@@ -1,10 +1,9 @@
-
 use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{bail, Context};
 use bitcoin::Amount;
-use sled::transaction as tx;
+use sled::transaction::{self as tx, Transactional};
 
 use ark::{Vtxo, VtxoId};
 use sled_utils::BucketTree;
@@ -22,7 +21,6 @@ const FORFEIT_VTXO_TREE: &str = "noah_forfeited_vtxos";
 const CLAIM_INPUTS: &str = "claim_inputs";
 const LAST_ARK_SYNC_HEIGHT: &str = "last_round_sync_height";
 
-
 pub struct Db {
 	db: sled::Db,
 }
@@ -33,38 +31,36 @@ impl Db {
 			db: sled::open(path).context("failed to open db")?,
 		})
 	}
-	
-	/// Utility function for transactions that fixes the annoying generics.
-	#[allow(unused)] // for future use
-	fn transaction(&self,
-		f: impl Fn(&tx::TransactionalTree) -> tx::ConflictableTransactionResult<(), ()>,
-	) -> anyhow::Result<()> {
-		if let Err(e) = self.db.transaction(f) {
-			bail!("db error in transaction: {:?}", e)
-		} else {
-			Ok(())
-		}
-	}
 
 	pub fn store_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
-		//TODO(stevenroose) should be a transaction but can't do cross-tree txs
-		self.db.open_tree(VTXO_TREE)?.insert(vtxo.id(), vtxo.encode())?;
-		BucketTree::new(self.db.open_tree(VTXO_EXPIRY_TREE)?)
-			.insert(vtxo.spec().expiry_height.to_le_bytes(), &vtxo.id())?;
+		let vtxo_tree = self.db.open_tree(VTXO_TREE)?;
+		let expiry_tree = self.db.open_tree(VTXO_EXPIRY_TREE)?;
+		(&vtxo_tree, &expiry_tree).transaction(|(vtxo_tree, expiry_tree)| {
+			vtxo_tree.insert(vtxo.id().to_ivec(), vtxo.encode())?;
+			BucketTree::new(expiry_tree)
+				.insert(vtxo.spec().expiry_height.to_le_bytes(), &vtxo.id())?;
+			Ok::<(), tx::ConflictableTransactionError>(())
+		})?;
 		Ok(())
 	}
 
 	pub fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
-		Ok(self.db.open_tree(VTXO_TREE)?.get(id)?.map(|b| {
-			Vtxo::decode(&b).expect("corrupt db: invalid vtxo")
-		}))
+		Ok(self
+			.db
+			.open_tree(VTXO_TREE)?
+			.get(id)?
+			.map(|b| Vtxo::decode(&b).expect("corrupt db: invalid vtxo")))
 	}
 
 	pub fn get_all_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
-		self.db.open_tree(VTXO_TREE)?.iter().map(|v| {
-			let (_key, val) = v?;
-			Ok(Vtxo::decode(&val).expect("corrupt db: invalid vtxo"))
-		}).collect()
+		self.db
+			.open_tree(VTXO_TREE)?
+			.iter()
+			.map(|v| {
+				let (_key, val) = v?;
+				Ok(Vtxo::decode(&val).expect("corrupt db: invalid vtxo"))
+			})
+			.collect()
 	}
 
 	/// Get the soonest-expiring vtxos with total value at least [min_value].
@@ -88,15 +84,17 @@ impl Db {
 	}
 
 	pub fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
-		//TODO(stevenroose) should be a transaction but can't do cross-tree txs
-		if let Some(v) = self.db.open_tree(VTXO_TREE)?.remove(&id)? {
-			let ret = Vtxo::decode(&v).expect("corrupt db: invalid vtxo");
-			BucketTree::new(self.db.open_tree(VTXO_EXPIRY_TREE)?)
-				.remove(ret.spec().expiry_height.to_le_bytes(), &id)?;
-			Ok(Some(ret))
-		} else {
-			Ok(None)
-		}
+		let vtxo_tree = self.db.open_tree(VTXO_TREE)?;
+		let expiry_tree = self.db.open_tree(VTXO_EXPIRY_TREE)?;
+		Ok((&vtxo_tree, &expiry_tree).transaction(|(vtxo_tree, expiry_tree)| {
+			if let Some(v) = vtxo_tree.remove(&id.to_ivec())? {
+				let ret = Vtxo::decode(&v).expect("corrupt db: invalid vtxo");
+				BucketTree::new(expiry_tree).remove(ret.spec().expiry_height.to_le_bytes(), &id)?;
+				Ok::<_, tx::ConflictableTransactionError>(Some(ret))
+			} else {
+				Ok(None)
+			}
+		})?)
 	}
 
 	/// This overrides the existing list of exit claim inputs with the new list.
@@ -110,8 +108,7 @@ impl Db {
 	/// Gets the current list of exit claim inputs.
 	pub fn get_claim_inputs(&self) -> anyhow::Result<Vec<exit::ClaimInput>> {
 		match self.db.get(CLAIM_INPUTS)? {
-			Some(buf) => Ok(ciborium::from_reader(&buf[..])
-				.expect("corrupt db: claim inputs")),
+			Some(buf) => Ok(ciborium::from_reader(&buf[..]).expect("corrupt db: claim inputs")),
 			None => Ok(Vec::new()),
 		}
 	}
@@ -139,4 +136,14 @@ impl Db {
 		Ok(self.db.open_tree(FORFEIT_VTXO_TREE)?.get(id)?.is_some())
 	}
 	//TODO(stevenroose) regularly prune forfeit vtxos based on height
+}
+
+trait ToIVec {
+	fn to_ivec(&self) -> sled::IVec;
+}
+
+impl<T: AsRef<[u8]>> ToIVec for T {
+	fn to_ivec(&self) -> sled::IVec {
+		self.as_ref().into()
+	}
 }
