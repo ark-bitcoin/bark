@@ -9,6 +9,8 @@ members = [
   "sled-utils",
 ]
 
+resolver = "2"
+
 # TODO(stevenroose) at some point probably move these inline
 [workspace.dependencies]
 # Rust stack
