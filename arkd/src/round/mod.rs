@@ -70,6 +70,15 @@ fn validate_payment(
 	offboards: &[OffboardRequest],
 	offboard_feerate: FeeRate,
 ) -> bool {
+	// Payment is invalid if any amount exceeds Amount::MAX_MONEY
+	if
+		inputs.iter().any(|x| x.amount() > Amount::MAX_MONEY) ||
+		outputs.iter().any(|x| x.amount > Amount::MAX_MONEY) ||
+		offboards.iter().any(|x| x.amount > Amount::MAX_MONEY)
+	{
+		return false;
+	}
+
 	let mut in_set = HashSet::with_capacity(inputs.len());
 	let mut in_sum = Amount::ZERO;
 	for input in inputs {
