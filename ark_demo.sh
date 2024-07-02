@@ -1,0 +1,37 @@
+#!/bin/sh
+
+# Set up useful 
+BITCOIN_DATADIR=$PWD/test/bitcoindatadir
+BITCOIN_CLI=bitcoin-cli
+BITCOIND=bitcoind
+
+BITCOIND_RPC_PORT=18443
+BITCOIND_RPC_HOST=127.0.0.1
+BITCOIND_URL=http://${BITCOIND_RPC_HOST}:${BITCOIND_RPC_PORT}
+BITCOIND_COOKIE=$PWD/test/bitcoindatadir/regtest/.cookie
+
+mkdir -p ${BITCOIN_DATADIR}
+
+# Define useful aliases
+alias bcli="$BITCOIN_CLI -regtest --rpcport=$BITCOIND_RPC_PORT --rpccookiefile=$BITCOIND_COOKIE"
+alias arkd="cargo run --bin arkd --"
+alias noah="cargo run --bin noah --"
+alias bd="$BITCOIND -regtest -datadir=${BITCOIN_DATADIR} -server -txindex"
+
+# Print some help and documentation 
+echo "-------------------------------------------"
+echo "- Ark Demo                                -"
+echo "-------------------------------------------"
+echo ""
+echo "This script is useful to test and demo ark "
+echo "on regtest. The script will help you to set-up"
+echo "an ASP and a couple of clients that can send"
+echo "ark payments to each-other."
+echo ""
+echo ""
+echo "The following aliases have been defined"
+echo "- \`bd\`: To run and start \`bitcoind\`"
+echo "- \`bcli\`: Use \`bitcoin-cli\` on your \`bitcoind\`"
+echo "- \`arkd\`: Compiles and runs \`arkd\`"
+echo "- \`noah\`: Compiles and runs \`noah\`"
+echo ""
