@@ -17,7 +17,7 @@ use std::str::FromStr;
 use anyhow::{bail, Context};
 use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Transaction, Txid};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{rand, KeyPair, PublicKey};
+use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use tokio_stream::StreamExt;
 
 use ark::{musig, BaseVtxo, OffboardRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
@@ -98,7 +98,7 @@ pub struct Wallet {
 	config: Config,
 	db: database::Db,
 	onchain: onchain::Wallet,
-	vtxo_seed: bip32::ExtendedPrivKey,
+	vtxo_seed: bip32::Xpriv,
 	// ASP stuff
 	asp: rpc::ArkServiceClient<tonic::transport::Channel>,
 	ark_info: ArkInfo,
@@ -195,7 +195,7 @@ impl Wallet {
 		let db = database::Db::open(&datadir.join("db")).context("failed to open db")?;
 
 		let vtxo_seed = {
-			let master = bip32::ExtendedPrivKey::new_master(config.network, &seed).unwrap();
+			let master = bip32::Xpriv::new_master(config.network, &seed).unwrap();
 			master.derive_priv(&SECP, &[350.into()]).unwrap()
 		};
 
@@ -285,7 +285,7 @@ impl Wallet {
 		// We create the onboard tx template, but don't sign it yet.
 		self.onchain.sync().await.context("sync error")?;
 		let onboard_tx = self.onchain.prepare_tx(addr, onboard_amount)?;
-		let utxo = OutPoint::new(onboard_tx.unsigned_tx.txid(), 0);
+		let utxo = OutPoint::new(onboard_tx.unsigned_tx.compute_txid(), 0);
 
 		// We ask the ASP to cosign our onboard vtxo reveal tx.
 		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
@@ -571,8 +571,6 @@ impl Wallet {
 	}
 
 	pub async fn send_ark_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<()> {
-		ensure!(addr.network == self.config.network, "invalid addr network");
-
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
@@ -659,7 +657,7 @@ impl Wallet {
 
 
 		'round: loop {
-			let cosign_key = KeyPair::new(&SECP, &mut rand::thread_rng());
+			let cosign_key = Keypair::new(&SECP, &mut rand::thread_rng());
 			debug!("Participating in round {} with cosign pubkey {}",
 				round_id, cosign_key.public_key(),
 			);
@@ -736,8 +734,8 @@ impl Wallet {
 				}
 			};
 
-			let vtxos_utxo = OutPoint::new(round_tx.txid(), 0);
-			let conns_utxo = OutPoint::new(round_tx.txid(), 1);
+			let vtxos_utxo = OutPoint::new(round_tx.compute_txid(), 0);
+			let conns_utxo = OutPoint::new(round_tx.compute_txid(), 1);
 
 			// Check that the proposal contains our inputs.
 			let mut my_vtxos = vtxo_reqs.clone();
@@ -911,7 +909,7 @@ impl Wallet {
 			}
 
 			// We also broadcast the tx, just to have it go around faster.
-			info!("Round finished, broadcasting round tx {}", round_tx.txid());
+			info!("Round finished, broadcasting round tx {}", round_tx.compute_txid());
 			if let Err(e) = self.onchain.broadcast_tx(&round_tx).await {
 				warn!("Couldn't broadcast round tx: {}", e);
 			}

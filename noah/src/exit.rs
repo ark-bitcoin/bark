@@ -116,10 +116,10 @@ impl Wallet {
 
 		// Broadcast exit txs.
 		for tx in &exit.broadcast {
-			trace!("Broadcasting tx {}: {}", tx.txid(), bitcoin::consensus::encode::serialize_hex(tx));
+			trace!("Broadcasting tx {}: {}", tx.compute_txid(), bitcoin::consensus::encode::serialize_hex(tx));
 			if let Err(e) = self.onchain.broadcast_tx(tx).await {
-				error!("Error broadcasting exit tx {}: {}", tx.txid(), e);
-				error!("Tx {}: {}", tx.txid(), bitcoin::consensus::encode::serialize_hex(tx));
+				error!("Error broadcasting exit tx {}: {}", tx.compute_txid(), e);
+				error!("Tx {}: {}", tx.compute_txid(), bitcoin::consensus::encode::serialize_hex(tx));
 			}
 		}
 
@@ -145,7 +145,7 @@ impl Wallet {
 
 		// Then we'll send a tx that will pay the fee for all the txs we made.
 		let tx = self.onchain.spend_fee_anchors(&exit.fee_anchors, exit.total_size).await?;
-		info!("Sent anchor spend tx: {}", tx.txid());
+		info!("Sent anchor spend tx: {}", tx.compute_txid());
 
 		// After we succesfully stored the claim inputs, we can drop the vtxos.
 		for id in exit.started {
@@ -232,7 +232,7 @@ impl Wallet {
 			let wit = Witness::from_slice(
 				&[&sig[..], exit_script.as_bytes(), &cb.serialize()],
 			);
-			debug_assert_eq!(wit.serialized_len(), claim.satisfaction_weight());
+			debug_assert_eq!(wit.size(), claim.satisfaction_weight());
 			input.final_script_witness = Some(wit);
 		}
 

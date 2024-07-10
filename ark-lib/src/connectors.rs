@@ -5,12 +5,13 @@ use std::iter;
 use bitcoin::{
 	Address, Amount, Network, OutPoint, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
 	Witness,
+
 };
-use bitcoin::secp256k1::{KeyPair, PublicKey};
+use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighashType};
 
 use crate::{fee, util};
-use crate::util::KeyPairExt;
+use crate::util::KeypairExt;
 
 
 /// The size in vbytes of each connector tx.
@@ -51,7 +52,7 @@ impl ConnectorChain {
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
 	pub fn output_script(pubkey: PublicKey) -> ScriptBuf {
-		ScriptBuf::new_v1_p2tr(&util::SECP, pubkey.x_only_public_key().0, None)
+		ScriptBuf::new_p2tr(&util::SECP, pubkey.x_only_public_key().0, None)
 	}
 
 	/// Create the address to create a connector chain using the given publick key.
@@ -63,7 +64,7 @@ impl ConnectorChain {
 	pub fn output(len: usize, pubkey: PublicKey) -> TxOut {
 		TxOut {
 			script_pubkey: Self::output_script(pubkey),
-			value: Self::required_budget(len).to_sat(),
+			value: Self::required_budget(len),
 		}
 	}
 
@@ -85,7 +86,7 @@ impl ConnectorChain {
 	}
 
 	/// Iterator over the signed transactions in this chain.
-	pub fn iter_signed_txs<'a>(&'a self, sign_key: &'a KeyPair) -> ConnectorTxIter<'a> {
+	pub fn iter_signed_txs<'a>(&'a self, sign_key: &'a Keypair) -> ConnectorTxIter<'a> {
 		ConnectorTxIter {
 			len: self.len,
 			spk: &self.spk,
@@ -118,7 +119,7 @@ impl ConnectorChain {
 pub struct ConnectorTxIter<'a> {
 	len: usize,
 	spk: &'a Script,
-	sign_key: Option<KeyPair>,
+	sign_key: Option<Keypair>,
 
 	prev: OutPoint,
 	idx: usize,
@@ -133,7 +134,7 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 		}
 
 		let mut ret = Transaction {
-			version: 2,
+			version: bitcoin::transaction::Version::TWO,
 			lock_time: bitcoin::absolute::LockTime::ZERO,
 			input: vec![TxIn {
 				previous_output: self.prev,
@@ -144,11 +145,11 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 			output: vec![
 				TxOut {
 					script_pubkey: self.spk.to_owned(),
-					value: ConnectorChain::required_budget(self.len - self.idx - 1).to_sat(),
+					value: ConnectorChain::required_budget(self.len - self.idx - 1),
 				},
 				TxOut {
 					script_pubkey: self.spk.to_owned(),
-					value: fee::DUST.to_sat(),
+					value: fee::DUST,
 				},
 			],
 		};
@@ -156,7 +157,7 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 		if let Some(keypair) = self.sign_key {
 			let prevout = TxOut {
 				script_pubkey: self.spk.to_owned(),
-				value: ConnectorChain::required_budget(self.len - self.idx).to_sat(),
+				value: ConnectorChain::required_budget(self.len - self.idx),
 			};
 			let mut shc = SighashCache::new(&ret);
 			let sighash = shc.taproot_key_spend_signature_hash(
@@ -167,7 +168,7 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 		}
 
 		self.idx += 1;
-		self.prev = OutPoint::new(ret.txid(), 0);
+		self.prev = OutPoint::new(ret.compute_txid(), 0);
 		Some(ret)
 	}
 
@@ -191,7 +192,7 @@ impl<'a> iter::Iterator for ConnectorIter<'a> {
 		}
 
 		if let Some(tx) = self.txs.next() {
-			let txid = tx.txid();
+			let txid = tx.compute_txid();
 			self.maybe_last = Some(OutPoint::new(txid, 0));
 			Some(OutPoint::new(txid, 1))
 		} else {
@@ -217,7 +218,7 @@ mod test {
 
 	#[test]
 	fn test_budget() {
-		let key = KeyPair::new(&util::SECP, &mut rand::thread_rng());
+		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
 		let utxo = OutPoint::new(Txid::all_zeros(), 0);
 
 		let chain = ConnectorChain::new(1, utxo, key.public_key());
@@ -238,27 +239,27 @@ mod test {
 		assert_eq!(chain.iter_signed_txs(&key).count(), 99);
 		for tx in chain.iter_signed_txs(&key) {
 			assert_eq!(tx.vsize() as u64, TX_SIZE);
-			assert_eq!(tx.input[0].witness.serialized_len(), INPUT_WEIGHT);
+			assert_eq!(tx.input[0].witness.size(), INPUT_WEIGHT);
 		}
 		let size = chain.iter_signed_txs(&key).map(|t| t.vsize() as u64).sum::<u64>();
 		assert_eq!(size, ConnectorChain::total_vsize(100));
-		chain.iter_unsigned_txs().for_each(|t| assert_eq!(t.output[1].value, fee::DUST.to_sat()));
-		assert_eq!(fee::DUST.to_sat(), chain.iter_unsigned_txs().last().unwrap().output[0].value);
+		chain.iter_unsigned_txs().for_each(|t| assert_eq!(t.output[1].value, fee::DUST));
+		assert_eq!(fee::DUST, chain.iter_unsigned_txs().last().unwrap().output[0].value);
 
-		let total_value = chain.iter_unsigned_txs().map(|t| t.output[1].value).sum::<u64>()
+		let total_value = chain.iter_unsigned_txs().map(|t| t.output[1].value).sum::<Amount>()
 			+ chain.iter_unsigned_txs().last().unwrap().output[0].value
-			+ size;
-		assert_eq!(ConnectorChain::required_budget(100).to_sat(), total_value);
+			+ Amount::from_sat(size);
+		assert_eq!(ConnectorChain::required_budget(100), total_value);
 
 		// random checks
 		let mut txs = chain.iter_unsigned_txs();
-		assert_eq!(txs.next().unwrap().output[0].value, ConnectorChain::required_budget(99).to_sat());
-		assert_eq!(txs.next().unwrap().output[0].value, ConnectorChain::required_budget(98).to_sat());
+		assert_eq!(txs.next().unwrap().output[0].value, ConnectorChain::required_budget(99));
+		assert_eq!(txs.next().unwrap().output[0].value, ConnectorChain::required_budget(98));
 	}
 
 	#[test]
 	fn test_signatures() {
-		let key = KeyPair::new(&util::SECP, &mut rand::thread_rng());
+		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
 		let utxo = OutPoint::new(Txid::all_zeros(), 0);
 		let spk = ConnectorChain::output_script(key.public_key());
 

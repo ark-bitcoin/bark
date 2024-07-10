@@ -2,7 +2,7 @@
 name = "arkd"
 version = "0.1.0"
 license = "CC0-1.0"
-authors = [ "Steven Roose <steven@roose.io>" ]
+authors = ["Steven Roose <steven@roose.io>"]
 edition = "2021"
 
 [build-dependencies]
@@ -22,7 +22,7 @@ serde_json.workspace = true
 ciborium.workspace = true
 bitcoin.workspace = true
 bip39.workspace = true
-bdk.workspace = true
+bdk_wallet.workspace = true
 bdk_file_store.workspace = true
 bdk_bitcoind_rpc.workspace = true
 prost.workspace = true

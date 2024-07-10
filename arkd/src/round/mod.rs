@@ -9,7 +9,7 @@ use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{Amount, FeeRate, OutPoint, Sequence, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
-use bitcoin::secp256k1::{rand, KeyPair, PublicKey};
+use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin::sighash::TapSighash;
 
 use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
@@ -18,7 +18,6 @@ use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 
 use crate::{SECP, App};
 use crate::database::ForfeitVtxo;
-use crate::util::FeeRateExt;
 
 #[derive(Debug, Clone)]
 pub enum RoundEvent {
@@ -205,7 +204,7 @@ pub async fn run_round_scheduler(
 			// NB allowed_inputs should NOT be cleared here.
 
 			// Generate a one-time use signing key.
-			let cosign_key = KeyPair::new(&SECP, &mut rand::thread_rng());
+			let cosign_key = Keypair::new(&SECP, &mut rand::thread_rng());
 			cosigners.insert(cosign_key.public_key());
 
 			// Start receiving payments.
@@ -322,24 +321,24 @@ pub async fn run_round_scheduler(
 			let mut wallet = app.wallet.lock().await;
 			let mut round_tx_psbt = {
 				let mut b = wallet.build_tx();
-				b.ordering(bdk::wallet::tx_builder::TxOrdering::Untouched);
+				b.ordering(bdk_wallet::wallet::tx_builder::TxOrdering::Untouched);
 				b.nlocktime(LockTime::from_height(tip).expect("actual height"));
 				for utxo in &spendable_utxos {
 					b.add_foreign_utxo_with_sequence(
 						utxo.point, utxo.psbt.clone(), utxo.weight, Sequence::ZERO,
 					).expect("bdk rejected foreign utxo");
 				}
-				b.add_recipient(vtxos_spec.cosign_spk(), vtxos_spec.total_required_value().to_sat());
+				b.add_recipient(vtxos_spec.cosign_spk(), vtxos_spec.total_required_value());
 				b.add_recipient(connector_output.script_pubkey, connector_output.value);
 				for offb in &all_offboards {
-					b.add_recipient(offb.script_pubkey.clone(), offb.amount.to_sat());
+					b.add_recipient(offb.script_pubkey.clone(), offb.amount);
 				}
-				b.fee_rate(round_tx_feerate.to_bdk());
+				b.fee_rate(round_tx_feerate);
 				b.finish().expect("bdk failed to create round tx")
 			};
-			let round_tx = round_tx_psbt.clone().extract_tx();
-			let vtxos_utxo = OutPoint::new(round_tx.txid(), 0);
-			let conns_utxo = OutPoint::new(round_tx.txid(), 1);
+			let round_tx = round_tx_psbt.clone().extract_tx()?;
+			let vtxos_utxo = OutPoint::new(round_tx.compute_txid(), 0);
+			let conns_utxo = OutPoint::new(round_tx.compute_txid(), 1);
 
 			// Generate vtxo nonces and combine with user's nonces.
 			let (sec_vtxo_nonces, pub_vtxo_nonces) = {
@@ -570,18 +569,20 @@ pub async fn run_round_scheduler(
 
 			// Sign the on-chain tx.
 			app.sign_round_utxo_inputs(&mut round_tx_psbt).context("signing round inputs")?;
-			let opts = bdk::SignOptions {
+			let opts = bdk_wallet::SignOptions {
 				trust_witness_utxo: true,
 				..Default::default()
 			};
 			let finalized = wallet.sign(&mut round_tx_psbt, opts)?;
 			assert!(finalized);
-			let round_tx = round_tx_psbt.extract_tx();
-			wallet.commit()?;
+			let round_tx = round_tx_psbt.extract_tx()?;
+			if let Some(change) = wallet.take_staged() {
+				app.wallet_db.lock().await.append_changeset(&change)?;
+			}
 			drop(wallet); // we no longer need the lock
 
 			// Broadcast over bitcoind.
-			debug!("Broadcasting round tx {}", round_tx.txid());
+			debug!("Broadcasting round tx {}", round_tx.compute_txid());
 			let bc = app.bitcoind.send_raw_transaction(&round_tx);
 			if let Err(e) = bc {
 				warn!("Couldn't broadcast round tx: {}", e);
@@ -596,7 +597,7 @@ pub async fn run_round_scheduler(
 			});
 
 			// Store forfeit txs and round info in database.
-			let round_id = round_tx.txid();
+			let round_id = round_tx.compute_txid();
 			for (id, vtxo) in all_inputs {
 				let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
 				let point = vtxo.point();
@@ -615,7 +616,7 @@ pub async fn run_round_scheduler(
 				app.db.remove_round(round)?;
 			}
 
-			info!("Finished round {} with tx {}", round_id, round_tx.txid());
+			info!("Finished round {} with tx {}", round_id, round_tx.compute_txid());
 			break 'attempt;
 		}
 	}

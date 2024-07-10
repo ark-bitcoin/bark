@@ -4,7 +4,7 @@ pub use secp256k1_zkp::{
 	MusigAggNonce, MusigKeyAggCache, MusigPubNonce, MusigPartialSignature, MusigSecNonce,
 	MusigSession, MusigSessionId,
 };
-use bitcoin::secp256k1::{rand, schnorr, KeyPair, PublicKey, SecretKey, XOnlyPublicKey};
+use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey, SecretKey, XOnlyPublicKey};
 
 use crate::util;
 
@@ -29,12 +29,12 @@ pub fn seckey_to(sk: SecretKey) -> zkp::SecretKey {
 	zkp::SecretKey::from_slice(&sk.secret_bytes()).unwrap()
 }
 
-pub fn keypair_to(kp: &KeyPair) -> zkp::Keypair {
+pub fn keypair_to(kp: &Keypair) -> zkp::Keypair {
 	zkp::Keypair::from_seckey_slice(&SECP, &kp.secret_bytes()).unwrap()
 }
 
-pub fn keypair_from(kp: &zkp::Keypair) -> KeyPair {
-	KeyPair::from_seckey_slice(&util::SECP, &kp.secret_bytes()).unwrap()
+pub fn keypair_from(kp: &zkp::Keypair) -> Keypair {
+	Keypair::from_seckey_slice(&util::SECP, &kp.secret_bytes()).unwrap()
 }
 
 pub fn sig_from(s: zkp::schnorr::Signature) -> schnorr::Signature {
@@ -61,7 +61,7 @@ pub fn combine_keys(keys: impl IntoIterator<Item = PublicKey>) -> XOnlyPublicKey
 	xonly_from(key_agg(keys).agg_pk())
 }
 
-pub fn nonce_pair(key: &KeyPair) -> (MusigSecNonce, MusigPubNonce) {
+pub fn nonce_pair(key: &Keypair) -> (MusigSecNonce, MusigPubNonce) {
 	let kp = keypair_to(key);
 	zkp::new_musig_nonce_pair(
 		&SECP,
@@ -81,7 +81,7 @@ pub fn nonce_agg(pub_nonces: impl IntoIterator<Item = MusigPubNonce>) -> MusigAg
 pub fn partial_sign(
 	pubkeys: impl IntoIterator<Item = PublicKey>,
 	agg_nonce: MusigAggNonce,
-	key: &KeyPair,
+	key: &Keypair,
 	sec_nonce: MusigSecNonce,
 	sighash: [u8; 32],
 	tweak: Option<[u8; 32]>,
@@ -111,7 +111,7 @@ pub fn partial_sign(
 /// Perform a deterministic partial sign for the given message and the
 /// given counterparty key and nonce.
 pub fn deterministic_partial_sign(
-	my_key: &KeyPair,
+	my_key: &Keypair,
 	their_pubkeys: impl IntoIterator<Item = PublicKey>,
 	their_nonces: impl IntoIterator<Item = MusigPubNonce>,
 	msg: [u8; 32],

@@ -102,7 +102,7 @@ pub struct StoredRound {
 
 impl StoredRound {
 	pub fn id(&self) -> Txid {
-		self.tx.txid()
+		self.tx.compute_txid()
 	}
 
 	fn encode(&self) -> Vec<u8> {

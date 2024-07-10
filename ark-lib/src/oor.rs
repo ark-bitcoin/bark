@@ -7,7 +7,7 @@ use bitcoin::{
 	Witness,
 };
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{schnorr, KeyPair, PublicKey};
+use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use crate::{fee, musig, util, Vtxo, VtxoRequest, VtxoSpec};
@@ -35,7 +35,7 @@ impl OorPayment {
 
 	pub fn unsigned_transaction(&self) -> Transaction {
 		Transaction {
-			version: 2,
+			version: bitcoin::transaction::Version::TWO,
 			lock_time: bitcoin::absolute::LockTime::ZERO,
 			input: self.inputs.iter().map(|input| {
 				TxIn {
@@ -48,7 +48,7 @@ impl OorPayment {
 			output: self.outputs.iter().map(|output| {
 				let spk = crate::exit_spk(output.pubkey, self.asp_pubkey, self.exit_delta);
 				TxOut {
-					value: output.amount.to_sat(),
+					value: output.amount,
 					script_pubkey: spk,
 				}
 			}).chain([fee::dust_anchor()]).collect(),
@@ -56,7 +56,7 @@ impl OorPayment {
 	}
 
 	pub fn txid(&self) -> Txid {
-		self.unsigned_transaction().txid()
+		self.unsigned_transaction().compute_txid()
 	}
 
 	pub fn sighashes(&self) -> Vec<TapSighash> {
@@ -98,7 +98,7 @@ impl OorPayment {
 
 	pub fn sign_asp(
 		&self,
-		keypair: &KeyPair,
+		keypair: &Keypair,
 		user_nonces: &[musig::MusigPubNonce],
 	) -> (Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>) {
 		assert_eq!(self.inputs.len(), user_nonces.len());
@@ -124,7 +124,7 @@ impl OorPayment {
 
 	pub fn sign_finalize_user(
 		self,
-		keypair: &KeyPair,
+		keypair: &Keypair,
 		our_sec_nonces: Vec<musig::MusigSecNonce>,
 		our_pub_nonces: &[musig::MusigPubNonce],
 		asp_nonces: &[musig::MusigPubNonce],
@@ -188,7 +188,7 @@ impl OorTransaction {
 		for (input, sig) in tx.input.iter_mut().zip(self.signatures.iter()) {
 			assert!(input.witness.is_empty());
 			input.witness.push(&sig[..]);
-			debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.serialized_len());
+			debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
 		}
 		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
 		// this +2 might be fixed later
@@ -203,7 +203,7 @@ impl OorTransaction {
 
 		let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
 		let oor_tx = self.signed_transaction();
-		let oor_txid = oor_tx.txid();
+		let oor_txid = oor_tx.compute_txid();
 		self.payment.outputs.iter().enumerate().map(|(idx, output)| {
 			Vtxo::Oor {
 				inputs: inputs.clone(),

@@ -73,14 +73,14 @@ impl OffboardRequest {
 			P2PKH_DUST_VB
 		} else if script.is_p2sh() {
 			P2SH_DUST_VB
-		} else if script.is_v0_p2wpkh() {
+		} else if script.is_p2wpkh() {
 			P2WPKH_DUST_VB
-		} else if script.is_v0_p2wsh() {
+		} else if script.is_p2wsh() {
 			P2WSH_DUST_VB
-		} else if script.is_v1_p2tr() {
+		} else if script.is_p2tr() {
 			P2TR_DUST_VB
 		} else if script.is_op_return() {
-			bitcoin::consensus::encode::VarInt(script.len() as u64).len() as u64
+			bitcoin::consensus::encode::VarInt(script.len() as u64).size() as u64
 				+ script.len() as u64
 				+ 8
 				// the input data (scriptSig and witness length fields included)
@@ -104,7 +104,7 @@ impl OffboardRequest {
 	pub fn to_txout(&self) -> TxOut {
 		TxOut {
 			script_pubkey: self.script_pubkey.clone(),
-			value: self.amount.to_sat(),
+			value: self.amount,
 		}
 	}
 
@@ -216,7 +216,7 @@ pub fn exit_spk(
 	exit_delta: u16,
 ) -> ScriptBuf {
 	let taproot = exit_taproot(user_pubkey, asp_pubkey, exit_delta);
-	ScriptBuf::new_v1_p2tr_tweaked(taproot.output_key())
+	ScriptBuf::new_p2tr_tweaked(taproot.output_key())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -299,9 +299,9 @@ impl Vtxo {
 	/// This can be an on-chain utxo or an off-chain vtxo.
 	pub fn point(&self) -> OutPoint {
 		match self {
-			Vtxo::Onboard { .. } => OutPoint::new(self.vtxo_tx().txid(), 0),
+			Vtxo::Onboard { .. } => OutPoint::new(self.vtxo_tx().compute_txid(), 0),
 			Vtxo::Round { exit_branch, .. } => {
-				OutPoint::new(exit_branch.last().unwrap().txid(), 0).into()
+				OutPoint::new(exit_branch.last().unwrap().compute_txid(), 0).into()
 			},
 			Vtxo::Oor { final_point, .. } => *final_point,
 		}
@@ -320,7 +320,7 @@ impl Vtxo {
 			Vtxo::Onboard { base, .. } => base.spec.amount,
 			Vtxo::Round { base, .. } => base.spec.amount,
 			Vtxo::Oor { oor_tx, final_point, .. } => {
-				Amount::from_sat(oor_tx.output[final_point.vout as usize].value)
+				oor_tx.output[final_point.vout as usize].value
 			},
 		}
 	}
@@ -328,7 +328,7 @@ impl Vtxo {
 	pub fn txout(&self) -> TxOut {
 		TxOut {
 			script_pubkey: self.spec().exit_spk(),
-			value: self.amount().to_sat(),
+			value: self.amount(),
 		}
 	}
 
@@ -346,7 +346,7 @@ impl Vtxo {
 
 	pub fn fee_anchor(&self) -> OutPoint {
 		let tx = self.vtxo_tx();
-		OutPoint::new(tx.txid(), tx.output.len() as u32 - 1)
+		OutPoint::new(tx.compute_txid(), tx.output.len() as u32 - 1)
 	}
 
 	/// Splits this vtxo in a set of non-OOR vtxos and the attached OOR txs.

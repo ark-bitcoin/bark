@@ -1,7 +1,7 @@
 
 use std::iter;
 
-use bitcoin::{Transaction, TxIn, TxOut, ScriptBuf, OutPoint, Txid, Witness, Script};
+use bitcoin::{Amount, Transaction, TxIn, TxOut, ScriptBuf, OutPoint, Txid, Witness, Script};
 use bitcoin::blockdata::opcodes;
 use bitcoin::hashes::Hash;
 
@@ -30,7 +30,7 @@ fn empty_input() -> TxIn {
 
 fn ctv_output() -> TxOut {
 	TxOut {
-		value: 0,
+		value: Amount::ZERO,
 		script_pubkey: Script::builder()
 			.push_opcode(opcodes::all::OP_NOP4)
 			.push_slice(&BYTES32)
@@ -44,7 +44,7 @@ fn ctv_input() -> TxIn {
 
 fn taproot_output() -> TxOut {
 	TxOut {
-		value: 0,
+		value: Amount::ZERO,
 		script_pubkey: Script::builder()
 			.push_opcode(opcodes::all::OP_PUSHNUM_1)
 			.push_slice(&BYTES32)
@@ -67,7 +67,7 @@ fn taproot_input() -> TxIn {
 
 fn anchor_output() -> TxOut {
 	TxOut {
-		value: 0,
+		value: Amount::ZERO,
 		script_pubkey: Script::builder()
 			.push_opcode(opcodes::OP_TRUE)
 			.into_script(),
@@ -80,7 +80,7 @@ fn anchor_input() -> TxIn {
 
 fn ctv_node_tx(radix: usize) -> Transaction {
 	Transaction {
-		version: 2,
+		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: vec![ctv_input()],
 		output: iter::repeat(ctv_output()).take(radix).chain(Some(anchor_output())).collect(),
@@ -89,7 +89,7 @@ fn ctv_node_tx(radix: usize) -> Transaction {
 
 fn ctv_leaf_tx() -> Transaction {
 	Transaction {
-		version: 2,
+		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: vec![ctv_input()],
 		output: vec![taproot_output(), anchor_output()],
@@ -98,7 +98,7 @@ fn ctv_leaf_tx() -> Transaction {
 
 fn clark_node_tx(radix: usize) -> Transaction {
 	Transaction {
-		version: 2,
+		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: vec![taproot_input()],
 		output: iter::repeat(taproot_output()).take(radix).chain(Some(anchor_output())).collect(),
@@ -107,7 +107,7 @@ fn clark_node_tx(radix: usize) -> Transaction {
 
 fn clark_leaf_tx() -> Transaction {
 	Transaction {
-		version: 2,
+		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: vec![taproot_input()],
 		output: vec![taproot_output(), anchor_output()],
@@ -137,7 +137,7 @@ fn calc_exit_cost(n: usize, radix: usize) {
 	// for exit cost the largest radix has to be taken anyway
 
 	let exit_tx = Transaction {
-		version: 2,
+		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: iter::repeat(anchor_input()).take(levels).chain(Some(taproot_input())).collect(),
 		output: vec![taproot_output()],

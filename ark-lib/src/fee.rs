@@ -18,9 +18,9 @@ pub fn op_true_script() -> ScriptBuf {
 pub fn dust_anchor() -> TxOut {
 	TxOut {
 		script_pubkey: {
-			ScriptBuf::new_v0_p2wsh(&op_true_script().wscript_hash())
+			ScriptBuf::new_p2wsh(&op_true_script().wscript_hash())
 		},
-		value: DUST.to_sat(),
+		value: DUST,
 	}
 }
 

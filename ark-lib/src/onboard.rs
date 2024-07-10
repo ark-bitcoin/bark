@@ -8,7 +8,7 @@
 use bitcoin::{taproot, Amount, OutPoint, Sequence, ScriptBuf, Transaction, TxIn, TxOut, Witness};
 use bitcoin::blockdata::locktime::absolute::LockTime;
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{schnorr, KeyPair};
+use bitcoin::secp256k1::{schnorr, Keypair};
 use bitcoin::sighash::{self, SighashCache, TapSighash};
 
 use crate::{fee, musig, util, BaseVtxo, Vtxo, VtxoSpec};
@@ -37,7 +37,7 @@ pub fn onboard_taptweak(spec: &VtxoSpec) -> taproot::TapTweakHash {
 }
 
 pub fn onboard_spk(spec: &VtxoSpec) -> ScriptBuf {
-	ScriptBuf::new_v1_p2tr_tweaked(onboard_taproot(spec).output_key())
+	ScriptBuf::new_p2tr_tweaked(onboard_taproot(spec).output_key())
 }
 
 /// The additional amount that needs to be sent into the onboard tx.
@@ -84,7 +84,7 @@ pub struct AspPart {
 	pub signature: musig::MusigPartialSignature,
 }
 
-pub fn new_asp(user: &UserPart, key: &KeyPair) -> AspPart {
+pub fn new_asp(user: &UserPart, key: &Keypair) -> AspPart {
 	let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user.spec, user.utxo);
 	let msg = reveal_sighash.to_byte_array();
 	let tweak = onboard_taptweak(&user.spec);
@@ -103,7 +103,7 @@ pub fn create_reveal_tx(
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
 	Transaction {
-		version: 2,
+		version: bitcoin::transaction::Version::TWO,
 		lock_time: LockTime::ZERO,
 		input: vec![TxIn {
 			previous_output: utxo,
@@ -120,7 +120,7 @@ pub fn create_reveal_tx(
 		output: vec![
 			TxOut {
 				script_pubkey: spec.exit_spk(),
-				value: spec.amount.to_sat(),
+				value: spec.amount,
 			},
 			fee::dust_anchor(),
 		],
@@ -132,7 +132,7 @@ pub fn reveal_tx_sighash(spec: &VtxoSpec, utxo: OutPoint) -> (TapSighash, Transa
 	let prev = TxOut {
 		script_pubkey: onboard_spk(&spec),
 		//TODO(stevenroose) consider storing both leaf and input values in vtxo struct
-		value: spec.amount.to_sat() + onboard_surplus().to_sat(),
+		value: spec.amount + onboard_surplus(),
 	};
 	let sighash = SighashCache::new(&reveal_tx).taproot_key_spend_signature_hash(
 		0, &sighash::Prevouts::All(&[&prev]), sighash::TapSighashType::Default,
@@ -144,7 +144,7 @@ pub fn finish(
 	user: UserPart,
 	asp: AspPart,
 	private: PrivateUserPart,
-	key: &KeyPair,
+	key: &Keypair,
 ) -> Vtxo {
 	let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user.spec, user.utxo);
 	let agg_nonce = musig::nonce_agg([user.nonce, asp.nonce]);
@@ -193,7 +193,7 @@ mod test {
 		//! Passes through the entire flow so that all assertions
 		//! inside the code are ran at least once.
 
-		let key = KeyPair::new(&util::SECP, &mut rand::thread_rng());
+		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
 		let utxo = "0000000000000000000000000000000000000000000000000000000000000001:1".parse().unwrap();
 		let spec = VtxoSpec {
 			user_pubkey: key.public_key(),

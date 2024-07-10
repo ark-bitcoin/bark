@@ -137,7 +137,7 @@ async fn inner_main() -> anyhow::Result<()> {
 		},
 		Command::Drain { address } => {
 			let app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
-			println!("{}", app.drain(address).await?.txid());
+			println!("{}", app.drain(address).await?.compute_txid());
 		},
 		Command::GetMnemonic => {
 			let app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
