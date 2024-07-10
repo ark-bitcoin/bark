@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{Result, Context};
 use bitcoin::{Address, Amount, Network};
 use clap::Parser;
 
@@ -32,6 +32,26 @@ struct CreateOpts {
 	bitcoind_url: String,
 	#[arg(long)]
 	bitcoind_cookie: String,
+	#[arg(long)]
+	public_rpc_address: Option<String>,
+	#[arg(long)]
+	public_rpc_tls_cert_path: Option<PathBuf>,
+	#[arg(long)]
+	public_rpc_tls_key_path: Option<PathBuf>,
+	#[arg(long)]
+	admin_rpc_address: Option<String>,
+	#[arg(long)]
+	round_interval: Option<u64>,
+	#[arg(long)]
+	round_submit_time: Option<u64>,
+	#[arg(long)]
+	round_sign_time: Option<u64>,
+	#[arg(long)]
+	nb_round_nonces: Option<usize>,
+	#[arg(long)]
+	vtxo_expiry_delta: Option<u16>,
+	#[arg(long)]
+	vtxo_exit_delta: Option<u16>
 }
 
 #[derive(clap::Subcommand)]
@@ -110,19 +130,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				datadir.canonicalize().context("canonicalizing path")?
 			};
 
-			let cfg = Config {
-				network: opts.network,
-				public_rpc_address: RPC_ADDR.parse().unwrap(),
-				round_interval: Duration::from_secs(10),
-				round_submit_time: Duration::from_secs(2),
-				round_sign_time: Duration::from_secs(2),
-				nb_round_nonces: 100,
-				vtxo_expiry_delta: 1 * 24 * 6,
-				vtxo_exit_delta: 2 * 6,
-				bitcoind_url: opts.bitcoind_url,
-				bitcoind_cookie: opts.bitcoind_cookie,
-				..Default::default()
-			};
+			let cfg = config_from_create_opts(opts)?;
 
 			App::create(&datadir, cfg)?;
 		},
@@ -177,4 +185,46 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		RpcCommand::Stop => unimplemented!(),
 	}
 	Ok(())
+}
+
+fn config_from_create_opts(opts: CreateOpts) -> Result<Config> {
+	// Configure the ASP
+	let mut cfg = Config {
+		network: opts.network,
+		bitcoind_url: opts.bitcoind_url,
+		bitcoind_cookie: opts.bitcoind_cookie,
+		public_rpc_tls_cert_path: opts.public_rpc_tls_cert_path,
+		public_rpc_tls_key_path: opts.public_rpc_tls_key_path,
+		..Default::default()
+	};
+
+	if let Some(pra) = opts.public_rpc_address {
+		cfg.public_rpc_address = pra.parse()
+			.context("Invalid `public_rpc_address`")?;
+	}
+	if let Some(ara) = opts.admin_rpc_address {
+		cfg.admin_rpc_address = Some(ara.parse()
+			.context("Invalid `admin_rpc_address`")?
+		);
+	}
+	if let Some(ri) = opts.round_interval {
+		cfg.round_interval = Duration::from_secs(ri);
+	}
+	if let Some(rst) = opts.round_submit_time {
+		cfg.round_submit_time = Duration::from_secs(rst);
+	}
+	if let Some(rst) = opts.round_sign_time {
+		cfg.round_sign_time = Duration::from_secs(rst);
+	}
+	if let Some(rnn) = opts.nb_round_nonces {
+		cfg.nb_round_nonces = rnn;
+	}
+	if let Some(ved) = opts.vtxo_expiry_delta {
+		cfg.vtxo_expiry_delta = ved;
+	}
+	if let Some(ved) = opts.vtxo_exit_delta {
+		cfg.vtxo_exit_delta = ved;
+	}
+
+	Ok(cfg)
 }
