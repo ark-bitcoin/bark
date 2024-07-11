@@ -1,4 +1,6 @@
 
+mod wallet;
+
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
@@ -15,6 +17,8 @@ use rocksdb::{
 
 use ark::{VtxoId, Vtxo};
 use ark::tree::signed::SignedVtxoTree;
+
+use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
 
 // COLUMN FAMILIES
@@ -116,9 +120,12 @@ impl StoredRound {
 	}
 }
 
+/// Type alias for the underlying RocksDB type.
+type RocksDb = rocksdb::OptimisticTransactionDB<rocksdb::MultiThreaded>;
 
 pub struct Db {
-	db: rocksdb::OptimisticTransactionDB<rocksdb::MultiThreaded>,
+	db: RocksDb,
+	wallet: ChangeSetDbState,
 }
 
 impl Db {
@@ -127,10 +134,18 @@ impl Db {
 		opts.create_if_missing(true);
 		opts.create_missing_column_families(true);
 
-		let cfs = [CF_FORFEIT_VTXO, CF_ROUND, CF_ROUND_EXPIRY, CF_OOR_COSIGNED, CF_OOR_MAILBOX];
+		let cfs = [
+			CF_FORFEIT_VTXO,
+			CF_ROUND,
+			CF_ROUND_EXPIRY,
+			CF_OOR_COSIGNED,
+			CF_OOR_MAILBOX,
+			CF_BDK_CHANGESETS,
+		];
 		let db = rocksdb::OptimisticTransactionDB::open_cf(&opts, path, cfs)
 			.context("failed to open db")?;
-		Ok(Db { db })
+		let wallet = ChangeSetDbState::new();
+		Ok(Db { db, wallet })
 	}
 
 	fn cf_forfeit_vtxo<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
