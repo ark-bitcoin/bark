@@ -147,12 +147,17 @@ impl App {
 		let seed = db.get_master_seed()
 			.context("db error")?
 			.context("db doesn't contain seed")?;
-		let (master_key, xpriv) = {
+		//NB BDK currently doesn't support single-key wallets and this makes
+		// that we are required to have two different descriptors.
+		// We should fix this once BDK fixes this.
+		let (master_key, xpriv, xpriv2) = {
 			let seed_xpriv = bip32::Xpriv::new_master(config.network, &seed).unwrap();
 			let path = bip32::DerivationPath::from_str("m/0").unwrap();
 			let xpriv = seed_xpriv.derive_priv(&SECP, &path).unwrap();
+			let path2 = bip32::DerivationPath::from_str("m/1").unwrap();
+			let xpriv2 = seed_xpriv.derive_priv(&SECP, &path2).unwrap();
 			let keypair = Keypair::from_secret_key(&SECP, &xpriv.private_key);
-			(keypair, xpriv)
+			(keypair, xpriv, xpriv2)
 		};
 
 		let wallet = {
@@ -163,9 +168,11 @@ impl App {
 			)?;
 
 			let desc = format!("tr({})", xpriv);
+			let desc2 = format!("tr({})", xpriv2);
 			debug!("Opening BDK wallet with descriptor {}", desc);
+			debug!("Using descriptors {} and {}", desc, desc2);
 			let init = db.aggregate_changesets()?;
-			let ret = bdk_wallet::wallet::Wallet::new_or_load(&desc, &desc, init, config.network)
+			let ret = bdk_wallet::wallet::Wallet::new_or_load(&desc, &desc2, init, config.network)
 				.context("failed to create or load bdk wallet")?;
 			(ret, db)
 		};
