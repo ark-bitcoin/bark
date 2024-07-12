@@ -13,7 +13,7 @@ use clap::Parser;
 use arkd::{App, Config};
 use arkd_rpc_client as rpc;
 
-const RPC_ADDR: &str = "[::]:35035";
+const RPC_ADDR: &str = "[::]:3535";
 
 #[derive(Parser)]
 #[command(author = "Steven Roose <steven@roose.io>", version, about)]
