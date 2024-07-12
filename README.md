@@ -67,13 +67,13 @@ Next, you can start some clients. To create a client, use the following command:
 ```
 noah --datadir ./test/noah1 create \
     --regtest \
-    --asp http://localhost:35035 \
+    --asp http://localhost:3535 \
     --bitcoind $BITCOIND_URL \
     --bitcoind-cookie $BITCOIND_COOKIE
 
 noah --datadir ./test/noah2 create \
     --regtest \
-    --asp http://localhost:35035 \
+    --asp http://localhost:3535 \
     --bitcoind $BITCOIND_URL \
     --bitcoind-cookie $BITCOIND_COOKIE
 ```
