@@ -54,10 +54,33 @@ struct CreateOpts {
 	vtxo_exit_delta: Option<u16>
 }
 
+#[derive(clap::Args)]
+struct ConfigOpts {
+	#[arg(long)]
+	bitcoind_url: Option<String>,
+	#[arg(long)]
+	bitcoind_cookie: Option<String>,
+	#[arg(long)]
+	public_rpc_address: Option<String>,
+	#[arg(long)]
+	// We use a double Option because we must be able to set 
+	// this variable to None.
+	// None -> Do not change this variable
+	// Some(None) -> Set this variable to None
+	// Some(val) -> Set this variable to `val`
+	public_rpc_tls_cert_path: Option<Option<PathBuf>>,
+	#[arg(long)]
+	public_rpc_tls_key_path: Option<Option<PathBuf>>,
+	#[arg(long)]
+	admin_rpc_address: Option<Option<String>>,
+}
+
 #[derive(clap::Subcommand)]
 enum Command {
 	#[command()]
 	Create(CreateOpts),
+	#[command()]
+	SetConfig(ConfigOpts),
 	#[command()]
 	Start,
 	#[command()]
@@ -134,6 +157,19 @@ async fn inner_main() -> anyhow::Result<()> {
 
 			App::create(&datadir, cfg)?;
 		},
+		Command::SetConfig(updates) => {
+			let datadir = PathBuf::from(cli.datadir.context("need datadir")?);
+			// Create a back-up of the old config file
+			Config::create_backup_in_datadir(&datadir)?;
+
+			// Update the configuration
+			let mut cfg = Config::read_from_datadir(&datadir)?;
+			merge_config(&mut cfg, updates)?;
+			cfg.write_to_datadir(&datadir)?;
+
+			println!("The configuration has been updated");
+			println!("You should restart `arkd` to ensure the new configuration takes effect");
+		},
 		Command::Start => {
 			let mut app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
 			let jh = app.start()?;
@@ -184,6 +220,44 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		}
 		RpcCommand::Stop => unimplemented!(),
 	}
+	Ok(())
+}
+
+fn merge_config(cfg: &mut Config, updates: ConfigOpts) -> anyhow::Result<()>{
+
+	match updates.bitcoind_url {
+		None => {},
+		Some(url) => cfg.bitcoind_url = url,
+	}
+
+	match updates.bitcoind_cookie {
+		None => {},
+		Some(cookie) => cfg.bitcoind_cookie = cookie
+	}
+
+	match updates.public_rpc_address {
+		None => {},
+		Some(addr) => {
+			cfg.public_rpc_address = addr.parse().context("public_rpc_address is invalid")?;
+		}
+	}
+
+	match updates.public_rpc_tls_cert_path {
+		None => {},
+		Some(x) => cfg.public_rpc_tls_cert_path = x
+	}
+
+	match updates.public_rpc_tls_key_path {
+		None => {},
+		Some(x) => cfg.public_rpc_tls_key_path = x
+	}
+
+	match updates.admin_rpc_address {
+		None => {},
+		Some(None) => cfg.admin_rpc_address = None,
+		Some(Some(x)) => cfg.admin_rpc_address = Some(x.parse().context("Invalid admin_rpc_address")?)
+	}
+
 	Ok(())
 }
 

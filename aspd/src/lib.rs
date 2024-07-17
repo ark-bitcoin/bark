@@ -56,6 +56,47 @@ pub struct Config {
 	pub vtxo_exit_delta: u16,
 }
 
+impl Config {
+
+	pub fn read_from_datadir<P: AsRef<Path>>(datadir: P) -> anyhow::Result<Self> {
+		let path = datadir.as_ref().join("config.json");
+		trace!("Reading configuraton from file {}", path.display());
+		let bytes = fs::read(&path)
+			.with_context(|| format!("failed to read config file: {}", path.display()))?;
+
+		serde_json::from_slice::<Self>(&bytes).context("invalid config file")
+	}
+
+	pub fn write_to_datadir<P: AsRef<Path>>(&self, datadir: P) -> anyhow::Result<()> {
+		let path = datadir.as_ref().join("config.json");
+		trace!("Dumping configuration from file {}", path.display());
+
+		// write the config to disk
+		let config_str = serde_json::to_string_pretty(&self)?;
+		fs::write(path, config_str.as_bytes())
+			.context("failed to write config file")?;
+
+			Ok(())
+	}
+
+  pub fn create_backup_in_datadir<P: AsRef<Path>>(datadir: P) -> anyhow::Result<()> {
+      let mut index = 0;
+      let source = datadir.as_ref().join("config.json");
+
+      // Create the destination file-path
+      // We don't delete data
+      let mut destination = datadir.as_ref().join(format!("config.backup.json.v{}", index));
+      while destination.exists() {
+          index+=1;
+          destination = datadir.as_ref().join(format!("config.backup.json.v{}", index))
+      }
+
+      // Create the copy
+      fs::copy(source, destination).context("Failed to create back-up")?;
+      Ok(())
+  }
+}
+
 // NB some random defaults to have something
 impl Default for Config {
 	fn default() -> Config {
@@ -132,12 +173,7 @@ impl App {
 	pub fn open(datadir: &Path) -> anyhow::Result<Arc<Self>> {
 		info!("Starting aspd at {}", datadir.display());
 
-		let config = {
-			let path = datadir.join("config.json");
-			let bytes = fs::read(&path)
-				.with_context(|| format!("failed to read config file: {}", path.display()))?;
-			serde_json::from_slice::<Config>(&bytes).context("invalid config file")?
-		};
+		let config = Config::read_from_datadir(datadir)?;
 		trace!("Config: {:?}", config);
 
 		let db_path = datadir.join("aspd_db");
