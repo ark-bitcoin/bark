@@ -1,0 +1,8 @@
+[package]
+name = "ark-testing"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true

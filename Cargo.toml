@@ -1,11 +1,11 @@
 
 [workspace]
 members = [
+  "ark-testing",
   "ark-lib",
   "aspd-rpc-client",
   "aspd",
   "bark",
-
   "sled-utils",
 ]
 
