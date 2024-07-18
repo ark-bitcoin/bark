@@ -4,12 +4,16 @@ pub mod aspd;
 pub mod cmd;
 pub mod constants;
 pub mod bark;
+
+mod error;
+mod runner;
 mod util;
 
 use std::path::PathBuf;
 use std::fs;
 pub use bitcoind;
 use bitcoind::BitcoinD;
+pub use runner::DaemonRunner;
 
 pub struct TestContext {
 	#[allow(dead_code)]
