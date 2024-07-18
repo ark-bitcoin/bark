@@ -101,7 +101,9 @@ name = "ark-testing"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitcoin",
  "log",
+ "rand",
 ]
 
 [[package]]
