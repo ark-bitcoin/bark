@@ -23,10 +23,13 @@ impl TestContext {
 	}
 
 	pub fn init_logging(&self) -> anyhow::Result<()> {
-		// We ignore the output
-		// An error is returned if the logger is initiated twice
-		// Note, that every test tries to initiate the logger
-		let _ = env_logger::builder().is_test(true).try_init();
+		// We ignore the error
+		// It is only returned when the logger is initiated twice
+		// Note, that every test tries to initiate the logger 
+		// so this happens all the time
+		let _ = env_logger::Builder::from_env(
+			env_logger::Env::default().default_filter_or("trace"))
+			.is_test(true).try_init();
 		Ok(())
 	}
 
