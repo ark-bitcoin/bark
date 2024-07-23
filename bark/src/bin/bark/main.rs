@@ -11,7 +11,7 @@ use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 
-use noah::{Wallet, Config};
+use bark::{Wallet, Config};
 
 const SIGNET_ASP_CERT: &'static [u8] = include_bytes!("signet.asp.21m.dev.cert.pem");
 
@@ -20,7 +20,7 @@ fn default_datadir() -> String {
 		env::current_dir().ok()
 	}).unwrap_or_else(|| {
 		"./".into()
-	}).join(".noah").display().to_string()
+	}).join(".bark").display().to_string()
 }
 
 #[derive(Parser)]
@@ -29,7 +29,7 @@ struct Cli {
 	/// Enable verbose logging.
 	#[arg(long, short = 'v', global = true)]
 	verbose: bool,
-	/// The datadir of the noah wallet.
+	/// The datadir of the bark wallet.
 	#[arg(long, global = true, default_value_t = default_datadir())]
 	datadir: String,
 	#[command(subcommand)]

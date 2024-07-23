@@ -14,8 +14,8 @@ mkdir -p ${BITCOIN_DATADIR}
 
 # Define useful aliases
 alias bcli="$BITCOIN_CLI -regtest --rpcport=$BITCOIND_RPC_PORT --rpccookiefile=$BITCOIND_COOKIE"
-alias arkd="cargo run --bin arkd --"
-alias noah="cargo run --bin noah --"
+alias aspd="cargo run --bin aspd --"
+alias bark="cargo run --bin bark --"
 alias bd="$BITCOIND -regtest -datadir=${BITCOIN_DATADIR} -server -txindex"
 
 # Print some help and documentation 
@@ -32,6 +32,6 @@ echo ""
 echo "The following aliases have been defined"
 echo "- \`bd\`: To run and start \`bitcoind\`"
 echo "- \`bcli\`: Use \`bitcoin-cli\` on your \`bitcoind\`"
-echo "- \`arkd\`: Compiles and runs \`arkd\`"
-echo "- \`noah\`: Compiles and runs \`noah\`"
+echo "- \`aspd\`: Compiles and runs \`aspd\`"
+echo "- \`bark\`: Compiles and runs \`bark\`"
 echo ""

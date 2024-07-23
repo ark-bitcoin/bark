@@ -7,7 +7,7 @@ use bitcoin::psbt;
 use crate::exit;
 
 
-const PROP_KEY_PREFIX: &'static [u8] = "ark_noah".as_bytes();
+const PROP_KEY_PREFIX: &'static [u8] = "bark".as_bytes();
 
 enum PropKey {
 	ClaimInput = 1,

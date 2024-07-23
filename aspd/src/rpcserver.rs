@@ -362,7 +362,7 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 
 	if let Some(ref cert_path) = app.config.public_rpc_tls_cert_path {
 		let key_path = app.config.public_rpc_tls_key_path.as_ref()
-			.context("arkd config has ASP TLS cert file but no key file")?;
+			.context("aspd config has ASP TLS cert file but no key file")?;
 		let cert = fs::read(&cert_path).context("failed to read ASP cert file")?;
 		let key = fs::read(&key_path).context("failed to read ASP cert key file")?;
 

@@ -2,9 +2,9 @@
 [workspace]
 members = [
   "ark-lib",
-  "arkd-rpc-client",
-  "arkd",
-  "noah",
+  "aspd-rpc-client",
+  "aspd",
+  "bark",
 
   "sled-utils",
 ]

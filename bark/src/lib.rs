@@ -23,7 +23,7 @@ use tokio_stream::StreamExt;
 use ark::{musig, BaseVtxo, OffboardRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
-use arkd_rpc_client as rpc;
+use aspd_rpc_client as rpc;
 
 
 lazy_static::lazy_static! {
@@ -38,11 +38,11 @@ pub struct ArkInfo {
 	pub vtxo_exit_delta: u16,
 }
 
-/// Configuration of the Noah wallet.
+/// Configuration of the Bark wallet.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
-	/// The Bitcoin network to run Noah on.
+	/// The Bitcoin network to run Bark on.
 	///
 	/// Default value: signet.
 	pub network: Network,
@@ -111,7 +111,7 @@ impl Wallet {
 		mut config: Config,
 		asp_cert: Option<Vec<u8>>,
 	) -> anyhow::Result<Wallet> {
-		info!("Creating new noah Wallet at {}", datadir.display());
+		info!("Creating new bark Wallet at {}", datadir.display());
 		trace!("Config: {:?}", config);
 
 		// create dir if not exit, but check that it's empty
@@ -149,7 +149,7 @@ impl Wallet {
 
 	/// Open existing wallet.
 	pub async fn open(datadir: &Path) -> anyhow::Result<Wallet> {
-		info!("Opening noah Wallet at {}", datadir.display());
+		info!("Opening bark Wallet at {}", datadir.display());
 
 		let config = {
 			let path = datadir.join("config.json");
@@ -290,7 +290,7 @@ impl Wallet {
 		// We ask the ASP to cosign our onboard vtxo reveal tx.
 		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
 		let asp_part = {
-			let res = self.asp.request_onboard_cosign(arkd_rpc_client::OnboardCosignRequest {
+			let res = self.asp.request_onboard_cosign(aspd_rpc_client::OnboardCosignRequest {
 				user_part: {
 					let mut buf = Vec::new();
 					ciborium::into_writer(&user_part, &mut buf).unwrap();

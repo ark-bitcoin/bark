@@ -103,7 +103,7 @@ pub struct App {
 
 impl App {
 	pub fn create(datadir: &Path, config: Config) -> anyhow::Result<()> {
-		info!("Creating arkd server at {}", datadir.display());
+		info!("Creating aspd server at {}", datadir.display());
 		trace!("Config: {:?}", config);
 
 		// create dir if not exit, but check that it's empty
@@ -119,7 +119,7 @@ impl App {
 			.context("failed to write config file")?;
 
 		// create mnemonic and store in empty db
-		let db_path = datadir.join("arkd_db");
+		let db_path = datadir.join("aspd_db");
 		info!("Loading db at {}", db_path.display());
 		let db = database::Db::open(&db_path).context("failed to open db")?;
 		let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
@@ -130,7 +130,7 @@ impl App {
 	}
 
 	pub fn open(datadir: &Path) -> anyhow::Result<Arc<Self>> {
-		info!("Starting arkd at {}", datadir.display());
+		info!("Starting aspd at {}", datadir.display());
 
 		let config = {
 			let path = datadir.join("config.json");
@@ -140,7 +140,7 @@ impl App {
 		};
 		trace!("Config: {:?}", config);
 
-		let db_path = datadir.join("arkd_db");
+		let db_path = datadir.join("aspd_db");
 		info!("Loading db at {}", db_path.display());
 		let db = database::Db::open(&db_path).context("failed to open db")?;
 

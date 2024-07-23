@@ -12,9 +12,9 @@ use crate::exit;
 
 // Trees
 
-const VTXO_TREE: &str = "noah_vtxos";
-const VTXO_EXPIRY_TREE: &str = "noah_vtxo_by_expiry";
-const FORFEIT_VTXO_TREE: &str = "noah_forfeited_vtxos";
+const VTXO_TREE: &str = "bark_vtxos";
+const VTXO_EXPIRY_TREE: &str = "bark_vtxo_by_expiry";
+const FORFEIT_VTXO_TREE: &str = "bark_forfeited_vtxos";
 
 // Top-level entries
 
@@ -63,7 +63,7 @@ impl Db {
 			.collect()
 	}
 
-	/// Get the soonest-expiring vtxos with total value at least [min_value].
+	/// Get the soonest-expiring vtxos with total value at least `min_value`.
 	pub fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>> {
 		let mut ret = Vec::new();
 		let mut total_amount = Amount::ZERO;

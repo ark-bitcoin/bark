@@ -10,8 +10,8 @@ use anyhow::{Result, Context};
 use bitcoin::{Address, Amount, Network};
 use clap::Parser;
 
-use arkd::{App, Config};
-use arkd_rpc_client as rpc;
+use aspd::{App, Config};
+use aspd_rpc_client as rpc;
 
 const RPC_ADDR: &str = "[::]:3535";
 
@@ -86,7 +86,7 @@ enum RpcCommand {
 	GetAddress,
 	#[command()]
 	TriggerRound,
-	/// Stop arkd.
+	/// Stop aspd.
 	#[command()]
 	Stop,
 }
@@ -137,9 +137,9 @@ async fn inner_main() -> anyhow::Result<()> {
 		Command::Start => {
 			let mut app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
 			let jh = app.start()?;
-			info!("arkd onchain address: {}", app.onchain_address().await?);
+			info!("aspd onchain address: {}", app.onchain_address().await?);
 			if let Err(e) = jh.await? {
-				error!("Shutdown error from arkd: {:?}", e);
+				error!("Shutdown error from aspd: {:?}", e);
 				process::exit(1);
 			}
 		},

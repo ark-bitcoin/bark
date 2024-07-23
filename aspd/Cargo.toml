@@ -1,16 +1,24 @@
 [package]
-name = "arkd"
+name = "bark-aspd"
 version = "0.1.0"
 license = "CC0-1.0"
 authors = ["Steven Roose <steven@roose.io>"]
 edition = "2021"
+
+[lib]
+name = "aspd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aspd"
+path = "src/main.rs"
 
 [build-dependencies]
 tonic-build = "0.10"
 
 [dependencies]
 ark-lib = { path = "../ark-lib" }
-arkd-rpc-client = { path = "../arkd-rpc-client" }
+aspd-rpc-client = { path = "../aspd-rpc-client" }
 
 anyhow.workspace = true
 lazy_static.workspace = true

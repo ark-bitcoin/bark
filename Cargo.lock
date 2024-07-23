@@ -97,76 +97,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-noah"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "ark-lib",
- "arkd-rpc-client",
- "bdk_bitcoind_rpc",
- "bdk_esplora",
- "bdk_file_store",
- "bdk_wallet",
- "bip39",
- "bitcoin",
- "ciborium",
- "clap",
- "env_logger",
- "home",
- "lazy_static",
- "log",
- "miniscript",
- "prost",
- "serde",
- "serde_json",
- "sled",
- "sled-utils",
- "tokio",
- "tokio-stream",
- "tonic",
-]
-
-[[package]]
-name = "arkd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ark-lib",
- "arkd-rpc-client",
- "bdk_bitcoind_rpc",
- "bdk_file_store",
- "bdk_wallet",
- "bip39",
- "bitcoin",
- "ciborium",
- "clap",
- "env_logger",
- "lazy_static",
- "log",
- "prost",
- "rocksdb",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-build",
-]
-
-[[package]]
-name = "arkd-rpc-client"
-version = "0.0.0"
-dependencies = [
- "prost",
- "tokio",
- "tonic",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+
+[[package]]
+name = "aspd-rpc-client"
+version = "0.0.0"
+dependencies = [
+ "prost",
+ "tokio",
+ "tonic",
+]
 
 [[package]]
 name = "async-stream"
@@ -265,6 +208,63 @@ dependencies = [
  "miniz_oxide",
  "object",
  "rustc-demangle",
+]
+
+[[package]]
+name = "bark-aspd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ark-lib",
+ "aspd-rpc-client",
+ "bdk_bitcoind_rpc",
+ "bdk_file_store",
+ "bdk_wallet",
+ "bip39",
+ "bitcoin",
+ "ciborium",
+ "clap",
+ "env_logger",
+ "lazy_static",
+ "log",
+ "prost",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+]
+
+[[package]]
+name = "bark-client"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "ark-lib",
+ "aspd-rpc-client",
+ "bdk_bitcoind_rpc",
+ "bdk_esplora",
+ "bdk_file_store",
+ "bdk_wallet",
+ "bip39",
+ "bitcoin",
+ "ciborium",
+ "clap",
+ "env_logger",
+ "home",
+ "lazy_static",
+ "log",
+ "miniscript",
+ "prost",
+ "serde",
+ "serde_json",
+ "sled",
+ "sled-utils",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]

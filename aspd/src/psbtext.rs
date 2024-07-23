@@ -13,7 +13,7 @@ pub enum RoundMeta {
 	Vtxo,
 }
 
-const PROP_KEY_PREFIX: &'static [u8] = "arkd".as_bytes();
+const PROP_KEY_PREFIX: &'static [u8] = "aspd".as_bytes();
 
 enum PropKey {
 	RoundMeta = 1,

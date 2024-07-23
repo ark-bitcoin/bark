@@ -1,21 +1,21 @@
 [package]
-name = "ark-noah"
+name = "bark-client"
 version = "0.0.0"
 license = "CC0-1.0"
 authors = ["Steven Roose <steven@roose.io>"]
 edition = "2021"
 
 [lib]
-name = "noah"
+name = "bark"
 path = "src/lib.rs"
 
 [[bin]]
-name = "noah"
-path = "src/bin/noah/main.rs"
+name = "bark"
+path = "src/bin/bark/main.rs"
 
 [dependencies]
 ark-lib = { path = "../ark-lib" }
-arkd-rpc-client = { path = "../arkd-rpc-client" }
+aspd-rpc-client = { path = "../aspd-rpc-client" }
 sled-utils = { path = "../sled-utils" }
 
 anyhow.workspace = true
