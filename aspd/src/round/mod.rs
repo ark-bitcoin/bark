@@ -68,13 +68,16 @@ fn validate_payment(
 	outputs: &[VtxoRequest],
 	offboards: &[OffboardRequest],
 	offboard_feerate: FeeRate,
-) -> bool {
+) -> anyhow::Result<()> {
 	let mut in_set = HashSet::with_capacity(inputs.len());
 	let mut in_sum = Amount::ZERO;
 	for input in inputs {
 		in_sum += input.amount();
-		if in_sum > Amount::MAX_MONEY || !in_set.insert(input.id()) {
-			return false;
+		if in_sum > Amount::MAX_MONEY{
+			bail!("total input amount overflow");
+		}
+		if !in_set.insert(input.id()) {
+			bail!("duplicate input");
 		}
 	}
 
@@ -82,21 +85,21 @@ fn validate_payment(
 	for output in outputs {
 		out_sum += output.amount;
 		if out_sum > in_sum {
-			return false;
+			bail!("total output amount exceeds total input amount");
 		}
 	}
 	for offboard in offboards {
 		let fee = match offboard.fee(offboard_feerate) {
 			Some(v) => v,
-			None => return false,
+			None => bail!("invalid offboard address"),
 		};
 		out_sum += offboard.amount + fee;
 		if out_sum > in_sum {
-			return false;
+			bail!("total output amount (with offboards) exceeds total input amount");
 		}
 	}
 
-	true
+	Ok(())
 }
 
 //TODO(stevenroose) we call this method at least once for each user, potentially dossable,
@@ -231,9 +234,11 @@ pub async fn run_round_scheduler(
 
 							//TODO(stevenroose) check that vtxos exist!
 
-							if !validate_payment(&inputs, &outputs, &offboards, offboard_feerate) {
-								warn!("User submitted bad payment: ins {:?}; outs {:?}; offb {:?}",
-									inputs, outputs, offboards);
+							let res = validate_payment(&inputs, &outputs, &offboards, offboard_feerate);
+							if let Err(e) = res {
+								warn!("User submitted bad payment: '{}': \
+									ins {:?}; outs {:?}; offb {:?}",
+									e, inputs, outputs, offboards);
 								continue 'receive;
 							}
 
