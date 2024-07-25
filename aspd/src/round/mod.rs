@@ -102,8 +102,7 @@ fn validate_payment(
 	Ok(())
 }
 
-//TODO(stevenroose) we call this method at least once for each user, potentially dossable,
-// so we should keep a cached version of all these variables for the entire round
+/// Validate the vtxo tree signatures from the given user.
 fn validate_partial_vtxo_sigs(
 	cosigners: impl IntoIterator<Item = PublicKey>,
 	agg_nonces: &[musig::MusigAggNonce],
@@ -187,11 +186,23 @@ pub async fn run_round_scheduler(
 		// Allocate this data once per round so that we can keep them 
 		// Perhaps we could even keep allocations between all rounds, but time
 		// in between attempts is way more critial than in between rounds.
+
+		// All input vtxos.
 		let mut all_inputs = HashMap::<VtxoId, Vtxo>::new();
+		// All output vtxos.
 		let mut all_outputs = Vec::<VtxoRequest>::new();
+		// All offboard requests.
 		let mut all_offboards = Vec::<OffboardRequest>::new();
+		// All cosigners in the vtxo tree creation.
 		let mut cosigners = HashSet::<PublicKey>::new();
+		// Mapping of cosigners with the input vtxos they added so we can ban them for dropping.
+		let mut cosigner_vtxos = HashMap::<PublicKey, Vec<VtxoId>>::new();
+		// Public nonces for forfeit txs per vtxo.
 		let mut vtxo_pub_nonces = HashMap::new();
+
+		// All allowed inputs into the series of rounds.
+		// This one will persist throughout round attempts and we will always cut out the users
+		// that misbehave so that we eventually converge to a successful round.
 		let mut allowed_inputs = HashSet::new();
 
 		// In this loop we will try to finish the round and make new attempts.
@@ -203,6 +214,7 @@ pub async fn run_round_scheduler(
 			all_outputs.clear();
 			all_offboards.clear();
 			cosigners.clear();
+			cosigner_vtxos.clear();
 			vtxo_pub_nonces.clear();
 			// NB allowed_inputs should NOT be cleared here.
 
@@ -225,7 +237,7 @@ pub async fn run_round_scheduler(
 
 							if !allowed_inputs.is_empty() {
 								// This means we're not trying first time and we filter inputs.
-								if let Some(bad) = inputs.iter().find(|i| allowed_inputs.contains(&i.id())) {
+								if let Some(bad) = inputs.iter().find(|i| !allowed_inputs.contains(&i.id())) {
 									warn!("User attempted to submit invalid input: {}", bad.id());
 									//TODO(stevenroose) would be nice if user saw this
 									continue 'receive;
@@ -244,6 +256,7 @@ pub async fn run_round_scheduler(
 
 							trace!("Received {} inputs, {} outputs and {} offboards from user",
 								inputs.len(), outputs.len(), offboards.len());
+							let vtxo_ids = inputs.iter().map(|v| v.id()).collect();
 							all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 							//TODO(stevenroose) somehow check if a tree using these outputs
 							//will exceed the config.nb_round_nonces number of nodes
@@ -251,6 +264,7 @@ pub async fn run_round_scheduler(
 							all_offboards.extend(offboards);
 							//TODO(stevenroose) handle duplicate cosign key
 							assert!(cosigners.insert(cosign_pubkey));
+							cosigner_vtxos.insert(cosign_pubkey, vtxo_ids);
 							vtxo_pub_nonces.insert(cosign_pubkey, public_nonces);
 						},
 						v => debug!("Received unexpected input: {:?}", v),
@@ -298,7 +312,7 @@ pub async fn run_round_scheduler(
 
 			let cosign_agg_pk = musig::combine_keys(cosigners.iter().copied());
 			let vtxos_spec = VtxoTreeSpec::new(
-				all_outputs,
+				all_outputs.clone(),
 				cosign_agg_pk,
 				app.master_key.public_key(),
 				expiry,
@@ -380,13 +394,23 @@ pub async fn run_round_scheduler(
 			});
 
 			// Wait for signatures from users.
-			//TODO(stevenroose) we need a check to see when we have all data we need so we can skip
-			// timeout
 			let mut vtxo_part_sigs = HashMap::with_capacity(cosigners.len());
 			tokio::pin! { let timeout = tokio::time::sleep(cfg.round_sign_time); }
 			'receive: loop {
 				tokio::select! {
-					_ = &mut timeout => break 'receive,
+					_ = &mut timeout => {
+						warn!("Timed out receiving vtxo partial signatures.");
+						// Disallow all inputs by this cosigner.
+						for (pk, vtxos) in cosigner_vtxos.iter() {
+							if !vtxo_part_sigs.contains_key(pk) {
+								for id in vtxos {
+									trace!("Dropping vtxo {}", id);
+									allowed_inputs.remove(id);
+								}
+							}
+						}
+						continue 'attempt;
+					},
 					input = round_input_rx.recv() => match input.expect("broken channel") {
 						RoundInput::VtxoSignatures { pubkey, signatures } => {
 							if !cosigners.contains(&pubkey) {
@@ -395,6 +419,10 @@ pub async fn run_round_scheduler(
 							}
 							trace!("Received signatures from cosigner {}", pubkey);
 
+							if vtxo_part_sigs.contains_key(&pubkey) {
+								trace!("User with pubkey {} submitted partial vtxo sigs again", pubkey);
+								continue 'receive;
+							}
 							if validate_partial_vtxo_sigs(
 								cosigners.iter().copied(),
 								&agg_vtxo_nonces,
@@ -409,17 +437,15 @@ pub async fn run_round_scheduler(
 								debug!("Received invalid partial vtxo sigs from signer: {}", pubkey);
 								continue 'receive;
 							}
+
+							// Stop the loop once we have all.
+							if vtxo_part_sigs.len() == cosigners.len() - 1 {
+								break 'receive;
+							}
 						},
 						v => debug!("Received unexpected input: {:?}", v),
 					}
 				}
-			}
-
-			//TODO(stevenroose) kick out signers that didn't sign and retry
-			if cosigners.len() - 1 != vtxo_part_sigs.len() {
-				error!("Not enough vtxo partial signatures! ({} != {})",
-					cosigners.len() - 1, vtxo_part_sigs.len());
-				continue 'round;
 			}
 
 			// Combine the vtxo signatures.
@@ -490,13 +516,20 @@ pub async fn run_round_scheduler(
 			);
 
 			// Wait for signatures from users.
-			//TODO(stevenroose) we need a check to see when we have all data we need so we can skip
-			// timeout
 			let mut forfeit_part_sigs = HashMap::with_capacity(all_inputs.len());
 			tokio::pin! { let timeout = tokio::time::sleep(cfg.round_sign_time); }
 			'receive: loop {
 				tokio::select! {
-					_ = &mut timeout => break 'receive,
+					_ = &mut timeout => {
+						warn!("Timed out receiving forfeit signatures.");
+						for vtxo in all_inputs.keys() {
+							if !forfeit_part_sigs.contains_key(vtxo) {
+								trace!("Dropping vtxo {}", vtxo);
+								allowed_inputs.remove(vtxo);
+							}
+						}
+						continue 'attempt;
+					}
 					input = round_input_rx.recv() => match input.expect("broken channel") {
 						RoundInput::ForfeitSignatures { signatures } => {
 							for (id, nonces, sigs) in signatures {
@@ -519,8 +552,7 @@ pub async fn run_round_scheduler(
 							}
 
 							// Check whether we have all and can skip the loop.
-							if forfeit_part_sigs.len() == all_inputs.len() &&
-								vtxo_part_sigs.len() == cosigners.len() - 1 {
+							if forfeit_part_sigs.len() == all_inputs.len() {
 								debug!("We received all signatures, continuing round...");
 								break 'receive;
 							}
@@ -528,13 +560,6 @@ pub async fn run_round_scheduler(
 						v => debug!("Received unexpected input: {:?}", v),
 					}
 				}
-			}
-
-			//TODO(stevenroose) kick out signers that didn't sign and retry
-			if forfeit_part_sigs.len() != all_inputs.len() {
-				error!("Not enough forfeit partial signatures! ({} != {})",
-					forfeit_part_sigs.len(), all_inputs.len());
-				continue 'round;
 			}
 
 			// Finish the forfeit signatures.
