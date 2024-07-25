@@ -79,22 +79,22 @@ impl Config {
 			Ok(())
 	}
 
-  pub fn create_backup_in_datadir<P: AsRef<Path>>(datadir: P) -> anyhow::Result<()> {
-      let mut index = 0;
-      let source = datadir.as_ref().join("config.json");
+	pub fn create_backup_in_datadir<P: AsRef<Path>>(datadir: P) -> anyhow::Result<()> {
+		let mut index = 0;
+		let source = datadir.as_ref().join("config.json");
 
-      // Create the destination file-path
-      // We don't delete data
-      let mut destination = datadir.as_ref().join(format!("config.backup.json.v{}", index));
-      while destination.exists() {
-          index+=1;
-          destination = datadir.as_ref().join(format!("config.backup.json.v{}", index))
-      }
+		// Create the destination file-path
+		// We don't delete data
+		let mut destination = datadir.as_ref().join(format!("config.backup.json.v{}", index));
+		while destination.exists() {
+			index+=1;
+			destination = datadir.as_ref().join(format!("config.backup.json.v{}", index))
+		}
 
-      // Create the copy
-      fs::copy(source, destination).context("Failed to create back-up")?;
-      Ok(())
-  }
+		// Create the copy
+		fs::copy(source, destination).context("Failed to create back-up")?;
+		Ok(())
+	}
 }
 
 // NB some random defaults to have something
