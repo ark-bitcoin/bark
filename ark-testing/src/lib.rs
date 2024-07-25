@@ -1,3 +1,5 @@
+#[macro_use] extern crate log;
+
 pub mod aspd;
 pub mod cmd;
 pub mod constants;
@@ -6,18 +8,21 @@ mod util;
 
 use std::path::PathBuf;
 use std::fs;
+pub use bitcoind;
+use bitcoind::BitcoinD;
 
 pub struct TestContext {
 	#[allow(dead_code)]
 	name: String,
-	datadir: PathBuf
+	datadir: PathBuf,
+	bitcoind_count: usize,
 }
 
 impl TestContext {
 
 	pub fn new(name: String, base_path: PathBuf) -> Self {
 		fs::create_dir_all(base_path.clone()).unwrap();
-		let context = TestContext { name, datadir: base_path};
+		let context = TestContext { name, datadir: base_path, bitcoind_count: 0};
 		context.init_logging().unwrap();
 		context
 	}
@@ -39,6 +44,23 @@ impl TestContext {
 		Self::new(name, datadir)
 	}
 
+	pub fn bitcoind(&mut self) -> BitcoinD {
+		self.bitcoind_count+=1;
+		let name = format!("bitcoind-{}", self.bitcoind_count);
+
+		// Launching bitcoind
+		info!("Starting {}", name);
+		let exe_path = bitcoind::exe_path().unwrap();
+
+		// Note, that `arkd` requires the `--txindex` argument
+		// Because we use `staticdir` the bitcoind`-folder will not be
+		// deleted if the test completes
+		let mut conf = bitcoind::Conf::default();
+		conf.args.push("--txindex");
+		conf.staticdir = Some(self.datadir.join(name));
+
+		BitcoinD::with_conf(exe_path, &conf).unwrap()
+	}
 }
 
 impl Drop for TestContext {

@@ -102,6 +102,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitcoin",
+ "bitcoind",
  "env_logger",
  "log",
  "rand",
@@ -518,6 +519,19 @@ dependencies = [
  "bitcoin",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bitcoind"
+version = "0.36.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ee5cf6a9903ff9cc808494c1232b0e9f6eef6600913d0d69fe1cb5c428f25b9"
+dependencies = [
+ "anyhow",
+ "bitcoincore-rpc",
+ "log",
+ "tempfile",
+ "which",
 ]
 
 [[package]]
