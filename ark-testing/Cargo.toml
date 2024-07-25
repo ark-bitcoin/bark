@@ -10,3 +10,4 @@ rand.workspace = true
 bitcoin.workspace = true
 env_logger.workspace = true
 bitcoind = "0.36.0"
+portpicker = "0.1.1"

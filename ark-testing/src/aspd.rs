@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use std::borrow::Borrow;
 use std::env::VarError;
 use std::process::Command;
@@ -49,7 +51,7 @@ pub struct AspD {
 
 impl AspD {
 
-	pub fn new<B>(name: String, arkd_cmd: BaseCommand, datadir: PathBuf, bitcoind: B) -> Self 
+	pub fn new<B>(name: String, arkd_cmd: BaseCommand, datadir: PathBuf, bitcoind: B) -> Self
 		where B : Borrow<bitcoind::BitcoinD>
 	{
 		Self {
@@ -62,6 +64,55 @@ impl AspD {
 			runtime_data: None,
 		}
 	}
+
+	pub fn client_rpc_port(&self) -> anyhow::Result<u16> {
+		match &self.runtime_data {
+			Some(data) => {
+				let mutex = data.lock().expect("We can acquire the lock");
+				return mutex.state.client_rpc_port.context("aspd has no client port yet. Is it running?")
+			},
+			None => { panic!("Server not yet started!"); }
+		}
+	}
+
+
+	pub fn admin_rpc_port(&self) -> anyhow::Result<u16> {
+		match &self.runtime_data {
+			Some(data) => {
+				let mutex = data.lock().expect("We can acquire the lock");
+				return mutex.state.admin_rpc_port.context("aspd has no admin rpc port yet. Is it running?")
+			},
+			None => { panic!("Server not yet started!"); }
+		}
+	}
+
+	pub fn run_cmd_with_args(&self, args: &[&str]) -> anyhow::Result<String>
+	{
+		let mut cmd = self.arkd_cmd.get_cmd();
+		cmd
+			.arg("--datadir")
+			.arg(self.datadir.clone())
+			.args(args);
+
+		trace!("Executing {:?}", &cmd);
+
+		let result = cmd.output().with_context(|| format!("Failed to execute {:?}", cmd))?;
+
+		// TODO: ensure you write the full command, stdout, stderr to the directory
+		// This makes debuggin a lot easier
+		let stdout_str = String::from_utf8(result.stdout)?;
+		let stderr_str = String::from_utf8(result.stderr)?;
+
+		if result.status.success() {
+			Ok(stdout_str)
+		}
+		else {
+			// Ensure we print the logs
+			error!("{}", stderr_str);
+			error!("{}", stdout_str);
+			return Err(anyhow::anyhow!("Command failed to execute"))
+		}
+	}
 }
 
 impl fmt::Debug for AspD {
@@ -72,6 +123,8 @@ impl fmt::Debug for AspD {
 
 #[derive(Debug)]
 pub struct State{
+	client_rpc_port: Option<u16>,
+	admin_rpc_port: Option<u16>,
 	stdout: Option<fs::File>,
 	stderr: Option<fs::File>
 }
@@ -79,19 +132,14 @@ pub struct State{
 impl State {
 
 	fn process_stdout(&mut self, name: &str, line: &str) {
-		match &mut self.stdout {
-			Some(file) => { 
-				let _ = write!(file, "{} - {}\n", name, line);},
-			_ => {}
-		}
+		if let Some(file) = &mut self.stdout {
+			let _ = writeln!(file, "{} - {}", name, line);
+		};
 	}
 
 	fn process_stderr(&mut self, line: &str) {
-		match &mut self.stderr {
-			Some(file) => {
-				let _ = write!(file, "{}\n", line);
-			},
-			None => {}
+		if let Some(file) = &mut self.stderr {
+			let _ = writeln!(file, "{}", line);
 		}
 	}
 }
@@ -122,7 +170,7 @@ impl RunnerHelper for AspD {
 			info!("Created {}", self.name)
 		}
 		else {
-			error!("Created arkd with stderr: {}", std::str::from_utf8(&output.stderr).unwrap());
+			error!("Failed to create arkd with stderr: {}", std::str::from_utf8(&output.stderr).unwrap());
 			panic!("Failed to create {}", self.name)
 		}
 
@@ -130,20 +178,37 @@ impl RunnerHelper for AspD {
 	}
 
 	fn _command(&self) -> Command {
-		let mut command = self.arkd_cmd.get_cmd();
-		command
-			.arg("start")
-			.arg("--datadir")
-			.arg(self.datadir.clone());
+		// TODO: Pick a port and perform retries
+		let locked_data = self.runtime_data.clone().unwrap();
+		let mut data = locked_data.lock().unwrap();
 
-		command
+		let client_rpc_port = portpicker::pick_unused_port().expect("No port free");
+		let admin_rpc_port = portpicker::pick_unused_port().expect("No port free");
+
+		data.state.client_rpc_port = Some(client_rpc_port);
+		data.state.admin_rpc_port = Some(admin_rpc_port);
+
+		let client_rpc_address = format!("0.0.0.0:{}", client_rpc_port);
+		let admin_rpc_address = format!("127.0.0.1:{}", admin_rpc_port);
+
+		// Update the configuration and use the port
+		self.run_cmd_with_args(
+			&["set-config", "--public-rpc-address", &client_rpc_address, "--admin-rpc-address", &admin_rpc_address]
+		).expect("set-config should be able to set a port");
+
+		let mut cmd = self.arkd_cmd.get_cmd();
+		cmd
+			.arg("--datadir")
+			.arg(self.datadir.clone())
+			.arg("start");
+
+		cmd
 	}
 
 
 	fn _process_stdout(name: &str, state: &mut Self::State, line: &str) {
 		state.process_stdout(name, line);
 	}
-
 
 	fn _process_stderr(state: &mut Self::State, line: &str) {
 		state.process_stderr(line);
@@ -162,18 +227,22 @@ impl RunnerHelper for AspD {
 			.open(self.datadir.join("stderr.log")).unwrap();
 
 
-		Self::State { 
+		Self::State {
 			stdout: Some(stdout),
-			stderr: Some(stderr)
+			stderr: Some(stderr),
+			admin_rpc_port: None,
+			client_rpc_port: None
 		}
 	}
 
-	fn _get_runtime(&self) -> Option<Arc<Mutex<RuntimeData<Self::State>>>>	{
-		self.runtime_data.clone()
+
+	fn _notif_starting(&mut self, runtime_data: Arc<Mutex<RuntimeData<Self::State>>>) {
+		trace!("I've replaced the init");
+		self.runtime_data.replace(runtime_data);
 	}
 
-	fn _notif_started(&mut self, runtime_data: Arc<Mutex<RuntimeData<Self::State>>>) {
-		self.runtime_data.replace(runtime_data);
+	fn _get_runtime(&self) -> Option<Arc<Mutex<RuntimeData<State>>>> {
+		self.runtime_data.clone()
 	}
 }
 

@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::fs;
 pub use bitcoind;
 use bitcoind::BitcoinD;
+use aspd::AspD;
 pub use runner::DaemonRunner;
 
 pub struct TestContext {
@@ -20,13 +21,14 @@ pub struct TestContext {
 	name: String,
 	datadir: PathBuf,
 	bitcoind_count: usize,
+	aspd_count: usize
 }
 
 impl TestContext {
 
 	pub fn new(name: String, base_path: PathBuf) -> Self {
 		fs::create_dir_all(base_path.clone()).unwrap();
-		let context = TestContext { name, datadir: base_path, bitcoind_count: 0};
+		let context = TestContext { name, datadir: base_path, bitcoind_count: 0, aspd_count: 0};
 		context.init_logging().unwrap();
 		context
 	}
@@ -64,6 +66,19 @@ impl TestContext {
 		conf.staticdir = Some(self.datadir.join(name));
 
 		BitcoinD::with_conf(exe_path, &conf).unwrap()
+	}
+
+	pub fn aspd(&mut self, bitcoind: &BitcoinD) -> AspD 
+	{
+		self.aspd_count+=1;
+		let name = format!("aspd-{}", self.aspd_count);
+
+		let base_command = aspd::get_base_cmd().unwrap();
+		let datadir = self.datadir.join(&name);
+
+		let mut aspd = AspD::new(name, base_command, datadir, bitcoind);
+		aspd.start().expect("aspd started");
+		aspd
 	}
 }
 

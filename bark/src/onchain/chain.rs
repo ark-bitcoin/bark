@@ -7,6 +7,7 @@ use bitcoin::{OutPoint, Transaction};
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 
+#[derive(Debug, Clone)]
 pub enum ChainSource {
 	Bitcoind {
 		url: String,
@@ -24,6 +25,7 @@ pub enum ChainSourceClient {
 
 impl ChainSourceClient {
 	pub fn new(chain_source: ChainSource) -> anyhow::Result<Self> {
+		log::debug!("Creating client for source {:?}", chain_source);
 		Ok(match chain_source {
 			ChainSource::Bitcoind { url, auth } => ChainSourceClient::Bitcoind(
 				bitcoincore_rpc::Client::new(&url, auth)

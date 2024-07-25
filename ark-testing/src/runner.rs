@@ -58,8 +58,8 @@ pub trait RunnerHelper {
 	/// This is called after the [_prepare] method is called.
 	fn _init_state(&self) -> Self::State;
 
-	/// Notify that the daemon has started.
-	fn _notif_started(&mut self, runtime_data: Arc<Mutex<RuntimeData<Self::State>>>);
+	/// Notify that the daemon will start soon
+	fn _notif_starting(&mut self, runtime_data: Arc<Mutex<RuntimeData<Self::State>>>);
 
 	/// Get the current runtime data.
 	fn _get_runtime(&self) -> Option<Arc<Mutex<RuntimeData<Self::State>>>>;
@@ -112,7 +112,7 @@ where
 					}
 					trace!("Thread {} stopped", thread::current().name().unwrap());
 				})
-				.expect(&format!("failed to start stdout read thread")),
+				.expect("failed to start stdout read thread"),
 		);
 
 		// Start stderr processing thread.
@@ -128,7 +128,7 @@ where
 					}
 					trace!("Thread {} stopped", thread::current().name().unwrap());
 				})
-				.expect(&format!("failed to start stderr read thread")),
+				.expect("failed to start stderr read thread"),
 		);
 
 		info!("Daemon {:?} started. PID: {}", self, pid);
@@ -157,8 +157,9 @@ where
 			state: self._init_state(),
 		}));
 
-		self._start_up(rt.clone())?;
-		self._notif_started(rt);
+
+		self._notif_starting(rt.clone());
+		self._start_up(rt)?;
 		Ok(())
 	}
 

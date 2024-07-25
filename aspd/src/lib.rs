@@ -213,6 +213,7 @@ impl App {
 			(ret, db)
 		};
 
+		debug!("Connecting to bitcoind at {} with cookie {}", &config.bitcoind_url, config.bitcoind_cookie);
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
 			&config.bitcoind_url,
 			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
@@ -232,6 +233,7 @@ impl App {
 	}
 
 	pub fn start(self: &mut Arc<Self>) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
+		log::trace!("Starting the asp");
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);

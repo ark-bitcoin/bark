@@ -171,7 +171,9 @@ async fn inner_main() -> anyhow::Result<()> {
 			println!("You should restart `arkd` to ensure the new configuration takes effect");
 		},
 		Command::Start => {
+			info!("Called start");
 			let mut app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
+			debug!("Open application");
 			let jh = app.start()?;
 			info!("aspd onchain address: {}", app.onchain_address().await?);
 			if let Err(e) = jh.await? {
