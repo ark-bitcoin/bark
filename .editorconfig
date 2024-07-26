@@ -1,6 +1,8 @@
 
 [*.rs]
 indent_style = tab
+trim_trailing_whitespace = true
 
 [*.proto]
 indent_style = tab
+trim_trailing_whitespace = true
