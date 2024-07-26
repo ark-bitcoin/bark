@@ -161,6 +161,10 @@ pub async fn run_round_scheduler(
 	let offboard_feerate = FeeRate::from_sat_per_vb(10).unwrap();
 	let round_tx_feerate = FeeRate::from_sat_per_vb(10).unwrap();
 
+	// The maximum number of output vtxos per round based on the max number
+	// of vtxo tree nonces we require users to provide.
+	let max_output_vtxos = (cfg.nb_round_nonces * 4 ) / 5;
+
 	'round: loop {
 		// Sleep for the round interval, but discard all incoming messages.
 		tokio::pin! { let timeout = tokio::time::sleep(cfg.round_interval); }
@@ -223,8 +227,6 @@ pub async fn run_round_scheduler(
 			cosigners.insert(cosign_key.public_key());
 
 			// Start receiving payments.
-			//TODO(stevenroose) we need a check to see when we have all data we need so we can skip
-			// timeout
 			tokio::pin! { let timeout = tokio::time::sleep(cfg.round_submit_time); }
 			'receive: loop {
 				tokio::select! {
@@ -233,12 +235,16 @@ pub async fn run_round_scheduler(
 						RoundInput::RegisterPayment {
 							inputs, outputs, offboards, cosign_pubkey, public_nonces,
 						} => {
+							if all_outputs.len() + outputs.len() > max_output_vtxos {
+								warn!("Got payment we don't have space for, dropping");
+								continue 'receive;
+							}
 							//TODO(stevenroose) verify ownership over inputs
 
 							if !allowed_inputs.is_empty() {
 								// This means we're not trying first time and we filter inputs.
 								if let Some(bad) = inputs.iter().find(|i| !allowed_inputs.contains(&i.id())) {
-									warn!("User attempted to submit invalid input: {}", bad.id());
+									debug!("User attempted to submit invalid input: {}", bad.id());
 									//TODO(stevenroose) would be nice if user saw this
 									continue 'receive;
 								}
@@ -248,7 +254,7 @@ pub async fn run_round_scheduler(
 
 							let res = validate_payment(&inputs, &outputs, &offboards, offboard_feerate);
 							if let Err(e) = res {
-								warn!("User submitted bad payment: '{}': \
+								debug!("User submitted bad payment: '{}': \
 									ins {:?}; outs {:?}; offb {:?}",
 									e, inputs, outputs, offboards);
 								continue 'receive;
@@ -266,6 +272,13 @@ pub async fn run_round_scheduler(
 							assert!(cosigners.insert(cosign_pubkey));
 							cosigner_vtxos.insert(cosign_pubkey, vtxo_ids);
 							vtxo_pub_nonces.insert(cosign_pubkey, public_nonces);
+
+							// Check whether our round is full.
+							const REGULAR_PAYMENT_NB_OUTPUTS: usize = 2;
+							if all_outputs.len() + REGULAR_PAYMENT_NB_OUTPUTS >= max_output_vtxos {
+								warn!("Round is full, got {} outputs", all_outputs.len());
+								break 'receive;
+							}
 						},
 						v => debug!("Received unexpected input: {:?}", v),
 					}
@@ -293,7 +306,6 @@ pub async fn run_round_scheduler(
 				}
 				all_outputs.push(VtxoRequest {
 					pubkey: *UNSPENDABLE,
-					//TODO(stevenroose) replace with the p2tr dust value 
 					amount: ark::fee::DUST,
 				});
 			}
