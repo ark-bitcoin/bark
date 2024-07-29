@@ -372,6 +372,8 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	}
 
 	b.add_service(ark_server).serve(addr).await?;
+
+	info!("Started public gRPC service on address {}", addr);
 	Ok(())
 }
 
@@ -384,5 +386,6 @@ pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 		.add_service(admin_server)
 		.serve(addr)
 		.await?;
+	info!("Started admin gRPC service on address {}", addr);
 	Ok(())
 }
