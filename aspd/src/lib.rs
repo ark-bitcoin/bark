@@ -138,7 +138,7 @@ pub struct App {
 	//NB only take this lock when you already have the above lock to avoid deadlock
 	wallet_db: Mutex<bdk_file_store::Store::<bdk_wallet::wallet::ChangeSet>>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
-	
+
 	rounds: Option<RoundHandle>,
 }
 
@@ -256,7 +256,7 @@ impl App {
 					ret = rpcserver::run_admin_rpc_server(app.clone()) => {
 						ret.context("error from admin gRPC server")
 					},
-					ret = round::run_round_scheduler(app.clone(), round_input_rx, round_trigger_rx) => {
+					ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx) => {
 						ret.context("error from round scheduler")
 					},
 				}
@@ -265,7 +265,7 @@ impl App {
 					ret = rpcserver::run_public_rpc_server(app.clone()) => {
 						ret.context("error from public gRPC server")
 					},
-					ret = round::run_round_scheduler(app.clone(), round_input_rx, round_trigger_rx) => {
+					ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx) => {
 						ret.context("error from round scheduler")
 					},
 				}

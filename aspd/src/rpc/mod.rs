@@ -19,16 +19,16 @@ mod convert {
 						})
 					},
 					RoundEvent::VtxoProposal {
-						id, vtxos_spec, round_tx, vtxos_signers, vtxos_agg_nonces,
+						id, vtxos_spec, round_tx, cosigners, cosign_agg_nonces,
 					} => {
 						rpc::round_event::Event::VtxoProposal(rpc::VtxoProposal {
 							round_id: id,
 							vtxos_spec: vtxos_spec.encode(),
 							round_tx: bitcoin::consensus::serialize(&round_tx),
-							vtxos_signers: vtxos_signers.into_iter()
+							vtxos_signers: cosigners.into_iter()
 								.map(|k| k.serialize().to_vec())
 								.collect(),
-							vtxos_agg_nonces: vtxos_agg_nonces.into_iter()
+							vtxos_agg_nonces: cosign_agg_nonces.into_iter()
 								.map(|n| n.serialize().to_vec())
 								.collect(),
 						})
