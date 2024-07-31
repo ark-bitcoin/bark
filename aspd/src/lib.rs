@@ -22,7 +22,7 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, sighash, psbt, taproot, Amount, Address, OutPoint, Transaction, Witness};
 use bitcoin::secp256k1::{self, Keypair};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use ark::util::KeypairExt;
 use ark::musig;
@@ -57,7 +57,6 @@ pub struct Config {
 }
 
 impl Config {
-
 	pub fn read_from_datadir<P: AsRef<Path>>(datadir: P) -> anyhow::Result<Self> {
 		let path = datadir.as_ref().join("config.json");
 		trace!("Reading configuraton from file {}", path.display());
@@ -119,10 +118,6 @@ impl Default for Config {
 }
 
 pub struct RoundHandle {
-	/// Whenever a round is going on, this lock will be held.
-	/// This helps us schedule tasks like db cleanups without
-	/// interfering with rounds.
-	round_busy: RwLock<()>,
 	round_event_tx: tokio::sync::broadcast::Sender<RoundEvent>,
 	round_input_tx: tokio::sync::mpsc::UnboundedSender<RoundInput>,
 	round_trigger_tx: tokio::sync::mpsc::Sender<()>,
@@ -239,7 +234,6 @@ impl App {
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 
 		mut_self.rounds = Some(RoundHandle {
-			round_busy: RwLock::new(()),
 			round_event_tx: round_event_tx,
 			round_input_tx: round_input_tx,
 			round_trigger_tx: round_trigger_tx,

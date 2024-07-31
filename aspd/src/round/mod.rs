@@ -374,7 +374,6 @@ pub async fn run_round_coordinator(
 			}
 		}
 
-		let _ = app.rounds().round_busy.write().await;
 		let round_id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() /
 			cfg.round_interval.as_secs();
 		info!("Starting round {}", round_id);
