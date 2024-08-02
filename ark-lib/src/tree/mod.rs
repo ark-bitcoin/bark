@@ -203,19 +203,22 @@ impl<T> Tree<T> {
 		self.parent_idx_of(idx).map(|idx| &mut self.nodes[idx].elem)
 	}
 
+	/// Returns the parent of the node with given `idx`, and the index of the
+	/// node among its siblings.
 	pub fn parent_of_with_idx(&self, idx: usize) -> Option<(&T, usize)> {
 		self.parent_idx_of(idx).map(|parent_idx| {
 			let child_idx = self.nodes[parent_idx].children.iter()
-				.find(|c| **c == Some(idx)).copied().flatten()
+				.position(|c| *c == Some(idx))
 				.expect("broken tree");
 			(&self.nodes[parent_idx].elem, child_idx)
 		})
 	}
 
+	/// Cfr [parent_of_with_idx], but returns mutable reference.
 	pub fn parent_of_with_idx_mut(&mut self, idx: usize) -> Option<(&mut T, usize)> {
 		self.parent_idx_of(idx).map(|parent_idx| {
 			let child_idx = self.nodes[parent_idx].children.iter()
-				.find(|c| **c == Some(idx)).copied().flatten()
+				.position(|c| *c == Some(idx))
 				.expect("broken tree");
 			(&mut self.nodes[parent_idx].elem, child_idx)
 		})
