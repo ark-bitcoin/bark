@@ -6,7 +6,7 @@ members = [
   "aspd",
   "bark",
 
-  "sled-utils",
+  "sled-utils", "ark-testing",
 ]
 
 resolver = "2"
