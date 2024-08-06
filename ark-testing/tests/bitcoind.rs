@@ -5,7 +5,7 @@ use ark_testing::context::TestContext;
 
 #[tokio::test]
 async fn start_bitcoind()  {
-	let context = TestContext::generate();
+	let context = TestContext::new("bitcoind/start_bitcoind");
 	let bitcoind = context.bitcoind("bitcoind-1").await.expect("bitcoind can be initialized");
 
 	let client = bitcoind.sync_client().expect("Client can be created");
@@ -15,7 +15,7 @@ async fn start_bitcoind()  {
 
 #[tokio::test]
 async fn fund_bitcoind() {
-	let context = TestContext::generate();
+	let context = TestContext::new("bitcoind/fund_bitcoind");
 	let bitcoind = context.bitcoind("bitcoind-1").await.expect("bitcoind can be initialized");
 
 	// We can initialize the wallet twice

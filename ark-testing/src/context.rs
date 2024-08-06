@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 use std::fs;
 
-use crate::util::random_string;
-use crate::constants;
+use crate::util::test_data_directory;
 use crate::daemon::bitcoind::bitcoind_exe_path;
 use crate::daemon::log::FileLogger;
 use crate::{AspD, AspDConfig, BitcoinD, BitcoinDConfig, Bark, BarkConfig};
@@ -14,16 +13,16 @@ pub struct TestContext {
 }
 
 impl TestContext {
-	pub fn new(name: impl AsRef<str>, base_path: PathBuf) -> Self {
-		fs::create_dir_all(base_path.clone()).unwrap();
+	pub fn new(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
-		TestContext { name: name.as_ref().to_string(), datadir: base_path}
-	}
+		let datadir = test_data_directory().join(name.as_ref());
 
-	pub fn generate() -> Self {
-		let name = random_string();
-		let datadir = ["/tmp/ark-testing/", &name].iter().collect();
-		Self::new(name, datadir)
+		if datadir.exists() {
+			fs::remove_dir_all(&datadir).unwrap();
+		}
+		fs::create_dir_all(&datadir).unwrap();
+
+		TestContext { name: name.as_ref().to_string(), datadir}
 	}
 
 	pub async fn bitcoind(&self, name: impl AsRef<str>) -> anyhow::Result<BitcoinD> {
@@ -58,8 +57,6 @@ impl TestContext {
 
 		let mut aspd = AspD::new(name, cfg);
 
-
-
 		aspd.add_stdout_handler(stdout_logger)?;
 		aspd.add_stderr_handler(stderr_logger)?;
 
@@ -87,38 +84,7 @@ impl TestContext {
 
 impl Drop for TestContext {
 	fn drop(&mut self) {
-		// Remove the data-directory
-		// If the user has set `LEAVE_INTACT` we don't delete any
-		// test-data.
-
-		if std::env::var(constants::env::TEST_LEAVE_INTACT).is_ok() {
-			log::info!("Textcontext: Leave intact at {:?}", self.datadir);
-			return
-		}
-		if self.datadir.exists() {
-			log::trace!("Testcontext: Clean up datadir at {:?}. Set `TEST_LEAVE_INTACT` if you want to see the content", self.datadir);
-			std::fs::remove_dir_all(self.datadir.clone()).unwrap();
-		}
+		log::info!("Textcontext: Datadir is located at {:?}", self.datadir);
 	}
 }
 
-#[cfg(test)]
-mod test {
-	use super::*;
-
-	#[test]
-	fn context_creates_and_deletes_datadir() {
-		let context = TestContext::generate();
-		let base_path = context.datadir.clone();
-
-		// The base-path is created
-		assert!(context.datadir.exists());
-		drop(context);
-
-		// The test cleans up after itself
-		match std::env::var(constants::env::TEST_LEAVE_INTACT) {
-			Ok(_) => assert!(base_path.exists()),
-			Err(_) => assert!(!base_path.exists())
-		}
-	}
-}

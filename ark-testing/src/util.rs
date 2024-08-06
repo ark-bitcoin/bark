@@ -1,12 +1,7 @@
-use rand::RngCore;
+use std::path::{Path, PathBuf};
+use std::fs;
 
-pub fn random_string() -> String {
-	// Generate a few random bytes and base58 encode them
-	// The entropy should be sufficient to generate unique test-names
-	let mut entropy :[u8; 8] = [0; 8];
-	rand::thread_rng().fill_bytes(&mut entropy);
-	bitcoin::base58::encode(&entropy)
-}
+use crate::constants::env::TEST_DIRECTORY;
 
 pub fn init_logging() -> anyhow::Result<()> {
 	// We ignore the output
@@ -19,3 +14,34 @@ pub fn init_logging() -> anyhow::Result<()> {
 		.try_init();
 	Ok(())
 }
+
+/// Returns the directory where all test data will be written
+///
+/// By default this is written in the `./test` directory at the project root.
+/// You can also set TEST_DIRECTORY to pick another location.
+/// You are responsible to ensure the `TEST_DIRECTORY` exists
+pub fn test_data_directory() -> PathBuf {
+	match std::env::var_os(TEST_DIRECTORY) {
+		Some(directory) => { PathBuf::from(directory) },
+		None => {
+			let path = get_cargo_workspace().join("test");
+			if !path.exists() {
+				fs::create_dir_all(&path).unwrap();
+			};
+			path
+		}
+	}
+}
+
+
+/// The root of the current cargo workspace
+fn get_cargo_workspace() -> PathBuf {
+	let output = std::process::Command::new("cargo")
+		.args(["locate-project", "--workspace", "--message-format=plain"])
+		.output()
+		.unwrap();
+
+		let cargo_path = String::from_utf8(output.stdout).unwrap();
+		Path::new(&cargo_path.trim()).parent().unwrap().to_path_buf()
+}
+

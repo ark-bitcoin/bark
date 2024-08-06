@@ -4,7 +4,7 @@ use bitcoincore_rpc::bitcoin::amount::Amount;
 
 #[tokio::test]
 async fn bark_version() {
-	let ctx = TestContext::generate();
+	let ctx = TestContext::new("bark_version");
 	let bitcoind = ctx.bitcoind("bitcoind-1").await.unwrap();
 	let aspd = ctx.aspd("aspd-1", &bitcoind).await.unwrap();
 
@@ -17,7 +17,7 @@ async fn bark_version() {
 
 #[tokio::test]
 async fn onboard_bark() {
-	let ctx = TestContext::generate();
+	let ctx = TestContext::new("bark/onboard_bark");
 	let bitcoind = ctx.bitcoind("bitcoind-1").await.unwrap();
 	let aspd = ctx.aspd("aspd-1", &bitcoind).await.unwrap();
 	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await.unwrap();
@@ -37,7 +37,7 @@ async fn onboard_bark() {
 #[tokio::test]
 async fn multiple_round_payments() {
 	// Initialize the test
-	let ctx = TestContext::generate();
+	let ctx = TestContext::new("bark/multiple_round_payments");
 	let bitcoind = ctx.bitcoind("bitcoind-1").await.unwrap();
 	let aspd = ctx.aspd("aspd-1", &bitcoind).await.unwrap();
 
