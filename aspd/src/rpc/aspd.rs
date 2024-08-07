@@ -387,7 +387,7 @@ pub mod ark_service_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/arkd.ArkService/GetArkInfo" => {
+                "/aspd.ArkService/GetArkInfo" => {
                     #[allow(non_camel_case_types)]
                     struct GetArkInfoSvc<T: ArkService>(pub Arc<T>);
                     impl<T: ArkService> tonic::server::UnaryService<super::Empty>
@@ -431,7 +431,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/GetFreshRounds" => {
+                "/aspd.ArkService/GetFreshRounds" => {
                     #[allow(non_camel_case_types)]
                     struct GetFreshRoundsSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -477,7 +477,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/GetRound" => {
+                "/aspd.ArkService/GetRound" => {
                     #[allow(non_camel_case_types)]
                     struct GetRoundSvc<T: ArkService>(pub Arc<T>);
                     impl<T: ArkService> tonic::server::UnaryService<super::RoundId>
@@ -521,7 +521,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/RequestOnboardCosign" => {
+                "/aspd.ArkService/RequestOnboardCosign" => {
                     #[allow(non_camel_case_types)]
                     struct RequestOnboardCosignSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -568,7 +568,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/RequestOorCosign" => {
+                "/aspd.ArkService/RequestOorCosign" => {
                     #[allow(non_camel_case_types)]
                     struct RequestOorCosignSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -614,7 +614,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/PostOorMailbox" => {
+                "/aspd.ArkService/PostOorMailbox" => {
                     #[allow(non_camel_case_types)]
                     struct PostOorMailboxSvc<T: ArkService>(pub Arc<T>);
                     impl<T: ArkService> tonic::server::UnaryService<super::OorVtxo>
@@ -658,7 +658,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/EmptyOorMailbox" => {
+                "/aspd.ArkService/EmptyOorMailbox" => {
                     #[allow(non_camel_case_types)]
                     struct EmptyOorMailboxSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -704,7 +704,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/SubscribeRounds" => {
+                "/aspd.ArkService/SubscribeRounds" => {
                     #[allow(non_camel_case_types)]
                     struct SubscribeRoundsSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -751,7 +751,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/SubmitPayment" => {
+                "/aspd.ArkService/SubmitPayment" => {
                     #[allow(non_camel_case_types)]
                     struct SubmitPaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -797,7 +797,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/ProvideVtxoSignatures" => {
+                "/aspd.ArkService/ProvideVtxoSignatures" => {
                     #[allow(non_camel_case_types)]
                     struct ProvideVtxoSignaturesSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -844,7 +844,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.ArkService/ProvideForfeitSignatures" => {
+                "/aspd.ArkService/ProvideForfeitSignatures" => {
                     #[allow(non_camel_case_types)]
                     struct ProvideForfeitSignaturesSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -932,7 +932,7 @@ pub mod ark_service_server {
         }
     }
     impl<T: ArkService> tonic::server::NamedService for ArkServiceServer<T> {
-        const NAME: &'static str = "arkd.ArkService";
+        const NAME: &'static str = "aspd.ArkService";
     }
 }
 /// Generated server implementations.
@@ -1038,7 +1038,7 @@ pub mod admin_service_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/arkd.AdminService/WalletStatus" => {
+                "/aspd.AdminService/WalletStatus" => {
                     #[allow(non_camel_case_types)]
                     struct WalletStatusSvc<T: AdminService>(pub Arc<T>);
                     impl<T: AdminService> tonic::server::UnaryService<super::Empty>
@@ -1082,7 +1082,7 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.AdminService/TriggerRound" => {
+                "/aspd.AdminService/TriggerRound" => {
                     #[allow(non_camel_case_types)]
                     struct TriggerRoundSvc<T: AdminService>(pub Arc<T>);
                     impl<T: AdminService> tonic::server::UnaryService<super::Empty>
@@ -1126,7 +1126,7 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/arkd.AdminService/Stop" => {
+                "/aspd.AdminService/Stop" => {
                     #[allow(non_camel_case_types)]
                     struct StopSvc<T: AdminService>(pub Arc<T>);
                     impl<T: AdminService> tonic::server::UnaryService<super::Empty>
@@ -1208,6 +1208,6 @@ pub mod admin_service_server {
         }
     }
     impl<T: AdminService> tonic::server::NamedService for AdminServiceServer<T> {
-        const NAME: &'static str = "arkd.AdminService";
+        const NAME: &'static str = "aspd.AdminService";
     }
 }
