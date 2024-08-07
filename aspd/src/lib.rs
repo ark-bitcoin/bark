@@ -30,8 +30,6 @@ use ark::musig;
 use crate::psbtext::{PsbtInputExt, RoundMeta};
 use crate::round::{RoundEvent, RoundInput};
 
-const DB_MAGIC: &str = "bdk_wallet";
-
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
@@ -129,9 +127,6 @@ pub struct App {
 	master_xpriv: bip32::Xpriv,
 	master_key: Keypair,
 	wallet: Mutex<bdk_wallet::wallet::Wallet>,
-	//TODO(stevenroose) dont use the file store and add the changesets to our own db
-	//NB only take this lock when you already have the above lock to avoid deadlock
-	wallet_db: Mutex<bdk_file_store::Store::<bdk_wallet::wallet::ChangeSet>>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 
 	rounds: Option<RoundHandle>,
@@ -165,7 +160,7 @@ impl App {
 		Ok(())
 	}
 
-	pub fn open(datadir: &Path) -> anyhow::Result<Arc<Self>> {
+	pub async fn open(datadir: &Path) -> anyhow::Result<Arc<Self>> {
 		info!("Starting aspd at {}", datadir.display());
 
 		let config = Config::read_from_datadir(datadir)?;
@@ -192,20 +187,13 @@ impl App {
 		};
 
 		let wallet = {
-			let db_path = datadir.join("wallet.db");
-			info!("Loading wallet db from {}", db_path.display());
-			let mut db = bdk_file_store::Store::<bdk_wallet::wallet::ChangeSet>::open_or_create_new(
-				DB_MAGIC.as_bytes(), db_path,
-			)?;
-
 			let desc = format!("tr({})", xpriv);
 			let desc2 = format!("tr({})", xpriv2);
 			debug!("Opening BDK wallet with descriptor {}", desc);
 			debug!("Using descriptors {} and {}", desc, desc2);
-			let init = db.aggregate_changesets()?;
-			let ret = bdk_wallet::wallet::Wallet::new_or_load(&desc, &desc2, init, config.network)
-				.context("failed to create or load bdk wallet")?;
-			(ret, db)
+			let init = db.read_aggregate_changeset().await?;
+			bdk_wallet::wallet::Wallet::new_or_load(&desc, &desc2, init, config.network)
+				.context("failed to create or load bdk wallet")?
 		};
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
@@ -219,8 +207,7 @@ impl App {
 			db: db,
 			master_xpriv: xpriv,
 			master_key: master_key,
-			wallet: Mutex::new(wallet.0),
-			wallet_db: Mutex::new(wallet.1),
+			wallet: Mutex::new(wallet),
 			bitcoind: bitcoind,
 			rounds: None,
 		}))
@@ -298,7 +285,7 @@ impl App {
 			if em.block_height() % 10_000 == 0 {
 				debug!("Synced until block {}, committing...", em.block_height());
 				if let Some(change) = wallet.take_staged() {
-					self.wallet_db.lock().await.append_changeset(&change)?;
+					self.db.store_changeset(&change).await?;
 				}
 			}
 		}
@@ -307,7 +294,7 @@ impl App {
 		let mempool = emitter.mempool()?;
 		wallet.apply_unconfirmed_txs(mempool.iter().map(|(tx, time)| (tx, *time)));
 		if let Some(change) = wallet.take_staged() {
-			self.wallet_db.lock().await.append_changeset(&change)?;
+			self.db.store_changeset(&change).await?;
 		}
 
 		// rebroadcast unconfirmed txs
@@ -343,7 +330,7 @@ impl App {
 		assert!(finalized);
 		let tx = psbt.extract_tx()?;
 		if let Some(change) = wallet.take_staged() {
-			self.wallet_db.lock().await.append_changeset(&change)?;
+			self.db.store_changeset(&change).await?;
 		}
 		drop(wallet);
 

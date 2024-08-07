@@ -236,7 +236,6 @@ dependencies = [
  "ark-lib",
  "aspd-rpc-client",
  "bdk_bitcoind_rpc",
- "bdk_file_store",
  "bdk_wallet",
  "bip39",
  "bitcoin",

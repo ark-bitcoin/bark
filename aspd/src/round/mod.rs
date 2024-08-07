@@ -733,7 +733,7 @@ pub async fn run_round_coordinator(
 			assert!(finalized);
 			let round_tx = round_tx_psbt.extract_tx()?;
 			if let Some(change) = wallet.take_staged() {
-				app.wallet_db.lock().await.append_changeset(&change)?;
+				app.db.store_changeset(&change).await?;
 			}
 			drop(wallet); // we no longer need the lock
 

@@ -171,7 +171,7 @@ async fn inner_main() -> anyhow::Result<()> {
 			println!("You should restart `arkd` to ensure the new configuration takes effect");
 		},
 		Command::Start => {
-			let mut app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
+			let mut app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
 			let jh = app.start()?;
 			info!("aspd onchain address: {}", app.onchain_address().await?);
 			if let Err(e) = jh.await? {
@@ -180,15 +180,15 @@ async fn inner_main() -> anyhow::Result<()> {
 			}
 		},
 		Command::Drain { address } => {
-			let app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
+			let app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
 			println!("{}", app.drain(address).await?.compute_txid());
 		},
 		Command::GetMnemonic => {
-			let app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
+			let app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
 			println!("{}", app.get_master_mnemonic()?);
 		},
 		Command::DropOorConflicts => {
-			let app = App::open(&cli.datadir.context("need datadir")?).context("server init")?;
+			let app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
 			app.drop_all_oor_conflicts()?;
 		},
 	}
