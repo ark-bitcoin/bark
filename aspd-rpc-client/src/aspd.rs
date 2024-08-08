@@ -336,11 +336,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/GetArkInfo",
+                "/aspd.ArkService/GetArkInfo",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "GetArkInfo"));
+                .insert(GrpcMethod::new("aspd.ArkService", "GetArkInfo"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_fresh_rounds(
@@ -358,11 +358,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/GetFreshRounds",
+                "/aspd.ArkService/GetFreshRounds",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "GetFreshRounds"));
+                .insert(GrpcMethod::new("aspd.ArkService", "GetFreshRounds"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_round(
@@ -379,9 +379,9 @@ pub mod ark_service_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/arkd.ArkService/GetRound");
+            let path = http::uri::PathAndQuery::from_static("/aspd.ArkService/GetRound");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("arkd.ArkService", "GetRound"));
+            req.extensions_mut().insert(GrpcMethod::new("aspd.ArkService", "GetRound"));
             self.inner.unary(req, path, codec).await
         }
         /// * ONBOARDING *
@@ -403,11 +403,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/RequestOnboardCosign",
+                "/aspd.ArkService/RequestOnboardCosign",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "RequestOnboardCosign"));
+                .insert(GrpcMethod::new("aspd.ArkService", "RequestOnboardCosign"));
             self.inner.unary(req, path, codec).await
         }
         /// * OOR PAYMENTS*
@@ -429,11 +429,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/RequestOorCosign",
+                "/aspd.ArkService/RequestOorCosign",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "RequestOorCosign"));
+                .insert(GrpcMethod::new("aspd.ArkService", "RequestOorCosign"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn post_oor_mailbox(
@@ -451,11 +451,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/PostOorMailbox",
+                "/aspd.ArkService/PostOorMailbox",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "PostOorMailbox"));
+                .insert(GrpcMethod::new("aspd.ArkService", "PostOorMailbox"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn empty_oor_mailbox(
@@ -476,11 +476,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/EmptyOorMailbox",
+                "/aspd.ArkService/EmptyOorMailbox",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "EmptyOorMailbox"));
+                .insert(GrpcMethod::new("aspd.ArkService", "EmptyOorMailbox"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn subscribe_rounds(
@@ -501,11 +501,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/SubscribeRounds",
+                "/aspd.ArkService/SubscribeRounds",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "SubscribeRounds"));
+                .insert(GrpcMethod::new("aspd.ArkService", "SubscribeRounds"));
             self.inner.server_streaming(req, path, codec).await
         }
         pub async fn submit_payment(
@@ -523,11 +523,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/SubmitPayment",
+                "/aspd.ArkService/SubmitPayment",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "SubmitPayment"));
+                .insert(GrpcMethod::new("aspd.ArkService", "SubmitPayment"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn provide_vtxo_signatures(
@@ -545,11 +545,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/ProvideVtxoSignatures",
+                "/aspd.ArkService/ProvideVtxoSignatures",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "ProvideVtxoSignatures"));
+                .insert(GrpcMethod::new("aspd.ArkService", "ProvideVtxoSignatures"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn provide_forfeit_signatures(
@@ -567,11 +567,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.ArkService/ProvideForfeitSignatures",
+                "/aspd.ArkService/ProvideForfeitSignatures",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.ArkService", "ProvideForfeitSignatures"));
+                .insert(GrpcMethod::new("aspd.ArkService", "ProvideForfeitSignatures"));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -680,11 +680,11 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.AdminService/WalletStatus",
+                "/aspd.AdminService/WalletStatus",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.AdminService", "WalletStatus"));
+                .insert(GrpcMethod::new("aspd.AdminService", "WalletStatus"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn trigger_round(
@@ -702,11 +702,11 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/arkd.AdminService/TriggerRound",
+                "/aspd.AdminService/TriggerRound",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("arkd.AdminService", "TriggerRound"));
+                .insert(GrpcMethod::new("aspd.AdminService", "TriggerRound"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn stop(
@@ -723,9 +723,9 @@ pub mod admin_service_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/arkd.AdminService/Stop");
+            let path = http::uri::PathAndQuery::from_static("/aspd.AdminService/Stop");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("arkd.AdminService", "Stop"));
+            req.extensions_mut().insert(GrpcMethod::new("aspd.AdminService", "Stop"));
             self.inner.unary(req, path, codec).await
         }
     }
