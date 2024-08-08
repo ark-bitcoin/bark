@@ -33,7 +33,7 @@ pub fn delayed_sign(delay_blocks: u16, pubkey: XOnlyPublicKey) -> ScriptBuf {
 		.into_script()
 }
 
-/// Create a tapscript that is a checksig and an absolute.
+/// Create a tapscript that is a checksig and an absolute timelock.
 pub fn timelock_sign(timelock_height: u32, pubkey: XOnlyPublicKey) -> ScriptBuf {
 	let lt = bitcoin::absolute::LockTime::from_height(timelock_height).unwrap();
 	bitcoin::Script::builder()
