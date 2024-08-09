@@ -12,7 +12,7 @@ use bitcoin::{
 use tokio::process::Command as TokioCommand;
 use which::which;
 
-use crate::constants::env::BARK_EXEC;
+use crate::constants::env::BARK_EXE;
 
 #[derive(Debug, Clone)]
 struct BarkCommand {
@@ -23,7 +23,7 @@ struct BarkCommand {
 impl BarkCommand {
 
 	pub fn new() -> anyhow::Result<Self> {
-		match env::var(BARK_EXEC) {
+		match env::var(BARK_EXE) {
 			Ok(aspd_exec) => {
 				Ok(BarkCommand {
 					exe_path: which(aspd_exec)?,
@@ -36,7 +36,7 @@ impl BarkCommand {
 					args: ["run", "--package", "bark-client", "--"].iter().map(|x| x.to_string()).collect()
 				})
 			},
-			Err(_) => anyhow::bail!("Failed to read BARK_EXEC"),
+			Err(_) => anyhow::bail!("Failed to read {}", BARK_EXE),
 		}
 	}
 

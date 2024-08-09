@@ -12,12 +12,12 @@ use aspd_rpc_client::{AdminServiceClient as AspDAdminClient, ArkServiceClient as
 use aspd_rpc_client::Empty;
 
 use crate::{Daemon, DaemonHelper};
-use crate::constants::env::ASPD_EXEC;
+use crate::constants::env::ASPD_EXE;
 
 pub fn get_base_cmd() -> anyhow::Result<Command> {
-	match env::var(ASPD_EXEC) {
+	match env::var(ASPD_EXE) {
 		Ok(aspd_exec) => {
-			let aspd_exe = which(aspd_exec).expect("Failed to find aspd_exec");
+			let aspd_exe = which(aspd_exec).expect(&format!("Failed to find {}", ASPD_EXE));
 			Ok(Command::new(aspd_exe))
 		},
 		Err(env::VarError::NotPresent) => {
@@ -26,7 +26,7 @@ pub fn get_base_cmd() -> anyhow::Result<Command> {
 				.args(&["run", "--package", "bark-aspd", "--"]);
 			Ok(cmd)
 		},
-		Err(_) => panic!("Failed to read ASPD_EXEC"),
+		Err(_) => panic!("Failed to read {}", ASPD_EXE),
 	}
 }
 pub type AspD = Daemon<AspDHelper>;

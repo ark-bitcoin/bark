@@ -9,7 +9,7 @@ use which::which;
 
 use crate::{Bark, AspD};
 use crate::daemon::{Daemon, DaemonHelper};
-use crate::constants::env::BITCOIND_EXEC;
+use crate::constants::env::BITCOIND_EXE;
 
 use bitcoin::{
 	amount::Amount,
@@ -51,10 +51,10 @@ pub struct BitcoinDState {
 pub type BitcoinD = Daemon<BitcoinDHelper>;
 
 pub fn bitcoind_exe_path() -> anyhow::Result<PathBuf> {
-		match std::env::var(&BITCOIND_EXEC) {
-			Ok(var) => which(var).context("Failed to find binary path from `BITCOIND_EXEC`"),
+		match std::env::var(&BITCOIND_EXE) {
+			Ok(var) => which(var).context(format!("Failed to find binary path from `{}`", BITCOIND_EXE)),
 			Err(VarError::NotPresent) => which("bitcoind").context("Failed to find `bitcoind` installation"),
-			_ => anyhow::bail!("BITCOIND_EXEC is not valid unicode")
+			_ => anyhow::bail!("{} is not valid unicode", BITCOIND_EXE)
 		}
 }
 
