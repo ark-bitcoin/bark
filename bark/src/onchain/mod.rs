@@ -9,7 +9,8 @@ use bdk_wallet::SignOptions;
 use bdk_file_store::Store;
 use bdk_esplora::EsploraAsyncExt;
 use bitcoin::{
-	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid,
+	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
+	Txid,
 };
 
 use crate::exit;
@@ -43,7 +44,7 @@ impl Wallet {
 		let init = db.aggregate_changesets()?;
 		let wallet = bdk_wallet::wallet::Wallet::new_or_load(&edesc, &idesc, init, network)
 			.context("failed to create or load bdk wallet")?;
-		
+
 		let chain_source = ChainSourceClient::new(chain_source)?;
 		Ok(Wallet { wallet, wallet_db: db, chain_source })
 	}
@@ -150,14 +151,21 @@ impl Wallet {
 	}
 
 	fn add_anchors<A>(b: &mut bdk_wallet::TxBuilder<A>, anchors: &[OutPoint])
-	where 
+	where
 		A: bdk_wallet::wallet::coin_selection::CoinSelectionAlgorithm,
 	{
 		for utxo in anchors {
 			let psbt_in = psbt::Input {
 				witness_utxo: Some(ark::fee::dust_anchor()),
 				final_script_witness: Some(ark::fee::dust_anchor_witness()),
-				non_witness_utxo: None,
+				//TODO(stevenroose) BDK wants this for now but shouldn't
+				// https://github.com/bitcoindevkit/bdk/issues/1548
+				non_witness_utxo: Some(Transaction {
+					version: bitcoin::transaction::Version::ONE,
+					lock_time: bitcoin::blockdata::locktime::absolute::LockTime::ZERO,
+					input: vec![],
+					output: vec![ark::fee::dust_anchor(); utxo.vout as usize + 1],
+				}),
 				..Default::default()
 			};
 			b.add_foreign_utxo(*utxo, psbt_in, 33).expect("adding foreign utxo");
