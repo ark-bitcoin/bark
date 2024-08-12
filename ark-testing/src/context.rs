@@ -43,25 +43,18 @@ impl TestContext {
 	}
 
 	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &BitcoinD) -> anyhow::Result<AspD> {
-
 		let datadir = self.datadir.join(name.as_ref());
 
-		let stdout_logger = FileLogger::new(datadir.join("stdout.log"));
-		let stderr_logger = FileLogger::new(datadir.join("stderr.log"));
-
 		let cfg = AspDConfig {
-			datadir,
+			datadir: datadir.clone(),
 			bitcoind_url: bitcoind.bitcoind_url(),
 			bitcoind_cookie: bitcoind.bitcoind_cookie()
 		};
-
 		let mut aspd = AspD::new(name, cfg);
-
-		aspd.add_stdout_handler(stdout_logger)?;
-		aspd.add_stderr_handler(stderr_logger)?;
+		aspd.add_stdout_handler(FileLogger::new(datadir.join("stdout.log")))?;
+		aspd.add_stderr_handler(FileLogger::new(datadir.join("stderr.log")))?;
 
 		aspd.start().await?;
-
 		Ok(aspd)
 	}
 

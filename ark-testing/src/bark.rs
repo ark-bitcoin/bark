@@ -129,6 +129,13 @@ impl Bark {
 		&self.name
 	}
 
+	pub async fn onchain_balance(&self) -> anyhow::Result<Amount> {
+		let json = self.run(["balance", "--json"]).await?;
+		let json = serde_json::from_str::<serde_json::Value>(&json).unwrap();
+		let sats = json.as_object().unwrap().get("onchain").unwrap().as_i64().unwrap();
+		Ok(Amount::from_sat(sats as u64))
+	}
+
 	pub async fn offchain_balance(&self) -> anyhow::Result<Amount> {
 		let json = self.run(["balance", "--json"]).await?;
 		let json = serde_json::from_str::<serde_json::Value>(&json).unwrap();
@@ -166,6 +173,16 @@ impl Bark {
 		self.run(["onboard", &amount.to_string()]).await?;
 		Ok(())
 	}
+
+    pub async fn start_exit(&self) -> anyhow::Result<()> {
+		self.run(["start-exit"]).await?;
+		Ok(())
+    }
+
+    pub async fn claim_exit(&self) -> anyhow::Result<()> {
+		self.run(["claim-exit"]).await?;
+		Ok(())
+    }
 
 	pub async fn run<I,S>(&self, args: I) -> anyhow::Result<String>
 		where I: IntoIterator<Item = S>, S : AsRef<str>
