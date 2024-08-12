@@ -1,7 +1,7 @@
 use std::time::Duration;
 use std::env;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Command;
 
 use anyhow::Context;
 use bitcoin::address::{Address, NetworkUnchecked, NetworkChecked};
@@ -29,13 +29,17 @@ pub type AspD = Daemon<AspDHelper>;
 pub struct AspDHelper {
 	name : String,
 	state: AspDState,
-	config: AspDConfig
+	config: AspDConfig,
 }
 
+#[derive(Debug, Clone)]
 pub struct AspDConfig {
 	pub datadir: PathBuf,
 	pub bitcoind_url : String,
-	pub bitcoind_cookie: PathBuf
+	pub bitcoind_cookie: PathBuf,
+	pub round_interval: Duration,
+	pub round_submit_time: Duration,
+	pub round_sign_time: Duration,
 }
 
 #[derive(Default)]
@@ -45,12 +49,11 @@ struct AspDState {
 }
 
 impl AspD {
-
 	pub fn new(name: impl AsRef<str>, config: AspDConfig) -> Self {
 		let helper = AspDHelper {
 			name: name.as_ref().to_string(),
 			config,
-			state: AspDState::default()
+			state: AspDState::default(),
 		};
 
 		Daemon::wrap(helper)
@@ -73,12 +76,10 @@ impl AspD {
 		let response = admin_client.wallet_status(Empty {}).await?.into_inner();
 		let address: Address<NetworkChecked> = response.address.parse::<Address<NetworkUnchecked>>()?.assume_checked();
 		Ok(address)
-
 	}
 }
 
 impl DaemonHelper for AspDHelper {
-
 	fn name(&self) -> &str {
 		&self.name
 	}
@@ -96,7 +97,7 @@ impl DaemonHelper for AspDHelper {
 		let pgrpc = public_grpc_address.clone();
 		let agrpc = admin_grpc_address.clone();
 
-		let output : Output = tokio::task::spawn_blocking(move || base_cmd
+		let output = tokio::task::spawn_blocking(move || base_cmd
 			.arg("--datadir")
 			.arg(datadir)
 			.arg("set-config")
@@ -107,7 +108,7 @@ impl DaemonHelper for AspDHelper {
 			.output())
 			.await??;
 
-		if ! output.status.success() {
+		if !output.status.success() {
 			let stderr = String::from_utf8(output.stderr)?;
 			error!("{}", stderr);
 			bail!("Failed to configure ports for arkd-1");
@@ -121,22 +122,27 @@ impl DaemonHelper for AspDHelper {
 
 	async fn prepare(&self) -> anyhow::Result<()> {
 		let mut base_cmd = get_base_cmd()?;
-
 		trace!("base_cmd={:?}", base_cmd);
 
-		let datadir = self.config.datadir.clone();
-		let bd_url = self.config.bitcoind_url.clone();
-		let bd_cookie = self.config.bitcoind_cookie.clone();
-		let output : Output = tokio::task::spawn_blocking(move || base_cmd
-			.arg("--datadir")
-			.arg(datadir)
-			.arg("create")
-			.arg("--bitcoind-url")
-			.arg(bd_url)
-			.arg("--bitcoind-cookie")
-			.arg(bd_cookie)
-			.arg("--network")
-			.arg("regtest")
+		let cfg = self.config.clone();
+		let output = tokio::task::spawn_blocking(move || base_cmd
+			.args([
+				"--datadir",
+				&cfg.datadir.display().to_string(),
+				"create",
+				"--bitcoind-url",
+				&cfg.bitcoind_url,
+				"--bitcoind-cookie",
+				&cfg.bitcoind_cookie.display().to_string(),
+				"--network",
+				"regtest",
+				"--round-interval",
+				&cfg.round_interval.as_millis().to_string(),
+				"--round-submit-time",
+				&cfg.round_submit_time.as_millis().to_string(),
+				"--round-sign-time",
+				&cfg.round_sign_time.as_millis().to_string(),
+			])
 			.output()).await??;
 
 		if output.status.success() {
