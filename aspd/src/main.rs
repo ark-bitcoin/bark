@@ -40,10 +40,13 @@ struct CreateOpts {
 	public_rpc_tls_key_path: Option<PathBuf>,
 	#[arg(long)]
 	admin_rpc_address: Option<String>,
+	/// Round interval, in ms.
 	#[arg(long)]
 	round_interval: Option<u64>,
+	/// Time for users to submit payments in rounds, in ms.
 	#[arg(long)]
 	round_submit_time: Option<u64>,
+	/// Time for users to submit signatures in rounds, in ms.
 	#[arg(long)]
 	round_sign_time: Option<u64>,
 	#[arg(long)]
@@ -63,7 +66,7 @@ struct ConfigOpts {
 	#[arg(long)]
 	public_rpc_address: Option<String>,
 	#[arg(long)]
-	// We use a double Option because we must be able to set 
+	// We use a double Option because we must be able to set
 	// this variable to None.
 	// None -> Do not change this variable
 	// Some(None) -> Set this variable to None
@@ -282,13 +285,13 @@ fn config_from_create_opts(opts: CreateOpts) -> Result<Config> {
 		);
 	}
 	if let Some(ri) = opts.round_interval {
-		cfg.round_interval = Duration::from_secs(ri);
+		cfg.round_interval = Duration::from_millis(ri);
 	}
 	if let Some(rst) = opts.round_submit_time {
-		cfg.round_submit_time = Duration::from_secs(rst);
+		cfg.round_submit_time = Duration::from_millis(rst);
 	}
 	if let Some(rst) = opts.round_sign_time {
-		cfg.round_sign_time = Duration::from_secs(rst);
+		cfg.round_sign_time = Duration::from_millis(rst);
 	}
 	if let Some(rnn) = opts.nb_round_nonces {
 		cfg.nb_round_nonces = rnn;
