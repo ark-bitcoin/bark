@@ -65,7 +65,7 @@ bcli generatetoaddress 100 mtDDKi5mDjZqGzmbnfUnVQ8ZhCPMPVsApj
 Next, you can start some clients. To create a client, use the following command:
 
 ```
-bark --datadir ./test/bark create \
+bark --datadir ./test/bark1 create \
     --regtest \
     --asp http://localhost:3535 \
     --bitcoind $BITCOIND_URL \
