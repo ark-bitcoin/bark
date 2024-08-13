@@ -88,10 +88,13 @@ impl TestContext {
 			network: String::from("regtest"),
 			bitcoin_dir: bitcoind.bitcoind_datadir(),
 			bitcoin_rpcport: bitcoind.bitcoind_rpcport(),
-			lightning_dir
+			lightning_dir: lightning_dir.clone()
 		};
 
+
 		let mut lightningd = LightningD::new(name, cfg);
+		lightningd.add_stdout_handler(FileLogger::new(lightning_dir.join("stdout.log")))?;
+		lightningd.add_stderr_handler(FileLogger::new(lightning_dir.join("stderr.log")))?;
 		lightningd.start().await?;
 
 		Ok(lightningd)

@@ -71,7 +71,6 @@ impl LightningDHelper {
 		writeln!(file, "network={}", self.config.network)?;
 		writeln!(file, "bitcoin-datadir={}", self.config.bitcoin_dir.to_string_lossy())?;
 		writeln!(file, "bitcoin-rpcport={}", self.config.bitcoin_rpcport)?;
-		writeln!(file, "log-file={}", self.config.lightning_dir.join("stdout.log").to_string_lossy())?;
 		writeln!(file, "alias={}", self.name)?;
 		writeln!(file, "")?;
 
@@ -148,7 +147,7 @@ impl DaemonHelper for LightningDHelper {
 		loop {
 			match self.is_ready().await {
 				Ok(()) => return Ok(()),
-				Err(err) => trace!("Lightningd not ready: {:?}", err)
+				Err(_) => {},
 			}
 			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 		}
