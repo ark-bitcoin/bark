@@ -11,4 +11,5 @@ pub use context::TestContext;
 pub use daemon::{Daemon, DaemonHelper};
 pub use daemon::bitcoind::{BitcoinD, BitcoinDConfig};
 pub use daemon::aspd::{AspD, AspDConfig};
+pub use daemon::lightningd::{LightningD, LightningDConfig};
 pub use bark::{Bark, BarkConfig};

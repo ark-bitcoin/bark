@@ -4,7 +4,7 @@ use std::fs;
 use crate::util::test_data_directory;
 use crate::daemon::bitcoind::bitcoind_exe_path;
 use crate::daemon::log::FileLogger;
-use crate::{AspD, AspDConfig, BitcoinD, BitcoinDConfig, Bark, BarkConfig};
+use crate::{AspD, AspDConfig, BitcoinD, BitcoinDConfig, Bark, BarkConfig, LightningD, LightningDConfig};
 
 pub struct TestContext {
 	#[allow(dead_code)]
@@ -80,7 +80,25 @@ impl TestContext {
 
 		Ok(bark)
 	}
+
+	pub async fn lightningd(&self, name: impl AsRef<str>, bitcoind: &BitcoinD) -> anyhow::Result<LightningD> {
+		let lightning_dir = self.datadir.join(name.as_ref());
+
+		let cfg = LightningDConfig {
+			network: String::from("regtest"),
+			bitcoin_dir: bitcoind.bitcoind_datadir(),
+			bitcoin_rpcport: bitcoind.bitcoind_rpcport(),
+			lightning_dir
+		};
+
+		let mut lightningd = LightningD::new(name, cfg);
+		lightningd.start().await?;
+
+		Ok(lightningd)
+	}
 }
+
+
 
 impl Drop for TestContext {
 	fn drop(&mut self) {

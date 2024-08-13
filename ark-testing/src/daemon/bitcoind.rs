@@ -78,6 +78,15 @@ impl BitcoinD {
 		self.inner.bitcoind_url()
 	}
 
+	pub fn bitcoind_rpcport(&self) -> u16 {
+		self.inner.bitcoind_rpcport()
+
+	}
+
+	pub fn bitcoind_datadir(&self) -> PathBuf {
+		self.inner.config.datadir.clone()
+	}
+
 	pub async fn init_wallet(&self) -> anyhow::Result<()> {
 		info!("Initialziing a wallet");
 		let client = self.sync_client()?;
@@ -130,6 +139,10 @@ impl BitcoinDHelper {
 			.join(".cookie");
 
 		cookie
+	}
+
+	pub fn bitcoind_rpcport(&self) -> u16 {
+		self.state.rpc_port.expect("A port has been picked. Is bitcoind running?")
 	}
 
 	pub fn bitcoind_url(&self) -> String {
