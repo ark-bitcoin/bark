@@ -8,6 +8,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use crate::util::is_running;
+
 pub enum DaemonState {
 	Init,
 	Starting,
@@ -129,13 +131,28 @@ where T : DaemonHelper + Send + Sync + 'static
 			}
 		}));
 
-		self.child = Some(child);
+		// Wait for init
+		// But check every 100 milliseconds if the Child is
+		// still running
+		let duration = std::time::Duration::from_millis(100);
+		let mut is_initialized = false;
+		while is_running(&mut child) && ! is_initialized {
+			match tokio::time::timeout(duration, self.inner.wait_for_init()).await {
+				Err(_) => {},
+				Ok(result) => {
+					result?;
+					is_initialized = true;
+				}
+			}
+		}
 
-		// TODO: Provide a time-out here
-		// TODO: Check if the child has finished after every await
-		self.inner.wait_for_init().await?;
-
-		Ok(())
+		if is_initialized {
+			self.child = Some(child);
+			Ok(())
+		}
+		else {
+			anyhow::bail!("Failed to initialize {}", self.inner.name());
+		}
 	}
 
 	pub async fn stop(&mut self) -> anyhow::Result<()> {

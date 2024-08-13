@@ -1,3 +1,4 @@
+use std::process::Child;
 use std::path::{Path, PathBuf};
 use std::fs;
 
@@ -47,5 +48,17 @@ fn get_cargo_workspace() -> PathBuf {
 
 		let cargo_path = String::from_utf8(output.stdout).unwrap();
 		Path::new(&cargo_path.trim()).parent().unwrap().to_path_buf()
+}
+
+pub fn is_running(child: &mut Child) -> bool {
+	match child.try_wait() {
+		Ok(None) => true,
+		Ok(Some(_status)) => false,
+		Err(err) => {
+			error!("Failed to get status of Child={:?}", child);
+			error!("{:?}", err);
+			false
+		},
+	}
 }
 
