@@ -10,7 +10,7 @@ use bdk_file_store::Store;
 use bdk_esplora::EsploraAsyncExt;
 use bitcoin::{
 	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
-	Txid,
+	Txid, Weight,
 };
 
 use crate::exit;
@@ -178,7 +178,7 @@ impl Wallet {
 	pub async fn spend_fee_anchors(
 		&mut self,
 		anchors: &[OutPoint],
-		package_vsize: usize,
+		package_weight: Weight,
 	) -> anyhow::Result<Transaction> {
 		self.sync().await.context("sync error")?;
 
@@ -189,13 +189,12 @@ impl Wallet {
 		// overshoot the fee, but we prefer that over undershooting it.
 
 		let urgent_fee_rate = self.urgent_fee_rate();
-		let package_fee = urgent_fee_rate.fee_vb(package_vsize as u64)
-			.expect("shouldn't overflow");
+		let package_fee = urgent_fee_rate * package_weight;
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal);
 
-		let template_size = {
+		let template_weight = {
 			let mut b = self.wallet.build_tx();
 			Wallet::add_anchors(&mut b, anchors);
 			b.add_recipient(change_addr.address.script_pubkey(), package_fee + ark::P2TR_DUST);
@@ -208,12 +207,11 @@ impl Wallet {
 			let finalized = self.wallet.sign(&mut psbt, opts)
 				.expect("failed to sign anchor spend template");
 			assert!(finalized);
-			psbt.extract_tx()?.vsize()
+			psbt.extract_tx()?.weight()
 		};
 
-		let total_vsize = template_size + package_vsize;
-		let total_fee = self.urgent_fee_rate().fee_vb(total_vsize as u64)
-			.expect("shouldn't overflow");
+		let total_weight = template_weight + package_weight;
+		let total_fee = self.urgent_fee_rate() * total_weight;
 
 		// Then build actual tx.
 		let mut b = self.wallet.build_tx();

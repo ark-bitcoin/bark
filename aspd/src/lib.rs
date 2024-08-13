@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::{bip32, sighash, psbt, taproot, Amount, Address, OutPoint, Transaction, Witness};
+use bitcoin::{bip32, sighash, psbt, taproot, Amount, Address, OutPoint, Transaction, Weight, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 use tokio::sync::Mutex;
 
@@ -448,7 +448,7 @@ impl App {
 						let wit = Witness::from_slice(
 							&[&sig[..], script.as_bytes(), &control.serialize()],
 						);
-						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT);
+						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
 						input.final_script_witness = Some(wit);
 					},
 					RoundMeta::Connector => {
@@ -482,7 +482,7 @@ impl App {
 pub(crate) struct SpendableUtxo {
 	pub point: OutPoint,
 	pub psbt: psbt::Input,
-	pub weight: usize,
+	pub weight: Weight,
 }
 
 impl SpendableUtxo {

@@ -3,7 +3,7 @@ use std::io;
 use std::collections::HashSet;
 
 use anyhow::Context;
-use bitcoin::{sighash, taproot, Amount, OutPoint, Transaction, Witness};
+use bitcoin::{sighash, taproot, Amount, OutPoint, Transaction, Weight, Witness};
 
 use ark::{Vtxo, VtxoId, VtxoSpec};
 
@@ -39,7 +39,7 @@ impl ClaimInput {
 }
 
 struct Exit {
-	total_size: usize,
+	total_weight: Weight,
 	started: Vec<VtxoId>,
 	claim_inputs: Vec<ClaimInput>,
 	fee_anchors: Vec<OutPoint>,
@@ -49,7 +49,7 @@ struct Exit {
 impl Exit {
 	fn new() -> Exit {
 		Exit {
-			total_size: 0,
+			total_weight: Weight::ZERO,
 			started: Vec::new(),
 			claim_inputs: Vec::new(),
 			fee_anchors: Vec::new(),
@@ -63,22 +63,22 @@ impl Exit {
 			Vtxo::Onboard { .. } => {
 				let reveal_tx = vtxo.vtxo_tx();
 				self.broadcast.push(reveal_tx.clone());
-				self.total_size += reveal_tx.vsize();
+				self.total_weight += reveal_tx.weight();
 			},
 			Vtxo::Round { exit_branch, .. } => {
-				let mut branch_size = 0;
+				let mut branch_weight = Weight::ZERO;
 				for tx in exit_branch {
 					self.broadcast.push(tx.clone());
-					branch_size += tx.vsize();
+					branch_weight += tx.weight();
 				}
-				self.total_size += branch_size;
+				self.total_weight += branch_weight;
 			},
 			Vtxo::Oor { inputs, oor_tx, .. } => {
 				for input in inputs {
 					self.add_vtxo(input);
 				}
 				self.broadcast.push(oor_tx.clone());
-				self.total_size += oor_tx.vsize();
+				self.total_weight += oor_tx.weight();
 			},
 		}
 		self.started.push(id);
@@ -127,8 +127,8 @@ impl Wallet {
 			return Ok(());
 		}
 
-		info!("Got {} outputs to claim, {} fee anchors to spend and {} package vsize to cover",
-			exit.claim_inputs.len(), exit.fee_anchors.len(), exit.total_size);
+		info!("Got {} outputs to claim, {} fee anchors to spend and {} package weight to cover",
+			exit.claim_inputs.len(), exit.fee_anchors.len(), exit.total_weight);
 
 		// First we will store the claim inputs so we for sure don't forget about them.
 		// We might already have some pending claim inputs.
@@ -144,7 +144,7 @@ impl Wallet {
 		self.db.store_claim_inputs(&claim_inputs).context("db error storing claim inputs")?;
 
 		// Then we'll send a tx that will pay the fee for all the txs we made.
-		let tx = self.onchain.spend_fee_anchors(&exit.fee_anchors, exit.total_size).await?;
+		let tx = self.onchain.spend_fee_anchors(&exit.fee_anchors, exit.total_weight).await?;
 		info!("Sent anchor spend tx: {}", tx.compute_txid());
 
 		// After we succesfully stored the claim inputs, we can drop the vtxos.
