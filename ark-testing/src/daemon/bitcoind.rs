@@ -7,7 +7,7 @@ use anyhow::Context;
 use bitcoincore_rpc::{Client as BitcoinDClient, Auth, RpcApi};
 use which::which;
 
-use crate::{Bark, AspD};
+use crate::{Bark, AspD, LightningD};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXE;
 
@@ -125,6 +125,15 @@ impl BitcoinD {
 		Ok(txid)
 	}
 
+	pub async fn fund_lightningd(&self, lightningd: &LightningD, amount: Amount) -> anyhow::Result<Txid> {
+		info!("Fund {} {}", lightningd.name(), amount);
+		let address = lightningd.get_onchain_address().await?;
+
+		let client = self.sync_client()?;
+		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
+
+		Ok(txid)
+	}
 }
 
 impl BitcoinDHelper {

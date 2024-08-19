@@ -3,6 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -202,5 +203,43 @@ impl LightningD {
 		self.inner.grpc_client().await
 	}
 
+	pub async fn port(&self) -> Option<u16> {
+		self.inner.state.lock().await.port
+	}
 
+	pub async fn id(&self) -> anyhow::Result<Vec<u8>> {
+		let mut client = self.grpc_client().await?;
+		let info = client.getinfo(grpc::GetinfoRequest {}).await?.into_inner();
+		Ok(info.id)
+	}
+
+	pub async fn connect(&self, other : &LightningD) -> anyhow::Result<()> {
+		let mut self_client = self.grpc_client().await?;
+		let mut other_client = other.grpc_client().await?;
+
+		// Get the  connection details of the other lightning Node
+		let other_id = other_client.getinfo(grpc::GetinfoRequest{}).await?.into_inner().id;
+		let other_host = "localhost";
+		let other_port : u16 = other.port().await.context(format!("No port configured on `{}`", other.name()))?;
+
+		// Connect both nodes
+		self_client.connect_peer(
+			grpc::ConnectRequest {
+				id: hex::encode(other_id),
+				host: Some(other_host.to_owned()),
+				port: Some(u32::from(other_port))
+			}
+		).await?;
+
+
+		Ok(())
+	}
+
+  pub async fn get_onchain_address(&self) -> anyhow::Result<bitcoin::Address> {
+      let mut grpc_client = self.grpc_client().await?;
+      let response = grpc_client.new_addr(grpc::NewaddrRequest { addresstype: None}).await?.into_inner();
+      let bech32 = response.bech32.unwrap();
+
+      Ok(bitcoin::Address::from_str(&bech32)?.assume_checked())
+  }
 }
