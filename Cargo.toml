@@ -2,11 +2,12 @@
 [workspace]
 members = [
   "ark-lib",
+  "ark-testing",
   "aspd-rpc-client",
   "aspd",
   "bark",
-
-  "sled-utils", "ark-testing",
+  "bark-cln",
+  "sled-utils"
 ]
 
 resolver = "2"
@@ -45,6 +46,7 @@ sled = "0.34.7"
 
 # async + gRPC stack
 tonic = { version = "0.10", features = [ "tls" ] }
+tonic-build = "0.10"
 prost = "0.12"
 tokio = { version = "1.35", features = [ "full" ] }
 tokio-stream = { version = "0.1.14", features = [ "sync" ] }

@@ -15,7 +15,7 @@ name = "aspd"
 path = "src/main.rs"
 
 [build-dependencies]
-tonic-build = "0.10"
+tonic-build.workspace = true
 
 [dependencies]
 ark-lib = { path = "../ark-lib" }
