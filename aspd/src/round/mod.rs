@@ -374,8 +374,8 @@ pub async fn run_round_coordinator(
 			}
 		}
 
-		let round_id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() /
-			cfg.round_interval.as_secs();
+		let round_id = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
+			cfg.round_interval.as_millis()) as u64;
 		info!("Starting round {}", round_id);
 
 		// Start new round, announce.

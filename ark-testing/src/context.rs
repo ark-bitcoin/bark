@@ -1,5 +1,6 @@
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::util::test_data_directory;
 use crate::daemon::bitcoind::bitcoind_exe_path;
@@ -48,7 +49,10 @@ impl TestContext {
 		let cfg = AspDConfig {
 			datadir: datadir.clone(),
 			bitcoind_url: bitcoind.bitcoind_url(),
-			bitcoind_cookie: bitcoind.bitcoind_cookie()
+			bitcoind_cookie: bitcoind.bitcoind_cookie(),
+			round_interval: Duration::from_millis(500),
+			round_submit_time: Duration::from_millis(500),
+			round_sign_time: Duration::from_millis(500),
 		};
 		let mut aspd = AspD::new(name, cfg);
 		aspd.add_stdout_handler(FileLogger::new(datadir.join("stdout.log")))?;
