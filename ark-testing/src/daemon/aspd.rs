@@ -20,13 +20,8 @@ pub fn get_base_cmd() -> anyhow::Result<Command> {
 			let aspd_exe = which(aspd_exec).expect("Failed to find aspd_exec");
 			Ok(Command::new(aspd_exe))
 		},
-		Err(env::VarError::NotPresent) => {
-			let mut cmd = Command::new("cargo");
-			cmd
-				.args(&["run", "--package", "bark-aspd", "--"]);
-			Ok(cmd)
-		},
-		Err(_) => panic!("Failed to read ASPD_EXEC"),
+		Err(env::VarError::NotPresent) => bail!("ASPD_EXEC not set"),
+		Err(_) => bail!("Failed to read ASPD_EXEC"),
 	}
 }
 pub type AspD = Daemon<AspDHelper>;
@@ -126,6 +121,8 @@ impl DaemonHelper for AspDHelper {
 
 	async fn prepare(&self) -> anyhow::Result<()> {
 		let mut base_cmd = get_base_cmd()?;
+
+		trace!("base_cmd={:?}", base_cmd);
 
 		let datadir = self.config.datadir.clone();
 		let bd_url = self.config.bitcoind_url.clone();

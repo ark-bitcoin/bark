@@ -2,24 +2,18 @@ extern crate tokio;
 
 use std::time::Duration;
 
-use tokio::process::Command;
-
 use ark_testing::TestContext;
+use ark_testing::daemon::aspd::get_base_cmd;
 use aspd_rpc_client::Empty;
 
 use bitcoin::amount::Amount;
 
-#[tokio::test]
-async fn check_aspd_version() {
-	let output = Command::new("cargo")
-		.arg("run")
-		.arg("--package")
-		.arg("bark-aspd")
-		.arg("--")
+#[test]
+fn check_aspd_version() {
+	let mut base_cmd = get_base_cmd().unwrap();
+	let output = base_cmd
 		.arg("--version")
-		.kill_on_drop(true)
 		.output()
-		.await
 		.expect("Failed to spawn process and capture output");
 
 	let stdout = String::from_utf8(output.stdout).expect("Output is valid utf-8");
