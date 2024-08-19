@@ -30,12 +30,7 @@ impl BarkCommand {
 					args: vec![]}
 				)
 			},
-			Err(env::VarError::NotPresent) => {
-				Ok(BarkCommand {
-					exe_path: which("cargo")?,
-					args: ["run", "--package", "bark-client", "--"].iter().map(|x| x.to_string()).collect()
-				})
-			},
+			Err(env::VarError::NotPresent) => bail!("BARK_EXEC is not set"),
 			Err(_) => bail!("Failed to read BARK_EXEC"),
 		}
 	}
