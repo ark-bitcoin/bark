@@ -54,7 +54,7 @@ pub fn bitcoind_exe_path() -> anyhow::Result<PathBuf> {
 		match std::env::var(&BITCOIND_EXEC) {
 			Ok(var) => which(var).context("Failed to find binary path from `BITCOIND_EXEC`"),
 			Err(VarError::NotPresent) => which("bitcoind").context("Failed to find `bitcoind` installation"),
-			_ => anyhow::bail!("BITCOIND_EXEC is not valid unicode")
+			_ => bail!("BITCOIND_EXEC is not valid unicode")
 		}
 }
 

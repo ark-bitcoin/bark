@@ -36,7 +36,7 @@ impl BarkCommand {
 					args: ["run", "--package", "bark-client", "--"].iter().map(|x| x.to_string()).collect()
 				})
 			},
-			Err(_) => anyhow::bail!("Failed to read BARK_EXEC"),
+			Err(_) => bail!("Failed to read BARK_EXEC"),
 		}
 	}
 
@@ -112,7 +112,7 @@ impl BarkConfig {
 			error!("{}", stderr);
 			error!("{}", stdout);
 
-			anyhow::bail!("Failed to create {}", name.as_ref());
+			bail!("Failed to create {}", name.as_ref());
 		}
 
 		Ok(Bark {
@@ -220,7 +220,7 @@ impl Bark {
 			return Ok(stdout_str.trim().to_string())
 		}
 		else {
-			anyhow::bail!("Failed to execute {:?}", command)
+			bail!("Failed to execute {:?}", command)
 		}
 	}
 }

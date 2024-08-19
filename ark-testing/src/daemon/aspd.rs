@@ -115,7 +115,7 @@ impl DaemonHelper for AspDHelper {
 		if ! output.status.success() {
 			let stderr = String::from_utf8(output.stderr)?;
 			error!("{}", stderr);
-			anyhow::bail!("Failed to configure ports for arkd-1");
+			bail!("Failed to configure ports for arkd-1");
 		};
 
 		self.state.public_grpc_address = Some(public_grpc_address);
@@ -147,7 +147,7 @@ impl DaemonHelper for AspDHelper {
 		} else {
 			let stderr = String::from_utf8(output.stderr)?;
 			error!("{}", stderr);
-			anyhow::bail!("Failed to start arkd-1");
+			bail!("Failed to start arkd-1");
 		}
 	}
 
