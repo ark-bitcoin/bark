@@ -164,7 +164,6 @@ where T : DaemonHelper + Send + Sync + 'static
 	}
 
 	pub fn add_stdout_handler<L : LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) -> anyhow::Result<()> {
-		trace!("{}: Added logger", self.inner.name());
 		let mut handlers = self.stdout_handler.lock().unwrap();
 		handlers.push(Box::new(log_handler));
 		Ok(())
@@ -172,7 +171,6 @@ where T : DaemonHelper + Send + Sync + 'static
 
 
 	pub fn add_stderr_handler<L : LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) -> anyhow::Result<()> {
-		trace!("{}: Added logger", self.inner.name());
 		let mut handlers = self.stderr_handler.lock().unwrap();
 		handlers.push(Box::new(log_handler));
 		Ok(())
