@@ -13,6 +13,8 @@ use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
 
+use bark_json::cli as json;
+
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
@@ -81,9 +83,7 @@ impl Bark {
 
 	pub async fn offchain_balance(&self) -> Amount {
 		let json = self.run(["balance", "--json"]).await;
-		let json = serde_json::from_str::<serde_json::Value>(&json).unwrap();
-		let sats = json.as_object().unwrap().get("offchain").unwrap().as_i64().unwrap();
-		Amount::from_sat(sats as u64)
+		serde_json::from_str::<json::Balance>(&json).unwrap().offchain
 	}
 
 	pub async fn get_onchain_address(&self) -> Address {
@@ -113,12 +113,9 @@ impl Bark {
 		self.run(["onboard", &amount.to_string()]).await;
 	}
 
-	pub async fn start_exit(&self) {
-		self.run(["start-exit"]).await;
-	}
-
-	pub async fn claim_exit(&self) {
-		self.run(["claim-exit"]).await;
+	pub async fn exit(&self) -> json::ExitStatus {
+		let res = self.run(["exit", "--json"]).await;
+		serde_json::from_str::<json::ExitStatus>(&res).expect("invalid json from exit")
 	}
 
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>
@@ -127,7 +124,11 @@ impl Bark {
 		let args: Vec<String>  = args.into_iter().map(|x| x.as_ref().to_string()).collect();
 
 		let mut command = Bark::cmd();
-		command.args(&["--datadir", &self.config.datadir.as_os_str().to_str().unwrap()]);
+		command.args(&[
+			"--verbose",
+			"--datadir",
+			&self.config.datadir.as_os_str().to_str().unwrap(),
+		]);
 		command.args(args);
 		let command_str = format!("{:?}", command.as_std());
 

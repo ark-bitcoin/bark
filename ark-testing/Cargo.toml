@@ -9,6 +9,8 @@ slow_test = []
 [dependencies]
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 bark-cln = { path = "../bark-cln"}
+bark-json = { path = "../bark-json"}
+
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
