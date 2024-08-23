@@ -12,9 +12,7 @@ pub struct Balance {
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub offchain: Amount,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	pub onchain_available_exit: Amount,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	pub onchain_pending_exit: Amount,
+	pub pending_exit: Amount,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -56,4 +54,10 @@ impl From<Vtxo> for VtxoInfo {
 			exit_delta: v.spec().exit_delta,
 		}
 	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExitStatus {
+	pub done: bool,
+	pub height: Option<u32>,
 }

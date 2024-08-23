@@ -5,6 +5,7 @@ pub use self::chain::ChainSource;
 use std::path::Path;
 
 use anyhow::Context;
+use ark::util::TransactionExt;
 use bdk_wallet::SignOptions;
 use bdk_file_store::Store;
 use bdk_esplora::EsploraAsyncExt;
@@ -57,8 +58,13 @@ impl Wallet {
 		self.chain_source.broadcast_tx(tx).await
 	}
 
-	pub async fn txout_confirmations(&self, outpoint: OutPoint) -> anyhow::Result<Option<u32>> {
-		self.chain_source.txout_confirmations(outpoint).await
+	/// Returns the block height the tx is confirmed in, if any.
+	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
+		self.chain_source.tx_confirmed(txid).await
+	}
+
+	pub async fn txout_value(&self, outpoint: OutPoint) -> anyhow::Result<Amount> {
+		self.chain_source.txout_value(outpoint).await
 	}
 
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
@@ -175,11 +181,17 @@ impl Wallet {
 		}
 	}
 
-	pub async fn spend_fee_anchors(
+	/// Create a cpfp spend that spends the fee anchors in the given txs.
+	///
+	/// This method doesn't broadcast any txs.
+	pub async fn make_cpfp(
 		&mut self,
-		anchors: &[OutPoint],
-		package_weight: Weight,
+		txs: &[&Transaction],
 	) -> anyhow::Result<Transaction> {
+		let anchors = txs.iter().map(|tx| {
+			tx.fee_anchor().with_context(|| format!("tx {} has no fee anchor", tx.compute_txid()))
+		}).collect::<Result<Vec<_>, _>>()?;
+
 		self.sync().await.context("sync error")?;
 
 		// Since BDK doesn't support adding extra weight for fees, we have to
@@ -188,16 +200,33 @@ impl Wallet {
 		// we will "fake" create an output on the first attempt. This might
 		// overshoot the fee, but we prefer that over undershooting it.
 
+		let existing_fee = {
+			let mut ret = Amount::ZERO;
+			for tx in txs {
+				let input_value = {
+					let mut ret = Amount::ZERO;
+					for inp in &tx.input {
+						ret += self.txout_value(inp.previous_output).await?;
+					}
+					ret
+				};
+				let output_value = tx.output.iter().map(|o| o.value).sum::<Amount>();
+				ret += input_value.checked_sub(output_value).context("invalid tx: amounts")?;
+			}
+			ret
+		};
+		let package_weight = txs.iter().map(|t| t.weight()).sum::<Weight>();
+
 		let urgent_fee_rate = self.urgent_fee_rate();
-		let package_fee = urgent_fee_rate * package_weight;
+		let extra_fee_needed = (urgent_fee_rate * package_weight) - existing_fee;
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal);
 
 		let template_weight = {
 			let mut b = self.wallet.build_tx();
-			Wallet::add_anchors(&mut b, anchors);
-			b.add_recipient(change_addr.address.script_pubkey(), package_fee + ark::P2TR_DUST);
+			Wallet::add_anchors(&mut b, &anchors);
+			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + ark::P2TR_DUST);
 			b.fee_rate(urgent_fee_rate);
 			let mut psbt = b.finish().expect("failed to craft anchor spend template");
 			let opts = SignOptions {
@@ -212,16 +241,17 @@ impl Wallet {
 
 		let total_weight = template_weight + package_weight;
 		let total_fee = self.urgent_fee_rate() * total_weight;
+		let extra_fee_needed = total_fee - existing_fee;
 
 		// Then build actual tx.
 		let mut b = self.wallet.build_tx();
-		trace!("setting version to 2");
-		Wallet::add_anchors(&mut b, anchors);
+		Wallet::add_anchors(&mut b, &anchors);
 		b.drain_to(change_addr.address.script_pubkey());
-		b.fee_absolute(total_fee);
+		b.fee_absolute(extra_fee_needed);
 		let psbt = b.finish().expect("failed to craft anchor spend tx");
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
-		self.broadcast_tx(&tx).await.context("failed to broadcast fee anchor spend")?;
+
+		//TODO(stevenroose) at some point use the package relay here to relay entire package
 		Ok(tx)
 	}
 

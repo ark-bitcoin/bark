@@ -3,7 +3,7 @@
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_esplora::esplora_client;
-use bitcoin::{OutPoint, Transaction};
+use bitcoin::{Amount, OutPoint, Transaction, Txid};
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 
@@ -65,22 +65,42 @@ impl ChainSourceClient {
 		}
 	}
 
-	pub async fn txout_confirmations(&self, outpoint: OutPoint) -> anyhow::Result<Option<u32>> {
-		match self {
+	/// Returns the block height the tx is confirmed in, if any.
+	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
+		let ret = match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				Ok(bitcoind.get_tx_out(
-					&outpoint.txid, outpoint.vout, Some(true), // include mempool
-				)?.map(|txout| txout.confirmations))
-			},
-			ChainSourceClient::Esplora(ref client) => {
-				let height = client.get_tx_status(&outpoint.txid).await?.block_height;
-				if let Some(height) = height {
-					let tip = client.get_height().await?;
-					Ok(Some(tip.saturating_sub(height) + 1))
+				//TODO(stevenroose) would be nice if we cna distinguish network Error
+				//or tx unknown error here (my refactor branch does that, liquid also)
+				let tx = bitcoind.get_raw_transaction_info(&txid, None)?;
+				if let Some(hash) = tx.blockhash {
+					let block = bitcoind.get_block_header_info(&hash)?;
+					if block.confirmations > 0 {
+						Some(block.height as u32)
+					} else {
+						None
+					}
 				} else {
-					Ok(None)
+					None
 				}
 			},
-		}
+			ChainSourceClient::Esplora(ref client) => {
+				client.get_tx_status(&txid).await?.block_height
+			},
+		};
+		Ok(ret)
+	}
+
+	pub async fn txout_value(&self, outpoint: OutPoint) -> anyhow::Result<Amount> {
+		let tx = match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				bitcoind.get_raw_transaction(&outpoint.txid, None)
+					.with_context(|| format!("tx {} unknown", outpoint.txid))?
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				client.get_tx(&outpoint.txid).await?
+					.with_context(|| format!("tx {} unknown", outpoint.txid))?
+			},
+		};
+		Ok(tx.output.get(outpoint.vout as usize).context("outpoint vout out of range")?.value)
 	}
 }
