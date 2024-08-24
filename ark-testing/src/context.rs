@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::util::test_data_directory;
 use crate::daemon::bitcoind::bitcoind_exe_path;
 use crate::daemon::log::FileLogger;
-use crate::{AspD, AspDConfig, BitcoinD, BitcoinDConfig, Bark, BarkConfig};
+use crate::{Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig};
 
 pub struct TestContext {
 	#[allow(dead_code)]
@@ -26,27 +26,27 @@ impl TestContext {
 		TestContext { name: name.as_ref().to_string(), datadir}
 	}
 
-	pub async fn bitcoind(&self, name: impl AsRef<str>) -> anyhow::Result<BitcoinD> {
+	pub async fn bitcoind(&self, name: impl AsRef<str>) -> anyhow::Result<Bitcoind> {
 		let bitcoind_exe = bitcoind_exe_path()?;
 
 		let datadir = self.datadir.join(name.as_ref());
-		let config = BitcoinDConfig {
+		let config = BitcoindConfig {
 			datadir,
 			txindex: true,
 			network: String::from("regtest"),
-			..BitcoinDConfig::default()
+			..BitcoindConfig::default()
 		};
 
-		let mut bitcoind = BitcoinD::new(name.as_ref().to_string(), bitcoind_exe, config);
+		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), bitcoind_exe, config);
 		bitcoind.start().await?;
 
 		Ok(bitcoind)
 	}
 
-	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &BitcoinD) -> anyhow::Result<AspD> {
+	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> anyhow::Result<Aspd> {
 		let datadir = self.datadir.join(name.as_ref());
 
-		let cfg = AspDConfig {
+		let cfg = AspdConfig {
 			datadir: datadir.clone(),
 			bitcoind_url: bitcoind.bitcoind_url(),
 			bitcoind_cookie: bitcoind.bitcoind_cookie(),
@@ -54,7 +54,7 @@ impl TestContext {
 			round_submit_time: Duration::from_millis(500),
 			round_sign_time: Duration::from_millis(500),
 		};
-		let mut aspd = AspD::new(name, cfg);
+		let mut aspd = Aspd::new(name, cfg);
 		aspd.add_stdout_handler(FileLogger::new(datadir.join("stdout.log")))?;
 		aspd.add_stderr_handler(FileLogger::new(datadir.join("stderr.log")))?;
 
@@ -63,7 +63,7 @@ impl TestContext {
 	}
 
 
-	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &BitcoinD, aspd: &AspD) -> anyhow::Result<Bark> {
+	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> anyhow::Result<Bark> {
 		let datadir = self.datadir.join(name.as_ref());
 		let asp_url = aspd.asp_url()?;
 

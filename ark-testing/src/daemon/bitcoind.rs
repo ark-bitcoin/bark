@@ -4,10 +4,10 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoincore_rpc::{Client as BitcoinDClient, Auth, RpcApi};
+use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 use which::which;
 
-use crate::{Bark, AspD};
+use crate::{Bark, Aspd};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXEC;
 
@@ -16,21 +16,21 @@ use bitcoin::{
 	network::Network,
 	transaction::Txid};
 
-pub struct BitcoinDHelper {
+pub struct BitcoindHelper {
 	name : String,
 	bitcoind_exec: PathBuf,
-	config: BitcoinDConfig,
-	state: BitcoinDState,
+	config: BitcoindConfig,
+	state: BitcoindState,
 }
 
-pub struct BitcoinDConfig {
+pub struct BitcoindConfig {
 	pub datadir: PathBuf,
 	pub txindex: bool,
 	pub network: String,
 	pub fallback_fee: Option<f64>,
 }
 
-impl Default for BitcoinDConfig {
+impl Default for BitcoindConfig {
 
 	fn default() -> Self {
 		Self {
@@ -43,12 +43,12 @@ impl Default for BitcoinDConfig {
 }
 
 #[derive(Default)]
-pub struct BitcoinDState {
+pub struct BitcoindState {
 	rpc_port: Option<u16>,
 	p2p_port: Option<u16>,
 }
 
-pub type BitcoinD = Daemon<BitcoinDHelper>;
+pub type Bitcoind = Daemon<BitcoindHelper>;
 
 pub fn bitcoind_exe_path() -> anyhow::Result<PathBuf> {
 		match std::env::var(&BITCOIND_EXEC) {
@@ -58,15 +58,15 @@ pub fn bitcoind_exe_path() -> anyhow::Result<PathBuf> {
 		}
 }
 
-impl BitcoinD {
+impl Bitcoind {
 
-	pub fn new(name: String, bitcoind_exec: PathBuf, config: BitcoinDConfig) -> Self {
-		let state = BitcoinDState::default();
-		let inner = BitcoinDHelper { name, bitcoind_exec, config, state};
+	pub fn new(name: String, bitcoind_exec: PathBuf, config: BitcoindConfig) -> Self {
+		let state = BitcoindState::default();
+		let inner = BitcoindHelper { name, bitcoind_exec, config, state};
 		Daemon::wrap(inner)
 	}
 
-	pub fn sync_client(&self) -> anyhow::Result<BitcoinDClient> {
+	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
 		self.inner.sync_client()
 	}
 
@@ -101,7 +101,7 @@ impl BitcoinD {
 		Ok(())
 	}
 
-	pub async fn fund_aspd(&self, aspd: &AspD, amount: Amount) -> anyhow::Result<()> {
+	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) -> anyhow::Result<()> {
 		let address = aspd.get_funding_address().await?;
 		self.sync_client()?.send_to_address(&address, amount, None, None, None, None, None, None)?;
 		Ok(())
@@ -118,7 +118,7 @@ impl BitcoinD {
 
 }
 
-impl BitcoinDHelper {
+impl BitcoindHelper {
 
 	pub fn auth(&self) -> Auth {
 			Auth::CookieFile(self.bitcoind_cookie())
@@ -136,15 +136,15 @@ impl BitcoinDHelper {
 		format!("http://127.0.0.1:{}", self.state.rpc_port.expect("A port has been picked. Is bitcoind running?"))
 	}
 
-	pub fn sync_client(&self) -> anyhow::Result<BitcoinDClient> {
+	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
 		let bitcoind_url = self.bitcoind_url();
 		let auth = self.auth();
-		let client = BitcoinDClient::new(&bitcoind_url, auth)?;
+		let client = BitcoindClient::new(&bitcoind_url, auth)?;
 		Ok(client)
 	}
 }
 
-impl DaemonHelper for BitcoinDHelper {
+impl DaemonHelper for BitcoindHelper {
 
 	fn name(&self) -> &str {
 		&self.name

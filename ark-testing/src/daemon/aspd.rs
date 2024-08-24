@@ -8,7 +8,7 @@ use bitcoin::address::{Address, NetworkUnchecked, NetworkChecked};
 
 use which::which;
 
-use aspd_rpc_client::{AdminServiceClient as AspDAdminClient, ArkServiceClient as AspDClient};
+use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
 use aspd_rpc_client::Empty;
 
 use crate::{Daemon, DaemonHelper};
@@ -24,16 +24,21 @@ pub fn get_base_cmd() -> anyhow::Result<Command> {
 		Err(_) => bail!("Failed to read ASPD_EXEC"),
 	}
 }
-pub type AspD = Daemon<AspDHelper>;
 
-pub struct AspDHelper {
+pub type Aspd = Daemon<AspdHelper>;
+
+pub type AdminClient = AdminServiceClient<tonic::transport::Channel>;
+pub type ArkClient = ArkServiceClient<tonic::transport::Channel>;
+
+
+pub struct AspdHelper {
 	name : String,
-	state: AspDState,
-	config: AspDConfig,
+	state: AspdState,
+	config: AspdConfig,
 }
 
 #[derive(Debug, Clone)]
-pub struct AspDConfig {
+pub struct AspdConfig {
 	pub datadir: PathBuf,
 	pub bitcoind_url : String,
 	pub bitcoind_cookie: PathBuf,
@@ -43,17 +48,17 @@ pub struct AspDConfig {
 }
 
 #[derive(Default)]
-struct AspDState {
+struct AspdState {
 	public_grpc_address: Option<String>,
 	admin_grpc_address: Option<String>,
 }
 
-impl AspD {
-	pub fn new(name: impl AsRef<str>, config: AspDConfig) -> Self {
-		let helper = AspDHelper {
+impl Aspd {
+	pub fn new(name: impl AsRef<str>, config: AspdConfig) -> Self {
+		let helper = AspdHelper {
 			name: name.as_ref().to_string(),
 			config,
-			state: AspDState::default(),
+			state: AspdState::default(),
 		};
 
 		Daemon::wrap(helper)
@@ -63,11 +68,11 @@ impl AspD {
 		self.inner.asp_url()
 	}
 
-	pub async fn get_admin_client(&self) -> anyhow::Result<AspDAdminClient<tonic::transport::Channel>> {
+	pub async fn get_admin_client(&self) -> anyhow::Result<AdminClient> {
 		self.inner.get_admin_client().await
 	}
 
-	pub async fn get_public_client(&self) -> anyhow::Result<AspDClient<tonic::transport::Channel>> {
+	pub async fn get_public_client(&self) -> anyhow::Result<ArkClient> {
 		self.inner.get_public_client().await
 	}
 
@@ -79,7 +84,7 @@ impl AspD {
 	}
 }
 
-impl DaemonHelper for AspDHelper {
+impl DaemonHelper for AspdHelper {
 	fn name(&self) -> &str {
 		&self.name
 	}
@@ -174,7 +179,7 @@ impl DaemonHelper for AspDHelper {
 	}
 }
 
-impl AspDHelper {
+impl AspdHelper {
 
 	async fn is_ready(&self) -> bool {
 		return self.admin_grpc_is_ready().await && self.public_grpc_is_ready().await
@@ -198,13 +203,13 @@ impl AspDHelper {
 		Ok(format!("http://{}", self.state.public_grpc_address.clone().context("Is asp running")?))
 	}
 
-	pub async fn get_admin_client(&self) -> anyhow::Result<AspDAdminClient<tonic::transport::Channel>> {
+	pub async fn get_admin_client(&self) -> anyhow::Result<AdminClient> {
 		let url = format!("http://{}", self.state.admin_grpc_address.clone().expect("The admin_grpc port is set. Is aspd running?"));
-		Ok(AspDAdminClient::connect(url).await?)
+		Ok(AdminClient::connect(url).await?)
 	}
 
-	pub async fn get_public_client(&self) -> anyhow::Result<AspDClient<tonic::transport::Channel>> {
+	pub async fn get_public_client(&self) -> anyhow::Result<ArkClient> {
 		let url = format!("http://{}", self.state.public_grpc_address.clone().expect("The public_grpc_address port is set. Is aspd running?"));
-		Ok(AspDClient::connect(url).await?)
+		Ok(ArkClient::connect(url).await?)
 	}
 }
