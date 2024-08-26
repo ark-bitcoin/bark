@@ -568,7 +568,7 @@ impl Wallet {
 				info!("Adding change vtxo for {}", amount);
 				Some(VtxoRequest {
 					pubkey: vtxo_key.public_key(),
-					amount,
+					amount: amount,
 				})
 			}
 		};
@@ -614,7 +614,7 @@ impl Wallet {
 					info!("Adding change vtxo for {}", amount);
 					Some(VtxoRequest {
 						pubkey: vtxo_key.public_key(),
-						amount,
+						amount: amount,
 					})
 				}
 			};
