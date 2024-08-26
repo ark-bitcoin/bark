@@ -1,5 +1,6 @@
 pub mod bitcoind;
 pub mod aspd;
+pub mod lightningd;
 pub mod log;
 
 use std::future::Future;
