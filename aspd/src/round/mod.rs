@@ -307,6 +307,9 @@ impl SigningForfeits {
 		&mut self,
 		signatures: Vec<(VtxoId, Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
 	) -> anyhow::Result<()> {
+		trace!("Received vtxo signatures for {:?}",
+			signatures.iter().map(|v| v.0).collect::<Vec<_>>(),
+		);
 		for (id, nonces, sigs) in signatures {
 			if let Some(_vtxo) = self.all_inputs.get(&id) {
 				//TODO(stevenroose) actually validate forfeit txs
@@ -416,7 +419,7 @@ pub async fn run_round_coordinator(
 								break 'receive;
 							}
 						},
-						v => debug!("Received unexpected input: {:?}", v),
+						_ => trace!("unexpected message"),
 					}
 				}
 			}
@@ -579,7 +582,7 @@ pub async fn run_round_coordinator(
 								break 'receive;
 							}
 						},
-						v => debug!("Received unexpected input: {:?}", v),
+						_ => trace!("unexpected message"),
 					}
 				}
 			}
@@ -684,7 +687,7 @@ pub async fn run_round_coordinator(
 								break 'receive;
 							}
 						},
-						v => debug!("Received unexpected input: {:?}", v),
+						_ => trace!("unexpected message"),
 					}
 				}
 			}
