@@ -122,6 +122,7 @@ dependencies = [
  "chrono",
  "env_logger",
  "fern",
+ "futures",
  "log",
  "portpicker",
  "rand",

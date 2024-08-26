@@ -20,3 +20,4 @@ regex = "1.10.5"
 tokio.workspace = true
 tonic.workspace = true
 which = "6.0.1"
+futures = "0.3.30"
