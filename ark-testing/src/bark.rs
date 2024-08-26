@@ -1,78 +1,19 @@
 
 use std::{env, fmt, fs};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::io::prelude::*;
-use std::ffi::OsStr;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::str::FromStr;
+use std::time::Duration;
 
 use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::Amount;
 use serde_json;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
-use which::which;
 
 use crate::constants::env::BARK_EXEC;
 
-#[derive(Debug, Clone)]
-struct BarkCommand {
-	exe_path: PathBuf,
-	args: Vec<String>
-}
-
-impl BarkCommand {
-
-	pub fn new() -> anyhow::Result<Self> {
-		match env::var(BARK_EXEC) {
-			Ok(aspd_exec) => {
-				Ok(BarkCommand {
-					exe_path: which(aspd_exec)?,
-					args: vec![]}
-				)
-			},
-			Err(env::VarError::NotPresent) => bail!("BARK_EXEC is not set"),
-			Err(_) => bail!("Failed to read BARK_EXEC"),
-		}
-	}
-
-	pub fn arg<S>(&mut self, arg: S) -> &mut Self
-		where S: AsRef<OsStr> {
-			let osstr = arg.as_ref().to_str().unwrap().to_owned();
-
-			self.args.push(osstr);
-			self
-	}
-
-	pub fn args<I,S>(&mut self, args: I) -> &mut Self
-		where
-		I: IntoIterator<Item = S>,
-		S: AsRef<OsStr>,
-	{
-		for arg in args {
-			self.arg(arg.as_ref());
-		}
-		self
-	}
-
-	pub fn tokio(&self) -> TokioCommand {
-		let mut cmd = TokioCommand::new(self.exe_path.clone());
-		cmd.args(self.args.clone());
-		cmd
-	}
-}
-
-impl std::fmt::Display for BarkCommand {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{:?} {}", self.exe_path, self.args.join(" "))
-	}
-
-}
-
-pub struct Bark {
-	name: String,
-	config: BarkConfig,
-	counter: AtomicUsize,
-}
 pub struct BarkConfig {
 	pub datadir: PathBuf,
 	pub asp_url: String,
@@ -81,22 +22,31 @@ pub struct BarkConfig {
 	pub bitcoind_cookie: PathBuf
 }
 
-impl BarkConfig {
+pub struct Bark {
+	name: String,
+	config: BarkConfig,
+	counter: AtomicUsize,
+	timeout: Duration,
+}
 
-	pub async fn create(self, name: impl AsRef<str>) -> anyhow::Result<Bark> {
+impl Bark {
+	fn cmd() -> TokioCommand {
+		let exec = env::var(BARK_EXEC).expect("BARK_EXEC env not set");
+		TokioCommand::new(exec)
+	}
 
-		let output = BarkCommand::new()?
+	pub async fn new(name: impl AsRef<str>, cfg: BarkConfig) -> anyhow::Result<Bark> {
+		let output = Bark::cmd()
 			.arg("create")
 			.arg("--datadir")
-			.arg(&self.datadir)
+			.arg(&cfg.datadir)
 			.arg("--asp")
-			.arg(&self.asp_url)
-			.arg(format!("--{}", self.network))
+			.arg(&cfg.asp_url)
+			.arg(format!("--{}", cfg.network))
 			.arg("--bitcoind-cookie")
-			.arg(&self.bitcoind_cookie)
+			.arg(&cfg.bitcoind_cookie)
 			.arg("--bitcoind")
-			.arg(&self.bitcoind_url)
-			.tokio()
+			.arg(&cfg.bitcoind_url)
 			.output()
 			.await?;
 
@@ -112,13 +62,11 @@ impl BarkConfig {
 
 		Ok(Bark {
 			name: name.as_ref().to_string(),
-			config: self,
-			counter: AtomicUsize::new(0)
+			config: cfg,
+			counter: AtomicUsize::new(0),
+			timeout: Duration::from_millis(10_000),
 		})
 	}
-}
-
-impl Bark {
 
 	pub fn name(&self) -> &str {
 		&self.name
@@ -169,50 +117,58 @@ impl Bark {
 		Ok(())
 	}
 
-    pub async fn start_exit(&self) -> anyhow::Result<()> {
+	pub async fn start_exit(&self) -> anyhow::Result<()> {
 		self.run(["start-exit"]).await?;
 		Ok(())
-    }
+	}
 
-    pub async fn claim_exit(&self) -> anyhow::Result<()> {
+	pub async fn claim_exit(&self) -> anyhow::Result<()> {
 		self.run(["claim-exit"]).await?;
 		Ok(())
-    }
+	}
 
 	pub async fn run<I,S>(&self, args: I) -> anyhow::Result<String>
 		where I: IntoIterator<Item = S>, S : AsRef<str>
 	{
 		let args: Vec<String>  = args.into_iter().map(|x| x.as_ref().to_string()).collect();
 
-		let mut command = BarkCommand::new()?;
-		command
-			.arg("--datadir")
-			.arg(&self.config.datadir)
-			.args(args);
+		let mut command = Bark::cmd();
+		command.args(&["--datadir", &self.config.datadir.as_os_str().to_str().unwrap()]);
+		command.args(args);
+		let command_str = format!("{:?}", command.as_std());
 
-		let output = command
-			.tokio()
-			.output()
-			.await?;
-
-		// Write logs to disk
 		// Create a folder for each command
 		let count = self.counter.fetch_add(1, Ordering::Relaxed);
-		let folder_name = self.config.datadir.join("cmd").join(count.to_string());
-		fs::create_dir_all(&folder_name)?;
+		let folder = self.config.datadir.join("cmd").join(count.to_string());
+		fs::create_dir_all(&folder)?;
+		fs::write(folder.join("cmd"), &command_str)?;
 
-		let mut cmd_file = fs::File::create(folder_name.join("cmd"))?;
-		write!(cmd_file, "{}", command)?;
+		// We capture stdout here in output, but we write stderr to a file,
+		// so that we can read it even is something fails in the execution.
+		command.stderr(fs::File::create(folder.join("stderr.log"))?);
+		command.stdout(Stdio::piped());
 
-		let mut stderr_file = fs::File::create(folder_name.join("stderr.log"))?;
-		writeln!(stderr_file, "{}", String::from_utf8(output.stderr)?)?;
+		let mut child = command.spawn().unwrap();
 
-		let mut stdout_file = fs::File::create(folder_name.join("stdout.log"))?;
-		let stdout_str = String::from_utf8(output.stdout)?;
-		writeln!(stdout_file, "{}", stdout_str)?;
-
-		if output.status.success() {
-			return Ok(stdout_str.trim().to_string())
+		let exit = tokio::time::timeout(
+			self.timeout,
+			child.wait(),
+		).await??;
+		if exit.success() {
+			let out = {
+				let mut buf = String::new();
+				if let Some(mut o) = child.stdout {
+					o.read_to_string(&mut buf).await.unwrap();
+				}
+				buf
+			};
+			let outfile = folder.join("stdout.log");
+			if let Err(e) = fs::write(&outfile, &out) {
+				error!("Failed to write stdout of cmd '{}' to file '{}': {}",
+					command_str, outfile.display(), e,
+				);
+			}
+			Ok(out.trim().to_string())
 		}
 		else {
 			bail!("Failed to execute {:?}", command)

@@ -3,15 +3,14 @@ extern crate tokio;
 use std::time::Duration;
 
 use ark_testing::TestContext;
-use ark_testing::daemon::aspd::get_base_cmd;
+use ark_testing::daemon::aspd::Aspd;
 use aspd_rpc_client::Empty;
 
 use bitcoin::amount::Amount;
 
 #[test]
 fn check_aspd_version() {
-	let mut base_cmd = get_base_cmd().unwrap();
-	let output = base_cmd
+	let output = Aspd::base_cmd()
 		.arg("--version")
 		.output()
 		.expect("Failed to spawn process and capture output");

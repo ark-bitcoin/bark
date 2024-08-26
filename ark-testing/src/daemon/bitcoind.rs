@@ -1,72 +1,68 @@
-use std::env::VarError;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::Context;
-use bitcoincore_rpc::{Client as BitcoinDClient, Auth, RpcApi};
-use which::which;
+use bitcoin::{Amount, FeeRate, Network, Txid};
+use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
-use crate::{Bark, AspD};
+use crate::{Bark, Aspd};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXEC;
+use crate::util::FeeRateExt;
 
-use bitcoin::{
-	amount::Amount,
-	network::Network,
-	transaction::Txid};
-
-pub struct BitcoinDHelper {
+pub struct BitcoindHelper {
 	name : String,
-	bitcoind_exec: PathBuf,
-	config: BitcoinDConfig,
-	state: BitcoinDState,
+	exec: PathBuf,
+	config: BitcoindConfig,
+	state: BitcoindState,
 }
 
-pub struct BitcoinDConfig {
+pub struct BitcoindConfig {
 	pub datadir: PathBuf,
 	pub txindex: bool,
 	pub network: String,
-	pub fallback_fee: Option<f64>,
+	pub fallback_fee: FeeRate,
+	pub relay_fee: Option<FeeRate>,
 }
 
-impl Default for BitcoinDConfig {
-
+impl Default for BitcoindConfig {
 	fn default() -> Self {
 		Self {
 			datadir: PathBuf::from("~/.bitcoin"),
 			txindex: false,
 			network: String::from("regtest"),
-			fallback_fee: Some(0.00001)
+			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
+			relay_fee: None,
 		}
 	}
 }
 
 #[derive(Default)]
-pub struct BitcoinDState {
+pub struct BitcoindState {
 	rpc_port: Option<u16>,
 	p2p_port: Option<u16>,
 }
 
-pub type BitcoinD = Daemon<BitcoinDHelper>;
+pub type Bitcoind = Daemon<BitcoindHelper>;
 
-pub fn bitcoind_exe_path() -> anyhow::Result<PathBuf> {
-		match std::env::var(&BITCOIND_EXEC) {
-			Ok(var) => which(var).context("Failed to find binary path from `BITCOIND_EXEC`"),
-			Err(VarError::NotPresent) => which("bitcoind").context("Failed to find `bitcoind` installation"),
-			_ => bail!("BITCOIND_EXEC is not valid unicode")
+impl Bitcoind {
+	fn exec() -> PathBuf {
+		if let Ok(e) = std::env::var(&BITCOIND_EXEC) {
+			e.into()
+		} else if let Ok(e) = which::which("bitcoind") {
+			e.into()
+		} else {
+			panic!("BITCOIND_EXEC env not set")
 		}
-}
-
-impl BitcoinD {
-
-	pub fn new(name: String, bitcoind_exec: PathBuf, config: BitcoinDConfig) -> Self {
-		let state = BitcoinDState::default();
-		let inner = BitcoinDHelper { name, bitcoind_exec, config, state};
-		Daemon::wrap(inner)
 	}
 
-	pub fn sync_client(&self) -> anyhow::Result<BitcoinDClient> {
+	pub fn new(name: String, config: BitcoindConfig) -> Self {
+		let state = BitcoindState::default();
+		let exec = Bitcoind::exec();
+		Daemon::wrap(BitcoindHelper { name, exec, config, state})
+	}
+
+	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
 		self.inner.sync_client()
 	}
 
@@ -101,7 +97,7 @@ impl BitcoinD {
 		Ok(())
 	}
 
-	pub async fn fund_aspd(&self, aspd: &AspD, amount: Amount) -> anyhow::Result<()> {
+	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) -> anyhow::Result<()> {
 		let address = aspd.get_funding_address().await?;
 		self.sync_client()?.send_to_address(&address, amount, None, None, None, None, None, None)?;
 		Ok(())
@@ -112,14 +108,11 @@ impl BitcoinD {
 		let address = bark.get_address().await?;
 		let client = self.sync_client()?;
 		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
-
 		Ok(txid)
 	}
-
 }
 
-impl BitcoinDHelper {
-
+impl BitcoindHelper {
 	pub fn auth(&self) -> Auth {
 			Auth::CookieFile(self.bitcoind_cookie())
 	}
@@ -136,16 +129,15 @@ impl BitcoinDHelper {
 		format!("http://127.0.0.1:{}", self.state.rpc_port.expect("A port has been picked. Is bitcoind running?"))
 	}
 
-	pub fn sync_client(&self) -> anyhow::Result<BitcoinDClient> {
+	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
 		let bitcoind_url = self.bitcoind_url();
 		let auth = self.auth();
-		let client = BitcoinDClient::new(&bitcoind_url, auth)?;
+		let client = BitcoindClient::new(&bitcoind_url, auth)?;
 		Ok(client)
 	}
 }
 
-impl DaemonHelper for BitcoinDHelper {
-
+impl DaemonHelper for BitcoindHelper {
 	fn name(&self) -> &str {
 		&self.name
 	}
@@ -163,17 +155,17 @@ impl DaemonHelper for BitcoinDHelper {
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		let mut cmd = Command::new(self.bitcoind_exec.clone());
-		cmd
-			.arg(format!("--{}", self.config.network))
-			.arg(format!("-datadir={}", self.config.datadir.display().to_string()))
-			.arg(format!("-txindex={}", self.config.txindex))
-			.arg(format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")))
-			.arg(format!("-port={}", self.state.p2p_port.expect("A port has been picked")));
-
-		match &self.config.fallback_fee {
-			Some(w) => {let _ = cmd.arg(format!("-fallbackfee={}", w));},
-			None => {}
+		let mut cmd = Command::new(self.exec.clone());
+		cmd.args(&[
+			&format!("--{}", self.config.network),
+			&format!("-datadir={}", self.config.datadir.display().to_string()),
+			&format!("-txindex={}", self.config.txindex),
+			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
+			&format!("-port={}", self.state.p2p_port.expect("A port has been picked")),
+			&format!("-fallbackfee={}", self.config.fallback_fee.to_btc_per_kvb()),
+		]);
+		if let Some(fr) = self.config.relay_fee {
+			cmd.arg(format!("-minrelaytxfee={}", fr.to_btc_per_kvb()));
 		}
 
 		Ok(cmd)

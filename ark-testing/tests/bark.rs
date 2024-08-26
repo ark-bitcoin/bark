@@ -1,6 +1,11 @@
-use ark_testing::context::TestContext;
+#[macro_use]
+extern crate log;
+
+use std::time::Duration;
 
 use bitcoincore_rpc::bitcoin::amount::Amount;
+
+use ark_testing::{TestContext, AspdConfig};
 
 #[tokio::test]
 async fn bark_version() {
@@ -36,74 +41,58 @@ async fn onboard_bark() {
 
 #[tokio::test]
 async fn multiple_round_payments() {
+	#[cfg(not(feature = "slow_test"))]
+	const N: usize = 8;
+	#[cfg(feature = "slow_test")]
+	const N: usize = 74; // this is the limit with this nb_round_nonces
+
+	info!("Running multiple_round_test with N set to {}", N);
+
 	// Initialize the test
 	let ctx = TestContext::new("bark/multiple_round_payments");
-	let bitcoind = ctx.bitcoind("bitcoind-1").await.unwrap();
-	let aspd = ctx.aspd("aspd-1", &bitcoind).await.unwrap();
+	let bitcoind = ctx.bitcoind("bitcoind").await.unwrap();
+	let aspd_cfg = AspdConfig {
+		round_interval: Duration::from_millis(2_000),
+		round_submit_time: Duration::from_millis(100 * N as u64),
+		round_sign_time: Duration::from_millis(1000 * N as u64),
+		nb_round_nonces: 200,
+		..ctx.aspd_default_cfg("aspd", &bitcoind)
+	};
+	let aspd = ctx.aspd_with_cfg("aspd", aspd_cfg).await.unwrap();
 
 	// Fund the asp
 	bitcoind.generate(106).await.unwrap();
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await.unwrap();
 
 	// Create a few clients
-	let bark_1 = ctx.bark("bark_1".to_string(), &bitcoind, &aspd).await.unwrap();
-	let bark_2 = ctx.bark("bark_2".to_string(), &bitcoind, &aspd).await.unwrap();
-	let bark_3 = ctx.bark("bark_3".to_string(), &bitcoind, &aspd).await.unwrap();
-	let bark_4 = ctx.bark("bark_4".to_string(), &bitcoind, &aspd).await.unwrap();
-	let bark_5 = ctx.bark("bark_5".to_string(), &bitcoind, &aspd).await.unwrap();
-	let bark_6 = ctx.bark("bark_6".to_string(), &bitcoind, &aspd).await.unwrap();
-	let bark_7 = ctx.bark("bark_7".to_string(), &bitcoind, &aspd).await.unwrap();
-	let bark_8 = ctx.bark("bark_8".to_string(), &bitcoind, &aspd).await.unwrap();
+	let (barks, pks) = {
+		let mut barks = Vec::new();
+		let mut pks = Vec::new();
+		for i in 0..N {
+			let b = ctx.bark(format!("bark{}", i), &bitcoind, &aspd).await.unwrap();
+			// Provide onchain funds
+			bitcoind.fund_bark(&b, Amount::from_sat(90_000)).await.unwrap();
+			if i % 24 == 0 {
+				bitcoind.generate(1).await.unwrap();
+			}
+			pks.push(b.get_vtxo_pubkey().await.unwrap());
+			barks.push(b);
+		}
+		(barks, pks)
+	};
 
-	// Provide onchain funds
-	tokio::try_join!(
-		bitcoind.fund_bark(&bark_1, Amount::from_sat(90_000)),
-		bitcoind.fund_bark(&bark_2, Amount::from_sat(90_000)),
-		bitcoind.fund_bark(&bark_3, Amount::from_sat(90_000)),
-		bitcoind.fund_bark(&bark_4, Amount::from_sat(90_000)),
-		bitcoind.fund_bark(&bark_5, Amount::from_sat(90_000)),
-		bitcoind.fund_bark(&bark_6, Amount::from_sat(90_000)),
-		bitcoind.fund_bark(&bark_7, Amount::from_sat(90_000)),
-		bitcoind.fund_bark(&bark_8, Amount::from_sat(90_000)),
-	).unwrap();
+	for chunk in barks.chunks(20) { // 25 sometimes failed..
+		futures::future::try_join_all(chunk.iter().map(|b| {
+			b.onboard(Amount::from_sat(80_000))
+		})).await.unwrap();
+		bitcoind.generate(1).await.unwrap();
+	}
 
-	// Onboard all the clients
-	tokio::try_join!(
-		bark_1.onboard(Amount::from_sat(80_000)),
-		bark_2.onboard(Amount::from_sat(80_000)),
-		bark_3.onboard(Amount::from_sat(80_000)),
-		bark_4.onboard(Amount::from_sat(80_000)),
-		bark_5.onboard(Amount::from_sat(80_000)),
-		bark_6.onboard(Amount::from_sat(80_000)),
-		bark_7.onboard(Amount::from_sat(80_000)),
-		bark_8.onboard(Amount::from_sat(80_000)),
-	).unwrap();
-
-		// Get all the vtxo pubkeys
-	let (a1, a2, a3, a4, a5, a6, a7, a8) =
-		tokio::try_join!(
-			bark_1.get_vtxo_pubkey(),
-			bark_2.get_vtxo_pubkey(),
-			bark_3.get_vtxo_pubkey(),
-			bark_4.get_vtxo_pubkey(),
-			bark_5.get_vtxo_pubkey(),
-			bark_6.get_vtxo_pubkey(),
-			bark_7.get_vtxo_pubkey(),
-			bark_8.get_vtxo_pubkey(),
-	).unwrap();
-
-	// Perform send_round
-	tokio::try_join!(
-		bark_1.send_round(a2, Amount::from_sat(100)),
-		bark_2.send_round(a3, Amount::from_sat(200)),
-		bark_3.send_round(a4, Amount::from_sat(300)),
-		bark_4.send_round(a5, Amount::from_sat(400)),
-		bark_5.send_round(a6, Amount::from_sat(500)),
-		bark_6.send_round(a7, Amount::from_sat(600)),
-		bark_7.send_round(a8, Amount::from_sat(700)),
-		bark_8.send_round(a1, Amount::from_sat(800)),
-	).unwrap();
-
+	let pks_shifted = pks.iter().chain(pks.iter()).skip(1).cloned().take(N).collect::<Vec<_>>();
+	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
+	futures::future::try_join_all(barks.iter().zip(pks_shifted).map(|(b, pk)| {
+		b.send_round(pk, Amount::from_sat(500))
+	})).await.unwrap();
 }
 
 #[tokio::test]

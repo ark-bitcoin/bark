@@ -32,7 +32,7 @@ pub trait DaemonHelper {
 }
 
 pub struct Daemon<T>
-where T : DaemonHelper + Send + Sync + 'static
+	where T : DaemonHelper + Send + Sync + 'static
 {
 	inner : T,
 	daemon_state: DaemonState,
@@ -44,7 +44,7 @@ where T : DaemonHelper + Send + Sync + 'static
 }
 
 impl<T> Daemon<T>
-where T: DaemonHelper + Send + Sync + 'static
+	where T: DaemonHelper + Send + Sync + 'static
 {
 
 	pub fn wrap(inner : T) -> Self {
@@ -62,9 +62,8 @@ where T: DaemonHelper + Send + Sync + 'static
 }
 
 impl<T> Daemon<T>
-where T : DaemonHelper + Send + Sync + 'static
+	where T : DaemonHelper + Send + Sync + 'static
 {
-
 	pub async fn start(&mut self) -> anyhow::Result<()> {
 		info!("Starting {}", self.inner.name());
 		self.daemon_state = DaemonState::Starting;
@@ -195,7 +194,7 @@ where T : DaemonHelper + Send + Sync + 'static
 }
 
 impl<T> Drop for Daemon<T>
-where T: DaemonHelper + Send + Sync + 'static
+	where T: DaemonHelper + Send + Sync + 'static
 {
 
 	fn drop(&mut self) {
