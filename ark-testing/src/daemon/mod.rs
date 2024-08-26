@@ -65,6 +65,10 @@ impl<T> Daemon<T>
 impl<T> Daemon<T>
 	where T : DaemonHelper + Send + Sync + 'static
 {
+	pub fn name(&self) -> &str {
+		return self.inner.name()
+	}
+
 	pub async fn start(&mut self) -> anyhow::Result<()> {
 		info!("Starting {}", self.inner.name());
 		self.daemon_state = DaemonState::Starting;

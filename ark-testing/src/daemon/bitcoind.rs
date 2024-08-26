@@ -5,7 +5,7 @@ use std::time::Duration;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
-use crate::{Bark, Aspd};
+use crate::{Bark, Aspd, Lightningd};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXEC;
 use crate::util::FeeRateExt;
@@ -118,6 +118,23 @@ impl Bitcoind {
 		let client = self.sync_client()?;
 		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
 		Ok(txid)
+	}
+
+	pub async fn fund_lightningd(&self, lightningd: &Lightningd, amount: Amount) -> anyhow::Result<Txid> {
+		info!("Fund {} {}", lightningd.name(), amount);
+		let address = lightningd.get_onchain_address().await?;
+
+		let client = self.sync_client()?;
+		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
+
+		Ok(txid)
+	}
+
+	pub async fn get_block_count(&self) -> anyhow::Result<u64> {
+		let client = self.sync_client().unwrap();
+		let height = client.get_block_count()?;
+		Ok(height)
+
 	}
 }
 

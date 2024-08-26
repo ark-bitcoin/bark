@@ -12,6 +12,7 @@ serde_json.workspace = true
 bitcoin.workspace = true
 bitcoincore-rpc = "0.19.0"
 env_logger.workspace = true
+hex.workspace = true
 log.workspace = true
 fern.workspace = true
 chrono.workspace = true
