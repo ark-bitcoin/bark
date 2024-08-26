@@ -32,7 +32,8 @@ impl Lightningd {
 #[derive(Default)]
 struct LightningDHelperState{
 	grpc_port: Option<u16>,
-	port: Option<u16>
+	grpc_client: Option<NodeClient<Channel>>,
+	port: Option<u16>,
 }
 
 pub struct LightningdConfig {
@@ -86,9 +87,22 @@ impl LightningDHelper {
 	}
 
 	pub async fn grpc_client(&self) -> anyhow::Result<NodeClient<Channel>> {
+		let mut unlocked_state = self.state.lock().await;
+
+		match &unlocked_state.grpc_client {
+			None => {
+				let port = unlocked_state.grpc_port.expect("grpc-port is set");
+				unlocked_state.grpc_client = Some(self.new_grpc_client(port).await?);
+			},
+			Some(_) => {}
+		}
+
+		Ok(unlocked_state.grpc_client.clone().unwrap())
+	}
+
+	async fn new_grpc_client(&self, grpc_port: u16) -> anyhow::Result<NodeClient<Channel>> {
 		// Client doesn't support grpc over http
 		// We need to use https using m-TLS authentication
-		let grpc_port = self.grpc_port().await.context("grpc-port is set")?;
 		let ca_pem = fs::read_to_string(self.config.lightning_dir.join("regtest/ca.pem"))?;
 		let id_pem = fs::read_to_string(self.config.lightning_dir.join("regtest/client.pem"))?;
 		let id_key = fs::read_to_string(self.config.lightning_dir.join("regtest/client-key.pem"))?;
@@ -180,8 +194,8 @@ impl Lightningd {
 		Daemon::wrap(inner)
 	}
 
-	pub async fn grpc_client(&self) -> anyhow::Result<NodeClient<Channel>> {
-		self.inner.grpc_client().await
+	pub async fn grpc_client(&self) -> NodeClient<Channel> {
+		self.inner.grpc_client().await.expect("Can connect to grpc-server")
 	}
 
 
