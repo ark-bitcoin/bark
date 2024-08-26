@@ -6,24 +6,11 @@ use std::process::Command;
 use anyhow::Context;
 use bitcoin::address::{Address, NetworkUnchecked, NetworkChecked};
 
-use which::which;
-
 use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
 use aspd_rpc_client::Empty;
 
 use crate::{Daemon, DaemonHelper};
 use crate::constants::env::ASPD_EXEC;
-
-pub fn get_base_cmd() -> anyhow::Result<Command> {
-	match env::var(ASPD_EXEC) {
-		Ok(aspd_exec) => {
-			let aspd_exe = which(aspd_exec).expect("Failed to find aspd_exec");
-			Ok(Command::new(aspd_exe))
-		},
-		Err(env::VarError::NotPresent) => bail!("ASPD_EXEC not set"),
-		Err(_) => bail!("Failed to read ASPD_EXEC"),
-	}
-}
 
 pub type Aspd = Daemon<AspdHelper>;
 
@@ -45,6 +32,7 @@ pub struct AspdConfig {
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
+	pub nb_round_nonces: usize,
 }
 
 #[derive(Default)]
@@ -54,6 +42,11 @@ struct AspdState {
 }
 
 impl Aspd {
+	pub fn base_cmd() -> Command {
+		let exec = env::var(ASPD_EXEC).expect("ASPD_EXEC env not set");
+		Command::new(exec)
+	}
+
 	pub fn new(name: impl AsRef<str>, config: AspdConfig) -> Self {
 		let helper = AspdHelper {
 			name: name.as_ref().to_string(),
@@ -82,6 +75,10 @@ impl Aspd {
 		let address: Address<NetworkChecked> = response.address.parse::<Address<NetworkUnchecked>>()?.assume_checked();
 		Ok(address)
 	}
+
+	pub async fn trigger_round(&self) {
+		self.get_admin_client().await.unwrap().trigger_round(Empty {}).await.unwrap();
+	}
 }
 
 impl DaemonHelper for AspdHelper {
@@ -96,7 +93,7 @@ impl DaemonHelper for AspdHelper {
 		let public_grpc_address = format!("0.0.0.0:{}", public_grpc_port);
 		let admin_grpc_address = format!("127.0.0.1:{}", admin_grpc_port);
 
-		let mut base_cmd = get_base_cmd()?;
+		let mut base_cmd = Aspd::base_cmd();
 
 		let datadir = self.config.datadir.clone();
 		let pgrpc = public_grpc_address.clone();
@@ -126,12 +123,12 @@ impl DaemonHelper for AspdHelper {
 	}
 
 	async fn prepare(&self) -> anyhow::Result<()> {
-		let mut base_cmd = get_base_cmd()?;
+		let mut base_cmd = Aspd::base_cmd();
 		trace!("base_cmd={:?}", base_cmd);
 
 		let cfg = self.config.clone();
-		let output = tokio::task::spawn_blocking(move || base_cmd
-			.args([
+		let output = tokio::task::spawn_blocking(move || {
+			let cmd = base_cmd.args([
 				"--datadir",
 				&cfg.datadir.display().to_string(),
 				"create",
@@ -147,8 +144,11 @@ impl DaemonHelper for AspdHelper {
 				&cfg.round_submit_time.as_millis().to_string(),
 				"--round-sign-time",
 				&cfg.round_sign_time.as_millis().to_string(),
-			])
-			.output()).await??;
+				"--nb-round-nonces",
+				&cfg.nb_round_nonces.to_string(),
+			]);
+			cmd.output()
+		}).await??;
 
 		if output.status.success() {
 			Ok(())
@@ -160,8 +160,7 @@ impl DaemonHelper for AspdHelper {
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-
-		let mut base_cmd = get_base_cmd()?;
+		let mut base_cmd = Aspd::base_cmd();
 		base_cmd
 			.arg("--datadir")
 			.arg(&self.config.datadir)
@@ -180,7 +179,6 @@ impl DaemonHelper for AspdHelper {
 }
 
 impl AspdHelper {
-
 	async fn is_ready(&self) -> bool {
 		return self.admin_grpc_is_ready().await && self.public_grpc_is_ready().await
 	}

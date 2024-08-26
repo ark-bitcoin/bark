@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::util::test_data_directory;
-use crate::daemon::bitcoind::bitcoind_exe_path;
 use crate::daemon::log::FileLogger;
 use crate::{Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig};
 
@@ -27,8 +26,6 @@ impl TestContext {
 	}
 
 	pub async fn bitcoind(&self, name: impl AsRef<str>) -> anyhow::Result<Bitcoind> {
-		let bitcoind_exe = bitcoind_exe_path()?;
-
 		let datadir = self.datadir.join(name.as_ref());
 		let config = BitcoindConfig {
 			datadir,
@@ -37,29 +34,39 @@ impl TestContext {
 			..BitcoindConfig::default()
 		};
 
-		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), bitcoind_exe, config);
+		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), config);
 		bitcoind.start().await?;
 
 		Ok(bitcoind)
 	}
 
-	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> anyhow::Result<Aspd> {
+	pub async fn aspd_with_cfg(&self, name: impl AsRef<str>, cfg: AspdConfig) -> anyhow::Result<Aspd> {
 		let datadir = self.datadir.join(name.as_ref());
 
-		let cfg = AspdConfig {
-			datadir: datadir.clone(),
-			bitcoind_url: bitcoind.bitcoind_url(),
-			bitcoind_cookie: bitcoind.bitcoind_cookie(),
-			round_interval: Duration::from_millis(500),
-			round_submit_time: Duration::from_millis(500),
-			round_sign_time: Duration::from_millis(500),
-		};
 		let mut aspd = Aspd::new(name, cfg);
 		aspd.add_stdout_handler(FileLogger::new(datadir.join("stdout.log")))?;
 		aspd.add_stderr_handler(FileLogger::new(datadir.join("stderr.log")))?;
 
 		aspd.start().await?;
 		Ok(aspd)
+	}
+
+	pub fn aspd_default_cfg(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> AspdConfig {
+		let datadir = self.datadir.join(name.as_ref());
+		AspdConfig {
+			datadir: datadir.clone(),
+			bitcoind_url: bitcoind.bitcoind_url(),
+			bitcoind_cookie: bitcoind.bitcoind_cookie(),
+			round_interval: Duration::from_millis(500),
+			round_submit_time: Duration::from_millis(500),
+			round_sign_time: Duration::from_millis(500),
+			nb_round_nonces: 100,
+		}
+	}
+
+	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> anyhow::Result<Aspd> {
+		let name = name.as_ref();
+		self.aspd_with_cfg(name, self.aspd_default_cfg(name, bitcoind)).await
 	}
 
 
@@ -73,9 +80,7 @@ impl TestContext {
 			bitcoind_url: bitcoind.bitcoind_url(),
 			bitcoind_cookie: bitcoind.bitcoind_cookie(),
 			network: String::from("regtest")};
-		let bark = cfg.create(name).await?;
-
-		Ok(bark)
+		Ok(Bark::new(name, cfg).await?)
 	}
 }
 

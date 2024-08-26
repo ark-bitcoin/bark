@@ -1,11 +1,8 @@
-use std::env::VarError;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::Context;
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
-use which::which;
 
 use crate::{Bark, Aspd};
 use crate::daemon::{Daemon, DaemonHelper};
@@ -18,7 +15,7 @@ use bitcoin::{
 
 pub struct BitcoindHelper {
 	name : String,
-	bitcoind_exec: PathBuf,
+	exec: PathBuf,
 	config: BitcoindConfig,
 	state: BitcoindState,
 }
@@ -50,20 +47,21 @@ pub struct BitcoindState {
 
 pub type Bitcoind = Daemon<BitcoindHelper>;
 
-pub fn bitcoind_exe_path() -> anyhow::Result<PathBuf> {
-		match std::env::var(&BITCOIND_EXEC) {
-			Ok(var) => which(var).context("Failed to find binary path from `BITCOIND_EXEC`"),
-			Err(VarError::NotPresent) => which("bitcoind").context("Failed to find `bitcoind` installation"),
-			_ => bail!("BITCOIND_EXEC is not valid unicode")
-		}
-}
-
 impl Bitcoind {
+	fn exec() -> PathBuf {
+		if let Ok(e) = std::env::var(&BITCOIND_EXEC) {
+			e.into()
+		} else if let Ok(e) = which::which("bitcoind") {
+			e.into()
+		} else {
+			panic!("BITCOIND_EXEC env not set")
+		}
+	}
 
-	pub fn new(name: String, bitcoind_exec: PathBuf, config: BitcoindConfig) -> Self {
+	pub fn new(name: String, config: BitcoindConfig) -> Self {
 		let state = BitcoindState::default();
-		let inner = BitcoindHelper { name, bitcoind_exec, config, state};
-		Daemon::wrap(inner)
+		let exec = Bitcoind::exec();
+		Daemon::wrap(BitcoindHelper { name, exec, config, state})
 	}
 
 	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
@@ -112,10 +110,8 @@ impl Bitcoind {
 		let address = bark.get_address().await?;
 		let client = self.sync_client()?;
 		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
-
 		Ok(txid)
 	}
-
 }
 
 impl BitcoindHelper {
@@ -163,7 +159,7 @@ impl DaemonHelper for BitcoindHelper {
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		let mut cmd = Command::new(self.bitcoind_exec.clone());
+		let mut cmd = Command::new(self.exec.clone());
 		cmd
 			.arg(format!("--{}", self.config.network))
 			.arg(format!("-datadir={}", self.config.datadir.display().to_string()))
