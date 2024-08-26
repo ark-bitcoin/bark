@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::util::test_data_directory;
 use crate::daemon::log::FileLogger;
-use crate::{Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig};
+use crate::{Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig};
 
 pub struct TestContext {
 	#[allow(dead_code)]
@@ -91,11 +91,28 @@ impl TestContext {
 			network: String::from("regtest")};
 		Ok(Bark::new(name, cfg).await?)
 	}
+
+	pub async fn lightningd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> anyhow::Result<Lightningd> {
+		let lightning_dir = self.datadir.join(name.as_ref());
+
+		let cfg = LightningdConfig {
+			network: String::from("regtest"),
+			bitcoin_dir: bitcoind.bitcoind_datadir(),
+			bitcoin_rpcport: bitcoind.bitcoind_rpcport(),
+			lightning_dir
+		};
+
+		let mut lightningd = Lightningd::new(name, cfg);
+		lightningd.start().await?;
+
+		Ok(lightningd)
+	}
 }
+
+
 
 impl Drop for TestContext {
 	fn drop(&mut self) {
 		log::info!("Textcontext: Datadir is located at {:?}", self.datadir);
 	}
 }
-

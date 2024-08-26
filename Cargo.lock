@@ -117,6 +117,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aspd-rpc-client",
+ "bark-cln",
  "bitcoin",
  "bitcoincore-rpc",
  "chrono",

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 aspd-rpc-client = { path = "../aspd-rpc-client" }
+bark-cln = { path = "../bark-cln"}
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
