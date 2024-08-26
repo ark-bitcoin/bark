@@ -2,16 +2,13 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
 use crate::{Bark, Aspd};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXEC;
-
-use bitcoin::{
-	amount::Amount,
-	network::Network,
-	transaction::Txid};
+use crate::util::FeeRateExt;
 
 pub struct BitcoindHelper {
 	name : String,
@@ -24,17 +21,18 @@ pub struct BitcoindConfig {
 	pub datadir: PathBuf,
 	pub txindex: bool,
 	pub network: String,
-	pub fallback_fee: Option<f64>,
+	pub fallback_fee: FeeRate,
+	pub relay_fee: Option<FeeRate>,
 }
 
 impl Default for BitcoindConfig {
-
 	fn default() -> Self {
 		Self {
 			datadir: PathBuf::from("~/.bitcoin"),
 			txindex: false,
 			network: String::from("regtest"),
-			fallback_fee: Some(0.00001)
+			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
+			relay_fee: None,
 		}
 	}
 }
@@ -115,7 +113,6 @@ impl Bitcoind {
 }
 
 impl BitcoindHelper {
-
 	pub fn auth(&self) -> Auth {
 			Auth::CookieFile(self.bitcoind_cookie())
 	}
@@ -141,7 +138,6 @@ impl BitcoindHelper {
 }
 
 impl DaemonHelper for BitcoindHelper {
-
 	fn name(&self) -> &str {
 		&self.name
 	}
@@ -160,16 +156,16 @@ impl DaemonHelper for BitcoindHelper {
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
 		let mut cmd = Command::new(self.exec.clone());
-		cmd
-			.arg(format!("--{}", self.config.network))
-			.arg(format!("-datadir={}", self.config.datadir.display().to_string()))
-			.arg(format!("-txindex={}", self.config.txindex))
-			.arg(format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")))
-			.arg(format!("-port={}", self.state.p2p_port.expect("A port has been picked")));
-
-		match &self.config.fallback_fee {
-			Some(w) => {let _ = cmd.arg(format!("-fallbackfee={}", w));},
-			None => {}
+		cmd.args(&[
+			&format!("--{}", self.config.network),
+			&format!("-datadir={}", self.config.datadir.display().to_string()),
+			&format!("-txindex={}", self.config.txindex),
+			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
+			&format!("-port={}", self.state.p2p_port.expect("A port has been picked")),
+			&format!("-fallbackfee={}", self.config.fallback_fee.to_btc_per_kvb()),
+		]);
+		if let Some(fr) = self.config.relay_fee {
+			cmd.arg(format!("-minrelaytxfee={}", fr.to_btc_per_kvb()));
 		}
 
 		Ok(cmd)

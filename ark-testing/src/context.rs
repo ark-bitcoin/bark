@@ -25,18 +25,27 @@ impl TestContext {
 		TestContext { name: name.as_ref().to_string(), datadir}
 	}
 
-	pub async fn bitcoind(&self, name: impl AsRef<str>) -> anyhow::Result<Bitcoind> {
+	pub fn bitcoind_default_cfg(&self, name: impl AsRef<str>) -> BitcoindConfig {
 		let datadir = self.datadir.join(name.as_ref());
-		let config = BitcoindConfig {
+		BitcoindConfig {
 			datadir,
 			txindex: true,
 			network: String::from("regtest"),
 			..BitcoindConfig::default()
-		};
+		}
+	}
 
-		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), config);
+	pub async fn bitcoind(&self, name: impl AsRef<str>) -> anyhow::Result<Bitcoind> {
+		self.bitcoind_with_cfg(name.as_ref(), self.bitcoind_default_cfg(name.as_ref())).await
+	}
+
+	pub async fn bitcoind_with_cfg(
+		&self,
+		name: impl AsRef<str>,
+		cfg: BitcoindConfig,
+	) -> anyhow::Result<Bitcoind> {
+		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), cfg);
 		bitcoind.start().await?;
-
 		Ok(bitcoind)
 	}
 

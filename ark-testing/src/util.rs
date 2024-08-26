@@ -1,6 +1,10 @@
+
+use std::borrow::Borrow;
 use std::process::Child;
 use std::path::{Path, PathBuf};
 use std::fs;
+
+use bitcoin::{Denomination, FeeRate, Weight};
 
 use crate::constants::env::TEST_DIRECTORY;
 
@@ -62,3 +66,9 @@ pub fn is_running(child: &mut Child) -> bool {
 	}
 }
 
+pub trait FeeRateExt: Borrow<FeeRate> {
+	fn to_btc_per_kvb(&self) -> String {
+		(*self.borrow() * Weight::from_vb(1000).unwrap()).to_string_in(Denomination::Bitcoin)
+	}
+}
+impl FeeRateExt for FeeRate {}

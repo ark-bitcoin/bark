@@ -1,6 +1,8 @@
 
+use ark_testing::daemon::bitcoind::BitcoindConfig;
 use ark_testing::context::TestContext;
 
+use bitcoin::FeeRate;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 
 
@@ -8,8 +10,11 @@ use bitcoincore_rpc::bitcoin::amount::Amount;
 async fn unilateral_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("unilateral_exit");
-	let bitcoind = ctx.bitcoind("bitcoind-1").await.unwrap();
-	let aspd = ctx.aspd("aspd-1", &bitcoind).await.unwrap();
+	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
+		relay_fee: Some(FeeRate::from_sat_per_vb(1).unwrap()),
+		..ctx.bitcoind_default_cfg("bitcoind")
+	}).await.unwrap();
+	let aspd = ctx.aspd("aspd", &bitcoind).await.unwrap();
 
 	// Fund the asp
 	bitcoind.generate(106).await.unwrap();
