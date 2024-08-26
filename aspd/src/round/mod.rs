@@ -361,7 +361,7 @@ pub async fn run_round_coordinator(
 
 	// The maximum number of output vtxos per round based on the max number
 	// of vtxo tree nonces we require users to provide.
-	let max_output_vtxos = (cfg.nb_round_nonces * 4 ) / 5;
+	let max_output_vtxos = (cfg.nb_round_nonces * 3 ) / 4;
 
 	'round: loop {
 		// Sleep for the round interval, but discard all incoming messages.
