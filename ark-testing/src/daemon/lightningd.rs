@@ -31,7 +31,8 @@ impl Lightningd {
 
 #[derive(Default)]
 struct LightningDHelperState{
-	grpc_port: Option<u16>
+	grpc_port: Option<u16>,
+	port: Option<u16>
 }
 
 pub struct LightningdConfig {
@@ -52,6 +53,7 @@ pub struct LightningDHelper {
 impl LightningDHelper {
 
 	async fn write_config_file(&self) -> anyhow::Result<()> {
+		trace!("Writing config file");
 		let config_filepath = self.config.lightning_dir.join("config");
 		if config_filepath.exists() {
 			fs::remove_file(&config_filepath).context("Failed to delete config file")?;
@@ -71,6 +73,10 @@ impl LightningDHelper {
 
 		if let Some(grpc_port) = self.state.lock().await.grpc_port {
 			writeln!(file, "grpc-port={}", grpc_port)?;
+		}
+
+		if let Some(port) = self.state.lock().await.port {
+			writeln!(file, "addr=0.0.0.0:{}", port)?;
 		}
 
 		Ok(())
@@ -121,7 +127,15 @@ impl DaemonHelper for LightningDHelper {
 
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
 		let grpc_port = portpicker::pick_unused_port().expect("No ports free");
-		self.state.lock().await.grpc_port = Some(grpc_port);
+		let port = portpicker::pick_unused_port().expect("No ports free");
+
+		trace!("Reserved grpc_port={} and port={}", grpc_port, port);
+		let mut state = self.state.lock().await;
+		state.grpc_port = Some(grpc_port);
+		state.port = Some(port);
+
+		drop(state);
+
 		self.write_config_file().await?;
 		Ok(())
 	}
