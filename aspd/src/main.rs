@@ -1,4 +1,5 @@
 
+#[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
 
 use std::{fs, process};
@@ -6,7 +7,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{Result, Context};
+use anyhow::Context;
 use bitcoin::{Address, Amount, Network};
 use clap::Parser;
 
@@ -18,64 +19,11 @@ const RPC_ADDR: &str = "[::]:3535";
 #[derive(Parser)]
 #[command(author = "Steven Roose <steven@roose.io>", version, about)]
 struct Cli {
+	/// the data directory for aspd, mandatory field for most commands
 	#[arg(long, global = true)]
 	datadir: Option<PathBuf>,
 	#[command(subcommand)]
 	command: Command,
-}
-
-#[derive(clap::Args)]
-struct CreateOpts {
-	#[arg(long, default_value = "regtest")]
-	network: Network,
-	#[arg(long)]
-	bitcoind_url: String,
-	#[arg(long)]
-	bitcoind_cookie: String,
-	#[arg(long)]
-	public_rpc_address: Option<String>,
-	#[arg(long)]
-	public_rpc_tls_cert_path: Option<PathBuf>,
-	#[arg(long)]
-	public_rpc_tls_key_path: Option<PathBuf>,
-	#[arg(long)]
-	admin_rpc_address: Option<String>,
-	/// Round interval, in ms.
-	#[arg(long)]
-	round_interval: Option<u64>,
-	/// Time for users to submit payments in rounds, in ms.
-	#[arg(long)]
-	round_submit_time: Option<u64>,
-	/// Time for users to submit signatures in rounds, in ms.
-	#[arg(long)]
-	round_sign_time: Option<u64>,
-	#[arg(long)]
-	nb_round_nonces: Option<usize>,
-	#[arg(long)]
-	vtxo_expiry_delta: Option<u16>,
-	#[arg(long)]
-	vtxo_exit_delta: Option<u16>
-}
-
-#[derive(clap::Args)]
-struct ConfigOpts {
-	#[arg(long)]
-	bitcoind_url: Option<String>,
-	#[arg(long)]
-	bitcoind_cookie: Option<String>,
-	#[arg(long)]
-	public_rpc_address: Option<String>,
-	#[arg(long)]
-	// We use a double Option because we must be able to set
-	// this variable to None.
-	// None -> Do not change this variable
-	// Some(None) -> Set this variable to None
-	// Some(val) -> Set this variable to `val`
-	public_rpc_tls_cert_path: Option<Option<PathBuf>>,
-	#[arg(long)]
-	public_rpc_tls_key_path: Option<Option<PathBuf>>,
-	#[arg(long)]
-	admin_rpc_address: Option<Option<String>>,
 }
 
 #[derive(clap::Subcommand)]
@@ -156,8 +104,18 @@ async fn inner_main() -> anyhow::Result<()> {
 				datadir.canonicalize().context("canonicalizing path")?
 			};
 
-			let cfg = config_from_create_opts(opts)?;
+			if opts.config.bitcoind_url.is_none() {
+				bail!("The --bitcoind-url flag is mandatory.");
+			}
+			if opts.config.bitcoind_cookie.is_none() {
+				bail!("The --bitcoind-cookie flag is mandatory.");
+			}
 
+			let mut cfg = Config {
+				network: opts.network,
+				..Default::default()
+			};
+			opts.config.merge_into(&mut cfg)?;
 			App::create(&datadir, cfg)?;
 		},
 		Command::SetConfig(updates) => {
@@ -167,7 +125,7 @@ async fn inner_main() -> anyhow::Result<()> {
 
 			// Update the configuration
 			let mut cfg = Config::read_from_datadir(&datadir)?;
-			merge_config(&mut cfg, updates)?;
+			updates.merge_into(&mut cfg)?;
 			cfg.write_to_datadir(&datadir)?;
 
 			println!("The configuration has been updated");
@@ -226,82 +184,110 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 	Ok(())
 }
 
-fn merge_config(cfg: &mut Config, updates: ConfigOpts) -> anyhow::Result<()>{
+#[derive(clap::Args)]
+struct CreateOpts {
+	#[arg(long, default_value = "regtest")]
+	network: Network,
 
-	match updates.bitcoind_url {
-		None => {},
-		Some(url) => cfg.bitcoind_url = url,
-	}
-
-	match updates.bitcoind_cookie {
-		None => {},
-		Some(cookie) => cfg.bitcoind_cookie = cookie
-	}
-
-	match updates.public_rpc_address {
-		None => {},
-		Some(addr) => {
-			cfg.public_rpc_address = addr.parse().context("public_rpc_address is invalid")?;
-		}
-	}
-
-	match updates.public_rpc_tls_cert_path {
-		None => {},
-		Some(x) => cfg.public_rpc_tls_cert_path = x
-	}
-
-	match updates.public_rpc_tls_key_path {
-		None => {},
-		Some(x) => cfg.public_rpc_tls_key_path = x
-	}
-
-	match updates.admin_rpc_address {
-		None => {},
-		Some(None) => cfg.admin_rpc_address = None,
-		Some(Some(x)) => cfg.admin_rpc_address = Some(x.parse().context("Invalid admin_rpc_address")?)
-	}
-
-	Ok(())
+	#[command(flatten)]
+	config: ConfigOpts,
 }
 
-fn config_from_create_opts(opts: CreateOpts) -> Result<Config> {
-	// Configure the ASP
-	let mut cfg = Config {
-		network: opts.network,
-		bitcoind_url: opts.bitcoind_url,
-		bitcoind_cookie: opts.bitcoind_cookie,
-		public_rpc_tls_cert_path: opts.public_rpc_tls_cert_path,
-		public_rpc_tls_key_path: opts.public_rpc_tls_key_path,
-		..Default::default()
-	};
+#[derive(Debug, Clone, clap::Args)]
+struct ConfigOpts {
+	/// the URL of the bitcoind RPC (mandatory on create)
+	#[arg(long)]
+	bitcoind_url: Option<String>,
+	/// the path of the cookie file for the bitcoind RPC (mandatory on create)
+	#[arg(long)]
+	bitcoind_cookie: Option<String>,
 
-	if let Some(pra) = opts.public_rpc_address {
-		cfg.public_rpc_address = pra.parse()
-			.context("Invalid `public_rpc_address`")?;
-	}
-	if let Some(ara) = opts.admin_rpc_address {
-		cfg.admin_rpc_address = Some(ara.parse()
-			.context("Invalid `admin_rpc_address`")?
-		);
-	}
-	if let Some(ri) = opts.round_interval {
-		cfg.round_interval = Duration::from_millis(ri);
-	}
-	if let Some(rst) = opts.round_submit_time {
-		cfg.round_submit_time = Duration::from_millis(rst);
-	}
-	if let Some(rst) = opts.round_sign_time {
-		cfg.round_sign_time = Duration::from_millis(rst);
-	}
-	if let Some(rnn) = opts.nb_round_nonces {
-		cfg.nb_round_nonces = rnn;
-	}
-	if let Some(ved) = opts.vtxo_expiry_delta {
-		cfg.vtxo_expiry_delta = ved;
-	}
-	if let Some(ved) = opts.vtxo_exit_delta {
-		cfg.vtxo_exit_delta = ved;
-	}
+	#[arg(long)]
+	public_rpc_address: Option<String>,
+	// We use a double Option because we must be able to set
+	// this variable to None.
+	// None -> Do not change this variable
+	// Some(None) -> Set this variable to None
+	// Some(val) -> Set this variable to `val`
+	#[arg(long)]
+	public_rpc_tls_cert_path: Option<Option<PathBuf>>,
+	#[arg(long)]
+	public_rpc_tls_key_path: Option<Option<PathBuf>>,
+	#[arg(long)]
+	admin_rpc_address: Option<Option<String>>,
 
-	Ok(cfg)
+	/// Round interval, in ms.
+	#[arg(long)]
+	round_interval: Option<u64>,
+	/// Time for users to submit payments in rounds, in ms.
+	#[arg(long)]
+	round_submit_time: Option<u64>,
+	/// Time for users to submit signatures in rounds, in ms.
+	#[arg(long)]
+	round_sign_time: Option<u64>,
+	#[arg(long)]
+	nb_round_nonces: Option<usize>,
+
+	#[arg(long)]
+	vtxo_expiry_delta: Option<u16>,
+	#[arg(long)]
+	vtxo_exit_delta: Option<u16>,
+}
+
+impl ConfigOpts {
+	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
+		if let Some(v) = self.bitcoind_url {
+			cfg.bitcoind_url = v;
+		}
+
+		if let Some(v) = self.bitcoind_cookie {
+			cfg.bitcoind_cookie = v;
+		}
+
+		if let Some(v) = self.public_rpc_address {
+			cfg.public_rpc_address = v.parse().context("public_rpc_address is invalid")?;
+		}
+
+		if let Some(v) = self.public_rpc_tls_cert_path {
+			cfg.public_rpc_tls_cert_path = v;
+		}
+
+		if let Some(v) = self.public_rpc_tls_key_path {
+			cfg.public_rpc_tls_key_path = v;
+		}
+
+		if let Some(v) = self.admin_rpc_address {
+			if let Some(v) = v {
+				cfg.admin_rpc_address = Some(v.parse().context("Invalid admin_rpc_address")?);
+			} else {
+				cfg.admin_rpc_address = None;
+			}
+		}
+
+		if let Some(v) = self.round_interval {
+			cfg.round_interval = Duration::from_millis(v);
+		}
+
+		if let Some(v) = self.round_submit_time {
+			cfg.round_submit_time = Duration::from_millis(v);
+		}
+
+		if let Some(v) = self.round_sign_time {
+			cfg.round_sign_time = Duration::from_millis(v);
+		}
+
+		if let Some(v) = self.nb_round_nonces {
+			cfg.nb_round_nonces = v;
+		}
+
+		if let Some(v) = self.vtxo_expiry_delta {
+			cfg.vtxo_expiry_delta = v;
+		}
+
+		if let Some(v) = self.vtxo_exit_delta {
+			cfg.vtxo_exit_delta = v;
+		}
+
+		Ok(())
+	}
 }
