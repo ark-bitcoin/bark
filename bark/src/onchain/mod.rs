@@ -143,7 +143,6 @@ impl Wallet {
 	}
 
 	pub async fn send_money(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
-		self.sync().await.context("sync error")?;
 		let psbt = self.prepare_tx(dest, amount)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;

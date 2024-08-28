@@ -81,8 +81,9 @@ enum Command {
 		#[arg(long)]
 		bitcoind_pass: Option<String>,
 	},
-	#[command()]
-	GetAddress,
+	/// use the built-in onchain wallet
+	#[command(subcommand)]
+	Onchain(OnchainCommand),
 	/// The the public key used to receive vtxos.
 	#[command()]
 	GetVtxoPubkey,
@@ -92,12 +93,6 @@ enum Command {
 	Vtxos,
 	#[command()]
 	Onboard {
-		amount: Amount,
-	},
-	/// Send using the built-in on-chain wallet.
-	#[command()]
-	SendOnchain {
-		address: Address<address::NetworkUnchecked>,
 		amount: Amount,
 	},
 	#[command()]
@@ -124,6 +119,22 @@ enum Command {
 	/// Dev command to drop the vtxo database.
 	#[command(hide = true)]
 	DropVtxos,
+}
+
+#[derive(clap::Subcommand)]
+enum OnchainCommand {
+	/// get the on-chain balance
+	#[command()]
+	Balance,
+	/// get an on-chain address
+	#[command()]
+	Address,
+	/// send using the on-chain wallet
+	#[command()]
+	Send {
+		address: Address<address::NetworkUnchecked>,
+		amount: Amount,
+	},
 }
 
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
@@ -210,7 +221,25 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	match cli.command {
 		Command::Create { .. } => unreachable!(),
-		Command::GetAddress => println!("{}", w.get_new_onchain_address()?),
+		Command::Onchain(cmd) => match cmd {
+			OnchainCommand::Balance => {
+				w.sync_onchain().await.context("sync error")?;
+				let res = w.onchain_balance();
+				if cli.json {
+					println!("{}", res.to_sat());
+				} else {
+					println!("{}", res);
+				}
+			},
+			OnchainCommand::Address => println!("{}", w.get_new_onchain_address()?),
+			OnchainCommand::Send { address, amount } => {
+				let addr = address.require_network(net).with_context(|| {
+					format!("address is not valid for configured network {}", net)
+				})?;
+				w.sync_onchain().await.context("sync error")?;
+				w.send_onchain(addr, amount).await?;
+			},
+		},
 		Command::GetVtxoPubkey => println!("{}", w.vtxo_pubkey()),
 		Command::Balance => {
 			w.sync().await.context("sync error")?;
@@ -254,12 +283,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 		},
 		Command::Onboard { amount } => w.onboard(amount).await?,
-		Command::SendOnchain { address, amount } => {
-			let addr = address.require_network(net).with_context(|| {
-				format!("address is not valid for configured network {}", net)
-			})?;
-			w.send_onchain(addr, amount).await?;
-		},
 		Command::SendOor { destination, amount } => {
 			let pk = PublicKey::from_str(&destination).context("invalid pubkey")?;
 			w.sync_ark().await.context("sync error")?;
