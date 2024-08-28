@@ -44,7 +44,7 @@ bdk_bitcoind_rpc = { git = "https://github.com/stevenroose/bdk.git", rev = "0543
 sled = "0.34.7"
 
 # LDK-dependencies
-lightning-invoice = "0.32.0-rc1"
+lightning-invoice = { version = "0.32.0-rc1", features = [ "serde" ] }
 
 # async + gRPC stack
 tonic = { version = "0.10", features = [ "tls" ] }

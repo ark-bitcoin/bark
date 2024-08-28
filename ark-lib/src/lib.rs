@@ -349,6 +349,10 @@ impl Vtxo {
 		}
 	}
 
+	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
+		self.spec().exit_taproot().output_key().to_inner()
+	}
+
 	pub fn vtxo_tx(&self) -> Transaction {
 		match self {
 			Vtxo::Onboard { base, reveal_tx_signature } => {

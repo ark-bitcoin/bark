@@ -36,6 +36,7 @@ bdk_wallet.workspace = true
 bdk_file_store.workspace = true
 bdk_bitcoind_rpc.workspace = true
 bdk_esplora.workspace = true
+lightning-invoice.workspace = true
 prost.workspace = true
 tonic.workspace = true
 tokio.workspace = true

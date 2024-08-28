@@ -300,6 +300,7 @@ dependencies = [
  "fern",
  "home",
  "lazy_static",
+ "lightning-invoice",
  "log",
  "miniscript",
  "prost",
@@ -1339,6 +1340,7 @@ dependencies = [
  "bech32 0.9.1",
  "bitcoin",
  "lightning-types",
+ "serde",
 ]
 
 [[package]]

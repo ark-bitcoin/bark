@@ -186,11 +186,7 @@ pub struct SignedOorPayment {
 impl SignedOorPayment {
 	pub fn signed_transaction(&self) -> Transaction {
 		let mut tx = self.payment.unsigned_transaction();
-		for (input, sig) in tx.input.iter_mut().zip(self.signatures.iter()) {
-			assert!(input.witness.is_empty());
-			input.witness.push(&sig[..]);
-			debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
-		}
+        util::fill_taproot_sigs(&mut tx, &self.signatures);
 		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
 		// this +2 might be fixed later
 		debug_assert_eq!(tx.weight(), self.payment.total_weight() + Weight::from_wu(2));

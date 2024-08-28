@@ -91,6 +91,42 @@ pub struct OorVtxosResponse {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentRequest {
+    #[prost(string, tag = "1")]
+    pub invoice: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub amount_sats: u64,
+    #[prost(bytes = "vec", repeated, tag = "3")]
+    pub input_vtxos: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", tag = "4")]
+    pub user_pubkey: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "5")]
+    pub user_nonces: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentDetails {
+    #[prost(bytes = "vec", tag = "1")]
+    pub details: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub pub_nonces: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", repeated, tag = "3")]
+    pub partial_sigs: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignedBolt11PaymentDetails {
+    #[prost(bytes = "vec", tag = "1")]
+    pub signed_payment: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentResult {
+    #[prost(bytes = "vec", tag = "1")]
+    pub payment_preimage: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RoundStart {
     #[prost(uint64, tag = "1")]
     pub round_id: u64,
@@ -170,6 +206,7 @@ pub mod round_event {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Payment {
+    /// amount in sats
     #[prost(uint64, tag = "1")]
     pub amount: u64,
     #[prost(oneof = "payment::Destination", tags = "2, 3")]
@@ -279,6 +316,21 @@ pub mod ark_service_server {
             request: tonic::Request<super::OorVtxosRequest>,
         ) -> std::result::Result<
             tonic::Response<super::OorVtxosResponse>,
+            tonic::Status,
+        >;
+        /// * LN payments
+        async fn start_bolt11_payment(
+            &self,
+            request: tonic::Request<super::Bolt11PaymentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::Bolt11PaymentDetails>,
+            tonic::Status,
+        >;
+        async fn finish_bolt11_payment(
+            &self,
+            request: tonic::Request<super::SignedBolt11PaymentDetails>,
+        ) -> std::result::Result<
+            tonic::Response<super::Bolt11PaymentResult>,
             tonic::Status,
         >;
         /// Server streaming response type for the SubscribeRounds method.
@@ -689,6 +741,100 @@ pub mod ark_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = EmptyOorMailboxSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/aspd.ArkService/StartBolt11Payment" => {
+                    #[allow(non_camel_case_types)]
+                    struct StartBolt11PaymentSvc<T: ArkService>(pub Arc<T>);
+                    impl<
+                        T: ArkService,
+                    > tonic::server::UnaryService<super::Bolt11PaymentRequest>
+                    for StartBolt11PaymentSvc<T> {
+                        type Response = super::Bolt11PaymentDetails;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::Bolt11PaymentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ArkService>::start_bolt11_payment(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = StartBolt11PaymentSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/aspd.ArkService/FinishBolt11Payment" => {
+                    #[allow(non_camel_case_types)]
+                    struct FinishBolt11PaymentSvc<T: ArkService>(pub Arc<T>);
+                    impl<
+                        T: ArkService,
+                    > tonic::server::UnaryService<super::SignedBolt11PaymentDetails>
+                    for FinishBolt11PaymentSvc<T> {
+                        type Response = super::Bolt11PaymentResult;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SignedBolt11PaymentDetails>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ArkService>::finish_bolt11_payment(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = FinishBolt11PaymentSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

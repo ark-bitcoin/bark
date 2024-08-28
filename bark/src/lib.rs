@@ -6,6 +6,8 @@
 mod database;
 mod exit;
 pub use exit::{ExitStatus, ExitLockError};
+use lightning_invoice::Bolt11Invoice;
+use serde::Serialize;
 mod onchain;
 mod psbtext;
 
@@ -16,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{bail, Context};
-use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Transaction, Txid};
+use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Transaction, Txid, Weight};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use tokio_stream::StreamExt;
@@ -421,6 +423,8 @@ impl Wallet {
 			.collect::<Result<Vec<_>, _>>()?;
 		debug!("ASP has {} OOR vtxos for us", oors.len());
 		for vtxo in oors {
+			//TODO(stevenroose) verify oor signatures
+
 			// Not sure if this can happen, but well.
 			if self.db.has_spent_vtxo(vtxo.id())? {
 				debug!("Not adding OOR vtxo {} because we previously forfeited it", vtxo.id());
@@ -600,6 +604,120 @@ impl Wallet {
 		}
 
 		Ok(user_vtxo.id())
+	}
+
+	pub async fn send_bolt11_payment(
+		&mut self,
+		invoice: &Bolt11Invoice,
+		amount: Amount,
+	) -> anyhow::Result<Vec<u8>> {
+		let current_height = self.onchain.tip().await?;
+		let fr = self.onchain.regular_fee_rate();
+		//TODO(stevenroose) impl key derivation
+		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+
+		// We do some kind of naive fee estimation: we try create a tx,
+		// if we don't have enough fee, we add the fee we were short to
+		// the desired input amount and try again.
+		let mut account_for_fee = ark::lightning::HTLC_MIN_FEE;
+		let inputs = loop {
+			let input_vtxos = self.db.get_expiring_vtxos(amount + account_for_fee)?;
+			let _change = {
+				let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+				let avail = Amount::from_sat(sum.to_sat().saturating_sub(account_for_fee.to_sat()));
+				if avail < amount {
+					bail!("Balance too low: {}", sum);
+				} else if avail < amount + ark::P2TR_DUST {
+					//TODO(stevenroose) consider below-dust change
+					info!("No change.");
+					None
+				} else {
+					let change_amount = avail - amount;
+					info!("Adding change vtxo for {}", change_amount);
+					Some(VtxoRequest {
+						pubkey: vtxo_key.public_key(),
+						amount: change_amount,
+					})
+				}
+			};
+
+            //TODO(stevenroose) we need a way for the user to calculate the htlc tx feerate,
+            //like in the oor way (it would be nicer if the user makes the bolt11payment info)
+
+            let vb = Weight::from_vb(300 + 20 * input_vtxos.len() as u64).unwrap();
+            if vb * fr > account_for_fee {
+                account_for_fee = vb * fr;
+            } else {
+                break input_vtxos;
+            }
+		};
+
+		let (sec_nonces, pub_nonces) = {
+			let mut secs = Vec::with_capacity(inputs.len());
+			let mut pubs = Vec::with_capacity(inputs.len());
+			for _ in 0..inputs.len() {
+				let (s, p) = musig::nonce_pair(&vtxo_key);
+				secs.push(s);
+				pubs.push(p);
+			}
+			(secs, pubs)
+		};
+
+		let req = rpc::Bolt11PaymentRequest {
+			invoice: invoice.to_string(),
+            amount_sats: amount.to_sat(),
+            input_vtxos: inputs.iter().map(|v| v.encode()).collect(),
+            user_pubkey: vtxo_key.public_key().serialize().to_vec(),
+			user_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		};
+		let resp = self.asp.start_bolt11_payment(req).await
+            .context("htlc request failed")?.into_inner();
+		let len = inputs.len();
+		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
+			bail!("invalid length of asp response");
+		}
+        let payment = ark::lightning::Bolt11Payment::decode(&resp.details)
+            .context("invalid bolt11 payment details from asp")?;
+
+		let asp_pub_nonces = resp.pub_nonces.into_iter()
+			.map(|b| musig::MusigPubNonce::from_slice(&b))
+			.collect::<Result<Vec<_>, _>>()
+			.context("invalid asp pub nonces")?;
+		let asp_part_sigs = resp.partial_sigs.into_iter()
+			.map(|b| musig::MusigPartialSignature::from_slice(&b))
+			.collect::<Result<Vec<_>, _>>()
+			.context("invalid asp part sigs")?;
+
+		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
+		let input_vtxos = payment.inputs.clone();
+		let signed = payment.sign_finalize_user(
+			&vtxo_key,
+			sec_nonces,
+			&pub_nonces,
+			&asp_pub_nonces,
+			&asp_part_sigs,
+		);
+		trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
+
+		let change_vtxo = signed.change_vtxo();
+		if let Err(e) = self.db.store_vtxo(&change_vtxo) {
+			//TODO(stevenroose) print vtxo in hex after btc fixed hex
+			error!("Failed to store change vtxo from Bolt11 payment: {}", e);
+		}
+
+		let req = rpc::SignedBolt11PaymentDetails {
+			signed_payment: signed.encode(),
+		};
+		let result = self.asp.finish_bolt11_payment(req).await
+			.context("signed htlc delivery failed")?.into_inner();
+
+		for v in input_vtxos {
+			self.db.store_spent_vtxo(v.id(), current_height)
+				.context("failed to store forfeited vtxo")?;
+			self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
+		}
+
+		Ok(result.payment_preimage)
 	}
 
 	/// Send a payment in an Ark round.
