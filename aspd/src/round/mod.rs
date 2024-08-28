@@ -355,9 +355,8 @@ pub async fn run_round_coordinator(
 
 	info!("Onchain balance: {}", app.sync_onchain_wallet().await?);
 
-	//TODO(stevenroose) somehow get these from a fee estimator service
-	let offboard_feerate = FeeRate::from_sat_per_vb(10).unwrap();
-	let round_tx_feerate = FeeRate::from_sat_per_vb(10).unwrap();
+	let round_tx_feerate = app.config.round_tx_feerate;
+	let offboard_feerate = round_tx_feerate;
 
 	// The maximum number of output vtxos per round based on the max number
 	// of vtxo tree nonces we require users to provide.

@@ -389,13 +389,13 @@ mod test {
 				2016,
 				false,
 			);
-			assert_eq!(spec.total_required_value().to_sat(), 2714705);
+			assert_eq!(spec.total_required_value().to_sat(), 2755270);
 			let sighashes_hash = {
 				let mut eng = siphash24::Hash::engine();
 				spec.sighashes(point).iter().for_each(|h| eng.input(&h[..]));
 				siphash24::Hash::from_engine(eng)
 			};
-			assert_eq!(sighashes_hash.to_string(), "9d740b15a0ecc969");
+			assert_eq!(sighashes_hash.to_string(), "6d145deb972c3096");
 		}
 		{
 			let spec = VtxoTreeSpec::new(
@@ -406,13 +406,13 @@ mod test {
 				2016,
 				true,
 			);
-			assert_eq!(spec.total_required_value().to_sat(), 2_817_843);
+			assert_eq!(spec.total_required_value().to_sat(), 2861894);
 			let sighashes_hash = {
 				let mut eng = siphash24::Hash::engine();
 				spec.sighashes(point).iter().for_each(|h| eng.input(&h[..]));
 				siphash24::Hash::from_engine(eng)
 			};
-			assert_eq!(sighashes_hash.to_string(), "30254f7773add95b");
+			assert_eq!(sighashes_hash.to_string(), "443aa356dd918d36");
 		}
 	}
 

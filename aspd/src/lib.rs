@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::{bip32, sighash, psbt, taproot, Amount, Address, OutPoint, Transaction, Weight, Witness};
+use bitcoin::{bip32, psbt, sighash, taproot, Address, Amount, FeeRate, OutPoint, Transaction, Weight, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 use tokio::sync::Mutex;
 
@@ -57,6 +57,10 @@ pub struct Config {
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
 
+	//TODO(stevenroose) get these from a fee estimator service
+	/// Fee rate used for the round tx.
+	pub round_tx_feerate: FeeRate,
+
 	// limits
 	pub max_onboard_value: Option<Amount>,
 }
@@ -79,6 +83,7 @@ impl Default for Config {
 			round_submit_time: Duration::from_secs(2),
 			round_sign_time: Duration::from_secs(2),
 			nb_round_nonces: 100,
+			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			max_onboard_value: None,
 		}
 	}

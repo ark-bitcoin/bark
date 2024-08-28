@@ -30,7 +30,7 @@ async fn unilateral_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("unilateral_exit").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
-		relay_fee: Some(FeeRate::from_sat_per_vb(1).unwrap()),
+		relay_fee: Some(FeeRate::from_sat_per_vb(8).unwrap()),
 		..ctx.bitcoind_default_cfg("bitcoind")
 	}).await;
 	let aspd = ctx.aspd("aspd", &bitcoind).await;
@@ -68,16 +68,16 @@ async fn unilateral_exit() {
 	assert_eq!(29_998_035, bark2.offchain_balance().await.to_sat());
 	assert_eq!(50_000_000, bark3.offchain_balance().await.to_sat());
 	assert_eq!(29_998_035, bark4.offchain_balance().await.to_sat());
-	assert_eq!(9_997_973, bark1.onchain_balance().await.to_sat());
+	assert_eq!(9_996_895, bark1.onchain_balance().await.to_sat());
 	assert_eq!(5_000_000, bark2.onchain_balance().await.to_sat());
-	assert_eq!(9_997_973, bark3.onchain_balance().await.to_sat());
+	assert_eq!(9_996_895, bark3.onchain_balance().await.to_sat());
 	assert_eq!(5_000_000, bark4.onchain_balance().await.to_sat());
 
 	progress_exit(&bitcoind, &bark1).await;
-	assert_eq!(59_832_433, bark1.onchain_balance().await.to_sat());
+	assert_eq!(59_826_978, bark1.onchain_balance().await.to_sat());
 
 	progress_exit(&bitcoind, &bark2).await;
-	assert_eq!(34_913_309, bark2.onchain_balance().await.to_sat());
+	assert_eq!(34_914_387, bark2.onchain_balance().await.to_sat());
 
 	// the amounts of the following two are a tiny bit higher because their tree was
 	// a bit smaller
