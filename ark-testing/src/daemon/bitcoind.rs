@@ -66,20 +66,20 @@ impl Bitcoind {
 		self.inner.sync_client()
 	}
 
-	pub fn bitcoind_cookie(&self) -> PathBuf {
-		self.inner.bitcoind_cookie()
+	pub fn rpc_cookie(&self) -> PathBuf {
+		self.inner.rpc_cookie()
 	}
 
-	pub fn bitcoind_url(&self) -> String {
-		self.inner.bitcoind_url()
+	pub fn rpc_url(&self) -> String {
+		self.inner.rpc_url()
 	}
 
-	pub fn bitcoind_rpcport(&self) -> u16 {
-		self.inner.bitcoind_rpcport()
+	pub fn rpc_port(&self) -> u16 {
+		self.inner.rpc_port()
 
 	}
 
-	pub fn bitcoind_datadir(&self) -> PathBuf {
+	pub fn datadir(&self) -> PathBuf {
 		self.inner.config.datadir.clone()
 	}
 
@@ -140,10 +140,10 @@ impl Bitcoind {
 
 impl BitcoindHelper {
 	pub fn auth(&self) -> Auth {
-			Auth::CookieFile(self.bitcoind_cookie())
+			Auth::CookieFile(self.rpc_cookie())
 	}
 
-	pub fn bitcoind_cookie(&self) -> PathBuf {
+	pub fn rpc_cookie(&self) -> PathBuf {
 		let cookie = self.config.datadir
 			.join(&self.config.network)
 			.join(".cookie");
@@ -151,16 +151,16 @@ impl BitcoindHelper {
 		cookie
 	}
 
-	pub fn bitcoind_rpcport(&self) -> u16 {
+	pub fn rpc_port(&self) -> u16 {
 		self.state.rpc_port.expect("A port has been picked. Is bitcoind running?")
 	}
 
-	pub fn bitcoind_url(&self) -> String {
+	pub fn rpc_url(&self) -> String {
 		format!("http://127.0.0.1:{}", self.state.rpc_port.expect("A port has been picked. Is bitcoind running?"))
 	}
 
 	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
-		let bitcoind_url = self.bitcoind_url();
+		let bitcoind_url = self.rpc_url();
 		let auth = self.auth();
 		let client = BitcoindClient::new(&bitcoind_url, auth)?;
 		Ok(client)

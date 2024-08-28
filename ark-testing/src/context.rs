@@ -64,8 +64,8 @@ impl TestContext {
 		let datadir = self.datadir.join(name.as_ref());
 		AspdConfig {
 			datadir: datadir.clone(),
-			bitcoind_url: bitcoind.bitcoind_url(),
-			bitcoind_cookie: bitcoind.bitcoind_cookie(),
+			bitcoind_url: bitcoind.rpc_url(),
+			bitcoind_cookie: bitcoind.rpc_cookie(),
 			round_interval: Duration::from_millis(500),
 			round_submit_time: Duration::from_millis(500),
 			round_sign_time: Duration::from_millis(500),
@@ -86,8 +86,8 @@ impl TestContext {
 		let cfg = BarkConfig {
 			datadir,
 			asp_url,
-			bitcoind_url: bitcoind.bitcoind_url(),
-			bitcoind_cookie: bitcoind.bitcoind_cookie(),
+			bitcoind_url: bitcoind.rpc_url(),
+			bitcoind_cookie: bitcoind.rpc_cookie(),
 			network: String::from("regtest")};
 		Ok(Bark::new(name, cfg).await?)
 	}
@@ -97,8 +97,8 @@ impl TestContext {
 
 		let cfg = LightningdConfig {
 			network: String::from("regtest"),
-			bitcoin_dir: bitcoind.bitcoind_datadir(),
-			bitcoin_rpcport: bitcoind.bitcoind_rpcport(),
+			bitcoin_dir: bitcoind.datadir(),
+			bitcoin_rpcport: bitcoind.rpc_port(),
 			lightning_dir: lightning_dir.clone()
 		};
 
