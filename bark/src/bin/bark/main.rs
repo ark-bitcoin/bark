@@ -86,7 +86,7 @@ enum Command {
 	Onchain(OnchainCommand),
 	/// The the public key used to receive vtxos.
 	#[command()]
-	GetVtxoPubkey,
+	VtxoPubkey,
 	#[command()]
 	Balance,
 	/// list the wallet's VTXOs
@@ -105,17 +105,18 @@ enum Command {
 	Onboard {
 		amount: Amount,
 	},
+	/// send money using an Ark (out-of-round) transaction
 	#[command()]
-	SendOor {
-		/// Destination for the payment.
+	Send {
+		/// the destination
 		destination: String,
 		amount: Amount,
 	},
-	/// Send money in an Ark round.
+	/// send money by participating in an Ark round
 	#[command()]
 	SendRound {
 		/// Destination for the payment, this can either be an on-chain address
-		/// or a public key for an Ark payment.
+		/// or an Ark VTXO public key.
 		destination: String,
 		amount: Amount,
 	},
@@ -142,7 +143,7 @@ enum OnchainCommand {
 	/// send using the on-chain wallet
 	#[command()]
 	Send {
-		address: Address<address::NetworkUnchecked>,
+		destination: Address<address::NetworkUnchecked>,
 		amount: Amount,
 	},
 }
@@ -243,7 +244,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			},
 			OnchainCommand::Address => println!("{}", w.get_new_onchain_address()?),
-			OnchainCommand::Send { address, amount } => {
+			OnchainCommand::Send { destination: address, amount } => {
 				let addr = address.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
@@ -251,7 +252,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				w.send_onchain(addr, amount).await?;
 			},
 		},
-		Command::GetVtxoPubkey => println!("{}", w.vtxo_pubkey()),
+		Command::VtxoPubkey => println!("{}", w.vtxo_pubkey()),
 		Command::Balance => {
 			w.sync().await.context("sync error")?;
 			let onchain = w.onchain_balance();
@@ -305,7 +306,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			w.refresh_vtxos(threshold).await?;
 		},
 		Command::Onboard { amount } => w.onboard(amount).await?,
-		Command::SendOor { destination, amount } => {
+		Command::Send { destination, amount } => {
 			let pk = PublicKey::from_str(&destination).context("invalid pubkey")?;
 			w.sync_ark().await.context("sync error")?;
 			w.send_oor_payment(pk, amount).await?;
