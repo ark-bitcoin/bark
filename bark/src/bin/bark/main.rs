@@ -1,7 +1,6 @@
 
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
-#[macro_use] extern crate serde_json;
 
 use std::{env, fs, io, process};
 use std::path::PathBuf;
@@ -13,6 +12,7 @@ use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 
 use bark::{Wallet, Config};
+use bark_json::cli as json;
 
 const SIGNET_ASP_CERT: &'static [u8] = include_bytes!("signet.asp.21m.dev.cert.pem");
 
@@ -211,30 +211,27 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::GetAddress => println!("{}", w.get_new_onchain_address()?),
 		Command::GetVtxoPubkey => println!("{}", w.vtxo_pubkey()),
 		Command::Balance => {
-			let onchain = w.onchain_balance().await?;
+			w.sync().await.context("sync error")?;
+			let onchain = w.onchain_balance();
 			let offchain =  w.offchain_balance().await?;
-			let (claimables, unclaimables) = w.unclaimed_exits().await?;
-			let claimable = claimables.iter().map(|i| i.spec.amount).sum::<Amount>();
-			let unclaimable = unclaimables.iter().map(|i| i.spec.amount).sum::<Amount>();
+			let (available, unavailable) = w.unclaimed_exits().await?;
+			let onchain_available_exit = available.iter().map(|i| i.spec.amount).sum::<Amount>();
+			let onchain_pending_exit = unavailable.iter().map(|i| i.spec.amount).sum::<Amount>();
 			if cli.json {
-				//TODO(stevenroose) should make a bark-json crate with these structs
-				serde_json::to_writer(io::stdout(), &json!({
-					"onchain": onchain.to_sat(),
-					"offchain": offchain.to_sat(),
-					"onchain_available_exit": claimable.to_sat(),
-					"onchain_pending_exit": unclaimable.to_sat(),
-				})).unwrap();
+				serde_json::to_writer(io::stdout(), &json::Balance {
+					onchain, offchain, onchain_available_exit, onchain_pending_exit
+				}).unwrap();
 			} else {
 				info!("Onchain balance: {}", onchain);
 				info!("Offchain balance: {}", offchain);
-				if !claimables.is_empty() {
+				if !available.is_empty() {
 					info!("Got {} claimable exits with total value of {}",
-						claimables.len(), claimable,
+						available.len(), onchain_available_exit,
 					);
 				}
-				if !unclaimables.is_empty() {
+				if !unavailable.is_empty() {
 					info!("Got {} unclaimable exits with total value of {}",
-						unclaimables.len(), unclaimable,
+						unavailable.len(), onchain_pending_exit,
 					);
 				}
 			}
@@ -248,19 +245,22 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::SendOor { destination, amount } => {
 			let pk = PublicKey::from_str(&destination).context("invalid pubkey")?;
+			w.sync_ark().await.context("sync error")?;
 			w.send_oor_payment(pk, amount).await?;
 			info!("Success");
 		},
 		Command::SendRound { destination, amount } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
 				debug!("Sending to Ark public key {}", pk);
-				w.send_ark_payment(pk, amount).await?;
+				w.sync_ark().await.context("sync error")?;
+				w.send_round_payment(pk, amount).await?;
 			} else if let Ok(addr) = Address::from_str(&destination) {
 				let addr = addr.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
 				debug!("Sending to on-chain address {}", addr);
-				w.send_ark_onchain_payment(addr, amount).await?;
+				w.sync_ark().await.context("sync error")?;
+				w.send_round_onchain_payment(addr, amount).await?;
 			} else {
 				bail!("Invalid destination");
 			}

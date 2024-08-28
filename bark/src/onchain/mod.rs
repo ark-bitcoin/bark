@@ -104,6 +104,10 @@ impl Wallet {
 		Ok(balance.total())
 	}
 
+	pub fn balance(&self) -> Amount {
+		self.wallet.balance().total()
+	}
+
 	/// Fee rate to use for regular txs like onboards.
 	pub fn regular_fee_rate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(10).unwrap()
