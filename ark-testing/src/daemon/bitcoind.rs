@@ -5,7 +5,7 @@ use std::time::Duration;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
-use crate::{Bark, Aspd};
+use crate::{Bark, Aspd, Lightningd};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXEC;
 use crate::util::FeeRateExt;
@@ -66,12 +66,21 @@ impl Bitcoind {
 		self.inner.sync_client()
 	}
 
-	pub fn bitcoind_cookie(&self) -> PathBuf {
-		self.inner.bitcoind_cookie()
+	pub fn rpc_cookie(&self) -> PathBuf {
+		self.inner.rpc_cookie()
 	}
 
-	pub fn bitcoind_url(&self) -> String {
-		self.inner.bitcoind_url()
+	pub fn rpc_url(&self) -> String {
+		self.inner.rpc_url()
+	}
+
+	pub fn rpc_port(&self) -> u16 {
+		self.inner.rpc_port()
+
+	}
+
+	pub fn datadir(&self) -> PathBuf {
+		self.inner.config.datadir.clone()
 	}
 
 	pub async fn init_wallet(&self) -> anyhow::Result<()> {
@@ -110,14 +119,31 @@ impl Bitcoind {
 		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
 		Ok(txid)
 	}
+
+	pub async fn fund_lightningd(&self, lightningd: &Lightningd, amount: Amount) -> anyhow::Result<Txid> {
+		info!("Fund {} {}", lightningd.name(), amount);
+		let address = lightningd.get_onchain_address().await?;
+
+		let client = self.sync_client()?;
+		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
+
+		Ok(txid)
+	}
+
+	pub async fn get_block_count(&self) -> anyhow::Result<u64> {
+		let client = self.sync_client().unwrap();
+		let height = client.get_block_count()?;
+		Ok(height)
+
+	}
 }
 
 impl BitcoindHelper {
 	pub fn auth(&self) -> Auth {
-			Auth::CookieFile(self.bitcoind_cookie())
+			Auth::CookieFile(self.rpc_cookie())
 	}
 
-	pub fn bitcoind_cookie(&self) -> PathBuf {
+	pub fn rpc_cookie(&self) -> PathBuf {
 		let cookie = self.config.datadir
 			.join(&self.config.network)
 			.join(".cookie");
@@ -125,12 +151,16 @@ impl BitcoindHelper {
 		cookie
 	}
 
-	pub fn bitcoind_url(&self) -> String {
+	pub fn rpc_port(&self) -> u16 {
+		self.state.rpc_port.expect("A port has been picked. Is bitcoind running?")
+	}
+
+	pub fn rpc_url(&self) -> String {
 		format!("http://127.0.0.1:{}", self.state.rpc_port.expect("A port has been picked. Is bitcoind running?"))
 	}
 
 	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
-		let bitcoind_url = self.bitcoind_url();
+		let bitcoind_url = self.rpc_url();
 		let auth = self.auth();
 		let client = BitcoindClient::new(&bitcoind_url, auth)?;
 		Ok(client)

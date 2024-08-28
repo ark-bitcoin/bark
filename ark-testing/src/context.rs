@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::util::test_data_directory;
 use crate::daemon::log::FileLogger;
-use crate::{Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig};
+use crate::{Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig};
 
 pub struct TestContext {
 	#[allow(dead_code)]
@@ -64,8 +64,8 @@ impl TestContext {
 		let datadir = self.datadir.join(name.as_ref());
 		AspdConfig {
 			datadir: datadir.clone(),
-			bitcoind_url: bitcoind.bitcoind_url(),
-			bitcoind_cookie: bitcoind.bitcoind_cookie(),
+			bitcoind_url: bitcoind.rpc_url(),
+			bitcoind_cookie: bitcoind.rpc_cookie(),
 			round_interval: Duration::from_millis(500),
 			round_submit_time: Duration::from_millis(500),
 			round_sign_time: Duration::from_millis(500),
@@ -86,16 +86,35 @@ impl TestContext {
 		let cfg = BarkConfig {
 			datadir,
 			asp_url,
-			bitcoind_url: bitcoind.bitcoind_url(),
-			bitcoind_cookie: bitcoind.bitcoind_cookie(),
+			bitcoind_url: bitcoind.rpc_url(),
+			bitcoind_cookie: bitcoind.rpc_cookie(),
 			network: String::from("regtest")};
 		Ok(Bark::new(name, cfg).await?)
 	}
+
+	pub async fn lightningd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> anyhow::Result<Lightningd> {
+		let lightning_dir = self.datadir.join(name.as_ref());
+
+		let cfg = LightningdConfig {
+			network: String::from("regtest"),
+			bitcoin_dir: bitcoind.datadir(),
+			bitcoin_rpcport: bitcoind.rpc_port(),
+			lightning_dir: lightning_dir.clone()
+		};
+
+		let mut lightningd = Lightningd::new(name, cfg);
+		lightningd.add_stdout_handler(FileLogger::new(lightning_dir.join("stdout.log")))?;
+		lightningd.add_stderr_handler(FileLogger::new(lightning_dir.join("stderr.log")))?;
+		lightningd.start().await?;
+
+		Ok(lightningd)
+	}
 }
+
+
 
 impl Drop for TestContext {
 	fn drop(&mut self) {
 		log::info!("Textcontext: Datadir is located at {:?}", self.datadir);
 	}
 }
-
