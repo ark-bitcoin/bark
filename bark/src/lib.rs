@@ -77,6 +77,11 @@ pub struct Config {
 	///
 	/// Only used with `bitcoind_address`.
 	pub bitcoind_pass: Option<String>,
+
+	/// The number of blocks before expiration to refresh vtxos.
+	///
+	/// Default value: 288 (48 hrs)
+	pub vtxo_refresh_threshold: u32
 }
 
 impl Default for Config {
@@ -90,6 +95,7 @@ impl Default for Config {
 			bitcoind_cookiefile: None,
 			bitcoind_user: None,
 			bitcoind_pass: None,
+			vtxo_refresh_threshold: 288,
 		}
 	}
 }
@@ -445,6 +451,33 @@ impl Wallet {
 			Ok((input_vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
 		Ok(())
+	}
+
+	/// Refresh vtxos that are close to expiration.
+	pub async fn refresh_vtxos(&mut self, threshold_blocks: u32) -> anyhow::Result<()> {
+		let height = self.onchain.tip().await?;
+		let expiring_vtxos = {
+			let mut ret = self.db.get_all_vtxos()?;
+			ret.retain(|v| v.spec().expiry_height + threshold_blocks < height);
+			ret
+		};
+		let amount = expiring_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
+		//TODO(stevenroose) impl key derivation
+		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+		let create = VtxoRequest { pubkey: vtxo_key.public_key(), amount };
+
+		self.participate_round(move |_id, _offb_fr| {
+			Ok((expiring_vtxos.clone(), vec![create.clone()], Vec::new()))
+		}).await.context("round failed")?;
+		Ok(())
+	}
+
+	/// Refresh vtxos that are close to expiration.
+	///
+	/// The threshold used for this is the configured threshold.
+	pub async fn refresh_expiring_vtxos(&mut self) -> anyhow::Result<()> {
+		self.refresh_vtxos(self.config.vtxo_refresh_threshold).await
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
