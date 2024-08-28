@@ -257,6 +257,7 @@ dependencies = [
  "anyhow",
  "ark-lib",
  "aspd-rpc-client",
+ "bark-cln",
  "bdk_bitcoind_rpc",
  "bdk_wallet",
  "bip39",

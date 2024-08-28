@@ -10,8 +10,9 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::{Address, Amount, FeeRate, Network};
 use clap::Parser;
+use tonic::transport::Uri;
 
-use aspd::{App, Config};
+use aspd::{App, Config, ClnConfig};
 use aspd_rpc_client as rpc;
 
 const RPC_ADDR: &str = "[::]:3535";
@@ -114,12 +115,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				datadir.canonicalize().context("canonicalizing path")?
 			};
 
-			if opts.config.bitcoind_url.is_none() {
-				bail!("The --bitcoind-url flag is mandatory.");
-			}
-			if opts.config.bitcoind_cookie.is_none() {
-				bail!("The --bitcoind-cookie flag is mandatory.");
-			}
+			opts.config.validate()?;
 
 			let mut cfg = Config {
 				network: opts.network,
@@ -173,7 +169,7 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 	} else {
 		format!("http://{}", addr)
 	};
-	let asp_endpoint = tonic::transport::Uri::from_str(&addr).context("invalid asp addr")?;
+	let asp_endpoint = Uri::from_str(&addr).context("invalid asp addr")?;
 	let mut asp = rpc::AdminServiceClient::connect(asp_endpoint)
 		.await.context("failed to connect to asp")?;
 
@@ -203,7 +199,7 @@ struct CreateOpts {
 	config: ConfigOpts,
 }
 
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 struct ConfigOpts {
 	/// the URL of the bitcoind RPC (mandatory on create)
 	#[arg(long)]
@@ -237,7 +233,6 @@ struct ConfigOpts {
 	round_sign_time: Option<u64>,
 	#[arg(long)]
 	nb_round_nonces: Option<usize>,
-
 	#[arg(long)]
 	vtxo_expiry_delta: Option<u16>,
 	#[arg(long)]
@@ -246,9 +241,57 @@ struct ConfigOpts {
 	/// The feerate (in sats per kvb) to use for round txs.
 	#[arg(long)]
 	round_tx_feerate_sat_per_kvb: Option<u64>,
+
+	#[arg(long)]
+	cln_grpc_uri: Option<Option<Uri>>,
+	#[arg(long)]
+	cln_grpc_server_cert_path: Option<Option<PathBuf>>,
+	#[arg(long)]
+	cln_grpc_client_cert_path: Option<Option<PathBuf>>,
+	#[arg(long)]
+	cln_grpc_client_key_path: Option<Option<PathBuf>>,
 }
 
 impl ConfigOpts {
+
+	/// Verifies if the specified configuration is valid
+	///
+	/// It also checks if all required arguments are present.
+	/// It should only be used on create.
+	fn validate(&self) -> anyhow::Result<()> {
+		if self.bitcoind_url.is_none() {
+			bail!("The --bitcoind-url flag is mandatory.");
+		}
+		if self.bitcoind_cookie.is_none() {
+			bail!("The --bitcoind-cookie flag is mandatory.");
+		}
+
+		let has_cln_config =
+			self.cln_grpc_uri.is_some() ||
+			self.cln_grpc_client_cert_path.is_some() ||
+			self.cln_grpc_client_cert_path.is_some() ||
+			self.cln_grpc_client_key_path.is_some();
+
+		if has_cln_config {
+
+			if self.cln_grpc_uri.is_none() {
+				bail!("The --cln-grpc-uri parameter is required if another cln-parameter is provided.")
+			}
+			if self.cln_grpc_server_cert_path.is_none() {
+				bail!("The --cln-grpc-server-cert-path parameter is required if another cln-parameter is provided.")
+			}
+			if self.cln_grpc_client_cert_path.is_none() {
+				bail!("The --cln-grpc-client-cert-path parameter is required if another cln-parameter is provided.")
+			}
+			if self.cln_grpc_client_key_path.is_none() {
+				bail!("the --cln-grpc-client-key-path parameter is required if another cln-parameter is provided.")
+			}
+		}
+
+		Ok(())
+	}
+
+
 	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
 		if let Some(v) = self.bitcoind_url {
 			cfg.bitcoind_url = v;
@@ -308,6 +351,185 @@ impl ConfigOpts {
 			);
 		}
 
+		// We have the following sc
+
+		// If any of these fields is Some(Some(value)) it explcitily sets the field
+		// In that case puts_cln_config is true
+		let puts_cln_config =
+			self.cln_grpc_uri.as_ref().map_or(false, |x| x.is_some()) ||
+			self.cln_grpc_server_cert_path.as_ref().map_or(false, |x| x.is_some()) ||
+			self.cln_grpc_client_cert_path.as_ref().map_or(false, |x| x.is_some()) ||
+			self.cln_grpc_client_key_path.as_ref().map_or(false, |x| x.is_some());
+
+		// If any of these fields is Some(None) it explicitly drops the field
+		// In that case drops_cln_config is true
+		let drops_some_cln_config =
+			self.cln_grpc_uri.as_ref().map_or(false, |x| x.is_none()) ||
+			self.cln_grpc_server_cert_path.as_ref().map_or(false, |x| x.is_none()) ||
+			self.cln_grpc_client_cert_path.as_ref().map_or(false, |x| x.is_none()) ||
+			self.cln_grpc_client_key_path.as_ref().map_or(false, |x| x.is_none());
+
+		// If all of the fields are Some(None)
+		let drops_all_cln_config =
+			self.cln_grpc_uri.as_ref().map_or(false, |x| x.is_none()) &&
+			self.cln_grpc_server_cert_path.as_ref().map_or(false, |x| x.is_none()) &&
+			self.cln_grpc_client_cert_path.as_ref().map_or(false, |x| x.is_none()) &&
+			self.cln_grpc_client_key_path.as_ref().map_or(false, |x| x.is_none());
+
+
+		if cfg.cln_config.is_none() && puts_cln_config {
+			// New cln-config is added
+			cfg.cln_config = Some(ClnConfig {
+				grpc_uri: self.cln_grpc_uri.clone().flatten().context("--cln-grpc-uri is required when a cln-config is provided")?,
+				grpc_server_cert_path: self.cln_grpc_server_cert_path.clone().flatten().context("--cln-server-cert-path is required when a cln-config is provided")?,
+				grpc_client_cert_path: self.cln_grpc_client_cert_path.clone().flatten().context("--cln-grpc-client-cert-path is required when a cln-config is provided")?,
+				grpc_client_key_path: self.cln_grpc_client_key_path.clone().flatten().context("--cln-grpc-client-key-path is required when a cln-config is provided")?,
+			});
+		}
+		if cfg.cln_config.is_none() {
+			// Don't do anything
+			// There is no config and we're not changing it
+		}
+		else if cfg.cln_config.is_some() && drops_all_cln_config {
+			// The cln-config is dropped
+			cfg.cln_config = None
+		}
+		else if cfg.cln_config.is_some() && drops_some_cln_config {
+			bail!("Invalid configuration. Remove either all cln-config bariables or none")
+		}
+		else {
+			let cln_config = cfg.cln_config.as_mut().unwrap();
+
+			if let Some(Some(v)) = self.cln_grpc_uri {
+				cln_config.grpc_uri = v;
+			}
+			if let Some(Some(v)) = self.cln_grpc_server_cert_path {
+				cln_config.grpc_server_cert_path = v;
+			}
+			if let Some(Some(v)) = self.cln_grpc_client_cert_path {
+				cln_config.grpc_client_cert_path = v;
+			}
+			if let Some(Some(v)) = self.cln_grpc_client_key_path {
+				cln_config.grpc_client_key_path = v;
+			}
+		}
+
 		Ok(())
+	}
+
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use std::str::FromStr;
+
+	#[test]
+	fn partial_cln_config_on_init_is_not_accepted() {
+		let mut cfg = Config::default();
+
+		// Create partial config opts
+		let uri = Uri::from_str("http://localhost:1313").unwrap();
+		let updates = ConfigOpts {
+			cln_grpc_uri: Some(Some(uri)),
+			..ConfigOpts::default()
+		};
+
+		updates.merge_into(&mut cfg).expect_err("This should fail");
+	}
+
+	#[test]
+	fn init_accepts_full_cln_config() {
+		let mut cfg = Config::default();
+
+		// Create full Config Opts
+		let uri = Uri::from_str("http://localhost:1313").unwrap();
+		let updates = ConfigOpts {
+			cln_grpc_uri: Some(Some(uri.clone())),
+			cln_grpc_server_cert_path: Some(Some(PathBuf::from("/certs/server.crt"))),
+			cln_grpc_client_cert_path: Some(Some(PathBuf::from("/certs/client.crt"))),
+			cln_grpc_client_key_path: Some(Some(PathBuf::from("/certs/client.key"))),
+			..ConfigOpts::default()
+		};
+
+		updates.merge_into(&mut cfg).expect("Accepts full config");
+
+		let cln_config = cfg.cln_config.as_ref().expect("A config has been created");
+		assert_eq!(cln_config.grpc_uri, uri);
+		assert_eq!(cln_config.grpc_server_cert_path, PathBuf::from("/certs/server.crt"));
+		assert_eq!(cln_config.grpc_client_cert_path, PathBuf::from("/certs/client.crt"));
+		assert_eq!(cln_config.grpc_client_key_path, PathBuf::from("/certs/client.key"));
+	}
+
+	#[test]
+	fn drop_cln_config() {
+		let mut cfg = Config::default();
+
+		let uri = Uri::from_str("http://localhost:1313").unwrap();
+		cfg.cln_config = Some(ClnConfig{
+			grpc_uri: uri.clone(),
+			grpc_server_cert_path: PathBuf::from("/certs/server.cert"),
+			grpc_client_cert_path: PathBuf::from("/certs/client.cert"),
+			grpc_client_key_path: PathBuf::from("/certs/client.key"),
+		});
+
+		// Create config opts that drop cln-config
+		let updates = ConfigOpts {
+			cln_grpc_uri: Some(None),
+			cln_grpc_server_cert_path: Some(None),
+			cln_grpc_client_cert_path: Some(None),
+			cln_grpc_client_key_path: Some(None),
+			..ConfigOpts::default()
+		};
+
+		updates.merge_into(&mut cfg).expect("Accepts full config");
+		assert!(cfg.cln_config.is_none());
+	}
+
+	#[test]
+	fn drop_partial_cln_config() {
+		let mut cfg = Config::default();
+
+		let uri : Uri = "http://localhost:1313".parse().unwrap();
+		cfg.cln_config = Some(ClnConfig{
+			grpc_uri: uri.clone(),
+			grpc_server_cert_path: PathBuf::from("/certs/server.cert"),
+			grpc_client_cert_path: PathBuf::from("/certs/client.cert"),
+			grpc_client_key_path: PathBuf::from("/certs/client.key"),
+		});
+
+		// Creates config-opts that partially drop cln-config
+		let updates = ConfigOpts {
+			cln_grpc_uri: Some(None),
+			..ConfigOpts::default()
+		};
+
+		updates.merge_into(&mut cfg).expect_err("Cannot drop cln-config partially");
+		assert!(cfg.cln_config.is_some());
+	}
+
+	#[test]
+	fn update_cln_config() {
+		let mut cfg = Config::default();
+
+		let uri = Uri::from_str("http://localhost:1313").unwrap();
+		cfg.cln_config = Some(ClnConfig{
+			grpc_uri: uri.clone(),
+			grpc_server_cert_path: PathBuf::from("/certs/server.cert"),
+			grpc_client_cert_path: PathBuf::from("/certs/client.cert"),
+			grpc_client_key_path: PathBuf::from("/certs/client.key"),
+		});
+
+		// Set a cln-config
+		let new_uri = Uri::from_str("http://otheruri").unwrap();
+		let updates = ConfigOpts {
+			cln_grpc_uri: Some(Some(new_uri.clone())),
+			..ConfigOpts::default()
+		};
+
+		updates.merge_into(&mut cfg).expect("Can update config");
+
+		assert_eq!(cfg.cln_config.unwrap().grpc_uri, new_uri);
 	}
 }

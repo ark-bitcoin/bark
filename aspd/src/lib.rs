@@ -6,7 +6,9 @@
 
 
 mod database;
+mod lightning;
 mod psbtext;
+mod serde_util;
 mod rpc;
 mod rpcserver;
 mod round;
@@ -35,7 +37,6 @@ lazy_static::lazy_static! {
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
 	pub network: bitcoin::Network,
@@ -56,13 +57,17 @@ pub struct Config {
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
-
 	//TODO(stevenroose) get these from a fee estimator service
 	/// Fee rate used for the round tx.
 	pub round_tx_feerate: FeeRate,
 
 	// limits
 	pub max_onboard_value: Option<Amount>,
+
+	// lightning
+	#[serde(skip_serializing_if = "Option::is_none")]
+	#[serde(default)]
+	pub cln_config: Option<ClnConfig>
 }
 
 // NB some random defaults to have something
@@ -85,8 +90,18 @@ impl Default for Config {
 			nb_round_nonces: 100,
 			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			max_onboard_value: None,
+			cln_config: None,
 		}
 	}
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ClnConfig {
+	#[serde(with = "serde_util::uri")]
+	pub grpc_uri: tonic::transport::Uri,
+	pub grpc_server_cert_path: PathBuf,
+	pub grpc_client_cert_path: PathBuf,
+	pub grpc_client_key_path: PathBuf,
 }
 
 impl Config {
