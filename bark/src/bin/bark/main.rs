@@ -89,6 +89,8 @@ enum Command {
 	#[command()]
 	Balance,
 	#[command()]
+	Vtxos,
+	#[command()]
 	Onboard {
 		amount: Amount,
 	},
@@ -232,6 +234,21 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				if !unavailable.is_empty() {
 					info!("Got {} unclaimable exits with total value of {}",
 						unavailable.len(), onchain_pending_exit,
+					);
+				}
+			}
+		},
+		Command::Vtxos => {
+			w.sync_ark().await.context("sync error")?;
+			let res = w.vtxos()?;
+			if cli.json {
+				let json = res.into_iter().map(|v| v.into()).collect::<Vec<json::VtxoInfo>>();
+				serde_json::to_writer(io::stdout(), &json).unwrap();
+			} else {
+				info!("Found {} vtxos:", res.len());
+				for v in res {
+					info!("  {}: {}; expires at height {}",
+						v.id(), v.amount(), v.spec().expiry_height,
 					);
 				}
 			}
