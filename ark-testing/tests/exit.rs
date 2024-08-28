@@ -27,8 +27,8 @@ async fn unilateral_exit() {
 	bitcoind.fund_bark(&bark2, Amount::from_sat(5_000_000)).await.unwrap();
 	bark1.onboard(Amount::from_sat(80_000_000)).await.unwrap();
 
-	let pk1 = bark1.get_vtxo_pubkey().await.unwrap();
-	let pk2 = bark2.get_vtxo_pubkey().await.unwrap();
+	let pk1 = bark1.vtxo_pubkey().await.unwrap();
+	let pk2 = bark2.vtxo_pubkey().await.unwrap();
 
 	bark1.send_round(pk2, Amount::from_sat(50_000_000)).await.unwrap();
 	bark2.send_oor(pk1, Amount::from_sat(20_000_000)).await.unwrap();

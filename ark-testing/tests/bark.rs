@@ -75,7 +75,7 @@ async fn multiple_round_payments() {
 			if i % 24 == 0 {
 				bitcoind.generate(1).await.unwrap();
 			}
-			pks.push(b.get_vtxo_pubkey().await.unwrap());
+			pks.push(b.vtxo_pubkey().await.unwrap());
 			barks.push(b);
 		}
 		(barks, pks)
@@ -113,7 +113,7 @@ async fn oor() {
 	bitcoind.fund_bark(&bark2, Amount::from_sat(5_000)).await.unwrap();
 	bark1.onboard(Amount::from_sat(80_000)).await.unwrap();
 
-	let pk2 = bark2.get_vtxo_pubkey().await.unwrap();
+	let pk2 = bark2.vtxo_pubkey().await.unwrap();
 	bark1.send_oor(pk2, Amount::from_sat(20_000)).await.unwrap();
 
 	assert_eq!(58_035, bark1.offchain_balance().await.unwrap().to_sat());
