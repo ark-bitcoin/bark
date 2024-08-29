@@ -283,6 +283,7 @@ dependencies = [
  "anyhow",
  "ark-lib",
  "aspd-rpc-client",
+ "bark-json",
  "bdk_bitcoind_rpc",
  "bdk_esplora",
  "bdk_file_store",
@@ -313,6 +314,15 @@ dependencies = [
  "prost",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "bark-json"
+version = "0.0.0"
+dependencies = [
+ "ark-lib",
+ "bitcoin",
+ "serde",
 ]
 
 [[package]]

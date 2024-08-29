@@ -8,7 +8,7 @@ members = [
   "bark",
   "bark-cln",
   "sled-utils"
-]
+, "bark-json"]
 
 resolver = "2"
 

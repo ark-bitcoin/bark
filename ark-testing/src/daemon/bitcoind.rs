@@ -114,7 +114,7 @@ impl Bitcoind {
 
 	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> anyhow::Result<Txid> {
 		info!("Fund {} {}", bark.name(), amount);
-		let address = bark.get_address().await?;
+		let address = bark.get_onchain_address().await?;
 		let client = self.sync_client()?;
 		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
 		Ok(txid)

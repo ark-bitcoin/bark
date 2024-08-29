@@ -1,7 +1,6 @@
 
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
-#[macro_use] extern crate serde_json;
 
 use std::{env, fs, io, process};
 use std::path::PathBuf;
@@ -13,6 +12,7 @@ use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 
 use bark::{Wallet, Config};
+use bark_json::cli as json;
 
 const SIGNET_ASP_CERT: &'static [u8] = include_bytes!("signet.asp.21m.dev.cert.pem");
 
@@ -81,34 +81,42 @@ enum Command {
 		#[arg(long)]
 		bitcoind_pass: Option<String>,
 	},
-	#[command()]
-	GetAddress,
+	/// use the built-in onchain wallet
+	#[command(subcommand)]
+	Onchain(OnchainCommand),
 	/// The the public key used to receive vtxos.
 	#[command()]
-	GetVtxoPubkey,
+	VtxoPubkey,
 	#[command()]
 	Balance,
+	/// list the wallet's VTXOs
+	#[command()]
+	Vtxos,
+	/// refresh expiring VTXOs
+	///
+	/// By default the wallet's configured threshold is used.
+	#[command()]
+	Refresh {
+		threshold_blocks: Option<u32>,
+		threshold_hours: Option<u32>,
+	},
+	/// onboard from the onchain wallet into the Ark
 	#[command()]
 	Onboard {
 		amount: Amount,
 	},
-	/// Send using the built-in on-chain wallet.
+	/// send money using an Ark (out-of-round) transaction
 	#[command()]
-	SendOnchain {
-		address: Address<address::NetworkUnchecked>,
-		amount: Amount,
-	},
-	#[command()]
-	SendOor {
-		/// Destination for the payment.
+	Send {
+		/// the destination
 		destination: String,
 		amount: Amount,
 	},
-	/// Send money in an Ark round.
+	/// send money by participating in an Ark round
 	#[command()]
 	SendRound {
 		/// Destination for the payment, this can either be an on-chain address
-		/// or a public key for an Ark payment.
+		/// or an Ark VTXO public key.
 		destination: String,
 		amount: Amount,
 	},
@@ -122,6 +130,22 @@ enum Command {
 	/// Dev command to drop the vtxo database.
 	#[command(hide = true)]
 	DropVtxos,
+}
+
+#[derive(clap::Subcommand)]
+enum OnchainCommand {
+	/// get the on-chain balance
+	#[command()]
+	Balance,
+	/// get an on-chain address
+	#[command()]
+	Address,
+	/// send using the on-chain wallet
+	#[command()]
+	Send {
+		destination: Address<address::NetworkUnchecked>,
+		amount: Amount,
+	},
 }
 
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
@@ -191,6 +215,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			bitcoind_cookiefile: bitcoind_cookie,
 			bitcoind_user: bitcoind_user,
 			bitcoind_pass: bitcoind_pass,
+			..Default::default()
 		};
 
 		if force {
@@ -208,59 +233,97 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	match cli.command {
 		Command::Create { .. } => unreachable!(),
-		Command::GetAddress => println!("{}", w.get_new_onchain_address()?),
-		Command::GetVtxoPubkey => println!("{}", w.vtxo_pubkey()),
+		Command::Onchain(cmd) => match cmd {
+			OnchainCommand::Balance => {
+				w.sync_onchain().await.context("sync error")?;
+				let res = w.onchain_balance();
+				if cli.json {
+					println!("{}", res.to_sat());
+				} else {
+					println!("{}", res);
+				}
+			},
+			OnchainCommand::Address => println!("{}", w.get_new_onchain_address()?),
+			OnchainCommand::Send { destination: address, amount } => {
+				let addr = address.require_network(net).with_context(|| {
+					format!("address is not valid for configured network {}", net)
+				})?;
+				w.sync_onchain().await.context("sync error")?;
+				w.send_onchain(addr, amount).await?;
+			},
+		},
+		Command::VtxoPubkey => println!("{}", w.vtxo_pubkey()),
 		Command::Balance => {
-			let onchain = w.onchain_balance().await?;
+			w.sync().await.context("sync error")?;
+			let onchain = w.onchain_balance();
 			let offchain =  w.offchain_balance().await?;
-			let (claimables, unclaimables) = w.unclaimed_exits().await?;
-			let claimable = claimables.iter().map(|i| i.spec.amount).sum::<Amount>();
-			let unclaimable = unclaimables.iter().map(|i| i.spec.amount).sum::<Amount>();
+			let (available, unavailable) = w.unclaimed_exits().await?;
+			let onchain_available_exit = available.iter().map(|i| i.spec.amount).sum::<Amount>();
+			let onchain_pending_exit = unavailable.iter().map(|i| i.spec.amount).sum::<Amount>();
 			if cli.json {
-				//TODO(stevenroose) should make a bark-json crate with these structs
-				serde_json::to_writer(io::stdout(), &json!({
-					"onchain": onchain.to_sat(),
-					"offchain": offchain.to_sat(),
-					"onchain_available_exit": claimable.to_sat(),
-					"onchain_pending_exit": unclaimable.to_sat(),
-				})).unwrap();
+				serde_json::to_writer(io::stdout(), &json::Balance {
+					onchain, offchain, onchain_available_exit, onchain_pending_exit
+				}).unwrap();
 			} else {
 				info!("Onchain balance: {}", onchain);
 				info!("Offchain balance: {}", offchain);
-				if !claimables.is_empty() {
+				if !available.is_empty() {
 					info!("Got {} claimable exits with total value of {}",
-						claimables.len(), claimable,
+						available.len(), onchain_available_exit,
 					);
 				}
-				if !unclaimables.is_empty() {
+				if !unavailable.is_empty() {
 					info!("Got {} unclaimable exits with total value of {}",
-						unclaimables.len(), unclaimable,
+						unavailable.len(), onchain_pending_exit,
 					);
 				}
 			}
 		},
-		Command::Onboard { amount } => w.onboard(amount).await?,
-		Command::SendOnchain { address, amount } => {
-			let addr = address.require_network(net).with_context(|| {
-				format!("address is not valid for configured network {}", net)
-			})?;
-			w.send_onchain(addr, amount).await?;
+		Command::Vtxos => {
+			w.sync_ark().await.context("sync error")?;
+			let res = w.vtxos()?;
+			if cli.json {
+				let json = res.into_iter().map(|v| v.into()).collect::<Vec<json::VtxoInfo>>();
+				serde_json::to_writer(io::stdout(), &json).unwrap();
+			} else {
+				info!("Found {} vtxos:", res.len());
+				for v in res {
+					info!("  {}: {}; expires at height {}",
+						v.id(), v.amount(), v.spec().expiry_height,
+					);
+				}
+			}
 		},
-		Command::SendOor { destination, amount } => {
+		Command::Refresh { threshold_blocks, threshold_hours } => {
+			let threshold = match (threshold_blocks, threshold_hours) {
+				(None, None) => w.config().vtxo_refresh_threshold,
+				(Some(b), None) => b,
+				(None, Some(h)) => h * 6,
+				(Some(_), Some(_)) => bail!("can't provide both block and hour threshold"),
+			};
+
+			info!("Refreshing VTXOs expiring within the next {} blocks...", threshold);
+			w.refresh_vtxos(threshold).await?;
+		},
+		Command::Onboard { amount } => w.onboard(amount).await?,
+		Command::Send { destination, amount } => {
 			let pk = PublicKey::from_str(&destination).context("invalid pubkey")?;
+			w.sync_ark().await.context("sync error")?;
 			w.send_oor_payment(pk, amount).await?;
 			info!("Success");
 		},
 		Command::SendRound { destination, amount } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
 				debug!("Sending to Ark public key {}", pk);
-				w.send_ark_payment(pk, amount).await?;
+				w.sync_ark().await.context("sync error")?;
+				w.send_round_payment(pk, amount).await?;
 			} else if let Ok(addr) = Address::from_str(&destination) {
 				let addr = addr.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
 				debug!("Sending to on-chain address {}", addr);
-				w.send_ark_onchain_payment(addr, amount).await?;
+				w.sync_ark().await.context("sync error")?;
+				w.send_round_onchain_payment(addr, amount).await?;
 			} else {
 				bail!("Invalid destination");
 			}

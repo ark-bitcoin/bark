@@ -16,6 +16,7 @@ path = "src/bin/bark/main.rs"
 
 [dependencies]
 ark-lib = { path = "../ark-lib" }
+bark-json = { path = "../bark-json" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 sled-utils = { path = "../sled-utils" }
 

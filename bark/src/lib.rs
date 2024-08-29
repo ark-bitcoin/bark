@@ -77,6 +77,11 @@ pub struct Config {
 	///
 	/// Only used with `bitcoind_address`.
 	pub bitcoind_pass: Option<String>,
+
+	/// The number of blocks before expiration to refresh vtxos.
+	///
+	/// Default value: 288 (48 hrs)
+	pub vtxo_refresh_threshold: u32
 }
 
 impl Default for Config {
@@ -90,6 +95,7 @@ impl Default for Config {
 			bitcoind_cookiefile: None,
 			bitcoind_user: None,
 			bitcoind_pass: None,
+			vtxo_refresh_threshold: 288,
 		}
 	}
 }
@@ -240,19 +246,43 @@ impl Wallet {
 		self.onchain.new_address()
 	}
 
-	pub async fn onchain_balance(&mut self) -> anyhow::Result<Amount> {
+	/// Sync the onchain wallet, returns the balance.
+	pub async fn sync_onchain(&mut self) -> anyhow::Result<Amount> {
 		self.onchain.sync().await
 	}
 
-	pub async fn offchain_balance(&mut self) -> anyhow::Result<Amount> {
-		self.sync_ark().await.context("ark sync error")?;
+	/// Return the balance of the onchain wallet.
+	///
+	/// Make sure you sync before calling this method.
+	pub fn onchain_balance(&mut self) -> Amount {
+		self.onchain.balance()
+	}
 
+	pub async fn send_onchain(&mut self, addr: Address, amount: Amount) -> anyhow::Result<Txid> {
+		Ok(self.onchain.send_money(addr, amount).await?)
+	}
+
+	/// Retrieve the off-chain balance of the wallet.
+	///
+	/// Make sure you sync before calling this method.
+	pub async fn offchain_balance(&mut self) -> anyhow::Result<Amount> {
 		let mut sum = Amount::ZERO;
 		for vtxo in self.db.get_all_vtxos()? {
 			sum += vtxo.spec().amount;
 			debug!("Vtxo {}: {}", vtxo.id(), vtxo.spec().amount);
 		}
 		Ok(sum)
+	}
+
+	pub fn vtxos(&mut self) -> anyhow::Result<Vec<Vtxo>> {
+		Ok(self.db.get_all_vtxos()?)
+	}
+
+	/// Sync both the onchain and offchain wallet.
+	pub async fn sync(&mut self) -> anyhow::Result<()> {
+		self.onchain.sync().await?;
+		self.sync_ark().await?;
+		Ok(())
 	}
 
 	//TODO(stevenroose) remove
@@ -262,6 +292,10 @@ impl Wallet {
 		}
 		self.db.store_claim_inputs(&[])?;
 		Ok(())
+	}
+
+	pub fn vtxo_pubkey(&self) -> PublicKey {
+		self.vtxo_seed.to_keypair(&SECP).public_key()
 	}
 
 	// Onboard a vtxo with the given vtxo amount.
@@ -312,10 +346,6 @@ impl Wallet {
 		info!("Onboard successfull");
 
 		Ok(())
-	}
-
-	pub fn vtxo_pubkey(&self) -> PublicKey {
-		self.vtxo_seed.to_keypair(&SECP).public_key()
 	}
 
 	fn add_new_vtxo(&mut self, vtxos: &SignedVtxoTree, leaf_idx: usize) -> anyhow::Result<()> {
@@ -403,10 +433,6 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub async fn send_onchain(&mut self, addr: Address, amount: Amount) -> anyhow::Result<Txid> {
-		Ok(self.onchain.send_money(addr, amount).await?)
-	}
-
 	pub async fn offboard_all(&mut self) -> anyhow::Result<()> {
 		let _ = self.onchain.sync().await;
 		self.sync_ark().await.context("failed to sync with ark")?;
@@ -427,9 +453,34 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
-		self.sync_ark().await.context("failed to sync with ark")?;
+	/// Refresh vtxos that are close to expiration.
+	pub async fn refresh_vtxos(&mut self, threshold_blocks: u32) -> anyhow::Result<()> {
+		let height = self.onchain.tip().await?;
+		let expiring_vtxos = {
+			let mut ret = self.db.get_all_vtxos()?;
+			ret.retain(|v| v.spec().expiry_height + threshold_blocks < height);
+			ret
+		};
+		let amount = expiring_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
+		//TODO(stevenroose) impl key derivation
+		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+		let create = VtxoRequest { pubkey: vtxo_key.public_key(), amount };
+
+		self.participate_round(move |_id, _offb_fr| {
+			Ok((expiring_vtxos.clone(), vec![create.clone()], Vec::new()))
+		}).await.context("round failed")?;
+		Ok(())
+	}
+
+	/// Refresh vtxos that are close to expiration.
+	///
+	/// The threshold used for this is the configured threshold.
+	pub async fn refresh_expiring_vtxos(&mut self) -> anyhow::Result<()> {
+		self.refresh_vtxos(self.config.vtxo_refresh_threshold).await
+	}
+
+	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
 		let current_height = self.onchain.tip().await?;
 		let fr = self.onchain.regular_fee_rate();
 		//TODO(stevenroose) impl key derivation
@@ -548,12 +599,14 @@ impl Wallet {
 		Ok(user_vtxo.id())
 	}
 
-	pub async fn send_ark_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<()> {
+	/// Send a payment in an Ark round.
+	///
+	/// It is advised to sync your wallet before calling this method.
+	pub async fn send_round_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<()> {
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
 		// Prepare the payment.
-		self.sync_ark().await.context("failed to sync with ark")?;
 		let payment = VtxoRequest { pubkey: destination, amount };
 		let input_vtxos = self.db.get_expiring_vtxos(amount)?;
 		let change = { //TODO(stevenroose) account dust
@@ -580,12 +633,14 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub async fn send_ark_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<()> {
+	/// Send to an off-chain address in an Ark round.
+	///
+	/// It is advised to sync your wallet before calling this method.
+	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<()> {
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
 		// Prepare the payment.
-		self.sync_ark().await.context("failed to sync with ark")?;
 		let input_vtxos = self.db.get_all_vtxos()?;
 
 		// do a quick check to fail early if we don't have enough money
@@ -637,7 +692,6 @@ impl Wallet {
 			(Vec<Vtxo>, Vec<VtxoRequest>, Vec<OffboardRequest>)
 		>,
 	) -> anyhow::Result<()> {
-		self.sync_ark().await.context("ark sync error")?;
 		let current_height = self.onchain.tip().await?;
 
 		//TODO(stevenroose) impl key derivation

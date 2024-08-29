@@ -104,6 +104,10 @@ impl Wallet {
 		Ok(balance.total())
 	}
 
+	pub fn balance(&self) -> Amount {
+		self.wallet.balance().total()
+	}
+
 	/// Fee rate to use for regular txs like onboards.
 	pub fn regular_fee_rate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(10).unwrap()
@@ -139,7 +143,6 @@ impl Wallet {
 	}
 
 	pub async fn send_money(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
-		self.sync().await.context("sync error")?;
 		let psbt = self.prepare_tx(dest, amount)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;

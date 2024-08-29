@@ -1,0 +1,13 @@
+[package]
+name = "bark-json"
+version = "0.0.0"
+license = "CC0-1.0"
+authors = ["Steven Roose <steven@roose.io>"]
+description = "JSON definitions for the bark APIs"
+edition = "2021"
+
+[dependencies]
+ark-lib = { path = "../ark-lib" }
+
+bitcoin.workspace = true
+serde.workspace = true

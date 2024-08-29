@@ -73,10 +73,7 @@ impl Bark {
 	}
 
 	pub async fn onchain_balance(&self) -> anyhow::Result<Amount> {
-		let json = self.run(["balance", "--json"]).await?;
-		let json = serde_json::from_str::<serde_json::Value>(&json).unwrap();
-		let sats = json.as_object().unwrap().get("onchain").unwrap().as_i64().unwrap();
-		Ok(Amount::from_sat(sats as u64))
+		Ok(self.run(["onchain", "balance"]).await?.parse()?)
 	}
 
 	pub async fn offchain_balance(&self) -> anyhow::Result<Amount> {
@@ -86,14 +83,14 @@ impl Bark {
 		Ok(Amount::from_sat(sats as u64))
 	}
 
-	pub async fn get_address(&self) -> anyhow::Result<Address> {
-		let address_string = self.run(["get-address"]).await?.trim().to_string();
+	pub async fn get_onchain_address(&self) -> anyhow::Result<Address> {
+		let address_string = self.run(["onchain", "address"]).await?.trim().to_string();
 		let address_unchecked = Address::<NetworkUnchecked>::from_str(&address_string)?;
 		Ok(address_unchecked.assume_checked())
 	}
 
-	pub async fn get_vtxo_pubkey(&self) -> anyhow::Result<String> {
-		Ok(self.run(["get-vtxo-pubkey"]).await?)
+	pub async fn vtxo_pubkey(&self) -> anyhow::Result<String> {
+		Ok(self.run(["vtxo-pubkey"]).await?)
 	}
 
 	pub async fn send_round(&self, destination: impl fmt::Display, amount: Amount) -> anyhow::Result<()> {
@@ -106,7 +103,7 @@ impl Bark {
 	pub async fn send_oor(&self, destination: impl fmt::Display, amount: Amount) -> anyhow::Result<()> {
 		let destination = destination.to_string();
 		let amount = amount.to_string();
-		self.run(["send-oor", &destination, &amount, "--verbose"]).await?;
+		self.run(["send", &destination, &amount, "--verbose"]).await?;
 		Ok(())
 	}
 
