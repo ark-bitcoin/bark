@@ -1,4 +1,4 @@
-use std::fs;
+use std::{env, fs};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -15,7 +15,7 @@ use bitcoin::{Amount, Txid};
 use bark_cln::grpc;
 use bark_cln::grpc::node_client::NodeClient;
 
-use crate::constants::env::LIGHTNINGD_EXEC;
+use crate::constants::env::{LIGHTNINGD_EXEC, LIGHTNINGD_PLUGINS};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::Bitcoind;
 
@@ -73,6 +73,9 @@ impl LightningDHelper {
 		writeln!(file, "network={}", self.config.network)?;
 		writeln!(file, "bitcoin-datadir={}", self.config.bitcoin_dir.to_string_lossy())?;
 		writeln!(file, "bitcoin-rpcport={}", self.config.bitcoin_rpcport)?;
+		if let Ok(dir) = env::var(LIGHTNINGD_PLUGINS) {
+			writeln!(file, "plugin-dir={}", dir)?;
+		}
 		writeln!(file, "alias={}", self.name)?;
 		writeln!(file, "")?;
 		writeln!(file, "# Make tests run faster and get better error messages")?;

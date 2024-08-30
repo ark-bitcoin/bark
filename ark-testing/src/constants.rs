@@ -4,4 +4,5 @@ pub mod env {
 	pub const BARK_EXEC: &str = "BARK_EXEC";
 	pub const ASPD_EXEC: &str = "ASPD_EXEC";
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
+	pub const LIGHTNINGD_PLUGINS: &str = "LIGHTNINGD_PLUGINS";
 }
