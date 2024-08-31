@@ -99,6 +99,13 @@ impl rpc::ArkService for Arc<App> {
 		if user_part.spec.asp_pubkey != self.master_key.public_key() {
 			return Err(badarg!("ASP public key is incorrect!"));
 		}
+
+		if let Some(max) = self.config.max_onboard_value {
+			if user_part.spec.amount > max {
+				return Err(badarg!("onboard amount exceeds limit of {}", max));
+			}
+		}
+
 		let asp_part = self.cosign_onboard(user_part);
 		Ok(tonic::Response::new(rpc::OnboardCosignResponse {
 			asp_part: {

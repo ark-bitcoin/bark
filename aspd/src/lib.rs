@@ -46,12 +46,39 @@ pub struct Config {
 	pub bitcoind_url: String,
 	pub bitcoind_cookie: String,
 
+	// vtxo spec
+	pub vtxo_expiry_delta: u16,
+	pub vtxo_exit_delta: u16,
+
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
-	pub vtxo_expiry_delta: u16,
-	pub vtxo_exit_delta: u16,
+
+	// limits
+	pub max_onboard_value: Option<Amount>,
+}
+
+// NB some random defaults to have something
+impl Default for Config {
+	fn default() -> Config {
+		Config {
+			network: bitcoin::Network::Regtest,
+			public_rpc_address: "0.0.0.0:3535".parse().unwrap(),
+			public_rpc_tls_cert_path: None,
+			public_rpc_tls_key_path: None,
+			admin_rpc_address: Some("127.0.0.1:3536".parse().unwrap()),
+			bitcoind_url: "http://127.0.0.1:38332".into(),
+			bitcoind_cookie: "~/.bitcoin/signet/.cookie".into(),
+			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
+			vtxo_exit_delta: 2 * 6, // 2 hrs
+			round_interval: Duration::from_secs(10),
+			round_submit_time: Duration::from_secs(2),
+			round_sign_time: Duration::from_secs(2),
+			nb_round_nonces: 100,
+			max_onboard_value: None,
+		}
+	}
 }
 
 impl Config {
@@ -91,27 +118,6 @@ impl Config {
 		// Create the copy
 		fs::copy(source, destination).context("Failed to create back-up")?;
 		Ok(())
-	}
-}
-
-// NB some random defaults to have something
-impl Default for Config {
-	fn default() -> Config {
-		Config {
-			network: bitcoin::Network::Regtest,
-			public_rpc_address: "0.0.0.0:3535".parse().unwrap(),
-			public_rpc_tls_cert_path: None,
-			public_rpc_tls_key_path: None,
-			admin_rpc_address: Some("127.0.0.1:3536".parse().unwrap()),
-			bitcoind_url: "http://127.0.0.1:38332".into(),
-			bitcoind_cookie: "~/.bitcoin/signet/.cookie".into(),
-			round_interval: Duration::from_secs(10),
-			round_submit_time: Duration::from_secs(2),
-			round_sign_time: Duration::from_secs(2),
-			nb_round_nonces: 100,
-			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
-			vtxo_exit_delta: 2 * 6, // 2 hrs
-		}
 	}
 }
 
