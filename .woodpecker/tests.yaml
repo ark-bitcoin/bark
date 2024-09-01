@@ -1,0 +1,26 @@
+
+when:
+  - event: pull_request
+  - event: push
+    branch: master
+
+steps:
+  - name: build
+    image: stevenroose/bark-ci-tests
+    commands:
+      - cargo build --workspace
+      - ls -al ./target/debug
+
+  - name: test-unit
+    image: stevenroose/bark-ci-tests
+    commands:
+      - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
+
+  - name: test-integration
+    depends_on: build
+    image: stevenroose/bark-ci-tests
+    environment:
+      ASPD_EXEC: /woodpecker/src/codeberg.org/ark-bitcoin/bark/target/debug/aspd
+      BARK_EXEC: /woodpecker/src/codeberg.org/ark-bitcoin/bark/target/debug/bark
+    commands:
+      - cargo test --package ark-testing
