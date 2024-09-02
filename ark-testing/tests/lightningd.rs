@@ -10,6 +10,9 @@ use bark_cln::grpc;
 async fn start_lightningd() {
 	let context = TestContext::new("lightningd/start-lightningd");
 	let bitcoind = context.bitcoind("bitcoind-1").await.expect("bitcoind started");
+	// See https://github.com/ElementsProject/lightning/pull/7379
+	// Why we need to generate 100 blocks before starting cln
+	bitcoind.generate(100).await.unwrap();
 
 	// Start an instance of lightningd
 	let lightningd_1 = context.lightningd("lightningd-1", &bitcoind).await.expect("Can start lightningd");
@@ -27,6 +30,9 @@ async fn start_lightningd() {
 async fn pay_lightningd() {
 	let context = TestContext::new("lightningd/pay-lightningd");
 	let bitcoind = context.bitcoind("bitcoind-1").await.expect("bitcoind started");
+	// See https://github.com/ElementsProject/lightning/pull/7379
+	// Why we need to generate 100 blocks before starting cln
+	bitcoind.generate(100).await.unwrap();
 
 	// Start an instance of lightningd
 	let (lightningd_1, lightningd_2) = tokio::try_join!(
