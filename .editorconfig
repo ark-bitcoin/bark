@@ -6,3 +6,11 @@ trim_trailing_whitespace = true
 [*.proto]
 indent_style = tab
 trim_trailing_whitespace = true
+
+[*.yaml]
+indent_style = space
+indent_size = 2
+
+[Dockerfile]
+indent_style = tab
+trim_trailing_whitespace = true
