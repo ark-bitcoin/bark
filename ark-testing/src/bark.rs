@@ -13,6 +13,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
 
 use crate::constants::env::BARK_EXEC;
+use crate::util::resolve_path;
 
 pub struct BarkConfig {
 	pub datadir: PathBuf,
@@ -31,7 +32,8 @@ pub struct Bark {
 
 impl Bark {
 	fn cmd() -> TokioCommand {
-		let exec = env::var(BARK_EXEC).expect("BARK_EXEC env not set");
+		let e = env::var(BARK_EXEC).expect("BARK_EXEC env not set");
+		let exec = resolve_path(e).expect("failed to resolve BARK_EXEC");
 		TokioCommand::new(exec)
 	}
 

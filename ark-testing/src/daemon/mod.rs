@@ -47,7 +47,6 @@ pub struct Daemon<T>
 impl<T> Daemon<T>
 	where T: DaemonHelper + Send + Sync + 'static
 {
-
 	pub fn wrap(inner : T) -> Self {
 
 		Self {

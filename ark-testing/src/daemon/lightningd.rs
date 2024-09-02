@@ -15,17 +15,17 @@ use bitcoin::{Amount, Txid};
 use bark_cln::grpc;
 use bark_cln::grpc::node_client::NodeClient;
 
+use crate::Bitcoind;
 use crate::constants::env::{LIGHTNINGD_EXEC, LIGHTNINGD_PLUGINS};
 use crate::daemon::{Daemon, DaemonHelper};
-use crate::Bitcoind;
+use crate::util::resolve_path;
 
 pub type Lightningd = Daemon<LightningDHelper>;
 
 impl Lightningd {
-
 	pub fn exec() -> PathBuf {
 		if let Ok(e) = std::env::var(&LIGHTNINGD_EXEC) {
-			e.into()
+			resolve_path(e).expect("failed to resolve LIGHTNINGD_EXEC")
 		} else if let Ok(e) = which::which("lightningd") {
 			e.into()
 		} else {

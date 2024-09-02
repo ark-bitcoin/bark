@@ -1,3 +1,4 @@
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 use crate::{Bark, Aspd, Lightningd};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXEC;
-use crate::util::FeeRateExt;
+use crate::util::{FeeRateExt, resolve_path};
 
 pub struct BitcoindHelper {
 	name : String,
@@ -48,7 +49,7 @@ pub type Bitcoind = Daemon<BitcoindHelper>;
 impl Bitcoind {
 	fn exec() -> PathBuf {
 		if let Ok(e) = std::env::var(&BITCOIND_EXEC) {
-			e.into()
+			resolve_path(e).expect("failed to resolve BITCOIND_EXEC")
 		} else if let Ok(e) = which::which("bitcoind") {
 			e.into()
 		} else {

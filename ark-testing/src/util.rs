@@ -1,9 +1,10 @@
 
+use std::{env, fs};
 use std::borrow::Borrow;
-use std::process::Child;
 use std::path::{Path, PathBuf};
-use std::fs;
+use std::process::Child;
 
+use anyhow::Context;
 use bitcoin::{Denomination, FeeRate, Weight};
 
 use crate::constants::env::TEST_DIRECTORY;
@@ -22,6 +23,29 @@ pub fn init_logging() -> anyhow::Result<()> {
 		.chain(std::io::stdout())
 		.apply();
 	Ok(())
+}
+
+/// Resolves the directory when it is a relative path, and
+/// returns canonicalized path.
+///
+/// Returns error if path doesn't exist.
+pub fn resolve_path(path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
+	let path = path.as_ref().to_path_buf();
+	let path = if path.is_relative() {
+		let cur = env::current_dir().expect("failed to get current dir");
+		let abs = cur.join(&path);
+		if abs.exists() {
+			abs
+		} else {
+			bail!("relative path {} doesn't exist for current directory {}",
+				path.display(), cur.display(),
+			);
+		}
+	} else {
+		path
+	};
+	Ok(fs::canonicalize(&path)
+		.with_context(|| format!("failed to canonicalize path {}", path.display()))?)
 }
 
 /// Returns the directory where all test data will be written

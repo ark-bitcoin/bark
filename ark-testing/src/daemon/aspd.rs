@@ -1,5 +1,6 @@
-use std::time::Duration;
+
 use std::env;
+use std::time::Duration;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -11,6 +12,7 @@ use aspd_rpc_client::Empty;
 
 use crate::{Daemon, DaemonHelper};
 use crate::constants::env::ASPD_EXEC;
+use crate::util::resolve_path;
 
 pub type Aspd = Daemon<AspdHelper>;
 
@@ -43,7 +45,8 @@ struct AspdState {
 
 impl Aspd {
 	pub fn base_cmd() -> Command {
-		let exec = env::var(ASPD_EXEC).expect("ASPD_EXEC env not set");
+		let e = env::var(ASPD_EXEC).expect("ASPD_EXEC env not set");
+		let exec = resolve_path(e).expect("failed to resolve ASPD_EXEC");
 		Command::new(exec)
 	}
 
