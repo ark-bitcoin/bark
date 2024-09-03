@@ -1,11 +1,11 @@
 
-use std::io;
-use std::collections::HashSet;
+use std::{cmp, io};
+use std::collections::HashMap;
 
 use anyhow::Context;
-use bitcoin::{sighash, taproot, Amount, OutPoint, Transaction, Witness};
+use bitcoin::{sighash, Amount, OutPoint, Transaction, Txid};
 
-use ark::{Vtxo, VtxoId, VtxoSpec};
+use ark::{Vtxo, VtxoSpec};
 
 use crate::{SECP, Wallet};
 use crate::psbtext::PsbtInputExt;
@@ -33,219 +33,275 @@ impl ClaimInput {
 	}
 
 	pub fn satisfaction_weight(&self) -> usize {
-		// NB Better use a method for this because might be vtxo-dependent in the future.
+		// NB might be vtxo-dependent in the future.
 		VTXO_CLAIM_INPUT_WEIGHT
 	}
 }
 
-struct Exit {
-	total_size: usize,
-	started: Vec<VtxoId>,
-	claim_inputs: Vec<ClaimInput>,
-	fee_anchors: Vec<OutPoint>,
-	broadcast: Vec<Transaction>,
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ExitTxStatus {
+	/// Tx has not been broadcast.
+	#[default]
+	Pending,
+	/// Has been been broadcast with
+	BroadcastWithCpfp(Transaction),
+	/// Has been confirmed.
+	ConfirmedIn(u32),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct VtxoExit {
+	vtxo: Vtxo,
+	exit_tx_status: HashMap<Txid, ExitTxStatus>,
+}
+
+impl VtxoExit {
+	fn new(vtxo: Vtxo) -> VtxoExit {
+		VtxoExit { vtxo, exit_tx_status: HashMap::new() }
+	}
+
+	fn exit_txs(&self) -> Vec<Transaction> {
+		let mut ret = Vec::new();
+		self.vtxo.collect_exit_txs(&mut ret);
+		ret
+	}
+
+	//TODO(stevenroose) probably not needed
+	fn claim(&self) -> ClaimInput {
+		ClaimInput {
+			utxo: self.vtxo.point(),
+			spec: self.vtxo.spec().clone(),
+		}
+	}
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct Exit {
+	/// The vtxos in process of exit
+	vtxos: Vec<VtxoExit>,
+
+	// nb for now this seems just a vec, but later we will have txs
+	// that cpfp multiple exits etc
 }
 
 impl Exit {
-	fn new() -> Exit {
-		Exit {
-			total_size: 0,
-			started: Vec::new(),
-			claim_inputs: Vec::new(),
-			fee_anchors: Vec::new(),
-			broadcast: Vec::new(),
+	fn add_vtxo(&mut self, vtxo: Vtxo) {
+		if self.vtxos.iter().any(|v| v.vtxo.id() == vtxo.id()) {
+			return;
 		}
+		self.vtxos.push(VtxoExit::new(vtxo));
 	}
 
-	fn add_vtxo(&mut self, vtxo: &Vtxo) {
-		let id = vtxo.id();
-		match vtxo {
-			Vtxo::Onboard { .. } => {
-				let reveal_tx = vtxo.vtxo_tx();
-				self.broadcast.push(reveal_tx.clone());
-				self.total_size += reveal_tx.vsize();
-			},
-			Vtxo::Round { exit_branch, .. } => {
-				let mut branch_size = 0;
-				for tx in exit_branch {
-					self.broadcast.push(tx.clone());
-					branch_size += tx.vsize();
-				}
-				self.total_size += branch_size;
-			},
-			Vtxo::Oor { inputs, oor_tx, .. } => {
-				for input in inputs {
-					self.add_vtxo(input);
-				}
-				self.broadcast.push(oor_tx.clone());
-				self.total_size += oor_tx.vsize();
-			},
-		}
-		self.started.push(id);
-		self.fee_anchors.push(vtxo.fee_anchor());
-		self.claim_inputs.push(ClaimInput { utxo: vtxo.point(), spec: vtxo.spec().clone() });
+	pub fn vtxos(&self) -> impl ExactSizeIterator<Item = &Vtxo> {
+		self.vtxos.iter().map(|v| &v.vtxo)
+	}
+
+	pub fn total_pending_amount(&self) -> Amount {
+		self.vtxos.iter().map(|v| v.vtxo.spec().amount).sum()
 	}
 }
 
+#[derive(Debug)]
+pub enum ExitStatus {
+	/// All txs were broadcast and we claimed all exits.
+	Done,
+	/// Not all txs were able to be broadcast and confirmed.
+	NeedMoreTxs,
+	/// All txs are broadcast and confirmed, but we need more confirmations.
+	WaitingForHeight(u32),
+}
+
+/// Failed to take the exit lock.
+#[derive(Debug)]
+pub struct ExitLockError;
+
+impl std::fmt::Display for ExitLockError {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		write!(f, "failed to take the exit lock")
+	}
+}
+
+impl std::error::Error for ExitLockError {}
+
+
 impl Wallet {
-	/// Exit all vtxo onto the chain.
-	pub async fn start_unilateral_exit(&mut self) -> anyhow::Result<()> {
+	/// Try to take exit lock and return the proper error.
+	fn take_exit_lock(&self) -> anyhow::Result<()> {
+		if let Err(_) = self.db.take_exit_lock() {
+			return Err(ExitLockError.into());
+		}
+		Ok(())
+	}
+
+	/// Release the exit lock.
+	///
+	/// Only use this if you are sure no other process has taken this lock.
+	pub fn release_exit_lock(&self) -> anyhow::Result<()> {
+		if let Err(_) = self.db.release_exit_lock() {
+			bail!("failed to release the exit lock, this might cause problems later");
+		}
+		Ok(())
+	}
+
+	async fn try_start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
 		self.onchain.sync().await.context("onchain sync error")?;
 		if let Err(e) = self.sync_ark().await {
 			warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
 		}
+		let current_height = self.onchain.tip().await?;
 
 		let vtxos = self.db.get_all_vtxos()?;
+		let ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 
-		//TODO(stevenroose) idea, each vtxo will have a fee anchor for us.
-		// We should here
-		// - collect all fee anchor outputs of broadcasted txs in a list
-		// - add up the vsize of all txs we broadcasted
-		// - create a new tx using our on-chain wallet that spends all anchors and
-		// has an absolute fee that pays our feerate (also todo) for the entire
-		// "package" vsize.
+		// The idea is to convert all our vtxos into an exit process structure,
+		// that we then store in the database and we can gradually proceed on.
 
-		info!("Starting unilateral exit of {} vtxos...", vtxos.len());
-		let mut exit = Exit::new();
+		let mut exit = self.db.fetch_exit()?.unwrap_or_default();
+
 		for vtxo in vtxos {
-			exit.add_vtxo(&vtxo);
+			exit.add_vtxo(vtxo);
 		}
 
-		//TODO(stevenroose) probably a good idea to store this exit struct in the db
-		// so we can recover if anything fails
-
-		// Broadcast exit txs.
-		for tx in &exit.broadcast {
-			trace!("Broadcasting tx {}: {}", tx.compute_txid(), bitcoin::consensus::encode::serialize_hex(tx));
-			if let Err(e) = self.onchain.broadcast_tx(tx).await {
-				error!("Error broadcasting exit tx {}: {}", tx.compute_txid(), e);
-				error!("Tx {}: {}", tx.compute_txid(), bitcoin::consensus::encode::serialize_hex(tx));
-			}
+		self.db.store_exit(&exit)?;
+		for id in ids {
+			self.db.store_spent_vtxo(id, current_height).context("failed to mark vtxo as spent")?;
+			self.db.remove_vtxo(id).context("failed to drop exited vtxo")?;
 		}
 
-		if exit.claim_inputs.len() == 0 {
-			return Ok(());
-		}
-
-		info!("Got {} outputs to claim, {} fee anchors to spend and {} package vsize to cover",
-			exit.claim_inputs.len(), exit.fee_anchors.len(), exit.total_size);
-
-		// First we will store the claim inputs so we for sure don't forget about them.
-		// We might already have some pending claim inputs.
-		let mut claim_inputs = self.db.get_claim_inputs().context("db error getting existing claims")?;
-		let mut claim_utxos = claim_inputs.iter().map(|i| i.utxo).collect::<HashSet<_>>();
-		for new in exit.claim_inputs {
-			if claim_utxos.insert(new.utxo) {
-				claim_inputs.push(new);
-			} else {
-				warn!("A claim input for utxo {} already existed", new.utxo);
-			}
-		}
-		self.db.store_claim_inputs(&claim_inputs).context("db error storing claim inputs")?;
-
-		// Then we'll send a tx that will pay the fee for all the txs we made.
-		let tx = self.onchain.spend_fee_anchors(&exit.fee_anchors, exit.total_size).await?;
-		info!("Sent anchor spend tx: {}", tx.compute_txid());
-
-		// After we succesfully stored the claim inputs, we can drop the vtxos.
-		for id in exit.started {
-			if let Err(e) = self.db.remove_vtxo(id) {
-				// Don't error here so we can try remove the others.
-				warn!("Error removing vtxo {} from db: {}", id, e);
-			}
-		}
 		Ok(())
 	}
 
-	/// Returns all the pending exit claims, first the claimable ones and then
-	/// the unclaimable ones.
-	pub async fn unclaimed_exits(&self) -> anyhow::Result<(Vec<ClaimInput>, Vec<ClaimInput>)> {
-		let all_inputs = self.db.get_claim_inputs()?;
-		//TODO(stevenroose) we need to find a way of what to do with the inputs
-		// that are already spent
-		let mut claimable = Vec::with_capacity(all_inputs.len());
-		let mut unclaimable = Vec::with_capacity(all_inputs.len());
-		for input in all_inputs {
-			match self.onchain.txout_confirmations(input.utxo).await {
-				Ok(Some(confs)) => {
-					if confs >= input.spec.exit_delta as u32 {
-						claimable.push(input);
-						continue;
-					} else {
-						trace!("Claim input {} has only {} confirmations (need {})",
-							input.utxo, confs, input.spec.exit_delta);
-					}
-				},
-				Ok(None) => warn!("Claim input {} not found in utxo set...", input.utxo),
-				Err(e) => {
-					trace!("Error from chain source: {}", e);
-					warn!("Claim input {} not found in utxo set...", input.utxo);
-				},
-			}
-			unclaimable.push(input);
-		}
-		Ok((claimable, unclaimable))
+	/// Add all vtxos in the current wallet to the exit process.
+	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
+		self.take_exit_lock()?;
+		let ret = self.try_start_exit_for_entire_wallet().await;
+		self.release_exit_lock()?;
+		ret
 	}
 
-	pub async fn claim_unilateral_exit(&mut self) -> anyhow::Result<()> {
-		let (inputs, remaining) = self.unclaimed_exits().await?;
+	/// Get the pending exit tracking struct.
+	//TODO(stevenroose) consider not exposing this and only expose a overview struct
+	pub fn get_exit(&self) -> anyhow::Result<Option<Exit>> {
+		Ok(self.db.fetch_exit()?)
+	}
 
-		if inputs.is_empty() {
-			info!("No inputs we can claim.");
-			return Ok(());
+	async fn try_progress_exit(&mut self) -> anyhow::Result<ExitStatus> {
+		self.onchain.sync().await.context("onchain sync error")?;
+		let mut exit = self.db.fetch_exit()?.unwrap_or_default();
+
+		// Go over each tx and see if we can make progress on it.
+		//
+		// NB cpfp should be done on individual txs for now, because we will utilize 1p1c
+		for vtxo in exit.vtxos.iter_mut() {
+			'tx: for tx in vtxo.exit_txs() {
+				let txid = tx.compute_txid();
+				match vtxo.exit_tx_status.get(&txid) {
+					Some(ExitTxStatus::ConfirmedIn(_)) => {}, // nothing to do
+					Some(ExitTxStatus::BroadcastWithCpfp(_tx)) => {
+						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
+							debug!("Exit tx {} is confirmed", txid);
+							vtxo.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+						}
+					},
+					None | Some(ExitTxStatus::Pending) => {
+						// First check if it's already confirmed.
+						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
+							debug!("Exit tx {} is confirmed", txid);
+							vtxo.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+							continue 'tx;
+						}
+
+						// Check if all the inputs are confirmed
+						for inp in &tx.input {
+							let res = self.onchain.tx_confirmed(inp.previous_output.txid).await;
+							if res.is_err() || res.unwrap().is_none() {
+								trace!("Can't include tx {} yet because input {} is not yet confirmed",
+									txid, inp.previous_output,
+								);
+								continue 'tx;
+							}
+						}
+
+						// Ok let's confirm this bastard.
+						let cpfp = self.onchain.make_cpfp(&[&tx]).await?;
+						if let Err(e) = self.onchain.broadcast_tx(&tx).await {
+							warn!("Error broadcasting an exit tx, \
+								hopefully means it already got broadcast before: {}", e);
+						}
+						if let Err(e) = self.onchain.broadcast_tx(&cpfp).await {
+							error!("Error broadcasting CPFP tx: {}", e);
+							//TODO(stevenroose) should we abort or still store the tx?
+						} else {
+							info!("Broadcast CPFP tx {} to confirm tx {}", cpfp.compute_txid(), txid);
+						}
+						vtxo.exit_tx_status.insert(txid, ExitTxStatus::BroadcastWithCpfp(cpfp));
+					},
+				}
+			}
 		}
-		let total_amount = inputs.iter().map(|i| i.spec.amount).sum::<Amount>();
-		debug!("Claiming the following exits with total value of {}: {:?}",
-			total_amount, inputs.iter().map(|i| i.utxo.to_string()).collect::<Vec<_>>(),
-		);
 
-		let mut psbt = self.onchain.create_exit_claim_tx(&inputs).await?;
+		// Save the updated exit state.
+		self.db.store_exit(&exit)?;
 
-		// Sign all the claim inputs.
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
-		let lver = taproot::LeafVersion::TapScript;
-		let prevouts = psbt.inputs.iter()
-			.map(|i| i.witness_utxo.clone().unwrap())
-			.collect::<Vec<_>>();
-		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
-		for (i, input) in psbt.inputs.iter_mut().enumerate() {
-			let claim = if let Some(c) = input.get_claim_input() {
-				c
+		// nb we wait until we can sweep all of them
+		let mut all_confirmed = true;
+		let mut highest_height = 0;
+		for vtxo in exit.vtxos.iter_mut() {
+			let status = vtxo.exit_tx_status.get(&vtxo.vtxo.vtxo_tx().compute_txid());
+			if let Some(ExitTxStatus::ConfirmedIn(h)) = status {
+				let height = h + vtxo.vtxo.spec().exit_delta as u32;
+				highest_height = cmp::max(highest_height, height);
 			} else {
-				continue;
-			};
-
-			// Now we need to sign for this.
-			let exit_script = claim.spec.exit_clause();
-			let leaf_hash = taproot::TapLeafHash::from_script(&exit_script, lver);
-			let sighash = shc.taproot_script_spend_signature_hash(
-				i, &sighash::Prevouts::All(&prevouts), leaf_hash, sighash::TapSighashType::Default,
-			).expect("all prevouts provided");
-
-			assert_eq!(vtxo_key.public_key(), claim.spec.user_pubkey);
-			let sig = SECP.sign_schnorr(&sighash.into(), &vtxo_key);
-
-			let cb = claim.spec.exit_taproot()
-				.control_block(&(exit_script.clone(), lver))
-				.expect("script is in taproot");
-
-			let wit = Witness::from_slice(
-				&[&sig[..], exit_script.as_bytes(), &cb.serialize()],
-			);
-			debug_assert_eq!(wit.size(), claim.satisfaction_weight());
-			input.final_script_witness = Some(wit);
+				all_confirmed = false;
+				break;
+			}
 		}
+		let ret = if all_confirmed {
+			let current_height = self.onchain.tip().await?;
+			if highest_height <= current_height {
+				let inputs = exit.vtxos.iter().map(|vtxo| {
+					vtxo.claim()
+				}).collect::<Vec<_>>();
 
-		// Then sign the wallet's funding inputs.
-		let tx = self.onchain.finish_tx(psbt).context("finishing claim psbt")?;
-		if let Err(e) = self.onchain.broadcast_tx(&tx).await {
-			bail!("Error broadcasting claim tx: {}", e);
-		}
+				let total_amount = inputs.iter().map(|i| i.spec.amount).sum::<Amount>();
+				debug!("Claiming the following exits with total value of {}: {:?}",
+					total_amount, inputs.iter().map(|i| i.utxo.to_string()).collect::<Vec<_>>(),
+				);
 
-		// Then update the database and only set the remaining inputs as to do.
-		self.db.store_claim_inputs(&remaining).context("failed db update")?;
+				let mut psbt = self.onchain.create_exit_claim_tx(&inputs).await?;
 
-		info!("Successfully claimed total value of {}", total_amount);
-		Ok(())
+				// Sign all the claim inputs.
+				let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+				let prevouts = psbt.inputs.iter()
+					.map(|i| i.witness_utxo.clone().unwrap())
+					.collect::<Vec<_>>();
+				let prevouts = sighash::Prevouts::All(&prevouts);
+				let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
+				for (i, input) in psbt.inputs.iter_mut().enumerate() {
+					input.try_sign_claim_input(&SECP, &mut shc, &prevouts, i, &vtxo_key);
+				}
+
+				// Then sign the wallet's funding inputs.
+				let tx = self.onchain.finish_tx(psbt).context("finishing claim psbt")?;
+				if let Err(e) = self.onchain.broadcast_tx(&tx).await {
+					bail!("Error broadcasting claim tx: {}", e);
+				}
+
+				ExitStatus::Done
+			} else {
+				ExitStatus::WaitingForHeight(highest_height)
+			}
+		} else {
+			ExitStatus::NeedMoreTxs
+		};
+		Ok(ret)
+	}
+
+	/// Progress a unilateral exit progress.
+	pub async fn progress_exit(&mut self) -> anyhow::Result<ExitStatus> {
+		self.take_exit_lock()?;
+		let ret = self.try_progress_exit().await;
+		self.release_exit_lock()?;
+		ret
 	}
 }

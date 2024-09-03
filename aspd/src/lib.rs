@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::{bip32, sighash, psbt, taproot, Amount, Address, OutPoint, Transaction, Witness};
+use bitcoin::{bip32, psbt, sighash, taproot, Address, Amount, FeeRate, OutPoint, Transaction, Weight, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 use tokio::sync::Mutex;
 
@@ -49,11 +49,17 @@ pub struct Config {
 	// vtxo spec
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
+	/// Add fee anchors on all VTXO tree intermediate txs.
+	pub vtxo_node_anchors: bool,
 
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
+
+	//TODO(stevenroose) get these from a fee estimator service
+	/// Fee rate used for the round tx.
+	pub round_tx_feerate: FeeRate,
 
 	// limits
 	pub max_onboard_value: Option<Amount>,
@@ -72,10 +78,12 @@ impl Default for Config {
 			bitcoind_cookie: "~/.bitcoin/signet/.cookie".into(),
 			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
 			vtxo_exit_delta: 2 * 6, // 2 hrs
+			vtxo_node_anchors: true,
 			round_interval: Duration::from_secs(10),
 			round_submit_time: Duration::from_secs(2),
 			round_sign_time: Duration::from_secs(2),
 			nb_round_nonces: 100,
+			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			max_onboard_value: None,
 		}
 	}
@@ -445,7 +453,7 @@ impl App {
 						let wit = Witness::from_slice(
 							&[&sig[..], script.as_bytes(), &control.serialize()],
 						);
-						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT);
+						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
 						input.final_script_witness = Some(wit);
 					},
 					RoundMeta::Connector => {
@@ -479,7 +487,7 @@ impl App {
 pub(crate) struct SpendableUtxo {
 	pub point: OutPoint,
 	pub psbt: psbt::Input,
-	pub weight: usize,
+	pub weight: Weight,
 }
 
 impl SpendableUtxo {

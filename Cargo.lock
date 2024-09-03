@@ -118,6 +118,7 @@ dependencies = [
  "anyhow",
  "aspd-rpc-client",
  "bark-cln",
+ "bark-json",
  "bitcoin",
  "bitcoincore-rpc",
  "chrono",

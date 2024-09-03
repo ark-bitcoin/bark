@@ -122,10 +122,22 @@ enum Command {
 	},
 	#[command()]
 	OffboardAll,
+	/// Perform a unilateral exit from the Ark.
 	#[command()]
-	StartExit,
-	#[command()]
-	ClaimExit,
+	Exit {
+		/// If set, only try to make progress on pending exits and don't
+		/// initiate exits on VTXOs in wallet.
+		#[arg(long)]
+		only_progress: bool,
+
+		/// Force overwriting the exit lock before starting.
+		/// Use this only if you are sure no other process is accessing this wallet.
+		#[arg(long)]
+		force_lock: bool,
+
+		//TODO(stevenroose) add a option to claim claimable exits while others are not claimable
+		//yet
+	},
 
 	/// Dev command to drop the vtxo database.
 	#[command(hide = true)]
@@ -257,25 +269,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			w.sync().await.context("sync error")?;
 			let onchain = w.onchain_balance();
 			let offchain =  w.offchain_balance().await?;
-			let (available, unavailable) = w.unclaimed_exits().await?;
-			let onchain_available_exit = available.iter().map(|i| i.spec.amount).sum::<Amount>();
-			let onchain_pending_exit = unavailable.iter().map(|i| i.spec.amount).sum::<Amount>();
+			let pending_exit = {
+				let exit = w.get_exit()?.unwrap_or_default();
+				exit.total_pending_amount()
+			};
 			if cli.json {
 				serde_json::to_writer(io::stdout(), &json::Balance {
-					onchain, offchain, onchain_available_exit, onchain_pending_exit
+					onchain, offchain, pending_exit,
 				}).unwrap();
 			} else {
 				info!("Onchain balance: {}", onchain);
 				info!("Offchain balance: {}", offchain);
-				if !available.is_empty() {
-					info!("Got {} claimable exits with total value of {}",
-						available.len(), onchain_available_exit,
-					);
-				}
-				if !unavailable.is_empty() {
-					info!("Got {} unclaimable exits with total value of {}",
-						unavailable.len(), onchain_pending_exit,
-					);
+				if pending_exit > Amount::ZERO {
+					info!("An exit process is pending for {}", pending_exit);
 				}
 			}
 		},
@@ -329,8 +335,55 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 		},
 		Command::OffboardAll => w.offboard_all().await?,
-		Command::StartExit => w.start_unilateral_exit().await?,
-		Command::ClaimExit => w.claim_unilateral_exit().await?,
+		Command::Exit { only_progress, force_lock } => {
+			if force_lock {
+				w.release_exit_lock().context("couldn't release exit lock")?;
+			}
+
+			fn print_exit_lock_msg<T>(res: anyhow::Result<T>) -> anyhow::Result<T> {
+				if let Result::Err(ref err) = res {
+					if let Some(_) = err.downcast_ref::<bark::ExitLockError>() {
+						error!("ERROR: Failed to take the exit lock. \
+							If you are sure no other process is accessing this wallet, \
+							run the same command with --force-lock to resolve this issue.");
+					}
+				}
+				res
+			}
+
+			if !only_progress {
+				print_exit_lock_msg(w.start_exit_for_entire_wallet().await)
+					.context("error starting exit process for existing vtxos")?;
+			}
+
+			let res = print_exit_lock_msg(w.progress_exit().await)
+				.context("error making progress on exit process")?;
+			if cli.json {
+				let ret = match res {
+					bark::ExitStatus::Done => {
+						json::ExitStatus { done: true, height: None }
+					},
+					bark::ExitStatus::NeedMoreTxs => {
+						json::ExitStatus { done: false, height: None }
+					},
+					bark::ExitStatus::WaitingForHeight(h) => {
+						json::ExitStatus { done: false, height: Some(h) }
+					},
+				};
+				serde_json::to_writer(io::stdout(), &ret).unwrap();
+			} else {
+				match res {
+					bark::ExitStatus::Done => info!("Exit done!"),
+					bark::ExitStatus::NeedMoreTxs => {
+						info!("More transactions need to be confirmed, keep calling this command.");
+					},
+					bark::ExitStatus::WaitingForHeight(h)=> {
+						info!("All transactions are confirmed, \
+							you can claim them all at block height {}.", h);
+					}
+				}
+			}
+		},
 
 		// dev commands
 

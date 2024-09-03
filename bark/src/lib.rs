@@ -5,6 +5,7 @@
 
 mod database;
 mod exit;
+pub use exit::{ExitStatus, ExitLockError};
 mod onchain;
 mod psbtext;
 
@@ -287,10 +288,11 @@ impl Wallet {
 
 	//TODO(stevenroose) remove
 	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
+		warn!("Dropping all vtxos from the database...");
 		for vtxo in self.db.get_all_vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
-		self.db.store_claim_inputs(&[])?;
+		self.db.store_exit(&exit::Exit::default())?;
 		Ok(())
 	}
 
@@ -591,9 +593,9 @@ impl Wallet {
 		}
 
 		for v in input_vtxos {
-			self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
 			self.db.store_spent_vtxo(v.id(), current_height)
 				.context("failed to store forfeited vtxo")?;
+			self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
 		}
 
 		Ok(user_vtxo.id())
@@ -987,9 +989,9 @@ impl Wallet {
 
 			// And remove the input vtxos.
 			for v in input_vtxos {
-				self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
 				self.db.store_spent_vtxo(v.id(), current_height)
 					.context("failed to store forfeited vtxo")?;
+				self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
 			}
 
 			info!("Finished payment");

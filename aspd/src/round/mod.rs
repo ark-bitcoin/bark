@@ -355,9 +355,8 @@ pub async fn run_round_coordinator(
 
 	info!("Onchain balance: {}", app.sync_onchain_wallet().await?);
 
-	//TODO(stevenroose) somehow get these from a fee estimator service
-	let offboard_feerate = FeeRate::from_sat_per_vb(10).unwrap();
-	let round_tx_feerate = FeeRate::from_sat_per_vb(10).unwrap();
+	let round_tx_feerate = app.config.round_tx_feerate;
+	let offboard_feerate = round_tx_feerate;
 
 	// The maximum number of output vtxos per round based on the max number
 	// of vtxo tree nonces we require users to provide.
@@ -465,6 +464,7 @@ pub async fn run_round_coordinator(
 				app.master_key.public_key(),
 				expiry,
 				cfg.vtxo_exit_delta,
+				cfg.vtxo_node_anchors,
 			);
 			//TODO(stevenroose) this is inefficient, improve this with direct getter
 			let nb_nodes = vtxos_spec.build_unsigned_tree(OutPoint::null()).nb_nodes();
@@ -491,7 +491,7 @@ pub async fn run_round_coordinator(
 				b.nlocktime(LockTime::from_height(tip).expect("actual height"));
 				for utxo in &spendable_utxos {
 					b.add_foreign_utxo_with_sequence(
-						utxo.point, utxo.psbt.clone(), utxo.weight, Sequence::ZERO,
+						utxo.point, utxo.psbt.clone(), utxo.weight.to_wu() as usize, Sequence::ZERO,
 					).expect("bdk rejected foreign utxo");
 				}
 				b.add_recipient(vtxos_spec.cosign_spk(), vtxos_spec.total_required_value());

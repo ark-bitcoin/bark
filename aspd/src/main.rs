@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, Network};
+use bitcoin::{Address, Amount, FeeRate, Network};
 use clap::Parser;
 
 use aspd::{App, Config};
@@ -232,6 +232,10 @@ struct ConfigOpts {
 	vtxo_expiry_delta: Option<u16>,
 	#[arg(long)]
 	vtxo_exit_delta: Option<u16>,
+
+	/// The feerate (in sats per kvb) to use for round txs.
+	#[arg(long)]
+	round_tx_feerate_sat_per_kvb: Option<u64>,
 }
 
 impl ConfigOpts {
@@ -286,6 +290,12 @@ impl ConfigOpts {
 
 		if let Some(v) = self.vtxo_exit_delta {
 			cfg.vtxo_exit_delta = v;
+		}
+
+		if let Some(v) = self.round_tx_feerate_sat_per_kvb {
+			cfg.round_tx_feerate = FeeRate::from_sat_per_kwu(
+				(v.checked_sub(1).context("feerate can't be 0")? / 4) + 1
+			);
 		}
 
 		Ok(())

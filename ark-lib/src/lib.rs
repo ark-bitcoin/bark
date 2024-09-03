@@ -1,4 +1,5 @@
 
+#[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde;
 
 pub mod connectors;
@@ -344,9 +345,24 @@ impl Vtxo {
 		}
 	}
 
-	pub fn fee_anchor(&self) -> OutPoint {
-		let tx = self.vtxo_tx();
-		OutPoint::new(tx.compute_txid(), tx.output.len() as u32 - 1)
+	/// Collect all off-chain txs required for the exit of this entire vtxo.
+	///
+	/// The [vtxo_tx] is always included.
+	pub fn collect_exit_txs(&self, txs: &mut Vec<Transaction>) {
+		match self {
+			Vtxo::Onboard { .. } => {
+				txs.push(self.vtxo_tx());
+			},
+			Vtxo::Round { exit_branch, .. } => {
+				txs.extend(exit_branch.iter().cloned());
+			},
+			Vtxo::Oor { inputs, oor_tx, .. } => {
+				for input in inputs {
+					input.collect_exit_txs(txs);
+				}
+				txs.push(oor_tx.clone());
+			},
+		}
 	}
 
 	/// Splits this vtxo in a set of non-OOR vtxos and the attached OOR txs.

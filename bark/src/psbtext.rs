@@ -1,8 +1,9 @@
 
 
-use std::borrow::BorrowMut;
+use std::borrow::{Borrow, BorrowMut};
 
-use bitcoin::psbt;
+use bitcoin::{psbt, sighash, taproot, Transaction, TxOut, Witness};
+use bitcoin::secp256k1::{self, Keypair};
 
 use crate::exit;
 
@@ -32,6 +33,45 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 	fn get_claim_input(&self) -> Option<exit::ClaimInput> {
 		self.borrow().proprietary.get(&*PROP_KEY_CLAIM_INPUT)
 			.map(|e| exit::ClaimInput::decode(&e).expect("corrupt psbt"))
+	}
+
+	fn try_sign_claim_input(
+		&mut self,
+		secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction>>,
+		prevouts: &sighash::Prevouts<impl Borrow<TxOut>>,
+		input_idx: usize,
+		vtxo_key: &Keypair,
+	) {
+		let claim = if let Some(c) = self.get_claim_input() {
+			c
+		} else {
+			return;
+		};
+
+		// Now we need to sign for this.
+		let exit_script = claim.spec.exit_clause();
+		let leaf_hash = taproot::TapLeafHash::from_script(
+			&exit_script,
+			taproot::LeafVersion::TapScript,
+		);
+		let sighash = sighash_cache.taproot_script_spend_signature_hash(
+			input_idx, prevouts, leaf_hash, sighash::TapSighashType::Default,
+		).expect("all prevouts provided");
+
+		assert_eq!(vtxo_key.public_key(), claim.spec.user_pubkey);
+		let sig = secp.sign_schnorr(&sighash.into(), &vtxo_key);
+
+		let cb = claim.spec.exit_taproot()
+			.control_block(&(exit_script.clone(), taproot::LeafVersion::TapScript))
+			.expect("script is in taproot");
+
+		let wit = Witness::from_slice(
+			&[&sig[..], exit_script.as_bytes(), &cb.serialize()],
+		);
+		debug_assert_eq!(wit.size(), claim.satisfaction_weight());
+		self.borrow_mut().final_script_witness = Some(wit);
+
 	}
 }
 

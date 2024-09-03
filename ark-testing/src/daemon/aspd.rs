@@ -4,8 +4,8 @@ use std::time::Duration;
 use std::path::PathBuf;
 use std::process::Command;
 
-use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::Network;
+use bitcoin::address::{Address, NetworkUnchecked};
 
 use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
 use aspd_rpc_client::Empty;

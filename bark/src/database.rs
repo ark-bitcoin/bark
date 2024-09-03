@@ -8,7 +8,7 @@ use sled::transaction::{self as tx, Transactional};
 use ark::{Vtxo, VtxoId};
 use sled_utils::BucketTree;
 
-use crate::exit;
+use crate::exit::Exit;
 
 // Trees
 
@@ -18,7 +18,8 @@ const SPENT_VTXO_TREE: &str = "bark_spent_vtxos";
 
 // Top-level entries
 
-const CLAIM_INPUTS: &str = "claim_inputs";
+const ONGOING_EXIT: &str = "exit";
+const ONGOING_EXIT_LOCK: &str = "exit_lock";
 const LAST_ARK_SYNC_HEIGHT: &str = "last_round_sync_height";
 
 pub struct Db {
@@ -97,20 +98,31 @@ impl Db {
 		})?)
 	}
 
-	/// This overrides the existing list of exit claim inputs with the new list.
-	pub fn store_claim_inputs(&self, inputs: &[exit::ClaimInput]) -> anyhow::Result<()> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(&inputs, &mut buf).unwrap();
-		self.db.insert(CLAIM_INPUTS, buf)?;
+	/// Try to take the exit process lock. Returns true on success.
+	pub fn take_exit_lock(&self) -> anyhow::Result<bool> {
+		let prev = self.db.fetch_and_update(ONGOING_EXIT_LOCK, |_| Some(vec![0x01]))?;
+		Ok(prev.is_none())
+	}
+
+	/// Release the exit process lock.
+	pub fn release_exit_lock(&self) -> anyhow::Result<()> {
+		self.db.remove(ONGOING_EXIT_LOCK)?;
 		Ok(())
 	}
 
-	/// Gets the current list of exit claim inputs.
-	pub fn get_claim_inputs(&self) -> anyhow::Result<Vec<exit::ClaimInput>> {
-		match self.db.get(CLAIM_INPUTS)? {
-			Some(buf) => Ok(ciborium::from_reader(&buf[..]).expect("corrupt db: claim inputs")),
-			None => Ok(Vec::new()),
-		}
+	/// Store the ongoing exit process.
+	pub fn store_exit(&self, exit: &Exit) -> anyhow::Result<()> {
+		let mut buf = Vec::new();
+		ciborium::into_writer(exit, &mut buf).unwrap();
+		self.db.insert(ONGOING_EXIT, buf)?;
+		Ok(())
+	}
+
+	/// Fetch the ongoing exit process.
+	pub fn fetch_exit(&self) -> anyhow::Result<Option<Exit>> {
+		Ok(self.db.get(ONGOING_EXIT)?.map(|b| {
+			ciborium::from_reader(&b[..]).expect("corrupt db: exit")
+		}))
 	}
 
 	pub fn get_last_ark_sync_height(&self) -> anyhow::Result<u32> {

@@ -5,7 +5,10 @@
 //! * ASP does a deterministic sign and sends ASP part using [new_asp].
 //! * User also signs and combines sigs using [finish] and stores vtxo.
 
-use bitcoin::{taproot, Amount, OutPoint, Sequence, ScriptBuf, Transaction, TxIn, TxOut, Witness};
+use bitcoin::{
+	taproot, Amount, OutPoint, Sequence, ScriptBuf, Transaction, TxIn, TxOut, Weight,
+	Witness,
+};
 use bitcoin::blockdata::locktime::absolute::LockTime;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair};
@@ -14,8 +17,8 @@ use bitcoin::sighash::{self, SighashCache, TapSighash};
 use crate::{fee, musig, util, BaseVtxo, Vtxo, VtxoSpec};
 
 
-/// The total signed tx vsize of a reveal tx.
-const REVEAL_TX_VSIZE: usize = 154;
+/// The total signed tx weight of a reveal tx.
+const REVEAL_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
 
 fn onboard_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
 	let expiry = util::timelock_sign(spec.expiry_height, spec.asp_pubkey.x_only_public_key().0);
@@ -42,7 +45,7 @@ pub fn onboard_spk(spec: &VtxoSpec) -> ScriptBuf {
 
 /// The additional amount that needs to be sent into the onboard tx.
 pub fn onboard_surplus() -> Amount {
-	fee::DUST + Amount::from_sat(REVEAL_TX_VSIZE as u64) // 1 sat/vb
+	fee::DUST + fee::RELAY_FEERATE * REVEAL_TX_WEIGHT
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -177,7 +180,7 @@ pub fn finish(
 pub fn signed_reveal_tx(vtxo: &Vtxo) -> Option<Transaction> {
 	if let Vtxo::Onboard { ref base, reveal_tx_signature } = vtxo {
 		let ret = create_reveal_tx(&base.spec, base.utxo, Some(reveal_tx_signature));
-		assert_eq!(ret.vsize(), REVEAL_TX_VSIZE);
+		assert_eq!(ret.weight(), REVEAL_TX_WEIGHT);
 		Some(ret)
 	} else {
 		None

@@ -4,8 +4,7 @@ use std::iter;
 
 use bitcoin::{
 	Address, Amount, Network, OutPoint, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
-	Witness,
-
+	Weight, Witness,
 };
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighashType};
@@ -15,8 +14,8 @@ use crate::util::KeypairExt;
 
 
 /// The size in vbytes of each connector tx.
-const TX_SIZE: u64 = 154;
-pub const INPUT_WEIGHT: usize = 66;
+const TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
+pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
 
 
 /// A chain of connector outputs.
@@ -32,9 +31,9 @@ pub struct ConnectorChain {
 
 impl ConnectorChain {
 	/// The total size in vbytes of the connector tree.
-	pub fn total_vsize(len: usize) -> u64 {
+	pub fn total_weight(len: usize) -> Weight {
 		assert_ne!(len, 0);
-		(len - 1) as u64 * TX_SIZE
+		(len - 1) as u64 * TX_WEIGHT
 	}
 
 	/// The budget needed for a chain of length [len] to pay for
@@ -42,12 +41,11 @@ impl ConnectorChain {
 	/// - minrelayfee per tx
 	pub fn required_budget(len: usize) -> Amount {
 		assert_ne!(len, 0);
-		Amount::from_sat(
-			// We need n times dust for connectors.
-			len as u64 * fee::DUST.to_sat()
-			// Then we need minrelayfee to make sure we can pay for every tx in chain.
-			+ Self::total_vsize(len)
-		)
+
+		// We need n times dust for connectors.
+		fee::DUST * len as u64
+		// Then we need minrelayfee to make sure we can pay for every tx in chain.
+		+ fee::RELAY_FEERATE * Self::total_weight(len)
 	}
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
@@ -231,24 +229,24 @@ mod test {
 		assert_eq!(chain.iter_unsigned_txs().count(), 1);
 		assert_eq!(chain.iter_signed_txs(&key).count(), 1);
 		let tx = chain.iter_signed_txs(&key).next().unwrap();
-		assert_eq!(TX_SIZE, tx.vsize() as u64);
+		assert_eq!(TX_WEIGHT, tx.weight());
 
 		let chain = ConnectorChain::new(100, utxo, key.public_key());
 		assert_eq!(chain.connectors().count(), 100);
 		assert_eq!(chain.iter_unsigned_txs().count(), 99);
 		assert_eq!(chain.iter_signed_txs(&key).count(), 99);
 		for tx in chain.iter_signed_txs(&key) {
-			assert_eq!(tx.vsize() as u64, TX_SIZE);
-			assert_eq!(tx.input[0].witness.size(), INPUT_WEIGHT);
+			assert_eq!(tx.weight(), TX_WEIGHT);
+			assert_eq!(tx.input[0].witness.size(), INPUT_WEIGHT.to_wu() as usize);
 		}
-		let size = chain.iter_signed_txs(&key).map(|t| t.vsize() as u64).sum::<u64>();
-		assert_eq!(size, ConnectorChain::total_vsize(100));
+		let weight = chain.iter_signed_txs(&key).map(|t| t.weight()).sum::<Weight>();
+		assert_eq!(weight, ConnectorChain::total_weight(100));
 		chain.iter_unsigned_txs().for_each(|t| assert_eq!(t.output[1].value, fee::DUST));
 		assert_eq!(fee::DUST, chain.iter_unsigned_txs().last().unwrap().output[0].value);
 
 		let total_value = chain.iter_unsigned_txs().map(|t| t.output[1].value).sum::<Amount>()
 			+ chain.iter_unsigned_txs().last().unwrap().output[0].value
-			+ Amount::from_sat(size);
+			+ fee::RELAY_FEERATE * weight;
 		assert_eq!(ConnectorChain::required_budget(100), total_value);
 
 		// random checks

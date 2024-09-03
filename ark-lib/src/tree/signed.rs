@@ -3,7 +3,7 @@
 use std::{cmp, io};
 
 use bitcoin::{
-	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness,
 };
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
@@ -14,18 +14,26 @@ use crate::tree::Tree;
 
 
 /// Size in vbytes for the leaf txs.
-const LEAF_TX_VSIZE: u64 = 154;
+const LEAF_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
+
 /// Size in vbytes for a node tx with radix 2.
-const NODE2_TX_VSIZE: u64 = 154;
+const NODE2_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
 /// Size in vbytes for a node tx with radix 3.
-const NODE3_TX_VSIZE: u64 = 197;
+const NODE3_TX_WEIGHT: Weight = Weight::from_vb_unchecked(197);
 /// Size in vbytes for a node tx with radix 4.
-const NODE4_TX_VSIZE: u64 = 240;
+const NODE4_TX_WEIGHT: Weight = Weight::from_vb_unchecked(240);
+
+/// Size in vbytes for a node tx with radix 2 and a fee anchor.
+const NODE2_TX_WEIGHT_ANCHOR: Weight = Weight::from_vb_unchecked(197);
+/// Size in vbytes for a node tx with radix 3 and a fee anchor.
+const NODE3_TX_WEIGHT_ANCHOR: Weight = Weight::from_vb_unchecked(240);
+/// Size in vbytes for a node tx with radix 4 and a fee anchor.
+const NODE4_TX_WEIGHT_ANCHOR: Weight = Weight::from_vb_unchecked(283);
 
 //TODO(stevenroose) write a test for this
 //NB this only works in regtest because it grows a few bytes when
 //the CLTV block height scriptnum grows
-pub const NODE_SPEND_WEIGHT: usize = 140;
+pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -35,6 +43,9 @@ pub struct VtxoTreeSpec {
 	pub asp_key: PublicKey,
 	pub expiry_height: u32,
 	pub exit_delta: u16,
+	/// Whether or not to place fee anchors on each node in the tree.
+	/// NB Fee anchors are always placed on the leaves regardless of this field.
+	pub node_anchors: bool,
 }
 
 impl VtxoTreeSpec {
@@ -44,8 +55,9 @@ impl VtxoTreeSpec {
 		asp_key: PublicKey,
 		expiry_height: u32,
 		exit_delta: u16,
+		node_anchors: bool,
 	) -> VtxoTreeSpec {
-		VtxoTreeSpec { vtxos, cosign_agg_pk, asp_key, expiry_height, exit_delta }
+		VtxoTreeSpec { vtxos, cosign_agg_pk, asp_key, expiry_height, exit_delta, node_anchors }
 	}
 
 	pub fn encode(&self) -> Vec<u8> {
@@ -71,28 +83,41 @@ impl VtxoTreeSpec {
 	pub fn total_required_value(&self) -> Amount {
 		let dest_sum = self.vtxos.iter().map(|d| d.amount).sum::<Amount>();
 
-		// all anchor dust + 1 sat/vb for minrelayfee
-		let leaf_extra = Amount::from_sat(self.vtxos.len() as u64 * fee::DUST.to_sat()
-			+ self.vtxos.len() as u64 * LEAF_TX_VSIZE);
+		let leaf_extra =
+			// one dust anchor per leaf
+			fee::DUST * self.vtxos.len() as u64
+			// relay fee for all txs
+			+ fee::RELAY_FEERATE * (self.vtxos.len() as u64 * LEAF_TX_WEIGHT);
 
 		// total minrelayfee requirement for all intermediate nodes
+		let mut node_anchors = Amount::ZERO;
 		let nodes_fee = {
-			let mut ret = 0;
+			let mut weight = Weight::ZERO;
 			let mut left = self.vtxos.len();
 			while left > 1 {
 				let radix = cmp::min(left, 4);
 				left -= radix;
-				ret += match radix {
-					2 => NODE2_TX_VSIZE,
-					3 => NODE3_TX_VSIZE,
-					4 => NODE4_TX_VSIZE,
-					_ => unreachable!(),
-				};
+				if self.node_anchors {
+					weight += match radix {
+						2 => NODE2_TX_WEIGHT_ANCHOR,
+						3 => NODE3_TX_WEIGHT_ANCHOR,
+						4 => NODE4_TX_WEIGHT_ANCHOR,
+						_ => unreachable!(),
+					};
+					node_anchors += fee::DUST;
+				} else {
+					weight += match radix {
+						2 => NODE2_TX_WEIGHT,
+						3 => NODE3_TX_WEIGHT,
+						4 => NODE4_TX_WEIGHT,
+						_ => unreachable!(),
+					};
+				}
 			}
-			Amount::from_sat(ret)
+			fee::RELAY_FEERATE * weight
 		};
 
-		dest_sum + leaf_extra + nodes_fee
+		dest_sum + leaf_extra + nodes_fee + node_anchors
 	}
 
 	pub fn find_leaf_idxs<'a>(&'a self, dest: &'a VtxoRequest) -> impl Iterator<Item = usize> + 'a {
@@ -108,7 +133,7 @@ impl VtxoTreeSpec {
 	/// The expiry clause hidden in the node taproot as only script.
 	fn expiry_clause(&self) -> ScriptBuf {
 		let pk = self.asp_key.x_only_public_key().0;
-		util::timelock_sign(self.expiry_height.try_into().unwrap(), pk)
+		util::timelock_sign(self.expiry_height, pk)
 	}
 
 	/// The taproot scriptspend info for the expiry clause.
@@ -146,21 +171,34 @@ impl VtxoTreeSpec {
 			}],
 			output: children.iter().map(|child| {
 				let is_leaf = child.output.len() == 2 && child.output[1] == fee::dust_anchor();
-				// We add vsize as if it was fee because 1 sat/vb.
-				let fee_budget = if is_leaf {
-					Amount::from_sat(LEAF_TX_VSIZE * 1)
+				let weight = if is_leaf {
+					LEAF_TX_WEIGHT
 				} else {
-					Amount::from_sat(match child.output.len() {
-						2 => NODE2_TX_VSIZE,
-						3 => NODE3_TX_VSIZE,
-						4 => NODE4_TX_VSIZE,
-						n => unreachable!("node tx with {} children", n),
-					})
+					if self.node_anchors {
+						match child.output.len() {
+							3 => NODE2_TX_WEIGHT_ANCHOR,
+							4 => NODE3_TX_WEIGHT_ANCHOR,
+							5 => NODE4_TX_WEIGHT_ANCHOR,
+							n => unreachable!("node tx with {} children", n),
+						}
+					} else {
+						match child.output.len() {
+							2 => NODE2_TX_WEIGHT,
+							3 => NODE3_TX_WEIGHT,
+							4 => NODE4_TX_WEIGHT,
+							n => unreachable!("node tx with {} children", n),
+						}
+					}
 				};
+				let fee_budget = fee::RELAY_FEERATE * weight;
 				TxOut {
 					script_pubkey: self.cosign_spk(),
 					value: child.output.iter().map(|o| o.value).sum::<Amount>() + fee_budget,
 				}
+			}).chain(if self.node_anchors {
+				Some(fee::dust_anchor())
+			} else {
+				None
 			}).collect(),
 		}
 	}
@@ -266,8 +304,7 @@ impl SignedVtxoTree {
 	}
 
 	fn finalize_tx(tx: &mut Transaction, sig: &schnorr::Signature) {
-		// NB all our txs have a single input
-		//TODO(stevenroose) check this, but I think taproot keyspecs have a single witness element
+		assert_eq!(tx.input.len(), 1);
 		tx.input[0].witness.push(&sig[..]);
 	}
 
@@ -305,18 +342,110 @@ impl SignedVtxoTree {
 
 		Some(branch)
 	}
+
+	/// Get all signed txs in this tree, starting with the leaves, towards the root.
+	pub fn all_signed_txs(&self) -> Vec<Transaction> {
+		let mut ret = self.spec.build_unsigned_tree(self.utxo).into_vec();
+		for (tx, sig) in ret.iter_mut().zip(self.signatures.iter()) {
+			SignedVtxoTree::finalize_tx(tx, sig);
+		}
+		ret
+	}
 }
 
 #[cfg(test)]
 mod test {
 	use super::*;
 
+	use std::collections::HashMap;
 	use std::str::FromStr;
 
-	use bitcoin::hashes::{sha256, Hash};
+	use bitcoin::hashes::{siphash24, sha256, Hash, HashEngine};
 	use bitcoin::secp256k1::{self, rand, Keypair};
+	use bitcoin::FeeRate;
+	use rand::SeedableRng;
 
 	use crate::musig;
+
+	#[test]
+	fn vtxo_tree_spec() {
+		let secp = secp256k1::Secp256k1::new();
+		let mut rand = rand::rngs::SmallRng::seed_from_u64(42);
+		let key1 = Keypair::new(&secp, &mut rand); // asp
+		let key2 = Keypair::new(&secp, &mut rand);
+		let key3 = Keypair::new(&secp, &mut rand);
+		let dest = VtxoRequest {
+			pubkey: Keypair::new(&secp, &mut rand).public_key(),
+			amount: Amount::from_sat(100_000),
+		};
+		let point = "0000000000000000000000000000000000000000000000000000000000000001:1".parse().unwrap();
+
+		{
+			let spec = VtxoTreeSpec::new(
+				vec![dest.clone(); 27],
+				musig::combine_keys([key1.public_key(), key2.public_key(), key3.public_key()]),
+				key1.public_key(),
+				100_000,
+				2016,
+				false,
+			);
+			assert_eq!(spec.total_required_value().to_sat(), 2755270);
+			let sighashes_hash = {
+				let mut eng = siphash24::Hash::engine();
+				spec.sighashes(point).iter().for_each(|h| eng.input(&h[..]));
+				siphash24::Hash::from_engine(eng)
+			};
+			assert_eq!(sighashes_hash.to_string(), "6d145deb972c3096");
+		}
+		{
+			let spec = VtxoTreeSpec::new(
+				vec![dest.clone(); 28],
+				musig::combine_keys([key1.public_key(), key3.public_key(), key2.public_key()]),
+				key1.public_key(),
+				101_000,
+				2016,
+				true,
+			);
+			assert_eq!(spec.total_required_value().to_sat(), 2861894);
+			let sighashes_hash = {
+				let mut eng = siphash24::Hash::engine();
+				spec.sighashes(point).iter().for_each(|h| eng.input(&h[..]));
+				siphash24::Hash::from_engine(eng)
+			};
+			assert_eq!(sighashes_hash.to_string(), "443aa356dd918d36");
+		}
+	}
+
+	fn test_tree_amounts(
+		tree: &SignedVtxoTree,
+		root_value: Amount,
+		fee_rate: FeeRate,
+	) {
+		let txs = tree.all_signed_txs();
+		let map = txs.iter().map(|tx| (tx.compute_txid(), tx)).collect::<HashMap<_, _>>();
+		println!("tx map: {:?}", map);
+
+		// skip the root
+		for tx in txs.iter().take(txs.len() - 1) {
+			println!("tx: {}", bitcoin::consensus::encode::serialize_hex(tx));
+			let input = tx.input.iter().map(|i| {
+				let prev = i.previous_output;
+				map.get(&prev.txid).expect("tx not found").output[prev.vout as usize].value
+			}).sum::<Amount>();
+			let output = tx.output.iter().map(|o| o.value).sum::<Amount>();
+			assert!(input >= output);
+			let weight = tx.weight();
+			let fee = weight * fee_rate;
+			assert_eq!(input, output + fee);
+		}
+
+		// check the root
+		let root = txs.last().unwrap();
+		let output = root.output.iter().map(|o| o.value).sum::<Amount>();
+		let weight = root.weight();
+		let fee = weight * fee_rate;
+		assert_eq!(root_value, output + fee);
+	}
 
 	#[test]
 	fn test_node_tx_sizes() {
@@ -332,6 +461,8 @@ mod test {
 		};
 		let point = "0000000000000000000000000000000000000000000000000000000000000001:1".parse().unwrap();
 
+		// WITHOUT FEE ANCHORS ON NODES
+
 		// For 2..5 we should pass all types of radixes.
 		let (mut had2, mut had3, mut had4) = (false, false, false);
 		for n in 2..5 {
@@ -341,11 +472,14 @@ mod test {
 				key1.public_key(),
 				100_000,
 				2016,
+				false,
 			);
+			let root_value = spec.total_required_value();
 			let unsigned = spec.build_unsigned_tree(point);
 			assert!(unsigned.iter().all(|n| !n.element.input[0].previous_output.is_null()));
 			let nb_nodes = unsigned.nb_nodes();
-			let signed = SignedVtxoTree::new(spec, point, vec![sig.clone(); nb_nodes]);
+			let signed = SignedVtxoTree::new(spec, point, vec![sig; nb_nodes]);
+			test_tree_amounts(&signed, root_value, fee::RELAY_FEERATE);
 			for m in 0..n {
 				let exit = signed.exit_branch(m).unwrap();
 
@@ -360,7 +494,7 @@ mod test {
 				// Assert the node tx sizes match our pre-computed ones.
 				let mut iter = exit.iter().rev();
 				let leaf = iter.next().unwrap();
-				assert_eq!(leaf.vsize() as u64, LEAF_TX_VSIZE);
+				assert_eq!(leaf.weight(), LEAF_TX_WEIGHT);
 				for node in iter {
 					assert_eq!(
 						node.input[0].witness.size(),
@@ -368,15 +502,74 @@ mod test {
 					);
 					match node.output.len() {
 						2 => {
-							assert_eq!(node.vsize() as u64, NODE2_TX_VSIZE);
+							assert_eq!(node.weight(), NODE2_TX_WEIGHT);
 							had2 = true;
 						},
 						3 => {
-							assert_eq!(node.vsize() as u64, NODE3_TX_VSIZE);
+							assert_eq!(node.weight(), NODE3_TX_WEIGHT);
 							had3 = true;
 						},
 						4 => {
-							assert_eq!(node.vsize() as u64, NODE4_TX_VSIZE);
+							assert_eq!(node.weight(), NODE4_TX_WEIGHT);
+							had4 = true;
+						},
+						_ => unreachable!(),
+					}
+				}
+			}
+		}
+		assert!(had2 && had3 && had4);
+
+		// WITH FEE ANCHORS ON NODES
+
+		// For 2..5 we should pass all types of radixes.
+		let (mut had2, mut had3, mut had4) = (false, false, false);
+		for n in 2..5 {
+			let spec = VtxoTreeSpec::new(
+				vec![dest.clone(); n],
+				musig::combine_keys([key1.public_key(), key2.public_key()]),
+				key1.public_key(),
+				100_000,
+				2016,
+				true,
+			);
+			let root_value = spec.total_required_value();
+			let unsigned = spec.build_unsigned_tree(point);
+			assert!(unsigned.iter().all(|n| !n.element.input[0].previous_output.is_null()));
+			let nb_nodes = unsigned.nb_nodes();
+			let signed = SignedVtxoTree::new(spec, point, vec![sig; nb_nodes]);
+			test_tree_amounts(&signed, root_value, fee::RELAY_FEERATE);
+			for m in 0..n {
+				let exit = signed.exit_branch(m).unwrap();
+
+				// Assert it's a valid chain.
+				let mut iter = exit.iter().enumerate().peekable();
+				while let Some((i, cur)) = iter.next() {
+					if let Some((_, next)) = iter.peek() {
+						assert_eq!(next.input[0].previous_output.txid, cur.compute_txid(), "{}", i);
+					}
+				}
+
+				// Assert the node tx sizes match our pre-computed ones.
+				let mut iter = exit.iter().rev();
+				let leaf = iter.next().unwrap();
+				assert_eq!(leaf.weight(), LEAF_TX_WEIGHT);
+				for node in iter {
+					assert_eq!(
+						node.input[0].witness.size(),
+						crate::TAPROOT_KEYSPEND_WEIGHT,
+					);
+					match node.output.len() {
+						3 => {
+							assert_eq!(node.weight(), NODE2_TX_WEIGHT_ANCHOR);
+							had2 = true;
+						},
+						4 => {
+							assert_eq!(node.weight(), NODE3_TX_WEIGHT_ANCHOR);
+							had3 = true;
+						},
+						5 => {
+							assert_eq!(node.weight(), NODE4_TX_WEIGHT_ANCHOR);
 							had4 = true;
 						},
 						_ => unreachable!(),

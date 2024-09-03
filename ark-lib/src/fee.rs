@@ -1,5 +1,13 @@
 
-use bitcoin::{opcodes, Amount, ScriptBuf, TxOut, Witness};
+use bitcoin::{opcodes, Amount, FeeRate, ScriptBuf, TxOut, Witness};
+
+/// The minimum feerate for transaction relay.
+///
+/// Currently 8 sat/vb.
+///
+// NB This can be set back to 1 sat/vb as soon as 1p1c package relay is
+// supported in the network.
+pub const RELAY_FEERATE: FeeRate = FeeRate::from_sat_per_kwu(8 * 250);
 
 /// Dust value of 330 satoshis.
 ///
@@ -10,25 +18,35 @@ pub const DUST: Amount = Amount::from_sat(330);
 pub const DUST_ANCHOR_SIZE: usize = 43;
 
 /// The Script that holds only the OP_TRUE opcode.
-pub fn op_true_script() -> ScriptBuf {
+fn op_true_script() -> ScriptBuf {
 	ScriptBuf::from_bytes(vec![opcodes::OP_TRUE.to_u8()])
 }
 
 /// A p2wsh OP_TRUE fee anchor with the dust amount.
 pub fn dust_anchor() -> TxOut {
-	TxOut {
-		script_pubkey: {
-			ScriptBuf::new_p2wsh(&op_true_script().wscript_hash())
-		},
-		value: DUST,
+	lazy_static! {
+		static ref DUST_ANCHOR: TxOut = TxOut {
+			script_pubkey: {
+				ScriptBuf::new_p2wsh(&op_true_script().wscript_hash())
+			},
+			value: DUST,
+		};
 	}
+
+	DUST_ANCHOR.clone()
 }
 
 /// The input witness for a dust fee anchor.
 pub fn dust_anchor_witness() -> Witness {
-	let mut ret = Witness::new();
-	ret.push(&op_true_script()[..]);
-	ret
+	lazy_static! {
+		static ref DUST_ANCHOR_WITNESS: Witness = {
+			let mut ret = Witness::new();
+			ret.push(&op_true_script()[..]);
+			ret
+		};
+	}
+
+	DUST_ANCHOR_WITNESS.clone()
 }
 
 #[cfg(test)]
