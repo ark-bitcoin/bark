@@ -13,6 +13,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use crate::{fee, musig, util, Vtxo, VtxoRequest, VtxoSpec};
 
 
+/// The minimum fee we consider for an oor transaction.
 pub const OOR_MIN_FEE: Amount = crate::P2TR_DUST;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -129,7 +130,7 @@ impl OorPayment {
 		our_pub_nonces: &[musig::MusigPubNonce],
 		asp_nonces: &[musig::MusigPubNonce],
 		asp_part_sigs: &[musig::MusigPartialSignature],
-	) -> OorTransaction {
+	) -> SignedOorPayment {
 		assert_eq!(self.inputs.len(), our_sec_nonces.len());
 		assert_eq!(self.inputs.len(), our_pub_nonces.len());
 		assert_eq!(self.inputs.len(), asp_nonces.len());
@@ -158,7 +159,7 @@ impl OorPayment {
 			sigs.push(final_sig);
 		}
 
-		OorTransaction {
+		SignedOorPayment {
 			payment: self,
 			signatures: sigs,
 		}
@@ -177,12 +178,12 @@ impl OorPayment {
 
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct OorTransaction {
+pub struct SignedOorPayment {
 	pub payment: OorPayment,
 	pub signatures: Vec<schnorr::Signature>,
 }
 
-impl OorTransaction {
+impl SignedOorPayment {
 	pub fn signed_transaction(&self) -> Transaction {
 		let mut tx = self.payment.unsigned_transaction();
 		for (input, sig) in tx.input.iter_mut().zip(self.signatures.iter()) {
