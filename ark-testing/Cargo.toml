@@ -3,6 +3,9 @@ name = "ark-testing"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+slow_test = []
+
 [dependencies]
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 bark-cln = { path = "../bark-cln"}
