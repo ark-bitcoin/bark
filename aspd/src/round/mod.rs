@@ -465,6 +465,7 @@ pub async fn run_round_coordinator(
 				app.master_key.public_key(),
 				expiry,
 				cfg.vtxo_exit_delta,
+				cfg.vtxo_node_anchors,
 			);
 			//TODO(stevenroose) this is inefficient, improve this with direct getter
 			let nb_nodes = vtxos_spec.build_unsigned_tree(OutPoint::null()).nb_nodes();

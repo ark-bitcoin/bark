@@ -241,10 +241,12 @@ impl<T> Tree<T> {
 		self.child_idx_of(node_idx, child_idx).map(|idx| &mut self.nodes[idx].elem)
 	}
 
+	/// Returns a vector of the nodes, starting with the leaves, all the way to the root.
 	pub fn into_vec(self) -> Vec<T> {
 		self.nodes.into_iter().map(|n| n.elem).collect()
 	}
 
+	/// Iterates the nodes, starting with the leaves, all the way to the root.
 	pub fn iter(&self) -> impl DoubleEndedIterator<Item = IterNode<T>> {
 		self.nodes.iter().map(|n| {
 			IterNode {
@@ -261,6 +263,7 @@ impl<T> Tree<T> {
 		})
 	}
 
+	/// Mutable version of [iter].
 	pub fn iter_mut(&mut self) -> NodeIterMut<T> {
 		NodeIterMut {
 			tree: self,

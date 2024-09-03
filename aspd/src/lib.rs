@@ -49,6 +49,8 @@ pub struct Config {
 	// vtxo spec
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
+	/// Add fee anchors on all VTXO tree intermediate txs.
+	pub vtxo_node_anchors: bool,
 
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
@@ -72,6 +74,7 @@ impl Default for Config {
 			bitcoind_cookie: "~/.bitcoin/signet/.cookie".into(),
 			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
 			vtxo_exit_delta: 2 * 6, // 2 hrs
+			vtxo_node_anchors: true,
 			round_interval: Duration::from_secs(10),
 			round_submit_time: Duration::from_secs(2),
 			round_sign_time: Duration::from_secs(2),
