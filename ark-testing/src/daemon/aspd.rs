@@ -4,8 +4,7 @@ use std::time::Duration;
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::Context;
-use bitcoin::address::{Address, NetworkUnchecked, NetworkChecked};
+use bitcoin::address::{Address, NetworkUnchecked};
 
 use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
 use aspd_rpc_client::Empty;
@@ -60,27 +59,26 @@ impl Aspd {
 		Daemon::wrap(helper)
 	}
 
-	pub fn asp_url(&self) -> anyhow::Result<String> {
+	pub fn asp_url(&self) -> String {
 		self.inner.asp_url()
 	}
 
-	pub async fn get_admin_client(&self) -> anyhow::Result<AdminClient> {
-		self.inner.get_admin_client().await
+	pub async fn get_admin_client(&self) -> AdminClient {
+		self.inner.connect_admin_client().await.unwrap()
 	}
 
-	pub async fn get_public_client(&self) -> anyhow::Result<ArkClient> {
-		self.inner.get_public_client().await
+	pub async fn get_public_client(&self) -> ArkClient {
+		self.inner.connect_public_client().await.unwrap()
 	}
 
-	pub async fn get_funding_address(&self) -> anyhow::Result<Address> {
-		let mut admin_client = self.get_admin_client().await?;
-		let response = admin_client.wallet_status(Empty {}).await?.into_inner();
-		let address: Address<NetworkChecked> = response.address.parse::<Address<NetworkUnchecked>>()?.assume_checked();
-		Ok(address)
+	pub async fn get_funding_address(&self) -> Address {
+		let mut admin_client = self.get_admin_client().await;
+		let response = admin_client.wallet_status(Empty {}).await.unwrap().into_inner();
+		response.address.parse::<Address<NetworkUnchecked>>().unwrap().assume_checked()
 	}
 
 	pub async fn trigger_round(&self) {
-		self.get_admin_client().await.unwrap().trigger_round(Empty {}).await.unwrap();
+		self.get_admin_client().await.trigger_round(Empty {}).await.unwrap();
 	}
 }
 
@@ -173,7 +171,6 @@ impl DaemonHelper for AspdHelper {
 	}
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
-
 		while !self.is_ready().await {
 			tokio::time::sleep(Duration::from_millis(100)).await;
 		}
@@ -186,31 +183,35 @@ impl AspdHelper {
 		return self.admin_grpc_is_ready().await && self.public_grpc_is_ready().await
 	}
 
-	async fn admin_grpc_is_ready(&self) -> bool {
-		match self.get_admin_client().await {
-				Ok(mut client) => client.wallet_status(Empty {}).await.is_ok(),
-				Err(_) => false
-			}
-	}
-
 	async fn public_grpc_is_ready(&self) -> bool {
-		match self.get_public_client().await {
-				Ok(mut client) => client.get_ark_info(Empty {}).await.is_ok(),
-				Err(_) => false
-			}
+		if let Ok(mut c) = self.connect_public_client().await {
+			c.get_ark_info(Empty {}).await.is_ok()
+		} else {
+			false
+		}
 	}
 
-	pub fn asp_url(&self) -> anyhow::Result<String> {
-		Ok(format!("http://{}", self.state.public_grpc_address.clone().context("Is asp running")?))
+	async fn admin_grpc_is_ready(&self) -> bool {
+		if let Ok(mut c) = self.connect_admin_client().await {
+			c.wallet_status(Empty {}).await.is_ok()
+		} else {
+			false
+		}
 	}
 
-	pub async fn get_admin_client(&self) -> anyhow::Result<AdminClient> {
-		let url = format!("http://{}", self.state.admin_grpc_address.clone().expect("The admin_grpc port is set. Is aspd running?"));
-		Ok(AdminClient::connect(url).await?)
+	pub fn asp_url(&self) -> String {
+		format!("http://{}", self.state.public_grpc_address.clone().expect("asp not running"))
 	}
 
-	pub async fn get_public_client(&self) -> anyhow::Result<ArkClient> {
-		let url = format!("http://{}", self.state.public_grpc_address.clone().expect("The public_grpc_address port is set. Is aspd running?"));
-		Ok(ArkClient::connect(url).await?)
+	pub fn admin_url(&self) -> String {
+		format!("http://{}", self.state.admin_grpc_address.clone().expect("asp not running"))
+	}
+
+	pub async fn connect_public_client(&self) -> Result<ArkClient, tonic::transport::Error> {
+		ArkClient::connect(self.asp_url()).await
+	}
+
+	pub async fn connect_admin_client(&self) -> Result<AdminClient, tonic::transport::Error> {
+		AdminClient::connect(self.admin_url()).await
 	}
 }

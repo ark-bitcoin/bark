@@ -35,7 +35,7 @@ impl TestContext {
 		}
 	}
 
-	pub async fn bitcoind(&self, name: impl AsRef<str>) -> anyhow::Result<Bitcoind> {
+	pub async fn bitcoind(&self, name: impl AsRef<str>) -> Bitcoind {
 		self.bitcoind_with_cfg(name.as_ref(), self.bitcoind_default_cfg(name.as_ref())).await
 	}
 
@@ -43,21 +43,21 @@ impl TestContext {
 		&self,
 		name: impl AsRef<str>,
 		cfg: BitcoindConfig,
-	) -> anyhow::Result<Bitcoind> {
-		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), cfg);
-		bitcoind.start().await?;
-		Ok(bitcoind)
+	) -> Bitcoind {
+		let mut ret = Bitcoind::new(name.as_ref().to_string(), cfg);
+		ret.start().await.unwrap();
+		ret
 	}
 
-	pub async fn aspd_with_cfg(&self, name: impl AsRef<str>, cfg: AspdConfig) -> anyhow::Result<Aspd> {
+	pub async fn aspd_with_cfg(&self, name: impl AsRef<str>, cfg: AspdConfig) -> Aspd {
 		let datadir = self.datadir.join(name.as_ref());
 
-		let mut aspd = Aspd::new(name, cfg);
-		aspd.add_stdout_handler(FileLogger::new(datadir.join("stdout.log")))?;
-		aspd.add_stderr_handler(FileLogger::new(datadir.join("stderr.log")))?;
+		let mut ret = Aspd::new(name, cfg);
+		ret.add_stdout_handler(FileLogger::new(datadir.join("stdout.log"))).unwrap();
+		ret.add_stderr_handler(FileLogger::new(datadir.join("stderr.log"))).unwrap();
 
-		aspd.start().await?;
-		Ok(aspd)
+		ret.start().await.unwrap();
+		ret
 	}
 
 	pub fn aspd_default_cfg(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> AspdConfig {
@@ -73,41 +73,40 @@ impl TestContext {
 		}
 	}
 
-	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> anyhow::Result<Aspd> {
+	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> Aspd {
 		let name = name.as_ref();
 		self.aspd_with_cfg(name, self.aspd_default_cfg(name, bitcoind)).await
 	}
 
-
-	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> anyhow::Result<Bark> {
+	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> Bark {
 		let datadir = self.datadir.join(name.as_ref());
-		let asp_url = aspd.asp_url()?;
+		let asp_url = aspd.asp_url();
 
 		let cfg = BarkConfig {
 			datadir,
 			asp_url,
 			bitcoind_url: bitcoind.rpc_url(),
 			bitcoind_cookie: bitcoind.rpc_cookie(),
-			network: String::from("regtest")};
-		Ok(Bark::new(name, cfg).await?)
+			network: String::from("regtest"),
+		};
+		Bark::new(name, cfg).await
 	}
 
-	pub async fn lightningd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> anyhow::Result<Lightningd> {
-		let lightning_dir = self.datadir.join(name.as_ref());
+	pub async fn lightningd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> Lightningd {
+		let datadir = self.datadir.join(name.as_ref());
 
 		let cfg = LightningdConfig {
 			network: String::from("regtest"),
 			bitcoin_dir: bitcoind.datadir(),
 			bitcoin_rpcport: bitcoind.rpc_port(),
-			lightning_dir: lightning_dir.clone()
+			lightning_dir: datadir.clone()
 		};
 
-		let mut lightningd = Lightningd::new(name, cfg);
-		lightningd.add_stdout_handler(FileLogger::new(lightning_dir.join("stdout.log")))?;
-		lightningd.add_stderr_handler(FileLogger::new(lightning_dir.join("stderr.log")))?;
-		lightningd.start().await?;
-
-		Ok(lightningd)
+		let mut ret = Lightningd::new(name, cfg);
+		ret.add_stdout_handler(FileLogger::new(datadir.join("stdout.log"))).unwrap();
+		ret.add_stderr_handler(FileLogger::new(datadir.join("stderr.log"))).unwrap();
+		ret.start().await.unwrap();
+		ret
 	}
 }
 

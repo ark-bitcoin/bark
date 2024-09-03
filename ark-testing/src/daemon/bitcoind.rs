@@ -63,8 +63,8 @@ impl Bitcoind {
 		Daemon::wrap(BitcoindHelper { name, exec, config, state})
 	}
 
-	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
-		self.inner.sync_client()
+	pub fn sync_client(&self) -> BitcoindClient {
+		self.inner.sync_client().unwrap()
 	}
 
 	pub fn rpc_cookie(&self) -> PathBuf {
@@ -84,58 +84,53 @@ impl Bitcoind {
 		self.inner.config.datadir.clone()
 	}
 
-	pub async fn init_wallet(&self) -> anyhow::Result<()> {
+	pub async fn init_wallet(&self) {
 		info!("Initialziing a wallet");
-		let client = self.sync_client()?;
-
-		match client.get_wallet_info() {
-			Ok(_) => Ok(()), // A wallet exists
-			Err(_) => {
-				let _ = client.create_wallet("", None, None, None, None)?;
-				Ok(())
-			}
+		let client = self.sync_client();
+		if client.get_wallet_info().is_err() {
+			client.create_wallet("", None, None, None, None).expect("failed to create new wallet");
 		}
 	}
 
-	pub async fn generate(&self, block_num: u64) -> anyhow::Result<()> {
-		self.init_wallet().await?;
+	pub async fn generate(&self, block_num: u64) {
+		self.init_wallet().await;
 
-		let client = self.sync_client()?;
-		let address = client.get_new_address(None, None)?.require_network(Network::Regtest)?;
-		client.generate_to_address(block_num, &address)?;
-
-		Ok(())
+		let client = self.sync_client();
+		let address = client.get_new_address(None, None).unwrap()
+			.require_network(Network::Regtest).unwrap();
+		client.generate_to_address(block_num, &address).unwrap();
 	}
 
-	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) -> anyhow::Result<()> {
-		let address = aspd.get_funding_address().await?;
-		self.sync_client()?.send_to_address(&address, amount, None, None, None, None, None, None)?;
-		Ok(())
+	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) {
+		let address = aspd.get_funding_address().await;
+		let client = self.sync_client();
+		client.send_to_address(
+			&address, amount, None, None, None, None, None, None,
+		).unwrap();
 	}
 
-	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> anyhow::Result<Txid> {
+	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> Txid {
 		info!("Fund {} {}", bark.name(), amount);
-		let address = bark.get_onchain_address().await?;
-		let client = self.sync_client()?;
-		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
-		Ok(txid)
+		let address = bark.get_onchain_address().await;
+		let client = self.sync_client();
+		client.send_to_address(
+			&address, amount, None, None, None, None, None, None,
+		).unwrap()
 	}
 
-	pub async fn fund_lightningd(&self, lightningd: &Lightningd, amount: Amount) -> anyhow::Result<Txid> {
+	pub async fn fund_lightningd(&self, lightningd: &Lightningd, amount: Amount) -> Txid {
 		info!("Fund {} {}", lightningd.name(), amount);
-		let address = lightningd.get_onchain_address().await?;
+		let address = lightningd.get_onchain_address().await;
 
-		let client = self.sync_client()?;
-		let txid = client.send_to_address(&address, amount, None, None, None, None, None, None)?;
-
-		Ok(txid)
+		let client = self.sync_client();
+		client.send_to_address(
+			&address, amount, None, None, None, None, None, None,
+		).unwrap()
 	}
 
-	pub async fn get_block_count(&self) -> anyhow::Result<u64> {
-		let client = self.sync_client().unwrap();
-		let height = client.get_block_count()?;
-		Ok(height)
-
+	pub async fn get_block_count(&self) -> u64 {
+		let client = self.sync_client();
+		client.get_block_count().unwrap()
 	}
 }
 

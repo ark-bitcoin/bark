@@ -21,19 +21,18 @@ fn check_aspd_version() {
 
 #[tokio::test]
 async fn fund_asp() {
-	let context = TestContext::new("aspd/fund_aspd");
-	let bitcoind = context.bitcoind("bitcoind-1").await.expect("bitcoind-1 started");
-	bitcoind.generate(106).await.unwrap();
-	let aspd = context.aspd("aspd-1", &bitcoind).await.expect("arkd-1 started");
-	let mut admin_client = aspd.get_admin_client().await.expect("Can conect to the admin-client");
-
+	let ctx = TestContext::new("aspd/fund_aspd");
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	bitcoind.generate(106).await;
+	let aspd = ctx.aspd("aspd", &bitcoind).await;
+	let mut admin_client = aspd.get_admin_client().await;
 
 	// Query the wallet balance of the asp
 	let response  = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
 	assert_eq!(response.balance, 0);
 
 	// Fund the aspd
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await.unwrap();
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 	tokio::time::sleep(Duration::from_secs(5)).await;
 
 	// Confirm that the balance is updated
