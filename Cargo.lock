@@ -106,6 +106,7 @@ dependencies = [
  "bitcoinconsensus",
  "ciborium",
  "lazy_static",
+ "lightning-invoice",
  "rand",
  "secp256k1-zkp",
  "serde",

@@ -5,6 +5,7 @@
 pub mod connectors;
 pub mod fee;
 pub mod forfeit;
+pub mod lightning;
 pub mod musig;
 pub mod onboard;
 pub mod oor;
