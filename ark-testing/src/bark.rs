@@ -1,5 +1,5 @@
 
-use std::{env, fmt, fs};
+use std::{env, fmt};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -9,6 +9,7 @@ use std::time::Duration;
 use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::{Amount, Network};
 use serde_json;
+use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
 
@@ -133,12 +134,12 @@ impl Bark {
 		// Create a folder for each command
 		let count = self.counter.fetch_add(1, Ordering::Relaxed);
 		let folder = self.config.datadir.join("cmd").join(count.to_string());
-		fs::create_dir_all(&folder)?;
-		fs::write(folder.join("cmd"), &command_str)?;
+		fs::create_dir_all(&folder).await?;
+		fs::write(folder.join("cmd"), &command_str).await?;
 
 		// We capture stdout here in output, but we write stderr to a file,
 		// so that we can read it even is something fails in the execution.
-		command.stderr(fs::File::create(folder.join("stderr.log"))?);
+		command.stderr(fs::File::create(folder.join("stderr.log")).await?.into_std().await);
 		command.stdout(Stdio::piped());
 
 		let mut child = command.spawn().unwrap();
@@ -156,7 +157,7 @@ impl Bark {
 				buf
 			};
 			let outfile = folder.join("stdout.log");
-			if let Err(e) = fs::write(&outfile, &out) {
+			if let Err(e) = fs::write(&outfile, &out).await {
 				error!("Failed to write stdout of cmd '{}' to file '{}': {}",
 					command_str, outfile.display(), e,
 				);

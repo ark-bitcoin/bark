@@ -1,6 +1,7 @@
-use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
+
+use tokio::fs;
 
 use crate::util::test_data_directory;
 use crate::daemon::log::FileLogger;
@@ -13,14 +14,14 @@ pub struct TestContext {
 }
 
 impl TestContext {
-	pub fn new(name: impl AsRef<str>) -> Self {
+	pub async fn new(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
-		let datadir = test_data_directory().join(name.as_ref());
+		let datadir = test_data_directory().await.join(name.as_ref());
 
 		if datadir.exists() {
-			fs::remove_dir_all(&datadir).unwrap();
+			fs::remove_dir_all(&datadir).await.unwrap();
 		}
-		fs::create_dir_all(&datadir).unwrap();
+		fs::create_dir_all(&datadir).await.unwrap();
 
 		TestContext { name: name.as_ref().to_string(), datadir}
 	}

@@ -9,7 +9,7 @@ use bitcoincore_rpc::bitcoin::amount::Amount;
 #[tokio::test]
 async fn unilateral_exit() {
 	// Initialize the test
-	let ctx = TestContext::new("unilateral_exit");
+	let ctx = TestContext::new("unilateral_exit").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
 		relay_fee: Some(FeeRate::from_sat_per_vb(1).unwrap()),
 		..ctx.bitcoind_default_cfg("bitcoind")

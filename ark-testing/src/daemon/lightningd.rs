@@ -1,13 +1,14 @@
-use std::{env, fs};
+
+use std::env;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::Context;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::hashes::Hash;
+use tokio::fs;
 use tokio::sync::Mutex;
 use tonic::transport::{Certificate, Channel, channel::ClientTlsConfig, Identity, Uri};
 
@@ -74,10 +75,10 @@ impl LightningDHelper {
 		trace!("Writing config file");
 		let config_filepath = self.config.lightning_dir.join("config");
 		if config_filepath.exists() {
-			fs::remove_file(&config_filepath).context("Failed to delete config file").unwrap();
+			fs::remove_file(&config_filepath).await.unwrap();
 		}
 
-		let mut file = fs::OpenOptions::new()
+		let mut file = std::fs::OpenOptions::new()
 			.create(true)
 			.write(true)
 			.open(config_filepath)
@@ -114,9 +115,9 @@ impl LightningDHelper {
 		// Client doesn't support grpc over http
 		// We need to use https using m-TLS authentication
 		let dir = &self.config.lightning_dir;
-		let ca_pem = fs::read_to_string(dir.join("regtest/ca.pem"))?;
-		let id_pem = fs::read_to_string(dir.join("regtest/client.pem"))?;
-		let id_key = fs::read_to_string(dir.join("regtest/client-key.pem"))?;
+		let ca_pem = fs::read_to_string(dir.join("regtest/ca.pem")).await?;
+		let id_pem = fs::read_to_string(dir.join("regtest/client.pem")).await?;
+		let id_key = fs::read_to_string(dir.join("regtest/client-key.pem")).await?;
 
 		let grpc_uri : Uri = format!("https://localhost:{}", grpc_port).parse().unwrap();
 		let channel = Channel::builder(grpc_uri).tls_config(ClientTlsConfig::new()
@@ -188,7 +189,7 @@ impl DaemonHelper for LightningDHelper {
 
 	async fn prepare(&self) -> anyhow::Result<()> {
 		if !self.config.lightning_dir.exists() {
-			fs::create_dir_all(&self.config.lightning_dir)?;
+			fs::create_dir_all(&self.config.lightning_dir).await?;
 		}
 		Ok(())
 	}

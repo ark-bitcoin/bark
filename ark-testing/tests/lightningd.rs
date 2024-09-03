@@ -8,7 +8,7 @@ use bark_cln::grpc;
 
 #[tokio::test]
 async fn start_lightningd() {
-	let context = TestContext::new("lightningd/start-lightningd");
+	let context = TestContext::new("lightningd/start-lightningd").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
@@ -28,7 +28,7 @@ async fn start_lightningd() {
 /// We don't integrate with `aspd` yet
 #[tokio::test]
 async fn pay_lightningd() {
-	let context = TestContext::new("lightningd/pay-lightningd");
+	let context = TestContext::new("lightningd/pay-lightningd").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln

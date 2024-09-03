@@ -9,7 +9,7 @@ use ark_testing::{TestContext, AspdConfig};
 
 #[tokio::test]
 async fn bark_version() {
-	let ctx = TestContext::new("bark_version");
+	let ctx = TestContext::new("bark_version").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
 	let aspd = ctx.aspd("aspd-1", &bitcoind).await;
 
@@ -22,7 +22,7 @@ async fn bark_version() {
 
 #[tokio::test]
 async fn onboard_bark() {
-	let ctx = TestContext::new("bark/onboard_bark");
+	let ctx = TestContext::new("bark/onboard_bark").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
 	let aspd = ctx.aspd("aspd-1", &bitcoind).await;
 	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
@@ -49,7 +49,7 @@ async fn multiple_round_payments() {
 	info!("Running multiple_round_test with N set to {}", N);
 
 	// Initialize the test
-	let ctx = TestContext::new("bark/multiple_round_payments");
+	let ctx = TestContext::new("bark/multiple_round_payments").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let aspd_cfg = AspdConfig {
 		round_interval: Duration::from_millis(2_000),
@@ -98,7 +98,7 @@ async fn multiple_round_payments() {
 #[tokio::test]
 async fn oor() {
 	// Initialize the test
-	let ctx = TestContext::new("bark/oor");
+	let ctx = TestContext::new("bark/oor").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
 	let aspd = ctx.aspd("aspd-1", &bitcoind).await;
 

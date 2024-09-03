@@ -21,7 +21,7 @@ fn check_aspd_version() {
 
 #[tokio::test]
 async fn fund_asp() {
-	let ctx = TestContext::new("aspd/fund_aspd");
+	let ctx = TestContext::new("aspd/fund_aspd").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	bitcoind.generate(106).await;
 	let aspd = ctx.aspd("aspd", &bitcoind).await;

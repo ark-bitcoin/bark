@@ -1,11 +1,12 @@
 
-use std::{env, fs};
+use std::env;
 use std::borrow::Borrow;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
 use anyhow::Context;
 use bitcoin::{Denomination, FeeRate, Weight};
+use tokio::fs;
 
 use crate::constants::env::TEST_DIRECTORY;
 
@@ -44,7 +45,7 @@ pub fn resolve_path(path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
 	} else {
 		path
 	};
-	Ok(fs::canonicalize(&path)
+	Ok(std::fs::canonicalize(&path)
 		.with_context(|| format!("failed to canonicalize path {}", path.display()))?)
 }
 
@@ -53,13 +54,13 @@ pub fn resolve_path(path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
 /// By default this is written in the `./test` directory at the project root.
 /// You can also set TEST_DIRECTORY to pick another location.
 /// You are responsible to ensure the `TEST_DIRECTORY` exists
-pub fn test_data_directory() -> PathBuf {
+pub async fn test_data_directory() -> PathBuf {
 	match std::env::var_os(TEST_DIRECTORY) {
 		Some(directory) => { PathBuf::from(directory) },
 		None => {
 			let path = get_cargo_workspace().join("test");
 			if !path.exists() {
-				fs::create_dir_all(&path).unwrap();
+				fs::create_dir_all(&path).await.unwrap();
 			};
 			path
 		}
