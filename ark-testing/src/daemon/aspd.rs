@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use bitcoin::address::{Address, NetworkUnchecked};
+use bitcoin::Network;
 
 use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
 use aspd_rpc_client::Empty;
@@ -74,7 +75,8 @@ impl Aspd {
 	pub async fn get_funding_address(&self) -> Address {
 		let mut admin_client = self.get_admin_client().await;
 		let response = admin_client.wallet_status(Empty {}).await.unwrap().into_inner();
-		response.address.parse::<Address<NetworkUnchecked>>().unwrap().assume_checked()
+		response.address.parse::<Address<NetworkUnchecked>>().unwrap()
+			.require_network(Network::Regtest).unwrap()
 	}
 
 	pub async fn trigger_round(&self) {

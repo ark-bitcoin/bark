@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use bitcoin::address::{Address, NetworkUnchecked};
-use bitcoin::Amount;
+use bitcoin::{Amount, Network};
 use serde_json;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
@@ -87,7 +87,8 @@ impl Bark {
 
 	pub async fn get_onchain_address(&self) -> Address {
 		let address_string = self.run(["onchain", "address"]).await.trim().to_string();
-		Address::<NetworkUnchecked>::from_str(&address_string).unwrap().assume_checked()
+		Address::<NetworkUnchecked>::from_str(&address_string).unwrap()
+			.require_network(Network::Regtest).unwrap()
 	}
 
 	pub async fn vtxo_pubkey(&self) -> String {

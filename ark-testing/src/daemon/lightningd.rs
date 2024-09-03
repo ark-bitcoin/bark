@@ -6,11 +6,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use bitcoin::{Amount, Network, Txid};
 use bitcoin::hashes::Hash;
 use tokio::sync::Mutex;
 use tonic::transport::{Certificate, Channel, channel::ClientTlsConfig, Identity, Uri};
-
-use bitcoin::{Amount, Txid};
 
 use bark_cln::grpc;
 use bark_cln::grpc::node_client::NodeClient;
@@ -257,8 +256,8 @@ impl Lightningd {
 			addresstype: None,
 		}).await.unwrap().into_inner();
 		let bech32 = response.bech32.unwrap();
-
-		bitcoin::Address::from_str(&bech32).unwrap().assume_checked()
+		bitcoin::Address::from_str(&bech32).unwrap()
+			.require_network(Network::Regtest).unwrap()
 	}
 
 	pub async fn fund_channel(&self, other: &Lightningd, amount: Amount) -> bitcoin::Txid {
