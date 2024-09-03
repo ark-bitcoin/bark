@@ -51,6 +51,11 @@
           "CARGO_TARGET_${target_underscores_upper}_LINKER" = "${clang}/bin/clang";
 
           PROTOC = "${protobuf}/bin/protoc";
+
+          #ROCKSDB_STATIC = "true"; # NB do this for prod
+          ROCKSDB_LIB_DIR = "${pkgs.rocksdb}/lib/";
+          #"ROCKSDB_${target_underscores}_STATIC" = "true"; # NB do this for prod
+          "ROCKSDB_${target_underscores}_LIB_DIR" = "${pkgs.rocksdb}/lib/";
         };
       }
     );
