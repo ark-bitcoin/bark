@@ -102,16 +102,15 @@ impl DaemonHelper for AspdHelper {
 		let pgrpc = public_grpc_address.clone();
 		let agrpc = admin_grpc_address.clone();
 
-		let output = tokio::task::spawn_blocking(move || base_cmd
-			.arg("--datadir")
-			.arg(datadir)
-			.arg("set-config")
-			.arg("--public-rpc-address")
-			.arg(pgrpc)
-			.arg("--admin-rpc-address")
-			.arg(agrpc)
-			.output())
-			.await??;
+		let output = tokio::task::spawn_blocking(move || base_cmd.args([
+			"--datadir",
+			&datadir.display().to_string(),
+			"set-config",
+			"--public-rpc-address",
+			&pgrpc,
+			"--admin-rpc-address",
+			&agrpc,
+		]).output()).await??;
 
 		if !output.status.success() {
 			let stderr = String::from_utf8(output.stderr)?;
@@ -130,28 +129,25 @@ impl DaemonHelper for AspdHelper {
 		trace!("base_cmd={:?}", base_cmd);
 
 		let cfg = self.config.clone();
-		let output = tokio::task::spawn_blocking(move || {
-			let cmd = base_cmd.args([
-				"--datadir",
-				&cfg.datadir.display().to_string(),
-				"create",
-				"--bitcoind-url",
-				&cfg.bitcoind_url,
-				"--bitcoind-cookie",
-				&cfg.bitcoind_cookie.display().to_string(),
-				"--network",
-				"regtest",
-				"--round-interval",
-				&cfg.round_interval.as_millis().to_string(),
-				"--round-submit-time",
-				&cfg.round_submit_time.as_millis().to_string(),
-				"--round-sign-time",
-				&cfg.round_sign_time.as_millis().to_string(),
-				"--nb-round-nonces",
-				&cfg.nb_round_nonces.to_string(),
-			]);
-			cmd.output()
-		}).await??;
+		let output = tokio::task::spawn_blocking(move || base_cmd.args([
+			"--datadir",
+			&cfg.datadir.display().to_string(),
+			"create",
+			"--bitcoind-url",
+			&cfg.bitcoind_url,
+			"--bitcoind-cookie",
+			&cfg.bitcoind_cookie.display().to_string(),
+			"--network",
+			"regtest",
+			"--round-interval",
+			&cfg.round_interval.as_millis().to_string(),
+			"--round-submit-time",
+			&cfg.round_submit_time.as_millis().to_string(),
+			"--round-sign-time",
+			&cfg.round_sign_time.as_millis().to_string(),
+			"--nb-round-nonces",
+			&cfg.nb_round_nonces.to_string(),
+		]).output()).await??;
 
 		if output.status.success() {
 			Ok(())

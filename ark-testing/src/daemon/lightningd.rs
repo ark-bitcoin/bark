@@ -53,6 +53,22 @@ pub struct LightningDHelper {
 	state: Arc<Mutex<LightningDHelperState>>
 }
 
+fn amount_or_all(amount: Amount) -> grpc::AmountOrAll {
+	grpc::AmountOrAll {
+		value : Some(grpc::amount_or_all::Value::Amount(grpc::Amount {
+			msat : amount.to_sat()*1000,
+		})),
+	}
+}
+
+fn amount_or_any(amount: Amount) -> grpc::AmountOrAny {
+	grpc::AmountOrAny {
+		value : Some(grpc::amount_or_any::Value::Amount(grpc::Amount {
+			msat : amount.to_sat()*1000,
+		})),
+	}
+}
+
 impl LightningDHelper {
 	async fn write_config_file(&self) {
 		trace!("Writing config file");
@@ -142,7 +158,6 @@ impl LightningDHelper {
 }
 
 impl DaemonHelper for LightningDHelper {
-
 	fn name(&self) -> &str {
 		&self.name
 	}
@@ -175,7 +190,6 @@ impl DaemonHelper for LightningDHelper {
 		if !self.config.lightning_dir.exists() {
 			fs::create_dir_all(&self.config.lightning_dir)?;
 		}
-
 		Ok(())
 	}
 
@@ -262,13 +276,21 @@ impl Lightningd {
 
 	pub async fn fund_channel(&self, other: &Lightningd, amount: Amount) -> bitcoin::Txid {
 		let mut client = self.grpc_client().await;
-		let request = grpc::FundchannelRequest {
+		let response = client.fund_channel(grpc::FundchannelRequest {
 			id: other.id().await,
-			amount: Some(grpc::AmountOrAll{value : Some(grpc::amount_or_all::Value::Amount(grpc::Amount {msat : amount.to_sat()*1000}))}),
-			feerate: None, announce: None, push_msat: None, close_to: None, request_amt: None, compact_lease: None, minconf: None,
-			utxos: vec![], mindepth: None, reserve: None, channel_type: vec![]};
-
-		let response : grpc::FundchannelResponse = client.fund_channel(request).await.unwrap().into_inner();
+			amount: Some(amount_or_all(amount)),
+			feerate: None,
+			announce: None,
+			push_msat: None,
+			close_to: None,
+			request_amt: None,
+			compact_lease: None,
+			minconf: None,
+			utxos: vec![],
+			mindepth: None,
+			reserve: None,
+			channel_type: vec![],
+		}).await.unwrap().into_inner();
 		Txid::from_slice(&response.txid).unwrap()
 	}
 
@@ -282,8 +304,13 @@ impl Lightningd {
 		client.invoice(grpc::InvoiceRequest {
 			description: description.as_ref().to_owned(),
 			label: label.as_ref().to_owned(),
-			amount_msat: Some(grpc::AmountOrAny{ value: Some(grpc::amount_or_any::Value::Amount(grpc::Amount { msat: amount.to_sat()*1_000} ))}),
-			cltv: None, fallbacks: vec![], preimage: None, expiry: None, exposeprivatechannels: vec![], deschashonly: None
+			amount_msat: Some(amount_or_any(amount)),
+			cltv: None,
+			fallbacks: vec![],
+			preimage: None,
+			expiry: None,
+			exposeprivatechannels: vec![],
+			deschashonly: None,
 		}).await.unwrap().into_inner().bolt11
 	}
 
@@ -291,9 +318,18 @@ impl Lightningd {
 		let mut client = self.grpc_client().await;
 		let response = client.pay(grpc::PayRequest {
 			bolt11: bolt11.as_ref().to_string(),
-			amount_msat: None, label: None, maxfeepercent: None, maxfee: None, retry_for: None, maxdelay: None,
-			exemptfee: None, riskfactor: None, exclude: vec![], description: None,
-			localinvreqid: None, partial_msat: None
+			amount_msat: None,
+			label: None,
+			maxfeepercent: None,
+			maxfee: None,
+			retry_for: None,
+			maxdelay: None,
+			exemptfee: None,
+			riskfactor: None,
+			exclude: vec![],
+			description: None,
+			localinvreqid: None,
+			partial_msat: None,
 		}).await.unwrap().into_inner();
 
 		if response.status != grpc::pay_response::PayStatus::Complete as i32 {
