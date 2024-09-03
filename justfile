@@ -13,3 +13,7 @@ test-integration TEST="":
 	cargo test --package ark-testing {{TEST}}
 
 test: test-unit test-integration
+
+# cleans most of our crates, doesn't clean grpc gens, they are sometimes slow to build
+clean:
+  cargo clean -p ark-lib -p ark-testing -p bark-aspd -p bark-client -p bark-json
