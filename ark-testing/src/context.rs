@@ -1,11 +1,14 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use bitcoin::Network;
 use tokio::fs;
 
 use crate::util::test_data_directory;
 use crate::daemon::log::FileLogger;
-use crate::{Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig};
+use crate::{
+	Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
+};
 
 pub struct TestContext {
 	#[allow(dead_code)]
@@ -31,7 +34,7 @@ impl TestContext {
 		BitcoindConfig {
 			datadir,
 			txindex: true,
-			network: String::from("regtest"),
+			network: Network::Regtest,
 			..BitcoindConfig::default()
 		}
 	}

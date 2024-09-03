@@ -21,7 +21,7 @@ pub struct BitcoindHelper {
 pub struct BitcoindConfig {
 	pub datadir: PathBuf,
 	pub txindex: bool,
-	pub network: String,
+	pub network: Network,
 	pub fallback_fee: FeeRate,
 	pub relay_fee: Option<FeeRate>,
 }
@@ -30,8 +30,8 @@ impl Default for BitcoindConfig {
 	fn default() -> Self {
 		Self {
 			datadir: PathBuf::from("~/.bitcoin"),
-			txindex: false,
-			network: String::from("regtest"),
+			txindex: true,
+			network: Network::Regtest,
 			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
 			relay_fee: None,
 		}
@@ -141,7 +141,7 @@ impl BitcoindHelper {
 
 	pub fn rpc_cookie(&self) -> PathBuf {
 		let cookie = self.config.datadir
-			.join(&self.config.network)
+			.join(self.config.network.to_string())
 			.join(".cookie");
 
 		cookie
@@ -182,10 +182,14 @@ impl DaemonHelper for BitcoindHelper {
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
 		let mut cmd = Command::new(self.exec.clone());
+		if self.config.network != Network::Bitcoin {
+			cmd.arg(format!("-{}", self.config.network));
+		}
 		cmd.args(&[
-			&format!("--{}", self.config.network),
+			&format!("-debug=1"),
+			&format!("-debugexclude=libevent"),
 			&format!("-datadir={}", self.config.datadir.display().to_string()),
-			&format!("-txindex={}", self.config.txindex),
+			&format!("-txindex={}", self.config.txindex as u8),
 			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
 			&format!("-port={}", self.state.p2p_port.expect("A port has been picked")),
 			&format!("-fallbackfee={}", self.config.fallback_fee.to_btc_per_kvb()),
