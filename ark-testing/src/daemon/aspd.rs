@@ -194,8 +194,8 @@ impl AspdHelper {
 	}
 
 	async fn public_grpc_is_ready(&self) -> bool {
-		match self.get_admin_client().await {
-				Ok(mut client) => client.wallet_status(Empty {}).await.is_ok(),
+		match self.get_public_client().await {
+				Ok(mut client) => client.get_ark_info(Empty {}).await.is_ok(),
 				Err(_) => false
 			}
 	}
