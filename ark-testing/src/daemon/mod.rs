@@ -8,6 +8,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use crate::util::is_running;
 
@@ -47,9 +48,7 @@ pub struct Daemon<T>
 impl<T> Daemon<T>
 	where T: DaemonHelper + Send + Sync + 'static
 {
-
 	pub fn wrap(inner : T) -> Self {
-
 		Self {
 			inner,
 			daemon_state: DaemonState::Init,
@@ -138,19 +137,18 @@ impl<T> Daemon<T>
 		// Wait for init
 		// But check every 100 milliseconds if the Child is
 		// still running
-		let duration = std::time::Duration::from_millis(100);
-		let mut is_initialized = false;
-		while is_running(&mut child) && ! is_initialized {
-			match tokio::time::timeout(duration, self.inner.wait_for_init()).await {
-				Err(_) => {},
-				Ok(result) => {
-					result?;
-					is_initialized = true;
-				}
+		let success = loop {
+			if !is_running(&mut child) {
+				break false;
 			}
-		}
+			let duration = Duration::from_millis(100);
+			if let Ok(res) = tokio::time::timeout(duration, self.inner.wait_for_init()).await {
+				res?;
+				break true;
+			}
+		};
 
-		if is_initialized {
+		if success {
 			self.child = Some(child);
 			Ok(())
 		}
@@ -201,9 +199,7 @@ impl<T> Daemon<T>
 impl<T> Drop for Daemon<T>
 	where T: DaemonHelper + Send + Sync + 'static
 {
-
 	fn drop(&mut self) {
-
 		match self.child.take() {
 			Some(mut c) => { let _ = c.kill(); },
 			None => {}

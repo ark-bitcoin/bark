@@ -1,10 +1,12 @@
 
+use std::env;
 use std::borrow::Borrow;
-use std::process::Child;
 use std::path::{Path, PathBuf};
-use std::fs;
+use std::process::Child;
 
+use anyhow::Context;
 use bitcoin::{Denomination, FeeRate, Weight};
+use tokio::fs;
 
 use crate::constants::env::TEST_DIRECTORY;
 
@@ -24,18 +26,41 @@ pub fn init_logging() -> anyhow::Result<()> {
 	Ok(())
 }
 
+/// Resolves the directory when it is a relative path, and
+/// returns canonicalized path.
+///
+/// Returns error if path doesn't exist.
+pub fn resolve_path(path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
+	let path = path.as_ref().to_path_buf();
+	let path = if path.is_relative() {
+		let cur = env::current_dir().expect("failed to get current dir");
+		let abs = cur.join(&path);
+		if abs.exists() {
+			abs
+		} else {
+			bail!("relative path {} doesn't exist for current directory {}",
+				path.display(), cur.display(),
+			);
+		}
+	} else {
+		path
+	};
+	Ok(std::fs::canonicalize(&path)
+		.with_context(|| format!("failed to canonicalize path {}", path.display()))?)
+}
+
 /// Returns the directory where all test data will be written
 ///
 /// By default this is written in the `./test` directory at the project root.
 /// You can also set TEST_DIRECTORY to pick another location.
 /// You are responsible to ensure the `TEST_DIRECTORY` exists
-pub fn test_data_directory() -> PathBuf {
+pub async fn test_data_directory() -> PathBuf {
 	match std::env::var_os(TEST_DIRECTORY) {
 		Some(directory) => { PathBuf::from(directory) },
 		None => {
 			let path = get_cargo_workspace().join("test");
 			if !path.exists() {
-				fs::create_dir_all(&path).unwrap();
+				fs::create_dir_all(&path).await.unwrap();
 			};
 			path
 		}
