@@ -21,6 +21,7 @@ pub enum VtxoType {
 	Onboard,
 	Round,
 	Oor,
+	Bolt11Change,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -46,6 +47,7 @@ impl From<Vtxo> for VtxoInfo {
 				Vtxo::Onboard { .. } => VtxoType::Onboard,
 				Vtxo::Round { .. } => VtxoType::Round,
 				Vtxo::Oor { .. } => VtxoType::Oor,
+				Vtxo::Bolt11Change { .. } => VtxoType::Bolt11Change,
 			},
 			utxo: v.point(),
 			user_pubkey: v.spec().user_pubkey,

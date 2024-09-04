@@ -288,6 +288,16 @@ pub enum Vtxo {
 		oor_tx: Transaction,
 		final_point: OutPoint,
 	},
+	Bolt11Change {
+		inputs: Vec<Box<Vtxo>>,
+		/// This has the fields for the spec, but were not necessarily
+		/// actually being used for the generation of the vtxos.
+		/// Primarily, the expiry height is the first of all the parents
+		/// expiry heights.
+		pseudo_spec: VtxoSpec,
+		htlc_tx: Transaction,
+		final_point: OutPoint,
+	},
 }
 
 impl Vtxo {
@@ -306,6 +316,7 @@ impl Vtxo {
 				OutPoint::new(exit_branch.last().unwrap().compute_txid(), 0).into()
 			},
 			Vtxo::Oor { final_point, .. } => *final_point,
+			Vtxo::Bolt11Change { final_point, .. } => *final_point,
 		}
 	}
 
@@ -314,6 +325,7 @@ impl Vtxo {
 			Vtxo::Onboard { base, .. } => &base.spec,
 			Vtxo::Round { base, .. } => &base.spec,
 			Vtxo::Oor { ref pseudo_spec, ..} => pseudo_spec,
+			Vtxo::Bolt11Change { ref pseudo_spec, ..} => pseudo_spec,
 		}
 	}
 
@@ -323,6 +335,9 @@ impl Vtxo {
 			Vtxo::Round { base, .. } => base.spec.amount,
 			Vtxo::Oor { oor_tx, final_point, .. } => {
 				oor_tx.output[final_point.vout as usize].value
+			},
+			Vtxo::Bolt11Change { htlc_tx, final_point, .. } => {
+				htlc_tx.output[final_point.vout as usize].value
 			},
 		}
 	}
@@ -343,10 +358,11 @@ impl Vtxo {
 			},
 			Vtxo::Round { ref exit_branch, .. } => exit_branch.last().unwrap().clone(),
 			Vtxo::Oor { ref oor_tx, .. } => oor_tx.clone(),
+			Vtxo::Bolt11Change { ref htlc_tx, .. } => htlc_tx.clone(),
 		}
 	}
 
-	/// Collect all off-chain txs required for the exit of this entire vtxo.
+	/// Collect all off-chain txs required for the exit oj this entire vtxo.
 	///
 	/// The [vtxo_tx] is always included.
 	pub fn collect_exit_txs(&self, txs: &mut Vec<Transaction>) {
@@ -363,27 +379,11 @@ impl Vtxo {
 				}
 				txs.push(oor_tx.clone());
 			},
-		}
-	}
-
-	/// Splits this vtxo in a set of non-OOR vtxos and the attached OOR txs.
-	pub fn split_oor(&self) -> (Vec<&Vtxo>, Vec<Transaction>) {
-		//TODO(stevenroose) this impls does allocations for each level of recursion
-		// it would be nice if we could optimize that somehow eventually
-
-		match self {
-			Vtxo::Onboard { .. } => (vec![self], vec![]),
-			Vtxo::Round { .. } => (vec![self], vec![]),
-			Vtxo::Oor { ref inputs, oor_tx, .. } => {
-				let mut ret_bases = Vec::with_capacity(inputs.len());
-				let mut ret_oors = Vec::with_capacity(1);
+			Vtxo::Bolt11Change { inputs, htlc_tx, .. } => {
 				for input in inputs {
-					let (bases, oors) = input.split_oor();
-					ret_bases.extend(bases);
-					ret_oors.extend(oors);
+					input.collect_exit_txs(txs);
 				}
-				ret_oors.push(oor_tx.clone());
-				(ret_bases, ret_oors)
+				txs.push(htlc_tx.clone());
 			},
 		}
 	}
@@ -395,10 +395,14 @@ impl Vtxo {
 		}
 	}
 
+	/// Whether this VTXO contains our-of-round parts. This is true for both
+	/// arkoor and lightning vtxos.
 	pub fn is_oor(&self) -> bool {
 		match self {
+			Vtxo::Onboard { .. } => false,
+			Vtxo::Round { .. } => false,
 			Vtxo::Oor { .. } => true,
-			_ => false,
+			Vtxo::Bolt11Change { .. } => true,
 		}
 	}
 
