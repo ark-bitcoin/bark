@@ -96,6 +96,8 @@ async fn aspd_can_pay_lightning() {
 	trace!("Creeating channesl between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
 	lightningd_1.fund_channel(&lightningd_2, Amount::from_int_btc(2)).await;
+	bitcoind.generate(6).await;
+	lightningd_1.wait_for_gossip(1).await;
 
 	// Start an aspd and link it to our cln installation
 	let aspd_config = context.aspd_default_cfg_lightningd("aspd-1", &bitcoind, &lightningd_1).await;

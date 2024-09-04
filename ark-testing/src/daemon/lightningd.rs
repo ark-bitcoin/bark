@@ -1,5 +1,6 @@
 
 use std::env;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -344,6 +345,27 @@ impl Lightningd {
 
 		if response.status != grpc::pay_response::PayStatus::Complete as i32 {
 			panic!("Payment failed with status {}", response.status);
+		}
+	}
+
+	pub async fn wait_for_gossip(&self, min_channels: usize) {
+		let mut client = self.grpc_client().await;
+
+		loop {
+			let req = grpc::ListchannelsRequest::default();
+			let res = client.list_channels(req).await.unwrap().into_inner();
+			let channels = res.channels.iter()
+				.map(|x| &x.short_channel_id)
+				.collect::<HashSet<_>>()
+				.len();
+
+			if channels >= min_channels {
+				break;
+			}
+
+			trace!("Waiting for gossip...");
+			trace!("{:?}", res.channels);
+			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 		}
 	}
 
