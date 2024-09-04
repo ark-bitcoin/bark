@@ -106,7 +106,8 @@ impl Bolt11Payment {
 		// Our input's should equal our outputs + onchain fees
 		let change_output = self.change_output();
 		let change_amount = change_output.value;
-		assert_eq!(input_amount, payment_amount + htlc_amount + onchain_fee + dust_amount + change_amount);
+
+		assert_eq!(input_amount, htlc_amount + onchain_fee + dust_amount + change_amount, "htlc = {}, onchain_fee={}, dust={}, change={}", htlc_amount, onchain_fee, dust_amount, change_amount);
 
 		// Let's draft the output transactions
 		let htlc_output = self.htlc_output(htlc_amount);

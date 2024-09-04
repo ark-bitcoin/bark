@@ -64,6 +64,22 @@ impl TestContext {
 		ret
 	}
 
+	pub async fn aspd_default_cfg_lightningd(
+		&self,
+		name: impl AsRef<str>,
+		bitcoind: &Bitcoind,
+		lightningd: &Lightningd) -> AspdConfig {
+			let grpc_details = lightningd.grpc_details().await;
+			let mut cfg = self.aspd_default_cfg(name, &bitcoind);
+
+			cfg.cln_grpc_uri = Some(grpc_details.uri);
+			cfg.cln_grpc_server_cert_path = Some(grpc_details.server_cert_path);
+			cfg.cln_grpc_client_cert_path = Some(grpc_details.client_cert_path);
+			cfg.cln_grpc_client_key_path = Some(grpc_details.client_key_path);
+
+			cfg
+	}
+
 	pub fn aspd_default_cfg(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> AspdConfig {
 		let datadir = self.datadir.join(name.as_ref());
 		AspdConfig {
@@ -74,6 +90,10 @@ impl TestContext {
 			round_submit_time: Duration::from_millis(500),
 			round_sign_time: Duration::from_millis(500),
 			nb_round_nonces: 100,
+			cln_grpc_uri: None,
+			cln_grpc_server_cert_path: None,
+			cln_grpc_client_cert_path: None,
+			cln_grpc_client_key_path: None,
 		}
 	}
 

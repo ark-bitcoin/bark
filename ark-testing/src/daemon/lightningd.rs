@@ -54,6 +54,13 @@ pub struct LightningDHelper {
 	state: Arc<Mutex<LightningDHelperState>>
 }
 
+pub struct GrpcDetails {
+	pub uri: String,
+	pub server_cert_path: PathBuf,
+	pub client_cert_path: PathBuf,
+	pub client_key_path: PathBuf
+}
+
 fn amount_or_all(amount: Amount) -> grpc::AmountOrAll {
 	grpc::AmountOrAll {
 		value : Some(grpc::amount_or_all::Value::Amount(grpc::Amount {
@@ -111,15 +118,16 @@ impl LightningDHelper {
 		self.state.lock().await.grpc_port
 	}
 
-	async fn new_grpc_client(&self, grpc_port: u16) -> anyhow::Result<NodeClient<Channel>> {
+	async fn try_grpc_client(&self) -> anyhow::Result<NodeClient<Channel>> {
 		// Client doesn't support grpc over http
 		// We need to use https using m-TLS authentication
-		let dir = &self.config.lightning_dir;
-		let ca_pem = fs::read_to_string(dir.join("regtest/ca.pem")).await?;
-		let id_pem = fs::read_to_string(dir.join("regtest/client.pem")).await?;
-		let id_key = fs::read_to_string(dir.join("regtest/client-key.pem")).await?;
+		let grpc_details = self.grpc_details().await;
+		let ca_pem = fs::read_to_string(grpc_details.server_cert_path).await?;
+		let id_pem = fs::read_to_string(grpc_details.client_cert_path).await?;
+		let id_key = fs::read_to_string(grpc_details.client_key_path).await?;
 
-		let grpc_uri : Uri = format!("https://localhost:{}", grpc_port).parse().unwrap();
+
+		let grpc_uri : Uri = grpc_details.uri.parse().expect("grpc-port is set.");
 		let channel = Channel::builder(grpc_uri).tls_config(ClientTlsConfig::new()
 			.ca_certificate(Certificate::from_pem(ca_pem))
 			.identity(Identity::from_pem(&id_pem, &id_key))
@@ -130,22 +138,19 @@ impl LightningDHelper {
 		Ok(client)
 	}
 
-	pub async fn try_grpc_client(&self) -> anyhow::Result<NodeClient<Channel>> {
-		let mut unlocked_state = self.state.lock().await;
-
-		match &unlocked_state.grpc_client {
-			None => {
-				let port = unlocked_state.grpc_port.expect("grpc-port is set");
-				unlocked_state.grpc_client = Some(self.new_grpc_client(port).await?);
-			},
-			Some(_) => {}
-		}
-
-		Ok(unlocked_state.grpc_client.clone().unwrap())
-	}
-
 	pub async fn grpc_client(&self) -> NodeClient<Channel> {
 		self.try_grpc_client().await.expect("failed to create rpc client")
+	}
+
+	pub async fn grpc_details(&self) -> GrpcDetails {
+		let state = self.state.lock().await;
+		let dir = &self.config.lightning_dir;
+		GrpcDetails {
+			uri: format!("https://localhost:{}", state.grpc_port.unwrap()),
+			server_cert_path: dir.join("regtest/ca.pem"),
+			client_cert_path: dir.join("regtest/client.pem"),
+			client_key_path: dir.join("regtest/client-key.pem")
+		}
 	}
 
 	async fn is_ready(&self) -> bool {
@@ -218,6 +223,10 @@ impl Lightningd {
 
 	pub async fn grpc_client(&self) -> NodeClient<Channel> {
 		self.inner.grpc_client().await
+	}
+
+	pub async fn grpc_details(&self) -> GrpcDetails {
+		self.inner.grpc_details().await
 	}
 
 	pub async fn port(&self) -> Option<u16> {
