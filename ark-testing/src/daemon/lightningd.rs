@@ -38,7 +38,6 @@ impl Lightningd {
 #[derive(Default)]
 struct LightningDHelperState{
 	grpc_port: Option<u16>,
-	grpc_client: Option<NodeClient<Channel>>,
 	port: Option<u16>,
 }
 

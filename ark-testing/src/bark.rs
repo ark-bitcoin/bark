@@ -6,7 +6,6 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::Duration;
 
-use aspd_rpc_client::payment::Destination;
 use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::{Amount, Network};
 use serde_json;
