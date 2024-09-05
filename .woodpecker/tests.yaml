@@ -19,8 +19,7 @@ steps:
   - name: test-integration
     depends_on: build
     image: stevenroose/bark-ci-tests
-    environment:
-      ASPD_EXEC: /woodpecker/src/codeberg.org/ark-bitcoin/bark/target/debug/aspd
-      BARK_EXEC: /woodpecker/src/codeberg.org/ark-bitcoin/bark/target/debug/bark
     commands:
+      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
+      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - cargo test --package ark-testing
