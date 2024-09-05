@@ -91,6 +91,42 @@ pub struct OorVtxosResponse {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentRequest {
+    #[prost(string, tag = "1")]
+    pub invoice: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub amount_sats: u64,
+    #[prost(bytes = "vec", repeated, tag = "3")]
+    pub input_vtxos: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", tag = "4")]
+    pub user_pubkey: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "5")]
+    pub user_nonces: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentDetails {
+    #[prost(bytes = "vec", tag = "1")]
+    pub details: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub pub_nonces: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", repeated, tag = "3")]
+    pub partial_sigs: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignedBolt11PaymentDetails {
+    #[prost(bytes = "vec", tag = "1")]
+    pub signed_payment: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentResult {
+    #[prost(bytes = "vec", tag = "1")]
+    pub payment_preimage: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RoundStart {
     #[prost(uint64, tag = "1")]
     pub round_id: u64,
@@ -170,6 +206,7 @@ pub mod round_event {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Payment {
+    /// amount in sats
     #[prost(uint64, tag = "1")]
     pub amount: u64,
     #[prost(oneof = "payment::Destination", tags = "2, 3")]
@@ -481,6 +518,57 @@ pub mod ark_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("aspd.ArkService", "EmptyOorMailbox"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// * LN payments
+        pub async fn start_bolt11_payment(
+            &mut self,
+            request: impl tonic::IntoRequest<super::Bolt11PaymentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::Bolt11PaymentDetails>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/aspd.ArkService/StartBolt11Payment",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("aspd.ArkService", "StartBolt11Payment"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn finish_bolt11_payment(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SignedBolt11PaymentDetails>,
+        ) -> std::result::Result<
+            tonic::Response<super::Bolt11PaymentResult>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/aspd.ArkService/FinishBolt11Payment",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("aspd.ArkService", "FinishBolt11Payment"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn subscribe_rounds(

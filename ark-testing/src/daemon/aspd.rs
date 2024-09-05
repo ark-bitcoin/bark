@@ -35,6 +35,10 @@ pub struct AspdConfig {
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
+	pub cln_grpc_uri: Option<String>,
+	pub cln_grpc_server_cert_path: Option<PathBuf>,
+	pub cln_grpc_client_cert_path: Option<PathBuf>,
+	pub cln_grpc_client_key_path: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -125,29 +129,51 @@ impl DaemonHelper for AspdHelper {
 	}
 
 	async fn prepare(&self) -> anyhow::Result<()> {
-		let mut base_cmd = Aspd::base_cmd();
-		trace!("base_cmd={:?}", base_cmd);
+
+
+		let do_command = |mut cmd: Command, cfg: AspdConfig| {
+			let datadir = cfg.datadir.display().to_string();
+			let bitcoind_cookie = cfg.bitcoind_cookie.display().to_string();
+			let round_interval = cfg.round_interval.as_millis().to_string();
+			let round_submit_time = cfg.round_submit_time.as_millis().to_string();
+			let round_sign_time = cfg.round_sign_time.as_millis().to_string();
+			let nb_round_nonces = cfg.nb_round_nonces.to_string();
+
+			let mut args = vec![
+				"create",
+				"--datadir", &datadir,
+				"--bitcoind-url", &cfg.bitcoind_url,
+				"--bitcoind-cookie", &bitcoind_cookie,
+				"--network", "regtest",
+				"--round-interval", &round_interval,
+				"--round-submit-time", &round_submit_time,
+				"--round-sign-time",  &round_sign_time,
+				"--nb-round-nonces", &nb_round_nonces
+				];
+
+
+			if cfg.cln_grpc_uri.is_some() {
+				args.extend(["--cln-grpc-uri", cfg.cln_grpc_uri.as_ref().unwrap()]);
+			}
+			if cfg.cln_grpc_server_cert_path.is_some() {
+				args.extend(["--cln-grpc-server-cert-path", cfg.cln_grpc_server_cert_path.as_ref().unwrap().to_str().unwrap()]);
+			}
+			if cfg.cln_grpc_client_cert_path.is_some() {
+				args.extend(["--cln-grpc-client-cert-path", cfg.cln_grpc_client_cert_path.as_ref().unwrap().to_str().unwrap()]);
+			}
+			if cfg.cln_grpc_client_key_path.is_some() {
+				args.extend(["--cln-grpc-client-key-path", cfg.cln_grpc_client_key_path.as_ref().unwrap().to_str().unwrap()]);
+			}
+
+			cmd.args(args).output()
+		};
+
 
 		let cfg = self.config.clone();
-		let output = tokio::task::spawn_blocking(move || base_cmd.args([
-			"--datadir",
-			&cfg.datadir.display().to_string(),
-			"create",
-			"--bitcoind-url",
-			&cfg.bitcoind_url,
-			"--bitcoind-cookie",
-			&cfg.bitcoind_cookie.display().to_string(),
-			"--network",
-			"regtest",
-			"--round-interval",
-			&cfg.round_interval.as_millis().to_string(),
-			"--round-submit-time",
-			&cfg.round_submit_time.as_millis().to_string(),
-			"--round-sign-time",
-			&cfg.round_sign_time.as_millis().to_string(),
-			"--nb-round-nonces",
-			&cfg.nb_round_nonces.to_string(),
-		]).output()).await??;
+		let base_cmd = Aspd::base_cmd();
+		trace!("base_cmd={:?}", base_cmd);
+
+		let output = tokio::task::spawn_blocking(move || do_command(base_cmd, cfg)).await??;
 
 		if output.status.success() {
 			Ok(())

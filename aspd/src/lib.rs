@@ -6,7 +6,9 @@
 
 
 mod database;
+mod lightning;
 mod psbtext;
+mod serde_util;
 mod rpc;
 mod rpcserver;
 mod round;
@@ -19,13 +21,17 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
+use bark_cln::grpc;
+use bark_cln::grpc::pay_response::PayStatus;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, psbt, sighash, taproot, Address, Amount, FeeRate, OutPoint, Transaction, Weight, Witness};
-use bitcoin::secp256k1::{self, Keypair};
+use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use lightning_invoice::Bolt11Invoice;
 use tokio::sync::Mutex;
 
 use ark::util::KeypairExt;
-use ark::musig;
+use ark::{musig, Vtxo};
 
 use crate::psbtext::{PsbtInputExt, RoundMeta};
 use crate::round::{RoundEvent, RoundInput};
@@ -35,7 +41,7 @@ lazy_static::lazy_static! {
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
-
+//TODO(stevenroose) sanity check deltas
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
 	pub network: bitcoin::Network,
@@ -51,18 +57,25 @@ pub struct Config {
 	pub vtxo_exit_delta: u16,
 	/// Add fee anchors on all VTXO tree intermediate txs.
 	pub vtxo_node_anchors: bool,
+	// ln
+	pub htlc_delta: u16,
+	pub htlc_expiry_delta: u16,
 
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
-
 	//TODO(stevenroose) get these from a fee estimator service
 	/// Fee rate used for the round tx.
 	pub round_tx_feerate: FeeRate,
 
 	// limits
 	pub max_onboard_value: Option<Amount>,
+
+	// lightning
+	#[serde(skip_serializing_if = "Option::is_none")]
+	#[serde(default)]
+	pub cln_config: Option<ClnConfig>
 }
 
 // NB some random defaults to have something
@@ -79,14 +92,26 @@ impl Default for Config {
 			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
 			vtxo_exit_delta: 2 * 6, // 2 hrs
 			vtxo_node_anchors: true,
+			htlc_delta: 1 * 6, // 1 hr
+			htlc_expiry_delta: 1 * 6, // 1 hr
 			round_interval: Duration::from_secs(10),
 			round_submit_time: Duration::from_secs(2),
 			round_sign_time: Duration::from_secs(2),
 			nb_round_nonces: 100,
 			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			max_onboard_value: None,
+			cln_config: None,
 		}
 	}
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ClnConfig {
+	#[serde(with = "serde_util::uri")]
+	pub grpc_uri: tonic::transport::Uri,
+	pub grpc_server_cert_path: PathBuf,
+	pub grpc_client_cert_path: PathBuf,
+	pub grpc_client_key_path: PathBuf,
 }
 
 impl Config {
@@ -373,6 +398,111 @@ impl App {
 			info!("Cosigning OOR tx {} with inputs: {:?}", payment.txid(), ids);
 			let (nonces, sigs) = payment.sign_asp(&self.master_key, &user_nonces);
 			Ok((nonces, sigs))
+		}
+	}
+
+	// lightning
+
+	pub fn start_bolt11(
+		&self,
+		invoice: Bolt11Invoice,
+		amount: Amount,
+		input_vtxos: Vec<Vtxo>,
+		user_pk: PublicKey,
+		user_nonces: &[musig::MusigPubNonce],
+	) -> anyhow::Result<(
+		Bolt11Payment,
+		Vec<musig::MusigPubNonce>,
+		Vec<musig::MusigPartialSignature>,
+	)> {
+		//TODO(stevenroose) check that vtxos are valid
+
+		//TODO(stevenroose) sanity check that inputs match up to the amount
+
+		let expiry = {
+			//TODO(stevenroose) bikeshed this
+			let tip = self.bitcoind.get_block_count()? as u32;
+			tip + 7 * 18
+		};
+		let details = Bolt11Payment {
+			invoice,
+			inputs: input_vtxos,
+			asp_pubkey: self.master_key.public_key(),
+			user_pubkey: user_pk,
+			payment_amount: amount,
+			forwarding_fee: Amount::from_sat(350), //TODO(stevenroose) set fee schedule
+			htlc_delta: self.config.htlc_delta,
+			htlc_expiry_delta: self.config.htlc_expiry_delta,
+			htlc_expiry: expiry,
+			exit_delta: self.config.vtxo_exit_delta,
+		};
+		if !details.check_amounts() {
+			bail!("invalid amounts");
+		}
+
+		// let's sign the tx
+		let (nonces, part_sigs) = details.sign_asp(
+			&self.master_key,
+			user_nonces,
+		);
+
+		Ok((details, nonces, part_sigs))
+	}
+
+	/// Pays a bolt-11 invoice.
+	///
+	/// Returns the payment preimage.
+	pub async fn pay_bolt11(&self, payment: SignedBolt11Payment) -> anyhow::Result<Vec<u8>> {
+		// TODO: Store the payment state somewhere and handle stuck payments properly
+		// If your funds get stuck paying a lightning-invoice might take a very long-time.
+		if self.config.cln_config.is_none() {
+			bail!("asp doesn't support Lightning integration");
+		}
+
+		let invoice = payment.payment.invoice;
+		if invoice.check_signature().is_err() {
+			bail!("Invalid signature in Bolt-11 invoice");
+		}
+
+		let cln_config = self.config.cln_config.as_ref().unwrap();
+		let mut cln_client = cln_config.grpc_client().await?;
+
+		let pay_response = cln_client.pay(grpc::PayRequest {
+			bolt11: invoice.to_string(),
+			label: None,
+			maxfee: None,
+			maxfeepercent: None,
+			retry_for: None,
+			maxdelay: None,
+			amount_msat: None,
+			description: None,
+			exemptfee: None,
+			riskfactor: None,
+			exclude: vec![],
+			localinvreqid: None,
+			partial_msat: None,
+		}).await?.into_inner();
+
+		let status = match PayStatus::try_from(pay_response.status) {
+			Ok(status) => status,
+			Err(_) => {
+				log::error!("An invalid payment status was returned by Core Lightning: {}", pay_response.status);
+				bail!("An unexpected error occured");
+			}
+		};
+
+		match status {
+			PayStatus::Complete => Ok(pay_response.payment_preimage),
+			PayStatus::Failed => {
+				//TODO(stevenroose) do something to give back vtxo to user or so
+				bail!("Failed to pay bolt11-invoice");
+			},
+			PayStatus::Pending => {
+				// We are not supporting stuck payments yet.
+				// This is bad
+				error!("Stuck payment");
+				bail!("Payment is stilll pending");
+			}
 		}
 	}
 

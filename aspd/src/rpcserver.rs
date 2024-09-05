@@ -1,11 +1,14 @@
 
 use std::fs;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use ark::lightning::SignedBolt11Payment;
 use bitcoin::{Amount, ScriptBuf, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
+use lightning_invoice::Bolt11Invoice;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -166,6 +169,58 @@ impl rpc::ArkService for Arc<App> {
 			vtxos: vtxos.into_iter().map(|v| v.encode()).collect(),
 		}))
 	}
+
+	// lightning
+
+	async fn start_bolt11_payment(
+		&self,
+		req: tonic::Request<rpc::Bolt11PaymentRequest>,
+	) -> Result<tonic::Response<rpc::Bolt11PaymentDetails>, tonic::Status> {
+		let req = req.into_inner();
+		let invoice = Bolt11Invoice::from_str(&req.invoice)
+			.map_err(|e| badarg!("invalid invoice: {}", e))?;
+		invoice.check_signature().map_err(|_| badarg!("invalid invoice signature"))?;
+		let amount = Amount::from_sat(req.amount_sats); //TODO(stevenroose) amount sanity check
+		let input_vtxos = req.input_vtxos.into_iter().map(|v| Vtxo::decode(&v))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| badarg!("invalid vtxo: {}", e))?;
+		let user_pubkey = PublicKey::from_slice(&req.user_pubkey)
+			.map_err(|e| badarg!("invalid user pubkey: {}", e))?;
+		let user_nonces = req.user_nonces.into_iter().map(|b| {
+			musig::MusigPubNonce::from_slice(&b)
+				.map_err(|e| badarg!("invalid public nonce: {}", e))
+		}).collect::<Result<Vec<_>, tonic::Status>>()?;
+
+		let (details, asp_nonces, part_sigs) = self.start_bolt11(
+			invoice, amount, input_vtxos, user_pubkey, &user_nonces,
+		).map_err(|e| internal!("error making payment: {}", e))?;
+
+		Ok(tonic::Response::new(rpc::Bolt11PaymentDetails {
+			details: details.encode(),
+			pub_nonces: asp_nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
+			partial_sigs: part_sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
+		}))
+	}
+
+    async fn finish_bolt11_payment(
+        &self,
+        req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
+    ) -> Result<tonic::Response<rpc::Bolt11PaymentResult>, tonic::Status> {
+		let req = req.into_inner();
+		let signed = SignedBolt11Payment::decode(&req.signed_payment)
+			.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
+		if let Err(e) = signed.validate_signatures(&crate::SECP) {
+			return Err(badarg!("bad signatures on payment: {}", e));
+		}
+
+		let preimage = self.pay_bolt11(signed).await
+			.map_err(|e| internal!("failed to make bolt11 payment: {}", e))?;
+
+		Ok(tonic::Response::new(rpc::Bolt11PaymentResult {
+			payment_preimage: preimage,
+
+		}))
+    }
 
 	// round
 

@@ -15,6 +15,7 @@ serde.workspace = true
 ciborium.workspace = true
 bitcoin.workspace = true
 rand.workspace = true
+lightning-invoice.workspace = true
 
 # using sanket's branch for musig2 code
 secp256k1-zkp = { git = "https://github.com/sanket1729/rust-secp256k1-zkp.git", rev = "60e631c24588a0c9e271badd61959294848c665d", features = [ "serde" ] }

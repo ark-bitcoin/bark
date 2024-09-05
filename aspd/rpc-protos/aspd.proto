@@ -17,6 +17,10 @@ service ArkService {
 	rpc PostOorMailbox(OorVtxo) returns (Empty) {}
 	rpc EmptyOorMailbox(OorVtxosRequest) returns (OorVtxosResponse) {}
 
+	// * LN payments
+	rpc StartBolt11Payment(Bolt11PaymentRequest) returns (Bolt11PaymentDetails) {}
+	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (Bolt11PaymentResult) {}
+
 	// * ARK ROUND INTERACTIONS *
 
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
@@ -87,6 +91,30 @@ message OorVtxosResponse {
 	repeated bytes vtxos = 1;
 }
 
+// lightning
+
+message Bolt11PaymentRequest {
+	string invoice = 1;
+	uint64 amount_sats = 2;
+	repeated bytes input_vtxos = 3;
+	bytes user_pubkey = 4;
+	repeated bytes user_nonces = 5;
+}
+
+message Bolt11PaymentDetails {
+	bytes details = 1;
+	repeated bytes pub_nonces = 2;
+	repeated bytes partial_sigs = 3;
+}
+
+message SignedBolt11PaymentDetails {
+	bytes signed_payment = 1;
+}
+
+message Bolt11PaymentResult {
+	bytes payment_preimage = 1;
+}
+
 // round
 
 message RoundStart {
@@ -135,6 +163,7 @@ message RoundEvent {
 }
 
 message Payment {
+	// amount in sats
 	uint64 amount = 1;
 	oneof destination {
 		bytes vtxo_public_key = 2;

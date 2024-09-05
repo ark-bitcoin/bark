@@ -20,6 +20,7 @@ tonic-build.workspace = true
 [dependencies]
 ark-lib = { path = "../ark-lib" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
+bark-cln = {path = "../bark-cln"}
 
 anyhow.workspace = true
 lazy_static.workspace = true
@@ -34,6 +35,7 @@ bitcoin.workspace = true
 bip39.workspace = true
 bdk_wallet.workspace = true
 bdk_bitcoind_rpc.workspace = true
+lightning-invoice.workspace = true
 prost.workspace = true
 tonic.workspace = true
 tokio.workspace = true

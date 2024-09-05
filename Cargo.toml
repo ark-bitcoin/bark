@@ -43,6 +43,8 @@ bdk_bitcoind_rpc = { git = "https://github.com/stevenroose/bdk.git", rev = "0543
 
 sled = "0.34.7"
 
+# LDK-dependencies
+lightning-invoice = { version = "0.32.0-rc1", features = [ "serde" ] }
 
 # async + gRPC stack
 tonic = { version = "0.10", features = [ "tls" ] }
@@ -50,4 +52,3 @@ tonic-build = "0.10"
 prost = "0.12"
 tokio = { version = "1.35", features = [ "full" ] }
 tokio-stream = { version = "0.1.14", features = [ "sync" ] }
-

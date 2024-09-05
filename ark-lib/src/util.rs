@@ -1,8 +1,10 @@
 
 use std::borrow::Borrow;
 
+use bitcoin::hashes::Hash;
 use bitcoin::{opcodes, taproot, OutPoint, ScriptBuf, Transaction};
-use bitcoin::secp256k1::{self, Keypair, XOnlyPublicKey};
+use bitcoin::secp256k1::{self, schnorr, Keypair, XOnlyPublicKey};
+use bitcoin::hashes::{sha256, ripemd160};
 
 use crate::fee;
 
@@ -58,4 +60,46 @@ pub fn timelock_sign(timelock_height: u32, pubkey: XOnlyPublicKey) -> ScriptBuf 
 		.push_x_only_key(&pubkey)
 		.push_opcode(opcodes::all::OP_CHECKSIG)
 		.into_script()
+}
+
+/// Create a tapscript
+pub fn delay_timelock_sign(delay_blocks: u16, timelock_height: u32, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	let csv = bitcoin::Sequence::from_height(delay_blocks);
+	let lt = bitcoin::absolute::LockTime::from_height(timelock_height).unwrap();
+	bitcoin::Script::builder()
+		.push_int(lt.to_consensus_u32().try_into().unwrap())
+		.push_opcode(opcodes::all::OP_CLTV)
+		.push_opcode(opcodes::all::OP_DROP)
+		.push_int(csv.to_consensus_u32().try_into().unwrap())
+		.push_opcode(opcodes::all::OP_CSV)
+		.push_opcode(opcodes::all::OP_DROP)
+		.push_x_only_key(&pubkey)
+		.push_opcode(opcodes::all::OP_CHECKSIG)
+		.into_script()
+}
+
+pub fn hash_and_sign(hash: sha256::Hash, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	let hash_160 = ripemd160::Hash::hash(&hash[..]);
+
+	bitcoin::Script::builder()
+		.push_slice(hash_160.as_byte_array())
+		.push_opcode(opcodes::all::OP_SWAP)
+		.push_opcode(opcodes::all::OP_HASH160)
+		.push_opcode(opcodes::all::OP_EQUALVERIFY)
+		.push_x_only_key(&pubkey)
+		.push_opcode(opcodes::all::OP_CHECKSIG)
+		.into_script()
+}
+
+/// Fill in the signatures into the unsigned transaction.
+///
+/// Panics if the nb of inputs and signatures doesn't match or if some input
+/// witnesses are not empty.
+pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
+    assert_eq!(tx.input.len(), sigs.len());
+    for (input, sig) in tx.input.iter_mut().zip(sigs.iter()) {
+        assert!(input.witness.is_empty());
+        input.witness.push(&sig[..]);
+        debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
+    }
 }

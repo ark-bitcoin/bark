@@ -7,12 +7,14 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 
 use bark::{Wallet, Config};
 use bark_json::cli as json;
+use lightning_invoice::Bolt11Invoice;
 
 const SIGNET_ASP_CERT: &'static [u8] = include_bytes!("signet.asp.21m.dev.cert.pem");
 
@@ -321,9 +323,18 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Onboard { amount } => w.onboard(amount).await?,
 		Command::Send { destination, amount } => {
-			let pk = PublicKey::from_str(&destination).context("invalid pubkey")?;
-			w.sync_ark().await.context("sync error")?;
-			w.send_oor_payment(pk, amount).await?;
+			if let Ok(pk) = PublicKey::from_str(&destination) {
+				info!("Sending arkoor payment to pubkey {}", pk);
+				w.sync_ark().await.context("sync error")?;
+				w.send_oor_payment(pk, amount).await?;
+			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
+				info!("Sending bolt11 payment to invoice {}", inv);
+				w.sync_ark().await.context("sync error")?;
+				let preimage = w.send_bolt11_payment(&inv, amount).await?;
+				info!("Payment preimage received: {}", preimage.as_hex());
+			} else {
+				bail!("Argument is neither a valid pubkey nor bolt11 invoice");
+			}
 			info!("Success");
 		},
 		Command::SendRound { destination, amount } => {

@@ -6,6 +6,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::Duration;
 
+use aspd_rpc_client::payment::Destination;
 use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::{Amount, Network};
 use serde_json;
@@ -105,6 +106,13 @@ impl Bark {
 	pub async fn send_oor(&self, destination: impl fmt::Display, amount: Amount) {
 		let destination = destination.to_string();
 		let amount = amount.to_string();
+		self.run(["send", &destination, &amount, "--verbose"]).await;
+	}
+
+	pub async fn send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>) {
+		let destination = destination.to_string();
+		let amount = amount.map(|a| a.to_string()).unwrap();
+
 		self.run(["send", &destination, &amount, "--verbose"]).await;
 	}
 
