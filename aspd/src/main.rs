@@ -76,22 +76,32 @@ async fn main() {
 	}
 }
 
+fn init_logging() {
+	fern::Dispatch::new()
+		.level(log::LevelFilter::Trace)
+		.level_for("rustls", log::LevelFilter::Warn)
+		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
+		.format(|out, msg, rec| {
+			let now = chrono::Local::now();
+			// only time, not date
+			let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
+			out.finish(format_args!(
+				"[{} {: >5} {}] {}",
+				stamp, rec.level(), rec.module_path().unwrap_or(""), msg,
+			))
+		})
+		.chain(std::io::stdout())
+		.apply().expect("error setting up logging");
+}
+
 async fn inner_main() -> anyhow::Result<()> {
+	init_logging();
+
 	let cli = Cli::parse();
 
 	if let Command::Rpc { cmd, addr } = cli.command {
-		env_logger::builder()
-			.filter_level(log::LevelFilter::Trace)
-			.init();
-
 		return run_rpc(&addr, cmd).await;
 	}
-
-	env_logger::builder()
-		.filter_module("bitcoincore_rpc", log::LevelFilter::Warn)
-		.filter_module("rustls", log::LevelFilter::Warn)
-		.filter_level(log::LevelFilter::Trace)
-		.init();
 
 	match cli.command {
 		Command::Rpc { .. } => unreachable!(),
