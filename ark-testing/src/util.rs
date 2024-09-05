@@ -15,12 +15,14 @@ pub fn init_logging() -> anyhow::Result<()> {
 	// An error is returned if the logger is initiated twice
 	// Note, that every test tries to initiate the logger
 	let _ = fern::Dispatch::new()
+		.level(log::LevelFilter::Trace)
+		.level_for("rustls", log::LevelFilter::Off)
+		.level_for("tonic", log::LevelFilter::Off)
 		.format(|out, msg, rec| {
 			let now = chrono::Local::now();
 			let stamp = now.format("%H:%M:%S.%3f");
 			out.finish(format_args!("[{} {: >5}] {}", stamp, rec.level(), msg))
 		})
-		.level(log::LevelFilter::Trace)
 		.chain(std::io::stdout())
 		.apply();
 	Ok(())
