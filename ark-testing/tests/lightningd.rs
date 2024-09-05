@@ -104,14 +104,18 @@ async fn bark_pay_ln() {
 	let aspd_1 = context.aspd_with_cfg("aspd-1", aspd_config).await;
 
 	// Start a bark and create a VTXO
+	let onchain_amount = Amount::from_int_btc(3);
+	let onboard_amount = Amount::from_int_btc(2);
 	let bark_1 = context.bark("bark-1", &bitcoind, &aspd_1).await;
-	bitcoind.fund_bark(&bark_1, Amount::from_int_btc(2)).await;
-	bark_1.onboard(Amount::from_btc(1.9).unwrap()).await;
+	bitcoind.fund_bark(&bark_1, onchain_amount).await;
+	bark_1.onboard(onboard_amount).await;
 	bitcoind.generate(6).await;
 
 	// Create a payable invoice
 	let invoice_amount = Amount::from_int_btc(1);
 	let invoice = lightningd_2.invoice(invoice_amount, "test_payment", "A test payment").await;
 
+	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 	bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
+	assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(99998820));
 }

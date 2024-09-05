@@ -324,7 +324,8 @@ impl Lightningd {
 		}).await.unwrap().into_inner().bolt11
 	}
 
-	pub async fn pay_bolt11(&self, bolt11: impl AsRef<str>) {
+
+	pub async fn try_pay_bolt11(&self, bolt11: impl AsRef<str>) -> anyhow::Result<()> {
 		let mut client = self.grpc_client().await;
 		let response = client.pay(grpc::PayRequest {
 			bolt11: bolt11.as_ref().to_string(),
@@ -342,9 +343,18 @@ impl Lightningd {
 			partial_msat: None,
 		}).await.unwrap().into_inner();
 
-		if response.status != grpc::pay_response::PayStatus::Complete as i32 {
-			panic!("Payment failed with status {}", response.status);
+		if response.status == grpc::pay_response::PayStatus::Complete as i32 {
+			Ok(())
 		}
+		else {
+			error!("{:?}", response);
+			bail!("Payment failed");
+		}
+	}
+
+	pub async fn pay_bolt11(&self, bolt11: impl AsRef<str>) {
+		self.try_pay_bolt11(bolt11).await.unwrap()
+
 	}
 
 	pub async fn wait_for_gossip(&self, min_channels: usize) {
