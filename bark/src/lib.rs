@@ -501,11 +501,9 @@ impl Wallet {
 				if avail < output.amount {
 					bail!("Balance too low: {}", sum);
 				} else if avail < output.amount + ark::P2TR_DUST {
-					info!("No change, emptying wallet.");
 					None
 				} else {
 					let change_amount = avail - output.amount;
-					info!("Adding change vtxo for {}", change_amount);
 					Some(VtxoRequest {
 						pubkey: vtxo_key.public_key(),
 						amount: change_amount,
@@ -527,7 +525,10 @@ impl Wallet {
 				break payment;
 			}
 		};
-		trace!("OOR tx sighashes: {:?}", payment.sighashes());
+		// it's a bit fragile, but if there is a second output, it's our change
+		if let Some(o) = payment.outputs.get(1) {
+			info!("Added change VTXO of {}", o.amount);
+		}
 
 		let (sec_nonces, pub_nonces) = {
 			let mut secs = Vec::with_capacity(payment.inputs.len());
