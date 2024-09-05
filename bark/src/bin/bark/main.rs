@@ -160,25 +160,33 @@ enum OnchainCommand {
 	},
 }
 
-async fn inner_main(cli: Cli) -> anyhow::Result<()> {
-	let mut logbuilder = env_logger::builder();
-	logbuilder.target(env_logger::Target::Stderr);
-	if cli.verbose {
-		logbuilder
-			.filter_module("sled", log::LevelFilter::Warn)
-			.filter_module("rustls", log::LevelFilter::Warn)
-			.filter_module("reqwest", log::LevelFilter::Warn)
-			.filter_module("bitcoincore_rpc", log::LevelFilter::Debug)
-			.filter_level(log::LevelFilter::Trace);
+fn init_logging(verbose: bool) {
+	let mut l = fern::Dispatch::new()
+		.level_for("sled", log::LevelFilter::Warn)
+		.level_for("rustls", log::LevelFilter::Warn)
+		.level_for("reqwest", log::LevelFilter::Warn);
+	if verbose {
+		l = l
+			.level(log::LevelFilter::Trace)
+			.level_for("bitcoincore_rpc", log::LevelFilter::Debug);
 	} else {
-		logbuilder
-			.filter_module("sled", log::LevelFilter::Off)
-			.filter_module("rustls", log::LevelFilter::Off)
-			.filter_module("reqwest", log::LevelFilter::Off)
-			.filter_module("bitcoincore_rpc", log::LevelFilter::Off)
-			.filter_level(log::LevelFilter::Info);
+		l = l
+			.level(log::LevelFilter::Info)
+			.level_for("bitcoincore_rpc", log::LevelFilter::Warn);
 	}
-	logbuilder.init();
+	l
+		.format(|out, msg, rec| {
+			let now = chrono::Local::now();
+			// only time, not date
+			let stamp = now.format("%H:%M:%S.%3f");
+			out.finish(format_args!("[{} {: >5}] {}", stamp, rec.level(), msg))
+		})
+		.chain(std::io::stderr())
+		.apply().expect("error setting up logging");
+}
+
+async fn inner_main(cli: Cli) -> anyhow::Result<()> {
+	init_logging(cli.verbose);
 
 	let datadir = {
 		let datadir = PathBuf::from(cli.datadir);

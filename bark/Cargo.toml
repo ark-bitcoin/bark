@@ -23,7 +23,8 @@ sled-utils = { path = "../sled-utils" }
 anyhow.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-env_logger.workspace = true
+fern.workspace = true
+chrono.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
