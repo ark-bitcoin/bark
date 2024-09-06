@@ -120,7 +120,6 @@ async fn bark_pay_ln() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn bark_pay_ln_fails() {
 	let context = TestContext::new("ln/bark-pay-ln-fails").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
