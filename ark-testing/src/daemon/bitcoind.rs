@@ -30,7 +30,7 @@ impl Default for BitcoindConfig {
 	fn default() -> Self {
 		Self {
 			datadir: PathBuf::from("~/.bitcoin"),
-			txindex: true,
+			txindex: false,
 			network: Network::Regtest,
 			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
 			relay_fee: None,
