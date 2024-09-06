@@ -99,7 +99,9 @@ enum Command {
 	/// By default the wallet's configured threshold is used.
 	#[command()]
 	Refresh {
+		#[arg(long)]
 		threshold_blocks: Option<u32>,
+		#[arg(long)]
 		threshold_hours: Option<u32>,
 	},
 	/// onboard from the onchain wallet into the Ark
