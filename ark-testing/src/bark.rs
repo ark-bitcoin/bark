@@ -18,6 +18,7 @@ use bark_json::cli as json;
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
+#[derive(Debug)]
 pub struct BarkConfig {
 	pub datadir: PathBuf,
 	pub asp_url: String,
@@ -26,6 +27,7 @@ pub struct BarkConfig {
 	pub bitcoind_cookie: PathBuf
 }
 
+#[derive(Debug)]
 pub struct Bark {
 	name: String,
 	config: BarkConfig,
@@ -41,10 +43,15 @@ impl Bark {
 	}
 
 	pub async fn new(name: impl AsRef<str>, cfg: BarkConfig) -> Bark {
+		Self::try_new(name, cfg).await.unwrap()
+	}
+
+	pub async fn try_new(name: impl AsRef<str>, cfg: BarkConfig) -> anyhow::Result<Bark> {
 		let output = Bark::cmd()
 			.arg("create")
 			.arg("--datadir")
 			.arg(&cfg.datadir)
+			.arg("--verbose")
 			.arg("--asp")
 			.arg(&cfg.asp_url)
 			.arg(format!("--{}", cfg.network))
@@ -53,24 +60,26 @@ impl Bark {
 			.arg("--bitcoind")
 			.arg(&cfg.bitcoind_url)
 			.output()
-			.await.unwrap();
+			.await?;
 
+		info!("Ran command");
 		if !output.status.success() {
-			let stdout = String::from_utf8(output.stdout).unwrap();
-			let stderr = String::from_utf8(output.stderr).unwrap();
+			info!("Detected failure");
+			let stdout = String::from_utf8(output.stdout)?;
+			let stderr = String::from_utf8(output.stderr)?;
 
 			error!("{}", stderr);
 			error!("{}", stdout);
 
-			panic!("Failed to create {}", name.as_ref());
+			bail!("Failed to create {}", name.as_ref());
 		}
 
-		Bark {
+		Ok(Bark {
 			name: name.as_ref().to_string(),
 			config: cfg,
 			counter: AtomicUsize::new(0),
 			timeout: Duration::from_millis(10_000),
-		}
+		})
 	}
 
 	pub fn name(&self) -> &str {

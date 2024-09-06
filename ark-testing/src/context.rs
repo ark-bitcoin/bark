@@ -92,7 +92,7 @@ impl TestContext {
 		self.aspd_with_cfg(name, self.aspd_default_cfg(name, bitcoind, lightningd).await).await
 	}
 
-	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> Bark {
+	pub async fn try_bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> anyhow::Result<Bark> {
 		let datadir = self.datadir.join(name.as_ref());
 		let asp_url = aspd.asp_url();
 
@@ -103,7 +103,11 @@ impl TestContext {
 			bitcoind_cookie: bitcoind.rpc_cookie(),
 			network: String::from("regtest"),
 		};
-		Bark::new(name, cfg).await
+		Bark::try_new(name, cfg).await
+	}
+
+	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> Bark {
+		self.try_bark(name, &bitcoind, &aspd).await.unwrap()
 	}
 
 	pub async fn lightningd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> Lightningd {
