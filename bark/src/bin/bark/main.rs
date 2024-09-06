@@ -65,6 +65,9 @@ enum Command {
 		/// Use signet network.
 		#[arg(long)]
 		signet: bool,
+		/// Use bitcoin mainnet
+		#[arg(long)]
+		bitcoin: bool,
 
 		#[arg(long)]
 		asp: Option<String>,
@@ -200,15 +203,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	// Handle create command differently.
 	if let Command::Create {
-		force, regtest, signet, mut asp, asp_cert, mut esplora, bitcoind, bitcoind_cookie, bitcoind_user,
+		force, regtest, signet, bitcoin, mut asp, asp_cert, mut esplora, bitcoind, bitcoind_cookie, bitcoind_user,
 		bitcoind_pass,
 	} = cli.command {
-		let net = if regtest && !signet {
+		let net = if regtest && !signet && !bitcoin{
 			bitcoin::Network::Regtest
-		} else if signet && !regtest {
+		} else if signet && !regtest && !bitcoin{
 			bitcoin::Network::Signet
-		} else {
-			bail!("Need to user either --signet and --regtest");
+		} else if bitcoin && !regtest && !signet {
+			warn!("bark is experimental and not yet suited for usage in production");
+			bitcoin::Network::Bitcoin
+		}
+		else {
+			bail!("Need to user either --signet, --regtest or --bitcoin");
 		};
 
 		let mut asp_cert = asp_cert.map(|p|
