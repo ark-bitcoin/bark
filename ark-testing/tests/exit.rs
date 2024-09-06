@@ -10,6 +10,7 @@ async fn progress_exit(
 	bitcoind: &Bitcoind,
 	w: &Bark,
 ) {
+	let mut flip = false;
 	for _ in 0..20 {
 		let res = w.exit().await;
 		if res.done {
@@ -19,7 +20,12 @@ async fn progress_exit(
 			let current = bitcoind.sync_client().get_block_count().unwrap();
 			bitcoind.generate(height as u64 - current).await;
 		} else {
-			bitcoind.generate(1).await;
+			flip = if flip {
+				bitcoind.generate(1).await;
+				false
+			} else {
+				true
+			};
 		}
 	}
 	panic!("failed to finish unilateral exit");
