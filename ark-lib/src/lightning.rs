@@ -139,13 +139,13 @@ impl Bolt11Payment {
 
 	/// Check if there is sufficient fee provided for the given feerate.
 	pub fn check_fee(
-        &self,
-        amount: Amount,
-        change: Amount,
-        fee_rate: FeeRate,
-    ) -> Result<(), InsufficientFunds> {
+		&self,
+		amount: Amount,
+		change: Amount,
+		fee_rate: FeeRate,
+	) -> Result<(), InsufficientFunds> {
 		let total_input = self.inputs.iter().map(|i| i.amount()).sum::<Amount>();
-        let total_output = amount + change;
+		let total_output = amount + change;
 
 		let weight = self.total_weight();
 		let fee = fee_rate * weight + self.forwarding_fee;
@@ -209,7 +209,7 @@ impl Bolt11Payment {
 		asp_nonces: &[musig::MusigPubNonce],
 		asp_part_sigs: &[musig::MusigPartialSignature],
 	) -> SignedBolt11Payment {
-        assert_eq!(self.inputs.len(), our_sec_nonces.len());
+		assert_eq!(self.inputs.len(), our_sec_nonces.len());
 		assert_eq!(self.inputs.len(), our_pub_nonces.len());
 		assert_eq!(self.inputs.len(), asp_nonces.len());
 		assert_eq!(self.inputs.len(), asp_part_sigs.len());
@@ -241,7 +241,7 @@ impl Bolt11Payment {
 			payment: self,
 			signatures: sigs,
 		}
-    }
+	}
 
 	pub fn encode(&self) -> Vec<u8> {
 		let mut buf = Vec::new();
@@ -256,14 +256,14 @@ impl Bolt11Payment {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SignedBolt11Payment {
-    pub payment: Bolt11Payment,
+	pub payment: Bolt11Payment,
 	pub signatures: Vec<schnorr::Signature>,
 }
 
 impl SignedBolt11Payment {
 	pub fn signed_transaction(&self) -> Transaction {
 		let mut tx = self.payment.unsigned_transaction();
-        util::fill_taproot_sigs(&mut tx, &self.signatures);
+		util::fill_taproot_sigs(&mut tx, &self.signatures);
 		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
 		// this +2 might be fixed later
 		debug_assert_eq!(tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
@@ -302,7 +302,7 @@ impl SignedBolt11Payment {
 		}
 	}
 
-    //TODO(stevenroose) make change_vtxo method here
+	//TODO(stevenroose) make change_vtxo method here
 	// pub fn output_vtxos(&self, asp_pubkey: PublicKey, exit_delta: u16) -> Vec<Vtxo> {
 	// 	let inputs = self.payment.inputs.iter()
 	// 		.map(|input| Box::new(input.clone()))

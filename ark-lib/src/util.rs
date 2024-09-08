@@ -96,10 +96,10 @@ pub fn hash_and_sign(hash: sha256::Hash, pubkey: XOnlyPublicKey) -> ScriptBuf {
 /// Panics if the nb of inputs and signatures doesn't match or if some input
 /// witnesses are not empty.
 pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
-    assert_eq!(tx.input.len(), sigs.len());
-    for (input, sig) in tx.input.iter_mut().zip(sigs.iter()) {
-        assert!(input.witness.is_empty());
-        input.witness.push(&sig[..]);
-        debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
-    }
+	assert_eq!(tx.input.len(), sigs.len());
+	for (input, sig) in tx.input.iter_mut().zip(sigs.iter()) {
+		assert!(input.witness.is_empty());
+		input.witness.push(&sig[..]);
+		debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
+	}
 }

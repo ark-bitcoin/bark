@@ -641,15 +641,15 @@ impl Wallet {
 				}
 			};
 
-            //TODO(stevenroose) we need a way for the user to calculate the htlc tx feerate,
-            //like in the oor way (it would be nicer if the user makes the bolt11payment info)
+			//TODO(stevenroose) we need a way for the user to calculate the htlc tx feerate,
+			//like in the oor way (it would be nicer if the user makes the bolt11payment info)
 
-            let vb = Weight::from_vb(300 + 20 * input_vtxos.len() as u64).unwrap();
-            if vb * fr > account_for_fee {
-                account_for_fee = vb * fr;
-            } else {
-                break input_vtxos;
-            }
+			let vb = Weight::from_vb(300 + 20 * input_vtxos.len() as u64).unwrap();
+			if vb * fr > account_for_fee {
+				account_for_fee = vb * fr;
+			} else {
+				break input_vtxos;
+			}
 		};
 
 		let (sec_nonces, pub_nonces) = {
@@ -665,19 +665,19 @@ impl Wallet {
 
 		let req = rpc::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
-            amount_sats: amount.to_sat(),
-            input_vtxos: inputs.iter().map(|v| v.encode()).collect(),
-            user_pubkey: vtxo_key.public_key().serialize().to_vec(),
+			amount_sats: amount.to_sat(),
+			input_vtxos: inputs.iter().map(|v| v.encode()).collect(),
+			user_pubkey: vtxo_key.public_key().serialize().to_vec(),
 			user_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
 		};
 		let resp = self.asp.start_bolt11_payment(req).await
-            .context("htlc request failed")?.into_inner();
+			.context("htlc request failed")?.into_inner();
 		let len = inputs.len();
 		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
 			bail!("invalid length of asp response");
 		}
-        let payment = ark::lightning::Bolt11Payment::decode(&resp.details)
-            .context("invalid bolt11 payment details from asp")?;
+		let payment = ark::lightning::Bolt11Payment::decode(&resp.details)
+			.context("invalid bolt11 payment details from asp")?;
 
 		let asp_pub_nonces = resp.pub_nonces.into_iter()
 			.map(|b| musig::MusigPubNonce::from_slice(&b))
