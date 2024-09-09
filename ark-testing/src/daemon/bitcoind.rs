@@ -168,6 +168,10 @@ impl DaemonHelper for BitcoindHelper {
 		&self.name
 	}
 
+	fn datadir(&self) -> PathBuf {
+		self.config.datadir.clone()
+	}
+
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
 		self.state.rpc_port = Some(portpicker::pick_unused_port().expect("A port is free"));
 		self.state.p2p_port = Some(portpicker::pick_unused_port().expect("A port is free"));

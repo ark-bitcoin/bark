@@ -180,7 +180,15 @@ impl rpc::ArkService for Arc<App> {
 		let invoice = Bolt11Invoice::from_str(&req.invoice)
 			.map_err(|e| badarg!("invalid invoice: {}", e))?;
 		invoice.check_signature().map_err(|_| badarg!("invalid invoice signature"))?;
-		let amount = Amount::from_sat(req.amount_sats); //TODO(stevenroose) amount sanity check
+
+		let inv_amount = invoice.amount_milli_satoshis()
+			.map(|v| Amount::from_sat(v.div_ceil(1000)));
+		if let (Some(_), Some(inv)) = (req.amount_sats, inv_amount) {
+			return Err(badarg!("Invoice has amount of {} encoded. Please omit amount field", inv));
+		}
+		let amount = req.amount_sats.map(|v| Amount::from_sat(v)).or(inv_amount)
+			.ok_or(badarg!("amount field required for invoice without amount"))?;
+
 		let input_vtxos = req.input_vtxos.into_iter().map(|v| Vtxo::decode(&v))
 			.collect::<Result<Vec<_>, _>>()
 			.map_err(|e| badarg!("invalid vtxo: {}", e))?;

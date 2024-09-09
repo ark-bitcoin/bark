@@ -82,8 +82,8 @@ pub struct OorVtxosResponse {
 pub struct Bolt11PaymentRequest {
     #[prost(string, tag = "1")]
     pub invoice: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "2")]
-    pub amount_sats: u64,
+    #[prost(uint64, optional, tag = "2")]
+    pub amount_sats: ::core::option::Option<u64>,
     #[prost(bytes = "vec", repeated, tag = "3")]
     pub input_vtxos: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(bytes = "vec", tag = "4")]

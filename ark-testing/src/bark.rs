@@ -110,9 +110,12 @@ impl Bark {
 
 	pub async fn try_send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>)-> anyhow::Result<()> {
 		let destination = destination.to_string();
-		let amount = amount.map(|a| a.to_string()).unwrap();
 
-		self.try_run(["send", &destination, &amount, "--verbose"]).await?;
+		if let Some(amount) = amount {
+			self.try_run(["send", &destination, &amount.to_string(), "--verbose"]).await?;
+		} else {
+			self.try_run(["send", &destination, "--verbose"]).await?;
+		}
 		Ok(())
 	}
 

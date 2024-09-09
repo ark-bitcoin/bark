@@ -93,6 +93,10 @@ impl DaemonHelper for AspdHelper {
 		&self.name
 	}
 
+	fn datadir(&self) -> PathBuf {
+		self.config.datadir.clone()
+	}
+
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
 		let public_grpc_port = portpicker::pick_unused_port().expect("No ports free");
 		let admin_grpc_port = portpicker::pick_unused_port().expect("No ports free");
@@ -129,8 +133,6 @@ impl DaemonHelper for AspdHelper {
 	}
 
 	async fn prepare(&self) -> anyhow::Result<()> {
-
-
 		let do_command = |mut cmd: Command, cfg: AspdConfig| {
 			let datadir = cfg.datadir.display().to_string();
 			let bitcoind_cookie = cfg.bitcoind_cookie.display().to_string();
@@ -149,7 +151,7 @@ impl DaemonHelper for AspdHelper {
 				"--round-submit-time", &round_submit_time,
 				"--round-sign-time",  &round_sign_time,
 				"--nb-round-nonces", &nb_round_nonces
-				];
+			];
 
 
 			if cfg.cln_grpc_uri.is_some() {

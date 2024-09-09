@@ -25,6 +25,7 @@ use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use bark_cln::grpc;
 use bark_cln::grpc::pay_response::PayStatus;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bitcoin::hex::DisplayHex;
 use bitcoin::{
 	bip32, psbt, sighash, taproot, Address, Amount, FeeRate, Network, OutPoint, Transaction,
 	Weight, Witness,
@@ -508,7 +509,13 @@ impl App {
 			maxfeepercent: None,
 			retry_for: None,
 			maxdelay: None,
-			amount_msat: None,
+			amount_msat: if invoice.amount_milli_satoshis().is_none() {
+				Some(grpc::Amount {
+					msat: payment.payment.payment_amount.to_sat() * 1000,
+				})
+			} else {
+				None
+			},
 			description: None,
 			exemptfee: None,
 			riskfactor: None,
@@ -520,13 +527,18 @@ impl App {
 		let status = match PayStatus::try_from(pay_response.status) {
 			Ok(status) => status,
 			Err(_) => {
-				log::error!("An invalid payment status was returned by Core Lightning: {}", pay_response.status);
+				error!("An invalid payment status was returned by Core Lightning: {}", pay_response.status);
 				bail!("An unexpected error occured");
 			}
 		};
 
 		match status {
-			PayStatus::Complete => Ok(pay_response.payment_preimage),
+			PayStatus::Complete => {
+				info!("Forwarded bolt11 invoice of {} (preimage: {}). Invoice: {}",
+					payment.payment.payment_amount, pay_response.payment_preimage.as_hex(), invoice.to_string(),
+				);
+				Ok(pay_response.payment_preimage)
+			},
 			PayStatus::Failed => {
 				//TODO(stevenroose) do something to give back vtxo to user or so
 				bail!("Failed to pay bolt11-invoice");

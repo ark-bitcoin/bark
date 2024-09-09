@@ -624,8 +624,15 @@ impl Wallet {
 	pub async fn send_bolt11_payment(
 		&mut self,
 		invoice: &Bolt11Invoice,
-		amount: Amount,
+		user_amount: Option<Amount>,
 	) -> anyhow::Result<Vec<u8>> {
+		let inv_amount = invoice.amount_milli_satoshis()
+			.map(|v| Amount::from_sat(v.div_ceil(1000)));
+		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
+			bail!("Invoice has amount of {} encoded. Please omit amount argument", inv);
+		}
+		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
+
 		let current_height = self.onchain.tip().await?;
 		let fr = self.onchain.regular_fee_rate();
 		//TODO(stevenroose) impl key derivation
@@ -637,24 +644,6 @@ impl Wallet {
 		let mut account_for_fee = ark::lightning::HTLC_MIN_FEE;
 		let inputs = loop {
 			let input_vtxos = self.db.get_expiring_vtxos(amount + account_for_fee)?;
-			let _change = {
-				let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-				let avail = Amount::from_sat(sum.to_sat().saturating_sub(account_for_fee.to_sat()));
-				if avail < amount {
-					bail!("Balance too low: {}", sum);
-				} else if avail < amount + ark::P2TR_DUST {
-					//TODO(stevenroose) consider below-dust change
-					info!("No change.");
-					None
-				} else {
-					let change_amount = avail - amount;
-					info!("Adding change vtxo for {}", change_amount);
-					Some(VtxoRequest {
-						pubkey: vtxo_key.public_key(),
-						amount: change_amount,
-					})
-				}
-			};
 
 			//TODO(stevenroose) we need a way for the user to calculate the htlc tx feerate,
 			//like in the oor way (it would be nicer if the user makes the bolt11payment info)
@@ -680,7 +669,7 @@ impl Wallet {
 
 		let req = rpc::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
-			amount_sats: amount.to_sat(),
+			amount_sats: user_amount.map(|a| a.to_sat()),
 			input_vtxos: inputs.iter().map(|v| v.encode()).collect(),
 			user_pubkey: vtxo_key.public_key().serialize().to_vec(),
 			user_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
@@ -712,6 +701,7 @@ impl Wallet {
 			&asp_pub_nonces,
 			&asp_part_sigs,
 		);
+		info!("Adding change VTXO of {}", signed.change_vtxo().amount());
 		trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
 
 		let req = rpc::SignedBolt11PaymentDetails {
