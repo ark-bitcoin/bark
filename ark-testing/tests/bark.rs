@@ -11,7 +11,7 @@ use ark_testing::{TestContext, AspdConfig};
 async fn bark_version() {
 	let ctx = TestContext::new("bark_version").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let aspd = ctx.aspd("aspd-1", &bitcoind).await;
+	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
 
 	//
 	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
@@ -24,7 +24,7 @@ async fn bark_version() {
 async fn onboard_bark() {
 	let ctx = TestContext::new("bark/onboard_bark").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let aspd = ctx.aspd("aspd-1", &bitcoind).await;
+	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
 	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
 
 	// Generate initial funds
@@ -56,7 +56,7 @@ async fn multiple_round_payments() {
 		round_submit_time: Duration::from_millis(100 * N as u64),
 		round_sign_time: Duration::from_millis(1000 * N as u64),
 		nb_round_nonces: 200,
-		..ctx.aspd_default_cfg("aspd", &bitcoind)
+		..ctx.aspd_default_cfg("aspd", &bitcoind, None).await
 	};
 	let aspd = ctx.aspd_with_cfg("aspd", aspd_cfg).await;
 
@@ -100,7 +100,7 @@ async fn oor() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/oor").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let aspd = ctx.aspd("aspd-1", &bitcoind).await;
+	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
 
 	// Fund the asp
 	bitcoind.generate(106).await;
@@ -119,4 +119,3 @@ async fn oor() {
 	assert_eq!(58_035, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
 }
-

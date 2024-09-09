@@ -100,8 +100,7 @@ async fn bark_pay_ln() {
 	lightningd_1.wait_for_gossip(1).await;
 
 	// Start an aspd and link it to our cln installation
-	let aspd_config = context.aspd_default_cfg_lightningd("aspd-1", &bitcoind, &lightningd_1).await;
-	let aspd_1 = context.aspd_with_cfg("aspd-1", aspd_config).await;
+	let aspd_1 = context.aspd("aspd-1", &bitcoind, Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = Amount::from_int_btc(3);

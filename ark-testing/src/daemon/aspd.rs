@@ -10,7 +10,7 @@ use bitcoin::address::{Address, NetworkUnchecked};
 use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
 use aspd_rpc_client::Empty;
 
-use crate::{Daemon, DaemonHelper};
+use crate::{Daemon, DaemonHelper, Lightningd};
 use crate::constants::env::ASPD_EXEC;
 use crate::util::resolve_path;
 
@@ -237,5 +237,17 @@ impl AspdHelper {
 
 	pub async fn connect_admin_client(&self) -> Result<AdminClient, tonic::transport::Error> {
 		AdminClient::connect(self.admin_url()).await
+	}
+}
+
+impl AspdConfig {
+
+	pub async fn configure_lighting(&mut self, lightningd: &Lightningd) {
+		let grpc_details = lightningd.grpc_details().await;
+
+		self.cln_grpc_uri = Some(grpc_details.uri);
+		self.cln_grpc_server_cert_path = Some(grpc_details.server_cert_path);
+		self.cln_grpc_client_cert_path = Some(grpc_details.client_cert_path);
+		self.cln_grpc_client_key_path = Some(grpc_details.client_key_path);
 	}
 }

@@ -24,7 +24,7 @@ async fn fund_asp() {
 	let ctx = TestContext::new("aspd/fund_aspd").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	bitcoind.generate(106).await;
-	let aspd = ctx.aspd("aspd", &bitcoind).await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 	let mut admin_client = aspd.get_admin_client().await;
 
 	// Query the wallet balance of the asp

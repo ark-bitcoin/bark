@@ -33,7 +33,7 @@ async fn unilateral_exit() {
 		relay_fee: Some(FeeRate::from_sat_per_vb(8).unwrap()),
 		..ctx.bitcoind_default_cfg("bitcoind")
 	}).await;
-	let aspd = ctx.aspd("aspd", &bitcoind).await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
 	bitcoind.generate(106).await;
@@ -87,5 +87,3 @@ async fn unilateral_exit() {
 	progress_exit(&bitcoind, &bark4).await;
 	assert_eq!(34_985_110, bark4.onchain_balance().await.to_sat());
 }
-
-
