@@ -122,7 +122,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				..Default::default()
 			};
 			opts.config.merge_into(&mut cfg)?;
-			App::create(&datadir, cfg)?;
+			App::create(&datadir, cfg).await?;
 		},
 		Command::SetConfig(updates) => {
 			let datadir = PathBuf::from(cli.datadir.context("need datadir")?);

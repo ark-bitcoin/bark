@@ -25,7 +25,10 @@ use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use bark_cln::grpc;
 use bark_cln::grpc::pay_response::PayStatus;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::{bip32, psbt, sighash, taproot, Address, Amount, FeeRate, OutPoint, Transaction, Weight, Witness};
+use bitcoin::{
+	bip32, psbt, sighash, taproot, Address, Amount, FeeRate, Network, OutPoint, Transaction,
+	Weight, Witness,
+};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::Mutex;
@@ -172,7 +175,37 @@ pub struct App {
 }
 
 impl App {
-	pub fn create(datadir: &Path, config: Config) -> anyhow::Result<()> {
+	fn wallet_from_seed(
+		network: Network,
+		seed: &[u8],
+		state: Option<bdk_wallet::wallet::ChangeSet>,
+	) -> anyhow::Result<(Keypair, bip32::Xpriv, bdk_wallet::wallet::Wallet)> {
+		//NB BDK currently doesn't support single-key wallets and this makes
+		// that we are required to have two different descriptors.
+		// We should fix this once BDK fixes this.
+		let (master_key, xpriv, xpriv2) = {
+			let seed_xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
+			let path = bip32::DerivationPath::from_str("m/0").unwrap();
+			let xpriv = seed_xpriv.derive_priv(&SECP, &path).unwrap();
+			let path2 = bip32::DerivationPath::from_str("m/1").unwrap();
+			let xpriv2 = seed_xpriv.derive_priv(&SECP, &path2).unwrap();
+			let keypair = Keypair::from_secret_key(&SECP, &xpriv.private_key);
+			(keypair, xpriv, xpriv2)
+		};
+
+		let wallet = {
+			let desc = format!("tr({})", xpriv);
+			let desc2 = format!("tr({})", xpriv2);
+			debug!("Opening BDK wallet with descriptor {}", desc);
+			debug!("Using descriptors {} and {}", desc, desc2);
+			bdk_wallet::wallet::Wallet::new_or_load(&desc, &desc2, state, network)
+				.context("failed to create or load bdk wallet")?
+		};
+
+		Ok((master_key, xpriv, wallet))
+	}
+
+	pub async fn create(datadir: &Path, config: Config) -> anyhow::Result<()> {
 		info!("Creating aspd server at {}", datadir.display());
 		trace!("Config: {:?}", config);
 
@@ -181,6 +214,13 @@ impl App {
 		if fs::read_dir(&datadir).context("can't read dir")?.next().is_some() {
 			bail!("dir is not empty");
 		}
+
+		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
+			&config.bitcoind_url,
+			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
+		).context("failed to create bitcoind rpc client")?;
+		let tip_hash = bitcoind.get_best_block_hash().context("can't fetch tip hash")?;
+		let tip = bitcoind.get_block_header_info(&tip_hash).context("can't fetch tip")?;
 
 		// write the config to disk
 		let config_str = serde_json::to_string_pretty(&config)
@@ -192,9 +232,23 @@ impl App {
 		let db_path = datadir.join("aspd_db");
 		info!("Loading db at {}", db_path.display());
 		let db = database::Db::open(&db_path).context("failed to open db")?;
+
+		// Initiate key material.
 		let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
 		db.store_master_mnemonic_and_seed(&mnemonic)
 			.context("failed to store mnemonic")?;
+
+		// Store initial wallet state to avoid full chain sync.
+		let seed = mnemonic.to_seed("");
+		let (_, _, mut wallet) = Self::wallet_from_seed(config.network, &seed, None)
+			.expect("shouldn't fail on empty state");
+		wallet.insert_checkpoint(bdk_wallet::chain::BlockId {
+			height: tip.height as u32,
+			hash: tip.hash,
+		}).expect("should work, might fail if tip is genesis");
+		let cs = wallet.take_staged().expect("should have stored tip");
+		ensure!(db.read_aggregate_changeset().await.context("db error")?.is_none(), "db not empty");
+		db.store_changeset(&cs).await.context("error storing initial wallet state")?;
 
 		Ok(())
 	}
@@ -212,34 +266,14 @@ impl App {
 		let seed = db.get_master_seed()
 			.context("db error")?
 			.context("db doesn't contain seed")?;
-		//NB BDK currently doesn't support single-key wallets and this makes
-		// that we are required to have two different descriptors.
-		// We should fix this once BDK fixes this.
-		let (master_key, xpriv, xpriv2) = {
-			let seed_xpriv = bip32::Xpriv::new_master(config.network, &seed).unwrap();
-			let path = bip32::DerivationPath::from_str("m/0").unwrap();
-			let xpriv = seed_xpriv.derive_priv(&SECP, &path).unwrap();
-			let path2 = bip32::DerivationPath::from_str("m/1").unwrap();
-			let xpriv2 = seed_xpriv.derive_priv(&SECP, &path2).unwrap();
-			let keypair = Keypair::from_secret_key(&SECP, &xpriv.private_key);
-			(keypair, xpriv, xpriv2)
-		};
-
-		let wallet = {
-			let desc = format!("tr({})", xpriv);
-			let desc2 = format!("tr({})", xpriv2);
-			debug!("Opening BDK wallet with descriptor {}", desc);
-			debug!("Using descriptors {} and {}", desc, desc2);
-			let init = db.read_aggregate_changeset().await?;
-			bdk_wallet::wallet::Wallet::new_or_load(&desc, &desc2, init, config.network)
-				.context("failed to create or load bdk wallet")?
-		};
+		let init = db.read_aggregate_changeset().await?;
+		let (master_key, xpriv, wallet) = Self::wallet_from_seed(config.network, &seed, init)
+			.context("error loading wallet")?;
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
 			&config.bitcoind_url,
 			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
 		).context("failed to create bitcoind rpc client")?;
-
 
 		Ok(Arc::new(App {
 			config: config,
