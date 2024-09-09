@@ -136,6 +136,7 @@ async fn inner_main() -> anyhow::Result<()> {
 
 			println!("The configuration has been updated");
 			println!("You should restart `arkd` to ensure the new configuration takes effect");
+			println!("Current config: {:#?}", cfg);
 		},
 		Command::Start => {
 			let mut app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
