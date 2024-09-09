@@ -202,10 +202,10 @@ impl rpc::ArkService for Arc<App> {
 		}))
 	}
 
-    async fn finish_bolt11_payment(
-        &self,
-        req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
-    ) -> Result<tonic::Response<rpc::Bolt11PaymentResult>, tonic::Status> {
+	async fn finish_bolt11_payment(
+		&self,
+		req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
+	) -> Result<tonic::Response<rpc::Bolt11PaymentResult>, tonic::Status> {
 		let req = req.into_inner();
 		let signed = SignedBolt11Payment::decode(&req.signed_payment)
 			.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
@@ -220,7 +220,7 @@ impl rpc::ArkService for Arc<App> {
 			payment_preimage: preimage,
 
 		}))
-    }
+	}
 
 	// round
 

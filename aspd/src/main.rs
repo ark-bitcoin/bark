@@ -15,7 +15,8 @@ use tonic::transport::Uri;
 use aspd::{App, Config, ClnConfig};
 use aspd_rpc_client as rpc;
 
-const RPC_ADDR: &str = "[::]:3535";
+/// Defaults to our default port on localhost.
+const DEFAULT_RPC_ADDR: &str = "[::]:3535";
 
 #[derive(Parser)]
 #[command(author = "Steven Roose <steven@roose.io>", version, about)]
@@ -46,7 +47,7 @@ enum Command {
 	DropOorConflicts,
 	#[command()]
 	Rpc {
-		#[arg(long, default_value = RPC_ADDR)]
+		#[arg(long, default_value = DEFAULT_RPC_ADDR)]
 		addr: String,
 		#[command(subcommand)]
 		cmd: RpcCommand,
@@ -69,10 +70,10 @@ enum RpcCommand {
 #[tokio::main]
 async fn main() {
 	if let Err(e) = inner_main().await {
-		eprintln!("An error occurred: {}", e);
+		println!("An error occurred: {}", e);
 		// maybe hide second print behind a verbose flag
-		eprintln!("");
-		eprintln!("{:?}", e);
+		println!("");
+		println!("{:?}", e);
 		process::exit(1);
 	}
 }
@@ -84,7 +85,6 @@ fn init_logging() {
 		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
 		.format(|out, msg, rec| {
 			let now = chrono::Local::now();
-			// only time, not date
 			let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
 			out.finish(format_args!(
 				"[{} {: >5} {}] {}",
@@ -96,13 +96,13 @@ fn init_logging() {
 }
 
 async fn inner_main() -> anyhow::Result<()> {
-	init_logging();
-
 	let cli = Cli::parse();
 
 	if let Command::Rpc { cmd, addr } = cli.command {
 		return run_rpc(&addr, cmd).await;
 	}
+
+	init_logging();
 
 	match cli.command {
 		Command::Rpc { .. } => unreachable!(),
@@ -163,7 +163,27 @@ async fn inner_main() -> anyhow::Result<()> {
 	Ok(())
 }
 
+fn init_logging_rpc() {
+	let colors = fern::colors::ColoredLevelConfig::default();
+	fern::Dispatch::new()
+		.level(log::LevelFilter::Trace)
+		.level_for("rustls", log::LevelFilter::Warn)
+		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
+		.format(move |out, msg, rec| {
+			let now = chrono::Local::now();
+			// only time, not date
+			let stamp = now.format("%H:%M:%S.%3f");
+			out.finish(format_args!(
+				"[{} {: >5}] {}", stamp, colors.color(rec.level()), msg,
+			))
+		})
+		.chain(std::io::stderr())
+		.apply().expect("error setting up logging");
+}
+
 async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
+	init_logging_rpc();
+
 	let addr = if addr.starts_with("http") {
 		addr.to_owned()
 	} else {

@@ -168,6 +168,8 @@ enum OnchainCommand {
 }
 
 fn init_logging(verbose: bool) {
+	let colors = fern::colors::ColoredLevelConfig::default();
+
 	let mut l = fern::Dispatch::new()
 		.level_for("sled", log::LevelFilter::Warn)
 		.level_for("rustls", log::LevelFilter::Warn)
@@ -182,11 +184,11 @@ fn init_logging(verbose: bool) {
 			.level_for("bitcoincore_rpc", log::LevelFilter::Warn);
 	}
 	l
-		.format(|out, msg, rec| {
+		.format(move |out, msg, rec| {
 			let now = chrono::Local::now();
 			// only time, not date
 			let stamp = now.format("%H:%M:%S.%3f");
-			out.finish(format_args!("[{} {: >5}] {}", stamp, rec.level(), msg))
+			out.finish(format_args!("[{} {: >5}] {}", stamp, colors.color(rec.level()), msg))
 		})
 		.chain(std::io::stderr())
 		.apply().expect("error setting up logging");
