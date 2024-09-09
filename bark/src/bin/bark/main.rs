@@ -117,7 +117,8 @@ enum Command {
 	Send {
 		/// the destination
 		destination: String,
-		amount: Amount,
+		/// the amount to send (optional for bolt11)
+		amount: Option<Amount>,
 	},
 	/// send money by participating in an Ark round
 	#[command()]
@@ -335,12 +336,21 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Onboard { amount } => w.onboard(amount).await?,
 		Command::Send { destination, amount } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
-				info!("Sending arkoor payment to pubkey {}", pk);
+				let amount = amount.context("amount missing")?;
+				info!("Sending arkoor payment of {} to pubkey {}", amount, pk);
 				w.sync_ark().await.context("sync error")?;
 				w.send_oor_payment(pk, amount).await?;
 			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
 				info!("Sending bolt11 payment to invoice {}", inv);
 				w.sync_ark().await.context("sync error")?;
+				let inv_amount = inv.amount_milli_satoshis()
+					.map(|v| Amount::from_sat(v.div_ceil(1000)));
+				if let (Some(_), Some(inv)) = (amount, inv_amount) {
+					bail!("Invoice has amount of {} encoded. Please omit amount argument", inv);
+				}
+				let final_amount = amount.or(inv_amount)
+					.context("amount required on invoice without amount")?;
+				info!("Sending bolt11 payment of {} to invoice {}", final_amount, inv);
 				let preimage = w.send_bolt11_payment(&inv, amount).await?;
 				info!("Payment preimage received: {}", preimage.as_hex());
 			} else {

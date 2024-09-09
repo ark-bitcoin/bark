@@ -69,11 +69,15 @@ fn amount_or_all(amount: Amount) -> grpc::AmountOrAll {
 	}
 }
 
-fn amount_or_any(amount: Amount) -> grpc::AmountOrAny {
+fn amount_or_any(amount: Option<Amount>) -> grpc::AmountOrAny {
 	grpc::AmountOrAny {
-		value : Some(grpc::amount_or_any::Value::Amount(grpc::Amount {
-			msat : amount.to_sat()*1000,
-		})),
+		value: Some(if let Some(amount) = amount {
+			grpc::amount_or_any::Value::Amount(grpc::Amount {
+				msat : amount.to_sat()*1000,
+			})
+		} else {
+			grpc::amount_or_any::Value::Any(true)
+		}),
 	}
 }
 
@@ -166,6 +170,10 @@ impl LightningDHelper {
 impl DaemonHelper for LightningDHelper {
 	fn name(&self) -> &str {
 		&self.name
+	}
+
+	fn datadir(&self) -> PathBuf {
+		self.config.lightning_dir.clone()
 	}
 
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
@@ -306,7 +314,7 @@ impl Lightningd {
 
 	pub async fn invoice(
 		&self,
-		amount: Amount,
+		amount: Option<Amount>,
 		label: impl AsRef<str>,
 		description: impl AsRef<str>,
 	) -> String {

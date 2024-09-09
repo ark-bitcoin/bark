@@ -5,6 +5,7 @@ pub mod log;
 
 use std::future::Future;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -27,6 +28,7 @@ pub trait LogHandler {
 
 pub trait DaemonHelper {
 	fn name(&self) -> &str;
+	fn datadir(&self) -> PathBuf;
 	fn make_reservations(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
 	fn prepare(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
 	fn get_command(&self) -> impl Future<Output = anyhow::Result<Command>> + Send;
@@ -102,33 +104,20 @@ impl<T> Daemon<T>
 			.get_command()
 			.await?;
 
-		cmd
-			.stdout(Stdio::piped())
-			.stderr(Stdio::piped());
+		cmd.stdout(Stdio::piped());
+		cmd.stderr(std::fs::File::create(self.inner.datadir().join("stderr.log"))?);
 
 		trace!("{}: Trying to spawn {:?}", self.inner.name(), cmd);
 		let mut child = cmd.spawn()?;
 
 		let stdout = child.stdout.take().unwrap();
-		let stderr = child.stderr.take().unwrap();
 		let stdout_log = self.stdout_handler.clone();
-		let stderr_log = self.stderr_handler.clone();
 
 		self.stdout_jh = Some(std::thread::spawn(move || {
 			let reader = BufReader::new(stdout);
 			for line in reader.lines() {
 				let line = line.unwrap();
 				for handler in stdout_log.lock().unwrap().iter_mut() {
-					handler.process_log(&line)
-				}
-			}
-		}));
-
-		self.stderr_jh = Some(std::thread::spawn(move || {
-			let reader = BufReader::new(stderr);
-			for line in reader.lines() {
-				let line = line.unwrap();
-				for handler in stderr_log.lock().unwrap().iter_mut() {
 					handler.process_log(&line)
 				}
 			}

@@ -95,7 +95,7 @@ message OorVtxosResponse {
 
 message Bolt11PaymentRequest {
 	string invoice = 1;
-	uint64 amount_sats = 2;
+	optional uint64 amount_sats = 2;
 	repeated bytes input_vtxos = 3;
 	bytes user_pubkey = 4;
 	repeated bytes user_nonces = 5;
