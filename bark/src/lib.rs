@@ -210,16 +210,31 @@ impl Wallet {
 
 		let asp_uri = tonic::transport::Uri::from_str(&config.asp_address)
 			.context("invalid asp addr")?;
+		let scheme = asp_uri.scheme_str().expect("no scheme?");
+		if scheme != "http" && scheme != "https" {
+			bail!("ASP scheme must be either http or https");
+		}
+
 		let asp_endpoint = if let Some(ref cert_path) = config.asp_cert {
+			info!("Connecting to ASP using custom TLS certificate...");
 			let domain = asp_uri.host().context("ASP address has no domain")?.to_owned();
 			let cert = fs::read(cert_path)
 				.with_context(|| format!("failed to read ASP cert file: {}", cert_path.display()))?;
-			tonic::transport::Channel::builder(asp_uri)
-				.tls_config(tonic::transport::ClientTlsConfig::new()
+			let tls_config = tonic::transport::ClientTlsConfig::new()
 					.ca_certificate(tonic::transport::Certificate::from_pem(&cert))
-					.domain_name(domain))?
+					.domain_name(domain);
+			tonic::transport::Channel::builder(asp_uri).tls_config(tls_config)?
+		} else if scheme == "https" {
+			info!("Connecting to ASP using SSL...");
+			let uri_auth = asp_uri.clone().into_parts().authority.expect("need authority");
+			let domain = uri_auth.host();
+
+			let tls_config = tonic::transport::ClientTlsConfig::new()
+				.domain_name(domain);
+			tonic::transport::Channel::builder(asp_uri).tls_config(tls_config)?
 		} else {
-			asp_uri.try_into().context("failed to convert ASP addr into endpoint")?
+			info!("Connecting to ASP without TLS...");
+			tonic::transport::Channel::builder(asp_uri)
 		};
 		let mut asp = rpc::ArkServiceClient::connect(asp_endpoint)
 			.await.context("failed to connect to asp")?;
