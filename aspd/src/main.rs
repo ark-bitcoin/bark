@@ -274,7 +274,6 @@ struct ConfigOpts {
 }
 
 impl ConfigOpts {
-
 	/// Verifies if the specified configuration is valid
 	///
 	/// It also checks if all required arguments are present.
@@ -311,7 +310,6 @@ impl ConfigOpts {
 
 		Ok(())
 	}
-
 
 	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
 		if let Some(v) = self.bitcoind_url {
