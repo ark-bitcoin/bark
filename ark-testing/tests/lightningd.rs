@@ -8,7 +8,7 @@ use bark_cln::grpc;
 
 #[tokio::test]
 async fn start_lightningd() {
-	let context = TestContext::new("lightningd/start-lightningd").await;
+	let context = TestContext::new("ln/start-lightningd").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
@@ -28,7 +28,7 @@ async fn start_lightningd() {
 /// We don't integrate with `aspd` yet
 #[tokio::test]
 async fn cln_can_pay_lightning() {
-	let context = TestContext::new("lightningd/cln-can-pay-lightningd").await;
+	let context = TestContext::new("ln/cln-can-pay-lightningd").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
@@ -75,8 +75,8 @@ async fn cln_can_pay_lightning() {
 }
 
 #[tokio::test]
-async fn aspd_can_pay_lightning() {
-	let context = TestContext::new("lightning/aspd-can-pay-lightning").await;
+async fn bark_pay_ln() {
+	let context = TestContext::new("ln/bark-pay-ln").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	bitcoind.generate(110).await;
 
@@ -100,18 +100,61 @@ async fn aspd_can_pay_lightning() {
 	lightningd_1.wait_for_gossip(1).await;
 
 	// Start an aspd and link it to our cln installation
-	let aspd_config = context.aspd_default_cfg_lightningd("aspd-1", &bitcoind, &lightningd_1).await;
-	let aspd_1 = context.aspd_with_cfg("aspd-1", aspd_config).await;
+	let aspd_1 = context.aspd("aspd-1", &bitcoind, Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
+	let onchain_amount = Amount::from_int_btc(3);
+	let onboard_amount = Amount::from_int_btc(2);
 	let bark_1 = context.bark("bark-1", &bitcoind, &aspd_1).await;
-	bitcoind.fund_bark(&bark_1, Amount::from_int_btc(2)).await;
-	bark_1.onboard(Amount::from_btc(1.9).unwrap()).await;
+	bitcoind.fund_bark(&bark_1, onchain_amount).await;
+	bark_1.onboard(onboard_amount).await;
 	bitcoind.generate(6).await;
 
 	// Create a payable invoice
 	let invoice_amount = Amount::from_int_btc(1);
 	let invoice = lightningd_2.invoice(invoice_amount, "test_payment", "A test payment").await;
 
+	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 	bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
+	assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(99998820));
+}
+
+#[tokio::test]
+async fn bark_pay_ln_fails() {
+	let context = TestContext::new("ln/bark-pay-ln-fails").await;
+	let bitcoind = context.bitcoind("bitcoind-1").await;
+	bitcoind.generate(110).await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let (lightningd_1, lightningd_2) = tokio::join!(
+		context.lightningd("lightningd-1", &bitcoind),
+		context.lightningd("lightningd-2", &bitcoind),
+	);
+
+	// No channels are created
+	// The payment must fail
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = context.aspd("aspd-1", &bitcoind, Some(&lightningd_1)).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = Amount::from_int_btc(3);
+	let onboard_amount = Amount::from_int_btc(2);
+	let bark_1 = context.bark("bark-1", &bitcoind, &aspd_1).await;
+	bitcoind.fund_bark(&bark_1, onchain_amount).await;
+	bark_1.onboard(onboard_amount).await;
+	bitcoind.generate(6).await;
+
+	// Create a payable invoice
+	let invoice_amount = Amount::from_int_btc(1);
+	let invoice = lightningd_2.invoice(invoice_amount, "test_payment", "A test payment").await;
+
+	// Onboard funds into the Ark
+	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
+	bark_1.try_send_bolt11(invoice, Some(invoice_amount)).await.expect_err("The payment fails");
+
+	// The payment fails, the user still has all their funds
+	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 }

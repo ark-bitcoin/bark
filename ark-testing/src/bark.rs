@@ -108,11 +108,16 @@ impl Bark {
 		self.run(["send", &destination, &amount, "--verbose"]).await;
 	}
 
-	pub async fn send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>) {
+	pub async fn try_send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>)-> anyhow::Result<()> {
 		let destination = destination.to_string();
 		let amount = amount.map(|a| a.to_string()).unwrap();
 
-		self.run(["send", &destination, &amount, "--verbose"]).await;
+		self.try_run(["send", &destination, &amount, "--verbose"]).await?;
+		Ok(())
+	}
+
+	pub async fn send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>) -> () {
+		self.try_send_bolt11(destination, amount).await.unwrap();
 	}
 
 	pub async fn onboard(&self, amount: Amount) {

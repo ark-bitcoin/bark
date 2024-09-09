@@ -714,26 +714,29 @@ impl Wallet {
 		);
 		trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
 
+		let req = rpc::SignedBolt11PaymentDetails {
+			signed_payment: signed.encode()
+		};
+
+		let grpc_msg = self.asp.finish_bolt11_payment(req).await?;
+
 		let change_vtxo = signed.change_vtxo();
 		if let Err(e) = self.db.store_vtxo(&change_vtxo) {
 			//TODO(stevenroose) print vtxo in hex after btc fixed hex
 			error!("Failed to store change vtxo from Bolt11 payment: {}", e);
 		}
 
-		let req = rpc::SignedBolt11PaymentDetails {
-			signed_payment: signed.encode(),
-		};
-		let result = self.asp.finish_bolt11_payment(req).await
-			.context("signed htlc delivery failed")?.into_inner();
-
+		// Mark the used vtxo's as spent
 		for v in input_vtxos {
 			self.db.store_spent_vtxo(v.id(), current_height)
 				.context("failed to store forfeited vtxo")?;
 			self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
 		}
 
-		Ok(result.payment_preimage)
-	}
+		info!("Bolt-11 payment succeeded");
+		let response = grpc_msg.into_inner();
+		Ok(response.payment_preimage)
+}
 
 	/// Send a payment in an Ark round.
 	///

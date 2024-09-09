@@ -64,25 +64,9 @@ impl TestContext {
 		ret
 	}
 
-	pub async fn aspd_default_cfg_lightningd(
-		&self,
-		name: impl AsRef<str>,
-		bitcoind: &Bitcoind,
-		lightningd: &Lightningd) -> AspdConfig {
-			let grpc_details = lightningd.grpc_details().await;
-			let mut cfg = self.aspd_default_cfg(name, &bitcoind);
-
-			cfg.cln_grpc_uri = Some(grpc_details.uri);
-			cfg.cln_grpc_server_cert_path = Some(grpc_details.server_cert_path);
-			cfg.cln_grpc_client_cert_path = Some(grpc_details.client_cert_path);
-			cfg.cln_grpc_client_key_path = Some(grpc_details.client_key_path);
-
-			cfg
-	}
-
-	pub fn aspd_default_cfg(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> AspdConfig {
+	pub async fn aspd_default_cfg(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, lightningd: Option<&Lightningd>) -> AspdConfig {
 		let datadir = self.datadir.join(name.as_ref());
-		AspdConfig {
+		let mut aspd_config = AspdConfig {
 			datadir: datadir.clone(),
 			bitcoind_url: bitcoind.rpc_url(),
 			bitcoind_cookie: bitcoind.rpc_cookie(),
@@ -94,12 +78,18 @@ impl TestContext {
 			cln_grpc_server_cert_path: None,
 			cln_grpc_client_cert_path: None,
 			cln_grpc_client_key_path: None,
-		}
+		};
+
+		if lightningd.is_some() {
+			aspd_config.configure_lighting(lightningd.unwrap()).await;
+		};
+
+		aspd_config
 	}
 
-	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> Aspd {
+	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, lightningd: Option<&Lightningd>) -> Aspd {
 		let name = name.as_ref();
-		self.aspd_with_cfg(name, self.aspd_default_cfg(name, bitcoind)).await
+		self.aspd_with_cfg(name, self.aspd_default_cfg(name, bitcoind, lightningd).await).await
 	}
 
 	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> Bark {
