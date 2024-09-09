@@ -10,6 +10,7 @@ async fn progress_exit(
 	bitcoind: &Bitcoind,
 	w: &Bark,
 ) {
+	let mut flip = false;
 	for _ in 0..20 {
 		let res = w.exit().await;
 		if res.done {
@@ -19,7 +20,12 @@ async fn progress_exit(
 			let current = bitcoind.sync_client().get_block_count().unwrap();
 			bitcoind.generate(height as u64 - current).await;
 		} else {
-			bitcoind.generate(1).await;
+			flip = if flip {
+				bitcoind.generate(1).await;
+				false
+			} else {
+				true
+			};
 		}
 	}
 	panic!("failed to finish unilateral exit");
@@ -50,6 +56,7 @@ async fn unilateral_exit() {
 	bitcoind.fund_bark(&bark4, Amount::from_sat(5_000_000)).await;
 	bark1.onboard(Amount::from_sat(80_000_000)).await;
 	bark3.onboard(Amount::from_sat(80_000_000)).await;
+	bitcoind.generate(1).await;
 
 	let pk1 = bark1.vtxo_pubkey().await;
 	let pk2 = bark2.vtxo_pubkey().await;
@@ -73,17 +80,21 @@ async fn unilateral_exit() {
 	assert_eq!(9_996_895, bark3.onchain_balance().await.to_sat());
 	assert_eq!(5_000_000, bark4.onchain_balance().await.to_sat());
 
+	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark1).await;
 	assert_eq!(59_826_978, bark1.onchain_balance().await.to_sat());
 
+	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark2).await;
 	assert_eq!(34_914_387, bark2.onchain_balance().await.to_sat());
 
 	// the amounts of the following two are a tiny bit higher because their tree was
 	// a bit smaller
+	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark3).await;
 	assert_eq!(59_942_982, bark3.onchain_balance().await.to_sat());
 
+	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark4).await;
 	assert_eq!(34_985_110, bark4.onchain_balance().await.to_sat());
 }
