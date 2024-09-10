@@ -28,6 +28,7 @@ log.workspace = true
 fern.workspace = true
 chrono.workspace = true
 clap.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ciborium.workspace = true

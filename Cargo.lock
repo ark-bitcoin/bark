@@ -275,6 +275,7 @@ dependencies = [
  "ciborium",
  "clap",
  "fern",
+ "futures",
  "lazy_static",
  "lightning-invoice",
  "log",
