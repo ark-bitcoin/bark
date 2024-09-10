@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use ark::lightning::SignedBolt11Payment;
+use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, ScriptBuf, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
@@ -221,12 +222,13 @@ impl rpc::ArkService for Arc<App> {
 			return Err(badarg!("bad signatures on payment: {}", e));
 		}
 
+		trace!("Trying to deliver bolt11 invoice...");
 		let preimage = self.pay_bolt11(signed).await
 			.map_err(|e| internal!("failed to make bolt11 payment: {}", e))?;
+		trace!("Done! preimage: {}", preimage.as_hex());
 
 		Ok(tonic::Response::new(rpc::Bolt11PaymentResult {
 			payment_preimage: preimage,
-
 		}))
 	}
 

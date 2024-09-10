@@ -12,6 +12,7 @@ mod onchain;
 mod psbtext;
 
 
+use std::time::Duration;
 use std::{fs, iter};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -215,7 +216,11 @@ impl Wallet {
 			bail!("ASP scheme must be either http or https");
 		}
 
-		let asp_endpoint = if let Some(ref cert_path) = config.asp_cert {
+		let mut endpoint = tonic::transport::Channel::builder(asp_uri.clone())
+			.keep_alive_timeout(Duration::from_secs(600))
+			.timeout(Duration::from_secs(600));
+
+		if let Some(ref cert_path) = config.asp_cert {
 			info!("Connecting to ASP using custom TLS certificate...");
 			let domain = asp_uri.host().context("ASP address has no domain")?.to_owned();
 			let cert = fs::read(cert_path)
@@ -223,7 +228,7 @@ impl Wallet {
 			let tls_config = tonic::transport::ClientTlsConfig::new()
 					.ca_certificate(tonic::transport::Certificate::from_pem(&cert))
 					.domain_name(domain);
-			tonic::transport::Channel::builder(asp_uri).tls_config(tls_config)?
+			endpoint = endpoint.tls_config(tls_config)?
 		} else if scheme == "https" {
 			info!("Connecting to ASP using SSL...");
 			let uri_auth = asp_uri.clone().into_parts().authority.expect("need authority");
@@ -231,12 +236,12 @@ impl Wallet {
 
 			let tls_config = tonic::transport::ClientTlsConfig::new()
 				.domain_name(domain);
-			tonic::transport::Channel::builder(asp_uri).tls_config(tls_config)?
+			endpoint = endpoint.tls_config(tls_config)?
 		} else {
 			info!("Connecting to ASP without TLS...");
-			tonic::transport::Channel::builder(asp_uri)
 		};
-		let mut asp = rpc::ArkServiceClient::connect(asp_endpoint)
+
+		let mut asp = rpc::ArkServiceClient::connect(endpoint)
 			.await.context("failed to connect to asp")?;
 
 		let ark_info = {
