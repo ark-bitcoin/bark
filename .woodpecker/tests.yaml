@@ -4,22 +4,48 @@ when:
   - event: push
     branch: master
 
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+      depth: 100
+      lfs: false
+
 steps:
-  - name: build
+  - name: merge-master
     image: stevenroose/bark-ci-tests
     commands:
+      - git fetch --no-tags --depth=200 origin master
+      - git log --oneline | head
+      - git log --oneline origin/master | head
+      - git branch prtip
+      - git checkout origin/master
+      - git config --global user.email "ci@codeberg.org"
+      - git config --global user.name "ci"
+      - git merge prtip || { git merge --abort; git checkout prtip; }
+      - git log --oneline | head
+
+  - name: build
+    depends_on: merge-master
+    image: stevenroose/bark-ci-tests
+    commands:
+      - git log --oneline | head -n 1
       - cargo build --workspace
       - ls -al ./target/debug
 
   - name: test-unit
+    depends_on: merge-master
     image: stevenroose/bark-ci-tests
     commands:
+      - git log --oneline | head -n 1
       - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
 
   - name: test-integration
     depends_on: build
     image: stevenroose/bark-ci-tests
     commands:
+      - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - cargo test --package ark-testing
