@@ -24,6 +24,7 @@ use anyhow::Context;
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use bark_cln::grpc;
 use bark_cln::grpc::pay_response::PayStatus;
+use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{
@@ -32,7 +33,7 @@ use bitcoin::{
 };
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 use ark::util::KeypairExt;
 use ark::{musig, Vtxo};
@@ -109,7 +110,7 @@ impl Default for Config {
 	}
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClnConfig {
 	#[serde(with = "serde_util::uri")]
 	pub grpc_uri: tonic::transport::Uri,
@@ -164,6 +165,10 @@ pub struct RoundHandle {
 	round_trigger_tx: tokio::sync::mpsc::Sender<()>,
 }
 
+pub struct SendpayHandle {
+	sendpay_rx: tokio::sync::broadcast::Receiver<SendpaySubscriptionItem>
+}
+
 pub struct App {
 	config: Config,
 	db: database::Db,
@@ -173,6 +178,7 @@ pub struct App {
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 
 	rounds: Option<RoundHandle>,
+	sendpay_updates: Option<SendpayHandle>
 }
 
 impl App {
@@ -289,6 +295,7 @@ impl App {
 			wallet: Mutex::new(wallet),
 			bitcoind: bitcoind,
 			rounds: None,
+			sendpay_updates: None
 		}))
 	}
 
@@ -298,8 +305,10 @@ impl App {
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
+		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
+		mut_self.sendpay_updates = Some(SendpayHandle{ sendpay_rx });
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
@@ -324,6 +333,15 @@ impl App {
 					.await.context("error running admin gRPC server")
 			});
 			jhs.push(jh_rpc_admin)
+		}
+
+		if self.config.cln_config.is_some() {
+			let cln_config = self.config.cln_config.clone().unwrap();
+			let jh_sendpay = tokio::spawn(async move {
+				lightning::run_process_sendpay_updates(&cln_config, sendpay_tx)
+					.await.context("error processing sendpays")
+			});
+			jhs.push(jh_sendpay)
 		}
 
 		// Wait until the first task finishes
