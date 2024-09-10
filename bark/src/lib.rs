@@ -29,6 +29,8 @@ use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 use aspd_rpc_client as rpc;
 
+/// The file name of the config file.
+const CONFIG_FILE: &str = "config.json";
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -53,9 +55,6 @@ pub struct Config {
 
 	/// The address of your ASP.
 	pub asp_address: String,
-
-	/// Path to PEM encoded ASP TLS certificate file.
-	pub asp_cert: Option<PathBuf>,
 
 	/// The address of the Esplora HTTP server to use.
 	///
@@ -93,7 +92,6 @@ impl Default for Config {
 		Config {
 			network: Network::Signet,
 			asp_address: "http://127.0.0.1:3535".to_owned(),
-			asp_cert: None,
 			esplora_address: None,
 			bitcoind_address: None,
 			bitcoind_cookiefile: None,
@@ -106,6 +104,7 @@ impl Default for Config {
 
 pub struct Wallet {
 	config: Config,
+	datadir: PathBuf,
 	db: database::Db,
 	onchain: onchain::Wallet,
 	vtxo_seed: bip32::Xpriv,
@@ -115,11 +114,20 @@ pub struct Wallet {
 }
 
 impl Wallet {
+	/// Write the config file into the data directory.
+	fn write_config(cfg: &Config, datadir: &Path) -> anyhow::Result<()> {
+		let config_str = serde_json::to_string_pretty(cfg)
+			.expect("serialization can't error");
+		let path = datadir.join(CONFIG_FILE);
+		fs::write(&path, config_str.as_bytes())
+			.with_context(|| format!("failed to write config file {}", path.display()))?;
+		Ok(())
+	}
+
 	/// Create new wallet.
 	pub async fn create(
 		datadir: &Path,
-		mut config: Config,
-		asp_cert: Option<Vec<u8>>,
+		config: Config,
 	) -> anyhow::Result<Wallet> {
 		info!("Creating new bark Wallet at {}", datadir.display());
 		trace!("Config: {:?}", config);
@@ -130,21 +138,8 @@ impl Wallet {
 			bail!("dir is not empty");
 		}
 
-		if let Some(cert) = asp_cert {
-			if config.asp_cert.is_some() {
-				bail!("Can't set the ASP cert file path in config and provide a raw cert file");
-			}
-			let path = fs::canonicalize(datadir)?.join("asp.cert");
-			fs::write(&path, cert)
-				.context("failed to write ASP cert file")?;
-			config.asp_cert = Some(path);
-		}
-
 		// write the config to disk
-		let config_str = serde_json::to_string_pretty(&config)
-			.expect("serialization can't error");
-		fs::write(datadir.join("config.json"), config_str.as_bytes())
-			.context("failed to write config file")?;
+		Self::write_config(&config, datadir).context("failed to write config file")?;
 
 		// generate seed
 		let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
@@ -162,7 +157,7 @@ impl Wallet {
 		info!("Opening bark Wallet at {}", datadir.display());
 
 		let config = {
-			let path = datadir.join("config.json");
+			let path = datadir.join(CONFIG_FILE);
 			let bytes = fs::read(&path)
 				.with_context(|| format!("failed to read config file: {}", path.display()))?;
 			serde_json::from_slice::<Config>(&bytes).context("invalid config file")?
@@ -220,16 +215,7 @@ impl Wallet {
 			.keep_alive_timeout(Duration::from_secs(600))
 			.timeout(Duration::from_secs(600));
 
-		if let Some(ref cert_path) = config.asp_cert {
-			info!("Connecting to ASP using custom TLS certificate...");
-			let domain = asp_uri.host().context("ASP address has no domain")?.to_owned();
-			let cert = fs::read(cert_path)
-				.with_context(|| format!("failed to read ASP cert file: {}", cert_path.display()))?;
-			let tls_config = tonic::transport::ClientTlsConfig::new()
-					.ca_certificate(tonic::transport::Certificate::from_pem(&cert))
-					.domain_name(domain);
-			endpoint = endpoint.tls_config(tls_config)?
-		} else if scheme == "https" {
+		if scheme == "https" {
 			info!("Connecting to ASP using SSL...");
 			let uri_auth = asp_uri.clone().into_parts().authority.expect("need authority");
 			let domain = uri_auth.host();
@@ -258,11 +244,23 @@ impl Wallet {
 			}
 		};
 
-		Ok(Wallet { config, db, onchain, vtxo_seed, asp, ark_info })
+		let datadir = datadir.to_path_buf();
+		Ok(Wallet { config, datadir, db, onchain, vtxo_seed, asp, ark_info })
 	}
 
 	pub fn config(&self) -> &Config {
 		&self.config
+	}
+
+	/// Change the config of this wallet.
+	///
+	/// In order for these changes to be persistent, call [Wallet::persist_config].
+	pub fn set_config(&mut self, config: Config) {
+		self.config = config;
+	}
+
+	pub fn persist_config(&self) -> anyhow::Result<()> {
+		Self::write_config(&self.config, &self.datadir)
 	}
 
 	pub fn get_new_onchain_address(&mut self) -> anyhow::Result<Address> {

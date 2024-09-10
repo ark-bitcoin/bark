@@ -16,8 +16,6 @@ use bark::{Wallet, Config};
 use bark_json::cli as json;
 use lightning_invoice::Bolt11Invoice;
 
-const SIGNET_ASP_CERT: &'static [u8] = include_bytes!("signet.asp.21m.dev.cert.pem");
-
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
 		env::current_dir().ok()
@@ -47,6 +45,53 @@ struct Cli {
 	command: Command,
 }
 
+#[derive(clap::Args)]
+struct ConfigOpts {
+	#[arg(long)]
+	asp: Option<String>,
+
+	/// The esplora HTTP API endpoint.
+	#[arg(long)]
+	esplora: Option<String>,
+	#[arg(long)]
+	bitcoind: Option<String>,
+	#[arg(long)]
+	bitcoind_cookie: Option<String>,
+	#[arg(long)]
+	bitcoind_user: Option<String>,
+	#[arg(long)]
+	bitcoind_pass: Option<String>,
+}
+
+impl ConfigOpts {
+	fn merge_info(self, cfg: &mut Config) -> anyhow::Result<()> {
+		if let Some(v) = self.asp {
+			cfg.asp_address = v;
+		}
+		if let Some(v) = self.esplora {
+			cfg.esplora_address = if v == "" { None } else { Some(v) };
+		}
+		if let Some(v) = self.bitcoind {
+			cfg.bitcoind_address = if v == "" { None } else { Some(v) };
+		}
+		if let Some(v) = self.bitcoind_cookie {
+			cfg.bitcoind_cookiefile = if v == "" { None } else { Some(v.into()) };
+		}
+		if let Some(v) = self.bitcoind_user {
+			cfg.bitcoind_user = if v == "" { None } else { Some(v) };
+		}
+		if let Some(v) = self.bitcoind_pass {
+			cfg.bitcoind_pass = if v == "" { None } else { Some(v) };
+		}
+
+		if cfg.esplora_address.is_none() && cfg.bitcoind_address.is_none() {
+			bail!("Provide either an esplora or bitcoind url as chain source.");
+		}
+
+		Ok(())
+	}
+}
+
 #[derive(clap::Subcommand)]
 enum Command {
 	/// Create a new wallet.
@@ -69,22 +114,16 @@ enum Command {
 		#[arg(long)]
 		bitcoin: bool,
 
-		#[arg(long)]
-		asp: Option<String>,
-		#[arg(long)]
-		asp_cert: Option<String>,
-
-		/// The esplora HTTP API endpoint.
-		#[arg(long)]
-		esplora: Option<String>,
-		#[arg(long)]
-		bitcoind: Option<String>,
-		#[arg(long)]
-		bitcoind_cookie: Option<PathBuf>,
-		#[arg(long)]
-		bitcoind_user: Option<String>,
-		#[arg(long)]
-		bitcoind_pass: Option<String>,
+		#[command(flatten)]
+		config: ConfigOpts,
+	},
+	/// Change the configuration of your bark wallet.
+	#[command()]
+	Config {
+		#[command(flatten)]
+		config: Option<ConfigOpts>,
+		#[arg(long, default_value_t = false)]
+		dangerous: bool,
 	},
 	/// use the built-in onchain wallet
 	#[command(subcommand)]
@@ -207,10 +246,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	};
 
 	// Handle create command differently.
-	if let Command::Create {
-		force, regtest, signet, bitcoin, mut asp, asp_cert, mut esplora, bitcoind, bitcoind_cookie, bitcoind_user,
-		bitcoind_pass,
-	} = cli.command {
+	if let Command::Create { force, regtest, signet, bitcoin, config } = cli.command {
 		let net = if regtest && !signet && !bitcoin{
 			bitcoin::Network::Regtest
 		} else if signet && !regtest && !bitcoin{
@@ -218,46 +254,24 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		} else if bitcoin && !regtest && !signet {
 			warn!("bark is experimental and not yet suited for usage in production");
 			bitcoin::Network::Bitcoin
-		}
-		else {
+		} else {
 			bail!("Need to user either --signet, --regtest or --bitcoin");
 		};
 
-		let mut asp_cert = asp_cert.map(|p|
-			fs::read(p).context("failed to read ASP cert file")
-		).transpose()?;
-
-		if signet {
-			if asp.is_none() {
-				asp = Some("https://signet.asp.21m.dev:35035".into());
-				if asp_cert.is_none() {
-					asp_cert = Some(SIGNET_ASP_CERT.to_vec());
-				}
-			}
-			if esplora.is_none() && bitcoind.is_none() {
-				esplora = Some("http://signet.21m.dev:3003".into());
-			}
-		}
-
-		//TODO(stevenroose) somehow pass this in
-		let cfg = Config {
+		let mut cfg = Config {
 			network: net,
-			asp_address: asp.context("missing ASP address")?,
-			asp_cert: None,
-			esplora_address: esplora,
-			bitcoind_address: bitcoind,
-			bitcoind_cookiefile: bitcoind_cookie,
-			bitcoind_user: bitcoind_user,
-			bitcoind_pass: bitcoind_pass,
+			// required args
+			asp_address: config.asp.clone().context("ASP address missing, use --asp")?,
 			..Default::default()
 		};
+		config.merge_info(&mut cfg).context("invalid configuration")?;
 
 		if force {
 			fs::remove_dir_all(&datadir)?;
 		}
 
 		fs::create_dir_all(&datadir).context("failed to create datadir")?;
-		let mut w = Wallet::create(&datadir, cfg, asp_cert).await.context("error creating wallet")?;
+		let mut w = Wallet::create(&datadir, cfg).await.context("error creating wallet")?;
 		info!("Onchain address: {}", w.get_new_onchain_address()?);
 		return Ok(());
 	}
@@ -267,6 +281,21 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	match cli.command {
 		Command::Create { .. } => unreachable!(),
+		Command::Config { config, dangerous } => {
+			if let Some(new_cfg) = config {
+				let mut cfg = w.config().clone();
+				if !dangerous {
+					if new_cfg.asp.is_some() {
+						bail!("Changing the ASP address can lead to loss of funds. \
+							If you insist, use the --dangerous flag.");
+					}
+				}
+				new_cfg.merge_info(&mut cfg).context("invalid configuration")?;
+				w.set_config(cfg);
+				w.persist_config().context("failed to persist config")?;
+			}
+			println!("{:#?}", w.config());
+		},
 		Command::Onchain(cmd) => match cmd {
 			OnchainCommand::Balance => {
 				w.sync_onchain().await.context("sync error")?;

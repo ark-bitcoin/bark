@@ -231,15 +231,6 @@ struct ConfigOpts {
 
 	#[arg(long)]
 	public_rpc_address: Option<String>,
-	// We use a double Option because we must be able to set
-	// this variable to None.
-	// None -> Do not change this variable
-	// Some(None) -> Set this variable to None
-	// Some(val) -> Set this variable to `val`
-	#[arg(long)]
-	public_rpc_tls_cert_path: Option<Option<PathBuf>>,
-	#[arg(long)]
-	public_rpc_tls_key_path: Option<Option<PathBuf>>,
 	#[arg(long)]
 	admin_rpc_address: Option<Option<String>>,
 
@@ -274,7 +265,6 @@ struct ConfigOpts {
 }
 
 impl ConfigOpts {
-
 	/// Verifies if the specified configuration is valid
 	///
 	/// It also checks if all required arguments are present.
@@ -312,7 +302,6 @@ impl ConfigOpts {
 		Ok(())
 	}
 
-
 	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
 		if let Some(v) = self.bitcoind_url {
 			cfg.bitcoind_url = v;
@@ -324,14 +313,6 @@ impl ConfigOpts {
 
 		if let Some(v) = self.public_rpc_address {
 			cfg.public_rpc_address = v.parse().context("public_rpc_address is invalid")?;
-		}
-
-		if let Some(v) = self.public_rpc_tls_cert_path {
-			cfg.public_rpc_tls_cert_path = v;
-		}
-
-		if let Some(v) = self.public_rpc_tls_key_path {
-			cfg.public_rpc_tls_key_path = v;
 		}
 
 		if let Some(v) = self.admin_rpc_address {
