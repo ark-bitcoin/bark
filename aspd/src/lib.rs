@@ -292,47 +292,44 @@ impl App {
 		}))
 	}
 
-	pub fn start(self: &mut Arc<Self>) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
+	pub async fn start(self: &mut Arc<Self>) -> anyhow::Result<()> {
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 
-		mut_self.rounds = Some(RoundHandle {
-			round_event_tx: round_event_tx,
-			round_input_tx: round_input_tx,
-			round_trigger_tx: round_trigger_tx,
+		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
+
+		let app = self.clone();
+		let jh_rpc_public = tokio::spawn(async move {
+			rpcserver::run_public_rpc_server(app.clone())
+				.await.context("error running public gRPC server")
 		});
 
 		let app = self.clone();
-		let jh = tokio::spawn(async move {
-			//TODO(stevenroose) make this block less redundant
-			if app.config.admin_rpc_address.is_some() {
-				tokio::select! {
-					ret = rpcserver::run_public_rpc_server(app.clone()) => {
-						ret.context("error from public gRPC server")
-					},
-					ret = rpcserver::run_admin_rpc_server(app.clone()) => {
-						ret.context("error from admin gRPC server")
-					},
-					ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx) => {
-						ret.context("error from round scheduler")
-					},
-				}
-			} else {
-				tokio::select! {
-					ret = rpcserver::run_public_rpc_server(app.clone()) => {
-						ret.context("error from public gRPC server")
-					},
-					ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx) => {
-						ret.context("error from round scheduler")
-					},
-				}
-			}
+		let jh_round_coord = tokio::spawn(async move {
+			round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx)
+				.await.context("error from round scheduler")
 		});
 
-		Ok(jh)
+		// The tasks that always run
+		let mut jhs = vec![jh_rpc_public, jh_round_coord];
+
+		// These tasks do only run if the config is provided
+		if self.config.admin_rpc_address.is_some() {
+			let app = self.clone();
+			let jh_rpc_admin = tokio::spawn(async move {
+				rpcserver::run_admin_rpc_server(app.clone())
+					.await.context("error running admin gRPC server")
+			});
+			jhs.push(jh_rpc_admin)
+		}
+
+		// Wait until the first task finishes
+		futures::future::try_join_all(jhs).await
+			.context("one of our background processes errored")?;
+		Ok(())
 	}
 
 	pub fn try_rounds(&self) -> anyhow::Result<&RoundHandle> {
