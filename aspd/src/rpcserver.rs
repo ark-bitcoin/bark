@@ -384,21 +384,10 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	let addr = app.config.public_rpc_address;
 	info!("Starting public gRPC service on address {}", addr);
 	let ark_server = rpc::ArkServiceServer::new(app.clone());
-	let mut b = tonic::transport::Server::builder();
-
-	if let Some(ref cert_path) = app.config.public_rpc_tls_cert_path {
-		let key_path = app.config.public_rpc_tls_key_path.as_ref()
-			.context("aspd config has ASP TLS cert file but no key file")?;
-		let cert = fs::read(&cert_path).context("failed to read ASP cert file")?;
-		let key = fs::read(&key_path).context("failed to read ASP cert key file")?;
-
-		info!("Binding public gRPC server using TLS certificate...");
-		b = b.tls_config(tonic::transport::ServerTlsConfig::new()
-			.identity(tonic::transport::Identity::from_pem(&cert, &key)))?;
-	}
-
-	b.add_service(ark_server).serve(addr).await?;
-
+	tonic::transport::Server::builder()
+		.add_service(ark_server)
+		.serve(addr)
+		.await?;
 	info!("Started public gRPC service on address {}", addr);
 	Ok(())
 }

@@ -50,8 +50,6 @@ lazy_static::lazy_static! {
 pub struct Config {
 	pub network: bitcoin::Network,
 	pub public_rpc_address: SocketAddr,
-	pub public_rpc_tls_cert_path: Option<PathBuf>,
-	pub public_rpc_tls_key_path: Option<PathBuf>,
 	pub admin_rpc_address: Option<SocketAddr>,
 	pub bitcoind_url: String,
 	pub bitcoind_cookie: String,
@@ -88,8 +86,6 @@ impl Default for Config {
 		Config {
 			network: bitcoin::Network::Regtest,
 			public_rpc_address: "0.0.0.0:3535".parse().unwrap(),
-			public_rpc_tls_cert_path: None,
-			public_rpc_tls_key_path: None,
 			admin_rpc_address: Some("127.0.0.1:3536".parse().unwrap()),
 			bitcoind_url: "http://127.0.0.1:38332".into(),
 			bitcoind_cookie: "~/.bitcoin/signet/.cookie".into(),
