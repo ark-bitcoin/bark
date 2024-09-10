@@ -45,6 +45,10 @@ lazy_static::lazy_static! {
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
+/// The number of confirmations after which we consider the odds of a reorg
+/// happening negligible.
+const DEEPLY_CONFIRMED: u64 = 100;
+
 //TODO(stevenroose) sanity check deltas
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -220,8 +224,13 @@ impl App {
 			&config.bitcoind_url,
 			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
 		).context("failed to create bitcoind rpc client")?;
-		let tip_hash = bitcoind.get_best_block_hash().context("can't fetch tip hash")?;
-		let tip = bitcoind.get_block_header_info(&tip_hash).context("can't fetch tip")?;
+		let deep_tip = (|| {
+			let tip = bitcoind.get_block_count()?;
+			let deep = tip.saturating_sub(DEEPLY_CONFIRMED);
+			let hash = bitcoind.get_block_hash(deep)?;
+			let header = bitcoind.get_block_header_info(&hash)?;
+			Ok::<_, anyhow::Error>(header)
+		})().context("failed to fetch deep tip from bitcoind")?;
 
 		// write the config to disk
 		let config_str = serde_json::to_string_pretty(&config)
@@ -244,8 +253,8 @@ impl App {
 		let (_, _, mut wallet) = Self::wallet_from_seed(config.network, &seed, None)
 			.expect("shouldn't fail on empty state");
 		wallet.insert_checkpoint(bdk_wallet::chain::BlockId {
-			height: tip.height as u32,
-			hash: tip.hash,
+			height: deep_tip.height as u32,
+			hash: deep_tip.hash,
 		}).expect("should work, might fail if tip is genesis");
 		let cs = wallet.take_staged().expect("should have stored tip");
 		ensure!(db.read_aggregate_changeset().await.context("db error")?.is_none(), "db not empty");
