@@ -238,6 +238,19 @@ impl rpc::ArkService for Arc<App> {
 		}))
 	}
 
+	async fn finish_bolt11_payment2(
+		&self,
+		req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
+	) -> Result<
+		tonic::Response<Self::FinishBolt11Payment2Stream>,
+		tonic::Status
+		> {
+			todo!("Implement")
+		}
+
+
+	type FinishBolt11Payment2Stream = Box<dyn Stream<Item =Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static>;
+
 	// round
 
 	type SubscribeRoundsStream = Box<

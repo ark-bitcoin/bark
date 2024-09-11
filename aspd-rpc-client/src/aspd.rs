@@ -110,6 +110,17 @@ pub struct Bolt11PaymentResult {
     #[prost(bytes = "vec", tag = "1")]
     pub payment_preimage: ::prost::alloc::vec::Vec<u8>,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentUpdate {
+    #[prost(string, tag = "1")]
+    pub progress_message: ::prost::alloc::string::String,
+    #[prost(enumeration = "PaymentStatus", tag = "2")]
+    pub status: i32,
+    #[prost(bytes = "vec", tag = "3")]
+    pub payment_hash: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", optional, tag = "4")]
+    pub payment_preimage: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+}
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct RoundStart {
     #[prost(uint64, tag = "1")]
@@ -242,6 +253,36 @@ pub struct WalletStatusResponse {
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct Empty {}
+/// / Primitives
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PaymentStatus {
+    Pending = 0,
+    Failed = 1,
+    Complete = 2,
+}
+impl PaymentStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            PaymentStatus::Pending => "PENDING",
+            PaymentStatus::Failed => "FAILED",
+            PaymentStatus::Complete => "COMPLETE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PENDING" => Some(Self::Pending),
+            "FAILED" => Some(Self::Failed),
+            "COMPLETE" => Some(Self::Complete),
+            _ => None,
+        }
+    }
+}
 /// Generated client implementations.
 pub mod ark_service_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
@@ -541,6 +582,32 @@ pub mod ark_service_client {
                 .insert(GrpcMethod::new("aspd.ArkService", "FinishBolt11Payment"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn finish_bolt11_payment2(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SignedBolt11PaymentDetails>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::Bolt11PaymentUpdate>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/aspd.ArkService/FinishBolt11Payment2",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("aspd.ArkService", "FinishBolt11Payment2"));
+            self.inner.server_streaming(req, path, codec).await
+        }
+        /// * ARK ROUND INTERACTIONS *
         pub async fn subscribe_rounds(
             &mut self,
             request: impl tonic::IntoRequest<super::Empty>,

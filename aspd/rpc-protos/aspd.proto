@@ -20,9 +20,9 @@ service ArkService {
 	// * LN payments
 	rpc StartBolt11Payment(Bolt11PaymentRequest) returns (Bolt11PaymentDetails) {}
 	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (Bolt11PaymentResult) {}
+	rpc FinishBolt11Payment2(SignedBolt11PaymentDetails) returns (stream Bolt11PaymentUpdate) {}
 
 	// * ARK ROUND INTERACTIONS *
-
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
 	rpc SubmitPayment(SubmitPaymentRequest) returns (Empty) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (Empty) {}
@@ -113,6 +113,13 @@ message SignedBolt11PaymentDetails {
 
 message Bolt11PaymentResult {
 	bytes payment_preimage = 1;
+}
+
+message Bolt11PaymentUpdate {
+	string progress_message = 1;
+	PaymentStatus status = 2;
+	bytes payment_hash = 3;
+	optional bytes payment_preimage = 4;
 }
 
 // round
@@ -209,3 +216,10 @@ message WalletStatusResponse {
 }
 
 message Empty {}
+
+/// Primitives
+enum PaymentStatus {
+	PENDING = 0;
+	FAILED = 1;
+	COMPLETE = 2;
+}
