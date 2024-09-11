@@ -326,6 +326,7 @@ dependencies = [
 name = "bark-cln"
 version = "0.1.0"
 dependencies = [
+ "ark-lib",
  "prost",
  "tonic",
  "tonic-build",

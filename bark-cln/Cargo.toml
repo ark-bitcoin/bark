@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ark-lib = { path = "../ark-lib" }
 tonic.workspace = true
 prost.workspace = true
 
