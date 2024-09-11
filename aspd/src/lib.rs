@@ -21,12 +21,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
-use bark_cln::grpc;
-use bark_cln::grpc::pay_response::PayStatus;
+use ark::lightning::Bolt11Payment;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::hex::DisplayHex;
 use bitcoin::{
 	bip32, psbt, sighash, taproot, Address, Amount, FeeRate, Network, OutPoint, Transaction,
 	Weight, Witness,
@@ -504,73 +501,8 @@ impl App {
 		Ok((details, nonces, part_sigs))
 	}
 
-	/// Pays a bolt-11 invoice.
-	///
-	/// Returns the payment preimage.
-	pub async fn pay_bolt11(&self, payment: SignedBolt11Payment) -> anyhow::Result<Vec<u8>> {
-		// TODO: Store the payment state somewhere and handle stuck payments properly
-		// If your funds get stuck paying a lightning-invoice might take a very long-time.
-		if self.config.cln_config.is_none() {
-			bail!("asp doesn't support Lightning integration");
-		}
 
-		let invoice = payment.payment.invoice;
-		if invoice.check_signature().is_err() {
-			bail!("Invalid signature in Bolt-11 invoice");
-		}
 
-		let cln_config = self.config.cln_config.as_ref().unwrap();
-		let mut cln_client = cln_config.grpc_client().await?;
-
-		let pay_response = cln_client.pay(grpc::PayRequest {
-			bolt11: invoice.to_string(),
-			label: None,
-			maxfee: None,
-			maxfeepercent: None,
-			retry_for: None,
-			maxdelay: None,
-			amount_msat: if invoice.amount_milli_satoshis().is_none() {
-				Some(grpc::Amount {
-					msat: payment.payment.payment_amount.to_sat() * 1000,
-				})
-			} else {
-				None
-			},
-			description: None,
-			exemptfee: None,
-			riskfactor: None,
-			exclude: vec![],
-			localinvreqid: None,
-			partial_msat: None,
-		}).await?.into_inner();
-
-		let status = match PayStatus::try_from(pay_response.status) {
-			Ok(status) => status,
-			Err(_) => {
-				error!("An invalid payment status was returned by Core Lightning: {}", pay_response.status);
-				bail!("An unexpected error occured");
-			}
-		};
-
-		match status {
-			PayStatus::Complete => {
-				info!("Forwarded bolt11 invoice of {} (preimage: {}). Invoice: {}",
-					payment.payment.payment_amount, pay_response.payment_preimage.as_hex(), invoice.to_string(),
-				);
-				Ok(pay_response.payment_preimage)
-			},
-			PayStatus::Failed => {
-				//TODO(stevenroose) do something to give back vtxo to user or so
-				bail!("Failed to pay bolt11-invoice");
-			},
-			PayStatus::Pending => {
-				// We are not supporting stuck payments yet.
-				// This is bad
-				error!("Stuck payment");
-				bail!("Payment is stilll pending");
-			}
-		}
-	}
 
 	/// Returns a set of UTXOs from previous rounds that can be spent.
 	///

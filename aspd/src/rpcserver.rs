@@ -1,9 +1,7 @@
 
-use std::fs;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::Context;
 use ark::lightning::SignedBolt11Payment;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, ScriptBuf, Txid};
@@ -18,6 +16,7 @@ use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
 use crate::App;
 use crate::rpc;
 use crate::round::RoundInput;
+use crate::lightning::pay_bolt11;
 
 macro_rules! badarg {
 	($($arg:tt)*) => {{
@@ -222,8 +221,15 @@ impl rpc::ArkService for Arc<App> {
 			return Err(badarg!("bad signatures on payment: {}", e));
 		}
 
+		// Connecting to the grpc-client
+		let cln_config = self.config.cln_config.as_ref()
+			.ok_or(not_found!("This asp does not support lightning"))?;
+		let cln_client = cln_config.grpc_client().await
+			.map_err(|_| internal!("Failed to connect to lightning"))?;
+		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
+
 		trace!("Trying to deliver bolt11 invoice...");
-		let preimage = self.pay_bolt11(signed).await
+		let preimage = pay_bolt11(cln_client, signed, sendpay_rx).await
 			.map_err(|e| internal!("failed to make bolt11 payment: {}", e))?;
 		trace!("Done! preimage: {}", preimage.as_hex());
 

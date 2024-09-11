@@ -328,6 +328,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ark-lib",
+ "bitcoin",
  "futures",
  "hex",
  "log",
