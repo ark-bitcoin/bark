@@ -21,6 +21,7 @@ tonic-build.workspace = true
 ark-lib = { path = "../ark-lib" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 bark-cln = {path = "../bark-cln"}
+stream-until = { path = "../stream-until" }
 
 anyhow.workspace = true
 lazy_static.workspace = true
