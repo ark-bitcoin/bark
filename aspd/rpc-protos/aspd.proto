@@ -19,7 +19,7 @@ service ArkService {
 
 	// * LN payments
 	rpc StartBolt11Payment(Bolt11PaymentRequest) returns (Bolt11PaymentDetails) {}
-	rpc FinishBolt11Payment2(SignedBolt11PaymentDetails) returns (stream Bolt11PaymentUpdate) {}
+	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (stream Bolt11PaymentUpdate) {}
 
 	// * ARK ROUND INTERACTIONS *
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}

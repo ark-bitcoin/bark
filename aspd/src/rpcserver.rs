@@ -210,14 +210,14 @@ impl rpc::ArkService for Arc<App> {
 		}))
 	}
 
-	type FinishBolt11Payment2Stream = Box<
+	type FinishBolt11PaymentStream = Box<
 		dyn Stream<Item = Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
 	>;
 
-	async fn finish_bolt11_payment2(
+	async fn finish_bolt11_payment(
 		&self,
 		req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
-	) -> Result<tonic::Response<Self::FinishBolt11Payment2Stream>, tonic::Status> {
+	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
 			let req = req.into_inner();
 			let signed = SignedBolt11Payment::decode(&req.signed_payment)
 				.map_err(|e| badarg!("invalid payment encoding: {}", e))?;

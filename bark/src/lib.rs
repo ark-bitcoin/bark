@@ -713,7 +713,7 @@ impl Wallet {
 
 		let mut payment_preimage = None;
 		let mut last_msg = String::from("");
-		let mut stream = self.asp.finish_bolt11_payment2(req).await?.into_inner();
+		let mut stream = self.asp.finish_bolt11_payment(req).await?.into_inner();
 		while let Some(msg) = stream.next().await {
 			let msg = msg.context("Error reported during pay")?;
 			info!("Progress update: {}", msg.progress_message);

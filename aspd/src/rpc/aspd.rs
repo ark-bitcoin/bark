@@ -337,17 +337,17 @@ pub mod ark_service_server {
             tonic::Response<super::Bolt11PaymentDetails>,
             tonic::Status,
         >;
-        /// Server streaming response type for the FinishBolt11Payment2 method.
-        type FinishBolt11Payment2Stream: tonic::codegen::tokio_stream::Stream<
+        /// Server streaming response type for the FinishBolt11Payment method.
+        type FinishBolt11PaymentStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::Bolt11PaymentUpdate, tonic::Status>,
             >
             + std::marker::Send
             + 'static;
-        async fn finish_bolt11_payment2(
+        async fn finish_bolt11_payment(
             &self,
             request: tonic::Request<super::SignedBolt11PaymentDetails>,
         ) -> std::result::Result<
-            tonic::Response<Self::FinishBolt11Payment2Stream>,
+            tonic::Response<Self::FinishBolt11PaymentStream>,
             tonic::Status,
         >;
         /// Server streaming response type for the SubscribeRounds method.
@@ -810,16 +810,16 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/FinishBolt11Payment2" => {
+                "/aspd.ArkService/FinishBolt11Payment" => {
                     #[allow(non_camel_case_types)]
-                    struct FinishBolt11Payment2Svc<T: ArkService>(pub Arc<T>);
+                    struct FinishBolt11PaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
                         T: ArkService,
                     > tonic::server::ServerStreamingService<
                         super::SignedBolt11PaymentDetails,
-                    > for FinishBolt11Payment2Svc<T> {
+                    > for FinishBolt11PaymentSvc<T> {
                         type Response = super::Bolt11PaymentUpdate;
-                        type ResponseStream = T::FinishBolt11Payment2Stream;
+                        type ResponseStream = T::FinishBolt11PaymentStream;
                         type Future = BoxFuture<
                             tonic::Response<Self::ResponseStream>,
                             tonic::Status,
@@ -830,7 +830,7 @@ pub mod ark_service_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as ArkService>::finish_bolt11_payment2(&inner, request)
+                                <T as ArkService>::finish_bolt11_payment(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -842,7 +842,7 @@ pub mod ark_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = FinishBolt11Payment2Svc(inner);
+                        let method = FinishBolt11PaymentSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
