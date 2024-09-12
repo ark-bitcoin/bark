@@ -7,7 +7,7 @@ edition = "2021"
 repository = "https://github.com/ark-bitcoin/bark"
 
 [dependencies]
-
+ark-lib = { path = "../ark-lib" }
 prost.workspace = true
 tonic.workspace = true
 tokio.workspace = true
