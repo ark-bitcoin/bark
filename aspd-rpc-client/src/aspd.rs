@@ -557,31 +557,6 @@ pub mod ark_service_client {
                 .insert(GrpcMethod::new("aspd.ArkService", "StartBolt11Payment"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn finish_bolt11_payment(
-            &mut self,
-            request: impl tonic::IntoRequest<super::SignedBolt11PaymentDetails>,
-        ) -> std::result::Result<
-            tonic::Response<super::Bolt11PaymentResult>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/FinishBolt11Payment",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "FinishBolt11Payment"));
-            self.inner.unary(req, path, codec).await
-        }
         pub async fn finish_bolt11_payment2(
             &mut self,
             request: impl tonic::IntoRequest<super::SignedBolt11PaymentDetails>,

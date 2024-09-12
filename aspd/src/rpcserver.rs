@@ -3,7 +3,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use ark::lightning::SignedBolt11Payment;
-use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, ScriptBuf, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
@@ -208,34 +207,6 @@ impl rpc::ArkService for Arc<App> {
 			details: details.encode(),
 			pub_nonces: asp_nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
 			partial_sigs: part_sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
-		}))
-	}
-
-	async fn finish_bolt11_payment(
-		&self,
-		req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
-	) -> Result<tonic::Response<rpc::Bolt11PaymentResult>, tonic::Status> {
-		let req = req.into_inner();
-		let signed = SignedBolt11Payment::decode(&req.signed_payment)
-			.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
-		if let Err(e) = signed.validate_signatures(&crate::SECP) {
-			return Err(badarg!("bad signatures on payment: {}", e));
-		}
-
-		// Connecting to the grpc-client
-		let cln_config = self.config.cln_config.as_ref()
-			.ok_or(not_found!("This asp does not support lightning"))?;
-		let cln_client = cln_config.grpc_client().await
-			.map_err(|_| internal!("Failed to connect to lightning"))?;
-		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
-
-		trace!("Trying to deliver bolt11 invoice...");
-		let preimage = pay_bolt11(cln_client, signed, sendpay_rx).await
-			.map_err(|e| internal!("failed to make bolt11 payment: {}", e))?;
-		trace!("Done! preimage: {}", preimage.as_hex());
-
-		Ok(tonic::Response::new(rpc::Bolt11PaymentResult {
-			payment_preimage: preimage,
 		}))
 	}
 
