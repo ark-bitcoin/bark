@@ -20,7 +20,6 @@ async fn bark_version() {
 	assert!(result.starts_with("bark-client"));
 }
 
-#[ignore]
 #[tokio::test]
 async fn bark_create_is_atomic() {
 	let ctx = TestContext::new("bark/atomic-create").await;
