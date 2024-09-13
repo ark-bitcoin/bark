@@ -28,10 +28,12 @@ steps:
     when:
       - event: push
         branch: master
+    failure: ignore
     image: appleboy/drone-git-push
     settings:
       remote: git@github.com:ark-bitcoin/bark.git
       branch: master
       local_branch: master
+      force: true
       ssh_key:
         from_secret: github-mirror-push-key
