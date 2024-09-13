@@ -21,18 +21,16 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
-use bark_cln::grpc;
-use bark_cln::grpc::pay_response::PayStatus;
+use ark::lightning::Bolt11Payment;
+use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::hex::DisplayHex;
 use bitcoin::{
 	bip32, psbt, sighash, taproot, Address, Amount, FeeRate, Network, OutPoint, Transaction,
 	Weight, Witness,
 };
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 use ark::util::KeypairExt;
 use ark::{musig, Vtxo};
@@ -109,7 +107,7 @@ impl Default for Config {
 	}
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClnConfig {
 	#[serde(with = "serde_util::uri")]
 	pub grpc_uri: tonic::transport::Uri,
@@ -164,6 +162,10 @@ pub struct RoundHandle {
 	round_trigger_tx: tokio::sync::mpsc::Sender<()>,
 }
 
+pub struct SendpayHandle {
+	sendpay_rx: tokio::sync::broadcast::Receiver<SendpaySubscriptionItem>
+}
+
 pub struct App {
 	config: Config,
 	db: database::Db,
@@ -173,6 +175,7 @@ pub struct App {
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 
 	rounds: Option<RoundHandle>,
+	sendpay_updates: Option<SendpayHandle>
 }
 
 impl App {
@@ -289,50 +292,59 @@ impl App {
 			wallet: Mutex::new(wallet),
 			bitcoind: bitcoind,
 			rounds: None,
+			sendpay_updates: None
 		}))
 	}
 
-	pub fn start(self: &mut Arc<Self>) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
+	pub async fn start(self: &mut Arc<Self>) -> anyhow::Result<()> {
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
+		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
-		mut_self.rounds = Some(RoundHandle {
-			round_event_tx: round_event_tx,
-			round_input_tx: round_input_tx,
-			round_trigger_tx: round_trigger_tx,
+		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
+		mut_self.sendpay_updates = Some(SendpayHandle{ sendpay_rx });
+
+		let app = self.clone();
+		let jh_rpc_public = tokio::spawn(async move {
+			rpcserver::run_public_rpc_server(app.clone())
+				.await.context("error running public gRPC server")
 		});
 
 		let app = self.clone();
-		let jh = tokio::spawn(async move {
-			//TODO(stevenroose) make this block less redundant
-			if app.config.admin_rpc_address.is_some() {
-				tokio::select! {
-					ret = rpcserver::run_public_rpc_server(app.clone()) => {
-						ret.context("error from public gRPC server")
-					},
-					ret = rpcserver::run_admin_rpc_server(app.clone()) => {
-						ret.context("error from admin gRPC server")
-					},
-					ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx) => {
-						ret.context("error from round scheduler")
-					},
-				}
-			} else {
-				tokio::select! {
-					ret = rpcserver::run_public_rpc_server(app.clone()) => {
-						ret.context("error from public gRPC server")
-					},
-					ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx) => {
-						ret.context("error from round scheduler")
-					},
-				}
-			}
+		let jh_round_coord = tokio::spawn(async move {
+			round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx)
+				.await.context("error from round scheduler")
 		});
 
-		Ok(jh)
+		// The tasks that always run
+		let mut jhs = vec![jh_rpc_public, jh_round_coord];
+
+		// These tasks do only run if the config is provided
+		if self.config.admin_rpc_address.is_some() {
+			let app = self.clone();
+			let jh_rpc_admin = tokio::spawn(async move {
+				rpcserver::run_admin_rpc_server(app.clone())
+					.await.context("error running admin gRPC server")
+			});
+			jhs.push(jh_rpc_admin)
+		}
+
+		if self.config.cln_config.is_some() {
+			let cln_config = self.config.cln_config.clone().unwrap();
+			let jh_sendpay = tokio::spawn(async move {
+				lightning::run_process_sendpay_updates(&cln_config, sendpay_tx)
+					.await.context("error processing sendpays")
+			});
+			jhs.push(jh_sendpay)
+		}
+
+		// Wait until the first task finishes
+		futures::future::try_join_all(jhs).await
+			.context("one of our background processes errored")?;
+		Ok(())
 	}
 
 	pub fn try_rounds(&self) -> anyhow::Result<&RoundHandle> {
@@ -489,73 +501,8 @@ impl App {
 		Ok((details, nonces, part_sigs))
 	}
 
-	/// Pays a bolt-11 invoice.
-	///
-	/// Returns the payment preimage.
-	pub async fn pay_bolt11(&self, payment: SignedBolt11Payment) -> anyhow::Result<Vec<u8>> {
-		// TODO: Store the payment state somewhere and handle stuck payments properly
-		// If your funds get stuck paying a lightning-invoice might take a very long-time.
-		if self.config.cln_config.is_none() {
-			bail!("asp doesn't support Lightning integration");
-		}
 
-		let invoice = payment.payment.invoice;
-		if invoice.check_signature().is_err() {
-			bail!("Invalid signature in Bolt-11 invoice");
-		}
 
-		let cln_config = self.config.cln_config.as_ref().unwrap();
-		let mut cln_client = cln_config.grpc_client().await?;
-
-		let pay_response = cln_client.pay(grpc::PayRequest {
-			bolt11: invoice.to_string(),
-			label: None,
-			maxfee: None,
-			maxfeepercent: None,
-			retry_for: None,
-			maxdelay: None,
-			amount_msat: if invoice.amount_milli_satoshis().is_none() {
-				Some(grpc::Amount {
-					msat: payment.payment.payment_amount.to_sat() * 1000,
-				})
-			} else {
-				None
-			},
-			description: None,
-			exemptfee: None,
-			riskfactor: None,
-			exclude: vec![],
-			localinvreqid: None,
-			partial_msat: None,
-		}).await?.into_inner();
-
-		let status = match PayStatus::try_from(pay_response.status) {
-			Ok(status) => status,
-			Err(_) => {
-				error!("An invalid payment status was returned by Core Lightning: {}", pay_response.status);
-				bail!("An unexpected error occured");
-			}
-		};
-
-		match status {
-			PayStatus::Complete => {
-				info!("Forwarded bolt11 invoice of {} (preimage: {}). Invoice: {}",
-					payment.payment.payment_amount, pay_response.payment_preimage.as_hex(), invoice.to_string(),
-				);
-				Ok(pay_response.payment_preimage)
-			},
-			PayStatus::Failed => {
-				//TODO(stevenroose) do something to give back vtxo to user or so
-				bail!("Failed to pay bolt11-invoice");
-			},
-			PayStatus::Pending => {
-				// We are not supporting stuck payments yet.
-				// This is bad
-				error!("Stuck payment");
-				bail!("Payment is stilll pending");
-			}
-		}
-	}
 
 	/// Returns a set of UTXOs from previous rounds that can be spent.
 	///

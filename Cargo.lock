@@ -147,6 +147,7 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 name = "aspd-rpc-client"
 version = "0.0.0-alpha01"
 dependencies = [
+ "ark-lib",
  "prost",
  "tokio",
  "tonic",
@@ -275,6 +276,7 @@ dependencies = [
  "ciborium",
  "clap",
  "fern",
+ "futures",
  "lazy_static",
  "lightning-invoice",
  "log",
@@ -282,6 +284,7 @@ dependencies = [
  "rocksdb",
  "serde",
  "serde_json",
+ "stream-until",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -325,7 +328,14 @@ dependencies = [
 name = "bark-cln"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "ark-lib",
+ "bitcoin",
+ "futures",
+ "hex",
+ "log",
  "prost",
+ "tokio",
  "tonic",
  "tonic-build",
 ]
@@ -2393,6 +2403,13 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "stream-until"
+version = "0.0.0"
+dependencies = [
+ "futures-core",
+]
 
 [[package]]
 name = "strsim"

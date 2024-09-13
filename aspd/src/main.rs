@@ -140,12 +140,10 @@ async fn inner_main() -> anyhow::Result<()> {
 		},
 		Command::Start => {
 			let mut app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
-			let jh = app.start()?;
-			info!("aspd onchain address: {}", app.onchain_address().await?);
-			if let Err(e) = jh.await? {
-				error!("Shutdown error from aspd: {:?}", e);
+			if let Err(e) = app.start().await {
+				error!("Shutdown error from aspd {:?}", e);
 				process::exit(1);
-			}
+			};
 		},
 		Command::Drain { address } => {
 			let app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;

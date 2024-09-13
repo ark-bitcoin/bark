@@ -7,8 +7,11 @@ members = [
   "aspd",
   "bark",
   "bark-cln",
-  "sled-utils"
-, "bark-json"]
+  "bark-json",
+
+  "sled-utils",
+  "stream-until",
+]
 
 resolver = "2"
 
@@ -52,3 +55,4 @@ tonic-build = "0.12.2"
 prost = "0.13.2"
 tokio = { version = "1.35", features = [ "full" ] }
 tokio-stream = { version = "0.1.14", features = [ "sync" ] }
+futures = {version = "0.3.30"}

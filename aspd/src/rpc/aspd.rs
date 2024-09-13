@@ -110,6 +110,17 @@ pub struct Bolt11PaymentResult {
     #[prost(bytes = "vec", tag = "1")]
     pub payment_preimage: ::prost::alloc::vec::Vec<u8>,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Bolt11PaymentUpdate {
+    #[prost(string, tag = "1")]
+    pub progress_message: ::prost::alloc::string::String,
+    #[prost(enumeration = "PaymentStatus", tag = "2")]
+    pub status: i32,
+    #[prost(bytes = "vec", tag = "3")]
+    pub payment_hash: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", optional, tag = "4")]
+    pub payment_preimage: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+}
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct RoundStart {
     #[prost(uint64, tag = "1")]
@@ -242,6 +253,36 @@ pub struct WalletStatusResponse {
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct Empty {}
+/// / Primitives
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PaymentStatus {
+    Pending = 0,
+    Failed = 1,
+    Complete = 2,
+}
+impl PaymentStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            PaymentStatus::Pending => "PENDING",
+            PaymentStatus::Failed => "FAILED",
+            PaymentStatus::Complete => "COMPLETE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PENDING" => Some(Self::Pending),
+            "FAILED" => Some(Self::Failed),
+            "COMPLETE" => Some(Self::Complete),
+            _ => None,
+        }
+    }
+}
 /// Generated server implementations.
 pub mod ark_service_server {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
@@ -296,11 +337,17 @@ pub mod ark_service_server {
             tonic::Response<super::Bolt11PaymentDetails>,
             tonic::Status,
         >;
+        /// Server streaming response type for the FinishBolt11Payment method.
+        type FinishBolt11PaymentStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::Bolt11PaymentUpdate, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
         async fn finish_bolt11_payment(
             &self,
             request: tonic::Request<super::SignedBolt11PaymentDetails>,
         ) -> std::result::Result<
-            tonic::Response<super::Bolt11PaymentResult>,
+            tonic::Response<Self::FinishBolt11PaymentStream>,
             tonic::Status,
         >;
         /// Server streaming response type for the SubscribeRounds method.
@@ -309,6 +356,7 @@ pub mod ark_service_server {
             >
             + std::marker::Send
             + 'static;
+        /// * ARK ROUND INTERACTIONS *
         async fn subscribe_rounds(
             &self,
             request: tonic::Request<super::Empty>,
@@ -767,11 +815,13 @@ pub mod ark_service_server {
                     struct FinishBolt11PaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
                         T: ArkService,
-                    > tonic::server::UnaryService<super::SignedBolt11PaymentDetails>
-                    for FinishBolt11PaymentSvc<T> {
-                        type Response = super::Bolt11PaymentResult;
+                    > tonic::server::ServerStreamingService<
+                        super::SignedBolt11PaymentDetails,
+                    > for FinishBolt11PaymentSvc<T> {
+                        type Response = super::Bolt11PaymentUpdate;
+                        type ResponseStream = T::FinishBolt11PaymentStream;
                         type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
+                            tonic::Response<Self::ResponseStream>,
                             tonic::Status,
                         >;
                         fn call(
@@ -803,7 +853,7 @@ pub mod ark_service_server {
                                 max_decoding_message_size,
                                 max_encoding_message_size,
                             );
-                        let res = grpc.unary(method, req).await;
+                        let res = grpc.server_streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

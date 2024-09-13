@@ -362,3 +362,16 @@ pub struct InsufficientFunds {
 	pub missing: Amount,
 	pub fee: Amount,
 }
+
+#[derive(Debug, Clone)]
+pub enum PaymentStatus {
+	Pending,
+	Complete,
+	Failed
+}
+
+impl fmt::Display for PaymentStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Debug::fmt(self, f)
+	}
+}

@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ark-lib = { path = "../ark-lib" }
+bitcoin.workspace = true
+anyhow.workspace = true
+hex.workspace = true
+futures.workspace = true
+log.workspace = true
+tokio.workspace = true
 tonic.workspace = true
 prost.workspace = true
 

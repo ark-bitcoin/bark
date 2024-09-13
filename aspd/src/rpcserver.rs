@@ -1,23 +1,22 @@
 
-use std::fs;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::Context;
 use ark::lightning::SignedBolt11Payment;
-use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, ScriptBuf, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
+use stream_until::{StreamExt as UntilStreamExt, StreamUntilItem};
 
 use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
 
 use crate::App;
 use crate::rpc;
 use crate::round::RoundInput;
+use crate::lightning::pay_bolt11;
 
 macro_rules! badarg {
 	($($arg:tt)*) => {{
@@ -211,26 +210,69 @@ impl rpc::ArkService for Arc<App> {
 		}))
 	}
 
+	type FinishBolt11PaymentStream = Box<
+		dyn Stream<Item = Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
+	>;
+
 	async fn finish_bolt11_payment(
 		&self,
 		req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
-	) -> Result<tonic::Response<rpc::Bolt11PaymentResult>, tonic::Status> {
-		let req = req.into_inner();
-		let signed = SignedBolt11Payment::decode(&req.signed_payment)
-			.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
-		if let Err(e) = signed.validate_signatures(&crate::SECP) {
-			return Err(badarg!("bad signatures on payment: {}", e));
+	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
+			let req = req.into_inner();
+			let signed = SignedBolt11Payment::decode(&req.signed_payment)
+				.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
+			if let Err(e) = signed.validate_signatures(&crate::SECP) {
+				return Err(badarg!("bad signatures on payment: {}", e));
+			}
+
+			let invoice = signed.payment.invoice.clone();
+
+			// Connecting to the grpc-client
+			let cln_config = self.config.cln_config.as_ref().ok_or(not_found!("This asp does not support lightning"))?;
+			let cln_client = cln_config.grpc_client().await.map_err(|_| internal!("Failed to connect to lightning"))?;
+			let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
+
+			// Spawn a task that performs the payment
+			let rx2 = sendpay_rx.resubscribe();
+			let jh = tokio::task::spawn(pay_bolt11(cln_client, signed, rx2));
+
+			let payment_hash = invoice.payment_hash().clone();
+			let sendpay_stream = BroadcastStream::new(sendpay_rx.resubscribe());
+			let stream = sendpay_stream.until(jh).filter_map(move |v| match v {
+				StreamUntilItem::Stream(Ok(v)) => {
+					Some(Ok(rpc::Bolt11PaymentUpdate {
+						status: rpc::PaymentStatus::from(v.status.clone()) as i32,
+						progress_message: format!(
+							"{} payment-part for hash {:?} - Attempt {} part {} to status {}",
+							v.kind, v.payment_hash, v.group_id, v.part_id, v.status,
+						),
+						payment_hash: payment_hash.as_byte_array().to_vec(),
+						payment_preimage: v.payment_preimage.clone()
+					}))
+				},
+				StreamUntilItem::Stream(Err(_)) => None,
+				StreamUntilItem::Future(Ok(Ok(preimage))) => {
+					Some(Ok(rpc::Bolt11PaymentUpdate {
+						progress_message: format!("Payment completed: {}", invoice.to_string()),
+						payment_hash: payment_hash.as_byte_array().to_vec(),
+						status: rpc::PaymentStatus::Complete as i32,
+						payment_preimage: Some(preimage),
+					}))
+				},
+				StreamUntilItem::Future(Ok(Err(_))) => {
+					Some(Ok(rpc::Bolt11PaymentUpdate {
+						progress_message: format!("Payment failed {}", invoice.to_string()),
+						payment_hash: payment_hash.as_byte_array().to_vec(),
+						status: rpc::PaymentStatus::Failed as i32,
+						payment_preimage: None
+					}))
+				},
+				//TODO(stevenroose) we return a result, why not just throw the error up here?
+				StreamUntilItem::Future(Err(_)) => panic!("supposedly can't happen???"),
+			});
+
+			Ok(tonic::Response::new(Box::new(stream)))
 		}
-
-		trace!("Trying to deliver bolt11 invoice...");
-		let preimage = self.pay_bolt11(signed).await
-			.map_err(|e| internal!("failed to make bolt11 payment: {}", e))?;
-		trace!("Done! preimage: {}", preimage.as_hex());
-
-		Ok(tonic::Response::new(rpc::Bolt11PaymentResult {
-			payment_preimage: preimage,
-		}))
-	}
 
 	// round
 

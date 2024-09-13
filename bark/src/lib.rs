@@ -711,7 +711,23 @@ impl Wallet {
 			signed_payment: signed.encode()
 		};
 
-		let grpc_msg = self.asp.finish_bolt11_payment(req).await?;
+		let mut payment_preimage = None;
+		let mut last_msg = String::from("");
+		let mut stream = self.asp.finish_bolt11_payment(req).await?.into_inner();
+		while let Some(msg) = stream.next().await {
+			let msg = msg.context("Error reported during pay")?;
+			info!("Progress update: {}", msg.progress_message);
+			last_msg = msg.progress_message.clone();
+			if msg.payment_preimage().len() > 0 {
+				payment_preimage = msg.payment_preimage;
+				break;
+			}
+		}
+
+		if payment_preimage.is_none() {
+			bail!("Payment failed: {}", last_msg)
+		}
+		let payment_preimage = payment_preimage.unwrap();
 
 		let change_vtxo = signed.change_vtxo();
 		if let Err(e) = self.db.store_vtxo(&change_vtxo) {
@@ -726,9 +742,8 @@ impl Wallet {
 			self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
 		}
 
-		info!("Bolt-11 payment succeeded");
-		let response = grpc_msg.into_inner();
-		Ok(response.payment_preimage)
+		info!("Bolt11 payment succeeded");
+		Ok(payment_preimage)
 }
 
 	/// Send a payment in an Ark round.

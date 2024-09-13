@@ -21,6 +21,7 @@ tonic-build.workspace = true
 ark-lib = { path = "../ark-lib" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 bark-cln = {path = "../bark-cln"}
+stream-until = { path = "../stream-until" }
 
 anyhow.workspace = true
 lazy_static.workspace = true
@@ -28,6 +29,7 @@ log.workspace = true
 fern.workspace = true
 chrono.workspace = true
 clap.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ciborium.workspace = true
