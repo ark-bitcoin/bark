@@ -1,0 +1,7 @@
+[package]
+name = "stream-until"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+futures-core = "0.3.30"

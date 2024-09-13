@@ -7,8 +7,11 @@ members = [
   "aspd",
   "bark",
   "bark-cln",
-  "sled-utils"
-, "bark-json"]
+  "bark-json",
+
+  "sled-utils",
+  "stream-until",
+]
 
 resolver = "2"
 
