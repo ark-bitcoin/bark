@@ -247,7 +247,7 @@ impl rpc::ArkService for Arc<App> {
 							v.kind, v.payment_hash, v.group_id, v.part_id, v.status,
 						),
 						payment_hash: payment_hash.as_byte_array().to_vec(),
-						payment_preimage: v.payment_preimage.clone()
+						payment_preimage: v.payment_preimage.map(|h| h.as_byte_array().to_vec())
 					}))
 				},
 				StreamUntilItem::Stream(Err(_)) => None,

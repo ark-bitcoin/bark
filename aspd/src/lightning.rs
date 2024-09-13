@@ -2,7 +2,6 @@ use std::fs;
 use std::time::{Duration, UNIX_EPOCH, SystemTime};
 
 use anyhow::Context;
-use bitcoin::hashes::Hash;
 use bitcoin::Amount;
 use lightning_invoice::Bolt11Invoice;
 use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
@@ -215,7 +214,7 @@ pub async fn pay_bolt11(
 	// will ensure we never starve the loop.
 	let sendpay_stream = BroadcastStream::new(sendpay_rx.resubscribe())
 		.filter_map(Result::ok)
-		.filter(|item| item.payment_hash == payment_hash.as_byte_array())
+		.filter(|item| item.payment_hash == *payment_hash)
 		.map(|_| ());
 
 	// Do the polling
