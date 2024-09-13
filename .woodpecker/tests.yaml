@@ -23,3 +23,15 @@ steps:
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - cargo test --package ark-testing
+
+  - name: push-github-mirror
+    when:
+      - event: push
+        branch: master
+    image: appleboy/drone-git-push
+    settings:
+      remote: git@github.com:ark-bitcoin/bark.git
+      branch: master
+      local_branch: master
+      ssh_key:
+        from_secret: github-mirror-push-key
