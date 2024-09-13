@@ -1,8 +1,9 @@
-
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
 
-use std::{env, fs, io, process};
+mod create;
+
+use std::{env, io, process};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -15,6 +16,8 @@ use clap::Parser;
 use bark::{Wallet, Config};
 use bark_json::cli as json;
 use lightning_invoice::Bolt11Invoice;
+
+use crate::create::{CreateOpts, create_wallet};
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -99,24 +102,7 @@ enum Command {
 	/// Configuration will pass in default values when --signet is used, but will
 	/// require full configuration for regtest.
 	#[command()]
-	Create {
-		/// Force re-create the wallet even if it already exists.
-		#[arg(long)]
-		force: bool,
-
-		/// Use regtest network.
-		#[arg(long)]
-		regtest: bool,
-		/// Use signet network.
-		#[arg(long)]
-		signet: bool,
-		/// Use bitcoin mainnet
-		#[arg(long)]
-		bitcoin: bool,
-
-		#[command(flatten)]
-		config: ConfigOpts,
-	},
+	Create (CreateOpts),
 	/// Change the configuration of your bark wallet.
 	#[command()]
 	Config {
@@ -237,43 +223,12 @@ fn init_logging(verbose: bool) {
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	init_logging(cli.verbose);
 
-	let datadir = {
-		let datadir = PathBuf::from(cli.datadir);
-		if !datadir.exists() {
-			fs::create_dir_all(&datadir).context("failed to create datadir")?;
-		}
-		datadir.canonicalize().context("canonicalizing path")?
-	};
+	let datadir =PathBuf::from_str(&cli.datadir).unwrap();
 
 	// Handle create command differently.
-	if let Command::Create { force, regtest, signet, bitcoin, config } = cli.command {
-		let net = if regtest && !signet && !bitcoin{
-			bitcoin::Network::Regtest
-		} else if signet && !regtest && !bitcoin{
-			bitcoin::Network::Signet
-		} else if bitcoin && !regtest && !signet {
-			warn!("bark is experimental and not yet suited for usage in production");
-			bitcoin::Network::Bitcoin
-		} else {
-			bail!("Need to user either --signet, --regtest or --bitcoin");
-		};
-
-		let mut cfg = Config {
-			network: net,
-			// required args
-			asp_address: config.asp.clone().context("ASP address missing, use --asp")?,
-			..Default::default()
-		};
-		config.merge_info(&mut cfg).context("invalid configuration")?;
-
-		if force {
-			fs::remove_dir_all(&datadir)?;
-		}
-
-		fs::create_dir_all(&datadir).context("failed to create datadir")?;
-		let mut w = Wallet::create(&datadir, cfg).await.context("error creating wallet")?;
-		info!("Onchain address: {}", w.get_new_onchain_address()?);
-		return Ok(());
+	if let Command::Create ( create_opts ) = cli.command {
+		create_wallet(&datadir, create_opts).await?;
+		return Ok(())
 	}
 
 	let mut w = Wallet::open(&datadir).await.context("error opening wallet")?;

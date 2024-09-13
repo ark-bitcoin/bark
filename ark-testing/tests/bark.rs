@@ -21,6 +21,31 @@ async fn bark_version() {
 }
 
 #[tokio::test]
+async fn bark_create_is_atomic() {
+	let ctx = TestContext::new("bark/atomic-create").await;
+	let bitcoind = ctx.bitcoind("bitcoind-1").await;
+	let mut aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
+
+	// Create a bark defines the folder
+	let _  = ctx.try_bark("bark_ok", &bitcoind, &aspd).await.expect("Can create bark");
+	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_ok").as_path()));
+
+	// You can't create a bark twice
+	// If you want to overwrite the folder you need force
+	let _ = ctx.try_bark("bark_twice", &bitcoind, &aspd).await.expect("Can create bark");
+	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_twice").as_path()));
+
+	let _ = ctx.try_bark("bark_twice", &bitcoind, &aspd).await.expect_err("Can create bark");
+	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_twice").as_path()));
+
+	// We stop the asp
+	// This ensures that clients cannot be created
+	aspd.stop().await.unwrap();
+	let _ = ctx.try_bark("bark_fails", &bitcoind, &aspd).await.expect_err("Cannot create bark if asp is not available");
+	assert!(!std::path::Path::is_dir(ctx.datadir.join("bark_fails").as_path()));
+}
+
+#[tokio::test]
 async fn onboard_bark() {
 	let ctx = TestContext::new("bark/onboard_bark").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
