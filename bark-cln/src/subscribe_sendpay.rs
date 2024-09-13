@@ -5,6 +5,7 @@ use tonic::transport::Channel;
 use tokio::sync::broadcast;
 
 use ark::lightning::PaymentStatus;
+use bitcoin::hashes::{ripemd160, sha256, Hash};
 
 use crate::grpc;
 use crate::grpc::node_client::NodeClient;
@@ -36,8 +37,8 @@ pub struct  SendpaySubscriptionItem {
 	pub status: PaymentStatus,
 	pub part_id: u64,
 	pub group_id: u64,
-	pub payment_hash: Vec<u8>,
-	pub payment_preimage: Option<Vec<u8>>,
+	pub payment_hash: sha256::Hash,
+	pub payment_preimage: Option<ripemd160::Hash>,
 }
 
 impl fmt::Display for SendpaySubscriptionItem {
@@ -139,8 +140,10 @@ async fn process_updated(
 			status: update.status().into(),
 			part_id: update.partid(),
 			group_id: update.groupid,
-			payment_hash: update.payment_hash,
+			payment_hash: sha256::Hash::from_slice(&update.payment_hash)?,
 			payment_preimage: update.payment_preimage
+				.map(|x| ripemd160::Hash::from_slice(&x))
+				.transpose()?
 		};
 
 		if max_index < updated_index {
@@ -179,8 +182,10 @@ async fn process_created(
 			status: update.status().into(),
 			part_id: update.partid(),
 			group_id: update.groupid,
-			payment_hash: update.payment_hash,
+			payment_hash: sha256::Hash::from_slice(&update.payment_hash)?,
 			payment_preimage: update.payment_preimage
+				.map(|x| ripemd160::Hash::from_slice(&x))
+				.transpose()?
 		};
 
 		if max_index < updated_index {
