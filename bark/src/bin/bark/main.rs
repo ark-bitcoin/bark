@@ -145,6 +145,8 @@ enum Command {
 		destination: String,
 		/// the amount to send (optional for bolt11)
 		amount: Option<Amount>,
+		/// an optional comment
+		comment: Option<String>,
 	},
 	/// send money by participating in an Ark round
 	#[command()]
@@ -319,15 +321,17 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			w.refresh_vtxos(threshold).await?;
 		},
 		Command::Onboard { amount } => w.onboard(amount).await?,
-		Command::Send { destination, amount } => {
+		Command::Send { destination, amount, comment } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
+				if comment.is_some() {
+					bail!("comment not supported for VTXO pubkey");
+				}
+
 				info!("Sending arkoor payment of {} to pubkey {}", amount, pk);
 				w.sync_ark().await.context("sync error")?;
 				w.send_oor_payment(pk, amount).await?;
 			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
-				info!("Sending bolt11 payment to invoice {}", inv);
-				w.sync_ark().await.context("sync error")?;
 				let inv_amount = inv.amount_milli_satoshis()
 					.map(|v| Amount::from_sat(v.div_ceil(1000)));
 				if let (Some(_), Some(inv)) = (amount, inv_amount) {
@@ -335,14 +339,22 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 				let final_amount = amount.or(inv_amount)
 					.context("amount required on invoice without amount")?;
+				if comment.is_some() {
+					bail!("comment not supported for bolt11 invoice");
+				}
+
+				info!("Sending bolt11 payment to invoice {}", inv);
+				w.sync_ark().await.context("sync error")?;
 				info!("Sending bolt11 payment of {} to invoice {}", final_amount, inv);
 				let preimage = w.send_bolt11_payment(&inv, amount).await?;
 				info!("Payment preimage received: {}", preimage.as_hex());
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
+
 				info!("Sending {} to lightning address {}", amount, addr);
 				w.sync_ark().await.context("sync error")?;
-				let (inv, preimage) = w.send_lnaddr(&addr, amount, None).await?;
+				let comment = comment.as_ref().map(|c| c.as_str());
+				let (inv, preimage) = w.send_lnaddr(&addr, amount, comment).await?;
 				info!("Paid invoice {}", inv);
 				info!("Payment preimage received: {}", preimage.as_hex());
 			} else {
