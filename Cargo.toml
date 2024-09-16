@@ -43,11 +43,14 @@ bdk_wallet = { git = "https://github.com/stevenroose/bdk.git", rev = "0543801787
 bdk_esplora = { git = "https://github.com/stevenroose/bdk.git", rev = "05438017876c3338d091ca85e52242b455e2193a" }
 bdk_file_store = { git = "https://github.com/stevenroose/bdk.git", rev = "05438017876c3338d091ca85e52242b455e2193a" }
 bdk_bitcoind_rpc = { git = "https://github.com/stevenroose/bdk.git", rev = "05438017876c3338d091ca85e52242b455e2193a" }
+lnurl-rs = "0.6.0"
+# this one is a workaround for a bug in lnurl-rs
+bitcoin030 = { package = "bitcoin", version = "0.30.2", features = [ "std" ] }
 
 sled = "0.34.7"
 
 # LDK-dependencies
-lightning-invoice = { version = "0.32.0-rc1", features = [ "serde" ] }
+lightning-invoice = { version = "0.32.0-rc1", features = [ "std", "serde" ] }
 
 # async + gRPC stack
 tonic = { version = "0.12.2", features = [ "tls", "tls-roots", "gzip" ] }
