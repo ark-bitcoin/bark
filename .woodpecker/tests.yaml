@@ -14,7 +14,7 @@ clone:
 
 steps:
   - name: merge-master
-    image: stevenroose/bark-ci-tests
+    image: stevenroose/bark-ci-tests@sha256:18ba577ae92da321346e3985cae13c274c466f5d1477b280051d3316eda53cf5
     commands:
       - git fetch --no-tags --depth=200 origin master
       - git log --oneline | head
@@ -28,26 +28,32 @@ steps:
 
   - name: build
     depends_on: merge-master
-    image: stevenroose/bark-ci-tests
+    image: stevenroose/bark-ci-tests@sha256:18ba577ae92da321346e3985cae13c274c466f5d1477b280051d3316eda53cf5
     commands:
       - git log --oneline | head -n 1
+      - cargo version
       - cargo build --workspace
       - ls -al ./target/debug
 
   - name: test-unit
     depends_on: merge-master
-    image: stevenroose/bark-ci-tests
+    image: stevenroose/bark-ci-tests@sha256:18ba577ae92da321346e3985cae13c274c466f5d1477b280051d3316eda53cf5
     commands:
       - git log --oneline | head -n 1
       - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
 
   - name: test-integration
     depends_on: build
-    image: stevenroose/bark-ci-tests
+    image: stevenroose/bark-ci-tests@sha256:18ba577ae92da321346e3985cae13c274c466f5d1477b280051d3316eda53cf5
+    environment:
+      BITCOIND_EXEC: /bitcoin/27.1/bin/bitcoind
+      LIGHTNINGD_EXEC: /lightning/24.05/bin/lightningd
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
+      - ls -al $${BITCOIND_EXEC}
+      - ls -al $${LIGHTNINGD_EXEC}
       - cargo test --package ark-testing
 
   - name: push-github-mirror
