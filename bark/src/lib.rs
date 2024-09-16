@@ -2,12 +2,12 @@
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde;
+extern crate lnurl as lnurllib;
 
 mod database;
 mod exit;
 pub use exit::{ExitStatus, ExitLockError};
-use lightning_invoice::Bolt11Invoice;
-use serde::Serialize;
+mod lnurl;
 mod onchain;
 mod psbtext;
 
@@ -22,6 +22,9 @@ use anyhow::{bail, Context};
 use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Transaction, Txid, Weight};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
+use lnurllib::lightning_address::LightningAddress;
+use lightning_invoice::Bolt11Invoice;
+use serde::Serialize;
 use tokio_stream::StreamExt;
 
 use ark::{musig, BaseVtxo, OffboardRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
@@ -744,7 +747,24 @@ impl Wallet {
 
 		info!("Bolt11 payment succeeded");
 		Ok(payment_preimage)
-}
+	}
+
+	/// Send to a lightning address.
+	///
+	/// Returns the invoice paid and the preimage.
+	pub async fn send_lnaddr(
+		&mut self,
+		addr: &LightningAddress,
+		amount: Amount,
+		comment: Option<&str>,
+	) -> anyhow::Result<(Bolt11Invoice, Vec<u8>)> {
+		let invoice = lnurl::lnaddr_invoice(addr, amount, comment).await
+			.context("lightning address error")?;
+		info!("Attempting to pay invoice {}", invoice);
+		let preimage = self.send_bolt11_payment(&invoice, None).await
+			.context("bolt11 payment error")?;
+		Ok((invoice, preimage))
+	}
 
 	/// Send a payment in an Ark round.
 	///
