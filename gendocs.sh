@@ -3,7 +3,7 @@
 RUSTDOCSDIR=${PWD}/rustdocs
 mkdir -p ${RUSTDOCSDIR}
 
-cargo doc --target-dir ${RUSTDOCSDIR} --all --lib --examples --document-private-items
+cargo doc --target-dir ${RUSTDOCSDIR} --locked --all --lib --examples --document-private-items
 
 # This is opinionated, but doesn't matter. Any page has full search.
 DEFAULT_CRATE=bark
