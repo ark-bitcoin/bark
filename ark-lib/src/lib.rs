@@ -423,6 +423,15 @@ impl Vtxo {
 	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
 		ciborium::from_reader(bytes)
 	}
+
+	pub fn vtxo_type(&self) -> &'static str {
+		match self {
+			Vtxo::Onboard { .. } => "onboard",
+			Vtxo::Round { .. } => "round",
+			Vtxo::Oor { .. } => "arkoor",
+			Vtxo::Bolt11Change { .. } => "bolt11change",
+		}
+	}
 }
 
 #[cfg(test)]
