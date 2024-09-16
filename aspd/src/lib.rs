@@ -28,9 +28,14 @@ use bitcoin::{
 	bip32, psbt, sighash, taproot, Address, Amount, FeeRate, Network, OutPoint, Transaction,
 	Weight, Witness,
 };
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
+
+use tokio::time::MissedTickBehavior;
 use tokio::sync::{Mutex, broadcast};
+use tokio_stream::{StreamExt, Stream};
+use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
 use ark::util::KeypairExt;
 use ark::{musig, Vtxo};
@@ -502,7 +507,41 @@ impl App {
 	}
 
 
+	/// Returns  a stream of updates related to the payment with hash
+	fn get_payment_update_stream(&self, payment_hash: sha256::Hash) -> impl Stream<Item = rpc::Bolt11PaymentUpdate> {
+		// A progress update is sent every five seconds to give the user an nidication of progress
+		let mut interval = tokio::time::interval(Duration::from_secs(5));
+		interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+		let heartbeat_stream = IntervalStream::new(interval).map(move |_| {
+				rpc::Bolt11PaymentUpdate {
+					progress_message: String::from("Your payment is being routed through the lightning network..."),
+					payment_hash: payment_hash.as_byte_array().to_vec(),
+					status: rpc::PaymentStatus::Pending as i32,
+					payment_preimage: None
+				}
+		});
+
+
+		// Let event-stream
+		let rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
+		let event_stream = BroadcastStream::new(rx).filter_map(move |v| match v {
+			Ok(v) => {
+				Some(rpc::Bolt11PaymentUpdate {
+					status: rpc::PaymentStatus::from(v.status.clone()) as i32,
+					progress_message: format!(
+						"{} payment-part for hash {:?} - Attempt {} part {} to status {}",
+						v.kind, v.payment_hash, v.group_id, v.part_id, v.status,
+					),
+					payment_hash: payment_hash.as_byte_array().to_vec(),
+					payment_preimage: v.payment_preimage.map(|h| h.as_byte_array().to_vec())
+				})
+			},
+			Err(_) => None,
+		});
+
+		heartbeat_stream.merge(event_stream)
+	}
 
 	/// Returns a set of UTXOs from previous rounds that can be spent.
 	///
