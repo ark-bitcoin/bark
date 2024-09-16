@@ -353,14 +353,15 @@ pub async fn run_round_coordinator(
 ) -> anyhow::Result<()> {
 	let cfg = &app.config;
 
-	info!("Onchain balance: {}", app.sync_onchain_wallet().await?);
-
 	let round_tx_feerate = app.config.round_tx_feerate;
 	let offboard_feerate = round_tx_feerate;
 
 	// The maximum number of output vtxos per round based on the max number
 	// of vtxo tree nonces we require users to provide.
 	let max_output_vtxos = (cfg.nb_round_nonces * 3 ) / 4;
+
+	// Whether we should sync the onchain wallet at the next round attempt.
+	let mut sync_next_attempt = true;
 
 	'round: loop {
 		// Sleep for the round interval, but discard all incoming messages.
@@ -370,6 +371,7 @@ pub async fn run_round_coordinator(
 				() = &mut timeout => break 'sleep,
 				Some(()) = round_trigger_rx.recv() => {
 					info!("Starting round based on admin RPC trigger");
+					sync_next_attempt = false; // start round fast
 					break 'sleep;
 				},
 				_ = round_input_rx.recv() => {},
@@ -389,8 +391,11 @@ pub async fn run_round_coordinator(
 
 		// In this loop we will try to finish the round and make new attempts.
 		'attempt: loop {
-			let balance = app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
-			info!("Current wallet balance: {}", balance);
+			if sync_next_attempt {
+				let balance = app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
+				info!("Current wallet balance: {}", balance);
+			}
+			sync_next_attempt = true;
 
 			let mut state = CollectingPayments::new(max_output_vtxos, offboard_feerate);
 
