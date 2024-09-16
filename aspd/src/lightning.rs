@@ -2,6 +2,7 @@ use std::fs;
 use std::time::{Duration, UNIX_EPOCH, SystemTime};
 
 use anyhow::Context;
+use bitcoin::hex::DisplayHex;
 use bitcoin::Amount;
 use lightning_invoice::Bolt11Invoice;
 use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
@@ -164,13 +165,18 @@ pub async fn pay_bolt11(
 	// This method might fail even if the payment will succeed
 	// (grpc-connection problems or time-outs).
 	// We keep the error-around but will verify if the payment actually failed.
+	info!("Forwarding bolt11 invoice of {:?}: {}", amount, invoice);
 	let pay_bolt11_err = match call_pay_bolt11(&mut cln_client, &invoice, amount).await {
-		Ok(preimage) => return Ok(preimage),
+		Ok(preimage) => {
+			debug!("Done, preimage: {} for invoice {}", preimage.as_hex(), invoice);
+			return Ok(preimage);
+		},
 		Err(err) => {
 			warn!("Pay returned with erro: {:?}", err);
 			err
 		}
 	};
+	debug!("Forward rpc returned without success, polling lightningd for status updates...");
 
 	// I am not sure if we need this
 	// IF there is no entry in `listpays` we assume one of the prechecks failed
@@ -221,8 +227,13 @@ pub async fn pay_bolt11(
 	let mut stream = sendpay_stream.merge(heartbeat_stream);
 	while let Some(_) = stream.next().await {
 		let (status, preimage) = invoice_pay_status(&mut cln_client, &invoice, payment_start_time).await?;
+		trace!("Bolt11 status {} for invoice {}", status, invoice);
 		match status {
-			PaymentStatus::Complete => return Ok(preimage.expect("preimage on succeed")),
+			PaymentStatus::Complete => {
+				let preimage = preimage.expect("preimage on succeed");
+				debug!("Done, preimage: {} for invoice {}", preimage.as_hex(), invoice);
+				return Ok(preimage);
+			},
 			PaymentStatus::Failed => bail!("Payment failed"),
 			PaymentStatus::Pending => {},
 		}
