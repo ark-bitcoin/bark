@@ -300,8 +300,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				info!("Our wallet has {} VTXO(s):", res.len());
 				for v in res {
-					info!("  {}: {}; expires at height {}",
-						v.id(), v.amount(), v.spec().expiry_height,
+					info!("  {} ({}): {}; expires at height {}",
+						v.id(), v.vtxo_type(), v.amount(), v.spec().expiry_height,
 					);
 				}
 			}
