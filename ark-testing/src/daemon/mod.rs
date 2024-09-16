@@ -3,6 +3,7 @@ pub mod aspd;
 pub mod lightningd;
 pub mod log;
 
+use std::fs;
 use std::future::Future;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -105,7 +106,8 @@ impl<T> Daemon<T>
 			.await?;
 
 		cmd.stdout(Stdio::piped());
-		cmd.stderr(std::fs::File::create(self.inner.datadir().join("stderr.log"))?);
+		let stderr_logfile = self.inner.datadir().join("stderr.log");
+		cmd.stderr(std::fs::File::create(&stderr_logfile)?);
 
 		trace!("{}: Trying to spawn {:?}", self.inner.name(), cmd);
 		let mut child = cmd.spawn()?;
@@ -140,8 +142,11 @@ impl<T> Daemon<T>
 		if success {
 			self.child = Some(child);
 			Ok(())
-		}
-		else {
+		} else {
+			match fs::read_to_string(&stderr_logfile) {
+				Ok(c) => error!("Lightningd failed to start, stderr: {}", c),
+				Err(e) => error!("Failed to read stderr at {}: {}", stderr_logfile.display(), e),
+			}
 			anyhow::bail!("Failed to initialize {}", self.inner.name());
 		}
 	}
