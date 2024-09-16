@@ -16,7 +16,7 @@ use aspd::{App, Config, ClnConfig};
 use aspd_rpc_client as rpc;
 
 /// Defaults to our default port on localhost.
-const DEFAULT_RPC_ADDR: &str = "[::]:3535";
+const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
 
 #[derive(Parser)]
 #[command(author = "Steven Roose <steven@roose.io>", version, about)]
@@ -47,7 +47,7 @@ enum Command {
 	DropOorConflicts,
 	#[command()]
 	Rpc {
-		#[arg(long, default_value = DEFAULT_RPC_ADDR)]
+		#[arg(long, default_value = DEFAULT_ADMIN_RPC_ADDR)]
 		addr: String,
 		#[command(subcommand)]
 		cmd: RpcCommand,
