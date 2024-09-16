@@ -12,10 +12,11 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
+use lightning_invoice::Bolt11Invoice;
+use lnurl::lightning_address::LightningAddress;
 
 use bark::{Wallet, Config};
 use bark_json::cli as json;
-use lightning_invoice::Bolt11Invoice;
 
 use crate::create::{CreateOpts, create_wallet};
 
@@ -337,8 +338,17 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				info!("Sending bolt11 payment of {} to invoice {}", final_amount, inv);
 				let preimage = w.send_bolt11_payment(&inv, amount).await?;
 				info!("Payment preimage received: {}", preimage.as_hex());
+			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
+				let amount = amount.context("amount missing")?;
+				info!("Sending {} to lightning address {}", amount, addr);
+				w.sync_ark().await.context("sync error")?;
+				let (inv, preimage) = w.send_lnaddr(&addr, amount, None).await?;
+				info!("Paid invoice {}", inv);
+				info!("Payment preimage received: {}", preimage.as_hex());
 			} else {
-				bail!("Argument is neither a valid pubkey nor bolt11 invoice");
+				bail!("Argument is not a valid destination. Supported are: \
+					VTXO pubkeys, bolt11 invoices, lightning addresses",
+				);
 			}
 			info!("Success");
 		},
