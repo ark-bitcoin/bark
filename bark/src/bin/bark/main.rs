@@ -128,10 +128,15 @@ enum Command {
 	/// By default the wallet's configured threshold is used.
 	#[command()]
 	Refresh {
+		/// Refresh VTXOs that expire within this amount of blocks.
 		#[arg(long)]
 		threshold_blocks: Option<u32>,
+		/// Refresh VTXOs that expire within this number of hours.
 		#[arg(long)]
 		threshold_hours: Option<u32>,
+		/// Force refresh all VTXOs regardless of expiry height.
+		#[arg(long)]
+		all: bool,
 	},
 	/// onboard from the onchain wallet into the Ark
 	#[command()]
@@ -309,15 +314,20 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 		},
-		Command::Refresh { threshold_blocks, threshold_hours } => {
-			let threshold = match (threshold_blocks, threshold_hours) {
-				(None, None) => w.config().vtxo_refresh_threshold,
-				(Some(b), None) => b,
-				(None, Some(h)) => h * 6,
-				(Some(_), Some(_)) => bail!("can't provide both block and hour threshold"),
+		Command::Refresh { threshold_blocks, threshold_hours, all } => {
+			let threshold = match (threshold_blocks, threshold_hours, all) {
+				(None, None, false) => Some(w.config().vtxo_refresh_threshold),
+				(Some(b), None, false) => Some(b),
+				(None, Some(h), false) => Some(h * 6),
+				(None, None, true) => None,
+				_ => bail!("please provide either threshold blocks, hour or all"),
 			};
 
-			info!("Refreshing VTXOs expiring within the next {} blocks...", threshold);
+			if let Some(th) = threshold {
+				info!("Refreshing VTXOs expiring within the next {} blocks...", th);
+			} else {
+				info!("Refreshing all VTXOs...");
+			}
 			w.refresh_vtxos(threshold).await?;
 		},
 		Command::Onboard { amount } => w.onboard(amount).await?,
