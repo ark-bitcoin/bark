@@ -101,7 +101,7 @@ impl Exit {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ExitStatus {
 	/// All txs were broadcast and we claimed all exits.
 	Done,

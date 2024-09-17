@@ -6,6 +6,7 @@ mod create;
 use std::{env, io, process};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::hex::DisplayHex;
@@ -165,6 +166,10 @@ enum Command {
 		/// initiate exits on VTXOs in wallet.
 		#[arg(long)]
 		only_progress: bool,
+
+		/// Keep running until the entire exit is finished. This can take several hours.
+		#[arg(long)]
+		wait: bool,
 
 		//TODO(stevenroose) add a option to claim claimable exits while others are not claimable
 		//yet
@@ -376,36 +381,61 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 		},
 		Command::OffboardAll => w.offboard_all().await?,
-		Command::Exit { only_progress } => {
+		Command::Exit { only_progress, wait } => {
 			if !only_progress {
 				w.start_exit_for_entire_wallet().await
 					.context("error starting exit process for existing vtxos")?;
 			}
 
-			let res = w.progress_exit().await.context("error making progress on exit process")?;
-			if cli.json {
-				let ret = match res {
-					bark::ExitStatus::Done => {
-						json::ExitStatus { done: true, height: None }
-					},
-					bark::ExitStatus::NeedMoreTxs => {
-						json::ExitStatus { done: false, height: None }
-					},
-					bark::ExitStatus::WaitingForHeight(h) => {
-						json::ExitStatus { done: false, height: Some(h) }
-					},
-				};
-				serde_json::to_writer(io::stdout(), &ret).unwrap();
-			} else {
-				match res {
-					bark::ExitStatus::Done => info!("Exit done!"),
-					bark::ExitStatus::NeedMoreTxs => {
-						info!("More transactions need to be confirmed, keep calling this command.");
-					},
-					bark::ExitStatus::WaitingForHeight(h)=> {
-						info!("All transactions are confirmed, \
-							you can claim them all at block height {}.", h);
+			loop {
+				let res = w.progress_exit().await.context("error making progress on exit process")?;
+				if cli.json {
+					let ret = match res {
+						bark::ExitStatus::Done => {
+							json::ExitStatus { done: true, height: None }
+						},
+						bark::ExitStatus::NeedMoreTxs => {
+							json::ExitStatus { done: false, height: None }
+						},
+						bark::ExitStatus::WaitingForHeight(h) => {
+							json::ExitStatus { done: false, height: Some(h) }
+						},
+					};
+					serde_json::to_writer(io::stdout(), &ret).unwrap();
+				} else {
+					match res {
+						bark::ExitStatus::Done => {
+							info!("Exit succesful!");
+						}
+						bark::ExitStatus::NeedMoreTxs => {
+							if wait {
+								info!("More transactions need to be confirmed.");
+							} else {
+								info!("More transactions need to be confirmed, \
+									keep calling this command.");
+							}
+						},
+						bark::ExitStatus::WaitingForHeight(h)=> {
+							if wait {
+								info!("All transactions are confirmed, \
+									waiting for block height {}.", h);
+							} else {
+								info!("All transactions are confirmed, call command again \
+									to claim them all at block height {}.", h);
+							}
+						}
 					}
+				}
+
+				if res == bark::ExitStatus::Done {
+					break;
+				}
+
+				if wait {
+					info!("Sleeping for a minute, then will continue...");
+					tokio::time::sleep(Duration::from_secs(60)).await;
+				} else {
+					break;
 				}
 			}
 		},
