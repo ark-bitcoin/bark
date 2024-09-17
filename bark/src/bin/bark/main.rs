@@ -387,8 +387,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					.context("error starting exit process for existing vtxos")?;
 			}
 
+			let mut wallet = Some(w);
 			loop {
-				let res = w.progress_exit().await.context("error making progress on exit process")?;
+				let res = wallet.as_mut().unwrap().progress_exit().await
+					.context("error making progress on exit process")?;
 				if cli.json {
 					let ret = match res {
 						bark::ExitStatus::Done => {
@@ -433,7 +435,21 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if wait {
 					info!("Sleeping for a minute, then will continue...");
+
+					drop(wallet.take());
 					tokio::time::sleep(Duration::from_secs(60)).await;
+					'w: loop {
+						match Wallet::open(&datadir).await {
+							Ok(w) => {
+								wallet = Some(w);
+								break 'w;
+							},
+							Err(e) => {
+								debug!("Error re-opening wallet, waiting a little... ({})", e);
+								tokio::time::sleep(Duration::from_secs(2)).await;
+							},
+						}
+					}
 				} else {
 					break;
 				}
