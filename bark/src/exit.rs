@@ -250,6 +250,9 @@ impl Wallet {
 					bail!("Error broadcasting claim tx: {}", e);
 				}
 
+				// Remove the exit record from the db.
+				self.db.store_exit(&Exit::default())?;
+
 				ExitStatus::Done
 			} else {
 				ExitStatus::WaitingForHeight(highest_height)
