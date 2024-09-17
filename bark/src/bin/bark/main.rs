@@ -2,10 +2,12 @@
 #[macro_use] extern crate log;
 
 mod create;
+mod util;
 
 use std::{env, io, process};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::hex::DisplayHex;
@@ -19,6 +21,7 @@ use bark::{Wallet, Config};
 use bark_json::cli as json;
 
 use crate::create::{CreateOpts, create_wallet};
+use crate::util::PrettyDuration;
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -302,10 +305,17 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				serde_json::to_writer(io::stdout(), &json).unwrap();
 			} else {
 				info!("Our wallet has {} VTXO(s):", res.len());
+				let tip = w.chain_tip_height().await.context("bitcoin chain source error")?;
 				for v in res {
-					info!("  {} ({}): {}; expires at height {}",
-						v.id(), v.vtxo_type(), v.amount(), v.spec().expiry_height,
-					);
+					let expiry = v.spec().expiry_height;
+					if let Some(diff) = expiry.checked_sub(tip) {
+						let time_left = Duration::from_secs(60 * 10 * diff as u64);
+						info!("  {} ({}): {}; expires at height {} (in about {})",
+							v.id(), v.vtxo_type(), v.amount(), expiry, PrettyDuration(time_left),
+						);
+					} else {
+						info!("  {} ({}): {}; already expired", v.id(), v.vtxo_type(), v.amount());
+					}
 				}
 			}
 		},
