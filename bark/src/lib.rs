@@ -266,6 +266,13 @@ impl Wallet {
 		Self::write_config(&self.config, &self.datadir)
 	}
 
+	//TODO(stevenroose) find a cleaner way to expose some of the onchain/chainsource stuff
+	//to the cli
+
+	pub async fn chain_tip_height(&self) -> anyhow::Result<u32> {
+		self.onchain.tip().await
+	}
+
 	pub fn get_new_onchain_address(&mut self) -> anyhow::Result<Address> {
 		self.onchain.new_address()
 	}
