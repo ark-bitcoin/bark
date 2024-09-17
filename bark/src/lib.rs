@@ -1159,7 +1159,7 @@ impl Wallet {
 				self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
 			}
 
-			info!("Finished payment");
+			info!("Round finished");
 			break;
 		}
 
