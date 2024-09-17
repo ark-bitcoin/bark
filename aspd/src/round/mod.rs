@@ -781,6 +781,9 @@ pub async fn run_round_coordinator(
 			}
 
 			info!("Finished round {} with tx {}", round_id, round_tx.compute_txid());
+
+			// Sync our wallet so that it sees the broadcasted tx.
+			app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
 			break 'attempt;
 		}
 	}
