@@ -144,3 +144,36 @@ async fn oor() {
 	assert_eq!(58_035, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
 }
+
+#[tokio::test]
+async fn refresh() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/refresh").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.generate(106).await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Create a few clients
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+	bark1.onboard(Amount::from_sat(800_000)).await;
+	bark2.onboard(Amount::from_sat(800_000)).await;
+
+	// We want bark2 to have an onboard, round and oor vtxo
+	let pk1 = bark1.vtxo_pubkey().await;
+	let pk2 = bark2.vtxo_pubkey().await;
+	bark2.send_round(&pk1, Amount::from_sat(20_000)).await; // generates change
+	bark1.send_round(&pk2, Amount::from_sat(20_000)).await;
+	bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
+	bark2.onboard(Amount::from_sat(20_000)).await;
+
+	assert_eq!(4, bark2.vtxos().await.len());
+	bark2.refresh_all().await;
+	assert_eq!(1, bark2.vtxos().await.len());
+}
+

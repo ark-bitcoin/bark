@@ -101,6 +101,11 @@ impl Bark {
 			.require_network(Network::Regtest).unwrap()
 	}
 
+	pub async fn vtxos(&self) -> Vec<json::VtxoInfo> {
+		let res = self.run(["vtxos", "--json"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
 	pub async fn vtxo_pubkey(&self) -> String {
 		self.run(["vtxo-pubkey"]).await
 	}
@@ -135,6 +140,10 @@ impl Bark {
 	pub async fn onboard(&self, amount: Amount) {
 		info!("{}: Onboard {}", self.name, amount);
 		self.run(["onboard", &amount.to_string()]).await;
+	}
+
+	pub async fn refresh_all(&self) {
+		self.run(["refresh", "--all"]).await;
 	}
 
 	pub async fn exit(&self) -> json::ExitStatus {
