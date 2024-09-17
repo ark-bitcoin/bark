@@ -111,39 +111,9 @@ pub enum ExitStatus {
 	WaitingForHeight(u32),
 }
 
-/// Failed to take the exit lock.
-#[derive(Debug)]
-pub struct ExitLockError;
-
-impl std::fmt::Display for ExitLockError {
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-		write!(f, "failed to take the exit lock")
-	}
-}
-
-impl std::error::Error for ExitLockError {}
-
-
 impl Wallet {
-	/// Try to take exit lock and return the proper error.
-	fn take_exit_lock(&self) -> anyhow::Result<()> {
-		if let Err(_) = self.db.take_exit_lock() {
-			return Err(ExitLockError.into());
-		}
-		Ok(())
-	}
-
-	/// Release the exit lock.
-	///
-	/// Only use this if you are sure no other process has taken this lock.
-	pub fn release_exit_lock(&self) -> anyhow::Result<()> {
-		if let Err(_) = self.db.release_exit_lock() {
-			bail!("failed to release the exit lock, this might cause problems later");
-		}
-		Ok(())
-	}
-
-	async fn try_start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
+	/// Add all vtxos in the current wallet to the exit process.
+	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
 		self.onchain.sync().await.context("onchain sync error")?;
 		if let Err(e) = self.sync_ark().await {
 			warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
@@ -171,21 +141,14 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Add all vtxos in the current wallet to the exit process.
-	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
-		self.take_exit_lock()?;
-		let ret = self.try_start_exit_for_entire_wallet().await;
-		self.release_exit_lock()?;
-		ret
-	}
-
 	/// Get the pending exit tracking struct.
 	//TODO(stevenroose) consider not exposing this and only expose a overview struct
 	pub fn get_exit(&self) -> anyhow::Result<Option<Exit>> {
 		Ok(self.db.fetch_exit()?)
 	}
 
-	async fn try_progress_exit(&mut self) -> anyhow::Result<ExitStatus> {
+	/// Progress a unilateral exit progress.
+	pub async fn progress_exit(&mut self) -> anyhow::Result<ExitStatus> {
 		self.onchain.sync().await.context("onchain sync error")?;
 		let mut exit = self.db.fetch_exit()?.unwrap_or_default();
 
@@ -295,13 +258,5 @@ impl Wallet {
 			ExitStatus::NeedMoreTxs
 		};
 		Ok(ret)
-	}
-
-	/// Progress a unilateral exit progress.
-	pub async fn progress_exit(&mut self) -> anyhow::Result<ExitStatus> {
-		self.take_exit_lock()?;
-		let ret = self.try_progress_exit().await;
-		self.release_exit_lock()?;
-		ret
 	}
 }

@@ -166,11 +166,6 @@ enum Command {
 		#[arg(long)]
 		only_progress: bool,
 
-		/// Force overwriting the exit lock before starting.
-		/// Use this only if you are sure no other process is accessing this wallet.
-		#[arg(long)]
-		force_lock: bool,
-
 		//TODO(stevenroose) add a option to claim claimable exits while others are not claimable
 		//yet
 	},
@@ -381,29 +376,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 		},
 		Command::OffboardAll => w.offboard_all().await?,
-		Command::Exit { only_progress, force_lock } => {
-			if force_lock {
-				w.release_exit_lock().context("couldn't release exit lock")?;
-			}
-
-			fn print_exit_lock_msg<T>(res: anyhow::Result<T>) -> anyhow::Result<T> {
-				if let Result::Err(ref err) = res {
-					if let Some(_) = err.downcast_ref::<bark::ExitLockError>() {
-						error!("ERROR: Failed to take the exit lock. \
-							If you are sure no other process is accessing this wallet, \
-							run the same command with --force-lock to resolve this issue.");
-					}
-				}
-				res
-			}
-
+		Command::Exit { only_progress } => {
 			if !only_progress {
-				print_exit_lock_msg(w.start_exit_for_entire_wallet().await)
+				w.start_exit_for_entire_wallet().await
 					.context("error starting exit process for existing vtxos")?;
 			}
 
-			let res = print_exit_lock_msg(w.progress_exit().await)
-				.context("error making progress on exit process")?;
+			let res = w.progress_exit().await.context("error making progress on exit process")?;
 			if cli.json {
 				let ret = match res {
 					bark::ExitStatus::Done => {
