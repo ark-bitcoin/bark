@@ -9,7 +9,8 @@ use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
-use stream_until::{StreamExt as UntilStreamExt, StreamUntilItem};
+
+use stream_until::{StreamUntilItem, StreamExt as StreamExtUntil};
 
 use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
 
@@ -218,61 +219,64 @@ impl rpc::ArkService for Arc<App> {
 		&self,
 		req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
 	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
-			let req = req.into_inner();
-			let signed = SignedBolt11Payment::decode(&req.signed_payment)
-				.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
-			if let Err(e) = signed.validate_signatures(&crate::SECP) {
-				return Err(badarg!("bad signatures on payment: {}", e));
-			}
-
-			let invoice = signed.payment.invoice.clone();
-
-			// Connecting to the grpc-client
-			let cln_config = self.config.cln_config.as_ref().ok_or(not_found!("This asp does not support lightning"))?;
-			let cln_client = cln_config.grpc_client().await.map_err(|_| internal!("Failed to connect to lightning"))?;
-			let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
-
-			// Spawn a task that performs the payment
-			let rx2 = sendpay_rx.resubscribe();
-			let jh = tokio::task::spawn(pay_bolt11(cln_client, signed, rx2));
-
-			let payment_hash = invoice.payment_hash().clone();
-			let sendpay_stream = BroadcastStream::new(sendpay_rx.resubscribe());
-			let stream = sendpay_stream.until(jh).filter_map(move |v| match v {
-				StreamUntilItem::Stream(Ok(v)) => {
-					Some(Ok(rpc::Bolt11PaymentUpdate {
-						status: rpc::PaymentStatus::from(v.status.clone()) as i32,
-						progress_message: format!(
-							"{} payment-part for hash {:?} - Attempt {} part {} to status {}",
-							v.kind, v.payment_hash, v.group_id, v.part_id, v.status,
-						),
-						payment_hash: payment_hash.as_byte_array().to_vec(),
-						payment_preimage: v.payment_preimage.map(|h| h.as_byte_array().to_vec())
-					}))
-				},
-				StreamUntilItem::Stream(Err(_)) => None,
-				StreamUntilItem::Future(Ok(Ok(preimage))) => {
-					Some(Ok(rpc::Bolt11PaymentUpdate {
-						progress_message: format!("Payment completed: {}", invoice.to_string()),
-						payment_hash: payment_hash.as_byte_array().to_vec(),
-						status: rpc::PaymentStatus::Complete as i32,
-						payment_preimage: Some(preimage),
-					}))
-				},
-				StreamUntilItem::Future(Ok(Err(_))) => {
-					Some(Ok(rpc::Bolt11PaymentUpdate {
-						progress_message: format!("Payment failed {}", invoice.to_string()),
-						payment_hash: payment_hash.as_byte_array().to_vec(),
-						status: rpc::PaymentStatus::Failed as i32,
-						payment_preimage: None
-					}))
-				},
-				//TODO(stevenroose) we return a result, why not just throw the error up here?
-				StreamUntilItem::Future(Err(_)) => panic!("supposedly can't happen???"),
-			});
-
-			Ok(tonic::Response::new(Box::new(stream)))
+		let req = req.into_inner();
+		let signed = SignedBolt11Payment::decode(&req.signed_payment)
+			.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
+		if let Err(e) = signed.validate_signatures(&crate::SECP) {
+			return Err(badarg!("bad signatures on payment: {}", e));
 		}
+
+		let invoice = signed.payment.invoice.clone();
+
+		// Connecting to the grpc-client
+		let cln_config = self.config.cln_config.as_ref().ok_or(not_found!("This asp does not support lightning"))?;
+		let cln_client = cln_config.grpc_client().await.map_err(|_| internal!("Failed to connect to lightning"))?;
+		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
+
+		// Spawn a task that performs the payment
+		let rx2 = sendpay_rx.resubscribe();
+		let pay_jh = tokio::task::spawn(pay_bolt11(cln_client, signed, rx2));
+
+		let payment_hash = invoice.payment_hash().clone();
+		let update_stream = self.get_payment_update_stream(payment_hash.clone());
+
+		let result = update_stream.until(pay_jh).map(move |item| {
+			let item = match item {
+				StreamUntilItem::Stream(v) => v,
+				StreamUntilItem::Future(payment) => {
+					match payment {
+						Ok(Ok(preimage)) => {
+							rpc::Bolt11PaymentUpdate {
+								progress_message: "Payment completed".to_string(),
+								status: rpc::PaymentStatus::Complete.into(),
+								payment_hash: payment_hash.as_byte_array().to_vec(),
+								payment_preimage: Some(preimage)
+							}
+						},
+						Ok(Err(err)) => {
+							rpc::Bolt11PaymentUpdate {
+								progress_message: format!("Payment failed: {}", err),
+								status: rpc::PaymentStatus::Failed as i32,
+								payment_hash: payment_hash.as_byte_array().to_vec(),
+								payment_preimage: None
+							}
+						},
+						Err(err) => {
+							rpc::Bolt11PaymentUpdate {
+								progress_message: format!("Error during payment. Payment state unknown {:?}", err),
+								status: rpc::PaymentStatus::Failed as i32,
+								payment_hash: payment_hash.as_byte_array().to_vec(),
+								payment_preimage: None
+							}
+						}
+					}
+				}
+			};
+			Ok(item)
+		});
+
+		Ok(tonic::Response::new(Box::new(result)))
+	}
 
 	// round
 
