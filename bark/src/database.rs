@@ -19,7 +19,6 @@ const SPENT_VTXO_TREE: &str = "bark_spent_vtxos";
 // Top-level entries
 
 const ONGOING_EXIT: &str = "exit";
-const ONGOING_EXIT_LOCK: &str = "exit_lock";
 const LAST_ARK_SYNC_HEIGHT: &str = "last_round_sync_height";
 
 pub struct Db {
@@ -96,18 +95,6 @@ impl Db {
 				Ok(None)
 			}
 		})?)
-	}
-
-	/// Try to take the exit process lock. Returns true on success.
-	pub fn take_exit_lock(&self) -> anyhow::Result<bool> {
-		let prev = self.db.fetch_and_update(ONGOING_EXIT_LOCK, |_| Some(vec![0x01]))?;
-		Ok(prev.is_none())
-	}
-
-	/// Release the exit process lock.
-	pub fn release_exit_lock(&self) -> anyhow::Result<()> {
-		self.db.remove(ONGOING_EXIT_LOCK)?;
-		Ok(())
 	}
 
 	/// Store the ongoing exit process.

@@ -6,7 +6,7 @@ extern crate lnurl as lnurllib;
 
 mod database;
 mod exit;
-pub use exit::{ExitStatus, ExitLockError};
+pub use exit::ExitStatus;
 mod lnurl;
 mod onchain;
 mod psbtext;

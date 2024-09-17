@@ -169,10 +169,9 @@ enum Command {
 		#[arg(long)]
 		only_progress: bool,
 
-		/// Force overwriting the exit lock before starting.
-		/// Use this only if you are sure no other process is accessing this wallet.
+		/// Keep running until the entire exit is finished. This can take several hours.
 		#[arg(long)]
-		force_lock: bool,
+		wait: bool,
 
 		//TODO(stevenroose) add a option to claim claimable exits while others are not claimable
 		//yet
@@ -391,52 +390,77 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 		},
 		Command::OffboardAll => w.offboard_all().await?,
-		Command::Exit { only_progress, force_lock } => {
-			if force_lock {
-				w.release_exit_lock().context("couldn't release exit lock")?;
-			}
-
-			fn print_exit_lock_msg<T>(res: anyhow::Result<T>) -> anyhow::Result<T> {
-				if let Result::Err(ref err) = res {
-					if let Some(_) = err.downcast_ref::<bark::ExitLockError>() {
-						error!("ERROR: Failed to take the exit lock. \
-							If you are sure no other process is accessing this wallet, \
-							run the same command with --force-lock to resolve this issue.");
-					}
-				}
-				res
-			}
-
+		Command::Exit { only_progress, wait } => {
 			if !only_progress {
-				print_exit_lock_msg(w.start_exit_for_entire_wallet().await)
+				w.start_exit_for_entire_wallet().await
 					.context("error starting exit process for existing vtxos")?;
 			}
 
-			let res = print_exit_lock_msg(w.progress_exit().await)
-				.context("error making progress on exit process")?;
-			if cli.json {
-				let ret = match res {
-					bark::ExitStatus::Done => {
-						json::ExitStatus { done: true, height: None }
-					},
-					bark::ExitStatus::NeedMoreTxs => {
-						json::ExitStatus { done: false, height: None }
-					},
-					bark::ExitStatus::WaitingForHeight(h) => {
-						json::ExitStatus { done: false, height: Some(h) }
-					},
-				};
-				serde_json::to_writer(io::stdout(), &ret).unwrap();
-			} else {
-				match res {
-					bark::ExitStatus::Done => info!("Exit done!"),
-					bark::ExitStatus::NeedMoreTxs => {
-						info!("More transactions need to be confirmed, keep calling this command.");
-					},
-					bark::ExitStatus::WaitingForHeight(h)=> {
-						info!("All transactions are confirmed, \
-							you can claim them all at block height {}.", h);
+			let mut wallet = Some(w);
+			loop {
+				let res = wallet.as_mut().unwrap().progress_exit().await
+					.context("error making progress on exit process")?;
+				if cli.json {
+					let ret = match res {
+						bark::ExitStatus::Done => {
+							json::ExitStatus { done: true, height: None }
+						},
+						bark::ExitStatus::NeedMoreTxs => {
+							json::ExitStatus { done: false, height: None }
+						},
+						bark::ExitStatus::WaitingForHeight(h) => {
+							json::ExitStatus { done: false, height: Some(h) }
+						},
+					};
+					serde_json::to_writer(io::stdout(), &ret).unwrap();
+				} else {
+					match res {
+						bark::ExitStatus::Done => {
+							info!("Exit succesful!");
+						}
+						bark::ExitStatus::NeedMoreTxs => {
+							if wait {
+								info!("More transactions need to be confirmed.");
+							} else {
+								info!("More transactions need to be confirmed, \
+									keep calling this command.");
+							}
+						},
+						bark::ExitStatus::WaitingForHeight(h)=> {
+							if wait {
+								info!("All transactions are confirmed, \
+									waiting for block height {}.", h);
+							} else {
+								info!("All transactions are confirmed, call command again \
+									to claim them all at block height {}.", h);
+							}
+						}
 					}
+				}
+
+				if res == bark::ExitStatus::Done {
+					break;
+				}
+
+				if wait {
+					info!("Sleeping for a minute, then will continue...");
+
+					drop(wallet.take());
+					tokio::time::sleep(Duration::from_secs(60)).await;
+					'w: loop {
+						match Wallet::open(&datadir).await {
+							Ok(w) => {
+								wallet = Some(w);
+								break 'w;
+							},
+							Err(e) => {
+								debug!("Error re-opening wallet, waiting a little... ({})", e);
+								tokio::time::sleep(Duration::from_secs(2)).await;
+							},
+						}
+					}
+				} else {
+					break;
 				}
 			}
 		},
