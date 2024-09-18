@@ -971,7 +971,7 @@ impl Wallet {
 					},
 					// If a new round started meanwhile, pick up on that one.
 					rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
-						error!("Unexpected new round start...");
+						warn!("Unexpected new round started...");
 						round_id = id;
 						continue 'round;
 					},
@@ -1069,7 +1069,7 @@ impl Wallet {
 					},
 					// If a new round started meanwhile, pick up on that one.
 					rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
-						error!("Unexpected new round start...");
+						warn!("Unexpected new round started...");
 						round_id = id;
 						continue 'round;
 					},
@@ -1127,7 +1127,7 @@ impl Wallet {
 			// * Wait for the finishing of the round.
 			// ****************************************************************
 
-			trace!("Waiting for round finish...");
+			trace!("Waiting for round to finish...");
 			let (new_vtxos, round_tx) = match events.next().await.context("events stream broke")??.event.unwrap() {
 				rpc::round_event::Event::Finished(f) => {
 					if f.round_id != round_id {
@@ -1142,7 +1142,7 @@ impl Wallet {
 				},
 				// If a new round started meanwhile, pick up on that one.
 				rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
-					warn!("Unexpected new round start...");
+					warn!("Unexpected new round started...");
 					round_id = id;
 					continue 'round;
 				},
@@ -1155,7 +1155,7 @@ impl Wallet {
 			}
 
 			// We also broadcast the tx, just to have it go around faster.
-			info!("Round finished, broadcasting round tx {}", round_tx.compute_txid());
+			info!("Broadcasting round tx {}", round_tx.compute_txid());
 			if let Err(e) = self.onchain.broadcast_tx(&round_tx).await {
 				warn!("Couldn't broadcast round tx: {}", e);
 			}
