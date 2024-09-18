@@ -16,6 +16,7 @@ mod napkin;
 
 
 use std::{fmt, io};
+use std::str::FromStr;
 
 use bitcoin::{taproot, Amount, FeeRate, OutPoint, Script, ScriptBuf, Transaction, Txid, TxOut, Weight};
 use bitcoin::hashes::Hash;
@@ -172,9 +173,20 @@ impl fmt::Debug for VtxoId {
 	}
 }
 
+impl FromStr for VtxoId {
+	type Err = <OutPoint as FromStr>::Err;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		Ok(OutPoint::from_str(s)?.into())
+	}
+}
+
 impl serde::Serialize for VtxoId {
 	fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-		s.serialize_bytes(self.as_ref())
+		if s.is_human_readable() {
+			s.collect_str(self)
+		} else {
+			s.serialize_bytes(self.as_ref())
+		}
 	}
 }
 
@@ -189,8 +201,15 @@ impl<'de> serde::Deserialize<'de> for VtxoId {
 			fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
 				VtxoId::from_slice(v).map_err(serde::de::Error::custom)
 			}
+			fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+				VtxoId::from_str(v).map_err(serde::de::Error::custom)
+			}
 		}
-		d.deserialize_bytes(Visitor)
+		if d.is_human_readable() {
+			d.deserialize_str(Visitor)
+		} else {
+			d.deserialize_bytes(Visitor)
+		}
 	}
 }
 

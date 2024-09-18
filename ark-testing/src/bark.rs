@@ -101,6 +101,11 @@ impl Bark {
 			.require_network(Network::Regtest).unwrap()
 	}
 
+	pub async fn vtxos(&self) -> Vec<json::VtxoInfo> {
+		let res = self.run(["vtxos", "--json"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
 	pub async fn vtxo_pubkey(&self) -> String {
 		self.run(["vtxo-pubkey"]).await
 	}
@@ -135,6 +140,10 @@ impl Bark {
 	pub async fn onboard(&self, amount: Amount) {
 		info!("{}: Onboard {}", self.name, amount);
 		self.run(["onboard", &amount.to_string()]).await;
+	}
+
+	pub async fn refresh_all(&self) {
+		self.run(["refresh", "--all"]).await;
 	}
 
 	pub async fn exit(&self) -> json::ExitStatus {
@@ -173,20 +182,21 @@ impl Bark {
 			self.timeout,
 			child.wait(),
 		).await??;
-		if exit.success() {
-			let out = {
-				let mut buf = String::new();
-				if let Some(mut o) = child.stdout {
-					o.read_to_string(&mut buf).await.unwrap();
-				}
-				buf
-			};
-			let outfile = folder.join("stdout.log");
-			if let Err(e) = fs::write(&outfile, &out).await {
-				error!("Failed to write stdout of cmd '{}' to file '{}': {}",
-					command_str, outfile.display(), e,
-				);
+		let out = {
+			let mut buf = String::new();
+			if let Some(mut o) = child.stdout {
+				o.read_to_string(&mut buf).await.unwrap();
 			}
+			buf
+		};
+		trace!("output of command '{}': {}", command_str, out);
+		let outfile = folder.join("stdout.log");
+		if let Err(e) = fs::write(&outfile, &out).await {
+			error!("Failed to write stdout of cmd '{}' to file '{}': {}",
+				command_str, outfile.display(), e,
+			);
+		}
+		if exit.success() {
 			Ok(out.trim().to_string())
 		}
 		else {
