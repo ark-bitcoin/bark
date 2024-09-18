@@ -79,6 +79,7 @@ pub struct Config {
 	pub round_tx_feerate: FeeRate,
 
 	// limits
+	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
 	pub max_onboard_value: Option<Amount>,
 
 	// lightning
