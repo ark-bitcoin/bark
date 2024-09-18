@@ -82,19 +82,19 @@ async fn unilateral_exit() {
 
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark1).await;
-	assert_eq!(59_826_978, bark1.onchain_balance().await.to_sat());
+	assert_eq!(59_977_933, bark1.onchain_balance().await.to_sat());
 
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark2).await;
-	assert_eq!(34_914_387, bark2.onchain_balance().await.to_sat());
+	assert_eq!(34_988_483, bark2.onchain_balance().await.to_sat());
 
 	// the amounts of the following two are a tiny bit higher because their tree was
 	// a bit smaller
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark3).await;
-	assert_eq!(59_942_982, bark3.onchain_balance().await.to_sat());
+	assert_eq!(59_990_133, bark3.onchain_balance().await.to_sat());
 
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark4).await;
-	assert_eq!(34_985_110, bark4.onchain_balance().await.to_sat());
+	assert_eq!(34_996_095, bark4.onchain_balance().await.to_sat());
 }

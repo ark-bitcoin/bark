@@ -122,7 +122,7 @@ impl Wallet {
 	/// Fee rate to use for urgent txs like exits.
 	fn urgent_fee_rate(&self) -> FeeRate {
 		//TODO(stevenroose) get from somewhere
-		FeeRate::from_sat_per_vb(100).unwrap()
+		FeeRate::from_sat_per_vb(15).unwrap()
 	}
 
 	pub fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
