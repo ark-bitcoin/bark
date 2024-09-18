@@ -92,6 +92,10 @@ impl Exit {
 		self.vtxos.push(VtxoExit::new(vtxo));
 	}
 
+	pub fn is_empty(&self) -> bool {
+		self.vtxos.is_empty()
+	}
+
 	pub fn vtxos(&self) -> impl ExactSizeIterator<Item = &Vtxo> {
 		self.vtxos.iter().map(|v| &v.vtxo)
 	}
@@ -151,6 +155,9 @@ impl Wallet {
 	pub async fn progress_exit(&mut self) -> anyhow::Result<ExitStatus> {
 		self.onchain.sync().await.context("onchain sync error")?;
 		let mut exit = self.db.fetch_exit()?.unwrap_or_default();
+		if exit.is_empty() {
+			return Ok(ExitStatus::Done);
+		}
 
 		// Go over each tx and see if we can make progress on it.
 		//
