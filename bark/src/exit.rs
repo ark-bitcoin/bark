@@ -3,7 +3,7 @@ use std::{cmp, io};
 use std::collections::HashMap;
 
 use anyhow::Context;
-use bitcoin::{sighash, Amount, OutPoint, Transaction, Txid};
+use bitcoin::{sighash, Amount, OutPoint, Transaction, Txid, Weight};
 
 use ark::{Vtxo, VtxoSpec};
 
@@ -12,7 +12,9 @@ use crate::psbtext::PsbtInputExt;
 
 
 
-const VTXO_CLAIM_INPUT_WEIGHT: usize = 138;
+/// The input weight required to claim a VTXO.
+const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClaimInput {
@@ -32,7 +34,7 @@ impl ClaimInput {
 		ciborium::from_reader(bytes)
 	}
 
-	pub fn satisfaction_weight(&self) -> usize {
+	pub fn satisfaction_weight(&self) -> Weight {
 		// NB might be vtxo-dependent in the future.
 		VTXO_CLAIM_INPUT_WEIGHT
 	}

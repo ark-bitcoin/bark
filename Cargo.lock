@@ -29,6 +29,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0453232ace82dee0dd0b4c87a59bd90f7b53b314f3e0f61fe2ee7c8a16482289"
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -398,31 +404,46 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bdk_bitcoind_rpc"
-version = "0.12.0"
-source = "git+https://github.com/stevenroose/bdk.git?rev=05438017876c3338d091ca85e52242b455e2193a#05438017876c3338d091ca85e52242b455e2193a"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5baa4cee070856947029bcaec4a5c070d1b34825909b364cfdb124f4ed3b7e40"
 dependencies = [
- "bdk_chain",
+ "bdk_core",
  "bitcoin 0.32.2",
  "bitcoincore-rpc",
 ]
 
 [[package]]
 name = "bdk_chain"
-version = "0.16.0"
-source = "git+https://github.com/stevenroose/bdk.git?rev=05438017876c3338d091ca85e52242b455e2193a#05438017876c3338d091ca85e52242b455e2193a"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e553c45ffed860aa7e0c6998c3a827fcdc039a2df76307563208ecfcae2f750"
 dependencies = [
+ "bdk_core",
  "bitcoin 0.32.2",
  "miniscript",
  "serde",
 ]
 
 [[package]]
+name = "bdk_core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0b45300422611971b0bbe84b04d18e38e81a056a66860c9dd3434f6d0f5396"
+dependencies = [
+ "bitcoin 0.32.2",
+ "hashbrown 0.9.1",
+ "serde",
+]
+
+[[package]]
 name = "bdk_esplora"
-version = "0.15.0"
-source = "git+https://github.com/stevenroose/bdk.git?rev=05438017876c3338d091ca85e52242b455e2193a#05438017876c3338d091ca85e52242b455e2193a"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cc9b320b2042e9729739eed66c6fc47b208554c8c6e393785cd56d257045e9f"
 dependencies = [
  "async-trait",
- "bdk_chain",
+ "bdk_core",
  "esplora-client",
  "futures",
  "miniscript",
@@ -430,8 +451,9 @@ dependencies = [
 
 [[package]]
 name = "bdk_file_store"
-version = "0.13.0"
-source = "git+https://github.com/stevenroose/bdk.git?rev=05438017876c3338d091ca85e52242b455e2193a#05438017876c3338d091ca85e52242b455e2193a"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68915bda6ad3e1dcd0ffcdf14efc455d6c64486159bbd8395e2b78aa8fb68455"
 dependencies = [
  "bdk_chain",
  "bincode",
@@ -440,15 +462,14 @@ dependencies = [
 
 [[package]]
 name = "bdk_wallet"
-version = "1.0.0-alpha.13"
-source = "git+https://github.com/stevenroose/bdk.git?rev=05438017876c3338d091ca85e52242b455e2193a#05438017876c3338d091ca85e52242b455e2193a"
+version = "1.0.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aeb48cd8e0a15d0bf7351fc8c30e44c474be01f4f98eb29f20ab59b645bd29c"
 dependencies = [
  "bdk_chain",
  "bitcoin 0.32.2",
- "getrandom",
- "js-sys",
  "miniscript",
- "rand",
+ "rand_core",
  "serde",
  "serde_json",
 ]
@@ -935,9 +956,9 @@ dependencies = [
 
 [[package]]
 name = "esplora-client"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69c6d27ef4ff21019edd98aa92199757e10a88065bbfcef6bb750ca6ec5e4a45"
+checksum = "9b546e91283ebfc56337de34e0cf814e3ad98083afde593b8e58495ee5355d0e"
 dependencies = [
  "bitcoin 0.32.2",
  "hex-conservative",
@@ -1193,6 +1214,16 @@ name = "half"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eabb4a44450da02c90444cf74558da904edde8fb4e9035a9a6a4e15445af0bd7"
+
+[[package]]
+name = "hashbrown"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7afe4a420e3fe79967a00898cc1f4db7c8a49a9333a29f8a4bd76a253d5cd04"
+dependencies = [
+ "ahash",
+ "serde",
+]
 
 [[package]]
 name = "hashbrown"
