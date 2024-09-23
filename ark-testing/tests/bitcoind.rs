@@ -1,4 +1,3 @@
-extern crate bitcoincore_rpc;
 
 use bitcoincore_rpc::RpcApi;
 use ark_testing::context::TestContext;

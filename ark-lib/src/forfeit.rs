@@ -12,8 +12,6 @@ use crate::connectors::ConnectorChain;
 pub const SIGNED_FORFEIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(0);
 
 pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
-	// NB we gain the dust from the connector and lose the dust from the fee anchor
-	let leftover = vtxo.amount() - fee::RELAY_FEERATE * SIGNED_FORFEIT_TX_WEIGHT;
 	Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -39,7 +37,8 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 		],
 		output: vec![
 			TxOut {
-				value: leftover,
+				// we gain the dust amount from the connector output
+				value: vtxo.amount() + fee::DUST,
 				script_pubkey: ScriptBuf::new_p2tr(&util::SECP, vtxo.spec().combined_pubkey(), None),
 			},
 			fee::dust_anchor(),

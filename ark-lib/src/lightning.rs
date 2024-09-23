@@ -70,27 +70,18 @@ impl Bolt11Payment {
 		}
 	}
 
-	pub fn onchain_fee(&self) -> Amount {
-		// To ensure this transaction can be relayed we need to put in a
-		// transaction fee. We currently set it to a few hundred sats
-		// TODO: Provide a proper value
-		// TODO: Can we delete this once tx-relay 1c1p is merged?
-		Amount::from_sat(500)
-	}
 
 	pub fn change_amount(&self) -> Amount {
 		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).fold(Amount::ZERO, |a,b| a+b);
 		let payment_amount = self.payment_amount;
-		let onchain_fee = self.onchain_fee();
 		let forwarding_fee = self.forwarding_fee;
 		let dust_amount = Amount::from_sat(P2TR_DUST_SAT);
-		input_amount - payment_amount - forwarding_fee - onchain_fee - dust_amount
+		input_amount - payment_amount - forwarding_fee - dust_amount
 	}
 
 	pub fn unsigned_transaction(&self) -> Transaction {
 		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).fold(Amount::ZERO, |a,b| a+b);
 		let payment_amount =self.payment_amount;
-		let onchain_fee = self.onchain_fee();
 
 		// This is the fee collected by the ASP for forwarding the payment
 		// We will calculate this later as base_fee + ppm * payment_amount
@@ -107,7 +98,9 @@ impl Bolt11Payment {
 		let change_output = self.change_output();
 		let change_amount = change_output.value;
 
-		assert_eq!(input_amount, htlc_amount + onchain_fee + dust_amount + change_amount, "htlc = {}, onchain_fee={}, dust={}, change={}", htlc_amount, onchain_fee, dust_amount, change_amount);
+		assert_eq!(input_amount, htlc_amount + dust_amount + change_amount,
+			"htlc = {htlc_amount}, dust={dust_amount}, change={change_amount}",
+		);
 
 		// Let's draft the output transactions
 		let htlc_output = self.htlc_output(htlc_amount);

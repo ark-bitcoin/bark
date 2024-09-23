@@ -1,4 +1,3 @@
-extern crate tokio;
 
 use std::time::Duration;
 

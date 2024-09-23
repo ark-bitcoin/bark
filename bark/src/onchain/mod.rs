@@ -80,10 +80,6 @@ impl Wallet {
 		self.chain_source.tx_confirmed(txid).await
 	}
 
-	pub async fn txout_value(&self, outpoint: OutPoint) -> anyhow::Result<Amount> {
-		self.chain_source.txout_value(outpoint).await
-	}
-
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
@@ -240,23 +236,8 @@ impl Wallet {
 		// we will "fake" create an output on the first attempt. This might
 		// overshoot the fee, but we prefer that over undershooting it.
 
-		let existing_fee = {
-			let mut ret = Amount::ZERO;
-			for tx in txs {
-				let input_value = {
-					let mut ret = Amount::ZERO;
-					for inp in &tx.input {
-						ret += self.txout_value(inp.previous_output).await?;
-					}
-					ret
-				};
-				let output_value = tx.output.iter().map(|o| o.value).sum::<Amount>();
-				ret += input_value.checked_sub(output_value).context("invalid tx: amounts")?;
-			}
-			ret
-		};
 		let package_weight = txs.iter().map(|t| t.weight()).sum::<Weight>();
-		let extra_fee_needed = (fee_rate * package_weight) - existing_fee;
+		let extra_fee_needed = fee_rate * package_weight;
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal);
@@ -283,11 +264,12 @@ impl Wallet {
 
 		let total_weight = template_weight + package_weight;
 		let total_fee = fee_rate * total_weight;
-		let extra_fee_needed = total_fee - existing_fee;
+		let extra_fee_needed = total_fee;
 
 		// Then build actual tx.
 		let mut b = self.wallet.build_tx();
 		b.only_witness_utxo();
+		b.version(3); // for 1p1c package relay
 		Wallet::add_anchors(&mut b, &anchors);
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);

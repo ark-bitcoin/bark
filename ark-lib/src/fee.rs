@@ -1,13 +1,6 @@
 
-use bitcoin::{opcodes, Amount, FeeRate, ScriptBuf, TxOut, Weight, Witness};
+use bitcoin::{opcodes, Amount, ScriptBuf, TxOut, Weight, Witness};
 
-/// The minimum feerate for transaction relay.
-///
-/// Currently 8 sat/vb.
-///
-// NB This can be set back to 1 sat/vb as soon as 1p1c package relay is
-// supported in the network.
-pub const RELAY_FEERATE: FeeRate = FeeRate::from_sat_per_kwu(8 * 250);
 
 /// Dust value of 330 satoshis.
 ///

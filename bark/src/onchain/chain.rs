@@ -126,6 +126,7 @@ impl ChainSourceClient {
 		Ok(ret)
 	}
 
+	#[allow(unused)]
 	pub async fn txout_value(&self, outpoint: OutPoint) -> anyhow::Result<Amount> {
 		let tx = match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
