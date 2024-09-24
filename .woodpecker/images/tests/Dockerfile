@@ -1,4 +1,54 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04 as builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	ca-certificates \
+	wget \
+	curl \
+	git \
+	xz-utils \
+	build-essential \
+	cmake \
+	clang
+
+ENV RUST_BACKTRACE=1 \
+	RUSTUP_TOOLCHAIN=1.77.2 \
+	PATH=/root/.cargo/bin:${PATH}
+
+# Installs the following components
+# * rustup Rust toolchains:
+#   - 1.77.2
+# * bitcoin core binaries in /bitcoin/<ver>/bin/
+#   - 28.0-rc2
+#   - 27.1
+# * c-lightning binaries in /lightning/<ver>/bin
+#   - 24.05
+# * Blockstream's electrs
+#   - commit 16321d4a7523b98c199d02ce793d13dee79dedfa
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none && \
+	echo "Installing Rust toolchains..." && \
+	rustup toolchain install ${RUSTUP_TOOLCHAIN} && \
+	echo "Installing bitcoin..." && \
+	mkdir /bitcoin && cd /bitcoin && \
+	echo "Installing bitcoin core v28.0-rc2..." && \
+	wget https://bitcoincore.org/bin/bitcoin-core-28.0/test.rc2/bitcoin-28.0rc2-x86_64-linux-gnu.tar.gz && \
+	tar xvzf bitcoin-28.0rc2-x86_64-linux-gnu.tar.gz && mv bitcoin-28.0rc2 28.0-rc2 && \
+	echo "Installing bitcoin core v27.1..." && \
+	wget https://bitcoincore.org/bin/bitcoin-core-27.1/bitcoin-27.1-x86_64-linux-gnu.tar.gz && \
+	tar xvzf bitcoin-27.1-x86_64-linux-gnu.tar.gz && mv bitcoin-27.1 27.1 && \
+	echo "Installing lightning..." && \
+	mkdir /lightning && cd /lightning && \
+	echo "Installing c-lightning v24.05..." && \
+	wget https://github.com/ElementsProject/lightning/releases/download/v24.05/clightning-v24.05-Ubuntu-24.04.tar.xz && \
+	mkdir 24.05 && tar -xvf clightning-v24.05-Ubuntu-24.04.tar.xz -C ./24.05 --strip-components=2 && \
+	echo "Installing electrs..." && cd /root && \
+	git clone https://github.com/Blockstream/electrs.git --depth 1 && cd electrs && \
+	git fetch --depth 1 origin 16321d4a7523b98c199d02ce793d13dee79dedfa && \
+	cargo install --locked --path . && \
+	echo "Done"
+
+
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
@@ -16,18 +66,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	librocksdb-dev \
 	protobuf-compiler
 
-ENV BITCOIND_VERSION=27.1 \
-	LIGHTNINGD_VERSION=24.05 \
-	RUST_VERSION=1.77.2 \
-	RUST_BACKTRACE=1 \
+ENV RUST_BACKTRACE=1 \
 	ROCKSDB_LIB_DIR=/usr/lib/x86_64-linux-gnu \
+	RUSTUP_TOOLCHAIN=1.77.2 \
 	PATH=/root/.cargo/bin:${PATH}
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none && \
-	rustup toolchain install ${RUST_VERSION} && \
-	wget https://bitcoincore.org/bin/bitcoin-core-${BITCOIND_VERSION}/bitcoin-${BITCOIND_VERSION}-x86_64-linux-gnu.tar.gz && \
-	tar xvzf bitcoin-$BITCOIND_VERSION-x86_64-linux-gnu.tar.gz && \
-	install -m 0755 -o root -g root -t /usr/local/bin bitcoin-${BITCOIND_VERSION}/bin/* && \
-	wget https://github.com/ElementsProject/lightning/releases/download/v${LIGHTNINGD_VERSION}/clightning-v${LIGHTNINGD_VERSION}-Ubuntu-24.04.tar.xz && \
-	tar -xvf clightning-v${LIGHTNINGD_VERSION}-Ubuntu-24.04.tar.xz -C /usr/local --strip-components=2
-
+COPY --from=builder /bitcoin/28.0-rc2/bin/bitcoin-cli /usr/bin/bitcoin-cli
+COPY --from=builder /bitcoin/28.0-rc2/bin/bitcoind    /bitcoin/28.0-rc2/bin/bitcoind
+COPY --from=builder /bitcoin/27.1/bin/bitcoind        /bitcoin/27.1/bin/bitcoind
+COPY --from=builder /lightning                        /lightning
+COPY --from=builder /root/.cargo/bin                  /root/.cargo/bin
