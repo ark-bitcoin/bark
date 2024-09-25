@@ -467,23 +467,54 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub async fn offboard_all(&mut self) -> anyhow::Result<()> {
-		let _ = self.onchain.sync().await;
-		self.sync_ark().await.context("failed to sync with ark")?;
+	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Option<Address>) -> anyhow::Result<()> {
+		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
-		let input_vtxos = self.db.get_all_vtxos()?;
-		let vtxo_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		let addr = self.onchain.new_address()?;
+		let addr = match address {
+			Some(addr) => addr,
+			None => self.onchain.new_address()?,
+		};
 
 		self.participate_round(move |_id, offb_fr| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), offb_fr)
 				.expect("bdk created invalid scriptPubkey");
+
 			let offb = OffboardRequest {
 				amount: vtxo_sum - fee,
 				script_pubkey: addr.script_pubkey(),
 			};
-			Ok((input_vtxos.clone(), Vec::new(), vec![offb]))
+
+			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
+		
+		Ok(())
+	}
+
+	/// Offboard all vtxos to a given address or default to bark onchain address
+	pub async fn offboard_all(&mut self, address: Option<Address>) -> anyhow::Result<()> {
+		self.sync_ark().await.context("failed to sync with ark")?;
+
+		let input_vtxos = self.db.get_all_vtxos()?;
+
+		self.offboard(input_vtxos, address).await?;
+
+		Ok(())
+	}
+
+	/// Offboard vtxos selection to a given address or default to bark onchain address
+	pub async fn offboard_vtxos(&mut self, vtxos: Vec<VtxoId>, address: Option<Address>) -> anyhow::Result<()> {
+		self.sync_ark().await.context("failed to sync with ark")?;
+
+		let input_vtxos =  vtxos
+				.into_iter()
+				.map(|vtxoid| match self.db.get_vtxo(vtxoid)? {
+					Some(vtxo) => Ok(vtxo),
+					_ => bail!("cannot find requested vtxo: {}", vtxoid),
+				})
+				.collect::<anyhow::Result<_>>()?;
+		
+		self.offboard(input_vtxos, address).await?;
+
 		Ok(())
 	}
 

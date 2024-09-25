@@ -152,6 +152,14 @@ impl Bark {
 		self.run(["refresh", "--all"]).await;
 	}
 
+	pub async fn offboard_all(&self, address: impl fmt::Display) {
+		self.run(["offboard", "--all", "--address", &address.to_string()]).await;
+	}
+
+	pub async fn offboard_vtxo(&self, vtxo: impl fmt::Display, address: impl fmt::Display) {
+		self.run(["offboard", "--vtxos", &vtxo.to_string(), "--address", &address.to_string()]).await;
+	}
+
 	pub async fn exit(&self) -> json::ExitStatus {
 		let res = self.run(["exit", "--json"]).await;
 		serde_json::from_str::<json::ExitStatus>(&res).expect("invalid json from exit")

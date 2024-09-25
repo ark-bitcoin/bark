@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use bitcoin::{Amount, FeeRate, Network, Txid};
+use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
 use crate::{Bark, Aspd, Lightningd};
@@ -131,6 +131,16 @@ impl Bitcoind {
 	pub async fn get_block_count(&self) -> u64 {
 		let client = self.sync_client();
 		client.get_block_count().unwrap()
+	}
+
+	pub fn get_new_address(&self) -> Address {
+		let client = self.sync_client();
+		client.get_new_address(None, None).unwrap().assume_checked()
+	}
+
+	pub fn get_received_by_address(&self, address: &Address) -> Amount {
+		let client = self.sync_client();
+		client.get_received_by_address(address, Some(1)).unwrap()
 	}
 }
 
