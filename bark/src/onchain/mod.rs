@@ -2,6 +2,7 @@
 mod chain;
 pub use self::chain::ChainSource;
 
+use std::borrow::Borrow;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -68,6 +69,10 @@ impl Wallet {
 
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
 		self.chain_source.broadcast_tx(tx).await
+	}
+
+	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
+		self.chain_source.broadcast_package(txs).await
 	}
 
 	/// Returns the block height the tx is confirmed in, if any.
