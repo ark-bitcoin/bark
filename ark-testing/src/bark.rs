@@ -10,13 +10,16 @@ use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::{Amount, Network};
 use serde_json;
 use tokio::fs;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
+use tokio::sync::Mutex;
 
 use bark_json::cli as json;
 
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
+
+const COMMAND_LOG_FILE: &str = "commands.log";
 
 #[derive(Debug)]
 pub struct BarkConfig {
@@ -33,6 +36,8 @@ pub struct Bark {
 	config: BarkConfig,
 	counter: AtomicUsize,
 	timeout: Duration,
+
+	command_log: Mutex<fs::File>,
 }
 
 impl Bark {
@@ -76,9 +81,10 @@ impl Bark {
 
 		Ok(Bark {
 			name: name.as_ref().to_string(),
-			config: cfg,
 			counter: AtomicUsize::new(0),
 			timeout: Duration::from_millis(10_000),
+			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
+			config: cfg,
 		})
 	}
 
@@ -170,10 +176,14 @@ impl Bark {
 		let folder = self.config.datadir.join("cmd").join(format!("{:03}", count));
 		fs::create_dir_all(&folder).await?;
 		fs::write(folder.join("cmd"), &command_str).await?;
+		self.command_log.lock().await.write_all(
+			format!("\n\n\nCOMMAND: {}\n", command_str).as_bytes()
+		).await?;
 
 		// We capture stdout here in output, but we write stderr to a file,
 		// so that we can read it even is something fails in the execution.
-		command.stderr(fs::File::create(folder.join("stderr.log")).await?.into_std().await);
+		let stderr_path = folder.join("stderr.log");
+		command.stderr(fs::File::create(&stderr_path).await?.into_std().await);
 		command.stdout(Stdio::piped());
 
 		let mut child = command.spawn().unwrap();
@@ -196,10 +206,19 @@ impl Bark {
 				command_str, outfile.display(), e,
 			);
 		}
+
+		// also append to the command log
+		self.command_log.lock().await.write_all("OUTPUT:".as_bytes()).await?;
+		self.command_log.lock().await.write_all(out.as_bytes()).await?;
+		self.command_log.lock().await.write_all("\nLOGS:\n".as_bytes()).await?;
+		tokio::io::copy(
+			&mut fs::File::open(stderr_path).await?,
+			&mut *self.command_log.lock().await,
+		).await?;
+
 		if exit.success() {
 			Ok(out.trim().to_string())
-		}
-		else {
+		} else {
 			bail!("Failed to execute {:?}", command)
 		}
 	}
