@@ -160,14 +160,14 @@ impl Bark {
 		command.args(&[
 			"--verbose",
 			"--datadir",
-			&self.config.datadir.as_os_str().to_str().unwrap(),
+			self.config.datadir.as_os_str().to_str().unwrap(),
 		]);
 		command.args(args);
 		let command_str = format!("{:?}", command.as_std());
 
 		// Create a folder for each command
 		let count = self.counter.fetch_add(1, Ordering::Relaxed);
-		let folder = self.config.datadir.join("cmd").join(count.to_string());
+		let folder = self.config.datadir.join("cmd").join(format!("{:03}", count));
 		fs::create_dir_all(&folder).await?;
 		fs::write(folder.join("cmd"), &command_str).await?;
 
