@@ -3,6 +3,9 @@ CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_di
 export ASPD_EXEC := CARGO_TARGET / "debug" / "aspd"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
+check-format:
+	bash -c contrib/prechecks.sh rust_no_spaces_for_indent
+
 build:
 	cargo build --workspace
 
