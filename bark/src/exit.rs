@@ -193,7 +193,8 @@ impl Wallet {
 						}
 
 						// Ok let's confirm this bastard.
-						let cpfp = self.onchain.make_cpfp(&[&tx]).await?;
+						let fee_rate = self.onchain.urgent_feerate();
+						let cpfp = self.onchain.make_cpfp(&[&tx], fee_rate).await?;
 						if let Err(e) = self.onchain.broadcast_tx(&tx).await {
 							warn!("Error broadcasting an exit tx, \
 								hopefully means it already got broadcast before: {}", e);
