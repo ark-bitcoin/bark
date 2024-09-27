@@ -1,0 +1,4 @@
+aspd-rpc-client/src/arkd.rs linguist-generated=true
+aspd-rpc-client/src/aspd.rs linguist-generated=true
+aspd/src/rpc/aspd.rs linguist-generated=true
+bark-cln/src/grpc/cln.rs linguist-generated=true
