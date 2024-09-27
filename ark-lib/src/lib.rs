@@ -385,7 +385,7 @@ impl Vtxo {
 		}
 	}
 
-	/// Collect all off-chain txs required for the exit oj this entire vtxo.
+	/// Collect all off-chain txs required for the exit of this entire vtxo.
 	///
 	/// The [vtxo_tx] is always included.
 	pub fn collect_exit_txs(&self, txs: &mut Vec<Transaction>) {
@@ -409,6 +409,15 @@ impl Vtxo {
 				txs.push(htlc_tx.clone());
 			},
 		}
+	}
+
+	/// Get a vec with all off-chain txs required for the exit of this entire vtxo.
+	///
+	/// The [vtxo_tx] is always included.
+	pub fn exit_txs(&self) -> Vec<Transaction> {
+		let mut ret = Vec::new();
+		self.collect_exit_txs(&mut ret);
+		ret
 	}
 
 	pub fn is_onboard(&self) -> bool {

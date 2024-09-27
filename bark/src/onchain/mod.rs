@@ -124,18 +124,18 @@ impl Wallet {
 	}
 
 	/// Fee rate to use for regular txs like onboards.
-	pub fn regular_fee_rate(&self) -> FeeRate {
+	pub fn regular_feerate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(10).unwrap()
 	}
 
 	/// Fee rate to use for urgent txs like exits.
-	fn urgent_fee_rate(&self) -> FeeRate {
+	pub fn urgent_feerate(&self) -> FeeRate {
 		//TODO(stevenroose) get from somewhere
 		FeeRate::from_sat_per_vb(15).unwrap()
 	}
 
 	pub fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
-		let fee_rate = self.regular_fee_rate();
+		let fee_rate = self.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.ordering(TxOrdering::Untouched);
 		b.add_recipient(dest.script_pubkey(), amount);
@@ -197,6 +197,7 @@ impl Wallet {
 	pub async fn make_cpfp(
 		&mut self,
 		txs: &[&Transaction],
+		fee_rate: FeeRate,
 	) -> anyhow::Result<Transaction> {
 		let anchors = txs.iter().map(|tx| {
 			tx.fee_anchor().with_context(|| format!("tx {} has no fee anchor", tx.compute_txid()))
@@ -226,9 +227,7 @@ impl Wallet {
 			ret
 		};
 		let package_weight = txs.iter().map(|t| t.weight()).sum::<Weight>();
-
-		let urgent_fee_rate = self.urgent_fee_rate();
-		let extra_fee_needed = (urgent_fee_rate * package_weight) - existing_fee;
+		let extra_fee_needed = (fee_rate * package_weight) - existing_fee;
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal);
@@ -237,7 +236,7 @@ impl Wallet {
 			let mut b = self.wallet.build_tx();
 			Wallet::add_anchors(&mut b, &anchors);
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + ark::P2TR_DUST);
-			b.fee_rate(urgent_fee_rate);
+			b.fee_rate(fee_rate);
 			let mut psbt = b.finish().expect("failed to craft anchor spend template");
 			let opts = SignOptions {
 				trust_witness_utxo: true,
@@ -250,7 +249,7 @@ impl Wallet {
 		};
 
 		let total_weight = template_weight + package_weight;
-		let total_fee = self.urgent_fee_rate() * total_weight;
+		let total_fee = fee_rate * total_weight;
 		let extra_fee_needed = total_fee - existing_fee;
 
 		// Then build actual tx.
@@ -269,7 +268,7 @@ impl Wallet {
 		assert!(!inputs.is_empty());
 		self.sync().await.context("sync error")?;
 
-		let urgent_fee_rate = self.urgent_fee_rate();
+		let urgent_fee_rate = self.urgent_feerate();
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal);

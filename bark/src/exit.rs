@@ -24,6 +24,13 @@ pub struct ClaimInput {
 }
 
 impl ClaimInput {
+	pub fn from_vtxo(vtxo: &Vtxo) -> ClaimInput {
+		ClaimInput {
+			utxo: vtxo.point(),
+			spec: vtxo.spec().clone(),
+		}
+	}
+
 	pub fn encode(&self) -> Vec<u8> {
 		let mut buf = Vec::new();
 		ciborium::into_writer(self, &mut buf).unwrap();
@@ -51,36 +58,13 @@ pub enum ExitTxStatus {
 	ConfirmedIn(u32),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct VtxoExit {
-	vtxo: Vtxo,
-	exit_tx_status: HashMap<Txid, ExitTxStatus>,
-}
-
-impl VtxoExit {
-	fn new(vtxo: Vtxo) -> VtxoExit {
-		VtxoExit { vtxo, exit_tx_status: HashMap::new() }
-	}
-
-	fn exit_txs(&self) -> Vec<Transaction> {
-		let mut ret = Vec::new();
-		self.vtxo.collect_exit_txs(&mut ret);
-		ret
-	}
-
-	//TODO(stevenroose) probably not needed
-	fn claim(&self) -> ClaimInput {
-		ClaimInput {
-			utxo: self.vtxo.point(),
-			spec: self.vtxo.spec().clone(),
-		}
-	}
-}
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Exit {
 	/// The vtxos in process of exit
-	vtxos: Vec<VtxoExit>,
+	vtxos: Vec<Vtxo>,
+	/// The statuses of the various exit txs. Kept here because different
+	/// exits might have overlapping txs.
+	exit_tx_status: HashMap<Txid, ExitTxStatus>,
 
 	// nb for now this seems just a vec, but later we will have txs
 	// that cpfp multiple exits etc
@@ -88,22 +72,18 @@ pub struct Exit {
 
 impl Exit {
 	fn add_vtxo(&mut self, vtxo: Vtxo) {
-		if self.vtxos.iter().any(|v| v.vtxo.id() == vtxo.id()) {
+		if self.vtxos.iter().any(|v| v.id() == vtxo.id()) {
 			return;
 		}
-		self.vtxos.push(VtxoExit::new(vtxo));
+		self.vtxos.push(vtxo);
 	}
 
 	pub fn is_empty(&self) -> bool {
 		self.vtxos.is_empty()
 	}
 
-	pub fn vtxos(&self) -> impl ExactSizeIterator<Item = &Vtxo> {
-		self.vtxos.iter().map(|v| &v.vtxo)
-	}
-
 	pub fn total_pending_amount(&self) -> Amount {
-		self.vtxos.iter().map(|v| v.vtxo.spec().amount).sum()
+		self.vtxos.iter().map(|v| v.spec().amount).sum()
 	}
 }
 
@@ -167,19 +147,30 @@ impl Wallet {
 		for vtxo in exit.vtxos.iter_mut() {
 			'tx: for tx in vtxo.exit_txs() {
 				let txid = tx.compute_txid();
-				match vtxo.exit_tx_status.get(&txid) {
+				match exit.exit_tx_status.get(&txid) {
 					Some(ExitTxStatus::ConfirmedIn(_)) => {}, // nothing to do
-					Some(ExitTxStatus::BroadcastWithCpfp(_tx)) => {
+					Some(ExitTxStatus::BroadcastWithCpfp(cpfp)) => {
+						// NB we don't care if our cpfp tx confirmed or
+						// if it confirmed through other means
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
-							debug!("Exit tx {} is confirmed", txid);
-							vtxo.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+							debug!("Exit tx {} is confirmed after cpfp", txid);
+							exit.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+							continue 'tx;
+						}
+
+						// Broadcast our cpfp again in case it got dropped.
+						info!("Re-broadcasting package with CPFP tx {} to confirm tx {}",
+							cpfp.compute_txid(), txid,
+						);
+						if let Err(e) = self.onchain.broadcast_tx(&cpfp).await {
+							error!("Error re-broadcasting CPFP tx: {}", e);
 						}
 					},
 					None | Some(ExitTxStatus::Pending) => {
 						// First check if it's already confirmed.
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
-							debug!("Exit tx {} is confirmed", txid);
-							vtxo.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+							debug!("Exit tx {} is confirmed before cpfp", txid);
+							exit.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
 							continue 'tx;
 						}
 
@@ -195,7 +186,8 @@ impl Wallet {
 						}
 
 						// Ok let's confirm this bastard.
-						let cpfp = self.onchain.make_cpfp(&[&tx]).await?;
+						let fee_rate = self.onchain.urgent_feerate();
+						let cpfp = self.onchain.make_cpfp(&[&tx], fee_rate).await?;
 						if let Err(e) = self.onchain.broadcast_tx(&tx).await {
 							warn!("Error broadcasting an exit tx, \
 								hopefully means it already got broadcast before: {}", e);
@@ -206,7 +198,7 @@ impl Wallet {
 						} else {
 							info!("Broadcast CPFP tx {} to confirm tx {}", cpfp.compute_txid(), txid);
 						}
-						vtxo.exit_tx_status.insert(txid, ExitTxStatus::BroadcastWithCpfp(cpfp));
+						exit.exit_tx_status.insert(txid, ExitTxStatus::BroadcastWithCpfp(cpfp));
 					},
 				}
 			}
@@ -219,9 +211,9 @@ impl Wallet {
 		let mut all_confirmed = true;
 		let mut highest_height = 0;
 		for vtxo in exit.vtxos.iter_mut() {
-			let status = vtxo.exit_tx_status.get(&vtxo.vtxo.vtxo_tx().compute_txid());
+			let status = exit.exit_tx_status.get(&vtxo.vtxo_tx().compute_txid());
 			if let Some(ExitTxStatus::ConfirmedIn(h)) = status {
-				let height = h + vtxo.vtxo.spec().exit_delta as u32;
+				let height = h + vtxo.spec().exit_delta as u32;
 				highest_height = cmp::max(highest_height, height);
 			} else {
 				all_confirmed = false;
@@ -231,9 +223,7 @@ impl Wallet {
 		let ret = if all_confirmed {
 			let current_height = self.onchain.tip().await?;
 			if highest_height <= current_height {
-				let inputs = exit.vtxos.iter().map(|vtxo| {
-					vtxo.claim()
-				}).collect::<Vec<_>>();
+				let inputs = exit.vtxos.iter().map(ClaimInput::from_vtxo).collect::<Vec<_>>();
 
 				let total_amount = inputs.iter().map(|i| i.spec.amount).sum::<Amount>();
 				debug!("Claiming the following exits with total value of {}: {:?}",

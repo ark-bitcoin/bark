@@ -399,7 +399,7 @@ impl Wallet {
 		};
 
 		if self.db.has_spent_vtxo(vtxo.id())? {
-			debug!("Not adding vtxo {} because we previously forfeited it", vtxo.id());
+			debug!("Not adding vtxo {} because it is considered spent", vtxo.id());
 			return Ok(());
 		}
 
@@ -455,7 +455,7 @@ impl Wallet {
 
 			// Not sure if this can happen, but well.
 			if self.db.has_spent_vtxo(vtxo.id())? {
-				debug!("Not adding OOR vtxo {} because we previously forfeited it", vtxo.id());
+				debug!("Not adding OOR vtxo {} because it is considered spent", vtxo.id());
 			}
 
 			if self.db.get_vtxo(vtxo.id())?.is_none() {
@@ -524,7 +524,7 @@ impl Wallet {
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
 		let current_height = self.onchain.tip().await?;
-		let fr = self.onchain.regular_fee_rate();
+		let fr = self.onchain.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 		let output = VtxoRequest { pubkey: destination, amount };
@@ -655,7 +655,7 @@ impl Wallet {
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
 
 		let current_height = self.onchain.tip().await?;
-		let fr = self.onchain.regular_fee_rate();
+		let fr = self.onchain.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
