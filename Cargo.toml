@@ -35,14 +35,10 @@ bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
 bip39 = { version = "2.0.0", features = [ "rand", "serde" ] }
 miniscript = "12.2"
 rand = { version = "0.8.5", features = [ "std", "std_rng" ] }
-# bdk = "1.0.0-alpha.3"
-# bdk_electrum = "0.5.0"
-# bdk_file_store = "0.3.0"
-# bdk_bitcoind_rpc = "0.2.0"
-bdk_wallet = { git = "https://github.com/stevenroose/bdk.git", rev = "05438017876c3338d091ca85e52242b455e2193a" }
-bdk_esplora = { git = "https://github.com/stevenroose/bdk.git", rev = "05438017876c3338d091ca85e52242b455e2193a" }
-bdk_file_store = { git = "https://github.com/stevenroose/bdk.git", rev = "05438017876c3338d091ca85e52242b455e2193a" }
-bdk_bitcoind_rpc = { git = "https://github.com/stevenroose/bdk.git", rev = "05438017876c3338d091ca85e52242b455e2193a" }
+bdk_wallet = "1.0.0-beta.4"
+bdk_esplora = "0.18.0"
+bdk_bitcoind_rpc = "0.15.0"
+bdk_file_store = "0.16.0"
 lnurl-rs = "0.6.0"
 # this one is a workaround for a bug in lnurl-rs
 bitcoin030 = { package = "bitcoin", version = "0.30.2", features = [ "std" ] }

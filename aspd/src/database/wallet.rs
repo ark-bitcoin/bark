@@ -17,8 +17,7 @@
 use std::sync::Arc;
 
 use anyhow::{ensure, Context};
-use bdk_wallet::chain::Append;
-use bdk_wallet::wallet::ChangeSet;
+use bdk_wallet::{chain::Merge, ChangeSet};
 use rocksdb::{BoundColumnFamily, FlushOptions, IteratorMode};
 use tokio::sync::Mutex;
 
@@ -78,7 +77,7 @@ impl ChangeSetDbState {
 			let cs = ciborium::from_reader::<ChangeSet, _>(&*value).context("corrupt db: changeset value")?;
 
 			if let Some(ref mut r) = ret {
-				r.append(cs);
+				r.merge(cs);
 			} else {
 				ret = Some(cs);
 			}

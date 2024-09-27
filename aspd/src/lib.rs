@@ -177,7 +177,7 @@ pub struct App {
 	db: database::Db,
 	master_xpriv: bip32::Xpriv,
 	master_key: Keypair,
-	wallet: Mutex<bdk_wallet::wallet::Wallet>,
+	wallet: Mutex<bdk_wallet::Wallet>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 
 	rounds: Option<RoundHandle>,
@@ -188,28 +188,29 @@ impl App {
 	fn wallet_from_seed(
 		network: Network,
 		seed: &[u8],
-		state: Option<bdk_wallet::wallet::ChangeSet>,
-	) -> anyhow::Result<(Keypair, bip32::Xpriv, bdk_wallet::wallet::Wallet)> {
-		//NB BDK currently doesn't support single-key wallets and this makes
-		// that we are required to have two different descriptors.
-		// We should fix this once BDK fixes this.
-		let (master_key, xpriv, xpriv2) = {
+		state: Option<bdk_wallet::ChangeSet>,
+	) -> anyhow::Result<(Keypair, bip32::Xpriv, bdk_wallet::Wallet)> {
+		let (master_key, xpriv, desc) = {
 			let seed_xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
 			let path = bip32::DerivationPath::from_str("m/0").unwrap();
 			let xpriv = seed_xpriv.derive_priv(&SECP, &path).unwrap();
-			let path2 = bip32::DerivationPath::from_str("m/1").unwrap();
-			let xpriv2 = seed_xpriv.derive_priv(&SECP, &path2).unwrap();
 			let keypair = Keypair::from_secret_key(&SECP, &xpriv.private_key);
-			(keypair, xpriv, xpriv2)
+			let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
+
+			(keypair, xpriv, desc)
 		};
 
-		let wallet = {
-			let desc = format!("tr({})", xpriv);
-			let desc2 = format!("tr({})", xpriv2);
-			debug!("Opening BDK wallet with descriptor {}", desc);
-			debug!("Using descriptors {} and {}", desc, desc2);
-			bdk_wallet::wallet::Wallet::new_or_load(&desc, &desc2, state, network)
-				.context("failed to create or load bdk wallet")?
+		let wallet = if let Some(changeset) = state {
+			bdk_wallet::Wallet::load()
+				.descriptor(bdk_wallet::KeychainKind::External, Some(desc))
+				.check_network(network)
+				.extract_keys()
+				.load_wallet_no_persist(changeset)?
+				.expect("wallet should be loaded")
+		} else {
+			bdk_wallet::Wallet::create_single(desc)
+				.network(network)
+				.create_wallet_no_persist()?
 		};
 
 		Ok((master_key, xpriv, wallet))
@@ -389,7 +390,7 @@ impl App {
 
 		// mempool
 		let mempool = emitter.mempool()?;
-		wallet.apply_unconfirmed_txs(mempool.iter().map(|(tx, time)| (tx, *time)));
+		wallet.apply_unconfirmed_txs(mempool.into_iter().map(|(tx, time)| (tx, time)));
 		if let Some(change) = wallet.take_staged() {
 			self.db.store_changeset(&change).await?;
 		}

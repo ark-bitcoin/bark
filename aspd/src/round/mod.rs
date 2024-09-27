@@ -492,11 +492,11 @@ pub async fn run_round_coordinator(
 			let mut wallet = app.wallet.lock().await;
 			let mut round_tx_psbt = {
 				let mut b = wallet.build_tx();
-				b.ordering(bdk_wallet::wallet::tx_builder::TxOrdering::Untouched);
+				b.ordering(bdk_wallet::TxOrdering::Untouched);
 				b.nlocktime(LockTime::from_height(tip).expect("actual height"));
 				for utxo in &spendable_utxos {
 					b.add_foreign_utxo_with_sequence(
-						utxo.point, utxo.psbt.clone(), utxo.weight.to_wu() as usize, Sequence::ZERO,
+						utxo.point, utxo.psbt.clone(), utxo.weight, Sequence::ZERO,
 					).expect("bdk rejected foreign utxo");
 				}
 				b.add_recipient(vtxos_spec.cosign_spk(), vtxos_spec.total_required_value());
