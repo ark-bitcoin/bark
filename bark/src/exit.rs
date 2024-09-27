@@ -167,16 +167,27 @@ impl Wallet {
 				let txid = tx.compute_txid();
 				match vtxo.exit_tx_status.get(&txid) {
 					Some(ExitTxStatus::ConfirmedIn(_)) => {}, // nothing to do
-					Some(ExitTxStatus::BroadcastWithCpfp(_tx)) => {
+					Some(ExitTxStatus::BroadcastWithCpfp(cpfp)) => {
+						// NB we don't care if our cpfp tx confirmed or
+						// if it confirmed through other means
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
-							debug!("Exit tx {} is confirmed", txid);
+							debug!("Exit tx {} is confirmed after cpfp", txid);
 							vtxo.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+							continue 'tx;
+						}
+
+						// Broadcast our cpfp again in case it got dropped.
+						info!("Re-broadcasting package with CPFP tx {} to confirm tx {}",
+							cpfp.compute_txid(), txid,
+						);
+						if let Err(e) = self.onchain.broadcast_tx(&cpfp).await {
+							error!("Error re-broadcasting CPFP tx: {}", e);
 						}
 					},
 					None | Some(ExitTxStatus::Pending) => {
 						// First check if it's already confirmed.
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
-							debug!("Exit tx {} is confirmed", txid);
+							debug!("Exit tx {} is confirmed before cpfp", txid);
 							vtxo.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
 							continue 'tx;
 						}
