@@ -26,8 +26,13 @@ steps:
       - git merge prtip || { git merge --abort; git checkout prtip; }
       - git log --oneline | head
 
-  - name: build
+  - name: prechecks
     depends_on: merge-master
+    image: stevenroose/bark-ci-tests@sha256:18ba577ae92da321346e3985cae13c274c466f5d1477b280051d3316eda53cf5
+    commands:
+      - bash -c contrib/prechecks.sh rust_no_spaces_for_indent
+  - name: build
+    depends_on: prechecks
     image: stevenroose/bark-ci-tests@sha256:18ba577ae92da321346e3985cae13c274c466f5d1477b280051d3316eda53cf5
     commands:
       - git log --oneline | head -n 1
