@@ -191,7 +191,11 @@ impl Wallet {
 	}
 
 	pub fn new_address(&mut self) -> anyhow::Result<Address> {
-		Ok(self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address)
+		let ret = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address;
+		if let Some(change) = self.wallet.take_staged() {
+			self.wallet_db.append_changeset(&change)?;
+		}
+		Ok(ret)
 	}
 
 	fn add_anchors<A>(b: &mut bdk_wallet::TxBuilder<A>, anchors: &[OutPoint])
