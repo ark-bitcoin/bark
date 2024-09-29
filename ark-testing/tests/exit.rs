@@ -28,7 +28,7 @@ async fn progress_exit(
 			};
 		}
 	}
-	panic!("failed to finish unilateral exit");
+	panic!("failed to finish unilateral exit of bark {}", w.name());
 }
 
 #[tokio::test]
