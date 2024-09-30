@@ -10,6 +10,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::VtxoId;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
@@ -165,7 +166,17 @@ enum Command {
 		amount: Amount,
 	},
 	#[command()]
-	OffboardAll,
+	Offboard {
+		/// Optional address to which offboard the vtxos. If no address is provided, it will be taken from onchain wallet
+		#[arg(long)]
+		address: Option<String>,
+		/// Optional selection of VTXOs to offboard. Either this or --all should be provided
+		#[arg(long)]
+		vtxos: Option<Vec<String>>,
+		/// Whether or not all VTXOs should be offboarded. Either this or --vtxos should be provided
+		#[arg(long)]
+		all: bool,
+	},
 	/// Perform a unilateral exit from the Ark.
 	#[command()]
 	Exit {
@@ -399,7 +410,36 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				bail!("Invalid destination");
 			}
 		},
-		Command::OffboardAll => w.offboard_all().await?,
+		Command::Offboard { address, vtxos , all} => {
+			let address = address
+			.map(|address| {
+				let address = Address::from_str(&address)?
+					.require_network(net)
+					.with_context(|| {
+						format!("address is not valid for configured network {}", net)
+					})?;
+
+				debug!("Sending to on-chain address {}", address);
+
+				Ok::<Address, anyhow::Error>(address)
+			})
+			.transpose()?;
+
+			if let Some(vtxos) = vtxos {
+				let vtxos = vtxos
+					.into_iter()
+					.map(|vtxo| {
+						VtxoId::from_str(&vtxo).with_context(|| format!("invalid vtxoid: {}", vtxo))
+					})
+					.collect::<anyhow::Result<_>>()?;
+
+				w.offboard_vtxos(vtxos, address).await?;
+			} else if all {
+				w.offboard_all(address).await?;
+			} else {	
+				bail!("Either --vtxos or --all argument must be provided to offboard");
+			}
+		},
 		Command::Exit { only_progress, wait } => {
 			if !only_progress {
 				w.start_exit_for_entire_wallet().await

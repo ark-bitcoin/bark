@@ -3,9 +3,10 @@ extern crate log;
 
 use std::time::Duration;
 
+use bark_json::cli::VtxoInfo;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 
-use ark_testing::{TestContext, AspdConfig};
+use ark_testing::{AspdConfig, Bark, TestContext};
 
 #[tokio::test]
 async fn bark_version() {
@@ -177,3 +178,96 @@ async fn refresh() {
 	assert_eq!(1, bark2.vtxos().await.len());
 }
 
+#[tokio::test]
+async fn offboard_all() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/offboard-all").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.generate(106).await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Create a few clients
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+
+	bitcoind
+		.fund_bark(&bark1, Amount::from_sat(1_000_000))
+		.await;
+	bark1.onboard(Amount::from_sat(800_000)).await;
+
+	bitcoind
+		.fund_bark(&bark2, Amount::from_sat(1_000_000))
+		.await;
+
+	// We want bark2 to have an onboard, round and oor vtxo
+	let pk2 = bark2.vtxo_pubkey().await;
+	bark2.onboard(Amount::from_sat(20_000)).await;
+	bark1.send_round(&pk2, Amount::from_sat(20_000)).await;
+	bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
+
+	let address = bitcoind.get_new_address();
+
+	assert_eq!(3, bark2.vtxos().await.len());
+	bark2.offboard_all(address.clone()).await;
+
+	// We check that all vtxos have been offboarded
+	assert_eq!(0, bark2.vtxos().await.len());
+	// We check that provided address received the coins
+	bitcoind.generate(1).await;
+	let balance = bitcoind.get_received_by_address(&address);
+	assert_eq!(balance, Amount::from_sat(59100));
+}
+
+/// Util to get deterministically sorted VTXOs. Only works if VTXO amounts are strictly different
+async fn get_sorted_vtxos(bark: &Bark) -> Vec<VtxoInfo> {
+	let mut vtxos = bark.vtxos().await;
+	vtxos.sort_by(|a, b| a.amount.cmp(&b.amount));
+	vtxos
+}
+
+#[tokio::test]
+async fn offboard_vtxos() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/offboard-vtxos").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.generate(106).await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Fund a client
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+
+	bitcoind
+		.fund_bark(&bark1, Amount::from_sat(1_000_000))
+		.await;
+	bark1.onboard(Amount::from_sat(200_000)).await;
+	bark1.onboard(Amount::from_sat(300_000)).await;
+	bark1.onboard(Amount::from_sat(400_000)).await;
+
+	let (first_vtxo, second_vtxo, third_vtxo) = {
+		let vtxos = get_sorted_vtxos(&bark1).await;
+		(vtxos[0].id, vtxos[1].id, vtxos[2].id)
+	};
+
+	let address = bitcoind.get_new_address();
+
+	assert_eq!(3, bark1.vtxos().await.len());
+	bark1.offboard_vtxo(second_vtxo, address.clone()).await;
+
+	// We check that only selected vtxo has been touched
+	let new_vtxos = get_sorted_vtxos(&bark1)
+		.await
+		.into_iter()
+		.map(|vtxo| vtxo.id)
+		.collect::<Vec<_>>();
+	assert_eq!(vec![first_vtxo, third_vtxo], new_vtxos);
+	// We check that provided address received the coins
+	bitcoind.generate(1).await;
+	let balance = bitcoind.get_received_by_address(&address);
+	assert_eq!(balance, Amount::from_sat(299100));
+}
