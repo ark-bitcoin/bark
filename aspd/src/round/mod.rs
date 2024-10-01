@@ -740,6 +740,7 @@ pub async fn run_round_coordinator(
 			let finalized = wallet.sign(&mut round_tx_psbt, opts)?;
 			assert!(finalized);
 			let round_tx = round_tx_psbt.extract_tx()?;
+			wallet.insert_tx(round_tx.clone());
 			if let Some(change) = wallet.take_staged() {
 				app.db.store_changeset(&change).await?;
 			}
@@ -749,7 +750,8 @@ pub async fn run_round_coordinator(
 			debug!("Broadcasting round tx {}", round_tx.compute_txid());
 			let bc = app.bitcoind.send_raw_transaction(&round_tx);
 			if let Err(e) = bc {
-				warn!("Couldn't broadcast round tx: {}", e);
+				//TODO(stevenroose) anything better to do here?
+				error!("Couldn't broadcast round tx: {}", e);
 			}
 
 			// Send out the finished round to users.
