@@ -3,20 +3,31 @@
 
 	inputs = {
 		nixpkgs.url = "nixpkgs/nixos-24.05";
-		flake-utils.url = "github:numtide/flake-utils";
+		flake-utils = {
+			url = "github:numtide/flake-utils";
+			inputs.nixpkgs.follows = "nixpkgs";
+		};
+		rust-overlay = {
+			url = "github:oxalica/rust-overlay";
+			inputs.nixpkgs.follows = "nixpkgs";
+		};
 	};
 
-	outputs = { self, nixpkgs, flake-utils }:
+	outputs = { self, nixpkgs, flake-utils, rust-overlay }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
+				rustVersion = "1.77.1";
+				protobuf = pkgs.protobuf3_23;
+
 				lib = nixpkgs.lib;
-				pkgs = nixpkgs.legacyPackages.${system};
+				overlays = [ rust-overlay.overlays.default ];
+				pkgs = import nixpkgs {
+					inherit system overlays;
+				};
 
 				target = pkgs.stdenv.buildPlatform.config;
 				target_underscores = lib.strings.replaceStrings [ "-" ] [ "_" ] target;
 				target_underscores_upper = lib.strings.toUpper target_underscores;
-
-				protobuf = pkgs.protobuf3_23;
 
 				# This is a bunch of stuff that is somehow necessary to build rocksdb.
 				targetLlvmConfigWrapper = { binClangPkg, libClangPkg }: pkgs.writeShellScriptBin "llvm-config" ''
@@ -40,6 +51,9 @@
 				devShells.default = pkgs.mkShell {
 					nativeBuildInput = [ ];
 					buildInputs = [ clang ] ++ (with pkgs; [
+						(pkgs.rust-bin.stable.${rustVersion}.default.override {
+							extensions = [ "rust-src" "rust-analyzer" ];
+						})
 						pkg-config
 						openssl
 					]);
