@@ -400,8 +400,7 @@ impl App {
 		// so this ensures we still broadcast them afterwards
 		for tx in wallet.transactions() {
 			if !tx.chain_position.is_confirmed() {
-				let bc = self.bitcoind.send_raw_transaction(&*tx.tx_node.tx);
-				if let Err(e) = bc {
+				if let Err(e) = self.bitcoind.send_raw_transaction(&*tx.tx_node.tx) {
 					warn!("Error broadcasting pending tx: {}", e);
 				}
 			}
