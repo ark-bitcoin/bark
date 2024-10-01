@@ -3,9 +3,11 @@ mod chain;
 pub use self::chain::ChainSource;
 
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::util::TransactionExt;
+use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::{SignOptions, TxOrdering};
 use bdk_file_store::Store;
 use bdk_esplora::EsploraAsyncExt;
@@ -64,6 +66,15 @@ impl Wallet {
 		self.chain_source.tip().await
 	}
 
+	/// Commit the tx in our database.
+	pub fn commit_tx(&mut self, tx: Transaction) -> anyhow::Result<()> {
+		self.wallet.insert_tx(tx);
+		if let Some(change) = self.wallet.take_staged() {
+			self.wallet_db.append_changeset(&change)?;
+		}
+		Ok(())
+	}
+
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
 		self.chain_source.broadcast_tx(tx).await
 	}
@@ -79,6 +90,7 @@ impl Wallet {
 
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
+		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		let prev_tip = self.wallet.latest_checkpoint();
 		match self.chain_source {
@@ -116,6 +128,18 @@ impl Wallet {
 		}
 
 		let balance = self.wallet.balance();
+
+		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
+		for tx in self.wallet.transactions() {
+			if let ChainPosition::Unconfirmed(last_seen) = tx.chain_position {
+				if last_seen < now {
+					if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
+						warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
+					}
+				}
+			}
+		}
+
 		Ok(balance.total())
 	}
 
@@ -161,7 +185,9 @@ impl Wallet {
 		let psbt = self.prepare_tx(dest, amount)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;
-		Ok(tx.compute_txid())
+		let txid = tx.compute_txid();
+		self.commit_tx(tx)?;
+		Ok(txid)
 	}
 
 	pub fn new_address(&mut self) -> anyhow::Result<Address> {
@@ -259,6 +285,7 @@ impl Wallet {
 		b.fee_absolute(extra_fee_needed);
 		let psbt = b.finish().expect("failed to craft anchor spend tx");
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
+		self.commit_tx(tx.clone()).context("failed to commit tx")?;
 
 		//TODO(stevenroose) at some point use the package relay here to relay entire package
 		Ok(tx)
