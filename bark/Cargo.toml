@@ -40,6 +40,7 @@ lightning-invoice.workspace = true
 lnurl-rs.workspace = true
 bitcoin030.workspace = true
 prost.workspace = true
+rusqlite.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
