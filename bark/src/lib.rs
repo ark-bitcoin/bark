@@ -4,6 +4,7 @@
 #[macro_use] extern crate serde;
 extern crate lnurl as lnurllib;
 
+mod db;
 mod database;
 mod exit;
 pub use exit::ExitStatus;
