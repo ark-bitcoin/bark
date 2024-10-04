@@ -30,21 +30,32 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Command {
+	/// Create and configure asp server.
 	#[command()]
 	Create(CreateOpts),
+
+	/// Set and update asp config
 	#[command()]
 	SetConfig(ConfigOpts),
+
+	/// Start asp server
 	#[command()]
 	Start,
+
+	/// Drain funds of asp
 	#[command()]
 	Drain {
 		/// the address to send all the wallet funds to
 		address: Address<bitcoin::address::NetworkUnchecked>,
 	},
+
+	/// Retrieve 12 word seed phrase
 	#[command()]
 	GetMnemonic,
 	#[command()]
 	DropOorConflicts,
+
+	/// Run RPC commands
 	#[command()]
 	Rpc {
 		#[arg(long, default_value = DEFAULT_ADMIN_RPC_ADDR)]
@@ -56,10 +67,13 @@ enum Command {
 
 #[derive(clap::Subcommand)]
 enum RpcCommand {
+	/// Get asp balance
 	#[command()]
 	Balance,
+	/// Get asp address
 	#[command()]
 	GetAddress,
+	/// Start a new asp round
 	#[command()]
 	TriggerRound,
 	/// Stop aspd.
