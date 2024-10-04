@@ -126,8 +126,9 @@ impl Db {
 		Ok(())
 	}
 
-	pub fn store_spent_vtxo(&self, id: VtxoId, height: u32) -> anyhow::Result<()> {
-		self.db.open_tree(SPENT_VTXO_TREE)?.insert(id, height.to_le_bytes().to_vec())?;
+	pub fn mark_vtxo_as_spent(&self, id: VtxoId) -> anyhow::Result<()> {
+		self.remove_vtxo(id)?;
+		self.db.open_tree(SPENT_VTXO_TREE)?.insert(id, [].to_ivec())?;
 		Ok(())
 	}
 
