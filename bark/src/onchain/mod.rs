@@ -66,15 +66,6 @@ impl Wallet {
 		self.chain_source.tip().await
 	}
 
-	/// Commit the tx in our database.
-	pub fn commit_tx(&mut self, tx: Transaction) -> anyhow::Result<()> {
-		self.wallet.insert_tx(tx);
-		if let Some(change) = self.wallet.take_staged() {
-			self.wallet_db.append_changeset(&change)?;
-		}
-		Ok(())
-	}
-
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
 		self.chain_source.broadcast_tx(tx).await
 	}
@@ -179,19 +170,20 @@ impl Wallet {
 		};
 		let finalized = self.wallet.sign(&mut psbt, opts).context("signing error")?;
 		assert!(finalized);
+		let tx = psbt.extract_tx()?;
+		let unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+		self.wallet.apply_unconfirmed_txs([(tx.clone(), unix)]);
 		if let Some(change) = self.wallet.take_staged() {
 			self.wallet_db.append_changeset(&change)?;
 		}
-		Ok(psbt.extract_tx()?)
+		Ok(tx)
 	}
 
 	pub async fn send_money(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
 		let psbt = self.prepare_tx(dest, amount)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;
-		let txid = tx.compute_txid();
-		self.commit_tx(tx)?;
-		Ok(txid)
+		Ok(tx.compute_txid())
 	}
 
 	pub fn new_address(&mut self) -> anyhow::Result<Address> {
@@ -293,7 +285,6 @@ impl Wallet {
 		b.fee_absolute(extra_fee_needed);
 		let psbt = b.finish().expect("failed to craft anchor spend tx");
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
-		self.commit_tx(tx.clone()).context("failed to commit tx")?;
 
 		//TODO(stevenroose) at some point use the package relay here to relay entire package
 		Ok(tx)
