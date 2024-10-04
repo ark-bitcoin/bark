@@ -109,7 +109,109 @@ impl Db {
 	pub fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
 		let conn = self.conn.read().unwrap();
 		let state : Option<VtxoState> = query::get_vtxo_state(&conn, id)?;
-		let result = state.map(|s| s == VtxoState::Ready).unwrap_or(false);
+		let result = state.map(|s| s == VtxoState::Spent).unwrap_or(false);
 		Ok(result)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use ark::{BaseVtxo, VtxoSpec};
+
+	#[test]
+	fn test_add_and_retreive_vtxos() {
+		// We can use stupid data here.
+		// If the vtxo/signatures are invalid the database does't care
+		// It is the job of the application to worry about this
+		let pk = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
+		let point_1 = "0000000000000000000000000000000000000000000000000000000000000000:1".parse().unwrap();
+		let point_2 = "0000000000000000000000000000000000000000000000000000000000000000:2".parse().unwrap();
+		let point_3 = "0000000000000000000000000000000000000000000000000000000000000000:3".parse().unwrap();
+		let sig = "cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd59320b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea".parse().unwrap();
+
+		let vtxo_1 = Vtxo::Onboard {
+			reveal_tx_signature: sig,
+			base: BaseVtxo {
+				utxo: point_1,
+				spec: VtxoSpec {
+					user_pubkey: pk,
+					asp_pubkey: pk,
+					expiry_height: 1001,
+					exit_delta: 40,
+					amount: Amount::from_sat(500)
+				},
+			},
+		};
+
+		let vtxo_2 = Vtxo::Onboard {
+			reveal_tx_signature: sig,
+			base: BaseVtxo {
+				utxo: point_2,
+				spec: VtxoSpec {
+					user_pubkey: pk,
+					asp_pubkey: pk,
+					expiry_height: 1002,
+					exit_delta: 40,
+					amount: Amount::from_sat(500)
+				},
+			},
+		};
+
+		let vtxo_3 = Vtxo::Onboard {
+			reveal_tx_signature: sig,
+			base: BaseVtxo {
+				utxo: point_3,
+				spec: VtxoSpec {
+					user_pubkey: pk,
+					asp_pubkey: pk,
+					expiry_height: 1003,
+					exit_delta: 40,
+					amount: Amount::from_sat(500)
+				},
+			},
+		};
+
+
+		let db = Db::open(Path::new(":memory:")).unwrap();
+		db.store_vtxo(&vtxo_1).unwrap();
+		db.store_vtxo(&vtxo_2).unwrap();
+
+		// Check that vtxo-1 can be retrieved from the database
+		let vtxo_1_db = db.get_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
+		assert_eq!(vtxo_1_db, vtxo_1);
+
+		// Verify that vtxo 3 is not in the database
+		assert!(db.get_vtxo(vtxo_3.id()).expect("No error").is_none());
+
+		// Verify that we have two entries in the database
+		let vtxos = db.get_all_vtxos().unwrap();
+		assert_eq!(vtxos.len(), 2);
+		assert!(vtxos.contains(&vtxo_1));
+		assert!(vtxos.contains(&vtxo_2));
+		assert!(! vtxos.contains(&vtxo_3));
+
+		// Add the thrid entry to the database
+		db.store_vtxo(&vtxo_3).unwrap();
+
+		// Get expiring vtxo's
+		// Matches exactly the first vtxo
+		let vs = db.get_expiring_vtxos(Amount::from_sat(500)).unwrap();
+		assert_eq!(vs, [vtxo_1.clone()]);
+
+		// Overshoots the first vtxo by one sat
+		let vs = db.get_expiring_vtxos(Amount::from_sat(501)).unwrap();
+		assert_eq!(vs, [vtxo_1.clone(), vtxo_2.clone()]);
+
+		// Verify that we can mark a vtxo as spent
+		db.mark_vtxo_as_spent(vtxo_1.id()).unwrap();
+		assert!(db.has_spent_vtxo(vtxo_1.id()).unwrap());
+		assert!(! db.has_spent_vtxo(vtxo_2.id()).unwrap());
+		assert!(! db.has_spent_vtxo(vtxo_3.id()).unwrap());
+
+		// The first vtxo has been spent
+		// It shouldn't be used for coin selection
+		let vs = db.get_expiring_vtxos(Amount::from_sat(501)).unwrap();
+		assert_eq!(vs, [vtxo_2.clone(), vtxo_3.clone()]);
 	}
 }
