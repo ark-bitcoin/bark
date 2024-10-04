@@ -104,8 +104,6 @@ impl Wallet {
 		if let Err(e) = self.sync_ark().await {
 			warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
 		}
-		let current_height = self.onchain.tip().await?;
-
 		let vtxos = self.db.get_all_vtxos()?;
 		let ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 
@@ -120,8 +118,7 @@ impl Wallet {
 
 		self.db.store_exit(&exit)?;
 		for id in ids {
-			self.db.store_spent_vtxo(id, current_height).context("failed to mark vtxo as spent")?;
-			self.db.remove_vtxo(id).context("failed to drop exited vtxo")?;
+			self.db.mark_vtxo_as_spent(id).context("Failed to mark vtxo as spent")?;
 		}
 
 		Ok(())

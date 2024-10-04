@@ -554,7 +554,6 @@ impl Wallet {
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
-		let current_height = self.onchain.tip().await?;
 		let fr = self.onchain.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
@@ -665,9 +664,7 @@ impl Wallet {
 		}
 
 		for v in input_vtxos {
-			self.db.store_spent_vtxo(v.id(), current_height)
-				.context("failed to store forfeited vtxo")?;
-			self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
+			self.db.mark_vtxo_as_spent(v.id()).context("Failed to mark vtxo as spent")?;
 		}
 
 		Ok(user_vtxo.id())
@@ -685,7 +682,6 @@ impl Wallet {
 		}
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
 
-		let current_height = self.onchain.tip().await?;
 		let fr = self.onchain.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
@@ -786,9 +782,8 @@ impl Wallet {
 
 		// Mark the used vtxo's as spent
 		for v in input_vtxos {
-			self.db.store_spent_vtxo(v.id(), current_height)
-				.context("failed to store forfeited vtxo")?;
-			self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
+			self.db.mark_vtxo_as_spent(v.id())
+				.context("Failed to mark vtxo as spent")?;
 		}
 
 		info!("Bolt11 payment succeeded");
@@ -905,8 +900,6 @@ impl Wallet {
 			(Vec<Vtxo>, Vec<VtxoRequest>, Vec<OffboardRequest>)
 		>,
 	) -> anyhow::Result<()> {
-		let current_height = self.onchain.tip().await?;
-
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
@@ -1200,9 +1193,8 @@ impl Wallet {
 
 			// And remove the input vtxos.
 			for v in input_vtxos {
-				self.db.store_spent_vtxo(v.id(), current_height)
-					.context("failed to store forfeited vtxo")?;
-				self.db.remove_vtxo(v.id()).context("failed to drop input vtxo")?;
+				self.db.mark_vtxo_as_spent(v.id())
+					.context("Failed to mark vtxo as spent")?;
 			}
 
 			info!("Round finished");
