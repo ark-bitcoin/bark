@@ -10,6 +10,7 @@ pub use exit::ExitStatus;
 mod lnurl;
 mod onchain;
 mod psbtext;
+mod vtxo_state;
 
 
 use std::time::Duration;
