@@ -99,6 +99,7 @@ impl LightningDHelper {
 		writeln!(file, "bitcoin-datadir={}", self.config.bitcoin_dir.to_string_lossy()).unwrap();
 		writeln!(file, "bitcoin-rpcport={}", self.config.bitcoin_rpcport).unwrap();
 		if let Ok(dir) = env::var(LIGHTNINGD_PLUGINS) {
+			trace!("Adding plugin-dir to lightningd: {}", dir);
 			writeln!(file, "plugin-dir={}", dir).unwrap();
 		}
 		writeln!(file, "alias={}", self.name).unwrap();

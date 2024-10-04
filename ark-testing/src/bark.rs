@@ -234,6 +234,6 @@ impl Bark {
 	pub async fn run<I,S>(&self, args: I) -> String
 		where I: IntoIterator<Item = S>, S : AsRef<str>
 	{
-		self.try_run(args).await.unwrap()
+		self.try_run(args).await.expect("command failed")
 	}
 }
