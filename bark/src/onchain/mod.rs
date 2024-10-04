@@ -229,8 +229,6 @@ impl Wallet {
 			tx.fee_anchor().with_context(|| format!("tx {} has no fee anchor", tx.compute_txid()))
 		}).collect::<Result<Vec<_>, _>>()?;
 
-		self.sync().await.context("sync error")?;
-
 		// Since BDK doesn't support adding extra weight for fees, we have to
 		// first build the tx regularly, and then build it again.
 		// Since we have to guarantee that we have enough money in the inputs,
@@ -292,7 +290,6 @@ impl Wallet {
 
 	pub async fn create_exit_claim_tx(&mut self, inputs: &[exit::ClaimInput]) -> anyhow::Result<Psbt> {
 		assert!(!inputs.is_empty());
-		self.sync().await.context("sync error")?;
 
 		let urgent_fee_rate = self.urgent_feerate();
 

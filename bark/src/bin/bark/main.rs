@@ -357,9 +357,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				info!("Refreshing all VTXOs...");
 			}
+			w.sync_ark().await.context("sync error")?;
 			w.refresh_vtxos(threshold).await?;
 		},
-		Command::Onboard { amount } => w.onboard(amount).await?,
+		Command::Onboard { amount } => {
+			w.sync_onchain().await.context("sync error")?;
+			w.onboard(amount).await?;
+		}
 		Command::Send { destination, amount, comment } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
@@ -457,6 +461,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			let mut wallet = Some(w);
 			loop {
+				if let Err(e) = wallet.as_mut().unwrap().sync_onchain().await {
+					warn!("Failed to perform on-chain sync before progressing exit: {}", e);
+				}
+
 				let res = wallet.as_mut().unwrap().progress_exit().await
 					.context("error making progress on exit process")?;
 				if cli.json {

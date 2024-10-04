@@ -100,7 +100,6 @@ pub enum ExitStatus {
 impl Wallet {
 	/// Add all vtxos in the current wallet to the exit process.
 	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
-		self.onchain.sync().await.context("onchain sync error")?;
 		if let Err(e) = self.sync_ark().await {
 			warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
 		}
@@ -132,7 +131,6 @@ impl Wallet {
 
 	/// Progress a unilateral exit progress.
 	pub async fn progress_exit(&mut self) -> anyhow::Result<ExitStatus> {
-		self.onchain.sync().await.context("onchain sync error")?;
 		let mut exit = self.db.fetch_exit()?.unwrap_or_default();
 		if exit.is_empty() {
 			return Ok(ExitStatus::Done);
