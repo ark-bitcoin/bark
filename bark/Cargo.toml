@@ -18,7 +18,6 @@ path = "src/bin/bark/main.rs"
 ark-lib = { path = "../ark-lib" }
 bark-json = { path = "../bark-json" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
-sled-utils = { path = "../sled-utils" }
 
 anyhow.workspace = true
 lazy_static.workspace = true
@@ -44,6 +43,5 @@ rusqlite.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
-sled.workspace = true
 
 home = "0.5.9"
