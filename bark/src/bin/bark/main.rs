@@ -436,7 +436,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				w.offboard_vtxos(vtxos, address).await?;
 			} else if all {
 				w.offboard_all(address).await?;
-			} else {	
+			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			}
 		},
@@ -488,29 +488,25 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				if res == bark::ExitStatus::Done {
+				if !wait || res == bark::ExitStatus::Done {
 					break;
 				}
 
-				if wait {
-					info!("Sleeping for a minute, then will continue...");
+				info!("Sleeping for a minute, then will continue...");
 
-					drop(wallet.take());
-					tokio::time::sleep(Duration::from_secs(60)).await;
-					'w: loop {
-						match Wallet::open(&datadir).await {
-							Ok(w) => {
-								wallet = Some(w);
-								break 'w;
-							},
-							Err(e) => {
-								debug!("Error re-opening wallet, waiting a little... ({})", e);
-								tokio::time::sleep(Duration::from_secs(2)).await;
-							},
-						}
+				drop(wallet.take());
+				tokio::time::sleep(Duration::from_secs(60)).await;
+				'w: loop {
+					match Wallet::open(&datadir).await {
+						Ok(w) => {
+							wallet = Some(w);
+							break 'w;
+						},
+						Err(e) => {
+							debug!("Error re-opening wallet, waiting a little... ({})", e);
+							tokio::time::sleep(Duration::from_secs(2)).await;
+						},
 					}
-				} else {
-					break;
 				}
 			}
 		},

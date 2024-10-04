@@ -144,9 +144,9 @@ impl Wallet {
 		for vtxo in exit.vtxos.iter_mut() {
 			'tx: for tx in vtxo.exit_txs() {
 				let txid = tx.compute_txid();
-				match exit.exit_tx_status.get(&txid) {
-					Some(ExitTxStatus::ConfirmedIn(_)) => {}, // nothing to do
-					Some(ExitTxStatus::BroadcastWithCpfp(cpfp)) => {
+				match exit.exit_tx_status.entry(txid).or_default() {
+					ExitTxStatus::ConfirmedIn(_) => {}, // nothing to do
+					ExitTxStatus::BroadcastWithCpfp(cpfp) => {
 						// NB we don't care if our cpfp tx confirmed or
 						// if it confirmed through other means
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
@@ -159,11 +159,15 @@ impl Wallet {
 						info!("Re-broadcasting package with CPFP tx {} to confirm tx {}",
 							cpfp.compute_txid(), txid,
 						);
+						if let Err(e) = self.onchain.broadcast_tx(&tx).await {
+							warn!("Error broadcasting an exit tx, \
+								hopefully means it already got broadcast before: {}", e);
+						}
 						if let Err(e) = self.onchain.broadcast_tx(&cpfp).await {
 							error!("Error re-broadcasting CPFP tx: {}", e);
 						}
 					},
-					None | Some(ExitTxStatus::Pending) => {
+					ExitTxStatus::Pending => {
 						// First check if it's already confirmed.
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
 							debug!("Exit tx {} is confirmed before cpfp", txid);
@@ -217,45 +221,45 @@ impl Wallet {
 				break;
 			}
 		}
-		let ret = if all_confirmed {
-			let current_height = self.onchain.tip().await?;
-			if highest_height <= current_height {
-				let inputs = exit.vtxos.iter().map(ClaimInput::from_vtxo).collect::<Vec<_>>();
 
-				let total_amount = inputs.iter().map(|i| i.spec.amount).sum::<Amount>();
-				debug!("Claiming the following exits with total value of {}: {:?}",
-					total_amount, inputs.iter().map(|i| i.utxo.to_string()).collect::<Vec<_>>(),
-				);
+		if !all_confirmed {
+			return Ok(ExitStatus::NeedMoreTxs);
+		}
 
-				let mut psbt = self.onchain.create_exit_claim_tx(&inputs).await?;
+		let current_height = self.onchain.tip().await?;
+		if current_height < highest_height {
+			return Ok(ExitStatus::WaitingForHeight(highest_height));
+		}
 
-				// Sign all the claim inputs.
-				let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
-				let prevouts = psbt.inputs.iter()
-					.map(|i| i.witness_utxo.clone().unwrap())
-					.collect::<Vec<_>>();
-				let prevouts = sighash::Prevouts::All(&prevouts);
-				let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
-				for (i, input) in psbt.inputs.iter_mut().enumerate() {
-					input.try_sign_claim_input(&SECP, &mut shc, &prevouts, i, &vtxo_key);
-				}
+		let inputs = exit.vtxos.iter().map(ClaimInput::from_vtxo).collect::<Vec<_>>();
 
-				// Then sign the wallet's funding inputs.
-				let tx = self.onchain.finish_tx(psbt).context("finishing claim psbt")?;
-				if let Err(e) = self.onchain.broadcast_tx(&tx).await {
-					bail!("Error broadcasting claim tx: {}", e);
-				}
+		let total_amount = inputs.iter().map(|i| i.spec.amount).sum::<Amount>();
+		debug!("Claiming the following exits with total value of {}: {:?}",
+			total_amount, inputs.iter().map(|i| i.utxo.to_string()).collect::<Vec<_>>(),
+		);
 
-				// Remove the exit record from the db.
-				self.db.store_exit(&Exit::default())?;
+		let mut psbt = self.onchain.create_exit_claim_tx(&inputs).await?;
 
-				ExitStatus::Done
-			} else {
-				ExitStatus::WaitingForHeight(highest_height)
-			}
-		} else {
-			ExitStatus::NeedMoreTxs
-		};
-		Ok(ret)
+		// Sign all the claim inputs.
+		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+		let prevouts = psbt.inputs.iter()
+			.map(|i| i.witness_utxo.clone().unwrap())
+			.collect::<Vec<_>>();
+		let prevouts = sighash::Prevouts::All(&prevouts);
+		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
+		for (i, input) in psbt.inputs.iter_mut().enumerate() {
+			input.try_sign_claim_input(&SECP, &mut shc, &prevouts, i, &vtxo_key);
+		}
+
+		// Then sign the wallet's funding inputs.
+		let tx = self.onchain.finish_tx(psbt).context("finishing claim psbt")?;
+		if let Err(e) = self.onchain.broadcast_tx(&tx).await {
+			bail!("Error broadcasting claim tx: {}", e);
+		}
+
+		// Remove the exit record from the db.
+		self.db.store_exit(&Exit::default())?;
+
+		Ok(ExitStatus::Done)
 	}
 }
