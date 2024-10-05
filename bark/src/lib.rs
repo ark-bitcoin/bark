@@ -289,6 +289,10 @@ impl Wallet {
 		self.onchain.balance()
 	}
 
+	pub fn onchain_utxos(&self) -> Vec<OutPoint> {
+		self.onchain.utxos()
+	}
+
 	pub async fn send_onchain(&mut self, addr: Address, amount: Amount) -> anyhow::Result<Txid> {
 		Ok(self.onchain.send_money(addr, amount).await?)
 	}
@@ -486,7 +490,7 @@ impl Wallet {
 
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
-		
+
 		Ok(())
 	}
 
@@ -512,7 +516,7 @@ impl Wallet {
 					_ => bail!("cannot find requested vtxo: {}", vtxoid),
 				})
 				.collect::<anyhow::Result<_>>()?;
-		
+
 		self.offboard(input_vtxos, address).await?;
 
 		Ok(())

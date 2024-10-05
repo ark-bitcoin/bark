@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use bitcoin::address::{Address, NetworkUnchecked};
-use bitcoin::{Amount, Network};
+use bitcoin::{Amount, Network, OutPoint};
 use serde_json;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -94,6 +94,11 @@ impl Bark {
 
 	pub async fn onchain_balance(&self) -> Amount {
 		self.run(["onchain", "balance"]).await.parse().unwrap()
+	}
+
+	pub async fn onchain_utxos(&self) -> Vec<OutPoint> {
+		self.run(["onchain", "utxos"]).await.lines().map(FromStr::from_str)
+			.collect::<Result<_, _>>().unwrap()
 	}
 
 	pub async fn offchain_balance(&self) -> Amount {

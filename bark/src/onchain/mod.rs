@@ -147,6 +147,10 @@ impl Wallet {
 		self.wallet.balance().total()
 	}
 
+	pub fn utxos(&self) -> Vec<OutPoint> {
+		self.wallet.list_unspent().map(|o| o.outpoint).collect()
+	}
+
 	/// Fee rate to use for regular txs like onboards.
 	pub fn regular_feerate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(10).unwrap()

@@ -212,6 +212,9 @@ enum OnchainCommand {
 		destination: Address<address::NetworkUnchecked>,
 		amount: Amount,
 	},
+	/// list our wallet's utxos
+	#[command()]
+	Utxos,
 }
 
 fn init_logging(verbose: bool) {
@@ -289,6 +292,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				})?;
 				w.sync_onchain().await.context("sync error")?;
 				w.send_onchain(addr, amount).await?;
+			},
+			OnchainCommand::Utxos => {
+				w.sync_onchain().await.context("sync error")?;
+				for op in w.onchain_utxos() {
+					println!("{op}");
+				}
 			},
 		},
 		Command::VtxoPubkey => println!("{}", w.vtxo_pubkey()),
