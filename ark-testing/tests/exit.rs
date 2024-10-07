@@ -82,6 +82,7 @@ async fn unilateral_exit() {
 
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark1).await;
+	assert_eq!(2, bark1.onchain_utxos().await.len());
 	assert_eq!(59_977_933, bark1.onchain_balance().await.to_sat());
 
 	bitcoind.generate(1).await;

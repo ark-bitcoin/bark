@@ -66,15 +66,6 @@ impl Wallet {
 		self.chain_source.tip().await
 	}
 
-	/// Commit the tx in our database.
-	pub fn commit_tx(&mut self, tx: Transaction) -> anyhow::Result<()> {
-		self.wallet.insert_tx(tx);
-		if let Some(change) = self.wallet.take_staged() {
-			self.wallet_db.append_changeset(&change)?;
-		}
-		Ok(())
-	}
-
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
 		self.chain_source.broadcast_tx(tx).await
 	}
@@ -147,6 +138,10 @@ impl Wallet {
 		self.wallet.balance().total()
 	}
 
+	pub fn utxos(&self) -> Vec<OutPoint> {
+		self.wallet.list_unspent().map(|o| o.outpoint).collect()
+	}
+
 	/// Fee rate to use for regular txs like onboards.
 	pub fn regular_feerate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(10).unwrap()
@@ -175,23 +170,28 @@ impl Wallet {
 		};
 		let finalized = self.wallet.sign(&mut psbt, opts).context("signing error")?;
 		assert!(finalized);
+		let tx = psbt.extract_tx()?;
+		let unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+		self.wallet.apply_unconfirmed_txs([(tx.clone(), unix)]);
 		if let Some(change) = self.wallet.take_staged() {
 			self.wallet_db.append_changeset(&change)?;
 		}
-		Ok(psbt.extract_tx()?)
+		Ok(tx)
 	}
 
 	pub async fn send_money(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
 		let psbt = self.prepare_tx(dest, amount)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;
-		let txid = tx.compute_txid();
-		self.commit_tx(tx)?;
-		Ok(txid)
+		Ok(tx.compute_txid())
 	}
 
 	pub fn new_address(&mut self) -> anyhow::Result<Address> {
-		Ok(self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address)
+		let ret = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address;
+		if let Some(change) = self.wallet.take_staged() {
+			self.wallet_db.append_changeset(&change)?;
+		}
+		Ok(ret)
 	}
 
 	fn add_anchors<A>(b: &mut bdk_wallet::TxBuilder<A>, anchors: &[OutPoint])
@@ -228,8 +228,6 @@ impl Wallet {
 		let anchors = txs.iter().map(|tx| {
 			tx.fee_anchor().with_context(|| format!("tx {} has no fee anchor", tx.compute_txid()))
 		}).collect::<Result<Vec<_>, _>>()?;
-
-		self.sync().await.context("sync error")?;
 
 		// Since BDK doesn't support adding extra weight for fees, we have to
 		// first build the tx regularly, and then build it again.
@@ -285,7 +283,6 @@ impl Wallet {
 		b.fee_absolute(extra_fee_needed);
 		let psbt = b.finish().expect("failed to craft anchor spend tx");
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
-		self.commit_tx(tx.clone()).context("failed to commit tx")?;
 
 		//TODO(stevenroose) at some point use the package relay here to relay entire package
 		Ok(tx)
@@ -293,7 +290,6 @@ impl Wallet {
 
 	pub async fn create_exit_claim_tx(&mut self, inputs: &[exit::ClaimInput]) -> anyhow::Result<Psbt> {
 		assert!(!inputs.is_empty());
-		self.sync().await.context("sync error")?;
 
 		let urgent_fee_rate = self.urgent_feerate();
 

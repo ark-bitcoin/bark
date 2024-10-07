@@ -212,6 +212,9 @@ enum OnchainCommand {
 		destination: Address<address::NetworkUnchecked>,
 		amount: Amount,
 	},
+	/// list our wallet's utxos
+	#[command()]
+	Utxos,
 }
 
 fn init_logging(verbose: bool) {
@@ -290,6 +293,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				w.sync_onchain().await.context("sync error")?;
 				w.send_onchain(addr, amount).await?;
 			},
+			OnchainCommand::Utxos => {
+				w.sync_onchain().await.context("sync error")?;
+				for op in w.onchain_utxos() {
+					println!("{op}");
+				}
+			},
 		},
 		Command::VtxoPubkey => println!("{}", w.vtxo_pubkey()),
 		Command::Balance => {
@@ -348,9 +357,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				info!("Refreshing all VTXOs...");
 			}
+			w.sync_ark().await.context("sync error")?;
 			w.refresh_vtxos(threshold).await?;
 		},
-		Command::Onboard { amount } => w.onboard(amount).await?,
+		Command::Onboard { amount } => {
+			w.sync_onchain().await.context("sync error")?;
+			w.onboard(amount).await?;
+		}
 		Command::Send { destination, amount, comment } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
@@ -436,7 +449,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				w.offboard_vtxos(vtxos, address).await?;
 			} else if all {
 				w.offboard_all(address).await?;
-			} else {	
+			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			}
 		},
@@ -448,6 +461,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			let mut wallet = Some(w);
 			loop {
+				if let Err(e) = wallet.as_mut().unwrap().sync_onchain().await {
+					warn!("Failed to perform on-chain sync before progressing exit: {}", e);
+				}
+
 				let res = wallet.as_mut().unwrap().progress_exit().await
 					.context("error making progress on exit process")?;
 				if cli.json {
@@ -488,29 +505,25 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				if res == bark::ExitStatus::Done {
+				if !wait || res == bark::ExitStatus::Done {
 					break;
 				}
 
-				if wait {
-					info!("Sleeping for a minute, then will continue...");
+				info!("Sleeping for a minute, then will continue...");
 
-					drop(wallet.take());
-					tokio::time::sleep(Duration::from_secs(60)).await;
-					'w: loop {
-						match Wallet::open(&datadir).await {
-							Ok(w) => {
-								wallet = Some(w);
-								break 'w;
-							},
-							Err(e) => {
-								debug!("Error re-opening wallet, waiting a little... ({})", e);
-								tokio::time::sleep(Duration::from_secs(2)).await;
-							},
-						}
+				drop(wallet.take());
+				tokio::time::sleep(Duration::from_secs(60)).await;
+				'w: loop {
+					match Wallet::open(&datadir).await {
+						Ok(w) => {
+							wallet = Some(w);
+							break 'w;
+						},
+						Err(e) => {
+							debug!("Error re-opening wallet, waiting a little... ({})", e);
+							tokio::time::sleep(Duration::from_secs(2)).await;
+						},
 					}
-				} else {
-					break;
 				}
 			}
 		},

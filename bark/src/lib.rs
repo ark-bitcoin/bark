@@ -289,6 +289,10 @@ impl Wallet {
 		self.onchain.balance()
 	}
 
+	pub fn onchain_utxos(&self) -> Vec<OutPoint> {
+		self.onchain.utxos()
+	}
+
 	pub async fn send_onchain(&mut self, addr: Address, amount: Amount) -> anyhow::Result<Txid> {
 		Ok(self.onchain.send_money(addr, amount).await?)
 	}
@@ -349,7 +353,6 @@ impl Wallet {
 		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), self.config.network).unwrap();
 
 		// We create the onboard tx template, but don't sign it yet.
-		self.onchain.sync().await.context("sync error")?;
 		let onboard_tx = self.onchain.prepare_tx(addr, onboard_amount)?;
 		let utxo = OutPoint::new(onboard_tx.unsigned_tx.compute_txid(), 0);
 
@@ -486,7 +489,7 @@ impl Wallet {
 
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
-		
+
 		Ok(())
 	}
 
@@ -512,7 +515,7 @@ impl Wallet {
 					_ => bail!("cannot find requested vtxo: {}", vtxoid),
 				})
 				.collect::<anyhow::Result<_>>()?;
-		
+
 		self.offboard(input_vtxos, address).await?;
 
 		Ok(())
