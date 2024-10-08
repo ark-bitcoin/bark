@@ -111,6 +111,7 @@ fn validate_forfeit_sigs(
 	Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VtxoParticipant {
 	pub req: VtxoRequest,
 	pub nonces: Vec<MusigPubNonce>,
@@ -752,5 +753,351 @@ pub async fn run_round_coordinator(
 			app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
 			break 'attempt;
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use ark::{fee, BaseVtxo, Vtxo, VtxoRequest, VtxoSpec};
+	use bitcoin::secp256k1::{PublicKey, Secp256k1};
+	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+	use std::collections::HashSet;
+	use std::str::FromStr;
+
+	fn generate_pubkey() -> PublicKey {
+		let secp = Secp256k1::new();
+		let (_secret_key, public_key) = secp.generate_keypair(&mut rand::thread_rng());
+		public_key
+	}
+
+	fn get_asp_pubkey() -> PublicKey {
+		PublicKey::from_str(
+			"02e6642fd69bd211f93f7f1f36ca51a26a5290eb2dd1b0d8279a87bb0d480c8443",
+		).unwrap()
+	}
+
+	fn create_vtxo_spec(amount: u64) -> VtxoSpec {
+		VtxoSpec {
+			user_pubkey: generate_pubkey(),
+			asp_pubkey: get_asp_pubkey(),
+			expiry_height: 100_000,
+			exit_delta: 2016,
+			amount: Amount::from_sat(amount),
+		}
+	}
+
+	fn create_round_vtxo(vtxo_spec: VtxoSpec) -> Vtxo {
+		let point = OutPoint::null();
+		let base_vtxo = BaseVtxo {
+			spec: vtxo_spec,
+			utxo: point,
+		};
+
+		let tx = Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![TxIn {
+				previous_output: OutPoint::null(),
+				sequence: Sequence::MAX,
+				script_sig: ScriptBuf::new(),
+				witness: Witness::new(),
+			}],
+			output: vec![
+				TxOut {
+					script_pubkey: base_vtxo.spec.exit_spk(),
+					value: base_vtxo.spec.amount,
+				},
+				fee::dust_anchor(),
+			],
+		};
+
+		Vtxo::Round {
+			base: base_vtxo,
+			leaf_idx: 0,
+			exit_branch: vec![tx],
+		}
+	}
+
+	fn create_vtxo_request(amount: u64) -> VtxoRequest {
+		VtxoRequest {
+			pubkey: generate_pubkey(),
+			amount: Amount::from_sat(amount),
+			cosign_pk: generate_pubkey(),
+		}
+	}
+
+	fn create_vtxo_participant(amount: u64) -> VtxoParticipant {
+		VtxoParticipant {
+			req: create_vtxo_request(amount),
+			nonces: vec![],
+		}
+	}
+
+	#[test]
+	fn test_register_payment_valid() {
+		const INPUT_AMOUNT: u64 = 400;
+		const OUTPUT_AMOUNT: u64 = 400;
+
+		let vtxo_spec = create_vtxo_spec(INPUT_AMOUNT);
+		let vtxo = create_round_vtxo(vtxo_spec);
+		let inputs = vec![vtxo];
+
+		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
+		let offboards = vec![];
+
+		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let result = collecting_payments.register_payment(
+			inputs,
+			outputs.clone(),
+			offboards,
+		);
+
+		assert!(result.is_ok(), "register_payment failed with valid inputs");
+		assert_eq!(collecting_payments.all_inputs.len(), 1);
+		assert_eq!(collecting_payments.all_outputs.len(), 1);
+		assert_eq!(collecting_payments.all_offboards.len(), 0);
+		assert_eq!(collecting_payments.inputs_per_cosigner.len(), 1);
+		assert_eq!(
+			collecting_payments.inputs_per_cosigner.get(&outputs[0].req.cosign_pk).unwrap().len(),
+			1
+		);
+	}
+
+	#[test]
+	fn test_register_payment_output_exceeds_input() {
+		const INPUT_AMOUNT: u64 = 400;
+		const OUTPUT_AMOUNT: u64 = INPUT_AMOUNT + 100;
+
+		let vtxo_spec = create_vtxo_spec(INPUT_AMOUNT);
+		let vtxo = create_round_vtxo(vtxo_spec);
+		let inputs = vec![vtxo];
+
+		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
+		let offboards = vec![];
+
+		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let result = collecting_payments.register_payment(
+			inputs,
+			outputs,
+			offboards,
+		);
+
+		assert!(
+			result.is_err(),
+			"register_payment should fail when output exceeds input"
+		);
+	}
+
+	#[test]
+	fn test_register_payment_duplicate_inputs() {
+		const INPUT_AMOUNT: u64 = 400;
+		const OUTPUT_AMOUNT: u64 = 300;
+
+		let vtxo_spec = create_vtxo_spec(INPUT_AMOUNT);
+		let vtxo = create_round_vtxo(vtxo_spec);
+		let inputs = vec![vtxo.clone(), vtxo.clone()];
+
+		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
+		let offboards = vec![];
+
+		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let result = collecting_payments.register_payment(
+			inputs,
+			outputs,
+			offboards,
+		);
+
+		assert!(
+			result.is_err(),
+			"register_payment should fail when duplicate inputs are provided"
+		);
+	}
+
+	#[test]
+	fn test_register_payment_exceeds_max_outputs() {
+		const INPUT_AMOUNT: u64 = 400;
+		const OUTPUT_AMOUNT_1: u64 = 100;
+		const OUTPUT_AMOUNT_2: u64 = 300;
+
+		let vtxo_spec = create_vtxo_spec(INPUT_AMOUNT);
+		let vtxo = create_round_vtxo(vtxo_spec);
+		let inputs = vec![vtxo];
+
+		let outputs = vec![
+			create_vtxo_participant(OUTPUT_AMOUNT_1),
+			create_vtxo_participant(OUTPUT_AMOUNT_2),
+		];
+		let offboards = vec![];
+
+		let mut collecting_payments = CollectingPayments::new(1, FeeRate::MIN);
+		let result = collecting_payments.register_payment(
+			inputs,
+			outputs,
+			offboards,
+		);
+
+		assert!(
+			result.is_err(),
+			"register_payment should fail when outputs exceed max_output_vtxos"
+		);
+	}
+
+	#[test]
+	fn test_register_payment_disallowed_input() {
+		const INPUT_AMOUNT: u64 = 400;
+		const OUTPUT_AMOUNT: u64 = 300;
+
+		let vtxo_spec = create_vtxo_spec(INPUT_AMOUNT);
+		let vtxo = create_round_vtxo(vtxo_spec);
+		let inputs = vec![vtxo.clone()];
+
+		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
+		let offboards = vec![];
+
+		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		collecting_payments.allowed_inputs = Some(HashSet::new());
+
+		let result = collecting_payments.register_payment(
+			inputs,
+			outputs,
+			offboards,
+		);
+
+		assert!(
+			result.is_err(),
+			"register_payment should fail when input is not allowed"
+		);
+	}
+
+	#[test]
+	fn test_register_payment_duplicate_cosign_pubkey() {
+		const INPUT_AMOUNT: u64 = 400;
+		const OUTPUT_AMOUNT_1: u64 = 200;
+		const OUTPUT_AMOUNT_2: u64 = 200;
+
+		let vtxo_spec1 = create_vtxo_spec(INPUT_AMOUNT);
+		let vtxo1 = create_round_vtxo(vtxo_spec1);
+		let inputs1 = vec![vtxo1];
+
+		let outputs1 = vec![create_vtxo_participant(OUTPUT_AMOUNT_1)];
+
+		let vtxo_spec2 = create_vtxo_spec(INPUT_AMOUNT);
+		let vtxo2 = create_round_vtxo(vtxo_spec2);
+		let inputs2 = vec![vtxo2];
+
+		let outputs2 = vec![{
+			let mut ret = create_vtxo_participant(OUTPUT_AMOUNT_2);
+			ret.req.cosign_pk = outputs1[0].req.cosign_pk;
+			ret
+		}];
+
+		let offboards = vec![];
+		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+
+		let result1 = collecting_payments.register_payment(
+			inputs1,
+			outputs1,
+			offboards.clone(),
+		);
+		assert!(result1.is_ok(), "First register_payment should succeed");
+
+		let result2 = collecting_payments.register_payment(
+			inputs2,
+			outputs2,
+			offboards,
+		);
+		assert!(result2.is_err());
+		assert!(result2.err().unwrap().to_string().contains("duplicate cosign key"));
+	}
+
+	#[test]
+	fn test_register_multiple_payments() {
+		const INPUT_AMOUNT_1: u64 = 400;
+		const OUTPUT_AMOUNT_1: u64 = 300;
+
+		let vtxo_spec1 = create_vtxo_spec(INPUT_AMOUNT_1);
+		let vtxo1 = create_round_vtxo(vtxo_spec1);
+		let inputs1 = vec![vtxo1];
+
+		let outputs1 = vec![create_vtxo_participant(OUTPUT_AMOUNT_1)];
+
+		let offboards = vec![];
+		let mut collecting_payments = CollectingPayments::new(4, FeeRate::MIN);
+
+		let result1 = collecting_payments.register_payment(
+			inputs1,
+			outputs1.clone(),
+			offboards.clone(),
+		);
+		assert!(result1.is_ok(), "First register_payment should succeed");
+
+		const INPUT_AMOUNT_2: u64 = 400;
+		const OUTPUT_AMOUNT_2: u64 = 300;
+
+		let vtxo_spec2 = create_vtxo_spec(INPUT_AMOUNT_2);
+		let vtxo2 = create_round_vtxo(vtxo_spec2);
+		let inputs2 = vec![vtxo2];
+
+		let outputs2 = vec![create_vtxo_participant(OUTPUT_AMOUNT_2)];
+
+		let result2 = collecting_payments.register_payment(
+			inputs2,
+			outputs2.clone(),
+			offboards,
+		);
+
+		assert!(result2.is_ok(), "Second register_payment should succeed");
+		assert_eq!(collecting_payments.all_inputs.len(), 2);
+		assert_eq!(collecting_payments.all_outputs.len(), 2);
+		assert_eq!(collecting_payments.inputs_per_cosigner.len(), 2);
+		assert!(collecting_payments.inputs_per_cosigner.contains_key(&outputs1[0].req.cosign_pk));
+		assert!(collecting_payments.inputs_per_cosigner.contains_key(&outputs2[0].req.cosign_pk));
+	}
+
+	#[test]
+	fn test_register_payment_proceed_set() {
+		const INPUT_AMOUNT_1: u64 = 400;
+		const OUTPUT_AMOUNT_1: u64 = 200;
+
+		let vtxo_spec1 = create_vtxo_spec(INPUT_AMOUNT_1);
+		let vtxo1 = create_round_vtxo(vtxo_spec1);
+		let inputs1 = vec![vtxo1];
+
+		let outputs1 = vec![create_vtxo_participant(OUTPUT_AMOUNT_1)];
+
+		let offboards = vec![];
+		let mut collecting_payments = CollectingPayments::new(4, FeeRate::MIN);
+
+		let result1 = collecting_payments.register_payment(
+			inputs1,
+			outputs1,
+			offboards.clone(),
+		);
+		assert!(result1.is_ok(), "First register_payment should succeed");
+		assert!(
+			!collecting_payments.proceed,
+			"Proceed should not be set after first registration"
+		);
+
+		const INPUT_AMOUNT_2: u64 = 400;
+		const OUTPUT_AMOUNT_2: u64 = 200;
+
+		let vtxo_spec2 = create_vtxo_spec(INPUT_AMOUNT_2);
+		let vtxo2 = create_round_vtxo(vtxo_spec2);
+		let inputs2 = vec![vtxo2];
+
+		let outputs2 = vec![create_vtxo_participant(OUTPUT_AMOUNT_2)];
+
+		let result2 = collecting_payments.register_payment(
+			inputs2,
+			outputs2,
+			offboards,
+		);
+		assert!(result2.is_ok(), "Second register_payment should succeed");
+		assert!(
+			collecting_payments.proceed,
+			"Proceed should be set after second registration"
+		);
 	}
 }
