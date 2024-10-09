@@ -13,7 +13,7 @@ BITCOIND_COOKIE=$PWD/test/bitcoindatadir/regtest/.cookie
 mkdir -p ${BITCOIN_DATADIR}
 
 # Define useful aliases
-alias bcli="$BITCOIN_CLI -regtest --rpcport=$BITCOIND_RPC_PORT --rpccookiefile=$BITCOIND_COOKIE"
+alias bcli="$BITCOIN_CLI -regtest --rpcport=$BITCOIND_RPC_PORT --rpccookiefile=$BITCOIND_COOKIE -fallbackfee=0.0002"
 alias aspd="cargo run --bin aspd --"
 alias bark="cargo run --bin bark --"
 alias bd="$BITCOIND -regtest -datadir=${BITCOIN_DATADIR} -server -txindex"
