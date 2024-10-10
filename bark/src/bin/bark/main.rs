@@ -306,7 +306,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::VtxoPubkey => println!("{}", w.vtxo_pubkey()),
 		Command::Balance => {
-			w.sync().await.context("sync error")?;
+			if let Err(e) = w.sync().await.context("sync error") {
+				warn!("Failed to sync balance. {}", e)
+			}
+
 			let onchain = w.onchain_balance();
 			let offchain =  w.offchain_balance().await?;
 			let pending_exit = {
@@ -326,7 +329,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 		},
 		Command::Vtxos => {
-			w.sync_ark().await.context("sync error")?;
+			if let Err(e) = w.sync_ark().await.context("sync error") {
+				warn!("Failed to sync with ASP. Some inbound VTXOs might not be shown. {}", e)
+			}
+
 			let res = w.vtxos()?;
 			if cli.json {
 				let json = res.into_iter().map(|v| v.into()).collect::<Vec<json::VtxoInfo>>();
