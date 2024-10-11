@@ -159,7 +159,6 @@ impl Wallet {
 		b.ordering(TxOrdering::Untouched);
 		b.add_recipient(dest.script_pubkey(), amount);
 		b.fee_rate(fee_rate);
-		b.enable_rbf();
 		Ok(b.finish()?)
 	}
 
