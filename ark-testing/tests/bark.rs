@@ -4,7 +4,8 @@ extern crate log;
 use std::time::Duration;
 
 use bark_json::cli::VtxoInfo;
-use bitcoincore_rpc::bitcoin::amount::Amount;
+use bitcoin::{FeeRate, Weight};
+use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
 use ark_testing::{AspdConfig, Bark, TestContext};
 
@@ -48,6 +49,7 @@ async fn bark_create_is_atomic() {
 
 #[tokio::test]
 async fn onboard_bark() {
+	const ONBOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/onboard_bark").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
 	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
@@ -58,11 +60,34 @@ async fn onboard_bark() {
 
 	// Get the bark-address and fund it
 	bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
-	bark.onboard(Amount::from_sat(90_000)).await;
+	bark.onboard(Amount::from_sat(ONBOARD_AMOUNT)).await;
 
-	// TODO: Verify the onboarded balance
-	// The current cli only provides logs in stdout. This is to annoying
-	let _ = bark.run(["balance"]).await;
+	assert_eq!(Amount::from_sat(ONBOARD_AMOUNT), bark.offchain_balance().await);
+}
+
+#[tokio::test]
+async fn onboard_all_bark() {
+	let ctx = TestContext::new("bark/onboard_all_bark").await;
+	let bitcoind = ctx.bitcoind("bitcoind-1").await;
+	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
+	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
+
+	// Generate initial funds
+	bitcoind.generate(101).await;
+
+	// Get the bark-address and fund it
+	let funding_txid = bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
+	bark.onboard_all().await;
+
+	// Check that we emptied our on-chain balance
+	assert_eq!(bark.onchain_balance().await, Amount::ZERO);
+
+	// Check if the onboarding tx's output value is the same as our off-chain balance
+	let sync_client = bitcoind.sync_client();
+	let entry = sync_client.get_mempool_entry(&funding_txid).unwrap();
+	let onboard_txid = entry.spent_by.last().unwrap();
+	let onboard_tx = sync_client.get_raw_transaction(onboard_txid, None).unwrap();
+	assert_eq!(bark.offchain_balance().await, onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus());
 }
 
 #[tokio::test]

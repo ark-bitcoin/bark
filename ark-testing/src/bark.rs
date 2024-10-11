@@ -153,6 +153,11 @@ impl Bark {
 		self.run(["onboard", &amount.to_string()]).await;
 	}
 
+	pub async fn onboard_all(&self) {
+		info!("{}: Onboarding all on-chain funds", self.name);
+		self.run(["onboard", "--all"]).await;
+	}
+
 	pub async fn refresh_all(&self) {
 		self.run(["refresh", "--all"]).await;
 	}
