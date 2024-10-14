@@ -1,4 +1,5 @@
 
+pub extern crate tonic;
 
 mod aspd;
 

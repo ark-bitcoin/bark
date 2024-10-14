@@ -11,19 +11,20 @@ aspd-rpc-client = { path = "../aspd-rpc-client" }
 bark-cln = { path = "../bark-cln"}
 bark-json = { path = "../bark-json"}
 
+bitcoincore-rpc = "0.19.0"
+portpicker = "0.1.1"
+regex = "1.10.5"
+which = "6.0.1"
+
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bitcoin.workspace = true
-bitcoincore-rpc = "0.19.0"
 hex.workspace = true
 log.workspace = true
 fern.workspace = true
 chrono.workspace = true
-portpicker = "0.1.1"
 rand.workspace = true
-regex = "1.10.5"
 tokio.workspace = true
 tonic.workspace = true
-which = "6.0.1"
 futures.workspace = true
