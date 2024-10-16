@@ -19,25 +19,22 @@ mod convert {
 						})
 					},
 					RoundEvent::VtxoProposal {
-						id, vtxos_spec, round_tx, cosigners, cosign_agg_nonces,
+						id, vtxos_spec, unsigned_round_tx, cosign_agg_nonces,
 					} => {
 						rpc::round_event::Event::VtxoProposal(rpc::VtxoProposal {
 							round_id: id,
 							vtxos_spec: vtxos_spec.encode(),
-							round_tx: bitcoin::consensus::serialize(&round_tx),
-							vtxos_signers: cosigners.into_iter()
-								.map(|k| k.serialize().to_vec())
-								.collect(),
+							unsigned_round_tx: bitcoin::consensus::serialize(&unsigned_round_tx),
 							vtxos_agg_nonces: cosign_agg_nonces.into_iter()
 								.map(|n| n.serialize().to_vec())
 								.collect(),
 						})
 					},
-					RoundEvent::RoundProposal { id, vtxos, round_tx, forfeit_nonces } => {
+					RoundEvent::RoundProposal { id, cosign_sigs, forfeit_nonces } => {
 						rpc::round_event::Event::RoundProposal(rpc::RoundProposal {
 							round_id: id,
-							signed_vtxos: vtxos.encode(),
-							round_tx: bitcoin::consensus::serialize(&round_tx),
+							vtxo_cosign_signatures: cosign_sigs.into_iter()
+								.map(|s| s.serialize().to_vec()).collect(),
 							forfeit_nonces: forfeit_nonces.into_iter().map(|(id, nonces)| {
 								rpc::ForfeitNonces {
 									input_vtxo_id: id.bytes().to_vec(),
@@ -48,11 +45,10 @@ mod convert {
 							}).collect(),
 						})
 					},
-					RoundEvent::Finished { id, vtxos, round_tx } => {
+					RoundEvent::Finished { id, signed_round_tx } => {
 						rpc::round_event::Event::Finished(rpc::RoundFinished {
 							round_id: id,
-							signed_vtxos: vtxos.encode(),
-							round_tx: bitcoin::consensus::serialize(&round_tx),
+							signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 						})
 					},
 				})

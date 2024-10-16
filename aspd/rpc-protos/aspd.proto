@@ -136,27 +136,21 @@ message ForfeitNonces {
 message VtxoProposal {
 	uint64 round_id = 1;
 	bytes vtxos_spec = 2;
-	/// The unsigned round tx.
-	bytes round_tx = 3;
-	repeated bytes vtxos_signers = 4;
-	repeated bytes vtxos_agg_nonces = 5;
+	bytes unsigned_round_tx = 3;
+	repeated bytes vtxos_agg_nonces = 4;
 }
 
 message RoundProposal {
 	uint64 round_id = 1;
-	/// Completely signed vtxo tree.
-	bytes signed_vtxos = 2;
-	/// The unsigned round tx.
-	bytes round_tx = 3;
-	repeated ForfeitNonces forfeit_nonces = 6;
+	/// The cosign signatures to plug into the vtxo tree.
+	repeated bytes vtxo_cosign_signatures = 2;
+	repeated ForfeitNonces forfeit_nonces = 3;
 }
 
 message RoundFinished {
 	uint64 round_id = 1;
-	/// Completely signed vtxo tree.
-	bytes signed_vtxos = 2;
 	/// The signed round tx.
-	bytes round_tx = 3;
+	bytes signed_round_tx = 3;
 }
 
 message RoundEvent {
@@ -168,21 +162,25 @@ message RoundEvent {
 	};
 }
 
-message Payment {
+message VtxoRequest {
 	// amount in sats
 	uint64 amount = 1;
-	oneof destination {
-		bytes vtxo_public_key = 2;
-		bytes offboard_spk = 3;
-	};
+	bytes vtxo_public_key = 2;
+	bytes cosign_pubkey = 3;
+	repeated bytes public_nonces = 4;
+}
+
+message OffboardRequest {
+	// amount in sats
+	uint64 amount = 1;
+	bytes offboard_spk = 2;
 }
 
 message SubmitPaymentRequest {
 	//TODO(stevenroose) add proof of vtxo ownership
 	repeated bytes input_vtxos = 1;
-	repeated Payment payments = 2;
-	bytes cosign_pubkey = 3;
-	repeated bytes public_nonces = 4;
+	repeated VtxoRequest vtxo_requests = 2;
+	repeated OffboardRequest offboard_requests = 3;
 }
 
 message ForfeitSignatures {
