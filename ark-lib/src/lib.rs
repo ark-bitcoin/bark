@@ -284,7 +284,11 @@ pub struct BaseVtxo {
 	pub utxo: OutPoint,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+/// Represents a VTXO in the Ark.
+///
+/// Implementations of [PartialEq], [Eq], [PartialOrd], [Ord] and [Hash] are
+/// proxied to the implementation on [Vtxo::id].
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum Vtxo {
 	Onboard {
 		base: BaseVtxo,
@@ -459,6 +463,32 @@ impl Vtxo {
 			Vtxo::Oor { .. } => "arkoor",
 			Vtxo::Bolt11Change { .. } => "bolt11change",
 		}
+	}
+}
+
+impl PartialEq for Vtxo {
+	fn eq(&self, other: &Self) -> bool {
+		PartialEq::eq(&self.id(), &other.id())
+	}
+}
+
+impl Eq for Vtxo {}
+
+impl PartialOrd for Vtxo {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+		PartialOrd::partial_cmp(&self.id(), &other.id())
+	}
+}
+
+impl Ord for Vtxo {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		Ord::cmp(&self.id(), &other.id())
+	}
+}
+
+impl std::hash::Hash for Vtxo {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+		std::hash::Hash::hash(&self.id(), state)
 	}
 }
 
