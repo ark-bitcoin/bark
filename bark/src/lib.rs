@@ -203,7 +203,7 @@ impl Wallet {
 		let onchain = onchain::Wallet::create(config.network, seed, &datadir, chain_source)
 			.context("failed to create onchain wallet")?;
 
-		let db = db::Db::open(&datadir.join("db")).context("failed to open db")?;
+		let db = db::Db::open(&datadir.join("db.sqlite")).context("failed to open db")?;
 
 		let vtxo_seed = {
 			let master = bip32::Xpriv::new_master(config.network, &seed).unwrap();
