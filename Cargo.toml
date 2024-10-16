@@ -8,8 +8,6 @@ members = [
   "bark",
   "bark-cln",
   "bark-json",
-
-  "sled-utils",
   "stream-until",
 ]
 
@@ -43,7 +41,8 @@ lnurl-rs = "0.6.0"
 # this one is a workaround for a bug in lnurl-rs
 bitcoin030 = { package = "bitcoin", version = "0.30.2", features = [ "std" ] }
 
-sled = "0.34.7"
+# database dependencies
+rusqlite =  "0.32.1"
 
 # LDK-dependencies
 lightning-invoice = { version = "0.32.0-rc1", features = [ "std", "serde" ] }

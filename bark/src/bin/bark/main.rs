@@ -221,7 +221,7 @@ fn init_logging(verbose: bool) {
 	let colors = fern::colors::ColoredLevelConfig::default();
 
 	let mut l = fern::Dispatch::new()
-		.level_for("sled", log::LevelFilter::Warn)
+		.level_for("rusqlite", log::LevelFilter::Warn)
 		.level_for("rustls", log::LevelFilter::Warn)
 		.level_for("reqwest", log::LevelFilter::Warn);
 	if verbose {

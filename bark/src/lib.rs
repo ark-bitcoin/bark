@@ -4,12 +4,13 @@
 #[macro_use] extern crate serde;
 extern crate lnurl as lnurllib;
 
-mod database;
+mod db;
 mod exit;
 pub use exit::ExitStatus;
 mod lnurl;
 mod onchain;
 mod psbtext;
+mod vtxo_state;
 
 
 use std::time::Duration;
@@ -31,6 +32,8 @@ use ark::{musig, BaseVtxo, OffboardRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec}
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 use aspd_rpc_client as rpc;
+
+use crate::vtxo_state::VtxoState;
 
 /// The file name of the config file.
 const CONFIG_FILE: &str = "config.json";
@@ -108,7 +111,7 @@ impl Default for Config {
 pub struct Wallet {
 	config: Config,
 	datadir: PathBuf,
-	db: database::Db,
+	db: db::Db,
 	onchain: onchain::Wallet,
 	vtxo_seed: bip32::Xpriv,
 	// ASP stuff
@@ -200,7 +203,7 @@ impl Wallet {
 		let onchain = onchain::Wallet::create(config.network, seed, &datadir, chain_source)
 			.context("failed to create onchain wallet")?;
 
-		let db = database::Db::open(&datadir.join("db")).context("failed to open db")?;
+		let db = db::Db::open(&datadir.join("db.sqlite")).context("failed to open db")?;
 
 		let vtxo_seed = {
 			let master = bip32::Xpriv::new_master(config.network, &seed).unwrap();
@@ -322,7 +325,7 @@ impl Wallet {
 
 	//TODO(stevenroose) remove
 	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
-		warn!("Dropping all vtxos from the database...");
+		warn!("Dropping all vtxos from the db...");
 		for vtxo in self.db.get_all_vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
