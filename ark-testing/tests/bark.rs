@@ -3,11 +3,9 @@ extern crate log;
 
 use std::time::Duration;
 
-use bark_json::cli::VtxoInfo;
-use bitcoin::{FeeRate, Weight};
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
-use ark_testing::{AspdConfig, Bark, TestContext};
+use ark_testing::{AspdConfig, TestContext};
 
 #[tokio::test]
 async fn bark_version() {
@@ -318,7 +316,7 @@ async fn offboard_all() {
 
 #[tokio::test]
 async fn offboard_vtxos() {
-	const FEES: Amount = Amount::from_sat(900); 
+	const FEES: Amount = Amount::from_sat(900);
 
 	// Initialize the test
 	let ctx = TestContext::new("bark/offboard-vtxos").await;
@@ -352,7 +350,7 @@ async fn offboard_vtxos() {
 		.into_iter()
 		.map(|vtxo| vtxo.id)
 		.collect::<Vec<_>>();
-	
+
 	assert!(updated_vtxos.contains(&vtxos[0].id));
 	assert!(updated_vtxos.contains(&vtxos[2].id));
 
