@@ -1,6 +1,8 @@
 
-#[macro_use] extern crate lazy_static;
+pub extern crate bitcoin;
+
 #[macro_use] extern crate serde;
+#[macro_use] extern crate lazy_static;
 
 pub mod connectors;
 pub mod fee;

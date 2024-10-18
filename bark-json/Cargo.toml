@@ -7,7 +7,9 @@ description = "JSON definitions for the bark APIs"
 edition = "2021"
 
 [dependencies]
+# OWN
 ark-lib = { path = "../ark-lib" }
 
+# EXPORTED
 bitcoin.workspace = true
 serde.workspace = true

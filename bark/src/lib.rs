@@ -1,8 +1,10 @@
 
+pub extern crate lightning_invoice;
+pub extern crate lnurl as lnurllib;
+
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde;
-extern crate lnurl as lnurllib;
 
 mod db;
 mod exit;

@@ -15,31 +15,39 @@ name = "bark"
 path = "src/bin/bark/main.rs"
 
 [dependencies]
+
+# OWN
 ark-lib = { path = "../ark-lib" }
 bark-json = { path = "../bark-json" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 
+# EXPORTED
+bitcoin.workspace = true
+lightning-invoice.workspace = true
+lnurl-rs.workspace = true
+bitcoin030.workspace = true # lnurl workaround
 anyhow.workspace = true
-lazy_static.workspace = true
 log.workspace = true
+serde.workspace = true
+
+# INTERNAL
+rusqlite =  "0.32.1"
+
+lazy_static.workspace = true
 fern.workspace = true
 chrono.workspace = true
 clap.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 ciborium.workspace = true
-bitcoin.workspace = true
+
 bip39.workspace = true
 miniscript.workspace = true
 bdk_wallet.workspace = true
 bdk_file_store.workspace = true
 bdk_bitcoind_rpc.workspace = true
 bdk_esplora.workspace = true
-lightning-invoice.workspace = true
-lnurl-rs.workspace = true
-bitcoin030.workspace = true
+
 prost.workspace = true
-rusqlite.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

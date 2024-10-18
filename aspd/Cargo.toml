@@ -18,29 +18,36 @@ path = "src/main.rs"
 tonic-build.workspace = true
 
 [dependencies]
+
+# OWN
 ark-lib = { path = "../ark-lib" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 bark-cln = {path = "../bark-cln"}
 stream-until = { path = "../stream-until" }
 
+# EXPORTED
+bitcoin.workspace = true
+lightning-invoice.workspace = true
 anyhow.workspace = true
-lazy_static.workspace = true
+serde.workspace = true
 log.workspace = true
+
+# INTERNAL
+rocksdb = "0.22.0"
+
+lazy_static.workspace = true
 fern.workspace = true
 chrono.workspace = true
 clap.workspace = true
 futures.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 ciborium.workspace = true
-bitcoin.workspace = true
+
 bip39.workspace = true
 bdk_wallet.workspace = true
 bdk_bitcoind_rpc.workspace = true
-lightning-invoice.workspace = true
+
 prost.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
-
-rocksdb = "0.22.0"
