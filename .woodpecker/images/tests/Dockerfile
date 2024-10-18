@@ -31,8 +31,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 	echo "Installing bitcoin..." && \
 	mkdir /bitcoin && cd /bitcoin && \
 	echo "Installing bitcoin core v28.0-rc2..." && \
-	wget https://bitcoincore.org/bin/bitcoin-core-28.0/test.rc2/bitcoin-28.0rc2-x86_64-linux-gnu.tar.gz && \
-	tar xvzf bitcoin-28.0rc2-x86_64-linux-gnu.tar.gz && mv bitcoin-28.0rc2 28.0-rc2 && \
+	wget https://bitcoincore.org/bin/bitcoin-core-28.0/bitcoin-28.0-x86_64-linux-gnu.tar.gz && \
+	tar xvzf bitcoin-28.0-x86_64-linux-gnu.tar.gz && mv bitcoin-28.0 28.0 && \
 	echo "Installing bitcoin core v27.1..." && \
 	wget https://bitcoincore.org/bin/bitcoin-core-27.1/bitcoin-27.1-x86_64-linux-gnu.tar.gz && \
 	tar xvzf bitcoin-27.1-x86_64-linux-gnu.tar.gz && mv bitcoin-27.1 27.1 && \
@@ -71,8 +71,8 @@ ENV RUST_BACKTRACE=1 \
 	RUSTUP_TOOLCHAIN=1.77.2 \
 	PATH=/root/.cargo/bin:${PATH}
 
-COPY --from=builder /bitcoin/28.0-rc2/bin/bitcoin-cli /usr/bin/bitcoin-cli
-COPY --from=builder /bitcoin/28.0-rc2/bin/bitcoind    /bitcoin/28.0-rc2/bin/bitcoind
+COPY --from=builder /bitcoin/28.0/bin/bitcoin-cli     /usr/bin/bitcoin-cli
+COPY --from=builder /bitcoin/28.0/bin/bitcoind        /bitcoin/28.0/bin/bitcoind
 COPY --from=builder /bitcoin/27.1/bin/bitcoind        /bitcoin/27.1/bin/bitcoind
 COPY --from=builder /lightning                        /lightning
 COPY --from=builder /root/.cargo/bin                  /root/.cargo/bin
