@@ -9,12 +9,14 @@ pub extern crate lnurl as lnurllib;
 mod db;
 mod exit;
 pub use exit::ExitStatus;
+use tokio::sync::Mutex;
 mod lnurl;
 mod onchain;
 mod psbtext;
 mod vtxo_state;
 
 
+use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, iter};
 use std::collections::{HashMap, HashSet};
@@ -110,15 +112,21 @@ impl Default for Config {
 	}
 }
 
+type AspClient = rpc::ArkServiceClient<tonic::transport::Channel>;
+
+struct AspConnection {
+	pub info: ArkInfo,
+	pub client: Mutex<AspClient>
+}
+
+
 pub struct Wallet {
 	config: Config,
 	datadir: PathBuf,
 	db: db::Db,
 	onchain: onchain::Wallet,
 	vtxo_seed: bip32::Xpriv,
-	// ASP stuff
-	asp: rpc::ArkServiceClient<tonic::transport::Channel>,
-	ark_info: ArkInfo,
+	asp: Option<Arc<AspConnection>>
 }
 
 impl Wallet {
@@ -157,7 +165,13 @@ impl Wallet {
 			.context("failed to write mnemonic")?;
 
 		// from then on we can open the wallet
-		Ok(Wallet::open(&datadir).await.context("failed to open")?)
+		let wallet = Wallet::open(&datadir).await.context("failed to open")?;
+
+		if wallet.asp.is_none() {
+			bail!("Cannot create bark if asp is not available");
+		}
+
+		Ok(wallet)
 	}
 
 	/// Open existing wallet.
@@ -235,25 +249,29 @@ impl Wallet {
 			info!("Connecting to ASP without TLS...");
 		};
 
-		let mut asp = rpc::ArkServiceClient::connect(endpoint)
-			.await.context("failed to connect to asp")?;
+		let asp = match rpc::ArkServiceClient::connect(endpoint).await {
+			Ok(mut client) => {
+				let res = client.get_ark_info(rpc::Empty{})
+					.await.context("ark info request failed")?.into_inner();
+				
+				if config.network != res.network.parse().context("invalid network from asp")? {
+					bail!("ASP is for net {} while we are on net {}", res.network, config.network);
+				}
 
-		let ark_info = {
-			let res = asp.get_ark_info(rpc::Empty{})
-				.await.context("ark info request failed")?.into_inner();
-			if config.network != res.network.parse().context("invalid network from asp")? {
-				bail!("ASP is for net {} while we are on net {}", res.network, config.network);
-			}
-			ArkInfo {
-				asp_pubkey: PublicKey::from_slice(&res.pubkey).context("asp pubkey")?,
-				nb_round_nonces: res.nb_round_nonces as usize,
-				vtxo_expiry_delta: res.vtxo_expiry_delta as u16,
-				vtxo_exit_delta: res.vtxo_exit_delta as u16,
-			}
+				let info = ArkInfo {
+					asp_pubkey: PublicKey::from_slice(&res.pubkey).context("asp pubkey")?,
+					nb_round_nonces: res.nb_round_nonces as usize,
+					vtxo_expiry_delta: res.vtxo_expiry_delta as u16,
+					vtxo_exit_delta: res.vtxo_exit_delta as u16,
+				};
+				
+				Some(Arc::new(AspConnection { info, client: Mutex::new(client) }))
+			},
+			_ => None
 		};
 
 		let datadir = datadir.to_path_buf();
-		Ok(Wallet { config, datadir, db, onchain, vtxo_seed, asp, ark_info })
+		Ok(Wallet { config, datadir, db, onchain, vtxo_seed, asp })
 	}
 
 	pub fn config(&self) -> &Config {
@@ -269,6 +287,10 @@ impl Wallet {
 
 	pub fn persist_config(&self) -> anyhow::Result<()> {
 		Self::write_config(&self.config, &self.datadir)
+	}
+
+	fn require_asp(&self) -> anyhow::Result<Arc<AspConnection>> {
+		self.asp.clone().context("You should be connected to ASP to perform this action")
 	}
 
 	//TODO(stevenroose) find a cleaner way to expose some of the onchain/chainsource stuff
@@ -290,7 +312,7 @@ impl Wallet {
 	/// Return the balance of the onchain wallet.
 	///
 	/// Make sure you sync before calling this method.
-	pub fn onchain_balance(&mut self) -> Amount {
+	pub fn onchain_balance(&self) -> Amount {
 		self.onchain.balance()
 	}
 
@@ -305,7 +327,7 @@ impl Wallet {
 	/// Retrieve the off-chain balance of the wallet.
 	///
 	/// Make sure you sync before calling this method.
-	pub async fn offchain_balance(&mut self) -> anyhow::Result<Amount> {
+	pub async fn offchain_balance(&self) -> anyhow::Result<Amount> {
 		let mut sum = Amount::ZERO;
 		for vtxo in self.db.get_all_vtxos()? {
 			sum += vtxo.spec().amount;
@@ -314,7 +336,7 @@ impl Wallet {
 		Ok(sum)
 	}
 
-	pub fn vtxos(&mut self) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
 		Ok(self.db.get_all_vtxos()?)
 	}
 
@@ -343,14 +365,16 @@ impl Wallet {
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
 	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<()> {
+		let asp = self.require_asp()?;
+
 		//TODO(stevenroose) impl key derivation
 		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
 		let current_height = self.onchain.tip().await?;
 		let spec = ark::VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
-			asp_pubkey: self.ark_info.asp_pubkey,
-			expiry_height: current_height + self.ark_info.vtxo_expiry_delta as u32,
-			exit_delta: self.ark_info.vtxo_exit_delta,
+			asp_pubkey: asp.info.asp_pubkey,
+			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
+			exit_delta: asp.info.vtxo_exit_delta,
 			amount: amount,
 		};
 
@@ -364,14 +388,16 @@ impl Wallet {
 	}
 
 	pub async fn onboard_all(&mut self) -> anyhow::Result<()> {
+		let asp = self.require_asp()?;
+
 		//TODO(stevenroose) impl key derivation
 		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
 		let current_height = self.onchain.tip().await?;
 		let mut spec = ark::VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
-			asp_pubkey: self.ark_info.asp_pubkey,
-			expiry_height: current_height + self.ark_info.vtxo_expiry_delta as u32,
-			exit_delta: self.ark_info.vtxo_exit_delta,
+			asp_pubkey: asp.info.asp_pubkey,
+			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
+			exit_delta: asp.info.vtxo_exit_delta,
 			// amount is temporarily set to total balance but will
 			// have fees deducted after psbt construction
 			amount: self.onchain_balance()
@@ -391,6 +417,9 @@ impl Wallet {
 	}
 
 	async fn onboard(&mut self, spec: VtxoSpec, user_keypair: Keypair, onboard_tx: Psbt) -> anyhow::Result<()> {
+		let asp = self.asp.clone().context("Client should be connected to ASP to perform onboarding")?;
+		let mut asp_client = asp.client.lock().await;
+
 		// This is manually enforced in prepare_tx
 		const VTXO_VOUT: u32 = 0;
 
@@ -398,7 +427,7 @@ impl Wallet {
 		// We ask the ASP to cosign our onboard vtxo reveal tx.
 		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
 		let asp_part = {
-			let res = self.asp.request_onboard_cosign(aspd_rpc_client::OnboardCosignRequest {
+			let res = asp_client.request_onboard_cosign(aspd_rpc_client::OnboardCosignRequest {
 				user_part: {
 					let mut buf = Vec::new();
 					ciborium::into_writer(&user_part, &mut buf).unwrap();
@@ -422,14 +451,14 @@ impl Wallet {
 		Ok(())
 	}
 
-	fn add_new_vtxo(&mut self, vtxos: &SignedVtxoTree, leaf_idx: usize) -> anyhow::Result<()> {
+	fn add_new_vtxo(&self, vtxos: &SignedVtxoTree, leaf_idx: usize) -> anyhow::Result<()> {
 		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
 		let dest = &vtxos.spec.vtxos[leaf_idx];
 		let vtxo = Vtxo::Round {
 			base: BaseVtxo {
 				spec: VtxoSpec {
 					user_pubkey: dest.pubkey,
-					asp_pubkey: self.ark_info.asp_pubkey,
+					asp_pubkey: vtxos.spec.asp_key,
 					expiry_height: vtxos.spec.expiry_height,
 					exit_delta: vtxos.spec.exit_delta,
 					amount: dest.amount,
@@ -453,20 +482,24 @@ impl Wallet {
 	}
 
 	/// Sync with the Ark and look for received vtxos.
-	pub async fn sync_ark(&mut self) -> anyhow::Result<()> {
+	pub async fn sync_ark(&self) -> anyhow::Result<()> {
+		let asp = self.require_asp()?;
+		let mut asp_client = asp.client.lock().await;
+
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+
 
 		//TODO(stevenroose) we won't do reorg handling here
 		let current_height = self.onchain.tip().await?;
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
 		let req = rpc::FreshRoundsRequest { start_height: last_sync_height };
-		let fresh_rounds = self.asp.get_fresh_rounds(req).await?.into_inner();
+		let fresh_rounds = asp_client.get_fresh_rounds(req).await?.into_inner();
 
 		for txid in fresh_rounds.txids {
 			let txid = Txid::from_slice(&txid).context("invalid txid from asp")?;
 			let req = rpc::RoundId { txid: txid.to_byte_array().to_vec() };
-			let round = self.asp.get_round(req).await?.into_inner();
+			let round = asp_client.get_round(req).await?.into_inner();
 
 			let tree = SignedVtxoTree::decode(&round.signed_vtxos)
 				.context("invalid signed vtxo tree from asp")?;
@@ -487,7 +520,7 @@ impl Wallet {
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
 		let req = rpc::OorVtxosRequest { pubkey: vtxo_key.public_key().serialize().to_vec() };
-		let resp = self.asp.empty_oor_mailbox(req).await.context("error fetching oors")?;
+		let resp = asp_client.empty_oor_mailbox(req).await.context("error fetching oors")?;
 		let oors = resp.into_inner().vtxos.into_iter()
 			.map(|b| Vtxo::decode(&b).context("invalid vtxo from asp"))
 			.collect::<Result<Vec<_>, _>>()?;
@@ -596,6 +629,9 @@ impl Wallet {
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
+		let asp = self.require_asp()?;
+		let mut asp_client = asp.client.lock().await;
+
 		let fr = self.onchain.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
@@ -625,8 +661,8 @@ impl Wallet {
 			let outputs = Some(output.clone()).into_iter().chain(change).collect::<Vec<_>>();
 
 			let payment = ark::oor::OorPayment::new(
-				self.ark_info.asp_pubkey,
-				self.ark_info.vtxo_exit_delta,
+				asp.info.asp_pubkey,
+				asp.info.vtxo_exit_delta,
 				input_vtxos,
 				outputs,
 			);
@@ -657,7 +693,7 @@ impl Wallet {
 			payment: payment.encode(),
 			pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
 		};
-		let resp = self.asp.request_oor_cosign(req).await.context("cosign request failed")?.into_inner();
+		let resp = asp_client.request_oor_cosign(req).await.context("cosign request failed")?.into_inner();
 		let len = payment.inputs.len();
 		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
 			bail!("invalid length of asp response");
@@ -682,7 +718,7 @@ impl Wallet {
 			&asp_part_sigs,
 		);
 		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&tx.signed_transaction()));
-		let vtxos = tx.output_vtxos(self.ark_info.asp_pubkey, self.ark_info.vtxo_exit_delta);
+		let vtxos = tx.output_vtxos(asp.info.asp_pubkey, asp.info.vtxo_exit_delta);
 
 		// The first one is of the recipient, we will post it to their
 		// mailbox.
@@ -692,7 +728,7 @@ impl Wallet {
 			pubkey: destination.serialize().to_vec(),
 			vtxo: user_vtxo.encode(),
 		};
-		if let Err(e) = self.asp.post_oor_mailbox(req).await {
+		if let Err(e) = asp_client.post_oor_mailbox(req).await {
 			//TODO(stevenroose) print vtxo in hex after btc fixed hex
 			error!("Failed to post the OOR vtxo to the recipients mailbox: {}", e);
 			//NB we will continue to at least not lose our own change
@@ -717,6 +753,9 @@ impl Wallet {
 		invoice: &Bolt11Invoice,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Vec<u8>> {
+		let asp = self.require_asp()?;
+		let mut asp_client = asp.client.lock().await;
+
 		let inv_amount = invoice.amount_milli_satoshis()
 			.map(|v| Amount::from_sat(v.div_ceil(1000)));
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
@@ -764,7 +803,7 @@ impl Wallet {
 			user_pubkey: vtxo_key.public_key().serialize().to_vec(),
 			user_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
 		};
-		let resp = self.asp.start_bolt11_payment(req).await
+		let resp = asp_client.start_bolt11_payment(req).await
 			.context("htlc request failed")?.into_inner();
 		let len = inputs.len();
 		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
@@ -800,7 +839,7 @@ impl Wallet {
 
 		let mut payment_preimage = None;
 		let mut last_msg = String::from("");
-		let mut stream = self.asp.finish_bolt11_payment(req).await?.into_inner();
+		let mut stream = asp_client.finish_bolt11_payment(req).await?.into_inner();
 		while let Some(msg) = stream.next().await {
 			let msg = msg.context("Error reported during pay")?;
 			debug!("Progress update: {}", msg.progress_message);
@@ -942,11 +981,14 @@ impl Wallet {
 			(Vec<Vtxo>, Vec<VtxoRequest>, Vec<OffboardRequest>)
 		>,
 	) -> anyhow::Result<()> {
+		let asp = self.require_asp()?;
+		let mut asp_client = asp.client.lock().await;
+
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
 		info!("Waiting for a round start...");
-		let mut events = self.asp.subscribe_rounds(rpc::Empty {}).await?.into_inner();
+		let mut events = asp_client.subscribe_rounds(rpc::Empty {}).await?.into_inner();
 
 		// Wait for the next round start.
 		let (mut round_id, offboard_feerate) = loop {
@@ -976,9 +1018,9 @@ impl Wallet {
 
 			// Prepare round participation info.
 			let (sec_nonces, pub_nonces) = {
-				let mut secs = Vec::with_capacity(self.ark_info.nb_round_nonces);
-				let mut pubs = Vec::with_capacity(self.ark_info.nb_round_nonces);
-				for _ in 0..self.ark_info.nb_round_nonces {
+				let mut secs = Vec::with_capacity(asp.info.nb_round_nonces);
+				let mut pubs = Vec::with_capacity(asp.info.nb_round_nonces);
+				for _ in 0..asp.info.nb_round_nonces {
 					let (s, p) = musig::nonce_pair(&cosign_key);
 					secs.push(s);
 					pubs.push(p);
@@ -989,26 +1031,26 @@ impl Wallet {
 			// The round has now started. We can submit our payment.
 			trace!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
 				input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len());
-			self.asp.submit_payment(rpc::SubmitPaymentRequest {
-				cosign_pubkey: cosign_key.public_key().serialize().to_vec(),
-				input_vtxos: input_vtxos.iter().map(|v| v.encode()).collect(),
-				payments: vtxo_reqs.iter().map(|r| {
-					rpc::Payment {
-						amount: r.amount.to_sat(),
-						destination: Some(rpc::payment::Destination::VtxoPublicKey(
-							r.pubkey.serialize().to_vec(),
-						)),
-					}
-				}).chain(offb_reqs.iter().map(|r| {
-					rpc::Payment {
-						amount: r.amount.to_sat(),
-						destination: Some(rpc::payment::Destination::OffboardSpk(
-							r.script_pubkey.to_bytes(),
-						)),
-					}
-				})).collect(),
-				public_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
-			}).await.context("submitting payment to asp")?;
+				asp_client.submit_payment(rpc::SubmitPaymentRequest {
+					cosign_pubkey: cosign_key.public_key().serialize().to_vec(),
+					input_vtxos: input_vtxos.iter().map(|v| v.encode()).collect(),
+					payments: vtxo_reqs.iter().map(|r| {
+						rpc::Payment {
+							amount: r.amount.to_sat(),
+							destination: Some(rpc::payment::Destination::VtxoPublicKey(
+								r.pubkey.serialize().to_vec(),
+							)),
+						}
+					}).chain(offb_reqs.iter().map(|r| {
+						rpc::Payment {
+							amount: r.amount.to_sat(),
+							destination: Some(rpc::payment::Destination::OffboardSpk(
+								r.script_pubkey.to_bytes(),
+							)),
+						}
+					})).collect(),
+					public_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+				}).await.context("submitting payment to asp")?;
 
 
 			// ****************************************************************
@@ -1093,10 +1135,10 @@ impl Wallet {
 						None,
 					).0
 				}).collect::<Vec<_>>();
-			self.asp.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
-				pubkey: cosign_key.public_key().serialize().to_vec(),
-				signatures: signatures.iter().map(|s| s.serialize().to_vec()).collect(),
-			}).await.context("providing signatures to asp")?;
+				asp_client.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
+					pubkey: cosign_key.public_key().serialize().to_vec(),
+					signatures: signatures.iter().map(|s| s.serialize().to_vec()).collect(),
+				}).await.context("providing signatures to asp")?;
 
 
 			// ****************************************************************
@@ -1157,7 +1199,7 @@ impl Wallet {
 			let connectors = ConnectorChain::new(
 				forfeit_nonces.values().next().unwrap().len(),
 				conns_utxo,
-				self.ark_info.asp_pubkey,
+				asp.info.asp_pubkey,
 			);
 			let forfeit_signatures = input_vtxos.iter().map(|v| {
 				let sigs = connectors.connectors().enumerate().map(|(i, conn)| {
@@ -1169,7 +1211,7 @@ impl Wallet {
 
 					let (nonce, sig) = musig::deterministic_partial_sign(
 						&vtxo_key,
-						[vtxo_key.public_key(), self.ark_info.asp_pubkey],
+						[vtxo_key.public_key(), asp.info.asp_pubkey],
 						[asp_nonce.clone()],
 						sighash.to_byte_array(),
 						Some(v.spec().exit_taptweak().to_byte_array()),
@@ -1178,7 +1220,7 @@ impl Wallet {
 				}).collect::<anyhow::Result<Vec<_>>>()?;
 				Ok((v.id(), sigs))
 			}).collect::<anyhow::Result<HashMap<_, _>>>()?;
-			self.asp.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
+			asp_client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
 				signatures: forfeit_signatures.into_iter().map(|(id, sigs)| {
 					rpc::ForfeitSignatures {
 						input_vtxo_id: id.bytes().to_vec(),

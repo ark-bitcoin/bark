@@ -91,6 +91,39 @@ async fn onboard_all_bark() {
 }
 
 #[tokio::test]
+async fn list_vtxos() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/list-vtxos").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.generate(107).await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Fund a client
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	bark1.onboard(Amount::from_sat(200_000)).await;
+	bark1.onboard(Amount::from_sat(300_000)).await;
+
+	let vtxos = bark1.vtxos().await;
+	assert_eq!(2, vtxos.len());
+	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 200_000));
+	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 300_000));
+
+	// Should have the same behaviour when ASP is offline
+	aspd.stop().await.unwrap();
+
+	let vtxos = bark1.vtxos().await;
+	assert_eq!(2, vtxos.len());
+	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 200_000));
+	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 300_000));
+}
+
+
+#[tokio::test]
 async fn multiple_round_payments() {
 	#[cfg(not(feature = "slow_test"))]
 	const N: usize = 8;
@@ -204,6 +237,43 @@ async fn refresh() {
 }
 
 #[tokio::test]
+async fn compute_balance() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/compute-balance").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.generate(101).await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Fund a client
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	// Second client to have all sort of vtxo
+	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+	bark2.onboard(Amount::from_sat(800_000)).await;
+
+	// onboard vtxo
+	bark1.onboard(Amount::from_sat(500_000)).await;
+
+	// round vtxo
+	bark2.send_round(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(250_000)).await;
+
+	let balance = bark1.offchain_balance().await;
+	assert_eq!(balance, Amount::from_sat(1_080_000));
+
+	// Should have the same behaviour when ASP is offline
+	aspd.stop().await.unwrap();
+
+	let balance = bark1.offchain_balance().await;
+	assert_eq!(balance, Amount::from_sat(1_080_000));
+}
+
+#[tokio::test]
 async fn offboard_all() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/offboard-all").await;
@@ -246,15 +316,10 @@ async fn offboard_all() {
 	assert_eq!(balance, Amount::from_sat(59100));
 }
 
-/// Util to get deterministically sorted VTXOs. Only works if VTXO amounts are strictly different
-async fn get_sorted_vtxos(bark: &Bark) -> Vec<VtxoInfo> {
-	let mut vtxos = bark.vtxos().await;
-	vtxos.sort_by(|a, b| a.amount.cmp(&b.amount));
-	vtxos
-}
-
 #[tokio::test]
 async fn offboard_vtxos() {
+	const FEES: Amount = Amount::from_sat(900); 
+
 	// Initialize the test
 	let ctx = TestContext::new("bark/offboard-vtxos").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
@@ -274,25 +339,25 @@ async fn offboard_vtxos() {
 	bark1.onboard(Amount::from_sat(300_000)).await;
 	bark1.onboard(Amount::from_sat(400_000)).await;
 
-	let (first_vtxo, second_vtxo, third_vtxo) = {
-		let vtxos = get_sorted_vtxos(&bark1).await;
-		(vtxos[0].id, vtxos[1].id, vtxos[2].id)
-	};
+	let vtxos = bark1.vtxos().await;
+	assert_eq!(3, vtxos.len());
 
 	let address = bitcoind.get_new_address();
+	let vtxo_to_offboard = &vtxos[1];
 
-	assert_eq!(3, bark1.vtxos().await.len());
-	bark1.offboard_vtxo(second_vtxo, address.clone()).await;
+	bark1.offboard_vtxo(vtxo_to_offboard.id, address.clone()).await;
 
 	// We check that only selected vtxo has been touched
-	let new_vtxos = get_sorted_vtxos(&bark1)
-		.await
+	let updated_vtxos = bark1.vtxos().await
 		.into_iter()
 		.map(|vtxo| vtxo.id)
 		.collect::<Vec<_>>();
-	assert_eq!(vec![first_vtxo, third_vtxo], new_vtxos);
+	
+	assert!(updated_vtxos.contains(&vtxos[0].id));
+	assert!(updated_vtxos.contains(&vtxos[2].id));
+
 	// We check that provided address received the coins
 	bitcoind.generate(1).await;
 	let balance = bitcoind.get_received_by_address(&address);
-	assert_eq!(balance, Amount::from_sat(299100));
+	assert_eq!(balance, vtxo_to_offboard.amount - FEES);
 }
