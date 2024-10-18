@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use bitcoin::Network;
+use bitcoin::{FeeRate, Network};
 use tokio::fs;
 
 use crate::util::test_data_directory;
@@ -35,7 +35,8 @@ impl TestContext {
 			datadir,
 			txindex: true,
 			network: Network::Regtest,
-			..BitcoindConfig::default()
+			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
+			relay_fee: None,
 		}
 	}
 
@@ -64,7 +65,12 @@ impl TestContext {
 		ret
 	}
 
-	pub async fn aspd_default_cfg(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, lightningd: Option<&Lightningd>) -> AspdConfig {
+	pub async fn aspd_default_cfg(
+		&self,
+		name: impl AsRef<str>,
+		bitcoind: &Bitcoind,
+		lightningd: Option<&Lightningd>,
+	) -> AspdConfig {
 		let datadir = self.datadir.join(name.as_ref());
 		let mut aspd_config = AspdConfig {
 			datadir: datadir.clone(),
@@ -87,12 +93,22 @@ impl TestContext {
 		aspd_config
 	}
 
-	pub async fn aspd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, lightningd: Option<&Lightningd>) -> Aspd {
+	pub async fn aspd(
+		&self,
+		name: impl AsRef<str>,
+		bitcoind: &Bitcoind,
+		lightningd: Option<&Lightningd>,
+	) -> Aspd {
 		let name = name.as_ref();
 		self.aspd_with_cfg(name, self.aspd_default_cfg(name, bitcoind, lightningd).await).await
 	}
 
-	pub async fn try_bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> anyhow::Result<Bark> {
+	pub async fn try_bark(
+		&self,
+		name: impl AsRef<str>,
+		bitcoind: &Bitcoind,
+		aspd: &Aspd,
+	) -> anyhow::Result<Bark> {
 		let datadir = self.datadir.join(name.as_ref());
 		let asp_url = aspd.asp_url();
 
