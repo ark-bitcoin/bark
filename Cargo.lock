@@ -146,6 +146,7 @@ name = "ark-testing"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ark-lib",
  "aspd-rpc-client",
  "bark-cln",
  "bark-json",

@@ -162,6 +162,15 @@ impl Wallet {
 		Ok(b.finish()?)
 	}
 
+	pub fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
+		let fee_rate = self.regular_feerate();
+		let mut b = self.wallet.build_tx();
+		b.drain_to(dest.script_pubkey());
+		b.drain_wallet();
+		b.fee_rate(fee_rate);
+		b.finish().context("error building tx")
+	}
+
 	pub fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
 		let opts = SignOptions {
 			trust_witness_utxo: true,

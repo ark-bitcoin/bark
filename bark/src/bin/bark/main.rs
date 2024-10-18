@@ -145,7 +145,11 @@ enum Command {
 	/// onboard from the onchain wallet into the Ark
 	#[command()]
 	Onboard {
-		amount: Amount,
+		// Optional amount of on-chain funds to onboard. Either this or --all should be provided
+		amount: Option<Amount>,
+		// Whether or not all funds in on-chain wallet should be onboarded
+		#[arg(long)]
+		all: bool,
 	},
 	/// send money using an Ark (out-of-round) transaction
 	#[command()]
@@ -360,9 +364,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			w.sync_ark().await.context("sync error")?;
 			w.refresh_vtxos(threshold).await?;
 		},
-		Command::Onboard { amount } => {
+		Command::Onboard { amount, all } => {
 			w.sync_onchain().await.context("sync error")?;
-			w.onboard(amount).await?;
+			match (amount, all) {
+				(Some(a), false) => w.onboard_amount(a).await?,
+				(None, true) => w.onboard_all().await?,
+				_ => bail!("please provide either an amount or --all"),
+			}
 		}
 		Command::Send { destination, amount, comment } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{bail, Context};
-use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Transaction, Txid, Weight};
+use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Transaction, Txid, Weight};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
@@ -342,25 +342,59 @@ impl Wallet {
 	// Onboard a vtxo with the given vtxo amount.
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
-	pub async fn onboard(&mut self, amount: Amount) -> anyhow::Result<()> {
+	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<()> {
 		//TODO(stevenroose) impl key derivation
-		let key = self.vtxo_seed.to_keypair(&SECP);
-
+		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
 		let current_height = self.onchain.tip().await?;
 		let spec = ark::VtxoSpec {
-			user_pubkey: key.public_key(),
+			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: self.ark_info.asp_pubkey,
 			expiry_height: current_height + self.ark_info.vtxo_expiry_delta as u32,
 			exit_delta: self.ark_info.vtxo_exit_delta,
 			amount: amount,
 		};
+
 		let onboard_amount = amount + ark::onboard::onboard_surplus();
 		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), self.config.network).unwrap();
 
 		// We create the onboard tx template, but don't sign it yet.
 		let onboard_tx = self.onchain.prepare_tx(addr, onboard_amount)?;
-		let utxo = OutPoint::new(onboard_tx.unsigned_tx.compute_txid(), 0);
 
+		self.onboard(spec, user_keypair, onboard_tx).await
+	}
+
+	pub async fn onboard_all(&mut self) -> anyhow::Result<()> {
+		//TODO(stevenroose) impl key derivation
+		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
+		let current_height = self.onchain.tip().await?;
+		let mut spec = ark::VtxoSpec {
+			user_pubkey: user_keypair.public_key(),
+			asp_pubkey: self.ark_info.asp_pubkey,
+			expiry_height: current_height + self.ark_info.vtxo_expiry_delta as u32,
+			exit_delta: self.ark_info.vtxo_exit_delta,
+			// amount is temporarily set to total balance but will
+			// have fees deducted after psbt construction
+			amount: self.onchain_balance()
+		};
+
+		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), self.config.network).unwrap();
+		let onboard_all_tx = self.onchain.prepare_send_all_tx(addr)?;
+
+		// Deduct fee from vtxo spec
+		let fee = onboard_all_tx.fee().context("Unable to calculate fee")?;
+		spec.amount = spec.amount.checked_sub(fee + ark::onboard::onboard_surplus()).unwrap();
+
+		assert_eq!(onboard_all_tx.outputs.len(), 1);
+		assert_eq!(onboard_all_tx.unsigned_tx.tx_out(0).unwrap().value, spec.amount + ark::onboard::onboard_surplus());
+
+		self.onboard(spec, user_keypair, onboard_all_tx).await
+	}
+
+	async fn onboard(&mut self, spec: VtxoSpec, user_keypair: Keypair, onboard_tx: Psbt) -> anyhow::Result<()> {
+		// This is manually enforced in prepare_tx
+		const VTXO_VOUT: u32 = 0;
+
+		let utxo = OutPoint::new(onboard_tx.unsigned_tx.compute_txid(), VTXO_VOUT);
 		// We ask the ASP to cosign our onboard vtxo reveal tx.
 		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
 		let asp_part = {
@@ -376,14 +410,14 @@ impl Wallet {
 		};
 
 		// Store vtxo first before we actually make the on-chain tx.
-		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &key);
+		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &user_keypair);
 		self.db.store_vtxo(&vtxo).context("db error storing vtxo")?;
 
 		let tx = self.onchain.finish_tx(onboard_tx)?;
 		trace!("Broadcasting onboard tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
-		info!("Onboard successfull");
+		info!("Onboard successful");
 
 		Ok(())
 	}
