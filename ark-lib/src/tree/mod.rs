@@ -5,12 +5,14 @@ pub mod signed;
 
 
 
+/// The max radix of this tree is 4.
+const RADIX: usize = 4;
 
 #[derive(Debug)]
 pub struct Node<T> {
 	elem: T,
 	parent: Option<usize>,
-	children: [Option<usize>; 4],
+	children: [Option<usize>; RADIX],
 }
 
 impl<T> Node<T> {
@@ -18,7 +20,7 @@ impl<T> Node<T> {
 		Node {
 			elem: elem,
 			parent: None,
-			children: [None; 4],
+			children: [None; RADIX],
 		}
 	}
 }
@@ -28,7 +30,7 @@ impl<T> Node<T> {
 pub struct IterNode<'a, T> {
 	pub element: &'a T,
 	pub parent: Option<&'a T>,
-	pub children: [Option<&'a T>; 4],
+	pub children: [Option<&'a T>; RADIX],
 }
 
 impl<'a, T> IterNode<'a, T> {
@@ -46,7 +48,7 @@ impl<'a, T> IterNode<'a, T> {
 pub struct IterNodeMut<'a, T> {
 	pub element: &'a mut T,
 	pub parent: Option<&'a mut T>,
-	pub children: [Option<&'a mut T>; 4],
+	pub children: [Option<&'a mut T>; RADIX],
 }
 
 impl<'a, T> IterNodeMut<'a, T> {
@@ -61,7 +63,7 @@ impl<'a, T> IterNodeMut<'a, T> {
 
 pub struct ChildrenIterMut<'a, T> {
 	tree: &'a mut Tree<T>,
-	idxs: [Option<usize>; 4],
+	idxs: [Option<usize>; RADIX],
 	inner_idx: usize,
 }
 
@@ -72,7 +74,7 @@ impl<'a, T> ChildrenIterMut<'a, T> {
 
 	pub fn next(&mut self) -> bool {
 		self.inner_idx += 1;
-		self.inner_idx < 4
+		self.inner_idx < RADIX
 	}
 }
 
@@ -153,16 +155,16 @@ impl<T> Tree<T> {
 		// As long as there is more than 1 element on the leftover stack,
 		// we have to add more nodes.
 		while cursor < nodes.len() - 1 {
-			let mut children = [None; 4];
+			let mut children = [None; RADIX];
 			let mut nb_children = 0;
-			while cursor < nodes.len() && nb_children < 4 {
+			while cursor < nodes.len() && nb_children < RADIX {
 				children[nb_children] = Some(cursor);
 				nodes[cursor].parent = Some(nodes.len()); // idx of next node
 				cursor += 1;
 				nb_children += 1;
 			}
 			// build a slice of references to the children elements to call the combine fn
-			let mut refs = Vec::with_capacity(4); //TODO(stevenroose) try avoid this allocation
+			let mut refs = Vec::with_capacity(RADIX);
 			for i in 0..nb_children {
 				refs.push(&nodes[children[i].unwrap()].elem);
 			}
@@ -229,7 +231,7 @@ impl<T> Tree<T> {
 	}
 
 	pub fn child_idx_of(&self, node_idx: usize, child_idx: usize) -> Option<usize> {
-		assert!(child_idx < 4);
+		assert!(child_idx < RADIX);
 		self.nodes.get(node_idx).and_then(|n| n.children[child_idx])
 	}
 
@@ -253,7 +255,7 @@ impl<T> Tree<T> {
 				element: &n.elem,
 				parent: n.parent.map(|i| &self.nodes[i].elem),
 				children: {
-					let mut ret = [None; 4];
+					let mut ret = [None; RADIX];
 					for (i, o) in n.children.iter().enumerate() {
 						ret[i] = o.map(|c| &self.nodes[c].elem);
 					}
