@@ -210,14 +210,6 @@ impl Wallet {
 			let psbt_in = psbt::Input {
 				witness_utxo: Some(ark::fee::dust_anchor()),
 				final_script_witness: Some(ark::fee::dust_anchor_witness()),
-				//TODO(stevenroose) BDK wants this for now but shouldn't
-				// https://github.com/bitcoindevkit/bdk/issues/1548
-				non_witness_utxo: Some(Transaction {
-					version: bitcoin::transaction::Version::ONE,
-					lock_time: bitcoin::blockdata::locktime::absolute::LockTime::ZERO,
-					input: vec![],
-					output: vec![ark::fee::dust_anchor(); utxo.vout as usize + 1],
-				}),
 				..Default::default()
 			};
 			//TODO(stevenroose) create a constant for this 33 weight and test
@@ -266,6 +258,7 @@ impl Wallet {
 
 		let template_weight = {
 			let mut b = self.wallet.build_tx();
+			b.only_witness_utxo();
 			Wallet::add_anchors(&mut b, &anchors);
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + ark::P2TR_DUST);
 			b.fee_rate(fee_rate);
@@ -286,6 +279,7 @@ impl Wallet {
 
 		// Then build actual tx.
 		let mut b = self.wallet.build_tx();
+		b.only_witness_utxo();
 		Wallet::add_anchors(&mut b, &anchors);
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);
