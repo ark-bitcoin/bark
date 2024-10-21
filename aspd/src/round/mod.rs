@@ -313,10 +313,6 @@ impl SigningForfeits {
 		);
 		for (id, nonces, sigs) in signatures {
 			if let Some(_vtxo) = self.all_inputs.get(&id) {
-				//TODO(stevenroose) actually validate forfeit txs
-				// probably make one method that both validates and cross-signs
-				// the forfeit txs at the same time to save memory and not
-				// double-create the musig context
 				match validate_forfeit_sigs(
 					&self.connectors,
 					&nonces,
@@ -750,7 +746,6 @@ pub async fn run_round_coordinator(
 			// Broadcast over bitcoind.
 			debug!("Broadcasting round tx {}", round_tx.compute_txid());
 			if let Err(e) = app.bitcoind.send_raw_transaction(&round_tx) {
-				//TODO(stevenroose) anything better to do here?
 				error!("Couldn't broadcast round tx: {}; tx: {}", e, serialize_hex(&round_tx));
 			}
 

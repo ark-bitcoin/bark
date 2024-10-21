@@ -191,8 +191,6 @@ impl Wallet {
 		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 		let seed = mnemonic.to_seed("");
 
-		//TODO(stevenroose) check if bitcoind has txindex enabled
-
 		// create on-chain wallet
 		let chain_source = if let Some(ref url) = config.esplora_address {
 			onchain::ChainSource::Esplora {
@@ -291,9 +289,6 @@ impl Wallet {
 		self.asp.clone().context("You should be connected to ASP to perform this action")
 	}
 
-	//TODO(stevenroose) find a cleaner way to expose some of the onchain/chainsource stuff
-	//to the cli
-
 	pub async fn chain_tip_height(&self) -> anyhow::Result<u32> {
 		self.onchain.tip().await
 	}
@@ -345,7 +340,7 @@ impl Wallet {
 		Ok(())
 	}
 
-	//TODO(stevenroose) remove
+	//TODO(stevenroose) improve the way we expose dangerous methods
 	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
 		for vtxo in self.db.get_all_vtxos()? {
@@ -715,9 +710,7 @@ impl Wallet {
 		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&tx.signed_transaction()));
 		let vtxos = tx.output_vtxos(asp.info.asp_pubkey, asp.info.vtxo_exit_delta);
 
-		// The first one is of the recipient, we will post it to their
-		// mailbox.
-		// TODO(stevenroose) in the future we will use nostr for this or something
+		// The first one is of the recipient, we will post it to their mailbox.
 		let user_vtxo = &vtxos[0];
 		let req = rpc::OorVtxo {
 			pubkey: destination.serialize().to_vec(),
@@ -772,6 +765,7 @@ impl Wallet {
 
 			//TODO(stevenroose) we need a way for the user to calculate the htlc tx feerate,
 			//like in the oor way (it would be nicer if the user makes the bolt11payment info)
+			// soon we might ignore this because zero relayfee
 
 			let vb = Weight::from_vb(300 + 20 * input_vtxos.len() as u64).unwrap();
 			if vb * fr > account_for_fee {
@@ -1054,9 +1048,6 @@ impl Wallet {
 			// ****************************************************************
 
 			let (vtxo_tree, round_tx, vtxo_signers, vtxo_agg_nonces) = loop {
-				//TODO(stevenroose) should we really gracefully handle ASP malformed data?
-				// panicking seems kinda ok since if we can't understand the ASP,
-				// what are we even doing?
 				match events.next().await.context("events stream broke")??.event.unwrap() {
 					rpc::round_event::Event::VtxoProposal(p) => {
 						assert_eq!(p.round_id, round_id, "missing messages");
@@ -1143,9 +1134,6 @@ impl Wallet {
 
 			// Wait for vtxo proposal from asp.
 			let (vtxos, new_round_tx, forfeit_nonces) = loop {
-				//TODO(stevenroose) should we really gracefully handle ASP malformed data?
-				// panicking seems kinda ok since if we can't understand the ASP,
-				// what are we even doing?
 				match events.next().await.context("events stream broke")??.event.unwrap() {
 					rpc::round_event::Event::RoundProposal(p) => {
 						assert_eq!(p.round_id, round_id, "missing messages");

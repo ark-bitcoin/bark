@@ -41,7 +41,6 @@ impl Wallet {
 		let mut db = Store::<bdk_wallet::ChangeSet>::open_or_create_new(DB_MAGIC.as_bytes(), db_path)?;
 		let init = db.aggregate_changesets()?;
 
-		//TODO(stevenroose) taproot?
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
@@ -150,7 +149,6 @@ impl Wallet {
 
 	/// Fee rate to use for urgent txs like exits.
 	pub fn urgent_feerate(&self) -> FeeRate {
-		//TODO(stevenroose) get from somewhere
 		FeeRate::from_sat_per_vb(15).unwrap()
 	}
 
@@ -291,7 +289,6 @@ impl Wallet {
 		let psbt = b.finish().expect("failed to craft anchor spend tx");
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
 
-		//TODO(stevenroose) at some point use the package relay here to relay entire package
 		Ok(tx)
 	}
 

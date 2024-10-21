@@ -52,7 +52,6 @@ lazy_static::lazy_static! {
 /// happening negligible.
 const DEEPLY_CONFIRMED: u64 = 100;
 
-//TODO(stevenroose) sanity check deltas
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
 	pub network: bitcoin::Network,
