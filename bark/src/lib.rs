@@ -1151,19 +1151,18 @@ impl Wallet {
 							.context("decoding vtxo spec")?;
 
 						// Directly filter the forfeit nonces only for out inputs.
-						let forfeit_nonces = p.forfeit_nonces.into_iter().filter_map(|f| {
+						let mut forfeit_nonces = HashMap::with_capacity(p.forfeit_nonces.len());
+						for f in p.forfeit_nonces {
 							let id = VtxoId::from_slice(&f.input_vtxo_id)
-								.expect("invalid vtxoid from asp"); //TODO(stevenroose) maybe handle?
+								.map_err(|e| anyhow!("invalid vtxoid from asp: {}", e))?;
 							if vtxo_ids.contains(&id) {
 								let nonces = f.pub_nonces.into_iter().map(|s| {
-									musig::MusigPubNonce::from_slice(&s)
-										.expect("invalid forfeit nonce from asp")
-								}).collect::<Vec<_>>();
-								Some((id, nonces))
-							} else {
-								None
+									Ok(musig::MusigPubNonce::from_slice(&s)
+										.context("invalid forfeit nonce from asp")?)
+								}).collect::<anyhow::Result<Vec<_>>>()?;
+								forfeit_nonces.insert(id, nonces);
 							}
-						}).collect::<HashMap<_, _>>();
+						}
 
 						break (vtxos, tx, forfeit_nonces);
 					},
