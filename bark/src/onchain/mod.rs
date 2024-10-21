@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use ark::fee;
 use ark::util::TransactionExt;
 use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::{SignOptions, TxOrdering};
@@ -212,8 +213,8 @@ impl Wallet {
 				final_script_witness: Some(ark::fee::dust_anchor_witness()),
 				..Default::default()
 			};
-			//TODO(stevenroose) create a constant for this 33 weight and test
-			b.add_foreign_utxo(*utxo, psbt_in, Weight::from_wu(33)).expect("adding foreign utxo");
+			b.add_foreign_utxo(*utxo, psbt_in, fee::DUST_ANCHOR_SPEND_WEIGHT)
+				.expect("adding foreign utxo");
 		}
 	}
 
@@ -225,6 +226,7 @@ impl Wallet {
 		txs: &[&Transaction],
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Transaction> {
+		assert!(!txs.is_empty());
 		let anchors = txs.iter().map(|tx| {
 			tx.fee_anchor().with_context(|| format!("tx {} has no fee anchor", tx.compute_txid()))
 		}).collect::<Result<Vec<_>, _>>()?;
@@ -258,6 +260,7 @@ impl Wallet {
 
 		let template_weight = {
 			let mut b = self.wallet.build_tx();
+			b.ordering(TxOrdering::Untouched);
 			b.only_witness_utxo();
 			Wallet::add_anchors(&mut b, &anchors);
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + ark::P2TR_DUST);
@@ -270,7 +273,9 @@ impl Wallet {
 			let finalized = self.wallet.sign(&mut psbt, opts)
 				.expect("failed to sign anchor spend template");
 			assert!(finalized);
-			psbt.extract_tx()?.weight()
+			let tx = psbt.extract_tx()?;
+			debug_assert_eq!(tx.input[0].witness.size() as u64, fee::DUST_ANCHOR_SPEND_WEIGHT.to_wu());
+			tx.weight()
 		};
 
 		let total_weight = template_weight + package_weight;
