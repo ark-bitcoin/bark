@@ -56,6 +56,7 @@
 						})
 						pkg-config
 						openssl
+						sqlite
 					]);
 
 					LLVM_CONFIG_PATH = "${llvmConfigPkg}/bin/llvm-config";
