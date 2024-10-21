@@ -144,10 +144,11 @@ impl<T> Daemon<T>
 			Ok(())
 		} else {
 			match fs::read_to_string(&stderr_logfile) {
-				Ok(c) => error!("Lightningd failed to start, stderr: {}", c),
-				Err(e) => error!("Failed to read stderr at {}: {}", stderr_logfile.display(), e),
+				Ok(c) => error!("Daemon '{}' failed to start, stderr: {}", self.name(), c),
+				Err(e) => error!("Daemon '{}' failed to start and failed to read stderr at {}: {}",
+					self.name(), stderr_logfile.display(), e),
 			}
-			anyhow::bail!("Failed to initialize {}", self.inner.name());
+			anyhow::bail!("Failed to initialize {}", self.name());
 		}
 	}
 
