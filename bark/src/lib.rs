@@ -8,6 +8,7 @@ pub extern crate lnurl as lnurllib;
 
 mod db;
 mod exit;
+use bitcoin::hex::DisplayHex;
 pub use exit::ExitStatus;
 mod lnurl;
 mod onchain;
@@ -723,15 +724,17 @@ impl Wallet {
 			vtxo: user_vtxo.encode(),
 		};
 		if let Err(e) = asp.client.post_oor_mailbox(req).await {
-			//TODO(stevenroose) print vtxo in hex after btc fixed hex
-			error!("Failed to post the OOR vtxo to the recipients mailbox: {}", e);
+			error!("Failed to post the OOR vtxo to the recipients mailbox: '{}'; vtxo: {}",
+				e, user_vtxo.encode().as_hex(),
+			);
 			//NB we will continue to at least not lose our own change
 		}
 
 		if let Some(change_vtxo) = vtxos.get(1) {
 			if let Err(e) = self.db.store_vtxo(change_vtxo) {
-				//TODO(stevenroose) print vtxo in hex after btc fixed hex
-				error!("Failed to store change vtxo from OOR tx: {}", e);
+				error!("Failed to store change vtxo from OOR tx: '{}'; vtxo: {}",
+					e, change_vtxo.encode().as_hex(),
+				);
 			}
 		}
 
@@ -850,8 +853,9 @@ impl Wallet {
 
 		let change_vtxo = signed.change_vtxo();
 		if let Err(e) = self.db.store_vtxo(&change_vtxo) {
-			//TODO(stevenroose) print vtxo in hex after btc fixed hex
-			error!("Failed to store change vtxo from Bolt11 payment: {}", e);
+			error!("Failed to store change vtxo from Bolt11 payment: '{}'; vtxo: {}",
+				e, change_vtxo.encode().as_hex(),
+			);
 		}
 
 		// Mark the used vtxo's as spent
