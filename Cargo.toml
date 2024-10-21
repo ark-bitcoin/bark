@@ -21,7 +21,7 @@ resolver = "2"
 
 bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
 lightning-invoice = { version = "0.32.0-rc1", features = [ "std", "serde" ] }
-lnurl-rs = "0.6.0"
+lnurl-rs = { version = "0.6.0", features = [ "async", "async-https" ], default-features = false }
 # this one is a workaround for a bug in lnurl-rs
 bitcoin030 = { package = "bitcoin", version = "0.30.2", features = [ "std" ] }
 anyhow = { version = "1.0", features = [ "backtrace" ] }
