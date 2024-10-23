@@ -16,21 +16,21 @@ use crate::tree::Tree;
 /// Size in vbytes for the leaf txs.
 const LEAF_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
 
-/// Size in vbytes for a node tx with radix 2.
+/// Tx weight for a node tx with radix 2.
 const NODE2_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
-/// Size in vbytes for a node tx with radix 3.
+/// Tx weight for a node tx with radix 3.
 const NODE3_TX_WEIGHT: Weight = Weight::from_vb_unchecked(197);
-/// Size in vbytes for a node tx with radix 4.
+/// Tx weight for a node tx with radix 4.
 const NODE4_TX_WEIGHT: Weight = Weight::from_vb_unchecked(240);
 
-/// Size in vbytes for a node tx with radix 2 and a fee anchor.
+/// Tx weight for a node tx with radix 2 and a fee anchor.
 const NODE2_TX_WEIGHT_ANCHOR: Weight = Weight::from_vb_unchecked(197);
-/// Size in vbytes for a node tx with radix 3 and a fee anchor.
+/// Tx weight for a node tx with radix 3 and a fee anchor.
 const NODE3_TX_WEIGHT_ANCHOR: Weight = Weight::from_vb_unchecked(240);
-/// Size in vbytes for a node tx with radix 4 and a fee anchor.
+/// Tx weight for a node tx with radix 4 and a fee anchor.
 const NODE4_TX_WEIGHT_ANCHOR: Weight = Weight::from_vb_unchecked(283);
 
-//TODO(stevenroose) write a test for this
+/// The witness weight to spend a node transaction.
 //NB this only works in regtest because it grows a few bytes when
 //the CLTV block height scriptnum grows
 pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);

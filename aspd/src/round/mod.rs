@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Amount, FeeRate, OutPoint, Sequence, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
@@ -312,10 +313,6 @@ impl SigningForfeits {
 		);
 		for (id, nonces, sigs) in signatures {
 			if let Some(_vtxo) = self.all_inputs.get(&id) {
-				//TODO(stevenroose) actually validate forfeit txs
-				// probably make one method that both validates and cross-signs
-				// the forfeit txs at the same time to save memory and not
-				// double-create the musig context
 				match validate_forfeit_sigs(
 					&self.connectors,
 					&nonces,
@@ -748,10 +745,8 @@ pub async fn run_round_coordinator(
 
 			// Broadcast over bitcoind.
 			debug!("Broadcasting round tx {}", round_tx.compute_txid());
-			let bc = app.bitcoind.send_raw_transaction(&round_tx);
-			if let Err(e) = bc {
-				//TODO(stevenroose) anything better to do here?
-				error!("Couldn't broadcast round tx: {}", e);
+			if let Err(e) = app.bitcoind.send_raw_transaction(&round_tx) {
+				error!("Couldn't broadcast round tx: {}; tx: {}", e, serialize_hex(&round_tx));
 			}
 
 			// Send out the finished round to users.

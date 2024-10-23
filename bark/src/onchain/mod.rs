@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use ark::fee;
 use ark::util::TransactionExt;
 use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::{SignOptions, TxOrdering};
@@ -40,7 +41,6 @@ impl Wallet {
 		let mut db = Store::<bdk_wallet::ChangeSet>::open_or_create_new(DB_MAGIC.as_bytes(), db_path)?;
 		let init = db.aggregate_changesets()?;
 
-		//TODO(stevenroose) taproot?
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
@@ -149,7 +149,6 @@ impl Wallet {
 
 	/// Fee rate to use for urgent txs like exits.
 	pub fn urgent_feerate(&self) -> FeeRate {
-		//TODO(stevenroose) get from somewhere
 		FeeRate::from_sat_per_vb(15).unwrap()
 	}
 
@@ -210,18 +209,10 @@ impl Wallet {
 			let psbt_in = psbt::Input {
 				witness_utxo: Some(ark::fee::dust_anchor()),
 				final_script_witness: Some(ark::fee::dust_anchor_witness()),
-				//TODO(stevenroose) BDK wants this for now but shouldn't
-				// https://github.com/bitcoindevkit/bdk/issues/1548
-				non_witness_utxo: Some(Transaction {
-					version: bitcoin::transaction::Version::ONE,
-					lock_time: bitcoin::blockdata::locktime::absolute::LockTime::ZERO,
-					input: vec![],
-					output: vec![ark::fee::dust_anchor(); utxo.vout as usize + 1],
-				}),
 				..Default::default()
 			};
-			//TODO(stevenroose) create a constant for this 33 weight and test
-			b.add_foreign_utxo(*utxo, psbt_in, Weight::from_wu(33)).expect("adding foreign utxo");
+			b.add_foreign_utxo(*utxo, psbt_in, fee::DUST_ANCHOR_SPEND_WEIGHT)
+				.expect("adding foreign utxo");
 		}
 	}
 
@@ -233,6 +224,7 @@ impl Wallet {
 		txs: &[&Transaction],
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Transaction> {
+		assert!(!txs.is_empty());
 		let anchors = txs.iter().map(|tx| {
 			tx.fee_anchor().with_context(|| format!("tx {} has no fee anchor", tx.compute_txid()))
 		}).collect::<Result<Vec<_>, _>>()?;
@@ -266,6 +258,8 @@ impl Wallet {
 
 		let template_weight = {
 			let mut b = self.wallet.build_tx();
+			b.ordering(TxOrdering::Untouched);
+			b.only_witness_utxo();
 			Wallet::add_anchors(&mut b, &anchors);
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + ark::P2TR_DUST);
 			b.fee_rate(fee_rate);
@@ -277,7 +271,9 @@ impl Wallet {
 			let finalized = self.wallet.sign(&mut psbt, opts)
 				.expect("failed to sign anchor spend template");
 			assert!(finalized);
-			psbt.extract_tx()?.weight()
+			let tx = psbt.extract_tx()?;
+			debug_assert_eq!(tx.input[0].witness.size() as u64, fee::DUST_ANCHOR_SPEND_WEIGHT.to_wu());
+			tx.weight()
 		};
 
 		let total_weight = template_weight + package_weight;
@@ -286,13 +282,13 @@ impl Wallet {
 
 		// Then build actual tx.
 		let mut b = self.wallet.build_tx();
+		b.only_witness_utxo();
 		Wallet::add_anchors(&mut b, &anchors);
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);
 		let psbt = b.finish().expect("failed to craft anchor spend tx");
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
 
-		//TODO(stevenroose) at some point use the package relay here to relay entire package
 		Ok(tx)
 	}
 

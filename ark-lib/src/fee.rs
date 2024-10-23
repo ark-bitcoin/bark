@@ -1,5 +1,5 @@
 
-use bitcoin::{opcodes, Amount, FeeRate, ScriptBuf, TxOut, Witness};
+use bitcoin::{opcodes, Amount, FeeRate, ScriptBuf, TxOut, Weight, Witness};
 
 /// The minimum feerate for transaction relay.
 ///
@@ -16,6 +16,9 @@ pub const DUST: Amount = Amount::from_sat(330);
 
 /// The size in bytes of a dust fee anchor created with [dust_anchor].
 pub const DUST_ANCHOR_SIZE: usize = 43;
+
+/// The witness size of a witness spending a dust anchor.
+pub const DUST_ANCHOR_SPEND_WEIGHT: Weight = Weight::from_wu(3);
 
 /// The Script that holds only the OP_TRUE opcode.
 fn op_true_script() -> ScriptBuf {

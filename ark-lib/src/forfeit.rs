@@ -35,7 +35,6 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 				script_sig: ScriptBuf::new(),
 				witness: Witness::new(),
 			},
-			//TODO(stevenroose) we don't need to spend dust anchors
 			TxIn {
 				previous_output: vtxo_fee_anchor_point,
 				sequence: Sequence::MAX,

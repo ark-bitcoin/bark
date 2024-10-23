@@ -229,15 +229,15 @@ impl Bark {
 		self.command_log.lock().await.write_all("OUTPUT:".as_bytes()).await?;
 		self.command_log.lock().await.write_all(out.as_bytes()).await?;
 		self.command_log.lock().await.write_all("\nLOGS:\n".as_bytes()).await?;
-		tokio::io::copy(
-			&mut fs::File::open(stderr_path).await?,
-			&mut *self.command_log.lock().await,
-		).await?;
+		let logs = fs::read_to_string(stderr_path).await?;
+		self.command_log.lock().await.write_all(logs.as_bytes()).await?;
 
 		if exit.success() {
 			Ok(out.trim().to_string())
 		} else {
-			bail!("Failed to execute {:?}", command)
+			bail!("Failed to execute command '{}':\nOUTPUT:\n{}\n\nLOGS:\n{}",
+				command_str, out, logs,
+			)
 		}
 	}
 

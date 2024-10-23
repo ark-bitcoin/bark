@@ -184,7 +184,7 @@ pub async fn pay_bolt11(
 	// TODO: investigate
 	tokio::time::sleep(Duration::from_millis(100)).await;
 
-	// Todo: Something bad happened if we trigger the `?`.
+	// TODO: Something bad happened if we trigger the `?`.
 	// We should handle it better?
 	// This probably means cln went unavailable
 	// We don't know the payment status and just give up
