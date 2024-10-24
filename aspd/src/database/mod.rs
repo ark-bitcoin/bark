@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
-use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::{Transaction, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use rocksdb::{
@@ -52,18 +52,10 @@ impl ForfeitVtxo {
 		self.vtxo.id()
 	}
 
-	pub fn amount(&self) -> Amount {
-		self.vtxo.amount()
-	}
-
 	fn encode(&self) -> Vec<u8> {
 		let mut buf = Vec::new();
 		ciborium::into_writer(self, &mut buf).unwrap();
 		buf
-	}
-
-	fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
 	}
 }
 

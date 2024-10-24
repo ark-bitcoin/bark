@@ -174,7 +174,6 @@ pub struct SendpayHandle {
 pub struct App {
 	config: Config,
 	db: database::Db,
-	master_xpriv: bip32::Xpriv,
 	master_key: Keypair,
 	wallet: Mutex<bdk_wallet::Wallet>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
@@ -282,7 +281,7 @@ impl App {
 			.context("db error")?
 			.context("db doesn't contain seed")?;
 		let init = db.read_aggregate_changeset().await?;
-		let (master_key, xpriv, wallet) = Self::wallet_from_seed(config.network, &seed, init)
+		let (master_key, _, wallet) = Self::wallet_from_seed(config.network, &seed, init)
 			.context("error loading wallet")?;
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
@@ -293,7 +292,6 @@ impl App {
 		Ok(Arc::new(App {
 			config: config,
 			db: db,
-			master_xpriv: xpriv,
 			master_key: master_key,
 			wallet: Mutex::new(wallet),
 			bitcoind: bitcoind,
