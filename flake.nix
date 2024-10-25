@@ -17,13 +17,23 @@
 		flake-utils.lib.eachDefaultSystem (system:
 			let
 				rustVersion = "1.77.1";
-				protobuf = pkgs.protobuf3_23;
+				protobufVersion = "3.12.4";
 
 				lib = nixpkgs.lib;
 				overlays = [ rust-overlay.overlays.default ];
 				pkgs = import nixpkgs {
 					inherit system overlays;
 				};
+
+				protobuf = pkgs.protobuf3_20.overrideAttrs (old: {
+					version = protobufVersion;
+					src = pkgs.fetchFromGitHub {
+						owner = "protocolbuffers";
+						repo = "protobuf";
+						rev = "v{protobufVersion}";
+						hash = "sha256-VyzFq1agobjvei4o/fQ8iMOLySf38DQsLb3C8kCz+78=";
+					};
+				});
 
 				target = pkgs.stdenv.buildPlatform.config;
 				target_underscores = lib.strings.replaceStrings [ "-" ] [ "_" ] target;
