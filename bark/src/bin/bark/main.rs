@@ -35,17 +35,17 @@ fn default_datadir() -> String {
 #[derive(Parser)]
 #[command(author = "Steven Roose <steven@roose.io>", version, about)]
 struct Cli {
-	/// Enable verbose logging.
+	/// Enable verbose logging
 	#[arg(long, short = 'v', global = true)]
 	verbose: bool,
 
-	/// Print output as JSON.
+	/// Print output as JSON
 	///
-	/// Note that simple string values will still be outputted as raw strings.
+	/// Note that simple string values will still be output as raw strings
 	#[arg(long, short = 'j', global = true)]
 	json: bool,
 
-	/// The datadir of the bark wallet.
+	/// The datadir of the bark wallet
 	#[arg(long, global = true, default_value_t = default_datadir())]
 	datadir: String,
 
@@ -58,10 +58,11 @@ struct ConfigOpts {
 	#[arg(long)]
 	asp: Option<String>,
 
-	/// The esplora HTTP API endpoint.
+	/// The esplora HTTP API endpoint
 	#[arg(long)]
 	esplora: Option<String>,
 	#[arg(long)]
+    /// The bitcoind address
 	bitcoind: Option<String>,
 	#[arg(long)]
 	bitcoind_cookie: Option<String>,
@@ -102,13 +103,14 @@ impl ConfigOpts {
 
 #[derive(clap::Subcommand)]
 enum Command {
-	/// Create a new wallet.
+	/// Create a new wallet
 	///
 	/// Configuration will pass in default values when --signet is used, but will
-	/// require full configuration for regtest.
+	/// require full configuration for regtest
 	#[command()]
 	Create (CreateOpts),
-	/// Change the configuration of your bark wallet.
+
+	/// Change the configuration of your bark wallet
 	#[command()]
 	Config {
 		#[command(flatten)]
@@ -116,33 +118,40 @@ enum Command {
 		#[arg(long, default_value_t = false)]
 		dangerous: bool,
 	},
-	/// use the built-in onchain wallet
+
+	/// Use the built-in onchain wallet
 	#[command(subcommand)]
 	Onchain(OnchainCommand),
-	/// The the public key used to receive vtxos.
+
+	/// The public key used to receive VTXOs
 	#[command()]
 	VtxoPubkey,
+
+    /// Get the wallet balance
 	#[command()]
 	Balance,
-	/// list the wallet's VTXOs
+
+	/// List the wallet's VTXOs
 	#[command()]
 	Vtxos,
-	/// refresh expiring VTXOs
+
+	/// Refresh expiring VTXOs
 	///
-	/// By default the wallet's configured threshold is used.
+	/// By default the wallet's configured threshold is used
 	#[command()]
 	Refresh {
-		/// Refresh VTXOs that expire within this amount of blocks.
+		/// Refresh VTXOs that expire within this amount of blocks
 		#[arg(long)]
 		threshold_blocks: Option<u32>,
-		/// Refresh VTXOs that expire within this number of hours.
+		/// Refresh VTXOs that expire within this number of hours
 		#[arg(long)]
 		threshold_hours: Option<u32>,
-		/// Force refresh all VTXOs regardless of expiry height.
+		/// Force refresh all VTXOs regardless of expiry height
 		#[arg(long)]
 		all: bool,
 	},
-	/// onboard from the onchain wallet into the Ark
+
+	/// Onboard from the onchain wallet into the Ark
 	#[command()]
 	Onboard {
 		// Optional amount of on-chain funds to onboard. Either this or --all should be provided
@@ -151,27 +160,31 @@ enum Command {
 		#[arg(long)]
 		all: bool,
 	},
-	/// send money using an Ark (out-of-round) transaction
+
+	/// Send money using an Ark (out-of-round) transaction
 	#[command()]
 	Send {
-		/// the destination
+		/// The destination
 		destination: String,
-		/// the amount to send (optional for bolt11)
+		/// The amount to send (optional for bolt11)
 		amount: Option<Amount>,
-		/// an optional comment
+		/// An optional comment
 		comment: Option<String>,
 	},
-	/// send money by participating in an Ark round
+
+	/// Send money by participating in an Ark round
 	#[command()]
 	SendRound {
 		/// Destination for the payment, this can either be an on-chain address
-		/// or an Ark VTXO public key.
+		/// or an Ark VTXO public key
 		destination: String,
 		amount: Amount,
 	},
+
+    /// Turn VTXOs into UTXOs
 	#[command()]
 	Offboard {
-		/// Optional address to which offboard the vtxos. If no address is provided, it will be taken from onchain wallet
+		/// Optional address to receive offboarded VTXOs. If no address is provided, it will be taken from onchain wallet
 		#[arg(long)]
 		address: Option<String>,
 		/// Optional selection of VTXOs to offboard. Either this or --all should be provided
@@ -181,15 +194,16 @@ enum Command {
 		#[arg(long)]
 		all: bool,
 	},
-	/// Perform a unilateral exit from the Ark.
+
+	/// Perform a unilateral exit from the Ark
 	#[command()]
 	Exit {
 		/// If set, only try to make progress on pending exits and don't
-		/// initiate exits on VTXOs in wallet.
+		/// initiate exits on VTXOs in wallet
 		#[arg(long)]
 		only_progress: bool,
 
-		/// Keep running until the entire exit is finished. This can take several hours.
+		/// Keep running until the entire exit is finished. This can take several hours
 		#[arg(long)]
 		wait: bool,
 
@@ -197,26 +211,29 @@ enum Command {
 		//yet
 	},
 
-	/// Dev command to drop the vtxo database.
+	/// Dev command to drop the vtxo database
 	#[command(hide = true)]
 	DropVtxos,
 }
 
 #[derive(clap::Subcommand)]
 enum OnchainCommand {
-	/// get the on-chain balance
+	/// Get the on-chain balance
 	#[command()]
 	Balance,
-	/// get an on-chain address
+
+	/// Get an on-chain address
 	#[command()]
 	Address,
-	/// send using the on-chain wallet
+
+	/// Send using the on-chain wallet
 	#[command()]
 	Send {
 		destination: Address<address::NetworkUnchecked>,
 		amount: Amount,
 	},
-	/// list our wallet's utxos
+
+	/// List our wallet's UTXOs
 	#[command()]
 	Utxos,
 }
