@@ -30,6 +30,8 @@ pub struct CreateOpts {
 }
 
 pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<()> {
+	debug!("Creating wallet in {}", datadir.display());
+
 	if opts.force && datadir.exists() {
 		fs::remove_dir_all(datadir).await?;
 	}
@@ -41,7 +43,13 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	match try_create_wallet(&datadir, opts).await {
 		Ok(ok) => Ok(ok),
 		Err(err) => {
-			fs::remove_dir_all(datadir).await?;
+			// Remove the datadir if it exists
+			if datadir.exists() {
+				if let Err(e) = fs::remove_dir_all(datadir).await {
+					warn!("Failed to remove '{}", datadir.display());
+					warn!("{}", e.to_string());
+				}
+			}
 			Err(err)
 		}
 	}
@@ -56,7 +64,7 @@ async fn try_create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		warn!("bark is experimental and not yet suited for usage in production");
 		bitcoin::Network::Bitcoin
 	} else {
-		bail!("Need to user either --signet, --regtest or --bitcoin");
+		bail!("A network must be specified. Use either --signet, --regtest or --bitcoin");
 	};
 
 	let mut cfg = Config {
