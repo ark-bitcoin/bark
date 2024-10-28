@@ -25,7 +25,7 @@ impl TestContext {
 		}
 		fs::create_dir_all(&datadir).await.unwrap();
 
-		TestContext { name: name.as_ref().to_string(), datadir}
+		TestContext { name: name.as_ref().to_string(), datadir }
 	}
 
 	pub fn bitcoind_default_cfg(&self, name: impl AsRef<str>) -> BitcoindConfig {
