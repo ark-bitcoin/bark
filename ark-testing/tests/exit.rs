@@ -32,14 +32,14 @@ async fn progress_exit(
 }
 
 #[tokio::test]
-async fn asp_is_online_unilateral_exit() {
+async fn unilateral_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("unilateral_exit/asp_is_online").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
 		relay_fee: Some(FeeRate::from_sat_per_vb(8).unwrap()),
 		..ctx.bitcoind_default_cfg("bitcoind")
 	}).await;
-	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
 	bitcoind.generate(106).await;
@@ -71,6 +71,7 @@ async fn asp_is_online_unilateral_exit() {
 	bark2.send_oor(pk3, Amount::from_sat(20_000_000)).await;
 	bark4.send_oor(pk1, Amount::from_sat(20_000_000)).await;
 
+	// All our pre-exit balances.
 	assert_eq!(50_000_000, bark1.offchain_balance().await.to_sat());
 	assert_eq!(29_998_035, bark2.offchain_balance().await.to_sat());
 	assert_eq!(50_000_000, bark3.offchain_balance().await.to_sat());
@@ -79,6 +80,9 @@ async fn asp_is_online_unilateral_exit() {
 	assert_eq!(5_000_000, bark2.onchain_balance().await.to_sat());
 	assert_eq!(9_996_895, bark3.onchain_balance().await.to_sat());
 	assert_eq!(5_000_000, bark4.onchain_balance().await.to_sat());
+
+	// We don't need ASP for exits.
+	aspd.stop().await.unwrap();
 
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark1).await;
@@ -98,38 +102,4 @@ async fn asp_is_online_unilateral_exit() {
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark4).await;
 	assert_eq!(34_996_095, bark4.onchain_balance().await.to_sat());
-}
-
-#[tokio::test]
-async fn asp_is_offline_unilateral_exit() {
-	// Initialize the test
-	let ctx = TestContext::new("unilateral_exit/asp_is_offline").await;
-	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
-
-	// Fund the asp
-	bitcoind.generate(106).await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-	bitcoind.fund_bark(&bark1, Amount::from_sat(30_000_000)).await;
-	bark1.onboard(Amount::from_sat(20_000_000)).await;
-
-	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
-	// bark2 needs funds to pay fees for the exit
-	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
-
-	// create vtxo on bark2 so that we can exit with it
-	let pk2 = bark2.vtxo_pubkey().await;
-	bark1.send_round(&pk2, Amount::from_sat(10_000_000)).await;
-
-	assert_eq!(10_000_000, bark2.offchain_balance().await.to_sat());
-
-	// ASP goes offline
-	aspd.stop().await.unwrap();
-
-	progress_exit(&bitcoind, &bark2).await;
-	assert_eq!(2, bark2.onchain_utxos().await.len());
-	// bark2's initial onchain balance + exit amount - fees
-	assert_eq!(10990389, bark2.onchain_balance().await.to_sat());
 }
