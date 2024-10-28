@@ -150,10 +150,14 @@ impl<T> Daemon<T>
 			self.child = Some(child);
 			Ok(())
 		} else {
+			error!("Daemon '{}' failed to start.", self.name());
 			match fs::read_to_string(&stderr_path) {
-				Ok(c) => error!("Daemon '{}' failed to start, stderr: {}", self.name(), c),
-				Err(e) => error!("Daemon '{}' failed to start and failed to read stderr at {}: {}",
-					self.name(), stderr_path.display(), e),
+				Ok(c) => error!("stderr: {c}"),
+				Err(e) => error!("failed to read stderr at {}: {}", stderr_path.display(), e),
+			}
+			match fs::read_to_string(&stdout_path) {
+				Ok(c) => error!("stdout: {c}"),
+				Err(e) => error!("failed to read stdout at {}: {}", stdout_path.display(), e),
 			}
 			anyhow::bail!("Failed to initialize {}", self.name());
 		}
