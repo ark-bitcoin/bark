@@ -59,7 +59,6 @@ impl TestContext {
 
 		let mut ret = Aspd::new(name, cfg);
 		ret.add_stdout_handler(FileLogger::new(datadir.join("stdout.log"))).unwrap();
-		ret.add_stderr_handler(FileLogger::new(datadir.join("stderr.log"))).unwrap();
 
 		ret.start().await.unwrap();
 		ret
@@ -138,7 +137,6 @@ impl TestContext {
 
 		let mut ret = Lightningd::new(name, cfg);
 		ret.add_stdout_handler(FileLogger::new(datadir.join("stdout.log"))).unwrap();
-		ret.add_stderr_handler(FileLogger::new(datadir.join("stderr.log"))).unwrap();
 		ret.start().await.unwrap();
 		ret
 	}

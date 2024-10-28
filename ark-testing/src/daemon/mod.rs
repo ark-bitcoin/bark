@@ -43,9 +43,7 @@ pub struct Daemon<T>
 	daemon_state: DaemonState,
 	child: Option<Child>,
 	stdout_jh: Option<JoinHandle<()>>,
-	stderr_jh: Option<JoinHandle<()>>,
 	stdout_handler: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>,
-	stderr_handler: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>
 }
 
 impl<T> Daemon<T>
@@ -57,9 +55,7 @@ impl<T> Daemon<T>
 			daemon_state: DaemonState::Init,
 			child: None,
 			stdout_handler: Arc::new(Mutex::new(vec![])),
-			stderr_handler: Arc::new(Mutex::new(vec![])),
 			stdout_jh: None,
-			stderr_jh: None
 		}
 	}
 }
@@ -182,13 +178,6 @@ impl<T> Daemon<T>
 		handlers.push(Box::new(log_handler));
 		Ok(())
 	}
-
-
-	pub fn add_stderr_handler<L : LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) -> anyhow::Result<()> {
-		let mut handlers = self.stderr_handler.lock().unwrap();
-		handlers.push(Box::new(log_handler));
-		Ok(())
-	}
 }
 
 impl<T> Drop for Daemon<T>
@@ -201,11 +190,6 @@ impl<T> Drop for Daemon<T>
 		}
 
 		match self.stdout_jh.take() {
-			Some(jh) => { let _ = jh.join(); },
-			None => {}
-		}
-
-		match self.stderr_jh.take() {
 			Some(jh) => { let _ = jh.join(); },
 			None => {}
 		}
