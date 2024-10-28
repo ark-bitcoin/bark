@@ -5,7 +5,6 @@ use bitcoin::{FeeRate, Network};
 use tokio::fs;
 
 use crate::util::test_data_directory;
-use crate::daemon::log::FileLogger;
 use crate::{
 	Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
 };
@@ -55,11 +54,7 @@ impl TestContext {
 	}
 
 	pub async fn aspd_with_cfg(&self, name: impl AsRef<str>, cfg: AspdConfig) -> Aspd {
-		let datadir = self.datadir.join(name.as_ref());
-
 		let mut ret = Aspd::new(name, cfg);
-		ret.add_stdout_handler(FileLogger::new(datadir.join("stdout.log"))).unwrap();
-
 		ret.start().await.unwrap();
 		ret
 	}
@@ -136,7 +131,6 @@ impl TestContext {
 		};
 
 		let mut ret = Lightningd::new(name, cfg);
-		ret.add_stdout_handler(FileLogger::new(datadir.join("stdout.log"))).unwrap();
 		ret.start().await.unwrap();
 		ret
 	}
