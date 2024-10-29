@@ -193,7 +193,7 @@ impl DaemonHelper for BitcoindHelper {
 			&format!("-datadir={}", self.config.datadir.display().to_string()),
 			&format!("-txindex={}", self.config.txindex as u8),
 			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
-			&format!("-port={}", self.state.p2p_port.expect("A port has been picked")),
+			&format!("-bind=127.0.0.1:{}", self.state.p2p_port.expect("A port has been picked")),
 			&format!("-fallbackfee={}", self.config.fallback_fee.to_btc_per_kvb()),
 		]);
 		if let Some(fr) = self.config.relay_fee {
