@@ -3,64 +3,56 @@ mod chain;
 pub use self::chain::ChainSource;
 
 use std::borrow::Borrow;
-use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::fee;
 use ark::util::TransactionExt;
 use bdk_wallet::chain::ChainPosition;
-use bdk_wallet::{SignOptions, TxOrdering};
-use bdk_file_store::Store;
+use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering};
 use bdk_esplora::EsploraAsyncExt;
 use bitcoin::{
 	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
 	Txid, Weight,
 };
 
-use crate::exit;
+use crate::{db, exit};
 use crate::psbtext::PsbtInputExt;
 use self::chain::ChainSourceClient;
-
-const DB_MAGIC: &str = "onchain_bdk";
-
 pub struct Wallet {
-	wallet: bdk_wallet::Wallet,
-	//TODO(stevenroose) integrate into our own db
-	wallet_db: Store<bdk_wallet::ChangeSet>,
+	wallet: PersistedWallet<db::Db>,
 	chain_source: ChainSourceClient,
+	db: db::Db,
 }
 
 impl Wallet {
 	pub fn create(
 		network: Network,
 		seed: [u8; 64],
-		dir: &Path,
+		mut db: db::Db,
 		chain_source: ChainSource,
 	) -> anyhow::Result<Wallet> {
-		let db_path = dir.join("bdkwallet.db");
-		let mut db = Store::<bdk_wallet::ChangeSet>::open_or_create_new(DB_MAGIC.as_bytes(), db_path)?;
-		let init = db.aggregate_changesets()?;
-
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
 
-		let wallet = if let Some(changeset) = init {
-			bdk_wallet::Wallet::load()
-				.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
-				.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
-				.check_network(network)
-				.extract_keys()
-				.load_wallet_no_persist(changeset)?
-				.expect("wallet should be loaded")
-		} else {
-			bdk_wallet::Wallet::create(edesc, idesc)
+		let wallet_opt = bdk_wallet::Wallet::load()
+			.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
+			.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
+			.extract_keys()
+			.check_network(network)
+			.load_wallet(&mut db)?;
+
+		let wallet = match wallet_opt {
+			Some(wallet) => wallet,
+			None => bdk_wallet::Wallet::create(edesc, idesc)
 				.network(network)
-				.create_wallet_no_persist()?
+				.create_wallet(&mut db)?,
 		};
+
 		let chain_source = ChainSourceClient::new(chain_source)?;
-		Ok(Wallet { wallet, wallet_db: db, chain_source })
+
+		Ok(Wallet { wallet, chain_source, db })
 	}
 
 	pub async fn tip(&self) -> anyhow::Result<u32> {
@@ -94,16 +86,12 @@ impl Wallet {
 					self.wallet.apply_block_connected_to(
 						&em.block, em.block_height(), em.connected_to(),
 					)?;
-					if let Some(change) = self.wallet.take_staged() {
-						self.wallet_db.append_changeset(&change)?;
-					}
+					self.wallet.persist(&mut self.db)?;
 				}
 
 				let mempool = emitter.mempool()?;
 				self.wallet.apply_unconfirmed_txs(mempool.into_iter().map(|(tx, time)| (tx, time)));
-				if let Some(change) = self.wallet.take_staged() {
-					self.wallet_db.append_changeset(&change)?;
-				}
+				self.wallet.persist(&mut self.db)?;
 			},
 			ChainSourceClient::Esplora(ref client) => {
 				const STOP_GAP: usize = 50;
@@ -113,9 +101,7 @@ impl Wallet {
 				let now = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
 				self.wallet.apply_update_at(update, Some(now))?;
-				if let Some(changeset) = self.wallet.take_staged() {
-					self.wallet_db.append_changeset(&changeset)?;
-				}
+				self.wallet.persist(&mut self.db)?;
 			},
 		}
 
@@ -181,9 +167,7 @@ impl Wallet {
 		let tx = psbt.extract_tx()?;
 		let unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 		self.wallet.apply_unconfirmed_txs([(tx.clone(), unix)]);
-		if let Some(change) = self.wallet.take_staged() {
-			self.wallet_db.append_changeset(&change)?;
-		}
+		self.wallet.persist(&mut self.db)?;
 		Ok(tx)
 	}
 
@@ -196,9 +180,7 @@ impl Wallet {
 
 	pub fn new_address(&mut self) -> anyhow::Result<Address> {
 		let ret = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address;
-		if let Some(change) = self.wallet.take_staged() {
-			self.wallet_db.append_changeset(&change)?;
-		}
+		self.wallet.persist(&mut self.db)?;
 		Ok(ret)
 	}
 

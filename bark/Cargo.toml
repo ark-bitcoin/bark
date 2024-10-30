@@ -31,7 +31,7 @@ log.workspace = true
 serde.workspace = true
 
 # INTERNAL
-rusqlite =  "0.32.1"
+rusqlite =  "0.31.0"
 
 lazy_static.workspace = true
 fern.workspace = true
@@ -42,7 +42,7 @@ ciborium.workspace = true
 
 bip39.workspace = true
 miniscript.workspace = true
-bdk_wallet.workspace = true
+bdk_wallet = { workspace = true, features = ["rusqlite"] }
 bdk_file_store.workspace = true
 bdk_bitcoind_rpc.workspace = true
 bdk_esplora.workspace = true
