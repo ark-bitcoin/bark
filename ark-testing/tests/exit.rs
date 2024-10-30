@@ -34,7 +34,7 @@ async fn progress_exit(
 #[tokio::test]
 async fn unilateral_exit() {
 	// Initialize the test
-	let ctx = TestContext::new("unilateral_exit/asp_is_online").await;
+	let ctx = TestContext::new("unilateral_exit").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
 		relay_fee: Some(FeeRate::from_sat_per_vb(8).unwrap()),
 		..ctx.bitcoind_default_cfg("bitcoind")
