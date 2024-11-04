@@ -62,20 +62,6 @@ steps:
       - ls -al $${LIGHTNINGD_EXEC}
       - TEST_DIRECTORY=./test/btc28 cargo test --package ark-testing
 
-  - name: test-integration-btc27.1
-    depends_on: build
-    image: stevenroose/bark-ci-tests@sha256:173f2b70c1ffd4ece153a971d2f16ca90d5ae8cadbba199c2b2ef962bf5941b8
-    environment:
-      BITCOIND_EXEC: /bitcoin/27.1/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/24.05/bin/lightningd
-    commands:
-      - git log --oneline | head -n 1
-      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
-      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
-      - ls -al $${BITCOIND_EXEC}
-      - ls -al $${LIGHTNINGD_EXEC}
-      - TEST_DIRECTORY=./test/btc27 cargo test --package ark-testing
-
   - name: push-github-mirror
     when:
       - event: push
