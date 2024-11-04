@@ -126,7 +126,7 @@ async fn multiple_round_payments() {
 	#[cfg(not(feature = "slow_test"))]
 	const N: usize = 9;
 	#[cfg(feature = "slow_test")]
-	const N: usize = 74; // this is the limit with this nb_round_nonces
+	const N: usize = 74;
 
 	info!("Running multiple_round_test with N set to {}", N);
 
