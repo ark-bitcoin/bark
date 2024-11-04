@@ -60,14 +60,15 @@
 			{
 				devShells.default = pkgs.mkShell {
 					nativeBuildInput = [ ];
-					buildInputs = [ clang ] ++ (with pkgs; [
+					buildInputs = [ clang ] ++ [
 						(pkgs.rust-bin.stable.${rustVersion}.default.override {
 							extensions = [ "rust-src" "rust-analyzer" ];
 						})
-						pkg-config
-						openssl
-						sqlite
-					]);
+						pkgs.pkg-config
+						pkgs.openssl
+						protobuf
+						pkgs.sqlite
+					];
 
 					LLVM_CONFIG_PATH = "${llvmConfigPkg}/bin/llvm-config";
 					LLVM_CONFIG_PATH_native = "${llvmConfigPkg}/bin/llvm-config";
@@ -77,10 +78,10 @@
 
 					PROTOC = "${protobuf}/bin/protoc";
 
-					#ROCKSDB_STATIC = "true"; # NB do this for prod
 					ROCKSDB_LIB_DIR = "${pkgs.rocksdb}/lib/";
-					#"ROCKSDB_${target_underscores}_STATIC" = "true"; # NB do this for prod
 					"ROCKSDB_${target_underscores}_LIB_DIR" = "${pkgs.rocksdb}/lib/";
+					#ROCKSDB_STATIC = "true"; # NB do this for prod
+					#"ROCKSDB_${target_underscores}_STATIC" = "true"; # NB do this for prod
 				};
 			}
 		);
