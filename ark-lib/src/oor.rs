@@ -10,7 +10,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use crate::{fee, musig, util, Vtxo, VtxoRequest, VtxoSpec};
+use crate::{fee, musig, util, PaymentRequest, Vtxo, VtxoSpec};
 
 
 /// The minimum fee we consider for an oor transaction.
@@ -21,7 +21,7 @@ pub struct OorPayment {
 	pub asp_pubkey: PublicKey,
 	pub exit_delta: u16,
 	pub inputs: Vec<Vtxo>,
-	pub outputs: Vec<VtxoRequest>,
+	pub outputs: Vec<PaymentRequest>,
 }
 
 impl OorPayment {
@@ -29,7 +29,7 @@ impl OorPayment {
 		asp_pubkey: PublicKey,
 		exit_delta: u16,
 		inputs: Vec<Vtxo>,
-		outputs: Vec<VtxoRequest>,
+		outputs: Vec<PaymentRequest>,
 	) -> OorPayment {
 		OorPayment { asp_pubkey, exit_delta, inputs, outputs }
 	}

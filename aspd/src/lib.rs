@@ -63,8 +63,7 @@ pub struct Config {
 	// vtxo spec
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
-	/// Add fee anchors on all VTXO tree intermediate txs.
-	pub vtxo_node_anchors: bool,
+
 	// ln
 	pub htlc_delta: u16,
 	pub htlc_expiry_delta: u16,
@@ -98,13 +97,12 @@ impl Default for Config {
 			bitcoind_cookie: "~/.bitcoin/signet/.cookie".into(),
 			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
 			vtxo_exit_delta: 2 * 6, // 2 hrs
-			vtxo_node_anchors: true,
 			htlc_delta: 1 * 6, // 1 hr
 			htlc_expiry_delta: 1 * 6, // 1 hr
 			round_interval: Duration::from_secs(10),
 			round_submit_time: Duration::from_secs(2),
 			round_sign_time: Duration::from_secs(2),
-			nb_round_nonces: 100,
+			nb_round_nonces: 10,
 			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			max_onboard_value: None,
 			cln_config: None,
@@ -313,14 +311,18 @@ impl App {
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
-			rpcserver::run_public_rpc_server(app.clone())
-				.await.context("error running public gRPC server")
+			let ret = rpcserver::run_public_rpc_server(app.clone())
+				.await.context("error running public gRPC server");
+			info!("RPC server exited with {:?}", ret);
+			ret
 		});
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
-			round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx)
-				.await.context("error from round scheduler")
+			let ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx)
+				.await.context("error from round scheduler");
+			info!("Round coordinator exited with {:?}", ret);
+			ret
 		});
 
 		// The tasks that always run
@@ -330,8 +332,10 @@ impl App {
 		if self.config.admin_rpc_address.is_some() {
 			let app = self.clone();
 			let jh_rpc_admin = tokio::spawn(async move {
-				rpcserver::run_admin_rpc_server(app.clone())
-					.await.context("error running admin gRPC server")
+				let ret = rpcserver::run_admin_rpc_server(app.clone())
+					.await.context("error running admin gRPC server");
+				info!("Admin RPC server exited with {:?}", ret);
+				ret
 			});
 			jhs.push(jh_rpc_admin)
 		}
@@ -339,8 +343,10 @@ impl App {
 		if self.config.cln_config.is_some() {
 			let cln_config = self.config.cln_config.clone().unwrap();
 			let jh_sendpay = tokio::spawn(async move {
-				lightning::run_process_sendpay_updates(&cln_config, sendpay_tx)
-					.await.context("error processing sendpays")
+				let ret = lightning::run_process_sendpay_updates(&cln_config, sendpay_tx)
+					.await.context("error processing sendpays");
+				info!("Sendpay updater process exited with {:?}", ret);
+				ret
 			});
 			jhs.push(jh_sendpay)
 		}
@@ -556,11 +562,11 @@ impl App {
 			// First add the vtxo tree utxo.
 			let (
 				spend_cb, spend_script, spend_lv, spend_merkle,
-			) = round.signed_tree.spec.expiry_scriptspend();
+			) = round.signed_tree.spec.expiry_scriptspend(round.signed_tree.spec.round_tx_cosign_pk());
 			let mut psbt_in = psbt::Input {
 				witness_utxo: Some(round.tx.output[0].clone()),
 				sighash_type: Some(sighash::TapSighashType::Default.into()),
-				tap_internal_key: Some(round.signed_tree.spec.cosign_agg_pk),
+				tap_internal_key: Some(round.signed_tree.spec.round_tx_cosign_pk()),
 				tap_scripts: [(spend_cb, (spend_script, spend_lv))].into_iter().collect(),
 				tap_merkle_root: Some(spend_merkle),
 				non_witness_utxo: None,

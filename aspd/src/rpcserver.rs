@@ -307,44 +307,41 @@ impl rpc::ArkService for Arc<App> {
 			Ok(Vtxo::decode(&vtxo).map_err(|e| badarg!("invalid vtxo: {}", e))?)
 		}).collect::<Result<_, tonic::Status>>()?;
 
-		let mut outputs = Vec::with_capacity(req.payments.len());
-		let mut offboards = Vec::with_capacity(req.payments.len() / 2);
-		for payment in req.payments {
-			let amount = Amount::from_sat(payment.amount);
-			match payment.destination.ok_or_else(|| badarg!("missing destination"))? {
-				rpc::payment::Destination::VtxoPublicKey(pk) => {
-					let pubkey= PublicKey::from_slice(&pk)
-						.map_err(|e| badarg!("malformed pubkey {:?}: {}", pk, e))?;
-					outputs.push(VtxoRequest { amount, pubkey });
-				},
-				rpc::payment::Destination::OffboardSpk(s) => {
-					let script_pubkey = ScriptBuf::from_bytes(s);
-					let offb = OffboardRequest { script_pubkey, amount };
-					offb.validate().map_err(|e| badarg!("invalid offboard request: {}", e))?;
-					offboards.push(offb);
-				},
+		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
+		let mut cosign_pub_nonces = Vec::with_capacity(req.vtxo_requests.len());
+		for r in req.vtxo_requests {
+			let amount = Amount::from_sat(r.amount);
+			let pubkey= PublicKey::from_slice(&r.vtxo_public_key)
+				.map_err(|e| badarg!("malformed pubkey: {}", e))?;
+			let cosign_pk = PublicKey::from_slice(&r.cosign_pubkey)
+				.map_err(|e| badarg!("malformed cosign pubkey: {}", e))?;
+			vtxo_requests.push(VtxoRequest { amount, pubkey, cosign_pk });
+
+			// Make sure users provided right number of nonces.
+			if r.public_nonces.len() != self.config.nb_round_nonces {
+				return Err(badarg!(
+					"need exactly {} public nonces", self.config.nb_round_nonces,
+				));
 			}
+			let public_nonces = r.public_nonces.into_iter()
+				.take(self.config.nb_round_nonces)
+				.map(|n| {
+					musig::MusigPubNonce::from_slice(&n)
+						.map_err(|e| badarg!("invalid public nonce: {}", e))
+				}).collect::<Result<_, tonic::Status>>()?;
+			cosign_pub_nonces.push(public_nonces);
 		}
 
-		let cosign_pubkey = PublicKey::from_slice(&req.cosign_pubkey)
-			.map_err(|e| badarg!("invalid cosign pubkey: {}", e))?;
-
-		// Make sure we have at least enough nonces, but just drop
-		// leftover if user provided too many.
-		if req.public_nonces.len() < self.config.nb_round_nonces {
-			return Err(badarg!(
-				"need at least {} public nonces", self.config.nb_round_nonces,
-			));
-		}
-		let public_nonces = req.public_nonces.into_iter()
-		.take(self.config.nb_round_nonces)
-		.map(|n| {
-			musig::MusigPubNonce::from_slice(&n)
-				.map_err(|e| badarg!("invalid public nonce: {}", e))
+		let offboards = req.offboard_requests.into_iter().map(|r| {
+			let amount = Amount::from_sat(r.amount);
+			let script_pubkey = ScriptBuf::from_bytes(r.offboard_spk);
+			let ret = OffboardRequest { script_pubkey, amount };
+			ret.validate().map_err(|e| badarg!("invalid offboard request: {}", e))?;
+			Ok(ret)
 		}).collect::<Result<_, tonic::Status>>()?;
 
 		let inp = RoundInput::RegisterPayment {
-			inputs, outputs, offboards, cosign_pubkey, public_nonces,
+			inputs, vtxo_requests, cosign_pub_nonces, offboards,
 		};
 		self.try_rounds().to_status()?.round_input_tx.send(inp).expect("input channel closed");
 		Ok(tonic::Response::new(rpc::Empty {}))

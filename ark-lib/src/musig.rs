@@ -77,7 +77,25 @@ pub fn nonce_pair(key: &Keypair) -> (MusigSecNonce, MusigPubNonce) {
 pub fn nonce_agg(pub_nonces: impl IntoIterator<Item = MusigPubNonce>) -> MusigAggNonce {
 	MusigAggNonce::new(&SECP, &pub_nonces.into_iter().collect::<Vec<_>>())
 }
-	
+
+pub fn combine_partial_signatures(
+	pubkeys: impl IntoIterator<Item = PublicKey>,
+	agg_nonce: MusigAggNonce,
+	sighash: [u8; 32],
+	tweak: Option<[u8; 32]>,
+	sigs: &[MusigPartialSignature],
+) -> schnorr::Signature {
+	let agg = if let Some(tweak) = tweak {
+		tweaked_key_agg(pubkeys, tweak).0
+	} else {
+		key_agg(pubkeys)
+	};
+
+	let msg = zkp::Message::from_digest(sighash);
+	let session = MusigSession::new(&SECP, &agg, agg_nonce, msg);
+	sig_from(session.partial_sig_agg(&sigs))
+}
+
 pub fn partial_sign(
 	pubkeys: impl IntoIterator<Item = PublicKey>,
 	agg_nonce: MusigAggNonce,

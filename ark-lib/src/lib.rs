@@ -53,11 +53,28 @@ pub const P2WSH_DUST: Amount = Amount::from_sat(P2WSH_DUST_SAT);
 pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 
 
+
+/// Request for the creation of a VTXO.
+///
+/// NB This differs from the [VtxoRequest] type in ark-lib in the fact that
+/// it doesn't have a cosign pubkey attached yet.
+/// With covenants we can remove this type distinction.
+/// Or we might be able to use it for OOR payments.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct PaymentRequest {
+	pub pubkey: PublicKey,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct VtxoRequest {
 	pub pubkey: PublicKey,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
+	/// The public key used by the client to cosign the transaction tree
+	/// The client SHOULD forget this key after signing it
+	pub cosign_pk: PublicKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
@@ -85,6 +102,7 @@ impl OffboardRequest {
 		} else if script.is_p2tr() {
 			P2TR_DUST_VB
 		} else if script.is_op_return() {
+			//TODO(stevenroose) verify length limit of standardness rules
 			bitcoin::consensus::encode::VarInt(script.len() as u64).size() as u64
 				+ script.len() as u64
 				+ 8

@@ -141,37 +141,28 @@ pub struct VtxoProposal {
     pub round_id: u64,
     #[prost(bytes = "vec", tag = "2")]
     pub vtxos_spec: ::prost::alloc::vec::Vec<u8>,
-    /// / The unsigned round tx.
     #[prost(bytes = "vec", tag = "3")]
-    pub round_tx: ::prost::alloc::vec::Vec<u8>,
+    pub unsigned_round_tx: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", repeated, tag = "4")]
-    pub vtxos_signers: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
-    #[prost(bytes = "vec", repeated, tag = "5")]
     pub vtxos_agg_nonces: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RoundProposal {
     #[prost(uint64, tag = "1")]
     pub round_id: u64,
-    /// / Completely signed vtxo tree.
-    #[prost(bytes = "vec", tag = "2")]
-    pub signed_vtxos: ::prost::alloc::vec::Vec<u8>,
-    /// / The unsigned round tx.
-    #[prost(bytes = "vec", tag = "3")]
-    pub round_tx: ::prost::alloc::vec::Vec<u8>,
-    #[prost(message, repeated, tag = "6")]
+    /// / The cosign signatures to plug into the vtxo tree.
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub vtxo_cosign_signatures: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(message, repeated, tag = "3")]
     pub forfeit_nonces: ::prost::alloc::vec::Vec<ForfeitNonces>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RoundFinished {
     #[prost(uint64, tag = "1")]
     pub round_id: u64,
-    /// / Completely signed vtxo tree.
-    #[prost(bytes = "vec", tag = "2")]
-    pub signed_vtxos: ::prost::alloc::vec::Vec<u8>,
     /// / The signed round tx.
     #[prost(bytes = "vec", tag = "3")]
-    pub round_tx: ::prost::alloc::vec::Vec<u8>,
+    pub signed_round_tx: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RoundEvent {
@@ -193,22 +184,24 @@ pub mod round_event {
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct Payment {
+pub struct VtxoRequest {
     /// amount in sats
     #[prost(uint64, tag = "1")]
     pub amount: u64,
-    #[prost(oneof = "payment::Destination", tags = "2, 3")]
-    pub destination: ::core::option::Option<payment::Destination>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub vtxo_public_key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "3")]
+    pub cosign_pubkey: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "4")]
+    pub public_nonces: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
-/// Nested message and enum types in `Payment`.
-pub mod payment {
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum Destination {
-        #[prost(bytes, tag = "2")]
-        VtxoPublicKey(::prost::alloc::vec::Vec<u8>),
-        #[prost(bytes, tag = "3")]
-        OffboardSpk(::prost::alloc::vec::Vec<u8>),
-    }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OffboardRequest {
+    /// amount in sats
+    #[prost(uint64, tag = "1")]
+    pub amount: u64,
+    #[prost(bytes = "vec", tag = "2")]
+    pub offboard_spk: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubmitPaymentRequest {
@@ -216,11 +209,9 @@ pub struct SubmitPaymentRequest {
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub input_vtxos: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(message, repeated, tag = "2")]
-    pub payments: ::prost::alloc::vec::Vec<Payment>,
-    #[prost(bytes = "vec", tag = "3")]
-    pub cosign_pubkey: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", repeated, tag = "4")]
-    pub public_nonces: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    pub vtxo_requests: ::prost::alloc::vec::Vec<VtxoRequest>,
+    #[prost(message, repeated, tag = "3")]
+    pub offboard_requests: ::prost::alloc::vec::Vec<OffboardRequest>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ForfeitSignatures {

@@ -42,6 +42,7 @@ async fn cln_can_pay_lightning() {
 
 	// Connect both peers and verify the connection succeeded
 	info!("Connect `{}` to `{}`", lightningd_1.name(), lightningd_2.name());
+	lightningd_1.wait_for_block_sync(&bitcoind).await;
 	lightningd_1.connect(&lightningd_2).await;
 	let mut grpc_client = lightningd_1.grpc_client().await;
 	let peers = grpc_client.list_peers(grpc::ListpeersRequest{

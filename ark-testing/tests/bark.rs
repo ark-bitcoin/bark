@@ -124,7 +124,7 @@ async fn list_vtxos() {
 #[tokio::test]
 async fn multiple_round_payments() {
 	#[cfg(not(feature = "slow_test"))]
-	const N: usize = 8;
+	const N: usize = 9;
 	#[cfg(feature = "slow_test")]
 	const N: usize = 74; // this is the limit with this nb_round_nonces
 

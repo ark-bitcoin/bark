@@ -206,10 +206,15 @@ impl Bark {
 
 		let mut child = command.spawn().unwrap();
 
-		let exit = tokio::time::timeout(
+		let exit_result = tokio::time::timeout(
 			self.timeout,
 			child.wait(),
-		).await??;
+		).await;
+		// on timeout, kill the child
+		if exit_result.is_err() {
+			child.kill().await
+				.map_err(|e| anyhow!("wait we can't kill the child??: {}", e))?;
+		}
 		let out = {
 			let mut buf = String::new();
 			if let Some(mut o) = child.stdout {
@@ -232,12 +237,13 @@ impl Bark {
 		let logs = fs::read_to_string(stderr_path).await?;
 		self.command_log.lock().await.write_all(logs.as_bytes()).await?;
 
-		if exit.success() {
-			Ok(out.trim().to_string())
-		} else {
-			bail!("Failed to execute command '{}':\nOUTPUT:\n{}\n\nLOGS:\n{}",
-				command_str, out, logs,
-			)
+		match exit_result {
+			Ok(Ok(ret)) if ret.success() => Ok(out.trim().to_string()),
+			_ => {
+				bail!("Failed to execute command on {} '{}': error={:?}\nOUTPUT:\n{}\n\nLOGS:\n{}",
+					self.name(), command_str, exit_result, out, logs,
+				)
+			},
 		}
 	}
 
