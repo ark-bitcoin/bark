@@ -18,12 +18,30 @@
 			let
 				rustVersion = "1.77.1";
 				protobufVersion = "3.12.4";
+				bitcoinVersion = "28.0";
+				lightningVersion = "24.05";
 
 				lib = nixpkgs.lib;
 				overlays = [ rust-overlay.overlays.default ];
 				pkgs = import nixpkgs {
 					inherit system overlays;
 				};
+
+				bitcoin = pkgs.bitcoin.overrideAttrs (old: {
+					version = bitcoinVersion;
+					src = pkgs.fetchurl {
+						urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
+						sha256 = "sha256-cAri0eIEYC6wfyd5puZmmJO8lsDcopBZP4D/jhAv838=";
+					};
+				});
+
+				clightning = pkgs.clightning.overrideAttrs (old: {
+					version = lightningVersion;
+					src = pkgs.fetchurl {
+						url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
+						hash = "sha256-FD7JFM80wrruqBWjYnJHZh2f2GZJ6XDQmUQ0XetnWBg=";
+					};
+				});
 
 				protobuf = pkgs.protobuf3_20.overrideAttrs (old: {
 					version = protobufVersion;
@@ -67,6 +85,8 @@
 						pkgs.pkg-config
 						protobuf
 						pkgs.sqlite
+						bitcoin
+						clightning
 					];
 
 					LLVM_CONFIG_PATH = "${llvmConfigPkg}/bin/llvm-config";
