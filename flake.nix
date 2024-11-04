@@ -65,7 +65,6 @@
 							extensions = [ "rust-src" "rust-analyzer" ];
 						})
 						pkgs.pkg-config
-						pkgs.openssl
 						protobuf
 						pkgs.sqlite
 					];
