@@ -1,9 +1,12 @@
 
 
+use std::borrow::Borrow;
+use std::collections::HashMap;
+
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_esplora::esplora_client;
-use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitcoin::{Amount, OutPoint, Transaction, Txid, Wtxid};
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 
@@ -65,6 +68,39 @@ impl ChainSourceClient {
 		}
 	}
 
+	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
+		#[derive(Debug, Deserialize)]
+		struct PackageTxInfo {
+			txid: Txid,
+			error: Option<String>,
+		}
+		#[derive(Debug, Deserialize)]
+		struct SubmitPacakgeResponse {
+			#[serde(rename = "tx-results")]
+			tx_results: HashMap<Wtxid, PackageTxInfo>,
+			package_msg: String,
+		}
+
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				let hexes = txs.iter()
+					.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
+					.collect::<Vec<_>>();
+				let res = bitcoind.call::<SubmitPacakgeResponse>("submitpackage", &[hexes.into()])?;
+				if res.package_msg != "success" {
+					let errors = res.tx_results.values()
+						.map(|t| format!("tx {}: {}",
+							t.txid, t.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)"),
+						))
+						.collect::<Vec<_>>();
+					bail!("msg: '{}', errors: {:?}", res.package_msg, errors);
+				}
+				Ok(())
+			},
+			ChainSourceClient::Esplora(ref _client) => unimplemented!(),
+		}
+	}
+
 	/// Returns the block height the tx is confirmed in, if any.
 	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
 		let ret = match self {
@@ -90,6 +126,7 @@ impl ChainSourceClient {
 		Ok(ret)
 	}
 
+	#[allow(unused)]
 	pub async fn txout_value(&self, outpoint: OutPoint) -> anyhow::Result<Amount> {
 		let tx = match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {

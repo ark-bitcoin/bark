@@ -44,8 +44,6 @@ impl ConnectorChain {
 
 		// We need n times dust for connectors.
 		fee::DUST * len as u64
-		// Then we need minrelayfee to make sure we can pay for every tx in chain.
-		+ fee::RELAY_FEERATE * Self::total_weight(len)
 	}
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
@@ -245,8 +243,7 @@ mod test {
 		assert_eq!(fee::DUST, chain.iter_unsigned_txs().last().unwrap().output[0].value);
 
 		let total_value = chain.iter_unsigned_txs().map(|t| t.output[1].value).sum::<Amount>()
-			+ chain.iter_unsigned_txs().last().unwrap().output[0].value
-			+ fee::RELAY_FEERATE * weight;
+			+ chain.iter_unsigned_txs().last().unwrap().output[0].value;
 		assert_eq!(ConnectorChain::required_budget(100), total_value);
 
 		// random checks

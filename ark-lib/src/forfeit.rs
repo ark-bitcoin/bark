@@ -3,6 +3,7 @@
 use bitcoin::{OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
+use crate::util::TransactionExt;
 use crate::{fee, util, Vtxo};
 use crate::connectors::ConnectorChain;
 
@@ -11,14 +12,6 @@ use crate::connectors::ConnectorChain;
 pub const SIGNED_FORFEIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(0);
 
 pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
-	// NB we gain the dust from the connector and lose the dust from the fee anchor
-	let leftover = vtxo.amount() - fee::RELAY_FEERATE * SIGNED_FORFEIT_TX_WEIGHT;
-	//TODO(stevenroose) improve this hack
-	let vtxo_fee_anchor_point = {
-		let mut point = vtxo.point();
-		point.vout = vtxo.vtxo_tx().output.len() as u32 - 1;
-		point
-	};
 	Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -36,7 +29,7 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 				witness: Witness::new(),
 			},
 			TxIn {
-				previous_output: vtxo_fee_anchor_point,
+				previous_output: vtxo.vtxo_tx().fee_anchor().expect("vtxo has fee anchor"),
 				sequence: Sequence::MAX,
 				script_sig: ScriptBuf::new(),
 				witness: fee::dust_anchor_witness(),
@@ -44,7 +37,8 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 		],
 		output: vec![
 			TxOut {
-				value: leftover,
+				// we gain the dust amount from the connector output
+				value: vtxo.amount() + fee::DUST,
 				script_pubkey: ScriptBuf::new_p2tr(&util::SECP, vtxo.spec().combined_pubkey(), None),
 			},
 			fee::dust_anchor(),

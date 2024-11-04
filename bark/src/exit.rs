@@ -157,12 +157,8 @@ impl Wallet {
 						info!("Re-broadcasting package with CPFP tx {} to confirm tx {}",
 							cpfp.compute_txid(), txid,
 						);
-						if let Err(e) = self.onchain.broadcast_tx(&tx).await {
-							warn!("Error broadcasting an exit tx, \
-								hopefully means it already got broadcast before: {}", e);
-						}
-						if let Err(e) = self.onchain.broadcast_tx(&cpfp).await {
-							error!("Error re-broadcasting CPFP tx: {}", e);
+						if let Err(e) = self.onchain.broadcast_package(&[&tx, &cpfp]).await {
+							error!("Error broadcasting CPFP tx package: {}", e);
 						}
 					},
 					ExitTxStatus::Pending => {
@@ -187,15 +183,14 @@ impl Wallet {
 						// Ok let's confirm this bastard.
 						let fee_rate = self.onchain.urgent_feerate();
 						let cpfp = self.onchain.make_cpfp(&[&tx], fee_rate).await?;
-						if let Err(e) = self.onchain.broadcast_tx(&tx).await {
-							warn!("Error broadcasting an exit tx, \
-								hopefully means it already got broadcast before: {}", e);
-						}
-						if let Err(e) = self.onchain.broadcast_tx(&cpfp).await {
-							error!("Error broadcasting CPFP tx: {}", e);
-							//TODO(stevenroose) should we abort or still store the tx?
-						} else {
-							info!("Broadcast CPFP tx {} to confirm tx {}", cpfp.compute_txid(), txid);
+						info!("Broadcasting package with CPFP tx {} to confirm tx {}",
+							cpfp.compute_txid(), txid,
+						);
+						if let Err(e) = self.onchain.broadcast_package(&[&tx, &cpfp]).await {
+							error!("Error broadcasting CPFP tx package: {}", e);
+							// We won't abort the process because there are
+							// various reasons why this can happen.
+							// Many of them are not hurtful.
 						}
 						exit.exit_tx_status.insert(txid, ExitTxStatus::BroadcastWithCpfp(cpfp));
 					},

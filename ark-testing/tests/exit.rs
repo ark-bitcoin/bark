@@ -1,8 +1,10 @@
 
+#[macro_use]
+extern crate ark_testing;
+
 use ark_testing::daemon::bitcoind::BitcoindConfig;
 use ark_testing::{context::TestContext, Bark, Bitcoind};
 
-use bitcoin::FeeRate;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
 
@@ -36,7 +38,6 @@ async fn unilateral_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("unilateral_exit").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
-		relay_fee: Some(FeeRate::from_sat_per_vb(8).unwrap()),
 		..ctx.bitcoind_default_cfg("bitcoind")
 	}).await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
@@ -76,9 +77,9 @@ async fn unilateral_exit() {
 	assert_eq!(29_998_035, bark2.offchain_balance().await.to_sat());
 	assert_eq!(50_000_000, bark3.offchain_balance().await.to_sat());
 	assert_eq!(29_998_035, bark4.offchain_balance().await.to_sat());
-	assert_eq!(9_996_895, bark1.onchain_balance().await.to_sat());
+	assert_eq!(9_998_127, bark1.onchain_balance().await.to_sat());
 	assert_eq!(5_000_000, bark2.onchain_balance().await.to_sat());
-	assert_eq!(9_996_895, bark3.onchain_balance().await.to_sat());
+	assert_eq!(9_998_127, bark3.onchain_balance().await.to_sat());
 	assert_eq!(5_000_000, bark4.onchain_balance().await.to_sat());
 
 	// We don't need ASP for exits.
@@ -87,11 +88,11 @@ async fn unilateral_exit() {
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark1).await;
 	assert_eq!(2, bark1.onchain_utxos().await.len());
-	assert_eq!(59_977_933, bark1.onchain_balance().await.to_sat());
+	assert_eq!(59_972_802, bark1.onchain_balance().await.to_sat());
 
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark2).await;
-	assert_eq!(34_988_483, bark2.onchain_balance().await.to_sat());
+	assert_eq!(34_985_616, bark2.onchain_balance().await.to_sat());
 
 	// the amounts of the following two are a tiny bit higher because their tree was
 	// a bit smaller

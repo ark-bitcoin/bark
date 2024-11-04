@@ -248,7 +248,7 @@ fn init_logging(verbose: bool) {
 	if verbose {
 		l = l
 			.level(log::LevelFilter::Trace)
-			.level_for("bitcoincore_rpc", log::LevelFilter::Debug);
+			.level_for("bitcoincore_rpc", log::LevelFilter::Trace);
 	} else {
 		l = l
 			.level(log::LevelFilter::Info)
@@ -259,7 +259,23 @@ fn init_logging(verbose: bool) {
 			let now = chrono::Local::now();
 			// only time, not date
 			let stamp = now.format("%H:%M:%S.%3f");
-			out.finish(format_args!("[{} {: >5}] {}", stamp, colors.color(rec.level()), msg))
+			if verbose {
+				let module = rec.module_path().expect("no module");
+				if module.starts_with("bark::") {
+					let file = rec.file().expect("our macro provides file");
+					let file = file.strip_prefix("bark/").unwrap_or(file);
+					let line = rec.line().expect("our macro provides line");
+					out.finish(format_args!("[{stamp} {: >5} {module} {file}:{line}] {}",
+						colors.color(rec.level()), msg,
+					))
+				} else {
+					out.finish(format_args!("[{stamp} {: >5} {module}] {}",
+						colors.color(rec.level()), msg,
+					))
+				}
+			} else {
+				out.finish(format_args!("[{stamp} {: >5}] {}", colors.color(rec.level()), msg))
+			}
 		})
 		.chain(std::io::stderr())
 		.apply().expect("error setting up logging");

@@ -45,7 +45,7 @@ pub fn onboard_spk(spec: &VtxoSpec) -> ScriptBuf {
 
 /// The additional amount that needs to be sent into the onboard tx.
 pub fn onboard_surplus() -> Amount {
-	fee::DUST + fee::RELAY_FEERATE * REVEAL_TX_WEIGHT
+	fee::DUST
 }
 
 #[derive(Debug, Serialize, Deserialize)]

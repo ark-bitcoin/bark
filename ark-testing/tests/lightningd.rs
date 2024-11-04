@@ -117,7 +117,7 @@ async fn bark_pay_ln() {
 
 		assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 		bark_1.send_bolt11(invoice, None).await;
-		assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(299998820));
+		assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(299999320));
 	}
 
 	{
@@ -125,7 +125,7 @@ async fn bark_pay_ln() {
 		let invoice_amount = Amount::from_int_btc(1);
 		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
 		bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
-		assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(199997640));
+		assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(199998640));
 	}
 }
 
