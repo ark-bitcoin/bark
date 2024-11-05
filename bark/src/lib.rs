@@ -42,6 +42,9 @@ use crate::vtxo_state::VtxoState;
 /// The file name of the config file.
 const CONFIG_FILE: &str = "config.json";
 
+/// File name of the database file.
+const DB_FILE: &str = "db.sqlite";
+
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
@@ -213,10 +216,12 @@ impl Wallet {
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
-		let onchain = onchain::Wallet::create(config.network, seed, &datadir, chain_source)
+		
+		let db = db::Db::open(&datadir.join(DB_FILE)).context("failed to open db")?;
+
+		let onchain = onchain::Wallet::create(config.network, seed, db.clone(), chain_source)
 			.context("failed to create onchain wallet")?;
 
-		let db = db::Db::open(&datadir.join("db.sqlite")).context("failed to open db")?;
 
 		let vtxo_seed = {
 			let master = bip32::Xpriv::new_master(config.network, &seed).unwrap();

@@ -2,16 +2,16 @@ mod convert;
 mod migrations;
 mod query;
 
-
-use std::path::Path;
+use std::{path::Path, rc::Rc};
 use std::sync::RwLock;
 
 use anyhow::Context;
+use bdk_wallet::{rusqlite::Connection, ChangeSet, WalletPersister};
 use bitcoin::Amount;
-use rusqlite::Connection;
 
 use crate::{Vtxo, VtxoId, VtxoState, exit::Exit};
 
+#[derive(Clone)]
 pub struct Db {
 	// The name RwLock might falsely imply this lock is used for reading
 	// and writing. This is not the case
@@ -23,7 +23,7 @@ pub struct Db {
 	// You should use the `write`-lock if you want to make a transaction
 	//
 	// The compiler is nice and will have your back on this
-	conn: RwLock<Connection>
+	conn: Rc<RwLock<Connection>>
 }
 
 
@@ -36,7 +36,7 @@ impl Db {
 		let migrations = migrations::MigrationContext::new();
 		migrations.do_all_migrations(&mut conn)?;
 
-		Ok( Self { conn: RwLock::new(conn) })
+		Ok( Self { conn: Rc::new(RwLock::new(conn)) })
 	}
 
 	/// Stores a vtxo in the database
@@ -114,10 +114,26 @@ impl Db {
 	}
 }
 
+impl WalletPersister for Db {
+	type Error = rusqlite::Error;
+
+	fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
+		let mut conn = persister.conn.write().unwrap();
+		rusqlite::Connection::initialize(&mut *conn)
+	}
+
+	fn persist(persister: &mut Self, changeset: &ChangeSet) -> Result<(), Self::Error> {
+		let mut conn = persister.conn.write().unwrap();
+		rusqlite::Connection::persist(&mut *conn, changeset)
+	}
+}
+
 #[cfg(test)]
 mod test {
 	use super::*;
 	use ark::{BaseVtxo, VtxoSpec};
+	use bdk_wallet::chain::DescriptorExt;
+	use bitcoin::bip32;
 
 	#[test]
 	fn test_add_and_retreive_vtxos() {
@@ -213,5 +229,36 @@ mod test {
 		// It shouldn't be used for coin selection
 		let vs = db.get_expiring_vtxos(Amount::from_sat(501)).unwrap();
 		assert_eq!(vs, [vtxo_2.clone(), vtxo_3.clone()]);
+	}
+
+	#[test]
+	fn test_create_wallet_then_load() {
+		let mut db = Db::open(Path::new(":memory:")).unwrap();
+		let network = bitcoin::Network::Testnet;
+
+		let seed = bip39::Mnemonic::generate(12).unwrap().to_seed("");
+		let xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
+
+		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
+		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
+
+		let created = bdk_wallet::Wallet::create(edesc.clone(), idesc.clone())
+			.network(network)
+			.create_wallet(&mut db)
+			.unwrap();
+
+		let loaded = bdk_wallet::Wallet::load()
+			.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
+			.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
+			.extract_keys()
+			.check_network(network)
+			.load_wallet(&mut db)
+			.unwrap();
+
+		assert!(loaded.is_some());
+		assert_eq!(
+			created.public_descriptor(bdk_wallet::KeychainKind::External).descriptor_id(), 
+			loaded.unwrap().public_descriptor(bdk_wallet::KeychainKind::External).descriptor_id()
+		);
 	}
 }
