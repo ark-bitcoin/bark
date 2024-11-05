@@ -172,16 +172,18 @@ enum Command {
 		comment: Option<String>,
 	},
 
-	/// Send money by participating in an Ark round
+	/// Send money from your vtxo's to an onchain address
+	/// This method requires to wait for a round
 	#[command()]
-	SendRound {
+	SendOnchain {
 		/// Destination for the payment, this can either be an on-chain address
 		/// or an Ark VTXO public key
 		destination: String,
 		amount: Amount,
 	},
 
-    /// Turn VTXOs into UTXOs
+	/// Turn VTXOs into UTXOs
+	/// This command sends 
 	#[command()]
 	Offboard {
 		/// Optional address to receive offboarded VTXOs. If no address is provided, it will be taken from onchain wallet
@@ -458,12 +460,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 			info!("Success");
 		},
-		Command::SendRound { destination, amount } => {
-			if let Ok(pk) = PublicKey::from_str(&destination) {
-				debug!("Sending to Ark public key {}", pk);
-				w.sync_ark().await.context("sync error")?;
-				w.send_round_payment(pk, amount).await?;
-			} else if let Ok(addr) = Address::from_str(&destination) {
+		Command::SendOnchain { destination, amount } => {
+			if let Ok(addr) = Address::from_str(&destination) {
 				let addr = addr.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;

@@ -891,40 +891,6 @@ impl Wallet {
 		Ok((invoice, preimage))
 	}
 
-	/// Send a payment in an Ark round.
-	///
-	/// It is advised to sync your wallet before calling this method.
-	pub async fn send_round_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<()> {
-		//TODO(stevenroose) impl key derivation
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
-
-		// Prepare the payment.
-		let payment = PaymentRequest { pubkey: destination, amount };
-		let input_vtxos = self.db.get_expiring_vtxos(amount)?;
-		let change = { //TODO(stevenroose) account dust
-			let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-			if sum < payment.amount {
-				bail!("Balance too low: {}", sum);
-			} else if sum == payment.amount {
-				info!("No change, emptying wallet.");
-				None
-			} else {
-				let amount = sum - payment.amount;
-				info!("Adding change vtxo for {}", amount);
-				Some(PaymentRequest {
-					pubkey: vtxo_key.public_key(),
-					amount: amount,
-				})
-			}
-		};
-
-		let vtxos = Some(payment).into_iter().chain(change).collect::<Vec<_>>();
-		self.participate_round(move |_id, _offb_fr| {
-			Ok((input_vtxos.clone(), vtxos.clone(), Vec::new()))
-		}).await.context("round failed")?;
-		Ok(())
-	}
-
 	/// Send to an off-chain address in an Ark round.
 	///
 	/// It is advised to sync your wallet before calling this method.

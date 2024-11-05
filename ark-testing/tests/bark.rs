@@ -122,7 +122,7 @@ async fn list_vtxos() {
 
 
 #[tokio::test]
-async fn multiple_round_payments() {
+async fn large_round() {
 	#[cfg(not(feature = "slow_test"))]
 	const N: usize = 9;
 	#[cfg(feature = "slow_test")]
@@ -163,6 +163,7 @@ async fn multiple_round_payments() {
 		(barks, pks)
 	};
 
+	// Onboard all vtxo's
 	for chunk in barks.chunks(20) { // 25 sometimes failed..
 		futures::future::join_all(chunk.iter().map(|b| {
 			b.onboard(Amount::from_sat(80_000))
@@ -170,10 +171,11 @@ async fn multiple_round_payments() {
 		bitcoind.generate(1).await;
 	}
 
+	// Refresh all vtxos
 	let pks_shifted = pks.iter().chain(pks.iter()).skip(1).cloned().take(N).collect::<Vec<_>>();
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
 	futures::future::join_all(barks.iter().zip(pks_shifted).map(|(b, pk)| {
-		b.send_round(pk, Amount::from_sat(500))
+		b.refresh_all()
 	})).await;
 }
 
@@ -221,15 +223,15 @@ async fn refresh() {
 	bark1.onboard(Amount::from_sat(800_000)).await;
 	bark2.onboard(Amount::from_sat(800_000)).await;
 
-	// We want bark2 to have an onboard, round and oor vtxo
+	// We want bark2 to have a refresh, onboard, round and oor vtxo
 	let pk1 = bark1.vtxo_pubkey().await;
 	let pk2 = bark2.vtxo_pubkey().await;
-	bark2.send_round(&pk1, Amount::from_sat(20_000)).await; // generates change
-	bark1.send_round(&pk2, Amount::from_sat(20_000)).await;
+	bark2.send_oor(&pk1, Amount::from_sat(20_000)).await; // generates change
+	bark1.refresh_all().await;
 	bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
 	bark2.onboard(Amount::from_sat(20_000)).await;
 
-	assert_eq!(4, bark2.vtxos().await.len());
+	assert_eq!(3, bark2.vtxos().await.len());
 	bark2.refresh_all().await;
 	assert_eq!(1, bark2.vtxos().await.len());
 }
@@ -257,7 +259,7 @@ async fn compute_balance() {
 	bark1.onboard(Amount::from_sat(500_000)).await;
 
 	// round vtxo
-	bark2.send_round(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
+	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(250_000)).await;
 
@@ -298,12 +300,11 @@ async fn offboard_all() {
 	// We want bark2 to have an onboard, round and oor vtxo
 	let pk2 = bark2.vtxo_pubkey().await;
 	bark2.onboard(Amount::from_sat(20_000)).await;
-	bark1.send_round(&pk2, Amount::from_sat(20_000)).await;
 	bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
 
 	let address = bitcoind.get_new_address();
 
-	assert_eq!(3, bark2.vtxos().await.len());
+	assert_eq!(2, bark2.vtxos().await.len());
 	bark2.offboard_all(address.clone()).await;
 
 	// We check that all vtxos have been offboarded
@@ -311,7 +312,7 @@ async fn offboard_all() {
 	// We check that provided address received the coins
 	bitcoind.generate(1).await;
 	let balance = bitcoind.get_received_by_address(&address);
-	assert_eq!(balance, Amount::from_sat(59100));
+	assert_eq!(balance, Amount::from_sat(39100));
 }
 
 #[tokio::test]

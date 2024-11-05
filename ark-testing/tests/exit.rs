@@ -66,8 +66,8 @@ async fn unilateral_exit() {
 
 	// try make sure they send in the same round, so that the have identical exit txs
 	tokio::join!(
-		bark1.send_round(pk2, Amount::from_sat(50_000_000)),
-		bark3.send_round(pk4, Amount::from_sat(50_000_000))
+		bark1.send_onchain(pk2, Amount::from_sat(50_000_000)),
+		bark3.send_onchain(pk4, Amount::from_sat(50_000_000))
 	);
 	bark2.send_oor(pk3, Amount::from_sat(20_000_000)).await;
 	bark4.send_oor(pk1, Amount::from_sat(20_000_000)).await;
