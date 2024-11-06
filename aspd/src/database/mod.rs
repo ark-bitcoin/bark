@@ -247,7 +247,7 @@ impl Db {
 		}))
 	}
 
-	/// Get all round IDs of rounds that expired before or on [height].
+	/// Get all round IDs of rounds that expired before or on `height`.
 	pub fn get_expired_rounds(&self, height: u32) -> anyhow::Result<Vec<Txid>> {
 		let mut ret = Vec::new();
 
