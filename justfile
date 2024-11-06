@@ -10,7 +10,7 @@ build:
 	cargo build --workspace
 
 check:
-  cargo check --all --tests
+	cargo check --all --tests
 
 alias unit := test-unit
 test-unit TEST="":
@@ -22,6 +22,14 @@ test-integration TEST="": build
 
 test: test-unit test-integration
 
+RUSTDOCSDIR := justfile_directory() / "rustdocs"
+DEFAULT_CRATE := "bark" # This is opinionated, but doesn't matter. Any page has full search.
+# Generate rustdoc documentation for all crates and dependencies
+rustdocs:
+	mkdir -p {{RUSTDOCSDIR}}
+	cargo doc --target-dir {{RUSTDOCSDIR}} --locked --all --lib --examples --document-private-items
+	echo "Open Rust docs at file://{{RUSTDOCSDIR}}/doc/{{DEFAULT_CRATE}}/index.html"
+
 # cleans most of our crates, doesn't clean grpc gens, they are sometimes slow to build
 clean:
-  cargo clean -p ark-lib -p ark-testing -p bark-aspd -p bark-client -p bark-json
+	cargo clean -p ark-lib -p ark-testing -p bark-aspd -p bark-client -p bark-json
