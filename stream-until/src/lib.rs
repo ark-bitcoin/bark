@@ -75,7 +75,7 @@ impl<S: Stream + Unpin, F: Future + Unpin> Stream for StreamUntil<S, F> {
 	}
 }
 
-/// This [Stream] extension trait provides a [until] method that terminates the
+/// This [Stream] extension trait provides a [StreamExt::until] method that terminates the
 /// stream once the given future resolves.
 pub trait StreamExt: Stream {
 	/// Yields elements from this stream until the given future resolves.

@@ -550,7 +550,7 @@ impl App {
 	/// Returns a set of UTXOs from previous rounds that can be spent.
 	///
 	/// It fills in the PSBT inputs with the fields required to sign,
-	/// for signing use [sign_round_utxo_inputs].
+	/// for signing use [App::sign_round_utxo_inputs].
 	fn spendable_expired_vtxos(&self, height: u32) -> anyhow::Result<Vec<SpendableUtxo>> {
 		let pubkey = self.master_key.public_key();
 
