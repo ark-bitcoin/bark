@@ -17,12 +17,14 @@ use opentelemetry::trace::{get_active_span, Span, SpanKind, Tracer, TracerProvid
 use opentelemetry_semantic_conventions as semconv;
 use opentelemetry_semantic_conventions::trace::RPC_GRPC_STATUS_CODE;
 use stream_until::{StreamExt as StreamExtUntil, StreamUntilItem};
+use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
 use ark::lightning::SignedBolt11Payment;
 use ark::{musig, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use aspd_rpc as rpc;
+use tonic::async_trait;
 
 use crate::error::{BadArgument, NotFound};
 use crate::{telemetry, App};
@@ -180,6 +182,27 @@ const RPC_SERVICE_ADMIN_METHODS: [&str; 4] = [
 	RPC_SERVICE_ADMIN_TRIGGER_SWEEP,
 	RPC_SERVICE_ADMIN_STOP,
 ];
+
+
+#[async_trait]
+trait ReceiverExt {
+	async fn wait_for_status(self) -> Result<(), tonic::Status>;
+}
+
+#[async_trait]
+impl ReceiverExt for oneshot::Receiver<anyhow::Error> {
+	/// Wait for an explicit Error sent in the channel
+	///
+	/// If the channel gets closed without any explicit error,
+	/// success is assumed
+	async fn wait_for_status(self) -> Result<(), tonic::Status> {
+		if let Ok(e) = self.await {
+			Err(e).to_status()?;
+		}
+
+		Ok(())
+	}
+}
 
 #[derive(Clone, Debug)]
 pub struct RpcMethodDetails {
@@ -598,12 +621,15 @@ impl rpc::server::ArkService for App {
 			Ok(ret)
 		}).collect::<Result<_, tonic::Status>>()?;
 
+		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::RegisterPayment {
 			inputs, vtxo_requests, cosign_pub_nonces, offboards,
 		};
-		self.try_rounds().to_status()?.round_input_tx.send(inp).expect("input channel closed");
 
-		Ok(tonic::Response::new(rpc::Empty{}))
+		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
+		rx.wait_for_status().await?;
+
+		Ok(tonic::Response::new(rpc::Empty {}))
 	}
 
 	async fn provide_vtxo_signatures(
@@ -617,6 +643,7 @@ impl rpc::server::ArkService for App {
 			KeyValue::new("signatures_count", format!("{:?}", req.get_ref().signatures.len())),
 		]);
 
+		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::VtxoSignatures {
 			pubkey: PublicKey::from_slice(&req.get_ref().pubkey)
 				.badarg("invalid pubkey")?,
@@ -625,9 +652,11 @@ impl rpc::server::ArkService for App {
 					.badarg("invalid signature")
 			}).collect::<Result<_, _>>()?,
 		};
-		self.try_rounds().to_status()?.round_input_tx.send(inp).expect("input channel closed");
 
-		Ok(tonic::Response::new(rpc::Empty{}))
+		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
+		rx.wait_for_status().await?;
+
+		Ok(tonic::Response::new(rpc::Empty {}))
 	}
 
 	async fn provide_forfeit_signatures(
@@ -640,6 +669,7 @@ impl rpc::server::ArkService for App {
 			KeyValue::new("signatures_count", format!("{:?}", req.get_ref().signatures.len())),
 		]);
 
+		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::ForfeitSignatures {
 			signatures: req.get_ref().signatures.iter().map(|ff| {
 				let id = VtxoId::from_slice(&ff.input_vtxo_id)
@@ -655,9 +685,11 @@ impl rpc::server::ArkService for App {
 				Ok((id, nonces, signatures))
 			}).collect::<Result<_, tonic::Status>>()?
 		};
-		self.try_rounds().to_status()?.round_input_tx.send(inp).expect("input channel closed");
 
-		Ok(tonic::Response::new(rpc::Empty{}))
+		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
+		rx.wait_for_status().await?;
+
+		Ok(tonic::Response::new(rpc::Empty {}))
 	}
 }
 #[tonic::async_trait]

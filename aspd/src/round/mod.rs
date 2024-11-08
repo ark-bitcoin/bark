@@ -12,7 +12,7 @@ use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use opentelemetry::{global, KeyValue};
 use opentelemetry::trace::{Span, Tracer, TracerProvider};
-use tokio::sync::OwnedMutexGuard;
+use tokio::sync::{oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
 use ark::{musig, BlockHeight, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::connectors::ConnectorChain;
@@ -951,7 +951,7 @@ impl From<SigningForfeits> for RoundState {
 /// This method is called from a tokio thread so it can be long-lasting.
 pub async fn run_round_coordinator(
 	app: &App,
-	mut round_input_rx: tokio::sync::mpsc::UnboundedReceiver<RoundInput>,
+	mut round_input_rx: tokio::sync::mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	mut round_trigger_rx: tokio::sync::mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
 	let mut shutdown = app.shutdown_channel.subscribe();
@@ -1042,23 +1042,34 @@ pub async fn run_round_coordinator(
 			'receive: loop {
 				tokio::select! {
 					() = &mut timeout => break 'receive,
-					input = round_input_rx.recv() => match input.expect("broken channel") {
-						RoundInput::RegisterPayment {
-							inputs, vtxo_requests, cosign_pub_nonces, offboards,
-						} => {
-							let state = round_state.collecting_payments();
-							if let Err(e) = state.process_payment(
-								app, inputs, vtxo_requests, cosign_pub_nonces, offboards,
-							).await {
-								debug!("error processing payment: {e}");
-								continue 'receive;
-							}
+					input = round_input_rx.recv() => {
+						let (input, tx) = input.expect("broken channel");
 
-							if round_state.proceed() {
-								break 'receive;
-							}
-						},
-						_ => trace!("unexpected message"),
+						let res = match input {
+							RoundInput::RegisterPayment {
+								inputs, vtxo_requests, cosign_pub_nonces, offboards,
+							} => {
+								round_state
+									.collecting_payments()
+									.process_payment(
+										app, inputs, vtxo_requests, cosign_pub_nonces, offboards,
+									).await
+									.map_err(|e| {
+										debug!("error processing payment: {e}");
+										e
+									})
+							},
+							_ => badarg!("unexpected message. current step is payment registration"),
+						};
+
+						if let Err(e) = res {
+							tx.send(e).expect("broken channel");
+							continue 'receive;
+						}
+
+						if round_state.proceed() {
+							break 'receive;
+						}
 					}
 				}
 			}
@@ -1130,14 +1141,27 @@ pub async fn run_round_coordinator(
 					},
 					input = round_input_rx.recv() => {
 						let state = round_state.signing_vtxo_tree();
-						match input.expect("broken channel") {
+						let (input, tx) = input.expect("broken channel");
+
+						let res = match input {
 							RoundInput::VtxoSignatures { pubkey, signatures } => {
-								if let Err(e) = state.register_signature(pubkey, signatures) {
-									slog!(VtxoSignatureRegistrationFailed, round_id, attempt, error: e.to_string());
-									continue 'receive;
-								}
+								state
+									.register_signature(pubkey, signatures)
+									.map_err(|e| {
+										slog!(VtxoSignatureRegistrationFailed, round_id, attempt, error: e.to_string());
+										e
+									})
 							},
-							_ => trace!("unexpected message"),
+							_ => badarg!("unexpected message. current step is vtxo signatures submission"),
+						};
+
+						if let Err(e) = res {
+							tx.send(e).expect("broken channel");
+							continue 'receive;
+						}
+
+						if round_state.proceed() {
+							break 'receive;
 						}
 					}
 				}
@@ -1182,18 +1206,28 @@ pub async fn run_round_coordinator(
 						}
 					}
 					input = round_input_rx.recv() => {
-						match input.expect("broken channel") {
-							RoundInput::ForfeitSignatures { signatures } => {
-								if let Err(e) = round_state.signing_forfeits().register_forfeits(signatures) {
-									slog!(ForfeitRegistrationFailed, round_id, attempt, error: e.to_string());
-									continue 'receive;
-								}
+						let (input, tx) = input.expect("broken channel");
 
-								if round_state.proceed() {
-									break 'receive;
-								}
+						let res = match input {
+							RoundInput::ForfeitSignatures { signatures } => {
+								round_state
+									.signing_forfeits()
+									.register_forfeits(signatures)
+									.map_err(|e| {
+										slog!(ForfeitRegistrationFailed, round_id, attempt, error: e.to_string());
+										e
+									})
 							},
-							_ => trace!("unexpected message"),
+							_ => badarg!("unexpected message. current step is forfeit signatures submission"),
+						};
+
+						if let Err(e) = res {
+							tx.send(e).expect("broken channel");
+							continue 'receive;
+						}
+
+						if round_state.proceed() {
+							break 'receive;
 						}
 					}
 				}

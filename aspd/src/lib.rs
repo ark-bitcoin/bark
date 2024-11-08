@@ -37,7 +37,7 @@ use error::ContextExt;
 use lightning_invoice::Bolt11Invoice;
 use opentelemetry::KeyValue;
 use tokio::time::MissedTickBehavior;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
@@ -65,10 +65,9 @@ const DEEPLY_CONFIRMED: BlockHeight = 12;
 const ASP_KEY_PATH: &str = "m/2'/0'";
 pub const ASPD_CONFIG_FILE: &str = "config.toml";
 
-
 pub struct RoundHandle {
 	round_event_tx: tokio::sync::broadcast::Sender<RoundEvent>,
-	round_input_tx: tokio::sync::mpsc::UnboundedSender<RoundInput>,
+	round_input_tx: tokio::sync::mpsc::UnboundedSender<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_trigger_tx: tokio::sync::mpsc::Sender<()>,
 }
 

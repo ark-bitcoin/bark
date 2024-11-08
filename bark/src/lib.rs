@@ -1134,7 +1134,7 @@ impl <P>Wallet<P> where
 				debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
 					input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
 				);
-				asp.client.submit_payment(rpc::SubmitPaymentRequest {
+				let res = asp.client.submit_payment(rpc::SubmitPaymentRequest {
 					input_vtxos: input_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 					vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
 						rpc::VtxoRequest {
@@ -1150,7 +1150,13 @@ impl <P>Wallet<P> where
 							offboard_spk: r.script_pubkey.to_bytes(),
 						}
 					}).collect(),
-				}).await.context("submitting payment to asp")?;
+				}).await;
+
+				if let Err(e) = res {
+					warn!("Could not submit payment, trying next round: {}", e);
+					round_info = None;
+					continue 'round
+				}
 
 
 				// ****************************************************************
@@ -1230,10 +1236,16 @@ impl <P>Wallet<P> where
 					info!("Sending {} partial vtxo cosign signatures for pk {}",
 						part_sigs.len(), key.public_key(),
 					);
-					asp.client.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
+					let res = asp.client.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
 						pubkey: key.public_key().serialize().to_vec(),
 						signatures: part_sigs.iter().map(|s| s.serialize().to_vec()).collect(),
-					}).await.context("providing signatures to asp")?;
+					}).await;
+
+					if let Err(e) = res {
+						warn!("Could not provide vtxo signatures, trying next round: {}", e);
+						round_info = None;
+						continue 'round
+					}
 				}
 
 
@@ -1303,7 +1315,7 @@ impl <P>Wallet<P> where
 					Ok((v.id(), sigs))
 				}).collect::<anyhow::Result<HashMap<_, _>>>()?;
 				debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
-				asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
+				let res = asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
 					signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
 						rpc::ForfeitSignatures {
 							input_vtxo_id: id.to_bytes().to_vec(),
@@ -1311,7 +1323,13 @@ impl <P>Wallet<P> where
 							signatures: sigs.iter().map(|s| s.1.serialize().to_vec()).collect(),
 						}
 					}).collect(),
-				}).await.context("providing signatures to asp")?;
+				}).await;
+
+				if let Err(e) = res {
+					warn!("Could not provide forfeit signatures, trying next round: {}", e);
+					round_info = None;
+					continue 'round
+				}
 
 
 				// ****************************************************************
