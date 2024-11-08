@@ -168,6 +168,7 @@ impl Wallet {
 
 		// from then on we can open the wallet
 		let wallet = Wallet::open(&datadir).await.context("failed to open")?;
+		wallet.require_chainsource_version()?;
 
 		if wallet.asp.is_none() {
 			bail!("Cannot create bark if asp is not available");
@@ -273,6 +274,7 @@ impl Wallet {
 		};
 
 		let datadir = datadir.to_path_buf();
+
 		Ok(Wallet { config, datadir, db, onchain, vtxo_seed, asp })
 	}
 
@@ -293,6 +295,10 @@ impl Wallet {
 
 	fn require_asp(&self) -> anyhow::Result<AspConnection> {
 		self.asp.clone().context("You should be connected to ASP to perform this action")
+	}
+
+	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
+		self.onchain.require_chainsource_version()
 	}
 
 	pub async fn chain_tip_height(&self) -> anyhow::Result<u32> {

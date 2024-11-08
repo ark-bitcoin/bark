@@ -55,6 +55,10 @@ impl Wallet {
 		Ok(Wallet { wallet, chain_source, db })
 	}
 
+	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
+		self.chain_source.require_version()
+	}
+
 	pub async fn tip(&self) -> anyhow::Result<u32> {
 		self.chain_source.tip().await
 	}
