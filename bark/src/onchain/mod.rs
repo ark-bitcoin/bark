@@ -33,19 +33,17 @@ impl Wallet {
 		chain_source: ChainSource,
 	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
-		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
-		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
+		let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 
 		let wallet_opt = bdk_wallet::Wallet::load()
-			.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
-			.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
+			.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
 			.extract_keys()
 			.check_network(network)
 			.load_wallet(&mut db)?;
 
 		let wallet = match wallet_opt {
 			Some(wallet) => wallet,
-			None => bdk_wallet::Wallet::create(edesc, idesc)
+			None => bdk_wallet::Wallet::create_single(desc)
 				.network(network)
 				.create_wallet(&mut db)?,
 		};
