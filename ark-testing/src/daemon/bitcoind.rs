@@ -1,8 +1,11 @@
 
+use std::fmt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::str::FromStr;
 use std::time::Duration;
 
+use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
@@ -89,21 +92,22 @@ impl Bitcoind {
 		client.generate_to_address(block_num, &address).unwrap();
 	}
 
-	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) {
-		let address = aspd.get_funding_address().await;
+	pub async fn fund_addr(&self, address: impl fmt::Display, amount: Amount) -> Txid {
+		let addr = Address::<NetworkUnchecked>::from_str(&address.to_string()).unwrap().assume_checked();
 		let client = self.sync_client();
 		client.send_to_address(
-			&address, amount, None, None, None, None, None, None,
-		).unwrap();
+			&addr, amount, None, None, None, None, None, None,
+		).unwrap()
+	}
+
+	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) -> Txid {
+		self.fund_addr(aspd.get_funding_address().await, amount).await
 	}
 
 	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> Txid {
 		info!("Fund {} {}", bark.name(), amount);
 		let address = bark.get_onchain_address().await;
-		let client = self.sync_client();
-		client.send_to_address(
-			&address, amount, None, None, None, None, None, None,
-		).unwrap()
+		self.fund_addr(address, amount).await
 	}
 
 	pub async fn fund_lightningd(&self, lightningd: &Lightningd, amount: Amount) -> Txid {
