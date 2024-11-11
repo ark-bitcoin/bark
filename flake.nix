@@ -101,6 +101,9 @@
 					"ROCKSDB_${target_underscores}_LIB_DIR" = "${pkgs.rocksdb}/lib/";
 					#ROCKSDB_STATIC = "true"; # NB do this for prod
 					#"ROCKSDB_${target_underscores}_STATIC" = "true"; # NB do this for prod
+
+					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
+					LIGHTNINGD_EXEC = "${clightning}/bin/lightningd";
 				};
 			}
 		);
