@@ -456,7 +456,7 @@ pub async fn run_round_coordinator(
 
 			let vtxos_spec = VtxoTreeSpec::new(
 				state.all_outputs.iter().map(|p| p.req.clone()).collect(),
-				app.master_key.public_key(),
+				app.asp_key.public_key(),
 				cosign_key.public_key(),
 				expiry,
 				cfg.vtxo_exit_delta,
@@ -465,7 +465,7 @@ pub async fn run_round_coordinator(
 			let nb_nodes = vtxos_spec.nb_nodes();
 			assert!(nb_nodes <= cfg.nb_round_nonces);
 			let connector_output = ConnectorChain::output(
-				state.all_inputs.len(), app.master_key.public_key(),
+				state.all_inputs.len(), app.asp_key.public_key(),
 			);
 
 			// Build round tx.
@@ -621,7 +621,7 @@ pub async fn run_round_coordinator(
 				let mut secs = Vec::with_capacity(state.all_inputs.len());
 				let mut pubs = Vec::with_capacity(state.all_inputs.len());
 				for _ in 0..state.all_inputs.len() {
-					let (s, p) = musig::nonce_pair(&app.master_key);
+					let (s, p) = musig::nonce_pair(&app.asp_key);
 					secs.push(s);
 					pubs.push(p);
 				}
@@ -638,7 +638,7 @@ pub async fn run_round_coordinator(
 			});
 
 			let connectors = ConnectorChain::new(
-				state.all_inputs.len(), conns_utxo, app.master_key.public_key(),
+				state.all_inputs.len(), conns_utxo, app.asp_key.public_key(),
 			);
 
 			let mut state = SigningForfeits {
@@ -693,9 +693,9 @@ pub async fn run_round_coordinator(
 						let (sighash, _) = ark::forfeit::forfeit_sighash(&vtxo, conn);
 						let agg_nonce = musig::nonce_agg([user_nonces[i], pub_nonces[i]]);
 						let (_, sig) = musig::partial_sign(
-							[app.master_key.public_key(), vtxo.spec().user_pubkey],
+							[app.asp_key.public_key(), vtxo.spec().user_pubkey],
 							agg_nonce,
-							&app.master_key,
+							&app.asp_key,
 							sec,
 							sighash.to_byte_array(),
 							Some(vtxo.spec().exit_taptweak().to_byte_array()),

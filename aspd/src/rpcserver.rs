@@ -56,8 +56,8 @@ impl rpc::ArkService for Arc<App> {
 	) -> Result<tonic::Response<rpc::ArkInfo>, tonic::Status> {
 		let ret = rpc::ArkInfo {
 			network: self.config.network.to_string(),
-			pubkey: self.master_key.public_key().serialize().to_vec(),
-			xonly_pubkey: self.master_key.x_only_public_key().0.serialize().to_vec(),
+			pubkey: self.asp_key.public_key().serialize().to_vec(),
+			xonly_pubkey: self.asp_key.x_only_public_key().0.serialize().to_vec(),
 			nb_round_nonces: self.config.nb_round_nonces as u32,
 			vtxo_exit_delta: self.config.vtxo_exit_delta as u32,
 			vtxo_expiry_delta: self.config.vtxo_expiry_delta as u32,
@@ -100,7 +100,7 @@ impl rpc::ArkService for Arc<App> {
 		let req = req.into_inner();
 		let user_part = ciborium::from_reader::<ark::onboard::UserPart, _>(&req.user_part[..])
 			.map_err(|e| badarg!("invalid user part: {}", e))?;
-		if user_part.spec.asp_pubkey != self.master_key.public_key() {
+		if user_part.spec.asp_pubkey != self.asp_key.public_key() {
 			return Err(badarg!("ASP public key is incorrect!"));
 		}
 
@@ -396,8 +396,9 @@ impl rpc::AdminService for Arc<App> {
 		_req: tonic::Request<rpc::Empty>,
 	) -> Result<tonic::Response<rpc::WalletStatusResponse>, tonic::Status> {
 		Ok(tonic::Response::new(rpc::WalletStatusResponse {
-			address: self.onchain_address().await.to_status()?.to_string(),
+			// NB the order matters here, we want to sync first
 			balance: self.sync_onchain_wallet().await.to_status()?.to_sat(),
+			address: self.new_onchain_address().await.to_status()?.to_string(),
 		}))
 	}
 
@@ -417,6 +418,7 @@ impl rpc::AdminService for Arc<App> {
 		&self,
 		_req: tonic::Request<rpc::Empty>,
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		info!("Shutting down because of RPC stop command...");
 		//TODO(stevenroose) implement graceful shutdown
 		std::process::exit(0);
 	}
