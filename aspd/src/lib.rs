@@ -368,9 +368,10 @@ impl App {
 
 	pub async fn onchain_address(&self) -> anyhow::Result<Address> {
 		let mut wallet = self.wallet.lock().await;
-		let ret = wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address;
-		// should always return the same address
-		debug_assert_eq!(ret, wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address);
+		let ret = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
+		if let Some(change) = wallet.take_staged() {
+			self.db.store_changeset(&change).await?;
+		}
 		Ok(ret)
 	}
 
