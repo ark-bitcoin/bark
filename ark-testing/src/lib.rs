@@ -1,7 +1,9 @@
 #[macro_use]
-extern crate log;
-#[macro_use]
 extern crate anyhow;
+#[macro_use]
+extern crate async_trait;
+#[macro_use]
+extern crate log;
 
 pub mod context;
 pub mod constants;
