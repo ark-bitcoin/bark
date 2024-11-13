@@ -419,6 +419,7 @@ version = "0.0.0-alpha01"
 dependencies = [
  "anyhow",
  "ark-lib",
+ "aspd-log",
  "aspd-rpc-client",
  "bark-cln",
  "bdk_bitcoind_rpc",
