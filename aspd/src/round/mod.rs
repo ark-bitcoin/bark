@@ -353,6 +353,7 @@ pub async fn run_round_coordinator(
 		let round_id = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
 			cfg.round_interval.as_millis()) as u64;
 		info!("Starting round {}", round_id);
+		slog!(RoundStarted, round_id);
 
 		// Start new round, announce.
 		let _ = app.rounds().round_event_tx.send(RoundEvent::Start { id: round_id, offboard_feerate });
@@ -468,13 +469,14 @@ pub async fn run_round_coordinator(
 			);
 
 			// Build round tx.
-			let spendable_utxos = app.spendable_expired_vtxos(tip)?;
+			let spendable_utxos = app.spendable_expired_rounds(tip)?;
 			if !spendable_utxos.is_empty() {
 				debug!("Will be spending {} round-related UTXOs with total value of {}",
 					spendable_utxos.len(), spendable_utxos.iter().map(|v| v.amount()).sum::<Amount>(),
 				);
 				for u in &spendable_utxos {
 					trace!("Including round-related UTXO {} with value {}", u.point, u.amount());
+					slog!(SpendingExpiredRound, outpoint: u.point, amount: u.amount());
 				}
 			}
 			//TODO(stevenroose) think about if we can release lock sooner

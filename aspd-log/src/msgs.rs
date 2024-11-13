@@ -8,6 +8,7 @@
 //! - somehow build a wrapper that uses serde to be a `Source` and use serde also
 //!   to deserialize from the log message
 
+use bitcoin::{Amount, OutPoint};
 use serde::{Deserialize, Serialize};
 
 macro_rules! logmsg {
@@ -61,5 +62,14 @@ macro_rules! logmsg {
 	};
 }
 
+// round flow
+
 logmsg!(RoundStarted, Info, round_id: u64);
+
+// wallet mgmt
+
+logmsg!(SpendingExpiredRound, Info, outpoint: OutPoint, amount: Amount);
+
+
+
 
