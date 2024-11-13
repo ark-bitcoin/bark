@@ -293,6 +293,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	}
 
 	let mut w = Wallet::open(&datadir).await.context("error opening wallet")?;
+	if let Err(e) = w.require_chainsource_version() {
+		warn!("{}", e);
+	}
+
 	let net = w.config().network;
 
 	match cli.command {

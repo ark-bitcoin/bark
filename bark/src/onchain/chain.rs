@@ -26,6 +26,20 @@ pub enum ChainSourceClient {
 }
 
 impl ChainSourceClient {
+	/// Checks that the version of the chain source is compatible with Bark.
+	/// 
+	/// For bitcoind, it checks if the version is at least 28.0, because unilateral exits rely on `package relay`, which was added in this version.
+	/// For esplora, it always returns `Ok(())` because there is no version to check.
+	pub fn require_version(&self) -> anyhow::Result<()> {
+		if let ChainSourceClient::Bitcoind(ref bitcoind) = self {
+			if bitcoind.version()? < 280000 {
+				bail!("Bitcoin Core version is too old, you can participate in rounds but won't be able to unilaterally exit. Please upgrade to 28.0 or higher.");
+			}
+		}
+
+		Ok(())
+	}
+
 	pub fn new(chain_source: ChainSource) -> anyhow::Result<Self> {
 		Ok(match chain_source {
 			ChainSource::Bitcoind { url, auth } => ChainSourceClient::Bitcoind(
