@@ -29,7 +29,17 @@ pub enum DaemonState {
 }
 
 pub trait LogHandler {
-	fn process_log(&mut self, line: &str);
+	/// Process a log line. Return true when you're done.
+	fn process_log(&mut self, line: &str) -> bool;
+}
+
+impl<F> LogHandler for F
+where
+	F: FnMut(&str) -> bool,
+{
+	fn process_log(&mut self, line: &str) -> bool {
+		self(line)
+	}
 }
 
 pub trait DaemonHelper {
@@ -126,9 +136,7 @@ impl<T> Daemon<T>
 				stdout_logfile.write_all(line.as_bytes()).expect("stdout logfile error");
 				stdout_logfile.write_all("\n".as_bytes()).expect("stdout logfile error");
 				// then invoke custom handlers
-				for handler in stdout_log.lock().unwrap().iter_mut() {
-					handler.process_log(&line)
-				}
+				stdout_log.lock().unwrap().retain_mut(|h| !h.process_log(&line));
 			}
 		}));
 
@@ -179,7 +187,6 @@ impl<T> Daemon<T>
 	}
 
 	pub async fn join(&mut self) -> anyhow::Result<()> {
-
 		match self.child.take() {
 			Some(mut child) => { tokio::task::spawn_blocking(move || child.wait())}.await?,
 			None => anyhow::bail!("Failed to wait for daemon to complete. Was it running?")
@@ -188,10 +195,9 @@ impl<T> Daemon<T>
 		Ok(())
 	}
 
-	pub fn add_stdout_handler<L : LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) -> anyhow::Result<()> {
+	pub fn add_stdout_handler<L: LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) {
 		let mut handlers = self.stdout_handler.lock().unwrap();
 		handlers.push(Box::new(log_handler));
-		Ok(())
 	}
 }
 

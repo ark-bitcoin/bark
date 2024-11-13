@@ -6,7 +6,9 @@ use std::process::Command;
 
 use bitcoin::Network;
 use bitcoin::address::{Address, NetworkUnchecked};
+use tokio::sync::{self, mpsc};
 
+use aspd_log::{LogMsg, ParsedRecord};
 use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
 use aspd_rpc_client::Empty;
 
@@ -85,6 +87,40 @@ impl Aspd {
 
 	pub async fn trigger_round(&self) {
 		self.get_admin_client().await.trigger_round(Empty {}).await.unwrap();
+	}
+
+	/// Subscribe to all structured logs of the given type.
+	pub fn subscribe_log<L: LogMsg>(&mut self) -> mpsc::UnboundedReceiver<L> {
+		let (tx, rx) = sync::mpsc::unbounded_channel();
+		self.add_stdout_handler(move |l: &str| {
+			if l.starts_with("{") {
+				let rec = serde_json::from_str::<ParsedRecord>(l)
+					.expect("invalid slog struct");
+				if rec.is::<L>() {
+					return tx.send(rec.try_as().expect("invalid slog data")).is_err();
+				}
+			}
+			false
+		});
+		rx
+	}
+
+	/// Wait for the first occurrence of the given log message type and return it.
+	pub async fn wait_for_log<L: LogMsg>(&mut self) -> L {
+		let (tx, mut rx) = sync::mpsc::channel(0);
+		self.add_stdout_handler(move |l: &str| {
+			if l.starts_with("{") {
+				let rec = serde_json::from_str::<ParsedRecord>(l)
+					.expect("invalid slog struct");
+				if rec.is::<L>() {
+					tx.try_send(rec.try_as().expect("invalid slog data"))
+						.expect("channel closed");
+					return true;
+				}
+			}
+			false
+		});
+		rx.recv().await.expect("log wait channel closed")
 	}
 }
 
@@ -243,7 +279,6 @@ impl AspdHelper {
 }
 
 impl AspdConfig {
-
 	pub async fn configure_lighting(&mut self, lightningd: &Lightningd) {
 		let grpc_details = lightningd.grpc_details().await;
 
