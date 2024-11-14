@@ -341,8 +341,25 @@ impl Wallet {
 		Ok(sum)
 	}
 
+	pub fn get_vtxo_by_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Vtxo> {
+		let vtxo = self.db.get_vtxo(vtxo_id)
+			.with_context(|| format!("Error when querying vtxo {} in database", vtxo_id))?
+			.with_context(|| format!("The VTXO with id {} cannot be found", vtxo_id))?;
+		Ok(vtxo)
+	}
+
+	/// Returns all unspent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
 		Ok(self.db.get_all_vtxos()?)
+	}
+
+	/// Returns all vtxos that will expire within
+	// [threshold_blocks] blocks
+	pub async fn get_expiring_vtxos(&mut self, threshold_blocks: u32) -> anyhow::Result<Vec<Vtxo>> {
+		let height = self.onchain.tip().await?;
+		let mut ret = self.db.get_all_vtxos()?;
+		ret.retain(|v| height + threshold_blocks > v.spec().expiry_height);
+		Ok(ret)
 	}
 
 	/// Sync both the onchain and offchain wallet.
@@ -596,39 +613,36 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Refresh vtxos that are close to expiration.
-	///
-	/// If no threshold is given, force refreshes all VTXOs.
-	pub async fn refresh_vtxos(&mut self, threshold_blocks: Option<u32>) -> anyhow::Result<()> {
-		let height = self.onchain.tip().await?;
-		let expiring_vtxos = {
-			let mut ret = self.db.get_all_vtxos()?;
-			if let Some(th) = threshold_blocks {
-				ret.retain(|v| height + th > v.spec().expiry_height);
-			}
-			ret
-		};
-		if expiring_vtxos.is_empty() {
-			info!("No VTXOs to refresh.");
-			return Ok(());
-		}
-		let total_amount = expiring_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
-		//TODO(stevenroose) impl key derivation
+	/// Refresh vtxo's
+	pub async fn refresh_vtxos(
+		&mut self,
+		vtxos: Vec<Vtxo>
+	) -> anyhow::Result<()> {
+		// Todo: Implement key-derivation
+		let total_amount: bitcoin::Amount = vtxos.iter().map(|v| v.amount()).sum();
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
-		let create = PaymentRequest { pubkey: vtxo_key.public_key(), amount: total_amount };
+		let payment_request = PaymentRequest {
+			pubkey: vtxo_key.public_key(),
+			amount: total_amount
+		};
 
 		self.participate_round(move |_id, _offb_fr| {
-			Ok((expiring_vtxos.clone(), vec![create.clone()], Vec::new()))
+			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
 		Ok(())
 	}
 
+	pub async fn refresh_all_vtxos(&mut self) -> anyhow::Result<()> {
+		let all_vtxos = self.db.get_all_vtxos()?;
+		self.refresh_vtxos(all_vtxos).await
+	}
+
 	/// Refresh vtxos that are close to expiration.
 	///
-	/// The threshold used for this is the configured threshold.
-	pub async fn refresh_expiring_vtxos(&mut self) -> anyhow::Result<()> {
-		self.refresh_vtxos(Some(self.config.vtxo_refresh_threshold)).await
+	/// If no threshold is given the wallet default is used
+	pub async fn refresh_expiring_vtxos(&mut self, threshold_blocks: u32) -> anyhow::Result<()> {
+		let expiring_vtxos = self.get_expiring_vtxos(threshold_blocks).await?;
+		self.refresh_vtxos(expiring_vtxos).await
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
