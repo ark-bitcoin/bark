@@ -106,7 +106,7 @@ pub fn create_reveal_tx(
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
 	Transaction {
-		version: bitcoin::transaction::Version::TWO,
+		version: bitcoin::transaction::Version(3),
 		lock_time: LockTime::ZERO,
 		input: vec![TxIn {
 			previous_output: utxo,
