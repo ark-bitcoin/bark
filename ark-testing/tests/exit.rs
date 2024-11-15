@@ -105,7 +105,6 @@ async fn unilateral_exit() {
 	assert_eq!(34_996_095, bark4.onchain_balance().await.to_sat());
 }
 
-#[ignore]
 #[tokio::test]
 async fn exit_after_onboard() {
 	let ctx = TestContext::new("exit/onboard").await;
