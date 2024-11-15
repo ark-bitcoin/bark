@@ -36,7 +36,7 @@ async fn progress_exit(
 #[tokio::test]
 async fn unilateral_exit() {
 	// Initialize the test
-	let ctx = TestContext::new("unilateral_exit").await;
+	let ctx = TestContext::new("exit/unilateral").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
 		..ctx.bitcoind_default_cfg("bitcoind")
 	}).await;
@@ -103,4 +103,27 @@ async fn unilateral_exit() {
 	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark4).await;
 	assert_eq!(34_996_095, bark4.onchain_balance().await.to_sat());
+}
+
+#[ignore]
+#[tokio::test]
+async fn exit_after_onboard() {
+	let ctx = TestContext::new("exit/onboard").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	bitcoind.generate(106).await;
+
+	// Fund the bark instance
+	let bark = ctx.bark("bark", &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark, Amount::from_sat(1_000_000)).await;
+
+	// Onboard funds
+	bark.onboard(Amount::from_sat(900_000)).await;
+
+	// Exit unilaterally
+	progress_exit(&bitcoind, &bark).await;
+
+	assert!(bark.onchain_balance().await > Amount::from_sat(900_000), 
+		"The balance has been returned");
 }
