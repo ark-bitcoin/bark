@@ -34,9 +34,9 @@ async fn progress_exit(
 }
 
 #[tokio::test]
-async fn unilateral_exit() {
+async fn exit_round() {
 	// Initialize the test
-	let ctx = TestContext::new("exit/unilateral").await;
+	let ctx = TestContext::new("exit/round").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
 		..ctx.bitcoind_default_cfg("bitcoind")
 	}).await;
@@ -51,65 +51,79 @@ async fn unilateral_exit() {
 	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
 	let bark3 = ctx.bark("bark3".to_string(), &bitcoind, &aspd).await;
 	let bark4 = ctx.bark("bark4".to_string(), &bitcoind, &aspd).await;
-	bitcoind.fund_bark(&bark1, Amount::from_sat(90_000_000)).await;
-	bitcoind.fund_bark(&bark2, Amount::from_sat(5_000_000)).await;
-	bitcoind.fund_bark(&bark3, Amount::from_sat(90_000_000)).await;
-	bitcoind.fund_bark(&bark4, Amount::from_sat(5_000_000)).await;
-	bark1.onboard(Amount::from_sat(80_000_000)).await;
-	bark3.onboard(Amount::from_sat(80_000_000)).await;
-	bitcoind.generate(1).await;
+	let bark5 = ctx.bark("bark5".to_string(), &bitcoind, &aspd).await;
+	let bark6 = ctx.bark("bark6".to_string(), &bitcoind, &aspd).await;
+	let bark7 = ctx.bark("bark7".to_string(), &bitcoind, &aspd).await;
+	let bark8 = ctx.bark("bark8".to_string(), &bitcoind, &aspd).await;
 
-	let pk1 = bark1.vtxo_pubkey().await;
-	let pk2 = bark2.vtxo_pubkey().await;
-	let pk3 = bark3.vtxo_pubkey().await;
-	let pk4 = bark4.vtxo_pubkey().await;
-
-	// try make sure they send in the same round, so that the have identical exit txs
 	tokio::join!(
-		bark1.send_onchain(pk2, Amount::from_sat(50_000_000)),
-		bark3.send_onchain(pk4, Amount::from_sat(50_000_000))
+		bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)),
+		bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)),
+		bitcoind.fund_bark(&bark3, Amount::from_sat(1_000_000)),
+		bitcoind.fund_bark(&bark4, Amount::from_sat(1_000_000)),
+		bitcoind.fund_bark(&bark5, Amount::from_sat(1_000_000)),
+		bitcoind.fund_bark(&bark6, Amount::from_sat(1_000_000)),
+		bitcoind.fund_bark(&bark7, Amount::from_sat(1_000_000)),
+		bitcoind.fund_bark(&bark8, Amount::from_sat(1_000_000)),
 	);
-	bark2.send_oor(pk3, Amount::from_sat(20_000_000)).await;
-	bark4.send_oor(pk1, Amount::from_sat(20_000_000)).await;
+	bitcoind.generate(1).await;
 
-	// All our pre-exit balances.
-	assert_eq!(50_000_000, bark1.offchain_balance().await.to_sat());
-	assert_eq!(29_998_035, bark2.offchain_balance().await.to_sat());
-	assert_eq!(50_000_000, bark3.offchain_balance().await.to_sat());
-	assert_eq!(29_998_035, bark4.offchain_balance().await.to_sat());
-	assert_eq!(9_998_127, bark1.onchain_balance().await.to_sat());
-	assert_eq!(5_000_000, bark2.onchain_balance().await.to_sat());
-	assert_eq!(9_998_127, bark3.onchain_balance().await.to_sat());
-	assert_eq!(5_000_000, bark4.onchain_balance().await.to_sat());
+	tokio::join!(
+		bark1.onboard(Amount::from_sat(500_000)),
+		bark2.onboard(Amount::from_sat(500_000)),
+		bark3.onboard(Amount::from_sat(500_000)),
+		bark4.onboard(Amount::from_sat(500_000)),
+		bark5.onboard(Amount::from_sat(500_000)),
+		bark6.onboard(Amount::from_sat(500_000)),
+		bark7.onboard(Amount::from_sat(500_000)),
+		bark8.onboard(Amount::from_sat(500_000)),
+	);
+	bitcoind.generate(7).await;
 
-	// We don't need ASP for exits.
+	tokio::join!(
+		bark1.refresh_all(),
+		bark2.refresh_all(),
+		bark3.refresh_all(),
+		bark4.refresh_all(),
+		bark5.refresh_all(),
+		bark6.refresh_all(),
+		bark7.refresh_all(),
+		bark8.refresh_all(),
+	);
+
+		// We don't need ASP for exits.
 	aspd.stop().await.unwrap();
-
-	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark1).await;
-	assert_eq!(2, bark1.onchain_utxos().await.len());
-	assert_eq!(59_972_802, bark1.onchain_balance().await.to_sat());
-
-	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark2).await;
-	assert_eq!(34_985_616, bark2.onchain_balance().await.to_sat());
-
-	// the amounts of the following two are a tiny bit higher because their tree was
-	// a bit smaller
-	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark3).await;
-	assert_eq!(59_990_133, bark3.onchain_balance().await.to_sat());
-
-	bitcoind.generate(1).await;
 	progress_exit(&bitcoind, &bark4).await;
-	assert_eq!(34_996_095, bark4.onchain_balance().await.to_sat());
+	progress_exit(&bitcoind, &bark5).await;
+	progress_exit(&bitcoind, &bark6).await;
+	progress_exit(&bitcoind, &bark7).await;
+	progress_exit(&bitcoind, &bark8).await;
+
+	// All wallets habe 1_000_000 sats of funds minus fees
+	//
+	// However, what fees are paid by which client is not fully predictable
+	// This depends on the shape of the tree and the order of the exit
+	//
+	// We can't control the shape of the tree in the test.
+	// The order of the exit is also somewhat random
+	assert!(Amount::from_sat(978_856) <= bark1.onchain_balance().await);
+	assert!(Amount::from_sat(978_856) <= bark2.onchain_balance().await);
+	assert!(Amount::from_sat(978_856) <= bark3.onchain_balance().await);
+	assert!(Amount::from_sat(978_856) <= bark4.onchain_balance().await);
+	assert!(Amount::from_sat(978_856) <= bark5.onchain_balance().await);
+	assert!(Amount::from_sat(978_856) <= bark6.onchain_balance().await);
+	assert!(Amount::from_sat(978_856) <= bark7.onchain_balance().await);
+	assert!(Amount::from_sat(978_856) <= bark8.onchain_balance().await);
 }
 
 #[tokio::test]
 async fn exit_after_onboard() {
 	let ctx = TestContext::new("exit/onboard").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	bitcoind.generate(106).await;
 
@@ -121,8 +135,35 @@ async fn exit_after_onboard() {
 	bark.onboard(Amount::from_sat(900_000)).await;
 
 	// Exit unilaterally
+	aspd.stop().await.unwrap();
 	progress_exit(&bitcoind, &bark).await;
 
 	assert!(bark.onchain_balance().await > Amount::from_sat(900_000), 
 		"The balance has been returned");
+}
+
+#[tokio::test]
+async fn exit_oor() {
+	let ctx = TestContext::new("bitcoind").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	bitcoind.generate(106).await;
+
+	// Bark1 will pay bark2 oor.
+	// Bark2 will attempt an exit
+	let bark1 = ctx.bark("bark1", &bitcoind, &aspd).await;
+	let bark2 = ctx.bark("bark2", &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+
+	// Bark1 onboard funds and sends some part to bark2
+	bark1.onboard(Amount::from_sat(900_000)).await;
+	let bark2_pubkey = bark2.vtxo_pubkey().await;
+	bark1.send_oor(bark2_pubkey, Amount::from_sat(100_000)).await;
+
+	// Bark2 performs a unilateral exit
+	aspd.stop().await.unwrap();
+	progress_exit(&bitcoind, &bark2).await;
+	assert_eq!(Amount::from_sat(98_127), bark1.onchain_balance().await)
 }
