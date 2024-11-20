@@ -297,6 +297,8 @@ struct ConfigOpts {
 	vtxo_expiry_delta: Option<u16>,
 	#[arg(long)]
 	vtxo_exit_delta: Option<u16>,
+	#[arg(long)]
+	sweep_threshold: Option<Amount>,
 
 	/// The feerate (in sats per kvb) to use for round txs.
 	#[arg(long)]
@@ -393,6 +395,10 @@ impl ConfigOpts {
 
 		if let Some(v) = self.vtxo_exit_delta {
 			cfg.vtxo_exit_delta = v;
+		}
+
+		if let Some(v) = self.sweep_threshold {
+			cfg.sweep_threshold = v;
 		}
 
 		if let Some(v) = self.round_tx_feerate_sat_per_kvb {
