@@ -187,7 +187,8 @@ pub struct App {
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 
 	rounds: Option<RoundHandle>,
-	sendpay_updates: Option<SendpayHandle>
+	sendpay_updates: Option<SendpayHandle>,
+	trigger_round_sweep_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl App {
@@ -302,7 +303,8 @@ impl App {
 			wallet: Mutex::new(wallet),
 			bitcoind: bitcoind,
 			rounds: None,
-			sendpay_updates: None
+			sendpay_updates: None,
+			trigger_round_sweep_tx: None,
 		}))
 	}
 
@@ -312,11 +314,12 @@ impl App {
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
-		let (_sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
+		let (sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
-		mut_self.sendpay_updates = Some(SendpayHandle{ sendpay_rx });
+		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
+		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {

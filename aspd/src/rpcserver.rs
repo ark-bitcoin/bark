@@ -408,7 +408,19 @@ impl rpc::AdminService for Arc<App> {
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		match self.try_rounds().to_status()?.round_trigger_tx.try_send(()) {
 			Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
-				Err(internal!("round scheduler closed"))
+				panic!("round scheduler closed");
+			},
+			_ => Ok(tonic::Response::new(rpc::Empty {})),
+		}
+	}
+
+	async fn trigger_sweep(
+		&self,
+		_req: tonic::Request<rpc::Empty>,
+	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		match self.trigger_round_sweep_tx.as_ref().unwrap().try_send(()) {
+			Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
+				panic!("sweep trigger channel closed");
 			},
 			_ => Ok(tonic::Response::new(rpc::Empty {})),
 		}
