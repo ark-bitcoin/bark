@@ -57,7 +57,6 @@ rand = { version = "0.8.5", features = [ "std", "std_rng" ] }
 bdk_wallet = "1.0.0-beta.5"
 bdk_esplora = { version = "0.19.0", features = [ "std", "async-https-rustls" ], default-features = false }
 bdk_bitcoind_rpc = "0.16.0"
-bdk_file_store = "0.17.0"
 
 
 [profile.release]
