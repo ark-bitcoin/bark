@@ -53,6 +53,9 @@ lazy_static::lazy_static! {
 /// happening negligible.
 const DEEPLY_CONFIRMED: u64 = 100;
 
+/// The HD keypath to use for the ASP key.
+const ASP_KEY_PATH: &str = "m/2'/0'";
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
 	pub network: bitcoin::Network,
@@ -173,7 +176,7 @@ pub struct SendpayHandle {
 pub struct App {
 	config: Config,
 	db: database::Db,
-	master_key: Keypair,
+	asp_key: Keypair,
 	wallet: Mutex<bdk_wallet::Wallet>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 
@@ -182,21 +185,15 @@ pub struct App {
 }
 
 impl App {
+	/// Return the bdk wallet struct and the ASP keypair.
 	fn wallet_from_seed(
 		network: Network,
 		seed: &[u8],
 		state: Option<bdk_wallet::ChangeSet>,
-	) -> anyhow::Result<(Keypair, bip32::Xpriv, bdk_wallet::Wallet)> {
-		let (master_key, xpriv, desc) = {
-			let seed_xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
-			let path = bip32::DerivationPath::from_str("m/0").unwrap();
-			let xpriv = seed_xpriv.derive_priv(&SECP, &path).unwrap();
-			let keypair = Keypair::from_secret_key(&SECP, &xpriv.private_key);
-			let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
+	) -> anyhow::Result<(bdk_wallet::Wallet, Keypair)> {
+		let seed_xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
 
-			(keypair, xpriv, desc)
-		};
-
+		let desc = format!("tr({}/84'/0'/0'/0/*)", seed_xpriv);
 		let wallet = if let Some(changeset) = state {
 			bdk_wallet::Wallet::load()
 				.descriptor(bdk_wallet::KeychainKind::External, Some(desc))
@@ -210,7 +207,11 @@ impl App {
 				.create_wallet_no_persist()?
 		};
 
-		Ok((master_key, xpriv, wallet))
+		let asp_path = bip32::DerivationPath::from_str(ASP_KEY_PATH).unwrap();
+		let asp_xpriv = seed_xpriv.derive_priv(&SECP, &asp_path).unwrap();
+		let asp_key = Keypair::from_secret_key(&SECP, &asp_xpriv.private_key);
+
+		Ok((wallet, asp_key))
 	}
 
 	pub async fn create(datadir: &Path, config: Config) -> anyhow::Result<()> {
@@ -253,7 +254,7 @@ impl App {
 
 		// Store initial wallet state to avoid full chain sync.
 		let seed = mnemonic.to_seed("");
-		let (_, _, mut wallet) = Self::wallet_from_seed(config.network, &seed, None)
+		let (mut wallet, _) = Self::wallet_from_seed(config.network, &seed, None)
 			.expect("shouldn't fail on empty state");
 		wallet.insert_checkpoint(bdk_wallet::chain::BlockId {
 			height: deep_tip.height as u32,
@@ -280,7 +281,7 @@ impl App {
 			.context("db error")?
 			.context("db doesn't contain seed")?;
 		let init = db.read_aggregate_changeset().await?;
-		let (master_key, _, wallet) = Self::wallet_from_seed(config.network, &seed, init)
+		let (wallet, asp_key) = Self::wallet_from_seed(config.network, &seed, init)
 			.context("error loading wallet")?;
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
@@ -291,7 +292,7 @@ impl App {
 		Ok(Arc::new(App {
 			config: config,
 			db: db,
-			master_key: master_key,
+			asp_key: asp_key,
 			wallet: Mutex::new(wallet),
 			bitcoind: bitcoind,
 			rounds: None,
@@ -366,11 +367,12 @@ impl App {
 		self.try_rounds().expect("should only call this in round scheduler code")
 	}
 
-	pub async fn onchain_address(&self) -> anyhow::Result<Address> {
+	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {
 		let mut wallet = self.wallet.lock().await;
-		let ret = wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address;
-		// should always return the same address
-		debug_assert_eq!(ret, wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address);
+		let ret = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
+		if let Some(change) = wallet.take_staged() {
+			self.db.store_changeset(&change).await?;
+		}
 		Ok(ret)
 	}
 
@@ -445,7 +447,7 @@ impl App {
 
 	pub fn cosign_onboard(&self, user_part: ark::onboard::UserPart) -> ark::onboard::AspPart {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
-		ark::onboard::new_asp(&user_part, &self.master_key)
+		ark::onboard::new_asp(&user_part, &self.asp_key)
 	}
 
 	pub fn cosign_oor(
@@ -458,7 +460,7 @@ impl App {
 			bail!("attempted to double sign OOR for vtxo {}", dup)
 		} else {
 			info!("Cosigning OOR tx {} with inputs: {:?}", payment.txid(), ids);
-			let (nonces, sigs) = payment.sign_asp(&self.master_key, &user_nonces);
+			let (nonces, sigs) = payment.sign_asp(&self.asp_key, &user_nonces);
 			Ok((nonces, sigs))
 		}
 	}
@@ -489,7 +491,7 @@ impl App {
 		let details = Bolt11Payment {
 			invoice,
 			inputs: input_vtxos,
-			asp_pubkey: self.master_key.public_key(),
+			asp_pubkey: self.asp_key.public_key(),
 			user_pubkey: user_pk,
 			payment_amount: amount,
 			forwarding_fee: Amount::from_sat(350), //TODO(stevenroose) set fee schedule
@@ -504,7 +506,7 @@ impl App {
 
 		// let's sign the tx
 		let (nonces, part_sigs) = details.sign_asp(
-			&self.master_key,
+			&self.asp_key,
 			user_nonces,
 		);
 
@@ -553,7 +555,7 @@ impl App {
 	/// It fills in the PSBT inputs with the fields required to sign,
 	/// for signing use [App::sign_round_utxo_inputs].
 	fn spendable_expired_rounds(&self, height: u32) -> anyhow::Result<Vec<SpendableUtxo>> {
-		let pubkey = self.master_key.public_key();
+		let pubkey = self.asp_key.public_key();
 
 		let expired_rounds = self.db.get_expired_rounds(height)?;
 		let mut ret = Vec::with_capacity(2 * expired_rounds.len());
@@ -606,7 +608,7 @@ impl App {
 			.map(|i| i.witness_utxo.clone().unwrap())
 			.collect::<Vec<_>>();
 
-		let connector_keypair = self.master_key.for_keyspend();
+		let connector_keypair = self.asp_key.for_keyspend();
 		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
 			if let Some((_round, meta)) = input.get_round_meta().context("corrupt psbt")? {
 				match meta {
@@ -621,7 +623,7 @@ impl App {
 							sighash::TapSighashType::Default,
 						).expect("all prevouts provided");
 						trace!("Signing expired VTXO input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &self.master_key);
+						let sig = SECP.sign_schnorr(&sighash.into(), &self.asp_key);
 						let wit = Witness::from_slice(
 							&[&sig[..], script.as_bytes(), &control.serialize()],
 						);

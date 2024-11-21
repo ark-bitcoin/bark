@@ -33,19 +33,17 @@ impl Wallet {
 		chain_source: ChainSource,
 	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
-		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
-		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
+		let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 
 		let wallet_opt = bdk_wallet::Wallet::load()
-			.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
-			.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
+			.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
 			.extract_keys()
 			.check_network(network)
 			.load_wallet(&mut db)?;
 
 		let wallet = match wallet_opt {
 			Some(wallet) => wallet,
-			None => bdk_wallet::Wallet::create(edesc, idesc)
+			None => bdk_wallet::Wallet::create_single(desc)
 				.network(network)
 				.create_wallet(&mut db)?,
 		};
@@ -183,7 +181,7 @@ impl Wallet {
 	}
 
 	pub fn new_address(&mut self) -> anyhow::Result<Address> {
-		let ret = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal).address;
+		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		self.wallet.persist(&mut self.db)?;
 		Ok(ret)
 	}
@@ -226,7 +224,7 @@ impl Wallet {
 		let extra_fee_needed = fee_rate * package_weight;
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
-		let change_addr = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal);
+		let change_addr = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
 
 		let template_weight = {
 			let mut b = self.wallet.build_tx();
@@ -271,7 +269,7 @@ impl Wallet {
 		let urgent_fee_rate = self.urgent_feerate();
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
-		let change_addr = self.wallet.next_unused_address(bdk_wallet::KeychainKind::Internal);
+		let change_addr = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
 
 		let mut b = self.wallet.build_tx();
 		b.version(2);
