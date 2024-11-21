@@ -121,10 +121,10 @@ impl Bark {
 		self.run(["vtxo-pubkey"]).await
 	}
 
-	pub async fn send_round(&self, destination: impl fmt::Display, amount: Amount) {
+	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) {
 		let destination = destination.to_string();
 		let amount = amount.to_string();
-		self.run(["send-round", &destination, &amount, "--verbose"]).await;
+		self.run(["send-onchain", &destination, &amount, "--verbose"]).await;
 	}
 
 	pub async fn send_oor(&self, destination: impl fmt::Display, amount: Amount) {

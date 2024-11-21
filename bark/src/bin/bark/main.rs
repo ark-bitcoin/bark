@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::VtxoId;
+use ark::{Vtxo, VtxoId};
 use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
@@ -140,6 +140,9 @@ enum Command {
 	/// By default the wallet's configured threshold is used
 	#[command()]
 	Refresh {
+		/// List of vtxos that will be refreshed
+		#[arg(long)]
+		vtxos: Option<Vec<String>>,
 		/// Refresh VTXOs that expire within this amount of blocks
 		#[arg(long)]
 		threshold_blocks: Option<u32>,
@@ -172,16 +175,18 @@ enum Command {
 		comment: Option<String>,
 	},
 
-	/// Send money by participating in an Ark round
+	/// Send money from your vtxo's to an onchain address
+	/// This method requires to wait for a round
 	#[command()]
-	SendRound {
+	SendOnchain {
 		/// Destination for the payment, this can either be an on-chain address
 		/// or an Ark VTXO public key
 		destination: String,
 		amount: Amount,
 	},
 
-    /// Turn VTXOs into UTXOs
+	/// Turn VTXOs into UTXOs
+	/// This command sends 
 	#[command()]
 	Offboard {
 		/// Optional address to receive offboarded VTXOs. If no address is provided, it will be taken from onchain wallet
@@ -390,22 +395,22 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 		},
-		Command::Refresh { threshold_blocks, threshold_hours, all } => {
-			let threshold = match (threshold_blocks, threshold_hours, all) {
-				(None, None, false) => Some(w.config().vtxo_refresh_threshold),
-				(Some(b), None, false) => Some(b),
-				(None, Some(h), false) => Some(h * 6),
-				(None, None, true) => None,
-				_ => bail!("please provide either threshold blocks, hour or all"),
-			};
-
-			if let Some(th) = threshold {
-				info!("Refreshing VTXOs expiring within the next {} blocks...", th);
-			} else {
-				info!("Refreshing all VTXOs...");
-			}
+		Command::Refresh { vtxos: vtxo, threshold_blocks, threshold_hours, all } => {
 			w.sync_ark().await.context("sync error")?;
-			w.refresh_vtxos(threshold).await?;
+			let vtxos = match (threshold_blocks, threshold_hours, all, vtxo) {
+				(None, None, false, None) => w.get_expiring_vtxos(w.config().vtxo_refresh_threshold).await?,
+				(Some(b), None, false, None) => w.get_expiring_vtxos(b).await?,
+				(None, Some(h), false, None) => w.get_expiring_vtxos(h*6).await?,
+				(None, None, true, None) => w.vtxos()?,
+				(None, None, false, Some(vs)) => {
+					let vtxo_ids = vs.iter().map(|s| VtxoId::from_str(s))
+						.collect::<Result<Vec<VtxoId>, _>>()
+						.with_context(|| "Invalid vtxo_id")?;
+					vtxo_ids.iter().map(|v| w.get_vtxo_by_id(*v)).collect::<Result<Vec<Vtxo>, _>>()?
+				}
+				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours or all"),
+			};
+			w.refresh_vtxos(vtxos).await?;
 		},
 		Command::Onboard { amount, all } => {
 			w.sync_onchain().await.context("sync error")?;
@@ -458,12 +463,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 			info!("Success");
 		},
-		Command::SendRound { destination, amount } => {
-			if let Ok(pk) = PublicKey::from_str(&destination) {
-				debug!("Sending to Ark public key {}", pk);
-				w.sync_ark().await.context("sync error")?;
-				w.send_round_payment(pk, amount).await?;
-			} else if let Ok(addr) = Address::from_str(&destination) {
+		Command::SendOnchain { destination, amount } => {
+			if let Ok(addr) = Address::from_str(&destination) {
 				let addr = addr.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
