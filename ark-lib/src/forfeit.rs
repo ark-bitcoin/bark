@@ -3,7 +3,6 @@
 use bitcoin::{OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use crate::util::TransactionExt;
 use crate::{fee, util, Vtxo};
 use crate::connectors::ConnectorChain;
 
@@ -27,12 +26,6 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 				sequence: Sequence::MAX,
 				script_sig: ScriptBuf::new(),
 				witness: Witness::new(),
-			},
-			TxIn {
-				previous_output: vtxo.vtxo_tx().fee_anchor().expect("vtxo has fee anchor"),
-				sequence: Sequence::MAX,
-				script_sig: ScriptBuf::new(),
-				witness: fee::dust_anchor_witness(),
 			},
 		],
 		output: vec![
@@ -60,7 +53,7 @@ pub fn forfeit_sighash(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transac
 	let tx = create_forfeit_tx(vtxo, connector);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
 		0,
-		&sighash::Prevouts::All(&[exit_prevout, connector_prevout, fee::dust_anchor()]),
+		&sighash::Prevouts::All(&[exit_prevout, connector_prevout]),
 		TapSighashType::Default,
 	).expect("sighash error");
 	(sighash, tx)
