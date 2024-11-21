@@ -99,20 +99,27 @@ async fn main() {
 }
 
 fn init_logging() {
+	//TODO(stevenroose) add filename and line number when verbose logging
 	fern::Dispatch::new()
 		.level(log::LevelFilter::Trace)
 		.level_for("rustls", log::LevelFilter::Warn)
 		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
 		// regular logging dispatch
 		.chain(fern::Dispatch::new()
-			//TODO(stevenroose) consider also having a human readable printout for slogs
-			.filter(|m| m.target() != aspd_log::SLOG_TARGET)
 			.format(|out, msg, rec| {
 				let now = chrono::Local::now();
 				let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
+				let kv = if rec.key_values().count() > 0 {
+					let mut buf = Vec::new();
+					buf.extend(" -- ".as_bytes());
+					serde_json::to_writer(&mut buf, &aspd_log::SourceSerializeWrapper(rec.key_values())).unwrap();
+					String::from_utf8(buf).unwrap()
+				} else {
+					String::new()
+				};
 				out.finish(format_args!(
-					"[{} {: >5} {}] {}",
-					stamp, rec.level(), rec.module_path().unwrap_or(""), msg,
+					"[{} {: >5} {}] {}{}",
+					stamp, rec.level(), rec.module_path().unwrap_or(""), msg, kv,
 				))
 			})
 			.chain(std::io::stdout())
