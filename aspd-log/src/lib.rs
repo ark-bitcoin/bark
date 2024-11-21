@@ -1,71 +1,125 @@
 
 #[macro_use] extern crate serde;
 
+#[macro_use]
+mod macros;
 mod msgs;
+
 pub use crate::msgs::*;
 
+use serde::de::{Deserialize, DeserializeOwned};
+use serde::ser::{Serialize, Serializer, SerializeMap};
 
-use serde::de::DeserializeOwned;
-use serde::ser::{Serialize, SerializeMap, Serializer};
 
 
 /// The "target" field used for structured logging.
 pub const SLOG_TARGET: &str = "aspd-slog";
 
-const LOGID_FIELD: &str = "logid";
+pub const LOGID_FIELD: &str = "slog_id";
+pub const DATA_FIELD: &str = "slog_data";
 
 pub trait LogMsg: Sized + Send + Serialize + DeserializeOwned + 'static {
 	const LOGID: &'static str;
 	const LEVEL: log::Level;
-
-	fn from_source<'a>(s: &'a dyn log::kv::Source) -> Result<Self, log::kv::Error>;
+	const MSG: &'static str;
 }
 
-pub fn log(
-	obj: &dyn log::kv::Source,
-	level: log::Level,
+
+pub fn log<T: LogMsg>(
+	obj: &T,
+	module: &str,
 	file: &str,
 	line: u32,
 ) {
-	let record = log::Record::builder()
-		.level(level)
-		.target("aspd-slog")
+	log::logger().log(&log::Record::builder()
+		.args(format_args!("{}", T::MSG))
+		.target(SLOG_TARGET)
+		.level(T::LEVEL)
+		.module_path(Some(module))
 		.file(Some(file))
 		.line(Some(line))
-		.key_values(obj)
-		.build();
-	log::logger().log(&record);
+		.key_values(&LogMsgSourceWrapper(obj))
+		.build());
 }
 
-#[macro_export]
-macro_rules! filename {
-    () => (file!().rsplit("aspd/").next().unwrap())
+
+/// A wrapper around our [LogMsg] structs that implements [log::kv::Source]
+/// so that we can pass them into the kv structure of a log record.
+struct LogMsgSourceWrapper<'a, T: LogMsg>(&'a T);
+
+impl<'a, T: LogMsg> log::kv::Source for LogMsgSourceWrapper<'a, T> {
+	fn visit<'k>(
+		&'k self,
+		visitor: &mut dyn log::kv::VisitSource<'k>,
+	) -> Result<(), log::kv::Error> {
+		visitor.visit_pair(
+			LOGID_FIELD.into(),
+			T::LOGID.into(),
+		)?;
+		visitor.visit_pair(
+			DATA_FIELD.into(),
+			log::kv::Value::from_serde(self.0),
+		)?;
+		Ok(())
+	}
 }
 
-#[macro_export]
-macro_rules! slog {
-    ($struct:ident) => {{
-		if log::log_enabled!(<$crate::$struct as $crate::LogMsg>::LEVEL) {
-			$crate::log(
-				&$crate::$struct {},
-				<$crate::$struct as $crate::LogMsg>::LEVEL,
-				$crate::filename!(),
-				line!(),
-			);
+#[derive(Debug)]
+pub enum RecordParseError {
+	WrongType,
+	Json(serde_json::Error),
+
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ParsedRecordKv<'a> {
+	#[serde(rename = "slog_id")]
+	pub id: &'a str,
+	#[serde(rename = "slog_data")]
+	pub data: &'a serde_json::value::RawValue,
+}
+
+// Custom deserializer for the `kv` field.
+fn deserialize_kv<'de, D>(d: D) -> Result<Option<ParsedRecordKv<'de>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Attempt to deserialize `ParsedRecordKv`, returning `None` if deserialization fails due to missing fields.
+    Ok(ParsedRecordKv::<'de>::deserialize(d).ok())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ParsedRecord<'a> {
+	pub msg: &'a str,
+	pub level: log::Level,
+	pub target: &'a str,
+	pub module: Option<&'a str>,
+	pub file: Option<&'a str>,
+	pub line: Option<u32>,
+	#[serde(deserialize_with = "deserialize_kv")]
+	pub kv: Option<ParsedRecordKv<'a>>,
+}
+
+impl<'a> ParsedRecord<'a> {
+	/// Check whether this log message if of the given structure log type.
+	pub fn is<T: LogMsg>(&self) -> bool {
+		if let Some(ref kv) = self.kv {
+			kv.id == T::LOGID
+		} else {
+			false
 		}
-    }};
-    ($struct:ident, $( $args:tt )*) => {{
-		if log::log_enabled!(<$crate::$struct as $crate::LogMsg>::LEVEL) {
-			$crate::log(
-				&$crate::$struct { $( $args )* },
-				<$crate::$struct as $crate::LogMsg>::LEVEL,
-				$crate::filename!(),
-				line!(),
-			);
-		}
-    }};
-}
+	}
 
+	/// Try to parse the log message into the given structured log type.
+	pub fn try_as<T: LogMsg>(&self) -> Result<T, RecordParseError> {
+		if !self.is::<T>() {
+			return Err(RecordParseError::WrongType);
+		}
+
+		Ok(serde_json::from_str(self.kv.as_ref().map(|v| v.data.get()).unwrap_or(""))
+			.map_err(RecordParseError::Json)?)
+	}
+}
 
 /// A wrapper around a [log::kv::Source] that implements [serde::Serialize].
 pub struct SourceSerializeWrapper<'a>(pub &'a dyn log::kv::Source);
@@ -112,8 +166,6 @@ impl<'a> Serialize for RecordSerializeWrapper<'a> {
 			m.serialize_entry("line", &line)?;
 		}
 		let kv = self.0.key_values();
-		let id = kv.get(LOGID_FIELD.into()).and_then(|v| v.to_borrowed_str()).unwrap_or("");
-		m.serialize_entry("id", id)?;
 		if kv.count() > 0 {
 			m.serialize_entry("kv", &SourceSerializeWrapper(kv))?;
 		}
@@ -121,38 +173,66 @@ impl<'a> Serialize for RecordSerializeWrapper<'a> {
 	}
 }
 
-#[derive(Debug)]
-pub enum RecordParseError {
-	WrongType,
-	Json(serde_json::Error),
-}
+#[cfg(test)]
+mod test {
+    use crate::*;
 
-#[derive(Debug, Deserialize)]
-pub struct ParsedRecord<'a> {
-	pub msg: &'a str,
-	pub level: log::Level,
-	pub target: &'a str,
-	pub module: Option<&'a str>,
-	pub file: Option<&'a str>,
-	pub line: Option<u32>,
-	// structured stuff
-	pub id: &'a str,
-	pub kv: Option<&'a serde_json::value::RawValue>,
-}
+	#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+	struct TestLog {
+		nb: usize,
+	}
+	impl_slog!(TestLog, Info, "testlog");
 
-impl<'a> ParsedRecord<'a> {
-	/// Check whether this log message if of the given structure log type.
-	pub fn is<T: LogMsg>(&self) -> bool {
-		T::LOGID == self.id
+	#[test]
+	fn json_roundtrip() {
+		let m = TestLog { nb: 42 };
+		let kv = LogMsgSourceWrapper(&m);
+		let record = log::Record::builder()
+			.target(SLOG_TARGET)
+			.level(RoundStarted::LEVEL)
+			.file(Some("some_file.rs"))
+			.line(Some(35))
+			.key_values(&kv)
+			.build();
+		let json = serde_json::to_string(&RecordSerializeWrapper(&record)).unwrap();
+
+		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
+		assert!(parsed.is::<TestLog>());
+		let inner = parsed.try_as::<TestLog>().unwrap();
+		assert_eq!(inner, m);
 	}
 
-	/// Try to parse the log message into the given structured log type.
-	pub fn try_as<T: LogMsg>(&self) -> Result<T, RecordParseError> {
-		if self.id != T::LOGID {
-			return Err(RecordParseError::WrongType);
-		}
+	#[test]
+	fn json_parse() {
+		// Check that we can parse messages with extra values.
+		let json = serde_json::to_string(&serde_json::json!({
+			"msg": "test",
+			"target": SLOG_TARGET,
+			"level": "info",
+			"file": "test.rs",
+			"line": 35,
+			"kv": {
+				"slog_id": "TestLog",
+				"slog_data": {"nb": 35},
+				"extra": {"extra": 3},
+			},
+		})).unwrap();
+		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
+		assert!(parsed.is::<TestLog>());
+		let _ = parsed.try_as::<TestLog>().unwrap();
 
-		Ok(serde_json::from_str(self.kv.map(|v| v.get()).unwrap_or(""))
-			.map_err(RecordParseError::Json)?)
+		// And without slog stuff
+		let json = serde_json::to_string(&serde_json::json!({
+			"msg": "test",
+			"target": "random",
+			"level": "info",
+			"file": "test.rs",
+			"line": 35,
+			"kv": {
+				"extra": {"extra": 3},
+			},
+		})).unwrap();
+		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
+		assert!(!parsed.is::<TestLog>());
 	}
 }

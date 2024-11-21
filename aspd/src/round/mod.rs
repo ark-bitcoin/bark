@@ -476,7 +476,6 @@ pub async fn run_round_coordinator(
 				);
 				for u in &spendable_utxos {
 					trace!("Including round-related UTXO {} with value {}", u.point, u.amount());
-					slog!(SpendingExpiredRound, outpoint: u.point, amount: u.amount());
 				}
 			}
 			//TODO(stevenroose) think about if we can release lock sooner
