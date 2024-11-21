@@ -3,6 +3,7 @@
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde;
+#[macro_use] extern crate aspd_log;
 
 
 mod database;
@@ -551,7 +552,7 @@ impl App {
 	///
 	/// It fills in the PSBT inputs with the fields required to sign,
 	/// for signing use [App::sign_round_utxo_inputs].
-	fn spendable_expired_vtxos(&self, height: u32) -> anyhow::Result<Vec<SpendableUtxo>> {
+	fn spendable_expired_rounds(&self, height: u32) -> anyhow::Result<Vec<SpendableUtxo>> {
 		let pubkey = self.master_key.public_key();
 
 		let expired_rounds = self.db.get_expired_rounds(height)?;

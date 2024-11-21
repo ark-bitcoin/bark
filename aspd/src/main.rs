@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use aspd_log::RecordSerializeWrapper;
 use bitcoin::{Address, Amount, FeeRate, Network};
 use clap::Parser;
 use tonic::transport::Uri;
@@ -102,15 +103,38 @@ fn init_logging() {
 		.level(log::LevelFilter::Trace)
 		.level_for("rustls", log::LevelFilter::Warn)
 		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
-		.format(|out, msg, rec| {
-			let now = chrono::Local::now();
-			let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
-			out.finish(format_args!(
-				"[{} {: >5} {}] {}",
-				stamp, rec.level(), rec.module_path().unwrap_or(""), msg,
-			))
-		})
-		.chain(std::io::stdout())
+		// regular logging dispatch
+		.chain(fern::Dispatch::new()
+			//TODO(stevenroose) consider also having a human readable printout for slogs
+			.filter(|m| m.target() != aspd_log::SLOG_TARGET)
+			.format(|out, msg, rec| {
+				let now = chrono::Local::now();
+				let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
+				out.finish(format_args!(
+					"[{} {: >5} {}] {}",
+					stamp, rec.level(), rec.module_path().unwrap_or(""), msg,
+				))
+			})
+			.chain(std::io::stdout())
+		)
+		// structured logging dispatch
+		.chain(fern::Dispatch::new()
+			.filter(|m| m.target() == aspd_log::SLOG_TARGET)
+			.format(|out, _msg, rec| {
+				#[derive(serde::Serialize)]
+				struct Rec<'a> {
+					timestamp: chrono::DateTime<chrono::Local>,
+					#[serde(flatten)]
+					rec: RecordSerializeWrapper<'a>,
+				}
+				let rec = Rec {
+					timestamp: chrono::Local::now(),
+					rec: RecordSerializeWrapper(rec),
+				};
+				out.finish(format_args!("{}", serde_json::to_string(&rec).unwrap()));
+			})
+			.chain(std::io::stdout()) //TODO(stevenroose) pipe to file?
+		)
 		.apply().expect("error setting up logging");
 }
 

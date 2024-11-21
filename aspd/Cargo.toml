@@ -22,7 +22,8 @@ tonic-build.workspace = true
 # OWN
 ark-lib = { path = "../ark-lib" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
-bark-cln = {path = "../bark-cln"}
+bark-cln = { path = "../bark-cln" }
+aspd-log = { path = "../aspd-log" }
 stream-until = { path = "../stream-until" }
 
 # EXPORTED
