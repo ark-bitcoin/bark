@@ -92,7 +92,7 @@ impl Wallet {
 				}
 
 				let mempool = emitter.mempool()?;
-				self.wallet.apply_unconfirmed_txs(mempool.into_iter().map(|(tx, time)| (tx, time)));
+				self.wallet.apply_unconfirmed_txs(mempool);
 				self.wallet.persist(&mut self.db)?;
 			},
 			ChainSourceClient::Esplora(ref client) => {
