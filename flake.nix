@@ -26,6 +26,9 @@
 					inherit system overlays;
 				};
 
+				rust = pkgs.rust-bin.stable.${rustVersion}.default.override {
+					extensions = [ "rust-src" "rust-analyzer" ];
+				};
 				bitcoin = pkgs.bitcoin.overrideAttrs (old: {
 					version = bitcoinVersion;
 					src = pkgs.fetchurl {
@@ -58,13 +61,20 @@
 				devShells.default = pkgs.mkShell {
 					nativeBuildInput = [ ];
 					buildInputs = [ pkgs.llvmPackages.clang ] ++ [
-						(pkgs.rust-bin.stable.${rustVersion}.default.override {
-							extensions = [ "rust-src" "rust-analyzer" ];
-						})
+						# For CI image
+						pkgs.coreutils
+						pkgs.which
+						pkgs.git
+						pkgs.gnugrep
+						# For building
+						rust
 						pkgs.pkg-config
-						pkgs.sqlite
-						pkgs.just
 						protobuf
+						pkgs.sqlite
+						# For development & testing
+						pkgs.just
+						pkgs.jq
+						pkgs.python3 # for clightning
 						bitcoin
 						clightning
 					];
