@@ -44,6 +44,24 @@
 						hash = "sha256-FD7JFM80wrruqBWjYnJHZh2f2GZJ6XDQmUQ0XetnWBg=";
 					};
 				});
+				cln-grpc = pkgs.rustPlatform.buildRustPackage rec {
+					pname = "cln-grpc";
+					version = "99.99.99";
+					src = pkgs.fetchFromGitHub {
+						owner = "ElementsProject";
+						repo = "lightning";
+						rev = "v${lightningVersion}";
+						hash = "sha256-cZZYFFplt6cOzI/VFUWeZbXeagHrwGjywDiXtYss698=";
+					};
+					buildAndTestSubdir = "plugins/grpc-plugin";
+					nativeBuildInputs = [ protobuf ];
+					cargoHash = "sha256-c+V2XCI+hdrHgHxtnBWBSilpxX3LAyvJx76xNbGkMQQ=";
+					# Avoid doing the configure step of the clightning C project
+					postUnpack = ''
+						rm ${src.name}/configure
+					'';
+					doCheck = false; # tests are broken
+				};
 
 				protobuf = pkgs.protobuf3_20.overrideAttrs (old: {
 					version = protobufVersion;
@@ -88,6 +106,7 @@
 
 					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
 					LIGHTNINGD_EXEC = "${clightning}/bin/lightningd";
+					LIGHTNINGD_PLUGINS = "${cln-grpc}/bin/";
 				};
 			}
 		);
