@@ -1,7 +1,7 @@
 
 
 use std::collections::{HashMap, VecDeque};
-use std::{cmp, fmt, io};
+use std::{cmp, fmt, io, iter};
 
 use bitcoin::hashes::Hash;
 use bitcoin::{
@@ -87,7 +87,9 @@ impl VtxoTreeSpec {
 	}
 
 	/// The taproot scriptspend info for the expiry clause.
-	pub fn expiry_scriptspend(&self, agg_pk: XOnlyPublicKey) -> (ControlBlock, ScriptBuf, LeafVersion, TapNodeHash) {
+	pub fn expiry_scriptspend(
+		&self, agg_pk: XOnlyPublicKey,
+	) -> (ControlBlock, ScriptBuf, LeafVersion, TapNodeHash) {
 		let taproot = self.cosign_taproot(agg_pk);
 		let script = self.expiry_clause();
 		let cb = taproot.control_block(&(script.clone(), LeafVersion::TapScript))
@@ -177,7 +179,9 @@ impl VtxoTreeSpec {
 	/// Calculate all the aggregate cosign pubkeys by aggregating the leaf and asp pubkeys.
 	///
 	/// Pubkeys expected and returned ordered from leaves to root.
-	pub fn cosign_agg_pks(&self) -> impl Iterator<Item = XOnlyPublicKey> + '_ {
+	pub fn cosign_agg_pks(&self)
+		-> impl Iterator<Item = XOnlyPublicKey> + iter::DoubleEndedIterator + iter::ExactSizeIterator + '_
+	{
 		Tree::new(self.nb_leaves()).into_iter().map(|node| {
 			musig::combine_keys(
 				node.leaves().map(|i| self.vtxos[i].cosign_pk).chain(Some(self.asp_cosign_pk))

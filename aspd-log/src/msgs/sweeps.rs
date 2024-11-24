@@ -3,6 +3,7 @@
 use bitcoin::{Amount, OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UneconomicalSweepInput {
 	pub outpoint: OutPoint,
@@ -33,8 +34,28 @@ pub struct SweepingOutput {
 impl_slog!(SweepingOutput, Debug, "Sweeping output");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SweepComplete {
+pub struct SweepBroadcast {
 	pub txid: Txid,
 	pub surplus: Amount,
 }
-impl_slog!(SweepComplete, Info, "Completed a sweep tx");
+impl_slog!(SweepBroadcast, Info, "Completed a sweep tx");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepTxFinalized {
+	pub txid: Txid,
+}
+impl_slog!(SweepTxFinalized, Info, "A sweep tx got deeply confirmed");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundFullySwept {
+	pub round_id: Txid,
+}
+impl_slog!(RoundFullySwept, Info, "An expired round was succesfully swept");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceivedSweepTrigger {}
+impl_slog!(ReceivedSweepTrigger, Info, "Reiceved a trigger to sweep over RPC");
+
+

@@ -7,7 +7,7 @@ use ark_testing::util::FutureExt;
 use ark_testing::{AspdConfig, TestContext};
 use ark_testing::daemon::aspd::Aspd;
 use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
-use aspd_log::{NotSweeping, SweepComplete};
+use aspd_log::{NotSweeping, RoundFullySwept, SweepBroadcast, TxIndexUpdateFinished};
 use aspd_rpc_client::Empty;
 
 use bitcoin::amount::Amount;
@@ -112,10 +112,10 @@ async fn restart_key_stability() {
 }
 
 #[tokio::test]
-async fn spend_expired() {
+async fn sweep_vtxos() {
 	//! Testing aspd spending expired rounds.
 
-	let ctx = TestContext::new("aspd/spend_expired").await;
+	let ctx = TestContext::new("aspd/sweep_vtxos").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	bitcoind.prepare_funds().await;
 	let mut aspd = ctx.aspd_with_cfg("aspd", AspdConfig {
@@ -136,22 +136,40 @@ async fn spend_expired() {
 	bark.refresh_all().await;
 	bitcoind.generate(65).await;
 
-	let mut not_sweeping = aspd.subscribe_log::<NotSweeping>().await;
-	let mut sweeping = aspd.subscribe_log::<SweepComplete>().await;
+	// subscribe to a few log messages
+	let mut log_not_sweeping = aspd.subscribe_log::<NotSweeping>().await;
+	let mut log_sweeping = aspd.subscribe_log::<SweepBroadcast>().await;
+	let mut log_round_done = aspd.subscribe_log::<RoundFullySwept>().await;
 
 	// Not sweeping yet, because available money under the threshold.
+	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
 	admin.trigger_sweep(Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(75145), not_sweeping.recv().fast().await.unwrap().available_surplus);
+	assert_eq!(Amount::from_sat(74980), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
 
 	bark.refresh_all().await;
 	bitcoind.generate(65).await;
 
 	assert_eq!(844734, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
 	admin.trigger_sweep(Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(150290), sweeping.recv().fast().await.unwrap().surplus);
+	assert_eq!(Amount::from_sat(149960), log_sweeping.recv().fast().await.unwrap().surplus);
 
-	bitcoind.generate(2).await;
-	assert_eq!(992837, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+	// then after a while, we should sweep the connectors
+	bitcoind.generate(65).await;
+	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
+	admin.trigger_sweep(Empty{}).await.unwrap();
+	assert_eq!(993333, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+
+	// and eventually the round should be finished
+	loop {
+		if log_round_done.try_recv().is_ok() {
+			break;
+		}
+		bitcoind.generate(65).await;
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+
+	assert_eq!(993333, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
 }
 
 #[tokio::test]
