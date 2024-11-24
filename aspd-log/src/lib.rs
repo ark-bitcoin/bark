@@ -4,6 +4,7 @@
 #[macro_use]
 mod macros;
 mod msgs;
+mod serde_utils;
 
 pub use crate::msgs::*;
 
