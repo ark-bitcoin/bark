@@ -174,7 +174,7 @@ async fn large_round() {
 	// Refresh all vtxos
 	let pks_shifted = pks.iter().chain(pks.iter()).skip(1).cloned().take(N).collect::<Vec<_>>();
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
-	futures::future::join_all(barks.iter().zip(pks_shifted).map(|(b, pk)| {
+	futures::future::join_all(barks.iter().zip(pks_shifted).map(|(b, _pk)| {
 		b.refresh_all()
 	})).await;
 }
