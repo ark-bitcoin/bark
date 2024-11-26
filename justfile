@@ -32,4 +32,4 @@ rustdocs:
 
 # cleans most of our crates, doesn't clean grpc gens, they are sometimes slow to build
 clean:
-	cargo clean -p ark-lib -p ark-testing -p bark-aspd -p bark-client -p bark-json
+	cargo clean -p ark-lib -p ark-testing -p bark-aspd -p bark-client -p bark-json -p aspd-log

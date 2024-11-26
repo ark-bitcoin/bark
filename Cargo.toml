@@ -57,11 +57,12 @@ rand = { version = "0.8.5", features = [ "std", "std_rng" ] }
 bdk_wallet = "1.0.0-beta.5"
 bdk_esplora = { version = "0.19.0", features = [ "std", "async-https-rustls" ], default-features = false }
 bdk_bitcoind_rpc = "0.16.0"
-bdk_file_store = "0.17.0"
 
 
 [profile.release]
 debug = true
 
 [patch.crates-io]
+# TODO(stevenroose) remove once this PR is released, probably 0.4.23
+# https://github.com/rust-lang/log/pull/643
 log = { git = "https://github.com/stevenroose/log.git", branch = "borrowed-str-lifetime" }
