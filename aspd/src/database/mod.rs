@@ -10,8 +10,8 @@ use bitcoin::{Transaction, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use rocksdb::{
-	BoundColumnFamily, FlushOptions, OptimisticTransactionOptions, WriteBatchWithTransaction,
-	WriteOptions,
+	BoundColumnFamily, Direction, FlushOptions, IteratorMode, OptimisticTransactionOptions,
+	WriteBatchWithTransaction, WriteOptions,
 };
 
 
@@ -251,21 +251,15 @@ impl Db {
 	pub fn get_expired_rounds(&self, height: u32) -> anyhow::Result<Vec<Txid>> {
 		let mut ret = Vec::new();
 
-		let mut iter = self.db.raw_iterator_cf(&self.cf_round_expiry());
-		iter.seek_to_first();
-		while iter.valid() {
-			if let Some(key) = iter.key() {
-				let expkey = RoundExpiryKey::decode(key);
-				if expkey.expiry > height {
-					break;
-				}
-				ret.push(expkey.id);
-				iter.next();
-			} else {
+		let mut iter = self.db.iterator_cf(&self.cf_round_expiry(), IteratorMode::Start);
+		while let Some(res) = iter.next() {
+			let (key, _) = res.context("db round expiry iter error")?;
+			let expkey = RoundExpiryKey::decode(&key);
+			if expkey.expiry > height {
 				break;
 			}
+			ret.push(expkey.id);
 		}
-		iter.status().context("round expiry iterator error")?;
 
 		Ok(ret)
 	}
@@ -273,17 +267,14 @@ impl Db {
 	pub fn get_fresh_round_ids(&self, start_height: u32) -> anyhow::Result<Vec<Txid>> {
 		let mut ret = Vec::new();
 
-		let mut iter = self.db.raw_iterator_cf(&self.cf_round_expiry());
-		iter.seek(&start_height.to_le_bytes());
-		while iter.valid() {
-			if let Some(key) = iter.key() {
-				ret.push(RoundExpiryKey::decode(key).id);
-				iter.next();
-			} else {
-				break;
-			}
+		let mut iter = self.db.iterator_cf(&self.cf_round_expiry(),
+			IteratorMode::From(&start_height.to_le_bytes(), Direction::Forward),
+		);
+		while let Some(res) = iter.next() {
+			let (key, _) = res.context("db round iter error")?;
+			ret.push(RoundExpiryKey::decode(&key).id);
+			iter.next();
 		}
-		iter.status().context("round expiry iterator error")?;
 
 		Ok(ret)
 	}
@@ -351,22 +342,19 @@ impl Db {
 		assert_eq!(33, pk.len());
 
 		let mut ret = Vec::new();
-		let mut iter = self.db.raw_iterator_cf(&self.cf_oor_mailbox());
-		iter.seek(&pk);
-		while iter.valid() {
-			if let Some(item) = iter.key() {
-				if item[0..33] == pk {
-					ret.push(Vtxo::decode(&item[33..]).expect("corrupt db: invalid vtxo"));
-					self.db.delete_cf(&self.cf_oor_mailbox(), &item)?;
-				} else {
-					break;
-				}
-				iter.next();
+		let mut iter = self.db.iterator_cf(&self.cf_oor_mailbox(),
+			IteratorMode::From(&pk, Direction::Forward),
+		);
+		while let Some(res) = iter.next() {
+			let (item, _) = res.context("db oor iter error")?;
+			if item[0..33] == pk {
+				ret.push(Vtxo::decode(&item[33..]).expect("corrupt db: invalid vtxo"));
+				self.db.delete_cf(&self.cf_oor_mailbox(), &item)?;
 			} else {
 				break;
 			}
 		}
-		iter.status().context("round expiry iterator error")?;
+
 		Ok(ret)
 	}
 }
