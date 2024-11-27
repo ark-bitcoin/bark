@@ -3,13 +3,13 @@ use std::env;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::hashes::Hash;
 use tokio::fs;
+use tokio::process::Command;
 use tokio::sync::Mutex;
 use tonic::transport::{Certificate, Channel, channel::ClientTlsConfig, Identity, Uri};
 

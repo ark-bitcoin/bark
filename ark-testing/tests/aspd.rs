@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate log;
 
 use std::time::Duration;
 
@@ -10,15 +12,29 @@ use aspd_rpc_client::Empty;
 use bitcoin::amount::Amount;
 use bitcoin::secp256k1::PublicKey;
 
-#[test]
-fn check_aspd_version() {
+#[tokio::test]
+async fn check_aspd_version() {
 	let output = Aspd::base_cmd()
 		.arg("--version")
 		.output()
+		.await
 		.expect("Failed to spawn process and capture output");
 
 	let stdout = String::from_utf8(output.stdout).expect("Output is valid utf-8");
 	assert!(stdout.starts_with("bark-aspd"))
+}
+
+#[tokio::test]
+async fn round_started_log_can_be_captured() {
+	let ctx = TestContext::new("aspd/capture_log").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	let mut log_stream = aspd.subscribe_log::<aspd_log::RoundStarted>().await;
+	while let Some(l) = log_stream.recv().await {
+		info!("Captured log: Round started at {}", l.round_id);
+		break;
+	}
 }
 
 #[tokio::test]
@@ -113,8 +129,8 @@ async fn spend_expired() {
 	bark.refresh_all().await;
 	bitcoind.generate(65).await;
 
-	let mut not_sweeping = aspd.subscribe_log::<NotSweeping>();
-	let mut sweeping = aspd.subscribe_log::<SweepComplete>();
+	let mut not_sweeping = aspd.subscribe_log::<NotSweeping>().await;
+	let mut sweeping = aspd.subscribe_log::<SweepComplete>().await;
 
 	// Not sweeping yet, because available money under the threshold.
 	admin.trigger_sweep(Empty{}).await.unwrap();

@@ -2,13 +2,16 @@ pub mod bitcoind;
 pub mod aspd;
 pub mod lightningd;
 
+use anyhow::Context;
+
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Command, Child};
+use tokio::sync::Mutex;
+
 use std::fs;
 use std::future::Future;
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::util::is_running;
@@ -57,7 +60,6 @@ pub struct Daemon<T>
 	inner : T,
 	daemon_state: DaemonState,
 	child: Option<Child>,
-	stdout_jh: Option<JoinHandle<()>>,
 	stdout_handler: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>,
 }
 
@@ -70,7 +72,6 @@ impl<T> Daemon<T>
 			daemon_state: DaemonState::Init,
 			child: None,
 			stdout_handler: Arc::new(Mutex::new(vec![])),
-			stdout_jh: None,
 		}
 	}
 }
@@ -116,29 +117,22 @@ impl<T> Daemon<T>
 			.get_command()
 			.await?;
 
-		cmd.stdout(Stdio::piped());
+		// Create files to where the outputs is logged
+		let stdout_path = self.inner.datadir().join(STDOUT_LOGFILE);
 		let stderr_path = self.inner.datadir().join(STDERR_LOGFILE);
-		cmd.stderr(std::fs::File::create(&stderr_path)?);
 
-		trace!("{}: Trying to spawn {:?}", self.inner.name(), cmd);
+		cmd.stdout(std::fs::File::create(&stdout_path)?);
+		cmd.stderr(std::fs::File::create(&stderr_path)?);
 		let mut child = cmd.spawn()?;
 
-		let stdout = child.stdout.take().unwrap();
-		let stdout_log = self.stdout_handler.clone();
-		let stdout_path = self.inner.datadir().join(STDOUT_LOGFILE);
-		let mut stdout_logfile = BufWriter::new(std::fs::File::create(&stdout_path)?);
+		// Read the log-file for stdout
+		info!("Process the file");
+		let (path,handler) = (stdout_path.clone(), self.stdout_handler.clone());
+		let _jh = tokio::spawn(async move {
+			process_log_file(path, handler).await
+		});
+		info!("Spawn completed the file");
 
-		self.stdout_jh = Some(std::thread::spawn(move || {
-			let reader = BufReader::new(stdout);
-			for line in reader.lines() {
-				let line = line.unwrap();
-				// first write to our logfile
-				stdout_logfile.write_all(line.as_bytes()).expect("stdout logfile error");
-				stdout_logfile.write_all("\n".as_bytes()).expect("stdout logfile error");
-				// then invoke custom handlers
-				stdout_log.lock().unwrap().retain_mut(|h| !h.process_log(&line));
-			}
-		}));
 
 		// Wait for init
 		// But check every 100 milliseconds if the Child is
@@ -171,14 +165,15 @@ impl<T> Daemon<T>
 		}
 	}
 
+
 	pub async fn stop(&mut self) -> anyhow::Result<()> {
 		trace!("Stopping {}", self.inner.name());
 		self.daemon_state = DaemonState::Stopping;
 
 		match self.child.take() {
-			Some(mut child) => tokio::task::spawn_blocking(move || child.kill()).await?,
+			Some(mut child) => child.kill().await.context("Failed to kill child")?,
 			None => anyhow::bail!("Failed to stop daemon because there is no child. Was it running?")
-		}?;
+		};
 
 
 		info!("Stopped {}", self.inner.name());
@@ -188,15 +183,15 @@ impl<T> Daemon<T>
 
 	pub async fn join(&mut self) -> anyhow::Result<()> {
 		match self.child.take() {
-			Some(mut child) => { tokio::task::spawn_blocking(move || child.wait())}.await?,
+			Some(mut child) => child.wait().await?,
 			None => anyhow::bail!("Failed to wait for daemon to complete. Was it running?")
-		}?;
+		};
 
 		Ok(())
 	}
 
-	pub fn add_stdout_handler<L: LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) {
-		let mut handlers = self.stdout_handler.lock().unwrap();
+	pub async fn add_stdout_handler<L: LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) {
+		let mut handlers = self.stdout_handler.lock().await;
 		handlers.push(Box::new(log_handler));
 	}
 }
@@ -209,10 +204,27 @@ impl<T> Drop for Daemon<T>
 			Some(mut c) => { let _ = c.kill(); },
 			None => {}
 		}
+	}
+}
 
-		match self.stdout_jh.take() {
-			Some(jh) => { let _ = jh.join(); },
-			None => {}
+
+async fn process_log_file<P: AsRef<Path>>(
+	filename: P, 
+	handlers: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>
+) -> () {
+	let file = tokio::fs::File::open(filename).await.expect("Can open log-file");
+	let buf_reader = BufReader::new(file);
+	let mut lines = buf_reader.lines();
+
+	loop {
+		match lines.next_line().await.unwrap() {
+			Some(line) => {
+				for handler in handlers.lock().await.iter_mut() {
+					handler.process_log(&line);
+				}
+			}, None => {
+				tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+			}
 		}
 	}
 }

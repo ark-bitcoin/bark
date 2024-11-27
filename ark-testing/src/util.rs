@@ -3,12 +3,13 @@ use std::env;
 use std::borrow::Borrow;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::process::Child;
 use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Denomination, FeeRate, Weight};
+
 use tokio::fs;
+use tokio::process::Child;
 
 use crate::constants::env::TEST_DIRECTORY;
 
