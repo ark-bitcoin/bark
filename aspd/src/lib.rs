@@ -14,6 +14,7 @@ mod sweep_rounds;
 mod rpc;
 mod rpcserver;
 mod round;
+mod txindex;
 
 use std::fs;
 use std::net::SocketAddr;
