@@ -109,13 +109,13 @@ impl Aspd {
 
 	/// Wait for the first occurrence of the given log message type and return it.
 	pub async fn wait_for_log<L: LogMsg>(&mut self) -> L {
-		let (tx, mut rx) = sync::mpsc::channel(0);
+		let (tx, mut rx) = sync::mpsc::unbounded_channel();
 		self.add_stdout_handler(move |l: &str| {
 			if l.starts_with("{") {
 				let rec = serde_json::from_str::<ParsedRecord>(l)
 					.expect("invalid slog struct");
 				if rec.is::<L>() {
-					tx.try_send(rec.try_as().expect("invalid slog data"))
+					tx.send(rec.try_as().expect("invalid slog data"))
 						.expect("channel closed");
 					return true;
 				}

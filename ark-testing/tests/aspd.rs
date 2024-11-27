@@ -35,6 +35,9 @@ async fn round_started_log_can_be_captured() {
 		info!("Captured log: Round started at {}", l.round_id);
 		break;
 	}
+
+	let l = aspd.wait_for_log::<aspd_log::RoundStarted>().await;
+	info!("Captured log: Round started with round_num {}", l.round_id);
 }
 
 #[tokio::test]
