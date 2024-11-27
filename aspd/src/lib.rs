@@ -40,6 +40,7 @@ use ark::{musig, BlockHeight, Vtxo};
 use ark::lightning::Bolt11Payment;
 
 use crate::round::{RoundEvent, RoundInput};
+use crate::txindex::TxIndex;
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -186,6 +187,7 @@ pub struct App {
 	asp_key: Keypair,
 	wallet: Mutex<bdk_wallet::Wallet>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
+	txindex: TxIndex,
 
 	rounds: Option<RoundHandle>,
 	sendpay_updates: Option<SendpayHandle>,
@@ -296,12 +298,17 @@ impl App {
 			&config.bitcoind_url,
 			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
 		).context("failed to create bitcoind rpc client")?;
+		let bitcoind2 = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
+			&config.bitcoind_url,
+			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
+		).context("failed to create bitcoind rpc client")?;
 
 		Ok(Arc::new(App {
 			config: config,
 			db: db,
 			asp_key: asp_key,
 			wallet: Mutex::new(wallet),
+			txindex: TxIndex::start(bitcoind2, Duration::from_secs(30)),
 			bitcoind: bitcoind,
 			rounds: None,
 			sendpay_updates: None,

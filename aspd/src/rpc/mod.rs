@@ -48,7 +48,7 @@ mod convert {
 					RoundEvent::Finished { id, signed_round_tx } => {
 						rpc::round_event::Event::Finished(rpc::RoundFinished {
 							round_id: id,
-							signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
+							signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx.tx),
 						})
 					},
 				})

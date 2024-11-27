@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use ark::musig::MusigPubNonce;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Amount, FeeRate, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
@@ -17,7 +16,7 @@ use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{UnsignedVtxoTree, VtxoTreeSpec};
 
-use crate::{SECP, App};
+use crate::{txindex, App, SECP};
 use crate::database::ForfeitVtxo;
 
 #[derive(Debug, Clone)]
@@ -39,7 +38,7 @@ pub enum RoundEvent {
 	},
 	Finished {
 		id: u64,
-		signed_round_tx: Transaction,
+		signed_round_tx: txindex::Tx,
 	},
 }
 
@@ -722,12 +721,8 @@ pub async fn run_round_coordinator(
 				app.db.store_changeset(&change).await?;
 			}
 			drop(wallet); // we no longer need the lock
-
-			// Broadcast over bitcoind.
-			debug!("Broadcasting round tx {}", signed_round_tx.compute_txid());
-			if let Err(e) = app.bitcoind.send_raw_transaction(&signed_round_tx) {
-				error!("Couldn't broadcast round tx: {}; tx: {}", e, serialize_hex(&signed_round_tx));
-			}
+			debug!("Broadcasting round tx {:?}", signed_round_tx);
+			let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
 
 			// Send out the finished round to users.
 			trace!("Sending out finish event.");
@@ -737,7 +732,7 @@ pub async fn run_round_coordinator(
 			});
 
 			// Store forfeit txs and round info in database.
-			let round_id = signed_round_tx.compute_txid();
+			let round_id = signed_round_tx.txid;
 			for (id, vtxo) in state.all_inputs {
 				let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
 				let point = vtxo.point();
@@ -746,9 +741,11 @@ pub async fn run_round_coordinator(
 			}
 
 			trace!("Storing round result");
-			app.db.store_round(signed_round_tx.clone(), signed_vtxos)?;
+			app.txindex.register_batch(signed_vtxos.all_signed_txs()).await;
+			app.txindex.register_batch(state.connectors.iter_signed_txs(&app.asp_key)).await;
+			app.db.store_round(signed_round_tx.tx.clone(), signed_vtxos)?;
 
-			info!("Finished round {} with tx {}", round_id, signed_round_tx.compute_txid());
+			info!("Finished round {} with tx {}", round_id, signed_round_tx.txid);
 
 			// Sync our wallet so that it sees the broadcasted tx.
 			app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
