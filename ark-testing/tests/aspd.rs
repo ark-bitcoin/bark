@@ -1,8 +1,10 @@
 
 use std::time::Duration;
 
-use ark_testing::TestContext;
+use ark_testing::util::FutureExt;
+use ark_testing::{AspdConfig, TestContext};
 use ark_testing::daemon::aspd::Aspd;
+use aspd_log::{NotSweeping, SweepComplete};
 use aspd_rpc_client::Empty;
 
 use bitcoin::amount::Amount;
@@ -28,7 +30,7 @@ async fn fund_asp() {
 	let mut admin_client = aspd.get_admin_client().await;
 
 	// Query the wallet balance of the asp
-	let response  = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
+	let response = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
 	assert_eq!(response.balance, 0);
 
 	// Fund the aspd
@@ -36,7 +38,7 @@ async fn fund_asp() {
 	tokio::time::sleep(Duration::from_secs(1)).await;
 
 	// Confirm that the balance is updated
-	let response  = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
+	let response = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
 	assert!(response.balance > 0);
 }
 
@@ -84,4 +86,47 @@ async fn restart_key_stability() {
 
 	assert_eq!(asp_key1, asp_key2);
 	assert_ne!(addr1, addr2);
+}
+
+#[tokio::test]
+async fn spend_expired() {
+	//! Testing aspd spending expired rounds.
+
+	let ctx = TestContext::new("aspd/spend_expired").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	bitcoind.generate(106).await;
+	let mut aspd = ctx.aspd_with_cfg("aspd", AspdConfig {
+		vtxo_expiry_delta: 64,
+		sweep_threshold: Amount::from_sat(100_000),
+		..ctx.aspd_default_cfg("aspd", &bitcoind, None).await
+	}).await;
+	let mut admin = aspd.get_admin_client().await;
+	let bark = ctx.bark("bark".to_string(), &bitcoind, &aspd).await;
+
+	bitcoind.fund_aspd(&aspd, Amount::from_sat(1_000_000)).await;
+	bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
+	bark.onboard(Amount::from_sat(75_000)).await;
+
+	assert_eq!(1000000, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+
+	// create a vtxo tree and do a round
+	bark.refresh_all().await;
+	bitcoind.generate(65).await;
+
+	let mut not_sweeping = aspd.subscribe_log::<NotSweeping>();
+	let mut sweeping = aspd.subscribe_log::<SweepComplete>();
+
+	// Not sweeping yet, because available money under the threshold.
+	admin.trigger_sweep(Empty{}).await.unwrap();
+	assert_eq!(Amount::from_sat(75145), not_sweeping.recv().fast().await.unwrap().available_surplus);
+
+	bark.refresh_all().await;
+	bitcoind.generate(65).await;
+
+	assert_eq!(844734, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+	admin.trigger_sweep(Empty{}).await.unwrap();
+	assert_eq!(Amount::from_sat(150290), sweeping.recv().fast().await.unwrap().surplus);
+
+	bitcoind.generate(2).await;
+	assert_eq!(992837, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
 }

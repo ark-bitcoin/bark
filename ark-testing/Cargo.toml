@@ -17,6 +17,7 @@ bitcoincore-rpc = "0.19.0"
 portpicker = "0.1.1"
 regex = "1.10.5"
 which = "6.0.1"
+async-trait = "0.1.83"
 
 anyhow.workspace = true
 serde.workspace = true

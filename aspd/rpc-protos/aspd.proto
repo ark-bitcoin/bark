@@ -204,6 +204,7 @@ message VtxoSignaturesRequest {
 service AdminService {
 	rpc WalletStatus(Empty) returns (WalletStatusResponse) {}
 	rpc TriggerRound(Empty) returns (Empty) {}
+	rpc TriggerSweep(Empty) returns (Empty) {}
 	rpc Stop(Empty) returns (Empty) {}
 }
 

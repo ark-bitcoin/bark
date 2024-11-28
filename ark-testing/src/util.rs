@@ -1,8 +1,10 @@
 
 use std::env;
 use std::borrow::Borrow;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Child;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Denomination, FeeRate, Weight};
@@ -103,3 +105,15 @@ pub trait FeeRateExt: Borrow<FeeRate> {
 	}
 }
 impl FeeRateExt for FeeRate {}
+
+/// Extension trait for futures.
+#[async_trait]
+pub trait FutureExt: Future {
+	/// Add a short timeout.
+	#[track_caller]
+	async fn fast(self) -> Self::Output where Self: Sized {
+		tokio::time::timeout(Duration::from_millis(100), self).await
+			.expect("future timed out")
+	}
+}
+impl<T: Future> FutureExt for T {}

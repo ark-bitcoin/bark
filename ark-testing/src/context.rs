@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use bitcoin::{FeeRate, Network};
+use bitcoin::{Amount, FeeRate, Network};
 use tokio::fs;
 
 use crate::util::test_data_directory;
@@ -73,6 +73,9 @@ impl TestContext {
 			round_interval: Duration::from_millis(500),
 			round_submit_time: Duration::from_millis(500),
 			round_sign_time: Duration::from_millis(500),
+			vtxo_expiry_delta: 1 * 24 * 6,
+			vtxo_exit_delta: 2 * 6,
+			sweep_threshold: Amount::from_sat(1_000_000),
 			nb_round_nonces: 100,
 			cln_grpc_uri: None,
 			cln_grpc_server_cert_path: None,

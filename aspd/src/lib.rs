@@ -10,6 +10,7 @@ mod database;
 mod lightning;
 mod psbtext;
 mod serde_util;
+mod sweep_rounds;
 mod rpc;
 mod rpcserver;
 mod round;
@@ -25,10 +26,7 @@ use anyhow::Context;
 use ark::lightning::Bolt11Payment;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::{
-	bip32, psbt, sighash, taproot, Address, Amount, FeeRate, Network, OutPoint, Transaction,
-	Weight, Witness,
-};
+use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
@@ -38,10 +36,8 @@ use tokio::sync::{Mutex, broadcast};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::util::KeypairExt;
 use ark::{musig, Vtxo};
 
-use crate::psbtext::{PsbtInputExt, RoundMeta};
 use crate::round::{RoundEvent, RoundInput};
 
 lazy_static::lazy_static! {
@@ -79,6 +75,13 @@ pub struct Config {
 	//TODO(stevenroose) get these from a fee estimator service
 	/// Fee rate used for the round tx.
 	pub round_tx_feerate: FeeRate,
+	/// Fallback feerate for sweep txs.
+	pub sweep_tx_fallback_feerate: FeeRate,
+
+	/// Interval at which to sweep expired rounds.
+	pub round_sweep_interval: Duration,
+	/// Don't make sweep txs for amounts lower than this amount.
+	pub sweep_threshold: Amount,
 
 	// limits
 	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
@@ -108,6 +111,9 @@ impl Default for Config {
 			round_sign_time: Duration::from_secs(2),
 			nb_round_nonces: 10,
 			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
+			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
+			round_sweep_interval: Duration::from_secs(1 * 60 * 60), // 1 hr
+			sweep_threshold: Amount::from_sat(1_000_000),
 			max_onboard_value: None,
 			cln_config: None,
 		}
@@ -181,7 +187,8 @@ pub struct App {
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 
 	rounds: Option<RoundHandle>,
-	sendpay_updates: Option<SendpayHandle>
+	sendpay_updates: Option<SendpayHandle>,
+	trigger_round_sweep_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl App {
@@ -296,7 +303,8 @@ impl App {
 			wallet: Mutex::new(wallet),
 			bitcoind: bitcoind,
 			rounds: None,
-			sendpay_updates: None
+			sendpay_updates: None,
+			trigger_round_sweep_tx: None,
 		}))
 	}
 
@@ -306,10 +314,12 @@ impl App {
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
+		let (sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
-		mut_self.sendpay_updates = Some(SendpayHandle{ sendpay_rx });
+		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
+		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
@@ -327,8 +337,16 @@ impl App {
 			ret
 		});
 
+		let app = self.clone();
+		let jh_round_sweeper = tokio::spawn(async move {
+			let ret = sweep_rounds::run_expired_round_sweeper(app, sweep_trigger_rx)
+				.await.context("error from round sweeper");
+			info!("Round sweeper exited with {:?}", ret);
+			ret
+		});
+
 		// The tasks that always run
-		let mut jhs = vec![jh_rpc_public, jh_round_coord];
+		let mut jhs = vec![jh_rpc_public, jh_round_coord, jh_round_sweeper];
 
 		// These tasks do only run if the config is provided
 		if self.config.admin_rpc_address.is_some() {
@@ -550,103 +568,6 @@ impl App {
 		heartbeat_stream.merge(event_stream)
 	}
 
-	/// Returns a set of UTXOs from previous rounds that can be spent.
-	///
-	/// It fills in the PSBT inputs with the fields required to sign,
-	/// for signing use [App::sign_round_utxo_inputs].
-	fn spendable_expired_rounds(&self, height: u32) -> anyhow::Result<Vec<SpendableUtxo>> {
-		let pubkey = self.asp_key.public_key();
-
-		let expired_rounds = self.db.get_expired_rounds(height)?;
-		let mut ret = Vec::with_capacity(2 * expired_rounds.len());
-		for round_txid in expired_rounds {
-			let round = self.db.get_round(round_txid)?.expect("db has round");
-
-			// First add the vtxo tree utxo.
-			let (
-				spend_cb, spend_script, spend_lv, spend_merkle,
-			) = round.signed_tree.spec.expiry_scriptspend(round.signed_tree.spec.round_tx_cosign_pk());
-			let mut psbt_in = psbt::Input {
-				witness_utxo: Some(round.tx.output[0].clone()),
-				sighash_type: Some(sighash::TapSighashType::Default.into()),
-				tap_internal_key: Some(round.signed_tree.spec.round_tx_cosign_pk()),
-				tap_scripts: [(spend_cb, (spend_script, spend_lv))].into_iter().collect(),
-				tap_merkle_root: Some(spend_merkle),
-				non_witness_utxo: None,
-				..Default::default()
-			};
-			psbt_in.set_round_meta(round_txid, RoundMeta::Vtxo);
-			ret.push(SpendableUtxo {
-				point: OutPoint::new(round_txid, 0),
-				psbt: psbt_in,
-				weight: ark::tree::signed::NODE_SPEND_WEIGHT,
-			});
-
-			// Then add the connector output.
-			// NB this is safe because we will use SIGHASH_ALL.
-			let mut psbt_in = psbt::Input {
-				witness_utxo: Some(round.tx.output[1].clone()),
-				sighash_type: Some(sighash::TapSighashType::Default.into()),
-				tap_internal_key: Some(pubkey.x_only_public_key().0),
-				non_witness_utxo: None,
-				..Default::default()
-			};
-			psbt_in.set_round_meta(round_txid, RoundMeta::Connector);
-			ret.push(SpendableUtxo {
-				point: OutPoint::new(round_txid, 1),
-				psbt: psbt_in,
-				weight: ark::connectors::INPUT_WEIGHT,
-			});
-		}
-
-		Ok(ret)
-	}
-
-	fn sign_round_utxo_inputs(&self, psbt: &mut psbt::Psbt) -> anyhow::Result<()> {
-		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
-		let prevouts = psbt.inputs.iter()
-			.map(|i| i.witness_utxo.clone().unwrap())
-			.collect::<Vec<_>>();
-
-		let connector_keypair = self.asp_key.for_keyspend();
-		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
-			if let Some((_round, meta)) = input.get_round_meta().context("corrupt psbt")? {
-				match meta {
-					RoundMeta::Vtxo => {
-						let (control, (script, lv)) = input.tap_scripts.iter().next()
-							.context("corrupt psbt: missing tap_scripts")?;
-						let leaf_hash = taproot::TapLeafHash::from_script(script, *lv);
-						let sighash = shc.taproot_script_spend_signature_hash(
-							idx,
-							&sighash::Prevouts::All(&prevouts),
-							leaf_hash,
-							sighash::TapSighashType::Default,
-						).expect("all prevouts provided");
-						trace!("Signing expired VTXO input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &self.asp_key);
-						let wit = Witness::from_slice(
-							&[&sig[..], script.as_bytes(), &control.serialize()],
-						);
-						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
-						input.final_script_witness = Some(wit);
-					},
-					RoundMeta::Connector => {
-						let sighash = shc.taproot_key_spend_signature_hash(
-							idx,
-							&sighash::Prevouts::All(&prevouts),
-							sighash::TapSighashType::Default,
-						).expect("all prevouts provided");
-						trace!("Signing expired connector input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &connector_keypair);
-						input.final_script_witness = Some(Witness::from_slice(&[sig[..].to_vec()]));
-					},
-				}
-			}
-		}
-
-		Ok(())
-	}
-
 	// ** SOME ADMIN COMMANDS **
 
 	pub fn get_master_mnemonic(&self) -> anyhow::Result<String> {
@@ -655,17 +576,5 @@ impl App {
 
 	pub fn drop_all_oor_conflicts(&self) -> anyhow::Result<()> {
 		self.db.clear_oor_cosigned()
-	}
-}
-
-pub(crate) struct SpendableUtxo {
-	pub point: OutPoint,
-	pub psbt: psbt::Input,
-	pub weight: Weight,
-}
-
-impl SpendableUtxo {
-	pub fn amount(&self) -> Amount {
-		self.psbt.witness_utxo.as_ref().unwrap().value
 	}
 }

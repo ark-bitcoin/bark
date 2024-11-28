@@ -8,7 +8,7 @@ use anyhow::Context;
 use ark::musig::MusigPubNonce;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{Amount, FeeRate, OutPoint, Sequence, Transaction};
+use bitcoin::{Amount, FeeRate, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
@@ -469,26 +469,12 @@ pub async fn run_round_coordinator(
 			);
 
 			// Build round tx.
-			let spendable_utxos = app.spendable_expired_rounds(tip)?;
-			if !spendable_utxos.is_empty() {
-				debug!("Will be spending {} round-related UTXOs with total value of {}",
-					spendable_utxos.len(), spendable_utxos.iter().map(|v| v.amount()).sum::<Amount>(),
-				);
-				for u in &spendable_utxos {
-					trace!("Including round-related UTXO {} with value {}", u.point, u.amount());
-				}
-			}
 			//TODO(stevenroose) think about if we can release lock sooner
 			let mut wallet = app.wallet.lock().await;
 			let mut round_tx_psbt = {
 				let mut b = wallet.build_tx();
 				b.ordering(bdk_wallet::TxOrdering::Untouched);
 				b.nlocktime(LockTime::from_height(tip).expect("actual height"));
-				for utxo in &spendable_utxos {
-					b.add_foreign_utxo_with_sequence(
-						utxo.point, utxo.psbt.clone(), utxo.weight, Sequence::ZERO,
-					).expect("bdk rejected foreign utxo");
-				}
 				b.add_recipient(vtxos_spec.round_tx_spk(), vtxos_spec.total_required_value());
 				b.add_recipient(connector_output.script_pubkey, connector_output.value);
 				for offb in &state.all_offboards {
@@ -715,7 +701,6 @@ pub async fn run_round_coordinator(
 			// ****************************************************************
 
 			// Sign the on-chain tx.
-			app.sign_round_utxo_inputs(&mut round_tx_psbt).context("signing round inputs")?;
 			let opts = bdk_wallet::SignOptions {
 				trust_witness_utxo: true,
 				..Default::default()
@@ -753,14 +738,6 @@ pub async fn run_round_coordinator(
 
 			trace!("Storing round result");
 			app.db.store_round(signed_round_tx.clone(), signed_vtxos)?;
-
-			//TODO(stevenroose) we should have a system that actually tracks that this tx is
-			// getting confirmed!
-			let spent_rounds = spendable_utxos.iter().map(|u| u.point.txid).collect::<HashSet<_>>();
-			for round in spent_rounds {
-				debug!("Removing round with id {} because UTXOs spent", round);
-				app.db.remove_round(round)?;
-			}
 
 			info!("Finished round {} with tx {}", round_id, signed_round_tx.compute_txid());
 

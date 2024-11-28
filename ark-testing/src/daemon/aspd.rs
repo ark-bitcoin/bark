@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::path::PathBuf;
 use std::process::Command;
 
-use bitcoin::Network;
+use bitcoin::{Amount, Network};
 use bitcoin::address::{Address, NetworkUnchecked};
 use tokio::sync::{self, mpsc};
 
@@ -36,7 +36,10 @@ pub struct AspdConfig {
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
+	pub vtxo_expiry_delta: u16,
+	pub vtxo_exit_delta: u16,
 	pub nb_round_nonces: usize,
+	pub sweep_threshold: Amount,
 	pub cln_grpc_uri: Option<String>,
 	pub cln_grpc_server_cert_path: Option<PathBuf>,
 	pub cln_grpc_client_cert_path: Option<PathBuf>,
@@ -240,6 +243,9 @@ impl AspdHelper {
 			let round_submit_time = cfg.round_submit_time.as_millis().to_string();
 			let round_sign_time = cfg.round_sign_time.as_millis().to_string();
 			let nb_round_nonces = cfg.nb_round_nonces.to_string();
+			let vtxo_expiry_delta = cfg.vtxo_expiry_delta.to_string();
+			let vtxo_exit_delta = cfg.vtxo_exit_delta.to_string();
+			let sweep_threshold = cfg.sweep_threshold.to_string();
 
 			let mut args = vec![
 				"create",
@@ -250,7 +256,10 @@ impl AspdHelper {
 				"--round-interval", &round_interval,
 				"--round-submit-time", &round_submit_time,
 				"--round-sign-time",  &round_sign_time,
-				"--nb-round-nonces", &nb_round_nonces
+				"--nb-round-nonces", &nb_round_nonces,
+				"--vtxo-expiry-delta", &vtxo_expiry_delta,
+				"--vtxo-exit-delta", &vtxo_exit_delta,
+				"--sweep-threshold", &sweep_threshold,
 			];
 
 
