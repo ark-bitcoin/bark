@@ -271,9 +271,8 @@ impl Db {
 			IteratorMode::From(&start_height.to_le_bytes(), Direction::Forward),
 		);
 		while let Some(res) = iter.next() {
-			let (key, _) = res.context("db round iter error")?;
+			let (key, _) = res.context("db round expiry iter error")?;
 			ret.push(RoundExpiryKey::decode(&key).id);
-			iter.next();
 		}
 
 		Ok(ret)
