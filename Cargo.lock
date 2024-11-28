@@ -473,6 +473,7 @@ dependencies = [
  "log",
  "miniscript",
  "prost",
+ "rand",
  "rusqlite",
  "serde",
  "serde_json",

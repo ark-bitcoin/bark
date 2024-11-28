@@ -217,8 +217,9 @@ impl Wallet {
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
-		
-		let db = db::Db::open(&datadir.join(DB_FILE)).context("failed to open db")?;
+
+		let connection_string = datadir.join(DB_FILE);
+		let db = db::Db::open(connection_string)?;
 
 		let onchain = onchain::Wallet::create(config.network, seed, db.clone(), chain_source)
 			.context("failed to create onchain wallet")?;
