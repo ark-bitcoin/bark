@@ -9,7 +9,7 @@ use ark_testing::{AspdConfig, TestContext};
 
 #[tokio::test]
 async fn bark_version() {
-	let ctx = TestContext::new("bark_version").await;
+	let ctx = TestContext::new("bark/bark_version").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
 	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
 
@@ -22,7 +22,7 @@ async fn bark_version() {
 
 #[tokio::test]
 async fn bark_create_is_atomic() {
-	let ctx = TestContext::new("bark/atomic-create").await;
+	let ctx = TestContext::new("bark/bark_create_is_atomic").await;
 	let bitcoind = ctx.bitcoind("bitcoind-1").await;
 	let mut aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
 
@@ -91,7 +91,7 @@ async fn onboard_all_bark() {
 #[tokio::test]
 async fn list_vtxos() {
 	// Initialize the test
-	let ctx = TestContext::new("bark/list-vtxos").await;
+	let ctx = TestContext::new("bark/list_vtxos").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
@@ -123,6 +123,7 @@ async fn list_vtxos() {
 
 #[tokio::test]
 async fn large_round() {
+	let ctx = TestContext::new("bark/large_round").await;
 	#[cfg(not(feature = "slow_test"))]
 	const N: usize = 9;
 	#[cfg(feature = "slow_test")]
@@ -131,7 +132,6 @@ async fn large_round() {
 	info!("Running multiple_round_test with N set to {}", N);
 
 	// Initialize the test
-	let ctx = TestContext::new("bark/multiple_round_payments").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let aspd_cfg = AspdConfig {
 		round_interval: Duration::from_millis(2_000),
@@ -239,7 +239,7 @@ async fn refresh() {
 #[tokio::test]
 async fn compute_balance() {
 	// Initialize the test
-	let ctx = TestContext::new("bark/compute-balance").await;
+	let ctx = TestContext::new("bark/compute_balance").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
@@ -276,7 +276,7 @@ async fn compute_balance() {
 #[tokio::test]
 async fn offboard_all() {
 	// Initialize the test
-	let ctx = TestContext::new("bark/offboard-all").await;
+	let ctx = TestContext::new("bark/offboard_all").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
@@ -320,7 +320,7 @@ async fn offboard_vtxos() {
 	const FEES: Amount = Amount::from_sat(900);
 
 	// Initialize the test
-	let ctx = TestContext::new("bark/offboard-vtxos").await;
+	let ctx = TestContext::new("bark/offboard_vtxos").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 

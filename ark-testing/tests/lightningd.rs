@@ -8,7 +8,7 @@ use bark_cln::grpc;
 
 #[tokio::test]
 async fn start_lightningd() {
-	let context = TestContext::new("ln/start-lightningd").await;
+	let context = TestContext::new("lightningd/start_lightningd").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
@@ -28,7 +28,7 @@ async fn start_lightningd() {
 /// We don't integrate with `aspd` yet
 #[tokio::test]
 async fn cln_can_pay_lightning() {
-	let context = TestContext::new("ln/cln-can-pay-lightningd").await;
+	let context = TestContext::new("lightningd/cln_can_pay_lightning").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
@@ -77,7 +77,7 @@ async fn cln_can_pay_lightning() {
 
 #[tokio::test]
 async fn bark_pay_ln() {
-	let context = TestContext::new("ln/bark-pay-ln").await;
+	let context = TestContext::new("lightningd/bark_pay_ln").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	bitcoind.generate(110).await;
 
@@ -132,7 +132,7 @@ async fn bark_pay_ln() {
 
 #[tokio::test]
 async fn bark_pay_ln_fails() {
-	let context = TestContext::new("ln/bark-pay-ln-fails").await;
+	let context = TestContext::new("lightningd/bark_pay_ln_fails").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	bitcoind.generate(110).await;
 
