@@ -112,9 +112,14 @@ impl FeeRateExt for FeeRate {}
 pub trait FutureExt: Future {
 	/// Add a short timeout.
 	#[track_caller]
+	fn try_fast(self) -> tokio::time::Timeout<Self> where Self: Sized {
+		tokio::time::timeout(Duration::from_millis(200), self)
+	}
+
+	/// Add a short timeout.
+	#[track_caller]
 	async fn fast(self) -> Self::Output where Self: Sized {
-		tokio::time::timeout(Duration::from_millis(200), self).await
-			.expect("future timed out")
+		self.try_fast().await.expect("future timed out")
 	}
 }
 impl<T: Future> FutureExt for T {}

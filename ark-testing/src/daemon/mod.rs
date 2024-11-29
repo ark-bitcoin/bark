@@ -209,7 +209,7 @@ impl<T> Drop for Daemon<T>
 
 
 async fn process_log_file<P: AsRef<Path>>(
-	filename: P, 
+	filename: P,
 	handlers: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>
 ) -> () {
 	let file = tokio::fs::File::open(filename).await.expect("Can open log-file");
@@ -222,9 +222,10 @@ async fn process_log_file<P: AsRef<Path>>(
 				for handler in handlers.lock().await.iter_mut() {
 					handler.process_log(&line);
 				}
-			}, None => {
+			},
+			None => {
 				tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-			}
+			},
 		}
 	}
 }
