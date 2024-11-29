@@ -2,17 +2,17 @@ pub mod bitcoind;
 pub mod aspd;
 pub mod lightningd;
 
-use anyhow::Context;
-
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Command, Child};
-use tokio::sync::Mutex;
-
 use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+use anyhow::Context;
+
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Command, Child};
+use tokio::sync::Mutex;
 
 use crate::util::is_running;
 
