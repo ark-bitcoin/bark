@@ -47,7 +47,7 @@ async fn restart_key_stability() {
 	//! Test to ensure that the asp key stays stable accross loads
 	//! but gives new on-chain addresses.
 
-	let ctx = TestContext::new("aspd/key_stability").await;
+	let ctx = TestContext::new("aspd/restart_key_stability").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	bitcoind.generate(106).await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;

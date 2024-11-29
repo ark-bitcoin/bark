@@ -36,7 +36,7 @@ async fn progress_exit(
 #[tokio::test]
 async fn exit_round() {
 	// Initialize the test
-	let ctx = TestContext::new("exit/round").await;
+	let ctx = TestContext::new("exit/exit_round").await;
 	let bitcoind = ctx.bitcoind_with_cfg("bitcoind", BitcoindConfig {
 		..ctx.bitcoind_default_cfg("bitcoind")
 	}).await;
@@ -121,7 +121,7 @@ async fn exit_round() {
 
 #[tokio::test]
 async fn exit_after_onboard() {
-	let ctx = TestContext::new("exit/onboard").await;
+	let ctx = TestContext::new("exit/exit_after_onboard").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
@@ -138,13 +138,13 @@ async fn exit_after_onboard() {
 	aspd.stop().await.unwrap();
 	progress_exit(&bitcoind, &bark).await;
 
-	assert!(bark.onchain_balance().await > Amount::from_sat(900_000), 
+	assert!(bark.onchain_balance().await > Amount::from_sat(900_000),
 		"The balance has been returned");
 }
 
 #[tokio::test]
 async fn exit_oor() {
-	let ctx = TestContext::new("bitcoind").await;
+	let ctx = TestContext::new("exit/exit_oor").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 

@@ -68,7 +68,6 @@ impl<'a, T: LogMsg> log::kv::Source for LogMsgSourceWrapper<'a, T> {
 pub enum RecordParseError {
 	WrongType,
 	Json(serde_json::Error),
-
 }
 
 #[derive(Debug, Deserialize)]
