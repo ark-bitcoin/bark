@@ -179,6 +179,7 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 name = "aspd-log"
 version = "0.1.0"
 dependencies = [
+ "ark-lib",
  "bitcoin 0.32.2",
  "chrono",
  "log",

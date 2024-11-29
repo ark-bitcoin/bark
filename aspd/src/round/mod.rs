@@ -693,7 +693,16 @@ pub async fn run_round_coordinator(
 					missing_forfeits.insert(*id);
 				}
 			}
-			//TODO(stevenroose) do something with missing forfeits
+
+			if !missing_forfeits.is_empty() {
+				for input in missing_forfeits {
+					slog!(MissingForfeits, round_id, input);
+				}
+
+				slog!(RestartMissingForfeits, round_id);
+				continue 'attempt;
+			}
+
 
 
 			// ****************************************************************
