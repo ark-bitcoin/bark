@@ -26,6 +26,9 @@
 					inherit system overlays;
 				};
 
+				rust = pkgs.rust-bin.stable.${rustVersion}.default.override {
+					extensions = [ "rust-src" "rust-analyzer" ];
+				};
 				bitcoin = pkgs.bitcoin.overrideAttrs (old: {
 					version = bitcoinVersion;
 					src = pkgs.fetchurl {
@@ -41,6 +44,24 @@
 						hash = "sha256-FD7JFM80wrruqBWjYnJHZh2f2GZJ6XDQmUQ0XetnWBg=";
 					};
 				});
+				cln-grpc = pkgs.rustPlatform.buildRustPackage rec {
+					pname = "cln-grpc";
+					version = "99.99.99";
+					src = pkgs.fetchFromGitHub {
+						owner = "ElementsProject";
+						repo = "lightning";
+						rev = "v${lightningVersion}";
+						hash = "sha256-cZZYFFplt6cOzI/VFUWeZbXeagHrwGjywDiXtYss698=";
+					};
+					buildAndTestSubdir = "plugins/grpc-plugin";
+					nativeBuildInputs = [ protobuf ];
+					cargoHash = "sha256-c+V2XCI+hdrHgHxtnBWBSilpxX3LAyvJx76xNbGkMQQ=";
+					# Avoid doing the configure step of the clightning C project
+					postUnpack = ''
+						rm ${src.name}/configure
+					'';
+					doCheck = false; # tests are broken
+				};
 
 				protobuf = pkgs.protobuf3_20.overrideAttrs (old: {
 					version = protobufVersion;
@@ -58,13 +79,20 @@
 				devShells.default = pkgs.mkShell {
 					nativeBuildInput = [ ];
 					buildInputs = [ pkgs.llvmPackages.clang ] ++ [
-						(pkgs.rust-bin.stable.${rustVersion}.default.override {
-							extensions = [ "rust-src" "rust-analyzer" ];
-						})
+						# For CI image
+						pkgs.coreutils
+						pkgs.which
+						pkgs.git
+						pkgs.gnugrep
+						# For building
+						rust
 						pkgs.pkg-config
-						pkgs.sqlite
-						pkgs.just
 						protobuf
+						pkgs.sqlite
+						# For development & testing
+						pkgs.just
+						pkgs.jq
+						pkgs.python3 # for clightning
 						bitcoin
 						clightning
 					];
@@ -78,6 +106,7 @@
 
 					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
 					LIGHTNINGD_EXEC = "${clightning}/bin/lightningd";
+					LIGHTNINGD_PLUGINS = "${cln-grpc}/bin/";
 				};
 			}
 		);
