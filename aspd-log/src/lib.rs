@@ -8,9 +8,10 @@ mod serde_utils;
 
 pub use crate::msgs::*;
 
+use std::fmt;
+
 use serde::de::{Deserialize, DeserializeOwned};
 use serde::ser::{Serialize, Serializer, SerializeMap};
-
 
 
 /// The "target" field used for structured logging.
@@ -19,7 +20,7 @@ pub const SLOG_TARGET: &str = "aspd-slog";
 pub const LOGID_FIELD: &str = "slog_id";
 pub const DATA_FIELD: &str = "slog_data";
 
-pub trait LogMsg: Sized + Send + Serialize + DeserializeOwned + 'static {
+pub trait LogMsg: Sized + Send + fmt::Debug + Serialize + DeserializeOwned + 'static {
 	const LOGID: &'static str;
 	const LEVEL: log::Level;
 	const MSG: &'static str;
