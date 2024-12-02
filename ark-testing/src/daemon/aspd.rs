@@ -1,12 +1,11 @@
-
 use std::env;
 use std::time::Duration;
 use std::path::PathBuf;
-use std::process::Command;
 
 use bitcoin::{Amount, Network};
 use bitcoin::address::{Address, NetworkUnchecked};
 use tokio::sync::{self, mpsc};
+use tokio::process::Command;
 
 use aspd_log::{LogMsg, ParsedRecord};
 use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
@@ -93,7 +92,7 @@ impl Aspd {
 	}
 
 	/// Subscribe to all structured logs of the given type.
-	pub fn subscribe_log<L: LogMsg>(&mut self) -> mpsc::UnboundedReceiver<L> {
+	pub async fn subscribe_log<L: LogMsg>(&mut self) -> mpsc::UnboundedReceiver<L> {
 		let (tx, rx) = sync::mpsc::unbounded_channel();
 		self.add_stdout_handler(move |l: &str| {
 			if l.starts_with("{") {
@@ -104,25 +103,25 @@ impl Aspd {
 				}
 			}
 			false
-		});
+		}).await;
 		rx
 	}
 
 	/// Wait for the first occurrence of the given log message type and return it.
 	pub async fn wait_for_log<L: LogMsg>(&mut self) -> L {
-		let (tx, mut rx) = sync::mpsc::channel(0);
+		let (tx, mut rx) = sync::mpsc::unbounded_channel();
 		self.add_stdout_handler(move |l: &str| {
 			if l.starts_with("{") {
 				let rec = serde_json::from_str::<ParsedRecord>(l)
 					.expect("invalid slog struct");
 				if rec.is::<L>() {
-					tx.try_send(rec.try_as().expect("invalid slog data"))
+					tx.send(rec.try_as().expect("invalid slog data"))
 						.expect("channel closed");
 					return true;
 				}
 			}
 			false
-		});
+		}).await;
 		rx.recv().await.expect("log wait channel closed")
 	}
 }
@@ -149,7 +148,7 @@ impl DaemonHelper for AspdHelper {
 		let pgrpc = public_grpc_address.clone();
 		let agrpc = admin_grpc_address.clone();
 
-		let output = tokio::task::spawn_blocking(move || base_cmd.args([
+		let output = base_cmd.args([
 			"--datadir",
 			&datadir.display().to_string(),
 			"set-config",
@@ -157,7 +156,7 @@ impl DaemonHelper for AspdHelper {
 			&pgrpc,
 			"--admin-rpc-address",
 			&agrpc,
-		]).output()).await??;
+		]).output().await?;
 
 		if !output.status.success() {
 			let stderr = String::from_utf8(output.stderr)?;
@@ -235,7 +234,7 @@ impl AspdHelper {
 
 	async fn create(&self) -> anyhow::Result<()> {
 		let cfg = self.config.clone();
-		let output = tokio::task::spawn_blocking(move || {
+		let output = {
 			let mut cmd = Aspd::base_cmd();
 			let datadir = cfg.datadir.display().to_string();
 			let bitcoind_cookie = cfg.bitcoind_cookie.display().to_string();
@@ -277,11 +276,8 @@ impl AspdHelper {
 			}
 
 			trace!("base_cmd={:?}; args={:?}", cmd, args);
-			trace!("command: {} {}",
-				cmd.get_program().to_str().unwrap_or("NOASCIICMD"), args.join(" "),
-			);
 			cmd.args(args).output()
-		}).await??;
+		}.await?;
 
 		if output.status.success() {
 			Ok(())

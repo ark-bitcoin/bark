@@ -1,7 +1,6 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -9,6 +8,7 @@ use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
+use tokio::process::Command;
 use crate::{Bark, Aspd, Lightningd};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::constants::env::BITCOIND_EXEC;
