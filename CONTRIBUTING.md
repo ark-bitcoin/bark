@@ -33,10 +33,11 @@ $ rustup toolchain install 1.77.2
 
 ## Nix
 
-Alternatively, you can use Nix to prepare a development environment with all
-necessary dependencies already packaged.
+Alternatively, you can use the Nix package manager (should be available for Linux and OSX)
+to prepare a development environment with all necessary dependencies already packaged.
 
-In our directory, call `nix develop`, or use envrc to do this automatically.
+In our directory, call `nix develop`, or use [direnv](https://github.com/direnv/direnv)
+to do this automatically:
 
 ```
 $ echo "use flake" > .envrc
