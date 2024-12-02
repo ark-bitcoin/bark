@@ -1,3 +1,4 @@
+
 # We don't want to run formatting on auto-generated files
 RUST_FILES="$(git ls-files *.rs \
   | git check-attr --stdin linguist-generated \
@@ -23,3 +24,10 @@ function rust_no_spaces_for_indent() {
   done
 }
 
+# Check if the function exists and execute it
+if declare -f "$1" > /dev/null; then
+    "$@"
+else
+    echo "Function '$1' not found!"
+    exit 1
+fi

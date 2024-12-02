@@ -4,7 +4,7 @@ export ASPD_EXEC := CARGO_TARGET / "debug" / "aspd"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
 check-format:
-	bash -c contrib/prechecks.sh rust_no_spaces_for_indent
+	bash contrib/prechecks.sh rust_no_spaces_for_indent
 
 build:
 	cargo build --workspace

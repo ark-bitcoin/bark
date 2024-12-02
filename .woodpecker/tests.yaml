@@ -30,7 +30,7 @@ steps:
     depends_on: merge-master
     image: stevenroose/bark-ci-tests@sha256:173f2b70c1ffd4ece153a971d2f16ca90d5ae8cadbba199c2b2ef962bf5941b8
     commands:
-      - bash -c contrib/prechecks.sh rust_no_spaces_for_indent
+      - bash contrib/prechecks.sh rust_no_spaces_for_indent
 
   - name: build
     depends_on: prechecks
