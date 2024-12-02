@@ -81,10 +81,10 @@ pub struct ParsedRecordKv<'a> {
 // Custom deserializer for the `kv` field.
 fn deserialize_kv<'de, D>(d: D) -> Result<Option<ParsedRecordKv<'de>>, D::Error>
 where
-    D: serde::Deserializer<'de>,
+	D: serde::Deserializer<'de>,
 {
-    // Attempt to deserialize `ParsedRecordKv`, returning `None` if deserialization fails due to missing fields.
-    Ok(ParsedRecordKv::<'de>::deserialize(d).ok())
+	// Attempt to deserialize `ParsedRecordKv`, returning `None` if deserialization fails due to missing fields.
+	Ok(ParsedRecordKv::<'de>::deserialize(d).ok())
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,7 +174,7 @@ impl<'a> Serialize for RecordSerializeWrapper<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::*;
+	use crate::*;
 
 	#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 	struct TestLog {

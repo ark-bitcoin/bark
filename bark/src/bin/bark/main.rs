@@ -62,7 +62,7 @@ struct ConfigOpts {
 	#[arg(long)]
 	esplora: Option<String>,
 	#[arg(long)]
-    /// The bitcoind address
+	/// The bitcoind address
 	bitcoind: Option<String>,
 	#[arg(long)]
 	bitcoind_cookie: Option<String>,
@@ -127,7 +127,7 @@ enum Command {
 	#[command()]
 	VtxoPubkey,
 
-    /// Get the wallet balance
+	/// Get the wallet balance
 	#[command()]
 	Balance,
 
@@ -186,7 +186,7 @@ enum Command {
 	},
 
 	/// Turn VTXOs into UTXOs
-	/// This command sends 
+	/// This command sends
 	#[command()]
 	Offboard {
 		/// Optional address to receive offboarded VTXOs. If no address is provided, it will be taken from onchain wallet
