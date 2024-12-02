@@ -7,6 +7,7 @@ precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
 prechecks:
 	just precheck rust_no_spaces_for_indent
+	just precheck unused_aspd_logs
 
 check:
 	cargo check --all --tests
