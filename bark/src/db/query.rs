@@ -107,7 +107,7 @@ pub fn delete_vtxo(
 	id: VtxoId
 ) -> anyhow::Result<Option<Vtxo>> {
 	// Delete all vtxo-states
-	let query = "DELETE FROM vtxo_states WHERE vtxo_id = ?1";
+	let query = "DELETE FROM vtxo_state WHERE vtxo_id = ?1";
 	tx.execute(query, [id.to_string()])?;
 
 	let query = "DELETE FROM vtxo WHERE vtxo_id = ?1 RETURNING raw_vtxo";
