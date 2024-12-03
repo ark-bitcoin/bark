@@ -14,12 +14,12 @@ macro_rules! impl_slog {
 
 #[macro_export]
 macro_rules! filename {
-    () => (file!().rsplit("bark/").next().unwrap())
+	() => (file!().rsplit("bark/").next().unwrap())
 }
 
 #[macro_export]
 macro_rules! slog {
-    ($struct:ident) => {{
+	($struct:ident) => {{
 		if log::log_enabled!(<$crate::$struct as $crate::LogMsg>::LEVEL) {
 			$crate::log(
 				&$crate::$struct {},
@@ -28,8 +28,8 @@ macro_rules! slog {
 				line!(),
 			);
 		}
-    }};
-    ($struct:ident, $( $args:tt )*) => {{
+	}};
+	($struct:ident, $( $args:tt )*) => {{
 		if log::log_enabled!(<$crate::$struct as $crate::LogMsg>::LEVEL) {
 			$crate::log(
 				&$crate::$struct { $( $args )* },
@@ -38,6 +38,6 @@ macro_rules! slog {
 				line!(),
 			);
 		}
-    }};
+	}};
 }
 

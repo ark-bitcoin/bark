@@ -127,7 +127,7 @@ trait Migration {
 
 	fn summary(&self) -> String {
 		format!("{}->{}:'{}'", self.from_version(), self.to_version(), self.name())
-  }
+	}
 }
 
 
@@ -196,7 +196,7 @@ mod test {
 		fn to_version(&self) -> i64 { 1 }
 		fn do_migration(&self, tx: &Transaction) -> anyhow::Result<()> {
 
-			let good_query = 
+			let good_query =
 				"CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)";
 			let bad_query = "NOT VALID SQL";
 

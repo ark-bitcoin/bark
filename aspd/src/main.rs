@@ -54,7 +54,7 @@ enum Command {
 	#[command()]
 	GetMnemonic,
 
-    /// Drop out of round conflicts from database
+	/// Drop out of round conflicts from database
 	#[command()]
 	DropOorConflicts,
 

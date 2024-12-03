@@ -3,14 +3,19 @@ CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_di
 export ASPD_EXEC := CARGO_TARGET / "debug" / "aspd"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
-check-format:
-	bash -c contrib/prechecks.sh rust_no_spaces_for_indent
-
-build:
-	cargo build --workspace
+precheck CHECK:
+	bash contrib/prechecks.sh {{CHECK}}
+prechecks:
+	just precheck rust_no_spaces_for_indent
+	just precheck unused_aspd_logs
 
 check:
 	cargo check --all --tests
+
+checks: prechecks check
+
+build:
+	cargo build --workspace
 
 alias unit := test-unit
 test-unit TEST="":
