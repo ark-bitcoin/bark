@@ -21,6 +21,7 @@
 				protobufVersion = "3.12.4";
 
 				lib = nixpkgs.lib;
+				isDarwin = builtins.match ".*darwin.*" system != null;
 				overlays = [ rust-overlay.overlays.default ];
 				pkgs = import nixpkgs {
 					inherit system overlays;
@@ -55,6 +56,7 @@
 					};
 					buildAndTestSubdir = "plugins/grpc-plugin";
 					nativeBuildInputs = [ protobuf ];
+					buildInputs = (if isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Security ] else []);
 					cargoHash = "sha256-c+V2XCI+hdrHgHxtnBWBSilpxX3LAyvJx76xNbGkMQQ=";
 					# Avoid doing the configure step of the clightning C project
 					postUnpack = ''
@@ -95,7 +97,10 @@
 						pkgs.python3 # for clightning
 						bitcoin
 						clightning
-					];
+					] ++ (if isDarwin then [
+						pkgs.darwin.apple_sdk.frameworks.Security
+						pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+					] else []);
 
 					LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 
