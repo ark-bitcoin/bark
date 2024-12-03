@@ -78,12 +78,9 @@ impl MigrationContext {
 		let mut statement = conn.prepare(query).context(ERR_MSG)?;
 		let mut rows = statement.query(()).context(ERR_MSG)?;
 
-		while let Some(row) = rows.next().context(ERR_MSG)? {
-			let number : i64 = row.get(0).context(ERR_MSG)?;
-			return Ok(number)
-		}
-
-		bail!("The current schema version is not defined in the databases")
+		let row = rows.next().context(ERR_MSG)?
+			.context("the current schema version is not defined in the databases")?;
+		Ok(row.get(0).context(ERR_MSG)?)
 	}
 
 	/// Update schema version

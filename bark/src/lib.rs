@@ -1049,7 +1049,7 @@ impl Wallet {
 			// ****************************************************************
 
 			debug!("Waiting for vtxo proposal from asp...");
-			let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = loop {
+			let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
 				match events.next().await.context("events stream broke")??.event.unwrap() {
 					rpc::round_event::Event::VtxoProposal(p) => {
 						assert_eq!(p.round_id, round_id, "missing messages");
@@ -1061,7 +1061,7 @@ impl Wallet {
 							musig::MusigAggNonce::from_slice(&k).context("invalid agg nonce")
 						}).collect::<anyhow::Result<Vec<_>>>()?;
 
-						break (vtxos, tx, vtxo_nonces);
+						(vtxos, tx, vtxo_nonces)
 					},
 					// If a new round started meanwhile, pick up on that one.
 					rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
@@ -1124,7 +1124,7 @@ impl Wallet {
 			// ****************************************************************
 
 			debug!("Wait for round proposal from asp...");
-			let (vtxo_cosign_sigs, forfeit_nonces) = loop {
+			let (vtxo_cosign_sigs, forfeit_nonces) = {
 				match events.next().await.context("events stream broke")??.event.unwrap() {
 					rpc::round_event::Event::RoundProposal(p) => {
 						assert_eq!(p.round_id, round_id, "missing messages");
@@ -1146,7 +1146,7 @@ impl Wallet {
 							}
 						}
 
-						break (vtxo_cosign_sigs, forfeit_nonces);
+						(vtxo_cosign_sigs, forfeit_nonces)
 					},
 					// If a new round started meanwhile, pick up on that one.
 					rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
