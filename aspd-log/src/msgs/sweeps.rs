@@ -32,9 +32,9 @@ pub struct SweepingOutput {
 }
 impl_slog!(SweepingOutput, Debug, "Sweeping output");
 
- #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SweepComplete {
-        pub txid: Txid,
-        pub surplus: Amount,
- }
+	pub txid: Txid,
+	pub surplus: Amount,
+}
 impl_slog!(SweepComplete, Info, "Completed a sweep tx");
