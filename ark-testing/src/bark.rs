@@ -187,6 +187,7 @@ impl Bark {
 			self.config.datadir.as_os_str().to_str().unwrap(),
 		]);
 		command.args(args);
+		command.kill_on_drop(true);
 		let command_str = format!("{:?}", command.as_std());
 
 		// Create a folder for each command
