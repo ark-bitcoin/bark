@@ -116,11 +116,11 @@ impl<T> Daemon<T>
 			.inner
 			.get_command()
 			.await?;
+		cmd.kill_on_drop(true);
 
 		// Create files to where the outputs is logged
 		let stdout_path = self.inner.datadir().join(STDOUT_LOGFILE);
 		let stderr_path = self.inner.datadir().join(STDERR_LOGFILE);
-
 		cmd.stdout(std::fs::File::create(&stdout_path)?);
 		cmd.stderr(std::fs::File::create(&stderr_path)?);
 		let mut child = cmd.spawn()?;
@@ -211,13 +211,13 @@ impl<T> Drop for Daemon<T>
 async fn process_log_file<P: AsRef<Path>>(
 	filename: P,
 	handlers: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>
-) -> () {
-	let file = tokio::fs::File::open(filename).await.expect("Can open log-file");
+) -> ! {
+	let file = tokio::fs::File::open(filename).await.expect("failed to open log file");
 	let buf_reader = BufReader::new(file);
 	let mut lines = buf_reader.lines();
 
 	loop {
-		match lines.next_line().await.unwrap() {
+		match lines.next_line().await.expect("I/O error on log file handle") {
 			Some(line) => {
 				for handler in handlers.lock().await.iter_mut() {
 					handler.process_log(&line);
