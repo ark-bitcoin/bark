@@ -110,7 +110,7 @@ pub fn delete_vtxo(
 	let query = "DELETE FROM vtxo_state WHERE vtxo_id = ?1";
 	tx.execute(query, [id.to_string()])?;
 
-	let query = "DELETE FROM vtxo WHERE vtxo_id = ?1 RETURNING raw_vtxo";
+	let query = "DELETE FROM vtxo WHERE id = ?1 RETURNING raw_vtxo";
 	let mut statement = tx.prepare(query)?;
 
 	let vtxo = statement
@@ -122,6 +122,7 @@ pub fn delete_vtxo(
 			})?
 		.filter_map(|x| x.ok())
 		.next();
+
 	Ok(vtxo)
 }
 

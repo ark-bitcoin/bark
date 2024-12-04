@@ -360,3 +360,41 @@ async fn offboard_vtxos() {
 	let balance = bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, vtxo_to_offboard.amount - FEES);
 }
+
+#[tokio::test]
+async fn drop_vtxos() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/drop_vtxos").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.generate(101).await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Fund clients
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+	bark2.onboard(Amount::from_sat(800_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(Amount::from_sat(200_000)).await;
+	bark1.refresh_all().await;
+	// onboard vtxo
+	bark1.onboard(Amount::from_sat(300_000)).await;
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
+
+	let balance = bark1.offchain_balance().await;
+	assert_eq!(balance, Amount::from_sat(830_000));
+
+	bark1.drop_vtxos().await;
+
+	let balance = bark1.offchain_balance().await;
+
+	// Even if all in-round, onboard and oor VTXOs were dropped, when performing a sync (in `offchain_balance`)
+	// ASP returns back the in-round ones which are stored again
+	assert_eq!(balance, Amount::from_sat(200_000));
+}
