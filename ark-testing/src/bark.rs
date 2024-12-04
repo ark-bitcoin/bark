@@ -170,6 +170,10 @@ impl Bark {
 		self.run(["offboard", "--vtxos", &vtxo.to_string(), "--address", &address.to_string()]).await;
 	}
 
+	pub async fn drop_vtxos(&self) {
+		self.run(["drop-vtxos"]).await;
+	}
+
 	pub async fn exit(&self) -> json::ExitStatus {
 		let res = self.run(["exit", "--json"]).await;
 		serde_json::from_str::<json::ExitStatus>(&res).expect("invalid json from exit")
