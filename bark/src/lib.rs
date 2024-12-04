@@ -335,7 +335,7 @@ impl Wallet {
 	/// Make sure you sync before calling this method.
 	pub async fn offchain_balance(&self) -> anyhow::Result<Amount> {
 		let mut sum = Amount::ZERO;
-		for vtxo in self.db.get_all_vtxos()? {
+		for vtxo in self.db.get_all_spendable_vtxos()? {
 			sum += vtxo.spec().amount;
 			debug!("Vtxo {}: {}", vtxo.id(), vtxo.spec().amount);
 		}
@@ -351,14 +351,14 @@ impl Wallet {
 
 	/// Returns all unspent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
-		Ok(self.db.get_all_vtxos()?)
+		Ok(self.db.get_all_spendable_vtxos()?)
 	}
 
 	/// Returns all vtxos that will expire within
 	// [threshold_blocks] blocks
 	pub async fn get_expiring_vtxos(&mut self, threshold_blocks: u32) -> anyhow::Result<Vec<Vtxo>> {
 		let height = self.onchain.tip().await?;
-		let mut ret = self.db.get_all_vtxos()?;
+		let mut ret = self.db.get_all_spendable_vtxos()?;
 		ret.retain(|v| height + threshold_blocks > v.spec().expiry_height);
 		Ok(ret)
 	}
@@ -373,7 +373,7 @@ impl Wallet {
 	//TODO(stevenroose) improve the way we expose dangerous methods
 	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
-		for vtxo in self.db.get_all_vtxos()? {
+		for vtxo in self.db.get_all_spendable_vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
 		self.db.store_exit(&exit::Exit::default())?;
@@ -590,7 +590,7 @@ impl Wallet {
 	pub async fn offboard_all(&mut self, address: Option<Address>) -> anyhow::Result<()> {
 		self.sync_ark().await.context("failed to sync with ark")?;
 
-		let input_vtxos = self.db.get_all_vtxos()?;
+		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
 		self.offboard(input_vtxos, address).await?;
 
@@ -634,7 +634,7 @@ impl Wallet {
 	}
 
 	pub async fn refresh_all_vtxos(&mut self) -> anyhow::Result<()> {
-		let all_vtxos = self.db.get_all_vtxos()?;
+		let all_vtxos = self.db.get_all_spendable_vtxos()?;
 		self.refresh_vtxos(all_vtxos).await
 	}
 
@@ -914,7 +914,7 @@ impl Wallet {
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
 		// Prepare the payment.
-		let input_vtxos = self.db.get_all_vtxos()?;
+		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
 		// do a quick check to fail early if we don't have enough money
 		let maybe_fee = OffboardRequest::calculate_fee(
