@@ -113,7 +113,7 @@ pub trait FutureExt: Future {
 	/// Add a short timeout.
 	#[track_caller]
 	fn try_fast(self) -> tokio::time::Timeout<Self> where Self: Sized {
-		tokio::time::timeout(Duration::from_millis(200), self)
+		tokio::time::timeout(Duration::from_millis(500), self)
 	}
 
 	/// Add a short timeout.
