@@ -3,7 +3,7 @@
 use std::iter;
 
 use bitcoin::{
-	Address, Amount, Network, OutPoint, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
+	Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
 	Weight, Witness,
 };
 use bitcoin::secp256k1::{Keypair, PublicKey};
@@ -22,7 +22,7 @@ pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
 ///
 /// Each connector is a p2tr keyspend output for the provided key.
 /// Each connector has the p2tr dust value.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectorChain {
 	len: usize,
 	spk: ScriptBuf,
@@ -81,11 +81,46 @@ impl ConnectorChain {
 		self.len
 	}
 
+	fn tx(&self, prev: OutPoint, idx: usize) -> Transaction {
+		Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![TxIn {
+				previous_output: prev,
+				script_sig: ScriptBuf::new(),
+				sequence: Sequence::MAX,
+				witness: Witness::new(),
+			}],
+			output: vec![
+				TxOut {
+					script_pubkey: self.spk.to_owned(),
+					value: ConnectorChain::required_budget(self.len - idx - 1),
+				},
+				TxOut {
+					script_pubkey: self.spk.to_owned(),
+					value: fee::DUST,
+				},
+			],
+		}
+	}
+
+	fn sign_tx(&self, tx: &mut Transaction, idx: usize, keypair: &Keypair) {
+		let prevout = TxOut {
+			script_pubkey: self.spk.to_owned(),
+			value: ConnectorChain::required_budget(self.len - idx),
+		};
+		let mut shc = SighashCache::new(&*tx);
+		let sighash = shc.taproot_key_spend_signature_hash(
+			0, &sighash::Prevouts::All(&[&prevout]), TapSighashType::Default,
+		).expect("sighash error");
+		let sig = util::SECP.sign_schnorr(&sighash.into(), &keypair);
+		tx.input[0].witness = Witness::from_slice(&[sig[..].to_vec()]);
+	}
+
 	/// Iterator over the signed transactions in this chain.
 	pub fn iter_signed_txs<'a>(&'a self, sign_key: &'a Keypair) -> ConnectorTxIter<'a> {
 		ConnectorTxIter {
-			len: self.len,
-			spk: &self.spk,
+			chain: self,
 			sign_key: Some(sign_key.for_keyspend()),
 			prev: self.utxo,
 			idx: 0,
@@ -95,8 +130,7 @@ impl ConnectorChain {
 	/// Iterator over the transactions in this chain.
 	pub fn iter_unsigned_txs(&self) -> ConnectorTxIter {
 		ConnectorTxIter {
-			len: self.len,
-			spk: &self.spk,
+			chain: self,
 			sign_key: None,
 			prev: self.utxo,
 			idx: 0,
@@ -113,8 +147,7 @@ impl ConnectorChain {
 }
 
 pub struct ConnectorTxIter<'a> {
-	len: usize,
-	spk: &'a Script,
+	chain: &'a ConnectorChain,
 	sign_key: Option<Keypair>,
 
 	prev: OutPoint,
@@ -125,42 +158,13 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 	type Item = Transaction;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		if self.idx >= self.len - 1 {
+		if self.idx >= self.chain.len - 1 {
 			return None;
 		}
 
-		let mut ret = Transaction {
-			version: bitcoin::transaction::Version(3),
-			lock_time: bitcoin::absolute::LockTime::ZERO,
-			input: vec![TxIn {
-				previous_output: self.prev,
-				script_sig: ScriptBuf::new(),
-				sequence: Sequence::MAX,
-				witness: Witness::new(),
-			}],
-			output: vec![
-				TxOut {
-					script_pubkey: self.spk.to_owned(),
-					value: ConnectorChain::required_budget(self.len - self.idx - 1),
-				},
-				TxOut {
-					script_pubkey: self.spk.to_owned(),
-					value: fee::DUST,
-				},
-			],
-		};
-
-		if let Some(keypair) = self.sign_key {
-			let prevout = TxOut {
-				script_pubkey: self.spk.to_owned(),
-				value: ConnectorChain::required_budget(self.len - self.idx),
-			};
-			let mut shc = SighashCache::new(&ret);
-			let sighash = shc.taproot_key_spend_signature_hash(
-				0, &sighash::Prevouts::All(&[&prevout]), TapSighashType::Default,
-			).expect("sighash error");
-			let sig = util::SECP.sign_schnorr(&sighash.into(), &keypair);
-			ret.input[0].witness = Witness::from_slice(&[sig[..].to_vec()]);
+		let mut ret = self.chain.tx(self.prev, self.idx);
+		if let Some(ref keypair) = self.sign_key {
+			self.chain.sign_tx(&mut ret, self.idx, keypair);
 		}
 
 		self.idx += 1;
@@ -169,13 +173,19 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		let s = self.len - 1;
+		let s = self.chain.len - 1;
 		(s, Some(s))
 	}
 }
 
 pub struct ConnectorIter<'a> {
 	txs: ConnectorTxIter<'a>,
+	// On all intermediate txs, only the second output is a connector and
+	// the first output continues the chain. On the very last tx, both
+	// outputs are connectors. We will keep this variable updated to contain
+	// the first output of the last tx we say, so that we can return it once
+	// the tx iterator does no longer yield new txs (hence we reached the
+	// last tx).
 	maybe_last: Option<OutPoint>,
 }
 
@@ -197,7 +207,7 @@ impl<'a> iter::Iterator for ConnectorIter<'a> {
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		(self.txs.len, Some(self.txs.len))
+		(self.txs.chain.len, Some(self.txs.chain.len))
 	}
 }
 
