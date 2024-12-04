@@ -53,6 +53,8 @@ pub const P2WSH_DUST: Amount = Amount::from_sat(P2WSH_DUST_SAT);
 pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 
 
+/// Type representing a block height in the bitcoin blockchain.
+pub type BlockHeight = u64;
 
 /// Request for the creation of a VTXO.
 ///

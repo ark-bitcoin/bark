@@ -23,7 +23,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::lightning::Bolt11Payment;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
@@ -36,7 +35,8 @@ use tokio::sync::{Mutex, broadcast};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::{musig, Vtxo};
+use ark::{musig, BlockHeight, Vtxo};
+use ark::lightning::Bolt11Payment;
 
 use crate::round::{RoundEvent, RoundInput};
 
@@ -47,7 +47,7 @@ lazy_static::lazy_static! {
 
 /// The number of confirmations after which we consider the odds of a reorg
 /// happening negligible.
-const DEEPLY_CONFIRMED: u64 = 100;
+const DEEPLY_CONFIRMED: BlockHeight = 100;
 
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";

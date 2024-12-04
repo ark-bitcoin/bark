@@ -15,7 +15,7 @@ use rocksdb::{
 };
 
 
-use ark::{VtxoId, Vtxo};
+use ark::{BlockHeight, VtxoId, Vtxo};
 use ark::tree::signed::SignedVtxoTree;
 
 use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
@@ -61,6 +61,7 @@ impl ForfeitVtxo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RoundExpiryKey {
+	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
 	expiry: u32,
 	id: Txid,
 }
@@ -248,14 +249,14 @@ impl Db {
 	}
 
 	/// Get all round IDs of rounds that expired before or on `height`.
-	pub fn get_expired_rounds(&self, height: u32) -> anyhow::Result<Vec<Txid>> {
+	pub fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<Txid>> {
 		let mut ret = Vec::new();
 
 		let mut iter = self.db.iterator_cf(&self.cf_round_expiry(), IteratorMode::Start);
 		while let Some(res) = iter.next() {
 			let (key, _) = res.context("db round expiry iter error")?;
 			let expkey = RoundExpiryKey::decode(&key);
-			if expkey.expiry > height {
+			if expkey.expiry as BlockHeight > height {
 				break;
 			}
 			ret.push(expkey.id);
