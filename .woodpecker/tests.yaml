@@ -54,7 +54,7 @@ steps:
     image: stevenroose/bark-ci-tests@sha256:30ed41c90182ade4342d5b60de387f8800d4de5406d2bf3964e67be42b853d10
     environment:
       BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/24.05/bin/lightningd
+      LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
