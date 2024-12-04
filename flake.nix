@@ -17,7 +17,7 @@
 			let
 				rustVersion = "1.77.1";
 				bitcoinVersion = "28.0";
-				lightningVersion = "24.05";
+				lightningVersion = "24.08.2";
 				protobufVersion = "3.12.4";
 
 				lib = nixpkgs.lib;
@@ -26,6 +26,7 @@
 				pkgs = import nixpkgs {
 					inherit system overlays;
 				};
+
 
 				rust = pkgs.rust-bin.stable.${rustVersion}.default.override {
 					extensions = [ "rust-src" "rust-analyzer" ];
@@ -42,7 +43,7 @@
 					version = lightningVersion;
 					src = pkgs.fetchurl {
 						url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-						hash = "sha256-FD7JFM80wrruqBWjYnJHZh2f2GZJ6XDQmUQ0XetnWBg=";
+						hash = "sha256-U54HNOreulhvCYeULyBbl/WHQ7F9WQnSCSMGg5WUAdg=";
 					};
 				});
 				cln-grpc = pkgs.rustPlatform.buildRustPackage rec {
@@ -52,12 +53,15 @@
 						owner = "ElementsProject";
 						repo = "lightning";
 						rev = "v${lightningVersion}";
-						hash = "sha256-cZZYFFplt6cOzI/VFUWeZbXeagHrwGjywDiXtYss698=";
+						hash = "sha256-MWU75e55Zt/P4aaIuMte7iRcrFGMw0P81b8VNHQBe2g=";
 					};
 					buildAndTestSubdir = "plugins/grpc-plugin";
 					nativeBuildInputs = [ protobuf ];
 					buildInputs = (if isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Security ] else []);
-					cargoHash = "sha256-c+V2XCI+hdrHgHxtnBWBSilpxX3LAyvJx76xNbGkMQQ=";
+					cargoDeps = pkgs.rustPlatform.importCargoLock {
+						lockFile = ./Cargo.lock;
+					};
+					cargoHash = "sha256-6s1NtTx9LnRXaPVHosKRlU7NMeAHKC/EalRtS+bZXkU=";
 					# Avoid doing the configure step of the clightning C project
 					postUnpack = ''
 						rm ${src.name}/configure
