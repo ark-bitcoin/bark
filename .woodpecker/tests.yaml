@@ -14,7 +14,7 @@ clone:
 
 steps:
   - name: merge-master
-    image: stevenroose/bark-ci-tests@sha256:173f2b70c1ffd4ece153a971d2f16ca90d5ae8cadbba199c2b2ef962bf5941b8
+    image: stevenroose/bark-ci-tests@sha256:30ed41c90182ade4342d5b60de387f8800d4de5406d2bf3964e67be42b853d10
     commands:
       - git fetch --no-tags --depth=200 origin master
       - git log --oneline | head
@@ -28,14 +28,14 @@ steps:
 
   - name: prechecks
     depends_on: merge-master
-    image: stevenroose/bark-ci-tests@sha256:173f2b70c1ffd4ece153a971d2f16ca90d5ae8cadbba199c2b2ef962bf5941b8
+    image: stevenroose/bark-ci-tests@sha256:30ed41c90182ade4342d5b60de387f8800d4de5406d2bf3964e67be42b853d10
     commands:
       - bash contrib/prechecks.sh rust_no_spaces_for_indent
       - bash contrib/prechecks.sh unused_aspd_logs
 
   - name: build
     depends_on: prechecks
-    image: stevenroose/bark-ci-tests@sha256:173f2b70c1ffd4ece153a971d2f16ca90d5ae8cadbba199c2b2ef962bf5941b8
+    image: stevenroose/bark-ci-tests@sha256:30ed41c90182ade4342d5b60de387f8800d4de5406d2bf3964e67be42b853d10
     commands:
       - git log --oneline | head -n 1
       - cargo version
@@ -44,17 +44,17 @@ steps:
 
   - name: test-unit
     depends_on: prechecks
-    image: stevenroose/bark-ci-tests@sha256:173f2b70c1ffd4ece153a971d2f16ca90d5ae8cadbba199c2b2ef962bf5941b8
+    image: stevenroose/bark-ci-tests@sha256:30ed41c90182ade4342d5b60de387f8800d4de5406d2bf3964e67be42b853d10
     commands:
       - git log --oneline | head -n 1
       - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
 
   - name: test-integration-btc28.0
     depends_on: build
-    image: stevenroose/bark-ci-tests@sha256:173f2b70c1ffd4ece153a971d2f16ca90d5ae8cadbba199c2b2ef962bf5941b8
+    image: stevenroose/bark-ci-tests@sha256:30ed41c90182ade4342d5b60de387f8800d4de5406d2bf3964e67be42b853d10
     environment:
       BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/24.05/bin/lightningd
+      LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
