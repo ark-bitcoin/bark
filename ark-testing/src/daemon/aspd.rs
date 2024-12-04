@@ -116,7 +116,8 @@ impl Aspd {
 					.expect("invalid slog struct");
 				if rec.is::<L>() {
 					let msg = rec.try_as().expect("invalid slog data");
-					tx.try_send(msg).expect("channel closed");
+					// if channel already closed, user is no longer interested
+					let _ = tx.try_send(msg);
 					return true;
 				}
 			}
