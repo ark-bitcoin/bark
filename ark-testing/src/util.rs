@@ -110,16 +110,40 @@ impl FeeRateExt for FeeRate {}
 /// Extension trait for futures.
 #[async_trait]
 pub trait FutureExt: Future {
+	/// Add a timeout of the given number of milliseconds.
+	#[track_caller]
+	fn try_wait(self, milliseconds: u64) -> tokio::time::Timeout<Self> where Self: Sized {
+		tokio::time::timeout(Duration::from_millis(milliseconds), self)
+	}
+
+	/// Add a timeout of the given number of milliseconds.
+	#[track_caller]
+	async fn wait(self, milliseconds: u64) -> Self::Output where Self: Sized {
+		match self.try_wait(milliseconds).await {
+			Ok(v) => v,
+			Err(_) => {
+				error!("future timed out");
+				panic!("future timed out");
+			},
+		}
+	}
+
 	/// Add a short timeout.
 	#[track_caller]
 	fn try_fast(self) -> tokio::time::Timeout<Self> where Self: Sized {
-		tokio::time::timeout(Duration::from_millis(500), self)
+		self.try_wait(500)
 	}
 
 	/// Add a short timeout.
 	#[track_caller]
 	async fn fast(self) -> Self::Output where Self: Sized {
-		self.try_fast().await.expect("future timed out")
+		match self.try_fast().await {
+			Ok(v) => v,
+			Err(_) => {
+				error!("future timed out");
+				panic!("future timed out");
+			},
+		}
 	}
 }
 impl<T: Future> FutureExt for T {}
