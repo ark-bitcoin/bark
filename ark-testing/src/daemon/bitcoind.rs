@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use anyhow::Context;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
@@ -11,7 +12,7 @@ use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 use tokio::process::Command;
 use crate::{Bark, Aspd, Lightningd};
 use crate::daemon::{Daemon, DaemonHelper};
-use crate::constants::env::BITCOIND_EXEC;
+use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
 use crate::util::{FeeRateExt, resolve_path};
 
 pub struct BitcoindHelper {
@@ -158,9 +159,21 @@ impl BitcoindHelper {
 	}
 
 	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
-		let bitcoind_url = self.rpc_url();
+		let url = self.rpc_url();
 		let auth = self.auth();
-		let client = BitcoindClient::new(&bitcoind_url, auth)?;
+		let (user, pass) = auth.get_user_pass()?;
+
+		let timeout_str = std::env::var(BITCOINRPC_TIMEOUT_SECS).unwrap_or_else(|_| String::from("15"));
+		let timeout = std::time::Duration::from_secs(timeout_str.parse::<u64>().expect("BITCOINRPC_TIMEOUT_SECS is not a number"));
+
+		let transport = bitcoincore_rpc::jsonrpc::http::simple_http::Builder::new()
+			.url(&url).with_context(|| format!("Invalid rpc-url: {}", url))?
+			.auth(user.expect("A user is defined"), pass)
+			.timeout(timeout)
+			.build();
+
+		let jsonrpc = bitcoincore_rpc::jsonrpc::client::Client::with_transport(transport);
+		let client = BitcoindClient::from_jsonrpc(jsonrpc);
 		Ok(client)
 	}
 }
