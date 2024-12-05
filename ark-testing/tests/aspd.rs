@@ -47,7 +47,7 @@ async fn round_started_log_can_be_captured() {
 async fn fund_asp() {
 	let ctx = TestContext::new("aspd/fund_aspd").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 	let mut admin_client = aspd.get_admin_client().await;
 
@@ -71,7 +71,7 @@ async fn restart_key_stability() {
 
 	let ctx = TestContext::new("aspd/restart_key_stability").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	let asp_key1 = {
@@ -116,7 +116,7 @@ async fn spend_expired() {
 
 	let ctx = TestContext::new("aspd/spend_expired").await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	let mut aspd = ctx.aspd_with_cfg("aspd", AspdConfig {
 		vtxo_expiry_delta: 64,
 		sweep_threshold: Amount::from_sat(100_000),

@@ -43,7 +43,7 @@ async fn exit_round() {
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Create a few clients
@@ -125,7 +125,7 @@ async fn exit_after_onboard() {
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 
 	// Fund the bark instance
 	let bark = ctx.bark("bark", &bitcoind, &aspd).await;
@@ -148,7 +148,7 @@ async fn exit_oor() {
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 
 	// Bark1 will pay bark2 oor.
 	// Bark2 will attempt an exit

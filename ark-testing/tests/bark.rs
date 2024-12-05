@@ -54,7 +54,7 @@ async fn onboard_bark() {
 	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
 
 	// Generate initial funds
-	bitcoind.generate(101).await;
+	bitcoind.prepare_funds().await;
 
 	// Get the bark-address and fund it
 	bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
@@ -71,7 +71,7 @@ async fn onboard_all_bark() {
 	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
 
 	// Generate initial funds
-	bitcoind.generate(101).await;
+	bitcoind.prepare_funds().await;
 
 	// Get the bark-address and fund it
 	let funding_txid = bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
@@ -96,7 +96,7 @@ async fn list_vtxos() {
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(107).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Fund a client
@@ -143,7 +143,7 @@ async fn large_round() {
 	let aspd = ctx.aspd_with_cfg("aspd", aspd_cfg).await;
 
 	// Fund the asp
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Create a few clients
@@ -187,7 +187,7 @@ async fn oor() {
 	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Create a few clients
@@ -212,7 +212,7 @@ async fn refresh() {
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Create a few clients
@@ -244,7 +244,7 @@ async fn compute_balance() {
 	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(101).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Fund a client
@@ -281,7 +281,7 @@ async fn offboard_all() {
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Create a few clients
@@ -325,7 +325,7 @@ async fn offboard_vtxos() {
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(106).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Fund a client
@@ -369,7 +369,7 @@ async fn drop_vtxos() {
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Fund the asp
-	bitcoind.generate(101).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
 
 	// Fund clients

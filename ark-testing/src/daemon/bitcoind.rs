@@ -83,13 +83,28 @@ impl Bitcoind {
 		}
 	}
 
-	pub async fn generate(&self, block_num: u64) {
+	pub async fn generate_to_wallet(&self, block_num: u64) {
 		self.init_wallet().await;
 
 		let client = self.sync_client();
 		let address = client.get_new_address(None, None).unwrap()
 			.require_network(Network::Regtest).unwrap();
 		client.generate_to_address(block_num, &address).unwrap();
+	}
+
+	pub async fn generate(&self, block_num: u64) {
+		let client = self.sync_client();
+		lazy_static! {
+			static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
+				"mzU8XRVhUdXtdxmSA3Vw8XeU2FDV4iBDRW"
+			).unwrap().assume_checked();
+		}
+		client.generate_to_address(block_num, &*RANDOM_ADDR).unwrap();
+	}
+
+	pub async fn prepare_funds(&self) {
+		self.generate_to_wallet(4).await;
+		self.generate(100).await;
 	}
 
 	pub async fn fund_addr(&self, address: impl fmt::Display, amount: Amount) -> Txid {

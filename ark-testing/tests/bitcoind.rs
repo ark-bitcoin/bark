@@ -22,7 +22,7 @@ async fn fund_bitcoind() {
 	bitcoind.init_wallet().await;
 
 	// We can fund the wallet
-	bitcoind.generate(101).await;
+	bitcoind.prepare_funds().await;
 
 	// Check the balance
 	let client = bitcoind.sync_client();
