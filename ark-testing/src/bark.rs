@@ -82,7 +82,7 @@ impl Bark {
 		Ok(Bark {
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
-			timeout: Duration::from_millis(10_000),
+			timeout: Duration::from_millis(20_000),
 			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
 			config: cfg,
 		})
