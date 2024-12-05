@@ -20,6 +20,7 @@ which = "6.0.1"
 async-trait = "0.1.83"
 
 anyhow.workspace = true
+lazy_static.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bitcoin.workspace = true

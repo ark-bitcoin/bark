@@ -12,7 +12,7 @@ async fn start_lightningd() {
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
-	bitcoind.generate(100).await;
+	bitcoind.prepare_funds().await;
 
 	// Start an instance of lightningd
 	let lightningd_1 = context.lightningd("lightningd-1", &bitcoind).await;
@@ -32,7 +32,7 @@ async fn cln_can_pay_lightning() {
 	let bitcoind = context.bitcoind("bitcoind-1").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
-	bitcoind.generate(100).await;
+	bitcoind.prepare_funds().await;
 
 	// Start an instance of lightningd
 	let (lightningd_1, lightningd_2) = tokio::join!(
@@ -54,7 +54,7 @@ async fn cln_can_pay_lightning() {
 
 	// Fund lightningd_1
 	info!("Funding lightningd_1");
-	bitcoind.generate(101).await;
+	bitcoind.prepare_funds().await;
 	bitcoind.fund_lightningd(&lightningd_1, Amount::from_int_btc(5)).await;
 	bitcoind.generate(6).await;
 	lightningd_1.wait_for_block_sync(&bitcoind).await;
@@ -79,7 +79,7 @@ async fn cln_can_pay_lightning() {
 async fn bark_pay_ln() {
 	let context = TestContext::new("lightningd/bark_pay_ln").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
-	bitcoind.generate(110).await;
+	bitcoind.prepare_funds().await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -134,7 +134,7 @@ async fn bark_pay_ln() {
 async fn bark_pay_ln_fails() {
 	let context = TestContext::new("lightningd/bark_pay_ln_fails").await;
 	let bitcoind = context.bitcoind("bitcoind-1").await;
-	bitcoind.generate(110).await;
+	bitcoind.prepare_funds().await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
