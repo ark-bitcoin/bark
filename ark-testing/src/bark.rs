@@ -106,6 +106,11 @@ impl Bark {
 		serde_json::from_str::<json::Balance>(&json).unwrap().offchain
 	}
 
+	pub async fn offchain_balance_no_sync(&self) -> Amount {
+		let json = self.run(["balance", "--json", "--no-sync"]).await;
+		serde_json::from_str::<json::Balance>(&json).unwrap().offchain
+	}
+
 	pub async fn get_onchain_address(&self) -> Address {
 		let address_string = self.run(["onchain", "address"]).await.trim().to_string();
 		Address::<NetworkUnchecked>::from_str(&address_string).unwrap()

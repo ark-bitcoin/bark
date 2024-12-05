@@ -129,11 +129,19 @@ enum Command {
 
 	/// Get the wallet balance
 	#[command()]
-	Balance,
+	Balance {
+		/// Skip syncing before computing balance
+		#[arg(long)]
+		no_sync: bool,
+	},
 
 	/// List the wallet's VTXOs
 	#[command()]
-	Vtxos,
+	Vtxos {
+		/// Skip syncing before fetching VTXOs
+		#[arg(long)]
+		no_sync: bool,
+	},
 
 	/// Refresh expiring VTXOs
 	///
@@ -347,9 +355,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			},
 		},
 		Command::VtxoPubkey => println!("{}", w.vtxo_pubkey()),
-		Command::Balance => {
-			if let Err(e) = w.sync().await.context("sync error") {
-				warn!("Failed to sync balance. {}", e)
+		Command::Balance { no_sync } => {
+			if !no_sync {
+				if let Err(e) = w.sync().await.context("sync error") {
+					warn!("Failed to sync balance. {}", e)
+				}
 			}
 
 			let onchain = w.onchain_balance();
@@ -370,9 +380,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 		},
-		Command::Vtxos => {
-			if let Err(e) = w.sync_ark().await.context("sync error") {
-				warn!("Failed to sync with ASP. Some inbound VTXOs might not be shown. {}", e)
+		Command::Vtxos { no_sync } => {
+			if !no_sync {
+				if let Err(e) = w.sync().await.context("sync error") {
+					warn!("Failed to sync balance. {}", e)
+				}
 			}
 
 			let res = w.vtxos()?;

@@ -391,10 +391,7 @@ async fn drop_vtxos() {
 	assert_eq!(balance, Amount::from_sat(830_000));
 
 	bark1.drop_vtxos().await;
+	let balance = bark1.offchain_balance_no_sync().await;
 
-	let balance = bark1.offchain_balance().await;
-
-	// Even if all in-round, onboard and oor VTXOs were dropped, when performing a sync (in `offchain_balance`)
-	// ASP returns back the in-round ones which are stored again
-	assert_eq!(balance, Amount::from_sat(200_000));
+	assert_eq!(balance, Amount::ZERO);
 }
