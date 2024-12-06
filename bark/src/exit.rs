@@ -19,7 +19,7 @@ use crate::psbtext::PsbtInputExt;
 const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub enum ExitTxStatus {
+enum TxStatus {
 	/// Tx has not been broadcast.
 	#[default]
 	Pending,
@@ -35,7 +35,7 @@ pub struct Exit {
 	vtxos: Vec<Vtxo>,
 	/// The statuses of the various exit txs. Kept here because different
 	/// exits might have overlapping txs.
-	exit_tx_status: HashMap<Txid, ExitTxStatus>,
+	exit_tx_status: HashMap<Txid, TxStatus>,
 
 	// nb for now this seems just a vec, but later we will have txs
 	// that cpfp multiple exits etc
@@ -123,13 +123,13 @@ impl <P>Wallet<P> where
 			'tx: for tx in vtxo.exit_txs() {
 				let txid = tx.compute_txid();
 				match exit.exit_tx_status.entry(txid).or_default() {
-					ExitTxStatus::ConfirmedIn(_) => {}, // nothing to do
-					ExitTxStatus::BroadcastWithCpfp(cpfp) => {
+					TxStatus::ConfirmedIn(_) => {}, // nothing to do
+					TxStatus::BroadcastWithCpfp(cpfp) => {
 						// NB we don't care if our cpfp tx confirmed or
 						// if it confirmed through other means
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
 							debug!("Exit tx {} is confirmed after cpfp", txid);
-							exit.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+							exit.exit_tx_status.insert(txid, TxStatus::ConfirmedIn(h));
 							continue 'tx;
 						}
 
@@ -141,11 +141,11 @@ impl <P>Wallet<P> where
 							error!("Error broadcasting CPFP tx package: {}", e);
 						}
 					},
-					ExitTxStatus::Pending => {
+					TxStatus::Pending => {
 						// First check if it's already confirmed.
 						if let Ok(Some(h)) = self.onchain.tx_confirmed(txid).await {
 							debug!("Exit tx {} is confirmed before cpfp", txid);
-							exit.exit_tx_status.insert(txid, ExitTxStatus::ConfirmedIn(h));
+							exit.exit_tx_status.insert(txid, TxStatus::ConfirmedIn(h));
 							continue 'tx;
 						}
 
@@ -172,7 +172,7 @@ impl <P>Wallet<P> where
 							// various reasons why this can happen.
 							// Many of them are not hurtful.
 						}
-						exit.exit_tx_status.insert(txid, ExitTxStatus::BroadcastWithCpfp(cpfp));
+						exit.exit_tx_status.insert(txid, TxStatus::BroadcastWithCpfp(cpfp));
 					},
 				}
 			}
@@ -186,7 +186,7 @@ impl <P>Wallet<P> where
 		let mut highest_height = 0;
 		for vtxo in exit.vtxos.iter_mut() {
 			let status = exit.exit_tx_status.get(&vtxo.vtxo_tx().compute_txid());
-			if let Some(ExitTxStatus::ConfirmedIn(h)) = status {
+			if let Some(TxStatus::ConfirmedIn(h)) = status {
 				let height = h + vtxo.spec().exit_delta as u32;
 				highest_height = cmp::max(highest_height, height);
 			} else {
