@@ -10,7 +10,7 @@ mod database;
 mod lightning;
 mod psbtext;
 mod serde_util;
-mod sweep_rounds;
+mod vtxo_sweeper;
 mod rpc;
 mod rpcserver;
 mod round;
@@ -391,7 +391,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
-			let ret = sweep_rounds::run_expired_round_sweeper(app, sweep_trigger_rx)
+			let ret = vtxo_sweeper::run_vtxo_sweeper(app, sweep_trigger_rx)
 				.await.context("error from round sweeper");
 			info!("Round sweeper exited with {:?}", ret);
 			ret

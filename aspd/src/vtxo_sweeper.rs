@@ -91,13 +91,13 @@ impl ExpiredRound {
 	}
 }
 
-struct RoundSweeper {
+struct VtxoSweeper {
 	app: Arc<App>,
 }
 
-impl RoundSweeper {
-	fn load(app: Arc<App>) -> anyhow::Result<RoundSweeper> {
-		Ok(RoundSweeper {
+impl VtxoSweeper {
+	fn load(app: Arc<App>) -> anyhow::Result<VtxoSweeper> {
+		Ok(VtxoSweeper {
 			app: app,
 		})
 	}
@@ -191,7 +191,7 @@ impl RoundSweeper {
 		Ok((signed, changeset))
 	}
 
-	async fn sweep_rounds(
+	async fn sweep_vtxos(
 		&mut self,
 	) -> anyhow::Result<()> {
 		let feerate = self.app.config.sweep_tx_fallback_feerate;
@@ -252,22 +252,22 @@ impl RoundSweeper {
 
 /// Run a process that will periodically check for expired rounds and
 /// sweep them into our internal wallet.
-pub async fn run_expired_round_sweeper(
+pub async fn run_vtxo_sweeper(
 	app: Arc<App>,
 	mut sweep_trigger_rx: tokio::sync::mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
 
-	let mut state = RoundSweeper::load(app).context("failed to load RoundSweeper state")?;
+	let mut state = VtxoSweeper::load(app).context("failed to load VtxoSweeper state")?;
 
-	info!("Starting expired round sweep loop");
+	info!("Starting expired vtxo sweep loop");
 	loop {
 		tokio::select! {
 			() = tokio::time::sleep(state.app.config.round_sweep_interval) => {},
 			Some(()) = sweep_trigger_rx.recv() => {
-				info!("Received RPC trigger to sweep rounds");
+				info!("Received RPC trigger to sweep vtxos");
 			},
 		}
 
-		state.sweep_rounds().await?;
+		state.sweep_vtxos().await?;
 	}
 }
