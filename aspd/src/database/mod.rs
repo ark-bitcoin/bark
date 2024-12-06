@@ -94,6 +94,7 @@ impl RoundExpiryKey {
 pub struct StoredRound {
 	pub tx: Transaction,
 	pub signed_tree: SignedVtxoTree,
+	pub nb_input_vtxos: u64,
 }
 
 impl StoredRound {
@@ -178,10 +179,16 @@ impl Db {
 		Ok(self.db.get(MASTER_MNEMONIC)?.map(|b| String::from_utf8(b)).transpose()?)
 	}
 
-	pub fn store_round(&self, round_tx: Transaction, vtxos: SignedVtxoTree) -> anyhow::Result<()> {
+	pub fn store_round(
+		&self,
+		round_tx: Transaction,
+		vtxos: SignedVtxoTree,
+		nb_input_vtxos: usize,
+	) -> anyhow::Result<()> {
 		let round = StoredRound {
 			tx: round_tx,
 			signed_tree: vtxos,
+			nb_input_vtxos: nb_input_vtxos as u64,
 		};
 		let id = round.id();
 		let encoded_round = round.encode();
