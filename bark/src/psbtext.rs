@@ -5,8 +5,7 @@ use std::borrow::{Borrow, BorrowMut};
 use bitcoin::{psbt, sighash, taproot, Transaction, TxOut, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 
-use crate::exit;
-
+use ark::Vtxo;
 
 const PROP_KEY_PREFIX: &'static [u8] = "bark".as_bytes();
 
@@ -26,13 +25,13 @@ lazy_static::lazy_static! {
 // within internal use, if we ever share them for communication or in a db,
 // they need to return errors
 pub trait PsbtInputExt: BorrowMut<psbt::Input> {
-	fn set_claim_input(&mut self, input: &exit::ClaimInput) {
+	fn set_claim_input(&mut self, input: &Vtxo) {
 		self.borrow_mut().proprietary.insert(PROP_KEY_CLAIM_INPUT.clone(), input.encode());
 	}
 
-	fn get_claim_input(&self) -> Option<exit::ClaimInput> {
+	fn get_claim_input(&self) -> Option<Vtxo> {
 		self.borrow().proprietary.get(&*PROP_KEY_CLAIM_INPUT)
-			.map(|e| exit::ClaimInput::decode(&e).expect("corrupt psbt"))
+			.map(|e| Vtxo::decode(&e).expect("corrupt psbt"))
 	}
 
 	fn try_sign_claim_input(
@@ -50,7 +49,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		};
 
 		// Now we need to sign for this.
-		let exit_script = claim.spec.exit_clause();
+		let exit_script = claim.spec().exit_clause();
 		let leaf_hash = taproot::TapLeafHash::from_script(
 			&exit_script,
 			taproot::LeafVersion::TapScript,
@@ -59,17 +58,18 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 			input_idx, prevouts, leaf_hash, sighash::TapSighashType::Default,
 		).expect("all prevouts provided");
 
-		assert_eq!(vtxo_key.public_key(), claim.spec.user_pubkey);
+		assert_eq!(vtxo_key.public_key(), claim.spec().user_pubkey);
 		let sig = secp.sign_schnorr(&sighash.into(), &vtxo_key);
 
-		let cb = claim.spec.exit_taproot()
+		let cb = claim.spec().exit_taproot()
 			.control_block(&(exit_script.clone(), taproot::LeafVersion::TapScript))
 			.expect("script is in taproot");
 
 		let wit = Witness::from_slice(
 			&[&sig[..], exit_script.as_bytes(), &cb.serialize()],
 		);
-		debug_assert_eq!(wit.size() as u64, claim.satisfaction_weight().to_wu());
+
+		debug_assert_eq!(wit.size() as u64, claim.claim_satisfaction_weight().to_wu());
 		self.borrow_mut().final_script_witness = Some(wit);
 
 	}

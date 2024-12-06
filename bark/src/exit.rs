@@ -1,13 +1,13 @@
 
-use std::{cmp, io};
+use std::cmp;
 use std::collections::HashMap;
 
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
-use bitcoin::{sighash, Amount, OutPoint, Transaction, Txid, Weight};
+use bitcoin::{sighash, Amount, Transaction, Txid, Weight};
 use serde::ser::StdError;
 
-use ark::{Vtxo, VtxoSpec};
+use ark::Vtxo;
 
 use crate::persist::BarkPersister;
 use crate::{SECP, Wallet};
@@ -17,38 +17,6 @@ use crate::psbtext::PsbtInputExt;
 
 /// The input weight required to claim a VTXO.
 const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
-
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ClaimInput {
-	pub utxo: OutPoint,
-	//TODO(stevenroose) check how this is used because for OOR a pseudo spec is stored hre
-	pub spec: VtxoSpec,
-}
-
-impl ClaimInput {
-	pub fn from_vtxo(vtxo: &Vtxo) -> ClaimInput {
-		ClaimInput {
-			utxo: vtxo.point(),
-			spec: vtxo.spec().clone(),
-		}
-	}
-
-	pub fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
-
-	pub fn satisfaction_weight(&self) -> Weight {
-		// NB might be vtxo-dependent in the future.
-		VTXO_CLAIM_INPUT_WEIGHT
-	}
-}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ExitTxStatus {
@@ -236,11 +204,11 @@ impl <P>Wallet<P> where
 			return Ok(ExitStatus::WaitingForHeight(highest_height));
 		}
 
-		let inputs = exit.vtxos.iter().map(ClaimInput::from_vtxo).collect::<Vec<_>>();
+		let inputs = exit.vtxos.iter().collect::<Vec<_>>();
 
-		let total_amount = inputs.iter().map(|i| i.spec.amount).sum::<Amount>();
+		let total_amount = inputs.iter().map(|i| i.amount()).sum::<Amount>();
 		debug!("Claiming the following exits with total value of {}: {:?}",
-			total_amount, inputs.iter().map(|i| i.utxo.to_string()).collect::<Vec<_>>(),
+			total_amount, inputs.iter().map(|i| i.point().to_string()).collect::<Vec<_>>(),
 		);
 
 		let mut psbt = self.onchain.create_exit_claim_tx(&inputs).await?;
@@ -266,5 +234,16 @@ impl <P>Wallet<P> where
 		self.db.store_exit(&Exit::default())?;
 
 		Ok(ExitStatus::Done)
+	}
+}
+
+pub(crate) trait VtxoExt {
+	fn satisfaction_weight(&self) -> Weight;
+}
+
+impl VtxoExt for Vtxo {
+	fn satisfaction_weight(&self) -> Weight {
+		// NB might be vtxo-dependent in the future
+		VTXO_CLAIM_INPUT_WEIGHT
 	}
 }

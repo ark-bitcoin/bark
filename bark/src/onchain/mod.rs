@@ -6,7 +6,7 @@ use std::borrow::Borrow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use ark::fee;
+use ark::{Vtxo, fee};
 use ark::util::TransactionExt;
 use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering, WalletPersister};
@@ -18,7 +18,7 @@ use bitcoin::{
 use serde::ser::StdError;
 
 use crate::persist::BarkPersister;
-use crate::{exit, UtxoInfo};
+use crate::{exit::VtxoExt, UtxoInfo};
 use crate::psbtext::PsbtInputExt;
 use self::chain::ChainSourceClient;
 
@@ -276,7 +276,7 @@ impl <P>Wallet<P> where
 		Ok(tx)
 	}
 
-	pub (crate) async fn create_exit_claim_tx(&mut self, inputs: &[exit::ClaimInput]) -> anyhow::Result<Psbt> {
+	pub(crate) async fn create_exit_claim_tx(&mut self, inputs: &[&Vtxo]) -> anyhow::Result<Psbt> {
 		assert!(!inputs.is_empty());
 
 		let urgent_fee_rate = self.urgent_feerate();
@@ -290,14 +290,14 @@ impl <P>Wallet<P> where
 			let mut psbt_in = psbt::Input::default();
 			psbt_in.set_claim_input(input);
 			psbt_in.witness_utxo = Some(TxOut {
-				script_pubkey: input.spec.exit_spk(),
-				value: input.spec.amount,
+				script_pubkey: input.spec().exit_spk(),
+				value: input.spec().amount,
 			});
 			b.add_foreign_utxo_with_sequence(
-				input.utxo,
+				input.point(),
 				psbt_in,
 				input.satisfaction_weight(),
-				Sequence::from_height(input.spec.exit_delta),
+				Sequence::from_height(input.spec().exit_delta),
 			).expect("error adding foreign utxo for claim input");
 		}
 		b.drain_to(change_addr.address.script_pubkey());
