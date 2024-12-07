@@ -204,6 +204,14 @@ impl <P>Wallet<P> where
 			return Ok(ExitStatus::WaitingForHeight(highest_height));
 		}
 
+		// Do the sweep
+		self.sweep().await
+	}
+
+	async fn sweep(&mut self) -> anyhow::Result<ExitStatus> {
+		let exit = self.db.fetch_exit()
+			.context("Failed to retreive exit from db")?
+			.context("Cannot sweep when no exit is in progress")?;
 		let inputs = exit.vtxos.iter().collect::<Vec<_>>();
 
 		let total_amount = inputs.iter().map(|i| i.amount()).sum::<Amount>();
@@ -233,9 +241,10 @@ impl <P>Wallet<P> where
 		// Remove the exit record from the db.
 		self.db.store_exit(&Exit::default())?;
 
-		Ok(ExitStatus::Done)
+		Ok(ExitStatus::Done)		
 	}
 }
+
 
 pub(crate) trait VtxoExt {
 	fn satisfaction_weight(&self) -> Weight;
