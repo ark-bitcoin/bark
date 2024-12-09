@@ -5,16 +5,60 @@ use std::time::Duration;
 
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
-use ark_testing::{AspdConfig, TestContext};
+use ark_testing::{
+	daemon::{aspd::AspdHelper, bitcoind::BitcoindHelper}, 
+	AspdConfig, 
+	Bark, 
+	Daemon, 
+	TestContext
+};
+
+const OFFBOARD_FEES: Amount = Amount::from_sat(900);
+
+async fn setup_simple(name: &str) -> (TestContext, Daemon<BitcoindHelper>, Daemon<AspdHelper>, Bark, Bark) {
+	let ctx = TestContext::new(name).await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+
+	(ctx, bitcoind, aspd, bark1, bark2)
+}
+
+async fn setup_asp_funded(name: &str) -> (TestContext, Daemon<BitcoindHelper>, Daemon<AspdHelper>, Bark, Bark) {
+	let (ctx, bitcoind, aspd, bark1, bark2) = setup_simple(name).await;
+
+	// Fund the asp
+	bitcoind.prepare_funds().await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	(ctx, bitcoind, aspd, bark1, bark2)
+}
+
+async fn setup_full(name: &str) -> (TestContext, Daemon<BitcoindHelper>, Daemon<AspdHelper>, Bark, Bark) {
+	let (ctx, bitcoind, aspd, bark1, bark2) = setup_asp_funded(name).await;
+
+	// Fund clients
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+	bark2.onboard(Amount::from_sat(800_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(Amount::from_sat(200_000)).await;
+	bark1.refresh_all().await;
+	// onboard vtxo
+	bark1.onboard(Amount::from_sat(300_000)).await;
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
+
+	(ctx, bitcoind, aspd, bark1, bark2)
+}
 
 #[tokio::test]
 async fn bark_version() {
-	let ctx = TestContext::new("bark/bark_version").await;
-	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
+	let (_, _, _, bark, _) = setup_simple("bark/bark_version").await;
 
-	//
-	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
 	let result = bark.run(&[&"--version"]).await;
 
 	assert!(result.starts_with("bark-client"));
@@ -23,8 +67,8 @@ async fn bark_version() {
 #[tokio::test]
 async fn bark_create_is_atomic() {
 	let ctx = TestContext::new("bark/bark_create_is_atomic").await;
-	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let mut aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
 
 	// Create a bark defines the folder
 	let _  = ctx.try_bark("bark_ok", &bitcoind, &aspd).await.expect("Can create bark");
@@ -48,76 +92,58 @@ async fn bark_create_is_atomic() {
 #[tokio::test]
 async fn onboard_bark() {
 	const ONBOARD_AMOUNT: u64 = 90_000;
-	let ctx = TestContext::new("bark/onboard_bark").await;
-	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
-	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
+	let (_ctx, bitcoind, _aspd, bark1, _bark2) = setup_simple("bark/onboard_bark").await;
 
 	// Generate initial funds
 	bitcoind.prepare_funds().await;
 
 	// Get the bark-address and fund it
-	bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
-	bark.onboard(Amount::from_sat(ONBOARD_AMOUNT)).await;
+	bitcoind.fund_bark(&bark1, Amount::from_sat(100_000)).await;
+	bark1.onboard(Amount::from_sat(ONBOARD_AMOUNT)).await;
 
-	assert_eq!(Amount::from_sat(ONBOARD_AMOUNT), bark.offchain_balance().await);
+	assert_eq!(Amount::from_sat(ONBOARD_AMOUNT), bark1.offchain_balance().await);
 }
 
 #[tokio::test]
 async fn onboard_all_bark() {
-	let ctx = TestContext::new("bark/onboard_all_bark").await;
-	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
-	let bark = ctx.bark("bark-1".to_string(), &bitcoind, &aspd).await;
+	let (_ctx, bitcoind, _aspd, bark1, _bark2) = setup_simple("bark/onboard_all_bark").await;
 
 	// Generate initial funds
 	bitcoind.prepare_funds().await;
 
 	// Get the bark-address and fund it
-	let funding_txid = bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
-	bark.onboard_all().await;
+	let funding_txid = bitcoind.fund_bark(&bark1, Amount::from_sat(100_000)).await;
+	bark1.onboard_all().await;
 
 	// Check that we emptied our on-chain balance
-	assert_eq!(bark.onchain_balance().await, Amount::ZERO);
+	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the onboarding tx's output value is the same as our off-chain balance
 	let sync_client = bitcoind.sync_client();
 	let entry = sync_client.get_mempool_entry(&funding_txid).unwrap();
 	let onboard_txid = entry.spent_by.last().unwrap();
 	let onboard_tx = sync_client.get_raw_transaction(onboard_txid, None).unwrap();
-	assert_eq!(bark.offchain_balance().await, onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus());
+	assert_eq!(bark1.offchain_balance().await, onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus());
 }
 
 #[tokio::test]
 async fn list_vtxos() {
-	// Initialize the test
-	let ctx = TestContext::new("bark/list_vtxos").await;
-	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
-
-	// Fund the asp
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	// Fund a client
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-
-	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
-	bark1.onboard(Amount::from_sat(200_000)).await;
-	bark1.onboard(Amount::from_sat(300_000)).await;
+	let (_ctx, _bitcoind, mut aspd, bark1, _bark2) = setup_full("bark/list_vtxos").await;
 
 	let vtxos = bark1.vtxos().await;
-	assert_eq!(2, vtxos.len());
+	assert_eq!(3, vtxos.len());
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 200_000));
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 300_000));
+	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 330_000));
 
 	// Should have the same behaviour when ASP is offline
 	aspd.stop().await.unwrap();
 
 	let vtxos = bark1.vtxos().await;
-	assert_eq!(2, vtxos.len());
+	assert_eq!(3, vtxos.len());
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 200_000));
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 300_000));
+	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 330_000));
 }
 
 
@@ -182,17 +208,9 @@ async fn large_round() {
 #[tokio::test]
 async fn oor() {
 	// Initialize the test
-	let ctx = TestContext::new("bark/oor").await;
-	let bitcoind = ctx.bitcoind("bitcoind-1").await;
-	let aspd = ctx.aspd("aspd-1", &bitcoind, None).await;
+	let (_ctx, bitcoind, _aspd, bark1, bark2) = setup_asp_funded("bark/oor").await;
 
-	// Fund the asp
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	// Create a few clients
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+	// Fund clients
 	bitcoind.fund_bark(&bark1, Amount::from_sat(90_000)).await;
 	bitcoind.fund_bark(&bark2, Amount::from_sat(5_000)).await;
 	bark1.onboard(Amount::from_sat(80_000)).await;
@@ -206,18 +224,9 @@ async fn oor() {
 
 #[tokio::test]
 async fn refresh() {
-	// Initialize the test
-	let ctx = TestContext::new("bark/refresh").await;
-	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+	let (_ctx, bitcoind, _aspd, bark1, bark2) = setup_asp_funded("bark/refresh").await;
 
-	// Fund the asp
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	// Create a few clients
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+	// Fund clients
 	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
 	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
 	bark1.onboard(Amount::from_sat(800_000)).await;
@@ -238,105 +247,41 @@ async fn refresh() {
 
 #[tokio::test]
 async fn compute_balance() {
-	// Initialize the test
-	let ctx = TestContext::new("bark/compute_balance").await;
-	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let mut aspd = ctx.aspd("aspd", &bitcoind, None).await;
-
-	// Fund the asp
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	// Fund a client
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
-	// Second client to have all sort of vtxo
-	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
-	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
-	bark2.onboard(Amount::from_sat(800_000)).await;
-
-	// onboard vtxo
-	bark1.onboard(Amount::from_sat(500_000)).await;
-
-	// round vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
-	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(250_000)).await;
+	let (_ctx, _bitcoind, mut aspd, bark1, _bark2) = setup_full("bark/compute_balance").await;
 
 	let balance = bark1.offchain_balance().await;
-	assert_eq!(balance, Amount::from_sat(1_080_000));
+	assert_eq!(balance, Amount::from_sat(830_000));
 
 	// Should have the same behaviour when ASP is offline
 	aspd.stop().await.unwrap();
 
 	let balance = bark1.offchain_balance().await;
-	assert_eq!(balance, Amount::from_sat(1_080_000));
+	assert_eq!(balance, Amount::from_sat(830_000));
 }
 
 #[tokio::test]
 async fn offboard_all() {
-	// Initialize the test
-	let ctx = TestContext::new("bark/offboard_all").await;
-	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
-
-	// Fund the asp
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	// Create a few clients
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
-
-	bitcoind
-		.fund_bark(&bark1, Amount::from_sat(1_000_000))
-		.await;
-	bark1.onboard(Amount::from_sat(800_000)).await;
-
-	bitcoind
-		.fund_bark(&bark2, Amount::from_sat(1_000_000))
-		.await;
-
-	// We want bark2 to have an onboard, round and oor vtxo
-	let pk2 = bark2.vtxo_pubkey().await;
-	bark2.onboard(Amount::from_sat(20_000)).await;
-	bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
+	let (_ctx, bitcoind, _aspd, bark1, _bark2) = setup_full("bark/offboard_all").await;
 
 	let address = bitcoind.get_new_address();
 
-	assert_eq!(2, bark2.vtxos().await.len());
-	bark2.offboard_all(address.clone()).await;
+	let init_balance = bark1.offchain_balance().await;
+	assert_eq!(init_balance, Amount::from_sat(830_000));
+
+	bark1.offboard_all(address.clone()).await;
 
 	// We check that all vtxos have been offboarded
-	assert_eq!(0, bark2.vtxos().await.len());
+	assert_eq!(Amount::ZERO, bark1.offchain_balance().await);
+
 	// We check that provided address received the coins
 	bitcoind.generate(1).await;
 	let balance = bitcoind.get_received_by_address(&address);
-	assert_eq!(balance, Amount::from_sat(39100));
+	assert_eq!(balance, init_balance - OFFBOARD_FEES);
 }
 
 #[tokio::test]
 async fn offboard_vtxos() {
-	const FEES: Amount = Amount::from_sat(900);
-
-	// Initialize the test
-	let ctx = TestContext::new("bark/offboard_vtxos").await;
-	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
-
-	// Fund the asp
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	// Fund a client
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-
-	bitcoind
-		.fund_bark(&bark1, Amount::from_sat(1_000_000))
-		.await;
-	bark1.onboard(Amount::from_sat(200_000)).await;
-	bark1.onboard(Amount::from_sat(300_000)).await;
-	bark1.onboard(Amount::from_sat(400_000)).await;
+	let (_ctx, bitcoind, _aspd, bark1, _bark2) = setup_full("bark/offboard_vtxos").await;
 
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
@@ -358,37 +303,13 @@ async fn offboard_vtxos() {
 	// We check that provided address received the coins
 	bitcoind.generate(1).await;
 	let balance = bitcoind.get_received_by_address(&address);
-	assert_eq!(balance, vtxo_to_offboard.amount - FEES);
+	assert_eq!(balance, vtxo_to_offboard.amount - OFFBOARD_FEES);
 }
 
 #[tokio::test]
 async fn drop_vtxos() {
 	// Initialize the test
-	let ctx = TestContext::new("bark/drop_vtxos").await;
-	let bitcoind = ctx.bitcoind("bitcoind").await;
-	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
-
-	// Fund the asp
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
-
-	// Fund clients
-	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
-	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
-	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
-	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
-	bark2.onboard(Amount::from_sat(800_000)).await;
-
-	// refresh vtxo
-	bark1.onboard(Amount::from_sat(200_000)).await;
-	bark1.refresh_all().await;
-	// onboard vtxo
-	bark1.onboard(Amount::from_sat(300_000)).await;
-	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
-
-	let balance = bark1.offchain_balance().await;
-	assert_eq!(balance, Amount::from_sat(830_000));
+	let (_ctx, _bitcoind, _aspd, bark1, _bark2) = setup_full("bark/drop_vtxos").await;
 
 	bark1.drop_vtxos().await;
 	let balance = bark1.offchain_balance_no_sync().await;
