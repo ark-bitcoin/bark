@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::Amount;
 
-use crate::{Vtxo, VtxoId, VtxoState, exit::Exit};
+use crate::{exit::Exit, ReadOnlyConfig, Config, Vtxo, VtxoId, VtxoState};
 
 #[derive(Clone)]
 pub struct Db {
@@ -31,6 +31,24 @@ impl Db {
 	fn connect(&self) -> anyhow::Result<Connection> {
 		rusqlite::Connection::open(&self.connection_string)
 			.with_context(|| format!("Error connecting to database {}", self.connection_string.display()))
+	}
+
+	pub (crate) fn init_config(&self, config: &Config, rd_config: &ReadOnlyConfig) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::store_config(&conn, config, rd_config)?;
+		Ok(())
+	}
+
+	pub fn write_config(&self, pub_config: &Config) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		let (_, prv_config) = query::fetch_config(&conn)?.context("Config unexpectedly missing")?;
+		query::store_config(&conn, pub_config, &prv_config)?;
+		Ok(())
+	}
+
+	pub fn read_config(&self) -> anyhow::Result<Option<(Config, ReadOnlyConfig)>> {
+		let conn = self.connect()?;
+		Ok(query::fetch_config(&conn)?)
 	}
 
 	/// Stores a vtxo in the database

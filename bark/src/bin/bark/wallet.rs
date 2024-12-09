@@ -1,12 +1,19 @@
-use std::path::Path;
+use std::{path::Path, str::FromStr};
 
 use anyhow::Context;
+use bip39::Mnemonic;
 use clap::Args;
 use tokio::fs;
 
-use bark::{Config, Wallet};
+use bark::{Config, Wallet, db};
 
 use crate::ConfigOpts;
+
+/// File name of the mnemonic file.
+const MNEMONIC_FILE: &str = "mnemonic";
+
+/// File name of the database file.
+const DB_FILE: &str = "db.sqlite";
 
 #[derive(Args)]
 pub struct CreateOpts {
@@ -36,11 +43,24 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		fs::remove_dir_all(datadir).await?;
 	}
 
+	// check if dir doesn't exists, then creates it
 	if datadir.exists() {
 		bail!("Directory {} already exists", datadir.display());
 	}
+	fs::create_dir_all(&datadir).await.context("can't create dir")?;
 
-	match try_create_wallet(&datadir, opts).await {
+	// generate seed
+	let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
+
+	// write it to file
+	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
+		.context("failed to write mnemonic")?;
+
+	info!("Creating new bark Wallet at {}", datadir.display());
+
+	let db = db::Db::open(datadir.join(DB_FILE))?;
+
+	match try_create_wallet(mnemonic, db, opts).await {
 		Ok(ok) => Ok(ok),
 		Err(err) => {
 			// Remove the datadir if it exists
@@ -55,7 +75,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	}
 }
 
-async fn try_create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<()> {
+async fn try_create_wallet(mnemonic: Mnemonic, db: db::Db, opts: CreateOpts) -> anyhow::Result<()> {
 	let net = if opts.regtest && !opts.signet && !opts.bitcoin{
 		bitcoin::Network::Regtest
 	} else if opts.signet && !opts.regtest && !opts.bitcoin{
@@ -67,15 +87,30 @@ async fn try_create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		bail!("A network must be specified. Use either --signet, --regtest or --bitcoin");
 	};
 
-	let mut cfg = Config {
+	let mut config = Config {
 		network: net,
 		// required args
 		asp_address: opts.config.asp.clone().context("ASP address missing, use --asp")?,
 		..Default::default()
 	};
-	opts.config.merge_info(&mut cfg).context("invalid configuration")?;
 
-	Wallet::create(&datadir, cfg).await.context("error creating wallet")?;
+	opts.config.merge_info(&mut config).context("invalid configuration")?;
+
+	Wallet::create(mnemonic, config, db).await.context("error creating wallet")?;
 
 	return Ok(())
+}
+
+pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Wallet> {
+	debug!("Opening bark wallet in {}", datadir.display());
+
+	// read mnemonic file
+	let mnemonic_path = datadir.join(MNEMONIC_FILE);
+	let mnemonic_str = fs::read_to_string(&mnemonic_path).await
+		.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
+	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
+
+	let db = db::Db::open(datadir.join(DB_FILE))?;
+
+	Wallet::open(&mnemonic, db).await
 }

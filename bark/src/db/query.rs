@@ -1,7 +1,86 @@
-use std::str::FromStr;
-use bitcoin::Amount;
+use std::{path::PathBuf, str::FromStr};
+use anyhow::Context;
+use bitcoin::{bip32::Fingerprint, Amount, Network};
 use rusqlite::{Connection, named_params, Transaction};
-use crate::{exit::Exit, Vtxo, VtxoId, VtxoState};
+use crate::{exit::Exit, ReadOnlyConfig, Config, Vtxo, VtxoId, VtxoState};
+
+pub (crate) fn store_config(
+	conn: &Connection,
+	pub_cfg: &Config,
+	prv_cfg: &ReadOnlyConfig,
+) -> anyhow::Result<()> {
+	// Store the ftxo
+	let query = 
+		"INSERT INTO config 
+			(id, network, fingerprint, asp_address, esplora_address, bitcoind_address, 
+			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_threshold) 
+		VALUES 
+			(1, :network, :fingerprint, :asp_address, :esplora_address, :bitcoind_address, 
+			:bitcoind_cookiefile, :bitcoind_user, :bitcoind_pass, :vtxo_refresh_threshold)
+		ON CONFLICT (id)	
+		DO UPDATE SET
+			network = :network,
+			asp_address = :asp_address,
+			esplora_address = :esplora_address,
+			bitcoind_address = :bitcoind_address,
+			bitcoind_cookiefile = :bitcoind_cookiefile,
+			bitcoind_user = :bitcoind_user,
+			bitcoind_pass = :bitcoind_pass,
+			vtxo_refresh_threshold = :vtxo_refresh_threshold
+		";
+	let mut statement = conn.prepare(query)?;
+
+	statement.execute(named_params! {
+		":network": pub_cfg.network.to_string(),
+		":fingerprint": prv_cfg.fingerprint.to_string(),
+		":asp_address": pub_cfg.asp_address,
+		":esplora_address": pub_cfg.esplora_address,
+		":bitcoind_address": pub_cfg.bitcoind_address,
+		":bitcoind_cookiefile": pub_cfg.bitcoind_cookiefile
+			.clone().and_then(|f| f.to_str().map(String::from)),
+		":bitcoind_user": pub_cfg.bitcoind_user,
+		":bitcoind_pass": pub_cfg.bitcoind_pass,
+		":vtxo_refresh_threshold": pub_cfg.vtxo_refresh_threshold,
+	})?;
+
+	Ok(())
+}
+
+pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<(Config, ReadOnlyConfig)>> {
+	let query = "SELECT * FROM config";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([])?;
+
+	if let Some(row) = rows.next()? {
+		let network: String = row.get("network")?;
+		let fingerprint: String = row.get("fingerprint")?;
+
+		let bitcoind_cookiefile_opt: Option<String> = row.get("bitcoind_cookiefile")?;
+		let bitcoind_cookiefile = if let Some (bitcoind_cookiefile) = bitcoind_cookiefile_opt {
+			Some(PathBuf::try_from(bitcoind_cookiefile)?)
+		} else {
+			None
+		};
+
+		Ok(Some(
+			(Config {
+				network: Network::from_str(&network).context("invalid network")?,
+				asp_address: row.get("asp_address")?,
+				esplora_address: row.get("esplora_address")?,
+				bitcoind_address: row.get("bitcoind_address")?,
+				bitcoind_cookiefile: bitcoind_cookiefile,
+				bitcoind_user: row.get("bitcoind_user")?,
+				bitcoind_pass: row.get("bitcoind_pass")?,
+				vtxo_refresh_threshold: row.get("vtxo_refresh_threshold")?,
+			}, 
+			ReadOnlyConfig {
+				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
+			}),
+		))
+	} else {
+		Ok(None)
+	}
+}
 
 pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
