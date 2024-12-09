@@ -31,7 +31,6 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
-use serde::Serialize;
 use tokio_stream::StreamExt;
 
 use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
@@ -55,14 +54,8 @@ pub struct ArkInfo {
 }
 
 /// Configuration of the Bark wallet.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[derive(Debug, Clone)]
 pub struct Config {
-	/// The Bitcoin network to run Bark on.
-	///
-	/// Default value: signet.
-	pub network: Network,
-
 	/// The address of your ASP.
 	pub asp_address: String,
 
@@ -100,7 +93,6 @@ pub struct Config {
 impl Default for Config {
 	fn default() -> Config {
 		Config {
-			network: Network::Signet,
 			asp_address: "http://127.0.0.1:3535".to_owned(),
 			esplora_address: None,
 			bitcoind_address: None,
@@ -112,9 +104,14 @@ impl Default for Config {
 	}
 }
 
-/// Private part of the Bark wallet configuration.
+/// Read-only properties of the Bark wallet.
 #[derive(Debug, Clone)]
-pub struct ReadOnlyConfig {
+pub struct WalletProperties {
+	/// The Bitcoin network to run Bark on.
+	///
+	/// Default value: signet.
+	pub network: Network,
+
 	/// The wallet fingerpint
 	/// 
 	/// Used on wallet loading to check mnemonic correctness
@@ -143,23 +140,24 @@ impl Wallet {
 	}
 
 	/// Create new wallet.
-	pub async fn create(mnemonic: Mnemonic, config: Config, db: db::Db) -> anyhow::Result<Wallet> {
+	pub async fn create(mnemonic: Mnemonic, network: Network, config: Config, db: db::Db) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
 			trace!("Existing config: {:?}", existing);
 			bail!("cannot overwrite already existing config")
 		}
 		
-		let wallet_fingerprint = Self::vtxo_seed(config.network, &mnemonic).fingerprint(&SECP);
-		let rd_config = ReadOnlyConfig { 
+		let wallet_fingerprint = Self::vtxo_seed(network, &mnemonic).fingerprint(&SECP);
+		let properties = WalletProperties { 
+			network: network,
 			fingerprint: wallet_fingerprint
 		};
 
 		// write the config to db
-		db.init_config(&config, &rd_config).context("failed to write config file")?;
+		db.init_wallet(&config, &properties).context("cannot init wallet in the database")?;
 
 		// from then on we can open the wallet
-		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open")?;
+		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
 		wallet.require_chainsource_version()?;
 
 		if wallet.asp.is_none() {
@@ -171,13 +169,14 @@ impl Wallet {
 
 	/// Open existing wallet.
 	pub async fn open(mnemonic: &Mnemonic, db: db::Db) -> anyhow::Result<Wallet> {
-		let (config, rd_config) = db.read_config()?.context("Missing config")?;
+		let config = db.read_config()?.context("Wallet is not initialised")?;
+		let properties = db.read_properties()?.context("Wallet is not initialised")?;
 		trace!("Config: {:?}", config);
 
 		let seed = mnemonic.to_seed("");
-		let vtxo_seed = Self::vtxo_seed(config.network, mnemonic);
+		let vtxo_seed = Self::vtxo_seed(properties.network, mnemonic);
 
-		if rd_config.fingerprint != vtxo_seed.fingerprint(&SECP) {
+		if properties.fingerprint != vtxo_seed.fingerprint(&SECP) {
 			bail!("incorrect mnemonic")
 		}
 
@@ -203,7 +202,7 @@ impl Wallet {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
-		let onchain = onchain::Wallet::create(config.network, seed, db.clone(), chain_source)
+		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source)
 			.context("failed to create onchain wallet")?;
 
 		let asp_uri = tonic::transport::Uri::from_str(&config.asp_address)
@@ -235,8 +234,8 @@ impl Wallet {
 				let res = client.get_ark_info(rpc::Empty{})
 					.await.context("ark info request failed")?.into_inner();
 
-				if config.network != res.network.parse().context("invalid network from asp")? {
-					bail!("ASP is for net {} while we are on net {}", res.network, config.network);
+				if properties.network != res.network.parse().context("invalid network from asp")? {
+					bail!("ASP is for net {} while we are on net {}", res.network, properties.network);
 				}
 
 				let info = ArkInfo {
@@ -256,6 +255,11 @@ impl Wallet {
 
 	pub fn config(&self) -> &Config {
 		&self.config
+	}
+
+	pub fn properties(&self) -> anyhow::Result<WalletProperties> {
+		let properties = self.db.read_properties()?.context("Wallet is not initialised")?;
+		Ok(properties)
 	}
 
 	/// Change the config of this wallet.
@@ -364,6 +368,7 @@ impl Wallet {
 	// NB we will spend a little more on-chain to cover minrelayfee.
 	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<()> {
 		let asp = self.require_asp()?;
+		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		//TODO(stevenroose) impl key derivation
 		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
@@ -377,7 +382,7 @@ impl Wallet {
 		};
 
 		let onboard_amount = amount + ark::onboard::onboard_surplus();
-		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), self.config.network).unwrap();
+		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), properties.network).unwrap();
 
 		// We create the onboard tx template, but don't sign it yet.
 		let onboard_tx = self.onchain.prepare_tx(addr, onboard_amount)?;
@@ -387,6 +392,7 @@ impl Wallet {
 
 	pub async fn onboard_all(&mut self) -> anyhow::Result<()> {
 		let asp = self.require_asp()?;
+		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		//TODO(stevenroose) impl key derivation
 		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
@@ -401,7 +407,7 @@ impl Wallet {
 			amount: self.onchain_balance()
 		};
 
-		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), self.config.network).unwrap();
+		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), properties.network).unwrap();
 		let onboard_all_tx = self.onchain.prepare_send_all_tx(addr)?;
 
 		// Deduct fee from vtxo spec

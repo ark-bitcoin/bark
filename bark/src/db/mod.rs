@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::Amount;
 
-use crate::{exit::Exit, ReadOnlyConfig, Config, Vtxo, VtxoId, VtxoState};
+use crate::{exit::Exit, WalletProperties, Config, Vtxo, VtxoId, VtxoState};
 
 #[derive(Clone)]
 pub struct Db {
@@ -33,20 +33,29 @@ impl Db {
 			.with_context(|| format!("Error connecting to database {}", self.connection_string.display()))
 	}
 
-	pub (crate) fn init_config(&self, config: &Config, rd_config: &ReadOnlyConfig) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::store_config(&conn, config, rd_config)?;
+	pub (crate) fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+
+		query::set_properties(&tx, properties)?;
+		query::set_config(&tx, config)?;
+
+		tx.commit()?;
 		Ok(())
 	}
 
-	pub fn write_config(&self, pub_config: &Config) -> anyhow::Result<()> {
+	pub fn write_config(&self, config: &Config) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		let (_, prv_config) = query::fetch_config(&conn)?.context("Config unexpectedly missing")?;
-		query::store_config(&conn, pub_config, &prv_config)?;
+		query::set_config(&conn, config)?;
 		Ok(())
 	}
 
-	pub fn read_config(&self) -> anyhow::Result<Option<(Config, ReadOnlyConfig)>> {
+	pub fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
+		let conn = self.connect()?;
+		Ok(query::fetch_properties(&conn)?)
+	}
+
+	pub fn read_config(&self) -> anyhow::Result<Option<Config>> {
 		let conn = self.connect()?;
 		Ok(query::fetch_config(&conn)?)
 	}

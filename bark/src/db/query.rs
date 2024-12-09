@@ -2,24 +2,40 @@ use std::{path::PathBuf, str::FromStr};
 use anyhow::Context;
 use bitcoin::{bip32::Fingerprint, Amount, Network};
 use rusqlite::{Connection, named_params, Transaction};
-use crate::{exit::Exit, ReadOnlyConfig, Config, Vtxo, VtxoId, VtxoState};
+use crate::{exit::Exit, WalletProperties, Config, Vtxo, VtxoId, VtxoState};
 
-pub (crate) fn store_config(
+/// Set read-only properties for the wallet
+/// 
+/// This is fail if properties aren't already set for the wallet
+pub (crate) fn set_properties(
 	conn: &Connection,
-	pub_cfg: &Config,
-	prv_cfg: &ReadOnlyConfig,
+	properties: &WalletProperties,
 ) -> anyhow::Result<()> {
 	// Store the ftxo
 	let query = 
+		"INSERT INTO properties (id, network, fingerprint) 
+		VALUES (1, :network, :fingerprint)";
+	let mut statement = conn.prepare(query)?;
+
+	statement.execute(named_params! {
+		":network": properties.network.to_string(),
+		":fingerprint": properties.fingerprint.to_string(),
+	})?;
+
+	Ok(())
+}
+
+pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<()> {
+	// Store the ftxo
+	let query = 
 		"INSERT INTO config 
-			(id, network, fingerprint, asp_address, esplora_address, bitcoind_address, 
+			(id, asp_address, esplora_address, bitcoind_address, 
 			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_threshold) 
 		VALUES 
-			(1, :network, :fingerprint, :asp_address, :esplora_address, :bitcoind_address, 
+			(1, :asp_address, :esplora_address, :bitcoind_address, 
 			:bitcoind_cookiefile, :bitcoind_user, :bitcoind_pass, :vtxo_refresh_threshold)
 		ON CONFLICT (id)	
 		DO UPDATE SET
-			network = :network,
 			asp_address = :asp_address,
 			esplora_address = :esplora_address,
 			bitcoind_address = :bitcoind_address,
@@ -31,23 +47,21 @@ pub (crate) fn store_config(
 	let mut statement = conn.prepare(query)?;
 
 	statement.execute(named_params! {
-		":network": pub_cfg.network.to_string(),
-		":fingerprint": prv_cfg.fingerprint.to_string(),
-		":asp_address": pub_cfg.asp_address,
-		":esplora_address": pub_cfg.esplora_address,
-		":bitcoind_address": pub_cfg.bitcoind_address,
-		":bitcoind_cookiefile": pub_cfg.bitcoind_cookiefile
+		":asp_address": config.asp_address,
+		":esplora_address": config.esplora_address,
+		":bitcoind_address": config.bitcoind_address,
+		":bitcoind_cookiefile": config.bitcoind_cookiefile
 			.clone().and_then(|f| f.to_str().map(String::from)),
-		":bitcoind_user": pub_cfg.bitcoind_user,
-		":bitcoind_pass": pub_cfg.bitcoind_pass,
-		":vtxo_refresh_threshold": pub_cfg.vtxo_refresh_threshold,
+		":bitcoind_user": config.bitcoind_user,
+		":bitcoind_pass": config.bitcoind_pass,
+		":vtxo_refresh_threshold": config.vtxo_refresh_threshold,
 	})?;
 
 	Ok(())
 }
 
-pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<(Config, ReadOnlyConfig)>> {
-	let query = "SELECT * FROM config";
+pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<WalletProperties>> {
+	let query = "SELECT * FROM properties";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([])?;
 
@@ -55,6 +69,23 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<(Config,
 		let network: String = row.get("network")?;
 		let fingerprint: String = row.get("fingerprint")?;
 
+		Ok(Some(
+			WalletProperties {
+				network: Network::from_str(&network).context("invalid network")?,
+				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
+			}
+		))
+	} else {
+		Ok(None)
+	}
+}
+
+pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>> {
+	let query = "SELECT * FROM config";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([])?;
+
+	if let Some(row) = rows.next()? {
 		let bitcoind_cookiefile_opt: Option<String> = row.get("bitcoind_cookiefile")?;
 		let bitcoind_cookiefile = if let Some (bitcoind_cookiefile) = bitcoind_cookiefile_opt {
 			Some(PathBuf::try_from(bitcoind_cookiefile)?)
@@ -63,8 +94,7 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<(Config,
 		};
 
 		Ok(Some(
-			(Config {
-				network: Network::from_str(&network).context("invalid network")?,
+			Config {
 				asp_address: row.get("asp_address")?,
 				esplora_address: row.get("esplora_address")?,
 				bitcoind_address: row.get("bitcoind_address")?,
@@ -72,10 +102,7 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<(Config,
 				bitcoind_user: row.get("bitcoind_user")?,
 				bitcoind_pass: row.get("bitcoind_pass")?,
 				vtxo_refresh_threshold: row.get("vtxo_refresh_threshold")?,
-			}, 
-			ReadOnlyConfig {
-				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
-			}),
+			}
 		))
 	} else {
 		Ok(None)

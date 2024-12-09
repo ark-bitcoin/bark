@@ -88,7 +88,6 @@ async fn try_create_wallet(mnemonic: Mnemonic, db: db::Db, opts: CreateOpts) -> 
 	};
 
 	let mut config = Config {
-		network: net,
 		// required args
 		asp_address: opts.config.asp.clone().context("ASP address missing, use --asp")?,
 		..Default::default()
@@ -96,7 +95,7 @@ async fn try_create_wallet(mnemonic: Mnemonic, db: db::Db, opts: CreateOpts) -> 
 
 	opts.config.merge_info(&mut config).context("invalid configuration")?;
 
-	Wallet::create(mnemonic, config, db).await.context("error creating wallet")?;
+	Wallet::create(mnemonic, net, config, db).await.context("error creating wallet")?;
 
 	return Ok(())
 }

@@ -310,7 +310,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		warn!("{}", e);
 	}
 
-	let net = w.config().network;
+	let net = w.properties()?.network;
 
 	match cli.command {
 		Command::Create { .. } => unreachable!(),
