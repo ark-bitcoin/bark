@@ -3,12 +3,14 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use ark::util::KeypairExt;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bdk_wallet::ChangeSet;
 use bitcoin::absolute::LockTime;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{psbt, sighash, taproot, Amount, FeeRate, OutPoint, Sequence, Transaction, Txid, Weight, Witness};
+
+use ark::BlockHeight;
+use ark::util::KeypairExt;
 
 use crate::database::StoredRound;
 use crate::psbtext::{PsbtInputExt, RoundMeta};
@@ -109,7 +111,7 @@ impl RoundSweeper {
 	// https://github.com/bitcoindevkit/bdk/pull/1737
 	async fn create_sweep_tx(
 		&self,
-		tip: u32,
+		tip: BlockHeight,
 		expired_rounds: &[ExpiredRound],
 		feerate: FeeRate,
 	) -> anyhow::Result<(Transaction, ChangeSet)> {
@@ -118,7 +120,7 @@ impl RoundSweeper {
 
 		let mut txb = wallet.build_tx();
 		txb.ordering(bdk_wallet::TxOrdering::Untouched);
-		txb.nlocktime(LockTime::from_height(tip).expect("actual height"));
+		txb.nlocktime(LockTime::from_height(tip as u32).expect("actual height"));
 
 		for round in expired_rounds {
 			for sweep in round.sweeps() {
@@ -193,7 +195,7 @@ impl RoundSweeper {
 	) -> anyhow::Result<()> {
 		let feerate = self.app.config.sweep_tx_fallback_feerate;
 
-		let tip = self.app.bitcoind.get_block_count()? as u32;
+		let tip = self.app.bitcoind.get_block_count()? as BlockHeight;
 		let expired_rounds = self.app.db.get_expired_rounds(tip)?.into_iter().map(|txid| {
 			let round = self.app.db.get_round(txid)?.expect("db has round");
 			Ok(ExpiredRound::new(txid, round))
