@@ -82,7 +82,7 @@ impl Bark {
 		Ok(Bark {
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
-			timeout: Duration::from_millis(10_000),
+			timeout: Duration::from_millis(20_000),
 			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
 			config: cfg,
 		})
@@ -204,7 +204,8 @@ impl Bark {
 		let folder = self.config.datadir.join("cmd").join(format!("{:03}", count));
 		fs::create_dir_all(&folder).await?;
 		fs::write(folder.join("cmd"), &command_str).await?;
-		self.command_log.lock().await.write_all(
+		let mut command_log = self.command_log.lock().await;
+		command_log.write_all(
 			format!("\n\n\nCOMMAND: {}\n", command_str).as_bytes()
 		).await?;
 
@@ -222,8 +223,9 @@ impl Bark {
 		).await;
 		// on timeout, kill the child
 		if exit_result.is_err() {
-			child.kill().await
-				.map_err(|e| anyhow!("wait we can't kill the child??: {}", e))?;
+			error!("bark command timed out");
+			command_log.write_all("TIMED OUT\n".as_bytes()).await?;
+			child.kill().await.map_err(|e| anyhow!("can't kill timedout child: {}", e))?;
 		}
 		let out = {
 			let mut buf = String::new();
@@ -241,11 +243,11 @@ impl Bark {
 		}
 
 		// also append to the command log
-		self.command_log.lock().await.write_all("OUTPUT:".as_bytes()).await?;
-		self.command_log.lock().await.write_all(out.as_bytes()).await?;
-		self.command_log.lock().await.write_all("\nLOGS:\n".as_bytes()).await?;
+		command_log.write_all("OUTPUT:".as_bytes()).await?;
+		command_log.write_all(out.as_bytes()).await?;
+		command_log.write_all("\nLOGS:\n".as_bytes()).await?;
 		let logs = fs::read_to_string(stderr_path).await?;
-		self.command_log.lock().await.write_all(logs.as_bytes()).await?;
+		command_log.write_all(logs.as_bytes()).await?;
 
 		match exit_result {
 			Ok(Ok(ret)) if ret.success() => Ok(out.trim().to_string()),
