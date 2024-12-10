@@ -5,6 +5,15 @@ use bitcoin::secp256k1::PublicKey;
 
 use ark::{VtxoId, Vtxo};
 
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UtxoInfo {
+	pub outpoint: OutPoint,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
+	pub confirmation_height: Option<u32>
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Balance {
 	#[serde(with = "bitcoin::amount::serde::as_sat")]

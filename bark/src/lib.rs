@@ -7,6 +7,7 @@ pub extern crate lnurl as lnurllib;
 
 pub mod persist;
 
+use bark_json::cli::UtxoInfo;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
 
@@ -38,7 +39,7 @@ use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 use aspd_rpc_client as rpc;
@@ -309,7 +310,7 @@ impl <P>Wallet<P> where
 		self.onchain.balance()
 	}
 
-	pub fn onchain_utxos(&self) -> Vec<OutPoint> {
+	pub fn onchain_utxos(&self) -> Vec<UtxoInfo> {
 		self.onchain.utxos()
 	}
 

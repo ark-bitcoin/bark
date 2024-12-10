@@ -349,8 +349,22 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			},
 			OnchainCommand::Utxos => {
 				w.sync_onchain().await.context("sync error")?;
-				for op in w.onchain_utxos() {
-					println!("{op}");
+				
+				let utxos = w.onchain_utxos();
+
+				if cli.json {
+					serde_json::to_writer(io::stdout(), &utxos).unwrap();
+				} else {
+					info!("Our onchain wallet has {} UTXO(s):", utxos.len());
+					for u in utxos {
+						if let Some(confirmation_height) = u.confirmation_height {
+							info!("  {}: {}; confirmed at height {}",
+								u.outpoint, u.amount, confirmation_height,
+							);
+						} else {
+							info!("  {}: {}; unconfirmed", u.outpoint, u.amount);
+						}
+					}
 				}
 			},
 		},

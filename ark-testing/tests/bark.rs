@@ -127,6 +127,22 @@ async fn onboard_all_bark() {
 }
 
 #[tokio::test]
+async fn list_utxos() {
+	let (_ctx, _bitcoind, _aspd, bark1, _bark2) = setup_full("bark/list_utxos").await;
+
+	let bark1_address = bark1.get_onchain_address().await;
+	bark1.offboard_all(bark1_address.clone()).await;
+
+	let utxos = bark1.utxos().await;
+
+	assert_eq!(2, utxos.len());
+	// onboard change utxo
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 496_254));
+	// offboard utxo
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 828_900));
+}
+
+#[tokio::test]
 async fn list_vtxos() {
 	let (_ctx, _bitcoind, mut aspd, bark1, _bark2) = setup_full("bark/list_vtxos").await;
 
