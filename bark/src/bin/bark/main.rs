@@ -306,7 +306,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	}
 
 	let mut w = open_wallet(&datadir).await.context("error opening wallet")?;
-	if let Err(e) = w.require_chainsource_version() {
+	if let Err(e) = w.onchain.require_chainsource_version() {
 		warn!("{}", e);
 	}
 
@@ -331,26 +331,26 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Onchain(cmd) => match cmd {
 			OnchainCommand::Balance => {
-				w.sync_onchain().await.context("sync error")?;
-				let res = w.onchain_balance();
+				w.onchain.sync().await.context("sync error")?;
+				let res = w.onchain.balance();
 				if cli.json {
 					println!("{}", res.to_sat());
 				} else {
 					println!("{}", res);
 				}
 			},
-			OnchainCommand::Address => println!("{}", w.get_new_onchain_address()?),
+			OnchainCommand::Address => println!("{}", w.onchain.address()?),
 			OnchainCommand::Send { destination: address, amount } => {
 				let addr = address.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
-				w.sync_onchain().await.context("sync error")?;
-				w.send_onchain(addr, amount).await?;
+				w.onchain.sync().await.context("sync error")?;
+				w.onchain.send(addr, amount).await?;
 			},
 			OnchainCommand::Utxos => {
-				w.sync_onchain().await.context("sync error")?;
+				w.onchain.sync().await.context("sync error")?;
 				
-				let utxos = w.onchain_utxos();
+				let utxos = w.onchain.utxos();
 
 				if cli.json {
 					serde_json::to_writer(io::stdout(), &utxos).unwrap();
@@ -376,7 +376,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 
-			let onchain = w.onchain_balance();
+			let onchain = w.onchain.balance();
 			let offchain =  w.offchain_balance().await?;
 			let pending_exit = {
 				let exit = w.get_exit()?.unwrap_or_default();
@@ -407,7 +407,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				serde_json::to_writer(io::stdout(), &json).unwrap();
 			} else {
 				info!("Our wallet has {} VTXO(s):", res.len());
-				let tip = w.chain_tip_height().await.context("bitcoin chain source error")?;
+				let tip = w.onchain.tip().await.context("bitcoin chain source error")?;
 				for v in res {
 					let expiry = v.spec().expiry_height;
 					if let Some(diff) = expiry.checked_sub(tip) {
@@ -439,7 +439,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			w.refresh_vtxos(vtxos).await?;
 		},
 		Command::Onboard { amount, all } => {
-			w.sync_onchain().await.context("sync error")?;
+			w.onchain.sync().await.context("sync error")?;
 			match (amount, all) {
 				(Some(a), false) => w.onboard_amount(a).await?,
 				(None, true) => w.onboard_all().await?,
@@ -539,7 +539,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			let mut wallet = Some(w);
 			loop {
-				if let Err(e) = wallet.as_mut().unwrap().sync_onchain().await {
+				if let Err(e) = wallet.as_mut().unwrap().onchain.sync().await {
 					warn!("Failed to perform on-chain sync before progressing exit: {}", e);
 				}
 

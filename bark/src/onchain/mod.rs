@@ -67,19 +67,20 @@ impl <P>Wallet<P> where
 		self.chain_source.tip().await
 	}
 
-	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
+	pub (crate) async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
 		self.chain_source.broadcast_tx(tx).await
 	}
 
-	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
+	pub (crate) async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
 		self.chain_source.broadcast_package(txs).await
 	}
 
 	/// Returns the block height the tx is confirmed in, if any.
-	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
+	pub (crate) async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
 		self.chain_source.tx_confirmed(txid).await
 	}
 
+	/// Sync the onchain wallet and returns the balance.
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
@@ -129,6 +130,9 @@ impl <P>Wallet<P> where
 		Ok(balance.total())
 	}
 
+	/// Return the balance of the onchain wallet.
+	///
+	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> Amount {
 		self.wallet.balance().total()
 	}
@@ -145,16 +149,16 @@ impl <P>Wallet<P> where
 	}
 
 	/// Fee rate to use for regular txs like onboards.
-	pub fn regular_feerate(&self) -> FeeRate {
+	pub (crate) fn regular_feerate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(10).unwrap()
 	}
 
 	/// Fee rate to use for urgent txs like exits.
-	pub fn urgent_feerate(&self) -> FeeRate {
+	pub (crate) fn urgent_feerate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(15).unwrap()
 	}
 
-	pub fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
+	pub (crate) fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
 		let fee_rate = self.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.ordering(TxOrdering::Untouched);
@@ -163,7 +167,7 @@ impl <P>Wallet<P> where
 		Ok(b.finish()?)
 	}
 
-	pub fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
+	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
 		let fee_rate = self.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.drain_to(dest.script_pubkey());
@@ -172,7 +176,7 @@ impl <P>Wallet<P> where
 		b.finish().context("error building tx")
 	}
 
-	pub fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
+	pub (crate) fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
 		let opts = SignOptions {
 			trust_witness_utxo: true,
 			..Default::default()
@@ -186,14 +190,17 @@ impl <P>Wallet<P> where
 		Ok(tx)
 	}
 
-	pub async fn send_money(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
+	pub async fn send(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
 		let psbt = self.prepare_tx(dest, amount)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
-	pub fn new_address(&mut self) -> anyhow::Result<Address> {
+	/// Reveals a new onchain address
+	/// 
+	/// The revealed address is directly persisted, so calling this method twice in a row will result in 2 different addresses
+	pub fn address(&mut self) -> anyhow::Result<Address> {
 		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		self.wallet.persist(&mut self.db)?;
 		Ok(ret)
@@ -217,7 +224,7 @@ impl <P>Wallet<P> where
 	/// Create a cpfp spend that spends the fee anchors in the given txs.
 	///
 	/// This method doesn't broadcast any txs.
-	pub async fn make_cpfp(
+	pub (crate) async fn make_cpfp(
 		&mut self,
 		txs: &[&Transaction],
 		fee_rate: FeeRate,
@@ -276,7 +283,7 @@ impl <P>Wallet<P> where
 		Ok(tx)
 	}
 
-	pub async fn create_exit_claim_tx(&mut self, inputs: &[exit::ClaimInput]) -> anyhow::Result<Psbt> {
+	pub (crate) async fn create_exit_claim_tx(&mut self, inputs: &[exit::ClaimInput]) -> anyhow::Result<Psbt> {
 		assert!(!inputs.is_empty());
 
 		let urgent_fee_rate = self.urgent_feerate();
