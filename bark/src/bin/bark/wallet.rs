@@ -5,7 +5,7 @@ use bip39::Mnemonic;
 use clap::Args;
 use tokio::fs;
 
-use bark::{Config, Wallet, db};
+use bark::{Config, Wallet, SqliteClient};
 
 use crate::ConfigOpts;
 
@@ -58,7 +58,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 
 	info!("Creating new bark Wallet at {}", datadir.display());
 
-	let db = db::Db::open(datadir.join(DB_FILE))?;
+	let db = SqliteClient::open(datadir.join(DB_FILE))?;
 
 	match try_create_wallet(mnemonic, db, opts).await {
 		Ok(ok) => Ok(ok),
@@ -75,7 +75,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	}
 }
 
-async fn try_create_wallet(mnemonic: Mnemonic, db: db::Db, opts: CreateOpts) -> anyhow::Result<()> {
+async fn try_create_wallet(mnemonic: Mnemonic, db: SqliteClient, opts: CreateOpts) -> anyhow::Result<()> {
 	let net = if opts.regtest && !opts.signet && !opts.bitcoin{
 		bitcoin::Network::Regtest
 	} else if opts.signet && !opts.regtest && !opts.bitcoin{
@@ -100,7 +100,7 @@ async fn try_create_wallet(mnemonic: Mnemonic, db: db::Db, opts: CreateOpts) -> 
 	return Ok(())
 }
 
-pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Wallet> {
+pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Wallet<SqliteClient>> {
 	debug!("Opening bark wallet in {}", datadir.display());
 
 	// read mnemonic file
@@ -109,7 +109,7 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Wallet> {
 		.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
 	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 
-	let db = db::Db::open(datadir.join(DB_FILE))?;
+	let db = SqliteClient::open(datadir.join(DB_FILE))?;
 
 	Wallet::open(&mnemonic, db).await
 }

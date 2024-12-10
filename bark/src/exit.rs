@@ -3,10 +3,13 @@ use std::{cmp, io};
 use std::collections::HashMap;
 
 use anyhow::Context;
+use bdk_wallet::WalletPersister;
 use bitcoin::{sighash, Amount, OutPoint, Transaction, Txid, Weight};
+use serde::ser::StdError;
 
 use ark::{Vtxo, VtxoSpec};
 
+use crate::persist::BarkPersister;
 use crate::{SECP, Wallet};
 use crate::psbtext::PsbtInputExt;
 
@@ -97,7 +100,10 @@ pub enum ExitStatus {
 	WaitingForHeight(u32),
 }
 
-impl Wallet {
+impl <P>Wallet<P> where 
+	P: BarkPersister, 
+	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+{
 	/// Add all vtxos in the current wallet to the exit process.
 	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
 		if let Err(e) = self.sync_ark().await {

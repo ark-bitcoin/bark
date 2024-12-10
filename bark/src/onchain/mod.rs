@@ -9,29 +9,35 @@ use anyhow::Context;
 use ark::fee;
 use ark::util::TransactionExt;
 use bdk_wallet::chain::ChainPosition;
-use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering};
+use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering, WalletPersister};
 use bdk_esplora::EsploraAsyncExt;
 use bitcoin::{
 	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
 	Txid, Weight,
 };
+use serde::ser::StdError;
 
-use crate::{db, exit};
+use crate::persist::BarkPersister;
+use crate::exit;
 use crate::psbtext::PsbtInputExt;
 use self::chain::ChainSourceClient;
-pub struct Wallet {
-	wallet: PersistedWallet<db::Db>,
+
+pub struct Wallet<P: BarkPersister> {
+	wallet: PersistedWallet<P>,
 	chain_source: ChainSourceClient,
-	db: db::Db,
+	db: P,
 }
 
-impl Wallet {
+impl <P>Wallet<P> where 
+	P: BarkPersister,
+	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+{
 	pub fn create(
 		network: Network,
 		seed: [u8; 64],
-		mut db: db::Db,
+		mut db: P,
 		chain_source: ChainSource,
-	) -> anyhow::Result<Wallet> {
+	) -> anyhow::Result<Wallet<P>> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 
@@ -230,7 +236,7 @@ impl Wallet {
 			let mut b = self.wallet.build_tx();
 			b.ordering(TxOrdering::Untouched);
 			b.only_witness_utxo();
-			Wallet::add_anchors(&mut b, &anchors);
+			Self::add_anchors(&mut b, &anchors);
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + ark::P2TR_DUST);
 			b.fee_rate(fee_rate);
 			let mut psbt = b.finish().expect("failed to craft anchor spend template");
@@ -254,7 +260,7 @@ impl Wallet {
 		let mut b = self.wallet.build_tx();
 		b.only_witness_utxo();
 		b.version(3); // for 1p1c package relay
-		Wallet::add_anchors(&mut b, &anchors);
+		Self::add_anchors(&mut b, &anchors);
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);
 		let psbt = b.finish().expect("failed to craft anchor spend tx");

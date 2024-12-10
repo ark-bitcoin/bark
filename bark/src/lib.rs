@@ -1,4 +1,3 @@
-
 pub extern crate lightning_invoice;
 pub extern crate lnurl as lnurllib;
 
@@ -6,18 +5,23 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde;
 
-pub mod db;
+pub mod persist;
+
+pub use exit::ExitStatus;
+pub use persist::sqlite::SqliteClient;
+
 mod exit;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
+use bdk_wallet::WalletPersister;
 use bip39::Mnemonic;
 use bitcoin::bip32::{Fingerprint, Xpriv};
 use bitcoin::hex::DisplayHex;
-pub use exit::ExitStatus;
+use persist::BarkPersister;
+
 mod lnurl;
 mod onchain;
 mod psbtext;
 mod vtxo_state;
-
 
 use std::time::Duration;
 use std::iter;
@@ -31,6 +35,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
+use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
@@ -124,15 +129,18 @@ struct AspConnection {
 	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
 }
 
-pub struct Wallet {
+pub struct Wallet<P: BarkPersister> {
 	config: Config,
-	db: db::Db,
-	onchain: onchain::Wallet,
+	db: P,
+	onchain: onchain::Wallet<P>,
 	vtxo_seed: bip32::Xpriv,
 	asp: Option<AspConnection>,
 }
 
-impl Wallet {
+impl <P>Wallet<P> where 
+	P: BarkPersister, 
+	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+{
 	pub fn vtxo_seed(network: Network, mnemonic: &Mnemonic) -> Xpriv {
 		let seed = mnemonic.to_seed("");
 		let master = bip32::Xpriv::new_master(network, &seed).unwrap();
@@ -140,7 +148,7 @@ impl Wallet {
 	}
 
 	/// Create new wallet.
-	pub async fn create(mnemonic: Mnemonic, network: Network, config: Config, db: db::Db) -> anyhow::Result<Wallet> {
+	pub async fn create(mnemonic: Mnemonic, network: Network, config: Config, db: P) -> anyhow::Result<Wallet<P>> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
 			trace!("Existing config: {:?}", existing);
@@ -168,7 +176,7 @@ impl Wallet {
 	}
 
 	/// Open existing wallet.
-	pub async fn open(mnemonic: &Mnemonic, db: db::Db) -> anyhow::Result<Wallet> {
+	pub async fn open(mnemonic: &Mnemonic, db: P) -> anyhow::Result<Wallet<P>> {
 		let config = db.read_config()?.context("Wallet is not initialised")?;
 		let properties = db.read_properties()?.context("Wallet is not initialised")?;
 		trace!("Config: {:?}", config);

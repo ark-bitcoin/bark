@@ -1,8 +1,8 @@
 use anyhow::Context;
 
-use rusqlite::{Transaction};
+use rusqlite::Transaction;
 
-use crate::db::migrations::Migration;
+use crate::persist::sqlite::migrations::Migration;
 
 pub struct Migration0001 {}
 
