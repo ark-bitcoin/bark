@@ -77,7 +77,7 @@ impl Bitcoind {
 	}
 
 	pub async fn init_wallet(&self) {
-		info!("Initialziing a wallet");
+		info!("Initializing a wallet");
 		let client = self.sync_client();
 		if client.get_wallet_info().is_err() {
 			client.create_wallet("", None, None, None, None).expect("failed to create new wallet");

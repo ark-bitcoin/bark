@@ -1,7 +1,7 @@
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
 
-mod create;
+mod wallet;
 mod util;
 
 use std::{env, io, process};
@@ -18,10 +18,10 @@ use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 
-use bark::{Wallet, Config};
+use bark::Config;
 use bark_json::cli as json;
 
-use crate::create::{CreateOpts, create_wallet};
+use crate::wallet::{CreateOpts, create_wallet, open_wallet};
 use crate::util::PrettyDuration;
 
 fn default_datadir() -> String {
@@ -297,7 +297,7 @@ fn init_logging(verbose: bool) {
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	init_logging(cli.verbose);
 
-	let datadir =PathBuf::from_str(&cli.datadir).unwrap();
+	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 
 	// Handle create command differently.
 	if let Command::Create ( create_opts ) = cli.command {
@@ -305,12 +305,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		return Ok(())
 	}
 
-	let mut w = Wallet::open(&datadir).await.context("error opening wallet")?;
+	let mut w = open_wallet(&datadir).await.context("error opening wallet")?;
 	if let Err(e) = w.require_chainsource_version() {
 		warn!("{}", e);
 	}
 
-	let net = w.config().network;
+	let net = w.properties()?.network;
 
 	match cli.command {
 		Command::Create { .. } => unreachable!(),
@@ -578,7 +578,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				drop(wallet.take());
 				tokio::time::sleep(Duration::from_secs(60)).await;
 				'w: loop {
-					match Wallet::open(&datadir).await {
+					match open_wallet(&datadir).await {
 						Ok(w) => {
 							wallet = Some(w);
 							break 'w;

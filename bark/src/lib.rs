@@ -6,9 +6,11 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde;
 
-mod db;
+pub mod db;
 mod exit;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
+use bip39::Mnemonic;
+use bitcoin::bip32::{Fingerprint, Xpriv};
 use bitcoin::hex::DisplayHex;
 pub use exit::ExitStatus;
 mod lnurl;
@@ -18,9 +20,9 @@ mod vtxo_state;
 
 
 use std::time::Duration;
-use std::{fs, iter};
+use std::iter;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{bail, Context};
@@ -29,7 +31,6 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
-use serde::Serialize;
 use tokio_stream::StreamExt;
 
 use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
@@ -38,12 +39,6 @@ use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 use aspd_rpc_client as rpc;
 
 use crate::vtxo_state::VtxoState;
-
-/// The file name of the config file.
-const CONFIG_FILE: &str = "config.json";
-
-/// File name of the database file.
-const DB_FILE: &str = "db.sqlite";
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -59,14 +54,8 @@ pub struct ArkInfo {
 }
 
 /// Configuration of the Bark wallet.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[derive(Debug, Clone)]
 pub struct Config {
-	/// The Bitcoin network to run Bark on.
-	///
-	/// Default value: signet.
-	pub network: Network,
-
 	/// The address of your ASP.
 	pub asp_address: String,
 
@@ -104,7 +93,6 @@ pub struct Config {
 impl Default for Config {
 	fn default() -> Config {
 		Config {
-			network: Network::Signet,
 			asp_address: "http://127.0.0.1:3535".to_owned(),
 			esplora_address: None,
 			bitcoind_address: None,
@@ -116,6 +104,20 @@ impl Default for Config {
 	}
 }
 
+/// Read-only properties of the Bark wallet.
+#[derive(Debug, Clone)]
+pub struct WalletProperties {
+	/// The Bitcoin network to run Bark on.
+	///
+	/// Default value: signet.
+	pub network: Network,
+
+	/// The wallet fingerpint
+	/// 
+	/// Used on wallet loading to check mnemonic correctness
+	pub fingerprint: Fingerprint,
+}
+
 #[derive(Clone)]
 struct AspConnection {
 	pub info: ArkInfo,
@@ -124,7 +126,6 @@ struct AspConnection {
 
 pub struct Wallet {
 	config: Config,
-	datadir: PathBuf,
 	db: db::Db,
 	onchain: onchain::Wallet,
 	vtxo_seed: bip32::Xpriv,
@@ -132,42 +133,31 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	/// Write the config file into the data directory.
-	fn write_config(cfg: &Config, datadir: &Path) -> anyhow::Result<()> {
-		let config_str = serde_json::to_string_pretty(cfg)
-			.expect("serialization can't error");
-		let path = datadir.join(CONFIG_FILE);
-		fs::write(&path, config_str.as_bytes())
-			.with_context(|| format!("failed to write config file {}", path.display()))?;
-		Ok(())
+	pub fn vtxo_seed(network: Network, mnemonic: &Mnemonic) -> Xpriv {
+		let seed = mnemonic.to_seed("");
+		let master = bip32::Xpriv::new_master(network, &seed).unwrap();
+		master.derive_priv(&SECP, &[350.into()]).unwrap()
 	}
 
 	/// Create new wallet.
-	pub async fn create(
-		datadir: &Path,
-		config: Config,
-	) -> anyhow::Result<Wallet> {
-		info!("Creating new bark Wallet at {}", datadir.display());
+	pub async fn create(mnemonic: Mnemonic, network: Network, config: Config, db: db::Db) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
-
-		// create dir if not exit, but check that it's empty
-		fs::create_dir_all(&datadir).context("can't create dir")?;
-		if fs::read_dir(&datadir).context("can't read dir")?.next().is_some() {
-			bail!("dir is not empty");
+		if let Some(existing) = db.read_config()? {
+			trace!("Existing config: {:?}", existing);
+			bail!("cannot overwrite already existing config")
 		}
+		
+		let wallet_fingerprint = Self::vtxo_seed(network, &mnemonic).fingerprint(&SECP);
+		let properties = WalletProperties { 
+			network: network,
+			fingerprint: wallet_fingerprint
+		};
 
-		// write the config to disk
-		Self::write_config(&config, datadir).context("failed to write config file")?;
-
-		// generate seed
-		let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
-
-		// write it to file
-		fs::write(datadir.join("mnemonic"), mnemonic.to_string().as_bytes())
-			.context("failed to write mnemonic")?;
+		// write the config to db
+		db.init_wallet(&config, &properties).context("cannot init wallet in the database")?;
 
 		// from then on we can open the wallet
-		let wallet = Wallet::open(&datadir).await.context("failed to open")?;
+		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
 		wallet.require_chainsource_version()?;
 
 		if wallet.asp.is_none() {
@@ -178,23 +168,17 @@ impl Wallet {
 	}
 
 	/// Open existing wallet.
-	pub async fn open(datadir: &Path) -> anyhow::Result<Wallet> {
-		info!("Opening bark Wallet at {}", datadir.display());
-
-		let config = {
-			let path = datadir.join(CONFIG_FILE);
-			let bytes = fs::read(&path)
-				.with_context(|| format!("failed to read config file: {}", path.display()))?;
-			serde_json::from_slice::<Config>(&bytes).context("invalid config file")?
-		};
+	pub async fn open(mnemonic: &Mnemonic, db: db::Db) -> anyhow::Result<Wallet> {
+		let config = db.read_config()?.context("Wallet is not initialised")?;
+		let properties = db.read_properties()?.context("Wallet is not initialised")?;
 		trace!("Config: {:?}", config);
 
-		// read mnemonic file
-		let mnemonic_path = datadir.join("mnemonic");
-		let mnemonic_str = fs::read_to_string(&mnemonic_path)
-			.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
-		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 		let seed = mnemonic.to_seed("");
+		let vtxo_seed = Self::vtxo_seed(properties.network, mnemonic);
+
+		if properties.fingerprint != vtxo_seed.fingerprint(&SECP) {
+			bail!("incorrect mnemonic")
+		}
 
 		// create on-chain wallet
 		let chain_source = if let Some(ref url) = config.esplora_address {
@@ -218,20 +202,12 @@ impl Wallet {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
-		let connection_string = datadir.join(DB_FILE);
-		let db = db::Db::open(connection_string)?;
-
-		let onchain = onchain::Wallet::create(config.network, seed, db.clone(), chain_source)
+		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source)
 			.context("failed to create onchain wallet")?;
-
-
-		let vtxo_seed = {
-			let master = bip32::Xpriv::new_master(config.network, &seed).unwrap();
-			master.derive_priv(&SECP, &[350.into()]).unwrap()
-		};
 
 		let asp_uri = tonic::transport::Uri::from_str(&config.asp_address)
 			.context("invalid asp addr")?;
+
 		let scheme = asp_uri.scheme_str().expect("no scheme?");
 		if scheme != "http" && scheme != "https" {
 			bail!("ASP scheme must be either http or https");
@@ -258,8 +234,8 @@ impl Wallet {
 				let res = client.get_ark_info(rpc::Empty{})
 					.await.context("ark info request failed")?.into_inner();
 
-				if config.network != res.network.parse().context("invalid network from asp")? {
-					bail!("ASP is for net {} while we are on net {}", res.network, config.network);
+				if properties.network != res.network.parse().context("invalid network from asp")? {
+					bail!("ASP is for net {} while we are on net {}", res.network, properties.network);
 				}
 
 				let info = ArkInfo {
@@ -274,13 +250,16 @@ impl Wallet {
 			_ => None
 		};
 
-		let datadir = datadir.to_path_buf();
-
-		Ok(Wallet { config, datadir, db, onchain, vtxo_seed, asp })
+		Ok(Wallet { config, db, onchain, vtxo_seed, asp })
 	}
 
 	pub fn config(&self) -> &Config {
 		&self.config
+	}
+
+	pub fn properties(&self) -> anyhow::Result<WalletProperties> {
+		let properties = self.db.read_properties()?.context("Wallet is not initialised")?;
+		Ok(properties)
 	}
 
 	/// Change the config of this wallet.
@@ -291,7 +270,7 @@ impl Wallet {
 	}
 
 	pub fn persist_config(&self) -> anyhow::Result<()> {
-		Self::write_config(&self.config, &self.datadir)
+		self.db.write_config(&self.config)
 	}
 
 	fn require_asp(&self) -> anyhow::Result<AspConnection> {
@@ -389,6 +368,7 @@ impl Wallet {
 	// NB we will spend a little more on-chain to cover minrelayfee.
 	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<()> {
 		let asp = self.require_asp()?;
+		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		//TODO(stevenroose) impl key derivation
 		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
@@ -402,7 +382,7 @@ impl Wallet {
 		};
 
 		let onboard_amount = amount + ark::onboard::onboard_surplus();
-		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), self.config.network).unwrap();
+		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), properties.network).unwrap();
 
 		// We create the onboard tx template, but don't sign it yet.
 		let onboard_tx = self.onchain.prepare_tx(addr, onboard_amount)?;
@@ -412,6 +392,7 @@ impl Wallet {
 
 	pub async fn onboard_all(&mut self) -> anyhow::Result<()> {
 		let asp = self.require_asp()?;
+		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		//TODO(stevenroose) impl key derivation
 		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
@@ -426,7 +407,7 @@ impl Wallet {
 			amount: self.onchain_balance()
 		};
 
-		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), self.config.network).unwrap();
+		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), properties.network).unwrap();
 		let onboard_all_tx = self.onchain.prepare_send_all_tx(addr)?;
 
 		// Deduct fee from vtxo spec
