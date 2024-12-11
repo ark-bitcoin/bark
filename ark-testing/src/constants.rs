@@ -7,6 +7,7 @@ pub mod env {
 	pub const BITCOINRPC_TIMEOUT_SECS: &str = "BITCOINRPC_TIMEOUT_SECS";
 	pub const BARK_EXEC: &str = "BARK_EXEC";
 	pub const ASPD_EXEC: &str = "ASPD_EXEC";
+	pub const LIGHTNINGD_DOCKER_IMAGE: &str = "LIGHTNINGD_DOCKER_IMAGE";
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
 	pub const LIGHTNINGD_PLUGINS: &str = "LIGHTNINGD_PLUGINS";
 }

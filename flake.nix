@@ -39,13 +39,13 @@
 					};
 				});
 
-				clightning = pkgs.clightning.overrideAttrs (old: {
+				clightning = (if isDarwin then null else pkgs.clightning.overrideAttrs (old: {
 					version = lightningVersion;
 					src = pkgs.fetchurl {
 						url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
 						hash = "sha256-U54HNOreulhvCYeULyBbl/WHQ7F9WQnSCSMGg5WUAdg=";
 					};
-				});
+				}));
 				cln-grpc = pkgs.rustPlatform.buildRustPackage rec {
 					pname = "cln-grpc";
 					version = "99.99.99";
@@ -114,7 +114,8 @@
 					#"ROCKSDB_${target}_STATIC" = "true"; # NB do this for prod
 
 					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
-					LIGHTNINGD_EXEC = "${clightning}/bin/lightningd";
+					LIGHTNINGD_DOCKER_IMAGE = "elementsproject/lightningd:v${lightningVersion}";
+					LIGHTNINGD_EXEC = (if !isDarwin then "${clightning}/bin/lightningd" else null);
 					LIGHTNINGD_PLUGINS = "${cln-grpc}/bin/";
 				};
 			}

@@ -223,6 +223,7 @@ impl DaemonHelper for BitcoindHelper {
 			"-unsafesqlitesync",
 			"-debug=1",
 			"-debugexclude=libevent",
+			"-rpcauth=test:7859aeb9ce7176a4f5c53de996bd5d5b$af59d74cb4b2973fe92f421b3345a3c985d111a28cefa694ffa498bcc4212fdc",
 			&format!("-datadir={}", self.config.datadir.display().to_string()),
 			&format!("-txindex={}", self.config.txindex as u8),
 			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
