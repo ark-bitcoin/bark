@@ -36,7 +36,7 @@ impl OorPayment {
 
 	pub fn unsigned_transaction(&self) -> Transaction {
 		Transaction {
-			version: bitcoin::transaction::Version::TWO,
+			version: bitcoin::transaction::Version(3),
 			lock_time: bitcoin::absolute::LockTime::ZERO,
 			input: self.inputs.iter().map(|input| {
 				TxIn {

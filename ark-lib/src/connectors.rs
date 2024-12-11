@@ -130,7 +130,7 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 		}
 
 		let mut ret = Transaction {
-			version: bitcoin::transaction::Version::TWO,
+			version: bitcoin::transaction::Version(3),
 			lock_time: bitcoin::absolute::LockTime::ZERO,
 			input: vec![TxIn {
 				previous_output: self.prev,
