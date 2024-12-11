@@ -1,9 +1,24 @@
 
-contributing to bark
+Contributing to bark
 ====================
 
 
 # Dependencies
+
+## Nix (Recommended)
+
+You can use the [Nix](https://nix.dev/install-nix) package manager to prepare a development
+environment with all necessary dependencies already packaged. We provide a Nix Flake which is tested
+against Linux and macOS. You can use it with one of the following methods in the root directory of
+the bark repository:
+
+- Run `nix develop`
+  - You may need to use the following flag: 
+    - `--extra-experimental-features "nix-command flakes"`
+- Alternatively, use [direnv](https://github.com/direnv/direnv) to do this automatically:
+  - `echo "use flake" > .envrc`
+
+## Manual setup
 
 A good starting point for the dev dependencies for bark and aspd is to look
 at the [CI Dockerfile](./.woodpecker/images/tests/Dockerfile). The dependencies
@@ -12,8 +27,8 @@ for Debian should be listed there.
 (Below commands might be outdated, the Dockerfile linked above is the better
 reference.)
 
-```
-$ sudo apt-get install \
+```shell
+$ sudo apt install \
 	ca-certificates \
 	wget \
 	curl \
@@ -24,24 +39,36 @@ $ sudo apt-get install \
 	clang
 ```
 
-And install the Rust toolchain
+And install the Rust toolchain:
 
-```
+```shell
 $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 $ rustup toolchain install 1.77.2
 ```
 
-## Nix
 
-Alternatively, you can use the Nix package manager (should be available for Linux and OSX)
-to prepare a development environment with all necessary dependencies already packaged.
+# Running tests
 
-In our directory, call `nix develop`, or use [direnv](https://github.com/direnv/direnv)
-to do this automatically:
+If you're using the Nix flake then [just](https://github.com/casey/just?tab=readme-ov-file#cross-platform) 
+will come preinstalled. If you aren't using Nix then you must manually install `just` and ensure 
+that you have [bitcoind](https://bitcoincore.org/en/download/) and [clightning](https://github.com/ElementsProject/lightning) 
+in your `PATH` variable, alternatively you can set the following environmental variables:
+- `BITCOIND_EXEC`: e.g. `export BITCOIND_EXEC="${PATH_TO_BITCOIND}/bin/bitcoind"`
+- `LIGHTNINGD_EXEC`: e.g. `export LIGHTNINGD_EXEC="${PATH_TO_LIGHTNINGD}/bin/lightningd"`
 
+Unit and integration tests are configured in the [justfile](justfile) and can be run using the 
+following command:
+
+```shell
+$ just test
 ```
-$ echo "use flake" > .envrc
-```
+
+### macOS differences
+
+On macOS we use [Docker](https://www.docker.com/) for running Core Lightning. If Docker is not 
+installed then the lightning tests will fail. If you are not using the Nix Flake then you must set 
+environmental variable for the Docker image to pull:
+- `LIGHTNINGD_DOCKER_IMAGE`: e.g. `export LIGHTNINGD_DOCKER_IMAGE="elementsproject/lightningd:v24.08.2"`
 
 
 # Code hygiene
