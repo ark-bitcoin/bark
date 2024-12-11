@@ -7,6 +7,7 @@ pub extern crate lnurl as lnurllib;
 
 pub mod persist;
 
+use bark_json::cli::UtxoInfo;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
 
@@ -38,7 +39,7 @@ use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 use aspd_rpc_client as rpc;
@@ -130,9 +131,10 @@ struct AspConnection {
 }
 
 pub struct Wallet<P: BarkPersister> {
+	pub onchain: onchain::Wallet<P>,
+
 	config: Config,
 	db: P,
-	onchain: onchain::Wallet<P>,
 	vtxo_seed: bip32::Xpriv,
 	asp: Option<AspConnection>,
 }
@@ -166,7 +168,7 @@ impl <P>Wallet<P> where
 
 		// from then on we can open the wallet
 		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
-		wallet.require_chainsource_version()?;
+		wallet.onchain.require_chainsource_version()?;
 
 		if wallet.asp.is_none() {
 			bail!("Cannot create bark if asp is not available");
@@ -285,38 +287,6 @@ impl <P>Wallet<P> where
 		self.asp.clone().context("You should be connected to ASP to perform this action")
 	}
 
-	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
-		self.onchain.require_chainsource_version()
-	}
-
-	pub async fn chain_tip_height(&self) -> anyhow::Result<u32> {
-		self.onchain.tip().await
-	}
-
-	pub fn get_new_onchain_address(&mut self) -> anyhow::Result<Address> {
-		self.onchain.new_address()
-	}
-
-	/// Sync the onchain wallet, returns the balance.
-	pub async fn sync_onchain(&mut self) -> anyhow::Result<Amount> {
-		self.onchain.sync().await
-	}
-
-	/// Return the balance of the onchain wallet.
-	///
-	/// Make sure you sync before calling this method.
-	pub fn onchain_balance(&self) -> Amount {
-		self.onchain.balance()
-	}
-
-	pub fn onchain_utxos(&self) -> Vec<OutPoint> {
-		self.onchain.utxos()
-	}
-
-	pub async fn send_onchain(&mut self, addr: Address, amount: Amount) -> anyhow::Result<Txid> {
-		Ok(self.onchain.send_money(addr, amount).await?)
-	}
-
 	/// Retrieve the off-chain balance of the wallet.
 	///
 	/// Make sure you sync before calling this method.
@@ -412,7 +382,7 @@ impl <P>Wallet<P> where
 			exit_delta: asp.info.vtxo_exit_delta,
 			// amount is temporarily set to total balance but will
 			// have fees deducted after psbt construction
-			amount: self.onchain_balance()
+			amount: self.onchain.balance()
 		};
 
 		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), properties.network).unwrap();
@@ -557,7 +527,7 @@ impl <P>Wallet<P> where
 
 		let addr = match address {
 			Some(addr) => addr,
-			None => self.onchain.new_address()?,
+			None => self.onchain.address()?,
 		};
 
 		self.participate_round(move |_id, offb_fr| {

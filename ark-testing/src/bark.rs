@@ -117,6 +117,11 @@ impl Bark {
 			.require_network(Network::Regtest).unwrap()
 	}
 
+	pub async fn utxos(&self) -> Vec<json::UtxoInfo> {
+		let res = self.run(["onchain", "utxos", "--json"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
 	pub async fn vtxos(&self) -> Vec<json::VtxoInfo> {
 		let res = self.run(["vtxos", "--json"]).await;
 		serde_json::from_str(&res).expect("json error")
