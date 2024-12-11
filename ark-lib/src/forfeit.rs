@@ -30,8 +30,7 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 		],
 		output: vec![
 			TxOut {
-				// we gain the dust amount from the connector output
-				value: vtxo.amount() + fee::DUST,
+				value: vtxo.amount(),
 				script_pubkey: ScriptBuf::new_p2tr(&util::SECP, vtxo.spec().combined_pubkey(), None),
 			},
 			fee::dust_anchor(),
