@@ -349,7 +349,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			},
 			OnchainCommand::Utxos => {
 				w.onchain.sync().await.context("sync error")?;
-				
 				let utxos = w.onchain.utxos();
 
 				if cli.json {
