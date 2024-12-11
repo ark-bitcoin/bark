@@ -1,0 +1,9 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Just Test" type="JustRunConfiguration" factoryName="JustRunConfiguration">
+    <option name="envVariables" />
+    <option name="fileName" value="justfile" />
+    <option name="recipeArgs" />
+    <option name="recipeName" value="test" />
+    <method v="2" />
+  </configuration>
+</component>
