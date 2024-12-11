@@ -9,15 +9,15 @@ use rusqlite::Connection;
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::Amount;
 
-use crate::{exit::Exit, WalletProperties, Config, Vtxo, VtxoId, VtxoState};
+use crate::{exit::Exit, persist::BarkPersister, Config, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 #[derive(Clone)]
-pub struct Db {
+pub struct SqliteClient {
 	connection_string: PathBuf,
 }
 
-impl Db {
-	pub fn open(path: PathBuf) -> anyhow::Result<Db> {
+impl SqliteClient {
+	pub fn open(path: PathBuf) -> anyhow::Result<SqliteClient> {
 		info!("Opening database at {}", path.display());
 		let mut conn = rusqlite::Connection::open(&path)
 			.with_context(|| format!("Error connecting to database {}", path.display()))?;
@@ -32,8 +32,11 @@ impl Db {
 		rusqlite::Connection::open(&self.connection_string)
 			.with_context(|| format!("Error connecting to database {}", self.connection_string.display()))
 	}
+}
 
-	pub (crate) fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()> {
+
+impl BarkPersister for SqliteClient {
+	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
@@ -44,24 +47,22 @@ impl Db {
 		Ok(())
 	}
 
-	pub fn write_config(&self, config: &Config) -> anyhow::Result<()> {
+	fn write_config(&self, config: &Config) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::set_config(&conn, config)?;
 		Ok(())
 	}
-
-	pub fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
+	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
 		let conn = self.connect()?;
 		Ok(query::fetch_properties(&conn)?)
 	}
-
-	pub fn read_config(&self) -> anyhow::Result<Option<Config>> {
+	fn read_config(&self) -> anyhow::Result<Option<Config>> {
 		let conn = self.connect()?;
 		Ok(query::fetch_config(&conn)?)
 	}
 
 	/// Stores a vtxo in the database
-	pub fn store_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+	fn store_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		// TODO: Use a better name.In most cases we don't want new vtxo's to get the state
 		// ready
 		let mut conn = self.connect()?;
@@ -71,23 +72,35 @@ impl Db {
 		Ok(())
 	}
 
-	pub fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxo_by_id(&conn, id)
 	}
 
-	pub fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxos_by_state(&conn, VtxoState::Ready)
 	}
 
 	/// Get the soonest-expiring vtxos with total value at least `min_value`.
-	pub fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>> {
+	fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_expiring_vtxos(&conn, min_value)
 	}
 
-	pub fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	fn mark_vtxo_as_spent(&self, id: VtxoId) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::update_vtxo_state(&conn, id, VtxoState::Spent)
+	}
+
+	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
+		let conn = self.connect()?;
+		let state : Option<VtxoState> = query::get_vtxo_state(&conn, id)?;
+		let result = state.map(|s| s == VtxoState::Spent).unwrap_or(false);
+		Ok(result)
+	}
+
+	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction().context("Failed to start transaction")?;
 		let result = query::delete_vtxo(&tx, id);
@@ -96,44 +109,32 @@ impl Db {
 	}
 
 	/// Store the ongoing exit process.
-	pub fn store_exit(&self, exit: &Exit) -> anyhow::Result<()> {
+	fn store_exit(&self, exit: &Exit) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		query::store_exit(&tx, exit)?;
 		tx.commit()?;
 		Ok(())
 	}
-
 	/// Fetch the ongoing exit process.
-	pub fn fetch_exit(&self) -> anyhow::Result<Option<Exit>> {
+	fn fetch_exit(&self) -> anyhow::Result<Option<Exit>> {
 		let conn = self.connect()?;
 		query::fetch_exit(&conn)
 	}
 
-	pub fn get_last_ark_sync_height(&self) -> anyhow::Result<u32> {
+	fn get_last_ark_sync_height(&self) -> anyhow::Result<u32> {
 		let conn = self.connect()?;
 		query::get_last_ark_sync_height(&conn)
 	}
 
-	pub fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()> {
+	fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_last_ark_sync_height(&conn, height)
 	}
-
-	pub fn mark_vtxo_as_spent(&self, id: VtxoId) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::update_vtxo_state(&conn, id, VtxoState::Spent)
-	}
-
-	pub fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
-		let conn = self.connect()?;
-		let state : Option<VtxoState> = query::get_vtxo_state(&conn, id)?;
-		let result = state.map(|s| s == VtxoState::Spent).unwrap_or(false);
-		Ok(result)
-	}
 }
 
-impl WalletPersister for Db {
+
+impl WalletPersister for SqliteClient {
 	type Error = rusqlite::Error;
 
 	fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
@@ -238,7 +239,7 @@ mod test {
 		};
 
 		let (cs, conn) = in_memory();
-		let db = Db::open(cs).unwrap();
+		let db = SqliteClient::open(cs).unwrap();
 		db.store_vtxo(&vtxo_1).unwrap();
 		db.store_vtxo(&vtxo_2).unwrap();
 
@@ -286,7 +287,7 @@ mod test {
 	fn test_create_wallet_then_load() {
 		let (connection_string, conn) = in_memory();
 
-		let mut db = Db::open(connection_string).unwrap();
+		let mut db = SqliteClient::open(connection_string).unwrap();
 		let network = bitcoin::Network::Testnet;
 
 		let seed = bip39::Mnemonic::generate(12).unwrap().to_seed("");
