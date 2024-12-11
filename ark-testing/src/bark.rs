@@ -6,6 +6,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::Duration;
 
+use bark::UtxoInfo;
 use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::{Amount, Network, OutPoint};
 use serde_json;
@@ -117,7 +118,7 @@ impl Bark {
 			.require_network(Network::Regtest).unwrap()
 	}
 
-	pub async fn utxos(&self) -> Vec<json::UtxoInfo> {
+	pub async fn utxos(&self) -> Vec<UtxoInfo> {
 		let res = self.run(["onchain", "utxos", "--json"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}

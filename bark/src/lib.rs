@@ -7,13 +7,13 @@ pub extern crate lnurl as lnurllib;
 
 pub mod persist;
 
-use bark_json::cli::UtxoInfo;
+use bdk_wallet::chain::ConfirmationTime;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
 
 mod exit;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
-use bdk_wallet::WalletPersister;
+use bdk_wallet::{LocalOutput, WalletPersister};
 use bip39::Mnemonic;
 use bitcoin::bip32::{Fingerprint, Xpriv};
 use bitcoin::hex::DisplayHex;
@@ -49,6 +49,27 @@ use crate::vtxo_state::VtxoState;
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UtxoInfo {
+	pub outpoint: OutPoint,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
+	pub confirmation_height: Option<u32>
+}
+
+impl From<LocalOutput> for UtxoInfo {
+	fn from(value: LocalOutput) -> Self {
+		UtxoInfo {
+			outpoint: value.outpoint,
+			amount: value.txout.value,
+			confirmation_height: match value.confirmation_time {
+				ConfirmationTime::Confirmed { height, .. } => Some(height),
+				_ => None
+			}
+		}
+	}
 }
 
 #[derive(Clone)]

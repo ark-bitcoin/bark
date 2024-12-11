@@ -150,6 +150,7 @@ dependencies = [
  "aspd-log",
  "aspd-rpc-client",
  "async-trait",
+ "bark-client",
  "bark-cln",
  "bark-json",
  "bitcoin 0.32.2",

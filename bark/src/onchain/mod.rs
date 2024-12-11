@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use ark::fee;
 use ark::util::TransactionExt;
-use bdk_wallet::chain::{ChainPosition, ConfirmationTime};
+use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering, WalletPersister};
 use bdk_esplora::EsploraAsyncExt;
 use bitcoin::{
@@ -138,14 +138,7 @@ impl <P>Wallet<P> where
 	}
 
 	pub fn utxos(&self) -> Vec<UtxoInfo> {
-		self.wallet.list_unspent().map(|o| UtxoInfo {
-			outpoint: o.outpoint,
-			amount: o.txout.value,
-			confirmation_height: match o.confirmation_time {
-				ConfirmationTime::Confirmed { height, .. } => Some(height),
-				_ => None
-			}
-		}).collect()
+		self.wallet.list_unspent().map(UtxoInfo::from).collect()
 	}
 
 	/// Fee rate to use for regular txs like onboards.

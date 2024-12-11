@@ -12,6 +12,7 @@ aspd-log = { path = "../aspd-log" }
 aspd-rpc-client = { path = "../aspd-rpc-client" }
 bark-cln = { path = "../bark-cln"}
 bark-json = { path = "../bark-json"}
+bark-client = { path = "../bark" } 
 
 bitcoincore-rpc = "0.19.0"
 portpicker = "0.1.1"
