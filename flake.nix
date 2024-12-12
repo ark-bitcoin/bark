@@ -104,6 +104,7 @@
 					] ++ (if isDarwin then [
 						pkgs.darwin.apple_sdk.frameworks.Security
 						pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+						pkgs.docker
 					] else []);
 
 					LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
@@ -114,8 +115,10 @@
 					#"ROCKSDB_${target}_STATIC" = "true"; # NB do this for prod
 
 					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
-					LIGHTNINGD_DOCKER_IMAGE = "elementsproject/lightningd:v${lightningVersion}";
-					LIGHTNINGD_EXEC = (if !isDarwin then "${clightning}/bin/lightningd" else null);
+
+					# Use Docker for Core Lightning on macOS by default instead of a local daemon
+					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
+					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "elementsproject/lightningd:v${lightningVersion}" else null);
 					LIGHTNINGD_PLUGINS = "${cln-grpc}/bin/";
 				};
 			}
