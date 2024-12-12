@@ -4,6 +4,7 @@ extern crate ark_testing;
 
 use ark_testing::daemon::bitcoind::BitcoindConfig;
 use ark_testing::{context::TestContext, Bark, Bitcoind};
+use bark_json::cli::VtxoType;
 
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
@@ -162,8 +163,18 @@ async fn exit_oor() {
 	let bark2_pubkey = bark2.vtxo_pubkey().await;
 	bark1.send_oor(bark2_pubkey, Amount::from_sat(100_000)).await;
 
-	// Bark2 performs a unilateral exit
+	// By calling bark2 vtxos we ensure the wallet is synced
+	// This ensures bark2 knows the vtxo exists
+	let vtxos = bark2.vtxos().await;
+	assert_eq!(vtxos.len(), 1, "We have received one vtxo");
+	assert_eq!(vtxos[0].vtxo_type, VtxoType::Oor);
+
+	// We stop the asp
 	aspd.stop().await.unwrap();
+
+	// Make bark2 exit and check the balance
+	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
 	progress_exit(&bitcoind, &bark2).await;
-	assert_eq!(Amount::from_sat(98_127), bark1.onchain_balance().await)
+	assert_eq!(bark2.onchain_balance().await, Amount::from_sat(1_087_581));
 }
+
