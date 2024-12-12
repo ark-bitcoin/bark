@@ -12,7 +12,7 @@ pub const SIGNED_FORFEIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(0);
 
 pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 	Transaction {
-		version: bitcoin::transaction::Version::TWO,
+		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
 		input: vec![
 			TxIn {
@@ -30,8 +30,7 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 		],
 		output: vec![
 			TxOut {
-				// we gain the dust amount from the connector output
-				value: vtxo.amount() + fee::DUST,
+				value: vtxo.amount(),
 				script_pubkey: ScriptBuf::new_p2tr(&util::SECP, vtxo.spec().combined_pubkey(), None),
 			},
 			fee::dust_anchor(),
