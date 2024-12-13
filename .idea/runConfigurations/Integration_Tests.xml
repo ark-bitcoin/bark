@@ -19,6 +19,7 @@
     <method v="2">
       <option name="RunConfigurationTask" enabled="false" run_configuration_name="Build Workspace" run_configuration_type="CargoCommandRunConfiguration" />
       <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      <option name="RunConfigurationTask" enabled="true" run_configuration_name="Just Docker Pull" run_configuration_type="JustRunConfiguration" />
     </method>
   </configuration>
 </component>

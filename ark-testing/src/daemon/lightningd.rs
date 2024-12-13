@@ -17,20 +17,64 @@ use bark_cln::grpc;
 use bark_cln::grpc::node_client::NodeClient;
 
 use crate::Bitcoind;
-use crate::constants::env::{LIGHTNINGD_EXEC, LIGHTNINGD_PLUGINS};
+use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
+use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGINS};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
 pub type Lightningd = Daemon<LightningDHelper>;
 
 impl Lightningd {
-	pub fn exec() -> PathBuf {
-		if let Ok(e) = std::env::var(&LIGHTNINGD_EXEC) {
-			resolve_path(e).expect("failed to resolve LIGHTNINGD_EXEC")
-		} else if let Ok(e) = which::which("lightningd") {
-			e.into()
+	pub fn command(config: &LightningdConfig, grpc_port: u16) -> anyhow::Result<Command> {
+		let (docker_exec, docker_image) = Self::docker();
+		let lightningd_exec = Self::exec();
+		if docker_exec.is_some() && docker_image.is_some() {
+			let uid = users::get_current_uid();
+			let gid = users::get_current_gid();
+			let mut cmd = Command::new(docker_exec.unwrap());
+			cmd.args([
+				"run",
+				"--rm",
+				"--mount", &format!("type=bind,source={},target=/data/.lightning", &config.lightning_dir.to_string_lossy()),
+				"--mount", &format!("type=bind,source={},target=/data/.bitcoin", &config.bitcoin_dir.to_string_lossy()),
+				"--user", &format!("{}:{}", uid, gid),
+				"--net=host",
+				&docker_image.unwrap(),
+				"--network", &config.network,
+				"--grpc-port", &grpc_port.to_string(),
+				"--bitcoin-datadir=/data/.bitcoin",
+				"--lightning-dir=/data/.lightning"
+			]);
+			Ok(cmd)
+		} else if lightningd_exec.is_some() {
+			let mut cmd = Command::new(lightningd_exec.unwrap());
+			cmd.args([
+				"--grpc-port", &grpc_port.to_string(),
+				"--lightning-dir", &config.lightning_dir.to_string_lossy(),
+				&format!("--bitcoin-datadir={}", &config.bitcoin_dir.to_string_lossy()),
+			]);
+			Ok(cmd)
 		} else {
-			panic!("LIGHTNIGND_EXEC env not set")
+			panic!("Docker and lightningd aren't installed and/or configured correctly. Please ensure they are in your PATH variable")
+		}
+	}
+
+	/// Tries to retrieve the path to a docker executable as well as the docker image to use for
+	/// Core Lightning.
+	///
+	/// # Returns
+	/// - `Option<PathBuf>` - An absolute path to the docker executable, if any
+	/// - `Option<String>` - The docker image to be used when initializing Core Lightning, if any
+	fn docker() -> (Option<PathBuf>, Option<String>) {
+		(which::which("docker").ok(), env::var(&LIGHTNINGD_DOCKER_IMAGE).ok())
+	}
+
+	/// Tries to retrieve an absolute path to the Core Lightning daemon `lightningd`
+	fn exec() -> Option<PathBuf> {
+		if let Ok(e) = env::var(&LIGHTNINGD_EXEC) {
+			Some(resolve_path(e).expect("failed to resolve LIGHTNINGD_EXEC"))
+		} else {
+			which::which("lightningd").ok()
 		}
 	}
 }
@@ -96,8 +140,9 @@ impl LightningDHelper {
 			.expect("failed to open cln config file");
 
 		writeln!(file, "network={}", self.config.network).unwrap();
-		writeln!(file, "bitcoin-datadir={}", self.config.bitcoin_dir.to_string_lossy()).unwrap();
 		writeln!(file, "bitcoin-rpcport={}", self.config.bitcoin_rpcport).unwrap();
+		writeln!(file, "bitcoin-rpcuser={}", BITCOINRPC_TEST_USER).unwrap();
+		writeln!(file, "bitcoin-rpcpassword={}", BITCOINRPC_TEST_PASSWORD).unwrap();
 		if let Ok(dir) = env::var(LIGHTNINGD_PLUGINS) {
 			trace!("Adding plugin-dir to lightningd: {}", dir);
 			writeln!(file, "plugin-dir={}", dir).unwrap();
@@ -209,15 +254,8 @@ impl DaemonHelper for LightningDHelper {
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		let mut cmd = Command::new(Lightningd::exec());
-		cmd
-			.arg("--lightning-dir")
-			.arg(&self.config.lightning_dir)
-			.arg("--grpc-port")
-			.arg(format!("{}", self.state.lock().await.grpc_port.unwrap()));
-		Ok(cmd)
+		Lightningd::command(&self.config, self.state.lock().await.grpc_port.unwrap())
 	}
-
 }
 
 impl Lightningd {

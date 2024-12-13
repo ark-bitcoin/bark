@@ -39,13 +39,13 @@
 					};
 				});
 
-				clightning = pkgs.clightning.overrideAttrs (old: {
+				clightning = (if isDarwin then null else pkgs.clightning.overrideAttrs (old: {
 					version = lightningVersion;
 					src = pkgs.fetchurl {
 						url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
 						hash = "sha256-U54HNOreulhvCYeULyBbl/WHQ7F9WQnSCSMGg5WUAdg=";
 					};
-				});
+				}));
 				cln-grpc = pkgs.rustPlatform.buildRustPackage rec {
 					pname = "cln-grpc";
 					version = "99.99.99";
@@ -104,6 +104,7 @@
 					] ++ (if isDarwin then [
 						pkgs.darwin.apple_sdk.frameworks.Security
 						pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+						pkgs.docker
 					] else []);
 
 					LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
@@ -114,7 +115,10 @@
 					#"ROCKSDB_${target}_STATIC" = "true"; # NB do this for prod
 
 					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
-					LIGHTNINGD_EXEC = "${clightning}/bin/lightningd";
+
+					# Use Docker for Core Lightning on macOS by default instead of a local daemon
+					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
+					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "elementsproject/lightningd:v${lightningVersion}" else null);
 					LIGHTNINGD_PLUGINS = "${cln-grpc}/bin/";
 				};
 			}

@@ -17,12 +17,15 @@ checks: prechecks check
 build:
 	cargo build --workspace
 
+docker-pull:
+	if [ -n "${LIGHTNINGD_DOCKER_IMAGE}" ]; then docker pull "$LIGHTNINGD_DOCKER_IMAGE"; fi
+
 alias unit := test-unit
 test-unit TEST="":
 	cargo test --workspace --exclude ark-testing {{TEST}}
 
 alias int := test-integration
-test-integration TEST="": build
+test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
 
 test: test-unit test-integration
