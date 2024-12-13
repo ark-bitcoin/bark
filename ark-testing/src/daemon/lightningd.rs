@@ -29,17 +29,21 @@ impl Lightningd {
 		let (docker_exec, docker_image) = Self::docker();
 		let lightningd_exec = Self::exec();
 		if docker_exec.is_some() && docker_image.is_some() {
+			let uid = users::get_current_uid();
+			let gid = users::get_current_gid();
 			let mut cmd = Command::new(docker_exec.unwrap());
 			cmd.args([
 				"run",
 				"--rm",
-				"--mount", &format!("type=bind,source={},target=/root/.lightning", &config.lightning_dir.to_string_lossy()),
-				"--mount", &format!("type=bind,source={},target=/root/.bitcoin", &config.bitcoin_dir.to_string_lossy()),
+				"--mount", &format!("type=bind,source={},target=/data/.lightning", &config.lightning_dir.to_string_lossy()),
+				"--mount", &format!("type=bind,source={},target=/data/.bitcoin", &config.bitcoin_dir.to_string_lossy()),
+				"--user", &format!("{}:{}", uid, gid),
 				"--net=host",
 				&docker_image.unwrap(),
 				"--network", &config.network,
 				"--grpc-port", &grpc_port.to_string(),
-				"--bitcoin-datadir=/root/.bitcoin",
+				"--bitcoin-datadir=/data/.bitcoin",
+				"--lightning-dir=/data/.lightning"
 			]);
 			Ok(cmd)
 		} else if lightningd_exec.is_some() {
