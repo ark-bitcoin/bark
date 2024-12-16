@@ -1,7 +1,7 @@
 
 mod wallet;
 
-use std::io;
+use std::{io, iter};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -13,7 +13,6 @@ use rocksdb::{
 	BoundColumnFamily, Direction, FlushOptions, IteratorMode, OptimisticTransactionOptions,
 	WriteBatchWithTransaction, WriteOptions,
 };
-
 
 use ark::{BlockHeight, VtxoId, Vtxo};
 use ark::tree::signed::SignedVtxoTree;
@@ -277,6 +276,26 @@ impl Db {
 		}
 
 		Ok(ret)
+	}
+
+	/// Get an iterator that yields each round in the database.
+	///
+	/// No particular order is guaranteed.
+	pub fn fetch_all_rounds(&self) -> impl Iterator<Item = anyhow::Result<StoredRound>> + '_ {
+		let mut iter = self.db.iterator_cf(&self.cf_round(), IteratorMode::Start);
+		iter::from_fn(move || {
+			if let Some(res) = iter.next() {
+				match res.context("dn round iter error") {
+					Ok((_k, v)) => {
+						let round = StoredRound::decode(&v).expect("corrupt db");
+						Some(Ok(round))
+					},
+					Err(e) => Some(Err(e)),
+				}
+			} else {
+				None
+			}
+		})
 	}
 
 	pub fn store_forfeit_vtxo(&self, vtxo: ForfeitVtxo) -> anyhow::Result<()> {

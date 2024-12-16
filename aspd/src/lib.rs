@@ -14,6 +14,7 @@ mod sweep_rounds;
 mod rpc;
 mod rpcserver;
 mod round;
+mod txindex;
 
 use std::fs;
 use std::net::SocketAddr;
@@ -31,7 +32,7 @@ use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 
 use tokio::time::MissedTickBehavior;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
@@ -39,6 +40,7 @@ use ark::{musig, BlockHeight, Vtxo};
 use ark::lightning::Bolt11Payment;
 
 use crate::round::{RoundEvent, RoundInput};
+use crate::txindex::TxIndex;
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -185,6 +187,7 @@ pub struct App {
 	asp_key: Keypair,
 	wallet: Mutex<bdk_wallet::Wallet>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
+	txindex: TxIndex,
 
 	rounds: Option<RoundHandle>,
 	sendpay_updates: Option<SendpayHandle>,
@@ -295,17 +298,57 @@ impl App {
 			&config.bitcoind_url,
 			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
 		).context("failed to create bitcoind rpc client")?;
+		let bitcoind2 = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
+			&config.bitcoind_url,
+			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
+		).context("failed to create bitcoind rpc client")?;
 
 		Ok(Arc::new(App {
-			config: config,
-			db: db,
-			asp_key: asp_key,
 			wallet: Mutex::new(wallet),
-			bitcoind: bitcoind,
+			txindex: TxIndex::start(bitcoind2, Duration::from_secs(30)),
 			rounds: None,
-			sendpay_updates: None,
 			trigger_round_sweep_tx: None,
+			sendpay_updates: None,
+			config, db, asp_key, bitcoind,
 		}))
+	}
+
+	/// Load all relevant txs from the database into the tx index.
+	pub async fn fill_txindex(self: &Arc<Self>) -> anyhow::Result<()> {
+		let (done_tx, done_rx) = oneshot::channel();
+
+		let s = self.clone();
+		tokio::task::spawn_blocking(move || {
+			// Load all round txs into the txindex.
+			let s2 = s.clone();
+			for res in s.db.fetch_all_rounds() {
+				match res {
+					Ok(round) => {
+						let s3 = s2.clone();
+						tokio::spawn(async move {
+							trace!("Adding txs for round {} to txindex", round.id());
+							s3.txindex.register(round.tx).await;
+							s3.txindex.register_batch(round.signed_tree.all_signed_txs()).await;
+						});
+					},
+					Err(e) => {
+						let _ = done_tx.send(Err(e));
+						return;
+					},
+				};
+			}
+			let _ = done_tx.send(Ok(()));
+		});
+
+		done_rx.await.expect("txindex fill thread panicked")?;
+		Ok(())
+	}
+
+	/// Perform all startup processes.
+	async fn startup(self: &Arc<Self>) -> anyhow::Result<()> {
+		// Start loading txindex.
+		self.fill_txindex().await.context("error filling txindex")?;
+		Ok(())
 	}
 
 	pub async fn start(self: &mut Arc<Self>) -> anyhow::Result<()> {
@@ -320,6 +363,11 @@ impl App {
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
 		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
+
+		// First perform all startup tasks...
+		info!("Starting startup tasks...");
+		self.startup().await.context("startup error")?;
+		info!("Startup tasks done");
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
