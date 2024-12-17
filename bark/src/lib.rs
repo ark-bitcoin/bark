@@ -47,7 +47,7 @@ use tokio_stream::StreamExt;
 
 use ark::{musig, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
+use ark::tree::signed::{SignedVtxoTreeSpec, VtxoTreeSpec};
 
 use crate::vtxo_state::VtxoState;
 
@@ -489,7 +489,7 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	fn build_vtxo(&self, vtxos: &SignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
+	fn build_vtxo(&self, vtxos: &SignedVtxoTreeSpec, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
 		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
 		let dest = &vtxos.spec.vtxos[leaf_idx];
 		let vtxo = Vtxo::Round {
@@ -532,7 +532,7 @@ impl <P>Wallet<P> where
 			let req = rpc::RoundId { txid: txid.to_byte_array().to_vec() };
 			let round = asp.client.get_round(req).await?.into_inner();
 
-			let tree = SignedVtxoTree::decode(&round.signed_vtxos)
+			let tree = SignedVtxoTreeSpec::decode(&round.signed_vtxos)
 				.context("invalid signed vtxo tree from asp")?;
 
 			for (idx, dest) in tree.spec.vtxos.iter().enumerate() {

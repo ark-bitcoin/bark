@@ -22,6 +22,7 @@ use crate::tree::{self, Tree};
 pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
 
+/// All the information that uniquely specifies a VTXO tree before it has been signed.
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct VtxoTreeSpec {
 	pub vtxos: Vec<VtxoRequest>,
@@ -270,7 +271,7 @@ impl VtxoTreeSpec {
 
 /// A VTXO tree ready to be signed.
 ///
-/// This type containts various cached values required to sign the tree.
+/// This type contains various cached values required to sign the tree.
 #[derive(Debug, Clone)]
 pub struct UnsignedVtxoTree {
 	pub spec: VtxoTreeSpec,
@@ -578,8 +579,8 @@ impl UnsignedVtxoTree {
 	pub fn into_signed_tree(
 		self,
 		signatures: Vec<schnorr::Signature>,
-	) -> SignedVtxoTree {
-		SignedVtxoTree {
+	) -> SignedVtxoTreeSpec {
+		SignedVtxoTreeSpec {
 			spec: self.spec,
 			utxo: self.utxo,
 			cosign_sigs: signatures,
@@ -587,6 +588,7 @@ impl UnsignedVtxoTree {
 	}
 }
 
+/// Error returned from cosigning a VTXO tree.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CosignSignatureError {
 	MissingSignature { pk: PublicKey },
@@ -619,22 +621,23 @@ impl fmt::Display for CosignSignatureError {
 
 impl std::error::Error for CosignSignatureError {}
 
+/// All the information needed to uniquely specify a fully signed VTXO tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignedVtxoTree {
+pub struct SignedVtxoTreeSpec {
 	pub spec: VtxoTreeSpec,
 	pub utxo: OutPoint,
 	/// The signatures for the txs from leaves to root.
 	pub cosign_sigs: Vec<schnorr::Signature>,
 }
 
-impl SignedVtxoTree {
+impl SignedVtxoTreeSpec {
 	/// Signatures expected ordered from leaves to root.
 	pub fn new(
 		spec: VtxoTreeSpec,
 		utxo: OutPoint,
 		signatures: Vec<schnorr::Signature>,
-	) -> SignedVtxoTree {
-		SignedVtxoTree { spec, utxo, cosign_sigs: signatures }
+	) -> SignedVtxoTreeSpec {
+		SignedVtxoTreeSpec { spec, utxo, cosign_sigs: signatures }
 	}
 
 	pub fn encode(&self) -> Vec<u8> {

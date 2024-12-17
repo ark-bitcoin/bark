@@ -17,7 +17,7 @@ use rocksdb::{
 };
 
 use ark::{BlockHeight, VtxoId, Vtxo};
-use ark::tree::signed::SignedVtxoTree;
+use ark::tree::signed::SignedVtxoTreeSpec;
 
 use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
@@ -97,7 +97,7 @@ impl RoundExpiryKey {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoredRound {
 	pub tx: Transaction,
-	pub signed_tree: SignedVtxoTree,
+	pub signed_tree: SignedVtxoTreeSpec,
 	pub nb_input_vtxos: u64,
 }
 
@@ -192,7 +192,7 @@ impl Db {
 	pub fn store_round(
 		&self,
 		round_tx: Transaction,
-		vtxos: SignedVtxoTree,
+		vtxos: SignedVtxoTreeSpec,
 		nb_input_vtxos: usize,
 	) -> anyhow::Result<()> {
 		let round = StoredRound {
