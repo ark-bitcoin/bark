@@ -30,8 +30,6 @@ const CF_VTXOS: &str = "vtxos";
 const CF_ROUND: &str = "rounds";
 /// set [expiry][txid]
 const CF_ROUND_EXPIRY: &str = "rounds_by_expiry";
-/// set [outpoint]
-const CF_OOR_COSIGNED: &str = "oor_cosign";
 /// set [pubkey][vtxo]
 const CF_OOR_MAILBOX: &str = "oor_mailbox";
 /// map Txid -> Transaction
@@ -143,7 +141,6 @@ impl Db {
 			CF_VTXOS,
 			CF_ROUND,
 			CF_ROUND_EXPIRY,
-			CF_OOR_COSIGNED,
 			CF_OOR_MAILBOX,
 			CF_BDK_CHANGESETS,
 			CF_PENDING_SWEEPS,
@@ -164,10 +161,6 @@ impl Db {
 
 	fn cf_round_expiry<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
 		self.db.cf_handle(CF_ROUND_EXPIRY).expect("db missing round expiry cf")
-	}
-
-	fn cf_oor_cosigned<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_OOR_COSIGNED).expect("db missing oor cosigned cf")
 	}
 
 	fn cf_oor_mailbox<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
@@ -372,24 +365,43 @@ impl Db {
 	/// and are now correctly marked as such.
 	/// Returns [Some] for the first vtxo that was already signed.
 	///
-	/// This is atomic so that a user can't try to make us double sign by firing
-	/// multiple cosign requests at the same time.
-	pub fn atomic_check_mark_oors_cosigned(
+	/// Also stores the new OOR vtxos atomically.
+	pub fn check_set_vtxo_oor_spent(
 		&self,
-		ids: impl Iterator<Item = VtxoId> + Clone,
+		spent_ids: &[VtxoId],
+		spending_tx: Txid,
+		new_vtxos: &[Vtxo],
 	) -> anyhow::Result<Option<VtxoId>> {
-		let opts = WriteOptions::default();
-		let oopts = OptimisticTransactionOptions::new();
+		let mut opts = WriteOptions::default();
+		opts.set_sync(true);
+		let mut oopts = OptimisticTransactionOptions::new();
+		oopts.set_snapshot(false);
 
 		//TODO(stevenroose) consider writing a macro for this sort of block
+		let cf = self.cf_vtxos();
 		loop {
 			let tx = self.db.transaction_opt(&opts, &oopts);
 
-			for id in ids.clone() {
-				if tx.get_cf(&self.cf_oor_cosigned(), id)?.is_some() {
-					tx.rollback()?;
-					return Ok(Some(id));
+			for id in spent_ids {
+				let encoded = tx.get_cf(&self.cf_vtxos(), id)?.context("vtxo not found")?;
+				let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
+				if !vtxo_state.is_spendable() {
+					return Ok(Some(*id));
 				}
+				vtxo_state.oor_spent = Some(spending_tx);
+				tx.put_cf(&self.cf_vtxos(), id, vtxo_state.encode())?;
+			}
+
+			for vtxo in new_vtxos {
+				if !vtxo.is_oor() {
+					bail!("vtxo {} is not an OOR vtxo", vtxo.id());
+				}
+				let state = VtxoState {
+					vtxo: vtxo.clone(),
+					oor_spent: None,
+					forfeit_sigs: None,
+				};
+				tx.put_cf(&cf, vtxo.id(), state.encode())?;
 			}
 
 			match tx.commit() {

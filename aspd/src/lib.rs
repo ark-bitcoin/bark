@@ -535,11 +535,13 @@ impl App {
 		payment: &ark::oor::OorPayment,
 		user_nonces: &[musig::MusigPubNonce],
 	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
+		let txid = payment.txid();
 		let ids = payment.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-		if let Some(dup) = self.db.atomic_check_mark_oors_cosigned(ids.iter().copied())? {
-			bail!("attempted to double sign OOR for vtxo {}", dup)
+		let new_vtxos = payment.unsigned_output_vtxos();
+		if let Some(dup) = self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos)? {
+			bail!("attempted to sign OOR for already spent vtxo {}", dup)
 		} else {
-			info!("Cosigning OOR tx {} with inputs: {:?}", payment.txid(), ids);
+			info!("Cosigning OOR tx {} with inputs: {:?}", txid, ids);
 			let (nonces, sigs) = payment.sign_asp(&self.asp_key, &user_nonces);
 			Ok((nonces, sigs))
 		}
