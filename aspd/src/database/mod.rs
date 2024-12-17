@@ -26,6 +26,8 @@ use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
 /// mapping VtxoId -> ForfeitVtxo
 const CF_FORFEIT_VTXO: &str = "forfeited_vtxos";
+/// mapping VtxoId -> VtxoState
+const CF_VTXOS: &str = "vtxos";
 /// mapping Txid -> serialized StoredRound
 const CF_ROUND: &str = "rounds";
 /// set [expiry][txid]
@@ -95,6 +97,33 @@ impl RoundExpiryKey {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VtxoState {
+	/// The raw vtxo encoded.
+	pub vtxo: Vtxo,
+
+	/// If this vtxo was spent in an OOR tx, the txid of the OOR tx.
+	pub oor_spent: Option<Txid>,
+	/// The forfeit tx signatures of the user if the vtxo was forfeited.
+	pub forfeit_sigs: Option<Vec<schnorr::Signature>>,
+}
+
+impl VtxoState {
+	pub fn is_spendable(&self) -> bool {
+		self.oor_spent.is_none() && self.forfeit_sigs.is_none()
+	}
+
+	fn encode(&self) -> Vec<u8> {
+		let mut buf = Vec::new();
+		ciborium::into_writer(self, &mut buf).unwrap();
+		buf
+	}
+
+	fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
+		ciborium::from_reader(bytes)
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoredRound {
 	pub tx: Transaction,
 	pub signed_tree: SignedVtxoTreeSpec,
@@ -133,6 +162,7 @@ impl Db {
 
 		let cfs = [
 			CF_FORFEIT_VTXO,
+			CF_VTXOS,
 			CF_ROUND,
 			CF_ROUND_EXPIRY,
 			CF_OOR_COSIGNED,
@@ -148,6 +178,10 @@ impl Db {
 
 	fn cf_forfeit_vtxo<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
 		self.db.cf_handle(CF_FORFEIT_VTXO).expect("db missing forfeit vtxo cf")
+	}
+
+	fn cf_vtxos<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
+		self.db.cf_handle(CF_VTXOS).expect("db missing vtxos cf")
 	}
 
 	fn cf_round<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
@@ -197,12 +231,12 @@ impl Db {
 	) -> anyhow::Result<()> {
 		let round = StoredRound {
 			tx: round_tx,
-			signed_tree: vtxos.spec,
+			signed_tree: vtxos.spec.clone(),
 			nb_input_vtxos: nb_input_vtxos as u64,
 		};
-		let id = round.id();
+		let round_id = round.id();
 		let encoded_round = round.encode();
-		let expiry_key = RoundExpiryKey::new(round.signed_tree.spec.expiry_height, id);
+		let expiry_key = RoundExpiryKey::new(round.signed_tree.spec.expiry_height, round_id);
 
 		let mut opts = WriteOptions::default();
 		opts.set_sync(true);
@@ -212,8 +246,19 @@ impl Db {
 		//TODO(stevenroose) consider writing a macro for this sort of block
 		loop {
 			let tx = self.db.transaction_opt(&opts, &oopts);
-			tx.put_cf(&self.cf_round(), id, &encoded_round)?;
+			tx.put_cf(&self.cf_round(), round_id, &encoded_round)?;
 			tx.put_cf(&self.cf_round_expiry(), expiry_key.encode(), [])?;
+
+			// Store all vtxos created in this round.
+			for vtxo in vtxos.all_vtxos() {
+				let vtxo_id = vtxo.id();
+				let vtxo_state = VtxoState {
+					vtxo: vtxo,
+					oor_spent: None,
+					forfeit_sigs: None,
+				};
+				tx.put_cf(&self.cf_vtxos(), vtxo_id, vtxo_state.encode())?;
+			}
 
 			match tx.commit() {
 				Ok(()) => break,
@@ -226,7 +271,7 @@ impl Db {
 		let mut opts = FlushOptions::default();
 		opts.set_wait(true); //TODO(stevenroose) is this needed?
 		self.db.flush_cfs_opt(
-			&[&self.cf_round(), &self.cf_forfeit_vtxo(), &self.cf_round_expiry()], &opts,
+			&[&self.cf_round(), &self.cf_round_expiry(), &self.cf_vtxos()], &opts,
 		).context("error flushing db")?;
 
 		Ok(())
