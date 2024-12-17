@@ -3,6 +3,7 @@
 extern crate ark_testing;
 
 use ark_testing::daemon::bitcoind::BitcoindConfig;
+use ark_testing::setup::setup_full;
 use ark_testing::{context::TestContext, Bark, Bitcoind};
 use bark_json::cli::VtxoType;
 
@@ -178,3 +179,38 @@ async fn exit_oor() {
 	assert_eq!(bark2.onchain_balance().await, Amount::from_sat(1_087_581));
 }
 
+#[tokio::test]
+async fn double_exit_call() {
+	let (_ctx, bitcoind, _aspd, bark1, bark2) = setup_full("bark/double_exit_call").await;
+
+	progress_exit(&bitcoind, &bark1).await;
+	assert_eq!(bark1.onchain_balance().await, Amount::from_sat(1_301_727));
+
+	let movements = bark1.list_movements().await;
+	assert_eq!(movements.len(), 5);
+
+	// check that all current vtxo were put in the movement
+	let last_move = movements.first().unwrap();
+	assert_eq!(last_move.spends.len(), 3);
+	assert_eq!(bark1.vtxos().await.len(), 0);
+
+	// create a new vtxo to exit
+	bark2.send_oor(bark1.vtxo_pubkey().await, Amount::from_sat(145_000)).await;
+	let vtxos = bark1.vtxos().await;
+	assert_eq!(vtxos.len(), 1);
+
+	progress_exit(&bitcoind, &bark1).await;
+
+	let movements = bark1.list_movements().await;
+	assert_eq!(movements.len(), 7);
+
+	// check we only exited last vtxo
+	let last_move = movements.first().unwrap();
+	assert_eq!(last_move.spends.len(), 1);
+	assert_eq!(last_move.spends.first().unwrap().id, vtxos.first().unwrap().id);
+	assert_eq!(bark1.vtxos().await.len(), 0);
+
+	// processing another exit without new vtxo won't create new movement
+	progress_exit(&bitcoind, &bark1).await;
+	assert_eq!(bark1.list_movements().await.len(), 7);
+}

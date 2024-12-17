@@ -160,17 +160,19 @@ pub fn get_paginated_movements(conn: &Connection, pagination: (u32, u32)) -> any
 pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
+	movement_id: i32,
 	state: VtxoState
 ) -> anyhow::Result<()> {
 	// Store the ftxo
 	let q1 = 
-		"INSERT INTO vtxo (id, expiry_height, amount_sat, raw_vtxo) 
-		VALUES (:vtxo_id, :expiry_height, :amount_sat, :raw_vtxo);";
+		"INSERT INTO vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo) 
+		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
 	let mut statement = tx.prepare(q1)?;
 	statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.spec().expiry_height,
 		":amount_sat": vtxo.amount().to_sat(),
+		":received_in": movement_id,
 		":raw_vtxo": vtxo.encode(),
 	})?;
 

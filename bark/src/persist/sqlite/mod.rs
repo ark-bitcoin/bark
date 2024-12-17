@@ -5,7 +5,8 @@ mod query;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use rusqlite::Connection;
+use ark::Movement;
+use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::Amount;
 
@@ -31,6 +32,29 @@ impl SqliteClient {
 	fn connect(&self) -> anyhow::Result<Connection> {
 		rusqlite::Connection::open(&self.connection_string)
 			.with_context(|| format!("Error connecting to database {}", self.connection_string.display()))
+	}
+
+	/// Create a movement to link VTXOs to it
+	fn create_movement(&self, tx: &Transaction, fees: Option<Amount>, destination: Option<String>) -> anyhow::Result<i32> {
+		let movement_id = query::create_movement(&tx, fees, destination)?;
+
+		Ok(movement_id)
+	}
+
+	/// Stores a vtxo in the database
+	fn store_vtxo(&self, tx: &Transaction, vtxo: &Vtxo, movement_id: i32) -> anyhow::Result<()> {
+		// TODO: Use a better name.In most cases we don't want new vtxo's to get the state
+		// ready
+		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, VtxoState::Ready)?;
+
+		Ok(())
+	}
+
+	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
+	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
+		query::update_vtxo_state(&tx, id, VtxoState::Spent)?;
+		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
+		Ok(())
 	}
 }
 
@@ -61,17 +85,69 @@ impl BarkPersister for SqliteClient {
 		Ok(query::fetch_config(&conn)?)
 	}
 
-	/// Stores a vtxo in the database
-	fn store_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
-		// TODO: Use a better name.In most cases we don't want new vtxo's to get the state
-		// ready
+
+	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-		query::store_vtxo_with_initial_state(&tx, vtxo, VtxoState::Ready)?;
+
+		let movement_id = self.create_movement(&tx, None, None)?;
+		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, VtxoState::Ready)?;
+
 		tx.commit()?;
 		Ok(())
 	}
 
+	fn register_send<'a>(
+		&self, 
+		vtxos: impl IntoIterator<Item = &'a Vtxo>, 
+		destination: String, 
+		change: Option<&Vtxo>, 
+		fees: Option<Amount>
+	) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+
+		let movement_id = self.create_movement(&tx, fees, Some(destination))?;
+
+		if let Some(change_vtxo) = change {
+			self.store_vtxo(&tx, change_vtxo, movement_id)
+				.context("Failed to store change VTXOs")?
+		}
+
+		for v in vtxos {
+			self.mark_vtxo_as_spent(&tx, v.id(), movement_id).context("Failed to mark vtxo as spent")?;
+		}
+
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn register_refresh(&self, input_vtxos: &[Vtxo], output_vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+
+		let sent_amount = input_vtxos.iter().fold(Amount::ZERO, |acc, v| acc + v.amount());
+		let received_amount = output_vtxos.iter().fold(Amount::ZERO, |acc, v| acc + v.amount());
+
+		// This works as long as wallet owns all inputs and all outputs of the in-round send (refresh)
+		let fees = sent_amount - received_amount;
+		let movement_id = self.create_movement(&tx, Some(fees), None)?;
+
+		// Then add our new vtxo(s) by just checking all vtxos that might be ours.
+		for v in output_vtxos {
+			self.store_vtxo(&tx, &v, movement_id)
+				.context("Failed to store new vtxo")?;
+		}
+
+		// And mark input vtxos as spent
+		for v in input_vtxos {
+			self.mark_vtxo_as_spent(&tx, v.id(), movement_id)
+				.context("Failed to mark vtxo as spent")?;
+		}
+
+		tx.commit()?;
+		Ok(())
+	}
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxo_by_id(&conn, id)
@@ -86,11 +162,6 @@ impl BarkPersister for SqliteClient {
 	fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_expiring_vtxos(&conn, min_value)
-	}
-
-	fn mark_vtxo_as_spent(&self, id: VtxoId) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::update_vtxo_state(&conn, id, VtxoState::Spent)
 	}
 
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
@@ -240,8 +311,8 @@ mod test {
 
 		let (cs, conn) = in_memory();
 		let db = SqliteClient::open(cs).unwrap();
-		db.store_vtxo(&vtxo_1).unwrap();
-		db.store_vtxo(&vtxo_2).unwrap();
+		db.register_receive(&vtxo_1).unwrap();
+		db.register_receive(&vtxo_2).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
 		let vtxo_1_db = db.get_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
@@ -257,8 +328,8 @@ mod test {
 		assert!(vtxos.contains(&vtxo_2));
 		assert!(! vtxos.contains(&vtxo_3));
 
-		// Add the thrid entry to the database
-		db.store_vtxo(&vtxo_3).unwrap();
+		// Add the third entry to the database
+		db.register_receive(&vtxo_3).unwrap();
 
 		// Get expiring vtxo's
 		// Matches exactly the first vtxo
@@ -270,7 +341,7 @@ mod test {
 		assert_eq!(vs, [vtxo_1.clone(), vtxo_2.clone()]);
 
 		// Verify that we can mark a vtxo as spent
-		db.mark_vtxo_as_spent(vtxo_1.id()).unwrap();
+		db.register_send(&vec![vtxo_1.clone()], pk.to_string(), None, None).unwrap();
 		assert!(db.has_spent_vtxo(vtxo_1.id()).unwrap());
 		assert!(! db.has_spent_vtxo(vtxo_2.id()).unwrap());
 		assert!(! db.has_spent_vtxo(vtxo_3.id()).unwrap());
