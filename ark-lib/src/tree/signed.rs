@@ -652,7 +652,7 @@ impl SignedVtxoTreeSpec {
 
 	/// Construct the exit branch starting from the root ending in the leaf.
 	pub fn exit_branch(&self, leaf_idx: usize) -> Option<Vec<Transaction>> {
-		let txs = self.spec.signed_transactions(self.utxo, &self.cosign_sigs);
+		let txs = self.all_signed_txs();
 
 		if leaf_idx >= self.spec.nb_leaves() {
 			return None;
@@ -670,7 +670,44 @@ impl SignedVtxoTreeSpec {
 	pub fn all_signed_txs(&self) -> Vec<Transaction> {
 		self.spec.signed_transactions(self.utxo, &self.cosign_sigs)
 	}
+
+	pub fn into_cached_tree(self) -> CachedSignedVtxoTree {
+		CachedSignedVtxoTree {
+			txs: self.all_signed_txs(),
+			spec: self,
+		}
+	}
 }
+
+/// A fully signed VTXO tree, with all the transaction cached.
+///
+/// This is useful for cheap extraction of VTXO branches.
+pub struct CachedSignedVtxoTree {
+	pub spec: SignedVtxoTreeSpec,
+	pub txs: Vec<Transaction>,
+}
+
+impl CachedSignedVtxoTree {
+	/// Construct the exit branch starting from the root ending in the leaf.
+	pub fn exit_branch(&self, leaf_idx: usize) -> Option<Vec<&Transaction>> {
+		if leaf_idx >= self.spec.spec.nb_leaves() {
+			return None;
+		}
+
+		let tree = Tree::new(self.spec.spec.nb_leaves());
+		let mut ret = tree.iter_branch(leaf_idx)
+			.map(|n| &self.txs[n.idx()])
+			.collect::<Vec<_>>();
+		ret.reverse();
+		Some(ret)
+	}
+
+	/// Get all signed txs in this tree, starting with the leaves, towards the root.
+	pub fn all_signed_txs(&self) -> &[Transaction] {
+		&self.txs
+	}
+}
+
 
 #[cfg(test)]
 mod test {

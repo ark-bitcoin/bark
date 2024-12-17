@@ -47,7 +47,7 @@ use tokio_stream::StreamExt;
 
 use ark::{musig, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use ark::tree::signed::{SignedVtxoTreeSpec, VtxoTreeSpec};
+use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
 use crate::vtxo_state::VtxoState;
 
@@ -489,19 +489,19 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	fn build_vtxo(&self, vtxos: &SignedVtxoTreeSpec, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
+	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
 		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
-		let dest = &vtxos.spec.vtxos[leaf_idx];
+		let dest = &vtxos.spec.spec.vtxos[leaf_idx];
 		let vtxo = Vtxo::Round {
 			spec: VtxoSpec {
 				user_pubkey: dest.pubkey,
-				asp_pubkey: vtxos.spec.asp_pk,
-				expiry_height: vtxos.spec.expiry_height,
-				exit_delta: vtxos.spec.exit_delta,
+				asp_pubkey: vtxos.spec.spec.asp_pk,
+				expiry_height: vtxos.spec.spec.expiry_height,
+				exit_delta: vtxos.spec.spec.exit_delta,
 				amount: dest.amount,
 			},
 			leaf_idx: leaf_idx,
-			exit_branch: exit_branch,
+			exit_branch: exit_branch.into_iter().cloned().collect(),
 		};
 
 		if self.db.get_vtxo(vtxo.id())?.is_some() {
@@ -533,9 +533,10 @@ impl <P>Wallet<P> where
 			let round = asp.client.get_round(req).await?.into_inner();
 
 			let tree = SignedVtxoTreeSpec::decode(&round.signed_vtxos)
-				.context("invalid signed vtxo tree from asp")?;
+				.context("invalid signed vtxo tree from asp")?
+				.into_cached_tree();
 
-			for (idx, dest) in tree.spec.vtxos.iter().enumerate() {
+			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
 				if dest.pubkey == vtxo_key.public_key() {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 						self.db.register_receive(&vtxo)?;
@@ -1161,7 +1162,9 @@ impl <P>Wallet<P> where
 			if let Err(e) = unsigned_vtxos.verify_cosign_sigs(&vtxo_cosign_sigs) {
 				bail!("Received incorrect vtxo cosign signatures from asp: {}", e);
 			}
-			let signed_vtxos = unsigned_vtxos.into_signed_tree(vtxo_cosign_sigs);
+			let signed_vtxos = unsigned_vtxos
+				.into_signed_tree(vtxo_cosign_sigs)
+				.into_cached_tree();
 
 			// Make forfeit signatures.
 			let connectors = ConnectorChain::new(
@@ -1241,7 +1244,7 @@ impl <P>Wallet<P> where
 
 			// Finally we save state after refresh
 			let mut new_vtxos: Vec<Vtxo> = vec![];
-			for (idx, dest) in signed_vtxos.spec.vtxos.iter().enumerate() {
+			for (idx, dest) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
 				//TODO(stevenroose) this is broken, need to match vtxorequest exactly
 				if dest.pubkey == vtxo_key.public_key() {
 					if let Some(vtxo) = self.build_vtxo(&signed_vtxos, idx)? {

@@ -17,7 +17,7 @@ use rocksdb::{
 };
 
 use ark::{BlockHeight, VtxoId, Vtxo};
-use ark::tree::signed::SignedVtxoTreeSpec;
+use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 
 use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
@@ -192,12 +192,12 @@ impl Db {
 	pub fn store_round(
 		&self,
 		round_tx: Transaction,
-		vtxos: SignedVtxoTreeSpec,
+		vtxos: CachedSignedVtxoTree,
 		nb_input_vtxos: usize,
 	) -> anyhow::Result<()> {
 		let round = StoredRound {
 			tx: round_tx,
-			signed_tree: vtxos,
+			signed_tree: vtxos.spec,
 			nb_input_vtxos: nb_input_vtxos as u64,
 		};
 		let id = round.id();

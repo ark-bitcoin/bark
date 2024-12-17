@@ -597,8 +597,11 @@ pub async fn run_round_coordinator(
 			debug_assert_eq!(state.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
 			// Then construct the final signed vtxo tree.
-			let signed_vtxos = state.unsigned_vtxo_tree.into_signed_tree(cosign_sigs);
-			slog!(CreatedSignedVtxoTree, round_id, attempt_number, nb_vtxo_signatures: signed_vtxos.cosign_sigs.len(), duration: Instant::now().duration_since(combine_signatures_start));
+			let signed_vtxos = state.unsigned_vtxo_tree
+				.into_signed_tree(cosign_sigs)
+				.into_cached_tree();
+			slog!(CreatedSignedVtxoTree, round_id, attempt_number, nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(), duration: Instant::now().duration_since(combine_signatures_start));
+
 
 			// ****************************************************************
 			// * Broadcast signed vtxo tree and gather forfeit signatures
@@ -624,7 +627,7 @@ pub async fn run_round_coordinator(
 			let send_round_proposal_start = Instant::now();
 			let _ = app.rounds().round_event_tx.send(RoundEvent::RoundProposal {
 				id: round_id,
-				cosign_sigs: signed_vtxos.cosign_sigs.clone(),
+				cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 				forfeit_nonces: forfeit_pub_nonces.clone(),
 			});
 
@@ -752,7 +755,7 @@ pub async fn run_round_coordinator(
 			}
 
 			trace!("Storing round result");
-			app.txindex.register_batch(signed_vtxos.all_signed_txs()).await;
+			app.txindex.register_batch(signed_vtxos.all_signed_txs().iter().cloned()).await;
 			app.txindex.register_batch(state.connectors.iter_signed_txs(&app.asp_key)).await;
 			app.db.store_round(signed_round_tx.tx.clone(), signed_vtxos, state.connectors.len())?;
 
