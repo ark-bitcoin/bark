@@ -635,8 +635,4 @@ impl App {
 	pub fn get_master_mnemonic(&self) -> anyhow::Result<String> {
 		Ok(self.db.get_master_mnemonic()?.expect("app running"))
 	}
-
-	pub fn drop_all_oor_conflicts(&self) -> anyhow::Result<()> {
-		self.db.clear_oor_cosigned()
-	}
 }

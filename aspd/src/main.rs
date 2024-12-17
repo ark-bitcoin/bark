@@ -54,10 +54,6 @@ enum Command {
 	#[command()]
 	GetMnemonic,
 
-	/// Drop out of round conflicts from database
-	#[command()]
-	DropOorConflicts,
-
 	/// Run RPC commands
 	#[command()]
 	Rpc {
@@ -202,10 +198,6 @@ async fn inner_main() -> anyhow::Result<()> {
 		Command::GetMnemonic => {
 			let app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
 			println!("{}", app.get_master_mnemonic()?);
-		},
-		Command::DropOorConflicts => {
-			let app = App::open(&cli.datadir.context("need datadir")?).await.context("server init")?;
-			app.drop_all_oor_conflicts()?;
 		},
 	}
 

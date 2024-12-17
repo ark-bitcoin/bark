@@ -402,16 +402,6 @@ impl Db {
 		Ok(None)
 	}
 
-	pub fn clear_oor_cosigned(&self) -> anyhow::Result<()> {
-		self.db.drop_cf(CF_OOR_COSIGNED)?;
-
-		let mut opts = rocksdb::Options::default();
-		opts.create_if_missing(true);
-		opts.create_missing_column_families(true);
-		self.db.create_cf(CF_OOR_COSIGNED, &opts)?;
-		Ok(())
-	}
-
 	pub fn store_oor(&self, pubkey: PublicKey, vtxo: Vtxo) -> anyhow::Result<()> {
 		let mut buf = Vec::new();
 		buf.extend(pubkey.serialize());
