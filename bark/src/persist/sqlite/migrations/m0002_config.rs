@@ -2,7 +2,7 @@ use anyhow::Context;
 
 use rusqlite::Transaction;
 
-use crate::persist::sqlite::migrations::Migration;
+use super::Migration;
 
 pub struct Migration0002 {}
 
