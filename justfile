@@ -18,7 +18,7 @@ build:
 	cargo build --workspace
 
 docker-pull:
-	if [ -n "${LIGHTNINGD_DOCKER_IMAGE}" ]; then docker pull "$LIGHTNINGD_DOCKER_IMAGE"; fi
+	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker pull "$LIGHTNINGD_DOCKER_IMAGE"; fi
 
 alias unit := test-unit
 test-unit TEST="":
