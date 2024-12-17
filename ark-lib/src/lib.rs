@@ -324,7 +324,7 @@ pub enum Vtxo {
 		exit_branch: Vec<Transaction>,
 	},
 	Oor {
-		inputs: Vec<Box<Vtxo>>,
+		inputs: Vec<Vtxo>,
 		/// This has the fields for the spec, but were not necessarily
 		/// actually being used for the generation of the vtxos.
 		/// Primarily, the expiry height is the first of all the parents
@@ -334,7 +334,7 @@ pub enum Vtxo {
 		final_point: OutPoint,
 	},
 	Bolt11Change {
-		inputs: Vec<Box<Vtxo>>,
+		inputs: Vec<Vtxo>,
 		/// This has the fields for the spec, but were not necessarily
 		/// actually being used for the generation of the vtxos.
 		/// Primarily, the expiry height is the first of all the parents
@@ -559,8 +559,8 @@ mod test {
 
 		let oor = Vtxo::Oor {
 			inputs: vec![
-				Box::new(round.clone()),
-				Box::new(onboard.clone()),
+				round.clone(),
+				onboard.clone(),
 			],
 			pseudo_spec: VtxoSpec {
 				user_pubkey: pk,
@@ -576,9 +576,9 @@ mod test {
 
 		let oor_recursive = Vtxo::Oor {
 			inputs: vec![
-				Box::new(round.clone()),
-				Box::new(onboard.clone()),
-				Box::new(oor.clone()),
+				round.clone(),
+				onboard.clone(),
+				oor.clone(),
 			],
 			pseudo_spec: VtxoSpec {
 				user_pubkey: pk,

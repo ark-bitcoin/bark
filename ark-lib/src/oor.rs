@@ -194,16 +194,12 @@ impl SignedOorPayment {
 	}
 
 	pub fn output_vtxos(&self, asp_pubkey: PublicKey, exit_delta: u16) -> Vec<Vtxo> {
-		let inputs = self.payment.inputs.iter()
-			.map(|input| Box::new(input.clone()))
-			.collect::<Vec<_>>();
-
 		let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
 		let oor_tx = self.signed_transaction();
 		let oor_txid = oor_tx.compute_txid();
 		self.payment.outputs.iter().enumerate().map(|(idx, output)| {
 			Vtxo::Oor {
-				inputs: inputs.clone(),
+				inputs: self.payment.inputs.clone(),
 				pseudo_spec: VtxoSpec {
 					amount: output.amount,
 					exit_delta,
