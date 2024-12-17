@@ -12,6 +12,7 @@ pub mod constants;
 pub mod daemon;
 pub mod util;
 pub mod bark;
+pub mod setup;
 
 pub use context::TestContext;
 pub use daemon::{Daemon, DaemonHelper};
