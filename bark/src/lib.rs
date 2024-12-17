@@ -51,6 +51,11 @@ lazy_static::lazy_static! {
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
+pub struct Pagination {
+	pub page_index: u16,
+	pub page_size: u16,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UtxoInfo {
 	pub outpoint: OutPoint,
@@ -325,6 +330,10 @@ impl <P>Wallet<P> where
 			.with_context(|| format!("Error when querying vtxo {} in database", vtxo_id))?
 			.with_context(|| format!("The VTXO with id {} cannot be found", vtxo_id))?;
 		Ok(vtxo)
+	}
+
+	pub fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+		Ok(self.db.list_movements(pagination)?)
 	}
 
 	/// Returns all unspent vtxos

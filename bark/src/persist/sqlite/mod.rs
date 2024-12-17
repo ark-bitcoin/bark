@@ -10,7 +10,7 @@ use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::Amount;
 
-use crate::{exit::Exit, persist::BarkPersister, Config, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{exit::Exit, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -85,6 +85,10 @@ impl BarkPersister for SqliteClient {
 		Ok(query::fetch_config(&conn)?)
 	}
 
+	fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+		let conn = self.connect()?;
+		query::get_paginated_movements(&conn, pagination)
+	}
 
 	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;

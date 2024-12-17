@@ -3,7 +3,7 @@ use anyhow::Context;
 use ark::Movement;
 use bitcoin::{bip32::Fingerprint, Amount, Network};
 use rusqlite::{Connection, named_params, Transaction};
-use crate::{exit::Exit, WalletProperties, Config, Vtxo, VtxoId, VtxoState};
+use crate::{exit::Exit, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 /// Set read-only properties for the wallet
 /// 
@@ -122,8 +122,9 @@ pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>, destination:
 	Ok(movement_id)
 }
 
-pub fn get_paginated_movements(conn: &Connection, pagination: (u32, u32)) -> anyhow::Result<Vec<Movement>> {
-	let (take, skip) = pagination;
+pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+	let take = pagination.page_size;
+	let skip = pagination.page_index * take;
 
 	let query = "
 		SELECT * FROM movement_view

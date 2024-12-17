@@ -232,6 +232,91 @@ async fn compute_balance() {
 }
 
 #[tokio::test]
+async fn list_movements() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/list_movements").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.prepare_funds().await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Fund clients
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+	let bark2 = ctx.bark("bark2".to_string(), &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	bitcoind.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+	bark2.onboard(Amount::from_sat(800_000)).await;
+
+	// onboard vtxo
+	bark1.onboard(Amount::from_sat(300_000)).await;
+	let payments = bark1.list_movements().await;
+	assert_eq!(payments.len(), 1);
+	assert_eq!(payments[0].spends.len(), 0);
+	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(300_000));
+	assert_eq!(payments[0].fees.to_sat(), 0);
+	assert!(payments[0].destination.is_none());
+
+	// oor change
+	bark1.send_oor(&bark2.vtxo_pubkey().await, Amount::from_sat(150_000)).await;
+	let payments = bark1.list_movements().await;
+	assert_eq!(payments.len(), 2);
+	assert_eq!(payments[0].spends[0].amount, Amount::from_sat(300_000));
+	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(148_035));
+	assert_eq!(payments[0].fees.to_sat(), 1965);
+	assert!(payments[0].destination.is_some());
+
+	// refresh vtxos
+	bark1.refresh_all().await;
+	let payments = bark1.list_movements().await;
+	assert_eq!(payments.len(), 3);
+	assert_eq!(payments[0].spends[0].amount, Amount::from_sat(148_035));
+	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(148_035));
+	assert_eq!(payments[0].fees.to_sat(), 0);
+	assert!(payments[0].destination.is_none());
+
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
+	let payments = bark1.list_movements().await;
+	assert_eq!(payments.len(), 4);
+	assert_eq!(payments[0].spends.len(), 0);
+	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(330_000));
+	assert_eq!(payments[0].fees.to_sat(), 0);
+	assert!(payments[0].destination.is_none());
+}
+
+#[tokio::test]
+async fn multiple_spends_in_payment() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/multiple_spends_in_payment").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
+
+	// Fund the asp
+	bitcoind.prepare_funds().await;
+	bitcoind.fund_aspd(&aspd, Amount::from_int_btc(10)).await;
+
+	// Fund clients
+	let bark1 = ctx.bark("bark1".to_string(), &bitcoind, &aspd).await;
+	bitcoind.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+
+	bark1.onboard(Amount::from_sat(100_000)).await;
+	bark1.onboard(Amount::from_sat(200_000)).await;
+	bark1.onboard(Amount::from_sat(300_000)).await;
+
+	// refresh vtxos
+	bark1.refresh_all().await;
+	let payments = bark1.list_movements().await;
+	assert_eq!(payments[0].spends.len(), 3);
+	assert_eq!(payments[0].spends[0].amount, Amount::from_sat(100_000));
+	assert_eq!(payments[0].spends[1].amount, Amount::from_sat(200_000));
+	assert_eq!(payments[0].spends[2].amount, Amount::from_sat(300_000));
+	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(600_000));
+	assert_eq!(payments[0].fees.to_sat(), 0);
+}
+
+#[tokio::test]
 async fn offboard_all() {
 	let (_ctx, bitcoind, _aspd, bark1, _bark2) = setup_full("bark/offboard_all").await;
 

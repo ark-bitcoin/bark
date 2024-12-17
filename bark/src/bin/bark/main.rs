@@ -18,11 +18,14 @@ use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 
-use bark::Config;
+use bark::{Config, Pagination};
 use bark_json::cli as json;
 
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
 use crate::util::PrettyDuration;
+
+const DEFAULT_PAGE_SIZE: u16 = 10;
+const DEFAULT_PAGE_INDEX: u16 = 0;
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -141,6 +144,19 @@ enum Command {
 		/// Skip syncing before fetching VTXOs
 		#[arg(long)]
 		no_sync: bool,
+	},
+
+	/// List the wallet's payments
+	///
+	/// By default will fetch the 10 first items
+	#[command()]
+	ListMovements {
+		/// Page index to return, default to 0
+		#[arg(long)]
+		page_index: Option<u16>,
+		/// Page size to return, default to 10
+		#[arg(long)]
+		page_size: Option<u16>,
 	},
 
 	/// Refresh expiring VTXOs
@@ -417,6 +433,35 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					} else {
 						info!("  {} ({}): {}; already expired", v.id(), v.vtxo_type(), v.amount());
 					}
+				}
+			}
+		},
+		Command::ListMovements { page_index, page_size } => {
+			if let Err(e) = w.sync_ark().await.context("sync error") {
+				warn!("Failed to sync with ASP. Some payments might not be shown. {}", e)
+			}
+
+			let pagination = Pagination { 
+				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX), 
+				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+			};
+
+			let movements = w.list_movements(pagination)?;
+			if cli.json {
+				serde_json::to_writer(io::stdout(), &movements).unwrap();
+			} else {
+				info!("Our wallet has {} movement(s):", movements.len());
+				for movement in movements {
+					let value: i64 = 
+						movement.receives.into_iter().fold(0i64, |a, v| a + v.amount.to_sat() as i64) -
+						movement.spends.into_iter().fold(0i64, |a, v| a + v.amount.to_sat() as i64);
+
+					info!("  {} ({}): value | {} sats; fees | {} sats", 
+						movement.id, 
+						movement.created_at, 
+						value, 
+						movement.fees.to_sat()
+					);
 				}
 			}
 		},

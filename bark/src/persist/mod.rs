@@ -1,10 +1,10 @@
 pub mod sqlite;
 
-use ark::{Vtxo, VtxoId};
+use ark::{Movement, Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::Amount;
 
-use crate::{exit::Exit, Config, WalletProperties};
+use crate::{exit::Exit, Config, Pagination, WalletProperties};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database
@@ -16,6 +16,8 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
 	fn read_config(&self) -> anyhow::Result<Option<Config>>;
 
+	/// Returns a paginated list of movements
+	fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
 	/// Register incoming payment
 	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()>;
 	/// Register outgoint payment
