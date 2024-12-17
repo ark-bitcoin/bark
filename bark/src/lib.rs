@@ -7,6 +7,7 @@ pub extern crate lnurl as lnurllib;
 
 pub mod persist;
 
+use ark::oor::verify_oor;
 use bdk_wallet::chain::ConfirmationTime;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
@@ -535,7 +536,11 @@ impl <P>Wallet<P> where
 			.collect::<Result<Vec<_>, _>>()?;
 		debug!("ASP has {} OOR vtxos for us", oors.len());
 		for vtxo in oors {
-			//TODO(stevenroose) verify oor signatures
+			// TODO: we need to test receiving arkoors with invalid signatures
+			if let Err(e) = verify_oor(vtxo.clone(), Some(self.vtxo_pubkey())) {
+				warn!("Could not validate OOR signature, dropping vtxo. {}", e);
+				continue;
+			}
 
 			// Not sure if this can happen, but well.
 			if self.db.has_spent_vtxo(vtxo.id())? {
@@ -648,6 +653,7 @@ impl <P>Wallet<P> where
 		let mut account_for_fee = ark::oor::OOR_MIN_FEE;
 		let payment = loop {
 			let input_vtxos = self.db.get_expiring_vtxos(amount + account_for_fee)?;
+
 			let change = {
 				let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 				let avail = Amount::from_sat(sum.to_sat().saturating_sub(account_for_fee.to_sat()));

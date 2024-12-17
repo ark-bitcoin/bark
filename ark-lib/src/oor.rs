@@ -8,7 +8,7 @@ use bitcoin::{
 	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{schnorr, PublicKey}; 
+use bitcoin::secp256k1::{Error, schnorr, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use crate::{fee, musig, util, PaymentRequest, Vtxo, VtxoSpec};
@@ -68,6 +68,37 @@ pub fn signed_oor_tx<V: Borrow<Vtxo>>(
 
 	tx
 }
+
+/// Build the oor tx with signatures and verify it
+/// 
+/// If a pubkey is provided, it'll check that vtxo's output user pubkey match it (later want to check it's derived from it)
+pub fn verify_oor(vtxo: Vtxo, pubkey: Option<PublicKey>) -> Result<(), Error> {
+	match vtxo {
+		Vtxo::Oor { inputs, signatures, output_specs, point } => {
+			// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
+
+			let tx = signed_oor_tx(&inputs, &signatures, &output_specs);
+
+			let sighashes = oor_sighashes(&inputs, &tx); 
+			for (idx, input) in inputs.iter().enumerate() {
+				util::SECP.verify_schnorr(
+					&schnorr::Signature::from_slice(&tx.input[idx].witness.to_vec()[0][..]).unwrap(),
+					&sighashes[idx].into(),
+					&input.spec().exit_taproot().output_key().to_inner(),
+				)?;
+			}
+
+			if let Some(pubkey) = pubkey {
+				//TODO: handle derived keys here
+				assert_eq!(pubkey, output_specs[point.vout as usize].user_pubkey)
+			}
+		},
+		_ => {}
+	}
+
+	Ok(())
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OorPayment {
 	pub asp_pubkey: PublicKey,
@@ -230,6 +261,7 @@ impl SignedOorPayment {
 		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
 		// this +2 might be fixed later
 		debug_assert_eq!(tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
+
 		tx
 	}
 
