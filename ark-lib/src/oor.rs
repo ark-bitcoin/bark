@@ -1,13 +1,14 @@
 
 
+use std::borrow::Borrow;
 use std::io;
 
+use bitcoin::key::Keypair;
 use bitcoin::{
-	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, TxOut, Weight,
-	Witness,
+	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
+use bitcoin::secp256k1::{schnorr, PublicKey}; 
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use crate::{fee, musig, util, PaymentRequest, Vtxo, VtxoSpec};
@@ -16,6 +17,57 @@ use crate::{fee, musig, util, PaymentRequest, Vtxo, VtxoSpec};
 /// The minimum fee we consider for an oor transaction.
 pub const OOR_MIN_FEE: Amount = crate::P2TR_DUST;
 
+fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction) -> Vec<TapSighash> {
+	let prevs = input_vtxos.iter().map(|i| i.borrow().txout()).collect::<Vec<_>>();
+	let mut shc = SighashCache::new(oor_tx);
+
+	(0..input_vtxos.len()).map(|idx| {
+		shc.taproot_key_spend_signature_hash(
+			idx, &sighash::Prevouts::All(&prevs), TapSighashType::Default,
+		).expect("sighash error")
+	}).collect()
+}
+
+pub fn unsigned_oor_transaction<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSpec]) -> Transaction {
+	Transaction {
+		version: bitcoin::transaction::Version(3),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: inputs.into_iter().map(|input| {
+			TxIn {
+				previous_output: input.borrow().point(),
+				script_sig: ScriptBuf::new(),
+				sequence: Sequence::ZERO,
+				witness: Witness::new(),
+			}
+		}).collect(),
+		output: outputs.into_iter().map(|output| {
+			let spk = crate::exit_spk(output.user_pubkey, output.asp_pubkey, output.exit_delta);
+			TxOut {
+				value: output.amount,
+				script_pubkey: spk,
+			}
+		}).chain([fee::dust_anchor()]).collect(),
+	}
+}
+
+/// Build oor tx and signs it 
+/// 
+/// ## Panic
+/// 
+/// Will panic if inputs and signatures don't have the same length, 
+/// or if some input witnesses are not empty
+pub fn signed_oor_tx<V: Borrow<Vtxo>>(		
+	inputs: &[V],
+	signatures: &[schnorr::Signature],
+	outputs: &[VtxoSpec]
+) -> Transaction {
+	// build the oor_tx
+	let mut tx = unsigned_oor_transaction(inputs, outputs);
+
+	util::fill_taproot_sigs(&mut tx, signatures);
+
+	tx
+}
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OorPayment {
 	pub asp_pubkey: PublicKey,
@@ -34,46 +86,34 @@ impl OorPayment {
 		OorPayment { asp_pubkey, exit_delta, inputs, outputs }
 	}
 
-	pub fn unsigned_transaction(&self) -> Transaction {
-		Transaction {
-			version: bitcoin::transaction::Version(3),
-			lock_time: bitcoin::absolute::LockTime::ZERO,
-			input: self.inputs.iter().map(|input| {
-				TxIn {
-					previous_output: input.point(),
-					script_sig: ScriptBuf::new(),
-					sequence: Sequence::ZERO,
-					witness: Witness::new(),
-				}
-			}).collect(),
-			output: self.outputs.iter().map(|output| {
-				let spk = crate::exit_spk(output.pubkey, self.asp_pubkey, self.exit_delta);
-				TxOut {
-					value: output.amount,
-					script_pubkey: spk,
-				}
-			}).chain([fee::dust_anchor()]).collect(),
-		}
+	fn expiry_height(&self) -> u32 {
+		self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap()
+	}
+
+	fn output_specs(&self) -> Vec<VtxoSpec> {
+		let expiry_height = self.expiry_height();
+		self.outputs.iter().map(|o| VtxoSpec {
+				user_pubkey: o.pubkey,
+				amount: o.amount,
+				expiry_height: expiry_height,
+				asp_pubkey: self.asp_pubkey,
+				exit_delta: self.exit_delta,
+		}).collect::<Vec<_>>()
 	}
 
 	pub fn txid(&self) -> Txid {
-		self.unsigned_transaction().compute_txid()
+		unsigned_oor_transaction(&self.inputs, &self.output_specs()).compute_txid()
 	}
 
 	pub fn sighashes(&self) -> Vec<TapSighash> {
-		let tx = self.unsigned_transaction();
-		let prevs = self.inputs.iter().map(|i| i.txout()).collect::<Vec<_>>();
-		let mut shc = SighashCache::new(&tx);
-
-		(0..self.inputs.len()).map(|idx| {
-			shc.taproot_key_spend_signature_hash(
-				idx, &sighash::Prevouts::All(&prevs), TapSighashType::Default,
-			).expect("sighash error")
-		}).collect()
+		oor_sighashes(
+			&self.inputs,
+			&unsigned_oor_transaction(&self.inputs, &self.output_specs())
+		) 
 	}
 
 	pub fn total_weight(&self) -> Weight {
-		let tx = self.unsigned_transaction();
+		let tx = unsigned_oor_transaction(&self.inputs, &self.output_specs());
 		let spend_weight = Weight::from_wu(crate::TAPROOT_KEYSPEND_WEIGHT as u64);
 		let nb_inputs = self.inputs.len() as u64;
 		tx.weight() + nb_inputs * spend_weight
@@ -185,30 +225,26 @@ pub struct SignedOorPayment {
 
 impl SignedOorPayment {
 	pub fn signed_transaction(&self) -> Transaction {
-		let mut tx = self.payment.unsigned_transaction();
-		util::fill_taproot_sigs(&mut tx, &self.signatures);
+		let tx = signed_oor_tx(&self.payment.inputs, &self.signatures, &self.payment.output_specs());
+
 		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
 		// this +2 might be fixed later
 		debug_assert_eq!(tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
 		tx
 	}
 
-	pub fn output_vtxos(&self, asp_pubkey: PublicKey, exit_delta: u16) -> Vec<Vtxo> {
-		let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
-		let oor_tx = self.signed_transaction();
-		let oor_txid = oor_tx.compute_txid();
-		self.payment.outputs.iter().enumerate().map(|(idx, output)| {
+	pub fn output_vtxos(&self) -> Vec<Vtxo> {
+		let outputs = self.payment.output_specs();
+		let inputs = self.payment.inputs.clone();
+
+		let tx = unsigned_oor_transaction(&inputs, &outputs);
+
+		self.payment.outputs.iter().enumerate().map(|(idx, _output)| {
 			Vtxo::Oor {
 				inputs: self.payment.inputs.clone(),
-				pseudo_spec: VtxoSpec {
-					amount: output.amount,
-					exit_delta,
-					expiry_height,
-					asp_pubkey,
-					user_pubkey: output.pubkey,
-				},
-				oor_tx: oor_tx.clone(),
-				final_point: OutPoint::new(oor_txid, idx as u32),
+				signatures: self.signatures.clone(),
+				output_specs: outputs.clone(),
+				point: OutPoint::new(tx.compute_txid(), idx as u32)
 			}
 		}).collect()
 	}

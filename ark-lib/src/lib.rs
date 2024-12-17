@@ -20,9 +20,10 @@ mod napkin;
 use std::{fmt, io};
 use std::str::FromStr;
 
-use bitcoin::{taproot, Amount, FeeRate, OutPoint, Script, ScriptBuf, Transaction, Txid, TxOut, Weight};
+use bitcoin::{taproot, Amount, FeeRate, OutPoint, Script, ScriptBuf, Transaction, TxOut, Txid, Weight};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
+use oor::signed_oor_tx;
 
 pub const P2TR_DUST_VB: u64 = 110;
 /// 330 satoshis
@@ -367,13 +368,9 @@ pub enum Vtxo {
 	},
 	Oor {
 		inputs: Vec<Vtxo>,
-		/// This has the fields for the spec, but were not necessarily
-		/// actually being used for the generation of the vtxos.
-		/// Primarily, the expiry height is the first of all the parents
-		/// expiry heights.
-		pseudo_spec: VtxoSpec,
-		oor_tx: Transaction,
-		final_point: OutPoint,
+		signatures: Vec<schnorr::Signature>,
+		output_specs:  Vec<VtxoSpec>,
+		point: OutPoint,
 	},
 	Bolt11Change {
 		inputs: Vec<Vtxo>,
@@ -402,7 +399,7 @@ impl Vtxo {
 			Vtxo::Round { exit_branch, .. } => {
 				OutPoint::new(exit_branch.last().unwrap().compute_txid(), 0).into()
 			},
-			Vtxo::Oor { final_point, .. } => *final_point,
+			Vtxo::Oor { point, .. } => *point,
 			Vtxo::Bolt11Change { final_point, .. } => *final_point,
 		}
 	}
@@ -411,7 +408,7 @@ impl Vtxo {
 		match self {
 			Vtxo::Onboard { base, .. } => &base.spec,
 			Vtxo::Round { base, .. } => &base.spec,
-			Vtxo::Oor { ref pseudo_spec, ..} => pseudo_spec,
+			Vtxo::Oor { output_specs, point, ..} => &output_specs[point.vout as usize],
 			Vtxo::Bolt11Change { ref pseudo_spec, ..} => pseudo_spec,
 		}
 	}
@@ -420,9 +417,7 @@ impl Vtxo {
 		match self {
 			Vtxo::Onboard { base, .. } => base.spec.amount,
 			Vtxo::Round { base, .. } => base.spec.amount,
-			Vtxo::Oor { oor_tx, final_point, .. } => {
-				oor_tx.output[final_point.vout as usize].value
-			},
+			Vtxo::Oor { .. } => self.spec().amount,
 			Vtxo::Bolt11Change { htlc_tx, final_point, .. } => {
 				htlc_tx.output[final_point.vout as usize].value
 			},
@@ -448,7 +443,11 @@ impl Vtxo {
 				)
 			},
 			Vtxo::Round { ref exit_branch, .. } => exit_branch.last().unwrap().clone(),
-			Vtxo::Oor { ref oor_tx, .. } => oor_tx.clone(),
+			Vtxo::Oor { inputs, signatures, output_specs, point } => {
+				let tx = signed_oor_tx(&inputs, &signatures, output_specs);
+				assert_eq!(tx.compute_txid(), point.txid);
+				tx
+			},
 			Vtxo::Bolt11Change { ref htlc_tx, .. } => htlc_tx.clone(),
 		}
 	}
@@ -464,11 +463,12 @@ impl Vtxo {
 			Vtxo::Round { exit_branch, .. } => {
 				txs.extend(exit_branch.iter().cloned());
 			},
-			Vtxo::Oor { inputs, oor_tx, .. } => {
+			Vtxo::Oor { inputs, .. } => {
 				for input in inputs {
 					input.collect_exit_txs(txs);
 				}
-				txs.push(oor_tx.clone());
+				
+				txs.push(self.vtxo_tx());
 			},
 			Vtxo::Bolt11Change { inputs, htlc_tx, .. } => {
 				for input in inputs {
@@ -564,6 +564,7 @@ impl std::hash::Hash for Vtxo {
 mod test {
 	use super::*;
 	use bitcoin::hashes::hex::FromHex;
+use oor::unsigned_oor_transaction;
 
 	#[test]
 	fn vtxo_roundtrip() {
@@ -571,6 +572,10 @@ mod test {
 		let point = "f338d94399994750d07607e2984b38d967b91fcc0d05e5dd856d674832620ba6:2".parse().unwrap();
 		let sig = "cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd59320b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea".parse().unwrap();
 		let tx = bitcoin::consensus::deserialize::<Transaction>(&Vec::<u8>::from_hex("010000000001040cd1965a17fec47521b619d56225abc6a33f73c6afac353048e5f386e10c6bf10000000000ffffffff0cd1965a17fec47521b619d56225abc6a33f73c6afac353048e5f386e10c6bf10100000000ffffffff91cc47b491ae94ea71cd727959e1758cdc3c0d8b14432497122ba9c566794be20000000000ffffffff91cc47b491ae94ea71cd727959e1758cdc3c0d8b14432497122ba9c566794be20100000000ffffffff03e2833d3600000000225120de391fbef06ac409794f11b0589835cb0850f866e8795b6a9b4ac16c479a4ca04a010000000000002251203ecd5454d152946220d6a4ab0ecd61441aa1982486d792c69bb108229283cd0a64b0953e000000002251203ecd5454d152946220d6a4ab0ecd61441aa1982486d792c69bb108229283cd0a0340122a381f3e05949d772022456524e5fb15cc54411f9543ae6a83442730f01dd12738d9c6696bd37559d29d5b0061022d9fc2ca41e1d6f34d04dc8b3f18e6d75b2702d601b17520d1520b6d6ac840e0c1478e514d5a14daac218a5dbb945789cc3aee628c25dc60ac21c0693471477e72768671054c1edf30412712c5a34ab2a3f14e16088f21bc21317d0140d5c2d47cba2bc70380c6b47ee01a5d8cd461515451562250ffb95dd7333f40f45b87977c8a98b63d6c2b641648e989844dbd2d4dfb51a6e06939caa30c80345203401cb74b31e35b1c3f0b033f1264f4b7167883d157814f99f350c546514d31c49989856986d2c894a6f665b896720fd77a7154cae2cad3097c88e8efaa5bc7b92e2702d701b17520d1520b6d6ac840e0c1478e514d5a14daac218a5dbb945789cc3aee628c25dc60ac21c1c06081bed228f8d624d05e58ff9ca0315d14c328648bb27a950b7cc9cb404e4f0140a09b7d8c0bd24707a077be0e3c9a93601f01954aa563a50eb41cbfdd0db0eb5e5df6971aa11eacd2b9faf9a2d9f3dd4d107c9bc8e5ba273c01052e633fa746760f020000").unwrap()).unwrap();
+		
+		let oor_sig1 = schnorr::Signature::from_str("784d3ad041909063648c33d076510e357646e60038835c40ec838f9e98ae8aaea4c583e7303ef86be17032d212df7d0276c369e616e905b4a192d97047bd141a").unwrap();
+		let oor_sig2 = schnorr::Signature::from_str("115e203be50944e96c00b30f88be5d4523397f66a1845addc95851fbe27ecd82b8e4d5bbd96229b8167a9196de77b3cd62a27c368d00774889900cffe2c932da").unwrap();
+		let oor_sig3 = schnorr::Signature::from_str("4be220ff1dabd0f7c35798eb19d587de1ad88e80369ef037c5e803f9d776e1c74bc4458698a783add458730d1dbd144c86f3b848cff5486b0fcbd1c17ecc5f76").unwrap();
 
 		let onboard = Vtxo::Onboard {
 			base: BaseVtxo {
@@ -603,38 +608,50 @@ mod test {
 		};
 		assert_eq!(round, Vtxo::decode(&round.encode()).unwrap());
 
+		let inputs = vec![
+			round.clone(),
+			onboard.clone(),
+		];
+		let output_specs = vec![VtxoSpec {
+			user_pubkey: pk,
+			asp_pubkey: pk,
+			expiry_height: 15,
+			exit_delta: 7,
+			amount: Amount::from_sat(5),
+		}];
+		let tx = unsigned_oor_transaction(&inputs, &output_specs);
 		let oor = Vtxo::Oor {
-			inputs: vec![
-				round.clone(),
-				onboard.clone(),
+			inputs,
+			output_specs,
+			signatures: vec![
+				oor_sig1,
+				oor_sig2
 			],
-			pseudo_spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 15,
-				exit_delta: 7,
-				amount: Amount::from_sat(5),
-			},
-			oor_tx: tx.clone(),
-			final_point: point,
+			point: OutPoint::new(tx.compute_txid(), 0)
 		};
 		assert_eq!(oor, Vtxo::decode(&oor.encode()).unwrap());
 
+		let inputs_recursive = vec![
+			round.clone(),
+			onboard.clone(),
+		];
+		let output_specs_recursive = vec![VtxoSpec {
+			user_pubkey: pk,
+			asp_pubkey: pk,
+			expiry_height: 15,
+			exit_delta: 7,
+			amount: Amount::from_sat(5),
+		}];
+		let tx_recursive = unsigned_oor_transaction(&inputs_recursive, &output_specs_recursive);
 		let oor_recursive = Vtxo::Oor {
-			inputs: vec![
-				round.clone(),
-				onboard.clone(),
-				oor.clone(),
+			inputs: inputs_recursive,
+			output_specs: output_specs_recursive,
+			signatures: vec![
+				oor_sig1,
+				oor_sig2,
+				oor_sig3
 			],
-			pseudo_spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 15,
-				exit_delta: 7,
-				amount: Amount::from_sat(5),
-			},
-			oor_tx: tx.clone(),
-			final_point: point,
+			point: OutPoint::new(tx_recursive.compute_txid(), 0)
 		};
 		assert_eq!(oor_recursive, Vtxo::decode(&oor_recursive.encode()).unwrap());
 	}

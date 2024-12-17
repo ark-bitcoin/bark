@@ -715,15 +715,15 @@ impl <P>Wallet<P> where
 
 		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
-		let tx = payment.sign_finalize_user(
+		let signed = payment.sign_finalize_user(
 			&vtxo_key,
 			sec_nonces,
 			&pub_nonces,
 			&asp_pub_nonces,
 			&asp_part_sigs,
 		);
-		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&tx.signed_transaction()));
-		let vtxos = tx.output_vtxos(asp.info.asp_pubkey, asp.info.vtxo_exit_delta);
+		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
+		let vtxos = signed.output_vtxos();
 
 		// The first one is of the recipient, we will post it to their mailbox.
 		let user_vtxo = &vtxos[0];
