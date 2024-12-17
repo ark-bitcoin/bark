@@ -17,7 +17,6 @@ use ark::musig::MusigPubNonce;
 use ark::tree::signed::{UnsignedVtxoTree, VtxoTreeSpec};
 
 use crate::{txindex, App, SECP};
-use crate::database::ForfeitVtxo;
 
 #[derive(Debug, Clone)]
 pub enum RoundEvent {
@@ -751,7 +750,7 @@ pub async fn run_round_coordinator(
 			for (id, vtxo) in state.all_inputs {
 				let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
 				slog!(StoringForfeitVtxo, round_id, attempt_number, out_point: vtxo.point());
-				app.db.store_forfeit_vtxo(ForfeitVtxo { vtxo, forfeit_sigs })?;
+				app.db.set_vtxo_forfeited(id, forfeit_sigs)?;
 			}
 
 			trace!("Storing round result");

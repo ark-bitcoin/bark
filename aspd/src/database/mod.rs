@@ -24,8 +24,6 @@ use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
 // COLUMN FAMILIES
 
-/// mapping VtxoId -> ForfeitVtxo
-const CF_FORFEIT_VTXO: &str = "forfeited_vtxos";
 /// mapping VtxoId -> VtxoState
 const CF_VTXOS: &str = "vtxos";
 /// mapping Txid -> serialized StoredRound
@@ -44,25 +42,6 @@ const CF_PENDING_SWEEPS: &str = "pending_sweeps";
 const MASTER_SEED: &str = "master_seed";
 const MASTER_MNEMONIC: &str = "master_mnemonic";
 
-
-/// A vtxo that has been forfeited and is now ours.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ForfeitVtxo {
-	pub vtxo: Vtxo,
-	pub forfeit_sigs: Vec<schnorr::Signature>,
-}
-
-impl ForfeitVtxo {
-	pub fn id(&self) -> VtxoId {
-		self.vtxo.id()
-	}
-
-	fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RoundExpiryKey {
@@ -161,7 +140,6 @@ impl Db {
 		opts.create_missing_column_families(true);
 
 		let cfs = [
-			CF_FORFEIT_VTXO,
 			CF_VTXOS,
 			CF_ROUND,
 			CF_ROUND_EXPIRY,
@@ -174,10 +152,6 @@ impl Db {
 			.context("failed to open db")?;
 		let wallet = ChangeSetDbState::new();
 		Ok(Db { db, wallet })
-	}
-
-	fn cf_forfeit_vtxo<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_FORFEIT_VTXO).expect("db missing forfeit vtxo cf")
 	}
 
 	fn cf_vtxos<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
@@ -360,8 +334,37 @@ impl Db {
 		})
 	}
 
-	pub fn store_forfeit_vtxo(&self, vtxo: ForfeitVtxo) -> anyhow::Result<()> {
-		self.db.put_cf(&self.cf_forfeit_vtxo(), vtxo.id(), vtxo.encode())?;
+	/// Set the vtxo as being forfeited.
+	pub fn set_vtxo_forfeited(&self, id: VtxoId, sigs: Vec<schnorr::Signature>) -> anyhow::Result<()> {
+		let mut opts = WriteOptions::default();
+		opts.set_sync(true);
+		let mut oopts = OptimisticTransactionOptions::new();
+		oopts.set_snapshot(false);
+
+		let cf = self.cf_vtxos();
+		loop {
+			let tx = self.db.transaction_opt(&opts, &oopts);
+
+			let encoded = tx.get_cf(&cf, id)?.context("vtxo not found")?;
+			let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
+			if !vtxo_state.is_spendable() {
+				error!("Marking unspendable vtxo as forfeited: {:?}", vtxo_state);
+			}
+
+			vtxo_state.forfeit_sigs = Some(sigs.clone());
+			tx.put_cf(&cf, id, vtxo_state.encode())?;
+
+			match tx.commit() {
+				Ok(()) => break,
+				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
+				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
+				Err(e) => bail!("failed to commit db tx: {}", e),
+			}
+		}
+
+		let mut opts = FlushOptions::default();
+		opts.set_wait(true); //TODO(stevenroose) is this needed?
+		self.db.flush_cf_opt(&cf, &opts).context("error flushing db")?;
 		Ok(())
 	}
 
