@@ -445,15 +445,16 @@ impl App {
 	pub async fn sync_onchain_wallet(&self) -> anyhow::Result<Amount> {
 		let mut wallet = self.wallet.lock().await;
 		let prev_tip = wallet.latest_checkpoint();
+		let prev_balance = wallet.balance();
 		// let keychain_spks = self.wallet.spks_of_all_keychains();
 
-		debug!("Starting onchain sync at block height {}", prev_tip.height());
+		slog!(WalletSyncStarting, block_height: prev_tip.height());
 		let mut emitter = bdk_bitcoind_rpc::Emitter::new(&self.bitcoind, prev_tip.clone(), prev_tip.height());
 		while let Some(em) = emitter.next_block()? {
 			wallet.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
 
 			if em.block_height() % 10_000 == 0 {
-				debug!("Synced until block {}, committing...", em.block_height());
+				slog!(WalletSyncCommittingProgress, block_height: prev_tip.height());
 				if let Some(change) = wallet.take_staged() {
 					self.db.store_changeset(&change).await?;
 				}
@@ -473,12 +474,20 @@ impl App {
 		for tx in wallet.transactions() {
 			if !tx.chain_position.is_confirmed() {
 				if let Err(e) = self.bitcoind.send_raw_transaction(&*tx.tx_node.tx) {
-					warn!("Error broadcasting pending tx: {}", e);
+					slog!(WalletTransactionBroadcastFailure, error: e.to_string(), txid: tx.tx_node.txid);
 				}
 			}
 		}
 
+		let checkpoint = wallet.latest_checkpoint();
+		slog!(WalletSyncComplete, new_block_height: checkpoint.height(), previous_block_height: prev_tip.height());
+
 		let balance = wallet.balance();
+		if balance != prev_balance {
+			slog!(WalletBalanceUpdated, balance: balance.clone(), network: wallet.network(), block_height: checkpoint.height());
+		} else {
+			slog!(WalletBalanceUnchanged, balance: balance.clone(), network: wallet.network(), block_height: checkpoint.height());
+		}
 		Ok(balance.total())
 	}
 
