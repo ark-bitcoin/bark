@@ -56,6 +56,11 @@ pub struct Pagination {
 	pub page_size: u16,
 }
 
+fn vtxo_seed(network: Network, seed: &[u8; 64]) -> Xpriv {
+	let master = bip32::Xpriv::new_master(network, seed).unwrap();
+	master.derive_priv(&SECP, &[350.into()]).unwrap()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UtxoInfo {
 	pub outpoint: OutPoint,
@@ -166,12 +171,6 @@ impl <P>Wallet<P> where
 	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
-	pub fn vtxo_seed(network: Network, mnemonic: &Mnemonic) -> Xpriv {
-		let seed = mnemonic.to_seed("");
-		let master = bip32::Xpriv::new_master(network, &seed).unwrap();
-		master.derive_priv(&SECP, &[350.into()]).unwrap()
-	}
-
 	/// Create new wallet.
 	pub async fn create(mnemonic: Mnemonic, network: Network, config: Config, db: P) -> anyhow::Result<Wallet<P>> {
 		trace!("Config: {:?}", config);
@@ -180,7 +179,7 @@ impl <P>Wallet<P> where
 			bail!("cannot overwrite already existing config")
 		}
 
-		let wallet_fingerprint = Self::vtxo_seed(network, &mnemonic).fingerprint(&SECP);
+		let wallet_fingerprint = vtxo_seed(network, &mnemonic.to_seed("")).fingerprint(&SECP);
 		let properties = WalletProperties {
 			network: network,
 			fingerprint: wallet_fingerprint
@@ -207,7 +206,7 @@ impl <P>Wallet<P> where
 		trace!("Config: {:?}", config);
 
 		let seed = mnemonic.to_seed("");
-		let vtxo_seed = Self::vtxo_seed(properties.network, mnemonic);
+		let vtxo_seed = vtxo_seed(properties.network, &seed);
 
 		if properties.fingerprint != vtxo_seed.fingerprint(&SECP) {
 			bail!("incorrect mnemonic")
