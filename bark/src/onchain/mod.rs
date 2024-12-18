@@ -15,15 +15,16 @@ use bitcoin::{
 use serde::ser::StdError;
 
 use crate::{
-	UtxoInfo,
-	persist::BarkPersister
+	exit::SpendableVtxo, persist::BarkPersister, UtxoInfo
 };
 pub use crate::onchain::chain::ChainSourceClient;
 
 pub struct Wallet<P: BarkPersister> {
 	wallet: PersistedWallet<P>,
-	pub(crate) chain_source: ChainSourceClient,
 	db: P,
+
+	pub (crate) exit_outputs: Vec<SpendableVtxo>,
+	pub (crate)	chain_source: ChainSourceClient,
 }
 
 impl <P>Wallet<P> where
@@ -54,7 +55,13 @@ impl <P>Wallet<P> where
 
 		let chain_source = ChainSourceClient::new(chain_source)?;
 
-		Ok(Wallet { wallet, chain_source, db })
+		Ok(Wallet { 
+			wallet, 
+			db, 
+			
+			chain_source, 
+			exit_outputs: vec![] 
+		})
 	}
 
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {

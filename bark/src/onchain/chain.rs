@@ -2,7 +2,7 @@
 
 use std::time::UNIX_EPOCH;
 use std::{borrow::Borrow, time::SystemTime};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 use ark::BlockHeight;
@@ -135,6 +135,68 @@ impl ChainSourceClient {
 		}
 
 		Ok(balance.total())
+	}
+
+	/// For each provided outpoint, fetches any confirmed or unconfirmed
+	/// transaction in which it is spent, then returns a tupple containing
+	/// _outpoint>confirmed tx_ map and _outpoint>unconfirmed tx_ map
+	pub async fn txs_spending_inputs(&self, outpoints: Vec<OutPoint>, start: BlockHeight)
+		-> anyhow::Result<(HashMap<OutPoint, (BlockHeight, Txid)>, HashMap<OutPoint, Txid>)>
+	{
+		let mut txs_by_outpoint = HashMap::<OutPoint, (BlockHeight, Txid)>::new();
+		let mut unconfirmed_txs_by_outpoint = HashMap::<OutPoint, Txid>::new();
+
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				let block = self.block_id(start as u32).await?;
+				let cp = CheckPoint::new(block);
+
+				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
+					bitcoind, cp.clone(), cp.height(),
+				);
+
+				let outpoint_set: HashSet<bitcoin::OutPoint> = HashSet::from_iter(outpoints.clone().into_iter());
+
+				while let Some(em) = emitter.next_block()? {
+					for tx in &em.block.txdata {
+						for txin in tx.input.iter() {
+							if outpoint_set.contains(&txin.previous_output) {
+								txs_by_outpoint.insert(txin.previous_output.clone(), (
+									em.block.bip34_block_height().unwrap(), tx.compute_txid()
+								));
+							}
+						}
+					}
+				}
+
+				let mempool = emitter.mempool()?;
+				for (tx, _last_seen) in &mempool {
+					for txin in tx.input.iter() {
+						if outpoint_set.contains(&txin.previous_output) {
+							unconfirmed_txs_by_outpoint.insert(txin.previous_output.clone(), tx.compute_txid());
+						}
+					}
+				}
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				for outpoint in outpoints {
+					let output_status = client.get_output_status(&outpoint.txid, outpoint.vout.into()).await?;
+
+					if let Some(output_status) = output_status {
+						if let Some(block_height) = output_status.status.and_then(|s| s.block_height) {
+							txs_by_outpoint.insert(outpoint, (block_height.into(), output_status.txid.expect("tx is confirmed")));
+							continue;
+						}
+
+						if output_status.spent {
+							unconfirmed_txs_by_outpoint.insert(outpoint, output_status.txid.expect("output is spent"));
+						}
+					}
+				}
+			},
+		}
+
+		Ok((txs_by_outpoint, unconfirmed_txs_by_outpoint))
 	}
 
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {

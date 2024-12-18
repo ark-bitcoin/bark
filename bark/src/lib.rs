@@ -353,6 +353,7 @@ impl <P>Wallet<P> where
 	/// Sync both the onchain and offchain wallet.
 	pub async fn sync(&mut self) -> anyhow::Result<()> {
 		self.onchain.sync().await?;
+		self.exit.sync_exit(&mut self.onchain).await?;
 		self.sync_ark().await?;
 		Ok(())
 	}

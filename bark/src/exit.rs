@@ -7,10 +7,14 @@ use bdk_wallet::WalletPersister;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use serde::ser::StdError;
 
-use ark::{Vtxo, VtxoId};
+use ark::{BlockHeight, Vtxo, VtxoId};
 
 use crate::onchain::{self, ChainSource, ChainSourceClient};
 use crate::persist::BarkPersister;
+
+/// The confirmations needed to consider transaction
+/// immutable in the chain
+const DEEPLY_CONFIRMED: BlockHeight = 6;
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -321,7 +325,7 @@ impl <P>Exit<P> where
 					}
 				}
 
-				if  current_height > spendable_at_height  {
+				if current_height >= spendable_at_height  {
 					spendable.push(SpendableVtxo {
 						vtxo: vtxo.clone(),
 						spendable_at_height: spendable_at_height,
@@ -334,5 +338,75 @@ impl <P>Exit<P> where
 		}
 
 		Ok(VtxoPartition { spendable, spent, pending })
+	}
+
+	pub (crate) async fn list_spendable_exits(&self) -> anyhow::Result<Vec<SpendableVtxo>> {
+		Ok(self.partition_vtxos().await?.spendable)
+	}
+
+	/// Sync to check if spendable vtxos have been spent
+	///
+	/// If so, it removes the VTXO from the exit
+	///
+	/// Note: this does not sync exit txs, only exit outputs.
+	/// To sync exit txs, see [`Exit::progress_exit`]
+	pub (crate) async fn sync_exit(&mut self, onchain: &mut onchain::Wallet<P>) -> anyhow::Result<()> {
+		let VtxoPartition { spendable, spent, .. } = self.partition_vtxos().await?;
+		let vtxos = spendable.into_iter().map(|v| v.vtxo).chain(spent.into_iter()).collect::<Vec<_>>();
+
+		let current_height = self.chain_source.tip().await?;
+
+		// we compute the lowest confirmation height from which we can start syncing
+		// we don't need to sync before because outputs weren't spendable
+		let lowest_confirm_height = vtxos.iter()
+			.map(|v| self.index.spendable_at_height(v).expect("vtxo must be spendable here"))
+			.min();
+
+		if let Some(lowest_confirm_height) = lowest_confirm_height {
+			let (tx_by_outpoint, unconfirmed_tx_by_outpoint) = self.chain_source.txs_spending_inputs(
+				vtxos.iter().map(|v| v.point()).collect::<Vec<_>>(),
+				lowest_confirm_height as u64
+			).await?;
+
+			for vtxo in vtxos {
+				let point = vtxo.point();
+
+				// Tracking output on chain
+				if let Some((height, _txid)) = tx_by_outpoint.get(&point) {
+					self.index.exit_output_status.insert(point, OutputStatus::ConfirmedIn(*height as u32));
+					continue
+				}
+
+				// Tracking output in mempool
+				if let Some(txid) = unconfirmed_tx_by_outpoint.get(&point) {
+					self.index.exit_output_status.insert(point, OutputStatus::SpentIn(*txid));
+					continue
+				}
+
+				// If transaction spending output has been sufficiently deep,
+				// we can safely remove the VTXO from the index
+				if let Some(exit_output_status) = self.index.exit_output_status.get(&point) {
+					match exit_output_status {
+						OutputStatus::ConfirmedIn(height)
+							if current_height > (height + DEEPLY_CONFIRMED as u32) =>
+						{
+							self.index.remove_vtxo(vtxo.id());
+							continue;
+						}
+						_ => {}
+					}
+				}
+
+				// Default to move back output to available status
+				self.index.exit_output_status.insert(point,  OutputStatus::Available);
+			}
+
+			self.persist_exit()?;
+
+			let outputs = self.list_spendable_exits().await?;
+			onchain.exit_outputs = outputs;
+		}
+
+		Ok(())
 	}
 }
