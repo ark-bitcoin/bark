@@ -249,7 +249,11 @@ enum Command {
 enum OnchainCommand {
 	/// Get the on-chain balance
 	#[command()]
-	Balance,
+	Balance {
+		/// Skip syncing before computing balance
+		#[arg(long)]
+		no_sync: bool,
+	},
 
 	/// Get an on-chain address
 	#[command()]
@@ -264,7 +268,11 @@ enum OnchainCommand {
 
 	/// List our wallet's UTXOs
 	#[command()]
-	Utxos,
+	Utxos {
+		/// Skip syncing before fetching UTXOs
+		#[arg(long)]
+		no_sync: bool,
+	},
 }
 
 fn init_logging(verbose: bool) {
@@ -346,8 +354,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			println!("{:#?}", w.config());
 		},
 		Command::Onchain(cmd) => match cmd {
-			OnchainCommand::Balance => {
-				w.onchain.sync().await.context("sync error")?;
+			OnchainCommand::Balance { no_sync } => {
+				if !no_sync {
+					if let Err(e) = w.sync().await {
+						warn!("Failed to sync utxos. {}", e)
+					}
+				}
+
 				let res = w.onchain.balance();
 				if cli.json {
 					println!("{}", res.to_sat());
@@ -360,11 +373,20 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				let addr = address.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
-				w.onchain.sync().await.context("sync error")?;
+
+				if let Err(e) = w.sync().await {
+					warn!("Failed to sync utxos. {}", e)
+				}
+
 				w.onchain.send(addr, amount).await?;
 			},
-			OnchainCommand::Utxos => {
-				w.onchain.sync().await.context("sync error")?;
+			OnchainCommand::Utxos { no_sync } => {
+				if !no_sync {
+					if let Err(e) = w.sync().await {
+						warn!("Failed to sync utxos. {}", e)
+					}
+				}
+
 				let utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<Vec<_>>();
 
 				if cli.json {
@@ -536,7 +558,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					format!("address is not valid for configured network {}", net)
 				})?;
 				debug!("Sending to on-chain address {}", addr);
-				w.sync_ark().await.context("sync error")?;
+
+				if let Err(e) = w.sync().await.context("sync error") {
+					warn!("Failed to sync before onchain send. {}", e)
+				}
+
 				w.send_round_onchain_payment(addr, amount).await?;
 			} else {
 				bail!("Invalid destination");
