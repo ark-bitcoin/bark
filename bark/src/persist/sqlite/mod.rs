@@ -10,7 +10,7 @@ use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::Amount;
 
-use crate::{exit::Exit, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{exit::ExitIndex, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -102,10 +102,10 @@ impl BarkPersister for SqliteClient {
 	}
 
 	fn register_send<'a>(
-		&self, 
-		vtxos: impl IntoIterator<Item = &'a Vtxo>, 
-		destination: String, 
-		change: Option<&Vtxo>, 
+		&self,
+		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+		destination: String,
+		change: Option<&Vtxo>,
 		fees: Option<Amount>
 	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
@@ -184,7 +184,7 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Store the ongoing exit process.
-	fn store_exit(&self, exit: &Exit) -> anyhow::Result<()> {
+	fn store_exit(&self, exit: &ExitIndex) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		query::store_exit(&tx, exit)?;
@@ -192,7 +192,7 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 	/// Fetch the ongoing exit process.
-	fn fetch_exit(&self) -> anyhow::Result<Option<Exit>> {
+	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>> {
 		let conn = self.connect()?;
 		query::fetch_exit(&conn)
 	}
@@ -237,7 +237,7 @@ mod test {
 
 
 	/// Creates an in-memory sqlite connection
-	/// 
+	///
 	/// It returns a [PathBuf] and a [Connection].
 	/// The user should ensure the [Connection] isn't dropped
 	/// until the test completes. If all connections are dropped during
@@ -386,7 +386,7 @@ mod test {
 
 		assert!(loaded.is_some());
 		assert_eq!(
-			created.public_descriptor(bdk_wallet::KeychainKind::External).descriptor_id(), 
+			created.public_descriptor(bdk_wallet::KeychainKind::External).descriptor_id(),
 			loaded.unwrap().public_descriptor(bdk_wallet::KeychainKind::External).descriptor_id()
 		);
 

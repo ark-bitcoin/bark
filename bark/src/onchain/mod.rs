@@ -2,25 +2,23 @@
 mod chain;
 pub use self::chain::ChainSource;
 
-use std::borrow::Borrow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use ark::{Vtxo, fee};
+use ark::fee;
 use ark::util::TransactionExt;
 use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering, WalletPersister};
 use bitcoin::{
-	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
+	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Transaction,
 	Txid, Weight,
 };
 use serde::ser::StdError;
 
 use crate::{
 	UtxoInfo,
-	persist::BarkPersister,
-	psbtext::PsbtInputExt,
-	onchain::chain::ChainSourceClient
+	persist::BarkPersister
 };
+pub use crate::onchain::chain::ChainSourceClient;
 
 pub struct Wallet<P: BarkPersister> {
 	wallet: PersistedWallet<P>,
@@ -69,15 +67,6 @@ impl <P>Wallet<P> where
 
 	pub (crate) async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
 		self.chain_source.broadcast_tx(tx).await
-	}
-
-	pub (crate) async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
-		self.chain_source.broadcast_package(txs).await
-	}
-
-	/// Returns the block height the tx is confirmed in, if any.
-	pub (crate) async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
-		self.chain_source.tx_confirmed(txid).await
 	}
 
 	/// Sync the onchain wallet and returns the balance.
@@ -219,35 +208,5 @@ impl <P>Wallet<P> where
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
 
 		Ok(tx)
-	}
-
-	pub(crate) async fn create_exit_claim_tx(&mut self, inputs: &[&Vtxo]) -> anyhow::Result<Psbt> {
-		assert!(!inputs.is_empty());
-
-		let urgent_fee_rate = self.chain_source.urgent_feerate();
-
-		// Since BDK doesn't allow tx without recipients, we add a drain output.
-		let change_addr = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
-
-		let mut b = self.wallet.build_tx();
-		b.version(2);
-		for input in inputs {
-			let mut psbt_in = psbt::Input::default();
-			psbt_in.set_exit_claim_input(input);
-			psbt_in.witness_utxo = Some(TxOut {
-				script_pubkey: input.spec().exit_spk(),
-				value: input.spec().amount,
-			});
-			b.add_foreign_utxo_with_sequence(
-				input.point(),
-				psbt_in,
-				input.claim_satisfaction_weight(),
-				Sequence::from_height(input.spec().exit_delta),
-			).expect("error adding foreign utxo for claim input");
-		}
-		b.drain_to(change_addr.address.script_pubkey());
-		b.fee_rate(urgent_fee_rate);
-
-		Ok(b.finish().context("failed to craft claim tx")?)
 	}
 }

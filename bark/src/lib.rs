@@ -9,6 +9,7 @@ pub mod persist;
 
 use ark::oor::verify_oor;
 use aspd_rpc as rpc;
+use exit::Exit;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
 
@@ -160,6 +161,7 @@ struct AspConnection {
 
 pub struct Wallet<P: BarkPersister> {
 	pub onchain: onchain::Wallet<P>,
+	pub exit: Exit<P>,
 
 	config: Config,
 	db: P,
@@ -234,7 +236,7 @@ impl <P>Wallet<P> where
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
-		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source)
+		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source.clone())
 			.context("failed to create onchain wallet")?;
 
 		let asp_uri = tonic::transport::Uri::from_str(&config.asp_address)
@@ -282,7 +284,9 @@ impl <P>Wallet<P> where
 			_ => None
 		};
 
-		Ok(Wallet { config, db, onchain, vtxo_seed, asp })
+		let exit = Exit::new(db.clone(), chain_source.clone())?;
+
+		Ok(Wallet { config, db, onchain, vtxo_seed, exit, asp })
 	}
 
 	pub fn config(&self) -> &Config {
@@ -354,12 +358,13 @@ impl <P>Wallet<P> where
 	}
 
 	//TODO(stevenroose) improve the way we expose dangerous methods
-	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
+	pub async fn drop_vtxos(&mut self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
 		for vtxo in self.db.get_all_spendable_vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
-		self.db.store_exit(&exit::Exit::default())?;
+
+		self.exit.clear_exit()?;
 		Ok(())
 	}
 

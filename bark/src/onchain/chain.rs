@@ -17,6 +17,7 @@ use crate::persist::BarkPersister;
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 
+#[derive(Clone)]
 pub enum ChainSource {
 	Bitcoind {
 		url: String,

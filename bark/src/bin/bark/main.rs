@@ -393,10 +393,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			let onchain = w.onchain.balance();
 			let offchain =  w.offchain_balance().await?;
-			let pending_exit = {
-				let exit = w.get_exit()?.unwrap_or_default();
-				exit.total_pending_amount()
-			};
+			let pending_exit = w.exit.pending_total().await?;
 			if cli.json {
 				serde_json::to_writer(io::stdout(), &json::Balance {
 					onchain, offchain, pending_exit,
@@ -441,8 +438,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				warn!("Failed to sync with ASP. Some payments might not be shown. {}", e)
 			}
 
-			let pagination = Pagination { 
-				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX), 
+			let pagination = Pagination {
+				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX),
 				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
 			};
 
@@ -452,14 +449,14 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				info!("Our wallet has {} movement(s):", movements.len());
 				for movement in movements {
-					let value: i64 = 
+					let value: i64 =
 						movement.receives.into_iter().fold(0i64, |a, v| a + v.amount.to_sat() as i64) -
 						movement.spends.into_iter().fold(0i64, |a, v| a + v.amount.to_sat() as i64);
 
-					info!("  {} ({}): value | {} sats; fees | {} sats", 
-						movement.id, 
-						movement.created_at, 
-						value, 
+					info!("  {} ({}): value | {} sats; fees | {} sats",
+						movement.id,
+						movement.created_at,
+						value,
 						movement.fees.to_sat()
 					);
 				}
@@ -577,7 +574,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Exit { only_progress, wait } => {
 			if !only_progress {
-				w.start_exit_for_entire_wallet().await
+				if let Err(e) = w.sync_ark().await {
+					warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
+				}
+
+				w.exit.start_exit_for_entire_wallet().await
 					.context("error starting exit process for existing vtxos")?;
 			}
 
@@ -587,47 +588,57 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					warn!("Failed to perform on-chain sync before progressing exit: {}", e);
 				}
 
-				let res = wallet.as_mut().unwrap().progress_exit().await
+				let wallet_mut = wallet.as_mut().unwrap();
+
+				let res = wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
 					.context("error making progress on exit process")?;
 				if cli.json {
 					let ret = match res {
-						bark::ExitStatus::Done => {
-							json::ExitStatus { done: true, height: None }
+						Some(ref status) => match status {
+							bark::ExitStatus::NeedMoreTxs => {
+								json::ExitStatus { done: false, height: None }
+							},
+							bark::ExitStatus::WaitingForHeight(h) => {
+								json::ExitStatus { done: false, height: Some(*h) }
+							},
+							bark::ExitStatus::CanSpendAllOutputs => {
+								json::ExitStatus { done: true, height: None }
+							},
 						},
-						bark::ExitStatus::NeedMoreTxs => {
-							json::ExitStatus { done: false, height: None }
-						},
-						bark::ExitStatus::WaitingForHeight(h) => {
-							json::ExitStatus { done: false, height: Some(h) }
-						},
+						None => json::ExitStatus { done: false, height: None }
 					};
 					serde_json::to_writer(io::stdout(), &ret).unwrap();
 				} else {
 					match res {
-						bark::ExitStatus::Done => {
-							info!("Exit succesful!");
-						}
-						bark::ExitStatus::NeedMoreTxs => {
-							if wait {
-								info!("More transactions need to be confirmed.");
-							} else {
-								info!("More transactions need to be confirmed, \
-									keep calling this command.");
+						Some(ref status) => {
+							match status {
+								bark::ExitStatus::NeedMoreTxs => {
+									if wait {
+										info!("More transactions need to be confirmed.");
+									} else {
+										info!("More transactions need to be confirmed, \
+											keep calling this command.");
+									}
+								},
+								bark::ExitStatus::WaitingForHeight(h) => {
+									if wait {
+										info!("All transactions are confirmed, \
+											waiting for block height {}.", h);
+									} else {
+										info!("All transactions are confirmed. \
+											They will be all spendable at block height {}.", h);
+									}
+								}
+								bark::ExitStatus::CanSpendAllOutputs => {
+									info!("All exit outputs can now be spent!");
+								}
 							}
 						},
-						bark::ExitStatus::WaitingForHeight(h)=> {
-							if wait {
-								info!("All transactions are confirmed, \
-									waiting for block height {}.", h);
-							} else {
-								info!("All transactions are confirmed, call command again \
-									to claim them all at block height {}.", h);
-							}
-						}
+						None => info!("No exit in progress")
 					}
 				}
 
-				if !wait || res == bark::ExitStatus::Done {
+				if !wait || res.is_none() || res.unwrap() == bark::ExitStatus::CanSpendAllOutputs {
 					break;
 				}
 
