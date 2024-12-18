@@ -6,20 +6,59 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::fee;
-use ark::util::TransactionExt;
-use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering, WalletPersister};
+use ark::util::{TransactionExt, SECP};
+use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
+use bdk_wallet::{LocalOutput, PersistedWallet, SignOptions, TxBuilder, TxOrdering, WalletPersister};
 use bitcoin::{
-	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Transaction,
-	Txid, Weight,
+	bip32, psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight
 };
 use serde::ser::StdError;
 
+use crate::psbtext::PsbtInputExt;
+use crate::vtxo_seed;
 use crate::{
-	exit::SpendableVtxo, persist::BarkPersister, UtxoInfo
+	exit::SpendableVtxo, persist::BarkPersister
 };
 pub use crate::onchain::chain::ChainSourceClient;
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum Utxo {
+	Local(LocalOutput),
+	Exit(SpendableVtxo)
+}
+
+pub trait TxBuilderExt {
+	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableVtxo]);
+}
+
+impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
+	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableVtxo]) {
+		self.version(2);
+
+		for input in exit_outputs {
+			let mut psbt_in = psbt::Input::default();
+			psbt_in.set_exit_claim_input(&input.vtxo);
+			psbt_in.witness_utxo = Some(TxOut {
+				script_pubkey: input.vtxo.spec().exit_spk(),
+				value: input.vtxo.spec().amount,
+			});
+
+			self.add_foreign_utxo_with_sequence(
+				input.vtxo.point(),
+				psbt_in,
+				input.vtxo.claim_satisfaction_weight(),
+				Sequence::from_height(input.vtxo.spec().exit_delta),
+			).expect("error adding foreign utxo for claim input");
+		}
+	}
+}
+
 pub struct Wallet<P: BarkPersister> {
+	/// NB: onchain wallet needs to be able to reconstruct
+	/// vtxo keypair in order to sign vtxo exit output if any
+	seed: [u8; 64],
+	network: Network,
+
 	wallet: PersistedWallet<P>,
 	db: P,
 
@@ -55,12 +94,15 @@ impl <P>Wallet<P> where
 
 		let chain_source = ChainSourceClient::new(chain_source)?;
 
-		Ok(Wallet { 
-			wallet, 
-			db, 
-			
-			chain_source, 
-			exit_outputs: vec![] 
+		Ok(Wallet {
+			seed,
+			network,
+
+			wallet,
+			db,
+
+			chain_source,
+			exit_outputs: vec![]
 		})
 	}
 
@@ -85,16 +127,21 @@ impl <P>Wallet<P> where
 	///
 	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> Amount {
-		self.wallet.balance().total()
+		let exit_total = self.exit_outputs.iter().fold(Amount::ZERO, |acc, v| acc + v.vtxo.spec().amount);
+		self.wallet.balance().total() + exit_total
 	}
 
-	pub fn utxos(&self) -> Vec<UtxoInfo> {
-		self.wallet.list_unspent().map(UtxoInfo::from).collect()
+	pub fn utxos(&self) -> Vec<Utxo> {
+		let mut utxos = self.wallet.list_unspent().map(|o| Utxo::Local(o)).collect::<Vec<_>>();
+		utxos.extend(self.exit_outputs.clone().into_iter().map(|e| Utxo::Exit(e)));
+
+		utxos
 	}
 
 	pub (crate) fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
 		let fee_rate = self.chain_source.regular_feerate();
 		let mut b = self.wallet.build_tx();
+		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.ordering(TxOrdering::Untouched);
 		b.add_recipient(dest.script_pubkey(), amount);
 		b.fee_rate(fee_rate);
@@ -104,13 +151,36 @@ impl <P>Wallet<P> where
 	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
 		let fee_rate = self.chain_source.regular_feerate();
 		let mut b = self.wallet.build_tx();
+		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.drain_to(dest.script_pubkey());
 		b.drain_wallet();
 		b.fee_rate(fee_rate);
 		b.finish().context("error building tx")
 	}
 
+	fn sign_exit_inputs(&self, psbt: &mut Psbt) {
+		let prevouts = psbt.inputs.iter()
+			.map(|i| i.witness_utxo.clone().unwrap())
+			.collect::<Vec<_>>();
+
+		let prevouts = sighash::Prevouts::All(&prevouts);
+		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
+
+		let keypair = vtxo_seed(self.network, &self.seed).to_keypair(&SECP);
+		for (i, input) in psbt.inputs.iter_mut().enumerate() {
+			input.try_sign_exit_claim_input(
+				&SECP,
+				&mut shc,
+				&prevouts,
+				i,
+				&keypair
+			);
+		}
+	}
+
 	pub (crate) fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
+		self.sign_exit_inputs(&mut psbt);
+
 		let opts = SignOptions {
 			trust_witness_utxo: true,
 			..Default::default()

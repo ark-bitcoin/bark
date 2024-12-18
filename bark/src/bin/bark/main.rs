@@ -18,7 +18,7 @@ use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 
-use bark::{Config, Pagination};
+use bark::{Config, Pagination, UtxoInfo};
 use bark_json::cli as json;
 
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
@@ -365,7 +365,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			},
 			OnchainCommand::Utxos => {
 				w.onchain.sync().await.context("sync error")?;
-				let utxos = w.onchain.utxos();
+				let utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<Vec<_>>();
 
 				if cli.json {
 					serde_json::to_writer(io::stdout(), &utxos).unwrap();

@@ -11,11 +11,12 @@ use ark::oor::verify_oor;
 use aspd_rpc as rpc;
 use exit::Exit;
 pub use exit::ExitStatus;
+use onchain::Utxo;
 pub use persist::sqlite::SqliteClient;
 
 mod exit;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
-use bdk_wallet::{LocalOutput, WalletPersister};
+use bdk_wallet::WalletPersister;
 use bip39::Mnemonic;
 use bitcoin::bip32::{Fingerprint, Xpriv};
 use bitcoin::hex::DisplayHex;
@@ -70,12 +71,21 @@ pub struct UtxoInfo {
 	pub confirmation_height: Option<u32>
 }
 
-impl From<LocalOutput> for UtxoInfo {
-	fn from(value: LocalOutput) -> Self {
-		UtxoInfo {
-			outpoint: value.outpoint,
-			amount: value.txout.value,
-			confirmation_height: value.chain_position.confirmation_height_upper_bound()
+impl From<Utxo> for UtxoInfo {
+	fn from(value: Utxo) -> Self {
+		match value {
+			Utxo::Local(o) =>
+				UtxoInfo {
+					outpoint: o.outpoint,
+					amount: o.txout.value,
+					confirmation_height: o.chain_position.confirmation_height_upper_bound()
+				},
+			Utxo::Exit(e) =>
+				UtxoInfo {
+					outpoint: e.vtxo.point(),
+					amount: e.vtxo.amount(),
+					confirmation_height: Some(e.spendable_at_height - e.vtxo.spec().exit_delta as u32)
+				}
 		}
 	}
 }
