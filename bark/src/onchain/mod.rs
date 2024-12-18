@@ -8,9 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use ark::{Vtxo, fee};
 use ark::util::TransactionExt;
-use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering, WalletPersister};
-use bdk_esplora::EsploraAsyncExt;
 use bitcoin::{
 	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
 	Txid, Weight,
@@ -26,11 +24,11 @@ use crate::{
 
 pub struct Wallet<P: BarkPersister> {
 	wallet: PersistedWallet<P>,
-	chain_source: ChainSourceClient,
+	pub(crate) chain_source: ChainSourceClient,
 	db: P,
 }
 
-impl <P>Wallet<P> where 
+impl <P>Wallet<P> where
 	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
@@ -84,52 +82,7 @@ impl <P>Wallet<P> where
 
 	/// Sync the onchain wallet and returns the balance.
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
-		debug!("Starting wallet sync...");
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
-
-		let prev_tip = self.wallet.latest_checkpoint();
-		match self.chain_source {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, prev_tip.clone(), prev_tip.height(),
-				);
-				while let Some(em) = emitter.next_block()? {
-					self.wallet.apply_block_connected_to(
-						&em.block, em.block_height(), em.connected_to(),
-					)?;
-					self.wallet.persist(&mut self.db)?;
-				}
-
-				let mempool = emitter.mempool()?;
-				self.wallet.apply_unconfirmed_txs(mempool);
-				self.wallet.persist(&mut self.db)?;
-			},
-			ChainSourceClient::Esplora(ref client) => {
-				const STOP_GAP: usize = 50;
-				const PARALLEL_REQS: usize = 4;
-
-				let request = self.wallet.start_full_scan();
-				let now = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
-				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
-				self.wallet.apply_update_at(update, now)?;
-				self.wallet.persist(&mut self.db)?;
-			},
-		}
-
-		let balance = self.wallet.balance();
-
-		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
-		for tx in self.wallet.transactions() {
-			if let ChainPosition::Unconfirmed { last_seen: Some(last_seen) } = tx.chain_position {
-				if last_seen < now {
-					if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
-						warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
-					}
-				}
-			}
-		}
-
-		Ok(balance.total())
+		Ok(self.chain_source.sync_wallet(&mut self.wallet, &mut self.db).await?)
 	}
 
 	/// Return the balance of the onchain wallet.
@@ -143,18 +96,8 @@ impl <P>Wallet<P> where
 		self.wallet.list_unspent().map(UtxoInfo::from).collect()
 	}
 
-	/// Fee rate to use for regular txs like onboards.
-	pub (crate) fn regular_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(10).unwrap()
-	}
-
-	/// Fee rate to use for urgent txs like exits.
-	pub (crate) fn urgent_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(15).unwrap()
-	}
-
 	pub (crate) fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
-		let fee_rate = self.regular_feerate();
+		let fee_rate = self.chain_source.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.ordering(TxOrdering::Untouched);
 		b.add_recipient(dest.script_pubkey(), amount);
@@ -163,7 +106,7 @@ impl <P>Wallet<P> where
 	}
 
 	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
-		let fee_rate = self.regular_feerate();
+		let fee_rate = self.chain_source.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.drain_to(dest.script_pubkey());
 		b.drain_wallet();
@@ -193,7 +136,7 @@ impl <P>Wallet<P> where
 	}
 
 	/// Reveals a new onchain address
-	/// 
+	///
 	/// The revealed address is directly persisted, so calling this method twice in a row will result in 2 different addresses
 	pub fn address(&mut self) -> anyhow::Result<Address> {
 		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
@@ -281,7 +224,7 @@ impl <P>Wallet<P> where
 	pub(crate) async fn create_exit_claim_tx(&mut self, inputs: &[&Vtxo]) -> anyhow::Result<Psbt> {
 		assert!(!inputs.is_empty());
 
-		let urgent_fee_rate = self.urgent_feerate();
+		let urgent_fee_rate = self.chain_source.urgent_feerate();
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);

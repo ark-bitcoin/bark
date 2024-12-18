@@ -644,7 +644,7 @@ impl <P>Wallet<P> where
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
 		let mut asp = self.require_asp()?;
 
-		let fr = self.onchain.regular_feerate();
+		let fr = self.onchain.chain_source.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 		let output = PaymentRequest { pubkey: destination, amount };
@@ -770,7 +770,7 @@ impl <P>Wallet<P> where
 		}
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
 
-		let fr = self.onchain.regular_feerate();
+		let fr = self.onchain.chain_source.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 

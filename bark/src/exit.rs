@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
-use bitcoin::{sighash, Amount, Transaction, Txid, Weight};
+use bitcoin::{sighash, Amount, Transaction, Txid};
 use serde::ser::StdError;
 
 use ark::Vtxo;
@@ -39,7 +39,7 @@ pub struct Exit {
 
 impl Exit {
 	/// Add vtxo to the exit, if not already in
-	/// 
+	///
 	/// Returns the vtxo if it was added to the exit
 	fn add_vtxo(&mut self, vtxo: Vtxo) -> Option<Vtxo> {
 		if self.vtxos.iter().any(|v| v.id() == vtxo.id()) {
@@ -68,8 +68,8 @@ pub enum ExitStatus {
 	WaitingForHeight(u32),
 }
 
-impl <P>Wallet<P> where 
-	P: BarkPersister, 
+impl <P>Wallet<P> where
+	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
 	/// Add all vtxos in the current wallet to the exit process.
@@ -157,7 +157,7 @@ impl <P>Wallet<P> where
 						}
 
 						// Ok let's confirm this bastard.
-						let fee_rate = self.onchain.urgent_feerate();
+						let fee_rate = self.onchain.chain_source.urgent_feerate();
 						let cpfp = self.onchain.make_cpfp(&[&tx], fee_rate).await?;
 						info!("Broadcasting package with CPFP tx {} to confirm tx {}",
 							cpfp.compute_txid(), txid,
