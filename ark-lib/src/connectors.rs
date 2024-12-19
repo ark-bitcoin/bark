@@ -261,10 +261,17 @@ mod test {
 		let mut n = 10;
 		let chain = ConnectorChain::new(n, utxo, key.public_key());
 		for tx in chain.iter_signed_txs(&key) {
+			let amount = ConnectorChain::required_budget(n).to_sat();
+			let inputs = vec![bitcoinconsensus::Utxo {
+				script_pubkey: spk.as_bytes().as_ptr(),
+				script_pubkey_len: spk.len() as u32,
+				value: amount as i64,
+			}];
 			bitcoinconsensus::verify(
 				spk.as_bytes(),
-				ConnectorChain::required_budget(n).to_sat(),
+				amount,
 				&bitcoin::consensus::serialize(&tx),
+				Some(&inputs),
 				0,
 			).expect("verification failed");
 			n -= 1;
