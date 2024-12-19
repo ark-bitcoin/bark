@@ -6,6 +6,7 @@ use std::time::Duration;
 use ark_testing::util::FutureExt;
 use ark_testing::{AspdConfig, TestContext};
 use ark_testing::daemon::aspd::Aspd;
+use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
 use aspd_log::{NotSweeping, SweepComplete};
 use aspd_rpc_client::Empty;
 
@@ -151,4 +152,25 @@ async fn spend_expired() {
 
 	bitcoind.generate(2).await;
 	assert_eq!(992837, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+}
+
+#[tokio::test]
+async fn restart_fresh_aspd() {
+	let (_ctx, _bitcoind, mut aspd, _bark1, _bark2) = setup_simple("aspd/restart_fresh_aspd").await;
+	aspd.stop().await.unwrap();
+	aspd.start().await.unwrap();
+}
+
+#[tokio::test]
+async fn restart_funded_aspd() {
+	let (_ctx, _bitcoind, mut aspd, _bark1, _bark2) = setup_asp_funded("aspd/restart_funded_aspd").await;
+	aspd.stop().await.unwrap();
+	aspd.start().await.unwrap();
+}
+
+#[tokio::test]
+async fn restart_aspd_with_payments() {
+	let (_ctx, _bitcoind, mut aspd, _bark1, _bark2) = setup_full("aspd/restart_aspd_with_payments").await;
+	aspd.stop().await.unwrap();
+	aspd.start().await.unwrap();
 }
