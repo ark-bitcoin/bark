@@ -17,10 +17,12 @@ use bitcoin::{
 };
 use serde::ser::StdError;
 
-use crate::persist::BarkPersister;
-use crate::{exit::VtxoExt, UtxoInfo};
-use crate::psbtext::PsbtInputExt;
-use self::chain::ChainSourceClient;
+use crate::{
+	UtxoInfo,
+	persist::BarkPersister,
+	psbtext::PsbtInputExt,
+	onchain::chain::ChainSourceClient
+};
 
 pub struct Wallet<P: BarkPersister> {
 	wallet: PersistedWallet<P>,
@@ -296,7 +298,7 @@ impl <P>Wallet<P> where
 			b.add_foreign_utxo_with_sequence(
 				input.point(),
 				psbt_in,
-				input.satisfaction_weight(),
+				input.claim_satisfaction_weight(),
 				Sequence::from_height(input.spec().exit_delta),
 			).expect("error adding foreign utxo for claim input");
 		}

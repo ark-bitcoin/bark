@@ -14,10 +14,6 @@ use crate::{SECP, Wallet};
 use crate::psbtext::PsbtInputExt;
 
 
-
-/// The input weight required to claim a VTXO.
-const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
-
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 enum TxStatus {
 	/// Tx has not been broadcast.
@@ -242,17 +238,5 @@ impl <P>Wallet<P> where
 		self.db.store_exit(&Exit::default())?;
 
 		Ok(ExitStatus::Done)		
-	}
-}
-
-
-pub(crate) trait VtxoExt {
-	fn satisfaction_weight(&self) -> Weight;
-}
-
-impl VtxoExt for Vtxo {
-	fn satisfaction_weight(&self) -> Weight {
-		// NB might be vtxo-dependent in the future
-		VTXO_CLAIM_INPUT_WEIGHT
 	}
 }

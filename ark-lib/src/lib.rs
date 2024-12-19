@@ -52,6 +52,9 @@ pub const P2WSH_DUST: Amount = Amount::from_sat(P2WSH_DUST_SAT);
 /// Witness weight of a taproot keyspend.
 pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 
+/// The input weight required to claim a VTXO.
+const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
+
 
 /// Type representing a block height in the bitcoin blockchain.
 pub type BlockHeight = u64;
@@ -524,6 +527,10 @@ impl Vtxo {
 			Vtxo::Oor { .. } => "arkoor",
 			Vtxo::Bolt11Change { .. } => "bolt11change",
 		}
+	}
+
+	pub fn claim_satisfaction_weight(&self)  -> Weight {
+		VTXO_CLAIM_INPUT_WEIGHT
 	}
 }
 
