@@ -1,8 +1,9 @@
 use std::{path::PathBuf, str::FromStr};
 use anyhow::Context;
+use ark::Movement;
 use bitcoin::{bip32::Fingerprint, Amount, Network};
 use rusqlite::{Connection, named_params, Transaction};
-use crate::{exit::Exit, WalletProperties, Config, Vtxo, VtxoId, VtxoState};
+use crate::{exit::Exit, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 /// Set read-only properties for the wallet
 /// 
@@ -109,20 +110,70 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 	}
 }
 
+pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>, destination: Option<String>) -> anyhow::Result<i32> {
+	// Store the vtxo
+	let query = "INSERT INTO movement (fees_sat, destination) VALUES (:fees_sat, :destination) RETURNING *;";
+	let mut statement = conn.prepare(query)?;	
+	let movement_id = statement.query_row(named_params! {
+		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat(),
+		":destination": destination
+	}, |row| row.get::<_, i32>(0))?;
+
+	Ok(movement_id)
+}
+
+pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+	let take = pagination.page_size;
+	let skip = pagination.page_index * take;
+
+	let query = "
+		SELECT * FROM movement_view
+		ORDER BY movement_view.created_at DESC
+		LIMIT :take
+		OFFSET :skip
+	";
+
+	let mut statement = conn.prepare(query)?;	
+	let mut rows = statement.query(named_params! {
+		":take" : take,
+		":skip" : skip,
+	})?;
+
+	let mut movements = Vec::with_capacity(take as usize);
+	while let Some(row) = rows.next()? {
+		let fees = Amount::from_sat(row.get("fees_sat")?);
+		let spends: String = row.get("spends")?;
+		let receives: String = row.get("receives")?;
+
+		movements.push(Movement {
+			id: row.get("id")?,
+			destination: row.get("destination")?,
+			fees: fees,
+			created_at: row.get("created_at")?,
+			spends: serde_json::from_str(&spends)?,
+			receives: serde_json::from_str(&receives)?,
+		});
+	}
+
+	Ok(movements)
+}
+
 pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
+	movement_id: i32,
 	state: VtxoState
 ) -> anyhow::Result<()> {
 	// Store the ftxo
 	let q1 = 
-		"INSERT INTO vtxo (id, expiry_height, amount_sat, raw_vtxo) 
-		VALUES (:vtxo_id, :expiry_height, :amount_sat, :raw_vtxo);";
+		"INSERT INTO vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo) 
+		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
 	let mut statement = tx.prepare(q1)?;
 	statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.spec().expiry_height,
 		":amount_sat": vtxo.amount().to_sat(),
+		":received_in": movement_id,
 		":raw_vtxo": vtxo.encode(),
 	})?;
 
@@ -251,6 +302,21 @@ pub fn get_vtxo_state(
 	} else {
 		Ok(None)
 	}
+}
+
+pub fn link_spent_vtxo_to_movement(
+	conn: &Connection,
+	id: VtxoId,
+	movement_id: i32
+) -> anyhow::Result<()> {
+	let query = "UPDATE vtxo SET spent_in = :spent_in WHERE id = :vtxo_id";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! {
+		":vtxo_id": id.to_string(),
+		":spent_in": movement_id
+	})?;
+
+	Ok(())
 }
 
 pub fn update_vtxo_state(

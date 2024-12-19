@@ -6,6 +6,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::Duration;
 
+use ark::Movement;
 use bark::UtxoInfo;
 use bitcoin::address::{Address, NetworkUnchecked};
 use bitcoin::{Amount, Network, OutPoint};
@@ -125,6 +126,11 @@ impl Bark {
 
 	pub async fn vtxos(&self) -> Vec<json::VtxoInfo> {
 		let res = self.run(["vtxos", "--json"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
+	pub async fn list_movements(&self) -> Vec<Movement> {
+		let res = self.run(["list-movements", "--json"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 

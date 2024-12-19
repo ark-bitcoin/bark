@@ -74,11 +74,15 @@ pub struct Exit {
 }
 
 impl Exit {
-	fn add_vtxo(&mut self, vtxo: Vtxo) {
+	/// Add vtxo to the exit, if not already in
+	/// 
+	/// Returns the vtxo if it was added to the exit
+	fn add_vtxo(&mut self, vtxo: Vtxo) -> Option<Vtxo> {
 		if self.vtxos.iter().any(|v| v.id() == vtxo.id()) {
-			return;
+			return None
 		}
-		self.vtxos.push(vtxo);
+		self.vtxos.push(vtxo.clone());
+		Some(vtxo)
 	}
 
 	pub fn is_empty(&self) -> bool {
@@ -109,21 +113,23 @@ impl <P>Wallet<P> where
 		if let Err(e) = self.sync_ark().await {
 			warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
 		}
+
 		let vtxos = self.db.get_all_spendable_vtxos()?;
-		let ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 
 		// The idea is to convert all our vtxos into an exit process structure,
 		// that we then store in the database and we can gradually proceed on.
 
 		let mut exit = self.db.fetch_exit()?.unwrap_or_default();
 
-		for vtxo in vtxos {
-			exit.add_vtxo(vtxo);
-		}
+		// We add vtxos to the exit, those already in exit are returned as `None`
+		let added_vtxos = vtxos.into_iter().filter_map(|v| exit.add_vtxo(v)).collect::<Vec<_>>();
 
 		self.db.store_exit(&exit)?;
-		for id in ids {
-			self.db.mark_vtxo_as_spent(id).context("Failed to mark vtxo as spent")?;
+
+		// TODO: later we might want to register each exit as separate exit (sent to different addresses)
+		if !added_vtxos.is_empty() {
+			// TODO: replace vtxo pubkey by something else
+			self.db.register_send(&added_vtxos,  self.vtxo_pubkey().to_string(), None, None).context("Failed to register send")?;
 		}
 
 		Ok(())

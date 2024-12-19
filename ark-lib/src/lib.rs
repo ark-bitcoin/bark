@@ -141,6 +141,45 @@ impl OffboardRequest {
 	}
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct VtxoSubset {
+	pub id: VtxoId, 
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount
+}
+
+/// A [`Movement`] represents any balance change, it can be of three kinds.
+/// 
+///  ### Incoming payment
+/// The wallet receives a new VTXO: the balance increases.
+/// The resulting movement will only have `receives` field filled
+///  
+///  ### Outgoing payment
+/// The wallet sends a set of VTXOs: the balance decreases.
+///	The resulting movement will reference spent VTXOs in `spends` field, 
+/// change VTXO in `receives` one and a non-null destination (either pubkey or BOLT11)
+///  
+///  ### Refreshes
+/// Wallet's VTXOs are replaced by new ones, and a small fee is paid: the balance decreases.
+/// The resulting movement will reference refreshed VTXOs in `spends` field, 
+/// new ones in `receives`, and no destination.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Movement {
+	pub id: u32,
+	/// Can either be a publickey or a bolt11 invoice
+	/// 
+	/// Paid amount can be computed as: `paid = sum(spends) - sum(receives) - fees`
+	pub destination: Option<String>,
+	/// Fees paid for the movement
+	pub fees: Amount,
+	/// wallet's VTXOs spent in this movement
+	pub spends: Vec<VtxoSubset>,
+	/// Received VTXOs from this movement
+	pub receives: Vec<VtxoSubset>,
+	/// Movement date
+	pub created_at: String,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VtxoId([u8; 36]);
 

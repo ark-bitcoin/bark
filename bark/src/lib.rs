@@ -39,7 +39,7 @@ use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, BaseVtxo, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
+use ark::{musig, BaseVtxo, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 use aspd_rpc_client as rpc;
@@ -49,6 +49,11 @@ use crate::vtxo_state::VtxoState;
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
+}
+
+pub struct Pagination {
+	pub page_index: u16,
+	pub page_size: u16,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -327,6 +332,10 @@ impl <P>Wallet<P> where
 		Ok(vtxo)
 	}
 
+	pub fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+		Ok(self.db.list_movements(pagination)?)
+	}
+
 	/// Returns all unspent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
 		Ok(self.db.get_all_spendable_vtxos()?)
@@ -442,8 +451,8 @@ impl <P>Wallet<P> where
 
 		// Store vtxo first before we actually make the on-chain tx.
 		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &user_keypair);
-		self.db.store_vtxo(&vtxo).context("db error storing vtxo")?;
 
+		self.db.register_receive(&vtxo).context("db error storing vtxo")?;
 		let tx = self.onchain.finish_tx(onboard_tx)?;
 		trace!("Broadcasting onboard tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
@@ -453,7 +462,7 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	fn add_new_vtxo(&self, vtxos: &SignedVtxoTree, leaf_idx: usize) -> anyhow::Result<()> {
+	fn build_vtxo(&self, vtxos: &SignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
 		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
 		let dest = &vtxos.spec.vtxos[leaf_idx];
 		let vtxo = Vtxo::Round {
@@ -471,16 +480,13 @@ impl <P>Wallet<P> where
 			exit_branch: exit_branch,
 		};
 
-		if self.db.has_spent_vtxo(vtxo.id())? {
-			debug!("Not adding vtxo {} because it is considered spent", vtxo.id());
-			return Ok(());
+		if self.db.get_vtxo(vtxo.id())?.is_some() {
+			debug!("Not adding vtxo {} because it already exists", vtxo.id());
+			return Ok(None)
 		}
 
-		if self.db.get_vtxo(vtxo.id())?.is_none() {
-			debug!("Storing new vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
-			self.db.store_vtxo(&vtxo).context("failed to store vtxo")?;
-		}
-		Ok(())
+		debug!("Built new vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
+		Ok(Some(vtxo))
 	}
 
 	/// Sync with the Ark and look for received vtxos.
@@ -507,7 +513,9 @@ impl <P>Wallet<P> where
 
 			for (idx, dest) in tree.spec.vtxos.iter().enumerate() {
 				if dest.pubkey == vtxo_key.public_key() {
-					self.add_new_vtxo(&tree, idx)?;
+					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
+						self.db.register_receive(&vtxo)?;
+					}
 				}
 			}
 		}
@@ -536,7 +544,7 @@ impl <P>Wallet<P> where
 
 			if self.db.get_vtxo(vtxo.id())?.is_none() {
 				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
-				self.db.store_vtxo(&vtxo).context("failed to store OOR vtxo")?;
+				self.db.register_receive(&vtxo).context("failed to store OOR vtxo")?;
 			}
 		}
 
@@ -730,17 +738,12 @@ impl <P>Wallet<P> where
 			//NB we will continue to at least not lose our own change
 		}
 
-		if let Some(change_vtxo) = vtxos.get(1) {
-			if let Err(e) = self.db.store_vtxo(change_vtxo) {
-				error!("Failed to store change vtxo from OOR tx: '{}'; vtxo: {}",
-					e, change_vtxo.encode().as_hex(),
-				);
-			}
-		}
-
-		for v in input_vtxos {
-			self.db.mark_vtxo_as_spent(v.id()).context("Failed to mark vtxo as spent")?;
-		}
+		let change = vtxos.get(1);
+		self.db.register_send(
+			&input_vtxos, 
+			output.pubkey.to_string(), 
+			change, 
+			Some(account_for_fee)).context("failed to store OOR vtxo")?;
 
 		Ok(user_vtxo.id())
 	}
@@ -852,18 +855,12 @@ impl <P>Wallet<P> where
 		}
 		let payment_preimage = payment_preimage.unwrap();
 
-		let change_vtxo = signed.change_vtxo();
-		if let Err(e) = self.db.store_vtxo(&change_vtxo) {
-			error!("Failed to store change vtxo from Bolt11 payment: '{}'; vtxo: {}",
-				e, change_vtxo.encode().as_hex(),
-			);
-		}
-
-		// Mark the used vtxo's as spent
-		for v in input_vtxos {
-			self.db.mark_vtxo_as_spent(v.id())
-				.context("Failed to mark vtxo as spent")?;
-		}
+		// TODO: this looks weird that signed.change_vtxo() is not an Option here. What happens if change is 0?
+		self.db.register_send(
+			&input_vtxos, 
+			invoice.to_string(), 
+			Some(&signed.change_vtxo()), 
+			Some(account_for_fee)).context("failed to store OOR vtxo")?;
 
 		info!("Bolt11 payment succeeded");
 		Ok(payment_preimage)
@@ -1221,19 +1218,18 @@ impl <P>Wallet<P> where
 				warn!("Couldn't broadcast round tx: {}", e);
 			}
 
-			// Then add our change vtxo(s) by just checking all vtxos that might be ours.
+			// Finally we save state after refresh
+			let mut new_vtxos: Vec<Vtxo> = vec![];
 			for (idx, dest) in signed_vtxos.spec.vtxos.iter().enumerate() {
 				//TODO(stevenroose) this is broken, need to match vtxorequest exactly
 				if dest.pubkey == vtxo_key.public_key() {
-					self.add_new_vtxo(&signed_vtxos, idx)?;
-				}
+					if let Some(vtxo) = self.build_vtxo(&signed_vtxos, idx)? {
+						new_vtxos.push(vtxo);
+					}
+				} 
 			}
 
-			// And remove the input vtxos.
-			for v in input_vtxos {
-				self.db.mark_vtxo_as_spent(v.id())
-					.context("Failed to mark vtxo as spent")?;
-			}
+			self.db.register_refresh(&input_vtxos, &new_vtxos)?;	
 
 			info!("Round finished");
 			break;

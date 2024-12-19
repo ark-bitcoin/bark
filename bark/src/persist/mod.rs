@@ -1,10 +1,10 @@
 pub mod sqlite;
 
-use ark::{Vtxo, VtxoId};
+use ark::{Movement, Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::Amount;
 
-use crate::{exit::Exit, Config, WalletProperties};
+use crate::{exit::Exit, Config, Pagination, WalletProperties};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database
@@ -16,8 +16,21 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
 	fn read_config(&self) -> anyhow::Result<Option<Config>>;
 
-	/// Stores a vtxo in the database
-	fn store_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()>;
+	/// Returns a paginated list of movements
+	fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
+	/// Register incoming payment
+	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()>;
+	/// Register outgoint payment
+	fn register_send<'a>(
+		&self, 
+		vtxos: impl IntoIterator<Item = &'a Vtxo>, 
+		destination: String, 
+		change: Option<&Vtxo>, 
+		fees: Option<Amount>
+	) -> anyhow::Result<()>;
+	/// Register in-round refresh
+	fn register_refresh(&self, input_vtxos: &[Vtxo], output_vtxos: &[Vtxo]) -> anyhow::Result<()>;
+
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 	/// Fetch all currently spendable VTXOs in the database
@@ -26,8 +39,6 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>>;
 	/// Remove a VTXO from the database
 	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
-	/// Create a new `SPENT` state for the VTXO, making it unspendable again
-	fn mark_vtxo_as_spent(&self, id: VtxoId) -> anyhow::Result<()>;
 	/// Check whether a VTXO has been spent already or not
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool>;
 
