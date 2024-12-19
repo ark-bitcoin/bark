@@ -9,6 +9,19 @@ use crate::{
 	Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
 };
 
+pub trait ToAspUrl {
+	fn asp_url(&self) -> String;
+}
+impl ToAspUrl for Aspd {
+	fn asp_url(&self) -> String { self.asp_url() }
+}
+impl ToAspUrl for String {
+	fn asp_url(&self) -> String { self.clone() }
+}
+impl ToAspUrl for str {
+	fn asp_url(&self) -> String { self.to_owned() }
+}
+
 pub struct TestContext {
 	#[allow(dead_code)]
 	pub name: String,
@@ -104,14 +117,13 @@ impl TestContext {
 		&self,
 		name: impl AsRef<str>,
 		bitcoind: &Bitcoind,
-		aspd: &Aspd,
+		aspd: &dyn ToAspUrl,
 	) -> anyhow::Result<Bark> {
 		let datadir = self.datadir.join(name.as_ref());
-		let asp_url = aspd.asp_url();
 
 		let cfg = BarkConfig {
 			datadir,
-			asp_url,
+			asp_url: aspd.asp_url(),
 			bitcoind_url: bitcoind.rpc_url(),
 			bitcoind_cookie: bitcoind.rpc_cookie(),
 			network: String::from("regtest"),
@@ -119,8 +131,8 @@ impl TestContext {
 		Bark::try_new(name, cfg).await
 	}
 
-	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &Aspd) -> Bark {
-		self.try_bark(name, &bitcoind, &aspd).await.unwrap()
+	pub async fn bark(&self, name: impl AsRef<str>, bitcoind: &Bitcoind, aspd: &dyn ToAspUrl) -> Bark {
+		self.try_bark(name, &bitcoind, aspd).await.unwrap()
 	}
 
 	pub async fn lightningd(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> Lightningd {
@@ -138,8 +150,6 @@ impl TestContext {
 		ret
 	}
 }
-
-
 
 impl Drop for TestContext {
 	fn drop(&mut self) {
