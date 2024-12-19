@@ -237,6 +237,6 @@ impl <P>Wallet<P> where
 		// Remove the exit record from the db.
 		self.db.store_exit(&Exit::default())?;
 
-		Ok(ExitStatus::Done)		
+		Ok(ExitStatus::Done)
 	}
 }
