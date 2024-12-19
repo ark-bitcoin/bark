@@ -6,6 +6,9 @@ authors = ["Steven Roose <steven@roose.io>"]
 edition = "2021"
 repository = "https://github.com/ark-bitcoin/bark"
 
+[features]
+cli = ["home"]
+
 [lib]
 name = "bark"
 path = "src/lib.rs"
@@ -13,6 +16,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "bark"
 path = "src/bin/bark/main.rs"
+required-features = ["cli"]
 
 [dependencies]
 
@@ -51,7 +55,7 @@ tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 
-home = "0.5.9"
+home = { version = "0.5.9", optional = true }
 
 [dev-dependencies]
 rand.workspace = true
