@@ -55,7 +55,7 @@ tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 
-home = { version = "0.5.9", optional = true }
+home = { version = "=0.5.9", optional = true }
 
 [dev-dependencies]
 rand.workspace = true
