@@ -30,7 +30,7 @@ impl From<RoundEvent> for rpc::RoundEvent {
 							.map(|s| s.serialize().to_vec()).collect(),
 						forfeit_nonces: forfeit_nonces.into_iter().map(|(id, nonces)| {
 							rpc::ForfeitNonces {
-								input_vtxo_id: id.bytes().to_vec(),
+								input_vtxo_id: id.to_bytes().to_vec(),
 								pub_nonces: nonces.into_iter()
 									.map(|n| n.serialize().to_vec())
 									.collect(),

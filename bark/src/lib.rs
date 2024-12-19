@@ -1195,7 +1195,7 @@ impl <P>Wallet<P> where
 			asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
 				signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
 					rpc::ForfeitSignatures {
-						input_vtxo_id: id.bytes().to_vec(),
+						input_vtxo_id: id.to_bytes().to_vec(),
 						pub_nonces: sigs.iter().map(|s| s.0.serialize().to_vec()).collect(),
 						signatures: sigs.iter().map(|s| s.1.serialize().to_vec()).collect(),
 					}

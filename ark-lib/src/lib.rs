@@ -206,7 +206,7 @@ impl VtxoId {
 		OutPoint::new(Txid::from_slice(&self.0[0..32]).unwrap(), u32::from_le_bytes(vout))
 	}
 
-	pub fn bytes(self) -> [u8; 36] {
+	pub fn to_bytes(self) -> [u8; 36] {
 		self.0
 	}
 }
