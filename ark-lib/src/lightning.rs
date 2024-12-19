@@ -282,7 +282,7 @@ impl SignedBolt11Payment {
 		let tx = self.signed_transaction();
 		let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
 		Vtxo::Bolt11Change {
-			inputs: self.payment.inputs.iter().map(|i| Box::new(i.clone())).collect(),
+			inputs: self.payment.inputs.clone(),
 			pseudo_spec: VtxoSpec {
 				amount: self.payment.change_amount(),
 				exit_delta: self.payment.exit_delta,
