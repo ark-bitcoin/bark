@@ -25,16 +25,16 @@ lazy_static::lazy_static! {
 // within internal use, if we ever share them for communication or in a db,
 // they need to return errors
 pub trait PsbtInputExt: BorrowMut<psbt::Input> {
-	fn set_claim_input(&mut self, input: &Vtxo) {
+	fn set_exit_claim_input(&mut self, input: &Vtxo) {
 		self.borrow_mut().proprietary.insert(PROP_KEY_CLAIM_INPUT.clone(), input.encode());
 	}
 
-	fn get_claim_input(&self) -> Option<Vtxo> {
+	fn get_exit_claim_input(&self) -> Option<Vtxo> {
 		self.borrow().proprietary.get(&*PROP_KEY_CLAIM_INPUT)
 			.map(|e| Vtxo::decode(&e).expect("corrupt psbt"))
 	}
 
-	fn try_sign_claim_input(
+	fn try_sign_exit_claim_input(
 		&mut self,
 		secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
 		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction>>,
@@ -42,7 +42,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		input_idx: usize,
 		vtxo_key: &Keypair,
 	) {
-		let claim = if let Some(c) = self.get_claim_input() {
+		let claim = if let Some(c) = self.get_exit_claim_input() {
 			c
 		} else {
 			return;

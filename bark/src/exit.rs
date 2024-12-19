@@ -221,7 +221,7 @@ impl <P>Wallet<P> where
 		let prevouts = sighash::Prevouts::All(&prevouts);
 		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
 		for (i, input) in psbt.inputs.iter_mut().enumerate() {
-			input.try_sign_claim_input(&SECP, &mut shc, &prevouts, i, &vtxo_key);
+			input.try_sign_exit_claim_input(&SECP, &mut shc, &prevouts, i, &vtxo_key);
 		}
 
 		// Then sign the wallet's funding inputs.

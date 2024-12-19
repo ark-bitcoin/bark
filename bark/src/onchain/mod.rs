@@ -288,7 +288,7 @@ impl <P>Wallet<P> where
 		b.version(2);
 		for input in inputs {
 			let mut psbt_in = psbt::Input::default();
-			psbt_in.set_claim_input(input);
+			psbt_in.set_exit_claim_input(input);
 			psbt_in.witness_utxo = Some(TxOut {
 				script_pubkey: input.spec().exit_spk(),
 				value: input.spec().amount,
