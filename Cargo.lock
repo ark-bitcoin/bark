@@ -183,6 +183,7 @@ name = "aspd-log"
 version = "0.1.0"
 dependencies = [
  "ark-lib",
+ "bdk_wallet",
  "bitcoin 0.32.2",
  "chrono",
  "log",
