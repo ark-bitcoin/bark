@@ -243,7 +243,11 @@ impl App {
 			let deep = tip.saturating_sub(DEEPLY_CONFIRMED);
 			let hash = bitcoind.get_block_hash(deep)?;
 			let header = bitcoind.get_block_header_info(&hash)?;
-			Ok::<_, anyhow::Error>(header)
+			let block_id = bdk_wallet::chain::BlockId {
+				height: header.height as u32,
+				hash: header.hash,
+			};
+			Ok::<_, anyhow::Error>(block_id)
 		})().context("failed to fetch deep tip from bitcoind")?;
 
 		// write the config to disk
@@ -266,9 +270,9 @@ impl App {
 		let seed = mnemonic.to_seed("");
 		let (mut wallet, _) = Self::wallet_from_seed(config.network, &seed, None)
 			.expect("shouldn't fail on empty state");
-		wallet.insert_checkpoint(bdk_wallet::chain::BlockId {
-			height: deep_tip.height as u32,
-			hash: deep_tip.hash,
+		wallet.apply_update(bdk_wallet::Update {
+			chain: Some(wallet.latest_checkpoint().insert(deep_tip)),
+			..Default::default()
 		}).expect("should work, might fail if tip is genesis");
 		let cs = wallet.take_staged().expect("should have stored tip");
 		ensure!(db.read_aggregate_changeset().await.context("db error")?.is_none(), "db not empty");

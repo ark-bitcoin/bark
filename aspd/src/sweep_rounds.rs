@@ -1,6 +1,6 @@
 
-
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
@@ -185,7 +185,8 @@ impl RoundSweeper {
 		let finalized = wallet.sign(&mut psbt, opts)?;
 		assert!(finalized);
 		let signed = psbt.extract_tx()?;
-		wallet.insert_tx(signed.clone());
+		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Unix epoch is in the past").as_secs();
+		wallet.apply_unconfirmed_txs([(Arc::new(signed.clone()), now)]);
 		let changeset = wallet.take_staged().expect("inserted new tx");
 		Ok((signed, changeset))
 	}
