@@ -5,15 +5,15 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use ark::musig::MusigPubNonce;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bdk_bitcoind_rpc::bitcoincore_rpc::{RawTx, RpcApi};
 use bitcoin::{Amount, FeeRate, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
-
+use tokio::time::Instant;
 use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
 use ark::connectors::ConnectorChain;
+use ark::musig::MusigPubNonce;
 use ark::tree::signed::{UnsignedVtxoTree, VtxoTreeSpec};
 
 use crate::{txindex, App, SECP};
@@ -118,6 +118,8 @@ pub struct VtxoParticipant {
 }
 
 pub struct CollectingPayments {
+	round_id: u64,
+	attempt_number: usize,
 	max_output_vtxos: usize,
 	offboard_feerate: FeeRate,
 
@@ -134,9 +136,9 @@ pub struct CollectingPayments {
 }
 
 impl CollectingPayments {
-	fn new(max_output_vtxos: usize, offboard_feerate: FeeRate) -> CollectingPayments {
+	fn new(round_id: u64, attempt_number: usize, max_output_vtxos: usize, offboard_feerate: FeeRate) -> CollectingPayments {
 		CollectingPayments {
-			max_output_vtxos, offboard_feerate,
+			round_id, attempt_number, max_output_vtxos, offboard_feerate,
 
 			allowed_inputs: None,
 			//TODO(stevenroose) allocate this more effectively
@@ -181,8 +183,7 @@ impl CollectingPayments {
 
 		// Ok we accept the round, register it.
 
-		trace!("Received {} inputs, {} outputs and {} offboards from user",
-			inputs.len(), outputs.len(), offboards.len());
+		slog!(RoundPaymentRegistered, round_id: self.round_id, attempt_number: self.attempt_number, nb_inputs: inputs.len(), nb_outputs: outputs.len(), nb_offboards: offboards.len());
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 		for out in &outputs {
@@ -194,7 +195,7 @@ impl CollectingPayments {
 		// Check whether our round is full.
 		const REGULAR_PAYMENT_NB_OUTPUTS: usize = 2;
 		if self.all_outputs.len() + REGULAR_PAYMENT_NB_OUTPUTS >= self.max_output_vtxos {
-			warn!("Round is full, got {} outputs", self.all_outputs.len());
+			slog!(FullRound, round_id: self.round_id, attempt_number: self.attempt_number, nb_outputs: self.all_outputs.len(), max_output_vtxos: self.max_output_vtxos);
 			self.proceed = true;
 			// self.proceed.notify_one();
 		}
@@ -203,6 +204,9 @@ impl CollectingPayments {
 }
 
 pub struct SigningVtxoTree {
+	round_id: u64,
+	attempt_number: usize,
+
 	cosign_part_sigs: HashMap<PublicKey, Vec<musig::MusigPartialSignature>>,
 	cosign_agg_nonces: Vec<musig::MusigAggNonce>,
 	unsigned_vtxo_tree: UnsignedVtxoTree,
@@ -236,7 +240,7 @@ impl SigningVtxoTree {
 				bail!("pubkey is not part of cosigner group");
 			},
 		};
-		trace!("Received {} signatures from cosigner {}", signatures.len(), pubkey);
+		slog!(RoundVtxoSignaturesRegistered, round_id: self.round_id, attempt_number: self.attempt_number, nb_vtxo_signatures: signatures.len(), cosigner: pubkey);
 
 		let res = self.unsigned_vtxo_tree.verify_branch_cosign_partial_sigs(
 			&self.cosign_agg_nonces,
@@ -253,18 +257,16 @@ impl SigningVtxoTree {
 
 		// Stop the loop once we have all.
 		if self.cosign_part_sigs.len() == self.unsigned_vtxo_tree.nb_leaves() {
-			trace!("We received all signatures before timing out, continuing!");
 			self.proceed = true;
-		} else {
-			trace!("Still missing {} signatures",
-				self.unsigned_vtxo_tree.nb_leaves() - self.cosign_part_sigs.len(),
-			);
 		}
 		Ok(())
 	}
 }
 
 pub struct SigningForfeits {
+	round_id: u64,
+	attempt_number: usize,
+
 	forfeit_part_sigs: HashMap<VtxoId, (Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
 
 	// data from earlier
@@ -283,9 +285,7 @@ impl SigningForfeits {
 		&mut self,
 		signatures: Vec<(VtxoId, Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
 	) -> anyhow::Result<()> {
-		trace!("Received vtxo signatures for {:?}",
-			signatures.iter().map(|v| v.0).collect::<Vec<_>>(),
-		);
+		slog!(ReceivedForfeitSignatures, round_id: self.round_id, attempt_number: self.attempt_number, nb_forfeits: signatures.len(), vtxo_ids: signatures.iter().map(|v| v.0).collect::<Vec<_>>());
 		for (id, nonces, sigs) in signatures {
 			if let Some(_vtxo) = self.all_inputs.get(&id) {
 				match validate_forfeit_sigs(
@@ -297,13 +297,12 @@ impl SigningForfeits {
 					Err(e) => debug!("Invalid forfeit sigs for {}: {}", id, e),
 				}
 			} else {
-				debug!("User provided forfeit sigs for unknown input {}", id);
+				slog!(UnknownForfeitSignature, round_id: self.round_id, attempt_number: self.attempt_number, vtxo_id: id);
 			}
 		}
 
 		// Check whether we have all and can skip the loop.
 		if self.forfeit_part_sigs.len() == self.all_inputs.len() {
-			debug!("We received all signatures, continuing round...");
 			self.proceed = true;
 		}
 		Ok(())
@@ -352,7 +351,6 @@ pub async fn run_round_coordinator(
 
 		let round_id = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
 			cfg.round_interval.as_millis()) as u64;
-		info!("Starting round {}", round_id);
 		slog!(RoundStarted, round_id);
 
 		// Start new round, announce.
@@ -363,20 +361,22 @@ pub async fn run_round_coordinator(
 		// in between attempts is way more critial than in between rounds.
 
 		// In this loop we will try to finish the round and make new attempts.
-		'attempt: loop {
+		'attempt: for attempt_number in 1usize.. {
+			slog!(AttemptingRound, round_id, attempt_number);
 			if sync_next_attempt {
-				let balance = app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
-				info!("Current wallet balance: {}", balance);
+				app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
 			}
 			sync_next_attempt = true;
 
-			let mut state = CollectingPayments::new(max_output_vtxos, offboard_feerate);
+			let attempt_start = Instant::now();
+			let mut state = CollectingPayments::new(round_id, attempt_number, max_output_vtxos, offboard_feerate);
 
 			// Generate a one-time use signing key.
 			let cosign_key = Keypair::new(&SECP, &mut rand::thread_rng());
 
 			// Start receiving payments.
 			tokio::pin! { let timeout = tokio::time::sleep(cfg.round_submit_time); }
+			let receive_payments_start = Instant::now();
 			'receive: loop {
 				tokio::select! {
 					() = &mut timeout => break 'receive,
@@ -388,7 +388,7 @@ pub async fn run_round_coordinator(
 								.map(|(req, nonces)| VtxoParticipant { req, nonces })
 								.collect();
 							if let Err(e) = state.register_payment(inputs, outputs, offboards) {
-								trace!("Error registering payment: {}", e);
+								slog!(RoundPaymentRegistrationFailed, round_id, attempt_number, error: e.to_string());
 								continue 'receive;
 							}
 
@@ -400,11 +400,12 @@ pub async fn run_round_coordinator(
 					}
 				}
 			}
+			let receive_payment_duration = Instant::now().duration_since(receive_payments_start);
 			if state.all_inputs.is_empty() || (state.all_outputs.is_empty() && state.all_offboards.is_empty()) {
-				info!("Nothing to do this round, sitting it out...");
+				slog!(NoRoundPayments, round_id, attempt_number, duration: receive_payment_duration, max_round_submit_time: cfg.round_submit_time);
 				continue 'round;
 			}
-			info!("Received {} inputs and {} outputs for round", state.all_inputs.len(), state.all_outputs.len());
+			slog!(ReceivedRoundPayments, round_id, attempt_number, nb_inputs: state.all_inputs.len(), nb_outputs: state.all_outputs.len(), duration: receive_payment_duration, max_round_submit_time: cfg.round_submit_time);
 
 			// Since it's possible in testing that we only have to do onboards,
 			// and since it's pretty annoying to deal with the case of no vtxos,
@@ -452,7 +453,7 @@ pub async fn run_round_coordinator(
 
 			let tip = app.bitcoind.get_block_count()? as u32;
 			let expiry = tip + cfg.vtxo_expiry_delta as u32;
-			debug!("Current tip is {}, so round vtxos will expire at {}", tip, expiry);
+			slog!(ConstructingRoundVtxoTree, round_id, attempt_number, tip_block_height: tip, vtxo_expiry_block_height: expiry);
 
 			let vtxos_spec = VtxoTreeSpec::new(
 				state.all_outputs.iter().map(|p| p.req.clone()).collect(),
@@ -506,6 +507,7 @@ pub async fn run_round_coordinator(
 			);
 
 			// Send out vtxo proposal to signers.
+			let send_vtxo_proposal_start = Instant::now();
 			let _ = app.rounds().round_event_tx.send(RoundEvent::VtxoProposal {
 				id: round_id,
 				unsigned_round_tx: unsigned_round_tx.clone(),
@@ -515,6 +517,8 @@ pub async fn run_round_coordinator(
 
 			let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(vtxos_utxo);
 			let mut state = SigningVtxoTree {
+				round_id,
+				attempt_number,
 				cosign_agg_nonces,
 				allowed_inputs: state.all_inputs.keys().copied().collect(),
 				all_inputs: state.all_inputs,
@@ -538,7 +542,8 @@ pub async fn run_round_coordinator(
 			}
 
 			// Wait for signatures from users.
-			debug!("Starting wait for vtxo signatures...");
+			slog!(AwaitingRoundSignatures, round_id, attempt_number, duration_since_sending: Instant::now().duration_since(send_vtxo_proposal_start), max_round_sign_time: cfg.round_sign_time);
+			let vtxo_signatures_receive_start = Instant::now();
 			tokio::pin! { let timeout = tokio::time::sleep(cfg.round_sign_time); }
 			'receive: loop {
 				if state.proceed {
@@ -550,8 +555,8 @@ pub async fn run_round_coordinator(
 						for (pk, vtxos) in state.inputs_per_cosigner.iter() {
 							if !state.cosign_part_sigs.contains_key(pk) {
 								// Disallow all inputs by this cosigner.
+								slog!(DroppingLateVtxoSignatureVtxos, round_id, attempt_number, disallowed_vtxos: vtxos.clone());
 								for id in vtxos {
-									trace!("Dropping vtxo {}", id);
 									state.allowed_inputs.remove(id);
 								}
 							}
@@ -561,7 +566,7 @@ pub async fn run_round_coordinator(
 					input = round_input_rx.recv() => match input.expect("broken channel") {
 						RoundInput::VtxoSignatures { pubkey, signatures } => {
 							if let Err(e) = state.register_signature(pubkey, signatures) {
-								trace!("Error in received vtxo tree signatures: {}", e);
+								slog!(VtxoSignatureRegistrationFailed, round_id, attempt_number, error: e.to_string());
 								continue 'receive;
 							}
 						},
@@ -569,9 +574,10 @@ pub async fn run_round_coordinator(
 					}
 				}
 			}
-			debug!("Done receiving vtxo signatures.");
+			slog!(ReceivedRoundVtxoSignatures, round_id, attempt_number, duration: Instant::now().duration_since(vtxo_signatures_receive_start), max_round_sign_time: cfg.round_sign_time);
 
 			// Combine the vtxo signatures.
+			let combine_signatures_start = Instant::now();
 			let asp_cosign_sigs = state.unsigned_vtxo_tree.cosign_tree(
 				&state.cosign_agg_nonces,
 				&cosign_key,
@@ -592,7 +598,7 @@ pub async fn run_round_coordinator(
 
 			// Then construct the final signed vtxo tree.
 			let signed_vtxos = state.unsigned_vtxo_tree.into_signed_tree(cosign_sigs);
-
+			slog!(CreatedSignedVtxoTree, round_id, attempt_number, nb_vtxo_signatures: signed_vtxos.cosign_sigs.len(), duration: Instant::now().duration_since(combine_signatures_start));
 
 			// ****************************************************************
 			// * Broadcast signed vtxo tree and gather forfeit signatures
@@ -615,7 +621,7 @@ pub async fn run_round_coordinator(
 			}
 
 			// Send out round proposal to signers.
-			debug!("Sending round proposal event");
+			let send_round_proposal_start = Instant::now();
 			let _ = app.rounds().round_event_tx.send(RoundEvent::RoundProposal {
 				id: round_id,
 				cosign_sigs: signed_vtxos.cosign_sigs.clone(),
@@ -627,6 +633,8 @@ pub async fn run_round_coordinator(
 			);
 
 			let mut state = SigningForfeits {
+				round_id,
+				attempt_number,
 				forfeit_part_sigs: HashMap::with_capacity(state.all_inputs.len()),
 				all_inputs: state.all_inputs,
 				allowed_inputs: state.allowed_inputs,
@@ -635,7 +643,8 @@ pub async fn run_round_coordinator(
 			};
 
 			// Wait for signatures from users.
-			debug!("Starting wait for forfeit signatures...");
+			slog!(AwaitingRoundForfeits, round_id, attempt_number, duration_since_sending: Instant::now().duration_since(send_round_proposal_start), max_round_sign_time: cfg.round_sign_time);
+			let receive_forfeit_signatures_start = Instant::now();
 			tokio::pin! { let timeout = tokio::time::sleep(cfg.round_sign_time); }
 			'receive: loop {
 				tokio::select! {
@@ -643,7 +652,7 @@ pub async fn run_round_coordinator(
 						warn!("Timed out receiving forfeit signatures.");
 						for vtxo in state.all_inputs.keys() {
 							if !state.forfeit_part_sigs.contains_key(vtxo) {
-								trace!("Dropping vtxo {}", vtxo);
+								slog!(DroppingLateForfeitSignatureVtxo, round_id, attempt_number, disallowed_vtxo: vtxo.clone());
 								state.allowed_inputs.remove(vtxo);
 							}
 						}
@@ -652,7 +661,7 @@ pub async fn run_round_coordinator(
 					input = round_input_rx.recv() => match input.expect("broken channel") {
 						RoundInput::ForfeitSignatures { signatures } => {
 							if let Err(e) = state.register_forfeits(signatures) {
-								trace!("Error in received vtxo tree signatures: {}", e);
+								slog!(ForfeitRegistrationFailed, round_id, attempt_number, error: e.to_string());
 								continue 'receive;
 							}
 
@@ -664,6 +673,7 @@ pub async fn run_round_coordinator(
 					}
 				}
 			}
+			slog!(ReceivedRoundForfeits, round_id, attempt_number, nb_forfeits: state.forfeit_part_sigs.len(), duration: Instant::now().duration_since(receive_forfeit_signatures_start), max_round_sign_time: cfg.round_sign_time);
 
 			// Finish the forfeit signatures.
 			let mut forfeit_sigs = HashMap::with_capacity(state.all_inputs.len());
@@ -696,10 +706,10 @@ pub async fn run_round_coordinator(
 
 			if !missing_forfeits.is_empty() {
 				for input in missing_forfeits {
-					slog!(MissingForfeits, round_id, input);
+					slog!(MissingForfeits, round_id, attempt_number, input);
 				}
 
-				slog!(RestartMissingForfeits, round_id);
+				slog!(RestartMissingForfeits, round_id, attempt_number);
 				continue 'attempt;
 			}
 
@@ -710,6 +720,7 @@ pub async fn run_round_coordinator(
 			// ****************************************************************
 
 			// Sign the on-chain tx.
+			let sign_start = Instant::now();
 			let opts = bdk_wallet::SignOptions {
 				trust_witness_utxo: true,
 				..Default::default()
@@ -723,7 +734,7 @@ pub async fn run_round_coordinator(
 				app.db.store_changeset(&change).await?;
 			}
 			drop(wallet); // we no longer need the lock
-			debug!("Broadcasting round tx {:?}", signed_round_tx);
+			slog!(BroadcastingFinalizedRoundTransaction, round_id, attempt_number, tx_hex: signed_round_tx.raw_hex(), signing_time: Instant::now().duration_since(sign_start));
 			let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
 
 			// Send out the finished round to users.
@@ -734,11 +745,9 @@ pub async fn run_round_coordinator(
 			});
 
 			// Store forfeit txs and round info in database.
-			let round_id = signed_round_tx.txid;
 			for (id, vtxo) in state.all_inputs {
 				let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
-				let point = vtxo.point();
-				trace!("Storing forfeit vtxo for vtxo {}", point);
+				slog!(StoringForfeitVtxo, round_id, attempt_number, out_point: vtxo.point());
 				app.db.store_forfeit_vtxo(ForfeitVtxo { vtxo, forfeit_sigs })?;
 			}
 
@@ -747,7 +756,7 @@ pub async fn run_round_coordinator(
 			app.txindex.register_batch(state.connectors.iter_signed_txs(&app.asp_key)).await;
 			app.db.store_round(signed_round_tx.tx.clone(), signed_vtxos, state.connectors.len())?;
 
-			info!("Finished round {} with tx {}", round_id, signed_round_tx.txid);
+			slog!(RoundFinished, round_id, attempt_number, txid: signed_round_tx.txid, vtxo_expiry_block_height: expiry, duration: Instant::now().duration_since(attempt_start));
 
 			// Sync our wallet so that it sees the broadcasted tx.
 			app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
@@ -846,7 +855,7 @@ mod tests {
 		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
 		let offboards = vec![];
 
-		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 2, FeeRate::MIN);
 		let result = collecting_payments.register_payment(
 			inputs,
 			outputs.clone(),
@@ -876,7 +885,7 @@ mod tests {
 		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
 		let offboards = vec![];
 
-		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 2, FeeRate::MIN);
 		let result = collecting_payments.register_payment(
 			inputs,
 			outputs,
@@ -901,7 +910,7 @@ mod tests {
 		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
 		let offboards = vec![];
 
-		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 2, FeeRate::MIN);
 		let result = collecting_payments.register_payment(
 			inputs,
 			outputs,
@@ -930,7 +939,7 @@ mod tests {
 		];
 		let offboards = vec![];
 
-		let mut collecting_payments = CollectingPayments::new(1, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 1, FeeRate::MIN);
 		let result = collecting_payments.register_payment(
 			inputs,
 			outputs,
@@ -955,7 +964,7 @@ mod tests {
 		let outputs = vec![create_vtxo_participant(OUTPUT_AMOUNT)];
 		let offboards = vec![];
 
-		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 2, FeeRate::MIN);
 		collecting_payments.allowed_inputs = Some(HashSet::new());
 
 		let result = collecting_payments.register_payment(
@@ -993,7 +1002,7 @@ mod tests {
 		}];
 
 		let offboards = vec![];
-		let mut collecting_payments = CollectingPayments::new(2, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 2, FeeRate::MIN);
 
 		let result1 = collecting_payments.register_payment(
 			inputs1,
@@ -1023,7 +1032,7 @@ mod tests {
 		let outputs1 = vec![create_vtxo_participant(OUTPUT_AMOUNT_1)];
 
 		let offboards = vec![];
-		let mut collecting_payments = CollectingPayments::new(4, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 4, FeeRate::MIN);
 
 		let result1 = collecting_payments.register_payment(
 			inputs1,
@@ -1067,7 +1076,7 @@ mod tests {
 		let outputs1 = vec![create_vtxo_participant(OUTPUT_AMOUNT_1)];
 
 		let offboards = vec![];
-		let mut collecting_payments = CollectingPayments::new(4, FeeRate::MIN);
+		let mut collecting_payments = CollectingPayments::new(0, 0, 4, FeeRate::MIN);
 
 		let result1 = collecting_payments.register_payment(
 			inputs1,
