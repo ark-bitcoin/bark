@@ -57,7 +57,6 @@ impl rpc::ArkService for Arc<App> {
 		let ret = rpc::ArkInfo {
 			network: self.config.network.to_string(),
 			pubkey: self.asp_key.public_key().serialize().to_vec(),
-			xonly_pubkey: self.asp_key.x_only_public_key().0.serialize().to_vec(),
 			nb_round_nonces: self.config.nb_round_nonces as u32,
 			vtxo_exit_delta: self.config.vtxo_exit_delta as u32,
 			vtxo_expiry_delta: self.config.vtxo_expiry_delta as u32,
