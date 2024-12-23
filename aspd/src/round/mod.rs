@@ -716,7 +716,8 @@ pub async fn run_round_coordinator(
 			let finalized = wallet.sign(&mut round_tx_psbt, opts)?;
 			assert!(finalized);
 			let signed_round_tx = round_tx_psbt.extract_tx()?;
-			wallet.insert_tx(signed_round_tx.clone());
+			let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Unix epoch is in the past").as_secs();
+			wallet.apply_unconfirmed_txs([(Arc::new(signed_round_tx.clone()), now)]);
 			if let Some(change) = wallet.take_staged() {
 				app.db.store_changeset(&change).await?;
 			}

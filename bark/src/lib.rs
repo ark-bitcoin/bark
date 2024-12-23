@@ -8,7 +8,6 @@ pub extern crate lnurl as lnurllib;
 pub mod persist;
 
 use ark::oor::verify_oor;
-use bdk_wallet::chain::ConfirmationTime;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
 
@@ -70,10 +69,7 @@ impl From<LocalOutput> for UtxoInfo {
 		UtxoInfo {
 			outpoint: value.outpoint,
 			amount: value.txout.value,
-			confirmation_height: match value.confirmation_time {
-				ConfirmationTime::Confirmed { height, .. } => Some(height),
-				_ => None
-			}
+			confirmation_height: value.chain_position.confirmation_height_upper_bound()
 		}
 	}
 }

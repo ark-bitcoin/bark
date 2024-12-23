@@ -111,7 +111,7 @@ impl <P>Wallet<P> where
 				let request = self.wallet.start_full_scan();
 				let now = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
-				self.wallet.apply_update_at(update, Some(now))?;
+				self.wallet.apply_update_at(update, now)?;
 				self.wallet.persist(&mut self.db)?;
 			},
 		}
@@ -120,7 +120,7 @@ impl <P>Wallet<P> where
 
 		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
 		for tx in self.wallet.transactions() {
-			if let ChainPosition::Unconfirmed(last_seen) = tx.chain_position {
+			if let ChainPosition::Unconfirmed { last_seen: Some(last_seen) } = tx.chain_position {
 				if last_seen < now {
 					if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
 						warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
