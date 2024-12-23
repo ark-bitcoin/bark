@@ -21,11 +21,14 @@ use bip39::Mnemonic;
 use bitcoin::bip32::{Fingerprint, Xpriv};
 use bitcoin::hex::DisplayHex;
 use persist::BarkPersister;
+use vtxo_selection::{ExpiredAtHeight, SelectVtxo};
 
 mod lnurl;
 mod onchain;
 mod psbtext;
 mod vtxo_state;
+
+pub mod vtxo_selection;
 
 use std::time::Duration;
 use std::iter;
@@ -351,13 +354,19 @@ impl <P>Wallet<P> where
 		Ok(self.db.get_all_spendable_vtxos()?)
 	}
 
+	/// Returns all unspent vtxos matching the provided predicate
+	pub fn vtxos_with<S>(&self, selection_algorithm: S) -> anyhow::Result<Vec<Vtxo>>
+		where S: SelectVtxo
+	{
+		let vtxos = self.vtxos()?;
+		Ok(selection_algorithm.select(&vtxos))
+	}
+
 	/// Returns all vtxos that will expire within
-	// [threshold_blocks] blocks
-	pub async fn get_expiring_vtxos(&mut self, threshold_blocks: u32) -> anyhow::Result<Vec<Vtxo>> {
-		let height = self.onchain.tip().await?;
-		let mut ret = self.db.get_all_spendable_vtxos()?;
-		ret.retain(|v| height + threshold_blocks > v.spec().expiry_height);
-		Ok(ret)
+	/// `threshold_blocks` blocks
+	pub async fn get_expiring_vtxos(&mut self, threshold: u32) -> anyhow::Result<Vec<Vtxo>> {
+		let selector = ExpiredAtHeight(self.onchain.tip().await? + threshold);
+		Ok(self.vtxos_with(selector)?)
 	}
 
 	/// Sync both the onchain and offchain wallet.
@@ -641,19 +650,6 @@ impl <P>Wallet<P> where
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
 		Ok(())
-	}
-
-	pub async fn refresh_all_vtxos(&mut self) -> anyhow::Result<()> {
-		let all_vtxos = self.db.get_all_spendable_vtxos()?;
-		self.refresh_vtxos(all_vtxos).await
-	}
-
-	/// Refresh vtxos that are close to expiration.
-	///
-	/// If no threshold is given the wallet default is used
-	pub async fn refresh_expiring_vtxos(&mut self, threshold_blocks: u32) -> anyhow::Result<()> {
-		let expiring_vtxos = self.get_expiring_vtxos(threshold_blocks).await?;
-		self.refresh_vtxos(expiring_vtxos).await
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {

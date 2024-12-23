@@ -6,9 +6,9 @@ use std::io::{self, BufRead};
 use std::time::Duration;
 
 use bitcoin::key::Keypair;
+use ark::Vtxo;
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
-use ark::Vtxo;
 use aspd_rpc as rpc;
 
 use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
@@ -221,6 +221,25 @@ async fn refresh() {
 	assert_eq!(3, bark2.vtxos().await.len());
 	bark2.refresh_all().await;
 	assert_eq!(1, bark2.vtxos().await.len());
+}
+
+#[tokio::test]
+async fn refresh_counterparty() {
+	let (_ctx, _bitcoind, _aspd, bark1, _bark2) = setup_full("bark/refresh_counterparty").await;
+
+	let (oor_vtxo, others): (Vec<_>, Vec<_>) = bark1.vtxos().await
+		.into_iter()
+		.partition(|v| v.amount == Amount::from_sat(330_000));
+
+	bark1.refresh_counterparty().await;
+
+	let vtxos = bark1.vtxos().await;
+	// there should still be 3 vtxos
+	assert_eq!(3, vtxos.len());
+	// received oor vtxo should be refreshed
+	assert!(!vtxos.iter().any(|v| v.id == oor_vtxo.first().unwrap().id));
+	// others should remain untouched
+	assert!(others.iter().all(|o| vtxos.iter().any(|v| v.id == o.id)));
 }
 
 #[tokio::test]

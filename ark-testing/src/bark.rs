@@ -191,6 +191,10 @@ impl Bark {
 		self.run(["refresh", "--all"]).await;
 	}
 
+	pub async fn refresh_counterparty(&self) {
+		self.run(["refresh", "--counterparty"]).await;
+	}
+
 	pub async fn offboard_all(&self, address: impl fmt::Display) {
 		self.run(["offboard", "--all", "--address", &address.to_string()]).await;
 	}
