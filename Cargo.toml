@@ -3,7 +3,7 @@
 members = [
   "ark-lib",
   "ark-testing",
-  "aspd-rpc-client",
+  "aspd-rpc",
   "aspd",
   "aspd-log",
   "bark",

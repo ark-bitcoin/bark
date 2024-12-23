@@ -8,7 +8,7 @@ use ark_testing::{AspdConfig, TestContext};
 use ark_testing::daemon::aspd::Aspd;
 use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
 use aspd_log::{NotSweeping, RoundFullySwept, SweepBroadcast, TxIndexUpdateFinished};
-use aspd_rpc_client::Empty;
+use aspd_rpc::rpc::Empty;
 
 use bitcoin::amount::Amount;
 use bitcoin::secp256k1::PublicKey;

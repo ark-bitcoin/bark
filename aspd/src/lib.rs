@@ -5,13 +5,12 @@
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
 
-
+mod convert;
 mod database;
 mod lightning;
 mod psbtext;
 mod serde_util;
 mod vtxo_sweeper;
-mod rpc;
 mod rpcserver;
 mod round;
 mod txindex;
@@ -24,6 +23,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use aspd_rpc::rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
@@ -376,7 +376,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
-			let ret = rpcserver::run_public_rpc_server(app.clone())
+			let ret = rpcserver::run_public_rpc_server(app)
 				.await.context("error running public gRPC server");
 			info!("RPC server exited with {:?}", ret);
 			ret
@@ -405,7 +405,7 @@ impl App {
 		if self.config.admin_rpc_address.is_some() {
 			let app = self.clone();
 			let jh_rpc_admin = tokio::spawn(async move {
-				let ret = rpcserver::run_admin_rpc_server(app.clone())
+				let ret = rpcserver::run_admin_rpc_server(app)
 					.await.context("error running admin gRPC server");
 				info!("Admin RPC server exited with {:?}", ret);
 				ret
