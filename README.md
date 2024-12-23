@@ -8,6 +8,10 @@ that contain all primitives used for this implementation.
 > This repository contains experimental code. 
 > Using this implementation in production with real bitcoin 
 > is reckless and can result in loss of funds.
+>
+> Please be aware that
+> - Updating bark/aspd may corrupt your wallet. At this stage we priorize development velocity over backward compatility.
+> - This code contains known bugs and vulnerabilities that can result in loss of funds.
 
 ## What is Ark??
 
@@ -26,4 +30,10 @@ and run an ASP using [regtest](https://docs.second.tech/getting-started/regtest-
 ## Questions or issues
 
 If you run into issues let us know. We run our issue-tracker on [codeberg](https://codeberg.org/ark-bitcoin/bark).
+
+## Security policy and responsible disclosure
+
+The code is experimental and must not be used in production.
+
+If you happen to find a vulnerability we invite you to file a public issue.
 
