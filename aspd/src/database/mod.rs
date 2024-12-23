@@ -325,7 +325,6 @@ impl Db {
 					tx.rollback()?;
 					return Ok(Some(id));
 				}
-				tx.put_cf(&self.cf_round(), id, [])?;
 			}
 
 			match tx.commit() {
