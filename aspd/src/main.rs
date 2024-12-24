@@ -23,7 +23,7 @@ const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
 #[command(author = "Steven Roose <steven@roose.io>", version, about)]
 struct Cli {
 	/// The data directory for aspd, mandatory field for most commands
-	#[arg(long, global = true)]
+	#[arg(long, global = true, env = "ASPD_DATADIR")]
 	datadir: Option<PathBuf>,
 	#[command(subcommand)]
 	command: Command,
@@ -261,8 +261,9 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 
 #[derive(clap::Args)]
 struct CreateOpts {
-	#[arg(long, default_value = "regtest")]
+	#[arg(long, default_value = "regtest", env = "BITCOIND_NETWORK")]
 	network: Network,
+
 
 	#[command(flatten)]
 	config: ConfigOpts,
@@ -271,46 +272,54 @@ struct CreateOpts {
 #[derive(Debug, Clone, Default, clap::Args)]
 struct ConfigOpts {
 	/// the URL of the bitcoind RPC (mandatory on create)
-	#[arg(long)]
+	#[arg(long, env = "BITCOIND_URL")]
 	bitcoind_url: Option<String>,
-	/// the path of the cookie file for the bitcoind RPC (mandatory on create)
-	#[arg(long)]
+
+	/// the path of the cookie file for the bitcoind RPC
+	/// It is mandatory to configure exactly one authentication method
+	/// This could either be [bitcoind_cookie] or [bitcoind_rpc_user] and [bitcoind_rpc_pass]
+	#[clap(long, env = "BITCOIND_COOKIE")]
 	bitcoind_cookie: Option<String>,
 
+
+
 	#[arg(long)]
+
+	#[arg(long, env = "ASPD_PUBLIC_RPC_ADDRESS")]
 	public_rpc_address: Option<String>,
-	#[arg(long)]
+
+	#[arg(long, env = "ASPD_ADMIN_RPC_ADDRESS")]
 	admin_rpc_address: Option<Option<String>>,
 
 	/// Round interval, in ms.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_INTERVAL")]
 	round_interval: Option<u64>,
 	/// Time for users to submit payments in rounds, in ms.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_SUBMIT_TIME")]
 	round_submit_time: Option<u64>,
 	/// Time for users to submit signatures in rounds, in ms.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_SIGN_TIME")]
 	round_sign_time: Option<u64>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_NB_ROUND_NONCES")]
 	nb_round_nonces: Option<usize>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_VTXO_EXPIRY_DELTA")]
 	vtxo_expiry_delta: Option<u16>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_VTXO_EXIT_DELTA")]
 	vtxo_exit_delta: Option<u16>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_SWEEP_THRESHOLD")]
 	sweep_threshold: Option<Amount>,
 
 	/// The feerate (in sats per kvb) to use for round txs.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_TX_FEERATE_SAT_PER_KVB")]
 	round_tx_feerate_sat_per_kvb: Option<u64>,
 
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_URI")]
 	cln_grpc_uri: Option<Option<Uri>>,
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_SERVER_CERT_PATH")]
 	cln_grpc_server_cert_path: Option<Option<PathBuf>>,
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_CLIENT_CERT_PATH")]
 	cln_grpc_client_cert_path: Option<Option<PathBuf>>,
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_CLIENT_KEY_PATH")]
 	cln_grpc_client_key_path: Option<Option<PathBuf>>,
 }
 
