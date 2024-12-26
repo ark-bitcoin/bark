@@ -171,7 +171,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				network: opts.network,
 				..Default::default()
 			};
-			opts.config.merge_into(&mut cfg)?;
+			cfg = opts.config.merge_into(&cfg)?;
 			App::create(&datadir, cfg).await?;
 		},
 		Command::SetConfig(updates) => {
@@ -180,8 +180,8 @@ async fn inner_main() -> anyhow::Result<()> {
 			Config::create_backup_in_datadir(&datadir)?;
 
 			// Update the configuration
-			let mut cfg = Config::read_from_datadir(&datadir)?;
-			updates.merge_into(&mut cfg)?;
+			let cfg = Config::read_from_datadir(&datadir)?;
+			let cfg = updates.merge_into(&cfg)?;
 			cfg.write_to_datadir(&datadir)?;
 
 			println!("The configuration has been updated");
@@ -361,7 +361,9 @@ impl ConfigOpts {
 		Ok(())
 	}
 
-	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
+	fn merge_into(self, cfg: &Config) -> anyhow::Result<Config> {
+		let mut cfg = cfg.clone();
+
 		if let Some(v) = self.bitcoind_url {
 			cfg.bitcoind_url = v;
 		}
@@ -479,7 +481,7 @@ impl ConfigOpts {
 			}
 		}
 
-		Ok(())
+		Ok(cfg)
 	}
 
 }
@@ -492,7 +494,7 @@ mod test {
 
 	#[test]
 	fn partial_cln_config_on_init_is_not_accepted() {
-		let mut cfg = Config::default();
+		let cfg = Config::default();
 
 		// Create partial config opts
 		let uri = Uri::from_str("http://localhost:1313").unwrap();
@@ -501,12 +503,12 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect_err("This should fail");
+		updates.merge_into(&cfg).expect_err("This should fail");
 	}
 
 	#[test]
 	fn init_accepts_full_cln_config() {
-		let mut cfg = Config::default();
+		let cfg = Config::default();
 
 		// Create full Config Opts
 		let uri = Uri::from_str("http://localhost:1313").unwrap();
@@ -518,7 +520,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect("Accepts full config");
+		let cfg = updates.merge_into(&cfg).expect("Accepts full config");
 
 		let cln_config = cfg.cln_config.as_ref().expect("A config has been created");
 		assert_eq!(cln_config.grpc_uri, uri);
@@ -548,7 +550,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect("Accepts full config");
+		let cfg = updates.merge_into(&cfg).expect("Accepts full config");
 		assert!(cfg.cln_config.is_none());
 	}
 
@@ -570,7 +572,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect_err("Cannot drop cln-config partially");
+		updates.merge_into(&cfg).expect_err("Cannot drop cln-config partially");
 		assert!(cfg.cln_config.is_some());
 	}
 
@@ -593,7 +595,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect("Can update config");
+		let cfg = updates.merge_into(&cfg).expect("Can update config");
 
 		assert_eq!(cfg.cln_config.unwrap().grpc_uri, new_uri);
 	}

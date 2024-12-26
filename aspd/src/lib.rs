@@ -54,7 +54,7 @@ const DEEPLY_CONFIRMED: BlockHeight = 100;
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
 	pub network: bitcoin::Network,
 	pub public_rpc_address: SocketAddr,
