@@ -484,6 +484,10 @@ impl <P>Wallet<P> where
 		trace!("Broadcasting onboard tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
+		asp.client.register_onboard_vtxos(rpc::OnboardVtxosRequest {
+			onboard_vtxos: vec![vtxo.encode()],
+		}).await.context("error registering onboard with the asp")?;
+
 		info!("Onboard successful");
 
 		Ok(())
@@ -988,6 +992,7 @@ impl <P>Wallet<P> where
 
 		let (input_vtxos, pay_reqs, offb_reqs) = round_input(round_id, offboard_feerate)
 			.context("error providing round input")?;
+
 		// Assign cosign pubkeys to the payment requests.
 		let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
 			.take(pay_reqs.len())
@@ -1002,7 +1007,6 @@ impl <P>Wallet<P> where
 
 		let vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
 		debug!("Spending vtxos: {:?}", vtxo_ids);
-
 
 		'round: loop {
 			// Prepare round participation info.
