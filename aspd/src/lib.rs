@@ -37,7 +37,7 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::{musig, BlockHeight, Vtxo, VtxoId};
+use ark::{musig, BlockHeight, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
 
 use crate::round::{RoundEvent, RoundInput};
@@ -551,7 +551,50 @@ impl App {
 
 	pub fn cosign_onboard(&self, user_part: ark::onboard::UserPart) -> ark::onboard::AspPart {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
-		ark::onboard::new_asp(&user_part, &self.asp_key)
+		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
+		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount);
+		ret
+	}
+
+	pub fn validate_onboard_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
+		let tip = self.bitcoind.get_block_count()? as u32;
+
+		if spec.asp_pubkey != self.asp_key.public_key() {
+			bail!("invalid asp pubkey: {} != {}", spec.asp_pubkey, self.asp_key.public_key());
+		}
+
+		//TODO(stevenroose) make this more robust
+		if spec.expiry_height < tip {
+			bail!("invalid expiry height: {} >= {}", spec.expiry_height, tip);
+		}
+
+		if spec.exit_delta != self.config.vtxo_exit_delta {
+			bail!("invalid exit delta: {} != {}", spec.exit_delta, self.config.vtxo_exit_delta);
+		}
+
+		Ok(())
+	}
+
+	pub fn register_onboards(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		for vtxo in vtxos {
+			if let Vtxo::Onboard { spec, .. } = vtxo {
+				self.validate_onboard_spec(&spec)?;
+				//TODO(stevenroose) verify confirmed? probably a good idea
+				//should at least verify confirmed when submitted to round
+			} else {
+				bail!("vtxo {} is not an onboard vtxo", vtxo.id());
+			}
+		}
+		//TODO(stevenroose) add onboard tx to txindex
+		self.db.insert_onboard_vtxos(vtxos).context("db error")?;
+
+		for vtxo in vtxos {
+			if let Vtxo::Onboard { spec, .. } = vtxo {
+				slog!(RegisteredOnboard, utxo: vtxo.point(), amount: spec.amount);
+			}
+		}
+
+		Ok(())
 	}
 
 	pub async fn cosign_oor(

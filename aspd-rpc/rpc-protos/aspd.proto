@@ -11,6 +11,7 @@ service ArkService {
 
 	// * ONBOARDING *
 	rpc RequestOnboardCosign(OnboardCosignRequest) returns (OnboardCosignResponse) {}
+	rpc RegisterOnboardVtxos(OnboardVtxosRequest) returns (Empty) {}
 
 	// * OOR PAYMENTS*
 	rpc RequestOorCosign(OorCosignRequest) returns (OorCosignResponse) {}
@@ -62,6 +63,10 @@ message OnboardCosignRequest {
 
 message OnboardCosignResponse {
 	bytes asp_part = 1;
+}
+
+message OnboardVtxosRequest {
+	repeated bytes onboard_vtxos = 1;
 }
 
 // oor

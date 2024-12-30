@@ -119,6 +119,19 @@ impl rpc::server::ArkService for App {
 		}))
 	}
 
+	async fn register_onboard_vtxos(
+		&self,
+		req: tonic::Request<rpc::OnboardVtxosRequest>,
+	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		let req = req.into_inner();
+		let vtxos = req.onboard_vtxos.into_iter()
+			.map(|v| Vtxo::decode(&v))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| badarg!("invalid vtxo: {}", e))?;
+		self.register_onboards(&vtxos).to_status()?;
+		Ok(tonic::Response::new(rpc::Empty {}))
+	}
+
 	// oor
 
 	async fn request_oor_cosign(

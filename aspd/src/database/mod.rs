@@ -327,6 +327,48 @@ impl Db {
 		})
 	}
 
+	/// Atomically insert the given onboard vtxos.
+	///
+	/// Errors if any one vtxo is not an onboard vtxo.
+	pub fn insert_onboard_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		let mut opts = WriteOptions::default();
+		opts.set_sync(true);
+		let mut oopts = OptimisticTransactionOptions::new();
+		oopts.set_snapshot(false);
+
+		//TODO(stevenroose) consider writing a macro for this sort of block
+		let cf = self.cf_vtxos();
+		loop {
+			let tx = self.db.transaction_opt(&opts, &oopts);
+
+			for vtxo in vtxos {
+				let id = vtxo.id();
+				if tx.get_cf(&cf, &id)?.is_some() {
+					trace!("db: vtxo {} already registered", id);
+					continue;
+				}
+				let state = VtxoState {
+					vtxo: vtxo.clone(),
+					oor_spent: None,
+					forfeit_sigs: None,
+				};
+				tx.put_cf(&cf, vtxo.id(), state.encode())?;
+			}
+
+			match tx.commit() {
+				Ok(()) => break,
+				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
+				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
+				Err(e) => bail!("failed to commit db tx: {}", e),
+			}
+		}
+
+		let mut opts = FlushOptions::default();
+		opts.set_wait(true); //TODO(stevenroose) is this needed?
+		self.db.flush_cf_opt(&cf, &opts).context("error flushing db")?;
+		Ok(())
+	}
+
 	/// Check whether the vtxos were already spent, and fetch them if not.
 	///
 	/// There is no guarantee that the vtxos are still all unspent by
