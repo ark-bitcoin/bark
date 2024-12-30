@@ -154,16 +154,16 @@ pub struct VtxoSubset {
 
 /// A [`Movement`] represents any balance change, it can be of three kinds.
 ///
-///  ### Incoming payment
+/// ### Incoming payment
 /// The wallet receives a new VTXO: the balance increases.
 /// The resulting movement will only have `receives` field filled
 ///
-///  ### Outgoing payment
+/// ### Outgoing payment
 /// The wallet sends a set of VTXOs: the balance decreases.
-///	The resulting movement will reference spent VTXOs in `spends` field,
+/// The resulting movement will reference spent VTXOs in `spends` field,
 /// change VTXO in `receives` one and a non-null destination (either pubkey or BOLT11)
 ///
-///  ### Refreshes
+/// ### Refreshes
 /// Wallet's VTXOs are replaced by new ones, and a small fee is paid: the balance decreases.
 /// The resulting movement will reference refreshed VTXOs in `spends` field,
 /// new ones in `receives`, and no destination.
@@ -356,7 +356,8 @@ pub struct BaseVtxo {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum Vtxo {
 	Onboard {
-		base: BaseVtxo,
+		spec: VtxoSpec,
+		input: OutPoint,
 		reveal_tx_signature: schnorr::Signature,
 	},
 	Round {
@@ -395,8 +396,10 @@ impl Vtxo {
 	/// This can be an on-chain utxo or an off-chain vtxo.
 	pub fn point(&self) -> OutPoint {
 		match self {
+			//TODO(stevenroose) consider caching this so that we don't have to calculate it
 			Vtxo::Onboard { .. } => OutPoint::new(self.vtxo_tx().compute_txid(), 0),
 			Vtxo::Round { exit_branch, .. } => {
+				//TODO(stevenroose) consider caching this so that we don't have to calculate it
 				OutPoint::new(exit_branch.last().unwrap().compute_txid(), 0).into()
 			},
 			Vtxo::Oor { point, .. } => *point,
@@ -406,7 +409,7 @@ impl Vtxo {
 
 	pub fn spec(&self) -> &VtxoSpec {
 		match self {
-			Vtxo::Onboard { base, .. } => &base.spec,
+			Vtxo::Onboard { spec, .. } => spec,
 			Vtxo::Round { base, .. } => &base.spec,
 			Vtxo::Oor { output_specs, point, ..} => &output_specs[point.vout as usize],
 			Vtxo::Bolt11Change { ref pseudo_spec, ..} => pseudo_spec,
@@ -415,7 +418,7 @@ impl Vtxo {
 
 	pub fn amount(&self) -> Amount {
 		match self {
-			Vtxo::Onboard { base, .. } => base.spec.amount,
+			Vtxo::Onboard { spec, .. } => spec.amount,
 			Vtxo::Round { base, .. } => base.spec.amount,
 			Vtxo::Oor { .. } => self.spec().amount,
 			Vtxo::Bolt11Change { htlc_tx, final_point, .. } => {
@@ -437,9 +440,9 @@ impl Vtxo {
 
 	pub fn vtxo_tx(&self) -> Transaction {
 		match self {
-			Vtxo::Onboard { base, reveal_tx_signature } => {
+			Vtxo::Onboard { spec, input, reveal_tx_signature } => {
 				onboard::create_reveal_tx(
-					&base.spec, base.utxo, Some(&reveal_tx_signature),
+					spec, *input, Some(&reveal_tx_signature),
 				)
 			},
 			Vtxo::Round { ref exit_branch, .. } => exit_branch.last().unwrap().clone(),
@@ -548,7 +551,7 @@ impl Vtxo {
 						Vtxo::Bolt11Change { inputs, .. } =>
 							inputs.iter().any(|i| inner_has_counterparty_risk(i, vtxo_pubkey)),
 						//TODO impl key derivation
-						Vtxo::Onboard { base, .. } => base.spec.user_pubkey != *vtxo_pubkey,
+						Vtxo::Onboard { spec, .. } => spec.user_pubkey != *vtxo_pubkey,
 						//TODO impl key derivation
 						Vtxo::Round { base, .. } => base.spec.user_pubkey != *vtxo_pubkey,
 					}
@@ -605,16 +608,14 @@ use oor::unsigned_oor_transaction;
 		let oor_sig3 = schnorr::Signature::from_str("4be220ff1dabd0f7c35798eb19d587de1ad88e80369ef037c5e803f9d776e1c74bc4458698a783add458730d1dbd144c86f3b848cff5486b0fcbd1c17ecc5f76").unwrap();
 
 		let onboard = Vtxo::Onboard {
-			base: BaseVtxo {
-				spec: VtxoSpec {
-					user_pubkey: pk,
-					asp_pubkey: pk,
-					expiry_height: 15,
-					exit_delta: 7,
-					amount: Amount::from_sat(5),
-				},
-				utxo: point,
+			spec: VtxoSpec {
+				user_pubkey: pk,
+				asp_pubkey: pk,
+				expiry_height: 15,
+				exit_delta: 7,
+				amount: Amount::from_sat(5),
 			},
+			input: point,
 			reveal_tx_signature: sig,
 		};
 		assert_eq!(onboard, Vtxo::decode(&onboard.encode()).unwrap());

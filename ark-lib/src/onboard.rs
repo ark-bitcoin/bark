@@ -14,7 +14,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair};
 use bitcoin::sighash::{self, SighashCache, TapSighash};
 
-use crate::{fee, musig, util, BaseVtxo, Vtxo, VtxoSpec};
+use crate::{fee, musig, util, Vtxo, VtxoSpec};
 
 
 /// The total signed tx weight of a reveal tx.
@@ -194,18 +194,16 @@ pub fn finish(
 	).is_ok(), "invalid reveal tx signature produced");
 
 	Vtxo::Onboard {
-		base: BaseVtxo {
-			utxo: user.utxo,
-			spec: user.spec,
-		},
+		spec: user.spec,
+		input: user.utxo,
 		reveal_tx_signature: final_sig,
 	}
 }
 
 /// Returns [None] when [Vtxo] is not an onboard vtxo.
 pub fn signed_reveal_tx(vtxo: &Vtxo) -> Option<Transaction> {
-	if let Vtxo::Onboard { ref base, reveal_tx_signature } = vtxo {
-		let ret = create_reveal_tx(&base.spec, base.utxo, Some(reveal_tx_signature));
+	if let Vtxo::Onboard { ref spec, input, reveal_tx_signature } = vtxo {
+		let ret = create_reveal_tx(spec, *input, Some(reveal_tx_signature));
 		assert_eq!(ret.weight(), REVEAL_TX_WEIGHT);
 		Some(ret)
 	} else {

@@ -231,7 +231,7 @@ mod test {
 	use bitcoin::bip32;
 	use rand::{Rng, distributions::Alphanumeric};
 
-	use ark::{BaseVtxo, VtxoSpec};
+	use ark::VtxoSpec;
 
 	use super::*;
 
@@ -273,43 +273,37 @@ mod test {
 
 		let vtxo_1 = Vtxo::Onboard {
 			reveal_tx_signature: sig,
-			base: BaseVtxo {
-				utxo: point_1,
-				spec: VtxoSpec {
-					user_pubkey: pk,
-					asp_pubkey: pk,
-					expiry_height: 1001,
-					exit_delta: 40,
-					amount: Amount::from_sat(500)
-				},
+			input: point_1,
+			spec: VtxoSpec {
+				user_pubkey: pk,
+				asp_pubkey: pk,
+				expiry_height: 1001,
+				exit_delta: 40,
+				amount: Amount::from_sat(500)
 			},
 		};
 
 		let vtxo_2 = Vtxo::Onboard {
 			reveal_tx_signature: sig,
-			base: BaseVtxo {
-				utxo: point_2,
-				spec: VtxoSpec {
-					user_pubkey: pk,
-					asp_pubkey: pk,
-					expiry_height: 1002,
-					exit_delta: 40,
-					amount: Amount::from_sat(500)
-				},
+			input: point_2,
+			spec: VtxoSpec {
+				user_pubkey: pk,
+				asp_pubkey: pk,
+				expiry_height: 1002,
+				exit_delta: 40,
+				amount: Amount::from_sat(500)
 			},
 		};
 
 		let vtxo_3 = Vtxo::Onboard {
 			reveal_tx_signature: sig,
-			base: BaseVtxo {
-				utxo: point_3,
-				spec: VtxoSpec {
-					user_pubkey: pk,
-					asp_pubkey: pk,
-					expiry_height: 1003,
-					exit_delta: 40,
-					amount: Amount::from_sat(500)
-				},
+			input: point_3,
+			spec: VtxoSpec {
+				user_pubkey: pk,
+				asp_pubkey: pk,
+				expiry_height: 1003,
+				exit_delta: 40,
+				amount: Amount::from_sat(500)
 			},
 		};
 
