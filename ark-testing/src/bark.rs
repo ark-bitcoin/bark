@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 
 use bark_json::cli as json;
 
+use crate::Bitcoind;
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
@@ -28,8 +29,6 @@ pub struct BarkConfig {
 	pub datadir: PathBuf,
 	pub asp_url: String,
 	pub network: String,
-	pub bitcoind_url: String,
-	pub bitcoind_cookie: PathBuf
 }
 
 #[derive(Debug)]
@@ -38,7 +37,7 @@ pub struct Bark {
 	config: BarkConfig,
 	counter: AtomicUsize,
 	timeout: Duration,
-
+	bitcoind: Bitcoind,
 	command_log: Mutex<fs::File>,
 }
 
@@ -49,11 +48,17 @@ impl Bark {
 		TokioCommand::new(exec)
 	}
 
-	pub async fn new(name: impl AsRef<str>, cfg: BarkConfig) -> Bark {
-		Self::try_new(name, cfg).await.unwrap()
+	/// Creates Bark client with a dedicated bitcoind daemon.
+	pub async fn new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: BarkConfig) -> Bark {
+		Self::try_new(name, bitcoind, cfg).await.unwrap()
 	}
 
-	pub async fn try_new(name: impl AsRef<str>, cfg: BarkConfig) -> anyhow::Result<Bark> {
+	/// Returns bitcoind daemon associated with this Bark client.
+	pub fn bitcoind(&self) -> &Bitcoind {
+		&self.bitcoind
+	}
+
+	pub async fn try_new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: BarkConfig) -> anyhow::Result<Bark> {
 		let output = Bark::cmd()
 			.arg("create")
 			.arg("--datadir")
@@ -63,9 +68,9 @@ impl Bark {
 			.arg(&cfg.asp_url)
 			.arg(format!("--{}", cfg.network))
 			.arg("--bitcoind-cookie")
-			.arg(&cfg.bitcoind_cookie)
+			.arg(bitcoind.rpc_cookie())
 			.arg("--bitcoind")
-			.arg(&cfg.bitcoind_url)
+			.arg(bitcoind.rpc_url())
 			.output()
 			.await?;
 
@@ -84,8 +89,9 @@ impl Bark {
 		Ok(Bark {
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
-			timeout: Duration::from_millis(20_000),
+			timeout: Duration::from_millis(60_000),
 			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
+			bitcoind,
 			config: cfg,
 		})
 	}

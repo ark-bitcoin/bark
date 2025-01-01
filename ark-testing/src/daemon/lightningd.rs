@@ -95,6 +95,7 @@ pub struct LightningdConfig {
 pub struct LightningDHelper {
 	name: String,
 	config: LightningdConfig,
+	bitcoind: Bitcoind,
 	state: Arc<Mutex<LightningDHelperState>>
 }
 
@@ -259,10 +260,11 @@ impl DaemonHelper for LightningDHelper {
 }
 
 impl Lightningd {
-	pub fn new(name: impl AsRef<str>, config: LightningdConfig) -> Self {
+	pub fn new(name: impl AsRef<str>, bitcoind: Bitcoind, config: LightningdConfig) -> Self {
 		let inner = LightningDHelper {
 			name: name.as_ref().to_owned(),
 			config,
+			bitcoind,
 			state: Arc::new(Mutex::new(LightningDHelperState::default()))
 		};
 		Daemon::wrap(inner)
@@ -315,9 +317,13 @@ impl Lightningd {
 		}).await.unwrap();
 	}
 
+	pub fn bitcoind(&self) -> &Bitcoind {
+		&self.inner.bitcoind
+	}
+
 	/// Wait until lightnignd is synced with bitcoind
-	pub async fn wait_for_block_sync(&self, bitcoind: &Bitcoind) {
-		let height = bitcoind.get_block_count().await;
+	pub async fn wait_for_block_sync(&self) {
+		let height = self.bitcoind().get_block_count().await;
 		self.wait_for_block(height)	.await;
 	}
 
@@ -410,6 +416,7 @@ impl Lightningd {
 		loop {
 			let req = grpc::ListchannelsRequest::default();
 			let res = client.list_channels(req).await.unwrap().into_inner();
+
 			let channels = res.channels.iter()
 				.map(|x| &x.short_channel_id)
 				.collect::<HashSet<_>>()

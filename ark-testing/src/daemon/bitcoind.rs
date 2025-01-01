@@ -10,7 +10,6 @@ use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 
 use tokio::process::Command;
-use crate::{Bark, Aspd, Lightningd};
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
 use crate::daemon::{Daemon, DaemonHelper};
@@ -21,6 +20,7 @@ pub struct BitcoindHelper {
 	exec: PathBuf,
 	config: BitcoindConfig,
 	state: BitcoindState,
+	add_node: Option<String>
 }
 
 pub struct BitcoindConfig {
@@ -28,7 +28,7 @@ pub struct BitcoindConfig {
 	pub txindex: bool,
 	pub network: Network,
 	pub fallback_fee: FeeRate,
-	pub relay_fee: Option<FeeRate>,
+	pub relay_fee: Option<FeeRate>
 }
 
 #[derive(Default)]
@@ -39,6 +39,12 @@ pub struct BitcoindState {
 }
 
 pub type Bitcoind = Daemon<BitcoindHelper>;
+
+impl std::fmt::Debug for Bitcoind {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "bitcoind in {}", self.inner.datadir().display())
+	}
+}
 
 impl Bitcoind {
 	fn exec() -> PathBuf {
@@ -51,10 +57,10 @@ impl Bitcoind {
 		}
 	}
 
-	pub fn new(name: String, config: BitcoindConfig) -> Self {
+	pub fn new(name: String, config: BitcoindConfig, add_node: Option<String>) -> Self {
 		let state = BitcoindState::default();
 		let exec = Bitcoind::exec();
-		Daemon::wrap(BitcoindHelper { name, exec, config, state})
+		Daemon::wrap(BitcoindHelper { name, exec, config, state, add_node })
 	}
 
 	pub fn sync_client(&self) -> BitcoindClient {
@@ -69,6 +75,10 @@ impl Bitcoind {
 		self.inner.rpc_url()
 	}
 
+	pub fn auth(&self) -> Auth {
+		self.inner.auth()
+	}
+
 	pub fn rpc_port(&self) -> u16 {
 		self.inner.rpc_port()
 
@@ -80,6 +90,10 @@ impl Bitcoind {
 
 	pub fn zmq_port(&self) -> u16 {
 		self.inner.zmq_port()
+	}
+
+	pub fn p2p_url(&self) -> String {
+		self.inner.p2p_url()
 	}
 
 	pub fn datadir(&self) -> PathBuf {
@@ -126,30 +140,6 @@ impl Bitcoind {
 		).unwrap()
 	}
 
-	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) -> Txid {
-		let ret = self.fund_addr(aspd.get_funding_address().await, amount).await;
-		// make sure the aspd does a wallet sync
-		aspd.get_admin_client().await.wallet_status(aspd_rpc::Empty {}).await
-			.expect("error calling wallet status after funding apsd");
-		ret
-	}
-
-	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> Txid {
-		info!("Fund {} {}", bark.name(), amount);
-		let address = bark.get_onchain_address().await;
-		self.fund_addr(address, amount).await
-	}
-
-	pub async fn fund_lightningd(&self, lightningd: &Lightningd, amount: Amount) -> Txid {
-		info!("Fund {} {}", lightningd.name(), amount);
-		let address = lightningd.get_onchain_address().await;
-
-		let client = self.sync_client();
-		client.send_to_address(
-			&address, amount, None, None, None, None, None, None,
-		).unwrap()
-	}
-
 	pub async fn get_block_count(&self) -> u64 {
 		let client = self.sync_client();
 		client.get_block_count().unwrap()
@@ -185,6 +175,10 @@ impl BitcoindHelper {
 
 	pub fn rpc_url(&self) -> String {
 		format!("http://127.0.0.1:{}", self.state.rpc_port.expect("A port has been picked. Is bitcoind running?"))
+	}
+
+	pub fn p2p_url(&self) -> String {
+		format!("127.0.0.1:{}", self.state.p2p_port.expect("A P2P port has been assigned."))
 	}
 
 	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
@@ -260,6 +254,10 @@ impl DaemonHelper for BitcoindHelper {
 		]);
 		if let Some(fr) = self.config.relay_fee {
 			cmd.arg(format!("-minrelaytxfee={}", fr.to_btc_per_kvb()));
+		}
+
+		if let Some(a) = &self.add_node {
+			cmd.arg(format!("-addnode={}", a));
 		}
 
 		Ok(cmd)

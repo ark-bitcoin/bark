@@ -13,7 +13,8 @@ use tokio::process::Command;
 
 use aspd_log::{LogMsg, ParsedRecord};
 
-use crate::{Daemon, DaemonHelper, Lightningd};
+use crate::{Bitcoind, Daemon, DaemonHelper, Lightningd};
+use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use crate::constants::env::ASPD_EXEC;
 use crate::util::resolve_path;
 
@@ -27,13 +28,12 @@ pub struct AspdHelper {
 	name : String,
 	state: AspdState,
 	config: AspdConfig,
+	bitcoind: Bitcoind
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AspdConfig {
 	pub datadir: PathBuf,
-	pub bitcoind_url : String,
-	pub bitcoind_auth: bitcoincore_rpc::Auth,
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
@@ -41,6 +41,10 @@ pub struct AspdConfig {
 	pub vtxo_exit_delta: u16,
 	pub nb_round_nonces: usize,
 	pub sweep_threshold: Amount,
+
+	/// Whether the apsd will use user+password for connection to bitcoind (true)
+	/// or cookies (false).
+	pub use_bitcoind_auth_pass: bool,
 	pub cln_grpc_uri: Option<String>,
 	pub cln_grpc_server_cert_path: Option<PathBuf>,
 	pub cln_grpc_client_cert_path: Option<PathBuf>,
@@ -54,17 +58,34 @@ struct AspdState {
 }
 
 impl Aspd {
+	pub fn bitcoind(&self) -> &Bitcoind {
+		&self.inner.bitcoind
+	}
+
+	/// Gracefully shutdown bitcoind associated with this ASP.
+	pub async fn shutdown_bitcoind(&self) {
+		use bitcoincore_rpc::RpcApi;
+		self.inner.bitcoind.sync_client().stop().unwrap();
+
+		// Need to wait a bit until all files are written, otherwise the
+		// daemon may be sigkilled, leaving incomplete files. Subsequent
+		// restart would fail.
+		tokio::time::sleep(Duration::from_secs(1)).await;
+	}
+
 	pub fn base_cmd() -> Command {
 		let e = env::var(ASPD_EXEC).expect("ASPD_EXEC env not set");
 		let exec = resolve_path(e).expect("failed to resolve ASPD_EXEC");
 		Command::new(exec)
 	}
 
-	pub fn new(name: impl AsRef<str>, config: AspdConfig) -> Self {
+	/// Creates ASP with a dedicated bitcoind daemon.
+	pub fn new(name: impl AsRef<str>, bitcoind: Bitcoind, config: AspdConfig) -> Self {
 		let helper = AspdHelper {
 			name: name.as_ref().to_string(),
 			config,
 			state: AspdState::default(),
+			bitcoind
 		};
 
 		Daemon::wrap(helper)
@@ -176,6 +197,20 @@ impl DaemonHelper for AspdHelper {
 	async fn prepare(&self) -> anyhow::Result<()> {
 		if !self.datadir().exists() {
 			self.create().await?;
+		} else {
+			// If datadir exists, it means ASP is being restarted but
+			// some settings might have changed in the meantime.
+			let output = Aspd::base_cmd().args([
+				"--datadir",&self.datadir().display().to_string(),
+				"set-config",
+				"--bitcoind-url", &self.bitcoind.rpc_url()
+			]).output().await?;
+
+			if !output.status.success() {
+				let stderr = String::from_utf8(output.stderr)?;
+				error!("{}", stderr);
+				bail!("Failed to configure ports for aspd '{}'", self.name());
+			};
 		}
 		Ok(())
 	}
@@ -236,10 +271,11 @@ impl AspdHelper {
 	}
 
 	async fn create(&self) -> anyhow::Result<()> {
-		let cfg = self.config.clone();
+		let cfg = &self.config;
 		let output = {
 			let mut cmd = Aspd::base_cmd();
 			let datadir = cfg.datadir.display().to_string();
+			let bitcoind_url = self.bitcoind.rpc_url().to_string();
 			let round_interval = cfg.round_interval.as_millis().to_string();
 			let round_submit_time = cfg.round_submit_time.as_millis().to_string();
 			let round_sign_time = cfg.round_sign_time.as_millis().to_string();
@@ -251,7 +287,7 @@ impl AspdHelper {
 			let mut args = vec![
 				"create",
 				"--datadir", &datadir,
-				"--bitcoind-url", &cfg.bitcoind_url,
+				"--bitcoind-url", &bitcoind_url,
 				"--network", "regtest",
 				"--round-interval", &round_interval,
 				"--round-submit-time", &round_submit_time,
@@ -261,7 +297,14 @@ impl AspdHelper {
 				"--vtxo-exit-delta", &vtxo_exit_delta,
 				"--sweep-threshold", &sweep_threshold,
 			];
-			match cfg.bitcoind_auth {
+
+			let bitcoind_auth = if cfg.use_bitcoind_auth_pass {
+				bitcoincore_rpc::Auth::UserPass(BITCOINRPC_TEST_USER.into(), BITCOINRPC_TEST_PASSWORD.into())
+			} else {
+				self.bitcoind.auth()
+			};
+
+			match bitcoind_auth {
 				bitcoincore_rpc::Auth::CookieFile(ref cookie) => {
 					args.extend([
 						"--bitcoind-cookie", cookie.to_str().unwrap(),

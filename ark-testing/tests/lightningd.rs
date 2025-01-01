@@ -8,14 +8,13 @@ use bark_cln::grpc;
 
 #[tokio::test]
 async fn start_lightningd() {
-	let context = TestContext::new("lightningd/start_lightningd").await;
-	let bitcoind = context.bitcoind("bitcoind-1").await;
+	let mut context = TestContext::new("lightningd/start_lightningd").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
-	bitcoind.prepare_funds().await;
+	context.bitcoind.generate(100).await;
 
 	// Start an instance of lightningd
-	let lightningd_1 = context.lightningd("lightningd-1", &bitcoind).await;
+	let lightningd_1 = context.lightningd("lightningd-1").await;
 	let mut client = lightningd_1.grpc_client().await;
 	let result = client.getinfo(grpc::GetinfoRequest{}).await.unwrap();
 	let info = result.into_inner();
@@ -28,21 +27,18 @@ async fn start_lightningd() {
 /// We don't integrate with `aspd` yet
 #[tokio::test]
 async fn cln_can_pay_lightning() {
-	let context = TestContext::new("lightningd/cln_can_pay_lightning").await;
-	let bitcoind = context.bitcoind("bitcoind-1").await;
+	let mut context = TestContext::new("lightningd/cln_can_pay_lightning").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
-	bitcoind.prepare_funds().await;
+	context.bitcoind.generate(100).await;
 
 	// Start an instance of lightningd
-	let (lightningd_1, lightningd_2) = tokio::join!(
-		context.lightningd("lightningd-1", &bitcoind),
-		context.lightningd("lightningd-2", &bitcoind)
-	);
+	let lightningd_1 = context.lightningd("lightningd-1").await;
+	let lightningd_2 = context.lightningd("lightningd-2").await;
 
 	// Connect both peers and verify the connection succeeded
 	info!("Connect `{}` to `{}`", lightningd_1.name(), lightningd_2.name());
-	lightningd_1.wait_for_block_sync(&bitcoind).await;
+	lightningd_1.wait_for_block_sync().await;
 	lightningd_1.connect(&lightningd_2).await;
 	let mut grpc_client = lightningd_1.grpc_client().await;
 	let peers = grpc_client.list_peers(grpc::ListpeersRequest{
@@ -54,18 +50,17 @@ async fn cln_can_pay_lightning() {
 
 	// Fund lightningd_1
 	info!("Funding lightningd_1");
-	bitcoind.prepare_funds().await;
-	bitcoind.fund_lightningd(&lightningd_1, Amount::from_int_btc(5)).await;
-	bitcoind.generate(6).await;
-	lightningd_1.wait_for_block_sync(&bitcoind).await;
+	context.fund_lightning(&lightningd_1, Amount::from_int_btc(5)).await;
+	context.bitcoind.generate(6).await;
+	lightningd_1.wait_for_block_sync().await;
 
 
 	info!("Lightningd_1 opens channel to lightningd_2");
 	// Open a channel from lightningd_1 to lightningd_2
 	lightningd_1.fund_channel(&lightningd_2, Amount::from_int_btc(1)).await;
-	bitcoind.generate(6).await;
-	lightningd_1.wait_for_block_sync(&bitcoind).await;
-	lightningd_2.wait_for_block_sync(&bitcoind).await;
+	lightningd_1.bitcoind().generate(6).await;
+	lightningd_1.wait_for_block_sync().await;
+	lightningd_2.wait_for_block_sync().await;
 
 	// Pay an invoice from lightningd_1 to lightningd_2
 	trace!("Lightningd_2 creates an invoice");
@@ -76,40 +71,42 @@ async fn cln_can_pay_lightning() {
 }
 
 #[tokio::test]
-async fn bark_pay_ln() {
-	let context = TestContext::new("lightningd/bark_pay_ln").await;
-	let bitcoind = context.bitcoind("bitcoind-1").await;
-	bitcoind.prepare_funds().await;
+async fn bark_pay_ln_succeeds() {
+	let mut context = TestContext::new("lightningd/bark_pay_ln").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
 	trace!("Start lightningd-1, lightningd-2, ...");
-	let (lightningd_1, lightningd_2) = tokio::join!(
-		context.lightningd("lightningd-1", &bitcoind),
-		context.lightningd("lightningd-2", &bitcoind),
-	);
+	let lightningd_1 = context.lightningd("lightningd-1").await;
+	let lightningd_2 = context.lightningd("lightningd-2").await;
 
 	trace!("Funding all lightning-nodes");
-	bitcoind.fund_lightningd(&lightningd_1, Amount::from_int_btc(10)).await;
-	bitcoind.generate(6).await;
-	lightningd_1.wait_for_block_sync(&bitcoind).await;
+	context.fund_lightning(&lightningd_1, Amount::from_int_btc(10)).await;
+	context.bitcoind.generate(6).await;
+	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creeating channesl between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
 	lightningd_1.fund_channel(&lightningd_2, Amount::from_int_btc(8)).await;
-	bitcoind.generate(6).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let context.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	context.bitcoind.generate(6).await;
+
 	lightningd_1.wait_for_gossip(1).await;
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = context.aspd("aspd-1", &bitcoind, Some(&lightningd_1)).await;
+	let aspd_1 = context.aspd("aspd-1", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = Amount::from_int_btc(7);
 	let onboard_amount = Amount::from_int_btc(5);
-	let bark_1 = context.bark("bark-1", &bitcoind, &aspd_1).await;
-	bitcoind.fund_bark(&bark_1, onchain_amount).await;
+	let bark_1 = context.bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+
 	bark_1.onboard(onboard_amount).await;
-	bitcoind.generate(6).await;
+	context.bitcoind.generate(6).await;
 
 	{
 		// Create a payable invoice
@@ -132,31 +129,27 @@ async fn bark_pay_ln() {
 
 #[tokio::test]
 async fn bark_pay_ln_fails() {
-	let context = TestContext::new("lightningd/bark_pay_ln_fails").await;
-	let bitcoind = context.bitcoind("bitcoind-1").await;
-	bitcoind.prepare_funds().await;
+	let mut context = TestContext::new("lightningd/bark_pay_ln_fails").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
 	trace!("Start lightningd-1, lightningd-2, ...");
-	let (lightningd_1, lightningd_2) = tokio::join!(
-		context.lightningd("lightningd-1", &bitcoind),
-		context.lightningd("lightningd-2", &bitcoind),
-	);
+	let lightningd_1 = context.lightningd("lightningd-1").await;
+	let lightningd_2 = context.lightningd("lightningd-2").await;
 
 	// No channels are created
 	// The payment must fail
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = context.aspd("aspd-1", &bitcoind, Some(&lightningd_1)).await;
+	let aspd_1 = context.aspd("aspd-1", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = Amount::from_int_btc(3);
 	let onboard_amount = Amount::from_int_btc(2);
-	let bark_1 = context.bark("bark-1", &bitcoind, &aspd_1).await;
-	bitcoind.fund_bark(&bark_1, onchain_amount).await;
+	let bark_1 = context.bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+
 	bark_1.onboard(onboard_amount).await;
-	bitcoind.generate(6).await;
+	context.bitcoind.generate(6).await;
 
 	// Create a payable invoice
 	let invoice_amount = Amount::from_int_btc(1);
