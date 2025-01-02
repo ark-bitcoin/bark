@@ -2,14 +2,13 @@ use std::env;
 use std::time::Duration;
 use std::path::PathBuf;
 
+use aspd_rpc::rpc;
 use bitcoin::{Amount, Network};
 use bitcoin::address::{Address, NetworkUnchecked};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
 use aspd_log::{LogMsg, ParsedRecord};
-use aspd_rpc_client::{AdminServiceClient, ArkServiceClient};
-use aspd_rpc_client::Empty;
 
 use crate::{Daemon, DaemonHelper, Lightningd};
 use crate::constants::env::ASPD_EXEC;
@@ -17,8 +16,8 @@ use crate::util::resolve_path;
 
 pub type Aspd = Daemon<AspdHelper>;
 
-pub type AdminClient = AdminServiceClient<tonic::transport::Channel>;
-pub type ArkClient = ArkServiceClient<tonic::transport::Channel>;
+pub type AdminClient = rpc::admin_service_client::AdminServiceClient<tonic::transport::Channel>;
+pub type ArkClient = rpc::ark_service_client::ArkServiceClient<tonic::transport::Channel>;
 
 
 pub struct AspdHelper {
@@ -82,13 +81,13 @@ impl Aspd {
 
 	pub async fn get_funding_address(&self) -> Address {
 		let mut admin_client = self.get_admin_client().await;
-		let response = admin_client.wallet_status(Empty {}).await.unwrap().into_inner();
+		let response = admin_client.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
 		response.address.parse::<Address<NetworkUnchecked>>().unwrap()
 			.require_network(Network::Regtest).unwrap()
 	}
 
 	pub async fn trigger_round(&self) {
-		self.get_admin_client().await.trigger_round(Empty {}).await.unwrap();
+		self.get_admin_client().await.trigger_round(rpc::Empty {}).await.unwrap();
 	}
 
 	/// Subscribe to all structured logs of the given type.
@@ -203,7 +202,7 @@ impl AspdHelper {
 
 	async fn public_grpc_is_ready(&self) -> bool {
 		if let Ok(mut c) = self.connect_public_client().await {
-			c.get_ark_info(Empty {}).await.is_ok()
+			c.get_ark_info(rpc::Empty {}).await.is_ok()
 		} else {
 			false
 		}
@@ -211,7 +210,7 @@ impl AspdHelper {
 
 	async fn admin_grpc_is_ready(&self) -> bool {
 		if let Ok(mut c) = self.connect_admin_client().await {
-			c.wallet_status(Empty {}).await.is_ok()
+			c.wallet_status(rpc::Empty {}).await.is_ok()
 		} else {
 			false
 		}

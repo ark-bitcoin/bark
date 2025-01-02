@@ -8,6 +8,7 @@ pub extern crate lnurl as lnurllib;
 pub mod persist;
 
 use ark::oor::verify_oor;
+use aspd_rpc::rpc;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
 
@@ -42,7 +43,6 @@ use tokio_stream::StreamExt;
 use ark::{musig, BaseVtxo, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
-use aspd_rpc_client as rpc;
 
 use crate::vtxo_state::VtxoState;
 
@@ -150,7 +150,7 @@ pub struct WalletProperties {
 #[derive(Clone)]
 struct AspConnection {
 	pub info: ArkInfo,
-	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
+	pub client: rpc::ark_service_client::ArkServiceClient<tonic::transport::Channel>,
 }
 
 pub struct Wallet<P: BarkPersister> {
@@ -262,7 +262,7 @@ impl <P>Wallet<P> where
 			info!("Connecting to ASP without TLS...");
 		};
 
-		let asp = match rpc::ArkServiceClient::connect(endpoint).await {
+		let asp = match rpc::ark_service_client::ArkServiceClient::connect(endpoint).await {
 			Ok(mut client) => {
 				let res = client.get_ark_info(rpc::Empty{})
 					.await.context("ark info request failed")?.into_inner();
@@ -435,7 +435,7 @@ impl <P>Wallet<P> where
 		// We ask the ASP to cosign our onboard vtxo reveal tx.
 		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
 		let asp_part = {
-			let res = asp.client.request_onboard_cosign(aspd_rpc_client::OnboardCosignRequest {
+			let res = asp.client.request_onboard_cosign(aspd_rpc::rpc::OnboardCosignRequest {
 				user_part: {
 					let mut buf = Vec::new();
 					ciborium::into_writer(&user_part, &mut buf).unwrap();

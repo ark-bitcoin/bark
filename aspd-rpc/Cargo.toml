@@ -1,10 +1,13 @@
 [package]
-name = "aspd-rpc-client"
+name = "aspd-rpc"
 version = "0.0.0-alpha01"
 license = "CC0-1.0"
 authors = [ "Steven Roose <steven@roose.io>" ]
 edition = "2021"
 repository = "https://github.com/ark-bitcoin/bark"
+
+[features]
+server-rpc = []
 
 [dependencies]
 # OWN
@@ -16,3 +19,6 @@ tonic.workspace = true
 # INTERNAL
 prost.workspace = true
 tokio.workspace = true
+
+[build-dependencies]
+tonic-build.workspace= true

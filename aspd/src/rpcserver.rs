@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use ark::lightning::SignedBolt11Payment;
+use aspd_rpc::rpc;
 use bitcoin::{Amount, ScriptBuf, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
@@ -15,7 +16,6 @@ use stream_until::{StreamUntilItem, StreamExt as StreamExtUntil};
 use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
 
 use crate::App;
-use crate::rpc;
 use crate::round::RoundInput;
 use crate::lightning::pay_bolt11;
 
@@ -49,7 +49,7 @@ impl<T> ToStatus<T> for anyhow::Result<T> {
 }
 
 #[tonic::async_trait]
-impl rpc::ArkService for Arc<App> {
+impl rpc::ark_service_server::ArkService for App {
 	async fn get_ark_info(
 		&self,
 		_req: tonic::Request<rpc::Empty>,
@@ -389,7 +389,7 @@ impl rpc::ArkService for Arc<App> {
 }
 
 #[tonic::async_trait]
-impl rpc::AdminService for Arc<App> {
+impl rpc::admin_service_server::AdminService for App {
 	async fn wallet_status(
 		&self,
 		_req: tonic::Request<rpc::Empty>,
@@ -439,7 +439,7 @@ impl rpc::AdminService for Arc<App> {
 pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	let addr = app.config.public_rpc_address;
 	info!("Starting public gRPC service on address {}", addr);
-	let ark_server = rpc::ArkServiceServer::new(app.clone());
+	let ark_server = rpc::ark_service_server::ArkServiceServer::from_arc(app.clone());
 	tonic::transport::Server::builder()
 		.add_service(ark_server)
 		.serve(addr)
@@ -452,7 +452,7 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	let addr = app.config.admin_rpc_address.expect("shouldn't call this method otherwise");
 	info!("Starting admin gRPC service on address {}", addr);
-	let admin_server = rpc::AdminServiceServer::new(app.clone());
+	let admin_server = rpc::admin_service_server::AdminServiceServer::from_arc(app.clone());
 	tonic::transport::Server::builder()
 		.add_service(admin_server)
 		.serve(addr)
