@@ -6,6 +6,9 @@ authors = [ "Steven Roose <steven@roose.io>" ]
 edition = "2021"
 repository = "https://github.com/ark-bitcoin/bark"
 
+[features]
+server-rpc = []
+
 [dependencies]
 # OWN
 ark-lib = { path = "../ark-lib" }
