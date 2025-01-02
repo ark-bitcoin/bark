@@ -10,7 +10,7 @@ mod database;
 mod lightning;
 mod psbtext;
 mod serde_util;
-mod sweep_rounds;
+mod vtxo_sweeper;
 mod rpc;
 mod rpcserver;
 mod round;
@@ -49,7 +49,7 @@ lazy_static::lazy_static! {
 
 /// The number of confirmations after which we consider the odds of a reorg
 /// happening negligible.
-const DEEPLY_CONFIRMED: BlockHeight = 100;
+const DEEPLY_CONFIRMED: BlockHeight = 12;
 
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";
@@ -309,7 +309,8 @@ impl App {
 
 		Ok(Arc::new(App {
 			wallet: Mutex::new(wallet),
-			txindex: TxIndex::start(bitcoind2, Duration::from_secs(30)),
+			//TODO(stevenroose) this 5s is wicked, but needed for now for testing
+			txindex: TxIndex::start(bitcoind2, Duration::from_secs(5)),
 			rounds: None,
 			trigger_round_sweep_tx: None,
 			sendpay_updates: None,
@@ -321,9 +322,9 @@ impl App {
 	pub async fn fill_txindex(self: &Arc<Self>) -> anyhow::Result<()> {
 		let (done_tx, done_rx) = oneshot::channel();
 
+		// Load all round txs into the txindex.
 		let s = self.clone();
 		tokio::task::spawn_blocking(move || {
-			// Load all round txs into the txindex.
 			let s2 = s.clone();
 			for res in s.db.fetch_all_rounds() {
 				match res {
@@ -391,7 +392,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
-			let ret = sweep_rounds::run_expired_round_sweeper(app, sweep_trigger_rx)
+			let ret = vtxo_sweeper::run_vtxo_sweeper(app, sweep_trigger_rx)
 				.await.context("error from round sweeper");
 			info!("Round sweeper exited with {:?}", ret);
 			ret

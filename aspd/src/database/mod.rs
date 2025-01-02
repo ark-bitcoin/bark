@@ -2,10 +2,12 @@
 mod wallet;
 
 use std::{io, iter};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
+use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::{Transaction, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey};
@@ -32,6 +34,8 @@ const CF_ROUND_EXPIRY: &str = "rounds_by_expiry";
 const CF_OOR_COSIGNED: &str = "oor_cosign";
 /// set [pubkey][vtxo]
 const CF_OOR_MAILBOX: &str = "oor_mailbox";
+/// map Txid -> Transaction
+const CF_PENDING_SWEEPS: &str = "pending_sweeps";
 
 // ROOT ENTRY KEYS
 
@@ -94,6 +98,7 @@ impl RoundExpiryKey {
 pub struct StoredRound {
 	pub tx: Transaction,
 	pub signed_tree: SignedVtxoTree,
+	pub nb_input_vtxos: u64,
 }
 
 impl StoredRound {
@@ -133,6 +138,7 @@ impl Db {
 			CF_OOR_COSIGNED,
 			CF_OOR_MAILBOX,
 			CF_BDK_CHANGESETS,
+			CF_PENDING_SWEEPS,
 		];
 		let db = rocksdb::OptimisticTransactionDB::open_cf(&opts, path, cfs)
 			.context("failed to open db")?;
@@ -160,6 +166,11 @@ impl Db {
 		self.db.cf_handle(CF_OOR_MAILBOX).expect("db missing oor mailbox cf")
 	}
 
+	fn cf_pending_sweeps<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
+		self.db.cf_handle(CF_PENDING_SWEEPS).expect("db missing pending sweeps cf")
+	}
+
+
 	pub fn store_master_mnemonic_and_seed(&self, mnemonic: &bip39::Mnemonic) -> anyhow::Result<()> {
 		let mut b = WriteBatchWithTransaction::<true>::default();
 		b.put(MASTER_MNEMONIC, mnemonic.to_string().as_bytes());
@@ -178,10 +189,16 @@ impl Db {
 		Ok(self.db.get(MASTER_MNEMONIC)?.map(|b| String::from_utf8(b)).transpose()?)
 	}
 
-	pub fn store_round(&self, round_tx: Transaction, vtxos: SignedVtxoTree) -> anyhow::Result<()> {
+	pub fn store_round(
+		&self,
+		round_tx: Transaction,
+		vtxos: SignedVtxoTree,
+		nb_input_vtxos: usize,
+	) -> anyhow::Result<()> {
 		let round = StoredRound {
 			tx: round_tx,
 			signed_tree: vtxos,
+			nb_input_vtxos: nb_input_vtxos as u64,
 		};
 		let id = round.id();
 		let encoded_round = round.encode();
@@ -371,6 +388,34 @@ impl Db {
 			} else {
 				break;
 			}
+		}
+
+		Ok(ret)
+	}
+
+	/// Add the pending sweep tx.
+	pub fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
+		let raw = serialize(tx);
+		self.db.put_cf(&self.cf_pending_sweeps(), txid, raw)?;
+		Ok(())
+	}
+
+	/// Drop the pending sweep tx by txid.
+	pub fn drop_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
+		self.db.delete_cf(&self.cf_pending_sweeps(), txid)?;
+		Ok(())
+	}
+
+	/// Fetch all pending sweep txs.
+	pub fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
+		let mut iter = self.db.iterator_cf(&self.cf_pending_sweeps(), IteratorMode::Start);
+
+		let mut ret = HashMap::new();
+		while let Some(res) = iter.next() {
+			let (key, value) = res.context("db pending sweeps iter error")?;
+			let txid = Txid::from_slice(&key).context("corrupt db: invalid pending sweep txid")?;
+			let tx = deserialize(&value).context("corrupt db: invalid pending sweep txid")?;
+			ret.insert(txid, tx);
 		}
 
 		Ok(ret)

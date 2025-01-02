@@ -744,7 +744,7 @@ pub async fn run_round_coordinator(
 			trace!("Storing round result");
 			app.txindex.register_batch(signed_vtxos.all_signed_txs()).await;
 			app.txindex.register_batch(state.connectors.iter_signed_txs(&app.asp_key)).await;
-			app.db.store_round(signed_round_tx.tx.clone(), signed_vtxos)?;
+			app.db.store_round(signed_round_tx.tx.clone(), signed_vtxos, state.connectors.len())?;
 
 			info!("Finished round {} with tx {}", round_id, signed_round_tx.txid);
 
