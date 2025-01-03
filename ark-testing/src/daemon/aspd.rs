@@ -2,7 +2,7 @@ use std::env;
 use std::time::Duration;
 use std::path::PathBuf;
 
-use aspd_rpc::rpc;
+use aspd_rpc as rpc;
 use bitcoin::{Amount, Network};
 use bitcoin::address::{Address, NetworkUnchecked};
 use tokio::sync::{self, mpsc};
@@ -16,8 +16,8 @@ use crate::util::resolve_path;
 
 pub type Aspd = Daemon<AspdHelper>;
 
-pub type AdminClient = rpc::admin_service_client::AdminServiceClient<tonic::transport::Channel>;
-pub type ArkClient = rpc::ark_service_client::ArkServiceClient<tonic::transport::Channel>;
+pub type AdminClient = rpc::AdminServiceClient<tonic::transport::Channel>;
+pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 
 
 pub struct AspdHelper {

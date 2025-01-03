@@ -8,7 +8,7 @@ pub extern crate lnurl as lnurllib;
 pub mod persist;
 
 use ark::oor::verify_oor;
-use aspd_rpc::rpc;
+use aspd_rpc as rpc;
 pub use exit::ExitStatus;
 pub use persist::sqlite::SqliteClient;
 
@@ -142,7 +142,7 @@ pub struct WalletProperties {
 	pub network: Network,
 
 	/// The wallet fingerpint
-	/// 
+	///
 	/// Used on wallet loading to check mnemonic correctness
 	pub fingerprint: Fingerprint,
 }
@@ -150,7 +150,7 @@ pub struct WalletProperties {
 #[derive(Clone)]
 struct AspConnection {
 	pub info: ArkInfo,
-	pub client: rpc::ark_service_client::ArkServiceClient<tonic::transport::Channel>,
+	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
 }
 
 pub struct Wallet<P: BarkPersister> {
@@ -162,8 +162,8 @@ pub struct Wallet<P: BarkPersister> {
 	asp: Option<AspConnection>,
 }
 
-impl <P>Wallet<P> where 
-	P: BarkPersister, 
+impl <P>Wallet<P> where
+	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
 	pub fn vtxo_seed(network: Network, mnemonic: &Mnemonic) -> Xpriv {
@@ -179,9 +179,9 @@ impl <P>Wallet<P> where
 			trace!("Existing config: {:?}", existing);
 			bail!("cannot overwrite already existing config")
 		}
-		
+
 		let wallet_fingerprint = Self::vtxo_seed(network, &mnemonic).fingerprint(&SECP);
-		let properties = WalletProperties { 
+		let properties = WalletProperties {
 			network: network,
 			fingerprint: wallet_fingerprint
 		};
@@ -262,7 +262,7 @@ impl <P>Wallet<P> where
 			info!("Connecting to ASP without TLS...");
 		};
 
-		let asp = match rpc::ark_service_client::ArkServiceClient::connect(endpoint).await {
+		let asp = match rpc::ArkServiceClient::connect(endpoint).await {
 			Ok(mut client) => {
 				let res = client.get_ark_info(rpc::Empty{})
 					.await.context("ark info request failed")?.into_inner();
@@ -435,7 +435,7 @@ impl <P>Wallet<P> where
 		// We ask the ASP to cosign our onboard vtxo reveal tx.
 		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
 		let asp_part = {
-			let res = asp.client.request_onboard_cosign(aspd_rpc::rpc::OnboardCosignRequest {
+			let res = asp.client.request_onboard_cosign(rpc::OnboardCosignRequest {
 				user_part: {
 					let mut buf = Vec::new();
 					ciborium::into_writer(&user_part, &mut buf).unwrap();
@@ -742,9 +742,9 @@ impl <P>Wallet<P> where
 
 		let change = vtxos.get(1);
 		self.db.register_send(
-			&input_vtxos, 
-			output.pubkey.to_string(), 
-			change, 
+			&input_vtxos,
+			output.pubkey.to_string(),
+			change,
 			Some(account_for_fee)).context("failed to store OOR vtxo")?;
 
 		Ok(user_vtxo.id())
@@ -859,9 +859,9 @@ impl <P>Wallet<P> where
 
 		// TODO: this looks weird that signed.change_vtxo() is not an Option here. What happens if change is 0?
 		self.db.register_send(
-			&input_vtxos, 
-			invoice.to_string(), 
-			Some(&signed.change_vtxo()), 
+			&input_vtxos,
+			invoice.to_string(),
+			Some(&signed.change_vtxo()),
 			Some(account_for_fee)).context("failed to store OOR vtxo")?;
 
 		info!("Bolt11 payment succeeded");
@@ -1228,10 +1228,10 @@ impl <P>Wallet<P> where
 					if let Some(vtxo) = self.build_vtxo(&signed_vtxos, idx)? {
 						new_vtxos.push(vtxo);
 					}
-				} 
+				}
 			}
 
-			self.db.register_refresh(&input_vtxos, &new_vtxos)?;	
+			self.db.register_refresh(&input_vtxos, &new_vtxos)?;
 
 			info!("Round finished");
 			break;
