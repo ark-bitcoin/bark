@@ -87,6 +87,32 @@ pub struct AspPart {
 	pub signature: musig::MusigPartialSignature,
 }
 
+impl AspPart {
+	/// Validate the ASP's partial signature.
+	pub fn verify_partial_sig(&self, user_part: &UserPart) -> bool {
+		let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user_part.spec, user_part.utxo);
+		let agg_nonce = musig::nonce_agg([user_part.nonce, self.nonce]);
+		let agg_pk = musig::tweaked_key_agg(
+			[user_part.spec.user_pubkey, user_part.spec.asp_pubkey],
+			onboard_taptweak(&user_part.spec).to_byte_array(),
+		).0;
+
+		let session = musig::MusigSession::new(
+			&musig::SECP,
+			&agg_pk,
+			agg_nonce,
+			musig::zkp::Message::from_digest(reveal_sighash.to_byte_array()),
+		);
+		session.partial_verify(
+			&musig::SECP,
+			&agg_pk,
+			self.signature,
+			self.nonce,
+			musig::pubkey_to(user_part.spec.asp_pubkey),
+		)
+	}
+}
+
 pub fn new_asp(user: &UserPart, key: &Keypair) -> AspPart {
 	let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user.spec, user.utxo);
 	let msg = reveal_sighash.to_byte_array();

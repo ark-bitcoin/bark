@@ -142,7 +142,7 @@ pub struct WalletProperties {
 	pub network: Network,
 
 	/// The wallet fingerpint
-	/// 
+	///
 	/// Used on wallet loading to check mnemonic correctness
 	pub fingerprint: Fingerprint,
 }
@@ -162,8 +162,8 @@ pub struct Wallet<P: BarkPersister> {
 	asp: Option<AspConnection>,
 }
 
-impl <P>Wallet<P> where 
-	P: BarkPersister, 
+impl <P>Wallet<P> where
+	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
 	pub fn vtxo_seed(network: Network, mnemonic: &Mnemonic) -> Xpriv {
@@ -179,9 +179,9 @@ impl <P>Wallet<P> where
 			trace!("Existing config: {:?}", existing);
 			bail!("cannot overwrite already existing config")
 		}
-		
+
 		let wallet_fingerprint = Self::vtxo_seed(network, &mnemonic).fingerprint(&SECP);
-		let properties = WalletProperties { 
+		let properties = WalletProperties {
 			network: network,
 			fingerprint: wallet_fingerprint
 		};
@@ -445,6 +445,12 @@ impl <P>Wallet<P> where
 			ciborium::from_reader::<ark::onboard::AspPart, _>(&res.into_inner().asp_part[..])
 				.context("invalid ASP part in response")?
 		};
+
+		if !asp_part.verify_partial_sig(&user_part) {
+			bail!("invalid ASP onboard cosignature received. user_part={:?}, asp_part={:?}",
+				user_part, asp_part,
+			);
+		}
 
 		// Store vtxo first before we actually make the on-chain tx.
 		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &user_keypair);
@@ -742,9 +748,9 @@ impl <P>Wallet<P> where
 
 		let change = vtxos.get(1);
 		self.db.register_send(
-			&input_vtxos, 
-			output.pubkey.to_string(), 
-			change, 
+			&input_vtxos,
+			output.pubkey.to_string(),
+			change,
 			Some(account_for_fee)).context("failed to store OOR vtxo")?;
 
 		Ok(user_vtxo.id())
@@ -859,9 +865,9 @@ impl <P>Wallet<P> where
 
 		// TODO: this looks weird that signed.change_vtxo() is not an Option here. What happens if change is 0?
 		self.db.register_send(
-			&input_vtxos, 
-			invoice.to_string(), 
-			Some(&signed.change_vtxo()), 
+			&input_vtxos,
+			invoice.to_string(),
+			Some(&signed.change_vtxo()),
 			Some(account_for_fee)).context("failed to store OOR vtxo")?;
 
 		info!("Bolt11 payment succeeded");
@@ -1228,10 +1234,10 @@ impl <P>Wallet<P> where
 					if let Some(vtxo) = self.build_vtxo(&signed_vtxos, idx)? {
 						new_vtxos.push(vtxo);
 					}
-				} 
+				}
 			}
 
-			self.db.register_refresh(&input_vtxos, &new_vtxos)?;	
+			self.db.register_refresh(&input_vtxos, &new_vtxos)?;
 
 			info!("Round finished");
 			break;
