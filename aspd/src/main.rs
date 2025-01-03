@@ -279,11 +279,20 @@ struct ConfigOpts {
 	/// It is mandatory to configure exactly one authentication method
 	/// This could either be [bitcoind_cookie] or [bitcoind_rpc_user] and [bitcoind_rpc_pass]
 	#[clap(long, env = "BITCOIND_COOKIE")]
-	bitcoind_cookie: Option<String>,
+	bitcoind_cookie: Option<PathBuf>,
 
 
+	/// the user for the bitcoind RPC
+	/// It is mandatory to configure exactly one authentication method
+	/// If a [bitcoind_rpc_user] is provided [bitcoind_rpc_pass] must be provided
+	#[clap(long, env = "BITCOIND_RPC_USER")]
+	bitcoind_rpc_user: Option<String>,
 
-	#[arg(long)]
+	/// the password for the bitcoind RPC
+	/// It is mandatory to configure exactly one authentication method
+	/// If a [bitcoind_rpc_user] is provided [bitcoind_rpc_pass] must be provided
+	#[clap(long, env = "BITCOIND_RPC_PASS")]
+	bitcoind_rpc_pass: Option<String>,
 
 	#[arg(long, env = "ASPD_PUBLIC_RPC_ADDRESS")]
 	public_rpc_address: Option<String>,
@@ -332,9 +341,20 @@ impl ConfigOpts {
 		if self.bitcoind_url.is_none() {
 			bail!("The --bitcoind-url flag is mandatory.");
 		}
-		if self.bitcoind_cookie.is_none() {
-			bail!("The --bitcoind-cookie flag is mandatory.");
+
+		let with_user_pass = match (&self.bitcoind_rpc_user, &self.bitcoind_rpc_pass) {
+			(Some(_), None) => bail!("Missing parameter --bitcoind-rpc-pass. This is required if --bitcoind-rpc-user is provided"),
+			(None, Some(_)) => bail!("Missing parameter --bitcoind-rpc-user. This is required if --bitcoind-rpc-pass is provided"),
+			(None, None) => false,
+			(Some(_),Some(_)) => true,
+		};
+
+		if !with_user_pass && self.bitcoind_cookie.is_none() {
+			bail!("Configuring authentication to bitcoind is mandatory. Specify either --bitcoind-cookie or (--bitcoind-rpc-user and --bitcoind-rpc-pass).");
+		} else if with_user_pass & self.bitcoind_cookie.is_some() {
+			bail!("Invalid configuration for authentication to bitcoind. Use either --bitcoind-cookie or (--bitcoind-rpc-user and --bitcoind-rpc-pass) but not both.")
 		}
+
 
 		let has_cln_config =
 			self.cln_grpc_uri.is_some() ||
@@ -366,10 +386,6 @@ impl ConfigOpts {
 
 		if let Some(v) = self.bitcoind_url {
 			cfg.bitcoind_url = v;
-		}
-
-		if let Some(v) = self.bitcoind_cookie {
-			cfg.bitcoind_cookie = v;
 		}
 
 		if let Some(v) = self.public_rpc_address {
@@ -418,7 +434,40 @@ impl ConfigOpts {
 			);
 		}
 
-		// We have the following sc
+		// Merging authentication for bitcoind and validating
+		// the resulting config
+		let mut put_bitcoind_cookie = false;
+		let mut put_bitcoind_userpass = false;
+		if let Some(v) = self.bitcoind_cookie {
+			put_bitcoind_cookie = true;
+			cfg.bitcoind_cookie = Some(v);
+			cfg.bitcoind_rpc_user = None;
+			cfg.bitcoind_rpc_pass = None;
+		}
+		if let Some(v) = self.bitcoind_rpc_user {
+			put_bitcoind_userpass = true;
+			cfg.bitcoind_rpc_user = Some(v);
+			cfg.bitcoind_cookie = None;
+		}
+		if let Some(v) = self.bitcoind_rpc_pass {
+			put_bitcoind_userpass = true;
+			cfg.bitcoind_rpc_pass = Some(v);
+			cfg.bitcoind_cookie = None;
+		}
+
+		match (&cfg.bitcoind_rpc_user, &cfg.bitcoind_rpc_pass) {
+			(Some(_), None) => bail!("Missing configuration for bitcoind-rpc-pass. This is required if bitcoind-rpc-user is provided"),
+			(None, Some(_)) => bail!("Missing configuration for bitcoind-rpc-user. This is required if bitcoind-rpc-pass  is provided"),
+			(Some(_), Some(_))=> true,
+			(None, None) => false,
+		};
+
+		if put_bitcoind_userpass && put_bitcoind_cookie {
+			bail!("Either set --bitcoind-cookie or (--bitcoind-rpc-user and --bitcoind-rpc-pass) but not both.")
+		}
+
+
+		// We have the following scenario's
 
 		// If any of these fields is Some(Some(value)) it explcitily sets the field
 		// In that case puts_cln_config is true
@@ -491,6 +540,63 @@ mod test {
 	use super::*;
 
 	use std::str::FromStr;
+
+	#[test]
+	fn validate_bitcoind_config() {
+		let bitcoind_url = Some(String::from("http://localhost:13444"));
+		let bitcoind_cookie = Some(PathBuf::from("/path/to/cookie"));
+		let bitcoind_rpc_user = Some(String::from("user"));
+		let bitcoind_rpc_pass = Some(String::from("pass"));
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_cookie = bitcoind_cookie.clone();
+		opts.validate().expect("This config should be valid");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		opts.bitcoind_rpc_pass = bitcoind_rpc_pass.clone();
+		opts.validate().expect("This config should be valid");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.validate().expect_err("Invalid because auth info is missing");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		opts.validate().expect_err("Invalid because pass is missing");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_cookie = bitcoind_cookie.clone();
+		opts.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		opts.bitcoind_rpc_pass = bitcoind_rpc_pass.clone();
+		opts.validate().expect_err("Invalid. Either cookie or pass but not both");
+	}
+
+
+	#[test]
+	fn update_bitcoind_auth_config() {
+		let bitcoind_cookie = Some(PathBuf::from("/path/to/cookie"));
+		let bitcoind_rpc_user = Some(String::from("user"));
+		let bitcoind_rpc_pass = Some(String::from("pass"));
+
+		// Aspd is configured to use config
+		// COnfigure to use user pass instead
+		let mut config = Config::default();
+		config.bitcoind_cookie = bitcoind_cookie.clone();
+
+		let mut update = ConfigOpts::default();
+		update.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		update.bitcoind_rpc_pass = bitcoind_rpc_pass.clone();
+
+		let new_config = update.merge_into(&config).expect("Valid change");
+		assert!(new_config.bitcoind_cookie.is_none());
+		assert!(new_config.bitcoind_rpc_user.is_some());
+		assert!(new_config.bitcoind_rpc_pass.is_some());
+	}
 
 	#[test]
 	fn partial_cln_config_on_init_is_not_accepted() {

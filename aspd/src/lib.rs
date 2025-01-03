@@ -60,7 +60,9 @@ pub struct Config {
 	pub public_rpc_address: SocketAddr,
 	pub admin_rpc_address: Option<SocketAddr>,
 	pub bitcoind_url: String,
-	pub bitcoind_cookie: String,
+	pub bitcoind_cookie: Option<PathBuf>,
+	pub bitcoind_rpc_user: Option<String>,
+	pub bitcoind_rpc_pass: Option<String>,
 
 	// vtxo spec
 	pub vtxo_expiry_delta: u16,
@@ -103,7 +105,9 @@ impl Default for Config {
 			public_rpc_address: "0.0.0.0:3535".parse().unwrap(),
 			admin_rpc_address: Some("127.0.0.1:3536".parse().unwrap()),
 			bitcoind_url: "http://127.0.0.1:38332".into(),
-			bitcoind_cookie: "~/.bitcoin/signet/.cookie".into(),
+			bitcoind_cookie: Some("~/.bitcoin/signet/.cookie".into()),
+			bitcoind_rpc_user: None,
+			bitcoind_rpc_pass: None,
 			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
 			vtxo_exit_delta: 2 * 6, // 2 hrs
 			htlc_delta: 1 * 6, // 1 hr
@@ -119,6 +123,20 @@ impl Default for Config {
 			max_onboard_value: None,
 			cln_config: None,
 		}
+	}
+}
+
+impl Config {
+	fn bitcoind_auth(&self) -> bdk_bitcoind_rpc::bitcoincore_rpc::Auth {
+		match (&self.bitcoind_rpc_user, &self.bitcoind_rpc_pass) {
+			(Some(user), Some(pass)) => return bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(user.into(), pass.into()),
+			(Some(_), None) => panic!("Missing configuration for bitcoind_rpc_pass."),
+			(None, Some(_)) => panic!("Missing configurationfor bitcoind_rpc_user."),
+			(None, None) => {} // Do nothing,
+		};
+
+		let bitcoind_cookie_file = self.bitcoind_cookie.as_ref().expect("The bitcoind-cookie must be set if username and password aren't provided");
+		bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(bitcoind_cookie_file.into())
 	}
 }
 
@@ -236,7 +254,7 @@ impl App {
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
 			&config.bitcoind_url,
-			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
+			config.bitcoind_auth(),
 		).context("failed to create bitcoind rpc client")?;
 		let deep_tip = (|| {
 			let tip = bitcoind.get_block_count()?;
@@ -296,11 +314,11 @@ impl App {
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
 			&config.bitcoind_url,
-			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
+			config.bitcoind_auth(),
 		).context("failed to create bitcoind rpc client")?;
 		let bitcoind2 = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
 			&config.bitcoind_url,
-			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(config.bitcoind_cookie.as_str().into()),
+			config.bitcoind_auth(),
 		).context("failed to create bitcoind rpc client")?;
 
 		Ok(Arc::new(App {
