@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use aspd_log::RecordSerializeWrapper;
-use aspd_rpc::rpc;
+use aspd_rpc as rpc;
 use bitcoin::{Address, Amount, FeeRate, Network};
 use clap::Parser;
 use tonic::transport::Uri;
@@ -239,7 +239,7 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		format!("http://{}", addr)
 	};
 	let asp_endpoint = Uri::from_str(&addr).context("invalid asp addr")?;
-	let mut asp = rpc::admin_service_client::AdminServiceClient::connect(asp_endpoint)
+	let mut asp = rpc::AdminServiceClient::connect(asp_endpoint)
 		.await.context("failed to connect to asp")?;
 
 	match cmd {

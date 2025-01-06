@@ -23,7 +23,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use aspd_rpc::rpc;
+use aspd_rpc as rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};

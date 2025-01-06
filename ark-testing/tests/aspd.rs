@@ -8,7 +8,7 @@ use ark_testing::{AspdConfig, TestContext};
 use ark_testing::daemon::aspd::Aspd;
 use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
 use aspd_log::{NotSweeping, RoundFullySwept, SweepBroadcast, TxIndexUpdateFinished};
-use aspd_rpc::rpc::Empty;
+use aspd_rpc as rpc;
 
 use bitcoin::amount::Amount;
 use bitcoin::secp256k1::PublicKey;
@@ -53,7 +53,7 @@ async fn fund_asp() {
 	let mut admin_client = aspd.get_admin_client().await;
 
 	// Query the wallet balance of the asp
-	let response = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
+	let response = admin_client.wallet_status(rpc::Empty {}).await.expect("Get response").into_inner();
 	assert_eq!(response.balance, 0);
 
 	// Fund the aspd
@@ -61,7 +61,7 @@ async fn fund_asp() {
 	tokio::time::sleep(Duration::from_secs(1)).await;
 
 	// Confirm that the balance is updated
-	let response = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
+	let response = admin_client.wallet_status(rpc::Empty {}).await.expect("Get response").into_inner();
 	assert!(response.balance > 0);
 }
 
@@ -77,12 +77,12 @@ async fn restart_key_stability() {
 
 	let asp_key1 = {
 		let mut client = aspd.get_public_client().await;
-		let res = client.get_ark_info(Empty {}).await.unwrap().into_inner();
+		let res = client.get_ark_info(rpc::Empty {}).await.unwrap().into_inner();
 		PublicKey::from_slice(&res.pubkey).unwrap()
 	};
 	let addr1 = {
 		let mut admin_client = aspd.get_admin_client().await;
-		let res = admin_client.wallet_status(Empty {}).await.unwrap().into_inner();
+		let res = admin_client.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
 		res.address
 	};
 
@@ -91,19 +91,19 @@ async fn restart_key_stability() {
 	bitcoind.generate(1).await;
 
 	// Restart aspd.
-	let _ = aspd.get_admin_client().await.stop(Empty {}).await;
+	let _ = aspd.get_admin_client().await.stop(rpc::Empty {}).await;
 	aspd.stop().await.unwrap();
 	tokio::time::sleep(Duration::from_secs(1)).await;
 
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
 	let asp_key2 = {
 		let mut client = aspd.get_public_client().await;
-		let res = client.get_ark_info(Empty {}).await.unwrap().into_inner();
+		let res = client.get_ark_info(rpc::Empty {}).await.unwrap().into_inner();
 		PublicKey::from_slice(&res.pubkey).unwrap()
 	};
 	let addr2 = {
 		let mut admin_client = aspd.get_admin_client().await;
-		let res = admin_client.wallet_status(Empty {}).await.expect("Get response").into_inner();
+		let res = admin_client.wallet_status(rpc::Empty {}).await.expect("Get response").into_inner();
 		res.address
 	};
 
@@ -130,7 +130,7 @@ async fn sweep_vtxos() {
 	bitcoind.fund_bark(&bark, Amount::from_sat(100_000)).await;
 	bark.onboard(Amount::from_sat(75_000)).await;
 
-	assert_eq!(1000000, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+	assert_eq!(1000000, admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner().balance);
 
 	// create a vtxo tree and do a round
 	bark.refresh_all().await;
@@ -143,22 +143,22 @@ async fn sweep_vtxos() {
 
 	// Not sweeping yet, because available money under the threshold.
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
-	admin.trigger_sweep(Empty{}).await.unwrap();
+	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
 	assert_eq!(Amount::from_sat(74980), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
 
 	bark.refresh_all().await;
 	bitcoind.generate(65).await;
 
-	assert_eq!(844734, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+	assert_eq!(844734, admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner().balance);
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
-	admin.trigger_sweep(Empty{}).await.unwrap();
+	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
 	assert_eq!(Amount::from_sat(149960), log_sweeping.recv().fast().await.unwrap().surplus);
 
 	// then after a while, we should sweep the connectors
 	bitcoind.generate(65).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(Empty{}).await.unwrap();
-	assert_eq!(993333, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
+	assert_eq!(993333, admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner().balance);
 
 	// and eventually the round should be finished
 	loop {
@@ -169,7 +169,7 @@ async fn sweep_vtxos() {
 		tokio::time::sleep(Duration::from_millis(200)).await;
 	}
 
-	assert_eq!(993333, admin.wallet_status(Empty {}).await.unwrap().into_inner().balance);
+	assert_eq!(993333, admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner().balance);
 }
 
 #[tokio::test]
