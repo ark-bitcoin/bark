@@ -446,6 +446,12 @@ impl <P>Wallet<P> where
 				.context("invalid ASP part in response")?
 		};
 
+		if !asp_part.verify_partial_sig(&user_part) {
+			bail!("invalid ASP onboard cosignature received. user_part={:?}, asp_part={:?}",
+				user_part, asp_part,
+			);
+		}
+
 		// Store vtxo first before we actually make the on-chain tx.
 		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &user_keypair);
 
