@@ -15,6 +15,8 @@ mod rpcserver;
 mod round;
 mod txindex;
 
+use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -30,13 +32,12 @@ use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
-
 use tokio::time::MissedTickBehavior;
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::{musig, BlockHeight, Vtxo};
+use ark::{musig, BlockHeight, Vtxo, VtxoId};
 use ark::lightning::Bolt11Payment;
 
 use crate::round::{RoundEvent, RoundInput};
@@ -190,6 +191,9 @@ pub struct App {
 	txindex: TxIndex,
 
 	rounds: Option<RoundHandle>,
+	/// All vtxos that are currently being processed in any way.
+	/// (Plus a small buffer to optimize allocations.)
+	vtxos_in_flux: Mutex<VtxosInFlux>,
 	sendpay_updates: Option<SendpayHandle>,
 	trigger_round_sweep_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
@@ -312,6 +316,7 @@ impl App {
 			//TODO(stevenroose) this 5s is wicked, but needed for now for testing
 			txindex: TxIndex::start(bitcoind2, Duration::from_secs(5)),
 			rounds: None,
+			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
 			sendpay_updates: None,
 			config, db, asp_key, bitcoind,
@@ -525,6 +530,25 @@ impl App {
 		Ok(tx)
 	}
 
+	/// Atomically store either all vtxos as being in flux, or none of them.
+	///
+	/// If one of them is already in flux, an error is returned containing it,
+	/// and none of the other ones are stored as in flux.
+	pub async fn atomic_check_put_vtxo_in_flux<V: Borrow<VtxoId>>(
+		&self,
+		ids: impl IntoIterator<Item = V>,
+	) -> Result<(), VtxoId> {
+		self.vtxos_in_flux.lock().await.atomic_check_put(ids)
+	}
+
+	/// Release the vtxos from flux.
+	pub async fn release_vtxos_in_flux<V: Borrow<VtxoId>>(
+		&self,
+		ids: impl IntoIterator<Item = V>,
+	) {
+		self.vtxos_in_flux.lock().await.release(ids)
+	}
+
 	pub fn cosign_onboard(&self, user_part: ark::onboard::UserPart) -> ark::onboard::AspPart {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		ark::onboard::new_asp(&user_part, &self.asp_key)
@@ -636,5 +660,76 @@ impl App {
 
 	pub fn get_master_mnemonic(&self) -> anyhow::Result<String> {
 		Ok(self.db.get_master_mnemonic()?.expect("app running"))
+	}
+}
+
+/// Simple locking structure to keep track of vtxos that are currently in flux.
+#[derive(Default)]
+struct VtxosInFlux {
+	vtxos: HashSet<VtxoId>,
+	buf: Vec<VtxoId>,
+}
+
+impl VtxosInFlux {
+	pub fn atomic_check_put<V: Borrow<VtxoId>>(
+		&mut self,
+		ids: impl IntoIterator<Item = V>,
+	) -> Result<(), VtxoId> {
+		let ids_iter = ids.into_iter();
+		let min_nb_vtxos = ids_iter.size_hint().0;
+		self.buf.clear();
+		self.vtxos.reserve(min_nb_vtxos);
+		self.buf.reserve(min_nb_vtxos);
+		for id in ids_iter {
+			let id = *id.borrow();
+			if !self.vtxos.insert(id) {
+				// abort
+				for take in &self.buf {
+					self.vtxos.remove(&take);
+				}
+				return Err(id);
+			}
+			self.buf.push(id);
+		}
+		Ok(())
+	}
+
+	pub fn release<V: Borrow<VtxoId>>(&mut self, ids: impl IntoIterator<Item = V>) {
+		for id in ids {
+			self.vtxos.remove(id.borrow());
+		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use std::iter;
+	use bitcoin::secp256k1::rand;
+
+	fn random_vtxoid() -> VtxoId {
+		let mut b = [0u8; 36];
+		rand::Fill::try_fill(&mut b[..], &mut rand::thread_rng()).unwrap();
+		VtxoId::from_slice(&b).unwrap()
+	}
+
+	#[test]
+	fn test_in_flux() {
+		let mut flux = VtxosInFlux::default();
+		let vtxos = iter::from_fn(|| Some(random_vtxoid())).take(10).collect::<Vec<_>>();
+
+		flux.atomic_check_put(&[vtxos[0], vtxos[1]]).unwrap();
+		flux.atomic_check_put(&[vtxos[2], vtxos[3]]).unwrap();
+		assert_eq!(4, flux.vtxos.len());
+		flux.atomic_check_put(&[vtxos[0], vtxos[4]]).unwrap_err();
+		assert_eq!(4, flux.vtxos.len());
+		flux.release(&[vtxos[0]]);
+		assert_eq!(3, flux.vtxos.len());
+		flux.atomic_check_put(&[vtxos[0], vtxos[4]]).unwrap();
+		assert_eq!(5, flux.vtxos.len());
+
+		flux.atomic_check_put(&[vtxos[1], vtxos[5]]).unwrap_err();
+		assert_eq!(5, flux.vtxos.len());
+		assert!(!flux.vtxos.contains(&vtxos[5]));
 	}
 }
