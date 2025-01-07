@@ -554,21 +554,34 @@ impl App {
 		ark::onboard::new_asp(&user_part, &self.asp_key)
 	}
 
-	pub fn cosign_oor(
+	pub async fn cosign_oor(
 		&self,
 		payment: &ark::oor::OorPayment,
 		user_nonces: &[musig::MusigPubNonce],
 	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
-		let txid = payment.txid();
 		let ids = payment.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-		let new_vtxos = payment.unsigned_output_vtxos();
-		if let Some(dup) = self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos)? {
-			bail!("attempted to sign OOR for already spent vtxo {}", dup)
-		} else {
-			info!("Cosigning OOR tx {} with inputs: {:?}", txid, ids);
-			let (nonces, sigs) = payment.sign_asp(&self.asp_key, &user_nonces);
-			Ok((nonces, sigs))
+
+		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
+			bail!("attempted to sign OOR for vtxo already in flux: {}", id);
 		}
+
+		let txid = payment.txid();
+		let new_vtxos = payment.unsigned_output_vtxos();
+		let ret = match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos) {
+			Ok(Some(dup)) => {
+				Err(anyhow!("attempted to sign OOR for already spent vtxo {}", dup))
+			},
+			Ok(None) => {
+				info!("Cosigning OOR tx {} with inputs: {:?}", txid, ids);
+				let (nonces, sigs) = payment.sign_asp(&self.asp_key, &user_nonces);
+				Ok((nonces, sigs))
+			},
+			Err(e) => Err(e),
+		};
+
+		self.release_vtxos_in_flux(ids).await;
+
+		ret
 	}
 
 	// lightning

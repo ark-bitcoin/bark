@@ -137,7 +137,7 @@ impl rpc::server::ArkService for App {
 			return Err(badarg!("wrong number of user nonces"));
 		}
 
-		let (nonces, sigs) = self.cosign_oor(&payment, &user_nonces).to_status()?;
+		let (nonces, sigs) = self.cosign_oor(&payment, &user_nonces).await.to_status()?;
 		Ok(tonic::Response::new(rpc::OorCosignResponse {
 			pub_nonces: nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
 			partial_sigs: sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
