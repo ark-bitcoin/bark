@@ -1025,7 +1025,7 @@ impl <P>Wallet<P> where
 				input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
 			);
 			asp.client.submit_payment(rpc::SubmitPaymentRequest {
-				input_vtxos: input_vtxos.iter().map(|v| v.encode()).collect(),
+				input_vtxos: input_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 				vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
 					rpc::VtxoRequest {
 						amount: r.amount.to_sat(),

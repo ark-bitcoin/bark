@@ -327,6 +327,29 @@ impl Db {
 		})
 	}
 
+	/// Check whether the vtxos were already spent, and fetch them if not.
+	///
+	/// There is no guarantee that the vtxos are still all unspent by
+	/// the time this call returns. The caller should ensure no changes
+	/// are made to them meanwhile.
+	pub fn check_fetch_unspent_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
+		let mut ret = Vec::with_capacity(ids.len());
+		let cf = self.cf_vtxos();
+		for id in ids {
+			let encoded = self.db.get_cf(&cf, id)?
+				.context(*id)
+				.with_context(|| format!("vtxo {} not found", id))?;
+			let vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
+			if !vtxo_state.is_spendable() {
+				return Err(anyhow!("vtxo {} is not spendable: {:?}", id, vtxo_state)
+					.context(*id));
+			}
+			ret.push(vtxo_state.vtxo);
+		}
+
+		Ok(ret)
+	}
+
 	/// Set the vtxo as being forfeited.
 	pub fn set_vtxo_forfeited(&self, id: VtxoId, sigs: Vec<schnorr::Signature>) -> anyhow::Result<()> {
 		let mut opts = WriteOptions::default();

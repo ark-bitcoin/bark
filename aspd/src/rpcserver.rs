@@ -303,7 +303,7 @@ impl rpc::server::ArkService for App {
 		let req = req.into_inner();
 
 		let inputs =  req.input_vtxos.into_iter().map(|vtxo| {
-			Ok(Vtxo::decode(&vtxo).map_err(|e| badarg!("invalid vtxo: {}", e))?)
+			Ok(VtxoId::from_slice(&vtxo).map_err(|e| badarg!("invalid vtxo: {}", e))?)
 		}).collect::<Result<_, tonic::Status>>()?;
 
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());

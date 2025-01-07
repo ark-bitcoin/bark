@@ -177,6 +177,8 @@ message OffboardRequest {
 
 message SubmitPaymentRequest {
 	//TODO(stevenroose) add proof of vtxo ownership
+
+	// vtxo ids of input vtxos
 	repeated bytes input_vtxos = 1;
 	repeated VtxoRequest vtxo_requests = 2;
 	repeated OffboardRequest offboard_requests = 3;

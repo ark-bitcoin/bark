@@ -44,7 +44,7 @@ pub enum RoundEvent {
 #[derive(Debug)]
 pub enum RoundInput {
 	RegisterPayment {
-		inputs: Vec<Vtxo>,
+		inputs: Vec<VtxoId>,
 		vtxo_requests: Vec<VtxoRequest>,
 		/// One set of nonces per vtxo request.
 		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
@@ -122,6 +122,8 @@ pub struct CollectingPayments {
 	max_output_vtxos: usize,
 	offboard_feerate: FeeRate,
 
+	/// All inputs that have participated, but might have dropped out.
+	all_locked_inputs: HashSet<VtxoId>,
 	allowed_inputs: Option<HashSet<VtxoId>>,
 	all_inputs: HashMap<VtxoId, Vtxo>,
 	all_outputs: Vec<VtxoParticipant>,
@@ -135,10 +137,16 @@ pub struct CollectingPayments {
 }
 
 impl CollectingPayments {
-	fn new(round_id: u64, attempt_number: usize, max_output_vtxos: usize, offboard_feerate: FeeRate) -> CollectingPayments {
+	fn new(
+		round_id: u64,
+		attempt_number: usize,
+		max_output_vtxos: usize,
+		offboard_feerate: FeeRate,
+	) -> CollectingPayments {
 		CollectingPayments {
 			round_id, attempt_number, max_output_vtxos, offboard_feerate,
 
+			all_locked_inputs: HashSet::new(),
 			allowed_inputs: None,
 			//TODO(stevenroose) allocate this more effectively
 			all_inputs: HashMap::new(),
@@ -170,8 +178,6 @@ impl CollectingPayments {
 			}
 		}
 
-		//TODO(stevenroose) check that vtxos exist!
-
 		validate_payment(&inputs, &outputs, &offboards, self.offboard_feerate)
 			.context("bad payment")?;
 		for out in &outputs {
@@ -183,6 +189,10 @@ impl CollectingPayments {
 		// Ok we accept the round, register it.
 
 		slog!(RoundPaymentRegistered, round_id: self.round_id, attempt_number: self.attempt_number, nb_inputs: inputs.len(), nb_outputs: outputs.len(), nb_offboards: offboards.len());
+		if self.allowed_inputs.is_none() {
+			// We're adding inputs for the first time
+			self.all_locked_inputs.extend(inputs.iter().map(|v| v.id()));
+		}
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 		for out in &outputs {
@@ -215,6 +225,8 @@ pub struct SigningVtxoTree {
 	user_cosign_nonces: HashMap<PublicKey, Vec<musig::MusigPubNonce>>,
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	allowed_inputs: HashSet<VtxoId>,
+	/// All inputs that have participated, but might have dropped out.
+	all_locked_inputs: HashSet<VtxoId>,
 
 	//TODO(stevenroose) this can become a notify once we multitask
 	proceed: bool,
@@ -271,6 +283,8 @@ pub struct SigningForfeits {
 	// data from earlier
 	all_inputs: HashMap<VtxoId, Vtxo>,
 	allowed_inputs: HashSet<VtxoId>,
+	/// All inputs that have participated, but might have dropped out.
+	all_locked_inputs: HashSet<VtxoId>,
 
 	// other public data
 	connectors: ConnectorChain,
@@ -383,11 +397,38 @@ pub async fn run_round_coordinator(
 						RoundInput::RegisterPayment {
 							inputs, vtxo_requests, cosign_pub_nonces, offboards,
 						} => {
+							if let Some(v) = inputs.iter().find(|v| state.all_inputs.contains_key(v)) {
+								slog!(RoundUserVtxoAlreadyRegistered, round_id, vtxo: *v);
+								continue 'receive;
+							}
+							// If some inputs already have been submitted in a previous attempt,
+							// no need to lock/check them again.
+							let new_inputs = inputs.iter().copied().filter(|v| {
+								!state.all_locked_inputs.contains(v)
+							}).collect::<Vec<_>>();
+
+							if let Err(id) = app.atomic_check_put_vtxo_in_flux(&new_inputs).await {
+								slog!(RoundUserVtxoInFlux, round_id, vtxo: id);
+								continue 'receive;
+							}
+
+							// Check if the input vtxos exist and are unspent.
+							let input_vtxos = match app.db.check_fetch_unspent_vtxos(&inputs) {
+								Ok(i) => i,
+								Err(e) => {
+									let id = e.downcast_ref::<VtxoId>().cloned();
+									slog!(RoundUserVtxoUnknown, round_id, vtxo: id);
+									app.release_vtxos_in_flux(&new_inputs).await;
+									continue 'receive;
+								},
+							};
+
 							let outputs = vtxo_requests.into_iter().zip(cosign_pub_nonces.into_iter())
 								.map(|(req, nonces)| VtxoParticipant { req, nonces })
 								.collect();
-							if let Err(e) = state.register_payment(inputs, outputs, offboards) {
+							if let Err(e) = state.register_payment(input_vtxos, outputs, offboards) {
 								slog!(RoundPaymentRegistrationFailed, round_id, attempt_number, error: e.to_string());
+								app.release_vtxos_in_flux(&new_inputs).await;
 								continue 'receive;
 							}
 
@@ -520,6 +561,7 @@ pub async fn run_round_coordinator(
 				attempt_number,
 				cosign_agg_nonces,
 				allowed_inputs: state.all_inputs.keys().copied().collect(),
+				all_locked_inputs: state.all_locked_inputs,
 				all_inputs: state.all_inputs,
 				// Make sure we don't allow other inputs next attempt.
 				cosign_part_sigs: HashMap::with_capacity(unsigned_vtxo_tree.nb_leaves()),
@@ -640,6 +682,7 @@ pub async fn run_round_coordinator(
 				forfeit_part_sigs: HashMap::with_capacity(state.all_inputs.len()),
 				all_inputs: state.all_inputs,
 				allowed_inputs: state.allowed_inputs,
+				all_locked_inputs: state.all_locked_inputs,
 				connectors,
 				proceed: false,
 			};
@@ -747,11 +790,12 @@ pub async fn run_round_coordinator(
 			});
 
 			// Store forfeit txs and round info in database.
-			for (id, vtxo) in state.all_inputs {
+			for (id, vtxo) in &state.all_inputs {
 				let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
 				slog!(StoringForfeitVtxo, round_id, attempt_number, out_point: vtxo.point());
-				app.db.set_vtxo_forfeited(id, forfeit_sigs)?;
+				app.db.set_vtxo_forfeited(*id, forfeit_sigs)?;
 			}
+			app.release_vtxos_in_flux(state.all_locked_inputs).await;
 
 			trace!("Storing round result");
 			app.txindex.register_batch(signed_vtxos.all_signed_txs().iter().cloned()).await;
