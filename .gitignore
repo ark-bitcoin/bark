@@ -1,3 +1,6 @@
+# generated rpc server/client
+aspd-rpc/src/aspd.rs
+
 debug/
 target/
 .direnv/
