@@ -45,7 +45,7 @@ use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, BaseVtxo, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
+use ark::{musig, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
 
@@ -493,15 +493,12 @@ impl <P>Wallet<P> where
 		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
 		let dest = &vtxos.spec.vtxos[leaf_idx];
 		let vtxo = Vtxo::Round {
-			base: BaseVtxo {
-				spec: VtxoSpec {
-					user_pubkey: dest.pubkey,
-					asp_pubkey: vtxos.spec.asp_pk,
-					expiry_height: vtxos.spec.expiry_height,
-					exit_delta: vtxos.spec.exit_delta,
-					amount: dest.amount,
-				},
-				utxo: vtxos.utxo,
+			spec: VtxoSpec {
+				user_pubkey: dest.pubkey,
+				asp_pubkey: vtxos.spec.asp_pk,
+				expiry_height: vtxos.spec.expiry_height,
+				exit_delta: vtxos.spec.exit_delta,
+				amount: dest.amount,
 			},
 			leaf_idx: leaf_idx,
 			exit_branch: exit_branch,
