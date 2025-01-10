@@ -8,7 +8,7 @@ use anyhow::Context;
 use ark::Movement;
 use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
-use bitcoin::Amount;
+use bitcoin::{secp256k1::PublicKey, Amount};
 
 use crate::{exit::ExitIndex, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
@@ -181,6 +181,31 @@ impl BarkPersister for SqliteClient {
 		let result = query::delete_vtxo(&tx, id);
 		tx.commit().context("Failed to commit transaction")?;
 		result
+	}
+
+	fn store_vtxo_key_index(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::store_vtxo_key_index(&conn, index, public_key)
+	}
+
+	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
+		let conn = self.connect()?;
+		query::get_last_vtxo_key_index(&conn)
+	}
+
+	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool> {
+		let conn = self.connect()?;
+		query::check_vtxo_key_exists(&conn, public_key)
+	}
+
+	fn get_vtxo_key_index(&self, vtxo: &Vtxo) -> anyhow::Result<u32> {
+		// TODO: implement key derivation for arkoors
+		if vtxo.vtxo_type() == "arkoor" {
+			Ok(0)
+		} else {
+			let conn = self.connect()?;
+			query::get_vtxo_key_index(&conn, vtxo)?.context("vtxo not found in the db")
+		}
 	}
 
 	/// Store the ongoing exit process.

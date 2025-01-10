@@ -23,6 +23,10 @@ impl Migration for Migration0001 {
 				raw_vtxo BLOB,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);",
+			"CREATE TABLE IF NOT EXISTS bark_vtxo_key (
+				idx INTEGER PRIMARY KEY,
+				public_key TEXT NOT NULL
+			);",
 			"CREATE TABLE IF NOT EXISTS bark_vtxo_state (
 				id INTEGER PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT  (strftime('%Y-%m-%d %H:%M:%f', 'now')),
@@ -38,8 +42,7 @@ impl Migration for Migration0001 {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				exit BLOB
 			)",
-			"
-			CREATE VIEW IF NOT EXISTS most_recent_vtxo_state
+			"CREATE VIEW IF NOT EXISTS most_recent_vtxo_state
 				(id, last_updated_at, vtxo_id, state)
 			AS
 			WITH most_recent AS (SELECT MAX(id) as id FROM bark_vtxo_state GROUP BY vtxo_id)
@@ -50,8 +53,9 @@ impl Migration for Migration0001 {
 					vs.state
 					FROM most_recent JOIN bark_vtxo_state as vs
 						ON vs.id = most_recent.id;
-			","CREATE VIEW IF NOT EXISTS vtxo_view 
-			AS SELECT 
+			",
+			"CREATE VIEW IF NOT EXISTS vtxo_view
+			AS SELECT
 				v.id,
 				v.expiry_height,
 				v.amount_sat,
@@ -59,8 +63,8 @@ impl Migration for Migration0001 {
 				v.raw_vtxo,
 				v.created_at,
 				vs.last_updated_at
-			FROM bark_vtxo as v 
-			JOIN most_recent_vtxo_state as vs 
+			FROM bark_vtxo as v
+			JOIN most_recent_vtxo_state as vs
 				ON v.id = vs.vtxo_id;
 			"];
 
