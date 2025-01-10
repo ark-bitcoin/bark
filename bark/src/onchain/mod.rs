@@ -175,7 +175,7 @@ impl <P>Wallet<P> where
 				let keypair_idx = self.db.get_vtxo_key_index(&vtxo)?;
 				let keypair = vtxo_seed.derive_keypair(keypair_idx);
 
-				input.try_sign_exit_claim_input(
+				input.maybe_sign_exit_claim_input(
 					&SECP,
 					&mut shc,
 					&prevouts,
