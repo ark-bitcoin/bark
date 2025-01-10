@@ -196,20 +196,22 @@ impl OorPayment {
 
 	pub fn sign_finalize_user(
 		self,
-		keypair: &Keypair,
 		our_sec_nonces: Vec<musig::MusigSecNonce>,
 		our_pub_nonces: &[musig::MusigPubNonce],
+		our_keypairs: &[Keypair],
 		asp_nonces: &[musig::MusigPubNonce],
 		asp_part_sigs: &[musig::MusigPartialSignature],
 	) -> SignedOorPayment {
 		assert_eq!(self.inputs.len(), our_sec_nonces.len());
 		assert_eq!(self.inputs.len(), our_pub_nonces.len());
+		assert_eq!(self.inputs.len(), our_keypairs.len());
 		assert_eq!(self.inputs.len(), asp_nonces.len());
 		assert_eq!(self.inputs.len(), asp_part_sigs.len());
 		let sighashes = self.sighashes();
 
 		let mut sigs = Vec::with_capacity(self.inputs.len());
 		for (idx, (input, sec_nonce)) in self.inputs.iter().zip(our_sec_nonces.into_iter()).enumerate() {
+			let keypair = &our_keypairs[idx];
 			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
 			let agg_nonce = musig::nonce_agg(&[&our_pub_nonces[idx], &asp_nonces[idx]]);
 			let (_part_sig, final_sig) = musig::partial_sign(

@@ -15,7 +15,7 @@ use bitcoin::{
 use serde::ser::StdError;
 
 use crate::psbtext::PsbtInputExt;
-use crate::vtxo_seed;
+use crate::VtxoSeed;
 use crate::{
 	exit::SpendableVtxo, persist::BarkPersister
 };
@@ -158,7 +158,9 @@ impl <P>Wallet<P> where
 		b.finish().context("error building tx")
 	}
 
-	fn sign_exit_inputs(&self, psbt: &mut Psbt) {
+	fn sign_exit_inputs(&self, psbt: &mut Psbt) -> anyhow::Result<()> {
+		let vtxo_seed = VtxoSeed::new(self.network, &self.seed);
+
 		let prevouts = psbt.inputs.iter()
 			.map(|i| i.witness_utxo.clone().unwrap())
 			.collect::<Vec<_>>();
@@ -166,20 +168,28 @@ impl <P>Wallet<P> where
 		let prevouts = sighash::Prevouts::All(&prevouts);
 		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
 
-		let keypair = vtxo_seed(self.network, &self.seed).to_keypair(&SECP);
 		for (i, input) in psbt.inputs.iter_mut().enumerate() {
-			input.try_sign_exit_claim_input(
-				&SECP,
-				&mut shc,
-				&prevouts,
-				i,
-				&keypair
-			);
+			let vtxo = input.get_exit_claim_input();
+
+			if let Some(vtxo) = vtxo {
+				let keypair_idx = self.db.get_vtxo_key_index(&vtxo)?;
+				let keypair = vtxo_seed.derive_keypair(keypair_idx);
+
+				input.try_sign_exit_claim_input(
+					&SECP,
+					&mut shc,
+					&prevouts,
+					i,
+					&keypair
+				);
+			}
 		}
+
+		Ok(())
 	}
 
 	pub (crate) fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
-		self.sign_exit_inputs(&mut psbt);
+		self.sign_exit_inputs(&mut psbt)?;
 
 		let opts = SignOptions {
 			trust_witness_utxo: true,

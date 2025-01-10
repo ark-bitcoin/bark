@@ -18,7 +18,7 @@ mod exit;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
 use bdk_wallet::WalletPersister;
 use bip39::Mnemonic;
-use bitcoin::bip32::{Fingerprint, Xpriv};
+use bitcoin::bip32::Fingerprint;
 use bitcoin::hex::DisplayHex;
 use persist::BarkPersister;
 use vtxo_selection::{ExpiredAtHeight, SelectVtxo};
@@ -56,14 +56,12 @@ lazy_static::lazy_static! {
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
+const OOR_PUB_KEY_INDEX: u32 = 0;
+const MIN_DERIVED_INDEX: u32 = OOR_PUB_KEY_INDEX + 1;
+
 pub struct Pagination {
 	pub page_index: u16,
 	pub page_size: u16,
-}
-
-fn vtxo_seed(network: Network, seed: &[u8; 64]) -> Xpriv {
-	let master = bip32::Xpriv::new_master(network, seed).unwrap();
-	master.derive_priv(&SECP, &[350.into()]).unwrap()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -166,6 +164,29 @@ pub struct WalletProperties {
 	pub fingerprint: Fingerprint,
 }
 
+/// Struct representing an extended private key derived from a
+/// wallet's seed, used to derived child VTXO keypairs
+///
+/// The VTXO seed is derived by applying a hardened derivation
+/// step at index 350 from the wallet's seed.
+pub struct VtxoSeed(bip32::Xpriv);
+
+impl VtxoSeed {
+	fn new(network: Network, seed: &[u8; 64]) -> Self {
+		let master = bip32::Xpriv::new_master(network, seed).unwrap();
+
+		Self(master.derive_priv(&SECP, &[350.into()]).unwrap())
+	}
+
+	fn fingerprint(&self) -> Fingerprint {
+		self.0.fingerprint(&SECP)
+	}
+
+	fn derive_keypair(&self, keypair_idx: u32) -> Keypair {
+		self.0.derive_priv(&SECP, &[keypair_idx.into()]).unwrap().to_keypair(&SECP)
+	}
+}
+
 #[derive(Clone)]
 struct AspConnection {
 	pub info: ArkInfo,
@@ -178,7 +199,7 @@ pub struct Wallet<P: BarkPersister> {
 
 	config: Config,
 	db: P,
-	vtxo_seed: bip32::Xpriv,
+	vtxo_seed: VtxoSeed,
 	asp: Option<AspConnection>,
 }
 
@@ -186,6 +207,24 @@ impl <P>Wallet<P> where
 	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
+	/// Return a _static_ public key that can be used to send OOR payments to
+	///
+	/// TODO: implement key derivation for OORs also
+	pub fn oor_pubkey(&self) -> PublicKey {
+		self.vtxo_seed.derive_keypair(OOR_PUB_KEY_INDEX).public_key()
+	}
+
+	/// Derive and store the keypair directly after currently last revealed one
+	pub fn derive_store_next_keypair(&self) -> anyhow::Result<Keypair> {
+		let last_revealed = self.db.get_last_vtxo_key_index()?;
+
+		let index = last_revealed.map(|i| i + 1).unwrap_or(MIN_DERIVED_INDEX);
+		let keypair = self.vtxo_seed.derive_keypair(index);
+
+		self.db.store_vtxo_key_index(index, keypair.public_key())?;
+		Ok(keypair)
+	}
+
 	/// Create new wallet.
 	pub async fn create(mnemonic: &Mnemonic, network: Network, config: Config, db: P) -> anyhow::Result<Wallet<P>> {
 		trace!("Config: {:?}", config);
@@ -194,7 +233,7 @@ impl <P>Wallet<P> where
 			bail!("cannot overwrite already existing config")
 		}
 
-		let wallet_fingerprint = vtxo_seed(network, &mnemonic.to_seed("")).fingerprint(&SECP);
+		let wallet_fingerprint = VtxoSeed::new(network, &mnemonic.to_seed("")).fingerprint();
 		let properties = WalletProperties {
 			network: network,
 			fingerprint: wallet_fingerprint
@@ -221,9 +260,9 @@ impl <P>Wallet<P> where
 		trace!("Config: {:?}", config);
 
 		let seed = mnemonic.to_seed("");
-		let vtxo_seed = vtxo_seed(properties.network, &seed);
+		let vtxo_seed = VtxoSeed::new(properties.network, &seed);
 
-		if properties.fingerprint != vtxo_seed.fingerprint(&SECP) {
+		if properties.fingerprint != vtxo_seed.fingerprint() {
 			bail!("incorrect mnemonic")
 		}
 
@@ -388,10 +427,6 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	pub fn vtxo_pubkey(&self) -> PublicKey {
-		self.vtxo_seed.to_keypair(&SECP).public_key()
-	}
-
 	// Onboard a vtxo with the given vtxo amount.
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
@@ -399,8 +434,7 @@ impl <P>Wallet<P> where
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
-		//TODO(stevenroose) impl key derivation
-		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
+		let user_keypair = self.derive_store_next_keypair()?;
 		let current_height = self.onchain.tip().await?;
 		let spec = ark::VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
@@ -423,8 +457,7 @@ impl <P>Wallet<P> where
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
-		//TODO(stevenroose) impl key derivation
-		let user_keypair = self.vtxo_seed.to_keypair(&SECP);
+		let user_keypair = self.derive_store_next_keypair()?;
 		let current_height = self.onchain.tip().await?;
 		let mut spec = ark::VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
@@ -543,10 +576,6 @@ impl <P>Wallet<P> where
 	pub async fn sync_ark(&self) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
-		//TODO(stevenroose) impl key derivation
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
-
-
 		//TODO(stevenroose) we won't do reorg handling here
 		let current_height = self.onchain.tip().await?;
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
@@ -563,7 +592,7 @@ impl <P>Wallet<P> where
 				.into_cached_tree();
 
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-				if dest.pubkey == vtxo_key.public_key() {
+				if self.db.check_vtxo_key_exists(&dest.pubkey)? {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 						self.db.register_receive(&vtxo)?;
 					}
@@ -579,7 +608,7 @@ impl <P>Wallet<P> where
 
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
-		let req = rpc::OorVtxosRequest { pubkey: vtxo_key.public_key().serialize().to_vec() };
+		let req = rpc::OorVtxosRequest { pubkey: self.oor_pubkey().serialize().to_vec() };
 		let resp = asp.client.empty_oor_mailbox(req).await.context("error fetching oors")?;
 		let oors = resp.into_inner().vtxos.into_iter()
 			.map(|b| Vtxo::decode(&b).context("invalid vtxo from asp"))
@@ -587,7 +616,7 @@ impl <P>Wallet<P> where
 		debug!("ASP has {} OOR vtxos for us", oors.len());
 		for vtxo in oors {
 			// TODO: we need to test receiving arkoors with invalid signatures
-			if let Err(e) = verify_oor(vtxo.clone(), Some(self.vtxo_pubkey())) {
+			if let Err(e) = verify_oor(vtxo.clone(), Some(self.oor_pubkey())) {
 				warn!("Could not validate OOR signature, dropping vtxo. {}", e);
 				continue;
 			}
@@ -667,11 +696,11 @@ impl <P>Wallet<P> where
 			return Ok(())
 		}
 
-		// Todo: Implement key-derivation
 		let total_amount: bitcoin::Amount = vtxos.iter().map(|v| v.amount()).sum();
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+
+		let user_keypair = self.derive_store_next_keypair()?;
 		let payment_request = PaymentRequest {
-			pubkey: vtxo_key.public_key(),
+			pubkey: user_keypair.public_key(),
 			amount: total_amount
 		};
 
@@ -685,8 +714,8 @@ impl <P>Wallet<P> where
 		let mut asp = self.require_asp()?;
 
 		let fr = self.onchain.chain_source.regular_feerate();
-		//TODO(stevenroose) impl key derivation
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+		let change_pubkey = self.oor_pubkey();
+
 		let output = PaymentRequest { pubkey: destination, amount };
 
 		// We do some kind of naive fee estimation: we try create a tx,
@@ -706,7 +735,7 @@ impl <P>Wallet<P> where
 				} else {
 					let change_amount = avail - output.amount;
 					Some(PaymentRequest {
-						pubkey: vtxo_key.public_key(),
+						pubkey: change_pubkey,
 						amount: change_amount,
 					})
 				}
@@ -731,15 +760,21 @@ impl <P>Wallet<P> where
 			info!("Added change VTXO of {}", o.amount);
 		}
 
-		let (sec_nonces, pub_nonces) = {
+		let (sec_nonces, pub_nonces, keypairs) = {
 			let mut secs = Vec::with_capacity(payment.inputs.len());
 			let mut pubs = Vec::with_capacity(payment.inputs.len());
-			for _ in 0..payment.inputs.len() {
-				let (s, p) = musig::nonce_pair(&vtxo_key);
+			let mut keypairs = Vec::with_capacity(payment.inputs.len());
+
+			for input in payment.inputs.iter() {
+				let keypair_idx = self.db.get_vtxo_key_index(&input)?;
+				let keypair = self.vtxo_seed.derive_keypair(keypair_idx);
+
+				let (s, p) = musig::nonce_pair(&keypair);
 				secs.push(s);
 				pubs.push(p);
+				keypairs.push(keypair);
 			}
-			(secs, pubs)
+			(secs, pubs, keypairs)
 		};
 
 		let req = rpc::OorCosignRequest {
@@ -764,9 +799,9 @@ impl <P>Wallet<P> where
 		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
-			&vtxo_key,
 			sec_nonces,
 			&pub_nonces,
+			&keypairs,
 			&asp_pub_nonces,
 			&asp_part_sigs,
 		);
@@ -811,8 +846,7 @@ impl <P>Wallet<P> where
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
 
 		let fr = self.onchain.chain_source.regular_feerate();
-		//TODO(stevenroose) impl key derivation
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+		let change_keypair = self.derive_store_next_keypair()?;
 
 		// We do some kind of naive fee estimation: we try create a tx,
 		// if we don't have enough fee, we add the fee we were short to
@@ -833,22 +867,28 @@ impl <P>Wallet<P> where
 			}
 		};
 
-		let (sec_nonces, pub_nonces) = {
+		let (sec_nonces, pub_nonces, keypairs) = {
 			let mut secs = Vec::with_capacity(inputs.len());
 			let mut pubs = Vec::with_capacity(inputs.len());
-			for _ in 0..inputs.len() {
-				let (s, p) = musig::nonce_pair(&vtxo_key);
+			let mut keypairs = Vec::with_capacity(inputs.len());
+
+			for input in inputs.iter() {
+				let keypair_idx = self.db.get_vtxo_key_index(&input)?;
+				let keypair = self.vtxo_seed.derive_keypair(keypair_idx);
+
+				let (s, p) = musig::nonce_pair(&keypair);
 				secs.push(s);
 				pubs.push(p);
+				keypairs.push(keypair);
 			}
-			(secs, pubs)
+			(secs, pubs, keypairs)
 		};
 
 		let req = rpc::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
 			amount_sats: user_amount.map(|a| a.to_sat()),
 			input_vtxos: inputs.iter().map(|v| v.encode()).collect(),
-			user_pubkey: vtxo_key.public_key().serialize().to_vec(),
+			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 			user_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
 		};
 		let resp = asp.client.start_bolt11_payment(req).await
@@ -872,9 +912,9 @@ impl <P>Wallet<P> where
 		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
-			&vtxo_key,
 			sec_nonces,
 			&pub_nonces,
+			&keypairs,
 			&asp_pub_nonces,
 			&asp_part_sigs,
 		);
@@ -931,12 +971,11 @@ impl <P>Wallet<P> where
 		Ok((invoice, preimage))
 	}
 
-	/// Send to an off-chain address in an Ark round.
+	/// Send to an onchain address in an Ark round.
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<()> {
-		//TODO(stevenroose) impl key derivation
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
+		let change_keypair = self.derive_store_next_keypair()?;
 
 		// Prepare the payment.
 		let input_vtxos = self.db.get_all_spendable_vtxos()?;
@@ -966,7 +1005,7 @@ impl <P>Wallet<P> where
 					let amount = in_sum - out_value;
 					info!("Adding change vtxo for {}", amount);
 					Some(PaymentRequest {
-						pubkey: vtxo_key.public_key(),
+						pubkey: change_keypair.public_key(),
 						amount: amount,
 					})
 				}
@@ -992,9 +1031,6 @@ impl <P>Wallet<P> where
 	) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
-		//TODO(stevenroose) impl key derivation
-		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
-
 		info!("Waiting for a round start...");
 		let mut events = asp.client.subscribe_rounds(rpc::Empty {}).await?.into_inner();
 
@@ -1019,7 +1055,7 @@ impl <P>Wallet<P> where
 		let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
 			.take(pay_reqs.len())
 			.collect::<Vec<_>>();
-		let vtxo_reqs = pay_reqs.into_iter().zip(cosign_keys.iter()).map(|(req, ck)| {
+		let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
 			VtxoRequest {
 				pubkey: req.pubkey,
 				amount: req.amount,
@@ -1198,7 +1234,11 @@ impl <P>Wallet<P> where
 				conns_utxo,
 				asp.info.asp_pubkey,
 			);
+
 			let forfeit_sigs = input_vtxos.iter().map(|v| {
+				let keypair_idx = self.db.get_vtxo_key_index(&v)?;
+				let vtxo_keypair = self.vtxo_seed.derive_keypair(keypair_idx);
+
 				let sigs = connectors.connectors().enumerate().map(|(i, conn)| {
 					let (sighash, _tx) = ark::forfeit::forfeit_sighash(v, conn);
 					let asp_nonce = forfeit_nonces.get(&v.id())
@@ -1207,8 +1247,8 @@ impl <P>Wallet<P> where
 						.context("asp didn't provide enough forfeit nonces")?;
 
 					let (nonce, sig) = musig::deterministic_partial_sign(
-						&vtxo_key,
-						[vtxo_key.public_key(), asp.info.asp_pubkey],
+						&vtxo_keypair,
+						[vtxo_keypair.public_key(), asp.info.asp_pubkey],
 						&[asp_nonce],
 						sighash.to_byte_array(),
 						Some(v.spec().exit_taptweak().to_byte_array()),
@@ -1270,12 +1310,11 @@ impl <P>Wallet<P> where
 
 			// Finally we save state after refresh
 			let mut new_vtxos: Vec<Vtxo> = vec![];
-			for (idx, dest) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
+			for (idx, vtxo_req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
 				//TODO(stevenroose) this is broken, need to match vtxorequest exactly
-				if dest.pubkey == vtxo_key.public_key() {
-					if let Some(vtxo) = self.build_vtxo(&signed_vtxos, idx)? {
-						new_vtxos.push(vtxo);
-					}
+				if pay_reqs.iter().any(|p| p.pubkey == vtxo_req.pubkey && p.amount == vtxo_req.amount) {
+					let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
+					new_vtxos.push(vtxo);
 				}
 			}
 

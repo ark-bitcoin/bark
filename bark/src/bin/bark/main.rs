@@ -410,7 +410,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			},
 		},
-		Command::VtxoPubkey => println!("{}", w.vtxo_pubkey()),
+		Command::VtxoPubkey => println!("{}", w.oor_pubkey()),
 		Command::Balance { no_sync } => {
 			if !no_sync {
 				if let Err(e) = w.sync().await.context("sync error") {
