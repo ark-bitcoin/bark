@@ -1257,7 +1257,17 @@ impl <P>Wallet<P> where
 				}
 			}
 
-			self.db.register_refresh(&input_vtxos, &new_vtxos)?;
+			// if there is one offboard req, we register as a spend, else as a refresh
+			// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
+			if let Some(offboard) = offb_reqs.get(0) {
+				self.db.register_send(
+					&input_vtxos,
+					offboard.script_pubkey.to_string(),
+					new_vtxos.get(0), None
+				)?;
+			} else {
+				self.db.register_refresh(&input_vtxos, &new_vtxos)?;
+			}
 
 			info!("Round finished");
 			break;
