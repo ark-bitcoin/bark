@@ -132,7 +132,7 @@ dependencies = [
  "lazy_static",
  "lightning-invoice",
  "rand",
- "secp256k1-zkp",
+ "secp256k1 0.30.0",
  "serde",
 ]
 
@@ -2611,16 +2611,6 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
-version = "0.28.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d24b59d129cdadea20aea4fb2352fa053712e5d713eee47d700cd4b2bc002f10"
-dependencies = [
- "secp256k1-sys 0.9.2",
- "serde",
-]
-
-[[package]]
-name = "secp256k1"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
@@ -2628,6 +2618,17 @@ dependencies = [
  "bitcoin_hashes 0.14.0",
  "rand",
  "secp256k1-sys 0.10.1",
+ "serde",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.30.0"
+source = "git+https://github.com/jlest01/rust-secp256k1.git?rev=1cc7410df436b73d06db3c8ff7cbb29a78916b06#1cc7410df436b73d06db3c8ff7cbb29a78916b06"
+dependencies = [
+ "bitcoin_hashes 0.14.0",
+ "rand",
+ "secp256k1-sys 0.11.0",
  "serde",
 ]
 
@@ -2642,15 +2643,6 @@ dependencies = [
 
 [[package]]
 name = "secp256k1-sys"
-version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5d1746aae42c19d583c3c1a8c646bfad910498e2051c551a7f2e3c0c9fbb7eb"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "secp256k1-sys"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4387882333d3aa8cb20530a17c69a3752e97837832f34f6dccc760e715001d9"
@@ -2659,23 +2651,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "secp256k1-zkp"
-version = "0.10.0"
-source = "git+https://github.com/sanket1729/rust-secp256k1-zkp.git?rev=60e631c24588a0c9e271badd61959294848c665d#60e631c24588a0c9e271badd61959294848c665d"
-dependencies = [
- "bitcoin-private",
- "secp256k1 0.28.2",
- "secp256k1-zkp-sys",
- "serde",
-]
-
-[[package]]
-name = "secp256k1-zkp-sys"
-version = "0.9.1"
-source = "git+https://github.com/sanket1729/rust-secp256k1-zkp.git?rev=60e631c24588a0c9e271badd61959294848c665d#60e631c24588a0c9e271badd61959294848c665d"
+name = "secp256k1-sys"
+version = "0.11.0"
+source = "git+https://github.com/jlest01/rust-secp256k1.git?rev=1cc7410df436b73d06db3c8ff7cbb29a78916b06#1cc7410df436b73d06db3c8ff7cbb29a78916b06"
 dependencies = [
  "cc",
- "secp256k1-sys 0.9.2",
 ]
 
 [[package]]

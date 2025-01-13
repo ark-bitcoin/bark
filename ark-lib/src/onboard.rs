@@ -68,9 +68,9 @@ pub fn new_user(spec: VtxoSpec, utxo: OutPoint) -> (UserPart, PrivateUserPart) {
 	);
 	let (sec_nonce, pub_nonce) = agg.nonce_gen(
 		&musig::SECP,
-		musig::MusigSessionId::assume_unique_per_nonce_gen(rand::random()),
+		musig::MusigSecRand::assume_unique_per_nonce_gen(rand::random()),
 		musig::pubkey_to(spec.user_pubkey),
-		musig::zkp::Message::from_digest(reveal_sighash.to_byte_array()),
+		musig::secpm::Message::from_digest(reveal_sighash.to_byte_array()),
 		None,
 	).expect("non-zero session id");
 
@@ -91,7 +91,7 @@ impl AspPart {
 	/// Validate the ASP's partial signature.
 	pub fn verify_partial_sig(&self, user_part: &UserPart) -> bool {
 		let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user_part.spec, user_part.utxo);
-		let agg_nonce = musig::nonce_agg([user_part.nonce, self.nonce]);
+		let agg_nonce = musig::nonce_agg(&[&user_part.nonce, &self.nonce]);
 		let agg_pk = musig::tweaked_key_agg(
 			[user_part.spec.user_pubkey, user_part.spec.asp_pubkey],
 			onboard_taptweak(&user_part.spec).to_byte_array(),
@@ -101,7 +101,7 @@ impl AspPart {
 			&musig::SECP,
 			&agg_pk,
 			agg_nonce,
-			musig::zkp::Message::from_digest(reveal_sighash.to_byte_array()),
+			musig::secpm::Message::from_digest(reveal_sighash.to_byte_array()),
 		);
 		session.partial_verify(
 			&musig::SECP,
@@ -118,7 +118,7 @@ pub fn new_asp(user: &UserPart, key: &Keypair) -> AspPart {
 	let msg = reveal_sighash.to_byte_array();
 	let tweak = onboard_taptweak(&user.spec);
 	let (pub_nonce, sig) = musig::deterministic_partial_sign(
-		key, [user.spec.user_pubkey], [user.nonce], msg, Some(tweak.to_byte_array()),
+		key, [user.spec.user_pubkey], &[&user.nonce], msg, Some(tweak.to_byte_array()),
 	);
 	AspPart {
 		nonce: pub_nonce,
@@ -176,7 +176,7 @@ pub fn finish(
 	key: &Keypair,
 ) -> Vtxo {
 	let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user.spec, user.utxo);
-	let agg_nonce = musig::nonce_agg([user.nonce, asp.nonce]);
+	let agg_nonce = musig::nonce_agg(&[&user.nonce, &asp.nonce]);
 	let (_user_sig, final_sig) = musig::partial_sign(
 		[user.spec.user_pubkey, user.spec.asp_pubkey],
 		agg_nonce,
@@ -184,7 +184,7 @@ pub fn finish(
 		private.sec_nonce,
 		reveal_sighash.to_byte_array(),
 		Some(onboard_taptweak(&user.spec).to_byte_array()),
-		Some(&[asp.signature]),
+		Some(&[&asp.signature]),
 	);
 	let final_sig = final_sig.expect("we provided the other sig");
 	debug_assert!(util::SECP.verify_schnorr(

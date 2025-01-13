@@ -21,8 +21,12 @@ ciborium.workspace = true
 rand.workspace = true
 lightning-invoice.workspace = true
 
-# using sanket's branch for musig2 code
-secp256k1-zkp = { git = "https://github.com/sanket1729/rust-secp256k1-zkp.git", rev = "60e631c24588a0c9e271badd61959294848c665d", features = [ "serde" ] }
+# using PR branch for musig2 code
+[dependencies.secp256k1-musig]
+package = "secp256k1"
+git = "https://github.com/jlest01/rust-secp256k1.git"
+rev = "1cc7410df436b73d06db3c8ff7cbb29a78916b06"
+features = [ "serde" ]
 
 
 [dev-dependencies]

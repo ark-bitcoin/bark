@@ -10,7 +10,7 @@ use bitcoin::{
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use bitcoin::taproot::{ControlBlock, LeafVersion, TapNodeHash, TaprootBuilder};
-use secp256k1_zkp::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
+use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
 use crate::{fee, musig, util, VtxoRequest};
 use crate::tree::{self, Tree};
@@ -246,13 +246,13 @@ impl VtxoTreeSpec {
 		let tree = Tree::new(self.nb_leaves());
 
 		tree.iter().zip(asp_cosign_nonces).map(|(node, asp)| {
-			musig::nonce_agg(node.leaves().map(|i| self.vtxos[i].cosign_pk).map(|pk| {
+			let nonces = node.leaves().map(|i| self.vtxos[i].cosign_pk).map(|pk| {
 				leaf_cosign_nonces.get(&pk).expect("nonces are complete")
 					// note that we skip some nonces for some leaves that are at the edges
 					// and skip some levels
 					.get(node.level()).expect("sufficient nonces provided")
-					.clone()
-			}).chain(Some(*asp)))
+			}).chain(Some(asp)).collect::<Vec<_>>();
+			musig::nonce_agg(&nonces)
 		}).collect()
 	}
 
@@ -428,7 +428,7 @@ impl UnsignedVtxoTree {
 			&musig::SECP,
 			&key_agg,
 			*agg_nonces.get(node.idx()).ok_or(CosignSignatureError::NotEnoughNonces)?,
-			musig::zkp::Message::from_digest(sighash.to_byte_array()),
+			musig::secpm::Message::from_digest(sighash.to_byte_array()),
 		);
 		let success = session.partial_verify(
 			&musig::SECP,
@@ -538,10 +538,10 @@ impl UnsignedVtxoTree {
 					.pop_front()
 					.ok_or(CosignSignatureError::missing_sig(cosign_pk))?;
 				cosign_pks.push(cosign_pk);
-				part_sigs.push(part_sig.clone());
+				part_sigs.push(part_sig);
 			}
 			cosign_pks.push(self.spec.asp_cosign_pk);
-			part_sigs.push(asp_sig);
+			part_sigs.push(&asp_sig);
 
 			Ok(musig::combine_partial_signatures(
 				cosign_pks,
