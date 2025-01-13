@@ -42,12 +42,6 @@ impl_slog!(SweepBroadcast, Info, "Completed a sweep tx");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SweepTxFinalized {
-	pub txid: Txid,
-}
-impl_slog!(SweepTxFinalized, Info, "A sweep tx got deeply confirmed");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundFullySwept {
 	pub round_id: Txid,
 }

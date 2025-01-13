@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	wget \
 	cmake \
 	git \
+	ripgrep \
 	clang \
 	libssl-dev \
 	libclang-dev \
