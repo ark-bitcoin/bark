@@ -21,7 +21,7 @@ RUN --mount=type=bind,source=Cargo.toml,target=/usr/src/Cargo.toml \
   --mount=type=cache,target=/usr/src/target \
   --mount=type=cache,target=/usr/local/cargo/git \
   --mount=type=cache,target=/usr/local/cargo/registry \
-  cargo build --package bark-aspd --release
+  cargo build --package bark-aspd --release --locked
 
 
 RUN --mount=type=cache,target=/usr/src/target \
