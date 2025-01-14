@@ -50,13 +50,13 @@ pub fn unsigned_oor_transaction<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSp
 	}
 }
 
-/// Build oor tx and signs it 
-/// 
+/// Build oor tx and signs it
+///
 /// ## Panic
-/// 
-/// Will panic if inputs and signatures don't have the same length, 
+///
+/// Will panic if inputs and signatures don't have the same length,
 /// or if some input witnesses are not empty
-pub fn signed_oor_tx<V: Borrow<Vtxo>>(		
+pub fn signed_oor_tx<V: Borrow<Vtxo>>(
 	inputs: &[V],
 	signatures: &[schnorr::Signature],
 	outputs: &[VtxoSpec]
@@ -70,7 +70,7 @@ pub fn signed_oor_tx<V: Borrow<Vtxo>>(
 }
 
 /// Build the oor tx with signatures and verify it
-/// 
+///
 /// If a pubkey is provided, it'll check that vtxo's output user pubkey match it (later want to check it's derived from it)
 pub fn verify_oor(vtxo: Vtxo, pubkey: Option<PublicKey>) -> Result<(), Error> {
 	match vtxo {
@@ -79,7 +79,7 @@ pub fn verify_oor(vtxo: Vtxo, pubkey: Option<PublicKey>) -> Result<(), Error> {
 
 			let tx = signed_oor_tx(&inputs, &signatures, &output_specs);
 
-			let sighashes = oor_sighashes(&inputs, &tx); 
+			let sighashes = oor_sighashes(&inputs, &tx);
 			for (idx, input) in inputs.iter().enumerate() {
 				util::SECP.verify_schnorr(
 					&schnorr::Signature::from_slice(&tx.input[idx].witness.to_vec()[0][..]).unwrap(),
@@ -140,7 +140,7 @@ impl OorPayment {
 		oor_sighashes(
 			&self.inputs,
 			&unsigned_oor_transaction(&self.inputs, &self.output_specs())
-		) 
+		)
 	}
 
 	pub fn total_weight(&self) -> Weight {
@@ -183,7 +183,7 @@ impl OorPayment {
 			let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
 				keypair,
 				[input.spec().user_pubkey],
-				[user_nonces[idx]],
+				&[&user_nonces[idx]],
 				sighashes[idx].to_byte_array(),
 				Some(input.spec().exit_taptweak().to_byte_array()),
 			);
@@ -211,7 +211,7 @@ impl OorPayment {
 		let mut sigs = Vec::with_capacity(self.inputs.len());
 		for (idx, (input, sec_nonce)) in self.inputs.iter().zip(our_sec_nonces.into_iter()).enumerate() {
 			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
-			let agg_nonce = musig::nonce_agg([our_pub_nonces[idx], asp_nonces[idx]]);
+			let agg_nonce = musig::nonce_agg(&[&our_pub_nonces[idx], &asp_nonces[idx]]);
 			let (_part_sig, final_sig) = musig::partial_sign(
 				[input.spec().user_pubkey, input.spec().asp_pubkey],
 				agg_nonce,
@@ -219,7 +219,7 @@ impl OorPayment {
 				sec_nonce,
 				sighashes[idx].to_byte_array(),
 				Some(input.spec().exit_taptweak().to_byte_array()),
-				Some(&[asp_part_sigs[idx]]),
+				Some(&[&asp_part_sigs[idx]]),
 			);
 			let final_sig = final_sig.expect("we provided the other sig");
 			debug_assert!(util::SECP.verify_schnorr(

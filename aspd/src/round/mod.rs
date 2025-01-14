@@ -676,7 +676,7 @@ pub async fn run_round_coordinator(
 					let mut sigs = Vec::with_capacity(state.all_inputs.len());
 					for (i, (conn, sec)) in connectors.zip(sec_nonces.into_iter()).enumerate() {
 						let (sighash, _) = ark::forfeit::forfeit_sighash(&vtxo, conn);
-						let agg_nonce = musig::nonce_agg([user_nonces[i], pub_nonces[i]]);
+						let agg_nonce = musig::nonce_agg(&[&user_nonces[i], &pub_nonces[i]]);
 						let (_, sig) = musig::partial_sign(
 							[app.asp_key.public_key(), vtxo.spec().user_pubkey],
 							agg_nonce,
@@ -684,7 +684,7 @@ pub async fn run_round_coordinator(
 							sec,
 							sighash.to_byte_array(),
 							Some(vtxo.spec().exit_taptweak().to_byte_array()),
-							Some(&[partial_sigs[i]]),
+							Some(&[&partial_sigs[i]]),
 						);
 						sigs.push(sig.expect("should be signed"));
 					}

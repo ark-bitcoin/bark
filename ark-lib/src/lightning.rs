@@ -184,7 +184,7 @@ impl Bolt11Payment {
 			let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
 				keypair,
 				[input.spec().user_pubkey],
-				[user_nonces[idx]],
+				&[&user_nonces[idx]],
 				sighashes[idx].to_byte_array(),
 				Some(input.spec().exit_taptweak().to_byte_array()),
 			);
@@ -211,7 +211,7 @@ impl Bolt11Payment {
 		let mut sigs = Vec::with_capacity(self.inputs.len());
 		for (idx, (input, sec_nonce)) in self.inputs.iter().zip(our_sec_nonces.into_iter()).enumerate() {
 			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
-			let agg_nonce = musig::nonce_agg([our_pub_nonces[idx], asp_nonces[idx]]);
+			let agg_nonce = musig::nonce_agg(&[&our_pub_nonces[idx], &asp_nonces[idx]]);
 			let (_part_sig, final_sig) = musig::partial_sign(
 				[input.spec().user_pubkey, input.spec().asp_pubkey],
 				agg_nonce,
@@ -219,7 +219,7 @@ impl Bolt11Payment {
 				sec_nonce,
 				sighashes[idx].to_byte_array(),
 				Some(input.spec().exit_taptweak().to_byte_array()),
-				Some(&[asp_part_sigs[idx]]),
+				Some(&[&asp_part_sigs[idx]]),
 			);
 			let final_sig = final_sig.expect("we provided the other sig");
 			debug_assert!(util::SECP.verify_schnorr(
