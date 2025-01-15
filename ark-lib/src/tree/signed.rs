@@ -153,7 +153,7 @@ impl VtxoTreeSpec {
 	}
 
 	fn leaf_tx(&self, vtxo: &VtxoRequest) -> Transaction {
-		let exit_spk = crate::exit_spk(
+		let exit_spk = crate::vtxo::exit_spk(
 			vtxo.pubkey,
 			self.asp_pk,
 			self.exit_delta,

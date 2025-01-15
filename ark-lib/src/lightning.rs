@@ -56,7 +56,7 @@ impl Bolt11Payment {
 	}
 
 	fn change_output(&self) -> TxOut {
-		let spk = crate::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
+		let spk = crate::vtxo::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
 		TxOut {
 			value: self.change_amount(),
 			script_pubkey: spk,

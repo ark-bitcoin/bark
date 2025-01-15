@@ -41,7 +41,7 @@ pub fn unsigned_oor_transaction<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSp
 			}
 		}).collect(),
 		output: outputs.into_iter().map(|output| {
-			let spk = crate::exit_spk(output.user_pubkey, output.asp_pubkey, output.exit_delta);
+			let spk = crate::vtxo::exit_spk(output.user_pubkey, output.asp_pubkey, output.exit_delta);
 			TxOut {
 				value: output.amount,
 				script_pubkey: spk,
