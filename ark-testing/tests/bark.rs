@@ -416,7 +416,7 @@ async fn reject_oor_with_bad_signature() {
 			let keypair = Keypair::new(&ark::util::SECP, &mut rand::thread_rng());
 			let (inputs, output_specs, point) = match
 				Vtxo::decode(&response.into_inner().vtxos[0]).unwrap() {
-					Vtxo::Oor { inputs, signatures: _, output_specs, point }
+					Vtxo::Arkoor { inputs, signatures: _, output_specs, point }
 						=> (inputs, output_specs, point),
 					_ => panic!("expect oor vtxo")
 				};
@@ -431,7 +431,7 @@ async fn reject_oor_with_bad_signature() {
 				fake_sigs.push(sig);
 			}
 
-			let vtxo = Vtxo::Oor { inputs, signatures: fake_sigs, output_specs, point };
+			let vtxo = Vtxo::Arkoor { inputs, signatures: fake_sigs, output_specs, point };
 
 			Ok(rpc::OorVtxosResponse {
 				vtxos: vec![vtxo.encode()]

@@ -188,7 +188,7 @@ pub enum Vtxo {
 		// and calculate branch on exit
 		exit_branch: Vec<Transaction>,
 	},
-	Oor {
+	Arkoor {
 		inputs: Vec<Vtxo>,
 		signatures: Vec<schnorr::Signature>,
 		output_specs:  Vec<VtxoSpec>,
@@ -223,7 +223,7 @@ impl Vtxo {
 				//TODO(stevenroose) consider caching this so that we don't have to calculate it
 				OutPoint::new(exit_branch.last().unwrap().compute_txid(), 0).into()
 			},
-			Vtxo::Oor { point, .. } => *point,
+			Vtxo::Arkoor { point, .. } => *point,
 			Vtxo::Bolt11Change { final_point, .. } => *final_point,
 		}
 	}
@@ -232,7 +232,7 @@ impl Vtxo {
 		match self {
 			Vtxo::Onboard { spec, .. } => spec,
 			Vtxo::Round { spec, .. } => spec,
-			Vtxo::Oor { output_specs, point, ..} => &output_specs[point.vout as usize],
+			Vtxo::Arkoor { output_specs, point, ..} => &output_specs[point.vout as usize],
 			Vtxo::Bolt11Change { ref pseudo_spec, ..} => pseudo_spec,
 		}
 	}
@@ -241,7 +241,7 @@ impl Vtxo {
 		match self {
 			Vtxo::Onboard { spec, .. } => spec.amount,
 			Vtxo::Round { spec, .. } => spec.amount,
-			Vtxo::Oor { .. } => self.spec().amount,
+			Vtxo::Arkoor { .. } => self.spec().amount,
 			Vtxo::Bolt11Change { htlc_tx, final_point, .. } => {
 				htlc_tx.output[final_point.vout as usize].value
 			},
@@ -267,7 +267,7 @@ impl Vtxo {
 				)
 			},
 			Vtxo::Round { ref exit_branch, .. } => exit_branch.last().unwrap().clone(),
-			Vtxo::Oor { inputs, signatures, output_specs, point } => {
+			Vtxo::Arkoor { inputs, signatures, output_specs, point } => {
 				let tx = oor::signed_oor_tx(&inputs, &signatures, output_specs);
 				assert_eq!(tx.compute_txid(), point.txid);
 				tx
@@ -287,7 +287,7 @@ impl Vtxo {
 			Vtxo::Round { exit_branch, .. } => {
 				txs.extend(exit_branch.iter().cloned());
 			},
-			Vtxo::Oor { inputs, .. } => {
+			Vtxo::Arkoor { inputs, .. } => {
 				for input in inputs {
 					input.collect_exit_txs(txs);
 				}
@@ -325,7 +325,7 @@ impl Vtxo {
 		match self {
 			Vtxo::Onboard { .. } => false,
 			Vtxo::Round { .. } => false,
-			Vtxo::Oor { .. } => true,
+			Vtxo::Arkoor { .. } => true,
 			Vtxo::Bolt11Change { .. } => true,
 		}
 	}
@@ -348,7 +348,7 @@ impl Vtxo {
 		match self {
 			Vtxo::Onboard { .. } => "onboard",
 			Vtxo::Round { .. } => "round",
-			Vtxo::Oor { .. } => "arkoor",
+			Vtxo::Arkoor { .. } => "arkoor",
 			Vtxo::Bolt11Change { .. } => "bolt11change",
 		}
 	}
@@ -360,14 +360,14 @@ impl Vtxo {
 
 	/// Checks if the VTXO has some counterparty risk
 	///
-	/// A [`Vtxo::Oor`] is considered to have some counterparty risk
+	/// A [`Vtxo::Arkoor`] is considered to have some counterparty risk
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
 	pub fn has_counterparty_risk(&self, vtxo_pubkey: &PublicKey) -> bool {
 		match self {
-			Vtxo::Oor { inputs, .. } => {
+			Vtxo::Arkoor { inputs, .. } => {
 				fn inner_has_counterparty_risk(vtxo: &Vtxo, vtxo_pubkey: &PublicKey) -> bool {
 					match vtxo {
-						Vtxo::Oor { inputs, .. } =>
+						Vtxo::Arkoor { inputs, .. } =>
 							inputs.iter().any(|i| inner_has_counterparty_risk(i, vtxo_pubkey)),
 						Vtxo::Bolt11Change { inputs, .. } =>
 							inputs.iter().any(|i| inner_has_counterparty_risk(i, vtxo_pubkey)),
@@ -466,7 +466,7 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx = unsigned_oor_transaction(&inputs, &output_specs);
-		let oor = Vtxo::Oor {
+		let oor = Vtxo::Arkoor {
 			inputs,
 			output_specs,
 			signatures: vec![
@@ -490,7 +490,7 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx_recursive = unsigned_oor_transaction(&inputs_recursive, &output_specs_recursive);
-		let oor_recursive = Vtxo::Oor {
+		let oor_recursive = Vtxo::Arkoor {
 			inputs: inputs_recursive,
 			output_specs: output_specs_recursive,
 			signatures: vec![
@@ -535,7 +535,7 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx = unsigned_oor_transaction(&inputs, &output_specs);
-		let oor = Vtxo::Oor {
+		let oor = Vtxo::Arkoor {
 			inputs,
 			output_specs,
 			signatures: vec![
@@ -555,7 +555,7 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx_recursive = unsigned_oor_transaction(&inputs_recursive, &output_specs_recursive);
-		let oor_recursive = Vtxo::Oor {
+		let oor_recursive = Vtxo::Arkoor {
 			inputs: inputs_recursive,
 			output_specs: output_specs_recursive,
 			signatures: vec![

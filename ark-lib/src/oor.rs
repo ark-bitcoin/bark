@@ -74,7 +74,7 @@ pub fn signed_oor_tx<V: Borrow<Vtxo>>(
 /// If a pubkey is provided, it'll check that vtxo's output user pubkey match it (later want to check it's derived from it)
 pub fn verify_oor(vtxo: Vtxo, pubkey: Option<PublicKey>) -> Result<(), Error> {
 	match vtxo {
-		Vtxo::Oor { inputs, signatures, output_specs, point } => {
+		Vtxo::Arkoor { inputs, signatures, output_specs, point } => {
 			// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
 
 			let tx = signed_oor_tx(&inputs, &signatures, &output_specs);
@@ -245,7 +245,7 @@ impl OorPayment {
 		let tx = unsigned_oor_transaction(&inputs, &outputs);
 
 		self.outputs.iter().enumerate().map(|(idx, _output)| {
-			Vtxo::Oor {
+			Vtxo::Arkoor {
 				inputs: self.inputs.clone(),
 				signatures: vec![],
 				output_specs: outputs.clone(),
@@ -287,7 +287,7 @@ impl SignedOorPayment {
 	pub fn output_vtxos(&self) -> Vec<Vtxo> {
 		let mut ret = self.payment.unsigned_output_vtxos();
 		for vtxo in ret.iter_mut() {
-			if let Vtxo::Oor { signatures, .. } = vtxo {
+			if let Vtxo::Arkoor { signatures, .. } = vtxo {
 				*signatures = self.signatures.clone();
 			} else {
 				unreachable!("vtxos are all OOR");

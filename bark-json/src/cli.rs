@@ -55,7 +55,7 @@ impl From<Vtxo> for VtxoInfo {
 			vtxo_type: match v {
 				Vtxo::Onboard { .. } => VtxoType::Onboard,
 				Vtxo::Round { .. } => VtxoType::Round,
-				Vtxo::Oor { .. } => VtxoType::Oor,
+				Vtxo::Arkoor { .. } => VtxoType::Oor,
 				Vtxo::Bolt11Change { .. } => VtxoType::Bolt11Change,
 			},
 			utxo: v.point(),
