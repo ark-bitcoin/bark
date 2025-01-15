@@ -24,9 +24,11 @@ use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
 // COLUMN FAMILIES
 
-/// mapping VtxoId -> VtxoState
+/// map VtxoId -> VtxoState
 const CF_VTXOS: &str = "vtxos";
-/// mapping Txid -> serialized StoredRound
+/// set [expiry][VtxoId]
+const CF_ONBOARD_EXPIRY: &str = "onboard_by_expiry";
+/// map Txid -> serialized StoredRound
 const CF_ROUND: &str = "rounds";
 /// set [expiry][txid]
 const CF_ROUND_EXPIRY: &str = "rounds_by_expiry";
@@ -69,6 +71,38 @@ impl RoundExpiryKey {
 				u32::from_le_bytes(buf)
 			},
 			id: Txid::from_slice(&b[4..]).unwrap(),
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VtxoExpiryKey {
+	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
+	expiry: u32,
+	id: VtxoId,
+}
+
+impl VtxoExpiryKey {
+	fn new(expiry: u32, id: VtxoId) -> Self {
+		Self { expiry, id }
+	}
+
+	fn encode(&self) -> [u8; 40] {
+		let mut ret = [0u8; 40];
+		ret[0..4].copy_from_slice(&self.expiry.to_le_bytes());
+		ret[4..].copy_from_slice(&self.id.to_bytes()[..]);
+		ret
+	}
+
+	fn decode(b: &[u8]) -> Self {
+		assert_eq!(b.len(), 40, "corrupt vtxo expiry key");
+		Self {
+			expiry: {
+				let mut buf = [0u8; 4];
+				buf[..].copy_from_slice(&b[0..4]);
+				u32::from_le_bytes(buf)
+			},
+			id: VtxoId::from_slice(&b[4..]).unwrap(),
 		}
 	}
 }
@@ -139,6 +173,7 @@ impl Db {
 
 		let cfs = [
 			CF_VTXOS,
+			CF_ONBOARD_EXPIRY,
 			CF_ROUND,
 			CF_ROUND_EXPIRY,
 			CF_OOR_MAILBOX,
@@ -153,6 +188,10 @@ impl Db {
 
 	fn cf_vtxos<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
 		self.db.cf_handle(CF_VTXOS).expect("db missing vtxos cf")
+	}
+
+	fn cf_onboard_expiry<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
+		self.db.cf_handle(CF_ONBOARD_EXPIRY).expect("db missing onboard expiry cf")
 	}
 
 	fn cf_round<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
@@ -338,21 +377,32 @@ impl Db {
 
 		//TODO(stevenroose) consider writing a macro for this sort of block
 		let cf = self.cf_vtxos();
+		let cf_expiry = self.cf_onboard_expiry();
 		loop {
 			let tx = self.db.transaction_opt(&opts, &oopts);
 
 			for vtxo in vtxos {
 				let id = vtxo.id();
+				let onboard = match vtxo {
+					Vtxo::Onboard(ref v) => v,
+					_ => bail!("vtxo {} is not an onboard vtxo", id),
+				};
+
 				if tx.get_cf(&cf, &id)?.is_some() {
 					trace!("db: vtxo {} already registered", id);
 					continue;
 				}
+
 				let state = VtxoState {
 					vtxo: vtxo.clone(),
 					oor_spent: None,
 					forfeit_sigs: None,
 				};
 				tx.put_cf(&cf, vtxo.id(), state.encode())?;
+
+				let expiry = onboard.spec.expiry_height;
+				let key = VtxoExpiryKey::new(expiry, id);
+				tx.put_cf(&cf_expiry, key.encode(), &[])?;
 			}
 
 			match tx.commit() {
@@ -367,6 +417,30 @@ impl Db {
 		opts.set_wait(true); //TODO(stevenroose) is this needed?
 		self.db.flush_cf_opt(&cf, &opts).context("error flushing db")?;
 		Ok(())
+	}
+
+	/// Get all onboard vtxos that expired before or on `height`.
+	pub fn get_expired_onboards(&self, height: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
+		let mut ret = Vec::new();
+
+		let cf_vtxos = self.cf_vtxos();
+		let mut iter = self.db.iterator_cf(&self.cf_onboard_expiry(), IteratorMode::Start);
+		while let Some(res) = iter.next() {
+			let (key, _) = res.context("db onboard vtxo expiry iter error")?;
+			let expkey = VtxoExpiryKey::decode(&key);
+			if expkey.expiry as BlockHeight > height {
+				break;
+			}
+
+			let vtxo_state = {
+				let bytes = self.db.get_cf(&cf_vtxos, expkey.id)?
+					.expect("corrupt db: missing vtxo");
+				VtxoState::decode(&bytes).expect("corrupt db: invalid vtxo state")
+			};
+			ret.push(vtxo_state.vtxo);
+		}
+
+		Ok(ret)
 	}
 
 	/// Check whether the vtxos were already spent, and fetch them if not.
