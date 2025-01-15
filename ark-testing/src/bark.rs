@@ -119,6 +119,13 @@ impl Bark {
 			.require_network(Network::Regtest).unwrap()
 	}
 
+	/// Use onchain wallet to send bitcoin onchain
+	pub async fn onchain_send(&self, destination: impl fmt::Display, amount: Amount) {
+		let destination = destination.to_string();
+		let amount = amount.to_string();
+		self.run(["onchain", "send", &destination, &amount, "--verbose"]).await;
+	}
+
 	pub async fn utxos(&self) -> Vec<UtxoInfo> {
 		let res = self.run(["onchain", "utxos", "--json"]).await;
 		serde_json::from_str(&res).expect("json error")
@@ -138,6 +145,7 @@ impl Bark {
 		self.run(["vtxo-pubkey"]).await
 	}
 
+	/// Use bark wallet to send bitcoin onchain
 	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) {
 		let destination = destination.to_string();
 		let amount = amount.to_string();

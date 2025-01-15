@@ -4,11 +4,11 @@ use ark::{Movement, Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::Amount;
 
-use crate::{exit::Exit, Config, Pagination, WalletProperties};
+use crate::{exit::ExitIndex, Config, Pagination, WalletProperties};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database
-	/// 
+	///
 	/// Will fail after first call
 	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()>;
 
@@ -22,10 +22,10 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()>;
 	/// Register outgoint payment
 	fn register_send<'a>(
-		&self, 
-		vtxos: impl IntoIterator<Item = &'a Vtxo>, 
-		destination: String, 
-		change: Option<&Vtxo>, 
+		&self,
+		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+		destination: String,
+		change: Option<&Vtxo>,
 		fees: Option<Amount>
 	) -> anyhow::Result<()>;
 	/// Register in-round refresh
@@ -43,9 +43,9 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool>;
 
 	/// Store the ongoing exit process.
-	fn store_exit(&self, exit: &Exit) -> anyhow::Result<()>;
+	fn store_exit(&self, exit: &ExitIndex) -> anyhow::Result<()>;
 	/// Fetch an ongoing exit process.
-	fn fetch_exit(&self) -> anyhow::Result<Option<Exit>>;
+	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>>;
 
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<u32>;
 	fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()>;

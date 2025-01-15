@@ -3,18 +3,18 @@ use anyhow::Context;
 use ark::Movement;
 use bitcoin::{bip32::Fingerprint, Amount, Network};
 use rusqlite::{Connection, named_params, Transaction};
-use crate::{exit::Exit, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{exit::ExitIndex, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 /// Set read-only properties for the wallet
-/// 
+///
 /// This is fail if properties aren't already set for the wallet
 pub (crate) fn set_properties(
 	conn: &Connection,
 	properties: &WalletProperties,
 ) -> anyhow::Result<()> {
 	// Store the ftxo
-	let query = 
-		"INSERT INTO properties (id, network, fingerprint) 
+	let query =
+		"INSERT INTO properties (id, network, fingerprint)
 		VALUES (1, :network, :fingerprint)";
 	let mut statement = conn.prepare(query)?;
 
@@ -28,14 +28,14 @@ pub (crate) fn set_properties(
 
 pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<()> {
 	// Store the ftxo
-	let query = 
-		"INSERT INTO config 
-			(id, asp_address, esplora_address, bitcoind_address, 
-			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_threshold) 
-		VALUES 
-			(1, :asp_address, :esplora_address, :bitcoind_address, 
+	let query =
+		"INSERT INTO config
+			(id, asp_address, esplora_address, bitcoind_address,
+			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_threshold)
+		VALUES
+			(1, :asp_address, :esplora_address, :bitcoind_address,
 			:bitcoind_cookiefile, :bitcoind_user, :bitcoind_pass, :vtxo_refresh_threshold)
-		ON CONFLICT (id)	
+		ON CONFLICT (id)
 		DO UPDATE SET
 			asp_address = :asp_address,
 			esplora_address = :esplora_address,
@@ -113,7 +113,7 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>, destination: Option<String>) -> anyhow::Result<i32> {
 	// Store the vtxo
 	let query = "INSERT INTO movement (fees_sat, destination) VALUES (:fees_sat, :destination) RETURNING *;";
-	let mut statement = conn.prepare(query)?;	
+	let mut statement = conn.prepare(query)?;
 	let movement_id = statement.query_row(named_params! {
 		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat(),
 		":destination": destination
@@ -133,7 +133,7 @@ pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> any
 		OFFSET :skip
 	";
 
-	let mut statement = conn.prepare(query)?;	
+	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query(named_params! {
 		":take" : take,
 		":skip" : skip,
@@ -165,8 +165,8 @@ pub fn store_vtxo_with_initial_state(
 	state: VtxoState
 ) -> anyhow::Result<()> {
 	// Store the ftxo
-	let q1 = 
-		"INSERT INTO vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo) 
+	let q1 =
+		"INSERT INTO vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo)
 		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
 	let mut statement = tx.prepare(q1)?;
 	statement.execute(named_params! {
@@ -178,8 +178,8 @@ pub fn store_vtxo_with_initial_state(
 	})?;
 
 	// Store the initial state
-	let q2 = 
-		"INSERT INTO vtxo_state (vtxo_id, state) 
+	let q2 =
+		"INSERT INTO vtxo_state (vtxo_id, state)
 		VALUES (:vtxo_id, :state);";
 	let mut statement = tx.prepare(q2)?;
 	statement.execute(named_params! {
@@ -228,9 +228,9 @@ pub fn get_expiring_vtxos(
 	conn: &Connection,
 	value: Amount
 ) -> anyhow::Result<Vec<Vtxo>> {
-	let query = 
+	let query =
 		"SELECT raw_vtxo, amount_sat
-		FROM vtxo_view 
+		FROM vtxo_view
 		WHERE state = ?1
 		ORDER BY expiry_height ASC";
 	let mut statement = conn.prepare(query)?;
@@ -242,7 +242,7 @@ pub fn get_expiring_vtxos(
 	while let Some(row) = rows.next()? {
 		let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
 		let vtxo_amount_sat : i64 = row.get("amount_sat")?;
-		
+
 		let vtxo = Vtxo::decode(&raw_vtxo)?;
 		let vtxo_amount = Amount::from_sat(u64::try_from(vtxo_amount_sat)?);
 
@@ -254,7 +254,7 @@ pub fn get_expiring_vtxos(
 		}
 	}
 	bail!(
-		"Insufficient money available. Needed {} but {} is available", 
+		"Insufficient money available. Needed {} but {} is available",
 		value,
 		total_amount);
 }
@@ -284,10 +284,10 @@ pub fn delete_vtxo(
 }
 
 pub fn get_vtxo_state(
-	conn: &Connection, 
+	conn: &Connection,
 	id: VtxoId
 ) -> anyhow::Result<Option<VtxoState>> {
-	let query = 
+	let query =
 		"SELECT state
 		FROM vtxo_state
 		WHERE vtxo_id = ?1
@@ -357,7 +357,7 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<u32> {
 	}
 }
 
-pub fn store_exit(tx: &Transaction, exit: &Exit) -> anyhow::Result<()> {
+pub fn store_exit(tx: &Transaction, exit: &ExitIndex) -> anyhow::Result<()> {
 	let mut buf = Vec::new();
 	ciborium::into_writer(exit, &mut buf)?;
 
@@ -368,13 +368,13 @@ pub fn store_exit(tx: &Transaction, exit: &Exit) -> anyhow::Result<()> {
 	Ok(())
 }
 
-pub fn fetch_exit(conn: &Connection) -> anyhow::Result<Option<Exit>> {
+pub fn fetch_exit(conn: &Connection) -> anyhow::Result<Option<ExitIndex>> {
 	let mut statement = conn.prepare("SELECT exit FROM exit;")?;
 	let mut rows = statement.query([])?;
 
 	if let Some(row) = rows.next()? {
 		let raw_exit : Vec<u8> = row.get("exit")?;
-		let exit :Exit = ciborium::from_reader(&raw_exit[..])?;
+		let exit: ExitIndex = ciborium::from_reader(&raw_exit[..])?;
 		Ok(Some(exit))
 	}
 	else {

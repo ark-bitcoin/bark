@@ -2,35 +2,71 @@
 mod chain;
 pub use self::chain::ChainSource;
 
-use std::borrow::Borrow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use ark::{Vtxo, fee};
-use ark::util::TransactionExt;
-use bdk_wallet::chain::ChainPosition;
-use bdk_wallet::{PersistedWallet, SignOptions, TxOrdering, WalletPersister};
-use bdk_esplora::EsploraAsyncExt;
+use ark::fee;
+use ark::util::{TransactionExt, SECP};
+use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
+use bdk_wallet::{LocalOutput, PersistedWallet, SignOptions, TxBuilder, TxOrdering, WalletPersister};
 use bitcoin::{
-	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
-	Txid, Weight,
+	bip32, psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight
 };
 use serde::ser::StdError;
 
+use crate::psbtext::PsbtInputExt;
+use crate::vtxo_seed;
 use crate::{
-	UtxoInfo,
-	persist::BarkPersister,
-	psbtext::PsbtInputExt,
-	onchain::chain::ChainSourceClient
+	exit::SpendableVtxo, persist::BarkPersister
 };
+pub use crate::onchain::chain::ChainSourceClient;
 
-pub struct Wallet<P: BarkPersister> {
-	wallet: PersistedWallet<P>,
-	chain_source: ChainSourceClient,
-	db: P,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum Utxo {
+	Local(LocalOutput),
+	Exit(SpendableVtxo)
 }
 
-impl <P>Wallet<P> where 
+pub trait TxBuilderExt {
+	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableVtxo]);
+}
+
+impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
+	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableVtxo]) {
+		self.version(2);
+
+		for input in exit_outputs {
+			let mut psbt_in = psbt::Input::default();
+			psbt_in.set_exit_claim_input(&input.vtxo);
+			psbt_in.witness_utxo = Some(TxOut {
+				script_pubkey: input.vtxo.spec().exit_spk(),
+				value: input.vtxo.spec().amount,
+			});
+
+			self.add_foreign_utxo_with_sequence(
+				input.vtxo.point(),
+				psbt_in,
+				input.vtxo.claim_satisfaction_weight(),
+				Sequence::from_height(input.vtxo.spec().exit_delta),
+			).expect("error adding foreign utxo for claim input");
+		}
+	}
+}
+
+pub struct Wallet<P: BarkPersister> {
+	/// NB: onchain wallet needs to be able to reconstruct
+	/// vtxo keypair in order to sign vtxo exit output if any
+	seed: [u8; 64],
+	network: Network,
+
+	wallet: PersistedWallet<P>,
+	db: P,
+
+	pub (crate) exit_outputs: Vec<SpendableVtxo>,
+	pub (crate)	chain_source: ChainSourceClient,
+}
+
+impl <P>Wallet<P> where
 	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
@@ -58,7 +94,16 @@ impl <P>Wallet<P> where
 
 		let chain_source = ChainSourceClient::new(chain_source)?;
 
-		Ok(Wallet { wallet, chain_source, db })
+		Ok(Wallet {
+			seed,
+			network,
+
+			wallet,
+			db,
+
+			chain_source,
+			exit_outputs: vec![]
+		})
 	}
 
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
@@ -73,89 +118,30 @@ impl <P>Wallet<P> where
 		self.chain_source.broadcast_tx(tx).await
 	}
 
-	pub (crate) async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
-		self.chain_source.broadcast_package(txs).await
-	}
-
-	/// Returns the block height the tx is confirmed in, if any.
-	pub (crate) async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
-		self.chain_source.tx_confirmed(txid).await
-	}
-
 	/// Sync the onchain wallet and returns the balance.
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
-		debug!("Starting wallet sync...");
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
-
-		let prev_tip = self.wallet.latest_checkpoint();
-		match self.chain_source {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, prev_tip.clone(), prev_tip.height(),
-				);
-				while let Some(em) = emitter.next_block()? {
-					self.wallet.apply_block_connected_to(
-						&em.block, em.block_height(), em.connected_to(),
-					)?;
-					self.wallet.persist(&mut self.db)?;
-				}
-
-				let mempool = emitter.mempool()?;
-				self.wallet.apply_unconfirmed_txs(mempool);
-				self.wallet.persist(&mut self.db)?;
-			},
-			ChainSourceClient::Esplora(ref client) => {
-				const STOP_GAP: usize = 50;
-				const PARALLEL_REQS: usize = 4;
-
-				let request = self.wallet.start_full_scan();
-				let now = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
-				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
-				self.wallet.apply_update_at(update, now)?;
-				self.wallet.persist(&mut self.db)?;
-			},
-		}
-
-		let balance = self.wallet.balance();
-
-		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
-		for tx in self.wallet.transactions() {
-			if let ChainPosition::Unconfirmed { last_seen: Some(last_seen) } = tx.chain_position {
-				if last_seen < now {
-					if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
-						warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
-					}
-				}
-			}
-		}
-
-		Ok(balance.total())
+		Ok(self.chain_source.sync_wallet(&mut self.wallet, &mut self.db).await?)
 	}
 
 	/// Return the balance of the onchain wallet.
 	///
 	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> Amount {
-		self.wallet.balance().total()
+		let exit_total = self.exit_outputs.iter().fold(Amount::ZERO, |acc, v| acc + v.vtxo.spec().amount);
+		self.wallet.balance().total() + exit_total
 	}
 
-	pub fn utxos(&self) -> Vec<UtxoInfo> {
-		self.wallet.list_unspent().map(UtxoInfo::from).collect()
-	}
+	pub fn utxos(&self) -> Vec<Utxo> {
+		let mut utxos = self.wallet.list_unspent().map(|o| Utxo::Local(o)).collect::<Vec<_>>();
+		utxos.extend(self.exit_outputs.clone().into_iter().map(|e| Utxo::Exit(e)));
 
-	/// Fee rate to use for regular txs like onboards.
-	pub (crate) fn regular_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(10).unwrap()
-	}
-
-	/// Fee rate to use for urgent txs like exits.
-	pub (crate) fn urgent_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(15).unwrap()
+		utxos
 	}
 
 	pub (crate) fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
-		let fee_rate = self.regular_feerate();
+		let fee_rate = self.chain_source.regular_feerate();
 		let mut b = self.wallet.build_tx();
+		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.ordering(TxOrdering::Untouched);
 		b.add_recipient(dest.script_pubkey(), amount);
 		b.fee_rate(fee_rate);
@@ -163,15 +149,38 @@ impl <P>Wallet<P> where
 	}
 
 	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
-		let fee_rate = self.regular_feerate();
+		let fee_rate = self.chain_source.regular_feerate();
 		let mut b = self.wallet.build_tx();
+		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.drain_to(dest.script_pubkey());
 		b.drain_wallet();
 		b.fee_rate(fee_rate);
 		b.finish().context("error building tx")
 	}
 
+	fn sign_exit_inputs(&self, psbt: &mut Psbt) {
+		let prevouts = psbt.inputs.iter()
+			.map(|i| i.witness_utxo.clone().unwrap())
+			.collect::<Vec<_>>();
+
+		let prevouts = sighash::Prevouts::All(&prevouts);
+		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
+
+		let keypair = vtxo_seed(self.network, &self.seed).to_keypair(&SECP);
+		for (i, input) in psbt.inputs.iter_mut().enumerate() {
+			input.try_sign_exit_claim_input(
+				&SECP,
+				&mut shc,
+				&prevouts,
+				i,
+				&keypair
+			);
+		}
+	}
+
 	pub (crate) fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
+		self.sign_exit_inputs(&mut psbt);
+
 		let opts = SignOptions {
 			trust_witness_utxo: true,
 			..Default::default()
@@ -193,7 +202,7 @@ impl <P>Wallet<P> where
 	}
 
 	/// Reveals a new onchain address
-	/// 
+	///
 	/// The revealed address is directly persisted, so calling this method twice in a row will result in 2 different addresses
 	pub fn address(&mut self) -> anyhow::Result<Address> {
 		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
@@ -276,35 +285,5 @@ impl <P>Wallet<P> where
 		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
 
 		Ok(tx)
-	}
-
-	pub(crate) async fn create_exit_claim_tx(&mut self, inputs: &[&Vtxo]) -> anyhow::Result<Psbt> {
-		assert!(!inputs.is_empty());
-
-		let urgent_fee_rate = self.urgent_feerate();
-
-		// Since BDK doesn't allow tx without recipients, we add a drain output.
-		let change_addr = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
-
-		let mut b = self.wallet.build_tx();
-		b.version(2);
-		for input in inputs {
-			let mut psbt_in = psbt::Input::default();
-			psbt_in.set_exit_claim_input(input);
-			psbt_in.witness_utxo = Some(TxOut {
-				script_pubkey: input.spec().exit_spk(),
-				value: input.spec().amount,
-			});
-			b.add_foreign_utxo_with_sequence(
-				input.point(),
-				psbt_in,
-				input.claim_satisfaction_weight(),
-				Sequence::from_height(input.spec().exit_delta),
-			).expect("error adding foreign utxo for claim input");
-		}
-		b.drain_to(change_addr.address.script_pubkey());
-		b.fee_rate(urgent_fee_rate);
-
-		Ok(b.finish().context("failed to craft claim tx")?)
 	}
 }

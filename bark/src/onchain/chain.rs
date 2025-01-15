@@ -1,15 +1,23 @@
 
 
-use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::time::UNIX_EPOCH;
+use std::{borrow::Borrow, time::SystemTime};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
+use ark::BlockHeight;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
-use bdk_esplora::esplora_client;
-use bitcoin::{Amount, OutPoint, Transaction, Txid, Wtxid};
+use bdk_esplora::{esplora_client, EsploraAsyncExt};
+use bdk_wallet::chain::{ChainPosition, CheckPoint};
+use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
+use bitcoin::{Amount, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use serde::ser::StdError;
+
+use crate::persist::BarkPersister;
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 
+#[derive(Clone)]
 pub enum ChainSource {
 	Bitcoind {
 		url: String,
@@ -27,7 +35,7 @@ pub enum ChainSourceClient {
 
 impl ChainSourceClient {
 	/// Checks that the version of the chain source is compatible with Bark.
-	/// 
+	///
 	/// For bitcoind, it checks if the version is at least 28.0, because unilateral exits rely on `package relay`, which was added in this version.
 	/// For esplora, it always returns `Ok(())` because there is no version to check.
 	pub fn require_version(&self) -> anyhow::Result<()> {
@@ -62,6 +70,133 @@ impl ChainSourceClient {
 				Ok(client.get_height().await?)
 			},
 		}
+	}
+
+	pub async fn block_id(&self, height: u32) -> anyhow::Result<BlockId> {
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				let hash = bitcoind.get_block_hash(height as u64)?;
+				Ok(BlockId::from((height, hash)))
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				let hash = client.get_block_hash(height).await?;
+				Ok(BlockId::from((height, hash)))
+			},
+		}
+	}
+
+	pub async fn sync_wallet<P>(&self, wallet: &mut PersistedWallet<P>, db: &mut P) -> anyhow::Result<Amount>
+		where
+			P: BarkPersister,
+			<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+	{
+		debug!("Starting wallet sync...");
+		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
+
+		let prev_tip = wallet.latest_checkpoint();
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
+					bitcoind, prev_tip.clone(), prev_tip.height(),
+				);
+				while let Some(em) = emitter.next_block()? {
+					wallet.apply_block_connected_to(
+						&em.block, em.block_height(), em.connected_to(),
+					)?;
+				}
+
+				let mempool = emitter.mempool()?;
+				wallet.apply_unconfirmed_txs(mempool);
+				wallet.persist(db)?;
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				const STOP_GAP: usize = 50;
+				const PARALLEL_REQS: usize = 4;
+
+				let request = wallet.start_full_scan();
+				let now = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
+				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
+				wallet.apply_update_at(update, now)?;
+				wallet.persist(db)?;
+			},
+		}
+
+		let balance = wallet.balance();
+
+		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
+		for tx in wallet.transactions() {
+			if let ChainPosition::Unconfirmed { last_seen: Some(last_seen) } = tx.chain_position {
+				if last_seen < now {
+					if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
+						warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
+					}
+				}
+			}
+		}
+
+		Ok(balance.total())
+	}
+
+	/// For each provided outpoint, fetches any confirmed or unconfirmed
+	/// transaction in which it is spent, then returns a tupple containing
+	/// _outpoint>confirmed tx_ map and _outpoint>unconfirmed tx_ map
+	pub async fn txs_spending_inputs(&self, outpoints: Vec<OutPoint>, start: BlockHeight)
+		-> anyhow::Result<(HashMap<OutPoint, (BlockHeight, Txid)>, HashMap<OutPoint, Txid>)>
+	{
+		let mut txs_by_outpoint = HashMap::<OutPoint, (BlockHeight, Txid)>::new();
+		let mut unconfirmed_txs_by_outpoint = HashMap::<OutPoint, Txid>::new();
+
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				let block = self.block_id(start as u32).await?;
+				let cp = CheckPoint::new(block);
+
+				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
+					bitcoind, cp.clone(), cp.height(),
+				);
+
+				let outpoint_set: HashSet<bitcoin::OutPoint> = HashSet::from_iter(outpoints.clone().into_iter());
+
+				while let Some(em) = emitter.next_block()? {
+					for tx in &em.block.txdata {
+						for txin in tx.input.iter() {
+							if outpoint_set.contains(&txin.previous_output) {
+								txs_by_outpoint.insert(txin.previous_output.clone(), (
+									em.block.bip34_block_height().unwrap(), tx.compute_txid()
+								));
+							}
+						}
+					}
+				}
+
+				let mempool = emitter.mempool()?;
+				for (tx, _last_seen) in &mempool {
+					for txin in tx.input.iter() {
+						if outpoint_set.contains(&txin.previous_output) {
+							unconfirmed_txs_by_outpoint.insert(txin.previous_output.clone(), tx.compute_txid());
+						}
+					}
+				}
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				for outpoint in outpoints {
+					let output_status = client.get_output_status(&outpoint.txid, outpoint.vout.into()).await?;
+
+					if let Some(output_status) = output_status {
+						if let Some(block_height) = output_status.status.and_then(|s| s.block_height) {
+							txs_by_outpoint.insert(outpoint, (block_height.into(), output_status.txid.expect("tx is confirmed")));
+							continue;
+						}
+
+						if output_status.spent {
+							unconfirmed_txs_by_outpoint.insert(outpoint, output_status.txid.expect("output is spent"));
+						}
+					}
+				}
+			},
+		}
+
+		Ok((txs_by_outpoint, unconfirmed_txs_by_outpoint))
 	}
 
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
@@ -153,5 +288,15 @@ impl ChainSourceClient {
 			},
 		};
 		Ok(tx.output.get(outpoint.vout as usize).context("outpoint vout out of range")?.value)
+	}
+
+	/// Fee rate to use for regular txs like onboards.
+	pub (crate) fn regular_feerate(&self) -> FeeRate {
+		FeeRate::from_sat_per_vb(10).unwrap()
+	}
+
+	/// Fee rate to use for urgent txs like exits.
+	pub (crate) fn urgent_feerate(&self) -> FeeRate {
+		FeeRate::from_sat_per_vb(15).unwrap()
 	}
 }

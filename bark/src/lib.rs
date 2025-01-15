@@ -9,12 +9,14 @@ pub mod persist;
 
 use ark::oor::verify_oor;
 use aspd_rpc as rpc;
+use exit::Exit;
 pub use exit::ExitStatus;
+use onchain::Utxo;
 pub use persist::sqlite::SqliteClient;
 
 mod exit;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
-use bdk_wallet::{LocalOutput, WalletPersister};
+use bdk_wallet::WalletPersister;
 use bip39::Mnemonic;
 use bitcoin::bip32::{Fingerprint, Xpriv};
 use bitcoin::hex::DisplayHex;
@@ -56,6 +58,11 @@ pub struct Pagination {
 	pub page_size: u16,
 }
 
+fn vtxo_seed(network: Network, seed: &[u8; 64]) -> Xpriv {
+	let master = bip32::Xpriv::new_master(network, seed).unwrap();
+	master.derive_priv(&SECP, &[350.into()]).unwrap()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UtxoInfo {
 	pub outpoint: OutPoint,
@@ -64,12 +71,21 @@ pub struct UtxoInfo {
 	pub confirmation_height: Option<u32>
 }
 
-impl From<LocalOutput> for UtxoInfo {
-	fn from(value: LocalOutput) -> Self {
-		UtxoInfo {
-			outpoint: value.outpoint,
-			amount: value.txout.value,
-			confirmation_height: value.chain_position.confirmation_height_upper_bound()
+impl From<Utxo> for UtxoInfo {
+	fn from(value: Utxo) -> Self {
+		match value {
+			Utxo::Local(o) =>
+				UtxoInfo {
+					outpoint: o.outpoint,
+					amount: o.txout.value,
+					confirmation_height: o.chain_position.confirmation_height_upper_bound()
+				},
+			Utxo::Exit(e) =>
+				UtxoInfo {
+					outpoint: e.vtxo.point(),
+					amount: e.vtxo.amount(),
+					confirmation_height: Some(e.spendable_at_height - e.vtxo.spec().exit_delta as u32)
+				}
 		}
 	}
 }
@@ -155,6 +171,7 @@ struct AspConnection {
 
 pub struct Wallet<P: BarkPersister> {
 	pub onchain: onchain::Wallet<P>,
+	pub exit: Exit<P>,
 
 	config: Config,
 	db: P,
@@ -166,12 +183,6 @@ impl <P>Wallet<P> where
 	P: BarkPersister,
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
-	pub fn vtxo_seed(network: Network, mnemonic: &Mnemonic) -> Xpriv {
-		let seed = mnemonic.to_seed("");
-		let master = bip32::Xpriv::new_master(network, &seed).unwrap();
-		master.derive_priv(&SECP, &[350.into()]).unwrap()
-	}
-
 	/// Create new wallet.
 	pub async fn create(mnemonic: Mnemonic, network: Network, config: Config, db: P) -> anyhow::Result<Wallet<P>> {
 		trace!("Config: {:?}", config);
@@ -180,7 +191,7 @@ impl <P>Wallet<P> where
 			bail!("cannot overwrite already existing config")
 		}
 
-		let wallet_fingerprint = Self::vtxo_seed(network, &mnemonic).fingerprint(&SECP);
+		let wallet_fingerprint = vtxo_seed(network, &mnemonic.to_seed("")).fingerprint(&SECP);
 		let properties = WalletProperties {
 			network: network,
 			fingerprint: wallet_fingerprint
@@ -207,7 +218,7 @@ impl <P>Wallet<P> where
 		trace!("Config: {:?}", config);
 
 		let seed = mnemonic.to_seed("");
-		let vtxo_seed = Self::vtxo_seed(properties.network, mnemonic);
+		let vtxo_seed = vtxo_seed(properties.network, &seed);
 
 		if properties.fingerprint != vtxo_seed.fingerprint(&SECP) {
 			bail!("incorrect mnemonic")
@@ -235,7 +246,7 @@ impl <P>Wallet<P> where
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
-		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source)
+		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source.clone())
 			.context("failed to create onchain wallet")?;
 
 		let asp_uri = tonic::transport::Uri::from_str(&config.asp_address)
@@ -283,7 +294,9 @@ impl <P>Wallet<P> where
 			_ => None
 		};
 
-		Ok(Wallet { config, db, onchain, vtxo_seed, asp })
+		let exit = Exit::new(db.clone(), chain_source.clone())?;
+
+		Ok(Wallet { config, db, onchain, vtxo_seed, exit, asp })
 	}
 
 	pub fn config(&self) -> &Config {
@@ -350,17 +363,19 @@ impl <P>Wallet<P> where
 	/// Sync both the onchain and offchain wallet.
 	pub async fn sync(&mut self) -> anyhow::Result<()> {
 		self.onchain.sync().await?;
+		self.exit.sync_exit(&mut self.onchain).await?;
 		self.sync_ark().await?;
 		Ok(())
 	}
 
 	//TODO(stevenroose) improve the way we expose dangerous methods
-	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
+	pub async fn drop_vtxos(&mut self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
 		for vtxo in self.db.get_all_spendable_vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
-		self.db.store_exit(&exit::Exit::default())?;
+
+		self.exit.clear_exit()?;
 		Ok(())
 	}
 
@@ -644,7 +659,7 @@ impl <P>Wallet<P> where
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
 		let mut asp = self.require_asp()?;
 
-		let fr = self.onchain.regular_feerate();
+		let fr = self.onchain.chain_source.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 		let output = PaymentRequest { pubkey: destination, amount };
@@ -770,7 +785,7 @@ impl <P>Wallet<P> where
 		}
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
 
-		let fr = self.onchain.regular_feerate();
+		let fr = self.onchain.chain_source.regular_feerate();
 		//TODO(stevenroose) impl key derivation
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
 
