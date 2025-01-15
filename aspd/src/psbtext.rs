@@ -7,36 +7,36 @@ use bitcoin::psbt;
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum RoundMeta {
+pub enum SweepMeta {
 	Connector,
 	Vtxo,
 }
 
 const PROP_KEY_PREFIX: &'static [u8] = "aspd".as_bytes();
 
+enum PropKey {
+	SweepMeta = 1,
+}
+
 lazy_static::lazy_static! {
-	static ref PROP_KEY_ROUND_META: psbt::raw::ProprietaryKey = psbt::raw::ProprietaryKey {
+	static ref PROP_KEY_SWEEP_META: psbt::raw::ProprietaryKey = psbt::raw::ProprietaryKey {
 		prefix: PROP_KEY_PREFIX.to_vec(),
-		subtype: PropKey::RoundMeta as u8,
+		subtype: PropKey::SweepMeta as u8,
 		key: Vec::new(),
 	};
 }
 
-enum PropKey {
-	RoundMeta = 1,
-}
-
 pub trait PsbtInputExt: BorrowMut<psbt::Input> {
-	fn set_round_meta(&mut self, meta: RoundMeta) {
+	fn set_sweep_meta(&mut self, meta: SweepMeta) {
 		let mut buf = Vec::new();
 		ciborium::into_writer(&meta, &mut buf).expect("can't fail");
-		self.borrow_mut().proprietary.insert(PROP_KEY_ROUND_META.clone(), buf);
+		self.borrow_mut().proprietary.insert(PROP_KEY_SWEEP_META.clone(), buf);
 	}
 
-	fn get_round_meta(&self) -> anyhow::Result<Option<RoundMeta>> {
+	fn get_sweep_meta(&self) -> anyhow::Result<Option<SweepMeta>> {
 		for (key, val) in &self.borrow().proprietary {
-			if *key == *PROP_KEY_ROUND_META {
-				let meta = ciborium::from_reader(&val[..]).context("corrupt psbt: RoundMeta")?;
+			if *key == *PROP_KEY_SWEEP_META {
+				let meta = ciborium::from_reader(&val[..]).context("corrupt psbt: SweepMeta")?;
 				return Ok(Some(meta));
 			}
 		}

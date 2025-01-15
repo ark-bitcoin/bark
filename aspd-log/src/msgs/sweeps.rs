@@ -19,11 +19,11 @@ pub struct NotSweeping {
 impl_slog!(NotSweeping, Info, "Not sweeping rounds");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SweepingRounds {
+pub struct SweepingVtxos {
 	pub total_surplus: Amount,
 	pub inputs: Vec<OutPoint>,
 }
-impl_slog!(SweepingRounds, Info, "Sweeping rounds");
+impl_slog!(SweepingVtxos, Info, "Sweeping vtxos");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SweepingOutput {

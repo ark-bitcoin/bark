@@ -55,20 +55,20 @@ use ark::util::KeypairExt;
 
 use crate::bitcoind::RpcApi;
 use crate::database::StoredRound;
-use crate::psbtext::{PsbtInputExt, RoundMeta};
+use crate::psbtext::{PsbtInputExt, SweepMeta};
 use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
 
 
-struct SweepInput<'a> {
+struct RoundSweepInput<'a> {
 	point: OutPoint,
 	utxo: TxOut,
 	internal_key: XOnlyPublicKey,
 	round: &'a ExpiredRound,
-	round_meta: RoundMeta,
+	sweep_meta: SweepMeta,
 	weight: Weight,
 }
 
-impl<'a> SweepInput<'a> {
+impl<'a> RoundSweepInput<'a> {
 	fn amount(&self) -> Amount {
 		self.utxo.value
 	}
@@ -97,7 +97,7 @@ impl<'a> SweepInput<'a> {
 			non_witness_utxo: None,
 			..Default::default()
 		};
-		ret.set_round_meta(self.round_meta.clone());
+		ret.set_sweep_meta(self.sweep_meta.clone());
 		ret
 	}
 }
@@ -128,7 +128,7 @@ impl ExpiredRound {
 /// Build a sweep.
 struct SweepBuilder<'a> {
 	sweeper: &'a mut VtxoSweeper,
-	sweeps: Vec<SweepInput<'a>>,
+	sweeps: Vec<RoundSweepInput<'a>>,
 	feerate: FeeRate,
 }
 
@@ -153,10 +153,10 @@ impl<'a> SweepBuilder<'a> {
 		agg_pk: XOnlyPublicKey,
 	) {
 		trace!("Adding vtxo sweep input {}", point);
-		self.sweeps.push(SweepInput {
+		self.sweeps.push(RoundSweepInput {
 			point, utxo, round,
 			internal_key: agg_pk,
-			round_meta: RoundMeta::Vtxo,
+			sweep_meta: SweepMeta::Vtxo,
 			weight: ark::tree::signed::NODE_SPEND_WEIGHT,
 		});
 	}
@@ -169,10 +169,10 @@ impl<'a> SweepBuilder<'a> {
 		utxo: TxOut,
 	) {
 		trace!("Adding connector sweep input {}", point);
-		self.sweeps.push(SweepInput {
+		self.sweeps.push(RoundSweepInput {
 			point, utxo, round,
 			internal_key: round.round.signed_tree.spec.asp_pk.x_only_public_key().0,
-			round_meta: RoundMeta::Connector,
+			sweep_meta: SweepMeta::Connector,
 			weight: ark::connectors::INPUT_WEIGHT,
 		});
 	}
@@ -354,6 +354,7 @@ impl<'a> SweepBuilder<'a> {
 		}
 
 		//TODO(stevenroose) do this elsewhere
+		slog!(RoundFullySwept, round_id: round.txid);
 		self.sweeper.round_finished(round).await;
 	}
 
@@ -391,9 +392,9 @@ impl<'a> SweepBuilder<'a> {
 
 		let connector_keypair = self.sweeper.app.asp_key.for_keyspend();
 		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
-			if let Some(meta) = input.get_round_meta().context("corrupt psbt")? {
+			if let Some(meta) = input.get_sweep_meta().context("corrupt psbt")? {
 				match meta {
-					RoundMeta::Vtxo => {
+					SweepMeta::Vtxo => {
 						let (control, (script, lv)) = input.tap_scripts.iter().next()
 							.context("corrupt psbt: missing tap_scripts")?;
 						let leaf_hash = taproot::TapLeafHash::from_script(script, *lv);
@@ -411,7 +412,7 @@ impl<'a> SweepBuilder<'a> {
 						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
 						input.final_script_witness = Some(wit);
 					},
-					RoundMeta::Connector => {
+					SweepMeta::Connector => {
 						let sighash = shc.taproot_key_spend_signature_hash(
 							idx,
 							&sighash::Prevouts::All(&prevouts),
@@ -451,7 +452,6 @@ impl VtxoSweeper {
 	fn store_pending(&mut self, tx: txindex::Tx) {
 		for inp in &tx.tx.input {
 			self.pending_tx_by_utxo.entry(inp.previous_output).or_insert(Vec::new()).push(tx.clone());
-
 		}
 	}
 
@@ -492,9 +492,8 @@ impl VtxoSweeper {
 		None
 	}
 
-	/// Clean jup all aftefacts after a round has been swept.
+	/// Clean up all artifacts after a round has been swept.
 	async fn round_finished(&mut self, round: &ExpiredRound) {
-		slog!(RoundFullySwept, round_id: round.txid);
 		if let Err(e) = self.app.db.remove_round(round.txid) {
 			error!("Failed to remove round from db after successful sweeping: {}", e);
 		}
@@ -526,9 +525,7 @@ impl VtxoSweeper {
 		//TODO(stevenroose) when do we clear pending txs from the db?
 	}
 
-	async fn process_rounds(
-		&mut self,
-	) -> anyhow::Result<()> {
+	async fn perform_sweep(&mut self) -> anyhow::Result<()> {
 		let sweep_threshold = self.app.config.sweep_threshold;
 		let tip = self.app.bitcoind.get_block_count()? as BlockHeight;
 		let expired_rounds = self.app.db.get_expired_rounds(tip)?.into_iter().map(|txid| {
@@ -557,7 +554,7 @@ impl VtxoSweeper {
 		}
 
 		let sweep_points = builder.sweeps.iter().map(|s| s.point).collect();
-		slog!(SweepingRounds, total_surplus: surplus, inputs: sweep_points);
+		slog!(SweepingVtxos, total_surplus: surplus, inputs: sweep_points);
 		for s in &builder.sweeps {
 			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
 				surplus: s.surplus(feerate).unwrap(),
@@ -602,7 +599,7 @@ pub async fn run_vtxo_sweeper(
 
 		//TODO(stevenroose) do this better
 		// state.prune_confirmed().await;
-		if let Err(e) = state.process_rounds().await {
+		if let Err(e) = state.perform_sweep().await {
 			error!("Error during round processing: {}", e);
 		}
 	}
