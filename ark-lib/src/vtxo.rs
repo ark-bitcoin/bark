@@ -6,7 +6,7 @@ use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Transaction, TxOut, Txid, We
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
-use crate::{musig, onboard, oor, util};
+use crate::{musig, oor, util};
 
 
 /// The input weight required to claim a VTXO.
@@ -170,40 +170,92 @@ impl VtxoSpec {
 	}
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OnboardVtxo {
+	pub spec: VtxoSpec,
+	pub input: OutPoint,
+	pub reveal_tx_signature: schnorr::Signature,
+}
+
+impl OnboardVtxo {
+	pub fn reveal_tx(&self) -> Transaction {
+		crate::onboard::create_reveal_tx(
+			&self.spec, self.input, Some(&self.reveal_tx_signature),
+		)
+	}
+
+	pub fn point(&self) -> OutPoint {
+		//TODO(stevenroose) consider caching this so that we don't have to calculate it
+		OutPoint::new(self.reveal_tx().compute_txid(), 0)
+	}
+
+	pub fn id(&self) -> VtxoId {
+		self.point().into()
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RoundVtxo {
+	pub spec: VtxoSpec,
+	pub leaf_idx: usize,
+	//TODO(stevenroose) reduce this to just storing the signatures
+	// and calculate branch on exit
+	pub exit_branch: Vec<Transaction>,
+}
+
+impl RoundVtxo {
+	pub fn point(&self) -> OutPoint {
+		//TODO(stevenroose) consider caching this so that we don't have to calculate it
+		OutPoint::new(self.exit_branch.last().unwrap().compute_txid(), 0).into()
+	}
+
+	pub fn id(&self) -> VtxoId {
+		self.point().into()
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArkoorVtxo {
+	pub inputs: Vec<Vtxo>,
+	pub signatures: Vec<schnorr::Signature>,
+	pub output_specs:  Vec<VtxoSpec>,
+	pub point: OutPoint,
+}
+
+impl ArkoorVtxo {
+	pub fn id(&self) -> VtxoId {
+		self.point.into()
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Bolt11ChangeVtxo {
+	pub inputs: Vec<Vtxo>,
+	/// This has the fields for the spec, but were not necessarily
+	/// actually being used for the generation of the vtxos.
+	/// Primarily, the expiry height is the first of all the parents
+	/// expiry heights.
+	pub pseudo_spec: VtxoSpec,
+	pub htlc_tx: Transaction,
+	pub final_point: OutPoint,
+}
+
+impl Bolt11ChangeVtxo {
+	pub fn id(&self) -> VtxoId {
+		self.final_point.into()
+	}
+}
+
 /// Represents a VTXO in the Ark.
 ///
 /// Implementations of [PartialEq], [Eq], [PartialOrd], [Ord] and [Hash] are
 /// proxied to the implementation on [Vtxo::id].
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum Vtxo {
-	Onboard {
-		spec: VtxoSpec,
-		input: OutPoint,
-		reveal_tx_signature: schnorr::Signature,
-	},
-	Round {
-		spec: VtxoSpec,
-		leaf_idx: usize,
-		//TODO(stevenroose) reduce this to just storing the signatures
-		// and calculate branch on exit
-		exit_branch: Vec<Transaction>,
-	},
-	Arkoor {
-		inputs: Vec<Vtxo>,
-		signatures: Vec<schnorr::Signature>,
-		output_specs:  Vec<VtxoSpec>,
-		point: OutPoint,
-	},
-	Bolt11Change {
-		inputs: Vec<Vtxo>,
-		/// This has the fields for the spec, but were not necessarily
-		/// actually being used for the generation of the vtxos.
-		/// Primarily, the expiry height is the first of all the parents
-		/// expiry heights.
-		pseudo_spec: VtxoSpec,
-		htlc_tx: Transaction,
-		final_point: OutPoint,
-	},
+	Onboard(OnboardVtxo),
+	Round(RoundVtxo),
+	Arkoor(ArkoorVtxo),
+	Bolt11Change(Bolt11ChangeVtxo),
 }
 
 impl Vtxo {
@@ -217,33 +269,29 @@ impl Vtxo {
 	/// This can be an on-chain utxo or an off-chain vtxo.
 	pub fn point(&self) -> OutPoint {
 		match self {
-			//TODO(stevenroose) consider caching this so that we don't have to calculate it
-			Vtxo::Onboard { .. } => OutPoint::new(self.vtxo_tx().compute_txid(), 0),
-			Vtxo::Round { exit_branch, .. } => {
-				//TODO(stevenroose) consider caching this so that we don't have to calculate it
-				OutPoint::new(exit_branch.last().unwrap().compute_txid(), 0).into()
-			},
-			Vtxo::Arkoor { point, .. } => *point,
-			Vtxo::Bolt11Change { final_point, .. } => *final_point,
+			Vtxo::Onboard(v) => v.point(),
+			Vtxo::Round(v) => v.point(),
+			Vtxo::Arkoor(v) => v.point,
+			Vtxo::Bolt11Change(v) => v.final_point,
 		}
 	}
 
 	pub fn spec(&self) -> &VtxoSpec {
 		match self {
-			Vtxo::Onboard { spec, .. } => spec,
-			Vtxo::Round { spec, .. } => spec,
-			Vtxo::Arkoor { output_specs, point, ..} => &output_specs[point.vout as usize],
-			Vtxo::Bolt11Change { ref pseudo_spec, ..} => pseudo_spec,
+			Vtxo::Onboard(v) => &v.spec,
+			Vtxo::Round(v) => &v.spec,
+			Vtxo::Arkoor(v) => &v.output_specs[v.point.vout as usize],
+			Vtxo::Bolt11Change(v) => &v.pseudo_spec,
 		}
 	}
 
 	pub fn amount(&self) -> Amount {
 		match self {
-			Vtxo::Onboard { spec, .. } => spec.amount,
-			Vtxo::Round { spec, .. } => spec.amount,
-			Vtxo::Arkoor { .. } => self.spec().amount,
-			Vtxo::Bolt11Change { htlc_tx, final_point, .. } => {
-				htlc_tx.output[final_point.vout as usize].value
+			Vtxo::Onboard(v) => v.spec.amount,
+			Vtxo::Round(v) => v.spec.amount,
+			Vtxo::Arkoor(_) => self.spec().amount,
+			Vtxo::Bolt11Change(v) => {
+				v.htlc_tx.output[v.final_point.vout as usize].value
 			},
 		}
 	}
@@ -261,18 +309,14 @@ impl Vtxo {
 
 	pub fn vtxo_tx(&self) -> Transaction {
 		match self {
-			Vtxo::Onboard { spec, input, reveal_tx_signature } => {
-				onboard::create_reveal_tx(
-					spec, *input, Some(&reveal_tx_signature),
-				)
-			},
-			Vtxo::Round { ref exit_branch, .. } => exit_branch.last().unwrap().clone(),
-			Vtxo::Arkoor { inputs, signatures, output_specs, point } => {
-				let tx = oor::signed_oor_tx(&inputs, &signatures, output_specs);
-				assert_eq!(tx.compute_txid(), point.txid);
+			Vtxo::Onboard(v) => v.reveal_tx(),
+			Vtxo::Round(v) => v.exit_branch.last().unwrap().clone(),
+			Vtxo::Arkoor(v) => {
+				let tx = oor::signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs);
+				assert_eq!(tx.compute_txid(), v.point.txid);
 				tx
 			},
-			Vtxo::Bolt11Change { ref htlc_tx, .. } => htlc_tx.clone(),
+			Vtxo::Bolt11Change(v) => v.htlc_tx.clone(),
 		}
 	}
 
@@ -281,24 +325,24 @@ impl Vtxo {
 	/// The [vtxo_tx] is always included.
 	pub fn collect_exit_txs(&self, txs: &mut Vec<Transaction>) {
 		match self {
-			Vtxo::Onboard { .. } => {
+			Vtxo::Onboard(_) => {
 				txs.push(self.vtxo_tx());
 			},
-			Vtxo::Round { exit_branch, .. } => {
-				txs.extend(exit_branch.iter().cloned());
+			Vtxo::Round(v) => {
+				txs.extend(v.exit_branch.iter().cloned());
 			},
-			Vtxo::Arkoor { inputs, .. } => {
-				for input in inputs {
+			Vtxo::Arkoor(v) => {
+				for input in &v.inputs {
 					input.collect_exit_txs(txs);
 				}
 
 				txs.push(self.vtxo_tx());
 			},
-			Vtxo::Bolt11Change { inputs, htlc_tx, .. } => {
-				for input in inputs {
+			Vtxo::Bolt11Change(v) => {
+				for input in &v.inputs {
 					input.collect_exit_txs(txs);
 				}
-				txs.push(htlc_tx.clone());
+				txs.push(v.htlc_tx.clone());
 			},
 		}
 	}
@@ -357,30 +401,87 @@ impl Vtxo {
 		VTXO_CLAIM_INPUT_WEIGHT
 	}
 
-
 	/// Checks if the VTXO has some counterparty risk
 	///
 	/// A [`Vtxo::Arkoor`] is considered to have some counterparty risk
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
 	pub fn has_counterparty_risk(&self, vtxo_pubkey: &PublicKey) -> bool {
 		match self {
-			Vtxo::Arkoor { inputs, .. } => {
+			Vtxo::Arkoor(v) => {
 				fn inner_has_counterparty_risk(vtxo: &Vtxo, vtxo_pubkey: &PublicKey) -> bool {
 					match vtxo {
-						Vtxo::Arkoor { inputs, .. } =>
-							inputs.iter().any(|i| inner_has_counterparty_risk(i, vtxo_pubkey)),
-						Vtxo::Bolt11Change { inputs, .. } =>
-							inputs.iter().any(|i| inner_has_counterparty_risk(i, vtxo_pubkey)),
+						Vtxo::Arkoor(v) => {
+							v.inputs.iter().any(|i| inner_has_counterparty_risk(i, vtxo_pubkey))
+						},
+						Vtxo::Bolt11Change(v) => {
+							v.inputs.iter().any(|i| inner_has_counterparty_risk(i, vtxo_pubkey))
+						},
 						//TODO impl key derivation
-						Vtxo::Onboard { spec, .. } => spec.user_pubkey != *vtxo_pubkey,
+						Vtxo::Onboard(v) => v.spec.user_pubkey != *vtxo_pubkey,
 						//TODO impl key derivation
-						Vtxo::Round { spec, .. } => spec.user_pubkey != *vtxo_pubkey,
+						Vtxo::Round(v) => v.spec.user_pubkey != *vtxo_pubkey,
 					}
 				}
 
-				inputs.iter().any(|v| inner_has_counterparty_risk(v, vtxo_pubkey))
+				v.inputs.iter().any(|v| inner_has_counterparty_risk(v, vtxo_pubkey))
 			},
 			_ => false
+		}
+	}
+
+	pub fn as_onboard(&self) -> Option<&OnboardVtxo> {
+		match self {
+			Vtxo::Onboard(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn into_onboard(self) -> Option<OnboardVtxo> {
+		match self {
+			Vtxo::Onboard(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn as_round(&self) -> Option<&RoundVtxo> {
+		match self {
+			Vtxo::Round(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn into_round(self) -> Option<RoundVtxo> {
+		match self {
+			Vtxo::Round(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn as_arkoor(&self) -> Option<&ArkoorVtxo> {
+		match self {
+			Vtxo::Arkoor(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn into_arkoor(self) -> Option<ArkoorVtxo> {
+		match self {
+			Vtxo::Arkoor(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn as_bolt11change(&self) -> Option<&Bolt11ChangeVtxo> {
+		match self {
+			Vtxo::Bolt11Change(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn into_bolt11change(self) -> Option<Bolt11ChangeVtxo> {
+		match self {
+			Vtxo::Bolt11Change(v) => Some(v),
+			_ => None,
 		}
 	}
 }
@@ -411,6 +512,31 @@ impl std::hash::Hash for Vtxo {
 	}
 }
 
+impl From<OnboardVtxo> for Vtxo {
+	fn from(v: OnboardVtxo) -> Vtxo {
+		Vtxo::Onboard(v)
+	}
+}
+
+impl From<RoundVtxo> for Vtxo {
+	fn from(v: RoundVtxo) -> Vtxo {
+		Vtxo::Round(v)
+	}
+}
+
+impl From<ArkoorVtxo> for Vtxo {
+	fn from(v: ArkoorVtxo) -> Vtxo {
+		Vtxo::Arkoor(v)
+	}
+}
+
+impl From<Bolt11ChangeVtxo> for Vtxo {
+	fn from(v: Bolt11ChangeVtxo) -> Vtxo {
+		Vtxo::Bolt11Change(v)
+	}
+}
+
+
 #[cfg(test)]
 mod test {
 	use super::*;
@@ -428,7 +554,7 @@ use oor::unsigned_oor_transaction;
 		let oor_sig2 = schnorr::Signature::from_str("115e203be50944e96c00b30f88be5d4523397f66a1845addc95851fbe27ecd82b8e4d5bbd96229b8167a9196de77b3cd62a27c368d00774889900cffe2c932da").unwrap();
 		let oor_sig3 = schnorr::Signature::from_str("4be220ff1dabd0f7c35798eb19d587de1ad88e80369ef037c5e803f9d776e1c74bc4458698a783add458730d1dbd144c86f3b848cff5486b0fcbd1c17ecc5f76").unwrap();
 
-		let onboard = Vtxo::Onboard {
+		let onboard = Vtxo::Onboard(OnboardVtxo {
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -438,10 +564,10 @@ use oor::unsigned_oor_transaction;
 			},
 			input: point,
 			reveal_tx_signature: sig,
-		};
+		});
 		assert_eq!(onboard, Vtxo::decode(&onboard.encode()).unwrap());
 
-		let round = Vtxo::Round {
+		let round = Vtxo::Round(RoundVtxo {
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -451,7 +577,7 @@ use oor::unsigned_oor_transaction;
 			},
 			leaf_idx: 3,
 			exit_branch: vec![tx.clone()],
-		};
+		});
 		assert_eq!(round, Vtxo::decode(&round.encode()).unwrap());
 
 		let inputs = vec![
@@ -466,7 +592,7 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx = unsigned_oor_transaction(&inputs, &output_specs);
-		let oor = Vtxo::Arkoor {
+		let oor = Vtxo::Arkoor(ArkoorVtxo {
 			inputs,
 			output_specs,
 			signatures: vec![
@@ -474,7 +600,7 @@ use oor::unsigned_oor_transaction;
 				oor_sig2
 			],
 			point: OutPoint::new(tx.compute_txid(), 0)
-		};
+		});
 		assert_eq!(oor, Vtxo::decode(&oor.encode()).unwrap());
 
 		let inputs_recursive = vec![
@@ -490,7 +616,7 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx_recursive = unsigned_oor_transaction(&inputs_recursive, &output_specs_recursive);
-		let oor_recursive = Vtxo::Arkoor {
+		let oor_recursive = Vtxo::Arkoor(ArkoorVtxo {
 			inputs: inputs_recursive,
 			output_specs: output_specs_recursive,
 			signatures: vec![
@@ -499,7 +625,7 @@ use oor::unsigned_oor_transaction;
 				oor_sig3
 			],
 			point: OutPoint::new(tx_recursive.compute_txid(), 0)
-		};
+		});
 		assert_eq!(oor_recursive, Vtxo::decode(&oor_recursive.encode()).unwrap());
 	}
 
@@ -512,7 +638,7 @@ use oor::unsigned_oor_transaction;
 		let oor_sig2 = schnorr::Signature::from_str("115e203be50944e96c00b30f88be5d4523397f66a1845addc95851fbe27ecd82b8e4d5bbd96229b8167a9196de77b3cd62a27c368d00774889900cffe2c932da").unwrap();
 		let oor_sig3 = schnorr::Signature::from_str("4be220ff1dabd0f7c35798eb19d587de1ad88e80369ef037c5e803f9d776e1c74bc4458698a783add458730d1dbd144c86f3b848cff5486b0fcbd1c17ecc5f76").unwrap();
 
-		let round = Vtxo::Round {
+		let round = Vtxo::Round(RoundVtxo {
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -522,7 +648,7 @@ use oor::unsigned_oor_transaction;
 			},
 			leaf_idx: 3,
 			exit_branch: vec![tx.clone()],
-		};
+		});
 
 		let inputs = vec![
 			round.clone(),
@@ -535,7 +661,7 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx = unsigned_oor_transaction(&inputs, &output_specs);
-		let oor = Vtxo::Arkoor {
+		let oor = Vtxo::Arkoor(ArkoorVtxo {
 			inputs,
 			output_specs,
 			signatures: vec![
@@ -543,7 +669,7 @@ use oor::unsigned_oor_transaction;
 				oor_sig2
 			],
 			point: OutPoint::new(tx.compute_txid(), 0)
-		};
+		});
 		assert_eq!(oor, Vtxo::decode(&oor.encode()).unwrap());
 
 		let inputs_recursive = vec![oor.clone()];
@@ -555,14 +681,14 @@ use oor::unsigned_oor_transaction;
 			amount: Amount::from_sat(5),
 		}];
 		let tx_recursive = unsigned_oor_transaction(&inputs_recursive, &output_specs_recursive);
-		let oor_recursive = Vtxo::Arkoor {
+		let oor_recursive = Vtxo::Arkoor(ArkoorVtxo {
 			inputs: inputs_recursive,
 			output_specs: output_specs_recursive,
 			signatures: vec![
 				oor_sig3
 			],
 			point: OutPoint::new(tx_recursive.compute_txid(), 0)
-		};
+		});
 
 		let pk_b = "03bd32ad71ff5d7e803e0d474284d1bb87ec84d26f5d79601c9c64f06660074833".parse().unwrap();
 

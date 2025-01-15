@@ -814,7 +814,7 @@ pub async fn run_round_coordinator(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use ark::{fee, Vtxo, VtxoRequest, VtxoSpec};
+	use ark::{fee, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 	use bitcoin::secp256k1::{PublicKey, Secp256k1};
 	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
 	use std::collections::HashSet;
@@ -861,11 +861,11 @@ mod tests {
 			],
 		};
 
-		Vtxo::Round {
+		Vtxo::Round(RoundVtxo {
 			spec: vtxo_spec,
 			leaf_idx: 0,
 			exit_branch: vec![tx],
-		}
+		})
 	}
 
 	fn create_vtxo_request(amount: u64) -> VtxoRequest {

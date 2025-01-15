@@ -12,7 +12,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use bitcoin::taproot::{ControlBlock, LeafVersion, TapNodeHash, TaprootBuilder};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use crate::{fee, musig, util, Vtxo, VtxoRequest, VtxoSpec};
+use crate::{fee, musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
 
 
@@ -712,7 +712,7 @@ impl CachedSignedVtxoTree {
 	/// This call is pretty wasteful.
 	pub fn all_vtxos(&self) -> impl Iterator<Item = Vtxo> + '_ {
 		self.spec.spec.vtxos.iter().enumerate().map(|(idx, req)| {
-			Vtxo::Round {
+			Vtxo::Round(RoundVtxo {
 				spec: VtxoSpec {
 					user_pubkey: req.pubkey,
 					asp_pubkey: self.spec.spec.asp_pk,
@@ -722,7 +722,7 @@ impl CachedSignedVtxoTree {
 				},
 				leaf_idx: idx,
 				exit_branch: self.exit_branch(idx).unwrap().into_iter().cloned().collect(),
-			}
+			})
 		})
 	}
 }

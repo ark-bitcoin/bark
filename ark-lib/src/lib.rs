@@ -22,7 +22,8 @@ mod napkin;
 use bitcoin::{Amount, FeeRate, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
 
-pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};
+pub use crate::vtxo::{ArkoorVtxo, Bolt11ChangeVtxo, OnboardVtxo, RoundVtxo, VtxoId, VtxoSpec, Vtxo};
+
 
 pub const P2TR_DUST_VB: u64 = 110;
 /// 330 satoshis
