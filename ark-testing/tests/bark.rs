@@ -1,13 +1,19 @@
 #[macro_use]
 extern crate log;
 
+use std::fs;
+use std::io::{self, BufRead};
 use std::time::Duration;
 
+use bitcoin::key::Keypair;
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
-use ark_testing::{
-	setup::{setup_asp_funded, setup_full, setup_simple}, AspdConfig, TestContext
-};
+use ark::Vtxo;
+use aspd_rpc as rpc;
+
+use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
+use ark_testing::{AspdConfig, TestContext};
+use ark_testing::daemon::aspd;
 
 const OFFBOARD_FEES: Amount = Amount::from_sat(900);
 
@@ -372,4 +378,64 @@ async fn drop_vtxos() {
 	let balance = bark1.offchain_balance_no_sync().await;
 
 	assert_eq!(balance, Amount::ZERO);
+}
+
+#[tokio::test]
+async fn reject_oor_with_bad_signature() {
+	#[derive(Clone)]
+	struct InvalidSigProxy(rpc::ArkServiceClient<tonic::transport::Channel>);
+
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for InvalidSigProxy {
+		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+
+		async fn empty_oor_mailbox(&mut self, req: rpc::OorVtxosRequest) -> Result<rpc::OorVtxosResponse, tonic::Status>  {
+			info!("proxy handling oor request");
+			let response = self.upstream().empty_oor_mailbox(req).await?;
+			info!("proxy received real response");
+
+			let keypair = Keypair::new(&ark::util::SECP, &mut rand::thread_rng());
+			let (inputs, output_specs, point) = match
+				Vtxo::decode(&response.into_inner().vtxos[0]).unwrap() {
+					Vtxo::Oor { inputs, signatures: _, output_specs, point }
+						=> (inputs, output_specs, point),
+					_ => panic!("expect oor vtxo")
+				};
+
+			let mut fake_sigs = Vec::with_capacity(inputs.len());
+
+			let sighashes = ark::oor::oor_sighashes(
+				&inputs, &ark::oor::unsigned_oor_transaction(&inputs, &output_specs),
+			);
+			for sighash in sighashes.into_iter() {
+				let sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
+				fake_sigs.push(sig);
+			}
+
+			let vtxo = Vtxo::Oor { inputs, signatures: fake_sigs, output_specs, point };
+
+			Ok(rpc::OorVtxosResponse {
+				vtxos: vec![vtxo.encode()]
+			})
+		}
+	}
+
+	// Initialize the test
+	let (ctx, bitcoind, aspd, _bark1, bark2) = setup_full("bark/reject_oor_with_bad_signature").await;
+
+	// create a proxy to return an arkoor with invalid signatures
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(aspd.get_public_client().await)).await;
+
+	// create a third wallet to receive the invalid arkoor
+	let bark3 = ctx.bark("bark3".to_string(), &bitcoind, &proxy.address).await;
+
+	bark2.send_oor(bark3.vtxo_pubkey().await, Amount::from_sat(10_000)).await;
+
+	// we should drop invalid arkoors
+	assert_eq!(bark3.vtxos().await.len(), 0);
+
+	// check that we saw a log
+	assert!(io::BufReader::new(fs::File::open(bark3.command_log_file()).unwrap()).lines().any(|line| {
+		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. signature failed verification")
+	}));
 }

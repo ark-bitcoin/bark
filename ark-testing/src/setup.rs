@@ -1,8 +1,8 @@
 use bitcoin::Amount;
 
-use crate::{daemon::{aspd::AspdHelper, bitcoind::BitcoindHelper}, Bark, Daemon, TestContext};
+use crate::{Aspd, Bitcoind, Bark, TestContext};
 
-pub async fn setup_simple(name: &str) -> (TestContext, Daemon<BitcoindHelper>, Daemon<AspdHelper>, Bark, Bark) {
+pub async fn setup_simple(name: &str) -> (TestContext, Bitcoind, Aspd, Bark, Bark) {
 	let ctx = TestContext::new(name).await;
 	let bitcoind = ctx.bitcoind("bitcoind").await;
 	let aspd = ctx.aspd("aspd", &bitcoind, None).await;
@@ -13,7 +13,7 @@ pub async fn setup_simple(name: &str) -> (TestContext, Daemon<BitcoindHelper>, D
 	(ctx, bitcoind, aspd, bark1, bark2)
 }
 
-pub async fn setup_asp_funded(name: &str) -> (TestContext, Daemon<BitcoindHelper>, Daemon<AspdHelper>, Bark, Bark) {
+pub async fn setup_asp_funded(name: &str) -> (TestContext, Bitcoind, Aspd, Bark, Bark) {
 	let (ctx, bitcoind, aspd, bark1, bark2) = setup_simple(name).await;
 
 	// Fund the asp
@@ -23,7 +23,7 @@ pub async fn setup_asp_funded(name: &str) -> (TestContext, Daemon<BitcoindHelper
 	(ctx, bitcoind, aspd, bark1, bark2)
 }
 
-pub async fn setup_full(name: &str) -> (TestContext, Daemon<BitcoindHelper>, Daemon<AspdHelper>, Bark, Bark) {
+pub async fn setup_full(name: &str) -> (TestContext, Bitcoind, Aspd, Bark, Bark) {
 	let (ctx, bitcoind, aspd, bark1, bark2) = setup_asp_funded(name).await;
 
 	// Fund clients

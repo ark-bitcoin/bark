@@ -8,6 +8,7 @@ slow_test = []
 
 [dependencies]
 ark-lib = { path = "../ark-lib" }
+bark-aspd = { path = "../aspd" }
 aspd-log = { path = "../aspd-log" }
 aspd-rpc = { path = "../aspd-rpc", features = ["server"] }
 bark-cln = { path = "../bark-cln"}
@@ -32,5 +33,6 @@ fern.workspace = true
 chrono.workspace = true
 rand.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 tonic.workspace = true
 futures.workspace = true

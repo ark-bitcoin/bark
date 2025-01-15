@@ -17,7 +17,7 @@ use crate::{fee, musig, util, PaymentRequest, Vtxo, VtxoSpec};
 /// The minimum fee we consider for an oor transaction.
 pub const OOR_MIN_FEE: Amount = crate::P2TR_DUST;
 
-fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction) -> Vec<TapSighash> {
+pub fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction) -> Vec<TapSighash> {
 	let prevs = input_vtxos.iter().map(|i| i.borrow().txout()).collect::<Vec<_>>();
 	let mut shc = SighashCache::new(oor_tx);
 

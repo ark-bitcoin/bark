@@ -94,6 +94,10 @@ impl Bark {
 		&self.name
 	}
 
+	pub fn command_log_file(&self) -> PathBuf {
+		self.config.datadir.join(COMMAND_LOG_FILE)
+	}
+
 	pub async fn onchain_balance(&self) -> Amount {
 		self.run(["onchain", "balance"]).await.parse().unwrap()
 	}
