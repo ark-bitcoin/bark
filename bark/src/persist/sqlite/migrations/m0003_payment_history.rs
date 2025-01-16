@@ -15,30 +15,30 @@ impl Migration for Migration0003 {
 
 	fn do_migration(&self, conn: &Transaction) -> anyhow::Result<()> {
 		let queries = [
-			"CREATE TABLE IF NOT EXISTS movement (
+			"CREATE TABLE IF NOT EXISTS bark_movement (
 				id INTEGER PRIMARY KEY,
 				fees_sat INTEGER NOT NULL,
 				destination TEXT,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);",
-			"ALTER TABLE vtxo ADD received_in TEXT NOT NULL REFERENCES movement(id);",
-			"ALTER TABLE vtxo ADD spent_in TEXT REFERENCES movement(id);",
+			"ALTER TABLE bark_vtxo ADD received_in TEXT NOT NULL REFERENCES bark_movement(id);",
+			"ALTER TABLE bark_vtxo ADD spent_in TEXT REFERENCES bark_movement(id);",
 			"CREATE VIEW IF NOT EXISTS movement_view AS
 				SELECT 
 					*,
 					(
 						SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-							'id', vtxo.id, 
-							'amount_sat', vtxo.amount_sat
-						)) FROM vtxo WHERE vtxo.spent_in = movement.id
+							'id', bark_vtxo.id, 
+							'amount_sat', bark_vtxo.amount_sat
+						)) FROM bark_vtxo WHERE bark_vtxo.spent_in = bark_movement.id
 					) AS spends,
 					(
 						SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-							'id', vtxo.id, 
-							'amount_sat', vtxo.amount_sat
-						)) FROM vtxo WHERE vtxo.received_in = movement.id
+							'id', bark_vtxo.id, 
+							'amount_sat', bark_vtxo.amount_sat
+						)) FROM bark_vtxo WHERE bark_vtxo.received_in = bark_movement.id
 					) AS receives
-				FROM movement
+				FROM bark_movement
 			;"];
 
 		for query in queries {

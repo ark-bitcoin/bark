@@ -16,25 +16,25 @@ impl Migration for Migration0001 {
 
 	fn do_migration(&self, conn: &Transaction) -> anyhow::Result<()> {
 		let queries = [
-			"CREATE TABLE IF NOT EXISTS vtxo (
+			"CREATE TABLE IF NOT EXISTS bark_vtxo (
 				id TEXT PRIMARY KEY,
 				expiry_height INTEGER,
 				amount_sat INTEGER,
 				raw_vtxo BLOB,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);",
-			"CREATE TABLE IF NOT EXISTS vtxo_state (
+			"CREATE TABLE IF NOT EXISTS bark_vtxo_state (
 				id INTEGER PRIMARY KEY,
-				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-				vtxo_id TEXT REFERENCES vtxo(id),
+				created_at DATETIME NOT NULL DEFAULT  (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+				vtxo_id TEXT REFERENCES bark_vtxo(id),
 				state TEXT
 			);",
-			"CREATE TABLE IF NOT EXISTS ark_sync (
+			"CREATE TABLE IF NOT EXISTS bark_ark_sync (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				sync_height INTEGER,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);",
-			"CREATE TABLE IF NOT EXISTS exit (
+			"CREATE TABLE IF NOT EXISTS bark_exit (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				exit BLOB
 			)",
@@ -42,13 +42,13 @@ impl Migration for Migration0001 {
 			CREATE VIEW IF NOT EXISTS most_recent_vtxo_state
 				(id, last_updated_at, vtxo_id, state)
 			AS
-			WITH most_recent AS (SELECT MAX(id) as id FROM vtxo_state GROUP BY vtxo_id)
+			WITH most_recent AS (SELECT MAX(id) as id FROM bark_vtxo_state GROUP BY vtxo_id)
 			SELECT
 					most_recent.id,
 					vs.created_at,
 					vs.vtxo_id,
 					vs.state
-					FROM most_recent JOIN vtxo_state as vs
+					FROM most_recent JOIN bark_vtxo_state as vs
 						ON vs.id = most_recent.id;
 			","CREATE VIEW IF NOT EXISTS vtxo_view 
 			AS SELECT 
@@ -59,7 +59,7 @@ impl Migration for Migration0001 {
 				v.raw_vtxo,
 				v.created_at,
 				vs.last_updated_at
-			FROM vtxo as v 
+			FROM bark_vtxo as v 
 			JOIN most_recent_vtxo_state as vs 
 				ON v.id = vs.vtxo_id;
 			"];

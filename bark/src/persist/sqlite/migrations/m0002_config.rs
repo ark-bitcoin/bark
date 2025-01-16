@@ -16,7 +16,7 @@ impl Migration for Migration0002 {
 
 	fn do_migration(&self, conn: &Transaction) -> anyhow::Result<()> {
 		let queries = [
-			"CREATE TABLE IF NOT EXISTS config (
+			"CREATE TABLE IF NOT EXISTS bark_config (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 
@@ -28,7 +28,7 @@ impl Migration for Migration0002 {
 				bitcoind_pass ,
 				vtxo_refresh_threshold INTEGER NOT NULL
 			);",
-			"CREATE TABLE IF NOT EXISTS properties (
+			"CREATE TABLE IF NOT EXISTS bark_properties (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 				

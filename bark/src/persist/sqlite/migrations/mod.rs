@@ -184,10 +184,10 @@ mod test {
 		// Perform the mgiration and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
 		assert_current_version(&conn, 3).unwrap();
-		assert!(table_exists(&conn, "vtxo").unwrap());
-		assert!(table_exists(&conn, "vtxo_state").unwrap());
-		assert!(table_exists(&conn, "config").unwrap());
-		assert!(table_exists(&conn, "movement").unwrap());
+		assert!(table_exists(&conn, "bark_vtxo").unwrap());
+		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
+		assert!(table_exists(&conn, "bark_config").unwrap());
+		assert!(table_exists(&conn, "bark_movement").unwrap());
 
 		// The migration can be run multiple times
 		migs.do_all_migrations(&mut conn).unwrap();
