@@ -50,7 +50,14 @@ trait ToStatus<T> {
 
 impl<T> ToStatus<T> for anyhow::Result<T> {
 	fn to_status(self) -> Result<T, tonic::Status> {
-		self.map_err(|e| tonic::Status::internal(format!("internal error: {}", e)))
+		self.map_err(|e| {
+			let mut msg = "internal error".to_owned();
+			for err in e.chain() {
+				msg.push_str(": ");
+				msg.push_str(&err.to_string());
+			}
+			tonic::Status::internal(msg)
+		})
 	}
 }
 
