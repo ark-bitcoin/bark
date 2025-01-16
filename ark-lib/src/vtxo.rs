@@ -173,14 +173,15 @@ impl VtxoSpec {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OnboardVtxo {
 	pub spec: VtxoSpec,
-	pub input: OutPoint,
+	/// The output of the onboard. This will be the input to the reveal tx.
+	pub onchain_output: OutPoint,
 	pub reveal_tx_signature: schnorr::Signature,
 }
 
 impl OnboardVtxo {
 	pub fn reveal_tx(&self) -> Transaction {
 		crate::onboard::create_reveal_tx(
-			&self.spec, self.input, Some(&self.reveal_tx_signature),
+			&self.spec, self.onchain_output, Some(&self.reveal_tx_signature),
 		)
 	}
 
@@ -562,7 +563,7 @@ use oor::unsigned_oor_transaction;
 				exit_delta: 7,
 				amount: Amount::from_sat(5),
 			},
-			input: point,
+			onchain_output: point,
 			reveal_tx_signature: sig,
 		});
 		assert_eq!(onboard, Vtxo::decode(&onboard.encode()).unwrap());

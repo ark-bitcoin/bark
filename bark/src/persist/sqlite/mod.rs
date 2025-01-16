@@ -273,7 +273,7 @@ mod test {
 
 		let vtxo_1 = Vtxo::Onboard(OnboardVtxo {
 			reveal_tx_signature: sig,
-			input: point_1,
+			onchain_output: point_1,
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -285,7 +285,7 @@ mod test {
 
 		let vtxo_2 = Vtxo::Onboard(OnboardVtxo {
 			reveal_tx_signature: sig,
-			input: point_2,
+			onchain_output: point_2,
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -297,7 +297,7 @@ mod test {
 
 		let vtxo_3 = Vtxo::Onboard(OnboardVtxo {
 			reveal_tx_signature: sig,
-			input: point_3,
+			onchain_output: point_3,
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,

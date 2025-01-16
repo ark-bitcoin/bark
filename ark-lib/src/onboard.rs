@@ -195,7 +195,7 @@ pub fn finish(
 
 	Vtxo::Onboard(OnboardVtxo {
 		spec: user.spec,
-		input: user.utxo,
+		onchain_output: user.utxo,
 		reveal_tx_signature: final_sig,
 	})
 }
@@ -203,7 +203,7 @@ pub fn finish(
 /// Returns [None] when [Vtxo] is not an onboard vtxo.
 pub fn signed_reveal_tx(vtxo: &Vtxo) -> Option<Transaction> {
 	if let Vtxo::Onboard(v) = vtxo {
-		let ret = create_reveal_tx(&v.spec, v.input, Some(&v.reveal_tx_signature));
+		let ret = create_reveal_tx(&v.spec, v.onchain_output, Some(&v.reveal_tx_signature));
 		assert_eq!(ret.weight(), REVEAL_TX_WEIGHT);
 		Some(ret)
 	} else {
