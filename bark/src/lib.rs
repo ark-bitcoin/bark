@@ -1135,6 +1135,11 @@ impl <P>Wallet<P> where
 						round_id = id;
 						continue 'round;
 					},
+					rpc::round_event::Event::Attempt(rpc::RoundAttempt { round_id: id, .. }) => {
+						debug!("New round attempt...");
+						round_id = id;
+						continue 'round;
+					},
 					//TODO(stevenroose) make this robust
 					other => panic!("Unexpected message: {:?}", other),
 				}
@@ -1220,6 +1225,11 @@ impl <P>Wallet<P> where
 						round_id = id;
 						continue 'round;
 					},
+					rpc::round_event::Event::Attempt(rpc::RoundAttempt { round_id: id, .. }) => {
+						debug!("New round attempt...");
+						round_id = id;
+						continue 'round;
+					},
 					//TODO(stevenroose) make this robust
 					other => panic!("Unexpected message: {:?}", other),
 				}
@@ -1291,6 +1301,11 @@ impl <P>Wallet<P> where
 				// If a new round started meanwhile, pick up on that one.
 				rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
 					warn!("Unexpected new round started...");
+					round_id = id;
+					continue 'round;
+				},
+				rpc::round_event::Event::Attempt(rpc::RoundAttempt { round_id: id, .. }) => {
+					debug!("New round attempt...");
 					round_id = id;
 					continue 'round;
 				},

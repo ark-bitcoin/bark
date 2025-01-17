@@ -132,6 +132,11 @@ message RoundStart {
 	uint64 offboard_feerate_sat_vkb = 2;
 }
 
+message RoundAttempt {
+	uint64 round_id = 1;
+	uint64 attempt = 2;
+}
+
 message ForfeitNonces {
 	bytes input_vtxo_id = 1;
 	repeated bytes pub_nonces = 2;
@@ -160,9 +165,10 @@ message RoundFinished {
 message RoundEvent {
 	oneof event {
 		RoundStart start = 1;
-		VtxoProposal vtxo_proposal = 2;
-		RoundProposal round_proposal = 3;
-		RoundFinished finished = 4;
+		RoundAttempt attempt = 2;
+		VtxoProposal vtxo_proposal = 3;
+		RoundProposal round_proposal = 4;
+		RoundFinished finished = 5;
 	};
 }
 

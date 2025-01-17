@@ -21,22 +21,26 @@ use crate::{txindex, App, SECP};
 #[derive(Debug, Clone)]
 pub enum RoundEvent {
 	Start {
-		id: u64,
+		round_id: u64,
 		offboard_feerate: FeeRate,
 	},
+	Attempt {
+		round_id: u64,
+		attempt: u64,
+	},
 	VtxoProposal {
-		id: u64,
+		round_id: u64,
 		unsigned_round_tx: Transaction,
 		vtxos_spec: VtxoTreeSpec,
 		cosign_agg_nonces: Vec<musig::MusigAggNonce>,
 	},
 	RoundProposal {
-		id: u64,
+		round_id: u64,
 		cosign_sigs: Vec<schnorr::Signature>,
 		forfeit_nonces: HashMap<VtxoId, Vec<musig::MusigPubNonce>>,
 	},
 	Finished {
-		id: u64,
+		round_id: u64,
 		signed_round_tx: txindex::Tx,
 	},
 }
@@ -372,7 +376,10 @@ pub async fn run_round_coordinator(
 		slog!(RoundStarted, round_id);
 
 		// Start new round, announce.
-		let _ = app.rounds().round_event_tx.send(RoundEvent::Start { id: round_id, offboard_feerate });
+		app.rounds().round_event_tx.send(RoundEvent::Start {
+			round_id,
+			offboard_feerate,
+		}).unwrap();
 
 		// Allocate this data once per round so that we can keep them
 		// Perhaps we could even keep allocations between all rounds, but time
@@ -385,6 +392,11 @@ pub async fn run_round_coordinator(
 				app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
 			}
 			sync_next_attempt = true;
+
+			app.rounds().round_event_tx.send(RoundEvent::Attempt {
+				round_id,
+				attempt: attempt_number as u64,
+			}).unwrap();
 
 			let attempt_start = Instant::now();
 			let mut state = CollectingPayments::new(round_id, attempt_number, max_output_vtxos, offboard_feerate);
@@ -554,7 +566,7 @@ pub async fn run_round_coordinator(
 			// Send out vtxo proposal to signers.
 			let send_vtxo_proposal_start = Instant::now();
 			let _ = app.rounds().round_event_tx.send(RoundEvent::VtxoProposal {
-				id: round_id,
+				round_id,
 				unsigned_round_tx: unsigned_round_tx.clone(),
 				vtxos_spec: vtxos_spec.clone(),
 				cosign_agg_nonces: cosign_agg_nonces.clone(),
@@ -672,7 +684,7 @@ pub async fn run_round_coordinator(
 			// Send out round proposal to signers.
 			let send_round_proposal_start = Instant::now();
 			let _ = app.rounds().round_event_tx.send(RoundEvent::RoundProposal {
-				id: round_id,
+				round_id,
 				cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 				forfeit_nonces: forfeit_pub_nonces.clone(),
 			});
@@ -791,7 +803,7 @@ pub async fn run_round_coordinator(
 			// Send out the finished round to users.
 			trace!("Sending out finish event.");
 			let _ = app.rounds().round_event_tx.send(RoundEvent::Finished {
-				id: round_id,
+				round_id,
 				signed_round_tx: signed_round_tx.clone(),
 			});
 
