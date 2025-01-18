@@ -60,7 +60,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 
 	let db = SqliteClient::open(datadir.join(DB_FILE))?;
 
-	match try_create_wallet(mnemonic, db, opts).await {
+	match try_create_wallet(&mnemonic, db, opts).await {
 		Ok(ok) => Ok(ok),
 		Err(err) => {
 			// Remove the datadir if it exists
@@ -75,7 +75,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	}
 }
 
-async fn try_create_wallet(mnemonic: Mnemonic, db: SqliteClient, opts: CreateOpts) -> anyhow::Result<()> {
+async fn try_create_wallet(mnemonic: &Mnemonic, db: SqliteClient, opts: CreateOpts) -> anyhow::Result<()> {
 	let net = if opts.regtest && !opts.signet && !opts.bitcoin{
 		bitcoin::Network::Regtest
 	} else if opts.signet && !opts.regtest && !opts.bitcoin{
@@ -95,7 +95,7 @@ async fn try_create_wallet(mnemonic: Mnemonic, db: SqliteClient, opts: CreateOpt
 
 	opts.config.merge_info(&mut config).context("invalid configuration")?;
 
-	Wallet::create(mnemonic, net, config, db).await.context("error creating wallet")?;
+	Wallet::create(&mnemonic, net, config, db).await.context("error creating wallet")?;
 
 	return Ok(())
 }
