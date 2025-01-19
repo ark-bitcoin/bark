@@ -12,7 +12,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use bitcoin::taproot::{ControlBlock, LeafVersion, TapNodeHash, TaprootBuilder};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use crate::{fee, musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
+use crate::{fee, musig, util, BlockHeight, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
 
 
@@ -37,11 +37,11 @@ impl VtxoTreeSpec {
 		vtxos: Vec<VtxoRequest>,
 		asp_pk: PublicKey,
 		asp_cosign_pk: PublicKey,
-		expiry_height: u32,
+		expiry_height: BlockHeight,
 		exit_delta: u16,
 	) -> VtxoTreeSpec {
 		assert_ne!(vtxos.len(), 0);
-		VtxoTreeSpec { vtxos, asp_pk, asp_cosign_pk, expiry_height, exit_delta }
+		VtxoTreeSpec { vtxos, asp_pk, asp_cosign_pk, expiry_height: expiry_height as u32, exit_delta }
 	}
 
 	pub fn encode(&self) -> Vec<u8> {

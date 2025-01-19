@@ -578,12 +578,12 @@ impl VtxoSweeper {
 /// Run a process that will periodically check for expired rounds and
 /// sweep them into our internal wallet.
 pub async fn run_vtxo_sweeper(
-	app: Arc<App>,
+	app: &Arc<App>,
 	mut sweep_trigger_rx: tokio::sync::mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
 	let mut shutdown = app.shutdown_channel.subscribe();
 
-	let mut state = VtxoSweeper::load(app).await.context("failed to load VtxoSweeper state")?;
+	let mut state = VtxoSweeper::load(app.clone()).await.context("failed to load VtxoSweeper state")?;
 
 	info!("Starting expired vtxo sweep loop");
 	loop {

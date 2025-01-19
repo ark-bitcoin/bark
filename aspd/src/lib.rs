@@ -19,8 +19,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -205,7 +205,8 @@ pub struct App {
 	db: database::Db,
 	shutdown_channel: broadcast::Sender<()>,
 	asp_key: Keypair,
-	wallet: Mutex<bdk_wallet::Wallet>,
+	// NB this needs to be an Arc so we can take a static guard
+	wallet: Arc<Mutex<bdk_wallet::Wallet>>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
 	chain_tip: Mutex<BlockRef>,
 	txindex: TxIndex,
@@ -330,7 +331,7 @@ impl App {
 		let (shutdown_channel, _) = broadcast::channel::<()>(1);
 
 		Ok(Arc::new(App {
-			wallet: Mutex::new(wallet),
+			wallet: Arc::new(Mutex::new(wallet)),
 			txindex: TxIndex::new(),
 			chain_tip: Mutex::new(fetch_tip(&bitcoind).context("failed to fetch tip")?),
 			rounds: None,
@@ -420,7 +421,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
-			let ret = round::run_round_coordinator(app, round_input_rx, round_trigger_rx)
+			let ret = round::run_round_coordinator(&app, round_input_rx, round_trigger_rx)
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", ret);
 			ret
@@ -428,7 +429,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
-			let ret = vtxo_sweeper::run_vtxo_sweeper(app, sweep_trigger_rx)
+			let ret = vtxo_sweeper::run_vtxo_sweeper(&app, sweep_trigger_rx)
 				.await.context("error from round sweeper");
 			info!("Round sweeper exited with {:?}", ret);
 			ret

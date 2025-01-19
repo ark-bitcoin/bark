@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bitcoin::{OutPoint, Txid};
 use bitcoin::secp256k1::PublicKey;
-use ark::VtxoId;
+use ark::{BlockHeight, VtxoId};
 
 // ****************************************************************************
 // * Round start
@@ -34,11 +34,25 @@ pub struct RoundPaymentRegistrationFailed {
 impl_slog!(RoundPaymentRegistrationFailed, Trace, "Participant failed to register a payment");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserVtxoDuplicateInput {
+	pub round_id: u64,
+	pub vtxo: VtxoId,
+}
+impl_slog!(RoundUserVtxoDuplicateInput, Trace, "user attempted to spend same input vtxo twice");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoAlreadyRegistered {
 	pub round_id: u64,
 	pub vtxo: VtxoId,
 }
 impl_slog!(RoundUserVtxoAlreadyRegistered, Trace, "user attempted to spend vtxo already registered in round");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserVtxoNotAllowed {
+	pub round_id: u64,
+	pub vtxo: VtxoId,
+}
+impl_slog!(RoundUserVtxoNotAllowed, Trace, "user attempted to spend vtxo not allowed in this round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoInFlux {
@@ -77,7 +91,6 @@ impl_slog!(FullRound, Warn, "Round is full, no longer adding payments");
 pub struct NoRoundPayments {
 	pub round_id: u64,
 	pub attempt_number: usize,
-	pub duration: Duration,
 	pub max_round_submit_time: Duration,
 }
 impl_slog!(NoRoundPayments, Info, "Nothing to do this round, sitting it out...");
@@ -101,8 +114,8 @@ impl_slog!(ReceivedRoundPayments, Info, "Finished collecting round payments");
 pub struct ConstructingRoundVtxoTree {
 	pub round_id: u64,
 	pub attempt_number: usize,
-	pub tip_block_height: u32,
-	pub vtxo_expiry_block_height: u32,
+	pub tip_block_height: BlockHeight,
+	pub vtxo_expiry_block_height: BlockHeight,
 }
 impl_slog!(ConstructingRoundVtxoTree, Debug, "Beginning VTXO tree construction and signing");
 
@@ -189,14 +202,6 @@ pub struct UnknownForfeitSignature {
 impl_slog!(UnknownForfeitSignature, Trace, "Participant provided a forfeit signature for an unknown input");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DroppingLateForfeitSignatureVtxo {
-	pub round_id: u64,
-	pub attempt_number: usize,
-	pub disallowed_vtxo: VtxoId,
-}
-impl_slog!(DroppingLateForfeitSignatureVtxo, Trace, "Dropping VTXO from the round because we didn't receive the participants signature in time");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForfeitRegistrationFailed {
 	pub round_id: u64,
 	pub attempt_number: usize,
@@ -255,7 +260,7 @@ pub struct RoundFinished {
 	pub round_id: u64,
 	pub attempt_number: usize,
 	pub txid: Txid,
-	pub vtxo_expiry_block_height: u32,
+	pub vtxo_expiry_block_height: BlockHeight,
 	pub duration: Duration,
 }
 impl_slog!(RoundFinished, Info, "Round finished");
