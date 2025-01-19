@@ -37,7 +37,7 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::{musig, BlockHeight, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
 
 use crate::round::{RoundEvent, RoundInput};
@@ -207,6 +207,7 @@ pub struct App {
 	asp_key: Keypair,
 	wallet: Mutex<bdk_wallet::Wallet>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
+	chain_tip: Mutex<BlockRef>,
 	txindex: TxIndex,
 
 	rounds: Option<RoundHandle>,
@@ -331,6 +332,7 @@ impl App {
 		Ok(Arc::new(App {
 			wallet: Mutex::new(wallet),
 			txindex: TxIndex::new(),
+			chain_tip: Mutex::new(fetch_tip(&bitcoind).context("failed to fetch tip")?),
 			rounds: None,
 			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
@@ -432,8 +434,27 @@ impl App {
 			ret
 		});
 
+		let app = self.clone();
+		let jh_tip_fetcher = tokio::spawn(async move {
+			loop {
+				tokio::time::sleep(Duration::from_secs(10)).await;
+				match fetch_tip(&app.bitcoind) {
+					Ok(t) => *app.chain_tip.lock().await = t,
+					Err(e) => {
+						warn!("Error getting chain tip from bitcoind: {}", e);
+					},
+				}
+			}
+		});
+
 		// The tasks that always run
-		let mut jhs = vec![jh_txindex, jh_rpc_public, jh_round_coord, jh_round_sweeper];
+		let mut jhs = vec![
+			jh_txindex,
+			jh_rpc_public,
+			jh_round_coord,
+			jh_round_sweeper,
+			jh_tip_fetcher,
+		];
 
 		// These tasks do only run if the config is provided
 		if self.config.admin_rpc_address.is_some() {
@@ -465,6 +486,10 @@ impl App {
 			.context("one of our background processes errored")?;
 
 		Ok(())
+	}
+
+	pub async fn chain_tip(&self) -> BlockRef {
+		self.chain_tip.lock().await.clone()
 	}
 
 	pub fn try_rounds(&self) -> anyhow::Result<&RoundHandle> {
@@ -820,4 +845,10 @@ mod test {
 		assert_eq!(5, flux.vtxos.len());
 		assert!(!flux.vtxos.contains(&vtxos[5]));
 	}
+}
+
+fn fetch_tip(bitcoind: &bdk_bitcoind_rpc::bitcoincore_rpc::Client) -> anyhow::Result<BlockRef> {
+	let height = bitcoind.get_block_count()?;
+	let hash = bitcoind.get_block_hash(height)?;
+	Ok(BlockRef { height, hash })
 }
