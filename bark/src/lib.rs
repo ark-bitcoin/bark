@@ -517,8 +517,9 @@ impl <P>Wallet<P> where
 		trace!("Broadcasting onboard tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
-		asp.client.register_onboard_vtxos(rpc::OnboardVtxosRequest {
-			onboard_vtxos: vec![vtxo.encode()],
+		asp.client.register_onboard_vtxo(rpc::OnboardVtxoRequest {
+			onboard_vtxo: vtxo.encode(),
+			onboard_tx: bitcoin::consensus::serialize(&tx),
 		}).await.context("error registering onboard with the asp")?;
 
 		info!("Onboard successful");

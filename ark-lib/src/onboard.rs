@@ -5,8 +5,9 @@
 //! * ASP does a deterministic sign and sends ASP part using [new_asp].
 //! * User also signs and combines sigs using [finish] and stores vtxo.
 
+use bitcoin::taproot::{ControlBlock, LeafVersion};
 use bitcoin::{
-	taproot, Amount, OutPoint, Sequence, ScriptBuf, Transaction, TxIn, TxOut, Weight,
+	taproot, Amount, OutPoint, ScriptBuf, Sequence, TapNodeHash, Transaction, TxIn, TxOut, Weight,
 	Witness,
 };
 use bitcoin::blockdata::locktime::absolute::LockTime;
@@ -18,9 +19,9 @@ use crate::{fee, musig, util, OnboardVtxo, Vtxo, VtxoSpec};
 
 
 /// The total signed tx weight of a reveal tx.
-const REVEAL_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
+pub const REVEAL_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
 
-fn onboard_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
+pub fn onboard_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
 	let expiry = util::timelock_sign(spec.expiry_height, spec.asp_pubkey.x_only_public_key().0);
 	let ret = taproot::TaprootBuilder::new()
 		.add_leaf(0, expiry).unwrap()
@@ -46,6 +47,23 @@ pub fn onboard_spk(spec: &VtxoSpec) -> ScriptBuf {
 /// The additional amount that needs to be sent into the onboard tx.
 pub fn onboard_surplus() -> Amount {
 	fee::DUST
+}
+
+/// The amount that should be sent into the onboard output.
+pub fn onboard_amount(spec: &VtxoSpec) -> Amount {
+	spec.amount + onboard_surplus()
+}
+
+
+/// The taproot scriptspend info for the expiry clause.
+pub fn expiry_scriptspend(
+	spec: &VtxoSpec,
+) -> (ControlBlock, ScriptBuf, LeafVersion, TapNodeHash) {
+	let taproot = onboard_taproot(spec);
+	let expiry_script = util::timelock_sign(spec.expiry_height, spec.asp_pubkey.x_only_public_key().0);
+	let cb = taproot.control_block(&(expiry_script.clone(), LeafVersion::TapScript))
+		.expect("expiry script should be in cosign taproot");
+	(cb, expiry_script, LeafVersion::TapScript, taproot.merkle_root().unwrap())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -161,7 +179,7 @@ pub fn reveal_tx_sighash(spec: &VtxoSpec, utxo: OutPoint) -> (TapSighash, Transa
 	let prev = TxOut {
 		script_pubkey: onboard_spk(&spec),
 		//TODO(stevenroose) consider storing both leaf and input values in vtxo struct
-		value: spec.amount + onboard_surplus(),
+		value: onboard_amount(spec),
 	};
 	let sighash = SighashCache::new(&reveal_tx).taproot_key_spend_signature_hash(
 		0, &sighash::Prevouts::All(&[&prev]), sighash::TapSighashType::Default,

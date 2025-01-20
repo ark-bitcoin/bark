@@ -30,8 +30,8 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().request_onboard_cosign(req).await?.into_inner())
 	}
 
-	async fn register_onboard_vtxos(&mut self, req: rpc::OnboardVtxosRequest) -> Result<rpc::Empty, tonic::Status> {
-		Ok(self.upstream().register_onboard_vtxos(req).await?.into_inner())
+	async fn register_onboard_vtxo(&mut self, req: rpc::OnboardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
+		Ok(self.upstream().register_onboard_vtxo(req).await?.into_inner())
 	}
 
 	async fn request_oor_cosign(&mut self, req: rpc::OorCosignRequest) -> Result<rpc::OorCosignResponse, tonic::Status> {
@@ -163,10 +163,10 @@ impl<T: AspdRpcProxy> rpc::ark_service_server::ArkService for AspdRpcProxyWrappe
 		Ok(tonic::Response::new(AspdRpcProxy::request_onboard_cosign(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn register_onboard_vtxos(
-		&self, req: tonic::Request<rpc::OnboardVtxosRequest>,
+	async fn register_onboard_vtxo(
+		&self, req: tonic::Request<rpc::OnboardVtxoRequest>,
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::register_onboard_vtxos(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(AspdRpcProxy::register_onboard_vtxo(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_oor_cosign(

@@ -16,7 +16,7 @@ use rocksdb::{
 	WriteBatchWithTransaction, WriteOptions,
 };
 
-use ark::{BlockHeight, VtxoId, Vtxo};
+use ark::{BlockHeight, OnboardVtxo, Vtxo, VtxoId};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 
 use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
@@ -306,6 +306,12 @@ impl Db {
 				Err(e) => bail!("failed to commit db tx: {}", e),
 			}
 		}
+
+		let mut opts = FlushOptions::default();
+		opts.set_wait(true); //TODO(stevenroose) is this needed?
+		self.db.flush_cfs_opt(
+			&[&self.cf_round(), &self.cf_round_expiry()], &opts,
+		).context("error flushing db")?;
 		Ok(())
 	}
 
@@ -369,7 +375,7 @@ impl Db {
 	/// Atomically insert the given onboard vtxos.
 	///
 	/// Errors if any one vtxo is not an onboard vtxo.
-	pub fn insert_onboard_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	pub fn insert_onboard_vtxos(&self, vtxos: &[&OnboardVtxo]) -> anyhow::Result<()> {
 		let mut opts = WriteOptions::default();
 		opts.set_sync(true);
 		let mut oopts = OptimisticTransactionOptions::new();
@@ -383,10 +389,6 @@ impl Db {
 
 			for vtxo in vtxos {
 				let id = vtxo.id();
-				let onboard = match vtxo {
-					Vtxo::Onboard(ref v) => v,
-					_ => bail!("vtxo {} is not an onboard vtxo", id),
-				};
 
 				if tx.get_cf(&cf, &id)?.is_some() {
 					trace!("db: vtxo {} already registered", id);
@@ -394,13 +396,13 @@ impl Db {
 				}
 
 				let state = VtxoState {
-					vtxo: vtxo.clone(),
+					vtxo: (*vtxo).clone().into(),
 					oor_spent: None,
 					forfeit_sigs: None,
 				};
-				tx.put_cf(&cf, vtxo.id(), state.encode())?;
+				tx.put_cf(&cf, id, state.encode())?;
 
-				let expiry = onboard.spec.expiry_height;
+				let expiry = vtxo.spec.expiry_height;
 				let key = VtxoExpiryKey::new(expiry, id);
 				tx.put_cf(&cf_expiry, key.encode(), &[])?;
 			}
@@ -415,32 +417,73 @@ impl Db {
 
 		let mut opts = FlushOptions::default();
 		opts.set_wait(true); //TODO(stevenroose) is this needed?
-		self.db.flush_cf_opt(&cf, &opts).context("error flushing db")?;
+		self.db.flush_cfs_opt(&[&cf, &cf_expiry], &opts).context("error flushing db")?;
 		Ok(())
 	}
 
 	/// Get all onboard vtxos that expired before or on `height`.
-	pub fn get_expired_onboards(&self, height: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
-		let mut ret = Vec::new();
-
+	pub fn get_expired_onboards(
+		&self,
+		height: BlockHeight,
+	) -> impl Iterator<Item = anyhow::Result<OnboardVtxo>> + '_ {
 		let cf_vtxos = self.cf_vtxos();
 		let mut iter = self.db.iterator_cf(&self.cf_onboard_expiry(), IteratorMode::Start);
-		while let Some(res) = iter.next() {
-			let (key, _) = res.context("db onboard vtxo expiry iter error")?;
-			let expkey = VtxoExpiryKey::decode(&key);
-			if expkey.expiry as BlockHeight > height {
-				break;
-			}
+		iter::from_fn(move || {
+			if let Some(res) = iter.next() {
+				let (key, _) = match res.context("db onboard vtxo expiry iter error") {
+					Ok(k) => k,
+					Err(e) => return Some(Err(e)),
+				};
+				let expkey = VtxoExpiryKey::decode(&key);
+				if expkey.expiry as BlockHeight > height {
+					return None;
+				}
 
-			let vtxo_state = {
-				let bytes = self.db.get_cf(&cf_vtxos, expkey.id)?
-					.expect("corrupt db: missing vtxo");
-				VtxoState::decode(&bytes).expect("corrupt db: invalid vtxo state")
-			};
-			ret.push(vtxo_state.vtxo);
+				let vtxo_state = {
+					let bytes = match self.db.get_cf(&cf_vtxos, expkey.id) {
+						Ok(b) => b.expect("corrupt db: missing vtxo"),
+						Err(e) => return Some(Err(e.into())),
+					};
+					VtxoState::decode(&bytes).expect("corrupt db: invalid vtxo state")
+				};
+				Some(Ok(vtxo_state.vtxo.into_onboard()
+					.expect("corrupt db: non-onboard vtxo in onboard expiry index")))
+			} else {
+				None
+			}
+		}).fuse()
+	}
+
+	pub fn remove_onboard(&self, vtxo: &OnboardVtxo) -> anyhow::Result<()> {
+		let id = vtxo.id();
+		let expiry = vtxo.spec.expiry_height;
+		let key = VtxoExpiryKey::new(expiry, id);
+
+		let mut opts = WriteOptions::default();
+		opts.set_sync(true);
+		let mut oopts = OptimisticTransactionOptions::new();
+		oopts.set_snapshot(false);
+
+		loop {
+			let tx = self.db.transaction_opt(&opts, &oopts);
+
+			self.db.delete_cf(&self.cf_vtxos(), id)?;
+			self.db.delete_cf(&self.cf_onboard_expiry(), key.encode())?;
+
+			match tx.commit() {
+				Ok(()) => break,
+				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
+				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
+				Err(e) => bail!("failed to commit db tx: {}", e),
+			}
 		}
 
-		Ok(ret)
+		let mut opts = FlushOptions::default();
+		opts.set_wait(true); //TODO(stevenroose) is this needed?
+		self.db.flush_cfs_opt(
+			&[&self.cf_vtxos(), &self.cf_onboard_expiry()], &opts,
+		).context("error flushing db")?;
+		Ok(())
 	}
 
 	/// Check whether the vtxos were already spent, and fetch them if not.

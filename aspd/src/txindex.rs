@@ -123,7 +123,7 @@ impl IndexedTx {
 			if let Some(s) = *self.status.lock().await {
 				return s;
 			}
-			trace!("waiting for tx status...");
+			trace!("waiting for tx status of {}...", self.txid);
 			tokio::time::sleep(Duration::from_millis(100)).await;
 		}
 	}

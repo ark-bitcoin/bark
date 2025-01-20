@@ -7,6 +7,7 @@ use std::future::Future;
 
 use bitcoin::{Amount, ScriptBuf, Txid};
 use bitcoin::hashes::Hash;
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 use opentelemetry::{global, KeyValue};
@@ -248,19 +249,25 @@ impl rpc::server::ArkService for App {
 		Ok(tonic::Response::new(response))
 	}
 
-	async fn register_onboard_vtxos(
+	async fn register_onboard_vtxo(
 		&self,
-		req: tonic::Request<rpc::OnboardVtxosRequest>,
+		req: tonic::Request<rpc::OnboardVtxoRequest>,
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REGISTER_ONBOARD_VTXOS);
 
-		add_tracing_attributes(vec![KeyValue::new("onboard_vtxos", format!("{:?}", req.get_ref().onboard_vtxos.len()))]);
+		add_tracing_attributes(vec![
+			KeyValue::new("onboard_vtxo", format!("{:?}", req.get_ref().onboard_vtxo.as_hex())),
+			KeyValue::new("onboard_txid", format!("{:?}", req.get_ref().onboard_tx.as_hex())),
+		]);
 
-		let vtxos = req.get_ref().onboard_vtxos.iter()
-			.map(|v| Vtxo::decode(&v))
-			.collect::<Result<Vec<_>, _>>()
-			.map_err(|e| badarg!("invalid vtxo: {}", e))?;
-		self.register_onboards(&vtxos).to_status()?;
+		let req = req.into_inner();
+		let vtxo = Vtxo::decode(&req.onboard_vtxo)
+			.map_err(|e| badarg!("invalid vtxo: {}", e))?
+			.into_onboard()
+			.ok_or_else(|| badarg!("vtxo not an onboard vtxo"))?;
+		let onboard_tx = bitcoin::consensus::deserialize(&req.onboard_tx)
+			.map_err(|e| badarg!("invalid onboard tx: {}", e))?;
+		self.register_onboard(vtxo, onboard_tx).await.to_status()?;
 
 		Ok(tonic::Response::new(rpc::Empty {}))
 	}

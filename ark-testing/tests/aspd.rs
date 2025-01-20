@@ -318,7 +318,7 @@ async fn spend_unregistered_onboard() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn register_onboard_vtxos(&mut self, _req: rpc::OnboardVtxosRequest) -> Result<rpc::Empty, tonic::Status> {
+		async fn register_onboard_vtxo(&mut self, _req: rpc::OnboardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
 			// drop the request
 			Ok(rpc::Empty{})
 		}
