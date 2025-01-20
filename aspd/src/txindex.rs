@@ -235,6 +235,14 @@ impl TxIndex {
 		}
 	}
 
+	/// Unregister a transaction
+	pub async fn unregister(&self, tx: impl TxOrTxid) {
+		let mut state = self.tx_map.write().await;
+		if let Some(tx) = state.remove(&tx.txid()) {
+			*tx.status.lock().await = Some(TxStatus::Unregistered);
+		}
+	}
+
 	/// Unregister a batch of transactions at once.
 	pub async fn unregister_batch(&self, txs: impl IntoIterator<Item = impl TxOrTxid>) {
 		let mut state = self.tx_map.write().await;

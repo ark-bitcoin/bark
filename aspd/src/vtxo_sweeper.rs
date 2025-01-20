@@ -36,7 +36,7 @@
 //!
 
 use std::cmp;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -547,16 +547,18 @@ impl<'a> SweepBuilder<'a> {
 
 struct VtxoSweeper {
 	app: Arc<App>,
+	pending_txs: HashMap<Txid, txindex::Tx>,
 	/// Pending txs indexed by the inputs they spend.
-	pending_tx_by_utxo: HashMap<OutPoint, Vec<txindex::Tx>>,
+	pending_tx_by_utxo: HashMap<OutPoint, Vec<Txid>>,
 }
 
 impl VtxoSweeper {
 	/// Store the tx in our local caches.
 	fn store_pending(&mut self, tx: txindex::Tx) {
 		for inp in &tx.tx.input {
-			self.pending_tx_by_utxo.entry(inp.previous_output).or_insert(Vec::new()).push(tx.clone());
+			self.pending_tx_by_utxo.entry(inp.previous_output).or_insert(Vec::new()).push(tx.txid);
 		}
+		self.pending_txs.insert(tx.txid, tx);
 	}
 
 	/// Load the [VtxoSweeper] by loading all pending txs from the database.
@@ -565,6 +567,7 @@ impl VtxoSweeper {
 		// Register all pending in the txindex.
 		let mut ret = VtxoSweeper {
 			app,
+			pending_txs: HashMap::with_capacity(raw_pending.len()),
 			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
 		};
 
@@ -587,7 +590,8 @@ impl VtxoSweeper {
 
 	async fn is_swept(&self, point: OutPoint) -> Option<BlockHeight> {
 		if let Some(txs) = self.pending_tx_by_utxo.get(&point) {
-			for tx in txs {
+			for txid in txs {
+				let tx = self.pending_txs.get(txid).expect("broken: utxo but no tx");
 				if let Some(h) = tx.status().await.confirmed_in() {
 					return Some(h);
 				}
@@ -611,9 +615,10 @@ impl VtxoSweeper {
 
 	/// Clean up all artifacts after a round has been swept.
 	async fn round_finished(&mut self, round: &ExpiredRound) {
-		if let Err(e) = self.app.db.remove_round(round.txid) {
-			error!("Failed to remove round from db after successful sweeping: {}", e);
-		}
+		// round tx root
+		self.pending_tx_by_utxo.remove(&OutPoint::new(round.txid, 0));
+		self.pending_tx_by_utxo.remove(&OutPoint::new(round.txid, 1));
+		self.app.txindex.unregister(round.txid).await;
 
 		// vtxo tree txs
 		let vtxo_txs = round.round.signed_tree.all_signed_txs();
@@ -637,9 +642,9 @@ impl VtxoSweeper {
 		trace!("Removing connector txs from txindex...");
 		self.app.txindex.unregister_batch(round.connectors.iter_unsigned_txs()).await;
 
-		debug!("round_finished returns");
-
-		//TODO(stevenroose) when do we clear pending txs from the db?
+		if let Err(e) = self.app.db.remove_round(round.txid) {
+			error!("Failed to remove round from db after successful sweeping: {}", e);
+		}
 	}
 
 	async fn perform_sweep(&mut self) -> anyhow::Result<()> {
@@ -702,6 +707,39 @@ impl VtxoSweeper {
 
 		Ok(())
 	}
+
+	async fn clear_confirmed_sweeps(&mut self) -> anyhow::Result<()> {
+		let tip = self.app.bitcoind.get_block_count()?;
+		let mut to_remove = HashSet::new();
+		for (txid, tx) in &self.pending_txs {
+			if tx.tx.input.iter().any(|i| self.pending_tx_by_utxo.contains_key(&i.previous_output)) {
+				trace!("tx {} still has pending sweep utxos", txid);
+				continue;
+			}
+
+			if let Some(h) = tx.status().await.confirmed_in() {
+				if tip - h >= 2 * DEEPLY_CONFIRMED {
+					slog!(SweepTxFullyConfirmed, txid: *txid);
+				} else {
+					slog!(SweepTxAbandoned, txid: *txid,
+						tx: bitcoin::consensus::encode::serialize_hex(&tx.tx),
+					);
+				}
+			} else {
+				slog!(SweepTxAbandoned, txid: *txid,
+					tx: bitcoin::consensus::encode::serialize_hex(&tx.tx),
+				);
+			}
+
+			self.app.db.drop_pending_sweep(txid)?;
+			self.app.txindex.unregister(txid).await;
+			to_remove.insert(*txid);
+		}
+		for txid in to_remove {
+			self.pending_txs.remove(&txid);
+		}
+		Ok(())
+	}
 }
 
 /// Run a process that will periodically check for expired rounds and
@@ -720,9 +758,7 @@ pub async fn run_vtxo_sweeper(
 			// Periodic interval for sweeping
 			() = tokio::time::sleep(state.app.config.round_sweep_interval) => {},
 			// Trigger received via channel
-			Some(()) = sweep_trigger_rx.recv() => {
-				slog!(ReceivedSweepTrigger);
-			},
+			Some(()) = sweep_trigger_rx.recv() => slog!(ReceivedSweepTrigger),
 			_ = shutdown.recv() => {
 				info!("Shutdown signal received. Exiting sweep loop...");
 				break;
@@ -732,7 +768,10 @@ pub async fn run_vtxo_sweeper(
 		//TODO(stevenroose) do this better
 		// state.prune_confirmed().await;
 		if let Err(e) = state.perform_sweep().await {
-			error!("Error during round processing: {}", e);
+			warn!("Error during round processing: {}", e);
+		}
+		if let Err(e) = state.clear_confirmed_sweeps().await {
+			warn!("Error occured in vtxo sweeper clear_confirmed_sweeps: {}", e);
 		}
 	}
 

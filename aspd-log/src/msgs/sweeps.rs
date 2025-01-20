@@ -60,3 +60,18 @@ pub struct ReceivedSweepTrigger {}
 impl_slog!(ReceivedSweepTrigger, Info, "Received a trigger to sweep over RPC");
 
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepTxFullyConfirmed {
+	pub txid: Txid,
+}
+impl_slog!(SweepTxFullyConfirmed, Info, "a sweep tx is deeply confirmed");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepTxAbandoned {
+	pub txid: Txid,
+	pub tx: String,
+}
+impl_slog!(SweepTxAbandoned, Warn, "a sweep tx is no longer needed, but unconfirmed");
+
+
