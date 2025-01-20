@@ -49,7 +49,7 @@ use bitcoin::{
 	Transaction, TxOut, Txid, Weight, Witness,
 };
 
-use ark::BlockHeight;
+use ark::{BlockHeight, OnboardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::util::KeypairExt;
 
@@ -58,6 +58,51 @@ use crate::database::StoredRound;
 use crate::psbtext::{PsbtInputExt, SweepMeta};
 use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
 
+
+struct OnboardSweepInput {
+	point: OutPoint,
+	vtxo_spec: VtxoSpec,
+}
+
+impl OnboardSweepInput {
+	fn amount(&self) -> Amount {
+		ark::onboard::onboard_amount(&self.vtxo_spec)
+	}
+
+	fn weight(&self) -> Weight {
+		ark::onboard::REVEAL_TX_WEIGHT
+	}
+
+	/// Calculate the surplus that can be gained from sweeping this input.
+	///
+	/// This is calculated as the inputs value subtracted with the cost
+	/// of spending it with the given fee rate.
+	///
+	/// If negative, returns [None].
+	fn surplus(&self, feerate: FeeRate) -> Option<Amount> {
+		self.amount().checked_sub(feerate * self.weight())
+	}
+
+	fn psbt(&self) -> psbt::Input {
+		let (spend_cb, spend_script, spend_lv, spend_merkle)
+			= ark::onboard::expiry_scriptspend(&self.vtxo_spec);
+		let utxo = TxOut {
+			script_pubkey: ark::onboard::onboard_spk(&self.vtxo_spec),
+			value: ark::onboard::onboard_amount(&self.vtxo_spec),
+		};
+		let mut ret = psbt::Input{
+			witness_utxo: Some(utxo),
+			sighash_type: Some(sighash::TapSighashType::Default.into()),
+			tap_internal_key: Some(self.vtxo_spec.combined_pubkey()),
+			tap_scripts: [(spend_cb, (spend_script, spend_lv))].into_iter().collect(),
+			tap_merkle_root: Some(spend_merkle),
+			non_witness_utxo: None,
+			..Default::default()
+		};
+		ret.set_sweep_meta(SweepMeta::Onboard);
+		ret
+	}
+}
 
 struct RoundSweepInput<'a> {
 	point: OutPoint,
@@ -129,6 +174,7 @@ impl ExpiredRound {
 struct SweepBuilder<'a> {
 	sweeper: &'a mut VtxoSweeper,
 	sweeps: Vec<RoundSweepInput<'a>>,
+	onboard_sweeps: Vec<OnboardSweepInput>,
 	feerate: FeeRate,
 }
 
@@ -136,12 +182,21 @@ impl<'a> SweepBuilder<'a> {
 	fn new(sweeper: &'a mut VtxoSweeper, feerate: FeeRate) -> Self {
 		Self {
 			sweeps: Vec::new(),
+			onboard_sweeps: Vec::new(),
 			sweeper, feerate,
 		}
 	}
 
 	fn total_surplus(&self) -> Amount {
-		self.sweeps.iter().map(|s| s.surplus(self.feerate).unwrap_or(Amount::ZERO)).sum()
+		self.onboard_sweeps.iter().map(|s| s.surplus(self.feerate).unwrap_or(Amount::ZERO))
+			.chain(self.sweeps.iter().map(|s| s.surplus(self.feerate).unwrap_or(Amount::ZERO)))
+			.sum()
+	}
+
+	/// Add sweep for the given onboard output.
+	fn add_onboard_output(&mut self, point: OutPoint, vtxo_spec: VtxoSpec) {
+		trace!("Adding onboard sweep input {}", point);
+		self.onboard_sweeps.push(OnboardSweepInput { point, vtxo_spec });
 	}
 
 	/// Add sweep for the given vtxo tree output.
@@ -181,7 +236,15 @@ impl<'a> SweepBuilder<'a> {
 	fn purge_sweeps(&mut self, point: &OutPoint) {
 		self.sweeps.retain(|s| {
 			if s.point != *point {
-				trace!("purging sweep for {} because successor tx confirmed", point);
+				trace!("purging vtxo sweep for {} because successor tx confirmed", point);
+				false
+			} else {
+				true
+			}
+		});
+		self.onboard_sweeps.retain(|s| {
+			if s.point != *point {
+				trace!("purging onboard sweep for {} because successor tx confirmed", point);
 				false
 			} else {
 				true
@@ -198,7 +261,39 @@ impl<'a> SweepBuilder<'a> {
 			} else {
 				true
 			}
-		})
+		});
+		self.onboard_sweeps.retain(|s| {
+			if s.surplus(self.feerate).is_none() {
+				slog!(UneconomicalSweepInput, outpoint: s.point, value: s.amount());
+				false
+			} else {
+				true
+			}
+		});
+	}
+
+	async fn process_onboard(&mut self, onboard: &OnboardVtxo, done_height: BlockHeight) {
+		let id = onboard.id();
+		let reveal_tx = onboard.reveal_tx();
+		let reveal_txid = reveal_tx.compute_txid();
+		let reveal_tx = self.sweeper.app.txindex.get(&reveal_txid).await
+			.expect("txindex should contain all onboard reveal txs");
+
+		if !reveal_tx.confirmed().await {
+			if let Some(h) = self.sweeper.is_swept(onboard.onchain_output).await {
+				trace!("Onboard {id} is already swept by us at height {h}");
+				if h <= done_height {
+					slog!(OnboardFullySwept, onboard_utxo: onboard.onchain_output);
+					self.sweeper.clear_onboard(onboard).await;
+				}
+			} else {
+				trace!("Sweeping onboard vtxo {id}");
+				self.add_onboard_output(onboard.onchain_output, onboard.spec.clone());
+			}
+		} else {
+			trace!("User has broadcast reveal tx {} of onboard vtxo {id}", reveal_txid);
+			self.sweeper.clear_onboard(onboard).await;
+		}
 	}
 
 	/// Sweep the leftovers of the vtxo tree of the given round.
@@ -377,6 +472,14 @@ impl<'a> SweepBuilder<'a> {
 				Sequence::ZERO,
 			).expect("bdk rejected foreign utxo");
 		}
+		for sweep in &self.onboard_sweeps {
+			txb.add_foreign_utxo_with_sequence(
+				sweep.point,
+				sweep.psbt(),
+				sweep.weight(),
+				Sequence::ZERO,
+			).expect("bdk rejected foreign utxo");
+		}
 
 		txb.drain_to(drain_addr.script_pubkey());
 		txb.fee_rate(self.feerate);
@@ -394,7 +497,8 @@ impl<'a> SweepBuilder<'a> {
 		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
 			if let Some(meta) = input.get_sweep_meta().context("corrupt psbt")? {
 				match meta {
-					SweepMeta::Vtxo => {
+					// onboard and vtxo happen to be exactly the same signing logic
+					SweepMeta::Vtxo | SweepMeta::Onboard => {
 						let (control, (script, lv)) = input.tap_scripts.iter().next()
 							.context("corrupt psbt: missing tap_scripts")?;
 						let leaf_hash = taproot::TapLeafHash::from_script(script, *lv);
@@ -492,6 +596,19 @@ impl VtxoSweeper {
 		None
 	}
 
+	/// Clear the onboard data from our database because we either swept it, or the user
+	/// has broadcast the reveal tx, doing a unilateral exit.
+	async fn clear_onboard(&mut self, onboard: &OnboardVtxo) {
+		if let Err(e) = self.app.db.remove_onboard(onboard) {
+			error!("Failed to remove onboard vtxo {} from database: {}", onboard.id(), e);
+		}
+
+		let reveal = onboard.reveal_tx().compute_txid();
+		self.app.txindex.unregister_batch(&[&onboard.onchain_output.txid, &reveal]).await;
+
+		self.pending_tx_by_utxo.remove(&onboard.onchain_output);
+	}
+
 	/// Clean up all artifacts after a round has been swept.
 	async fn round_finished(&mut self, round: &ExpiredRound) {
 		if let Err(e) = self.app.db.remove_round(round.txid) {
@@ -528,11 +645,16 @@ impl VtxoSweeper {
 	async fn perform_sweep(&mut self) -> anyhow::Result<()> {
 		let sweep_threshold = self.app.config.sweep_threshold;
 		let tip = self.app.bitcoind.get_block_count()? as BlockHeight;
+
 		let expired_rounds = self.app.db.get_expired_rounds(tip)?.into_iter().map(|txid| {
 			let round = self.app.db.get_round(txid)?.expect("db has round");
 			Ok(ExpiredRound::new(txid, round))
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 		trace!("{} expired rounds fetched", expired_rounds.len());
+
+		let expired_onboards = self.app.db.get_expired_onboards(tip)
+			.collect::<anyhow::Result<Vec<_>>>()?;
+		trace!("{} expired onboards fetched", expired_onboards.len());
 
 		let feerate = self.app.config.sweep_tx_fallback_feerate;
 		let mut builder = SweepBuilder::new(self, feerate);
@@ -543,6 +665,11 @@ impl VtxoSweeper {
 			builder.process_round(round, done_height).await;
 			builder.purge_uneconomical();
 			//TODO(stevenroose) check if we exceeded some builder limits
+		}
+		for onboard in &expired_onboards {
+			trace!("Processing onboard {}", onboard.id());
+			builder.process_onboard(&onboard, done_height).await;
+			builder.purge_uneconomical();
 		}
 
 		// We processed all rounds, check if it's worth to sweep at all.
@@ -556,6 +683,11 @@ impl VtxoSweeper {
 		let sweep_points = builder.sweeps.iter().map(|s| s.point).collect();
 		slog!(SweepingVtxos, total_surplus: surplus, inputs: sweep_points);
 		for s in &builder.sweeps {
+			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
+				surplus: s.surplus(feerate).unwrap(),
+			);
+		}
+		for s in &builder.onboard_sweeps {
 			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
 				surplus: s.surplus(feerate).unwrap(),
 			);

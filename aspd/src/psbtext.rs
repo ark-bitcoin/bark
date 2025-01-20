@@ -8,6 +8,7 @@ use bitcoin::psbt;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum SweepMeta {
+	Onboard,
 	Connector,
 	Vtxo,
 }
