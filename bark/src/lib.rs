@@ -184,7 +184,7 @@ impl <P>Wallet<P> where
 	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
 {
 	/// Create new wallet.
-	pub async fn create(mnemonic: Mnemonic, network: Network, config: Config, db: P) -> anyhow::Result<Wallet<P>> {
+	pub async fn create(mnemonic: &Mnemonic, network: Network, config: Config, db: P) -> anyhow::Result<Wallet<P>> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
 			trace!("Existing config: {:?}", existing);
