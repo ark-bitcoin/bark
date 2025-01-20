@@ -82,6 +82,8 @@ pub struct Config {
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
+	/// Number of confirmations needed for onboard vtxos to be spend in rounds.
+	pub round_onboard_confirmations: usize,
 	//TODO(stevenroose) get these from a fee estimator service
 	/// Fee rate used for the round tx.
 	pub round_tx_feerate: FeeRate,
@@ -123,6 +125,7 @@ impl Default for Config {
 			round_submit_time: Duration::from_secs(2),
 			round_sign_time: Duration::from_secs(2),
 			nb_round_nonces: 10,
+			round_onboard_confirmations: 12,
 			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			round_sweep_interval: Duration::from_secs(1 * 60 * 60), // 1 hr

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RawTx;
+use bdk_bitcoind_rpc::bitcoincore_rpc::{RawTx, RpcApi};
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
@@ -220,6 +220,37 @@ impl CollectingPayments {
 		Ok(())
 	}
 
+	fn validate_onboard_inputs(
+		&self,
+		app: &App,
+		inputs: &[Vtxo],
+	) -> anyhow::Result<()> {
+		// TODO(stevenroose) cache this check
+		for onboard in inputs.iter().filter_map(|v| v.as_onboard()) {
+			let id = onboard.id();
+			let txid = onboard.onchain_output.txid;
+			match app.bitcoind.get_raw_transaction_info(&txid, None) {
+				Ok(tx) => {
+					let confs = tx.confirmations.unwrap_or(0) as usize;
+					if confs < app.config.round_onboard_confirmations {
+						slog!(RoundUserVtxoUnconfirmedOnboard, round_id: self.round_id,
+							vtxo: id, confirmations: confs,
+						);
+						bail!("input onboard vtxo not deeply confirmed (has {confs} confs, \
+							but requires {})", app.config.round_onboard_confirmations,
+						);
+					}
+				},
+				Err(e) => {
+					// might mean tx is not in mempool nor chain
+					bail!("error getting raw tx for onboard vtxo: {e}");
+				},
+			}
+		}
+
+		Ok(())
+	}
+
 	async fn process_payment(
 		&mut self,
 		app: &App,
@@ -247,6 +278,14 @@ impl CollectingPayments {
 		};
 
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
+			slog!(RoundPaymentRegistrationFailed, round_id: self.round_id,
+				attempt: self.attempt, error: e.to_string(),
+			);
+			app.release_vtxos_in_flux(&inputs).await;
+			bail!("registration failed: {e}");
+		}
+
+		if let Err(e) = self.validate_onboard_inputs(app, &input_vtxos) {
 			slog!(RoundPaymentRegistrationFailed, round_id: self.round_id,
 				attempt: self.attempt, error: e.to_string(),
 			);
@@ -804,7 +843,7 @@ impl SigningForfeits {
 		app.release_vtxos_in_flux(self.locked_inputs).await;
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_RUN_ROUND_COORDINATOR);
-		
+
 		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_PERSIST);
 		span.set_attribute(KeyValue::new("signed-vtxo-count", self.signed_vtxos.all_signed_txs().len().to_string()));
 		span.set_attribute(KeyValue::new("connectors-count", self.connectors.iter_signed_txs(&app.asp_key).len().to_string()));
@@ -987,7 +1026,7 @@ pub async fn run_round_coordinator(
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
-			
+
 			tokio::pin! { let timeout = tokio::time::sleep(app.config.round_submit_time); }
 			'receive: loop {
 				tokio::select! {
@@ -1014,11 +1053,11 @@ pub async fn run_round_coordinator(
 			}
 			if !round_state.collecting_payments().have_payments() {
 				tracer_provider.start(telemetry::TRACE_RUN_ROUND_EMPTY);
-				
+
 				slog!(NoRoundPayments, round_id, attempt,
 					max_round_submit_time: app.config.round_submit_time,
 				);
-				
+
 				continue 'round;
 			}
 			let receive_payment_duration = Instant::now().duration_since(receive_payments_start);
@@ -1042,7 +1081,7 @@ pub async fn run_round_coordinator(
 			// *   meaning from the root tx down to the leaves.
 			// ****************************************************************
 			let send_vtxo_proposal_start = Instant::now();
-			
+
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
@@ -1055,13 +1094,13 @@ pub async fn run_round_coordinator(
 			);
 
 			let vtxo_signatures_receive_start = Instant::now();
-			
+
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVE_VTXO_SIGNATURES);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
-			
+
 			tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
-			
+
 			'receive: loop {
 				if round_state.proceed() {
 					break 'receive;
@@ -1101,7 +1140,7 @@ pub async fn run_round_coordinator(
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
-			
+
 			round_state = round_state.progress(&app).await;
 
 			// Wait for signatures from users.
@@ -1109,15 +1148,15 @@ pub async fn run_round_coordinator(
 				max_round_sign_time: app.config.round_sign_time,
 				duration_since_sending: Instant::now().duration_since(send_round_proposal_start),
 			);
-			
+
 			let receive_forfeit_signatures_start = Instant::now();
-			
+
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
-			
+
 			tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
-			
+
 			'receive: loop {
 				tokio::select! {
 					_ = &mut timeout => {
@@ -1164,16 +1203,16 @@ pub async fn run_round_coordinator(
 				},
 				_ => unreachable!(),
 			}
-			
+
 			// ****************************************************************
 			// * Finish the round
 			// ****************************************************************
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_FINALIZING);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
-			
+
 			round_state.into_signing_forfeits().finish(&app).await.context("error finishing round")?;
-			
+
 			break 'attempt;
 		}
 	}
