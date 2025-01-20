@@ -638,6 +638,11 @@ impl <P>Wallet<P> where
 		&mut self,
 		vtxos: Vec<Vtxo>
 	) -> anyhow::Result<()> {
+		if vtxos.is_empty() {
+			warn!("There is no VTXO to refresh!");
+			return Ok(())
+		}
+
 		// Todo: Implement key-derivation
 		let total_amount: bitcoin::Amount = vtxos.iter().map(|v| v.amount()).sum();
 		let vtxo_key = self.vtxo_seed.to_keypair(&SECP);
