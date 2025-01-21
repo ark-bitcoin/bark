@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::{Vtxo, VtxoId};
+use bark::vtxo_selection::WithCounterpartyRisk;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
@@ -176,6 +177,10 @@ enum Command {
 		/// Force refresh all VTXOs regardless of expiry height
 		#[arg(long)]
 		all: bool,
+		/// Force refresh all VTXOs that have some counterparty risk,
+		/// regardless of expiry height
+		#[arg(long)]
+		counterparty: bool,
 	},
 
 	/// Onboard from the onchain wallet into the Ark
@@ -484,21 +489,30 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 		},
-		Command::Refresh { vtxos: vtxo, threshold_blocks, threshold_hours, all } => {
+		Command::Refresh { vtxos: vtxo, threshold_blocks, threshold_hours, counterparty, all } => {
 			w.sync_ark().await.context("sync error")?;
-			let vtxos = match (threshold_blocks, threshold_hours, all, vtxo) {
-				(None, None, false, None) => w.get_expiring_vtxos(w.config().vtxo_refresh_threshold).await?,
-				(Some(b), None, false, None) => w.get_expiring_vtxos(b).await?,
-				(None, Some(h), false, None) => w.get_expiring_vtxos(h*6).await?,
-				(None, None, true, None) => w.vtxos()?,
-				(None, None, false, Some(vs)) => {
-					let vtxo_ids = vs.iter().map(|s| VtxoId::from_str(s))
-						.collect::<Result<Vec<VtxoId>, _>>()
+			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxo) {
+				(None, None, false, false, None) => w.get_expiring_vtxos(w.config().vtxo_refresh_threshold).await?,
+				(Some(b), None, false, false, None) => w.get_expiring_vtxos(b).await?,
+				(None, Some(h), false, false, None) => w.get_expiring_vtxos(h*6).await?,
+				(None, None, true, false, None) => {
+					let selector = WithCounterpartyRisk { wallet: &w };
+					w.vtxos_with(selector)?
+				},
+				(None, None, false, true, None) => w.vtxos()?,
+				(None, None, false, false, Some(vs)) => {
+					let vtxos = vs.iter().map(|s| {
+						let id = VtxoId::from_str(s)?;
+						w.get_vtxo_by_id(id)
+					})
+						.collect::<Result<Vec<Vtxo>, _>>()
 						.with_context(|| "Invalid vtxo_id")?;
-					vtxo_ids.iter().map(|v| w.get_vtxo_by_id(*v)).collect::<Result<Vec<Vtxo>, _>>()?
+
+					vtxos
 				}
-				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours or all"),
+				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
 			};
+
 			w.refresh_vtxos(vtxos).await?;
 		},
 		Command::Onboard { amount, all } => {
