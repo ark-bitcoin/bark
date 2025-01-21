@@ -14,7 +14,7 @@ pub (crate) fn set_properties(
 ) -> anyhow::Result<()> {
 	// Store the ftxo
 	let query =
-		"INSERT INTO properties (id, network, fingerprint)
+		"INSERT INTO bark_properties (id, network, fingerprint)
 		VALUES (1, :network, :fingerprint)";
 	let mut statement = conn.prepare(query)?;
 
@@ -29,7 +29,7 @@ pub (crate) fn set_properties(
 pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<()> {
 	// Store the ftxo
 	let query =
-		"INSERT INTO config
+		"INSERT INTO bark_config
 			(id, asp_address, esplora_address, bitcoind_address,
 			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_threshold)
 		VALUES
@@ -62,7 +62,7 @@ pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<
 }
 
 pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<WalletProperties>> {
-	let query = "SELECT * FROM properties";
+	let query = "SELECT * FROM bark_properties";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([])?;
 
@@ -82,7 +82,7 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 }
 
 pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>> {
-	let query = "SELECT * FROM config";
+	let query = "SELECT * FROM bark_config";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([])?;
 
@@ -112,8 +112,8 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 
 pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>, destination: Option<String>) -> anyhow::Result<i32> {
 	// Store the vtxo
-	let query = "INSERT INTO movement (fees_sat, destination) VALUES (:fees_sat, :destination) RETURNING *;";
-	let mut statement = conn.prepare(query)?;
+	let query = "INSERT INTO bark_movement (fees_sat, destination) VALUES (:fees_sat, :destination) RETURNING *;";
+	let mut statement = conn.prepare(query)?;	
 	let movement_id = statement.query_row(named_params! {
 		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat(),
 		":destination": destination
@@ -166,7 +166,7 @@ pub fn store_vtxo_with_initial_state(
 ) -> anyhow::Result<()> {
 	// Store the ftxo
 	let q1 =
-		"INSERT INTO vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo)
+		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo)
 		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
 	let mut statement = tx.prepare(q1)?;
 	statement.execute(named_params! {
@@ -179,7 +179,7 @@ pub fn store_vtxo_with_initial_state(
 
 	// Store the initial state
 	let q2 =
-		"INSERT INTO vtxo_state (vtxo_id, state)
+		"INSERT INTO bark_vtxo_state (vtxo_id, state)
 		VALUES (:vtxo_id, :state);";
 	let mut statement = tx.prepare(q2)?;
 	statement.execute(named_params! {
@@ -194,7 +194,7 @@ pub fn get_vtxo_by_id(
 	conn: &Connection,
 	id: VtxoId
 ) -> anyhow::Result<Option<Vtxo>> {
-	let query = "SELECT raw_vtxo FROM vtxo WHERE id = ?1";
+	let query = "SELECT raw_vtxo FROM bark_vtxo WHERE id = ?1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([id.to_string()])?;
 
@@ -264,10 +264,10 @@ pub fn delete_vtxo(
 	id: VtxoId
 ) -> anyhow::Result<Option<Vtxo>> {
 	// Delete all vtxo-states
-	let query = "DELETE FROM vtxo_state WHERE vtxo_id = ?1";
+	let query = "DELETE FROM bark_vtxo_state WHERE vtxo_id = ?1";
 	tx.execute(query, [id.to_string()])?;
 
-	let query = "DELETE FROM vtxo WHERE id = ?1 RETURNING raw_vtxo";
+	let query = "DELETE FROM bark_vtxo WHERE id = ?1 RETURNING raw_vtxo";
 	let mut statement = tx.prepare(query)?;
 
 	let vtxo = statement
@@ -289,7 +289,7 @@ pub fn get_vtxo_state(
 ) -> anyhow::Result<Option<VtxoState>> {
 	let query =
 		"SELECT state
-		FROM vtxo_state
+		FROM bark_vtxo_state
 		WHERE vtxo_id = ?1
 		ORDER BY created_at DESC LIMIT 1";
 
@@ -309,7 +309,7 @@ pub fn link_spent_vtxo_to_movement(
 	id: VtxoId,
 	movement_id: i32
 ) -> anyhow::Result<()> {
-	let query = "UPDATE vtxo SET spent_in = :spent_in WHERE id = :vtxo_id";
+	let query = "UPDATE bark_vtxo SET spent_in = :spent_in WHERE id = :vtxo_id";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
 		":vtxo_id": id.to_string(),
@@ -324,7 +324,7 @@ pub fn update_vtxo_state(
 	id: VtxoId,
 	state: VtxoState
 ) -> anyhow::Result<()> {
-	let query = "INSERT INTO vtxo_state (vtxo_id, state) VALUES (?1, ?2)";
+	let query = "INSERT INTO bark_vtxo_state (vtxo_id, state) VALUES (?1, ?2)";
 	let mut statement = conn.prepare(query)?;
 	statement.execute([id.to_string(), state.to_string()])?;
 	Ok(())
@@ -334,7 +334,7 @@ pub fn store_last_ark_sync_height(
 	conn: &Connection,
 	height: u32
 ) -> anyhow::Result<()> {
-	let query = "INSERT INTO ark_sync (sync_height) VALUES (?1);";
+	let query = "INSERT INTO bark_ark_sync (sync_height) VALUES (?1);";
 	let mut statement = conn.prepare(query)?;
 	statement.execute([height])?;
 	Ok(())
@@ -344,7 +344,7 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<u32> {
 	// This query orders on id and not on the created_at field
 	// Using creatd_at would be more readable, however, this might break
 	// if two subsequent rows are added in the same millisecond.
-	let query = "SELECT sync_height FROM ark_sync ORDER BY id DESC LIMIT 1";
+	let query = "SELECT sync_height FROM bark_ark_sync ORDER BY id DESC LIMIT 1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query(())?;
 
@@ -363,13 +363,13 @@ pub fn store_exit(tx: &Transaction, exit: &ExitIndex) -> anyhow::Result<()> {
 
 	// Exits are somehwat large, we only want one in the database
 	// That's why we delete the old one and add the new one later
-	tx.execute("DELETE FROM exit", [])?;
-	tx.execute("INSERT INTO exit (exit) VALUES (?1)", [buf])?;
+	tx.execute("DELETE FROM bark_exit", [])?;
+	tx.execute("INSERT INTO bark_exit (exit) VALUES (?1)", [buf])?;
 	Ok(())
 }
 
 pub fn fetch_exit(conn: &Connection) -> anyhow::Result<Option<ExitIndex>> {
-	let mut statement = conn.prepare("SELECT exit FROM exit;")?;
+	let mut statement = conn.prepare("SELECT exit FROM bark_exit;")?;
 	let mut rows = statement.query([])?;
 
 	if let Some(row) = rows.next()? {
