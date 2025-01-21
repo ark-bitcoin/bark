@@ -17,6 +17,7 @@ pub mod setup;
 pub use context::TestContext;
 pub use daemon::{Daemon, DaemonHelper};
 pub use daemon::bitcoind::{Bitcoind, BitcoindConfig};
+pub use daemon::electrs::{Electrs, ElectrsConfig};
 pub use daemon::aspd::{Aspd, AspdConfig};
 pub use daemon::lightningd::{Lightningd, LightningdConfig};
 pub use bark::{Bark, BarkConfig};

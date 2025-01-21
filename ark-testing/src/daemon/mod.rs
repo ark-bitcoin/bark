@@ -1,4 +1,5 @@
 pub mod bitcoind;
+pub mod electrs;
 pub mod aspd;
 pub mod lightningd;
 

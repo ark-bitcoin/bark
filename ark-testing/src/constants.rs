@@ -5,11 +5,13 @@ pub mod env {
 	/// If the time-out is exceeded a SocketError(Os { code: 35: WouldBlock, ...})
 	/// is returned
 	pub const BITCOINRPC_TIMEOUT_SECS: &str = "BITCOINRPC_TIMEOUT_SECS";
+	pub const ELECTRS_EXEC: &str = "ELECTRS_EXEC";
 	pub const BARK_EXEC: &str = "BARK_EXEC";
 	pub const ASPD_EXEC: &str = "ASPD_EXEC";
 	pub const LIGHTNINGD_DOCKER_IMAGE: &str = "LIGHTNINGD_DOCKER_IMAGE";
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
 	pub const LIGHTNINGD_PLUGINS: &str = "LIGHTNINGD_PLUGINS";
+	pub const CHAIN_SOURCE: &str = "CHAIN_SOURCE";
 }
 
 pub mod bitcoind {
