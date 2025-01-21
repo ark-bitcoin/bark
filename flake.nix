@@ -19,7 +19,7 @@
 				bitcoinVersion = "28.0";
 				lightningVersion = "24.08.2";
 				protobufVersion = "3.12.4";
-				electrsRevision = "38d252537bcc01a4c6ade54961df191bc65aec85";
+				electrsRevision = "a9a39b1616591fb08514fba4df1c1ca11b24a500";
 
 				lib = nixpkgs.lib;
 				isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
@@ -44,10 +44,10 @@
 					pname = "esplora-electrs";
 					version = "99.99.99";
 					src = pkgs.fetchFromGitHub {
-						owner = "Blockstream";
+						owner = "stevenroose";
 						repo = "electrs";
 						rev = electrsRevision;
-						hash = "sha256-YZBCcHM/NjjqTN6BnnCHwAMZL1AwavDALMkh8p1kNzM=";
+						hash = "sha256-7AANp7WIS7Xa2KiHsOi+YE6/yCi4UDWk2FoEisI/zms=";
 					};
 
 					ROCKSDB_LIB_DIR = "${pkgs.rocksdb}/lib/";

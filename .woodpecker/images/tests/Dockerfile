@@ -1,4 +1,4 @@
-FROM ubuntu:24.04 as builder
+FROM ubuntu:24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
@@ -18,18 +18,18 @@ ENV RUST_BACKTRACE=1 \
 # * rustup Rust toolchains:
 #   - 1.77.2
 # * bitcoin core binaries in /bitcoin/<ver>/bin/
-#   - 28.0-rc2
+#   - 28.0
 # * c-lightning binaries in /lightning/<ver>/bin
 #   - 24.08.2
-# * Blockstream's electrs
-#   - commit 16321d4a7523b98c199d02ce793d13dee79dedfa
+# * Stevens' electrs
+#   - commit a9a39b1616591fb08514fba4df1c1ca11b24a500
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none && \
 	echo "Installing Rust toolchains..." && \
 	rustup toolchain install ${RUSTUP_TOOLCHAIN} && \
 	echo "Installing bitcoin..." && \
 	mkdir /bitcoin && cd /bitcoin && \
-	echo "Installing bitcoin core v28.0-rc2..." && \
+	echo "Installing bitcoin core v28.0..." && \
 	wget https://bitcoincore.org/bin/bitcoin-core-28.0/bitcoin-28.0-x86_64-linux-gnu.tar.gz && \
 	tar xvzf bitcoin-28.0-x86_64-linux-gnu.tar.gz && mv bitcoin-28.0 28.0 && \
 	echo "Installing lightning..." && \
@@ -38,8 +38,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 	wget https://github.com/ElementsProject/lightning/releases/download/v24.08.2/clightning-v24.08.2-Ubuntu-24.04.tar.xz && \
 	mkdir 24.08.2 && tar -xvf clightning-v24.08.2-Ubuntu-24.04.tar.xz -C ./24.08.2 --strip-components=2 && \
 	echo "Installing electrs..." && cd /root && \
-	git clone https://github.com/Blockstream/electrs.git --depth 1 && cd electrs && \
-	git fetch --depth 1 origin 16321d4a7523b98c199d02ce793d13dee79dedfa && \
+	git clone -b submit-tx-package https://github.com/stevenroose/electrs.git --depth 1 && cd electrs && \
+	git fetch --depth 1 origin a9a39b1616591fb08514fba4df1c1ca11b24a500 && \
 	cargo install --locked --path . && \
 	echo "Done"
 
