@@ -17,21 +17,19 @@ use rocksdb::{
 };
 
 use ark::{BlockHeight, VtxoId, Vtxo};
-use ark::tree::signed::SignedVtxoTree;
+use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 
 use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
 
 // COLUMN FAMILIES
 
-/// mapping VtxoId -> ForfeitVtxo
-const CF_FORFEIT_VTXO: &str = "forfeited_vtxos";
+/// mapping VtxoId -> VtxoState
+const CF_VTXOS: &str = "vtxos";
 /// mapping Txid -> serialized StoredRound
 const CF_ROUND: &str = "rounds";
 /// set [expiry][txid]
 const CF_ROUND_EXPIRY: &str = "rounds_by_expiry";
-/// set [outpoint]
-const CF_OOR_COSIGNED: &str = "oor_cosign";
 /// set [pubkey][vtxo]
 const CF_OOR_MAILBOX: &str = "oor_mailbox";
 /// map Txid -> Transaction
@@ -42,25 +40,6 @@ const CF_PENDING_SWEEPS: &str = "pending_sweeps";
 const MASTER_SEED: &str = "master_seed";
 const MASTER_MNEMONIC: &str = "master_mnemonic";
 
-
-/// A vtxo that has been forfeited and is now ours.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ForfeitVtxo {
-	pub vtxo: Vtxo,
-	pub forfeit_sigs: Vec<schnorr::Signature>,
-}
-
-impl ForfeitVtxo {
-	pub fn id(&self) -> VtxoId {
-		self.vtxo.id()
-	}
-
-	fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RoundExpiryKey {
@@ -95,9 +74,36 @@ impl RoundExpiryKey {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VtxoState {
+	/// The raw vtxo encoded.
+	pub vtxo: Vtxo,
+
+	/// If this vtxo was spent in an OOR tx, the txid of the OOR tx.
+	pub oor_spent: Option<Txid>,
+	/// The forfeit tx signatures of the user if the vtxo was forfeited.
+	pub forfeit_sigs: Option<Vec<schnorr::Signature>>,
+}
+
+impl VtxoState {
+	pub fn is_spendable(&self) -> bool {
+		self.oor_spent.is_none() && self.forfeit_sigs.is_none()
+	}
+
+	fn encode(&self) -> Vec<u8> {
+		let mut buf = Vec::new();
+		ciborium::into_writer(self, &mut buf).unwrap();
+		buf
+	}
+
+	fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
+		ciborium::from_reader(bytes)
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoredRound {
 	pub tx: Transaction,
-	pub signed_tree: SignedVtxoTree,
+	pub signed_tree: SignedVtxoTreeSpec,
 	pub nb_input_vtxos: u64,
 }
 
@@ -132,10 +138,9 @@ impl Db {
 		opts.create_missing_column_families(true);
 
 		let cfs = [
-			CF_FORFEIT_VTXO,
+			CF_VTXOS,
 			CF_ROUND,
 			CF_ROUND_EXPIRY,
-			CF_OOR_COSIGNED,
 			CF_OOR_MAILBOX,
 			CF_BDK_CHANGESETS,
 			CF_PENDING_SWEEPS,
@@ -146,8 +151,8 @@ impl Db {
 		Ok(Db { db, wallet })
 	}
 
-	fn cf_forfeit_vtxo<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_FORFEIT_VTXO).expect("db missing forfeit vtxo cf")
+	fn cf_vtxos<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
+		self.db.cf_handle(CF_VTXOS).expect("db missing vtxos cf")
 	}
 
 	fn cf_round<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
@@ -156,10 +161,6 @@ impl Db {
 
 	fn cf_round_expiry<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
 		self.db.cf_handle(CF_ROUND_EXPIRY).expect("db missing round expiry cf")
-	}
-
-	fn cf_oor_cosigned<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_OOR_COSIGNED).expect("db missing oor cosigned cf")
 	}
 
 	fn cf_oor_mailbox<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
@@ -192,17 +193,17 @@ impl Db {
 	pub fn store_round(
 		&self,
 		round_tx: Transaction,
-		vtxos: SignedVtxoTree,
+		vtxos: CachedSignedVtxoTree,
 		nb_input_vtxos: usize,
 	) -> anyhow::Result<()> {
 		let round = StoredRound {
 			tx: round_tx,
-			signed_tree: vtxos,
+			signed_tree: vtxos.spec.clone(),
 			nb_input_vtxos: nb_input_vtxos as u64,
 		};
-		let id = round.id();
+		let round_id = round.id();
 		let encoded_round = round.encode();
-		let expiry_key = RoundExpiryKey::new(round.signed_tree.spec.expiry_height, id);
+		let expiry_key = RoundExpiryKey::new(round.signed_tree.spec.expiry_height, round_id);
 
 		let mut opts = WriteOptions::default();
 		opts.set_sync(true);
@@ -212,8 +213,19 @@ impl Db {
 		//TODO(stevenroose) consider writing a macro for this sort of block
 		loop {
 			let tx = self.db.transaction_opt(&opts, &oopts);
-			tx.put_cf(&self.cf_round(), id, &encoded_round)?;
+			tx.put_cf(&self.cf_round(), round_id, &encoded_round)?;
 			tx.put_cf(&self.cf_round_expiry(), expiry_key.encode(), [])?;
+
+			// Store all vtxos created in this round.
+			for vtxo in vtxos.all_vtxos() {
+				let vtxo_id = vtxo.id();
+				let vtxo_state = VtxoState {
+					vtxo: vtxo,
+					oor_spent: None,
+					forfeit_sigs: None,
+				};
+				tx.put_cf(&self.cf_vtxos(), vtxo_id, vtxo_state.encode())?;
+			}
 
 			match tx.commit() {
 				Ok(()) => break,
@@ -226,7 +238,7 @@ impl Db {
 		let mut opts = FlushOptions::default();
 		opts.set_wait(true); //TODO(stevenroose) is this needed?
 		self.db.flush_cfs_opt(
-			&[&self.cf_round(), &self.cf_forfeit_vtxo(), &self.cf_round_expiry()], &opts,
+			&[&self.cf_round(), &self.cf_round_expiry(), &self.cf_vtxos()], &opts,
 		).context("error flushing db")?;
 
 		Ok(())
@@ -315,8 +327,102 @@ impl Db {
 		})
 	}
 
-	pub fn store_forfeit_vtxo(&self, vtxo: ForfeitVtxo) -> anyhow::Result<()> {
-		self.db.put_cf(&self.cf_forfeit_vtxo(), vtxo.id(), vtxo.encode())?;
+	/// Atomically insert the given onboard vtxos.
+	///
+	/// Errors if any one vtxo is not an onboard vtxo.
+	pub fn insert_onboard_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		let mut opts = WriteOptions::default();
+		opts.set_sync(true);
+		let mut oopts = OptimisticTransactionOptions::new();
+		oopts.set_snapshot(false);
+
+		//TODO(stevenroose) consider writing a macro for this sort of block
+		let cf = self.cf_vtxos();
+		loop {
+			let tx = self.db.transaction_opt(&opts, &oopts);
+
+			for vtxo in vtxos {
+				let id = vtxo.id();
+				if tx.get_cf(&cf, &id)?.is_some() {
+					trace!("db: vtxo {} already registered", id);
+					continue;
+				}
+				let state = VtxoState {
+					vtxo: vtxo.clone(),
+					oor_spent: None,
+					forfeit_sigs: None,
+				};
+				tx.put_cf(&cf, vtxo.id(), state.encode())?;
+			}
+
+			match tx.commit() {
+				Ok(()) => break,
+				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
+				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
+				Err(e) => bail!("failed to commit db tx: {}", e),
+			}
+		}
+
+		let mut opts = FlushOptions::default();
+		opts.set_wait(true); //TODO(stevenroose) is this needed?
+		self.db.flush_cf_opt(&cf, &opts).context("error flushing db")?;
+		Ok(())
+	}
+
+	/// Check whether the vtxos were already spent, and fetch them if not.
+	///
+	/// There is no guarantee that the vtxos are still all unspent by
+	/// the time this call returns. The caller should ensure no changes
+	/// are made to them meanwhile.
+	pub fn check_fetch_unspent_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
+		let mut ret = Vec::with_capacity(ids.len());
+		let cf = self.cf_vtxos();
+		for id in ids {
+			let encoded = self.db.get_cf(&cf, id)?
+				.context(*id)
+				.with_context(|| format!("vtxo {} not found", id))?;
+			let vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
+			if !vtxo_state.is_spendable() {
+				return Err(anyhow!("vtxo {} is not spendable: {:?}", id, vtxo_state)
+					.context(*id));
+			}
+			ret.push(vtxo_state.vtxo);
+		}
+
+		Ok(ret)
+	}
+
+	/// Set the vtxo as being forfeited.
+	pub fn set_vtxo_forfeited(&self, id: VtxoId, sigs: Vec<schnorr::Signature>) -> anyhow::Result<()> {
+		let mut opts = WriteOptions::default();
+		opts.set_sync(true);
+		let mut oopts = OptimisticTransactionOptions::new();
+		oopts.set_snapshot(false);
+
+		let cf = self.cf_vtxos();
+		loop {
+			let tx = self.db.transaction_opt(&opts, &oopts);
+
+			let encoded = tx.get_cf(&cf, id)?.context("vtxo not found")?;
+			let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
+			if !vtxo_state.is_spendable() {
+				error!("Marking unspendable vtxo as forfeited: {:?}", vtxo_state);
+			}
+
+			vtxo_state.forfeit_sigs = Some(sigs.clone());
+			tx.put_cf(&cf, id, vtxo_state.encode())?;
+
+			match tx.commit() {
+				Ok(()) => break,
+				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
+				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
+				Err(e) => bail!("failed to commit db tx: {}", e),
+			}
+		}
+
+		let mut opts = FlushOptions::default();
+		opts.set_wait(true); //TODO(stevenroose) is this needed?
+		self.db.flush_cf_opt(&cf, &opts).context("error flushing db")?;
 		Ok(())
 	}
 
@@ -324,24 +430,43 @@ impl Db {
 	/// and are now correctly marked as such.
 	/// Returns [Some] for the first vtxo that was already signed.
 	///
-	/// This is atomic so that a user can't try to make us double sign by firing
-	/// multiple cosign requests at the same time.
-	pub fn atomic_check_mark_oors_cosigned(
+	/// Also stores the new OOR vtxos atomically.
+	pub fn check_set_vtxo_oor_spent(
 		&self,
-		ids: impl Iterator<Item = VtxoId> + Clone,
+		spent_ids: &[VtxoId],
+		spending_tx: Txid,
+		new_vtxos: &[Vtxo],
 	) -> anyhow::Result<Option<VtxoId>> {
-		let opts = WriteOptions::default();
-		let oopts = OptimisticTransactionOptions::new();
+		let mut opts = WriteOptions::default();
+		opts.set_sync(true);
+		let mut oopts = OptimisticTransactionOptions::new();
+		oopts.set_snapshot(false);
 
 		//TODO(stevenroose) consider writing a macro for this sort of block
+		let cf = self.cf_vtxos();
 		loop {
 			let tx = self.db.transaction_opt(&opts, &oopts);
 
-			for id in ids.clone() {
-				if tx.get_cf(&self.cf_oor_cosigned(), id)?.is_some() {
-					tx.rollback()?;
-					return Ok(Some(id));
+			for id in spent_ids {
+				let encoded = tx.get_cf(&self.cf_vtxos(), id)?.context("vtxo not found")?;
+				let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
+				if !vtxo_state.is_spendable() {
+					return Ok(Some(*id));
 				}
+				vtxo_state.oor_spent = Some(spending_tx);
+				tx.put_cf(&self.cf_vtxos(), id, vtxo_state.encode())?;
+			}
+
+			for vtxo in new_vtxos {
+				if !vtxo.is_oor() {
+					bail!("vtxo {} is not an OOR vtxo", vtxo.id());
+				}
+				let state = VtxoState {
+					vtxo: vtxo.clone(),
+					oor_spent: None,
+					forfeit_sigs: None,
+				};
+				tx.put_cf(&cf, vtxo.id(), state.encode())?;
 			}
 
 			match tx.commit() {
@@ -352,16 +477,6 @@ impl Db {
 			}
 		}
 		Ok(None)
-	}
-
-	pub fn clear_oor_cosigned(&self) -> anyhow::Result<()> {
-		self.db.drop_cf(CF_OOR_COSIGNED)?;
-
-		let mut opts = rocksdb::Options::default();
-		opts.create_if_missing(true);
-		opts.create_missing_column_families(true);
-		self.db.create_cf(CF_OOR_COSIGNED, &opts)?;
-		Ok(())
 	}
 
 	pub fn store_oor(&self, pubkey: PublicKey, vtxo: Vtxo) -> anyhow::Result<()> {

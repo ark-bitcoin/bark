@@ -119,6 +119,19 @@ impl rpc::server::ArkService for App {
 		}))
 	}
 
+	async fn register_onboard_vtxos(
+		&self,
+		req: tonic::Request<rpc::OnboardVtxosRequest>,
+	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		let req = req.into_inner();
+		let vtxos = req.onboard_vtxos.into_iter()
+			.map(|v| Vtxo::decode(&v))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| badarg!("invalid vtxo: {}", e))?;
+		self.register_onboards(&vtxos).to_status()?;
+		Ok(tonic::Response::new(rpc::Empty {}))
+	}
+
 	// oor
 
 	async fn request_oor_cosign(
@@ -137,7 +150,7 @@ impl rpc::server::ArkService for App {
 			return Err(badarg!("wrong number of user nonces"));
 		}
 
-		let (nonces, sigs) = self.cosign_oor(&payment, &user_nonces).to_status()?;
+		let (nonces, sigs) = self.cosign_oor(&payment, &user_nonces).await.to_status()?;
 		Ok(tonic::Response::new(rpc::OorCosignResponse {
 			pub_nonces: nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
 			partial_sigs: sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
@@ -303,7 +316,7 @@ impl rpc::server::ArkService for App {
 		let req = req.into_inner();
 
 		let inputs =  req.input_vtxos.into_iter().map(|vtxo| {
-			Ok(Vtxo::decode(&vtxo).map_err(|e| badarg!("invalid vtxo: {}", e))?)
+			Ok(VtxoId::from_slice(&vtxo).map_err(|e| badarg!("invalid vtxo: {}", e))?)
 		}).collect::<Result<_, tonic::Status>>()?;
 
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());

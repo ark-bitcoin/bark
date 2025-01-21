@@ -17,7 +17,6 @@ use ark::musig::MusigPubNonce;
 use ark::tree::signed::{UnsignedVtxoTree, VtxoTreeSpec};
 
 use crate::{txindex, App, SECP};
-use crate::database::ForfeitVtxo;
 
 #[derive(Debug, Clone)]
 pub enum RoundEvent {
@@ -45,7 +44,7 @@ pub enum RoundEvent {
 #[derive(Debug)]
 pub enum RoundInput {
 	RegisterPayment {
-		inputs: Vec<Vtxo>,
+		inputs: Vec<VtxoId>,
 		vtxo_requests: Vec<VtxoRequest>,
 		/// One set of nonces per vtxo request.
 		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
@@ -123,6 +122,8 @@ pub struct CollectingPayments {
 	max_output_vtxos: usize,
 	offboard_feerate: FeeRate,
 
+	/// All inputs that have participated, but might have dropped out.
+	all_locked_inputs: HashSet<VtxoId>,
 	allowed_inputs: Option<HashSet<VtxoId>>,
 	all_inputs: HashMap<VtxoId, Vtxo>,
 	all_outputs: Vec<VtxoParticipant>,
@@ -136,10 +137,16 @@ pub struct CollectingPayments {
 }
 
 impl CollectingPayments {
-	fn new(round_id: u64, attempt_number: usize, max_output_vtxos: usize, offboard_feerate: FeeRate) -> CollectingPayments {
+	fn new(
+		round_id: u64,
+		attempt_number: usize,
+		max_output_vtxos: usize,
+		offboard_feerate: FeeRate,
+	) -> CollectingPayments {
 		CollectingPayments {
 			round_id, attempt_number, max_output_vtxos, offboard_feerate,
 
+			all_locked_inputs: HashSet::new(),
 			allowed_inputs: None,
 			//TODO(stevenroose) allocate this more effectively
 			all_inputs: HashMap::new(),
@@ -171,8 +178,6 @@ impl CollectingPayments {
 			}
 		}
 
-		//TODO(stevenroose) check that vtxos exist!
-
 		validate_payment(&inputs, &outputs, &offboards, self.offboard_feerate)
 			.context("bad payment")?;
 		for out in &outputs {
@@ -184,6 +189,10 @@ impl CollectingPayments {
 		// Ok we accept the round, register it.
 
 		slog!(RoundPaymentRegistered, round_id: self.round_id, attempt_number: self.attempt_number, nb_inputs: inputs.len(), nb_outputs: outputs.len(), nb_offboards: offboards.len());
+		if self.allowed_inputs.is_none() {
+			// We're adding inputs for the first time
+			self.all_locked_inputs.extend(inputs.iter().map(|v| v.id()));
+		}
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 		for out in &outputs {
@@ -216,6 +225,8 @@ pub struct SigningVtxoTree {
 	user_cosign_nonces: HashMap<PublicKey, Vec<musig::MusigPubNonce>>,
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	allowed_inputs: HashSet<VtxoId>,
+	/// All inputs that have participated, but might have dropped out.
+	all_locked_inputs: HashSet<VtxoId>,
 
 	//TODO(stevenroose) this can become a notify once we multitask
 	proceed: bool,
@@ -272,6 +283,8 @@ pub struct SigningForfeits {
 	// data from earlier
 	all_inputs: HashMap<VtxoId, Vtxo>,
 	allowed_inputs: HashSet<VtxoId>,
+	/// All inputs that have participated, but might have dropped out.
+	all_locked_inputs: HashSet<VtxoId>,
 
 	// other public data
 	connectors: ConnectorChain,
@@ -384,11 +397,38 @@ pub async fn run_round_coordinator(
 						RoundInput::RegisterPayment {
 							inputs, vtxo_requests, cosign_pub_nonces, offboards,
 						} => {
+							if let Some(v) = inputs.iter().find(|v| state.all_inputs.contains_key(v)) {
+								slog!(RoundUserVtxoAlreadyRegistered, round_id, vtxo: *v);
+								continue 'receive;
+							}
+							// If some inputs already have been submitted in a previous attempt,
+							// no need to lock/check them again.
+							let new_inputs = inputs.iter().copied().filter(|v| {
+								!state.all_locked_inputs.contains(v)
+							}).collect::<Vec<_>>();
+
+							if let Err(id) = app.atomic_check_put_vtxo_in_flux(&new_inputs).await {
+								slog!(RoundUserVtxoInFlux, round_id, vtxo: id);
+								continue 'receive;
+							}
+
+							// Check if the input vtxos exist and are unspent.
+							let input_vtxos = match app.db.check_fetch_unspent_vtxos(&inputs) {
+								Ok(i) => i,
+								Err(e) => {
+									let id = e.downcast_ref::<VtxoId>().cloned();
+									slog!(RoundUserVtxoUnknown, round_id, vtxo: id);
+									app.release_vtxos_in_flux(&new_inputs).await;
+									continue 'receive;
+								},
+							};
+
 							let outputs = vtxo_requests.into_iter().zip(cosign_pub_nonces.into_iter())
 								.map(|(req, nonces)| VtxoParticipant { req, nonces })
 								.collect();
-							if let Err(e) = state.register_payment(inputs, outputs, offboards) {
+							if let Err(e) = state.register_payment(input_vtxos, outputs, offboards) {
 								slog!(RoundPaymentRegistrationFailed, round_id, attempt_number, error: e.to_string());
+								app.release_vtxos_in_flux(&new_inputs).await;
 								continue 'receive;
 							}
 
@@ -521,6 +561,7 @@ pub async fn run_round_coordinator(
 				attempt_number,
 				cosign_agg_nonces,
 				allowed_inputs: state.all_inputs.keys().copied().collect(),
+				all_locked_inputs: state.all_locked_inputs,
 				all_inputs: state.all_inputs,
 				// Make sure we don't allow other inputs next attempt.
 				cosign_part_sigs: HashMap::with_capacity(unsigned_vtxo_tree.nb_leaves()),
@@ -597,8 +638,11 @@ pub async fn run_round_coordinator(
 			debug_assert_eq!(state.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
 			// Then construct the final signed vtxo tree.
-			let signed_vtxos = state.unsigned_vtxo_tree.into_signed_tree(cosign_sigs);
-			slog!(CreatedSignedVtxoTree, round_id, attempt_number, nb_vtxo_signatures: signed_vtxos.cosign_sigs.len(), duration: Instant::now().duration_since(combine_signatures_start));
+			let signed_vtxos = state.unsigned_vtxo_tree
+				.into_signed_tree(cosign_sigs)
+				.into_cached_tree();
+			slog!(CreatedSignedVtxoTree, round_id, attempt_number, nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(), duration: Instant::now().duration_since(combine_signatures_start));
+
 
 			// ****************************************************************
 			// * Broadcast signed vtxo tree and gather forfeit signatures
@@ -624,7 +668,7 @@ pub async fn run_round_coordinator(
 			let send_round_proposal_start = Instant::now();
 			let _ = app.rounds().round_event_tx.send(RoundEvent::RoundProposal {
 				id: round_id,
-				cosign_sigs: signed_vtxos.cosign_sigs.clone(),
+				cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 				forfeit_nonces: forfeit_pub_nonces.clone(),
 			});
 
@@ -638,6 +682,7 @@ pub async fn run_round_coordinator(
 				forfeit_part_sigs: HashMap::with_capacity(state.all_inputs.len()),
 				all_inputs: state.all_inputs,
 				allowed_inputs: state.allowed_inputs,
+				all_locked_inputs: state.all_locked_inputs,
 				connectors,
 				proceed: false,
 			};
@@ -745,14 +790,15 @@ pub async fn run_round_coordinator(
 			});
 
 			// Store forfeit txs and round info in database.
-			for (id, vtxo) in state.all_inputs {
+			for (id, vtxo) in &state.all_inputs {
 				let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
 				slog!(StoringForfeitVtxo, round_id, attempt_number, out_point: vtxo.point());
-				app.db.store_forfeit_vtxo(ForfeitVtxo { vtxo, forfeit_sigs })?;
+				app.db.set_vtxo_forfeited(*id, forfeit_sigs)?;
 			}
+			app.release_vtxos_in_flux(state.all_locked_inputs).await;
 
 			trace!("Storing round result");
-			app.txindex.register_batch(signed_vtxos.all_signed_txs()).await;
+			app.txindex.register_batch(signed_vtxos.all_signed_txs().iter().cloned()).await;
 			app.txindex.register_batch(state.connectors.iter_signed_txs(&app.asp_key)).await;
 			app.db.store_round(signed_round_tx.tx.clone(), signed_vtxos, state.connectors.len())?;
 
@@ -768,7 +814,7 @@ pub async fn run_round_coordinator(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use ark::{fee, BaseVtxo, Vtxo, VtxoRequest, VtxoSpec};
+	use ark::{fee, Vtxo, VtxoRequest, VtxoSpec};
 	use bitcoin::secp256k1::{PublicKey, Secp256k1};
 	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
 	use std::collections::HashSet;
@@ -797,12 +843,6 @@ mod tests {
 	}
 
 	fn create_round_vtxo(vtxo_spec: VtxoSpec) -> Vtxo {
-		let point = OutPoint::null();
-		let base_vtxo = BaseVtxo {
-			spec: vtxo_spec,
-			utxo: point,
-		};
-
 		let tx = Transaction {
 			version: bitcoin::transaction::Version(3),
 			lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -814,15 +854,15 @@ mod tests {
 			}],
 			output: vec![
 				TxOut {
-					script_pubkey: base_vtxo.spec.exit_spk(),
-					value: base_vtxo.spec.amount,
+					script_pubkey: vtxo_spec.exit_spk(),
+					value: vtxo_spec.amount,
 				},
 				fee::dust_anchor(),
 			],
 		};
 
 		Vtxo::Round {
-			base: base_vtxo,
+			spec: vtxo_spec,
 			leaf_idx: 0,
 			exit_branch: vec![tx],
 		}

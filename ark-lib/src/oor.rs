@@ -236,6 +236,24 @@ impl OorPayment {
 		}
 	}
 
+	/// Construct the vtxos of the outputs of this OOR tx.
+	///
+	/// These vtxos are not valid vtxos because they lack the signature.
+	pub fn unsigned_output_vtxos(&self) -> Vec<Vtxo> {
+		let outputs = self.output_specs();
+		let inputs = self.inputs.clone();
+		let tx = unsigned_oor_transaction(&inputs, &outputs);
+
+		self.outputs.iter().enumerate().map(|(idx, _output)| {
+			Vtxo::Oor {
+				inputs: self.inputs.clone(),
+				signatures: vec![],
+				output_specs: outputs.clone(),
+				point: OutPoint::new(tx.compute_txid(), idx as u32)
+			}
+		}).collect()
+	}
+
 	pub fn encode(&self) -> Vec<u8> {
 		let mut buf = Vec::new();
 		ciborium::into_writer(self, &mut buf).unwrap();
@@ -265,20 +283,17 @@ impl SignedOorPayment {
 		tx
 	}
 
+	/// Construct the vtxos of the outputs of this OOR tx.
 	pub fn output_vtxos(&self) -> Vec<Vtxo> {
-		let outputs = self.payment.output_specs();
-		let inputs = self.payment.inputs.clone();
-
-		let tx = unsigned_oor_transaction(&inputs, &outputs);
-
-		self.payment.outputs.iter().enumerate().map(|(idx, _output)| {
-			Vtxo::Oor {
-				inputs: self.payment.inputs.clone(),
-				signatures: self.signatures.clone(),
-				output_specs: outputs.clone(),
-				point: OutPoint::new(tx.compute_txid(), idx as u32)
+		let mut ret = self.payment.unsigned_output_vtxos();
+		for vtxo in ret.iter_mut() {
+			if let Vtxo::Oor { signatures, .. } = vtxo {
+				*signatures = self.signatures.clone();
+			} else {
+				unreachable!("vtxos are all OOR");
 			}
-		}).collect()
+		}
+		ret
 	}
 }
 

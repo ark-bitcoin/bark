@@ -45,9 +45,9 @@ use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, BaseVtxo, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
+use ark::{musig, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use ark::tree::signed::{SignedVtxoTree, VtxoTreeSpec};
+use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
 use crate::vtxo_state::VtxoState;
 
@@ -484,27 +484,28 @@ impl <P>Wallet<P> where
 		trace!("Broadcasting onboard tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
+		asp.client.register_onboard_vtxos(rpc::OnboardVtxosRequest {
+			onboard_vtxos: vec![vtxo.encode()],
+		}).await.context("error registering onboard with the asp")?;
+
 		info!("Onboard successful");
 
 		Ok(())
 	}
 
-	fn build_vtxo(&self, vtxos: &SignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
+	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
 		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
-		let dest = &vtxos.spec.vtxos[leaf_idx];
+		let dest = &vtxos.spec.spec.vtxos[leaf_idx];
 		let vtxo = Vtxo::Round {
-			base: BaseVtxo {
-				spec: VtxoSpec {
-					user_pubkey: dest.pubkey,
-					asp_pubkey: vtxos.spec.asp_pk,
-					expiry_height: vtxos.spec.expiry_height,
-					exit_delta: vtxos.spec.exit_delta,
-					amount: dest.amount,
-				},
-				utxo: vtxos.utxo,
+			spec: VtxoSpec {
+				user_pubkey: dest.pubkey,
+				asp_pubkey: vtxos.spec.spec.asp_pk,
+				expiry_height: vtxos.spec.spec.expiry_height,
+				exit_delta: vtxos.spec.spec.exit_delta,
+				amount: dest.amount,
 			},
 			leaf_idx: leaf_idx,
-			exit_branch: exit_branch,
+			exit_branch: exit_branch.into_iter().cloned().collect(),
 		};
 
 		if self.db.get_vtxo(vtxo.id())?.is_some() {
@@ -535,10 +536,11 @@ impl <P>Wallet<P> where
 			let req = rpc::RoundId { txid: txid.to_byte_array().to_vec() };
 			let round = asp.client.get_round(req).await?.into_inner();
 
-			let tree = SignedVtxoTree::decode(&round.signed_vtxos)
-				.context("invalid signed vtxo tree from asp")?;
+			let tree = SignedVtxoTreeSpec::decode(&round.signed_vtxos)
+				.context("invalid signed vtxo tree from asp")?
+				.into_cached_tree();
 
-			for (idx, dest) in tree.spec.vtxos.iter().enumerate() {
+			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
 				if dest.pubkey == vtxo_key.public_key() {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 						self.db.register_receive(&vtxo)?;
@@ -990,6 +992,7 @@ impl <P>Wallet<P> where
 
 		let (input_vtxos, pay_reqs, offb_reqs) = round_input(round_id, offboard_feerate)
 			.context("error providing round input")?;
+
 		// Assign cosign pubkeys to the payment requests.
 		let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
 			.take(pay_reqs.len())
@@ -1004,7 +1007,6 @@ impl <P>Wallet<P> where
 
 		let vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
 		debug!("Spending vtxos: {:?}", vtxo_ids);
-
 
 		'round: loop {
 			// Prepare round participation info.
@@ -1027,7 +1029,7 @@ impl <P>Wallet<P> where
 				input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
 			);
 			asp.client.submit_payment(rpc::SubmitPaymentRequest {
-				input_vtxos: input_vtxos.iter().map(|v| v.encode()).collect(),
+				input_vtxos: input_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 				vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
 					rpc::VtxoRequest {
 						amount: r.amount.to_sat(),
@@ -1164,7 +1166,9 @@ impl <P>Wallet<P> where
 			if let Err(e) = unsigned_vtxos.verify_cosign_sigs(&vtxo_cosign_sigs) {
 				bail!("Received incorrect vtxo cosign signatures from asp: {}", e);
 			}
-			let signed_vtxos = unsigned_vtxos.into_signed_tree(vtxo_cosign_sigs);
+			let signed_vtxos = unsigned_vtxos
+				.into_signed_tree(vtxo_cosign_sigs)
+				.into_cached_tree();
 
 			// Make forfeit signatures.
 			let connectors = ConnectorChain::new(
@@ -1195,7 +1199,7 @@ impl <P>Wallet<P> where
 			asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
 				signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
 					rpc::ForfeitSignatures {
-						input_vtxo_id: id.bytes().to_vec(),
+						input_vtxo_id: id.to_bytes().to_vec(),
 						pub_nonces: sigs.iter().map(|s| s.0.serialize().to_vec()).collect(),
 						signatures: sigs.iter().map(|s| s.1.serialize().to_vec()).collect(),
 					}
@@ -1244,7 +1248,7 @@ impl <P>Wallet<P> where
 
 			// Finally we save state after refresh
 			let mut new_vtxos: Vec<Vtxo> = vec![];
-			for (idx, dest) in signed_vtxos.spec.vtxos.iter().enumerate() {
+			for (idx, dest) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
 				//TODO(stevenroose) this is broken, need to match vtxorequest exactly
 				if dest.pubkey == vtxo_key.public_key() {
 					if let Some(vtxo) = self.build_vtxo(&signed_vtxos, idx)? {

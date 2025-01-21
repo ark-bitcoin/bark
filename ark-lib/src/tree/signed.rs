@@ -12,7 +12,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use bitcoin::taproot::{ControlBlock, LeafVersion, TapNodeHash, TaprootBuilder};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use crate::{fee, musig, util, VtxoRequest};
+use crate::{fee, musig, util, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
 
 
@@ -22,6 +22,7 @@ use crate::tree::{self, Tree};
 pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
 
+/// All the information that uniquely specifies a VTXO tree before it has been signed.
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct VtxoTreeSpec {
 	pub vtxos: Vec<VtxoRequest>,
@@ -270,7 +271,7 @@ impl VtxoTreeSpec {
 
 /// A VTXO tree ready to be signed.
 ///
-/// This type containts various cached values required to sign the tree.
+/// This type contains various cached values required to sign the tree.
 #[derive(Debug, Clone)]
 pub struct UnsignedVtxoTree {
 	pub spec: VtxoTreeSpec,
@@ -578,8 +579,8 @@ impl UnsignedVtxoTree {
 	pub fn into_signed_tree(
 		self,
 		signatures: Vec<schnorr::Signature>,
-	) -> SignedVtxoTree {
-		SignedVtxoTree {
+	) -> SignedVtxoTreeSpec {
+		SignedVtxoTreeSpec {
 			spec: self.spec,
 			utxo: self.utxo,
 			cosign_sigs: signatures,
@@ -587,6 +588,7 @@ impl UnsignedVtxoTree {
 	}
 }
 
+/// Error returned from cosigning a VTXO tree.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CosignSignatureError {
 	MissingSignature { pk: PublicKey },
@@ -619,22 +621,23 @@ impl fmt::Display for CosignSignatureError {
 
 impl std::error::Error for CosignSignatureError {}
 
+/// All the information needed to uniquely specify a fully signed VTXO tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignedVtxoTree {
+pub struct SignedVtxoTreeSpec {
 	pub spec: VtxoTreeSpec,
 	pub utxo: OutPoint,
 	/// The signatures for the txs from leaves to root.
 	pub cosign_sigs: Vec<schnorr::Signature>,
 }
 
-impl SignedVtxoTree {
+impl SignedVtxoTreeSpec {
 	/// Signatures expected ordered from leaves to root.
 	pub fn new(
 		spec: VtxoTreeSpec,
 		utxo: OutPoint,
 		signatures: Vec<schnorr::Signature>,
-	) -> SignedVtxoTree {
-		SignedVtxoTree { spec, utxo, cosign_sigs: signatures }
+	) -> SignedVtxoTreeSpec {
+		SignedVtxoTreeSpec { spec, utxo, cosign_sigs: signatures }
 	}
 
 	pub fn encode(&self) -> Vec<u8> {
@@ -649,7 +652,7 @@ impl SignedVtxoTree {
 
 	/// Construct the exit branch starting from the root ending in the leaf.
 	pub fn exit_branch(&self, leaf_idx: usize) -> Option<Vec<Transaction>> {
-		let txs = self.spec.signed_transactions(self.utxo, &self.cosign_sigs);
+		let txs = self.all_signed_txs();
 
 		if leaf_idx >= self.spec.nb_leaves() {
 			return None;
@@ -667,7 +670,63 @@ impl SignedVtxoTree {
 	pub fn all_signed_txs(&self) -> Vec<Transaction> {
 		self.spec.signed_transactions(self.utxo, &self.cosign_sigs)
 	}
+
+	pub fn into_cached_tree(self) -> CachedSignedVtxoTree {
+		CachedSignedVtxoTree {
+			txs: self.all_signed_txs(),
+			spec: self,
+		}
+	}
 }
+
+/// A fully signed VTXO tree, with all the transaction cached.
+///
+/// This is useful for cheap extraction of VTXO branches.
+pub struct CachedSignedVtxoTree {
+	pub spec: SignedVtxoTreeSpec,
+	pub txs: Vec<Transaction>,
+}
+
+impl CachedSignedVtxoTree {
+	/// Construct the exit branch starting from the root ending in the leaf.
+	pub fn exit_branch(&self, leaf_idx: usize) -> Option<Vec<&Transaction>> {
+		if leaf_idx >= self.spec.spec.nb_leaves() {
+			return None;
+		}
+
+		let tree = Tree::new(self.spec.spec.nb_leaves());
+		let mut ret = tree.iter_branch(leaf_idx)
+			.map(|n| &self.txs[n.idx()])
+			.collect::<Vec<_>>();
+		ret.reverse();
+		Some(ret)
+	}
+
+	/// Get all signed txs in this tree, starting with the leaves, towards the root.
+	pub fn all_signed_txs(&self) -> &[Transaction] {
+		&self.txs
+	}
+
+	/// Construct all individual vtxos from this round.
+	///
+	/// This call is pretty wasteful.
+	pub fn all_vtxos(&self) -> impl Iterator<Item = Vtxo> + '_ {
+		self.spec.spec.vtxos.iter().enumerate().map(|(idx, req)| {
+			Vtxo::Round {
+				spec: VtxoSpec {
+					user_pubkey: req.pubkey,
+					asp_pubkey: self.spec.spec.asp_pk,
+					expiry_height: self.spec.spec.expiry_height,
+					exit_delta: self.spec.spec.exit_delta,
+					amount: req.amount,
+				},
+				leaf_idx: idx,
+				exit_branch: self.exit_branch(idx).unwrap().into_iter().cloned().collect(),
+			}
+		})
+	}
+}
+
 
 #[cfg(test)]
 mod test {

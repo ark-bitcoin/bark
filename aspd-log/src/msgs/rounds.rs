@@ -34,6 +34,27 @@ pub struct RoundPaymentRegistrationFailed {
 impl_slog!(RoundPaymentRegistrationFailed, Trace, "Participant failed to register a payment");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserVtxoAlreadyRegistered {
+	pub round_id: u64,
+	pub vtxo: VtxoId,
+}
+impl_slog!(RoundUserVtxoAlreadyRegistered, Trace, "user attempted to spend vtxo already registered in round");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserVtxoInFlux {
+	pub round_id: u64,
+	pub vtxo: VtxoId,
+}
+impl_slog!(RoundUserVtxoInFlux, Trace, "user attempted to spend vtxo already in flux");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserVtxoUnknown {
+	pub round_id: u64,
+	pub vtxo: Option<VtxoId>,
+}
+impl_slog!(RoundUserVtxoUnknown, Trace, "user attempted to spend unknown vtxo");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundPaymentRegistered {
 	pub round_id: u64,
 	pub attempt_number: usize,
