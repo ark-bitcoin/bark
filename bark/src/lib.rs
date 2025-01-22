@@ -1022,7 +1022,7 @@ impl <P>Wallet<P> where
 		mut round_input: impl FnMut(u64, FeeRate) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<Txid> {
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
@@ -1325,9 +1325,7 @@ impl <P>Wallet<P> where
 			}
 
 			info!("Round finished");
-			break;
+			return Ok(signed_round_tx.compute_txid())
 		}
-
-		Ok(())
 	}
 }
