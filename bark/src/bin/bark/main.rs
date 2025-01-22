@@ -528,11 +528,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Onboard { amount, all } => {
 			w.onchain.sync().await.context("sync error")?;
-			match (amount, all) {
+			let onboard = match (amount, all) {
 				(Some(a), false) => w.onboard_amount(a).await?,
 				(None, true) => w.onboard_all().await?,
 				_ => bail!("please provide either an amount or --all"),
-			}
+			};
+
+			serde_json::to_writer_pretty(io::stdout(), &onboard).unwrap();
 		}
 		Command::Send { destination, amount, comment } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {

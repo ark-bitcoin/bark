@@ -50,6 +50,7 @@ use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
 pub use bark_json::primitives::UtxoInfo;
+pub use bark_json::cli::Onboard;
 
 use crate::vtxo_state::VtxoState;
 
@@ -424,7 +425,7 @@ impl <P>Wallet<P> where
 	// Onboard a vtxo with the given vtxo amount.
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
-	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<()> {
+	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<Onboard> {
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
@@ -447,7 +448,7 @@ impl <P>Wallet<P> where
 		self.onboard(spec, user_keypair, onboard_tx).await
 	}
 
-	pub async fn onboard_all(&mut self) -> anyhow::Result<()> {
+	pub async fn onboard_all(&mut self) -> anyhow::Result<Onboard> {
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
@@ -476,7 +477,7 @@ impl <P>Wallet<P> where
 		self.onboard(spec, user_keypair, onboard_all_tx).await
 	}
 
-	async fn onboard(&mut self, spec: VtxoSpec, user_keypair: Keypair, onboard_tx: Psbt) -> anyhow::Result<()> {
+	async fn onboard(&mut self, spec: VtxoSpec, user_keypair: Keypair, onboard_tx: Psbt) -> anyhow::Result<Onboard> {
 		let mut asp = self.require_asp()?;
 
 		// This is manually enforced in prepare_tx
@@ -517,7 +518,12 @@ impl <P>Wallet<P> where
 
 		info!("Onboard successful");
 
-		Ok(())
+		Ok(
+			Onboard {
+				funding_txid: tx.compute_txid(),
+				vtxos: vec![vtxo.into()],
+			}
+		)
 	}
 
 	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {

@@ -18,6 +18,18 @@ pub struct ExitStatus {
 	pub height: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Onboard {
+	/// The [Txid] of the funding-transaction.
+	/// This is the transaction that has to be confirmed 
+	/// onchain for the onboard to succeed.
+	pub funding_txid: Txid,
+	/// The info for each <Vtxo> that was created
+	/// in this onboard.
+	///
+	/// Currently, this is always a vector of length 1
+	pub vtxos: Vec<VtxoInfo>,
+}
 
 pub mod onchain {
 	use super::*;
