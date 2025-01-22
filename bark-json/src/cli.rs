@@ -1,5 +1,3 @@
-
-
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 
@@ -71,4 +69,25 @@ impl From<Vtxo> for VtxoInfo {
 pub struct ExitStatus {
 	pub done: bool,
 	pub height: Option<u32>,
+}
+
+pub mod onchain {
+
+	#[derive(Debug, Clone, Deserialize, Serialize)]
+	pub struct Send {
+		pub txid: bitcoin::Txid,
+	}
+
+	#[derive(Debug, Clone, Serialize, Deserialize)]
+	pub struct Address {
+		pub address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
+	}
+
+	pub type Utxos = Vec<super::UtxoInfo>;
+
+	#[derive(Debug, Clone, Serialize, Deserialize)]
+	pub struct Balance {
+		#[serde(rename="total_sat", with="bitcoin::amount::serde::as_sat")]
+		pub total: bitcoin::Amount
+	}
 }

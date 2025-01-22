@@ -49,6 +49,8 @@ use ark::{musig, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, Paymen
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
+pub use bark_json::cli::UtxoInfo;
+
 use crate::vtxo_state::VtxoState;
 
 lazy_static::lazy_static! {
@@ -62,14 +64,6 @@ const MIN_DERIVED_INDEX: u32 = OOR_PUB_KEY_INDEX + 1;
 pub struct Pagination {
 	pub page_index: u16,
 	pub page_size: u16,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct UtxoInfo {
-	pub outpoint: OutPoint,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	pub amount: Amount,
-	pub confirmation_height: Option<u32>
 }
 
 impl From<Utxo> for UtxoInfo {

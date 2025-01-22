@@ -373,7 +373,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					println!("{}", res);
 				}
 			},
-			OnchainCommand::Address => println!("{}", w.onchain.address()?),
+			OnchainCommand::Address => {
+					let address = w.onchain.address().expect("Wallet failed to generate address");
+					let output = json::onchain::Address { address: address.into_unchecked() };
+					serde_json::to_writer(io::stdout(), &output).unwrap();
+			},
 			OnchainCommand::Send { destination: address, amount } => {
 				let addr = address.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
@@ -383,7 +387,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					warn!("Failed to sync utxos. {}", e)
 				}
 
-				w.onchain.send(addr, amount).await?;
+				let txid = w.onchain.send(addr, amount).await?;
+				let output = json::onchain::Send { txid };
+				serde_json::to_writer(io::stdout(), &output).unwrap();
 			},
 			OnchainCommand::Utxos { no_sync } => {
 				if !no_sync {
@@ -392,7 +398,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				let utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<Vec<_>>();
+				let utxos : json::onchain::Utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<Vec<_>>();
 
 				if cli.json {
 					serde_json::to_writer(io::stdout(), &utxos).unwrap();

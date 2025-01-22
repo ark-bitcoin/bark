@@ -118,9 +118,9 @@ impl Bark {
 	}
 
 	pub async fn get_onchain_address(&self) -> Address {
-		let address_string = self.run(["onchain", "address"]).await.trim().to_string();
-		Address::<NetworkUnchecked>::from_str(&address_string).unwrap()
-			.require_network(Network::Regtest).unwrap()
+		let output = self.run(["onchain", "address"]).await.trim().to_string();
+		let parsed = serde_json::from_str::<json::onchain::Address>(&output).unwrap();
+		parsed.address.require_network(Network::Regtest).unwrap()
 	}
 
 	/// Use onchain wallet to send bitcoin onchain
