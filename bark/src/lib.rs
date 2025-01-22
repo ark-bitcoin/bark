@@ -681,13 +681,17 @@ impl <P>Wallet<P> where
 	}
 
 	/// Refresh vtxo's
+	///
+	/// Returns the [Txid] of the round-transaction
+	/// if a successful refresh occured. It will return
+	/// [None] if no [Vtxo] needed to be refreshed.
 	pub async fn refresh_vtxos(
 		&mut self,
 		vtxos: Vec<Vtxo>
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<Option<Txid>> {
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to refresh!");
-			return Ok(())
+			return Ok(None)
 		}
 
 		let total_amount: bitcoin::Amount = vtxos.iter().map(|v| v.amount()).sum();
@@ -698,10 +702,10 @@ impl <P>Wallet<P> where
 			amount: total_amount
 		};
 
-		self.participate_round(move |_id, _offb_fr| {
+		let txid = self.participate_round(move |_id, _offb_fr| {
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
-		Ok(())
+		Ok(Some(txid))
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {

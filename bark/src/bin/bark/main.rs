@@ -519,7 +519,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
 			};
 
-			w.refresh_vtxos(vtxos).await?;
+			let round_txid: Option<bitcoin::Txid> = w.refresh_vtxos(vtxos).await?;
+			let refresh_output = json::Refresh {
+				participate_round: round_txid.is_some(),
+				round_txid
+			};
+			serde_json::to_writer_pretty(io::stdout(), &refresh_output).unwrap();
 		},
 		Command::Onboard { amount, all } => {
 			w.onchain.sync().await.context("sync error")?;
