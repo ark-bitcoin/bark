@@ -99,7 +99,9 @@ impl Bark {
 	}
 
 	pub async fn onchain_balance(&self) -> Amount {
-		self.run(["onchain", "balance"]).await.parse().unwrap()
+		let balance_output = self.run(["onchain", "balance"]).await;
+		let balance = serde_json::from_str::<json::onchain::Balance>(&balance_output).unwrap();
+		balance.total
 	}
 
 	pub async fn onchain_utxos(&self) -> Vec<OutPoint> {
@@ -108,12 +110,12 @@ impl Bark {
 	}
 
 	pub async fn offchain_balance(&self) -> Amount {
-		let json = self.run(["balance", "--json"]).await;
+		let json = self.run(["balance"]).await;
 		serde_json::from_str::<json::Balance>(&json).unwrap().offchain
 	}
 
 	pub async fn offchain_balance_no_sync(&self) -> Amount {
-		let json = self.run(["balance", "--json", "--no-sync"]).await;
+		let json = self.run(["balance", "--no-sync"]).await;
 		serde_json::from_str::<json::Balance>(&json).unwrap().offchain
 	}
 
@@ -131,17 +133,17 @@ impl Bark {
 	}
 
 	pub async fn utxos(&self) -> Vec<UtxoInfo> {
-		let res = self.run(["onchain", "utxos", "--json"]).await;
+		let res = self.run(["onchain", "utxos"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
 	pub async fn vtxos(&self) -> json::Vtxos {
-		let res = self.run(["vtxos", "--json"]).await;
+		let res = self.run(["vtxos"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
 	pub async fn list_movements(&self) -> Vec<Movement> {
-		let res = self.run(["list-movements", "--json"]).await;
+		let res = self.run(["list-movements"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
@@ -208,7 +210,7 @@ impl Bark {
 	}
 
 	pub async fn exit(&self) -> json::ExitStatus {
-		let res = self.run(["exit", "--json"]).await;
+		let res = self.run(["exit"]).await;
 		serde_json::from_str::<json::ExitStatus>(&res).expect("invalid json from exit")
 	}
 

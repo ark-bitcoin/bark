@@ -23,7 +23,6 @@ use bark::{Config, Pagination, UtxoInfo};
 use bark_json::cli as json;
 
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
-use crate::util::PrettyDuration;
 
 const DEFAULT_PAGE_SIZE: u16 = 10;
 const DEFAULT_PAGE_INDEX: u16 = 0;
@@ -42,12 +41,6 @@ struct Cli {
 	/// Enable verbose logging
 	#[arg(long, short = 'v', global = true)]
 	verbose: bool,
-
-	/// Print output as JSON
-	///
-	/// Note that simple string values will still be output as raw strings
-	#[arg(long, short = 'j', global = true)]
-	json: bool,
 
 	/// The datadir of the bark wallet
 	#[arg(long, global = true, default_value_t = default_datadir())]
@@ -366,17 +359,14 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				let res = w.onchain.balance();
-				if cli.json {
-					println!("{}", res.to_sat());
-				} else {
-					println!("{}", res);
-				}
+				let total = w.onchain.balance();
+				let json_output  = json::onchain::Balance { total };
+				serde_json::to_writer_pretty(io::stdout(), &json_output).unwrap();
 			},
 			OnchainCommand::Address => {
 					let address = w.onchain.address().expect("Wallet failed to generate address");
 					let output = json::onchain::Address { address: address.into_unchecked() };
-					serde_json::to_writer(io::stdout(), &output).unwrap();
+					serde_json::to_writer_pretty(io::stdout(), &output).unwrap();
 			},
 			OnchainCommand::Send { destination: address, amount } => {
 				let addr = address.require_network(net).with_context(|| {
@@ -389,7 +379,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				let txid = w.onchain.send(addr, amount).await?;
 				let output = json::onchain::Send { txid };
-				serde_json::to_writer(io::stdout(), &output).unwrap();
+				serde_json::to_writer_pretty(io::stdout(), &output).unwrap();
 			},
 			OnchainCommand::Utxos { no_sync } => {
 				if !no_sync {
@@ -398,22 +388,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				let utxos : json::onchain::Utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<Vec<_>>();
-
-				if cli.json {
-					serde_json::to_writer(io::stdout(), &utxos).unwrap();
-				} else {
-					info!("Our onchain wallet has {} UTXO(s):", utxos.len());
-					for u in utxos {
-						if let Some(confirmation_height) = u.confirmation_height {
-							info!("  {}: {}; confirmed at height {}",
-								u.outpoint, u.amount, confirmation_height,
-							);
-						} else {
-							info!("  {}: {}; unconfirmed", u.outpoint, u.amount);
-						}
-					}
-				}
+				let utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<json::onchain::Utxos>();
+				serde_json::to_writer_pretty(io::stdout(), &utxos).unwrap();
 			},
 		},
 		Command::VtxoPubkey => println!("{}", w.oor_pubkey()),
@@ -427,17 +403,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let onchain = w.onchain.balance();
 			let offchain =  w.offchain_balance().await?;
 			let pending_exit = w.exit.pending_total().await?;
-			if cli.json {
-				serde_json::to_writer(io::stdout(), &json::Balance {
-					onchain, offchain, pending_exit,
-				}).unwrap();
-			} else {
-				info!("Onchain balance: {}", onchain);
-				info!("Offchain balance: {}", offchain);
-				if pending_exit > Amount::ZERO {
-					info!("An exit process is pending for {}", pending_exit);
-				}
-			}
+			serde_json::to_writer_pretty(io::stdout(), &json::Balance {
+				onchain, offchain, pending_exit,
+			}).unwrap();
 		},
 		Command::Vtxos { no_sync } => {
 			if !no_sync {
@@ -447,24 +415,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let res = w.vtxos()?;
-			if cli.json {
-				let json : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
-				serde_json::to_writer(io::stdout(), &json).unwrap();
-			} else {
-				info!("Our wallet has {} VTXO(s):", res.len());
-				let tip = w.onchain.tip().await.context("bitcoin chain source error")?;
-				for v in res {
-					let expiry = v.spec().expiry_height;
-					if let Some(diff) = expiry.checked_sub(tip) {
-						let time_left = Duration::from_secs(60 * 10 * diff as u64);
-						info!("  {} ({}): {}; expires at height {} (in about {})",
-							v.id(), v.vtxo_type(), v.amount(), expiry, PrettyDuration(time_left),
-						);
-					} else {
-						info!("  {} ({}): {}; already expired", v.id(), v.vtxo_type(), v.amount());
-					}
-				}
-			}
+			let json : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
+			serde_json::to_writer_pretty(io::stdout(), &json).unwrap();
 		},
 		Command::ListMovements { page_index, page_size } => {
 			if let Err(e) = w.sync_ark().await.context("sync error") {
@@ -477,23 +429,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 
 			let movements = w.list_movements(pagination)?;
-			if cli.json {
-				serde_json::to_writer(io::stdout(), &movements).unwrap();
-			} else {
-				info!("Our wallet has {} movement(s):", movements.len());
-				for movement in movements {
-					let value: i64 =
-						movement.receives.into_iter().fold(0i64, |a, v| a + v.amount.to_sat() as i64) -
-						movement.spends.into_iter().fold(0i64, |a, v| a + v.amount.to_sat() as i64);
-
-					info!("  {} ({}): value | {} sats; fees | {} sats",
-						movement.id,
-						movement.created_at,
-						value,
-						movement.fees.to_sat()
-					);
-				}
-			}
+			serde_json::to_writer_pretty(io::stdout(), &movements).unwrap();
 		},
 		Command::Refresh { vtxos: vtxo, threshold_blocks, threshold_hours, counterparty, all } => {
 			w.sync_ark().await.context("sync error")?;
@@ -645,51 +581,23 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				let res = wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
 					.context("error making progress on exit process")?;
-				if cli.json {
-					let ret = match res {
-						Some(ref status) => match status {
-							bark::ExitStatus::NeedMoreTxs => {
-								json::ExitStatus { done: false, height: None }
-							},
-							bark::ExitStatus::WaitingForHeight(h) => {
-								json::ExitStatus { done: false, height: Some(*h) }
-							},
-							bark::ExitStatus::CanSpendAllOutputs => {
-								json::ExitStatus { done: true, height: None }
-							},
+
+				// Print the output as json
+				let json_output = match res {
+					Some(ref status) => match status {
+						bark::ExitStatus::NeedMoreTxs => {
+							json::ExitStatus { done: false, height: None }
 						},
-						None => json::ExitStatus { done: false, height: None }
-					};
-					serde_json::to_writer(io::stdout(), &ret).unwrap();
-				} else {
-					match res {
-						Some(ref status) => {
-							match status {
-								bark::ExitStatus::NeedMoreTxs => {
-									if wait {
-										info!("More transactions need to be confirmed.");
-									} else {
-										info!("More transactions need to be confirmed, \
-											keep calling this command.");
-									}
-								},
-								bark::ExitStatus::WaitingForHeight(h) => {
-									if wait {
-										info!("All transactions are confirmed, \
-											waiting for block height {}.", h);
-									} else {
-										info!("All transactions are confirmed. \
-											They will be all spendable at block height {}.", h);
-									}
-								}
-								bark::ExitStatus::CanSpendAllOutputs => {
-									info!("All exit outputs can now be spent!");
-								}
-							}
+						bark::ExitStatus::WaitingForHeight(h) => {
+							json::ExitStatus { done: false, height: Some(*h) }
 						},
-						None => info!("No exit in progress")
-					}
-				}
+						bark::ExitStatus::CanSpendAllOutputs => {
+							json::ExitStatus { done: true, height: None }
+						},
+					},
+					None => json::ExitStatus { done: false, height: None }
+				};
+				serde_json::to_writer_pretty(io::stdout(), &json_output).unwrap();
 
 				if !wait || res.is_none() || res.unwrap() == bark::ExitStatus::CanSpendAllOutputs {
 					break;
