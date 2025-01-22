@@ -64,4 +64,11 @@ pub struct Refresh {
 	pub round_txid: Option<Txid>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendOnchain {
+	/// The [Txid] of the round in which the send occured
+	pub round_txid: Txid,
+	// TODO: List the [OutPoint] and [Amount] here
+}
+
 pub type Vtxos = Vec<VtxoInfo>;

@@ -50,7 +50,7 @@ use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
 pub use bark_json::primitives::UtxoInfo;
-pub use bark_json::cli::Onboard;
+pub use bark_json::cli::{Onboard, SendOnchain};
 
 use crate::vtxo_state::VtxoState;
 
@@ -978,7 +978,7 @@ impl <P>Wallet<P> where
 	/// Send to an onchain address in an Ark round.
 	///
 	/// It is advised to sync your wallet before calling this method.
-	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<()> {
+	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
 		let change_keypair = self.derive_store_next_keypair()?;
 
 		// Prepare the payment.
@@ -993,7 +993,7 @@ impl <P>Wallet<P> where
 			bail!("Balance too low");
 		}
 
-		self.participate_round(move |_id, offb_fr| {
+		let txid = self.participate_round(move |_id, offb_fr| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
@@ -1017,7 +1017,8 @@ impl <P>Wallet<P> where
 
 			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
 		}).await.context("round failed")?;
-		Ok(())
+
+		Ok(SendOnchain { round_txid: txid})
 	}
 
 	/// Participate in a round.
