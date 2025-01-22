@@ -11,7 +11,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Error, schnorr, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use crate::{fee, musig, util, PaymentRequest, Vtxo, VtxoSpec};
+use crate::{fee, musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
 
 
 /// The minimum fee we consider for an oor transaction.
@@ -41,7 +41,7 @@ pub fn unsigned_oor_transaction<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSp
 			}
 		}).collect(),
 		output: outputs.into_iter().map(|output| {
-			let spk = crate::exit_spk(output.user_pubkey, output.asp_pubkey, output.exit_delta);
+			let spk = crate::vtxo::exit_spk(output.user_pubkey, output.asp_pubkey, output.exit_delta);
 			TxOut {
 				value: output.amount,
 				script_pubkey: spk,
@@ -74,13 +74,13 @@ pub fn signed_oor_tx<V: Borrow<Vtxo>>(
 /// If a pubkey is provided, it'll check that vtxo's output user pubkey match it (later want to check it's derived from it)
 pub fn verify_oor(vtxo: Vtxo, pubkey: Option<PublicKey>) -> Result<(), Error> {
 	match vtxo {
-		Vtxo::Oor { inputs, signatures, output_specs, point } => {
+		Vtxo::Arkoor(v) => {
 			// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
 
-			let tx = signed_oor_tx(&inputs, &signatures, &output_specs);
+			let tx = signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs);
 
-			let sighashes = oor_sighashes(&inputs, &tx);
-			for (idx, input) in inputs.iter().enumerate() {
+			let sighashes = oor_sighashes(&v.inputs, &tx);
+			for (idx, input) in v.inputs.iter().enumerate() {
 				util::SECP.verify_schnorr(
 					&schnorr::Signature::from_slice(&tx.input[idx].witness.to_vec()[0][..]).unwrap(),
 					&sighashes[idx].into(),
@@ -90,7 +90,7 @@ pub fn verify_oor(vtxo: Vtxo, pubkey: Option<PublicKey>) -> Result<(), Error> {
 
 			if let Some(pubkey) = pubkey {
 				//TODO: handle derived keys here
-				assert_eq!(pubkey, output_specs[point.vout as usize].user_pubkey)
+				assert_eq!(pubkey, v.output_specs[v.point.vout as usize].user_pubkey)
 			}
 		},
 		_ => {}
@@ -245,12 +245,12 @@ impl OorPayment {
 		let tx = unsigned_oor_transaction(&inputs, &outputs);
 
 		self.outputs.iter().enumerate().map(|(idx, _output)| {
-			Vtxo::Oor {
+			Vtxo::Arkoor(ArkoorVtxo {
 				inputs: self.inputs.clone(),
 				signatures: vec![],
 				output_specs: outputs.clone(),
 				point: OutPoint::new(tx.compute_txid(), idx as u32)
-			}
+			})
 		}).collect()
 	}
 
@@ -287,8 +287,8 @@ impl SignedOorPayment {
 	pub fn output_vtxos(&self) -> Vec<Vtxo> {
 		let mut ret = self.payment.unsigned_output_vtxos();
 		for vtxo in ret.iter_mut() {
-			if let Vtxo::Oor { signatures, .. } = vtxo {
-				*signatures = self.signatures.clone();
+			if let Vtxo::Arkoor(v) = vtxo {
+				v.signatures = self.signatures.clone();
 			} else {
 				unreachable!("vtxos are all OOR");
 			}

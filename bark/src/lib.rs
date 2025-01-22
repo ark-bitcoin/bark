@@ -45,7 +45,7 @@ use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, OffboardRequest, Movement, PaymentRequest, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
+use ark::{musig, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
@@ -496,7 +496,7 @@ impl <P>Wallet<P> where
 	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
 		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
 		let dest = &vtxos.spec.spec.vtxos[leaf_idx];
-		let vtxo = Vtxo::Round {
+		let vtxo = Vtxo::Round(RoundVtxo {
 			spec: VtxoSpec {
 				user_pubkey: dest.pubkey,
 				asp_pubkey: vtxos.spec.spec.asp_pk,
@@ -506,7 +506,7 @@ impl <P>Wallet<P> where
 			},
 			leaf_idx: leaf_idx,
 			exit_branch: exit_branch.into_iter().cloned().collect(),
-		};
+		});
 
 		if self.db.get_vtxo(vtxo.id())?.is_some() {
 			debug!("Not adding vtxo {} because it already exists", vtxo.id());

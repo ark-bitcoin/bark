@@ -231,7 +231,7 @@ mod test {
 	use bitcoin::bip32;
 	use rand::{Rng, distributions::Alphanumeric};
 
-	use ark::VtxoSpec;
+	use ark::{OnboardVtxo, VtxoSpec};
 
 	use super::*;
 
@@ -271,9 +271,9 @@ mod test {
 		let point_3 = "0000000000000000000000000000000000000000000000000000000000000000:3".parse().unwrap();
 		let sig = "cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd59320b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea".parse().unwrap();
 
-		let vtxo_1 = Vtxo::Onboard {
+		let vtxo_1 = Vtxo::Onboard(OnboardVtxo {
 			reveal_tx_signature: sig,
-			input: point_1,
+			onchain_output: point_1,
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -281,11 +281,11 @@ mod test {
 				exit_delta: 40,
 				amount: Amount::from_sat(500)
 			},
-		};
+		});
 
-		let vtxo_2 = Vtxo::Onboard {
+		let vtxo_2 = Vtxo::Onboard(OnboardVtxo {
 			reveal_tx_signature: sig,
-			input: point_2,
+			onchain_output: point_2,
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -293,11 +293,11 @@ mod test {
 				exit_delta: 40,
 				amount: Amount::from_sat(500)
 			},
-		};
+		});
 
-		let vtxo_3 = Vtxo::Onboard {
+		let vtxo_3 = Vtxo::Onboard(OnboardVtxo {
 			reveal_tx_signature: sig,
-			input: point_3,
+			onchain_output: point_3,
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -305,7 +305,7 @@ mod test {
 				exit_delta: 40,
 				amount: Amount::from_sat(500)
 			},
-		};
+		});
 
 		let (cs, conn) = in_memory();
 		let db = SqliteClient::open(cs).unwrap();

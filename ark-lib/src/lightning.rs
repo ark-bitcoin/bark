@@ -7,7 +7,7 @@ use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
 use lightning_invoice::Bolt11Invoice;
 
-use crate::{fee, musig, util, Vtxo, VtxoSpec, P2TR_DUST_SAT};
+use crate::{fee, musig, util, Bolt11ChangeVtxo, Vtxo, VtxoSpec, P2TR_DUST_SAT};
 
 
 /// The minimum fee we consider for an HTLC transaction.
@@ -56,7 +56,7 @@ impl Bolt11Payment {
 	}
 
 	fn change_output(&self) -> TxOut {
-		let spk = crate::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
+		let spk = crate::vtxo::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
 		TxOut {
 			value: self.change_amount(),
 			script_pubkey: spk,
@@ -281,7 +281,7 @@ impl SignedBolt11Payment {
 	pub fn change_vtxo(&self) -> Vtxo {
 		let tx = self.signed_transaction();
 		let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
-		Vtxo::Bolt11Change {
+		Vtxo::Bolt11Change(Bolt11ChangeVtxo {
 			inputs: self.payment.inputs.clone(),
 			pseudo_spec: VtxoSpec {
 				amount: self.payment.change_amount(),
@@ -292,7 +292,7 @@ impl SignedBolt11Payment {
 			},
 			final_point: OutPoint::new(tx.compute_txid(), 1),
 			htlc_tx: tx,
-		}
+		})
 	}
 
 	//TODO(stevenroose) make change_vtxo method here

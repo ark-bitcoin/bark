@@ -577,8 +577,8 @@ impl App {
 
 	pub fn register_onboards(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
 		for vtxo in vtxos {
-			if let Vtxo::Onboard { spec, .. } = vtxo {
-				self.validate_onboard_spec(&spec)?;
+			if let Vtxo::Onboard(v) = vtxo {
+				self.validate_onboard_spec(&v.spec)?;
 				//TODO(stevenroose) verify confirmed? probably a good idea
 				//should at least verify confirmed when submitted to round
 			} else {
@@ -589,8 +589,8 @@ impl App {
 		self.db.insert_onboard_vtxos(vtxos).context("db error")?;
 
 		for vtxo in vtxos {
-			if let Vtxo::Onboard { spec, .. } = vtxo {
-				slog!(RegisteredOnboard, utxo: vtxo.point(), amount: spec.amount);
+			if let Vtxo::Onboard(v) = vtxo {
+				slog!(RegisteredOnboard, utxo: vtxo.point(), amount: v.spec.amount);
 			}
 		}
 
