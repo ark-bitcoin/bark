@@ -8,7 +8,7 @@ use ark::vtxo::exit_spk;
 use ark_testing::daemon::bitcoind::BitcoindConfig;
 use ark_testing::setup::setup_full;
 use ark_testing::{context::TestContext, Bark, Bitcoind};
-use bark_json::cli::VtxoType;
+use bark_json::primitives::VtxoType;
 
 use bitcoin::Address;
 use bitcoincore_rpc::bitcoin::amount::Amount;

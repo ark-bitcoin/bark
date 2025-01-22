@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use ark::Movement;
 use bark::UtxoInfo;
-use bitcoin::address::{Address, NetworkUnchecked};
+use bitcoin::address::Address;
 use bitcoin::{Amount, Network, OutPoint};
 use serde_json;
 use tokio::fs;
@@ -135,7 +135,7 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn vtxos(&self) -> Vec<json::VtxoInfo> {
+	pub async fn vtxos(&self) -> json::Vtxos {
 		let res = self.run(["vtxos", "--json"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}

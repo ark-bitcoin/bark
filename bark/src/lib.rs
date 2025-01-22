@@ -49,7 +49,7 @@ use ark::{musig, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, Paymen
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
-pub use bark_json::cli::UtxoInfo;
+pub use bark_json::primitives::UtxoInfo;
 
 use crate::vtxo_state::VtxoState;
 

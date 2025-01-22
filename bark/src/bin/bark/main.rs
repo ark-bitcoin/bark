@@ -448,7 +448,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			let res = w.vtxos()?;
 			if cli.json {
-				let json = res.into_iter().map(|v| v.into()).collect::<Vec<json::VtxoInfo>>();
+				let json : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
 				serde_json::to_writer(io::stdout(), &json).unwrap();
 			} else {
 				info!("Our wallet has {} VTXO(s):", res.len());
