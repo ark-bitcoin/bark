@@ -50,7 +50,7 @@ use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
 pub use bark_json::primitives::UtxoInfo;
-pub use bark_json::cli::{Onboard, SendOnchain};
+pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
 
 use crate::vtxo_state::VtxoState;
 
@@ -635,7 +635,7 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Option<Address>) -> anyhow::Result<()> {
+	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Option<Address>) -> anyhow::Result<Offboard> {
 		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let addr = match address {
@@ -643,7 +643,7 @@ impl <P>Wallet<P> where
 			None => self.onchain.address()?,
 		};
 
-		self.participate_round(move |_id, offb_fr| {
+		let txid = self.participate_round(move |_id, offb_fr| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), offb_fr)
 				.expect("bdk created invalid scriptPubkey");
 
@@ -655,7 +655,7 @@ impl <P>Wallet<P> where
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(())
+		Ok(Offboard { round_txid : txid})
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address

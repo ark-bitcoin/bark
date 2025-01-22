@@ -53,6 +53,12 @@ pub mod onchain {
 	}
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Offboard {
+	/// The [Txid] of the round in which the offboard occured
+	pub round_txid: Txid,
+}
+
 /// The output of the `bark refresh` command
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Refresh {
