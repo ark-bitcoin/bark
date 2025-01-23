@@ -11,6 +11,7 @@ pub mod lightning;
 pub mod musig;
 pub mod onboard;
 pub mod oor;
+pub mod rounds;
 pub mod tree;
 pub mod util;
 pub mod vtxo;

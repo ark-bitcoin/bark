@@ -12,6 +12,7 @@ server = []
 [dependencies]
 # OWN
 ark-lib = { path = "../ark-lib" }
+bitcoin.workspace = true
 
 # EXPORTED
 tonic.workspace = true

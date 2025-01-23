@@ -5,7 +5,6 @@
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
 
-mod convert;
 mod database;
 mod lightning;
 mod psbtext;
@@ -39,8 +38,9 @@ use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
 use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
+use ark::rounds::RoundEvent;
 
-use crate::round::{RoundEvent, RoundInput};
+use crate::round::RoundInput;
 use crate::txindex::TxIndex;
 
 lazy_static::lazy_static! {

@@ -30,6 +30,7 @@ mod vtxo_state;
 
 pub mod vtxo_selection;
 
+use std::convert::TryFrom;
 use std::time::Duration;
 use std::iter;
 use std::collections::{HashMap, HashSet};
@@ -37,9 +38,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{bail, Context};
-use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Transaction, Txid, Weight};
+use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid, Weight};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
+use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
@@ -47,7 +48,8 @@ use tokio_stream::StreamExt;
 
 use ark::{musig, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
+use ark::rounds::RoundEvent;
+use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
@@ -1037,16 +1039,19 @@ impl <P>Wallet<P> where
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
-		let mut events = asp.client.subscribe_rounds(rpc::Empty {}).await?.into_inner();
+		let mut events = asp.client.subscribe_rounds(rpc::Empty {}).await?.into_inner()
+			.map(|m| {
+				let m = m.context("received error on event stream")?;
+				let e = RoundEvent::try_from(m).context("error converting rpc round event")?;
+				trace!("Received round event: {}", e);
+				Ok::<_, anyhow::Error>(e)
+			});
 
 		// Wait for the next round start.
 		let (mut round_id, offboard_feerate) = loop {
-			match events.next().await.context("events stream broke")??.event.unwrap() {
-				rpc::round_event::Event::Start(rpc::RoundStart {
-					round_id, offboard_feerate_sat_vkb,
-				}) => {
-					let offb_fr = FeeRate::from_sat_per_kwu(offboard_feerate_sat_vkb / 4);
-					break (round_id, offb_fr);
+			match events.next().await.context("events stream broke")?? {
+				RoundEvent::Start { round_id, offboard_feerate } => {
+					break (round_id, offboard_feerate);
 				},
 				_ => {},
 			}
@@ -1116,26 +1121,17 @@ impl <P>Wallet<P> where
 
 			debug!("Waiting for vtxo proposal from asp...");
 			let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
-				match events.next().await.context("events stream broke")??.event.unwrap() {
-					rpc::round_event::Event::VtxoProposal(p) => {
-						assert_eq!(p.round_id, round_id, "missing messages");
-						let vtxos = VtxoTreeSpec::decode(&p.vtxos_spec)
-							.context("decoding vtxo spec")?;
-						let tx = bitcoin::consensus::deserialize::<Transaction>(&p.unsigned_round_tx)
-							.context("decoding round tx")?;
-						let vtxo_nonces = p.vtxos_agg_nonces.into_iter().map(|k| {
-							musig::MusigAggNonce::from_slice(&k).context("invalid agg nonce")
-						}).collect::<anyhow::Result<Vec<_>>>()?;
-
-						(vtxos, tx, vtxo_nonces)
+				match events.next().await.context("events stream broke")?? {
+					RoundEvent::VtxoProposal { unsigned_round_tx, vtxos_spec, cosign_agg_nonces, .. } => {
+						(vtxos_spec, unsigned_round_tx, cosign_agg_nonces)
 					},
 					// If a new round started meanwhile, pick up on that one.
-					rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
+					RoundEvent::Start { round_id: id, .. } => {
 						warn!("Unexpected new round started...");
 						round_id = id;
 						continue 'round;
 					},
-					rpc::round_event::Event::Attempt(rpc::RoundAttempt { round_id: id, .. }) => {
+					RoundEvent::Attempt { round_id: id, .. } => {
 						debug!("New round attempt...");
 						round_id = id;
 						continue 'round;
@@ -1196,36 +1192,17 @@ impl <P>Wallet<P> where
 
 			debug!("Wait for round proposal from asp...");
 			let (vtxo_cosign_sigs, forfeit_nonces) = {
-				match events.next().await.context("events stream broke")??.event.unwrap() {
-					rpc::round_event::Event::RoundProposal(p) => {
-						assert_eq!(p.round_id, round_id, "missing messages");
-						let vtxo_cosign_sigs = p.vtxo_cosign_signatures.iter().map(|s| {
-							schnorr::Signature::from_slice(s).context("invalid vtxo sig")
-						}).collect::<Result<Vec<_>, _>>()?;
-
-						// Directly filter the forfeit nonces only for out inputs.
-						let mut forfeit_nonces = HashMap::with_capacity(p.forfeit_nonces.len());
-						for f in p.forfeit_nonces {
-							let id = VtxoId::from_slice(&f.input_vtxo_id)
-								.map_err(|e| anyhow!("invalid vtxoid from asp: {}", e))?;
-							if vtxo_ids.contains(&id) {
-								let nonces = f.pub_nonces.into_iter().map(|s| {
-									Ok(musig::MusigPubNonce::from_slice(&s)
-										.context("invalid forfeit nonce from asp")?)
-								}).collect::<anyhow::Result<Vec<_>>>()?;
-								forfeit_nonces.insert(id, nonces);
-							}
-						}
-
-						(vtxo_cosign_sigs, forfeit_nonces)
+				match events.next().await.context("events stream broke")?? {
+					RoundEvent::RoundProposal { cosign_sigs, forfeit_nonces, .. } => {
+						(cosign_sigs, forfeit_nonces)
 					},
 					// If a new round started meanwhile, pick up on that one.
-					rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
+					RoundEvent::Start { round_id: id, .. } => {
 						warn!("Unexpected new round started...");
 						round_id = id;
 						continue 'round;
 					},
-					rpc::round_event::Event::Attempt(rpc::RoundAttempt { round_id: id, .. }) => {
+					RoundEvent::Attempt { round_id: id, .. } => {
 						debug!("New round attempt...");
 						round_id = id;
 						continue 'round;
@@ -1289,22 +1266,15 @@ impl <P>Wallet<P> where
 			// ****************************************************************
 
 			debug!("Waiting for round to finish...");
-			let signed_round_tx = match events.next().await.context("events stream broke")??.event.unwrap() {
-				rpc::round_event::Event::Finished(f) => {
-					if f.round_id != round_id {
-						bail!("Unexpected round ID from round finished event: {} != {}",
-							f.round_id, round_id);
-					}
-					bitcoin::consensus::deserialize::<Transaction>(&f.signed_round_tx)
-						.context("invalid round tx from asp")?
-				},
+			let signed_round_tx = match events.next().await.context("events stream broke")?? {
+				RoundEvent::Finished { signed_round_tx, .. } => signed_round_tx,
 				// If a new round started meanwhile, pick up on that one.
-				rpc::round_event::Event::Start(rpc::RoundStart { round_id: id, .. }) => {
+				RoundEvent::Start { round_id: id, .. } => {
 					warn!("Unexpected new round started...");
 					round_id = id;
 					continue 'round;
 				},
-				rpc::round_event::Event::Attempt(rpc::RoundAttempt { round_id: id, .. }) => {
+				RoundEvent::Attempt { round_id: id, .. } => {
 					debug!("New round attempt...");
 					round_id = id;
 					continue 'round;

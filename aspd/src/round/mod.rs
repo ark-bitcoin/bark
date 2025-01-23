@@ -6,44 +6,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{RawTx, RpcApi};
-use bitcoin::{Amount, FeeRate, OutPoint, Transaction};
+use bitcoin::{Amount, FeeRate, OutPoint};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
-use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
+use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use tokio::time::Instant;
 use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId};
 use ark::connectors::ConnectorChain;
 use ark::musig::MusigPubNonce;
 use ark::tree::signed::{UnsignedVtxoTree, VtxoTreeSpec};
+use ark::rounds::RoundEvent;
 
-use crate::{txindex, App, SECP};
-
-#[derive(Debug, Clone)]
-pub enum RoundEvent {
-	Start {
-		round_id: u64,
-		offboard_feerate: FeeRate,
-	},
-	Attempt {
-		round_id: u64,
-		attempt: u64,
-	},
-	VtxoProposal {
-		round_id: u64,
-		unsigned_round_tx: Transaction,
-		vtxos_spec: VtxoTreeSpec,
-		cosign_agg_nonces: Vec<musig::MusigAggNonce>,
-	},
-	RoundProposal {
-		round_id: u64,
-		cosign_sigs: Vec<schnorr::Signature>,
-		forfeit_nonces: HashMap<VtxoId, Vec<musig::MusigPubNonce>>,
-	},
-	Finished {
-		round_id: u64,
-		signed_round_tx: txindex::Tx,
-	},
-}
+use crate::{App, SECP};
 
 #[derive(Debug)]
 pub enum RoundInput {
@@ -804,7 +778,7 @@ pub async fn run_round_coordinator(
 			trace!("Sending out finish event.");
 			let _ = app.rounds().round_event_tx.send(RoundEvent::Finished {
 				round_id,
-				signed_round_tx: signed_round_tx.clone(),
+				signed_round_tx: signed_round_tx.tx.clone(),
 			});
 
 			// Store forfeit txs and round info in database.
