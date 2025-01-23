@@ -45,7 +45,7 @@ use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
+use ark::{musig, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
@@ -515,6 +515,28 @@ impl <P>Wallet<P> where
 
 		debug!("Built new vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
 		Ok(Some(vtxo))
+	}
+
+	/// Checks if the provided VTXO has some counterparty risk in the current wallet
+	///
+	/// A [`Vtxo::Oor`] is considered to have some counterparty risk
+	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
+	fn has_counterparty_risk(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
+		let iterate_over_inputs = |inputs: &[Vtxo]| -> anyhow::Result<bool> {
+			for input in inputs.iter() {
+				if self.has_counterparty_risk(input)? {
+					return Ok(true)
+				}
+			}
+			Ok(false)
+		};
+
+		match vtxo {
+			Vtxo::Arkoor(ArkoorVtxo { inputs, .. }) => iterate_over_inputs(inputs),
+			Vtxo::Bolt11Change(Bolt11ChangeVtxo { inputs, .. }) => iterate_over_inputs(inputs),
+			Vtxo::Onboard(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
+			Vtxo::Round(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
+		}
 	}
 
 	/// Sync with the Ark and look for received vtxos.

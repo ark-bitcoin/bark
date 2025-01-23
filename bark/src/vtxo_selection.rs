@@ -38,7 +38,7 @@ impl <P>SelectVtxo for WithCounterpartyRisk<'_, P>
 		vtxos
 			.to_owned()
 			.into_iter()
-			.filter(|v| v.has_counterparty_risk(&self.wallet.vtxo_pubkey()))
+			.filter(|v| self.wallet.has_counterparty_risk(&v).unwrap_or(false))
 			.collect::<Vec<_>>()
 	}
 }
