@@ -6,54 +6,53 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
-
-use ark::oor::verify_oor;
-use aspd_rpc as rpc;
-use exit::Exit;
-pub use exit::ExitStatus;
-use onchain::Utxo;
 pub use persist::sqlite::SqliteClient;
-
+pub mod vtxo_selection;
 mod exit;
-use ark::musig::{MusigPubNonce, MusigSecNonce};
-use bdk_wallet::WalletPersister;
-use bip39::Mnemonic;
-use bitcoin::bip32::Fingerprint;
-use bitcoin::hex::DisplayHex;
-use persist::BarkPersister;
-use vtxo_selection::{ExpiredAtHeight, SelectVtxo};
-
+pub use exit::ExitStatus;
 mod lnurl;
 pub mod onchain;
 mod psbtext;
 mod vtxo_state;
 
-pub mod vtxo_selection;
 
+use std::iter;
 use std::convert::TryFrom;
 use std::time::Duration;
-use std::iter;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{bail, Context};
-use bitcoin::{bip32, secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid, Weight};
+use bdk_wallet::WalletPersister;
+use bip39::Mnemonic;
+use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid, Weight};
+use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
-use ark::{musig, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec};
+use ark::{
+	oor, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
+	VtxoId, VtxoRequest, VtxoSpec,
+};
 use ark::connectors::ConnectorChain;
+use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::RoundEvent;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
+use aspd_rpc as rpc;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
 
+use crate::exit::Exit;
+use crate::onchain::Utxo;
+use crate::persist::BarkPersister;
+use crate::vtxo_selection::{ExpiredAtHeight, SelectVtxo};
 use crate::vtxo_state::VtxoState;
 
 lazy_static::lazy_static! {
@@ -618,7 +617,7 @@ impl <P>Wallet<P> where
 		debug!("ASP has {} OOR vtxos for us", oors.len());
 		for vtxo in oors {
 			// TODO: we need to test receiving arkoors with invalid signatures
-			if let Err(e) = verify_oor(vtxo.clone(), Some(self.oor_pubkey())) {
+			if let Err(e) = oor::verify_oor(vtxo.clone(), Some(self.oor_pubkey())) {
 				warn!("Could not validate OOR signature, dropping vtxo. {}", e);
 				continue;
 			}
@@ -645,8 +644,8 @@ impl <P>Wallet<P> where
 			None => self.onchain.address()?,
 		};
 
-		let txid = self.participate_round(move |_id, offb_fr| {
-			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), offb_fr)
+		let txid = self.participate_round(move |round| {
+			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), round.offboard_feerate)
 				.expect("bdk created invalid scriptPubkey");
 
 			let offb = OffboardRequest {
@@ -702,7 +701,7 @@ impl <P>Wallet<P> where
 			return Ok(None)
 		}
 
-		let total_amount: bitcoin::Amount = vtxos.iter().map(|v| v.amount()).sum();
+		let total_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let user_keypair = self.derive_store_next_keypair()?;
 		let payment_request = PaymentRequest {
@@ -710,7 +709,7 @@ impl <P>Wallet<P> where
 			amount: total_amount
 		};
 
-		let txid = self.participate_round(move |_id, _offb_fr| {
+		let txid = self.participate_round(move |_| {
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
 		Ok(Some(txid))
@@ -995,12 +994,12 @@ impl <P>Wallet<P> where
 			bail!("Balance too low");
 		}
 
-		let txid = self.participate_round(move |_id, offb_fr| {
+		let txid = self.participate_round(move |round| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
 			};
-			let out_value = amount + offb.fee(offb_fr).expect("script from address");
+			let out_value = amount + offb.fee(round.offboard_feerate).expect("script from address");
 			let change = {
 				if in_sum < out_value {
 					bail!("Balance too low");
@@ -1032,7 +1031,7 @@ impl <P>Wallet<P> where
 	/// round attempts for better privacy.
 	async fn participate_round(
 		&mut self,
-		mut round_input: impl FnMut(u64, FeeRate) -> anyhow::Result<
+		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
 	) -> anyhow::Result<Txid> {
@@ -1047,281 +1046,364 @@ impl <P>Wallet<P> where
 				Ok::<_, anyhow::Error>(e)
 			});
 
-		// Wait for the next round start.
-		let (mut round_id, offboard_feerate) = loop {
-			match events.next().await.context("events stream broke")?? {
-				RoundEvent::Start { round_id, offboard_feerate } => {
-					break (round_id, offboard_feerate);
-				},
-				_ => {},
-			}
-		};
-		info!("Round started");
-
-		let (input_vtxos, pay_reqs, offb_reqs) = round_input(round_id, offboard_feerate)
-			.context("error providing round input")?;
-
-		// Assign cosign pubkeys to the payment requests.
-		let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
-			.take(pay_reqs.len())
-			.collect::<Vec<_>>();
-		let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
-			VtxoRequest {
-				pubkey: req.pubkey,
-				amount: req.amount,
-				cosign_pk: ck.public_key(),
-			}
-		}).collect::<Vec<_>>();
-
-		let vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
-		debug!("Spending vtxos: {:?}", vtxo_ids);
+		// We keep this Option with the latest round info.
+		// It allows us to conveniently restart when something unexpected happens:
+		// - when a new attempt starts, we update the info and restart
+		// - when a new round starts, we set it to the new round info and restart
+		// - when the asp misbehaves, we set it to None and restart
+		let mut round_info = None;
 
 		'round: loop {
-			// Prepare round participation info.
-			// For each of our requested vtxo output, we need a set of public and secret nonces.
-			let cosign_nonces = cosign_keys.iter().map(|key| {
-				let mut secs = Vec::with_capacity(asp.info.nb_round_nonces);
-				let mut pubs = Vec::with_capacity(asp.info.nb_round_nonces);
-				for _ in 0..asp.info.nb_round_nonces {
-					let (s, p) = musig::nonce_pair(key);
-					secs.push(s);
-					pubs.push(p);
+
+			// If we don't have a round info yet, wait for round start.
+			if round_info.is_none() {
+				debug!("Waiting for a new round to start...");
+				loop {
+					match events.next().await.context("events stream broke")?? {
+						e @ RoundEvent::Start { .. } => {
+							round_info = Some(RoundInfo::new_from_start(e));
+							break;
+						},
+						_ => trace!("ignoring irrelevant message"),
+					}
 				}
-				(secs, pubs)
-			})
-				.take(vtxo_reqs.len())
-				.collect::<Vec<(Vec<MusigSecNonce>, Vec<MusigPubNonce>)>>();
-
-			// The round has now started. We can submit our payment.
-			debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
-				input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
-			);
-			asp.client.submit_payment(rpc::SubmitPaymentRequest {
-				input_vtxos: input_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-				vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
-					rpc::VtxoRequest {
-						amount: r.amount.to_sat(),
-						vtxo_public_key: r.pubkey.serialize().to_vec(),
-						cosign_pubkey: r.cosign_pk.serialize().to_vec(),
-						public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
-					}
-				}).collect(),
-				offboard_requests: offb_reqs.iter().map(|r| {
-					rpc::OffboardRequest {
-						amount: r.amount.to_sat(),
-						offboard_spk: r.script_pubkey.to_bytes(),
-					}
-				}).collect(),
-			}).await.context("submitting payment to asp")?;
-
-
-			// ****************************************************************
-			// * Wait for vtxo proposal from asp.
-			// ****************************************************************
-
-			debug!("Waiting for vtxo proposal from asp...");
-			let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
+				// then we expect the first attempt message
 				match events.next().await.context("events stream broke")?? {
-					RoundEvent::VtxoProposal { unsigned_round_tx, vtxos_spec, cosign_agg_nonces, .. } => {
-						(vtxos_spec, unsigned_round_tx, cosign_agg_nonces)
+					RoundEvent::Attempt { attempt, .. } => {
+						if attempt != 0 {
+							error!("First attempt message didn't have number 0, but {attempt}");
+						}
 					},
-					// If a new round started meanwhile, pick up on that one.
-					RoundEvent::Start { round_id: id, .. } => {
-						warn!("Unexpected new round started...");
-						round_id = id;
-						continue 'round;
-					},
-					RoundEvent::Attempt { round_id: id, .. } => {
-						debug!("New round attempt...");
-						round_id = id;
-						continue 'round;
-					},
-					//TODO(stevenroose) make this robust
-					other => panic!("Unexpected message: {:?}", other),
-				}
-			};
-
-			//TODO(stevenroose) remove these magic numbers
-			let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 0);
-			let conns_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 1);
-
-			// Check that the proposal contains our inputs.
-			{
-				let mut my_vtxos = vtxo_reqs.clone();
-				for vtxo_req in vtxo_tree.iter_vtxos() {
-					if let Some(i) = my_vtxos.iter().position(|v| v == vtxo_req) {
-						my_vtxos.swap_remove(i);
-					}
-				}
-				if !my_vtxos.is_empty() {
-					bail!("asp didn't include all of our vtxos, missing: {:?}", my_vtxos);
-				}
-				let mut my_offbs = offb_reqs.clone();
-				for offb in unsigned_round_tx.output.iter().skip(2) {
-					if let Some(i) = my_offbs.iter().position(|o| o.to_txout() == *offb) {
-						my_offbs.swap_remove(i);
-					}
-				}
-				if !my_offbs.is_empty() {
-					bail!("asp didn't include all of our offboards, missing: {:?}", my_offbs);
+					_ => trace!("ignoring irrelevant message"),
 				}
 			}
 
-			// Make vtxo signatures from top to bottom, just like sighashes are returned.
-			let unsigned_vtxos = vtxo_tree.into_unsigned_tree(vtxos_utxo);
-			for ((req, key), (sec, _pub)) in vtxo_reqs.iter().zip(&cosign_keys).zip(cosign_nonces) {
-				let part_sigs = unsigned_vtxos.cosign_branch(
-					&vtxo_cosign_agg_nonces,
-					req,
-					key,
-					sec,
-				).context("failed to cosign branch: our request not part of tree")?;
-				info!("Sending {} partial vtxo cosign signatures for pk {}",
-					part_sigs.len(), key.public_key(),
+			info!("Round started");
+
+			let (input_vtxos, pay_reqs, offb_reqs) = round_input(round_info.as_ref().unwrap())
+				.context("error providing round input")?;
+
+			let vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
+			debug!("Spending vtxos: {:?}", vtxo_ids);
+
+			'attempt: loop {
+				let round = round_info.as_mut().unwrap();
+
+				// Assign cosign pubkeys to the payment requests.
+				let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
+					.take(pay_reqs.len())
+					.collect::<Vec<_>>();
+				let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
+					VtxoRequest {
+						pubkey: req.pubkey,
+						amount: req.amount,
+						cosign_pk: ck.public_key(),
+					}
+				}).collect::<Vec<_>>();
+
+				// Prepare round participation info.
+				// For each of our requested vtxo output, we need a set of public and secret nonces.
+				let cosign_nonces = cosign_keys.iter().map(|key| {
+					let mut secs = Vec::with_capacity(asp.info.nb_round_nonces);
+					let mut pubs = Vec::with_capacity(asp.info.nb_round_nonces);
+					for _ in 0..asp.info.nb_round_nonces {
+						let (s, p) = musig::nonce_pair(key);
+						secs.push(s);
+						pubs.push(p);
+					}
+					(secs, pubs)
+				})
+					.take(vtxo_reqs.len())
+					.collect::<Vec<(Vec<MusigSecNonce>, Vec<MusigPubNonce>)>>();
+
+				// The round has now started. We can submit our payment.
+				debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
+					input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
 				);
-				asp.client.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
-					pubkey: key.public_key().serialize().to_vec(),
-					signatures: part_sigs.iter().map(|s| s.serialize().to_vec()).collect(),
+				asp.client.submit_payment(rpc::SubmitPaymentRequest {
+					input_vtxos: input_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+					vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
+						rpc::VtxoRequest {
+							amount: r.amount.to_sat(),
+							vtxo_public_key: r.pubkey.serialize().to_vec(),
+							cosign_pubkey: r.cosign_pk.serialize().to_vec(),
+							public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
+						}
+					}).collect(),
+					offboard_requests: offb_reqs.iter().map(|r| {
+						rpc::OffboardRequest {
+							amount: r.amount.to_sat(),
+							offboard_spk: r.script_pubkey.to_bytes(),
+						}
+					}).collect(),
+				}).await.context("submitting payment to asp")?;
+
+
+				// ****************************************************************
+				// * Wait for vtxo proposal from asp.
+				// ****************************************************************
+
+				debug!("Waiting for vtxo proposal from asp...");
+				let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
+					match events.next().await.context("events stream broke")?? {
+						RoundEvent::VtxoProposal {
+							round_id,
+							unsigned_round_tx,
+							vtxos_spec,
+							cosign_agg_nonces,
+						} => {
+							if round_id != round.round_id {
+								warn!("Unexpected different round id");
+								round_info = None;
+								continue 'round;
+							}
+							(vtxos_spec, unsigned_round_tx, cosign_agg_nonces)
+						},
+						e @ RoundEvent::Start { .. } => {
+							warn!("Unexpected new round started...");
+							round_info = Some(RoundInfo::new_from_start(e));
+							continue 'round;
+						},
+						e @ RoundEvent::Attempt { .. } => {
+							round_info = round_info.unwrap().process_attempt(e);
+							continue 'attempt;
+						},
+						//TODO(stevenroose) make this robust
+						other => panic!("Unexpected message: {:?}", other),
+					}
+				};
+
+				//TODO(stevenroose) remove these magic numbers
+				let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 0);
+				let conns_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 1);
+
+				// Check that the proposal contains our inputs.
+				{
+					let mut my_vtxos = vtxo_reqs.clone();
+					for vtxo_req in vtxo_tree.iter_vtxos() {
+						if let Some(i) = my_vtxos.iter().position(|v| v == vtxo_req) {
+							my_vtxos.swap_remove(i);
+						}
+					}
+					if !my_vtxos.is_empty() {
+						error!("asp didn't include all of our vtxos, missing: {:?}", my_vtxos);
+						round_info = None;
+						continue 'round;
+					}
+
+					let mut my_offbs = offb_reqs.clone();
+					for offb in unsigned_round_tx.output.iter().skip(2) {
+						if let Some(i) = my_offbs.iter().position(|o| o.to_txout() == *offb) {
+							my_offbs.swap_remove(i);
+						}
+					}
+					if !my_offbs.is_empty() {
+						error!("asp didn't include all of our offboards, missing: {:?}", my_offbs);
+						round_info = None;
+						continue 'round;
+					}
+				}
+
+				// Make vtxo signatures from top to bottom, just like sighashes are returned.
+				let unsigned_vtxos = vtxo_tree.into_unsigned_tree(vtxos_utxo);
+				for ((req, key), (sec, _pub)) in vtxo_reqs.iter().zip(&cosign_keys).zip(cosign_nonces) {
+					let part_sigs = unsigned_vtxos.cosign_branch(
+						&vtxo_cosign_agg_nonces,
+						req,
+						key,
+						sec,
+					).context("failed to cosign branch: our request not part of tree")?;
+					info!("Sending {} partial vtxo cosign signatures for pk {}",
+						part_sigs.len(), key.public_key(),
+					);
+					asp.client.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
+						pubkey: key.public_key().serialize().to_vec(),
+						signatures: part_sigs.iter().map(|s| s.serialize().to_vec()).collect(),
+					}).await.context("providing signatures to asp")?;
+				}
+
+
+				// ****************************************************************
+				// * Then proceed to get a round proposal and sign forfeits
+				// ****************************************************************
+
+				debug!("Wait for round proposal from asp...");
+				let (vtxo_cosign_sigs, forfeit_nonces) = {
+					match events.next().await.context("events stream broke")?? {
+						RoundEvent::RoundProposal { round_id, cosign_sigs, forfeit_nonces } => {
+							if round_id != round.round_id {
+								warn!("Unexpected different round id");
+								round_info = None;
+								continue 'round;
+							}
+							(cosign_sigs, forfeit_nonces)
+						},
+						e @ RoundEvent::Start { .. } => {
+							warn!("Unexpected new round started...");
+							round_info = Some(RoundInfo::new_from_start(e));
+							continue 'round;
+						},
+						e @ RoundEvent::Attempt { .. } => {
+							round_info = round_info.unwrap().process_attempt(e);
+							continue 'attempt;
+						},
+						//TODO(stevenroose) make this robust
+						other => panic!("Unexpected message: {:?}", other),
+					}
+				};
+
+				// Validate the vtxo tree.
+				if let Err(e) = unsigned_vtxos.verify_cosign_sigs(&vtxo_cosign_sigs) {
+					bail!("Received incorrect vtxo cosign signatures from asp: {}", e);
+				}
+				let signed_vtxos = unsigned_vtxos
+					.into_signed_tree(vtxo_cosign_sigs)
+					.into_cached_tree();
+
+				// Make forfeit signatures.
+				let connectors = ConnectorChain::new(
+					forfeit_nonces.values().next().unwrap().len(),
+					conns_utxo,
+					asp.info.asp_pubkey,
+				);
+				let forfeit_sigs = input_vtxos.iter().map(|v| {
+					let keypair_idx = self.db.get_vtxo_key_index(&v)?;
+					let vtxo_keypair = self.vtxo_seed.derive_keypair(keypair_idx);
+
+					let sigs = connectors.connectors().enumerate().map(|(i, conn)| {
+						let (sighash, _tx) = ark::forfeit::forfeit_sighash(v, conn);
+						let asp_nonce = forfeit_nonces.get(&v.id())
+							.with_context(|| format!("missing asp forfeit nonce for {}", v.id()))?
+							.get(i)
+							.context("asp didn't provide enough forfeit nonces")?;
+
+						let (nonce, sig) = musig::deterministic_partial_sign(
+							&vtxo_keypair,
+							[vtxo_keypair.public_key(), asp.info.asp_pubkey],
+							&[asp_nonce],
+							sighash.to_byte_array(),
+							Some(v.spec().exit_taptweak().to_byte_array()),
+						);
+						Ok((nonce, sig))
+					}).collect::<anyhow::Result<Vec<_>>>()?;
+					Ok((v.id(), sigs))
+				}).collect::<anyhow::Result<HashMap<_, _>>>()?;
+				debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
+				asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
+					signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
+						rpc::ForfeitSignatures {
+							input_vtxo_id: id.to_bytes().to_vec(),
+							pub_nonces: sigs.iter().map(|s| s.0.serialize().to_vec()).collect(),
+							signatures: sigs.iter().map(|s| s.1.serialize().to_vec()).collect(),
+						}
+					}).collect(),
 				}).await.context("providing signatures to asp")?;
-			}
 
 
-			// ****************************************************************
-			// * Then proceed to get a round proposal and sign forfeits
-			// ****************************************************************
+				// ****************************************************************
+				// * Wait for the finishing of the round.
+				// ****************************************************************
 
-			debug!("Wait for round proposal from asp...");
-			let (vtxo_cosign_sigs, forfeit_nonces) = {
-				match events.next().await.context("events stream broke")?? {
-					RoundEvent::RoundProposal { cosign_sigs, forfeit_nonces, .. } => {
-						(cosign_sigs, forfeit_nonces)
+				debug!("Waiting for round to finish...");
+				let signed_round_tx = match events.next().await.context("events stream broke")?? {
+					RoundEvent::Finished { round_id, signed_round_tx } => {
+						if round_id != round.round_id {
+							bail!("Unexpected round ID from round finished event: {} != {}",
+								round_id, round.round_id);
+						}
+						signed_round_tx
 					},
-					// If a new round started meanwhile, pick up on that one.
-					RoundEvent::Start { round_id: id, .. } => {
+					e @ RoundEvent::Start { .. } => {
 						warn!("Unexpected new round started...");
-						round_id = id;
+						round_info = Some(RoundInfo::new_from_start(e));
 						continue 'round;
 					},
-					RoundEvent::Attempt { round_id: id, .. } => {
-						debug!("New round attempt...");
-						round_id = id;
-						continue 'round;
+					e @ RoundEvent::Attempt { .. } => {
+						round_info = round_info.unwrap().process_attempt(e);
+						continue 'attempt;
 					},
 					//TODO(stevenroose) make this robust
 					other => panic!("Unexpected message: {:?}", other),
+				};
+
+				if signed_round_tx.compute_txid() != unsigned_round_tx.compute_txid() {
+					warn!("ASP changed the round transaction during the round!");
+					warn!("unsigned tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx));
+					warn!("signed tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_round_tx));
+					//TODO(stevenroose) keep the unsigned tx because it might get broadcast
+					// we have vtxos in it
+					bail!("unsigned and signed round txids don't match");
 				}
-			};
 
-			// Validate the vtxo tree.
-			if let Err(e) = unsigned_vtxos.verify_cosign_sigs(&vtxo_cosign_sigs) {
-				bail!("Received incorrect vtxo cosign signatures from asp: {}", e);
-			}
-			let signed_vtxos = unsigned_vtxos
-				.into_signed_tree(vtxo_cosign_sigs)
-				.into_cached_tree();
+				// We also broadcast the tx, just to have it go around faster.
+				info!("Broadcasting round tx {}", signed_round_tx.compute_txid());
+				if let Err(e) = self.onchain.broadcast_tx(&signed_round_tx).await {
+					warn!("Couldn't broadcast round tx: {}", e);
+				}
 
-			// Make forfeit signatures.
-			let connectors = ConnectorChain::new(
-				forfeit_nonces.values().next().unwrap().len(),
-				conns_utxo,
-				asp.info.asp_pubkey,
-			);
-
-			let forfeit_sigs = input_vtxos.iter().map(|v| {
-				let keypair_idx = self.db.get_vtxo_key_index(&v)?;
-				let vtxo_keypair = self.vtxo_seed.derive_keypair(keypair_idx);
-
-				let sigs = connectors.connectors().enumerate().map(|(i, conn)| {
-					let (sighash, _tx) = ark::forfeit::forfeit_sighash(v, conn);
-					let asp_nonce = forfeit_nonces.get(&v.id())
-						.with_context(|| format!("missing asp forfeit nonce for {}", v.id()))?
-						.get(i)
-						.context("asp didn't provide enough forfeit nonces")?;
-
-					let (nonce, sig) = musig::deterministic_partial_sign(
-						&vtxo_keypair,
-						[vtxo_keypair.public_key(), asp.info.asp_pubkey],
-						&[asp_nonce],
-						sighash.to_byte_array(),
-						Some(v.spec().exit_taptweak().to_byte_array()),
-					);
-					Ok((nonce, sig))
-				}).collect::<anyhow::Result<Vec<_>>>()?;
-				Ok((v.id(), sigs))
-			}).collect::<anyhow::Result<HashMap<_, _>>>()?;
-			debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
-			asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
-				signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
-					rpc::ForfeitSignatures {
-						input_vtxo_id: id.to_bytes().to_vec(),
-						pub_nonces: sigs.iter().map(|s| s.0.serialize().to_vec()).collect(),
-						signatures: sigs.iter().map(|s| s.1.serialize().to_vec()).collect(),
+				// Finally we save state after refresh
+				let mut new_vtxos: Vec<Vtxo> = vec![];
+				for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
+					//TODO(stevenroose) this is broken, need to match vtxorequest exactly
+					if pay_reqs.iter().any(|p| p.pubkey == req.pubkey && p.amount == req.amount) {
+						let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
+						new_vtxos.push(vtxo);
 					}
-				}).collect(),
-			}).await.context("providing signatures to asp")?;
-
-
-			// ****************************************************************
-			// * Wait for the finishing of the round.
-			// ****************************************************************
-
-			debug!("Waiting for round to finish...");
-			let signed_round_tx = match events.next().await.context("events stream broke")?? {
-				RoundEvent::Finished { signed_round_tx, .. } => signed_round_tx,
-				// If a new round started meanwhile, pick up on that one.
-				RoundEvent::Start { round_id: id, .. } => {
-					warn!("Unexpected new round started...");
-					round_id = id;
-					continue 'round;
-				},
-				RoundEvent::Attempt { round_id: id, .. } => {
-					debug!("New round attempt...");
-					round_id = id;
-					continue 'round;
-				},
-				//TODO(stevenroose) make this robust
-				other => panic!("Unexpected message: {:?}", other),
-			};
-
-			if signed_round_tx.compute_txid() != unsigned_round_tx.compute_txid() {
-				warn!("ASP changed the round transaction during the round!");
-				warn!("unsigned tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx));
-				warn!("signed tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_round_tx));
-				//TODO(stevenroose) keep the unsigned tx because it might get broadcast
-				// we have vtxos in it
-				bail!("unsigned and signed round txids don't match");
-			}
-
-			// We also broadcast the tx, just to have it go around faster.
-			info!("Broadcasting round tx {}", signed_round_tx.compute_txid());
-			if let Err(e) = self.onchain.broadcast_tx(&signed_round_tx).await {
-				warn!("Couldn't broadcast round tx: {}", e);
-			}
-
-			// Finally we save state after refresh
-			let mut new_vtxos: Vec<Vtxo> = vec![];
-			for (idx, vtxo_req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
-				//TODO(stevenroose) this is broken, need to match vtxorequest exactly
-				if pay_reqs.iter().any(|p| p.pubkey == vtxo_req.pubkey && p.amount == vtxo_req.amount) {
-					let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
-					new_vtxos.push(vtxo);
 				}
-			}
 
-			// if there is one offboard req, we register as a spend, else as a refresh
-			// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
-			if let Some(offboard) = offb_reqs.get(0) {
-				self.db.register_send(
-					&input_vtxos,
-					offboard.script_pubkey.to_string(),
-					new_vtxos.get(0), None
-				)?;
+				// if there is one offboard req, we register as a spend, else as a refresh
+				// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
+				if let Some(offboard) = offb_reqs.get(0) {
+					self.db.register_send(
+						&input_vtxos,
+						offboard.script_pubkey.to_string(),
+						new_vtxos.get(0), None
+					)?;
+				} else {
+					self.db.register_refresh(&input_vtxos, &new_vtxos)?;
+				}
+
+				info!("Round finished");
+				return Ok(signed_round_tx.compute_txid())
+			}
+		}
+	}
+}
+
+struct RoundInfo {
+	round_id: u64,
+	attempt: u64,
+	offboard_feerate: FeeRate,
+}
+
+impl RoundInfo {
+	/// Create a new [RoundInfo] from a [RoundEvent::Start].
+	///
+	/// Panics if any other event type is passed.
+	fn new_from_start(event: RoundEvent) -> RoundInfo {
+		if let RoundEvent::Start { round_id, offboard_feerate } = event {
+			RoundInfo { round_id, attempt: 0, offboard_feerate }
+		} else {
+			panic!("called new_from_start with a wrong event type: {}", event);
+		}
+	}
+
+	/// Process a new round attempt message.
+	///
+	/// If it belongs to the same round, returns the updated round info.
+	/// If it belongs to another round, we return None.
+	fn process_attempt(mut self, event: RoundEvent) -> Option<RoundInfo> {
+		if let RoundEvent::Attempt { round_id, attempt } = event {
+			if self.round_id == round_id {
+				debug!("New round attempt...");
+				self.attempt = attempt;
+				Some(self)
 			} else {
-				self.db.register_refresh(&input_vtxos, &new_vtxos)?;
+				warn!("Received a new attempt message for a different round. Restarting...");
+				None
 			}
-
-			info!("Round finished");
-			return Ok(signed_round_tx.compute_txid())
+		} else {
+			panic!("called process_attempt with a wrong event type: {}", event);
 		}
 	}
 }
