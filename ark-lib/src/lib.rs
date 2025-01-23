@@ -58,7 +58,7 @@ pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 /// Type representing a block height in the bitcoin blockchain.
 pub type BlockHeight = u64;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockRef {
 	pub height: BlockHeight,
 	pub hash: BlockHash,

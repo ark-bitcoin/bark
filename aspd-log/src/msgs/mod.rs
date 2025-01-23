@@ -9,6 +9,19 @@ mod txindex;
 pub use self::txindex::*;
 mod wallet;
 pub use self::wallet::*;
-
 mod system;
 pub use self::system::*;
+
+
+use bitcoin::BlockHash;
+
+use ark::BlockHeight;
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TipUpdated {
+	pub height: BlockHeight,
+	pub hash: BlockHash,
+}
+impl_slog!(TipUpdated, Debug, "the chain tip has been updated");
+

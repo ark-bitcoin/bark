@@ -469,7 +469,7 @@ impl App {
 			loop {
 				tokio::select! {
 					// Periodic interval for chain tip fetch
-					() = tokio::time::sleep(Duration::from_secs(10)) => {},
+					() = tokio::time::sleep(Duration::from_secs(1)) => {},
 					_ = shutdown.recv() => {
 						info!("Shutdown signal received. Exiting fetch_tip loop...");
 						break;
@@ -477,7 +477,13 @@ impl App {
 				}
 
 				match app.bitcoind.tip() {
-					Ok(t) => *app.chain_tip.lock().await = t,
+					Ok(t) => {
+						let mut lock = app.chain_tip.lock().await;
+						if t != *lock {
+							*lock = t;
+							slog!(TipUpdated, height: t.height, hash: t.hash);
+						}
+					}
 					Err(e) => {
 						warn!("Error getting chain tip from bitcoind: {}", e);
 					},
