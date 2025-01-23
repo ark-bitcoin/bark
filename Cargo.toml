@@ -22,10 +22,7 @@ resolver = "2"
 
 bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
 lightning-invoice = { version = "0.32.0-rc1", features = [ "std", "serde" ] }
-#TODO(stevenroose) change back when the async-https-rustls feature is released
-lnurl-rs = { version = "0.8.0", git = "https://github.com/benthecarman/lnurl-rs.git", rev = "871824852c431a46976285196d403213b6069a69", features = [ "async", "async-https-rustls" ], default-features = false }
-# this one is a workaround for a bug in lnurl-rs
-bitcoin030 = { package = "bitcoin", version = "0.30.2", features = [ "std" ] }
+lnurl-rs = { version = "0.9.0", features = [ "async", "async-https-rustls" ], default-features = false }
 anyhow = { version = "1.0", features = [ "backtrace" ] }
 log = { version = "0.4.22", features = [ "kv", "kv_serde" ] }
 serde = { version = "1" }

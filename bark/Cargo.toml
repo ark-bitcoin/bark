@@ -30,7 +30,6 @@ aspd-rpc = { path = "../aspd-rpc" }
 bitcoin.workspace = true
 lightning-invoice.workspace = true
 lnurl-rs.workspace = true
-bitcoin030.workspace = true # lnurl workaround
 anyhow.workspace = true
 log.workspace = true
 serde.workspace = true
