@@ -1,11 +1,13 @@
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use futures::FutureExt;
 use tokio_stream::Stream;
 
 use aspd_rpc as rpc;
+
+use crate::util::FutureExt;
 
 /// Trait used to easily implement aspd proxy interfaces.
 #[tonic::async_trait]
@@ -84,17 +86,35 @@ impl AspdRpcProxyServer {
 	pub async fn start(proxy: impl AspdRpcProxy) -> AspdRpcProxyServer {
 		loop {
 			let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-			let stop_rx = FutureExt::map(stop_rx, |_| ());
+			let stop_rx = futures::FutureExt::map(stop_rx, |_| ());
 
-			let port = rand::random::<u16>();
+			let port = portpicker::pick_unused_port().expect("free port available");
 			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 			let server = rpc::server::ArkServiceServer::new(AspdRpcProxyWrapper(proxy.clone()));
-			tokio::spawn(async move {
-				tonic::transport::Server::builder()
+
+			// The serve_with_shutdown call stays running if the port number
+			// is accepted, but returns immediatelly if it's not.
+			// So we have to ignore the port usage error and then check if
+			// the future yields fast.
+			let server_res = tokio::spawn(async move {
+				let ret = tonic::transport::Server::builder()
 					.add_service(server)
 					.serve_with_shutdown(addr, stop_rx)
-					.await.expect("proxy server shut down with error");
+					.await;
+				if let Err(ref e) = ret {
+					if let Some(e) = std::error::Error::source(&e) {
+						if let Some(e) = e.downcast_ref::<io::Error>() {
+							if e.kind() == io::ErrorKind::AddrInUse {
+								return;
+							}
+						}
+					}
+				}
+				ret.expect("rpc proxy server stopped with error");
 			});
+			if server_res.try_fast().await.is_ok() {
+				continue;
+			}
 
 			// try to connect
 			let addr = format!("http://{}", addr);
