@@ -1,4 +1,4 @@
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
@@ -8,67 +8,92 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	xz-utils \
 	build-essential \
 	cmake \
-	clang
-
-ENV RUST_BACKTRACE=1 \
-	RUSTUP_TOOLCHAIN=1.77.2 \
-	PATH=/root/.cargo/bin:${PATH}
-
-# Installs the following components
-# * rustup Rust toolchains:
-#   - 1.77.2
-# * bitcoin core binaries in /bitcoin/<ver>/bin/
-#   - 28.0
-# * c-lightning binaries in /lightning/<ver>/bin
-#   - 24.08.2
-# * Stevens' electrs
-#   - commit a9a39b1616591fb08514fba4df1c1ca11b24a500
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none && \
-	echo "Installing Rust toolchains..." && \
-	rustup toolchain install ${RUSTUP_TOOLCHAIN} && \
-	echo "Installing bitcoin..." && \
-	mkdir /bitcoin && cd /bitcoin && \
-	echo "Installing bitcoin core v28.0..." && \
-	wget https://bitcoincore.org/bin/bitcoin-core-28.0/bitcoin-28.0-x86_64-linux-gnu.tar.gz && \
-	tar xvzf bitcoin-28.0-x86_64-linux-gnu.tar.gz && mv bitcoin-28.0 28.0 && \
-	echo "Installing lightning..." && \
-	mkdir /lightning && cd /lightning && \
-	echo "Installing c-lightning v24.08.2..." && \
-	wget https://github.com/ElementsProject/lightning/releases/download/v24.08.2/clightning-v24.08.2-Ubuntu-24.04.tar.xz && \
-	mkdir 24.08.2 && tar -xvf clightning-v24.08.2-Ubuntu-24.04.tar.xz -C ./24.08.2 --strip-components=2 && \
-	echo "Installing electrs..." && cd /root && \
-	git clone -b submit-tx-package https://github.com/stevenroose/electrs.git --depth 1 && cd electrs && \
-	git fetch --depth 1 origin a9a39b1616591fb08514fba4df1c1ca11b24a500 && \
-	cargo install --locked --path . && \
-	echo "Done"
-
-
-FROM debian:trixie-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-	ca-certificates \
-	build-essential \
-	pkg-config \
-	curl \
-	wget \
-	cmake \
-	git \
-	ripgrep \
 	clang \
+	make \
+	pkg-config \
+	ripgrep \
 	libssl-dev \
 	libclang-dev \
 	libsqlite3-dev \
 	libpq5 \
 	librocksdb-dev \
-	protobuf-compiler
+	lzma-dev \
+	protobuf-compiler \
+	jq \
+	mingw-w64 \
+	gcc-mingw-w64 \
+	llvm \
+	libxml2-dev \
+	python3
 
 ENV RUST_BACKTRACE=1 \
+	RUSTUP_TOOLCHAIN_VERSION=1.84 \
+	BITCOIN_VERSION=28.0 \
+	CLN_VERSION=24.08.2 \
+	MACOS_SDK_VERSION=15.1 \
+	ELECTRS_HASH=a9a39b1616591fb08514fba4df1c1ca11b24a500 \
+	PATH=/root/.cargo/bin:${PATH} \
 	ROCKSDB_LIB_DIR=/usr/lib/x86_64-linux-gnu \
-	RUSTUP_TOOLCHAIN=1.77.2 \
-	PATH=/root/.cargo/bin:${PATH}
+	ZIG_VERSION=0.13.0
 
-COPY --from=builder /bitcoin/28.0/bin/bitcoin-cli     /usr/bin/bitcoin-cli
-COPY --from=builder /bitcoin/28.0/bin/bitcoind        /bitcoin/28.0/bin/bitcoind
-COPY --from=builder /lightning                        /lightning
-COPY --from=builder /root/.cargo/bin                  /root/.cargo/bin
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
+	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION} && \
+	rustup target add x86_64-pc-windows-gnu && \
+#	rustup target add aarch64-pc-windows-msvc && \
+	rustup target add x86_64-apple-darwin && \
+	rustup target add aarch64-apple-darwin
+RUN echo "Installing bitcoin core in /bitcoin/${BITCOIN_VERSION}/bin/" && \
+	mkdir /bitcoin && \
+	cd /bitcoin && \
+	wget https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}/bitcoin-${BITCOIN_VERSION}-x86_64-linux-gnu.tar.gz && \
+	tar xvzf bitcoin-${BITCOIN_VERSION}-x86_64-linux-gnu.tar.gz && \
+	mv bitcoin-${BITCOIN_VERSION} ${BITCOIN_VERSION} && \
+	cp /bitcoin/28.0/bin/bitcoin-cli /usr/bin/bitcoin-cli
+RUN echo "Installing c-lightning in /lightning/${CLN_VERSION}/bin/" && \
+	mkdir /lightning && \
+	cd /lightning && \
+	wget https://github.com/ElementsProject/lightning/releases/download/v${CLN_VERSION}/clightning-v${CLN_VERSION}-Ubuntu-24.04.tar.xz && \
+	mkdir ${CLN_VERSION} && \
+	tar -xvf clightning-v${CLN_VERSION}-Ubuntu-24.04.tar.xz -C ./${CLN_VERSION} --strip-components=2
+RUN cd /root/ && \
+	git clone https://github.com/tpoechtrager/osxcross.git && \
+	cd /root/osxcross/tarballs/ && \
+	wget https://github.com/joseluisq/macosx-sdks/releases/download/${MACOS_SDK_VERSION}/MacOSX${MACOS_SDK_VERSION}.sdk.tar.xz && \
+	wget https://github.com/joseluisq/macosx-sdks/releases/download/${MACOS_SDK_VERSION}/sha256sum.txt && \
+	cd /root/osxcross/ && \
+	TARGET_DIR=/usr/local/osxcross SDK_VERSION=${MACOS_SDK_VERSION} UNATTENDED=1 ./build.sh && \
+	export PATH=$PATH:/usr/local/osxcross/bin
+RUN echo "Installing sccache"
+RUN cargo install --locked sccache
+RUN echo "Installing just"
+RUN cargo install --locked just
+RUN mkdir -p /root/.cargo && \
+	echo '[build]\nrustc-wrapper = "sccache"\n[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n[target.i686-pc-windows-gnu]\nlinker = "i686-w64-mingw32-gcc"\n[target.x86_64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/x86_64-apple-darwin24.1-clang"\nar = "/usr/local/osxcross/bin/x86_64-apple-darwin24.1-ar"\n[target.aarch64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/aarch64-apple-darwin24.1-clang"\nar = "/usr/local/osxcross/bin/aarch64-apple-darwin24.1-ar"\n' > /root/.cargo/config.toml
+RUN cat /root/.cargo/config.toml
+RUN echo "Installing Blockstream's electrs..." && \
+	cd /root && \
+	git clone -b submit-tx-package https://github.com/stevenroose/electrs.git --depth 1 && \
+	cd electrs && \
+	git fetch --depth 1 origin ${ELECTRS_HASH} && \
+	cargo install --locked --path .
+RUN echo "pre-build bark" && \
+	cd /root && \
+	wget https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz && \
+	tar -xJf zig-linux-x86_64-${ZIG_VERSION}.tar.xz && \
+	ln -s /root/zig-linux-x86_64-${ZIG_VERSION}/zig /usr/bin/ && \
+	cargo install cargo-zigbuild && \
+	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
+	git clone https://codeberg.org/ark-bitcoin/bark.git && \
+	cd bark && \
+	cargo build --workspace && \
+	cargo test --workspace --exclude ark-testing --target-dir ./target-unit && \
+	cargo install --locked --path bark && \
+	cargo install --locked --path aspd && \
+	cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path bark/Cargo.toml && \
+#	cargo build --release --target aarch64-pc-windows-msvc --locked --manifest-path bark/Cargo.toml && \
+	cargo build --release --target x86_64-pc-windows-gnu --locked --manifest-path bark/Cargo.toml && \
+	cargo zigbuild --release --target x86_64-apple-darwin --locked --manifest-path bark/Cargo.toml && \
+	cargo zigbuild --release --target aarch64-apple-darwin --locked --manifest-path bark/Cargo.toml
+RUN rm -rf /root/bark
+RUN echo "Done"
