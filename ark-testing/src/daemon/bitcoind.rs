@@ -35,6 +35,7 @@ pub struct BitcoindConfig {
 pub struct BitcoindState {
 	rpc_port: Option<u16>,
 	p2p_port: Option<u16>,
+	zmq_port: Option<u16>,
 }
 
 pub type Bitcoind = Daemon<BitcoindHelper>;
@@ -71,6 +72,14 @@ impl Bitcoind {
 	pub fn rpc_port(&self) -> u16 {
 		self.inner.rpc_port()
 
+	}
+
+	pub fn zmq_url(&self) -> String {
+		self.inner.zmq_url()
+	}
+
+	pub fn zmq_port(&self) -> u16 {
+		self.inner.zmq_port()
 	}
 
 	pub fn datadir(&self) -> PathBuf {
@@ -192,6 +201,14 @@ impl BitcoindHelper {
 		let client = BitcoindClient::from_jsonrpc(jsonrpc);
 		Ok(client)
 	}
+
+	pub fn zmq_port(&self) -> u16 {
+		self.state.zmq_port.expect("A port has been picked. Is bitcoind running?")
+	}
+
+	pub fn zmq_url(&self) -> String {
+		format!("tcp://127.0.0.1:{}", self.zmq_port())
+	}
 }
 
 impl DaemonHelper for BitcoindHelper {
@@ -206,6 +223,7 @@ impl DaemonHelper for BitcoindHelper {
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
 		self.state.rpc_port = Some(portpicker::pick_unused_port().expect("A port is free"));
 		self.state.p2p_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+		self.state.zmq_port = Some(portpicker::pick_unused_port().expect("A port is free"));
 
 		Ok(())
 	}
@@ -225,10 +243,15 @@ impl DaemonHelper for BitcoindHelper {
 			"-debug=1",
 			"-debugexclude=libevent",
 			&format!("-rpcauth={}", BITCOINRPC_TEST_AUTH),
-			&format!("-datadir={}", self.config.datadir.display().to_string()),
+			&format!("-datadir={}", self.config.datadir.display()),
 			&format!("-txindex={}", self.config.txindex as u8),
 			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
 			&format!("-bind=127.0.0.1:{}", self.state.p2p_port.expect("A port has been picked")),
+			&format!("-zmqpubhashblock={}", self.zmq_url()),
+			&format!("-zmqpubhashtx={}", self.zmq_url()),
+			&format!("-zmqpubrawblock={}", self.zmq_url()),
+			&format!("-zmqpubrawtx={}", self.zmq_url()),
+			&format!("-zmqpubsequence={}", self.zmq_url()),
 			&format!("-fallbackfee={}", self.config.fallback_fee.to_btc_per_kvb()),
 		]);
 		if let Some(fr) = self.config.relay_fee {

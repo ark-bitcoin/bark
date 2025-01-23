@@ -17,7 +17,7 @@ use crate::persist::BarkPersister;
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ChainSource {
 	Bitcoind {
 		url: String,
@@ -96,6 +96,7 @@ impl ChainSourceClient {
 		let prev_tip = wallet.latest_checkpoint();
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				debug!("Syncing with bitcoind...");
 				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
 					bitcoind, prev_tip.clone(), prev_tip.height(),
 				);
@@ -108,8 +109,10 @@ impl ChainSourceClient {
 				let mempool = emitter.mempool()?;
 				wallet.apply_unconfirmed_txs(mempool);
 				wallet.persist(db)?;
+				debug!("Finished syncing with bitcoind, {}", wallet.balance());
 			},
 			ChainSourceClient::Esplora(ref client) => {
+				debug!("Syncing with esplora...");
 				const STOP_GAP: usize = 50;
 				const PARALLEL_REQS: usize = 4;
 
@@ -118,6 +121,7 @@ impl ChainSourceClient {
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
 				wallet.apply_update_at(update, now)?;
 				wallet.persist(db)?;
+				debug!("Finished syncing with esplora, {}", wallet.balance());
 			},
 		}
 
@@ -224,7 +228,7 @@ impl ChainSourceClient {
 			error: Option<String>,
 		}
 		#[derive(Debug, Deserialize)]
-		struct SubmitPacakgeResponse {
+		struct SubmitPackageResponse {
 			#[serde(rename = "tx-results")]
 			tx_results: HashMap<Wtxid, PackageTxInfo>,
 			package_msg: String,
@@ -235,7 +239,7 @@ impl ChainSourceClient {
 				let hexes = txs.iter()
 					.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
 					.collect::<Vec<_>>();
-				let res = bitcoind.call::<SubmitPacakgeResponse>("submitpackage", &[hexes.into()])?;
+				let res = bitcoind.call::<SubmitPackageResponse>("submitpackage", &[hexes.into()])?;
 				if res.package_msg != "success" {
 					let errors = res.tx_results.values()
 						.map(|t| format!("tx {}: {}",

@@ -14,7 +14,7 @@ clone:
 
 steps:
   - name: merge-master
-    image: stevenroose/bark-ci-tests@sha256:0e675c0c843c5bf5ce37b7aedd9a644ac7f3a7d48e17cb7c24aa6926ce5462a0
+    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
     commands:
       - git fetch --no-tags --depth=200 origin master
       - git log --oneline | head
@@ -28,14 +28,14 @@ steps:
 
   - name: prechecks
     depends_on: merge-master
-    image: stevenroose/bark-ci-tests@sha256:0e675c0c843c5bf5ce37b7aedd9a644ac7f3a7d48e17cb7c24aa6926ce5462a0
+    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
     commands:
       - bash contrib/prechecks.sh rust_no_spaces_for_indent
       - bash contrib/prechecks.sh unused_aspd_logs
 
   - name: build
     depends_on: prechecks
-    image: stevenroose/bark-ci-tests@sha256:0e675c0c843c5bf5ce37b7aedd9a644ac7f3a7d48e17cb7c24aa6926ce5462a0
+    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
     commands:
       - git log --oneline | head -n 1
       - cargo version
@@ -44,14 +44,14 @@ steps:
 
   - name: test-unit
     depends_on: prechecks
-    image: stevenroose/bark-ci-tests@sha256:0e675c0c843c5bf5ce37b7aedd9a644ac7f3a7d48e17cb7c24aa6926ce5462a0
+    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
     commands:
       - git log --oneline | head -n 1
       - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
 
   - name: test-integration-btc28.0
     depends_on: build
-    image: stevenroose/bark-ci-tests@sha256:0e675c0c843c5bf5ce37b7aedd9a644ac7f3a7d48e17cb7c24aa6926ce5462a0
+    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
     environment:
       BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
       LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
@@ -62,7 +62,6 @@ steps:
       - ls -al $${BITCOIND_EXEC}
       - ls -al $${LIGHTNINGD_EXEC}
       - TEST_DIRECTORY=./test/btc28 cargo test --package ark-testing
-
   - name: push-github-mirror
     when:
       - event: push

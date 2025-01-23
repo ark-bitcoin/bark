@@ -24,7 +24,7 @@ use persist::BarkPersister;
 use vtxo_selection::{ExpiredAtHeight, SelectVtxo};
 
 mod lnurl;
-mod onchain;
+pub mod onchain;
 mod psbtext;
 mod vtxo_state;
 
