@@ -193,6 +193,10 @@ impl<'a> SweepBuilder<'a> {
 			.sum()
 	}
 
+	fn total_nb_sweeps(&self) -> usize {
+		self.sweeps.len() + self.onboard_sweeps.len()
+	}
+
 	/// Add sweep for the given onboard output.
 	fn add_onboard_output(&mut self, point: OutPoint, vtxo_spec: VtxoSpec) {
 		trace!("Adding onboard sweep input {}", point);
@@ -280,10 +284,10 @@ impl<'a> SweepBuilder<'a> {
 			.expect("txindex should contain all onboard reveal txs");
 
 		if !reveal_tx.confirmed().await {
-			if let Some(h) = self.sweeper.is_swept(onboard.onchain_output).await {
+			if let Some((h, txid)) = self.sweeper.is_swept(onboard.onchain_output).await {
 				trace!("Onboard {id} is already swept by us at height {h}");
 				if h <= done_height {
-					slog!(OnboardFullySwept, onboard_utxo: onboard.onchain_output);
+					slog!(OnboardFullySwept, onboard_utxo: onboard.onchain_output, sweep_tx: txid);
 					self.sweeper.clear_onboard(onboard).await;
 				}
 			} else {
@@ -309,8 +313,9 @@ impl<'a> SweepBuilder<'a> {
 		if !tree_root.confirmed().await {
 			trace!("Tree root tx {} not yet confirmed, sweeping round tx...", tree_root.txid);
 			let point = OutPoint::new(round.txid, 0);
-			if let Some(h) = self.sweeper.is_swept(point).await {
-				trace!("Round tx vtxo tree output {point} it already swept by us at height {h}");
+			if let Some((h, txid)) = self.sweeper.is_swept(point).await {
+				trace!("Round tx vtxo tree output {point} is already swept \
+					by us at height {h} with tx {txid}");
 				return Some(h);
 			} else {
 				trace!("Sweeping round tx vtxo output {}", point);
@@ -349,7 +354,7 @@ impl<'a> SweepBuilder<'a> {
 
 			for (idx, out) in signed_tx.output.into_iter().enumerate() {
 				let point = OutPoint::new(tx.txid, idx as u32);
-				if let Some(h) = self.sweeper.is_swept(point).await {
+				if let Some((h, _txid)) = self.sweeper.is_swept(point).await {
 					ret = ret.and_then(|old| Some(cmp::max(old, h)));
 				} else {
 					let utxo = out;
@@ -392,7 +397,7 @@ impl<'a> SweepBuilder<'a> {
 				let conn = OutPoint::new(tx.txid, 1);
 				match self.sweeper.app.bitcoind.get_tx_out(&conn.txid, conn.vout, Some(true)) {
 					Ok(Some(out)) => {
-						if let Some(h) = self.sweeper.is_swept(conn).await {
+						if let Some((h, _txid)) = self.sweeper.is_swept(conn).await {
 							ret = ret.and_then(|old| Some(cmp::max(old, h)));
 						} else {
 							let txout = TxOut {
@@ -416,7 +421,7 @@ impl<'a> SweepBuilder<'a> {
 			} else {
 				// add the last point
 				let (point, output) = last;
-				if let Some(h) = self.sweeper.is_swept(point).await {
+				if let Some((h, _txid)) = self.sweeper.is_swept(point).await {
 					ret = ret.and_then(|old| Some(cmp::max(old, h)));
 				} else {
 					self.add_connector_output(round, point, output);
@@ -484,6 +489,7 @@ impl<'a> SweepBuilder<'a> {
 		txb.drain_to(drain_addr.script_pubkey());
 		txb.fee_rate(self.feerate);
 		let mut psbt = txb.finish().expect("bdk failed to create round sweep tx");
+		assert_eq!(psbt.inputs.len(), self.total_nb_sweeps(), "unexpected nb of inputs");
 
 
 		// SIGNING
@@ -588,12 +594,12 @@ impl VtxoSweeper {
 		Ok(())
 	}
 
-	async fn is_swept(&self, point: OutPoint) -> Option<BlockHeight> {
+	async fn is_swept(&self, point: OutPoint) -> Option<(BlockHeight, Txid)> {
 		if let Some(txs) = self.pending_tx_by_utxo.get(&point) {
 			for txid in txs {
 				let tx = self.pending_txs.get(txid).expect("broken: utxo but no tx");
 				if let Some(h) = tx.status().await.confirmed_in() {
-					return Some(h);
+					return Some((h, tx.txid));
 				}
 			}
 		}
@@ -681,20 +687,27 @@ impl VtxoSweeper {
 		let surplus = builder.total_surplus();
 		trace!("Sweep surpus calculated: {}", surplus);
 		if surplus < sweep_threshold {
-			slog!(NotSweeping, available_surplus: surplus, nb_inputs: builder.sweeps.len());
+			slog!(NotSweeping, available_surplus: surplus, nb_inputs: builder.total_nb_sweeps());
 			return Ok(());
 		}
 
-		let sweep_points = builder.sweeps.iter().map(|s| s.point).collect();
+		let sweep_points = builder.sweeps.iter().map(|s| s.point)
+			.chain(builder.onboard_sweeps.iter().map(|s| s.point))
+			.collect();
 		slog!(SweepingVtxos, total_surplus: surplus, inputs: sweep_points);
 		for s in &builder.sweeps {
+			let tp = match s.sweep_meta {
+				SweepMeta::Vtxo => "vtxo",
+				SweepMeta::Connector => "connector",
+				SweepMeta::Onboard => unreachable!(),
+			};
 			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
-				surplus: s.surplus(feerate).unwrap(),
+				surplus: s.surplus(feerate).unwrap(), sweep_type: tp.into(),
 			);
 		}
 		for s in &builder.onboard_sweeps {
 			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
-				surplus: s.surplus(feerate).unwrap(),
+				surplus: s.surplus(feerate).unwrap(), sweep_type: "onboard".into(),
 			);
 		}
 
@@ -738,6 +751,9 @@ impl VtxoSweeper {
 		for txid in to_remove {
 			self.pending_txs.remove(&txid);
 		}
+		slog!(SweeperStats, nb_pending_txs: self.pending_txs.len(),
+			nb_pending_utxos: self.pending_tx_by_utxo.len(),
+		);
 		Ok(())
 	}
 }

@@ -1,5 +1,7 @@
 
 
+use std::borrow::Cow;
+
 use bitcoin::{Amount, OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +32,7 @@ pub struct SweepingOutput {
 	pub outpoint: OutPoint,
 	pub amount: Amount,
 	pub surplus: Amount,
+	pub sweep_type: Cow<'static, str>,
 }
 impl_slog!(SweepingOutput, Debug, "Sweeping output");
 
@@ -44,6 +47,7 @@ impl_slog!(SweepBroadcast, Info, "Completed a sweep tx");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnboardFullySwept {
 	pub onboard_utxo: OutPoint,
+	pub sweep_tx: Txid,
 }
 impl_slog!(OnboardFullySwept, Info, "Succesfully swept and fully confirmed an onboard vtxo");
 
@@ -75,3 +79,9 @@ pub struct SweepTxAbandoned {
 impl_slog!(SweepTxAbandoned, Warn, "a sweep tx is no longer needed, but unconfirmed");
 
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweeperStats {
+	pub nb_pending_txs: usize,
+	pub nb_pending_utxos: usize,
+}
+impl_slog!(SweeperStats, Info, "sweep process statistics");
