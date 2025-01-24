@@ -67,7 +67,7 @@ steps:
       - event: push
         branch: master
     failure: ignore
-    image: appleboy/drone-git-push
+    image: appleboy/drone-git-push@sha256:b7fbe3c66653f36d5898ccaf142be65274dc18ba260783b3a99ccc3098eed7b2
     settings:
       remote: git@github.com:ark-bitcoin/bark.git
       branch: master
