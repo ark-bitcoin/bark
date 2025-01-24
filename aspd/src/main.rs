@@ -23,7 +23,7 @@ const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
 #[command(author = "Steven Roose <steven@roose.io>", version, about)]
 struct Cli {
 	/// The data directory for aspd, mandatory field for most commands
-	#[arg(long, global = true)]
+	#[arg(long, global = true, env = "ASPD_DATADIR")]
 	datadir: Option<PathBuf>,
 	#[command(subcommand)]
 	command: Command,
@@ -167,7 +167,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				network: opts.network,
 				..Default::default()
 			};
-			opts.config.merge_into(&mut cfg)?;
+			cfg = opts.config.merge(cfg)?;
 			App::create(&datadir, cfg).await?;
 		},
 		Command::SetConfig(updates) => {
@@ -176,8 +176,8 @@ async fn inner_main() -> anyhow::Result<()> {
 			Config::create_backup_in_datadir(&datadir)?;
 
 			// Update the configuration
-			let mut cfg = Config::read_from_datadir(&datadir)?;
-			updates.merge_into(&mut cfg)?;
+			let cfg = Config::read_from_datadir(&datadir)?;
+			let cfg = updates.merge(cfg)?;
 			cfg.write_to_datadir(&datadir)?;
 
 			println!("The configuration has been updated");
@@ -253,8 +253,9 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 
 #[derive(clap::Args)]
 struct CreateOpts {
-	#[arg(long, default_value = "regtest")]
+	#[arg(long, default_value = "regtest", env = "BITCOIND_NETWORK")]
 	network: Network,
+
 
 	#[command(flatten)]
 	config: ConfigOpts,
@@ -263,46 +264,63 @@ struct CreateOpts {
 #[derive(Debug, Clone, Default, clap::Args)]
 struct ConfigOpts {
 	/// the URL of the bitcoind RPC (mandatory on create)
-	#[arg(long)]
+	#[arg(long, env = "BITCOIND_URL")]
 	bitcoind_url: Option<String>,
-	/// the path of the cookie file for the bitcoind RPC (mandatory on create)
-	#[arg(long)]
-	bitcoind_cookie: Option<String>,
 
-	#[arg(long)]
+	/// the path of the cookie file for the bitcoind RPC
+	/// It is mandatory to configure exactly one authentication method
+	/// This could either be [bitcoind_cookie] or [bitcoind_rpc_user] and [bitcoind_rpc_pass]
+	#[clap(long, env = "BITCOIND_COOKIE")]
+	bitcoind_cookie: Option<PathBuf>,
+
+
+	/// the user for the bitcoind RPC
+	/// It is mandatory to configure exactly one authentication method
+	/// If a [bitcoind_rpc_user] is provided [bitcoind_rpc_pass] must be provided
+	#[clap(long, env = "BITCOIND_RPC_USER")]
+	bitcoind_rpc_user: Option<String>,
+
+	/// the password for the bitcoind RPC
+	/// It is mandatory to configure exactly one authentication method
+	/// If a [bitcoind_rpc_user] is provided [bitcoind_rpc_pass] must be provided
+	#[clap(long, env = "BITCOIND_RPC_PASS")]
+	bitcoind_rpc_pass: Option<String>,
+
+	#[arg(long, env = "ASPD_PUBLIC_RPC_ADDRESS")]
 	public_rpc_address: Option<String>,
-	#[arg(long)]
+
+	#[arg(long, env = "ASPD_ADMIN_RPC_ADDRESS")]
 	admin_rpc_address: Option<Option<String>>,
 
 	/// Round interval, in ms.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_INTERVAL")]
 	round_interval: Option<u64>,
 	/// Time for users to submit payments in rounds, in ms.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_SUBMIT_TIME")]
 	round_submit_time: Option<u64>,
 	/// Time for users to submit signatures in rounds, in ms.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_SIGN_TIME")]
 	round_sign_time: Option<u64>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_NB_ROUND_NONCES")]
 	nb_round_nonces: Option<usize>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_VTXO_EXPIRY_DELTA")]
 	vtxo_expiry_delta: Option<u16>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_VTXO_EXIT_DELTA")]
 	vtxo_exit_delta: Option<u16>,
-	#[arg(long)]
+	#[arg(long, env = "ASPD_SWEEP_THRESHOLD")]
 	sweep_threshold: Option<Amount>,
 
 	/// The feerate (in sats per kvb) to use for round txs.
-	#[arg(long)]
+	#[arg(long, env = "ASPD_ROUND_TX_FEERATE_SAT_PER_KVB")]
 	round_tx_feerate_sat_per_kvb: Option<u64>,
 
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_URI")]
 	cln_grpc_uri: Option<Option<Uri>>,
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_SERVER_CERT_PATH")]
 	cln_grpc_server_cert_path: Option<Option<PathBuf>>,
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_CLIENT_CERT_PATH")]
 	cln_grpc_client_cert_path: Option<Option<PathBuf>>,
-	#[arg(long)]
+	#[arg(long, env = "CLN_GRPC_CLIENT_KEY_PATH")]
 	cln_grpc_client_key_path: Option<Option<PathBuf>>,
 }
 
@@ -315,9 +333,20 @@ impl ConfigOpts {
 		if self.bitcoind_url.is_none() {
 			bail!("The --bitcoind-url flag is mandatory.");
 		}
-		if self.bitcoind_cookie.is_none() {
-			bail!("The --bitcoind-cookie flag is mandatory.");
+
+		let with_user_pass = match (&self.bitcoind_rpc_user, &self.bitcoind_rpc_pass) {
+			(Some(_), None) => bail!("Missing parameter --bitcoind-rpc-pass. This is required if --bitcoind-rpc-user is provided"),
+			(None, Some(_)) => bail!("Missing parameter --bitcoind-rpc-user. This is required if --bitcoind-rpc-pass is provided"),
+			(None, None) => false,
+			(Some(_),Some(_)) => true,
+		};
+
+		if !with_user_pass && self.bitcoind_cookie.is_none() {
+			bail!("Configuring authentication to bitcoind is mandatory. Specify either --bitcoind-cookie or (--bitcoind-rpc-user and --bitcoind-rpc-pass).");
+		} else if with_user_pass & self.bitcoind_cookie.is_some() {
+			bail!("Invalid configuration for authentication to bitcoind. Use either --bitcoind-cookie or (--bitcoind-rpc-user and --bitcoind-rpc-pass) but not both.")
 		}
+
 
 		let has_cln_config =
 			self.cln_grpc_uri.is_some() ||
@@ -344,13 +373,10 @@ impl ConfigOpts {
 		Ok(())
 	}
 
-	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
+	fn merge(self, mut cfg: Config) -> anyhow::Result<Config> {
+
 		if let Some(v) = self.bitcoind_url {
 			cfg.bitcoind_url = v;
-		}
-
-		if let Some(v) = self.bitcoind_cookie {
-			cfg.bitcoind_cookie = v;
 		}
 
 		if let Some(v) = self.public_rpc_address {
@@ -399,7 +425,40 @@ impl ConfigOpts {
 			);
 		}
 
-		// We have the following sc
+		// Merging authentication for bitcoind and validating
+		// the resulting config
+		let mut put_bitcoind_cookie = false;
+		let mut put_bitcoind_userpass = false;
+		if let Some(v) = self.bitcoind_cookie {
+			put_bitcoind_cookie = true;
+			cfg.bitcoind_cookie = Some(v);
+			cfg.bitcoind_rpc_user = None;
+			cfg.bitcoind_rpc_pass = None;
+		}
+		if let Some(v) = self.bitcoind_rpc_user {
+			put_bitcoind_userpass = true;
+			cfg.bitcoind_rpc_user = Some(v);
+			cfg.bitcoind_cookie = None;
+		}
+		if let Some(v) = self.bitcoind_rpc_pass {
+			put_bitcoind_userpass = true;
+			cfg.bitcoind_rpc_pass = Some(v);
+			cfg.bitcoind_cookie = None;
+		}
+
+		match (&cfg.bitcoind_rpc_user, &cfg.bitcoind_rpc_pass) {
+			(Some(_), None) => bail!("Missing configuration for bitcoind-rpc-pass. This is required if bitcoind-rpc-user is provided"),
+			(None, Some(_)) => bail!("Missing configuration for bitcoind-rpc-user. This is required if bitcoind-rpc-pass  is provided"),
+			(Some(_), Some(_))=> true,
+			(None, None) => false,
+		};
+
+		if put_bitcoind_userpass && put_bitcoind_cookie {
+			bail!("Either set --bitcoind-cookie or (--bitcoind-rpc-user and --bitcoind-rpc-pass) but not both.")
+		}
+
+
+		// We have the following scenario's
 
 		// If any of these fields is Some(Some(value)) it explcitily sets the field
 		// In that case puts_cln_config is true
@@ -462,7 +521,7 @@ impl ConfigOpts {
 			}
 		}
 
-		Ok(())
+		Ok(cfg)
 	}
 
 }
@@ -474,8 +533,65 @@ mod test {
 	use std::str::FromStr;
 
 	#[test]
+	fn validate_bitcoind_config() {
+		let bitcoind_url = Some(String::from("http://localhost:13444"));
+		let bitcoind_cookie = Some(PathBuf::from("/path/to/cookie"));
+		let bitcoind_rpc_user = Some(String::from("user"));
+		let bitcoind_rpc_pass = Some(String::from("pass"));
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_cookie = bitcoind_cookie.clone();
+		opts.validate().expect("This config should be valid");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		opts.bitcoind_rpc_pass = bitcoind_rpc_pass.clone();
+		opts.validate().expect("This config should be valid");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.validate().expect_err("Invalid because auth info is missing");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		opts.validate().expect_err("Invalid because pass is missing");
+
+		let mut opts = ConfigOpts::default();
+		opts.bitcoind_url = bitcoind_url.clone();
+		opts.bitcoind_cookie = bitcoind_cookie.clone();
+		opts.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		opts.bitcoind_rpc_pass = bitcoind_rpc_pass.clone();
+		opts.validate().expect_err("Invalid. Either cookie or pass but not both");
+	}
+
+
+	#[test]
+	fn update_bitcoind_auth_config() {
+		let bitcoind_cookie = Some(PathBuf::from("/path/to/cookie"));
+		let bitcoind_rpc_user = Some(String::from("user"));
+		let bitcoind_rpc_pass = Some(String::from("pass"));
+
+		// Aspd is configured to use config
+		// COnfigure to use user pass instead
+		let mut config = Config::default();
+		config.bitcoind_cookie = bitcoind_cookie.clone();
+
+		let mut update = ConfigOpts::default();
+		update.bitcoind_rpc_user = bitcoind_rpc_user.clone();
+		update.bitcoind_rpc_pass = bitcoind_rpc_pass.clone();
+
+		let new_config = update.merge(config).expect("Valid change");
+		assert!(new_config.bitcoind_cookie.is_none());
+		assert!(new_config.bitcoind_rpc_user.is_some());
+		assert!(new_config.bitcoind_rpc_pass.is_some());
+	}
+
+	#[test]
 	fn partial_cln_config_on_init_is_not_accepted() {
-		let mut cfg = Config::default();
+		let cfg = Config::default();
 
 		// Create partial config opts
 		let uri = Uri::from_str("http://localhost:1313").unwrap();
@@ -484,12 +600,12 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect_err("This should fail");
+		updates.merge(cfg).expect_err("This should fail");
 	}
 
 	#[test]
 	fn init_accepts_full_cln_config() {
-		let mut cfg = Config::default();
+		let cfg = Config::default();
 
 		// Create full Config Opts
 		let uri = Uri::from_str("http://localhost:1313").unwrap();
@@ -501,7 +617,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect("Accepts full config");
+		let cfg = updates.merge(cfg).expect("Accepts full config");
 
 		let cln_config = cfg.cln_config.as_ref().expect("A config has been created");
 		assert_eq!(cln_config.grpc_uri, uri);
@@ -531,7 +647,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect("Accepts full config");
+		let cfg = updates.merge(cfg).expect("Accepts full config");
 		assert!(cfg.cln_config.is_none());
 	}
 
@@ -553,8 +669,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect_err("Cannot drop cln-config partially");
-		assert!(cfg.cln_config.is_some());
+		updates.merge(cfg).expect_err("Cannot drop cln-config partially");
 	}
 
 	#[test]
@@ -576,7 +691,7 @@ mod test {
 			..ConfigOpts::default()
 		};
 
-		updates.merge_into(&mut cfg).expect("Can update config");
+		let cfg = updates.merge(cfg).expect("Can update config");
 
 		assert_eq!(cfg.cln_config.unwrap().grpc_uri, new_uri);
 	}
