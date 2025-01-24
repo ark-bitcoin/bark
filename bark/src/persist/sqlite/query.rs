@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 use anyhow::Context;
 use ark::Movement;
-use bitcoin::{bip32::Fingerprint, Amount, Network};
+use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
 use rusqlite::{Connection, named_params, Transaction};
 use crate::{exit::ExitIndex, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
@@ -113,7 +113,7 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>, destination: Option<String>) -> anyhow::Result<i32> {
 	// Store the vtxo
 	let query = "INSERT INTO bark_movement (fees_sat, destination) VALUES (:fees_sat, :destination) RETURNING *;";
-	let mut statement = conn.prepare(query)?;	
+	let mut statement = conn.prepare(query)?;
 	let movement_id = statement.query_row(named_params! {
 		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat(),
 		":destination": destination
@@ -328,6 +328,54 @@ pub fn update_vtxo_state(
 	let mut statement = conn.prepare(query)?;
 	statement.execute([id.to_string(), state.to_string()])?;
 	Ok(())
+}
+
+pub fn store_vtxo_key_index(
+	conn: &Connection,
+	index: u32,
+	public_key: PublicKey
+) -> anyhow::Result<()> {
+	let query = "INSERT INTO bark_vtxo_key (idx, public_key) VALUES (?1, ?2);";
+	let mut statement = conn.prepare(query)?;
+	statement.execute([index.to_string(), public_key.to_string()])?;
+	Ok(())
+}
+
+pub fn get_vtxo_key_index(conn: &Connection, vtxo: &Vtxo) -> anyhow::Result<Option<u32>> {
+	let query = "SELECT idx FROM bark_vtxo_key WHERE public_key = (?1)";
+	let pk = vtxo.spec().user_pubkey.to_string();
+
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query((pk, ))?;
+
+	if let Some(row) = rows.next()? {
+		let index = u32::try_from(row.get::<usize, i64>(0)?)?;
+		Ok(Some(index))
+	} else {
+		Ok(None)
+	}
+}
+
+pub fn check_vtxo_key_exists(conn: &Connection, public_key: &PublicKey) -> anyhow::Result<bool> {
+	let query = "SELECT idx FROM bark_vtxo_key WHERE public_key = (?1)";
+
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query((public_key.to_string(), ))?;
+
+	Ok(rows.next()?.is_some())
+}
+
+pub fn get_last_vtxo_key_index(conn: &Connection) -> anyhow::Result<Option<u32>> {
+	let query = "SELECT idx FROM bark_vtxo_key ORDER BY idx DESC LIMIT 1";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(())?;
+
+	if let Some(row) = rows.next()? {
+		let index = u32::try_from(row.get::<usize, i64>(0)?)?;
+		Ok(Some(index))
+	} else {
+		Ok(None)
+	}
 }
 
 pub fn store_last_ark_sync_height(

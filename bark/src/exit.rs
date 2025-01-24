@@ -156,12 +156,9 @@ impl <P>Exit<P> where
 		for vtxo in vtxos {
 			let added = self.index.add_vtxo(vtxo);
 			if let Some(added) = added {
-				let pubkey = added.spec().user_pubkey.to_string();
-
 				self.db.register_send(
-					&[added],
-					// TODO: in the context of an exit, it might make more sense to store spk rather than pubkey
-					pubkey,
+					vec![&added],
+					added.spec().exit_spk().to_string(),
 					None,
 					None
 				).context("Failed to register send")?;

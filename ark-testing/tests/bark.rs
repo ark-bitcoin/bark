@@ -354,6 +354,11 @@ async fn offboard_all() {
 	// We check that all vtxos have been offboarded
 	assert_eq!(Amount::ZERO, bark1.offchain_balance().await);
 
+	let movements = bark1.list_movements().await;
+	let offb_movement = movements.first().unwrap();
+	assert_eq!(offb_movement.spends.len(), 3, "all offboard vtxos should be in movement");
+	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
+
 	// We check that provided address received the coins
 	bitcoind.generate(1).await;
 	let balance = bitcoind.get_received_by_address(&address);
@@ -380,6 +385,12 @@ async fn offboard_vtxos() {
 
 	assert!(updated_vtxos.contains(&vtxos[0].id));
 	assert!(updated_vtxos.contains(&vtxos[2].id));
+
+	let movements = bark1.list_movements().await;
+	let offb_movement = movements.first().unwrap();
+	assert_eq!(offb_movement.spends.len(), 1, "only provided vtxo should be offboarded");
+	assert_eq!(offb_movement.spends[0].id, vtxo_to_offboard.id, "only provided vtxo should be offboarded");
+	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
 	bitcoind.generate(1).await;

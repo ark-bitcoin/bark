@@ -2,7 +2,7 @@ pub mod sqlite;
 
 use ark::{Movement, Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
-use bitcoin::Amount;
+use bitcoin::{secp256k1::PublicKey, Amount};
 
 use crate::{exit::ExitIndex, Config, Pagination, WalletProperties};
 
@@ -41,6 +41,16 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 	/// Check whether a VTXO has been spent already or not
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool>;
+
+	/// Store a newly revealed index
+	fn store_vtxo_key_index(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
+	/// Get last revealed index
+	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>>;
+	/// Get index of vtxo key
+	fn get_vtxo_key_index(&self, vtxo: &Vtxo) -> anyhow::Result<u32>;
+	/// Checks if provided public key exists in the database,
+	/// meaning that it is owned by the wallet
+	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
 
 	/// Store the ongoing exit process.
 	fn store_exit(&self, exit: &ExitIndex) -> anyhow::Result<()>;

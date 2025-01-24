@@ -34,7 +34,14 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 			.map(|e| Vtxo::decode(&e).expect("corrupt psbt"))
 	}
 
-	fn try_sign_exit_claim_input(
+	/// If [`self`] has an exit claim input on it, it'll be signed using
+	/// provided `vtxo_key` and signature will be put in witness
+	///
+	/// ### Panic
+	///
+	/// This call will panic if provided keypair's public key does not
+	/// match VTXO's spec one
+	fn maybe_sign_exit_claim_input(
 		&mut self,
 		secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
 		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction>>,
@@ -71,7 +78,6 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 
 		debug_assert_eq!(wit.size() as u64, claim.claim_satisfaction_weight().to_wu());
 		self.borrow_mut().final_script_witness = Some(wit);
-
 	}
 }
 

@@ -4,6 +4,7 @@ extern crate ark_testing;
 
 use std::str::FromStr;
 
+use ark::vtxo::exit_spk;
 use ark_testing::daemon::bitcoind::BitcoindConfig;
 use ark_testing::setup::setup_full;
 use ark_testing::{context::TestContext, Bark, Bitcoind};
@@ -251,16 +252,21 @@ async fn double_exit_call() {
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 7);
 
-	// check that a movement was created for each exited vtxo
 	let last_moves = &movements[0..=2];
-	assert!(vtxos.iter().all(|v| last_moves.iter().any(|m| m.spends.first().unwrap().id == v.id)));
-	// check that all vtxos have been marked as spent
-	assert_eq!(bark1.vtxos().await.len(), 0);
+	assert!(
+		vtxos.iter().all(|v| last_moves.iter().any(|m|
+			m.spends.first().unwrap().id == v.id &&
+			m.destination.clone().unwrap() ==
+				exit_spk(v.user_pubkey, v.asp_pubkey, v.exit_delta).to_string()
+		)), "each exited vtxo should be linked to a movement with exit_spk as destination"
+	);
+	assert_eq!(bark1.vtxos().await.len(), 0, "all vtxos should be marked as spent");
 
 	// create a new vtxo to exit
 	bark2.send_oor(bark1.vtxo_pubkey().await, Amount::from_sat(145_000)).await;
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(vtxos.len(), 1);
+	let vtxo = vtxos.first().unwrap();
 
 	progress_exit(&bitcoind, &bark1).await;
 
@@ -269,12 +275,12 @@ async fn double_exit_call() {
 
 	// check we only exited last vtxo
 	let last_move = movements.first().unwrap();
-	assert_eq!(last_move.spends.len(), 1);
-	assert_eq!(last_move.spends.first().unwrap().id, vtxos.first().unwrap().id);
-	// check that all vtxos have been marked as spent
-	assert_eq!(bark1.vtxos().await.len(), 0);
+	assert_eq!(last_move.spends.len(), 1, "we should only exit last spendable vtxo");
+	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
+	let exit_spk = exit_spk(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta).to_string();
+	assert_eq!(last_move.destination.clone().unwrap(), exit_spk, "movement destination should be exit_spk");
+	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
-	// processing another exit without new vtxo won't create new movement
 	progress_exit(&bitcoind, &bark1).await;
-	assert_eq!(bark1.list_movements().await.len(), 9);
+	assert_eq!(bark1.list_movements().await.len(), 9, "should not create new movement when no new vtxo to exit");
 }
