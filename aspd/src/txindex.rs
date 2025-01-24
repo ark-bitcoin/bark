@@ -6,11 +6,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid};
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, Client, RpcApi};
 use chrono::{DateTime, Local};
 use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::task::JoinHandle;
 
 use ark::BlockHeight;
 
@@ -166,8 +168,8 @@ impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
 /// The handle to the transaction index.
 #[derive(Clone)]
 pub struct TxIndex {
-	state: Arc<RwLock<HashMap<Txid, Tx>>>,
-	broadcast_tx: mpsc::UnboundedSender<Txid>,
+	tx_map: Arc<RwLock<HashMap<Txid, Tx>>>,
+	broadcast_tx: Option<mpsc::UnboundedSender<Txid>>,
 }
 //TODO(stevenroose) consider persisting all this state
 // - this would make it easier to entirely rely on new blocks and incoming mempool txs
@@ -177,14 +179,14 @@ pub struct TxIndex {
 impl TxIndex {
 	/// Get a tx from the index.
 	pub async fn get(&self, txid: &Txid) -> Option<Tx> {
-		self.state.read().await.get(txid).cloned()
+		self.tx_map.read().await.get(txid).cloned()
 	}
 
 	/// Quick getter for the status of a tx by txid.
 	///
 	/// Returns [None] for a tx not in the index.
 	pub async fn status_of(&self, txid: &Txid) -> Option<TxStatus> {
-		if let Some(tx) = self.state.read().await.get(txid) {
+		if let Some(tx) = self.tx_map.read().await.get(txid) {
 			Some(tx.status().await)
 		} else {
 			None
@@ -198,7 +200,7 @@ impl TxIndex {
 			tx
 		} else {
 			let ret = IndexedTx::new(txid, tx);
-			self.state.write().await.insert(txid, ret.clone());
+			self.tx_map.write().await.insert(txid, ret.clone());
 			ret
 		}
 	}
@@ -210,7 +212,7 @@ impl TxIndex {
 			tx
 		} else {
 			let ret = IndexedTx::new_as(txid, tx, status);
-			self.state.write().await.insert(txid, ret.clone());
+			self.tx_map.write().await.insert(txid, ret.clone());
 			ret
 		}
 	}
@@ -222,14 +224,14 @@ impl TxIndex {
 			tx
 		} else {
 			let ret = IndexedTx::new_incomplete(txid, tx);
-			self.state.write().await.insert(txid, ret.clone());
+			self.tx_map.write().await.insert(txid, ret.clone());
 			ret
 		}
 	}
 
 	/// Register a batch of transactions at once.
 	pub async fn register_batch(&self, txs: impl IntoIterator<Item = Transaction>) {
-		let mut state = self.state.write().await;
+		let mut state = self.tx_map.write().await;
 		for tx in txs {
 			let txid = tx.compute_txid();
 			state.entry(txid).or_insert_with(|| IndexedTx::new(txid, tx));
@@ -238,7 +240,7 @@ impl TxIndex {
 
 	/// Unregister a batch of transactions at once.
 	pub async fn unregister_batch(&self, txs: impl IntoIterator<Item = impl TxOrTxid>) {
-		let mut state = self.state.write().await;
+		let mut state = self.tx_map.write().await;
 		for tx in txs {
 			let txid = tx.txid();
 			if let Some(tx) = state.remove(&txid) {
@@ -258,27 +260,32 @@ impl TxIndex {
 	///
 	/// You'll probably prefer to use [broadcast_tx] instead.
 	pub fn broadcast(&self, txid: Txid) {
-		self.broadcast_tx.send(txid).expect("txindex shut down");
+		self.broadcast_tx.as_ref().expect("txindex not started yet")
+			.send(txid).expect("txindex shut down");
 	}
 
-	/// Start a new tx index.
-	pub fn start(bitcoind: Client, interval: Duration) -> TxIndex {
-		let state = Arc::new(RwLock::new(HashMap::new()));
+	pub fn new() -> TxIndex {
+		TxIndex {
+			tx_map: Arc::new(RwLock::new(HashMap::new())),
+			broadcast_tx: None,
+		}
+	}
+
+	/// Start the tx index.
+	pub fn start(&mut self, bitcoind: Client, interval: Duration) -> JoinHandle<anyhow::Result<()>> {
 		let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel();
+		self.broadcast_tx = Some(broadcast_tx);
 
 		let proc = TxIndexProcess {
 			bitcoind, interval, broadcast_rx,
-			txs: state.clone(),
+			txs: self.tx_map.clone(),
 			broadcast: HashSet::new(),
 		};
 		tokio::spawn(async move {
-			match proc.run().await {
-				Ok(()) => info!("TxIndex shut down."),
-				Err(e) => error!("TxIndex exited with error: {}", e),
-			}
-		});
-
-		TxIndex { state, broadcast_tx }
+			proc.run().await.context("txindex exited with error")?;
+			info!("TxIndex shut down.");
+			Ok(())
+		})
 	}
 }
 

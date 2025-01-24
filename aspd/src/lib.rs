@@ -324,15 +324,10 @@ impl App {
 			&config.bitcoind_url,
 			config.bitcoind_auth(),
 		).context("failed to create bitcoind rpc client")?;
-		let bitcoind2 = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
-			&config.bitcoind_url,
-			config.bitcoind_auth(),
-		).context("failed to create bitcoind rpc client")?;
 
 		Ok(Arc::new(App {
 			wallet: Mutex::new(wallet),
-			//TODO(stevenroose) this 5s is wicked, but needed for now for testing
-			txindex: TxIndex::start(bitcoind2, Duration::from_secs(5)),
+			txindex: TxIndex::new(),
 			rounds: None,
 			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
@@ -360,17 +355,22 @@ impl App {
 	}
 
 	pub async fn start(self: &mut Arc<Self>) -> anyhow::Result<()> {
-		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
-
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
+		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
+			&self.config.bitcoind_url,
+			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(self.config.bitcoind_cookie.as_str().into()),
+		).context("failed to create bitcoind rpc client")?;
+
+		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
 		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
+		let jh_txindex = mut_self.txindex.start(bitcoind, Duration::from_secs(2));
 
 		// First perform all startup tasks...
 		info!("Starting startup tasks...");
@@ -402,7 +402,7 @@ impl App {
 		});
 
 		// The tasks that always run
-		let mut jhs = vec![jh_rpc_public, jh_round_coord, jh_round_sweeper];
+		let mut jhs = vec![jh_txindex, jh_rpc_public, jh_round_coord, jh_round_sweeper];
 
 		// These tasks do only run if the config is provided
 		if self.config.admin_rpc_address.is_some() {
