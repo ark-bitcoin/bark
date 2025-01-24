@@ -33,7 +33,7 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use tokio::time::MissedTickBehavior;
-use tokio::sync::{broadcast, oneshot, Mutex};
+use tokio::sync::{broadcast, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
@@ -343,32 +343,12 @@ impl App {
 
 	/// Load all relevant txs from the database into the tx index.
 	pub async fn fill_txindex(self: &Arc<Self>) -> anyhow::Result<()> {
-		let (done_tx, done_rx) = oneshot::channel();
-
-		// Load all round txs into the txindex.
-		let s = self.clone();
-		tokio::task::spawn_blocking(move || {
-			let s2 = s.clone();
-			for res in s.db.fetch_all_rounds() {
-				match res {
-					Ok(round) => {
-						let s3 = s2.clone();
-						tokio::spawn(async move {
-							trace!("Adding txs for round {} to txindex", round.id());
-							s3.txindex.register(round.tx).await;
-							s3.txindex.register_batch(round.signed_tree.all_signed_txs()).await;
-						});
-					},
-					Err(e) => {
-						let _ = done_tx.send(Err(e));
-						return;
-					},
-				};
-			}
-			let _ = done_tx.send(Ok(()));
-		});
-
-		done_rx.await.expect("txindex fill thread panicked")?;
+		for res in self.db.fetch_all_rounds() {
+			let round = res?;
+			trace!("Adding txs for round {} to txindex", round.id());
+			self.txindex.register(round.tx).await;
+			self.txindex.register_batch(round.signed_tree.all_signed_txs()).await;
+		}
 		Ok(())
 	}
 
