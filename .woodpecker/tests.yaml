@@ -1,6 +1,8 @@
 
 when:
   - event: pull_request
+  - event: manual
+  - event: tag
   - event: push
     branch: master
 
@@ -14,7 +16,7 @@ clone:
 
 steps:
   - name: merge-master
-    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
+    image: registry.2nd.dev/build:7
     commands:
       - git fetch --no-tags --depth=200 origin master
       - git log --oneline | head
@@ -28,14 +30,14 @@ steps:
 
   - name: prechecks
     depends_on: merge-master
-    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
+    image: registry.2nd.dev/build:7
     commands:
       - bash contrib/prechecks.sh rust_no_spaces_for_indent
       - bash contrib/prechecks.sh unused_aspd_logs
 
   - name: build
     depends_on: prechecks
-    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
+    image: registry.2nd.dev/build:7
     commands:
       - git log --oneline | head -n 1
       - cargo version
@@ -44,14 +46,14 @@ steps:
 
   - name: test-unit
     depends_on: prechecks
-    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
+    image: registry.2nd.dev/build:7
     commands:
       - git log --oneline | head -n 1
       - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
 
   - name: test-integration-btc28.0
     depends_on: build
-    image: stevenroose/bark-ci-tests@sha256:298baad20cb861411e6f21073ed4a8a3a981c9ec23a3d67ce72993342646662a
+    image: registry.2nd.dev/build:7
     environment:
       BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
       LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
@@ -75,3 +77,34 @@ steps:
       force: true
       ssh_key:
         from_secret: github-mirror-push-key
+
+  - name: release-macos15.1-windows-linux
+    when:
+      - event: tag
+    depends_on: test-integration-btc28.0
+    image: registry.2nd.dev/build:7
+    environment:
+      SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
+    commands:
+      - cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path bark/Cargo.toml
+      - cargo build    --release --target x86_64-pc-windows-gnu    --locked --manifest-path bark/Cargo.toml
+      - cargo zigbuild --release --target x86_64-apple-darwin      --locked --manifest-path bark/Cargo.toml
+      - cargo zigbuild --release --target aarch64-apple-darwin     --locked --manifest-path bark/Cargo.toml
+      - cp ./target/x86_64-unknown-linux-gnu/release/bark  ./target/bark-linux-x86_64
+      - cp ./target/x86_64-pc-windows-gnu/release/bark.exe ./target/bark-windows-x86_64.exe
+      - cp ./target/x86_64-apple-darwin/release/bark       ./target/bark-apple-x86_64
+      - cp ./target/aarch64-apple-darwin/release/bark      ./target/bark-apple-aarch64
+
+  - name: publish
+    when:
+      - event: tag
+    depends_on: release-macos15.1-windows-linux
+    image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
+    settings:
+      files:
+        - "./target/bark-linux-x86_64"
+        - "./target/bark-windows-x86_64.exe"
+        - "./target/bark-apple-x86_64"
+        - "./target/bark-apple-aarch64"
+      api_key:
+        from_secret: RELEASE
