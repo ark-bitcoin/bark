@@ -288,6 +288,7 @@ impl<'a> SweepBuilder<'a> {
 				None => return Some(0), // all connector txs confirmed and spent
 				Some(c) => c,
 			};
+
 			let tx = self.sweeper.app.txindex.get(&tx.compute_txid()).await
 				.expect("txindex should contain all connector txs");
 
@@ -462,16 +463,19 @@ impl VtxoSweeper {
 			app,
 			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
 		};
+
 		for (_txid, raw_tx) in raw_pending {
 			let tx = ret.app.txindex.broadcast_tx(raw_tx).await;
 			ret.store_pending(tx);
 		}
+
 		Ok(ret)
 	}
 
 	/// Store the pending tx both in the db and mem cache.
 	async fn add_new_pending(&mut self, txid: Txid, tx: Transaction) -> anyhow::Result<()> {
 		self.app.db.store_pending_sweep(&txid, &tx).context("db error storing pending sweep")?;
+
 		let tx = self.app.txindex.broadcast_tx(tx).await;
 		self.store_pending(tx);
 		Ok(())
@@ -503,6 +507,7 @@ impl VtxoSweeper {
 				self.pending_tx_by_utxo.remove(&OutPoint::new(tx.compute_txid(), i as u32));
 			}
 		}
+
 		trace!("Removing vtxo txs from txindex...");
 		self.app.txindex.unregister_batch(vtxo_txs.iter()).await;
 
@@ -576,20 +581,33 @@ pub async fn run_vtxo_sweeper(
 	app: Arc<App>,
 	mut sweep_trigger_rx: tokio::sync::mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
+	let mut shutdown = app.shutdown_channel.subscribe();
 
 	let mut state = VtxoSweeper::load(app).await.context("failed to load VtxoSweeper state")?;
 
 	info!("Starting expired vtxo sweep loop");
 	loop {
 		tokio::select! {
+			// Periodic interval for sweeping
 			() = tokio::time::sleep(state.app.config.round_sweep_interval) => {},
+			// Trigger received via channel
 			Some(()) = sweep_trigger_rx.recv() => {
 				slog!(ReceivedSweepTrigger);
 			},
+			_ = shutdown.recv() => {
+				info!("Shutdown signal received. Exiting sweep loop...");
+				break;
+			}
 		}
 
 		//TODO(stevenroose) do this better
 		// state.prune_confirmed().await;
-		state.process_rounds().await?;
+		if let Err(e) = state.process_rounds().await {
+			error!("Error during round processing: {}", e);
+		}
 	}
+
+	info!("Expired vtxo sweep loop terminated gracefully.");
+
+	Ok(())
 }

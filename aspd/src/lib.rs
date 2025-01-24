@@ -203,6 +203,7 @@ pub struct SendpayHandle {
 pub struct App {
 	config: Config,
 	db: database::Db,
+	shutdown_channel: broadcast::Sender<()>,
 	asp_key: Keypair,
 	wallet: Mutex<bdk_wallet::Wallet>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
@@ -325,6 +326,8 @@ impl App {
 			config.bitcoind_auth(),
 		).context("failed to create bitcoind rpc client")?;
 
+		let (shutdown_channel, _) = broadcast::channel::<()>(1);
+
 		Ok(Arc::new(App {
 			wallet: Mutex::new(wallet),
 			txindex: TxIndex::new(),
@@ -332,7 +335,11 @@ impl App {
 			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
 			sendpay_updates: None,
-			config, db, asp_key, bitcoind,
+			config,
+			db,
+			shutdown_channel,
+			asp_key,
+			bitcoind,
 		}))
 	}
 
@@ -351,6 +358,7 @@ impl App {
 	async fn startup(self: &Arc<Self>) -> anyhow::Result<()> {
 		// Start loading txindex.
 		self.fill_txindex().await.context("error filling txindex")?;
+
 		Ok(())
 	}
 
@@ -363,14 +371,37 @@ impl App {
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
 			&self.config.bitcoind_url,
-			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(self.config.bitcoind_cookie.as_str().into()),
+			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(self.config.bitcoind_cookie.clone().unwrap()),
 		).context("failed to create bitcoind rpc client")?;
 
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
 		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
-		let jh_txindex = mut_self.txindex.start(bitcoind, Duration::from_secs(2));
+		let jh_txindex = mut_self.txindex.start(
+			bitcoind,
+			Duration::from_secs(2),
+			mut_self.shutdown_channel.subscribe(),
+		);
+
+		// Spawn a task to handle Ctrl+C
+		let shutdown_channel = mut_self.shutdown_channel.clone();
+		tokio::spawn(async move {
+			tokio::signal::ctrl_c()
+				.await
+				.expect("Failed to listen for Ctrl+C");
+
+			info!("Ctrl+C received! Sending shutdown signal...");
+
+			let _ = shutdown_channel.send(());
+
+			for i in (1..=60).rev() {
+				info!("Forced exit in {} seconds...", i);
+				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+			}
+
+			std::process::exit(0);
+		});
 
 		// First perform all startup tasks...
 		info!("Starting startup tasks...");
@@ -387,7 +418,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
-			let ret = round::run_round_coordinator(app.clone(), round_input_rx, round_trigger_rx)
+			let ret = round::run_round_coordinator(app, round_input_rx, round_trigger_rx)
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", ret);
 			ret
@@ -416,10 +447,12 @@ impl App {
 			jhs.push(jh_rpc_admin)
 		}
 
+		let app = self.clone();
 		if self.config.cln_config.is_some() {
 			let cln_config = self.config.cln_config.clone().unwrap();
 			let jh_sendpay = tokio::spawn(async move {
-				let ret = lightning::run_process_sendpay_updates(&cln_config, sendpay_tx)
+				let shutdown = app.shutdown_channel.clone();
+				let ret = lightning::run_process_sendpay_updates(shutdown, &cln_config, sendpay_tx)
 					.await.context("error processing sendpays");
 				info!("Sendpay updater process exited with {:?}", ret);
 				ret
@@ -430,6 +463,7 @@ impl App {
 		// Wait until the first task finishes
 		futures::future::try_join_all(jhs).await
 			.context("one of our background processes errored")?;
+
 		Ok(())
 	}
 
