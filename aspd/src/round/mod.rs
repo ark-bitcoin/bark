@@ -293,8 +293,7 @@ impl CollectingPayments {
 		self.all_offboards.extend(offboards);
 
 		// Check whether our round is full.
-		const REGULAR_PAYMENT_NB_OUTPUTS: usize = 2;
-		if self.all_outputs.len() + REGULAR_PAYMENT_NB_OUTPUTS >= self.round_data.max_output_vtxos {
+		if self.all_outputs.len() == self.round_data.max_output_vtxos {
 			slog!(FullRound, round_id: self.round_id, attempt: self.attempt,
 				nb_outputs: self.all_outputs.len(), max_output_vtxos: self.round_data.max_output_vtxos,
 			);
