@@ -64,7 +64,7 @@ pub struct RoundData {
 
 pub struct CollectingPayments {
 	round_id: u64,
-	attempt_number: usize,
+	attempt: usize,
 	round_data: RoundData,
 
 	/// All inputs that have participated, but might have dropped out.
@@ -84,14 +84,14 @@ pub struct CollectingPayments {
 impl CollectingPayments {
 	fn new(
 		round_id: u64,
-		attempt_number: usize,
+		attempt: usize,
 		round_data: RoundData,
 		all_locked_inputs: HashSet<VtxoId>,
 		allowed_inputs: Option<HashSet<VtxoId>>,
 	) -> CollectingPayments {
 		CollectingPayments {
 			round_id,
-			attempt_number,
+			attempt,
 			round_data,
 			all_locked_inputs,
 			allowed_inputs,
@@ -110,8 +110,8 @@ impl CollectingPayments {
 	}
 
 	fn first_attempt(&self) -> bool {
-		assert_eq!(self.attempt_number == 0, self.allowed_inputs.is_none());
-		self.attempt_number == 0
+		assert_eq!(self.attempt == 0, self.allowed_inputs.is_none());
+		self.attempt == 0
 	}
 
 	/// Returns whether there are no valid inputs left in the round
@@ -180,11 +180,15 @@ impl CollectingPayments {
 		let mut unique_inputs = HashSet::with_capacity(inputs.len());
 		for input in inputs {
 			if !unique_inputs.insert(input) {
-				slog!(RoundUserVtxoDuplicateInput, round_id: self.round_id, vtxo: *input);
+				slog!(RoundUserVtxoDuplicateInput, round_id: self.round_id, attempt: self.attempt,
+					vtxo: *input,
+				);
 				bail!("user provided duplicate inputs");
 			}
 			if self.all_inputs.contains_key(input) {
-				slog!(RoundUserVtxoAlreadyRegistered, round_id: self.round_id, vtxo: *input);
+				slog!(RoundUserVtxoAlreadyRegistered, round_id: self.round_id, attempt: self.attempt,
+					vtxo: *input,
+				);
 				bail!("vtxo {input} already registered");
 			}
 		}
@@ -192,7 +196,9 @@ impl CollectingPayments {
 		if let Some(ref allowed) = self.allowed_inputs {
 			// This means we're not trying first time and we filter inputs.
 			if let Some(bad) = inputs.iter().find(|i| !allowed.contains(&i)) {
-				slog!(RoundUserVtxoNotAllowed, round_id: self.round_id, vtxo: *bad);
+				slog!(RoundUserVtxoNotAllowed, round_id: self.round_id, attempt: self.attempt,
+					vtxo: *bad,
+				);
 				bail!("input vtxo {} has been banned for this round", bad);
 			}
 		}
@@ -228,7 +234,7 @@ impl CollectingPayments {
 			!self.all_locked_inputs.contains(v)
 		}).collect::<Vec<_>>();
 		if let Err(id) = app.atomic_check_put_vtxo_in_flux(&new_inputs).await {
-			slog!(RoundUserVtxoInFlux, round_id: self.round_id, vtxo: id);
+			slog!(RoundUserVtxoInFlux, round_id: self.round_id, attempt: self.attempt, vtxo: id);
 			bail!("vtxo {id} already in flux");
 		}
 
@@ -245,7 +251,7 @@ impl CollectingPayments {
 
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
 			slog!(RoundPaymentRegistrationFailed, round_id: self.round_id,
-				attempt_number: self.attempt_number, error: e.to_string(),
+				attempt: self.attempt, error: e.to_string(),
 			);
 			app.release_vtxos_in_flux(&new_inputs).await;
 			bail!("registration failed: {e}");
@@ -264,7 +270,7 @@ impl CollectingPayments {
 		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
 		offboards: Vec<OffboardRequest>,
 	) {
-		slog!(RoundPaymentRegistered, round_id: self.round_id, attempt_number: self.attempt_number,
+		slog!(RoundPaymentRegistered, round_id: self.round_id, attempt: self.attempt,
 			nb_inputs: inputs.len(), nb_outputs: vtxo_requests.len(), nb_offboards: offboards.len(),
 		);
 
@@ -289,7 +295,7 @@ impl CollectingPayments {
 		// Check whether our round is full.
 		const REGULAR_PAYMENT_NB_OUTPUTS: usize = 2;
 		if self.all_outputs.len() + REGULAR_PAYMENT_NB_OUTPUTS >= self.round_data.max_output_vtxos {
-			slog!(FullRound, round_id: self.round_id, attempt_number: self.attempt_number,
+			slog!(FullRound, round_id: self.round_id, attempt: self.attempt,
 				nb_outputs: self.all_outputs.len(), max_output_vtxos: self.round_data.max_output_vtxos,
 			);
 			self.proceed = true;
@@ -299,7 +305,7 @@ impl CollectingPayments {
 	async fn progress(mut self, app: &App) -> SigningVtxoTree {
 		let tip = app.chain_tip().await.height;
 		let expiry_height = tip + app.config.vtxo_expiry_delta as BlockHeight;
-		slog!(ConstructingRoundVtxoTree, round_id: self.round_id, attempt_number: self.attempt_number,
+		slog!(ConstructingRoundVtxoTree, round_id: self.round_id, attempt: self.attempt,
 			tip_block_height: tip, vtxo_expiry_block_height: expiry_height,
 		);
 
@@ -418,7 +424,7 @@ impl CollectingPayments {
 		SigningVtxoTree {
 			round_id: self.round_id,
 			round_data: self.round_data,
-			attempt_number: self.attempt_number,
+			attempt: self.attempt,
 			expiry_height,
 			cosign_key: self.cosign_key,
 			cosign_sec_nonces,
@@ -441,7 +447,7 @@ impl CollectingPayments {
 
 pub struct SigningVtxoTree {
 	round_id: u64,
-	attempt_number: usize,
+	attempt: usize,
 	round_data: RoundData,
 	expiry_height: BlockHeight,
 
@@ -486,7 +492,7 @@ impl SigningVtxoTree {
 				bail!("pubkey is not part of cosigner group");
 			},
 		};
-		slog!(RoundVtxoSignaturesRegistered, round_id: self.round_id, attempt_number: self.attempt_number,
+		slog!(RoundVtxoSignaturesRegistered, round_id: self.round_id, attempt: self.attempt,
 			nb_vtxo_signatures: signatures.len(), cosigner: pubkey,
 		);
 
@@ -516,7 +522,7 @@ impl SigningVtxoTree {
 			if !self.cosign_part_sigs.contains_key(pk) {
 				// Disallow all inputs by this cosigner.
 				slog!(DroppingLateVtxoSignatureVtxos, round_id: self.round_id,
-					attempt_number: self.attempt_number, disallowed_vtxos: vtxos.clone(),
+					attempt: self.attempt, disallowed_vtxos: vtxos.clone(),
 				);
 				for id in vtxos {
 					allowed_inputs.remove(id);
@@ -525,7 +531,7 @@ impl SigningVtxoTree {
 		}
 		CollectingPayments::new(
 			self.round_id,
-			self.attempt_number + 1,
+			self.attempt + 1,
 			self.round_data,
 			self.all_locked_inputs,
 			Some(allowed_inputs),
@@ -557,7 +563,7 @@ impl SigningVtxoTree {
 		let signed_vtxos = self.unsigned_vtxo_tree
 			.into_signed_tree(cosign_sigs)
 			.into_cached_tree();
-		slog!(CreatedSignedVtxoTree, round_id: self.round_id, attempt_number: self.attempt_number,
+		slog!(CreatedSignedVtxoTree, round_id: self.round_id, attempt: self.attempt,
 			nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(),
 			duration: Instant::now().duration_since(combine_signatures_start),
 		);
@@ -596,7 +602,7 @@ impl SigningVtxoTree {
 
 		SigningForfeits {
 			round_id: self.round_id,
-			attempt_number: self.attempt_number,
+			attempt: self.attempt,
 			round_data: self.round_data,
 			expiry_height: self.expiry_height,
 			forfeit_sec_nonces: Some(forfeit_sec_nonces),
@@ -617,7 +623,7 @@ impl SigningVtxoTree {
 
 pub struct SigningForfeits {
 	round_id: u64,
-	attempt_number: usize,
+	attempt: usize,
 	round_data: RoundData,
 	expiry_height: BlockHeight,
 
@@ -647,7 +653,7 @@ impl SigningForfeits {
 		&mut self,
 		signatures: Vec<(VtxoId, Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
 	) -> anyhow::Result<()> {
-		slog!(ReceivedForfeitSignatures, round_id: self.round_id, attempt_number: self.attempt_number,
+		slog!(ReceivedForfeitSignatures, round_id: self.round_id, attempt: self.attempt,
 			nb_forfeits: signatures.len(), vtxo_ids: signatures.iter().map(|v| v.0).collect::<Vec<_>>(),
 		);
 
@@ -663,7 +669,7 @@ impl SigningForfeits {
 				}
 			} else {
 				slog!(UnknownForfeitSignature, round_id: self.round_id,
-					attempt_number: self.attempt_number, vtxo_id: id,
+					attempt: self.attempt, vtxo_id: id,
 				);
 			}
 		}
@@ -679,7 +685,7 @@ impl SigningForfeits {
 		let allowed_inputs = if let Some(missing) = missing {
 			for input in &missing {
 				slog!(MissingForfeits, round_id: self.round_id,
-					attempt_number: self.attempt_number, input: *input,
+					attempt: self.attempt, input: *input,
 				);
 			}
 
@@ -690,7 +696,7 @@ impl SigningForfeits {
 			self.all_inputs.keys().copied().filter(|v| {
 				if !self.forfeit_part_sigs.contains_key(v) {
 					slog!(MissingForfeits, round_id: self.round_id,
-						attempt_number: self.attempt_number, input: *v,
+						attempt: self.attempt, input: *v,
 					);
 					false
 				} else {
@@ -698,10 +704,10 @@ impl SigningForfeits {
 				}
 			}).collect()
 		};
-		slog!(RestartMissingForfeits, round_id: self.round_id, attempt_number: self.attempt_number);
+		slog!(RestartMissingForfeits, round_id: self.round_id, attempt: self.attempt);
 		CollectingPayments::new(
 			self.round_id,
-			self.attempt_number + 1,
+			self.attempt + 1,
 			self.round_data,
 			self.all_locked_inputs,
 			Some(allowed_inputs),
@@ -766,7 +772,7 @@ impl SigningForfeits {
 			app.db.store_changeset(&change).await?;
 		}
 		drop(self.wallet_lock); // we no longer need the lock
-		slog!(BroadcastingFinalizedRoundTransaction, round_id: self.round_id, attempt_number: self.attempt_number,
+		slog!(BroadcastingFinalizedRoundTransaction, round_id: self.round_id, attempt: self.attempt,
 			tx_hex: signed_round_tx.raw_hex(), signing_time: Instant::now().duration_since(sign_start),
 		);
 		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
@@ -782,7 +788,7 @@ impl SigningForfeits {
 		let mut forfeit_sigs = self.forfeit_sigs.take().unwrap();
 		for (id, vtxo) in self.all_inputs {
 			let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
-			slog!(StoringForfeitVtxo, round_id: self.round_id, attempt_number: self.attempt_number,
+			slog!(StoringForfeitVtxo, round_id: self.round_id, attempt: self.attempt,
 				out_point: vtxo.point(),
 			);
 			app.db.set_vtxo_forfeited(id, forfeit_sigs)?;
@@ -794,7 +800,7 @@ impl SigningForfeits {
 		app.txindex.register_batch(self.connectors.iter_signed_txs(&app.asp_key)).await;
 		app.db.store_round(signed_round_tx.tx.clone(), self.signed_vtxos, self.connectors.len())?;
 
-		slog!(RoundFinished, round_id: self.round_id, attempt_number: self.attempt_number,
+		slog!(RoundFinished, round_id: self.round_id, attempt: self.attempt,
 			txid: signed_round_tx.txid, vtxo_expiry_block_height: self.expiry_height,
 			duration: Instant::now().duration_since(self.attempt_start),
 		);
@@ -936,8 +942,8 @@ pub async fn run_round_coordinator(
 
 		// In this loop we will try to finish the round and make new attempts.
 		'attempt: loop {
-			let attempt_number = round_state.collecting_payments().attempt_number;
-			slog!(AttemptingRound, round_id, attempt_number);
+			let attempt = round_state.collecting_payments().attempt;
+			slog!(AttemptingRound, round_id, attempt);
 			if sync_next_attempt {
 				app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
 			}
@@ -945,7 +951,7 @@ pub async fn run_round_coordinator(
 
 			app.rounds().round_event_tx.send(RoundEvent::Attempt {
 				round_id,
-				attempt: attempt_number as u64,
+				attempt: attempt as u64,
 			}).expect("round event channel broken");
 
 			// Start receiving payments.
@@ -975,13 +981,13 @@ pub async fn run_round_coordinator(
 				}
 			}
 			if !round_state.collecting_payments().have_payments() {
-				slog!(NoRoundPayments, round_id, attempt_number,
+				slog!(NoRoundPayments, round_id, attempt,
 					max_round_submit_time: app.config.round_submit_time,
 				);
 				continue 'round;
 			}
 			let receive_payment_duration = Instant::now().duration_since(receive_payments_start);
-			slog!(ReceivedRoundPayments, round_id, attempt_number,
+			slog!(ReceivedRoundPayments, round_id, attempt,
 				nb_inputs: round_state.collecting_payments().all_inputs.len(),
 				nb_outputs: round_state.collecting_payments().all_outputs.len(),
 				duration: receive_payment_duration, max_round_submit_time: app.config.round_submit_time,
@@ -999,7 +1005,7 @@ pub async fn run_round_coordinator(
 			round_state = round_state.progress(app).await;
 
 			// Wait for signatures from users.
-			slog!(AwaitingRoundSignatures, round_id, attempt_number,
+			slog!(AwaitingRoundSignatures, round_id, attempt,
 				max_round_sign_time: app.config.round_sign_time,
 				duration_since_sending: Instant::now().duration_since(send_vtxo_proposal_start),
 			);
@@ -1026,7 +1032,7 @@ pub async fn run_round_coordinator(
 						match input.expect("broken channel") {
 							RoundInput::VtxoSignatures { pubkey, signatures } => {
 								if let Err(e) = state.register_signature(pubkey, signatures) {
-									slog!(VtxoSignatureRegistrationFailed, round_id, attempt_number, error: e.to_string());
+									slog!(VtxoSignatureRegistrationFailed, round_id, attempt, error: e.to_string());
 									continue 'receive;
 								}
 							},
@@ -1035,7 +1041,7 @@ pub async fn run_round_coordinator(
 					}
 				}
 			}
-			slog!(ReceivedRoundVtxoSignatures, round_id, attempt_number, duration: Instant::now().duration_since(vtxo_signatures_receive_start),
+			slog!(ReceivedRoundVtxoSignatures, round_id, attempt, duration: Instant::now().duration_since(vtxo_signatures_receive_start),
 				max_round_sign_time: app.config.round_sign_time,
 			);
 
@@ -1043,7 +1049,7 @@ pub async fn run_round_coordinator(
 			round_state = round_state.progress(&app).await;
 
 			// Wait for signatures from users.
-			slog!(AwaitingRoundForfeits, round_id, attempt_number,
+			slog!(AwaitingRoundForfeits, round_id, attempt,
 				max_round_sign_time: app.config.round_sign_time,
 				duration_since_sending: Instant::now().duration_since(send_round_proposal_start),
 			);
@@ -1066,7 +1072,7 @@ pub async fn run_round_coordinator(
 						match input.expect("broken channel") {
 							RoundInput::ForfeitSignatures { signatures } => {
 								if let Err(e) = round_state.signing_forfeits().register_forfeits(signatures) {
-									slog!(ForfeitRegistrationFailed, round_id, attempt_number, error: e.to_string());
+									slog!(ForfeitRegistrationFailed, round_id, attempt, error: e.to_string());
 									continue 'receive;
 								}
 
@@ -1079,7 +1085,7 @@ pub async fn run_round_coordinator(
 					}
 				}
 			}
-			slog!(ReceivedRoundForfeits, round_id, attempt_number,
+			slog!(ReceivedRoundForfeits, round_id, attempt,
 				max_round_sign_time: app.config.round_sign_time,
 				nb_forfeits: round_state.signing_forfeits().forfeit_part_sigs.len(),
 				duration: Instant::now().duration_since(receive_forfeit_signatures_start),
