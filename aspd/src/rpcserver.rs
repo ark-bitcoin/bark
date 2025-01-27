@@ -443,33 +443,63 @@ impl rpc::server::AdminService for App {
 		_req: tonic::Request<rpc::Empty>,
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		info!("Shutting down because of RPC stop command...");
-		//TODO(stevenroose) implement graceful shutdown
-		std::process::exit(0);
+
+		let _ = self.shutdown_channel.send(());
+
+		Ok(tonic::Response::new(rpc::Empty {}))
 	}
 }
 
 /// Run the public gRPC endpoint.
 pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	let addr = app.config.public_rpc_address;
+
 	info!("Starting public gRPC service on address {}", addr);
+
 	let ark_server = rpc::server::ArkServiceServer::from_arc(app.clone());
+
+	let mut shutdown = app.shutdown_channel.subscribe();
+
 	tonic::transport::Server::builder()
 		.add_service(ark_server)
-		.serve(addr)
-		.await?;
-	info!("Started public gRPC service on address {}", addr);
+		.serve_with_shutdown(addr, async move {
+			shutdown.recv().await.expect("Shutdown channel failure");
+			info!("Shutdown command received. Stopping gRPC server...");
+		}).await
+		.map_err(|e| {
+			error!("Failed to start gRPC server on {}: {}", addr, e);
+			e
+		})?;
+
+	info!("Terminated public gRPC service on address {}", addr);
+
 	Ok(())
 }
 
 /// Run the public gRPC endpoint.
 pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	let addr = app.config.admin_rpc_address.expect("shouldn't call this method otherwise");
+
 	info!("Starting admin gRPC service on address {}", addr);
+
 	let admin_server = rpc::server::AdminServiceServer::from_arc(app.clone());
+
+	let mut shutdown = app.shutdown_channel.subscribe();
+
 	tonic::transport::Server::builder()
 		.add_service(admin_server)
-		.serve(addr)
-		.await?;
-	info!("Started admin gRPC service on address {}", addr);
+		.serve_with_shutdown(addr, async move {
+			shutdown.recv().await.expect("Shutdown channel failure");
+			info!("Shutdown command received. Stopping gRPC server...");
+		})
+		.await
+		.map_err(|e| {
+			error!("Failed to start admin gRPC server on {}: {}", addr, e);
+
+			e
+		})?;
+
+	info!("Terminated admin gRPC service on address {}", addr);
+
 	Ok(())
 }

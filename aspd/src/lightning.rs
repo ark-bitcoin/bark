@@ -49,6 +49,7 @@ impl ClnConfig {
 }
 
 pub async fn run_process_sendpay_updates(
+	shutdown_channel: broadcast::Sender<()>,
 	cln_config: &ClnConfig,
 	tx: broadcast::Sender<SendpaySubscriptionItem>,
 ) -> anyhow::Result<()> {
@@ -63,6 +64,7 @@ pub async fn run_process_sendpay_updates(
 		indexname: grpc::wait_request::WaitIndexname::Updated as i32,
 		nextvalue: 0
 	}).await?.into_inner().updated() + 1;
+
 	let created_index = client.wait(grpc::WaitRequest {
 		subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
 		indexname: grpc::wait_request::WaitIndexname::Created as i32,
@@ -74,12 +76,14 @@ pub async fn run_process_sendpay_updates(
 	);
 
 	let subscribe_send_pay = SubscribeSendpay {
+		shutdown_channel,
 		client: client.clone(),
-		created_index: created_index,
+		created_index,
 		update_index: updated_index,
 	};
 
 	subscribe_send_pay.run(tx).await.context("sendpay processor shut ")?;
+
 	Ok(())
 }
 

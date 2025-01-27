@@ -336,6 +336,7 @@ pub async fn run_round_coordinator(
 	mut round_trigger_rx: tokio::sync::mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
 	let cfg = &app.config;
+	let mut shutdown = app.shutdown_channel.subscribe();
 
 	let round_tx_feerate = app.config.round_tx_feerate;
 	let offboard_feerate = round_tx_feerate;
@@ -359,6 +360,10 @@ pub async fn run_round_coordinator(
 					break 'sleep;
 				},
 				_ = round_input_rx.recv() => {},
+				_ = shutdown.recv() => {
+					info!("Shutdown signal received. Exiting round coordinator loop...");
+					return Ok(());
+				}
 			}
 		}
 
@@ -780,6 +785,7 @@ pub async fn run_round_coordinator(
 			}
 			drop(wallet); // we no longer need the lock
 			slog!(BroadcastingFinalizedRoundTransaction, round_id, attempt_number, tx_hex: signed_round_tx.raw_hex(), signing_time: Instant::now().duration_since(sign_start));
+
 			let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
 
 			// Send out the finished round to users.
