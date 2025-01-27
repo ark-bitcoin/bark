@@ -143,7 +143,7 @@ pub struct VtxoSpec {
 	/// vtxo tree output. It does not include budget for fees, so f.e. to
 	/// calculate the onboard amount needed for this vtxo, fee budget should
 	/// be added.
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
 
