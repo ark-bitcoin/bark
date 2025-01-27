@@ -49,6 +49,9 @@ use ark::{musig, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, Paymen
 use ark::connectors::ConnectorChain;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, VtxoTreeSpec};
 
+pub use bark_json::primitives::UtxoInfo;
+pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
+
 use crate::vtxo_state::VtxoState;
 
 lazy_static::lazy_static! {
@@ -62,14 +65,6 @@ const MIN_DERIVED_INDEX: u32 = OOR_PUB_KEY_INDEX + 1;
 pub struct Pagination {
 	pub page_index: u16,
 	pub page_size: u16,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct UtxoInfo {
-	pub outpoint: OutPoint,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	pub amount: Amount,
-	pub confirmation_height: Option<u32>
 }
 
 impl From<Utxo> for UtxoInfo {
@@ -430,7 +425,7 @@ impl <P>Wallet<P> where
 	// Onboard a vtxo with the given vtxo amount.
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
-	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<()> {
+	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<Onboard> {
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
@@ -453,7 +448,7 @@ impl <P>Wallet<P> where
 		self.onboard(spec, user_keypair, onboard_tx).await
 	}
 
-	pub async fn onboard_all(&mut self) -> anyhow::Result<()> {
+	pub async fn onboard_all(&mut self) -> anyhow::Result<Onboard> {
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
@@ -482,7 +477,7 @@ impl <P>Wallet<P> where
 		self.onboard(spec, user_keypair, onboard_all_tx).await
 	}
 
-	async fn onboard(&mut self, spec: VtxoSpec, user_keypair: Keypair, onboard_tx: Psbt) -> anyhow::Result<()> {
+	async fn onboard(&mut self, spec: VtxoSpec, user_keypair: Keypair, onboard_tx: Psbt) -> anyhow::Result<Onboard> {
 		let mut asp = self.require_asp()?;
 
 		// This is manually enforced in prepare_tx
@@ -523,7 +518,12 @@ impl <P>Wallet<P> where
 
 		info!("Onboard successful");
 
-		Ok(())
+		Ok(
+			Onboard {
+				funding_txid: tx.compute_txid(),
+				vtxos: vec![vtxo.into()],
+			}
+		)
 	}
 
 	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
@@ -635,7 +635,7 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Option<Address>) -> anyhow::Result<()> {
+	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Option<Address>) -> anyhow::Result<Offboard> {
 		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let addr = match address {
@@ -643,7 +643,7 @@ impl <P>Wallet<P> where
 			None => self.onchain.address()?,
 		};
 
-		self.participate_round(move |_id, offb_fr| {
+		let txid = self.participate_round(move |_id, offb_fr| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), offb_fr)
 				.expect("bdk created invalid scriptPubkey");
 
@@ -655,7 +655,7 @@ impl <P>Wallet<P> where
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(())
+		Ok(Offboard { round_txid : txid})
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
@@ -687,13 +687,17 @@ impl <P>Wallet<P> where
 	}
 
 	/// Refresh vtxo's
+	///
+	/// Returns the [Txid] of the round-transaction
+	/// if a successful refresh occured. It will return
+	/// [None] if no [Vtxo] needed to be refreshed.
 	pub async fn refresh_vtxos(
 		&mut self,
 		vtxos: Vec<Vtxo>
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<Option<Txid>> {
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to refresh!");
-			return Ok(())
+			return Ok(None)
 		}
 
 		let total_amount: bitcoin::Amount = vtxos.iter().map(|v| v.amount()).sum();
@@ -704,10 +708,10 @@ impl <P>Wallet<P> where
 			amount: total_amount
 		};
 
-		self.participate_round(move |_id, _offb_fr| {
+		let txid = self.participate_round(move |_id, _offb_fr| {
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
-		Ok(())
+		Ok(Some(txid))
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
@@ -974,7 +978,7 @@ impl <P>Wallet<P> where
 	/// Send to an onchain address in an Ark round.
 	///
 	/// It is advised to sync your wallet before calling this method.
-	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<()> {
+	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
 		let change_keypair = self.derive_store_next_keypair()?;
 
 		// Prepare the payment.
@@ -989,7 +993,7 @@ impl <P>Wallet<P> where
 			bail!("Balance too low");
 		}
 
-		self.participate_round(move |_id, offb_fr| {
+		let txid = self.participate_round(move |_id, offb_fr| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
@@ -1013,7 +1017,8 @@ impl <P>Wallet<P> where
 
 			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
 		}).await.context("round failed")?;
-		Ok(())
+
+		Ok(SendOnchain { round_txid: txid})
 	}
 
 	/// Participate in a round.
@@ -1028,7 +1033,7 @@ impl <P>Wallet<P> where
 		mut round_input: impl FnMut(u64, FeeRate) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<Txid> {
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
@@ -1331,9 +1336,7 @@ impl <P>Wallet<P> where
 			}
 
 			info!("Round finished");
-			break;
+			return Ok(signed_round_tx.compute_txid())
 		}
-
-		Ok(())
 	}
 }

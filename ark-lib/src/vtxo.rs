@@ -207,7 +207,7 @@ pub struct RoundVtxo {
 impl RoundVtxo {
 	pub fn point(&self) -> OutPoint {
 		//TODO(stevenroose) consider caching this so that we don't have to calculate it
-		OutPoint::new(self.exit_branch.last().unwrap().compute_txid(), 0).into()
+		OutPoint::new(self.exit_branch.last().unwrap().compute_txid(), 0)
 	}
 
 	pub fn id(&self) -> VtxoId {
