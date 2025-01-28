@@ -6,7 +6,7 @@ use ark::{VtxoId, Vtxo};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UtxoInfo {
 	pub outpoint: OutPoint,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	pub confirmation_height: Option<u32>
 
@@ -23,7 +23,7 @@ pub enum VtxoType {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VtxoInfo {
 	pub id: VtxoId,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	pub vtxo_type: VtxoType,
 	/// The offchain UTXO.

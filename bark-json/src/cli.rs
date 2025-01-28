@@ -4,11 +4,11 @@ use crate::primitives::{VtxoInfo, UtxoInfo};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Balance {
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "onchain_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub onchain: Amount,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "offchain_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub offchain: Amount,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_exit: Amount,
 }
 
@@ -21,7 +21,7 @@ pub struct ExitStatus {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Onboard {
 	/// The [Txid] of the funding-transaction.
-	/// This is the transaction that has to be confirmed 
+	/// This is the transaction that has to be confirmed
 	/// onchain for the onboard to succeed.
 	pub funding_txid: Txid,
 	/// The info for each <Vtxo> that was created

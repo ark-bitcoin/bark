@@ -89,7 +89,7 @@ pub struct Config {
 	pub sweep_threshold: Amount,
 
 	// limits
-	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
+	#[serde(rename = "max_onboard_value_sat", with = "bitcoin::amount::serde::as_sat::opt")]
 	pub max_onboard_value: Option<Amount>,
 
 	// lightning

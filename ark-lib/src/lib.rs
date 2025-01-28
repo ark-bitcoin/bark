@@ -66,14 +66,14 @@ pub type BlockHeight = u64;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct PaymentRequest {
 	pub pubkey: PublicKey,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct VtxoRequest {
 	pub pubkey: PublicKey,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	/// The public key used by the client to cosign the transaction tree
 	/// The client SHOULD forget this key after signing it
@@ -83,7 +83,7 @@ pub struct VtxoRequest {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct OffboardRequest {
 	pub script_pubkey: ScriptBuf,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
 
