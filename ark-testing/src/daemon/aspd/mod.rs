@@ -33,7 +33,7 @@ pub struct AspdHelper {
 pub struct AspdConfig {
 	pub datadir: PathBuf,
 	pub bitcoind_url : String,
-	pub bitcoind_cookie: PathBuf,
+	pub bitcoind_auth: bitcoincore_rpc::Auth,
 	pub round_interval: Duration,
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
@@ -240,7 +240,6 @@ impl AspdHelper {
 		let output = {
 			let mut cmd = Aspd::base_cmd();
 			let datadir = cfg.datadir.display().to_string();
-			let bitcoind_cookie = cfg.bitcoind_cookie.display().to_string();
 			let round_interval = cfg.round_interval.as_millis().to_string();
 			let round_submit_time = cfg.round_submit_time.as_millis().to_string();
 			let round_sign_time = cfg.round_sign_time.as_millis().to_string();
@@ -253,7 +252,6 @@ impl AspdHelper {
 				"create",
 				"--datadir", &datadir,
 				"--bitcoind-url", &cfg.bitcoind_url,
-				"--bitcoind-cookie", &bitcoind_cookie,
 				"--network", "regtest",
 				"--round-interval", &round_interval,
 				"--round-submit-time", &round_submit_time,
@@ -263,7 +261,22 @@ impl AspdHelper {
 				"--vtxo-exit-delta", &vtxo_exit_delta,
 				"--sweep-threshold", &sweep_threshold,
 			];
-
+			match cfg.bitcoind_auth {
+				bitcoincore_rpc::Auth::CookieFile(ref cookie) => {
+					args.extend([
+						"--bitcoind-cookie", cookie.to_str().unwrap(),
+					]);
+				},
+				bitcoincore_rpc::Auth::UserPass(ref user, ref pass) => {
+					args.extend([
+						"--bitcoind-rpc-user", user,
+						"--bitcoind-rpc-pass", pass,
+					]);
+				},
+				bitcoincore_rpc::Auth::None => {
+					panic!("aspd has no bitcoin rpc authentication method configured");
+				},
+			}
 
 			if cfg.cln_grpc_uri.is_some() {
 				args.extend(["--cln-grpc-uri", cfg.cln_grpc_uri.as_ref().unwrap()]);

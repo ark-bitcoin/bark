@@ -371,7 +371,7 @@ impl App {
 
 		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
 			&self.config.bitcoind_url,
-			bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(self.config.bitcoind_cookie.clone().unwrap()),
+			self.config.bitcoind_auth(),
 		).context("failed to create bitcoind rpc client")?;
 
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;

@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 
 use ark_testing::util::FutureExt;
 use ark_testing::{AspdConfig, TestContext};
+use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::aspd::{self, Aspd};
 use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
 use aspd_log::{NotSweeping, RoundFullySwept, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown, SweepBroadcast, TxIndexUpdateFinished};
@@ -29,6 +30,40 @@ async fn check_aspd_version() {
 
 	let stdout = String::from_utf8(output.stdout).expect("Output is valid utf-8");
 	assert!(stdout.starts_with("bark-aspd"))
+}
+
+#[tokio::test]
+async fn bitcoind_auth_connection() {
+	let ctx = TestContext::new("aspd/bitcoind_auth_connection").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	bitcoind.prepare_funds().await;
+
+	let mut config = ctx.aspd_default_cfg("aspd", &bitcoind, None).await;
+	config.bitcoind_auth = bitcoincore_rpc::Auth::UserPass(BITCOINRPC_TEST_USER.into(), BITCOINRPC_TEST_PASSWORD.into());
+
+	let aspd = ctx.aspd_with_cfg("aspd", config).await;
+	let mut admin = aspd.get_admin_client().await;
+	bitcoind.fund_aspd(&aspd, Amount::from_sat(1_000_000)).await;
+
+	let response = admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
+	assert_eq!(response.balance, 1_000_000);
+}
+
+#[tokio::test]
+async fn bitcoind_cookie_connection() {
+	let ctx = TestContext::new("aspd/bitcoind_cookie_connection").await;
+	let bitcoind = ctx.bitcoind("bitcoind").await;
+	bitcoind.prepare_funds().await;
+
+	let mut config = ctx.aspd_default_cfg("aspd", &bitcoind, None).await;
+	config.bitcoind_auth = bitcoincore_rpc::Auth::CookieFile(bitcoind.rpc_cookie());
+
+	let aspd = ctx.aspd_with_cfg("aspd", config).await;
+	let mut admin = aspd.get_admin_client().await;
+	bitcoind.fund_aspd(&aspd, Amount::from_sat(1_000_000)).await;
+
+	let response = admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
+	assert_eq!(response.balance, 1_000_000);
 }
 
 #[tokio::test]

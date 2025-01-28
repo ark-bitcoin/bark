@@ -82,7 +82,7 @@ impl TestContext {
 		let mut aspd_config = AspdConfig {
 			datadir: datadir.clone(),
 			bitcoind_url: bitcoind.rpc_url(),
-			bitcoind_cookie: bitcoind.rpc_cookie(),
+			bitcoind_auth: bitcoincore_rpc::Auth::CookieFile(bitcoind.rpc_cookie()),
 			round_interval: Duration::from_millis(500),
 			round_submit_time: Duration::from_millis(500),
 			round_sign_time: Duration::from_millis(500),

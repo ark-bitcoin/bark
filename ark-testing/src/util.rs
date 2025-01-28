@@ -76,7 +76,6 @@ pub async fn test_data_directory() -> PathBuf {
 	path.canonicalize().unwrap()
 }
 
-
 /// The root of the current cargo workspace
 fn get_cargo_workspace() -> PathBuf {
 	let output = std::process::Command::new("cargo")
