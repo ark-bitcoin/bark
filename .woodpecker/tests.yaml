@@ -64,6 +64,17 @@ steps:
       - ls -al $${BITCOIND_EXEC}
       - ls -al $${LIGHTNINGD_EXEC}
       - TEST_DIRECTORY=./test/btc28 cargo test --package ark-testing
+
+  - name: use-bark-as-dependency
+    depends_on: prechecks
+    image: registry.2nd.dev/build:7
+    commands:
+      - git log --oneline | head -n 1
+      - cargo init barktest && cd barktest
+      - cargo add bark-client
+      - cargo update
+      - cargo build
+
   - name: push-github-mirror
     when:
       - event: push
@@ -108,3 +119,4 @@ steps:
         - "./target/bark-apple-aarch64"
       api_key:
         from_secret: RELEASE
+
