@@ -67,8 +67,8 @@ pub struct CollectingPayments {
 	attempt: usize,
 	round_data: RoundData,
 
-	/// All inputs that have participated, but might have dropped out.
-	all_locked_inputs: HashSet<VtxoId>,
+	/// All inputs that have participated in the previous attetmpt.
+	locked_inputs: HashSet<VtxoId>,
 	cosign_key: Keypair,
 	allowed_inputs: Option<HashSet<VtxoId>>,
 	all_inputs: HashMap<VtxoId, Vtxo>,
@@ -86,14 +86,14 @@ impl CollectingPayments {
 		round_id: u64,
 		attempt: usize,
 		round_data: RoundData,
-		all_locked_inputs: HashSet<VtxoId>,
+		locked_inputs: HashSet<VtxoId>,
 		allowed_inputs: Option<HashSet<VtxoId>>,
 	) -> CollectingPayments {
 		CollectingPayments {
 			round_id,
 			attempt,
 			round_data,
-			all_locked_inputs,
+			locked_inputs,
 			allowed_inputs,
 
 			// Generate a one-time use signing key.
@@ -228,12 +228,7 @@ impl CollectingPayments {
 	) -> anyhow::Result<()> {
 		self.validate_payment_data(&inputs, &vtxo_requests, &cosign_pub_nonces)?;
 
-		// If some inputs already have been submitted in a previous attempt,
-		// no need to lock/check them again.
-		let new_inputs = inputs.iter().copied().filter(|v| {
-			!self.all_locked_inputs.contains(v)
-		}).collect::<Vec<_>>();
-		if let Err(id) = app.atomic_check_put_vtxo_in_flux(&new_inputs).await {
+		if let Err(id) = app.atomic_check_put_vtxo_in_flux(&inputs).await {
 			slog!(RoundUserVtxoInFlux, round_id: self.round_id, attempt: self.attempt, vtxo: id);
 			bail!("vtxo {id} already in flux");
 		}
@@ -244,7 +239,7 @@ impl CollectingPayments {
 			Err(e) => {
 				let id = e.downcast_ref::<VtxoId>().cloned();
 				slog!(RoundUserVtxoUnknown, round_id: self.round_id, vtxo: id);
-				app.release_vtxos_in_flux(&new_inputs).await;
+				app.release_vtxos_in_flux(&inputs).await;
 				bail!("unknown vtxo {:?}", id);
 			},
 		};
@@ -253,7 +248,7 @@ impl CollectingPayments {
 			slog!(RoundPaymentRegistrationFailed, round_id: self.round_id,
 				attempt: self.attempt, error: e.to_string(),
 			);
-			app.release_vtxos_in_flux(&new_inputs).await;
+			app.release_vtxos_in_flux(&inputs).await;
 			bail!("registration failed: {e}");
 		}
 
@@ -274,9 +269,9 @@ impl CollectingPayments {
 			nb_inputs: inputs.len(), nb_outputs: vtxo_requests.len(), nb_offboards: offboards.len(),
 		);
 
-		// If we're adding inputs for the first time, also add them to all_locked_inputs.
+		// If we're adding inputs for the first time, also add them to locked_inputs.
 		if self.first_attempt() {
-			self.all_locked_inputs.extend(inputs.iter().map(|v| v.id()));
+			self.locked_inputs.extend(inputs.iter().map(|v| v.id()));
 		}
 
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
@@ -430,7 +425,7 @@ impl CollectingPayments {
 			cosign_pub_nonces,
 			cosign_agg_nonces,
 			all_inputs: self.all_inputs,
-			all_locked_inputs: self.all_locked_inputs,
+			locked_inputs: self.locked_inputs,
 			cosign_part_sigs,
 			unsigned_vtxo_tree,
 			wallet_lock,
@@ -465,7 +460,7 @@ pub struct SigningVtxoTree {
 	user_cosign_nonces: HashMap<PublicKey, Vec<musig::MusigPubNonce>>,
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	/// All inputs that have participated, but might have dropped out.
-	all_locked_inputs: HashSet<VtxoId>,
+	locked_inputs: HashSet<VtxoId>,
 
 	attempt_start: Instant,
 
@@ -532,7 +527,7 @@ impl SigningVtxoTree {
 			self.round_id,
 			self.attempt + 1,
 			self.round_data,
-			self.all_locked_inputs,
+			self.locked_inputs,
 			Some(allowed_inputs),
 		)
 	}
@@ -610,7 +605,7 @@ impl SigningVtxoTree {
 			forfeit_sigs: None,
 			signed_vtxos,
 			all_inputs: self.all_inputs,
-			all_locked_inputs: self.all_locked_inputs,
+			locked_inputs: self.locked_inputs,
 			connectors,
 			wallet_lock: self.wallet_lock,
 			round_tx_psbt: self.round_tx_psbt,
@@ -635,7 +630,7 @@ pub struct SigningForfeits {
 	signed_vtxos: CachedSignedVtxoTree,
 	all_inputs: HashMap<VtxoId, Vtxo>,
 	/// All inputs that have participated, but might have dropped out.
-	all_locked_inputs: HashSet<VtxoId>,
+	locked_inputs: HashSet<VtxoId>,
 
 	// other public data
 	connectors: ConnectorChain,
@@ -708,7 +703,7 @@ impl SigningForfeits {
 			self.round_id,
 			self.attempt + 1,
 			self.round_data,
-			self.all_locked_inputs,
+			self.locked_inputs,
 			Some(allowed_inputs),
 		)
 	}
@@ -792,7 +787,7 @@ impl SigningForfeits {
 			);
 			app.db.set_vtxo_forfeited(id, forfeit_sigs)?;
 		}
-		app.release_vtxos_in_flux(self.all_locked_inputs).await;
+		app.release_vtxos_in_flux(self.locked_inputs).await;
 
 		trace!("Storing round result");
 		app.txindex.register_batch(self.signed_vtxos.all_signed_txs().iter().cloned()).await;
@@ -948,6 +943,12 @@ pub async fn run_round_coordinator(
 			}
 			sync_next_attempt = true;
 
+			// Release all vtxos in flux from previous attempt
+			let state = round_state.collecting_payments();
+			if !state.locked_inputs.is_empty() {
+				app.release_vtxos_in_flux(state.locked_inputs.drain()).await;
+			}
+
 			app.rounds().round_event_tx.send(RoundEvent::Attempt {
 				round_id,
 				attempt: attempt as u64,
@@ -1019,7 +1020,7 @@ pub async fn run_round_coordinator(
 						warn!("Timed out receiving vtxo partial signatures.");
 						let new = round_state.into_signing_vtxo_tree().restart();
 						if new.need_new_round() {
-							app.release_vtxos_in_flux(new.all_locked_inputs).await;
+							app.release_vtxos_in_flux(new.locked_inputs).await;
 							continue 'round;
 						} else {
 							round_state = new.into();
@@ -1060,7 +1061,7 @@ pub async fn run_round_coordinator(
 						warn!("Timed out receiving forfeit signatures.");
 						let new = round_state.into_signing_forfeits().restart_missing_forfeits(None);
 						if new.need_new_round() {
-							app.release_vtxos_in_flux(new.all_locked_inputs).await;
+							app.release_vtxos_in_flux(new.locked_inputs).await;
 							continue 'round;
 						} else {
 							round_state = new.into();
