@@ -5,7 +5,6 @@
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
 
-mod convert;
 mod database;
 mod lightning;
 mod psbtext;
@@ -20,8 +19,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -37,10 +36,11 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::{musig, BlockHeight, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
+use ark::rounds::RoundEvent;
 
-use crate::round::{RoundEvent, RoundInput};
+use crate::round::RoundInput;
 use crate::txindex::TxIndex;
 
 lazy_static::lazy_static! {
@@ -205,8 +205,10 @@ pub struct App {
 	db: database::Db,
 	shutdown_channel: broadcast::Sender<()>,
 	asp_key: Keypair,
-	wallet: Mutex<bdk_wallet::Wallet>,
+	// NB this needs to be an Arc so we can take a static guard
+	wallet: Arc<Mutex<bdk_wallet::Wallet>>,
 	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
+	chain_tip: Mutex<BlockRef>,
 	txindex: TxIndex,
 
 	rounds: Option<RoundHandle>,
@@ -329,8 +331,9 @@ impl App {
 		let (shutdown_channel, _) = broadcast::channel::<()>(1);
 
 		Ok(Arc::new(App {
-			wallet: Mutex::new(wallet),
+			wallet: Arc::new(Mutex::new(wallet)),
 			txindex: TxIndex::new(),
+			chain_tip: Mutex::new(fetch_tip(&bitcoind).context("failed to fetch tip")?),
 			rounds: None,
 			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
@@ -418,7 +421,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
-			let ret = round::run_round_coordinator(app, round_input_rx, round_trigger_rx)
+			let ret = round::run_round_coordinator(&app, round_input_rx, round_trigger_rx)
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", ret);
 			ret
@@ -426,14 +429,33 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
-			let ret = vtxo_sweeper::run_vtxo_sweeper(app, sweep_trigger_rx)
+			let ret = vtxo_sweeper::run_vtxo_sweeper(&app, sweep_trigger_rx)
 				.await.context("error from round sweeper");
 			info!("Round sweeper exited with {:?}", ret);
 			ret
 		});
 
+		let app = self.clone();
+		let jh_tip_fetcher = tokio::spawn(async move {
+			loop {
+				tokio::time::sleep(Duration::from_secs(10)).await;
+				match fetch_tip(&app.bitcoind) {
+					Ok(t) => *app.chain_tip.lock().await = t,
+					Err(e) => {
+						warn!("Error getting chain tip from bitcoind: {}", e);
+					},
+				}
+			}
+		});
+
 		// The tasks that always run
-		let mut jhs = vec![jh_txindex, jh_rpc_public, jh_round_coord, jh_round_sweeper];
+		let mut jhs = vec![
+			jh_txindex,
+			jh_rpc_public,
+			jh_round_coord,
+			jh_round_sweeper,
+			jh_tip_fetcher,
+		];
 
 		// These tasks do only run if the config is provided
 		if self.config.admin_rpc_address.is_some() {
@@ -465,6 +487,10 @@ impl App {
 			.context("one of our background processes errored")?;
 
 		Ok(())
+	}
+
+	pub async fn chain_tip(&self) -> BlockRef {
+		self.chain_tip.lock().await.clone()
 	}
 
 	pub fn try_rounds(&self) -> anyhow::Result<&RoundHandle> {
@@ -820,4 +846,10 @@ mod test {
 		assert_eq!(5, flux.vtxos.len());
 		assert!(!flux.vtxos.contains(&vtxos[5]));
 	}
+}
+
+fn fetch_tip(bitcoind: &bdk_bitcoind_rpc::bitcoincore_rpc::Client) -> anyhow::Result<BlockRef> {
+	let height = bitcoind.get_block_count()?;
+	let hash = bitcoind.get_block_hash(height)?;
+	Ok(BlockRef { height, hash })
 }

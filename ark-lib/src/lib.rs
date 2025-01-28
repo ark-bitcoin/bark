@@ -11,6 +11,7 @@ pub mod lightning;
 pub mod musig;
 pub mod onboard;
 pub mod oor;
+pub mod rounds;
 pub mod tree;
 pub mod util;
 pub mod vtxo;
@@ -19,7 +20,7 @@ pub mod vtxo;
 mod napkin;
 
 
-use bitcoin::{Amount, FeeRate, Script, ScriptBuf, TxOut, Weight};
+use bitcoin::{Amount, BlockHash, FeeRate, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
 
 pub use crate::vtxo::{ArkoorVtxo, Bolt11ChangeVtxo, OnboardVtxo, RoundVtxo, VtxoId, VtxoSpec, Vtxo};
@@ -56,6 +57,12 @@ pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 
 /// Type representing a block height in the bitcoin blockchain.
 pub type BlockHeight = u64;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BlockRef {
+	pub height: BlockHeight,
+	pub hash: BlockHash,
+}
 
 /// Request for the creation of a VTXO.
 ///

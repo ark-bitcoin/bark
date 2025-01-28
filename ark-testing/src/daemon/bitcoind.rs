@@ -127,7 +127,11 @@ impl Bitcoind {
 	}
 
 	pub async fn fund_aspd(&self, aspd: &Aspd, amount: Amount) -> Txid {
-		self.fund_addr(aspd.get_funding_address().await, amount).await
+		let ret = self.fund_addr(aspd.get_funding_address().await, amount).await;
+		// make sure the aspd does a wallet sync
+		aspd.get_admin_client().await.wallet_status(aspd_rpc::Empty {}).await
+			.expect("error calling wallet status after funding apsd");
+		ret
 	}
 
 	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> Txid {
