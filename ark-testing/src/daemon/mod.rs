@@ -58,9 +58,10 @@ pub trait DaemonHelper {
 pub struct Daemon<T>
 	where T : DaemonHelper + Send + Sync + 'static
 {
-	inner : T,
-	daemon_state: DaemonState,
-	child: Option<Child>,
+	pub name: String,
+	inner: T,
+	daemon_state: Mutex<DaemonState>,
+	child: Mutex<Option<Child>>,
 	stdout_handler: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>,
 }
 
@@ -69,54 +70,44 @@ impl<T> Daemon<T>
 {
 	pub fn wrap(inner : T) -> Self {
 		Self {
-			inner,
-			daemon_state: DaemonState::Init,
-			child: None,
+			name: inner.name().to_owned(),
+			inner: inner,
+			daemon_state: Mutex::new(DaemonState::Init),
+			child: Mutex::new(None),
 			stdout_handler: Arc::new(Mutex::new(vec![])),
 		}
 	}
-}
-
-impl<T> Daemon<T>
-	where T : DaemonHelper + Send + Sync + 'static
-{
-	pub fn name(&self) -> &str {
-		return self.inner.name()
-	}
 
 	pub async fn start(&mut self) -> anyhow::Result<()> {
-		info!("Starting {}", self.inner.name());
-		self.daemon_state = DaemonState::Starting;
+		info!("Starting {}", self.name);
+		*self.daemon_state.get_mut() = DaemonState::Starting;
 
-		trace!("Preparing {}", self.inner.name());
+		trace!("Preparing {}", self.name);
 		self.inner.prepare().await?;
 
 		let retries = 3;
 		for i in 0..retries {
 			match self.try_start().await {
 				Ok(_) => {
-					info!("Started {}", self.inner.name());
-					self.daemon_state = DaemonState::Running;
+					info!("Started {}", self.name);
+					*self.daemon_state.get_mut() = DaemonState::Running;
 					return Ok(());
 				},
 				Err(_) => {
-					warn!("Failed attempt to start {}. This was attempt {} of {}", self.inner.name(), i, retries);
+					warn!("Failed attempt to start {}. This was attempt {} of {}", self.name, i, retries);
 				}
 			}
 		}
 
-		error!("Failed to start {}", self.inner.name());
-		self.daemon_state = DaemonState::Error;
+		error!("Failed to start {}", self.name);
+		*self.daemon_state.get_mut() = DaemonState::Error;
 		anyhow::bail!("Failed to launch daemon");
 	}
 
 	pub async fn try_start(&mut self) -> anyhow::Result<()> {
 		self.inner.make_reservations().await?;
 
-		let mut cmd = self
-			.inner
-			.get_command()
-			.await?;
+		let mut cmd = self.inner.get_command().await?;
 		cmd.kill_on_drop(true);
 
 		// Create files to where the outputs is logged
@@ -150,10 +141,10 @@ impl<T> Daemon<T>
 		};
 
 		if success {
-			self.child = Some(child);
+			*self.child.get_mut() = Some(child);
 			Ok(())
 		} else {
-			error!("Daemon '{}' failed to start.", self.name());
+			error!("Daemon '{}' failed to start.", self.name);
 			match fs::read_to_string(&stderr_path) {
 				Ok(c) => error!("stderr: {c}"),
 				Err(e) => error!("failed to read stderr at {}: {}", stderr_path.display(), e),
@@ -162,36 +153,37 @@ impl<T> Daemon<T>
 				Ok(c) => error!("stdout: {c}"),
 				Err(e) => error!("failed to read stdout at {}: {}", stdout_path.display(), e),
 			}
-			anyhow::bail!("Failed to initialize {}", self.name());
+			anyhow::bail!("Failed to initialize {}", self.name);
 		}
 	}
 
 
-	pub async fn stop(&mut self) -> anyhow::Result<()> {
-		trace!("Stopping {}", self.inner.name());
-		self.daemon_state = DaemonState::Stopping;
+	pub async fn stop(&self) -> anyhow::Result<()> {
+		trace!("Stopping {}", self.name);
+		let mut state_lock = self.daemon_state.lock().await;
+		*state_lock = DaemonState::Stopping;
 
-		match self.child.take() {
+		match self.child.lock().await.take() {
 			Some(mut child) => child.kill().await.context("Failed to kill child")?,
 			None => anyhow::bail!("Failed to stop daemon because there is no child. Was it running?")
 		};
 
 
-		info!("Stopped {}", self.inner.name());
-		self.daemon_state = DaemonState::Stopped;
+		info!("Stopped {}", self.name);
+		*state_lock = DaemonState::Stopped;
 		Ok(())
 	}
 
-	pub async fn join(&mut self) -> anyhow::Result<()> {
-		match self.child.take() {
-			Some(mut child) => child.wait().await?,
+	pub async fn join(&self) -> anyhow::Result<()> {
+		match &mut *self.child.lock().await {
+			Some(ref mut child) => child.wait().await?,
 			None => anyhow::bail!("Failed to wait for daemon to complete. Was it running?")
 		};
 
 		Ok(())
 	}
 
-	pub async fn add_stdout_handler<L: LogHandler + Send + Sync + 'static>(&mut self, log_handler: L) {
+	pub async fn add_stdout_handler<L: LogHandler + Send + Sync + 'static>(&self, log_handler: L) {
 		let mut handlers = self.stdout_handler.lock().await;
 		handlers.push(Box::new(log_handler));
 	}
@@ -201,8 +193,8 @@ impl<T> Drop for Daemon<T>
 	where T: DaemonHelper + Send + Sync + 'static
 {
 	fn drop(&mut self) {
-		match self.child.take() {
-			Some(mut c) => { let _ = c.kill(); },
+		match self.child.get_mut() {
+			Some(ref mut c) => { let _ = c.kill(); },
 			None => {}
 		}
 	}

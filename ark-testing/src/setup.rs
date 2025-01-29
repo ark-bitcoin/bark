@@ -10,7 +10,7 @@ pub struct TestSetup {
 }
 
 pub async fn setup_simple(name: &str) -> TestSetup {
-	let mut context = TestContext::new(name).await;
+	let context = TestContext::new(name).await;
 
 	let aspd = context.new_aspd("aspd", None).await;
 	let bark1 = context.new_bark("bark1", &aspd).await;

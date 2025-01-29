@@ -31,8 +31,8 @@ async fn bark_version() {
 
 #[tokio::test]
 async fn bark_create_is_atomic() {
-	let mut ctx = TestContext::new("bark/bark_create_is_atomic").await;
-	let mut aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("bark/bark_create_is_atomic").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Create a bark defines the folder
 	let _  = ctx.try_new_bark("bark_ok", &aspd).await.expect("Can create bark");
@@ -107,7 +107,7 @@ async fn list_utxos() {
 
 #[tokio::test]
 async fn list_vtxos() {
-	let mut setup = setup_full("bark/list_vtxos").await;
+	let setup = setup_full("bark/list_vtxos").await;
 
 	let vtxos = setup.bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
@@ -127,7 +127,7 @@ async fn list_vtxos() {
 
 #[tokio::test]
 async fn large_round() {
-	let mut ctx = TestContext::new("bark/large_round").await;
+	let ctx = TestContext::new("bark/large_round").await;
 	#[cfg(not(feature = "slow_test"))]
 	const N: usize = 9;
 	#[cfg(feature = "slow_test")]
@@ -244,7 +244,7 @@ async fn refresh_counterparty() {
 
 #[tokio::test]
 async fn compute_balance() {
-	let mut setup = setup_full("bark/compute_balance").await;
+	let setup = setup_full("bark/compute_balance").await;
 
 	let balance = setup.bark1.offchain_balance().await;
 	assert_eq!(balance, Amount::from_sat(830_000));
@@ -259,7 +259,7 @@ async fn compute_balance() {
 #[tokio::test]
 async fn list_movements() {
 	// Initialize the test
-	let mut ctx = TestContext::new("bark/list_movements").await;
+	let ctx = TestContext::new("bark/list_movements").await;
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_000_000)).await;
@@ -309,7 +309,7 @@ async fn list_movements() {
 #[tokio::test]
 async fn multiple_spends_in_payment() {
 	// Initialize the test
-	let mut ctx = TestContext::new("bark/multiple_spends_in_payment").await;
+	let ctx = TestContext::new("bark/multiple_spends_in_payment").await;
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
@@ -440,7 +440,7 @@ async fn reject_oor_with_bad_signature() {
 	}
 
 	// Initialize the test
-	let mut setup = setup_full("bark/reject_oor_with_bad_signature").await;
+	let setup = setup_full("bark/reject_oor_with_bad_signature").await;
 
 	// create a proxy to return an arkoor with invalid signatures
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(setup.aspd.get_public_client().await)).await;
@@ -483,8 +483,8 @@ async fn second_round_attempt() {
 		}
 	}
 
-	let mut ctx = TestContext::new("bark/second_round_attempt").await;
-	let mut aspd = ctx.new_aspd_with_cfg("aspd", AspdConfig {
+	let ctx = TestContext::new("bark/second_round_attempt").await;
+	let aspd = ctx.new_aspd_with_cfg("aspd", AspdConfig {
 		round_interval: Duration::from_secs(3600),
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;

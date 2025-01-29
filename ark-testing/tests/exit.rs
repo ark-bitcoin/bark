@@ -47,8 +47,8 @@ async fn exit_round() {
 		).unwrap().assume_checked();
 
 	// Initialize the test
-	let mut ctx = TestContext::new("exit/exit_round").await;
-	let mut aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("exit/exit_round").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Fund the asp
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
@@ -162,8 +162,8 @@ async fn exit_after_onboard() {
 		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
 	).unwrap().assume_checked();
 
-	let mut ctx = TestContext::new("exit/exit_after_onboard").await;
-	let mut aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("exit/exit_after_onboard").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Fund the bark instance
 	let bark = ctx.new_bark_with_funds("bark", &aspd, Amount::from_sat(1_000_000)).await;
@@ -191,8 +191,8 @@ async fn exit_after_onboard() {
 
 #[tokio::test]
 async fn exit_oor() {
-	let mut ctx = TestContext::new("exit/exit_oor").await;
-	let mut aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("exit/exit_oor").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Bark1 will pay bark2 oor.
 	// Bark2 will attempt an exit
