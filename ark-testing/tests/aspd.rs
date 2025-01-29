@@ -35,7 +35,7 @@ async fn check_aspd_version() {
 async fn bitcoind_auth_connection() {
 	let mut ctx = TestContext::new("aspd/bitcoind_auth_connection").await;
 
-	let aspd = ctx.aspd_with_cfg("aspd", AspdConfig {
+	let aspd = ctx.new_aspd_with_cfg("aspd", AspdConfig {
 		use_bitcoind_auth_pass: true,
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
@@ -51,7 +51,7 @@ async fn bitcoind_auth_connection() {
 async fn bitcoind_cookie_connection() {
 	let mut ctx = TestContext::new("aspd/bitcoind_cookie_connection").await;
 
-	let aspd = ctx.aspd_with_cfg("aspd", AspdConfig {
+	let aspd = ctx.new_aspd_with_cfg("aspd", AspdConfig {
 		use_bitcoind_auth_pass: false,
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
@@ -66,7 +66,7 @@ async fn bitcoind_cookie_connection() {
 #[tokio::test]
 async fn round_started_log_can_be_captured() {
 	let mut ctx = TestContext::new("aspd/capture_log").await;
-	let mut aspd = ctx.aspd("aspd", None).await;
+	let mut aspd = ctx.new_aspd("aspd", None).await;
 
 	let mut log_stream = aspd.subscribe_log::<aspd_log::RoundStarted>().await;
 	while let Some(l) = log_stream.recv().await {
@@ -84,7 +84,7 @@ async fn round_started_log_can_be_captured() {
 #[tokio::test]
 async fn fund_asp() {
 	let mut ctx = TestContext::new("aspd/fund_aspd").await;
-	let aspd = ctx.aspd("aspd", None).await;
+	let aspd = ctx.new_aspd("aspd", None).await;
 	let mut admin_client = aspd.get_admin_client().await;
 
 	// Query the wallet balance of the asp
@@ -106,7 +106,7 @@ async fn restart_key_stability() {
 	//! but gives new on-chain addresses.
 
 	let mut ctx = TestContext::new("aspd/restart_key_stability").await;
-	let mut aspd = ctx.aspd("aspd", None).await;
+	let mut aspd = ctx.new_aspd("aspd", None).await;
 
 	let asp_key1 = {
 		let mut client = aspd.get_public_client().await;
@@ -129,7 +129,7 @@ async fn restart_key_stability() {
 	aspd.shutdown_bitcoind().await;
 	aspd.stop().await.unwrap();
 
-	let aspd = ctx.aspd("aspd", None).await;
+	let aspd = ctx.new_aspd("aspd", None).await;
 	let asp_key2 = {
 		let mut client = aspd.get_public_client().await;
 		let res = client.get_ark_info(rpc::Empty {}).await.unwrap().into_inner();
@@ -154,12 +154,12 @@ async fn sweep_vtxos() {
 	// require some synchronization.
 
 	let mut ctx = TestContext::new("aspd/sweep_vtxos").await;
-	let mut aspd = ctx.aspd_with_cfg("aspd", AspdConfig {
+	let mut aspd = ctx.new_aspd_with_cfg("aspd", AspdConfig {
 		vtxo_expiry_delta: 64,
 		sweep_threshold: Amount::from_sat(100_000),
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
-	let bark = ctx.bark_with_funds("bark", &aspd, Amount::from_sat(100_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, Amount::from_sat(100_000)).await;
 
 	ctx.fund_asp(&aspd, Amount::from_sat(1_000_000)).await;
 	ctx.bitcoind.generate(1).await;
@@ -258,12 +258,12 @@ async fn double_spend_oor() {
 		}
 	}
 
-	let aspd = ctx.aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let last_req = Arc::new(Mutex::new(None));
 	let proxy = Proxy(aspd.get_public_client().await, last_req.clone());
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
-	let bark = ctx.bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.onboard(Amount::from_sat(800_000)).await;
 
 	bark.send_oor(&*RANDOM_PK, Amount::from_sat(100_000)).await;
@@ -297,10 +297,10 @@ async fn double_spend_round() {
 		}
 	}
 
-	let mut aspd = ctx.aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let mut aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
-	let bark = ctx.bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.onboard(Amount::from_sat(800_000)).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
@@ -324,10 +324,10 @@ async fn spend_unregistered_onboard() {
 		}
 	}
 
-	let mut aspd = ctx.aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let mut aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
-	let bark = ctx.bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.onboard(Amount::from_sat(800_000)).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;

@@ -48,20 +48,20 @@ async fn exit_round() {
 
 	// Initialize the test
 	let mut ctx = TestContext::new("exit/exit_round").await;
-	let mut aspd = ctx.aspd("aspd", None).await;
+	let mut aspd = ctx.new_aspd("aspd", None).await;
 
 	// Fund the asp
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
 
 	// Create a few clients
-	let bark1 = ctx.bark("bark1".to_string(), &aspd).await;
-	let bark2 = ctx.bark("bark2".to_string(), &aspd).await;
-	let bark3 = ctx.bark("bark3".to_string(), &aspd).await;
-	let bark4 = ctx.bark("bark4".to_string(), &aspd).await;
-	let bark5 = ctx.bark("bark5".to_string(), &aspd).await;
-	let bark6 = ctx.bark("bark6".to_string(), &aspd).await;
-	let bark7 = ctx.bark("bark7".to_string(), &aspd).await;
-	let bark8 = ctx.bark("bark8".to_string(), &aspd).await;
+	let bark1 = ctx.new_bark("bark1".to_string(), &aspd).await;
+	let bark2 = ctx.new_bark("bark2".to_string(), &aspd).await;
+	let bark3 = ctx.new_bark("bark3".to_string(), &aspd).await;
+	let bark4 = ctx.new_bark("bark4".to_string(), &aspd).await;
+	let bark5 = ctx.new_bark("bark5".to_string(), &aspd).await;
+	let bark6 = ctx.new_bark("bark6".to_string(), &aspd).await;
+	let bark7 = ctx.new_bark("bark7".to_string(), &aspd).await;
+	let bark8 = ctx.new_bark("bark8".to_string(), &aspd).await;
 
 	tokio::join!(
 		ctx.fund_bark(&bark1, Amount::from_sat(1_000_000)),
@@ -163,10 +163,10 @@ async fn exit_after_onboard() {
 	).unwrap().assume_checked();
 
 	let mut ctx = TestContext::new("exit/exit_after_onboard").await;
-	let mut aspd = ctx.aspd("aspd", None).await;
+	let mut aspd = ctx.new_aspd("aspd", None).await;
 
 	// Fund the bark instance
-	let bark = ctx.bark_with_funds("bark", &aspd, Amount::from_sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, Amount::from_sat(1_000_000)).await;
 
 	// Onboard funds
 	bark.onboard(Amount::from_sat(900_000)).await;
@@ -192,12 +192,12 @@ async fn exit_after_onboard() {
 #[tokio::test]
 async fn exit_oor() {
 	let mut ctx = TestContext::new("exit/exit_oor").await;
-	let mut aspd = ctx.aspd("aspd", None).await;
+	let mut aspd = ctx.new_aspd("aspd", None).await;
 
 	// Bark1 will pay bark2 oor.
 	// Bark2 will attempt an exit
-	let bark1 = ctx.bark_with_funds("bark1", &aspd, Amount::from_sat(1_000_000)).await;
-	let bark2 = ctx.bark_with_funds("bark2", &aspd, Amount::from_sat(1_000_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, Amount::from_sat(1_000_000)).await;
 
 	ctx.bitcoind.generate(1).await;
 

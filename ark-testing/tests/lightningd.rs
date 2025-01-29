@@ -14,7 +14,7 @@ async fn start_lightningd() {
 	context.bitcoind.generate(100).await;
 
 	// Start an instance of lightningd
-	let lightningd_1 = context.lightningd("lightningd-1").await;
+	let lightningd_1 = context.new_lightningd("lightningd-1").await;
 	let mut client = lightningd_1.grpc_client().await;
 	let result = client.getinfo(grpc::GetinfoRequest{}).await.unwrap();
 	let info = result.into_inner();
@@ -33,8 +33,8 @@ async fn cln_can_pay_lightning() {
 	context.bitcoind.generate(100).await;
 
 	// Start an instance of lightningd
-	let lightningd_1 = context.lightningd("lightningd-1").await;
-	let lightningd_2 = context.lightningd("lightningd-2").await;
+	let lightningd_1 = context.new_lightningd("lightningd-1").await;
+	let lightningd_2 = context.new_lightningd("lightningd-2").await;
 
 	// Connect both peers and verify the connection succeeded
 	info!("Connect `{}` to `{}`", lightningd_1.name(), lightningd_2.name());
@@ -77,8 +77,8 @@ async fn bark_pay_ln_succeeds() {
 	// Start a three lightning nodes
 	// And connect them in a line.
 	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = context.lightningd("lightningd-1").await;
-	let lightningd_2 = context.lightningd("lightningd-2").await;
+	let lightningd_1 = context.new_lightningd("lightningd-1").await;
+	let lightningd_2 = context.new_lightningd("lightningd-2").await;
 
 	trace!("Funding all lightning-nodes");
 	context.fund_lightning(&lightningd_1, Amount::from_int_btc(10)).await;
@@ -98,12 +98,12 @@ async fn bark_pay_ln_succeeds() {
 	lightningd_1.wait_for_gossip(1).await;
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = context.aspd("aspd-1", Some(&lightningd_1)).await;
+	let aspd_1 = context.new_aspd("aspd-1", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = Amount::from_int_btc(7);
 	let onboard_amount = Amount::from_int_btc(5);
-	let bark_1 = context.bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = context.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.onboard(onboard_amount).await;
 	context.bitcoind.generate(6).await;
@@ -134,19 +134,19 @@ async fn bark_pay_ln_fails() {
 	// Start a three lightning nodes
 	// And connect them in a line.
 	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = context.lightningd("lightningd-1").await;
-	let lightningd_2 = context.lightningd("lightningd-2").await;
+	let lightningd_1 = context.new_lightningd("lightningd-1").await;
+	let lightningd_2 = context.new_lightningd("lightningd-2").await;
 
 	// No channels are created
 	// The payment must fail
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = context.aspd("aspd-1", Some(&lightningd_1)).await;
+	let aspd_1 = context.new_aspd("aspd-1", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = Amount::from_int_btc(3);
 	let onboard_amount = Amount::from_int_btc(2);
-	let bark_1 = context.bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = context.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.onboard(onboard_amount).await;
 	context.bitcoind.generate(6).await;
