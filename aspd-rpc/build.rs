@@ -8,4 +8,7 @@ fn main() {
 		.protoc_arg("--experimental_allow_proto3_optional")
 		.compile_protos(protos, &[] as &[&str])
 		.expect("failed to compile aspd protos");
+
+	println!("cargo:rerun-if-changed=src/aspd.rs");
+	println!("cargo:rerun-if-changed=rpc-protos/aspd.proto");
 }
