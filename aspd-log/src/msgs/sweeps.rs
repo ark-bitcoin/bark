@@ -45,11 +45,11 @@ impl_slog!(SweepBroadcast, Info, "Completed a sweep tx");
 pub struct RoundFullySwept {
 	pub round_id: Txid,
 }
-impl_slog!(RoundFullySwept, Info, "An expired round was succesfully swept");
+impl_slog!(RoundFullySwept, Info, "An expired round was successfully swept");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceivedSweepTrigger {}
-impl_slog!(ReceivedSweepTrigger, Info, "Reiceved a trigger to sweep over RPC");
+impl_slog!(ReceivedSweepTrigger, Info, "Received a trigger to sweep over RPC");
 
 

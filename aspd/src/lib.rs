@@ -436,9 +436,18 @@ impl App {
 		});
 
 		let app = self.clone();
+		let mut shutdown = app.shutdown_channel.clone().subscribe();
 		let jh_tip_fetcher = tokio::spawn(async move {
 			loop {
-				tokio::time::sleep(Duration::from_secs(10)).await;
+				tokio::select! {
+					// Periodic interval for chain tip fetch
+					() = tokio::time::sleep(Duration::from_secs(10)) => {},
+					_ = shutdown.recv() => {
+						info!("Shutdown signal received. Exiting fetch_tip loop...");
+						break;
+					}
+				}
+					
 				match fetch_tip(&app.bitcoind) {
 					Ok(t) => *app.chain_tip.lock().await = t,
 					Err(e) => {
@@ -446,6 +455,10 @@ impl App {
 					},
 				}
 			}
+
+			info!("Chain tip loop terminated gracefully.");
+			
+			Ok(())
 		});
 
 		// The tasks that always run
@@ -485,7 +498,9 @@ impl App {
 		// Wait until the first task finishes
 		futures::future::try_join_all(jhs).await
 			.context("one of our background processes errored")?;
-
+		
+		slog!(AspdTerminated);
+		
 		Ok(())
 	}
 
