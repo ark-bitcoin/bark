@@ -5,9 +5,8 @@
 //! * ASP does a deterministic sign and sends ASP part using [new_asp].
 //! * User also signs and combines sigs using [finish] and stores vtxo.
 
-use bitcoin::taproot::{ControlBlock, LeafVersion};
 use bitcoin::{
-	taproot, Amount, OutPoint, ScriptBuf, Sequence, TapNodeHash, Transaction, TxIn, TxOut, Weight,
+	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight,
 	Witness,
 };
 use bitcoin::blockdata::locktime::absolute::LockTime;
@@ -52,18 +51,6 @@ pub fn onboard_surplus() -> Amount {
 /// The amount that should be sent into the onboard output.
 pub fn onboard_amount(spec: &VtxoSpec) -> Amount {
 	spec.amount + onboard_surplus()
-}
-
-
-/// The taproot scriptspend info for the expiry clause.
-pub fn expiry_scriptspend(
-	spec: &VtxoSpec,
-) -> (ControlBlock, ScriptBuf, LeafVersion, TapNodeHash) {
-	let taproot = onboard_taproot(spec);
-	let expiry_script = util::timelock_sign(spec.expiry_height, spec.asp_pubkey.x_only_public_key().0);
-	let cb = taproot.control_block(&(expiry_script.clone(), LeafVersion::TapScript))
-		.expect("expiry script should be in cosign taproot");
-	(cb, expiry_script, LeafVersion::TapScript, taproot.merkle_root().unwrap())
 }
 
 #[derive(Debug, Serialize, Deserialize)]

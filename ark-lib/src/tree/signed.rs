@@ -9,7 +9,6 @@ use bitcoin::{
 };
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
-use bitcoin::taproot::{ControlBlock, LeafVersion, TapNodeHash, TaprootBuilder};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
 use crate::{fee, musig, util, BlockHeight, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
@@ -87,19 +86,8 @@ impl VtxoTreeSpec {
 		util::timelock_sign(self.expiry_height, pk)
 	}
 
-	/// The taproot scriptspend info for the expiry clause.
-	pub fn expiry_scriptspend(
-		&self, agg_pk: XOnlyPublicKey,
-	) -> (ControlBlock, ScriptBuf, LeafVersion, TapNodeHash) {
-		let taproot = self.cosign_taproot(agg_pk);
-		let script = self.expiry_clause();
-		let cb = taproot.control_block(&(script.clone(), LeafVersion::TapScript))
-			.expect("expiry script should be in cosign taproot");
-		(cb, script, LeafVersion::TapScript, taproot.merkle_root().unwrap())
-	}
-
 	pub fn cosign_taproot(&self, agg_pk: XOnlyPublicKey) -> taproot::TaprootSpendInfo {
-		TaprootBuilder::new()
+		taproot::TaprootBuilder::new()
 			.add_leaf(0, self.expiry_clause()).unwrap()
 			.finalize(&util::SECP, agg_pk).unwrap()
 	}

@@ -51,7 +51,7 @@ use bitcoin::{
 
 use ark::{BlockHeight, OnboardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use ark::util::KeypairExt;
+use ark::util::{KeypairExt, TaprootSpendInfoExt};
 
 use crate::bitcoind::RpcApi;
 use crate::database::StoredRound;
@@ -84,8 +84,7 @@ impl OnboardSweepInput {
 	}
 
 	fn psbt(&self) -> psbt::Input {
-		let (spend_cb, spend_script, spend_lv, spend_merkle)
-			= ark::onboard::expiry_scriptspend(&self.vtxo_spec);
+		let taproot = ark::onboard::onboard_taproot(&self.vtxo_spec);
 		let utxo = TxOut {
 			script_pubkey: ark::onboard::onboard_spk(&self.vtxo_spec),
 			value: ark::onboard::onboard_amount(&self.vtxo_spec),
@@ -94,8 +93,8 @@ impl OnboardSweepInput {
 			witness_utxo: Some(utxo),
 			sighash_type: Some(sighash::TapSighashType::Default.into()),
 			tap_internal_key: Some(self.vtxo_spec.combined_pubkey()),
-			tap_scripts: [(spend_cb, (spend_script, spend_lv))].into_iter().collect(),
-			tap_merkle_root: Some(spend_merkle),
+			tap_scripts: taproot.psbt_tap_scripts(),
+			tap_merkle_root: Some(taproot.merkle_root().unwrap()),
 			non_witness_utxo: None,
 			..Default::default()
 		};
@@ -130,15 +129,13 @@ impl<'a> RoundSweepInput<'a> {
 
 	fn psbt(&self) -> psbt::Input {
 		let round_cosign_pk = self.round.round.signed_tree.spec.round_tx_cosign_pk();
-		let (
-			spend_cb, spend_script, spend_lv, spend_merkle,
-		) = self.round.round.signed_tree.spec.expiry_scriptspend(round_cosign_pk);
+		let taproot = self.round.round.signed_tree.spec.cosign_taproot(round_cosign_pk);
 		let mut ret = psbt::Input{
 			witness_utxo: Some(self.utxo.clone()),
 			sighash_type: Some(sighash::TapSighashType::Default.into()),
 			tap_internal_key: Some(self.internal_key),
-			tap_scripts: [(spend_cb, (spend_script, spend_lv))].into_iter().collect(),
-			tap_merkle_root: Some(spend_merkle),
+			tap_scripts: taproot.psbt_tap_scripts(),
+			tap_merkle_root: Some(taproot.merkle_root().unwrap()),
 			non_witness_utxo: None,
 			..Default::default()
 		};
