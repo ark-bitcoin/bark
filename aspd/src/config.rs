@@ -46,6 +46,15 @@ pub struct Lightningd {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Postgres {
+	pub host: String,
+	pub port: u16,
+	pub name: String,
+	pub user: Option<String>,
+	pub password: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
 	pub data_dir: PathBuf,
 	pub network: bitcoin::Network,
@@ -78,6 +87,7 @@ pub struct Config {
 	pub otel_collector_endpoint: Option<String>,
 
 	pub rpc: Rpc,
+	pub postgres: Postgres,
 
 	pub bitcoind: Bitcoind,
 
@@ -185,6 +195,13 @@ impl Default for Config {
 				cookie: None,
 				rpc_user: None,
 				rpc_pass: None,
+			},
+			postgres: Postgres {
+				host: String::from("localhost"),
+				port: 5432,
+				name: String::from("aspdb"),
+				user: None,
+				password: None
 			},
 			lightningd : None,
 		}

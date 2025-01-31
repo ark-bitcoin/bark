@@ -1,491 +1,163 @@
-
-mod wallet;
-
-use std::{io, iter};
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
 
-use anyhow::{bail, Context};
-use bitcoin::consensus::encode::{deserialize, serialize};
-use bitcoin::{Transaction, Txid};
-use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{schnorr, PublicKey};
-use rocksdb::{
-	BoundColumnFamily, Direction, FlushOptions, IteratorMode, OptimisticTransactionOptions,
-	WriteBatchWithTransaction, WriteOptions,
-};
+use anyhow::Context;
+use ark::{tree::signed::CachedSignedVtxoTree, ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
+use bb8::Pool;
+use bb8_postgres::PostgresConnectionManager;
+use bdk_wallet::{chain::Merge, ChangeSet};
+use bitcoin::{consensus::serialize, secp256k1::{schnorr, PublicKey}, Transaction, Txid};
+use futures::{Stream, StreamExt, TryStreamExt};
+use model::{MailboxArkoor, PendingSweep, StoredRound, VtxoState};
+use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 
-use ark::{ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
-use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
+use crate::Config;
 
-use crate::error::ContextExt;
+pub mod model;
 
-use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
-
-
-// COLUMN FAMILIES
-
-/// map VtxoId -> VtxoState
-const CF_VTXOS: &str = "vtxos";
-/// set [expiry][VtxoId]
-const CF_ONBOARD_EXPIRY: &str = "onboard_by_expiry";
-/// map Txid -> serialized StoredRound
-const CF_ROUND: &str = "rounds";
-/// set [expiry][txid]
-const CF_ROUND_EXPIRY: &str = "rounds_by_expiry";
-/// set [pubkey][vtxo]
-const CF_OOR_MAILBOX: &str = "oor_mailbox";
-/// map Txid -> Transaction
-const CF_PENDING_SWEEPS: &str = "pending_sweeps";
-
-// ROOT ENTRY KEYS
-
-const MASTER_SEED: &str = "master_seed";
-const MASTER_MNEMONIC: &str = "master_mnemonic";
-
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RoundExpiryKey {
-	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
-	expiry: u32,
-	id: Txid,
+mod embedded {
+	use refinery::embed_migrations;
+	embed_migrations!("src/database/migrations");
 }
 
-impl RoundExpiryKey {
-	fn new(expiry: u32, id: Txid) -> Self {
-		Self { expiry, id }
-	}
-
-	fn encode(&self) -> [u8; 36] {
-		let mut ret = [0u8; 36];
-		ret[0..4].copy_from_slice(&self.expiry.to_le_bytes());
-		ret[4..].copy_from_slice(&self.id[..]);
-		ret
-	}
-
-	fn decode(b: &[u8]) -> Self {
-		assert_eq!(b.len(), 36, "corrupt round expiry key");
-		Self {
-			expiry: {
-				let mut buf = [0u8; 4];
-				buf[..].copy_from_slice(&b[0..4]);
-				u32::from_le_bytes(buf)
-			},
-			id: Txid::from_slice(&b[4..]).unwrap(),
-		}
-	}
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct VtxoExpiryKey {
-	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
-	expiry: u32,
-	id: VtxoId,
-}
-
-impl VtxoExpiryKey {
-	fn new(expiry: u32, id: VtxoId) -> Self {
-		Self { expiry, id }
-	}
-
-	fn encode(&self) -> [u8; 40] {
-		let mut ret = [0u8; 40];
-		ret[0..4].copy_from_slice(&self.expiry.to_le_bytes());
-		ret[4..].copy_from_slice(&self.id.to_bytes()[..]);
-		ret
-	}
-
-	fn decode(b: &[u8]) -> Self {
-		assert_eq!(b.len(), 40, "corrupt vtxo expiry key");
-		Self {
-			expiry: {
-				let mut buf = [0u8; 4];
-				buf[..].copy_from_slice(&b[0..4]);
-				u32::from_le_bytes(buf)
-			},
-			id: VtxoId::from_slice(&b[4..]).unwrap(),
-		}
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct VtxoState {
-	/// The raw vtxo encoded.
-	pub vtxo: Vtxo,
-
-	/// If this vtxo was spent in an OOR tx, the txid of the OOR tx.
-	pub oor_spent: Option<Txid>,
-	/// The forfeit tx signatures of the user if the vtxo was forfeited.
-	pub forfeit_sigs: Option<Vec<schnorr::Signature>>,
-}
-
-impl VtxoState {
-	pub fn is_spendable(&self) -> bool {
-		self.oor_spent.is_none() && self.forfeit_sigs.is_none()
-	}
-
-	fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct StoredRound {
-	pub tx: Transaction,
-	pub signed_tree: SignedVtxoTreeSpec,
-	pub nb_input_vtxos: u64,
-}
-
-impl StoredRound {
-	pub fn id(&self) -> Txid {
-		self.tx.compute_txid()
-	}
-
-	fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
-}
-
-/// Type alias for the underlying RocksDB type.
-type RocksDb = rocksdb::OptimisticTransactionDB<rocksdb::MultiThreaded>;
+const DEFAULT_DATABASE: &str = "postgres";
 
 pub struct Db {
-	db: RocksDb,
-	wallet: ChangeSetDbState,
+	client: Pool<PostgresConnectionManager<NoTls>>
 }
 
 impl Db {
-	pub fn open(path: &Path) -> anyhow::Result<Db> {
-		let mut opts = rocksdb::Options::default();
-		opts.create_if_missing(true);
-		opts.create_missing_column_families(true);
-
-		let cfs = [
-			CF_VTXOS,
-			CF_ONBOARD_EXPIRY,
-			CF_ROUND,
-			CF_ROUND_EXPIRY,
-			CF_OOR_MAILBOX,
-			CF_BDK_CHANGESETS,
-			CF_PENDING_SWEEPS,
-		];
-		let db = rocksdb::OptimisticTransactionDB::open_cf(&opts, path, cfs)
-			.context("failed to open db")?;
-		let wallet = ChangeSetDbState::new();
-		Ok(Db { db, wallet })
-	}
-
-	fn cf_vtxos<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_VTXOS).expect("db missing vtxos cf")
-	}
-
-	fn cf_onboard_expiry<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_ONBOARD_EXPIRY).expect("db missing onboard expiry cf")
-	}
-
-	fn cf_round<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_ROUND).expect("db missing round cf")
-	}
-
-	fn cf_round_expiry<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_ROUND_EXPIRY).expect("db missing round expiry cf")
-	}
-
-	fn cf_oor_mailbox<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_OOR_MAILBOX).expect("db missing oor mailbox cf")
-	}
-
-	fn cf_pending_sweeps<'a>(&'a self) -> Arc<BoundColumnFamily<'a>> {
-		self.db.cf_handle(CF_PENDING_SWEEPS).expect("db missing pending sweeps cf")
-	}
-
-
-	pub fn store_master_mnemonic_and_seed(&self, mnemonic: &bip39::Mnemonic) -> anyhow::Result<()> {
-		let mut b = WriteBatchWithTransaction::<true>::default();
-		b.put(MASTER_MNEMONIC, mnemonic.to_string().as_bytes());
-		b.put(MASTER_SEED, mnemonic.to_seed("").to_vec());
-		let mut opts = WriteOptions::default();
-		opts.set_sync(true);
-		self.db.write_opt(b, &opts)?;
+	async fn run_migrations<'a>(manager: &Pool<PostgresConnectionManager<NoTls>>) -> anyhow::Result<()> {
+		let mut conn = manager.get().await?;
+		embedded::migrations::runner().run_async::<Client>(&mut conn).await?;
+		info!("All migrations got successfully run");
 		Ok(())
 	}
 
-	pub fn get_master_seed(&self) -> anyhow::Result<Option<Vec<u8>>> {
-		Ok(self.db.get(MASTER_SEED)?)
-	}
-
-	pub fn get_master_mnemonic(&self) -> anyhow::Result<Option<String>> {
-		Ok(self.db.get(MASTER_MNEMONIC)?.map(|b| String::from_utf8(b)).transpose()?)
-	}
-
-	pub fn store_round(
-		&self,
-		round_tx: Transaction,
-		vtxos: CachedSignedVtxoTree,
-		nb_input_vtxos: usize,
-	) -> anyhow::Result<()> {
-		let round = StoredRound {
-			tx: round_tx,
-			signed_tree: vtxos.spec.clone(),
-			nb_input_vtxos: nb_input_vtxos as u64,
-		};
-		let round_id = round.id();
-		let encoded_round = round.encode();
-		let expiry_key = RoundExpiryKey::new(round.signed_tree.spec.expiry_height, round_id);
-
-		let mut opts = WriteOptions::default();
-		opts.set_sync(true);
-		let mut oopts = OptimisticTransactionOptions::new();
-		oopts.set_snapshot(false);
-
-		//TODO(stevenroose) consider writing a macro for this sort of block
-		loop {
-			let tx = self.db.transaction_opt(&opts, &oopts);
-			tx.put_cf(&self.cf_round(), round_id, &encoded_round)?;
-			tx.put_cf(&self.cf_round_expiry(), expiry_key.encode(), [])?;
-
-			// Store all vtxos created in this round.
-			for vtxo in vtxos.all_vtxos() {
-				let vtxo_id = vtxo.id();
-				let vtxo_state = VtxoState {
-					vtxo: vtxo,
-					oor_spent: None,
-					forfeit_sigs: None,
-				};
-				tx.put_cf(&self.cf_vtxos(), vtxo_id, vtxo_state.encode())?;
-			}
-
-			match tx.commit() {
-				Ok(()) => break,
-				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
-				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
-				Err(e) => bail!("failed to commit db tx: {}", e),
-			}
+	fn config(database: &str, app_config: &Config) -> tokio_postgres::Config {
+		let mut config = tokio_postgres::Config::new();
+		config.host(&app_config.postgres.host);
+		config.port(app_config.postgres.port);
+		config.dbname(database);
+		if let Some(user) = &app_config.postgres.user {
+			config.user(user);
+		}
+		if let Some(password) = &app_config.postgres.password {
+			config.password(password);
 		}
 
-		let mut opts = FlushOptions::default();
-		opts.set_wait(true); //TODO(stevenroose) is this needed?
-		self.db.flush_cfs_opt(
-			&[&self.cf_round(), &self.cf_round_expiry(), &self.cf_vtxos()], &opts,
-		).context("error flushing db")?;
+		config
+	}
+
+	pub async fn create(app_config: &Config) -> anyhow::Result<Self> {
+		let config = Self::config(DEFAULT_DATABASE, app_config);
+
+		let manager = PostgresConnectionManager::new(config, NoTls);
+		let pool = Pool::builder().build(manager).await.expect("Failed to create pool");
+
+		let conn = pool.get().await?;
+		let statement = conn.prepare(
+			&format!("CREATE DATABASE \"{}\"", app_config.postgres.name)
+		).await?;
+		conn.execute(&statement, &[]).await?;
+
+		Self::connect(app_config).await
+	}
+
+	pub async fn connect(app_config: &Config) -> anyhow::Result<Self> {
+		let config = Self::config(&app_config.postgres.name, app_config);
+
+		let manager = PostgresConnectionManager::new(config, NoTls);
+		let pool = Pool::builder().build(manager).await.expect("Failed to create pool");
+
+		Self::run_migrations(&pool).await?;
+		Ok(Self { client: pool })
+	}
+
+	/**
+	 * VTXOs
+	*/
+
+	async fn inner_insert_vtxos<T>(client: &T, vtxos: &[Vtxo]) -> anyhow::Result<()>
+		where T: GenericClient
+	{
+		// Store all vtxos created in this round.
+		let statement = client.prepare_typed("
+			INSERT INTO vtxo (id, vtxo, expiry) VALUES ($1, $2, $3);
+		", &[Type::TEXT, Type::BYTEA, Type::INT4]).await?;
+
+		for vtxo in vtxos {
+			let vtxo_id = vtxo.id();
+
+			client.execute(
+				&statement,
+				&[
+					&vtxo_id.to_string(),
+					&Vtxo::encode(&vtxo),
+					&(vtxo.spec().expiry_height as i32)
+				]
+			).await?;
+		}
 
 		Ok(())
 	}
 
-	pub fn remove_round(&self, id: Txid) -> anyhow::Result<()> {
-		let round = match self.get_round(id)? {
-			Some(r) => r,
-			None => return Ok(()),
-		};
-		let expiry_key = RoundExpiryKey::new(round.signed_tree.spec.expiry_height, id);
+	/// Atomically insert the given vtxos.
+	pub async fn insert_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		let mut conn = self.client.get().await?;
+		let tx = conn.transaction().await?;
 
-		let opts = WriteOptions::default();
-		let oopts = OptimisticTransactionOptions::new();
+		Self::inner_insert_vtxos(&tx, vtxos).await?;
 
-		//TODO(stevenroose) consider writing a macro for this sort of block
-		loop {
-			let tx = self.db.transaction_opt(&opts, &oopts);
-			tx.delete_cf(&self.cf_round(), id)?;
-			tx.delete_cf(&self.cf_round_expiry(), expiry_key.encode())?;
-
-			match tx.commit() {
-				Ok(()) => break,
-				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
-				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
-				Err(e) => bail!("failed to commit db tx: {}", e),
-			}
-		}
-
-		let mut opts = FlushOptions::default();
-		opts.set_wait(true); //TODO(stevenroose) is this needed?
-		self.db.flush_cfs_opt(
-			&[&self.cf_round(), &self.cf_round_expiry()], &opts,
-		).context("error flushing db")?;
-		Ok(())
-	}
-
-	pub fn get_round(&self, id: Txid) -> anyhow::Result<Option<StoredRound>> {
-		Ok(self.db.get_pinned_cf(&self.cf_round(), id)?.map(|b| {
-			StoredRound::decode(&b).expect("corrupt db")
-		}))
-	}
-
-	/// Get all round IDs of rounds that expired before or on `height`.
-	pub fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<Txid>> {
-		let mut ret = Vec::new();
-
-		let mut iter = self.db.iterator_cf(&self.cf_round_expiry(), IteratorMode::Start);
-		while let Some(res) = iter.next() {
-			let (key, _) = res.context("db round expiry iter error")?;
-			let expkey = RoundExpiryKey::decode(&key);
-			if expkey.expiry as BlockHeight > height {
-				break;
-			}
-			ret.push(expkey.id);
-		}
-
-		Ok(ret)
-	}
-
-	pub fn get_fresh_round_ids(&self, start_height: u32) -> anyhow::Result<Vec<Txid>> {
-		let mut ret = Vec::new();
-
-		let mut iter = self.db.iterator_cf(&self.cf_round_expiry(),
-			IteratorMode::From(&start_height.to_le_bytes(), Direction::Forward),
-		);
-		while let Some(res) = iter.next() {
-			let (key, _) = res.context("db round expiry iter error")?;
-			ret.push(RoundExpiryKey::decode(&key).id);
-		}
-
-		Ok(ret)
-	}
-
-	/// Get an iterator that yields each round in the database.
-	///
-	/// No particular order is guaranteed.
-	pub fn fetch_all_rounds(&self) -> impl Iterator<Item = anyhow::Result<StoredRound>> + '_ {
-		let mut iter = self.db.iterator_cf(&self.cf_round(), IteratorMode::Start);
-		iter::from_fn(move || {
-			if let Some(res) = iter.next() {
-				match res.context("dn round iter error") {
-					Ok((_k, v)) => {
-						let round = StoredRound::decode(&v).expect("corrupt db");
-						Some(Ok(round))
-					},
-					Err(e) => Some(Err(e)),
-				}
-			} else {
-				None
-			}
-		})
-	}
-
-	/// Atomically insert the given onboard vtxos.
-	///
-	/// Errors if any one vtxo is not an onboard vtxo.
-	pub fn insert_onboard_vtxos(&self, vtxos: &[&OnboardVtxo]) -> anyhow::Result<()> {
-		let mut opts = WriteOptions::default();
-		opts.set_sync(true);
-		let mut oopts = OptimisticTransactionOptions::new();
-		oopts.set_snapshot(false);
-
-		//TODO(stevenroose) consider writing a macro for this sort of block
-		let cf = self.cf_vtxos();
-		let cf_expiry = self.cf_onboard_expiry();
-		loop {
-			let tx = self.db.transaction_opt(&opts, &oopts);
-
-			for vtxo in vtxos {
-				let id = vtxo.id();
-
-				if tx.get_cf(&cf, &id)?.is_some() {
-					trace!("db: vtxo {} already registered", id);
-					continue;
-				}
-
-				let state = VtxoState {
-					vtxo: (*vtxo).clone().into(),
-					oor_spent: None,
-					forfeit_sigs: None,
-				};
-				tx.put_cf(&cf, id, state.encode())?;
-
-				let expiry = vtxo.spec.expiry_height;
-				let key = VtxoExpiryKey::new(expiry, id);
-				tx.put_cf(&cf_expiry, key.encode(), &[])?;
-			}
-
-			match tx.commit() {
-				Ok(()) => break,
-				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
-				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
-				Err(e) => bail!("failed to commit db tx: {}", e),
-			}
-		}
-
-		let mut opts = FlushOptions::default();
-		opts.set_wait(true); //TODO(stevenroose) is this needed?
-		self.db.flush_cfs_opt(&[&cf, &cf_expiry], &opts).context("error flushing db")?;
+		tx.commit().await?;
 		Ok(())
 	}
 
 	/// Get all onboard vtxos that expired before or on `height`.
-	pub fn get_expired_onboards(
+	pub async fn get_expired_onboards(
 		&self,
 		height: BlockHeight,
-	) -> impl Iterator<Item = anyhow::Result<OnboardVtxo>> + '_ {
-		let cf_vtxos = self.cf_vtxos();
-		let mut iter = self.db.iterator_cf(&self.cf_onboard_expiry(), IteratorMode::Start);
-		iter::from_fn(move || {
-			if let Some(res) = iter.next() {
-				let (key, _) = match res.context("db onboard vtxo expiry iter error") {
-					Ok(k) => k,
-					Err(e) => return Some(Err(e)),
-				};
-				let expkey = VtxoExpiryKey::decode(&key);
-				if expkey.expiry as BlockHeight > height {
-					return None;
-				}
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<OnboardVtxo>> + '_> {
+		let conn = self.client.get().await?;
 
-				let vtxo_state = {
-					let bytes = match self.db.get_cf(&cf_vtxos, expkey.id) {
-						Ok(b) => b.expect("corrupt db: missing vtxo"),
-						Err(e) => return Some(Err(e.into())),
-					};
-					VtxoState::decode(&bytes).expect("corrupt db: invalid vtxo state")
-				};
-				Some(Ok(vtxo_state.vtxo.into_onboard()
-					.expect("corrupt db: non-onboard vtxo in onboard expiry index")))
-			} else {
-				None
-			}
-		}).fuse()
+		// TODO: maybe store kind in a column to filter onboard at the db level
+		let statement = conn.prepare_typed("
+			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs FROM vtxo WHERE expiry <= $1
+		", &[Type::INT4]).await?;
+
+		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
+
+		Ok(rows.filter_map(|row| async move {
+			row
+				.map(|row | VtxoState::try_from(row).expect("corrupt db").vtxo.into_onboard())
+				.map_err(Into::into)
+				.transpose()
+		}).fuse())
 	}
 
-	pub fn remove_onboard(&self, vtxo: &OnboardVtxo) -> anyhow::Result<()> {
-		let id = vtxo.id();
-		let expiry = vtxo.spec.expiry_height;
-		let key = VtxoExpiryKey::new(expiry, id);
+	pub async fn remove_onboard(&self, vtxo: &OnboardVtxo) -> anyhow::Result<()> {
+		let conn = self.client.get().await?;
 
-		let mut opts = WriteOptions::default();
-		opts.set_sync(true);
-		let mut oopts = OptimisticTransactionOptions::new();
-		oopts.set_snapshot(false);
+		// TODO: implement soft deletion
+		let statement = conn.prepare("
+			DELETE FROM vtxo WHERE id = $1;
+		").await?;
 
-		loop {
-			let tx = self.db.transaction_opt(&opts, &oopts);
+		conn.execute(&statement, &[&vtxo.id().to_string()]).await?;
 
-			self.db.delete_cf(&self.cf_vtxos(), id)?;
-			self.db.delete_cf(&self.cf_onboard_expiry(), key.encode())?;
-
-			match tx.commit() {
-				Ok(()) => break,
-				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
-				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
-				Err(e) => bail!("failed to commit db tx: {}", e),
-			}
-		}
-
-		let mut opts = FlushOptions::default();
-		opts.set_wait(true); //TODO(stevenroose) is this needed?
-		self.db.flush_cfs_opt(
-			&[&self.cf_vtxos(), &self.cf_onboard_expiry()], &opts,
-		).context("error flushing db")?;
 		Ok(())
+	}
+
+	async fn get_vtxo<T>(client: &T, id: &VtxoId) -> anyhow::Result<VtxoState>
+		where T: GenericClient {
+		let statement = client.prepare("
+			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs FROM vtxo WHERE id = $1
+		").await?;
+
+		let row = client.query_opt(&statement, &[&id.to_string()]).await?
+			.context(*id)
+			.with_context(|| format!("vtxo {} not found", id))?;
+
+		Ok(VtxoState::try_from(row).expect("corrupt db"))
 	}
 
 	/// Check whether the vtxos were already spent, and fetch them if not.
@@ -493,55 +165,44 @@ impl Db {
 	/// There is no guarantee that the vtxos are still all unspent by
 	/// the time this call returns. The caller should ensure no changes
 	/// are made to them meanwhile.
-	pub fn check_fetch_unspent_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn check_fetch_unspent_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
+		let conn = self.client.get().await?;
 		let mut ret = Vec::with_capacity(ids.len());
-		let cf = self.cf_vtxos();
+
 		for id in ids {
-			let encoded = self.db.get_cf(&cf, id)?
-				.context(*id)
-				.with_context(|| format!("vtxo {} not found", id))?;
-			let vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
+			let vtxo_state = Self::get_vtxo(&*conn, id).await?;
+
 			if !vtxo_state.is_spendable() {
 				return Err(anyhow!("vtxo {} is not spendable: {:?}", id, vtxo_state)
 					.context(*id));
 			}
-			ret.push(vtxo_state.vtxo);
+
+			ret.push(vtxo_state.vtxo.clone());
 		}
 
 		Ok(ret)
 	}
 
 	/// Set the vtxo as being forfeited.
-	pub fn set_vtxo_forfeited(&self, id: VtxoId, sigs: Vec<schnorr::Signature>) -> anyhow::Result<()> {
-		let mut opts = WriteOptions::default();
-		opts.set_sync(true);
-		let mut oopts = OptimisticTransactionOptions::new();
-		oopts.set_snapshot(false);
+	pub async fn set_vtxo_forfeited(&self, id: VtxoId, sigs: Vec<schnorr::Signature>) -> anyhow::Result<()> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare_typed("
+			UPDATE vtxo SET forfeit_sigs = $2 WHERE id = $1;
+		", &[Type::TEXT, Type::BYTEA_ARRAY]).await?;
 
-		let cf = self.cf_vtxos();
-		loop {
-			let tx = self.db.transaction_opt(&opts, &oopts);
-
-			let encoded = tx.get_cf(&cf, id)?.context("vtxo not found")?;
-			let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
-			if !vtxo_state.is_spendable() {
-				error!("Marking unspendable vtxo as forfeited: {:?}", vtxo_state);
-			}
-
-			vtxo_state.forfeit_sigs = Some(sigs.clone());
-			tx.put_cf(&cf, id, vtxo_state.encode())?;
-
-			match tx.commit() {
-				Ok(()) => break,
-				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
-				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
-				Err(e) => bail!("failed to commit db tx: {}", e),
-			}
+		let vtxo_state = Self::get_vtxo(&*conn, &id).await?;
+		if !vtxo_state.is_spendable() {
+			error!("Marking unspendable vtxo as forfeited: {:?}", vtxo_state);
 		}
 
-		let mut opts = FlushOptions::default();
-		opts.set_wait(true); //TODO(stevenroose) is this needed?
-		self.db.flush_cf_opt(&cf, &opts).context("error flushing db")?;
+		conn.execute(
+			&statement,
+			&[
+				&id.to_string(),
+				&sigs.into_iter().map(|s| s.serialize().to_vec()).collect::<Vec<_>>()
+			]
+		).await?;
+
 		Ok(())
 	}
 
@@ -550,109 +211,303 @@ impl Db {
 	/// Returns [Some] for the first vtxo that was already signed.
 	///
 	/// Also stores the new OOR vtxos atomically.
-	pub fn check_set_vtxo_oor_spent(
+	pub async fn check_set_vtxo_oor_spent(
 		&self,
 		spent_ids: &[VtxoId],
 		spending_tx: Txid,
 		new_vtxos: &[ArkoorVtxo],
 	) -> anyhow::Result<Option<VtxoId>> {
-		let mut opts = WriteOptions::default();
-		opts.set_sync(true);
-		let mut oopts = OptimisticTransactionOptions::new();
-		oopts.set_snapshot(false);
+		let mut conn = self.client.get().await?;
+		let tx = conn.transaction().await?;
 
-		//TODO(stevenroose) consider writing a macro for this sort of block
-		let cf = self.cf_vtxos();
-		loop {
-			let tx = self.db.transaction_opt(&opts, &oopts);
+		let statement = tx.prepare_typed("
+			UPDATE vtxo SET oor_spent = $2 WHERE id = $1;
+		", &[Type::TEXT, Type::BYTEA]).await?;
 
-			for id in spent_ids {
-				let encoded = tx.get_cf(&self.cf_vtxos(), id)?
-					.not_found([id], "vtxo not found")?;
-				let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
-				if !vtxo_state.is_spendable() {
-					return Ok(Some(*id));
-				}
-				vtxo_state.oor_spent = Some(spending_tx);
-				tx.put_cf(&self.cf_vtxos(), id, vtxo_state.encode())?;
+		for id in spent_ids {
+			let vtxo_state = Self::get_vtxo(&tx, id).await?;
+			if !vtxo_state.is_spendable() {
+				return Ok(Some(*id));
 			}
 
-			for vtxo in new_vtxos {
-				let state = VtxoState {
-					vtxo: vtxo.clone().into(),
-					oor_spent: None,
-					forfeit_sigs: None,
-				};
-				tx.put_cf(&cf, vtxo.id(), state.encode())?;
-			}
-
-			match tx.commit() {
-				Ok(()) => break,
-				Err(e) if e.kind() == rocksdb::ErrorKind::TryAgain => continue,
-				Err(e) if e.kind() == rocksdb::ErrorKind::Busy => continue,
-				Err(e) => bail!("failed to commit db tx: {}", e),
-			}
+			tx.execute(&statement, &[&id.to_string(), &serialize(&spending_tx)]).await?;
 		}
+
+		let new_vtxos = new_vtxos.into_iter().map(|a| a.clone().into()).collect::<Vec<_>>();
+		Self::inner_insert_vtxos(&tx, &new_vtxos).await?;
+
+		tx.commit().await?;
 		Ok(None)
 	}
 
-	pub fn store_oor(&self, pubkey: PublicKey, vtxo: Vtxo) -> anyhow::Result<()> {
-		let mut buf = Vec::new();
-		buf.extend(pubkey.serialize());
-		vtxo.encode_into(&mut buf);
-		self.db.put_cf(&self.cf_oor_mailbox(), buf, [])?;
+	/**
+	 * Arkoors
+	*/
+
+	pub async fn store_oor(&self, pubkey: PublicKey, vtxo: Vtxo) -> anyhow::Result<()> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			INSERT INTO arkoor_mailbox (id, pubkey, vtxo) VALUES ($1, $2, $3);
+		").await?;
+		conn.execute(
+			&statement,
+			&[&vtxo.id().to_string(), &pubkey.serialize().to_vec(), &vtxo.encode()]
+		).await?;
+
 		Ok(())
 	}
 
-	pub fn pull_oors(&self, pubkey: PublicKey) -> anyhow::Result<Vec<Vtxo>> {
-		let pk = pubkey.serialize();
-		assert_eq!(33, pk.len());
+	pub async fn pull_oors(&self, pubkey: PublicKey) -> anyhow::Result<Vec<Vtxo>> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT id, pubkey, vtxo FROM arkoor_mailbox WHERE pubkey = $1
+		").await?;
 
-		let mut ret = Vec::new();
-		let mut iter = self.db.iterator_cf(&self.cf_oor_mailbox(),
-			IteratorMode::From(&pk, Direction::Forward),
-		);
-		while let Some(res) = iter.next() {
-			let (item, _) = res.context("db oor iter error")?;
-			if item[0..33] == pk {
-				ret.push(Vtxo::decode(&item[33..]).expect("corrupt db: invalid vtxo"));
-				self.db.delete_cf(&self.cf_oor_mailbox(), &item)?;
-			} else {
-				break;
-			}
-		}
+		let rows = conn.query(&statement, &[&pubkey.serialize().to_vec()]).await?;
+		let oors = rows
+			.into_iter()
+			.map(|row| -> anyhow::Result<Vtxo> { Ok(MailboxArkoor::try_from(row).expect("corrupt db").vtxo) })
+			.collect::<Result<Vec<_>, _>>()?;
 
-		Ok(ret)
+		// TODO: implement soft deletion
+		let statement = conn.prepare("
+			DELETE FROM arkoor_mailbox WHERE pubkey = $1;
+		").await?;
+		let result = conn.execute(&statement, &[&pubkey.serialize().to_vec()]).await?;
+		assert_eq!(result, oors.len() as u64);
+
+		Ok(oors)
 	}
 
+	/**
+	 * Rounds
+	*/
+
+	pub async fn store_round(
+		&self,
+		round_tx: Transaction,
+		vtxos: CachedSignedVtxoTree,
+		nb_input_vtxos: usize,
+	) -> anyhow::Result<()> {
+		let round_id = round_tx.compute_txid();
+
+		let mut conn = self.client.get().await?;
+		let tx = conn.transaction().await?;
+
+		let statement = tx.prepare_typed("
+			INSERT INTO round (id, tx, signed_tree, nb_input_vtxos, expiry)
+			VALUES ($1, $2, $3, $4, $5);
+		", &[Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::INT4]).await?;
+		tx.execute(
+			&statement,
+			&[
+				&round_id.to_string(),
+				&serialize(&round_tx),
+				&vtxos.spec.encode(),
+				&(nb_input_vtxos as i32),
+				&(vtxos.spec.spec.expiry_height as i32)
+			]
+		).await?;
+
+		Self::inner_insert_vtxos(&tx, &vtxos.all_vtxos().collect::<Vec<_>>()).await?;
+
+		tx.commit().await?;
+		Ok(())
+	}
+
+	/// Get an iterator that yields each round in the database.
+	///
+	/// No particular order is guaranteed.
+	pub async fn fetch_all_rounds(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<StoredRound>> + '_> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT id, tx, signed_tree, nb_input_vtxos FROM round
+		").await?;
+
+		let params: Vec<String> = vec![];
+		let rows = conn.query_raw(&statement, params).await?;
+
+		Ok(
+			rows
+				.map_ok(|row| StoredRound::try_from(row).expect("corrupt db"))
+				.map_err(Into::into)
+		)
+	}
+
+	pub async fn get_round(&self, id: Txid) -> anyhow::Result<Option<StoredRound>> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE id = $1;
+		").await?;
+
+		let rows = conn.query(&statement, &[&id.to_string()]).await?;
+		let round = match rows.get(0) {
+			Some(row) => Some(StoredRound::try_from(row.clone()).expect("corrupt db")),
+			_ => None
+		};
+
+		Ok(round)
+	}
+
+	pub async fn remove_round(&self, id: Txid) -> anyhow::Result<()> {
+		let conn = self.client.get().await?;
+
+		// TODO: implement soft deletion
+		let statement = conn.prepare("
+			DELETE FROM round WHERE id = $1;
+		").await?;
+
+		conn.execute(&statement, &[&id.to_string()]).await?;
+
+		Ok(())
+	}
+
+	/// Get all round IDs of rounds that expired before or on `height`.
+	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<Txid>> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry <= $1
+		").await?;
+
+		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
+		Ok(rows.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id).try_collect::<Vec<_>>().await?)
+	}
+
+	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<Txid>> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry > $1
+		").await?;
+
+		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
+		Ok(rows.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id).try_collect::<Vec<_>>().await?)
+	}
+
+	/**
+	 * Sweeps
+	*/
+
 	/// Add the pending sweep tx.
-	pub fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
-		let raw = serialize(tx);
-		self.db.put_cf(&self.cf_pending_sweeps(), txid, raw)?;
+	pub async fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare_typed("
+			INSERT INTO pending_sweep (txid, tx) VALUES ($1, $2);
+		", &[Type::TEXT, Type::BYTEA]).await?;
+		conn.execute(
+			&statement,
+			&[&txid.to_string(), &serialize(tx)]
+		).await?;
+
 		Ok(())
 	}
 
 	/// Drop the pending sweep tx by txid.
-	pub fn drop_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
-		self.db.delete_cf(&self.cf_pending_sweeps(), txid)?;
+	pub async fn drop_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
+		let conn = self.client.get().await?;
+
+		// TODO: implement soft deletion
+		let statement = conn.prepare("
+			DELETE FROM pending_sweep WHERE txid = $1;
+		").await?;
+		conn.execute(&statement, &[&txid.to_string()]).await?;
+
 		Ok(())
 	}
 
 	/// Fetch all pending sweep txs.
-	pub fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
-		let mut iter = self.db.iterator_cf(&self.cf_pending_sweeps(), IteratorMode::Start);
+	pub async fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT txid, tx FROM pending_sweep
+		").await?;
 
-		let mut ret = HashMap::new();
-		while let Some(res) = iter.next() {
-			let (key, value) = res.context("db pending sweeps iter error")?;
-			let txid = Txid::from_slice(&key).context("corrupt db: invalid pending sweep txid")?;
-			let tx = deserialize(&value).context("corrupt db: invalid pending sweep txid")?;
-			ret.insert(txid, tx);
+		let rows = conn.query(&statement, &[]).await?;
+
+		let pending_sweeps = rows
+			.into_iter()
+			.map(|row| -> anyhow::Result<(Txid, Transaction)> {
+				let sweep = PendingSweep::try_from(row).expect("corrupt db");
+				Ok((sweep.txid, sweep.tx))
+			})
+			.collect::<Result<HashMap<Txid, Transaction>, _>>()?;
+
+		Ok(pending_sweeps)
+	}
+
+	/**
+	 * Wallet
+	*/
+
+	pub async fn get_master_seed(&self) -> anyhow::Result<Option<Vec<u8>>> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT seed FROM wallet
+		").await?;
+		let rows = conn.query(&statement, &[]).await?;
+
+		Ok(rows.get(0).map(|row| row.get::<_, Vec<u8>>(0)))
+	}
+
+	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Option<String>> {
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT mnemonic FROM wallet
+		").await?;
+		let rows = conn.query(&statement, &[]).await?;
+
+		Ok(rows.get(0).map(|row| row.get::<_, String>(0)))
+	}
+
+	pub async fn store_master_mnemonic_and_seed(&self, mnemonic: &bip39::Mnemonic) -> anyhow::Result<()> {
+		if self.get_master_seed().await?.is_some() {
+			bail!("a wallet already exists in this DB")
+		}
+
+		let conn = self.client.get().await?;
+		let statement = conn.prepare_typed("
+			INSERT INTO wallet (mnemonic, seed) VALUES ($1, $2);
+		", &[Type::TEXT, Type::BYTEA]).await?;
+		conn.execute(
+			&statement,
+			&[&mnemonic.to_string(), &mnemonic.to_seed("").to_vec()]
+		).await?;
+
+		Ok(())
+	}
+
+	pub async fn store_changeset(&self, c: &ChangeSet) -> anyhow::Result<()> {
+		let mut buf = Vec::new();
+		ciborium::into_writer(c, &mut buf).unwrap();
+
+		let conn = self.client.get().await?;
+		let statement = conn.prepare_typed("
+			INSERT INTO wallet_changeset (content) VALUES ($1);
+		", &[Type::BYTEA]).await?;
+		conn.execute(&statement, &[&buf]).await?;
+
+		Ok(())
+	}
+
+	pub async fn read_aggregate_changeset(&self) -> anyhow::Result<Option<ChangeSet>> {
+		let mut ret = Option::<ChangeSet>::None;
+
+		let conn = self.client.get().await?;
+		let statement = conn.prepare("
+			SELECT content FROM wallet_changeset
+		").await?;
+		let rows = conn.query(&statement, &[]).await?;
+
+		for row in rows {
+			let value = row.get::<_, Vec<u8>>(0);
+			let cs = ciborium::from_reader::<ChangeSet, _>(&*value).context("corrupt db: changeset value")?;
+
+			if let Some(ref mut r) = ret {
+				r.merge(cs);
+			} else {
+				ret = Some(cs);
+			}
 		}
 
 		Ok(ret)
 	}
 }
-
-//TODO(stevenroose) write test to make sure the iterator in get_fresh_round_ids doesn't skip
-//any rounds on the same height.

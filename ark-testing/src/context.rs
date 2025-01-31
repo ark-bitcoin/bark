@@ -174,6 +174,13 @@ impl TestContext {
 				rpc_user: None,
 				rpc_pass: None,
 			},
+			postgres: config::Postgres {
+				host: String::from("localhost"),
+				port: 5432,
+				name: String::from("aspdb"),
+				user: None,
+				password: None
+			},
 			lightningd,
 		}
 	}
