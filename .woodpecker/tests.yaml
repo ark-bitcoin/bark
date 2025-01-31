@@ -97,14 +97,22 @@ steps:
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
     commands:
+      - cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
       - cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path bark/Cargo.toml
       - cargo build    --release --target x86_64-pc-windows-gnu    --locked --manifest-path bark/Cargo.toml
       - cargo zigbuild --release --target x86_64-apple-darwin      --locked --manifest-path bark/Cargo.toml
       - cargo zigbuild --release --target aarch64-apple-darwin     --locked --manifest-path bark/Cargo.toml
-      - cp ./target/x86_64-unknown-linux-gnu/release/bark  ./target/bark-linux-x86_64
-      - cp ./target/x86_64-pc-windows-gnu/release/bark.exe ./target/bark-windows-x86_64.exe
-      - cp ./target/x86_64-apple-darwin/release/bark       ./target/bark-apple-x86_64
-      - cp ./target/aarch64-apple-darwin/release/bark      ./target/bark-apple-aarch64
+      - cd ./target
+      - cp x86_64-unknown-linux-gnu/release/aspd  aspd-linux-x86_64
+      - cp x86_64-unknown-linux-gnu/release/bark  bark-linux-x86_64
+      - cp x86_64-pc-windows-gnu/release/bark.exe bark-windows-x86_64.exe
+      - cp x86_64-apple-darwin/release/bark       bark-apple-x86_64
+      - cp aarch64-apple-darwin/release/bark      bark-apple-aarch64
+      - sha256sum aspd-linux-x86_64        > SHA256SUMS
+      - sha256sum bark-linux-x86_64       >> SHA256SUMS
+      - sha256sum bark-windows-x86_64.exe >> SHA256SUMS
+      - sha256sum bark-apple-x86_64       >> SHA256SUMS
+      - sha256sum bark-apple-aarch64      >> SHA256SUMS
 
   - name: publish
     when:
@@ -113,10 +121,12 @@ steps:
     image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
     settings:
       files:
+        - "./target/aspd-linux-x86_64"
         - "./target/bark-linux-x86_64"
         - "./target/bark-windows-x86_64.exe"
         - "./target/bark-apple-x86_64"
         - "./target/bark-apple-aarch64"
+        - "./target/SHA256SUMS"
       api_key:
         from_secret: RELEASE
 
