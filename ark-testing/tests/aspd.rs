@@ -381,7 +381,7 @@ async fn double_spend_round() {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
-			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0]).unwrap();
+			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
 
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
 			let res1 = c1.submit_payment(req.clone()).await;

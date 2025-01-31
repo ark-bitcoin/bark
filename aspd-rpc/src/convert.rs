@@ -2,6 +2,7 @@
 use std::convert::TryFrom;
 use std::fmt;
 
+use ark::rounds::VtxoOwnershipChallenge;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, FeeRate};
 
@@ -48,10 +49,11 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 						offboard_feerate_sat_vkb: offboard_feerate.to_sat_per_kwu() * 4,
 					})
 				},
-				ark::rounds::RoundEvent::Attempt { round_seq, attempt_seq } => {
+				ark::rounds::RoundEvent::Attempt { round_seq, attempt_seq, challenge } => {
 					crate::round_event::Event::Attempt(crate::RoundAttempt {
 						round_seq: round_seq as u64,
 						attempt_seq: attempt_seq as u64,
+						vtxo_ownership_challenge: challenge.inner().to_vec(),
 					})
 				},
 				ark::rounds::RoundEvent::VtxoProposal {
@@ -109,6 +111,9 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 				ark::rounds::RoundEvent::Attempt {
 					round_seq: m.round_seq as usize,
 					attempt_seq: m.attempt_seq as usize,
+					challenge: VtxoOwnershipChallenge::new(
+						m.vtxo_ownership_challenge.try_into().map_err(|_| "invalid challenge")?
+					),
 				}
 			},
 			crate::round_event::Event::VtxoProposal(m) => {

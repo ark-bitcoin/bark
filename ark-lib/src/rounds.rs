@@ -1,15 +1,62 @@
 
 use std::fmt;
 use std::collections::HashMap;
+use std::io::Write;
 use std::str::FromStr;
 
-use bitcoin::hashes::Hash;
-use bitcoin::{FeeRate, Transaction, Txid};
-use bitcoin::secp256k1::{schnorr, PublicKey};
+use bitcoin::hashes::{sha256, Hash};
+use bitcoin::hex::DisplayHex;
+use bitcoin::secp256k1::PublicKey;
+use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
+use bitcoin::secp256k1::{schnorr::{self, Signature}, Message};
+use rand::Rng;
 
-use crate::{musig, VtxoId};
+use crate::{musig, util, Vtxo, VtxoId};
 use crate::tree::signed::VtxoTreeSpec;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VtxoOwnershipChallenge([u8; 32]);
+
+impl VtxoOwnershipChallenge {
+	const CHALENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"Ark round input ownership proof ";
+
+	pub fn new(value: [u8; 32]) -> Self {
+		Self(value)
+	}
+
+	pub fn replace(&mut self, challenge: &VtxoOwnershipChallenge) {
+		self.0 = challenge.inner();
+	}
+
+	pub fn generate() -> Self {
+		Self(rand::thread_rng().gen())
+	}
+
+	pub fn inner(&self) -> [u8; 32] {
+		self.0
+	}
+
+	/// Combines [`Challenge`] and [`VtxoId`] in a signable message
+	///
+	/// Note: because we use [`VtxoId`] in the message, there is no
+	fn as_signable_message(&self, vtxo_id: VtxoId) -> Message {
+		let mut engine = sha256::Hash::engine();
+		engine.write_all(Self::CHALENGE_MESSAGE_PREFIX).unwrap();
+		engine.write_all(&self.0).unwrap();
+		engine.write_all(&vtxo_id.to_bytes()).unwrap();
+
+		let hash = sha256::Hash::from_engine(engine).to_byte_array();
+		Message::from_digest(hash)
+	}
+
+	pub fn sign_with(&self, vtxo_id: VtxoId, vtxo_keypair: Keypair) -> Signature {
+		util::SECP.sign_schnorr(&self.as_signable_message(vtxo_id), &vtxo_keypair)
+	}
+
+	pub fn verify_input_vtxo_sig(&self, vtxo: &Vtxo, sig: &Signature) -> Result<(), bitcoin::secp256k1::Error> {
+		util::SECP.verify_schnorr(sig, &self.as_signable_message(vtxo.id()), &vtxo.spec().user_pubkey.x_only_public_key().0)
+	}
+}
 
 
 /// Identifier for a past round.
@@ -102,6 +149,7 @@ pub enum RoundEvent {
 	Attempt {
 		round_seq: usize,
 		attempt_seq: usize,
+		challenge: VtxoOwnershipChallenge,
 	},
 	VtxoProposal {
 		round_seq: usize,
@@ -131,10 +179,11 @@ impl fmt::Display for RoundEvent {
 					.field("offboard_feerate", offboard_feerate)
 					.finish()
 			},
-			Self::Attempt { round_seq, attempt_seq } => {
+			Self::Attempt { round_seq, attempt_seq, challenge } => {
 				f.debug_struct("Attempt")
 					.field("round_seq", round_seq)
 					.field("attempt_seq", attempt_seq)
+					.field("challenge", &challenge.inner().as_hex())
 					.finish()
 			},
 			Self::VtxoProposal { round_seq, unsigned_round_tx, connector_pubkey, .. } => {

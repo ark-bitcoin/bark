@@ -49,7 +49,7 @@ use ark::{
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::{RoundEvent, RoundId};
+use ark::rounds::{VtxoOwnershipChallenge, RoundEvent, RoundId};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc as rpc;
 use bitcoin_ext::P2TR_DUST;
@@ -68,6 +68,7 @@ lazy_static::lazy_static! {
 
 const OOR_PUB_KEY_INDEX: u32 = 0;
 const MIN_DERIVED_INDEX: u32 = OOR_PUB_KEY_INDEX + 1;
+
 
 pub struct Pagination {
 	pub page_index: u16,
@@ -1099,7 +1100,6 @@ impl <P>Wallet<P> where
 		let mut round_info = None;
 
 		'round: loop {
-
 			// If we don't have a round info yet, wait for round start.
 			if round_info.is_none() {
 				debug!("Waiting for a new round to start...");
@@ -1115,11 +1115,13 @@ impl <P>Wallet<P> where
 			}
 
 			// then we expect the first attempt message
-			match events.next().await.context("events stream broke")?? {
-				RoundEvent::Attempt { attempt_seq, .. } => {
+			let mut challenge = match events.next().await.context("events stream broke")?? {
+				RoundEvent::Attempt { attempt_seq, challenge, .. } => {
 					if attempt_seq != 0 {
 						error!("First attempt message didn't have number 0, but {attempt_seq}");
 					}
+
+					challenge
 				},
 				e @ RoundEvent::Start { .. } => {
 					warn!("Unexpected new round started...");
@@ -1128,7 +1130,7 @@ impl <P>Wallet<P> where
 				},
 				//TODO(stevenroose) make this robust
 				other => panic!("Unexpected message: {:?}", other),
-			}
+			};
 
 			info!("Round started");
 
@@ -1177,8 +1179,21 @@ impl <P>Wallet<P> where
 				debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
 					input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
 				);
+
 				let res = asp.client.submit_payment(rpc::SubmitPaymentRequest {
-					input_vtxos: input_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+					input_vtxos: input_vtxos.iter().map(|vtxo| {
+						let vtxo_id = vtxo.id();
+						let key = self.vtxo_seed.derive_keypair(
+							self.db.get_vtxo_key_index(vtxo).expect("owned vtxo key should be in database")
+						);
+						rpc::InputVtxo {
+							vtxo_id: vtxo_id.to_bytes().to_vec(),
+							ownership_proof: challenge
+								.sign_with(vtxo_id, key)
+								.serialize()
+								.to_vec()
+						}
+					}).collect(),
 					vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
 						rpc::VtxoRequest {
 							amount: r.amount.to_sat(),
@@ -1229,7 +1244,7 @@ impl <P>Wallet<P> where
 							continue 'round;
 						},
 						e @ RoundEvent::Attempt { .. } => {
-							e.process_attempt(round_info.as_mut().expect("should be some"));
+							e.process_attempt(round_info.as_mut().expect("should be some round info here"), &mut challenge);
 							continue 'attempt;
 						},
 						//TODO(stevenroose) make this robust
@@ -1314,7 +1329,7 @@ impl <P>Wallet<P> where
 							continue 'round;
 						},
 						e @ RoundEvent::Attempt { .. } => {
-							e.process_attempt(round_info.as_mut().expect("should be some"));
+							e.process_attempt(round_info.as_mut().expect("should be some round info here"), &mut challenge);
 							continue 'attempt;
 						},
 						//TODO(stevenroose) make this robust
@@ -1397,7 +1412,7 @@ impl <P>Wallet<P> where
 						continue 'round;
 					},
 					e @ RoundEvent::Attempt { .. } => {
-						e.process_attempt(round_info.as_mut().expect("should be some"));
+						e.process_attempt(round_info.as_mut().expect("should be some round info here"), &mut challenge);
 						continue 'attempt;
 					},
 					//TODO(stevenroose) make this robust
@@ -1453,11 +1468,12 @@ trait RoundEventExt: Borrow<RoundEvent> {
 	///
 	/// If it belongs to the same round, returns the updated round info.
 	/// If it belongs to another round, we return None.
-	fn process_attempt(&self, round_info: &mut RoundInfo) {
-		if let RoundEvent::Attempt { round_seq, attempt_seq } = self.borrow() {
+	fn process_attempt(&self, round_info: &mut RoundInfo, challenge: &mut VtxoOwnershipChallenge) -> () {
+		if let RoundEvent::Attempt { round_seq, attempt_seq, challenge: c } = self.borrow() {
 			if round_info.round_seq == *round_seq {
 				debug!("New round attempt...");
 				round_info.attempt_seq = *attempt_seq;
+				challenge.replace(c);
 			} else {
 				warn!("Received a new attempt message for a different round. Restarting...");
 			}
@@ -1472,7 +1488,7 @@ impl RoundEventExt for RoundEvent {}
 struct RoundInfo {
 	round_seq: usize,
 	attempt_seq: usize,
-	offboard_feerate: FeeRate,
+	offboard_feerate: FeeRate
 }
 
 impl RoundInfo {
