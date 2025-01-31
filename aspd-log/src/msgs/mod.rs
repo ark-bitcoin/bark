@@ -10,3 +10,5 @@ pub use self::txindex::*;
 mod wallet;
 pub use self::wallet::*;
 
+mod system;
+pub use self::system::*;
