@@ -18,6 +18,8 @@ pub mod env {
 	// If a daemon isn't initialized in DAEMON_INIT_TIMEOUT_MILLIS
 	// the test will fail
 	pub const DAEMON_INIT_TIMEOUT_MILLIS: &str = "DAEMON_INIT_TIMEOUT";
+	/// The env var to reach postgres binaries folder
+	pub const POSTGRES_BINS: &str = "POSTGRES_BINS";
 }
 
 pub mod bitcoind {

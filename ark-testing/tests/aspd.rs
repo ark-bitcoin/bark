@@ -131,7 +131,9 @@ async fn restart_key_stability() {
 	aspd.shutdown_bitcoind().await;
 	aspd.stop().await.unwrap();
 
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let mut cfg = aspd.config().clone();
+	cfg.bitcoind.url = String::new();
+	let aspd = ctx.new_aspd_with_cfg("aspd", cfg).await;
 	let asp_key2 = {
 		let mut client = aspd.get_public_client().await;
 		let res = client.get_ark_info(rpc::Empty {}).await.unwrap().into_inner();

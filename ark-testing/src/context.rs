@@ -11,6 +11,7 @@ use tonic::transport::Uri;
 
 use aspd::config::{self, Config};
 
+use crate::daemon::aspd::postgresd::{use_global_database, Postgres, PostgresHelper};
 use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
@@ -37,6 +38,10 @@ pub struct TestContext {
 	pub use_electrs: bool,
 
 	pub bitcoind: Bitcoind,
+
+	// ensures postgres daemon, if any, stays alive the TestContext's lifetime
+	_postgresd: Option<Postgres>,
+	postgres_config: config::Postgres
 }
 
 impl TestContext {
@@ -71,11 +76,25 @@ impl TestContext {
 		bitcoind.init_wallet().await;
 		bitcoind.prepare_funds().await;
 
+		let (postgres_config, postgresd) = if use_global_database() {
+			let helper = PostgresHelper::new_global(name);
+			// NB: we only need to clean up database when using global one: local dirs get wiped on each tests
+			helper.cleanup_dbs(name).await.expect("could not cleanup postgres databases");
+			(helper.as_base_config(), None)
+		} else {
+			let postgresd = Self::new_postgres("postgres", datadir.clone()).await;
+			(postgresd.helper().as_base_config(), Some(postgresd))
+		};
+
+
 		TestContext {
 			name: name.to_string(),
 			use_electrs: should_use_electrs(),
 			datadir,
 			bitcoind,
+
+			postgres_config,
+			_postgresd: postgresd,
 		}
 	}
 
@@ -119,6 +138,19 @@ impl TestContext {
 		let mut ret = Electrs::new(name, cfg);
 		ret.start().await.unwrap();
 		ret
+	}
+
+	async fn new_postgres(name: &str, datadir: PathBuf) -> Postgres {
+		let mut ret = Postgres::new(name, datadir);
+		ret.start().await.unwrap();
+		ret
+	}
+
+	fn postgres_default_cfg(&self, name: impl AsRef<str>) -> config::Postgres {
+		config::Postgres {
+			name: format!("{}/{}", &self.name, name.as_ref()),
+			..self.postgres_config.clone()
+		}
 	}
 
 	pub async fn aspd_default_cfg(
@@ -174,13 +206,7 @@ impl TestContext {
 				rpc_user: None,
 				rpc_pass: None,
 			},
-			postgres: config::Postgres {
-				host: String::from("localhost"),
-				port: 5432,
-				name: String::from("aspdb"),
-				user: None,
-				password: None
-			},
+			postgres: self.postgres_default_cfg(name),
 			lightningd,
 		}
 	}
@@ -190,6 +216,7 @@ impl TestContext {
 
 		assert_eq!("", cfg.bitcoind.url, "bitcoind url already set");
 		cfg.bitcoind.url = bitcoind.rpc_url();
+
 		// We allow some tests to set custom bitcoind auth
 		if cfg.bitcoind.cookie.is_none() && cfg.bitcoind.rpc_user.is_none() {
 			cfg.bitcoind.cookie = Some(bitcoind.rpc_cookie());
