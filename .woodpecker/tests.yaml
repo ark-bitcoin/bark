@@ -64,6 +64,21 @@ steps:
       - ls -al $${LIGHTNINGD_EXEC}
       - TEST_DIRECTORY=./test/btc28 cargo test --package ark-testing
 
+  - name: test-integration-esplora
+    depends_on: build
+    image: registry.2nd.dev/build:7
+    environment:
+      BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
+      LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
+      ELECTRS_EXEC: /root/.cargo/bin/electrs
+      CHAIN_SOURCE: esplora
+    commands:
+      - git log --oneline | head -n 1
+      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
+      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
+      - ls -al ${ELECTRS_EXEC}
+      - TEST_DIRECTORY=./test/esplora cargo test --package ark-testing -- --skip exit
+
   - name: use-bark-as-dependency
     depends_on: merge-master
     image: registry.2nd.dev/build:7

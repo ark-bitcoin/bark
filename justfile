@@ -32,7 +32,11 @@ alias int := test-integration
 test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
 
-test: test-unit test-integration
+alias int-esplora := test-integration-esplora
+test-integration-esplora TEST="": build docker-pull
+	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}} -- --skip exit
+
+test: test-unit test-integration test-integration-esplora
 
 release-all:
 	cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
