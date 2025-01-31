@@ -11,7 +11,7 @@ use tonic::transport::Uri;
 
 use aspd::config::{self, Config};
 
-use crate::util::{should_use_electrs, test_data_directory};
+use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
@@ -234,7 +234,7 @@ impl TestContext {
 		let cfg = BarkConfig {
 			datadir,
 			asp_url: aspd.asp_url(),
-			network: String::from("regtest"),
+			network: Regtest.to_string(),
 		};
 		Bark::try_new(name, bitcoind, electrs, cfg).await
 	}
@@ -285,6 +285,7 @@ impl TestContext {
 		let address = bark.get_onchain_address().await;
 		let txid = self.bitcoind.fund_addr(address, amount).await;
 		self.bitcoind.generate(1).await;
+		bark.await_transaction_propagation(&txid).wait(30000).await;
 		txid
 	}
 

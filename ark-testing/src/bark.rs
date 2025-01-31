@@ -7,7 +7,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, Network, OutPoint};
+use bitcoin::{Address, Amount, Network, OutPoint, Txid};
+use bitcoincore_rpc::RpcApi;
 use serde_json;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -57,6 +58,11 @@ impl Bark {
 	/// Returns bitcoind daemon associated with this Bark client.
 	pub fn bitcoind(&self) -> &Bitcoind {
 		&self.bitcoind
+	}
+
+	/// Returns electrs daemon associated with this Bark client.
+	pub fn electrs(&self) -> &Option<Electrs> {
+		&self.electrs
 	}
 
 	pub async fn try_new(name: impl AsRef<str>, bitcoind: Bitcoind, electrs: Option<Electrs>, cfg: BarkConfig) -> anyhow::Result<Bark> {
@@ -112,6 +118,22 @@ impl Bark {
 
 	pub fn command_log_file(&self) -> PathBuf {
 		self.config.datadir.join(COMMAND_LOG_FILE)
+	}
+
+	/// Waits until a transaction with the given ID is synced by the chain source in use by the bark
+	/// instance.
+	pub async fn await_transaction_propagation(&self, txid: &Txid) {
+		if let Some(electrs) = &self.electrs {
+			let client = electrs.async_client();
+			while client.get_tx(&txid).await.ok().flatten().is_none() {
+				tokio::time::sleep(Duration::from_millis(200)).await;
+			}
+		} else {
+			let client = self.bitcoind.sync_client();
+			while client.get_raw_transaction(&txid, None).is_err() {
+				tokio::time::sleep(Duration::from_millis(200)).await;
+			}
+		}
 	}
 
 	pub async fn onchain_balance(&self) -> Amount {

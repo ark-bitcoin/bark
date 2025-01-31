@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use bdk_esplora::esplora_client::Builder;
+use bdk_esplora::esplora_client::{AsyncClient, Builder};
 use tokio::fs;
 use tokio::process::Command;
 
@@ -36,6 +36,10 @@ impl Electrs {
 			state: ElectrsHelperState::default()
 		};
 		Daemon::wrap(inner)
+	}
+
+	pub fn async_client(&self) -> AsyncClient {
+		Builder::new(&self.rest_url()).build_async().unwrap()
 	}
 
 	pub fn electrum_port(&self) -> u16 {
