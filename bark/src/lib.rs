@@ -1,3 +1,7 @@
+
+pub extern crate ark;
+pub extern crate bark_json as json;
+
 pub extern crate lightning_invoice;
 pub extern crate lnurl as lnurllib;
 
