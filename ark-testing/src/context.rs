@@ -1,14 +1,19 @@
-
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::Duration;
 
 use bitcoin::{Amount, FeeRate, Network, Txid};
+use bitcoin::Network::Regtest;
 use bitcoincore_rpc::RpcApi;
 use tokio::fs;
+use tonic::transport::Uri;
+
+use aspd::config::{self, Config};
 
 use crate::util::test_data_directory;
 use crate::{
-	constants, Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
+	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
 };
 
 pub trait ToAspUrl {
@@ -97,41 +102,74 @@ impl TestContext {
 		bitcoind
 	}
 
-	pub async fn new_aspd_with_cfg(&self, name: impl AsRef<str>, cfg: AspdConfig) -> Aspd {
-		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-		let mut ret = Aspd::new(name, bitcoind, cfg);
-		ret.start().await.unwrap();
-		ret
-	}
-
 	pub async fn aspd_default_cfg(
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
-	) -> AspdConfig {
-		let datadir = self.datadir.join(name.as_ref());
-		let mut aspd_config = AspdConfig {
-			datadir: datadir.clone(),
+	) -> Config {
+		let name = name.as_ref();
+		let data_dir = self.datadir.join(name);
+
+		let lightningd = if let Some(lnd) = lightningd {
+			let grpc_details = lnd.grpc_details().await;
+			Some(config::Lightningd {
+				uri: Uri::from_str(&grpc_details.uri).expect("failed to parse cln grpc uri"),
+				server_cert_path: grpc_details.server_cert_path,
+				client_cert_path: grpc_details.client_cert_path,
+				client_key_path: grpc_details.client_key_path,
+			})
+		} else {
+			None
+		};
+
+		Config {
+			data_dir,
+			network: Regtest,
+			vtxo_expiry_delta: 144,
+			vtxo_exit_delta: 12,
+			htlc_delta: 6,
+			htlc_expiry_delta: 6,
 			round_interval: Duration::from_millis(500),
 			round_submit_time: Duration::from_millis(500),
 			round_sign_time: Duration::from_millis(500),
-			vtxo_expiry_delta: 1 * 24 * 6,
-			vtxo_exit_delta: 2 * 6,
+			nb_round_nonces: 64,
+			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
+			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
+			round_sweep_interval: Duration::from_secs(60),
 			sweep_threshold: Amount::from_sat(1_000_000),
-			round_onboard_confirmations: constants::ONBOARD_CONFIRMATIONS,
-			nb_round_nonces: 100,
-			use_bitcoind_auth_pass: false,
-			cln_grpc_uri: None,
-			cln_grpc_server_cert_path: None,
-			cln_grpc_client_cert_path: None,
-			cln_grpc_client_key_path: None,
-		};
+			round_onboard_confirmations: constants::ONBOARD_CONFIRMATIONS as usize,
+			max_onboard_value: None,
+			otel_collector_endpoint: None,
+			rpc: config::Rpc {
+				// these will be overwritten on start, but can't be empty
+				public_address: SocketAddr::from_str("127.0.0.1:3535").unwrap(),
+				admin_address: None,
+			},
+			bitcoind: config::Bitcoind {
+				// these will be overwritten on start, but can't be empty
+				url: "".into(),
+				cookie: None,
+				rpc_user: None,
+				rpc_pass: None,
+			},
+			lightningd,
+		}
+	}
 
-		if lightningd.is_some() {
-			aspd_config.configure_lighting(lightningd.unwrap()).await;
-		};
+	pub async fn new_aspd_with_cfg(&self, name: impl AsRef<str>, mut cfg: Config) -> Aspd {
+		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
 
-		aspd_config
+		assert_eq!("", cfg.bitcoind.url, "bitcoind url already set");
+		cfg.bitcoind.url = bitcoind.rpc_url();
+		// We allow some tests to set custom bitcoind auth
+		if cfg.bitcoind.cookie.is_none() && cfg.bitcoind.rpc_user.is_none() {
+			cfg.bitcoind.cookie = Some(bitcoind.rpc_cookie());
+		}
+
+		let mut ret = Aspd::new(name, bitcoind, cfg);
+		ret.start().await.unwrap();
+
+		ret
 	}
 
 	/// Creates new aspd without any funds.
@@ -140,8 +178,8 @@ impl TestContext {
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
 	) -> Aspd {
-		let name = name.as_ref();
-		self.new_aspd_with_cfg(name, self.aspd_default_cfg(name, lightningd).await).await
+		let cfg = self.aspd_default_cfg(name.as_ref(), lightningd).await;
+		self.new_aspd_with_cfg(name, cfg).await
 	}
 
 	/// Creates new aspd and immediately funds it. Waits until the aspd's bitcoind

@@ -10,11 +10,11 @@ use std::time::Duration;
 use bitcoin::key::Keypair;
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
-use ark::{ArkoorVtxo, Vtxo};
 use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
+use ark::{ArkoorVtxo, Vtxo};
 use aspd_rpc as rpc;
 
-use ark_testing::{AspdConfig, TestContext};
+use ark_testing::TestContext;
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 use ark_testing::daemon::aspd;
 use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
@@ -140,15 +140,13 @@ async fn large_round() {
 
 	info!("Running multiple_round_test with N set to {}", N);
 
-	// Initialize the test
-	let aspd_cfg = AspdConfig {
+	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
 		round_interval: Duration::from_millis(2_000),
 		round_submit_time: Duration::from_millis(100 * N as u64),
 		round_sign_time: Duration::from_millis(1000 * N as u64),
 		nb_round_nonces: 200,
 		..ctx.aspd_default_cfg("aspd", None).await
-	};
-	let aspd = ctx.new_aspd_with_cfg("aspd", aspd_cfg).await;
+	}).await;
 
 	// Fund the asp
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
@@ -489,7 +487,7 @@ async fn second_round_attempt() {
 	}
 
 	let ctx = TestContext::new("bark/second_round_attempt").await;
-	let aspd = ctx.new_aspd_with_cfg("aspd", AspdConfig {
+	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
 		round_interval: Duration::from_secs(3600),
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;

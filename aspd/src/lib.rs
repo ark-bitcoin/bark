@@ -15,18 +15,19 @@ mod rpcserver;
 mod round;
 mod txindex;
 mod telemetry;
+pub mod config;
+pub use crate::config::Config;
 
 use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
+use bitcoin::{bip32, Address, Amount, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
@@ -58,149 +59,8 @@ const DEEPLY_CONFIRMED: BlockHeight = 12;
 
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";
+pub const ASPD_CONFIG_FILE: &str = "config.toml";
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Config {
-	pub network: bitcoin::Network,
-	pub public_rpc_address: SocketAddr,
-	pub admin_rpc_address: Option<SocketAddr>,
-	pub bitcoind_url: String,
-	pub bitcoind_cookie: Option<PathBuf>,
-	pub bitcoind_rpc_user: Option<String>,
-	pub bitcoind_rpc_pass: Option<String>,
-	pub otel_collector_endpoint: Option<String>,
-
-	// vtxo spec
-	pub vtxo_expiry_delta: u16,
-	pub vtxo_exit_delta: u16,
-
-	// ln
-	pub htlc_delta: u16,
-	pub htlc_expiry_delta: u16,
-
-	pub round_interval: Duration,
-	pub round_submit_time: Duration,
-	pub round_sign_time: Duration,
-	pub nb_round_nonces: usize,
-	/// Number of confirmations needed for onboard vtxos to be spend in rounds.
-	pub round_onboard_confirmations: usize,
-	//TODO(stevenroose) get these from a fee estimator service
-	/// Fee rate used for the round tx.
-	pub round_tx_feerate: FeeRate,
-	/// Fallback feerate for sweep txs.
-	pub sweep_tx_fallback_feerate: FeeRate,
-
-	/// Interval at which to sweep expired rounds.
-	pub round_sweep_interval: Duration,
-	/// Don't make sweep txs for amounts lower than this amount.
-	pub sweep_threshold: Amount,
-
-	// limits
-	#[serde(rename = "max_onboard_value_sat", with = "bitcoin::amount::serde::as_sat::opt")]
-	pub max_onboard_value: Option<Amount>,
-
-	// lightning
-	#[serde(skip_serializing_if = "Option::is_none")]
-	#[serde(default)]
-	pub cln_config: Option<ClnConfig>
-}
-
-// NB some random defaults to have something
-impl Default for Config {
-	fn default() -> Config {
-		Config {
-			network: bitcoin::Network::Regtest,
-			public_rpc_address: "0.0.0.0:3535".parse().unwrap(),
-			admin_rpc_address: Some("127.0.0.1:3536".parse().unwrap()),
-			bitcoind_url: "http://127.0.0.1:38332".into(),
-			bitcoind_cookie: Some("~/.bitcoin/signet/.cookie".into()),
-			bitcoind_rpc_user: None,
-			bitcoind_rpc_pass: None,
-			otel_collector_endpoint: Some("http://127.0.0.1:4317".parse().unwrap()),
-			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
-			vtxo_exit_delta: 2 * 6, // 2 hrs
-			htlc_delta: 1 * 6, // 1 hr
-			htlc_expiry_delta: 1 * 6, // 1 hr
-			round_interval: Duration::from_secs(10),
-			round_submit_time: Duration::from_secs(2),
-			round_sign_time: Duration::from_secs(2),
-			nb_round_nonces: 10,
-			round_onboard_confirmations: 12,
-			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
-			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
-			round_sweep_interval: Duration::from_secs(1 * 60 * 60), // 1 hr
-			sweep_threshold: Amount::from_sat(1_000_000),
-			max_onboard_value: None,
-			cln_config: None,
-		}
-	}
-}
-
-impl Config {
-	fn bitcoind_auth(&self) -> bdk_bitcoind_rpc::bitcoincore_rpc::Auth {
-		match (&self.bitcoind_rpc_user, &self.bitcoind_rpc_pass) {
-			(Some(user), Some(pass)) => {
-				return bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(user.into(), pass.into());
-			},
-			(Some(_), None) => panic!("Missing configuration for bitcoind_rpc_pass."),
-			(None, Some(_)) => panic!("Missing configurationfor bitcoind_rpc_user."),
-			(None, None) => {} // Do nothing,
-		};
-
-		let bitcoind_cookie_file = self.bitcoind_cookie.as_ref()
-			.expect("The bitcoind-cookie must be set if username and password aren't provided");
-		bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(bitcoind_cookie_file.into())
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClnConfig {
-	#[serde(with = "serde_util::uri")]
-	pub grpc_uri: tonic::transport::Uri,
-	pub grpc_server_cert_path: PathBuf,
-	pub grpc_client_cert_path: PathBuf,
-	pub grpc_client_key_path: PathBuf,
-}
-
-impl Config {
-	pub fn read_from_datadir<P: AsRef<Path>>(datadir: P) -> anyhow::Result<Self> {
-		let path = datadir.as_ref().join("config.json");
-		trace!("Reading configuraton from file {}", path.display());
-		let bytes = fs::read(&path)
-			.with_context(|| format!("failed to read config file: {}", path.display()))?;
-
-		serde_json::from_slice::<Self>(&bytes).context("invalid config file")
-	}
-
-	pub fn write_to_datadir<P: AsRef<Path>>(&self, datadir: P) -> anyhow::Result<()> {
-		let path = datadir.as_ref().join("config.json");
-		trace!("Dumping configuration from file {}", path.display());
-
-		// write the config to disk
-		let config_str = serde_json::to_string_pretty(&self)?;
-		fs::write(path, config_str.as_bytes())
-			.context("failed to write config file")?;
-
-			Ok(())
-	}
-
-	pub fn create_backup_in_datadir<P: AsRef<Path>>(datadir: P) -> anyhow::Result<()> {
-		let mut index = 0;
-		let source = datadir.as_ref().join("config.json");
-
-		// Create the destination file-path
-		// We don't delete data
-		let mut destination = datadir.as_ref().join(format!("config.backup.json.v{}", index));
-		while destination.exists() {
-			index+=1;
-			destination = datadir.as_ref().join(format!("config.backup.json.v{}", index))
-		}
-
-		// Create the copy
-		fs::copy(source, destination).context("Failed to create back-up")?;
-		Ok(())
-	}
-}
 
 pub struct RoundHandle {
 	round_event_tx: tokio::sync::broadcast::Sender<RoundEvent>,
@@ -261,17 +121,40 @@ impl App {
 		Ok((wallet, asp_key))
 	}
 
-	pub async fn create(datadir: &Path, config: Config) -> anyhow::Result<()> {
-		info!("Creating aspd server at {}", datadir.display());
-		trace!("Config: {:?}", config);
+	pub async fn create(config_file: Option<&Path>) -> anyhow::Result<()> {
+		let cfg = Config::load(config_file)?;
+		cfg.validate().expect("invalid configuration");
+		info!("Resulting configuration: {:#?}", cfg);
+
+		let data_dir = {
+			let data_dir = cfg.data_dir.clone();
+			if !data_dir.exists() {
+				fs::create_dir_all(&data_dir).context("failed to create datadir")?;
+			}
+			data_dir.canonicalize().context("canonicalizing path")?
+		};
+
+		info!("Creating aspd server at {}", data_dir.display());
 
 		// create dir if not exit, but check that it's empty
-		fs::create_dir_all(&datadir).context("can't create dir")?;
-		if fs::read_dir(&datadir).context("can't read dir")?.next().is_some() {
-			bail!("dir is not empty");
+		fs::create_dir_all(&data_dir).context("can't create dir")?;
+
+		let entries = fs::read_dir(&data_dir).context("can't read dir")?;
+		let mut clean_folder = true;
+
+		for entry in entries {
+			let entry = entry.context("can't read entry")?;
+
+			if !entry.file_name().to_string_lossy().ends_with(ASPD_CONFIG_FILE) {
+				clean_folder = false;
+			}
 		}
 
-		let bitcoind = BitcoinRpcClient::new(&config.bitcoind_url, config.bitcoind_auth())
+		if !clean_folder {
+			bail!("aspd is already initialized");
+		}
+
+		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
 		let deep_tip = (|| {
 			let tip = bitcoind.get_block_count()?;
@@ -285,14 +168,8 @@ impl App {
 			Ok::<_, anyhow::Error>(block_id)
 		})().context("failed to fetch deep tip from bitcoind")?;
 
-		// write the config to disk
-		let config_str = serde_json::to_string_pretty(&config)
-			.expect("serialization can't error");
-		fs::write(datadir.join("config.json"), config_str.as_bytes())
-			.context("failed to write config file")?;
-
 		// create mnemonic and store in empty db
-		let db_path = datadir.join("aspd_db");
+		let db_path = data_dir.join("aspd_db");
 		info!("Loading db at {}", db_path.display());
 		let db = database::Db::open(&db_path).context("failed to open db")?;
 
@@ -303,7 +180,7 @@ impl App {
 
 		// Store initial wallet state to avoid full chain sync.
 		let seed = mnemonic.to_seed("");
-		let (mut wallet, _) = Self::wallet_from_seed(config.network, &seed, None)
+		let (mut wallet, _) = Self::wallet_from_seed(cfg.network, &seed, None)
 			.expect("shouldn't fail on empty state");
 		wallet.apply_update(bdk_wallet::Update {
 			chain: Some(wallet.latest_checkpoint().insert(deep_tip)),
@@ -316,13 +193,14 @@ impl App {
 		Ok(())
 	}
 
-	pub async fn open(datadir: &Path) -> anyhow::Result<Arc<Self>> {
-		info!("Starting aspd at {}", datadir.display());
+	pub async fn open(config_file: Option<&Path>) -> anyhow::Result<Arc<Self>> {
+		let cfg = Config::load(config_file)?;
+		cfg.validate().expect("invalid configuration");
+		info!("Resulting configuration: {:#?}", cfg);
 
-		let config = Config::read_from_datadir(datadir)?;
-		trace!("Config: {:?}", config);
+		info!("Starting aspd at {}", cfg.data_dir.display());
 
-		let db_path = datadir.join("aspd_db");
+		let db_path = cfg.data_dir.join("aspd_db");
 		info!("Loading db at {}", db_path.display());
 		let db = database::Db::open(&db_path).context("failed to open db")?;
 
@@ -330,10 +208,10 @@ impl App {
 			.context("db error")?
 			.context("db doesn't contain seed")?;
 		let init = db.read_aggregate_changeset().await?;
-		let (wallet, asp_key) = Self::wallet_from_seed(config.network, &seed, init)
+		let (wallet, asp_key) = Self::wallet_from_seed(cfg.network, &seed, init)
 			.context("error loading wallet")?;
 
-		let bitcoind = BitcoinRpcClient::new(&config.bitcoind_url, config.bitcoind_auth())
+		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
 
 		let (shutdown_channel, _) = broadcast::channel::<()>(1);
@@ -345,7 +223,7 @@ impl App {
 			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
 			sendpay_updates: None,
-			config,
+			config: cfg,
 			db,
 			shutdown_channel,
 			asp_key,
@@ -506,7 +384,7 @@ impl App {
 		];
 
 		// These tasks do only run if the config is provided
-		if self.config.admin_rpc_address.is_some() {
+		if self.config.rpc.admin_address.is_some() {
 			let app = self.clone();
 			let jh_rpc_admin = tokio::spawn(async move {
 				let ret = rpcserver::run_admin_rpc_server(app)
@@ -522,8 +400,8 @@ impl App {
 		}
 
 		let app = self.clone();
-		if self.config.cln_config.is_some() {
-			let cln_config = self.config.cln_config.clone().unwrap();
+		if self.config.lightningd.is_some() {
+			let cln_config = self.config.lightningd.clone().unwrap();
 			let jh_sendpay = tokio::spawn(async move {
 				let shutdown = app.shutdown_channel.clone();
 				let ret = lightning::run_process_sendpay_updates(shutdown, &cln_config, sendpay_tx)

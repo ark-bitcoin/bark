@@ -79,12 +79,13 @@ impl<T> Daemon<T>
 		}
 	}
 
+	pub fn name(&self) -> &str {
+		return self.inner.name()
+	}
+
 	pub async fn start(&mut self) -> anyhow::Result<()> {
 		info!("Starting {}", self.name);
 		*self.daemon_state.get_mut() = DaemonState::Starting;
-
-		trace!("Preparing {}", self.name);
-		self.inner.prepare().await?;
 
 		let retries = 3;
 		for i in 0..retries {
@@ -107,7 +108,9 @@ impl<T> Daemon<T>
 	}
 
 	pub async fn try_start(&mut self) -> anyhow::Result<()> {
+		trace!("Preparing {}", self.name);
 		self.inner.make_reservations().await?;
+		self.inner.prepare().await?;
 
 		let mut cmd = self.inner.get_command().await?;
 		cmd.kill_on_drop(true);

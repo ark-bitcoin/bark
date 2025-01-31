@@ -17,18 +17,18 @@ use bark_cln::grpc;
 use bark_cln::grpc::node_client::NodeClient;
 use bark_cln::subscribe_sendpay::{SubscribeSendpay, SendpaySubscriptionItem};
 
-use crate::ClnConfig;
+use crate::config::Lightningd;
 
-impl ClnConfig {
+impl Lightningd {
 
 	pub async fn grpc_client(&self) ->  anyhow::Result<NodeClient<tonic::transport::Channel>> {
 		// Client doesn't support grpc over http
 		// We need to use https using m-TLS authentication
-		let ca_pem = fs::read_to_string(&self.grpc_server_cert_path)?;
-		let id_pem = fs::read_to_string(&self.grpc_client_cert_path)?;
-		let id_key = fs::read_to_string(&self.grpc_client_key_path)?;
+		let ca_pem = fs::read_to_string(&self.server_cert_path)?;
+		let id_pem = fs::read_to_string(&self.client_cert_path)?;
+		let id_key = fs::read_to_string(&self.client_key_path)?;
 
-		let channel = Channel::builder(self.grpc_uri.clone().into())
+		let channel = Channel::builder(self.uri.clone().into())
 			.tls_config(ClientTlsConfig::new()
 				.ca_certificate(Certificate::from_pem(ca_pem))
 				.identity(Identity::from_pem(&id_pem, &id_key))
@@ -50,7 +50,7 @@ impl ClnConfig {
 
 pub async fn run_process_sendpay_updates(
 	shutdown_channel: broadcast::Sender<()>,
-	cln_config: &ClnConfig,
+	cln_config: &Lightningd,
 	tx: broadcast::Sender<SendpaySubscriptionItem>,
 ) -> anyhow::Result<()> {
 	// Get the grpc-client

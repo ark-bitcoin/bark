@@ -2,19 +2,23 @@
 pub mod proxy;
 
 use std::env;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
+use std::str::FromStr;
 
-use aspd_rpc as rpc;
-use bitcoin::{Amount, Network};
+use anyhow::Context;
+use bitcoin::Network;
 use bitcoin::address::{Address, NetworkUnchecked};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
 use aspd_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
+use aspd::ASPD_CONFIG_FILE;
+use aspd_rpc as rpc;
+pub use aspd::config::{self, Config};
 
-use crate::{Bitcoind, Daemon, DaemonHelper, Lightningd};
-use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
+use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::ASPD_EXEC;
 use crate::util::resolve_path;
 
@@ -26,36 +30,8 @@ pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 
 pub struct AspdHelper {
 	name: String,
-	state: AspdState,
-	config: AspdConfig,
+	cfg: Config,
 	bitcoind: Bitcoind
-}
-
-#[derive(Debug)]
-pub struct AspdConfig {
-	pub datadir: PathBuf,
-	pub round_interval: Duration,
-	pub round_submit_time: Duration,
-	pub round_sign_time: Duration,
-	pub vtxo_expiry_delta: u16,
-	pub vtxo_exit_delta: u16,
-	pub nb_round_nonces: usize,
-	pub sweep_threshold: Amount,
-	pub round_onboard_confirmations: u64,
-
-	/// Whether the apsd will use user+password for connection to bitcoind (true)
-	/// or cookies (false).
-	pub use_bitcoind_auth_pass: bool,
-	pub cln_grpc_uri: Option<String>,
-	pub cln_grpc_server_cert_path: Option<PathBuf>,
-	pub cln_grpc_client_cert_path: Option<PathBuf>,
-	pub cln_grpc_client_key_path: Option<PathBuf>,
-}
-
-#[derive(Default)]
-struct AspdState {
-	public_grpc_address: Option<String>,
-	admin_grpc_address: Option<String>,
 }
 
 impl Aspd {
@@ -81,12 +57,11 @@ impl Aspd {
 	}
 
 	/// Creates ASP with a dedicated bitcoind daemon.
-	pub fn new(name: impl AsRef<str>, bitcoind: Bitcoind, config: AspdConfig) -> Self {
+	pub fn new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: Config) -> Self {
 		let helper = AspdHelper {
 			name: name.as_ref().to_string(),
-			config,
-			state: AspdState::default(),
-			bitcoind
+			cfg,
+			bitcoind,
 		};
 
 		Daemon::wrap(helper)
@@ -94,6 +69,10 @@ impl Aspd {
 
 	pub fn asp_url(&self) -> String {
 		self.inner.asp_url()
+	}
+
+	pub fn config(&self) -> &Config {
+		&self.inner.cfg
 	}
 
 	pub async fn get_admin_client(&self) -> AdminClient {
@@ -164,73 +143,63 @@ impl DaemonHelper for AspdHelper {
 	}
 
 	fn datadir(&self) -> PathBuf {
-		self.config.datadir.clone()
+		self.cfg.data_dir.clone()
 	}
 
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
-		let public_grpc_port = portpicker::pick_unused_port().expect("No ports free");
-		let admin_grpc_port = portpicker::pick_unused_port().expect("No ports free");
+		let public_port = portpicker::pick_unused_port().expect("No ports free");
+		let admin_port = portpicker::pick_unused_port().expect("No ports free");
 
-		let public_grpc_address = format!("0.0.0.0:{}", public_grpc_port);
-		let admin_grpc_address = format!("127.0.0.1:{}", admin_grpc_port);
+		let public_address = format!("0.0.0.0:{}", public_port);
+		let admin_address = format!("127.0.0.1:{}", admin_port);
+		trace!("ASPD_RPC_PUBLIC_ADDRESS: {}", public_port.to_string());
+		trace!("ASPD_RPC_ADMIN_ADDRESS: {}", admin_port.to_string());
 
-		let mut base_cmd = Aspd::base_cmd();
-
-		let datadir = self.config.datadir.clone();
-		let pgrpc = public_grpc_address.clone();
-		let agrpc = admin_grpc_address.clone();
-
-		let output = base_cmd.args([
-			"--datadir",
-			&datadir.display().to_string(),
-			"set-config",
-			"--public-rpc-address",
-			&pgrpc,
-			"--admin-rpc-address",
-			&agrpc,
-		]).output().await?;
-
-		if !output.status.success() {
-			let stderr = String::from_utf8(output.stderr)?;
-			error!("{}", stderr);
-			bail!("Failed to configure ports for aspd '{}'", self.name());
+		self.cfg.rpc = config::Rpc {
+			public_address: SocketAddr::from_str(public_address.as_str())?,
+			admin_address: Some(SocketAddr::from_str(admin_address.as_str())?),
 		};
-
-		self.state.public_grpc_address = Some(public_grpc_address);
-		self.state.admin_grpc_address = Some(admin_grpc_address);
 
 		Ok(())
 	}
 
 	async fn prepare(&self) -> anyhow::Result<()> {
-		if !self.datadir().exists() {
-			self.create().await?;
-		} else {
-			// If datadir exists, it means ASP is being restarted but
-			// some settings might have changed in the meantime.
-			let output = Aspd::base_cmd().args([
-				"--datadir",&self.datadir().display().to_string(),
-				"set-config",
-				"--bitcoind-url", &self.bitcoind.rpc_url()
-			]).output().await?;
+		let mut first_run = false;
 
-			if !output.status.success() {
-				let stderr = String::from_utf8(output.stderr)?;
-				error!("{}", stderr);
-				bail!("Failed to configure ports for aspd '{}'", self.name());
-			};
+		let data_dir = self.datadir();
+		if !data_dir.exists() {
+			info!("Data directory {:?} does not exist. Creating...", data_dir);
+			std::fs::create_dir_all(data_dir.clone())?;
+			first_run = true;
 		}
+
+		let config_path = data_dir.join(ASPD_CONFIG_FILE);
+		info!("Preparing to create configuration file at: {}", config_path.display());
+		self.cfg.write_to_file(&config_path)
+			.with_context(|| format!("error writing aspd config to '{}'", config_path.display()))?;
+		info!("Configuration file successfully created at: {}", config_path.display());
+
+		if first_run {
+			info!("Initializing new {} instance", self.name.to_string());
+			self.create().await?;
+		}
+
 		Ok(())
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		let mut base_cmd = Aspd::base_cmd();
-		base_cmd
-			.arg("--datadir")
-			.arg(&self.config.datadir)
-			.arg("start");
+		let config_file = self.datadir().join(ASPD_CONFIG_FILE);
 
-		Ok(base_cmd)
+		let mut cmd = Aspd::base_cmd();
+		let args = vec![
+			"start",
+			"--config",
+			config_file.to_str().unwrap(),
+		];
+		trace!("base_cmd={:?}; args={:?}", cmd, args);
+		cmd.args(args);
+
+		Ok(cmd)
 	}
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
@@ -247,124 +216,55 @@ impl AspdHelper {
 	}
 
 	async fn public_grpc_is_ready(&self) -> bool {
-		if let Ok(mut c) = self.connect_public_client().await {
-			c.get_ark_info(rpc::Empty {}).await.is_ok()
-		} else {
-			false
+		match self.connect_public_client().await {
+			Ok(mut c) => c.get_ark_info(rpc::Empty {}).await.is_ok(),
+			Err(_e) => false,
 		}
 	}
 
 	async fn admin_grpc_is_ready(&self) -> bool {
-		if let Ok(mut c) = self.connect_admin_client().await {
-			c.wallet_status(rpc::Empty {}).await.is_ok()
-		} else {
-			false
+		match self.connect_admin_client().await {
+			Ok(mut c) => c.wallet_status(rpc::Empty {}).await.is_ok(),
+			Err(_e) => false,
 		}
 	}
 
 	pub fn asp_url(&self) -> String {
-		format!("http://{}", self.state.public_grpc_address.clone().expect("asp not running"))
+		format!("http://{}", self.cfg.rpc.public_address)
 	}
 
 	pub fn admin_url(&self) -> String {
-		format!("http://{}", self.state.admin_grpc_address.clone().expect("asp not running"))
+		format!("http://{}", self.cfg.rpc.admin_address.expect("missing admin addr"))
 	}
 
-	pub async fn connect_public_client(&self) -> Result<ArkClient, tonic::transport::Error> {
-		ArkClient::connect(self.asp_url()).await
+	pub async fn connect_public_client(&self) -> anyhow::Result<ArkClient> {
+		ArkClient::connect(self.asp_url()).await.context("can't connect asp public rpc")
 	}
 
-	pub async fn connect_admin_client(&self) -> Result<AdminClient, tonic::transport::Error> {
-		AdminClient::connect(self.admin_url()).await
+	pub async fn connect_admin_client(&self) -> anyhow::Result<AdminClient> {
+		AdminClient::connect(self.admin_url()).await.context("can't connect asp admin rpc")
 	}
 
 	async fn create(&self) -> anyhow::Result<()> {
-		let cfg = &self.config;
-		let output = {
-			let mut cmd = Aspd::base_cmd();
-			let datadir = cfg.datadir.display().to_string();
-			let bitcoind_url = self.bitcoind.rpc_url().to_string();
-			let round_interval = cfg.round_interval.as_millis().to_string();
-			let round_submit_time = cfg.round_submit_time.as_millis().to_string();
-			let round_sign_time = cfg.round_sign_time.as_millis().to_string();
-			let nb_round_nonces = cfg.nb_round_nonces.to_string();
-			let vtxo_expiry_delta = cfg.vtxo_expiry_delta.to_string();
-			let vtxo_exit_delta = cfg.vtxo_exit_delta.to_string();
-			let sweep_threshold = cfg.sweep_threshold.to_string();
-			let onboard_confs = cfg.round_onboard_confirmations.to_string();
+		let config_file = self.datadir().join(ASPD_CONFIG_FILE);
 
-			let mut args = vec![
-				"create",
-				"--datadir", &datadir,
-				"--bitcoind-url", &bitcoind_url,
-				"--network", "regtest",
-				"--round-interval", &round_interval,
-				"--round-submit-time", &round_submit_time,
-				"--round-sign-time",  &round_sign_time,
-				"--nb-round-nonces", &nb_round_nonces,
-				"--vtxo-expiry-delta", &vtxo_expiry_delta,
-				"--vtxo-exit-delta", &vtxo_exit_delta,
-				"--sweep-threshold", &sweep_threshold,
-				"--round-onboard-confirmations", &onboard_confs,
-			];
+		let mut cmd = Aspd::base_cmd();
+		let args = vec![
+			"create",
+			"--config",
+			config_file.to_str().unwrap(),
+		];
+		trace!("base_cmd={:?}; args={:?}", cmd, args);
 
-			let bitcoind_auth = if cfg.use_bitcoind_auth_pass {
-				bitcoincore_rpc::Auth::UserPass(BITCOINRPC_TEST_USER.into(), BITCOINRPC_TEST_PASSWORD.into())
-			} else {
-				self.bitcoind.auth()
-			};
-
-			match bitcoind_auth {
-				bitcoincore_rpc::Auth::CookieFile(ref cookie) => {
-					args.extend([
-						"--bitcoind-cookie", cookie.to_str().unwrap(),
-					]);
-				},
-				bitcoincore_rpc::Auth::UserPass(ref user, ref pass) => {
-					args.extend([
-						"--bitcoind-rpc-user", user,
-						"--bitcoind-rpc-pass", pass,
-					]);
-				},
-				bitcoincore_rpc::Auth::None => {
-					panic!("aspd has no bitcoin rpc authentication method configured");
-				},
-			}
-
-			if cfg.cln_grpc_uri.is_some() {
-				args.extend(["--cln-grpc-uri", cfg.cln_grpc_uri.as_ref().unwrap()]);
-			}
-			if cfg.cln_grpc_server_cert_path.is_some() {
-				args.extend(["--cln-grpc-server-cert-path", cfg.cln_grpc_server_cert_path.as_ref().unwrap().to_str().unwrap()]);
-			}
-			if cfg.cln_grpc_client_cert_path.is_some() {
-				args.extend(["--cln-grpc-client-cert-path", cfg.cln_grpc_client_cert_path.as_ref().unwrap().to_str().unwrap()]);
-			}
-			if cfg.cln_grpc_client_key_path.is_some() {
-				args.extend(["--cln-grpc-client-key-path", cfg.cln_grpc_client_key_path.as_ref().unwrap().to_str().unwrap()]);
-			}
-
-			trace!("base_cmd={:?}; args={:?}", cmd, args);
-			cmd.args(args).output()
-		}.await?;
-
+		let output = cmd.args(args).output().await?;
 		if output.status.success() {
 			Ok(())
 		} else {
+			let stdout = String::from_utf8(output.stdout)?;
+			error!("Failed to create aspd '{}' with stdout: {}", self.name, stdout);
 			let stderr = String::from_utf8(output.stderr)?;
-			error!("stderr: {}", stderr);
-			bail!("Failed to create aspd '{}'", self.name());
+			error!("Failed to create aspd '{}' with stderr: {}", self.name, stderr);
+			bail!("Failed to create aspd '{}'", self.name);
 		}
-	}
-}
-
-impl AspdConfig {
-	pub async fn configure_lighting(&mut self, lightningd: &Lightningd) {
-		let grpc_details = lightningd.grpc_details().await;
-
-		self.cln_grpc_uri = Some(grpc_details.uri);
-		self.cln_grpc_server_cert_path = Some(grpc_details.server_cert_path);
-		self.cln_grpc_client_cert_path = Some(grpc_details.client_cert_path);
-		self.cln_grpc_client_key_path = Some(grpc_details.client_key_path);
 	}
 }

@@ -421,7 +421,7 @@ impl rpc::server::ArkService for App {
 		let invoice = signed.payment.invoice.clone();
 
 		// Connecting to the grpc-client
-		let cln_config = self.config.cln_config.as_ref().ok_or(not_found!("This asp does not support lightning"))?;
+		let cln_config = self.config.lightningd.as_ref().ok_or(not_found!("This asp does not support lightning"))?;
 		let cln_client = cln_config.grpc_client().await.map_err(|_| internal!("Failed to connect to lightning"))?;
 		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
 
@@ -866,7 +866,7 @@ fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'stati
 
 /// Run the public gRPC endpoint.
 pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
-	let addr = app.config.public_rpc_address;
+	let addr = app.config.rpc.public_address;
 
 	info!("Starting public gRPC service on address {}", addr);
 
@@ -906,7 +906,7 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 
 /// Run the public gRPC endpoint.
 pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
-	let addr = app.config.admin_rpc_address.expect("shouldn't call this method otherwise");
+	let addr = app.config.rpc.admin_address.expect("shouldn't call this method otherwise");
 
 	info!("Starting admin gRPC service on address {}", addr);
 
