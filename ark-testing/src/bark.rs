@@ -249,7 +249,7 @@ impl Bark {
 		command.stderr(fs::File::create(&stderr_path).await?.into_std().await);
 		command.stdout(Stdio::piped());
 
-		let mut child = command.spawn().unwrap();
+		let mut child = command.spawn()?;
 
 		let exit_result = tokio::time::timeout(
 			self.timeout,
@@ -264,7 +264,7 @@ impl Bark {
 		let out = {
 			let mut buf = String::new();
 			if let Some(mut o) = child.stdout {
-				o.read_to_string(&mut buf).await.unwrap();
+				o.read_to_string(&mut buf).await?;
 			}
 			buf
 		};
