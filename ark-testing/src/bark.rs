@@ -18,7 +18,7 @@ use ark::Movement;
 use bark::UtxoInfo;
 use bark_json::cli as json;
 
-use crate::Bitcoind;
+use crate::{Bitcoind, Electrs};
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
@@ -38,6 +38,7 @@ pub struct Bark {
 	counter: AtomicUsize,
 	timeout: Duration,
 	bitcoind: Bitcoind,
+	electrs: Option<Electrs>,
 	command_log: Mutex<fs::File>,
 }
 
@@ -49,8 +50,8 @@ impl Bark {
 	}
 
 	/// Creates Bark client with a dedicated bitcoind daemon.
-	pub async fn new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: BarkConfig) -> Bark {
-		Self::try_new(name, bitcoind, cfg).await.unwrap()
+	pub async fn new(name: impl AsRef<str>, bitcoind: Bitcoind, electrs: Option<Electrs>, cfg: BarkConfig) -> Bark {
+		Self::try_new(name, bitcoind, electrs, cfg).await.unwrap()
 	}
 
 	/// Returns bitcoind daemon associated with this Bark client.
@@ -58,22 +59,31 @@ impl Bark {
 		&self.bitcoind
 	}
 
-	pub async fn try_new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: BarkConfig) -> anyhow::Result<Bark> {
-		let output = Bark::cmd()
+	pub async fn try_new(name: impl AsRef<str>, bitcoind: Bitcoind, electrs: Option<Electrs>, cfg: BarkConfig) -> anyhow::Result<Bark> {
+		let mut cmd = Self::cmd();
+		cmd
 			.arg("create")
 			.arg("--datadir")
 			.arg(&cfg.datadir)
 			.arg("--verbose")
 			.arg("--asp")
 			.arg(&cfg.asp_url)
-			.arg(format!("--{}", cfg.network))
-			.arg("--bitcoind-cookie")
-			.arg(bitcoind.rpc_cookie())
-			.arg("--bitcoind")
-			.arg(bitcoind.rpc_url())
-			.output()
-			.await?;
+			.arg(format!("--{}", &cfg.network));
 
+		// Configure barks' chain source
+		match electrs {
+			Some(ref electrs) =>
+				cmd.args([
+					"--esplora", &electrs.rest_url()
+				]),
+			None =>
+				cmd.args([
+					"--bitcoind", &bitcoind.rpc_url(),
+					"--bitcoind-cookie", &bitcoind.rpc_cookie().display().to_string(),
+				]),
+		};
+
+		let output = cmd.output().await?;
 		if !output.status.success() {
 			error!("Failure creating new bark wallet");
 			let stdout = String::from_utf8(output.stdout)?;
@@ -91,6 +101,7 @@ impl Bark {
 			timeout: Duration::from_millis(60_000),
 			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
 			bitcoind,
+			electrs,
 			config: cfg,
 		})
 	}

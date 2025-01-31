@@ -11,7 +11,7 @@ use bitcoin::{Denomination, FeeRate, Weight};
 use tokio::fs;
 use tokio::process::Child;
 
-use crate::constants::env::TEST_DIRECTORY;
+use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY};
 
 pub fn init_logging() -> anyhow::Result<()> {
 	match env::var("RUST_LOG") {
@@ -107,6 +107,15 @@ pub fn is_running(child: &mut Child) -> bool {
 pub async fn wait_for_completion(child: &mut Child) -> () {
 	while is_running(child) {
 		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+	}
+}
+
+pub fn should_use_electrs() -> bool {
+	let chain_source = env::var(&CHAIN_SOURCE);
+	if let Ok(chain_source) = chain_source {
+		chain_source == "esplora" || chain_source == "electrum"
+	} else {
+		false
 	}
 }
 

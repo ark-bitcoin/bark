@@ -11,9 +11,10 @@ use tonic::transport::Uri;
 
 use aspd::config::{self, Config};
 
-use crate::util::test_data_directory;
+use crate::util::{should_use_electrs, test_data_directory};
 use crate::{
-	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
+	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
+	Lightningd, LightningdConfig,
 };
 
 pub trait ToAspUrl {
@@ -33,6 +34,7 @@ pub struct TestContext {
 	#[allow(dead_code)]
 	pub name: String,
 	pub datadir: PathBuf,
+	pub use_electrs: bool,
 
 	pub bitcoind: Bitcoind,
 }
@@ -71,8 +73,9 @@ impl TestContext {
 
 		TestContext {
 			name: name.to_string(),
+			use_electrs: should_use_electrs(),
 			datadir,
-			bitcoind
+			bitcoind,
 		}
 	}
 
@@ -100,6 +103,22 @@ impl TestContext {
 			bitcoind.init_wallet().await;
 		}
 		bitcoind
+	}
+
+	pub async fn new_electrs(&self, name: impl AsRef<str>, bitcoind: &Bitcoind) -> Electrs {
+		let datadir = self.datadir.join(name.as_ref());
+
+		let cfg = ElectrsConfig {
+			network: String::from("regtest"),
+			bitcoin_dir: bitcoind.datadir(),
+			bitcoin_rpc_port: bitcoind.rpc_port(),
+			bitcoin_zmq_port: bitcoind.zmq_port(),
+			electrs_dir: datadir.clone()
+		};
+
+		let mut ret = Electrs::new(name, cfg);
+		ret.start().await.unwrap();
+		ret
 	}
 
 	pub async fn aspd_default_cfg(
@@ -206,13 +225,18 @@ impl TestContext {
 		let datadir = self.datadir.join(name.as_ref());
 
 		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+		let electrs = if self.use_electrs {
+			Some(self.new_electrs(format!("{}_electrs", name.as_ref()), &bitcoind).await)
+		} else {
+			None
+		};
 
 		let cfg = BarkConfig {
 			datadir,
 			asp_url: aspd.asp_url(),
 			network: String::from("regtest"),
 		};
-		Bark::try_new(name, bitcoind, cfg).await
+		Bark::try_new(name, bitcoind, electrs, cfg).await
 	}
 
 	/// Creates new bark without any funds.

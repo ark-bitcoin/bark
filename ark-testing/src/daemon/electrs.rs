@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 
 use bdk_esplora::esplora_client::Builder;
@@ -10,6 +11,12 @@ use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
 pub type Electrs = Daemon<ElectrsHelper>;
+
+impl fmt::Debug for Electrs {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "esplora-electrs in {}", self.inner.datadir().display())
+	}
+}
 
 impl Electrs {
 	fn exec() -> PathBuf {
