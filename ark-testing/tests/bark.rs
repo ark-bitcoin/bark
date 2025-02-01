@@ -335,7 +335,7 @@ async fn multiple_spends_in_payment() {
 async fn offboard_all() {
 	let setup = setup_full("bark/offboard_all").await;
 
-	let address = setup.bark1.bitcoind().get_new_address();
+	let address = setup.context.bitcoind.get_new_address();
 
 	let init_balance = setup.bark1.offchain_balance().await;
 	assert_eq!(init_balance, Amount::from_sat(830_000));
@@ -351,8 +351,8 @@ async fn offboard_all() {
 	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
-	setup.bark1.bitcoind().generate(1).await;
-	let balance = setup.bark1.bitcoind().get_received_by_address(&address);
+	setup.context.bitcoind.generate(1).await;
+	let balance = setup.context.bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, init_balance - OFFBOARD_FEES);
 }
 
@@ -363,7 +363,7 @@ async fn offboard_vtxos() {
 	let vtxos = setup.bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
 
-	let address = setup.bark1.bitcoind().get_new_address();
+	let address = setup.context.bitcoind.get_new_address();
 	let vtxo_to_offboard = &vtxos[1];
 
 	setup.bark1.offboard_vtxo(vtxo_to_offboard.id, address.clone()).await;
@@ -384,8 +384,8 @@ async fn offboard_vtxos() {
 	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
-	setup.bark1.bitcoind().generate(1).await;
-	let balance = setup.bark1.bitcoind().get_received_by_address(&address);
+	setup.context.bitcoind.generate(1).await;
+	let balance = setup.context.bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, vtxo_to_offboard.amount - OFFBOARD_FEES);
 }
 

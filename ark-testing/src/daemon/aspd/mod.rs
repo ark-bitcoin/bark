@@ -25,7 +25,7 @@ pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 
 
 pub struct AspdHelper {
-	name : String,
+	name: String,
 	state: AspdState,
 	config: AspdConfig,
 	bitcoind: Bitcoind

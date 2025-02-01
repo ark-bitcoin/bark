@@ -1,6 +1,7 @@
 
 use bitcoincore_rpc::RpcApi;
-use ark_testing::context::TestContext;
+
+use ark_testing::TestContext;
 
 #[tokio::test]
 async fn start_bitcoind()  {
@@ -15,17 +16,16 @@ async fn start_bitcoind()  {
 #[tokio::test]
 async fn fund_bitcoind() {
 	let ctx = TestContext::new("bitcoind/fund_bitcoind").await;
-	let bitcoind = ctx.new_bitcoind("bitcoind-1").await;
 
 	// We can initialize the wallet twice
-	bitcoind.init_wallet().await;
-	bitcoind.init_wallet().await;
+	ctx.bitcoind.init_wallet().await;
+	ctx.bitcoind.init_wallet().await;
 
 	// We can fund the wallet
-	bitcoind.prepare_funds().await;
+	ctx.bitcoind.prepare_funds().await;
 
 	// Check the balance
-	let client = bitcoind.sync_client();
+	let client = ctx.bitcoind.sync_client();
 	let amount = client.get_balance(Some(6), None).unwrap();
 	assert!(amount.to_sat() > 100_000_000);
 }

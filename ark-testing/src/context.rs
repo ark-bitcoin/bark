@@ -49,6 +49,7 @@ impl TestContext {
 				"bitcoind".to_string(),
 				BitcoindConfig {
 					datadir: datadir.join("bitcoind"),
+					wallet: true,
 					txindex: true,
 					network: Network::Regtest,
 					fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
@@ -60,6 +61,7 @@ impl TestContext {
 			bitcoind
 		};
 
+		bitcoind.init_wallet().await;
 		bitcoind.prepare_funds().await;
 
 		TestContext {
@@ -73,6 +75,7 @@ impl TestContext {
 		let datadir = self.datadir.join(name.as_ref());
 		BitcoindConfig {
 			datadir,
+			wallet: false,
 			txindex: true,
 			network: Network::Regtest,
 			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
@@ -85,9 +88,12 @@ impl TestContext {
 	}
 
 	pub async fn new_bitcoind_with_cfg(&self, name: impl AsRef<str>, cfg: BitcoindConfig) -> Bitcoind {
+		let wallet = cfg.wallet;
 		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), cfg, Some(self.bitcoind.p2p_url()));
 		bitcoind.start().await.unwrap();
-		bitcoind.init_wallet().await;
+		if wallet {
+			bitcoind.init_wallet().await;
+		}
 		bitcoind
 	}
 
