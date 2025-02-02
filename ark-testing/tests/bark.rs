@@ -71,19 +71,19 @@ async fn onboard_all_bark() {
 	let setup = setup_simple("bark/onboard_all_bark").await;
 
 	// Get the bark-address and fund it
-	let funding_txid = setup.context.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
+	setup.context.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
+	assert_eq!(setup.bark1.onchain_balance().await, Amount::from_sat(100_000));
 
-	setup.bark1.onboard_all().await;
+	let onboard_txid = setup.bark1.onboard_all().await.funding_txid;
 
 	// Check that we emptied our on-chain balance
 	assert_eq!(setup.bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the onboarding tx's output value is the same as our off-chain balance
 	let sync_client = setup.bark1.bitcoind().sync_client();
-	let entry = sync_client.get_mempool_entry(&funding_txid).unwrap();
-	let onboard_txid = entry.spent_by.last().unwrap();
-	let onboard_tx = sync_client.get_raw_transaction(onboard_txid, None).unwrap();
+	let onboard_tx = sync_client.get_raw_transaction(&onboard_txid, None).unwrap();
 	assert_eq!(setup.bark1.offchain_balance().await, onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus());
+	assert_eq!(setup.bark1.onchain_balance().await, Amount::ZERO);
 }
 
 #[tokio::test]

@@ -186,14 +186,14 @@ impl Bark {
 		self.try_send_bolt11(destination, amount).await.unwrap();
 	}
 
-	pub async fn onboard(&self, amount: Amount) {
+	pub async fn onboard(&self, amount: Amount) -> json::Onboard {
 		info!("{}: Onboard {}", self.name, amount);
-		self.run(["onboard", &amount.to_string()]).await;
+		self.run_json(["onboard", &amount.to_string()]).await
 	}
 
-	pub async fn onboard_all(&self) {
+	pub async fn onboard_all(&self) -> json::Onboard {
 		info!("{}: Onboarding all on-chain funds", self.name);
-		self.run(["onboard", "--all"]).await;
+		self.run_json(["onboard", "--all"]).await
 	}
 
 	pub async fn refresh_all(&self) {
