@@ -6,8 +6,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::Duration;
 
-use ark::Movement;
-use bark::UtxoInfo;
+use anyhow::Context;
 use bitcoin::address::Address;
 use bitcoin::{Amount, Network, OutPoint};
 use serde_json;
@@ -16,6 +15,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
+use ark::Movement;
+use bark::UtxoInfo;
 use bark_json::cli as json;
 
 use crate::Bitcoind;
@@ -295,9 +296,30 @@ impl Bark {
 		}
 	}
 
-	pub async fn run<I,S>(&self, args: I) -> String
+	pub async fn run<I, S>(&self, args: I) -> String
 		where I: IntoIterator<Item = S>, S : AsRef<str>
 	{
 		self.try_run(args).await.expect("command failed")
+	}
+
+	pub async fn try_run_json<T, I, S>(&self, args: I) -> anyhow::Result<T>
+	where
+		T: for <'de> serde::Deserialize<'de>,
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
+		let json = self.try_run(args).await?;
+		let ret = serde_json::from_str(&json)
+			.with_context(|| format!("unexpected json output: {}", json))?;
+		Ok(ret)
+	}
+
+	pub async fn run_json<T, I, S>(&self, args: I) -> T
+	where
+		T: for <'de> serde::Deserialize<'de>,
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
+		self.try_run_json(args).await.expect("json command failed")
 	}
 }
