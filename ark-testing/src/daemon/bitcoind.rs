@@ -241,6 +241,7 @@ impl DaemonHelper for BitcoindHelper {
 			"-unsafesqlitesync",
 			"-debug=1",
 			"-debugexclude=libevent",
+			"-whitelist=noban,in,out@127.0.0.1", // whitelist our peers for instant relay
 			&format!("-rpcauth={}", BITCOINRPC_TEST_AUTH),
 			&format!("-datadir={}", self.config.datadir.display()),
 			&format!("-txindex={}", self.config.txindex as u8),
