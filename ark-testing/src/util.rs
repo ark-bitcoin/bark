@@ -157,3 +157,19 @@ pub trait FutureExt: Future {
 	}
 }
 impl<T: Future> FutureExt for T {}
+
+/// Extension trait for channel receivers.
+pub trait ReceiverExt<T> {
+	fn collect(&mut self) -> Vec<T>;
+}
+
+impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
+	fn collect(&mut self) -> Vec<T> {
+		let mut ret = Vec::new();
+		while let Ok(v) = self.try_recv() {
+			ret.push(v);
+		}
+		ret
+	}
+
+}

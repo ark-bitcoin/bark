@@ -2,20 +2,22 @@
 extern crate log;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use bitcoin::amount::Amount;
 use bitcoin::secp256k1::PublicKey;
 use tokio::sync::Mutex;
 
-use ark_testing::util::FutureExt;
-use ark_testing::{AspdConfig, TestContext};
-use ark_testing::daemon::aspd::{self, Aspd};
-use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
 use aspd_log::{
-	NotSweeping, OnboardFullySwept, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
-	RoundUserVtxoUnknown, SweepBroadcast, TxIndexUpdateFinished,
+	NotSweeping, OnboardFullySwept, RoundFullySwept, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished
 };
 use aspd_rpc as rpc;
+
+use ark_testing::{AspdConfig, TestContext};
+use ark_testing::constants::ONBOARD_CONFIRMATIONS;
+use ark_testing::daemon::aspd::{self, Aspd};
+use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
+use ark_testing::util::{FutureExt, ReceiverExt};
 
 lazy_static::lazy_static! {
 	static ref RANDOM_PK: PublicKey = "02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49".parse().unwrap();
@@ -157,11 +159,12 @@ async fn sweep_vtxos() {
 
 	let ctx = TestContext::new("aspd/sweep_vtxos").await;
 	let aspd = ctx.new_aspd_with_cfg("aspd", AspdConfig {
+		round_interval: Duration::from_millis(500000000),
 		vtxo_expiry_delta: 64,
 		sweep_threshold: Amount::from_sat(100_000),
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
-	let bark = ctx.new_bark_with_funds("bark", &aspd, Amount::from_sat(100_000)).await;
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, Amount::from_sat(100_000)).await);
 	let mut admin = aspd.get_admin_client().await;
 
 	// subscribe to a few log messages
@@ -169,54 +172,70 @@ async fn sweep_vtxos() {
 	let mut log_sweeping = aspd.subscribe_log::<SweepBroadcast>().await;
 	let mut log_onboard_done = aspd.subscribe_log::<OnboardFullySwept>().await;
 	let mut log_round_done = aspd.subscribe_log::<RoundFullySwept>().await;
+	let mut log_sweeps = aspd.subscribe_log::<SweepingOutput>().await;
 
 	ctx.fund_asp(&aspd, Amount::from_sat(1_000_000)).await;
 	ctx.fund_bark(&bark, Amount::from_sat(400_000)).await;
 
 	// we onboard one vtxo and then a few blocks later another
 	bark.onboard(Amount::from_sat(75_000)).await;
-	aspd.bitcoind().generate(5).await;
+	ctx.bitcoind.generate(5).await;
 	bark.onboard(Amount::from_sat(75_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// before either expires not sweeping yet because nothing available
-	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
+	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
 	assert_eq!(Amount::from_sat(0), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
-	aspd.bitcoind().generate(30).await;
-	bark.refresh_all().await;
-	aspd.bitcoind().generate(30).await;
+	ctx.bitcoind.generate(18).await;
+	let b = bark.clone();
+	tokio::spawn(async move {
+		b.refresh_all().await;
+	});
+	aspd.trigger_round().await;
+	ctx.bitcoind.generate(30).await;
 
 	// now we expire the first one, still not sweeping because not enough surplus
-	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
+	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(73790), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
+	assert_eq!(Amount::from_sat(73790), log_not_sweeping.recv().wait(1500).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
-	aspd.bitcoind().generate(5).await;
+	ctx.bitcoind.generate(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
 	assert_eq!(Amount::from_sat(147580), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	let sweeps = log_sweeps.collect();
+	assert_eq!(2, sweeps.len());
+	assert_eq!(sweeps[0].sweep_type, "onboard");
+	assert_eq!(sweeps[1].sweep_type, "onboard");
 
 	// now we swept both onboard vtxos, let's sweep the round we created above
-	aspd.bitcoind().generate(30).await;
-	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
+	ctx.bitcoind.generate(30).await;
+	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(149980), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	assert_eq!(Amount::from_sat(149980), log_sweeping.recv().wait(2500).await.unwrap().surplus);
+	let sweeps = log_sweeps.collect();
+	assert_eq!(1, sweeps.len());
+	assert_eq!(sweeps[0].sweep_type, "vtxo");
 
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another onboard
 	bark.onboard(Amount::from_sat(101_000)).await;
-	aspd.bitcoind().generate(70).await;
+	ctx.bitcoind.generate(70).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(1142288, admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner().balance);
-	aspd.bitcoind().generate(65).await;
+	assert_eq!(Amount::from_sat(100285), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	let sweeps = log_sweeps.collect();
+	assert_eq!(2, sweeps.len());
+	assert_eq!(sweeps[0].sweep_type, "connector");
+	assert_eq!(sweeps[1].sweep_type, "onboard");
+
+	ctx.bitcoind.generate(65).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	aspd.bitcoind().generate(65).await;
-	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
+	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
 
 	// and eventually the round should be finished
@@ -224,6 +243,8 @@ async fn sweep_vtxos() {
 	info!("Onboard done signal received");
 	log_round_done.recv().wait(1000).await.unwrap();
 	info!("Round done signal received");
+	let stats = log_stats.recv().fast().await.unwrap();
+	assert_eq!(0, stats.nb_pending_utxos);
 	assert_eq!(1241212, admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner().balance);
 }
 
@@ -321,6 +342,7 @@ async fn double_spend_round() {
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.onboard(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
 	bark.refresh_all().await;
@@ -348,7 +370,7 @@ async fn spend_unregistered_onboard() {
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.onboard(Amount::from_sat(800_000)).await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;
 	tokio::spawn(async move {

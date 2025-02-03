@@ -670,7 +670,9 @@ impl App {
 	pub fn cosign_onboard(&self, user_part: ark::onboard::UserPart) -> ark::onboard::AspPart {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
-		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount);
+		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
+			reveal_txid: ark::onboard::create_reveal_tx(&user_part.spec, user_part.utxo, None).compute_txid(),
+		);
 		ret
 	}
 
@@ -734,7 +736,9 @@ impl App {
 		self.txindex.register(vtxo.reveal_tx()).await;
 		self.db.insert_onboard_vtxos(&[&vtxo]).context("db error")?;
 
-		slog!(RegisteredOnboard, utxo: vtxo.onchain_output, amount: vtxo.spec.amount);
+		slog!(RegisteredOnboard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
+			amount: vtxo.spec.amount,
+		);
 
 		Ok(())
 	}

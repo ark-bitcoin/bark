@@ -1,3 +1,4 @@
+
 use bitcoin::Amount;
 
 use crate::{Aspd, Bark, TestContext};
@@ -42,9 +43,14 @@ pub async fn setup_full(name: &str) -> TestSetup {
 
 	// refresh vtxo
 	setup.bark1.onboard(Amount::from_sat(200_000)).await;
+	setup.context.bitcoind.generate(12).await;
+
 	setup.bark1.refresh_all().await;
+
 	// onboard vtxo
 	setup.bark1.onboard(Amount::from_sat(300_000)).await;
+	setup.context.bitcoind.generate(12).await;
+
 	// oor vtxo
 	setup.bark2.send_oor(&setup.bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
 

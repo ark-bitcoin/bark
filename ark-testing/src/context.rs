@@ -8,7 +8,7 @@ use tokio::fs;
 
 use crate::util::test_data_directory;
 use crate::{
-	Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
+	constants, Aspd, AspdConfig, Bitcoind, BitcoindConfig, Bark, BarkConfig, Lightningd, LightningdConfig,
 };
 
 pub trait ToAspUrl {
@@ -118,6 +118,7 @@ impl TestContext {
 			vtxo_expiry_delta: 1 * 24 * 6,
 			vtxo_exit_delta: 2 * 6,
 			sweep_threshold: Amount::from_sat(1_000_000),
+			round_onboard_confirmations: constants::ONBOARD_CONFIRMATIONS,
 			nb_round_nonces: 100,
 			use_bitcoind_auth_pass: false,
 			cln_grpc_uri: None,

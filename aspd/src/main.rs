@@ -311,6 +311,8 @@ struct ConfigOpts {
 	vtxo_exit_delta: Option<u16>,
 	#[arg(long, env = "ASPD_SWEEP_THRESHOLD")]
 	sweep_threshold: Option<Amount>,
+	#[arg(long, env = "ASPD_ROUND_ONBOARD_CONFIRMATIONS")]
+	round_onboard_confirmations: Option<usize>,
 
 	/// The feerate (in sats per kvb) to use for round txs.
 	#[arg(long, env = "ASPD_ROUND_TX_FEERATE_SAT_PER_KVB")]
@@ -427,6 +429,10 @@ impl ConfigOpts {
 
 		if let Some(v) = self.sweep_threshold {
 			cfg.sweep_threshold = v;
+		}
+
+		if let Some(v) = self.round_onboard_confirmations {
+			cfg.round_onboard_confirmations = v;
 		}
 
 		if let Some(v) = self.round_tx_feerate_sat_per_kvb {

@@ -7,8 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::address::Address;
-use bitcoin::{Amount, Network, OutPoint};
+use bitcoin::{Address, Amount, Network, OutPoint};
 use serde_json;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

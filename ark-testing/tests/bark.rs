@@ -7,16 +7,18 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
-use ark_testing::util::FutureExt;
-use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use bitcoin::key::Keypair;
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
 use ark::{ArkoorVtxo, Vtxo};
+use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use aspd_rpc as rpc;
-use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
+
 use ark_testing::{AspdConfig, TestContext};
+use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 use ark_testing::daemon::aspd;
+use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
+use ark_testing::util::FutureExt;
 
 const OFFBOARD_FEES: Amount = Amount::from_sat(900);
 
@@ -82,7 +84,10 @@ async fn onboard_all_bark() {
 	// Check if the onboarding tx's output value is the same as our off-chain balance
 	let sync_client = setup.bark1.bitcoind().sync_client();
 	let onboard_tx = sync_client.get_raw_transaction(&onboard_txid, None).unwrap();
-	assert_eq!(setup.bark1.offchain_balance().await, onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus());
+	assert_eq!(
+		setup.bark1.offchain_balance().await,
+		onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus(),
+	);
 	assert_eq!(setup.bark1.onchain_balance().await, Amount::ZERO);
 }
 
@@ -168,8 +173,7 @@ async fn large_round() {
 			b.onboard(Amount::from_sat(80_000)).await;
 		})).await;
 	}
-
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// Refresh all vtxos
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
@@ -203,10 +207,9 @@ async fn refresh() {
 	// Fund clients
 	setup.context.fund_bark(&setup.bark1, Amount::from_sat(1_000_000)).await;
 	setup.context.fund_bark(&setup.bark2, Amount::from_sat(1_000_000)).await;
-	setup.context.bitcoind.generate(1).await;
 	setup.bark1.onboard(Amount::from_sat(800_000)).await;
 	setup.bark2.onboard(Amount::from_sat(800_000)).await;
-	setup.context.bitcoind.generate(1).await;
+	setup.context.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// We want bark2 to have a refresh, onboard, round and oor vtxo
 	let pk1 = setup.bark1.vtxo_pubkey().await;
@@ -215,6 +218,7 @@ async fn refresh() {
 	setup.bark1.refresh_all().await;
 	setup.bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
 	setup.bark2.onboard(Amount::from_sat(20_000)).await;
+	setup.context.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	assert_eq!(3, setup.bark2.vtxos().await.len());
 	setup.bark2.refresh_all().await;
@@ -269,6 +273,7 @@ async fn list_movements() {
 
 	// onboard vtxo
 	bark1.onboard(Amount::from_sat(300_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 1);
 	assert_eq!(payments[0].spends.len(), 0);
@@ -317,7 +322,7 @@ async fn multiple_spends_in_payment() {
 	bark1.onboard(Amount::from_sat(100_000)).await;
 	bark1.onboard(Amount::from_sat(200_000)).await;
 	bark1.onboard(Amount::from_sat(300_000)).await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// refresh vtxos
 	bark1.refresh_all().await;
@@ -453,6 +458,7 @@ async fn reject_oor_with_bad_signature() {
 	assert_eq!(bark3.vtxos().await.len(), 0);
 
 	// check that we saw a log
+	tokio::time::sleep(Duration::from_millis(250)).await;
 	assert!(io::BufReader::new(fs::File::open(bark3.command_log_file()).unwrap()).lines().any(|line| {
 		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. signature failed verification")
 	}));

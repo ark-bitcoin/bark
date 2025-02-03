@@ -2,14 +2,16 @@
 
 use std::str::FromStr;
 
-use ark::vtxo::exit_spk;
-use ark_testing::setup::setup_full;
-use ark_testing::{context::TestContext, Bark};
-use bark_json::primitives::VtxoType;
-
 use bitcoin::Address;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
+
+use ark::vtxo::exit_spk;
+use bark_json::primitives::VtxoType;
+
+use ark_testing::{TestContext, Bark};
+use ark_testing::constants::ONBOARD_CONFIRMATIONS;
+use ark_testing::setup::setup_full;
 
 async fn progress_exit(bark: &Bark) {
 	let mut flip = false;
@@ -78,7 +80,7 @@ async fn exit_round() {
 		bark7.onboard(Amount::from_sat(500_000)),
 		bark8.onboard(Amount::from_sat(500_000)),
 	);
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	tokio::join!(
 		bark1.refresh_all(),
