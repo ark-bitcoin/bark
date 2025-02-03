@@ -1,6 +1,4 @@
 
-#[macro_use]
-extern crate ark_testing;
 
 use std::str::FromStr;
 
@@ -13,35 +11,33 @@ use bitcoin::Address;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
 
-async fn progress_exit(
-	w: &Bark,
-) {
+async fn progress_exit(bark: &Bark) {
 	let mut flip = false;
 	for _ in 0..20 {
-		let res = w.exit().await;
+		let res = bark.exit().await;
 		if res.done {
 			return;
 		}
 		if let Some(height) = res.height {
-			let current = w.bitcoind().sync_client().get_block_count().unwrap();
-			w.bitcoind().generate(height as u64 - current).await;
+			let current = bark.bitcoind().sync_client().get_block_count().unwrap();
+			bark.bitcoind().generate(height as u64 - current).await;
 		} else {
 			flip = if flip {
-				w.bitcoind().generate(1).await;
+				bark.bitcoind().generate(1).await;
 				false
 			} else {
 				true
 			};
 		}
 	}
-	panic!("failed to finish unilateral exit of bark {}", w.name());
+	panic!("failed to finish unilateral exit of bark {}", bark.name());
 }
 
 #[tokio::test]
 async fn exit_round() {
 	let random_addr = Address::from_str(
-			"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
-		).unwrap().assume_checked();
+		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
+	).unwrap().assume_checked();
 
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;

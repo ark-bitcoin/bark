@@ -216,8 +216,7 @@ impl Bark {
 	}
 
 	pub async fn exit(&self) -> json::ExitStatus {
-		let res = self.run(["exit"]).await;
-		serde_json::from_str::<json::ExitStatus>(&res).expect("invalid json from exit")
+		self.run_json(["exit"]).await
 	}
 
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>
