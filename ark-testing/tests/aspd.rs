@@ -329,6 +329,7 @@ async fn spend_unregistered_onboard() {
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.onboard(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(1).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;
 	tokio::spawn(async move {

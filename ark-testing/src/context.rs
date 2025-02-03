@@ -207,13 +207,7 @@ impl TestContext {
 		info!("Fund {} {}", asp.name, amount);
 		let address = asp.get_funding_address().await;
 		let txid = self.bitcoind.fund_addr(address, amount).await;
-
-		// wait for funding transaction to appear in mempool
-		let client = asp.bitcoind().sync_client();
-		while client.get_raw_transaction(&txid, None).is_err() {
-			tokio::time::sleep(Duration::from_millis(200)).await;
-		}
-
+		self.bitcoind.generate(1).await;
 		asp.get_admin_client().await.wallet_status(aspd_rpc::Empty {}).await
 			.expect("error calling wallet status after funding apsd");
 		txid
@@ -224,13 +218,7 @@ impl TestContext {
 		info!("Fund {} {}", bark.name(), amount);
 		let address = bark.get_onchain_address().await;
 		let txid = self.bitcoind.fund_addr(address, amount).await;
-
-		// wait for funding transaction to appear in mempool
-		let client = bark.bitcoind().sync_client();
-		while client.get_raw_transaction(&txid, None).is_err() {
-			tokio::time::sleep(Duration::from_millis(200)).await;
-		}
-
+		self.bitcoind.generate(1).await;
 		txid
 	}
 

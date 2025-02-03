@@ -209,6 +209,7 @@ async fn refresh() {
 	setup.context.bitcoind.generate(1).await;
 	setup.bark1.onboard(Amount::from_sat(800_000)).await;
 	setup.bark2.onboard(Amount::from_sat(800_000)).await;
+	setup.context.bitcoind.generate(1).await;
 
 	// We want bark2 to have a refresh, onboard, round and oor vtxo
 	let pk1 = setup.bark1.vtxo_pubkey().await;
@@ -319,6 +320,7 @@ async fn multiple_spends_in_payment() {
 	bark1.onboard(Amount::from_sat(100_000)).await;
 	bark1.onboard(Amount::from_sat(200_000)).await;
 	bark1.onboard(Amount::from_sat(300_000)).await;
+	ctx.bitcoind.generate(1).await;
 
 	// refresh vtxos
 	bark1.refresh_all().await;

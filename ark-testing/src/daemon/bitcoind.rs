@@ -119,13 +119,19 @@ impl Bitcoind {
 	}
 
 	pub async fn generate(&self, block_num: u64) {
-		let client = self.sync_client();
 		lazy_static! {
 			static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
 				"mzU8XRVhUdXtdxmSA3Vw8XeU2FDV4iBDRW"
 			).unwrap().assume_checked();
 		}
-		client.generate_to_address(block_num, &*RANDOM_ADDR).unwrap();
+
+		// give txs time to propagate
+		tokio::time::sleep(Duration::from_millis(1000)).await;
+
+		self.sync_client().generate_to_address(block_num, &*RANDOM_ADDR).unwrap();
+
+		// give blocks some time to propagate
+		tokio::time::sleep(Duration::from_millis(500)).await;
 	}
 
 	pub async fn prepare_funds(&self) {

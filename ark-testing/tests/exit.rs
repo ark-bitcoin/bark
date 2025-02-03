@@ -33,9 +33,6 @@ async fn progress_exit(
 				true
 			};
 		}
-		// TODO: find a way how to remove this sleep
-		// without the sleep exit tests become very flaky
-		tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
 	}
 	panic!("failed to finish unilateral exit of bark {}", w.name());
 }
@@ -73,6 +70,7 @@ async fn exit_round() {
 		ctx.fund_bark(&bark7, Amount::from_sat(1_000_000)),
 		ctx.fund_bark(&bark8, Amount::from_sat(1_000_000)),
 	);
+	ctx.bitcoind.generate(1).await;
 
 	tokio::join!(
 		bark1.onboard(Amount::from_sat(500_000)),
@@ -84,8 +82,7 @@ async fn exit_round() {
 		bark7.onboard(Amount::from_sat(500_000)),
 		bark8.onboard(Amount::from_sat(500_000)),
 	);
-
-	ctx.bitcoind.generate(7).await;
+	ctx.bitcoind.generate(6).await;
 
 	tokio::join!(
 		bark1.refresh_all(),
