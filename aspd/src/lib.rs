@@ -5,6 +5,7 @@
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
 
+mod bitcoind;
 mod database;
 mod lightning;
 mod psbtext;
@@ -32,6 +33,7 @@ use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
+use opentelemetry::KeyValue;
 use tokio::time::MissedTickBehavior;
 use tokio::sync::{broadcast, Mutex};
 use tokio_stream::{StreamExt, Stream};
@@ -41,8 +43,7 @@ use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
 use ark::rounds::RoundEvent;
 
-use opentelemetry::KeyValue;
-
+use crate::bitcoind::BitcoinRpcExt;
 use crate::round::RoundInput;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
@@ -335,11 +336,10 @@ impl App {
 		).context("failed to create bitcoind rpc client")?;
 
 		let (shutdown_channel, _) = broadcast::channel::<()>(1);
-
 		Ok(Arc::new(App {
 			wallet: Arc::new(Mutex::new(wallet)),
 			txindex: TxIndex::new(),
-			chain_tip: Mutex::new(fetch_tip(&bitcoind).context("failed to fetch tip")?),
+			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: None,
 			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
@@ -461,8 +461,8 @@ impl App {
 						break;
 					}
 				}
-					
-				match fetch_tip(&app.bitcoind) {
+
+				match app.bitcoind.tip() {
 					Ok(t) => *app.chain_tip.lock().await = t,
 					Err(e) => {
 						warn!("Error getting chain tip from bitcoind: {}", e);
@@ -471,7 +471,7 @@ impl App {
 			}
 
 			info!("Chain tip loop terminated gracefully.");
-			
+
 			Ok(())
 		});
 
@@ -520,9 +520,9 @@ impl App {
 		// Wait until the first task finishes
 		futures::future::try_join_all(jhs).await
 			.context("one of our background processes errored")?;
-		
+
 		slog!(AspdTerminated);
-		
+
 		Ok(())
 	}
 
@@ -578,7 +578,7 @@ impl App {
 		// so this ensures we still broadcast them afterwards
 		for tx in wallet.transactions() {
 			if !tx.chain_position.is_confirmed() {
-				if let Err(e) = self.bitcoind.send_raw_transaction(&*tx.tx_node.tx) {
+				if let Err(e) = self.bitcoind.broadcast_tx(&*tx.tx_node.tx) {
 					slog!(WalletTransactionBroadcastFailure, error: e.to_string(), txid: tx.tx_node.txid);
 				}
 			}
@@ -617,7 +617,7 @@ impl App {
 		}
 		drop(wallet);
 
-		if let Err(e) = self.bitcoind.send_raw_transaction(&tx) {
+		if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
 			error!("Error broadcasting tx: {}", e);
 			error!("Try yourself: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		}
@@ -883,10 +883,4 @@ mod test {
 		assert_eq!(5, flux.vtxos.len());
 		assert!(!flux.vtxos.contains(&vtxos[5]));
 	}
-}
-
-fn fetch_tip(bitcoind: &bdk_bitcoind_rpc::bitcoincore_rpc::Client) -> anyhow::Result<BlockRef> {
-	let height = bitcoind.get_block_count()?;
-	let hash = bitcoind.get_block_hash(height)?;
-	Ok(BlockRef { height, hash })
 }

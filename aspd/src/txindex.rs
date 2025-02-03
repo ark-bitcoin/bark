@@ -9,16 +9,14 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid};
-use bdk_bitcoind_rpc::bitcoincore_rpc::{self, Client, RpcApi};
+use bdk_bitcoind_rpc::bitcoincore_rpc::{Client, RpcApi};
 use chrono::{DateTime, Local};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use ark::BlockHeight;
 
-
-/// The JSON-RPC error code when tx is not found.
-const TX_NOT_FOUND_ERROR: i32 = -5;
+use crate::bitcoind::BitcoinRpcErrorExt;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,9 +327,7 @@ impl TxIndexProcess {
 						}
 					}
 				},
-				Err(bitcoincore_rpc::Error::JsonRpc(
-					bitcoincore_rpc::jsonrpc::Error::Rpc(e))
-				) if e.code == TX_NOT_FOUND_ERROR => {
+				Err(e) if e.is_not_found() => {
 					// Node doesn't know about tx. If it's in broadcast, let's rebroadcast.
 					if self.broadcast.contains(&tx.txid) {
 						self.broadcast_tx(tx).await;
