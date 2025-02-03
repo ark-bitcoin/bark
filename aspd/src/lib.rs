@@ -363,6 +363,14 @@ impl App {
 
 	/// Perform all startup processes.
 	async fn startup(self: &Arc<Self>) -> anyhow::Result<()> {
+		// Check if our bitcoind is on the expected network.
+		let chain_info = self.bitcoind.get_blockchain_info()?;
+		if chain_info.chain != self.config.network {
+			bail!("Our bitcoind is running on network {} while we are configured for network {}",
+				chain_info.chain, self.config.network,
+			);
+		}
+
 		// Start loading txindex.
 		self.fill_txindex().await.context("error filling txindex")?;
 
