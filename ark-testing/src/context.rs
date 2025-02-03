@@ -1,3 +1,4 @@
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -48,6 +49,7 @@ impl TestContext {
 				"bitcoind".to_string(),
 				BitcoindConfig {
 					datadir: datadir.join("bitcoind"),
+					wallet: true,
 					txindex: true,
 					network: Network::Regtest,
 					fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
@@ -59,6 +61,7 @@ impl TestContext {
 			bitcoind
 		};
 
+		bitcoind.init_wallet().await;
 		bitcoind.prepare_funds().await;
 
 		TestContext {
@@ -72,6 +75,7 @@ impl TestContext {
 		let datadir = self.datadir.join(name.as_ref());
 		BitcoindConfig {
 			datadir,
+			wallet: false,
 			txindex: true,
 			network: Network::Regtest,
 			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
@@ -79,19 +83,22 @@ impl TestContext {
 		}
 	}
 
-	pub async fn bitcoind(&mut self, name: impl AsRef<str>) -> Bitcoind {
-		self.bitcoind_with_cfg(name.as_ref(), self.bitcoind_default_cfg(name.as_ref())).await
+	pub async fn new_bitcoind(&self, name: impl AsRef<str>) -> Bitcoind {
+		self.new_bitcoind_with_cfg(name.as_ref(), self.bitcoind_default_cfg(name.as_ref())).await
 	}
 
-	pub async fn bitcoind_with_cfg(&self, name: impl AsRef<str>, cfg: BitcoindConfig) -> Bitcoind {
+	pub async fn new_bitcoind_with_cfg(&self, name: impl AsRef<str>, cfg: BitcoindConfig) -> Bitcoind {
+		let wallet = cfg.wallet;
 		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), cfg, Some(self.bitcoind.p2p_url()));
 		bitcoind.start().await.unwrap();
-		bitcoind.init_wallet().await;
+		if wallet {
+			bitcoind.init_wallet().await;
+		}
 		bitcoind
 	}
 
-	pub async fn aspd_with_cfg(&mut self, name: impl AsRef<str>, cfg: AspdConfig) -> Aspd {
-		let bitcoind = self.bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+	pub async fn new_aspd_with_cfg(&self, name: impl AsRef<str>, cfg: AspdConfig) -> Aspd {
+		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
 		let mut ret = Aspd::new(name, bitcoind, cfg);
 		ret.start().await.unwrap();
 		ret
@@ -126,8 +133,78 @@ impl TestContext {
 		aspd_config
 	}
 
+	/// Creates new aspd without any funds.
+	pub async fn new_aspd(
+		&self,
+		name: impl AsRef<str>,
+		lightningd: Option<&Lightningd>,
+	) -> Aspd {
+		let name = name.as_ref();
+		self.new_aspd_with_cfg(name, self.aspd_default_cfg(name, lightningd).await).await
+	}
+
+	/// Creates new aspd and immediately funds it. Waits until the aspd's bitcoind
+	/// receives funding transaction.
+	pub async fn new_aspd_with_funds(
+		&self,
+		name: impl AsRef<str>,
+		lightningd: Option<&Lightningd>,
+		amount: Amount
+	) -> Aspd {
+		let asp = self.new_aspd(name, lightningd).await;
+		let _txid = self.fund_asp(&asp, amount).await;
+		asp
+	}
+
+	pub async fn try_new_bark(
+		&self,
+		name: impl AsRef<str>,
+		aspd: &dyn ToAspUrl,
+	) -> anyhow::Result<Bark> {
+		let datadir = self.datadir.join(name.as_ref());
+
+		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+
+		let cfg = BarkConfig {
+			datadir,
+			asp_url: aspd.asp_url(),
+			network: String::from("regtest"),
+		};
+		Bark::try_new(name, bitcoind, cfg).await
+	}
+
+	/// Creates new bark without any funds.
+	pub async fn new_bark(&self, name: impl AsRef<str>, aspd: &dyn ToAspUrl) -> Bark {
+		self.try_new_bark(name, aspd).await.unwrap()
+	}
+
+	/// Creates new bark and immediately funds it. Waits until the bark's bitcoind
+	/// receives funding transaction.
+	pub async fn new_bark_with_funds(&self, name: impl AsRef<str>, aspd: &dyn ToAspUrl, amount: Amount) -> Bark {
+		let bark = self.try_new_bark(name, aspd).await.unwrap();
+		let _txid = self.fund_bark(&bark, amount).await;
+		bark
+	}
+
+	pub async fn new_lightningd(&self, name: impl AsRef<str>) -> Lightningd {
+		let datadir = self.datadir.join(name.as_ref());
+
+		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+
+		let cfg = LightningdConfig {
+			network: String::from("regtest"),
+			bitcoin_dir: bitcoind.datadir(),
+			bitcoin_rpcport: bitcoind.rpc_port(),
+			lightning_dir: datadir.clone()
+		};
+
+		let mut ret = Lightningd::new(name, bitcoind, cfg);
+		ret.start().await.unwrap();
+		ret
+	}
+
 	pub async fn fund_asp(&self, asp: &Aspd, amount: Amount) -> Txid {
-		info!("Fund {} {}", asp.name(), amount);
+		info!("Fund {} {}", asp.name, amount);
 		let address = asp.get_funding_address().await;
 		let txid = self.bitcoind.fund_addr(address, amount).await;
 
@@ -158,83 +235,13 @@ impl TestContext {
 	}
 
 	pub async fn fund_lightning(&self, lightning: &Lightningd, amount: Amount) -> Txid {
-		info!("Fund {} {}", lightning.name(), amount);
+		info!("Fund {} {}", lightning.name, amount);
 		let address = lightning.get_onchain_address().await;
 
 		let client = self.bitcoind.sync_client();
 		client.send_to_address(
 			&address, amount, None, None, None, None, None, None,
 		).unwrap()
-	}
-	
-	/// Creates new aspd without any funds.
-	pub async fn aspd(
-		&mut self,
-		name: impl AsRef<str>,
-		lightningd: Option<&Lightningd>,
-	) -> Aspd {
-		let name = name.as_ref();
-		self.aspd_with_cfg(name, self.aspd_default_cfg(name, lightningd).await).await
-	}
-
-	/// Creates new aspd and immediately funds it. Waits until the aspd's bitcoind
-	/// receives funding transaction.
-	pub async fn aspd_with_funds(
-		&mut self,
-		name: impl AsRef<str>,
-		lightningd: Option<&Lightningd>,
-		amount: Amount
-	) -> Aspd {
-		let asp = self.aspd(name, lightningd).await;
-		let _txid = self.fund_asp(&asp, amount).await;
-		asp
-	}
-	
-	pub async fn try_bark(
-		&mut self,
-		name: impl AsRef<str>,
-		aspd: &dyn ToAspUrl,
-	) -> anyhow::Result<Bark> {
-		let datadir = self.datadir.join(name.as_ref());
-
-		let bitcoind = self.bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-
-		let cfg = BarkConfig {
-			datadir,
-			asp_url: aspd.asp_url(),
-			network: String::from("regtest"),
-		};
-		Bark::try_new(name, bitcoind, cfg).await
-	}
-
-	/// Creates new bark without any funds.
-	pub async fn bark(&mut self, name: impl AsRef<str>, aspd: &dyn ToAspUrl) -> Bark {
-		self.try_bark(name, aspd).await.unwrap()
-	}
-
-	/// Creates new bark and immediately funds it. Waits until the bark's bitcoind
-	/// receives funding transaction.
-	pub async fn bark_with_funds(&mut self, name: impl AsRef<str>, aspd: &dyn ToAspUrl, amount: Amount) -> Bark {
-		let bark = self.try_bark(name, aspd).await.unwrap();
-		let _txid = self.fund_bark(&bark, amount).await;
-		bark
-	}
-
-	pub async fn lightningd(&mut self, name: impl AsRef<str>) -> Lightningd {
-		let datadir = self.datadir.join(name.as_ref());
-
-		let bitcoind = self.bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-
-		let cfg = LightningdConfig {
-			network: String::from("regtest"),
-			bitcoin_dir: bitcoind.datadir(),
-			bitcoin_rpcport: bitcoind.rpc_port(),
-			lightning_dir: datadir.clone()
-		};
-
-		let mut ret = Lightningd::new(name, bitcoind, cfg);
-		ret.start().await.unwrap();
-		ret
 	}
 }
 

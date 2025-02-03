@@ -25,6 +25,7 @@ pub struct BitcoindHelper {
 
 pub struct BitcoindConfig {
 	pub datadir: PathBuf,
+	pub wallet: bool,
 	pub txindex: bool,
 	pub network: Network,
 	pub fallback_fee: FeeRate,
@@ -240,9 +241,11 @@ impl DaemonHelper for BitcoindHelper {
 			"-unsafesqlitesync",
 			"-debug=1",
 			"-debugexclude=libevent",
+			"-whitelist=noban,in,out@127.0.0.1", // whitelist our peers for instant relay
 			&format!("-rpcauth={}", BITCOINRPC_TEST_AUTH),
 			&format!("-datadir={}", self.config.datadir.display()),
 			&format!("-txindex={}", self.config.txindex as u8),
+			&format!("-disablewallet={}", !self.config.wallet as u8),
 			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
 			&format!("-bind=127.0.0.1:{}", self.state.p2p_port.expect("A port has been picked")),
 			&format!("-zmqpubhashblock={}", self.zmq_url()),

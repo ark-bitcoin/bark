@@ -294,7 +294,7 @@ impl Lightningd {
 			.into_inner().id;
 		let other_host = "localhost";
 		let other_port = other.port().await
-			.expect(&format!("No port configured on `{}`", other.name()));
+			.expect(&format!("No port configured on `{}`", other.name));
 
 		// Connect both nodes
 		let mut client = self.grpc_client().await;
@@ -309,7 +309,7 @@ impl Lightningd {
 
 	/// Wait for block
 	pub async fn wait_for_block(&self, blockheight: u64) {
-		trace!("{} - Wait for block {}", self.name(), blockheight);
+		trace!("{} - Wait for block {}", self.name, blockheight);
 		let mut client = self.grpc_client().await;
 		client.wait_block_height(grpc::WaitblockheightRequest {
 			blockheight: u32::try_from(blockheight).unwrap(),

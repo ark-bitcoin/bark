@@ -25,7 +25,7 @@ pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 
 
 pub struct AspdHelper {
-	name : String,
+	name: String,
 	state: AspdState,
 	config: AspdConfig,
 	bitcoind: Bitcoind
@@ -115,7 +115,7 @@ impl Aspd {
 	}
 
 	/// Subscribe to all structured logs of the given type.
-	pub async fn subscribe_log<L: LogMsg>(&mut self) -> mpsc::UnboundedReceiver<L> {
+	pub async fn subscribe_log<L: LogMsg>(&self) -> mpsc::UnboundedReceiver<L> {
 		let (tx, rx) = sync::mpsc::unbounded_channel();
 		self.add_stdout_handler(move |l: &str| {
 			if l.starts_with("{") {
@@ -131,7 +131,7 @@ impl Aspd {
 	}
 
 	/// Wait for the first occurrence of the given log message type and return it.
-	pub async fn wait_for_log<L: LogMsg>(&mut self) -> L {
+	pub async fn wait_for_log<L: LogMsg>(&self) -> L {
 		let (tx, mut rx) = sync::mpsc::channel(1);
 		self.add_stdout_handler(move |l: &str| {
 			if l.starts_with("{") {

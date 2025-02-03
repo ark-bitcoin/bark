@@ -14,6 +14,11 @@ use tokio::process::Child;
 use crate::constants::env::TEST_DIRECTORY;
 
 pub fn init_logging() -> anyhow::Result<()> {
+	match env::var("RUST_LOG") {
+		Ok(v) if v == "0" => return Ok(()),
+		_ => {},
+	}
+
 	// We ignore the output
 	// An error is returned if the logger is initiated twice
 	// Note, that every test tries to initiate the logger
