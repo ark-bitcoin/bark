@@ -28,8 +28,9 @@ log = { version = "0.4.23", features = [ "kv", "kv_serde" ] }
 serde = { version = "1" }
 # grpc clients
 tonic = { version = "0.12.2", features = [ "tls", "tls-roots", "gzip" ] }
-
-
+tower = "0.5.2"
+http = "1.2.0"
+http-body = "1.0.1"
 #
 # * INTERNAL
 
@@ -54,7 +55,14 @@ rand = { version = "0.8.5", features = [ "std", "std_rng" ] }
 bdk_wallet = "1.0.0"
 bdk_esplora = { version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false }
 bdk_bitcoind_rpc = "0.17.1"
-
+# tracing and monitoring
+opentelemetry = "0.27.1"
+opentelemetry_sdk = { version = "0.27.0", features = ["tracing", "rt-tokio"] }
+opentelemetry-otlp = "0.27.0"
+opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
+tracing = { version = "0.1.41", features = ["std", "attributes"] }
+tracing-opentelemetry = "0.28.0"
+tracing-subscriber = { version = "0.3.19", features = ["std", "registry", "ansi", "fmt", "env-filter"] }
 
 [profile.release]
 debug = true
