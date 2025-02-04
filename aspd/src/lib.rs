@@ -28,7 +28,6 @@ use std::time::Duration;
 use anyhow::Context;
 use aspd_rpc as rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -43,7 +42,7 @@ use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
 use ark::rounds::RoundEvent;
 
-use crate::bitcoind::BitcoinRpcExt;
+use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use crate::round::RoundInput;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
@@ -137,13 +136,16 @@ impl Default for Config {
 impl Config {
 	fn bitcoind_auth(&self) -> bdk_bitcoind_rpc::bitcoincore_rpc::Auth {
 		match (&self.bitcoind_rpc_user, &self.bitcoind_rpc_pass) {
-			(Some(user), Some(pass)) => return bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(user.into(), pass.into()),
+			(Some(user), Some(pass)) => {
+				return bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(user.into(), pass.into());
+			},
 			(Some(_), None) => panic!("Missing configuration for bitcoind_rpc_pass."),
 			(None, Some(_)) => panic!("Missing configurationfor bitcoind_rpc_user."),
 			(None, None) => {} // Do nothing,
 		};
 
-		let bitcoind_cookie_file = self.bitcoind_cookie.as_ref().expect("The bitcoind-cookie must be set if username and password aren't provided");
+		let bitcoind_cookie_file = self.bitcoind_cookie.as_ref()
+			.expect("The bitcoind-cookie must be set if username and password aren't provided");
 		bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(bitcoind_cookie_file.into())
 	}
 }
@@ -214,7 +216,7 @@ pub struct App {
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
 	wallet: Arc<Mutex<bdk_wallet::Wallet>>,
-	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
+	bitcoind: BitcoinRpcClient,
 	chain_tip: Mutex<BlockRef>,
 	txindex: TxIndex,
 
@@ -266,10 +268,8 @@ impl App {
 			bail!("dir is not empty");
 		}
 
-		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
-			&config.bitcoind_url,
-			config.bitcoind_auth(),
-		).context("failed to create bitcoind rpc client")?;
+		let bitcoind = BitcoinRpcClient::new(&config.bitcoind_url, config.bitcoind_auth())
+			.context("failed to create bitcoind rpc client")?;
 		let deep_tip = (|| {
 			let tip = bitcoind.get_block_count()?;
 			let deep = tip.saturating_sub(DEEPLY_CONFIRMED);
@@ -330,10 +330,8 @@ impl App {
 		let (wallet, asp_key) = Self::wallet_from_seed(config.network, &seed, init)
 			.context("error loading wallet")?;
 
-		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
-			&config.bitcoind_url,
-			config.bitcoind_auth(),
-		).context("failed to create bitcoind rpc client")?;
+		let bitcoind = BitcoinRpcClient::new(&config.bitcoind_url, config.bitcoind_auth())
+			.context("failed to create bitcoind rpc client")?;
 
 		let (shutdown_channel, _) = broadcast::channel::<()>(1);
 		Ok(Arc::new(App {
@@ -378,17 +376,12 @@ impl App {
 		let (sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
-		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
-			&self.config.bitcoind_url,
-			self.config.bitcoind_auth(),
-		).context("failed to create bitcoind rpc client")?;
-
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
 		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
 		let jh_txindex = mut_self.txindex.start(
-			bitcoind,
+			mut_self.bitcoind.clone(),
 			Duration::from_secs(2),
 			mut_self.shutdown_channel.subscribe(),
 		);
@@ -554,7 +547,9 @@ impl App {
 		// let keychain_spks = self.wallet.spks_of_all_keychains();
 
 		slog!(WalletSyncStarting, block_height: prev_tip.height());
-		let mut emitter = bdk_bitcoind_rpc::Emitter::new(&self.bitcoind, prev_tip.clone(), prev_tip.height());
+		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
+			&self.bitcoind, prev_tip.clone(), prev_tip.height(),
+		);
 		while let Some(em) = emitter.next_block()? {
 			wallet.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
 

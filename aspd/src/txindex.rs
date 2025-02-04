@@ -9,14 +9,13 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid};
-use bdk_bitcoind_rpc::bitcoincore_rpc::{Client, RpcApi};
 use chrono::{DateTime, Local};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use ark::BlockHeight;
 
-use crate::bitcoind::BitcoinRpcErrorExt;
+use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, RpcApi};
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,7 +271,7 @@ impl TxIndex {
 	/// Start the tx index.
 	pub fn start(
 		&mut self,
-		bitcoind: Client,
+		bitcoind: BitcoinRpcClient,
 		interval: Duration,
 		shutdown: broadcast::Receiver<()>,
 	) -> JoinHandle<anyhow::Result<()>> {
@@ -293,7 +292,7 @@ impl TxIndex {
 }
 
 struct TxIndexProcess {
-	bitcoind: Client,
+	bitcoind: BitcoinRpcClient,
 	interval: Duration,
 
 	txs: Arc<RwLock<HashMap<Txid, Tx>>>,
