@@ -13,6 +13,7 @@ mod vtxo_sweeper;
 mod rpcserver;
 mod round;
 mod txindex;
+mod telemetry;
 
 use std::borrow::Borrow;
 use std::collections::HashSet;
@@ -40,7 +41,10 @@ use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
 use ark::rounds::RoundEvent;
 
+use opentelemetry::KeyValue;
+
 use crate::round::RoundInput;
+use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
 
 lazy_static::lazy_static! {
@@ -64,6 +68,7 @@ pub struct Config {
 	pub bitcoind_cookie: Option<PathBuf>,
 	pub bitcoind_rpc_user: Option<String>,
 	pub bitcoind_rpc_pass: Option<String>,
+	pub otel_collector_endpoint: Option<String>,
 
 	// vtxo spec
 	pub vtxo_expiry_delta: u16,
@@ -109,6 +114,7 @@ impl Default for Config {
 			bitcoind_cookie: Some("~/.bitcoin/signet/.cookie".into()),
 			bitcoind_rpc_user: None,
 			bitcoind_rpc_pass: None,
+			otel_collector_endpoint: Some("http://127.0.0.1:4317".parse().unwrap()),
 			vtxo_expiry_delta: 1 * 24 * 6, // 1 day
 			vtxo_exit_delta: 2 * 6, // 2 hrs
 			htlc_delta: 1 * 6, // 1 hr
@@ -411,6 +417,8 @@ impl App {
 		self.startup().await.context("startup error")?;
 		info!("Startup tasks done");
 
+		let spawn_counter = init_telemetry(self)?;
+
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
 			let ret = rpcserver::run_public_rpc_server(app)
@@ -418,6 +426,8 @@ impl App {
 			info!("RPC server exited with {:?}", ret);
 			ret
 		});
+
+		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_public_rpc_server")]));
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
@@ -427,6 +437,8 @@ impl App {
 			ret
 		});
 
+		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "round::run_round_coordinator")]));
+
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
 			let ret = vtxo_sweeper::run_vtxo_sweeper(&app, sweep_trigger_rx)
@@ -434,6 +446,8 @@ impl App {
 			info!("Round sweeper exited with {:?}", ret);
 			ret
 		});
+
+		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "vtxo_sweeper::run_vtxo_sweeper")]));
 
 		let app = self.clone();
 		let mut shutdown = app.shutdown_channel.clone().subscribe();
@@ -461,6 +475,8 @@ impl App {
 			Ok(())
 		});
 
+		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "fetch_tip")]));
+
 		// The tasks that always run
 		let mut jhs = vec![
 			jh_txindex,
@@ -479,6 +495,9 @@ impl App {
 				info!("Admin RPC server exited with {:?}", ret);
 				ret
 			});
+
+			spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_admin_rpc_server")]));
+
 			jhs.push(jh_rpc_admin)
 		}
 
@@ -492,6 +511,9 @@ impl App {
 				info!("Sendpay updater process exited with {:?}", ret);
 				ret
 			});
+
+			spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "lightning::run_process_sendpay_updates")]));
+
 			jhs.push(jh_sendpay)
 		}
 
@@ -749,7 +771,7 @@ impl App {
 	}
 
 
-	/// Returns  a stream of updates related to the payment with hash
+	/// Returns a stream of updates related to the payment with hash
 	fn get_payment_update_stream(&self, payment_hash: sha256::Hash) -> impl Stream<Item = rpc::Bolt11PaymentUpdate> {
 		// A progress update is sent every five seconds to give the user an nidication of progress
 		let mut interval = tokio::time::interval(Duration::from_secs(5));

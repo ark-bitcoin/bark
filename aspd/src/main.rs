@@ -291,6 +291,8 @@ struct ConfigOpts {
 
 	#[arg(long, env = "ASPD_ADMIN_RPC_ADDRESS")]
 	admin_rpc_address: Option<Option<String>>,
+	#[arg(long)]
+	otel_collector_endpoint: Option<Option<String>>,
 
 	/// Round interval, in ms.
 	#[arg(long, env = "ASPD_ROUND_INTERVAL")]
@@ -388,6 +390,14 @@ impl ConfigOpts {
 				cfg.admin_rpc_address = Some(v.parse().context("Invalid admin_rpc_address")?);
 			} else {
 				cfg.admin_rpc_address = None;
+			}
+		}
+		
+		if let Some(v) = self.otel_collector_endpoint {
+			if let Some(v) = v {
+				cfg.otel_collector_endpoint = Some(v);
+			} else {
+				cfg.otel_collector_endpoint = None;
 			}
 		}
 
