@@ -32,12 +32,14 @@
 				rust = pkgs.rust-bin.stable.${rustVersion}.default.override {
 					extensions = [ "rust-src" "rust-analyzer" ];
 				};
-				bitcoin = pkgs.bitcoin.overrideAttrs (old: {
+
+				bitcoin = pkgs.bitcoind.overrideAttrs (old: {
 					version = bitcoinVersion;
 					src = pkgs.fetchurl {
 						urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
 						sha256 = "sha256-cAri0eIEYC6wfyd5puZmmJO8lsDcopBZP4D/jhAv838=";
 					};
+					doCheck = false;
 				});
 
 				electrs = pkgs.rustPlatform.buildRustPackage rec {
