@@ -394,31 +394,30 @@ impl App {
 			mut_self.shutdown_channel.subscribe(),
 		);
 
-		// Spawn a task to handle Ctrl+C
-		let shutdown_channel = mut_self.shutdown_channel.clone();
-		tokio::spawn(async move {
-			tokio::signal::ctrl_c()
-				.await
-				.expect("Failed to listen for Ctrl+C");
-
-			info!("Ctrl+C received! Sending shutdown signal...");
-
-			let _ = shutdown_channel.send(());
-
-			for i in (1..=60).rev() {
-				info!("Forced exit in {} seconds...", i);
-				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-			}
-
-			std::process::exit(0);
-		});
 
 		// First perform all startup tasks...
 		info!("Starting startup tasks...");
 		self.startup().await.context("startup error")?;
 		info!("Startup tasks done");
 
+
+		// Then start all our subprocesses
 		let spawn_counter = init_telemetry(self)?;
+
+		// Spawn a task to handle Ctrl+C
+		let shutdown_channel = self.shutdown_channel.clone();
+		tokio::spawn(async move {
+			tokio::signal::ctrl_c()
+				.await
+				.expect("Failed to listen for Ctrl+C");
+			info!("Ctrl+C received! Sending shutdown signal...");
+			let _ = shutdown_channel.send(());
+			for i in (1..=60).rev() {
+				info!("Forced exit in {} seconds...", i);
+				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+			}
+			std::process::exit(0);
+		});
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
@@ -427,8 +426,9 @@ impl App {
 			info!("RPC server exited with {:?}", ret);
 			ret
 		});
-
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_public_rpc_server")]));
+		spawn_counter.as_ref().map(|sc| {
+			sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_public_rpc_server")])
+		});
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
@@ -437,8 +437,9 @@ impl App {
 			info!("Round coordinator exited with {:?}", ret);
 			ret
 		});
-
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "round::run_round_coordinator")]));
+		spawn_counter.as_ref().map(|sc| {
+			sc.add(1, &[KeyValue::new("spawn", "round::run_round_coordinator")])
+		});
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
@@ -447,8 +448,9 @@ impl App {
 			info!("Round sweeper exited with {:?}", ret);
 			ret
 		});
-
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "vtxo_sweeper::run_vtxo_sweeper")]));
+		spawn_counter.as_ref().map(|sc| {
+			sc.add(1, &[KeyValue::new("spawn", "vtxo_sweeper::run_vtxo_sweeper")])
+		});
 
 		let app = self.clone();
 		let mut shutdown = app.shutdown_channel.clone().subscribe();
@@ -475,7 +477,6 @@ impl App {
 
 			Ok(())
 		});
-
 		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "fetch_tip")]));
 
 		// The tasks that always run
@@ -496,8 +497,9 @@ impl App {
 				info!("Admin RPC server exited with {:?}", ret);
 				ret
 			});
-
-			spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_admin_rpc_server")]));
+			spawn_counter.as_ref().map(|sc| {
+				sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_admin_rpc_server")])
+			});
 
 			jhs.push(jh_rpc_admin)
 		}
@@ -512,8 +514,9 @@ impl App {
 				info!("Sendpay updater process exited with {:?}", ret);
 				ret
 			});
-
-			spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "lightning::run_process_sendpay_updates")]));
+			spawn_counter.as_ref().map(|sc| {
+				sc.add(1, &[KeyValue::new("spawn", "lightning::run_process_sendpay_updates")])
+			});
 
 			jhs.push(jh_sendpay)
 		}
