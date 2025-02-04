@@ -149,17 +149,15 @@ async fn large_round() {
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
 
 	// Create a few clients
-	let (barks, pks) = {
+	let barks = {
 		let mut barks = Vec::new();
-		let mut pks = Vec::new();
 		// TODO: This might be parallelized
 		// Currently, each creation of bark is waiting, in sequence, for its funding transaction
 		for i in 0..N {
-			let b = ctx.new_bark_with_funds(format!("bark{}", i), &aspd, Amount::from_sat(90_000)).await;
-			pks.push(b.vtxo_pubkey().await);
-			barks.push(b);
+			let name = format!("bark{}", i);
+			barks.push(ctx.new_bark_with_funds(name, &aspd, Amount::from_sat(90_000)).await);
 		}
-		(barks, pks)
+		barks
 	};
 
 	ctx.bitcoind.generate(1).await;
@@ -174,9 +172,8 @@ async fn large_round() {
 	ctx.bitcoind.generate(1).await;
 
 	// Refresh all vtxos
-	let pks_shifted = pks.iter().chain(pks.iter()).skip(1).cloned().take(N).collect::<Vec<_>>();
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
-	futures::future::join_all(barks.iter().zip(pks_shifted).map(|(b, _pk)| {
+	futures::future::join_all(barks.iter().map(|b| {
 		b.refresh_all()
 	})).await;
 }
@@ -209,6 +206,7 @@ async fn refresh() {
 	setup.context.bitcoind.generate(1).await;
 	setup.bark1.onboard(Amount::from_sat(800_000)).await;
 	setup.bark2.onboard(Amount::from_sat(800_000)).await;
+	setup.context.bitcoind.generate(1).await;
 
 	// We want bark2 to have a refresh, onboard, round and oor vtxo
 	let pk1 = setup.bark1.vtxo_pubkey().await;
@@ -319,6 +317,7 @@ async fn multiple_spends_in_payment() {
 	bark1.onboard(Amount::from_sat(100_000)).await;
 	bark1.onboard(Amount::from_sat(200_000)).await;
 	bark1.onboard(Amount::from_sat(300_000)).await;
+	ctx.bitcoind.generate(1).await;
 
 	// refresh vtxos
 	bark1.refresh_all().await;
