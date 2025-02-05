@@ -264,6 +264,30 @@ impl CollectingPayments {
 		Ok(())
 	}
 
+	/// Fetch and check whether the vtxos are owned by user and
+	/// weren't already spent, then return them.
+	///
+	/// There is no guarantee that the vtxos is still all unspent by
+	/// the time this call returns. The caller should ensure no changes
+	/// are made to them meanwhile.
+	async fn check_fetch_round_input_vtxos(&self, app: &App, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
+		let mut ret  = Vec::with_capacity(ids.len());
+
+		let vtxos = app.db.get_vtxos_by_id(ids).await?;
+
+		// Check if the input vtxos exist, unspent and owned by user.
+		for vtxo_state in vtxos {
+			let vtxo_id = vtxo_state.vtxo.id();
+			if !vtxo_state.is_spendable() {
+				bail!("vtxo {} is not spendable: {:?}", vtxo_id, vtxo_state)
+			}
+
+			ret.push(vtxo_state.vtxo);
+		}
+
+		Ok(ret)
+	}
+
 	async fn process_payment(
 		&mut self,
 		app: &App,
@@ -280,14 +304,14 @@ impl CollectingPayments {
 		}
 
 		// Check if the input vtxos exist and are unspent.
-		let input_vtxos = match app.db.check_fetch_unspent_vtxos(&inputs).await {
+		let input_vtxos = match self.check_fetch_round_input_vtxos(app, &inputs).await {
 			Ok(i) => i,
 			Err(e) => {
 				let id = e.downcast_ref::<VtxoId>().cloned();
 				slog!(RoundUserVtxoUnknown, round_seq: self.round_seq, vtxo: id);
 				app.release_vtxos_in_flux(&inputs).await;
-				bail!("unknown vtxo {:?}", id);
-			},
+				return Err(e)
+			}
 		};
 
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
