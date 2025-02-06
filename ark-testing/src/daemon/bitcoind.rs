@@ -13,8 +13,9 @@ use tokio::process::Command;
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
 use crate::daemon::{Daemon, DaemonHelper};
-use crate::util::{FeeRateExt, resolve_path};
+use crate::util::{FeeRateExt, FutureExt, resolve_path};
 
+#[derive(Clone)]
 pub struct BitcoindHelper {
 	name : String,
 	exec: PathBuf,
@@ -23,6 +24,7 @@ pub struct BitcoindHelper {
 	add_node: Option<String>
 }
 
+#[derive(Clone)]
 pub struct BitcoindConfig {
 	pub datadir: PathBuf,
 	pub wallet: bool,
@@ -32,7 +34,7 @@ pub struct BitcoindConfig {
 	pub relay_fee: Option<FeeRate>
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct BitcoindState {
 	rpc_port: Option<u16>,
 	p2p_port: Option<u16>,
@@ -214,6 +216,34 @@ impl BitcoindHelper {
 	pub fn zmq_url(&self) -> String {
 		format!("tcp://127.0.0.1:{}", self.zmq_port())
 	}
+
+	async fn is_initialized(&self) -> bool {
+		let helper = self.clone();
+		let check_init = tokio::task::spawn_blocking(move || {
+			match helper.sync_client() {
+				Ok(client) => {
+					client.get_network_info().is_ok()
+				},
+				Err(_) => false
+			}
+		});
+
+		// We do need an additional time-out here to ensure this method returns
+		//
+		// In a normal scenario connecting to bitcoind and requesting 
+		// `get_network_info` will always succeed in 100 ms
+		//
+		// However, if the `BitcoindClient` tries to connect before `bitcoind`
+		// is started it will just halt forever. The time-out is only respected for
+		// the call to `get_network_info` and not for the connection.
+		//
+		// Without this time-out there is a race-condition which can prevent
+		// this method from returning
+		check_init
+			.wait(500)
+			.await
+			.unwrap_or(false) // Not initialized if the task fails
+	}
 }
 
 impl DaemonHelper for BitcoindHelper {
@@ -274,13 +304,11 @@ impl DaemonHelper for BitcoindHelper {
 
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
-		loop {
-			if let Ok(client) = self.sync_client() {
-				if client.get_blockchain_info().is_ok(){
-					return Ok(())
-				}
-			}
-			tokio::time::sleep(Duration::from_millis(100)).await;
+		let sleep_duration = Duration::from_millis(100);
+		while !self.is_initialized().await
+		{
+				tokio::time::sleep(sleep_duration).await;
 		}
+		Ok(())
 	}
 }
