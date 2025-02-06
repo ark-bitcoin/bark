@@ -5,6 +5,7 @@
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
 
+mod bitcoind;
 mod database;
 mod lightning;
 mod psbtext;
@@ -27,11 +28,11 @@ use std::time::Duration;
 use anyhow::Context;
 use aspd_rpc as rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
+use opentelemetry::KeyValue;
 use tokio::time::MissedTickBehavior;
 use tokio::sync::{broadcast, Mutex};
 use tokio_stream::{StreamExt, Stream};
@@ -41,8 +42,7 @@ use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
 use ark::rounds::RoundEvent;
 
-use opentelemetry::KeyValue;
-
+use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use crate::round::RoundInput;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
@@ -136,13 +136,16 @@ impl Default for Config {
 impl Config {
 	fn bitcoind_auth(&self) -> bdk_bitcoind_rpc::bitcoincore_rpc::Auth {
 		match (&self.bitcoind_rpc_user, &self.bitcoind_rpc_pass) {
-			(Some(user), Some(pass)) => return bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(user.into(), pass.into()),
+			(Some(user), Some(pass)) => {
+				return bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(user.into(), pass.into());
+			},
 			(Some(_), None) => panic!("Missing configuration for bitcoind_rpc_pass."),
 			(None, Some(_)) => panic!("Missing configurationfor bitcoind_rpc_user."),
 			(None, None) => {} // Do nothing,
 		};
 
-		let bitcoind_cookie_file = self.bitcoind_cookie.as_ref().expect("The bitcoind-cookie must be set if username and password aren't provided");
+		let bitcoind_cookie_file = self.bitcoind_cookie.as_ref()
+			.expect("The bitcoind-cookie must be set if username and password aren't provided");
 		bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(bitcoind_cookie_file.into())
 	}
 }
@@ -213,7 +216,7 @@ pub struct App {
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
 	wallet: Arc<Mutex<bdk_wallet::Wallet>>,
-	bitcoind: bdk_bitcoind_rpc::bitcoincore_rpc::Client,
+	bitcoind: BitcoinRpcClient,
 	chain_tip: Mutex<BlockRef>,
 	txindex: TxIndex,
 
@@ -265,10 +268,8 @@ impl App {
 			bail!("dir is not empty");
 		}
 
-		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
-			&config.bitcoind_url,
-			config.bitcoind_auth(),
-		).context("failed to create bitcoind rpc client")?;
+		let bitcoind = BitcoinRpcClient::new(&config.bitcoind_url, config.bitcoind_auth())
+			.context("failed to create bitcoind rpc client")?;
 		let deep_tip = (|| {
 			let tip = bitcoind.get_block_count()?;
 			let deep = tip.saturating_sub(DEEPLY_CONFIRMED);
@@ -329,17 +330,14 @@ impl App {
 		let (wallet, asp_key) = Self::wallet_from_seed(config.network, &seed, init)
 			.context("error loading wallet")?;
 
-		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
-			&config.bitcoind_url,
-			config.bitcoind_auth(),
-		).context("failed to create bitcoind rpc client")?;
+		let bitcoind = BitcoinRpcClient::new(&config.bitcoind_url, config.bitcoind_auth())
+			.context("failed to create bitcoind rpc client")?;
 
 		let (shutdown_channel, _) = broadcast::channel::<()>(1);
-
 		Ok(Arc::new(App {
 			wallet: Arc::new(Mutex::new(wallet)),
 			txindex: TxIndex::new(),
-			chain_tip: Mutex::new(fetch_tip(&bitcoind).context("failed to fetch tip")?),
+			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: None,
 			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
 			trigger_round_sweep_tx: None,
@@ -365,6 +363,14 @@ impl App {
 
 	/// Perform all startup processes.
 	async fn startup(self: &Arc<Self>) -> anyhow::Result<()> {
+		// Check if our bitcoind is on the expected network.
+		let chain_info = self.bitcoind.get_blockchain_info()?;
+		if chain_info.chain != self.config.network {
+			bail!("Our bitcoind is running on network {} while we are configured for network {}",
+				chain_info.chain, self.config.network,
+			);
+		}
+
 		// Start loading txindex.
 		self.fill_txindex().await.context("error filling txindex")?;
 
@@ -378,46 +384,40 @@ impl App {
 		let (sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
-		let bitcoind = bdk_bitcoind_rpc::bitcoincore_rpc::Client::new(
-			&self.config.bitcoind_url,
-			self.config.bitcoind_auth(),
-		).context("failed to create bitcoind rpc client")?;
-
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
 		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
 		let jh_txindex = mut_self.txindex.start(
-			bitcoind,
+			mut_self.bitcoind.clone(),
 			Duration::from_secs(2),
 			mut_self.shutdown_channel.subscribe(),
 		);
 
-		// Spawn a task to handle Ctrl+C
-		let shutdown_channel = mut_self.shutdown_channel.clone();
-		tokio::spawn(async move {
-			tokio::signal::ctrl_c()
-				.await
-				.expect("Failed to listen for Ctrl+C");
-
-			info!("Ctrl+C received! Sending shutdown signal...");
-
-			let _ = shutdown_channel.send(());
-
-			for i in (1..=60).rev() {
-				info!("Forced exit in {} seconds...", i);
-				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-			}
-
-			std::process::exit(0);
-		});
 
 		// First perform all startup tasks...
 		info!("Starting startup tasks...");
 		self.startup().await.context("startup error")?;
 		info!("Startup tasks done");
 
+
+		// Then start all our subprocesses
 		let spawn_counter = init_telemetry(self)?;
+
+		// Spawn a task to handle Ctrl+C
+		let shutdown_channel = self.shutdown_channel.clone();
+		tokio::spawn(async move {
+			tokio::signal::ctrl_c()
+				.await
+				.expect("Failed to listen for Ctrl+C");
+			info!("Ctrl+C received! Sending shutdown signal...");
+			let _ = shutdown_channel.send(());
+			for i in (1..=60).rev() {
+				info!("Forced exit in {} seconds...", i);
+				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+			}
+			std::process::exit(0);
+		});
 
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
@@ -426,8 +426,9 @@ impl App {
 			info!("RPC server exited with {:?}", ret);
 			ret
 		});
-
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_public_rpc_server")]));
+		spawn_counter.as_ref().map(|sc| {
+			sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_public_rpc_server")])
+		});
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
@@ -436,8 +437,9 @@ impl App {
 			info!("Round coordinator exited with {:?}", ret);
 			ret
 		});
-
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "round::run_round_coordinator")]));
+		spawn_counter.as_ref().map(|sc| {
+			sc.add(1, &[KeyValue::new("spawn", "round::run_round_coordinator")])
+		});
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
@@ -446,8 +448,9 @@ impl App {
 			info!("Round sweeper exited with {:?}", ret);
 			ret
 		});
-
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "vtxo_sweeper::run_vtxo_sweeper")]));
+		spawn_counter.as_ref().map(|sc| {
+			sc.add(1, &[KeyValue::new("spawn", "vtxo_sweeper::run_vtxo_sweeper")])
+		});
 
 		let app = self.clone();
 		let mut shutdown = app.shutdown_channel.clone().subscribe();
@@ -461,8 +464,8 @@ impl App {
 						break;
 					}
 				}
-					
-				match fetch_tip(&app.bitcoind) {
+
+				match app.bitcoind.tip() {
 					Ok(t) => *app.chain_tip.lock().await = t,
 					Err(e) => {
 						warn!("Error getting chain tip from bitcoind: {}", e);
@@ -471,10 +474,9 @@ impl App {
 			}
 
 			info!("Chain tip loop terminated gracefully.");
-			
+
 			Ok(())
 		});
-
 		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "fetch_tip")]));
 
 		// The tasks that always run
@@ -495,8 +497,9 @@ impl App {
 				info!("Admin RPC server exited with {:?}", ret);
 				ret
 			});
-
-			spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_admin_rpc_server")]));
+			spawn_counter.as_ref().map(|sc| {
+				sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_admin_rpc_server")])
+			});
 
 			jhs.push(jh_rpc_admin)
 		}
@@ -511,8 +514,9 @@ impl App {
 				info!("Sendpay updater process exited with {:?}", ret);
 				ret
 			});
-
-			spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "lightning::run_process_sendpay_updates")]));
+			spawn_counter.as_ref().map(|sc| {
+				sc.add(1, &[KeyValue::new("spawn", "lightning::run_process_sendpay_updates")])
+			});
 
 			jhs.push(jh_sendpay)
 		}
@@ -520,9 +524,9 @@ impl App {
 		// Wait until the first task finishes
 		futures::future::try_join_all(jhs).await
 			.context("one of our background processes errored")?;
-		
+
 		slog!(AspdTerminated);
-		
+
 		Ok(())
 	}
 
@@ -554,7 +558,9 @@ impl App {
 		// let keychain_spks = self.wallet.spks_of_all_keychains();
 
 		slog!(WalletSyncStarting, block_height: prev_tip.height());
-		let mut emitter = bdk_bitcoind_rpc::Emitter::new(&self.bitcoind, prev_tip.clone(), prev_tip.height());
+		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
+			&self.bitcoind, prev_tip.clone(), prev_tip.height(),
+		);
 		while let Some(em) = emitter.next_block()? {
 			wallet.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
 
@@ -578,7 +584,7 @@ impl App {
 		// so this ensures we still broadcast them afterwards
 		for tx in wallet.transactions() {
 			if !tx.chain_position.is_confirmed() {
-				if let Err(e) = self.bitcoind.send_raw_transaction(&*tx.tx_node.tx) {
+				if let Err(e) = self.bitcoind.broadcast_tx(&*tx.tx_node.tx) {
 					slog!(WalletTransactionBroadcastFailure, error: e.to_string(), txid: tx.tx_node.txid);
 				}
 			}
@@ -617,7 +623,7 @@ impl App {
 		}
 		drop(wallet);
 
-		if let Err(e) = self.bitcoind.send_raw_transaction(&tx) {
+		if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
 			error!("Error broadcasting tx: {}", e);
 			error!("Try yourself: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		}
@@ -883,10 +889,4 @@ mod test {
 		assert_eq!(5, flux.vtxos.len());
 		assert!(!flux.vtxos.contains(&vtxos[5]));
 	}
-}
-
-fn fetch_tip(bitcoind: &bdk_bitcoind_rpc::bitcoincore_rpc::Client) -> anyhow::Result<BlockRef> {
-	let height = bitcoind.get_block_count()?;
-	let hash = bitcoind.get_block_hash(height)?;
-	Ok(BlockRef { height, hash })
 }

@@ -41,7 +41,6 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bdk_wallet::ChangeSet;
 use bitcoin::absolute::LockTime;
 use bitcoin::secp256k1::XOnlyPublicKey;
@@ -54,6 +53,7 @@ use ark::BlockHeight;
 use ark::connectors::ConnectorChain;
 use ark::util::KeypairExt;
 
+use crate::bitcoind::RpcApi;
 use crate::database::StoredRound;
 use crate::psbtext::{PsbtInputExt, RoundMeta};
 use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
