@@ -15,7 +15,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Command, Child};
 use tokio::sync::Mutex;
 
-use crate::util::is_running;
+use crate::constants::env::DAEMON_INIT_TIMEOUT_MILLIS;
+use crate::util::wait_for_completion;
 
 /// The file inside the datadir where stderr output is logged.
 pub const STDERR_LOGFILE: &str = "stderr.log";
@@ -93,7 +94,8 @@ impl<T> Daemon<T>
 					*self.daemon_state.get_mut() = DaemonState::Running;
 					return Ok(());
 				},
-				Err(_) => {
+				Err(err) => {
+					warn!("{:?}", err);
 					warn!("Failed attempt to start {}. This was attempt {} of {}", self.name, i, retries);
 				}
 			}
@@ -126,34 +128,44 @@ impl<T> Daemon<T>
 		info!("Spawn completed the file");
 
 
-		// Wait for init
-		// But check every 100 milliseconds if the Child is
-		// still running
-		let success = loop {
-			if !is_running(&mut child) {
-				break false;
-			}
-			let duration = Duration::from_millis(100);
-			if let Ok(res) = tokio::time::timeout(duration, self.inner.wait_for_init()).await {
-				res?;
-				break true;
-			}
-		};
+		// Wait for initialization
+		let init_timeout = std::env::var(DAEMON_INIT_TIMEOUT_MILLIS)
+			.unwrap_or("30000".into())
+			.parse::<u64>()
+			.map(|s| Duration::from_millis(s))
+			.expect("DAEMON_INIT_TIMEOUT_MILLIS should be a number");
 
-		if success {
-			*self.child.get_mut() = Some(child);
-			Ok(())
-		} else {
-			error!("Daemon '{}' failed to start.", self.name);
-			match fs::read_to_string(&stderr_path) {
-				Ok(c) => error!("stderr: {c}"),
-				Err(e) => error!("failed to read stderr at {}: {}", stderr_path.display(), e),
+		let is_initialized = tokio::time::timeout(init_timeout, self.inner.wait_for_init());
+		let child_died = wait_for_completion(&mut child);
+
+		let result = tokio::select!(
+			val = is_initialized => {
+				val
+					.with_context(|| format!("Daemon {} failed to initialize within reasonable time", self.inner.name()))?
+					.with_context(|| format!("Daemon {} errorded during wait_for_init", self.inner.name()))
 			}
-			match fs::read_to_string(&stdout_path) {
-				Ok(c) => error!("stdout: {c}"),
-				Err(e) => error!("failed to read stdout at {}: {}", stdout_path.display(), e),
+			_ = child_died => {
+				bail!("Daemon {} stopped running before initialization", self.inner.name())
 			}
-			anyhow::bail!("Failed to initialize {}", self.name);
+		);
+
+		match result {
+			Ok(()) => {
+				*self.child.get_mut() = Some(child);
+				Ok(())
+			},
+			Err(e) => {
+				error!("Daemon '{}' failed to start.", self.name);
+				match fs::read_to_string(&stderr_path) {
+					Ok(c) => error!("stderr: {c}"),
+					Err(e) => error!("failed to read stderr at {}: {}", stderr_path.display(), e),
+				}
+				match fs::read_to_string(&stdout_path) {
+					Ok(c) => error!("stdout: {c}"),
+					Err(e) => error!("failed to read stdout at {}: {}", stdout_path.display(), e),
+				}
+				Err(e)
+			}
 		}
 	}
 

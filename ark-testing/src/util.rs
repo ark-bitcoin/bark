@@ -104,6 +104,12 @@ pub fn is_running(child: &mut Child) -> bool {
 	}
 }
 
+pub async fn wait_for_completion(child: &mut Child) -> () {
+	while is_running(child) {
+		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+	}
+}
+
 pub trait FeeRateExt: Borrow<FeeRate> {
 	fn to_btc_per_kvb(&self) -> String {
 		(*self.borrow() * Weight::from_vb(1000).unwrap()).to_string_in(Denomination::Bitcoin)

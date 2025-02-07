@@ -12,6 +12,9 @@ pub mod env {
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
 	pub const LIGHTNINGD_PLUGINS: &str = "LIGHTNINGD_PLUGINS";
 	pub const CHAIN_SOURCE: &str = "CHAIN_SOURCE";
+	// If a daemon isn't initialized in DAEMON_INIT_TIMEOUT_MILLIS
+	// the test will fail
+	pub const DAEMON_INIT_TIMEOUT_MILLIS: &str = "DAEMON_INIT_TIMEOUT";
 }
 
 pub mod bitcoind {
