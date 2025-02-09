@@ -172,8 +172,8 @@ async fn exit_after_onboard() {
 	aspd.stop().await.unwrap();
 	progress_exit(&bark).await;
 
-	assert!(bark.onchain_balance().await > Amount::from_sat(900_000),
-		"The balance has been returned");
+	let balance = bark.onchain_balance().await;
+	assert!(balance > Amount::from_sat(900_000), "balance: {balance}");
 
 	// Verify exit output is considered as part of the wallet
 	let utxos = bark.utxos().await;

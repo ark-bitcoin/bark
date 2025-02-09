@@ -354,8 +354,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Onchain(cmd) => match cmd {
 			OnchainCommand::Balance { no_sync } => {
 				if !no_sync {
-					if let Err(e) = w.sync().await {
-						warn!("Failed to sync utxos. {}", e)
+					if let Err(e) = w.onchain.sync().await {
+						warn!("Failed to sync onchain wallet: {}", e)
+					}
+					if let Err(e) = w.sync_exits().await {
+						warn!("Failed to sync exits: {}", e)
 					}
 				}
 

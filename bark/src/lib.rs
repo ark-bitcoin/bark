@@ -408,6 +408,12 @@ impl <P>Wallet<P> where
 		Ok(self.vtxos_with(selector)?)
 	}
 
+	/// Sync status of unilateral exits.
+	pub async fn sync_exits(&mut self) -> anyhow::Result<()> {
+		self.exit.sync_exit(&mut self.onchain).await?;
+		Ok(())
+	}
+
 	/// Sync both the onchain and offchain wallet.
 	pub async fn sync(&mut self) -> anyhow::Result<()> {
 		self.onchain.sync().await?;
