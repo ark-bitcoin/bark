@@ -5,20 +5,12 @@
 //! * ASP does a deterministic sign and sends ASP part using [new_asp].
 //! * User also signs and combines sigs using [finish] and stores vtxo.
 
-use bitcoin::{
-	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight,
-	Witness,
-};
-use bitcoin::blockdata::locktime::absolute::LockTime;
+use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Transaction, TxOut};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{schnorr, Keypair};
-use bitcoin::sighash::{self, SighashCache, TapSighash};
+use bitcoin::secp256k1::Keypair;
 
-use crate::{fee, musig, util, OnboardVtxo, Vtxo, VtxoSpec};
+use crate::{fee, musig, util, vtxo, OnboardVtxo, VtxoSpec};
 
-
-/// The total signed tx weight of a reveal tx.
-pub const REVEAL_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
 
 pub fn onboard_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
 	let expiry = util::timelock_sign(spec.expiry_height, spec.asp_pubkey.x_only_public_key().0);
@@ -53,6 +45,14 @@ pub fn onboard_amount(spec: &VtxoSpec) -> Amount {
 	spec.amount + onboard_surplus()
 }
 
+fn onboard_txout(spec: &VtxoSpec) -> TxOut {
+	TxOut {
+		script_pubkey: onboard_spk(&spec),
+		//TODO(stevenroose) consider storing both leaf and input values in vtxo struct
+		value: spec.amount + onboard_surplus(),
+	}
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserPart {
 	pub spec: VtxoSpec,
@@ -61,13 +61,27 @@ pub struct UserPart {
 	pub nonce: musig::MusigPubNonce,
 }
 
+impl UserPart {
+	pub fn exit_tx(&self) -> Transaction {
+		vtxo::create_exit_tx(
+			self.spec.user_pubkey,
+			self.spec.asp_pubkey,
+			self.spec.exit_delta,
+			self.spec.amount,
+			self.utxo,
+			None,
+		)
+	}
+}
+
 #[derive(Debug)]
 pub struct PrivateUserPart {
 	pub sec_nonce: musig::MusigSecNonce,
 }
 
 pub fn new_user(spec: VtxoSpec, utxo: OutPoint) -> (UserPart, PrivateUserPart) {
-	let (reveal_sighash, _tx) = reveal_tx_sighash(&spec, utxo);
+	let onboard_prev = onboard_txout(&spec);
+	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&spec, utxo, &onboard_prev);
 	let (agg, _) = musig::tweaked_key_agg(
 		[spec.user_pubkey, spec.asp_pubkey], onboard_taptweak(&spec).to_byte_array(),
 	);
@@ -95,7 +109,12 @@ pub struct AspPart {
 impl AspPart {
 	/// Validate the ASP's partial signature.
 	pub fn verify_partial_sig(&self, user_part: &UserPart) -> bool {
-		let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user_part.spec, user_part.utxo);
+		let onboard_prev = onboard_txout(&user_part.spec);
+		let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(
+			&user_part.spec,
+			user_part.utxo,
+			&onboard_prev,
+		);
 		let agg_nonce = musig::nonce_agg(&[&user_part.nonce, &self.nonce]);
 		let agg_pk = musig::tweaked_key_agg(
 			[user_part.spec.user_pubkey, user_part.spec.asp_pubkey],
@@ -119,7 +138,8 @@ impl AspPart {
 }
 
 pub fn new_asp(user: &UserPart, key: &Keypair) -> AspPart {
-	let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user.spec, user.utxo);
+	let onboard_prev = onboard_txout(&user.spec);
+	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &onboard_prev);
 	let msg = reveal_sighash.to_byte_array();
 	let tweak = onboard_taptweak(&user.spec);
 	let (pub_nonce, sig) = musig::deterministic_partial_sign(
@@ -131,56 +151,14 @@ pub fn new_asp(user: &UserPart, key: &Keypair) -> AspPart {
 	}
 }
 
-pub fn create_reveal_tx(
-	spec: &VtxoSpec,
-	utxo: OutPoint,
-	signature: Option<&schnorr::Signature>,
-) -> Transaction {
-	Transaction {
-		version: bitcoin::transaction::Version(3),
-		lock_time: LockTime::ZERO,
-		input: vec![TxIn {
-			previous_output: utxo,
-			script_sig: ScriptBuf::new(),
-			sequence: Sequence::MAX,
-			witness: {
-				let mut ret = Witness::new();
-				if let Some(sig) = signature {
-					ret.push(&sig[..]);
-				}
-				ret
-			},
-		}],
-		output: vec![
-			TxOut {
-				script_pubkey: spec.exit_spk(),
-				value: spec.amount,
-			},
-			fee::dust_anchor(),
-		],
-	}
-}
-
-pub fn reveal_tx_sighash(spec: &VtxoSpec, utxo: OutPoint) -> (TapSighash, Transaction) {
-	let reveal_tx = create_reveal_tx(spec, utxo, None);
-	let prev = TxOut {
-		script_pubkey: onboard_spk(&spec),
-		//TODO(stevenroose) consider storing both leaf and input values in vtxo struct
-		value: onboard_amount(spec),
-	};
-	let sighash = SighashCache::new(&reveal_tx).taproot_key_spend_signature_hash(
-		0, &sighash::Prevouts::All(&[&prev]), sighash::TapSighashType::Default,
-	).expect("matching prevouts");
-	(sighash, reveal_tx)
-}
-
 pub fn finish(
 	user: UserPart,
 	asp: AspPart,
 	private: PrivateUserPart,
 	key: &Keypair,
-) -> Vtxo {
-	let (reveal_sighash, _reveal_tx) = reveal_tx_sighash(&user.spec, user.utxo);
+) -> OnboardVtxo {
+	let onboard_prev = onboard_txout(&user.spec);
+	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &onboard_prev);
 	let agg_nonce = musig::nonce_agg(&[&user.nonce, &asp.nonce]);
 	let (_user_sig, final_sig) = musig::partial_sign(
 		[user.spec.user_pubkey, user.spec.asp_pubkey],
@@ -196,23 +174,12 @@ pub fn finish(
 		&final_sig,
 		&reveal_sighash.into(),
 		&onboard_taproot(&user.spec).output_key().to_inner(),
-	).is_ok(), "invalid reveal tx signature produced");
+	).is_ok(), "invalid onboard exit tx signature produced");
 
-	Vtxo::Onboard(OnboardVtxo {
+	OnboardVtxo {
 		spec: user.spec,
 		onchain_output: user.utxo,
-		reveal_tx_signature: final_sig,
-	})
-}
-
-/// Returns [None] when [Vtxo] is not an onboard vtxo.
-pub fn signed_reveal_tx(vtxo: &Vtxo) -> Option<Transaction> {
-	if let Vtxo::Onboard(v) = vtxo {
-		let ret = create_reveal_tx(&v.spec, v.onchain_output, Some(&v.reveal_tx_signature));
-		assert_eq!(ret.weight(), REVEAL_TX_WEIGHT);
-		Some(ret)
-	} else {
-		None
+		exit_tx_signature: final_sig,
 	}
 }
 
@@ -237,6 +204,6 @@ mod test {
 		let (user, upriv) = new_user(spec, utxo);
 		let asp = new_asp(&user, &key);
 		let vtxo = finish(user, asp, upriv, &key);
-		let _reveal_tx = signed_reveal_tx(&vtxo).unwrap();
+		let _exit_tx = vtxo.exit_tx(); // does some assertion inside
 	}
 }

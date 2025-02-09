@@ -363,11 +363,11 @@ impl App {
 			self.txindex.register_batch(round.signed_tree.all_signed_txs()).await;
 		}
 
-		// Load all onboard reveal txs into the txindex.
+		// Load all onboard exit txs into the txindex.
 		for res in self.db.get_expired_onboards(BlockHeight::MAX) {
 			let onboard = res?;
 			trace!("Adding onboard vtxo {} to txindex", onboard.id());
-			self.txindex.register(onboard.reveal_tx()).await;
+			self.txindex.register(onboard.exit_tx()).await;
 		}
 		Ok(())
 	}
@@ -671,7 +671,7 @@ impl App {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
 		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
-			reveal_txid: ark::onboard::create_reveal_tx(&user_part.spec, user_part.utxo, None).compute_txid(),
+			exit_txid: user_part.exit_tx().compute_txid(),
 		);
 		ret
 	}
@@ -733,7 +733,7 @@ impl App {
 		}
 
 		// Accepted, let's register
-		self.txindex.register(vtxo.reveal_tx()).await;
+		self.txindex.register(vtxo.exit_tx()).await;
 		self.db.insert_onboard_vtxos(&[&vtxo]).context("db error")?;
 
 		slog!(RegisteredOnboard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),

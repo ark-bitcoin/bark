@@ -297,7 +297,7 @@ mod test {
 		let sig = "cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd59320b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea".parse().unwrap();
 
 		let vtxo_1 = Vtxo::Onboard(OnboardVtxo {
-			reveal_tx_signature: sig,
+			exit_tx_signature: sig,
 			onchain_output: point_1,
 			spec: VtxoSpec {
 				user_pubkey: pk,
@@ -309,7 +309,7 @@ mod test {
 		});
 
 		let vtxo_2 = Vtxo::Onboard(OnboardVtxo {
-			reveal_tx_signature: sig,
+			exit_tx_signature: sig,
 			onchain_output: point_2,
 			spec: VtxoSpec {
 				user_pubkey: pk,
@@ -321,7 +321,7 @@ mod test {
 		});
 
 		let vtxo_3 = Vtxo::Onboard(OnboardVtxo {
-			reveal_tx_signature: sig,
+			exit_tx_signature: sig,
 			onchain_output: point_3,
 			spec: VtxoSpec {
 				user_pubkey: pk,
