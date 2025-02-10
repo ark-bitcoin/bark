@@ -7,6 +7,8 @@
 
 mod bitcoind;
 mod database;
+#[macro_use]
+mod error;
 mod lightning;
 mod psbtext;
 mod serde_util;
