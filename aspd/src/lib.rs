@@ -5,10 +5,11 @@
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
 
-mod bitcoind;
-mod database;
 #[macro_use]
 mod error;
+
+mod bitcoind;
+mod database;
 mod lightning;
 mod psbtext;
 mod serde_util;
