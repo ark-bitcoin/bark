@@ -26,8 +26,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use aspd_rpc as rpc;
-use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -38,11 +36,13 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_stream::{StreamExt, Stream};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::{musig, BlockHeight, BlockRef, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BlockHeight, BlockRef, OnboardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::Bolt11Payment;
 use ark::rounds::RoundEvent;
+use aspd_rpc as rpc;
+use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 
-use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
+use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::round::RoundInput;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
@@ -82,6 +82,8 @@ pub struct Config {
 	pub round_submit_time: Duration,
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
+	/// Number of confirmations needed for onboard vtxos to be spend in rounds.
+	pub round_onboard_confirmations: usize,
 	//TODO(stevenroose) get these from a fee estimator service
 	/// Fee rate used for the round tx.
 	pub round_tx_feerate: FeeRate,
@@ -123,6 +125,7 @@ impl Default for Config {
 			round_submit_time: Duration::from_secs(2),
 			round_sign_time: Duration::from_secs(2),
 			nb_round_nonces: 10,
+			round_onboard_confirmations: 12,
 			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			round_sweep_interval: Duration::from_secs(1 * 60 * 60), // 1 hr
@@ -352,11 +355,19 @@ impl App {
 
 	/// Load all relevant txs from the database into the tx index.
 	pub async fn fill_txindex(self: &Arc<Self>) -> anyhow::Result<()> {
+		// Load all round txs into the txindex.
 		for res in self.db.fetch_all_rounds() {
 			let round = res?;
 			trace!("Adding txs for round {} to txindex", round.id());
 			self.txindex.register(round.tx).await;
 			self.txindex.register_batch(round.signed_tree.all_signed_txs()).await;
+		}
+
+		// Load all onboard reveal txs into the txindex.
+		for res in self.db.get_expired_onboards(BlockHeight::MAX) {
+			let onboard = res?;
+			trace!("Adding onboard vtxo {} to txindex", onboard.id());
+			self.txindex.register(onboard.reveal_tx()).await;
 		}
 		Ok(())
 	}
@@ -458,7 +469,7 @@ impl App {
 			loop {
 				tokio::select! {
 					// Periodic interval for chain tip fetch
-					() = tokio::time::sleep(Duration::from_secs(10)) => {},
+					() = tokio::time::sleep(Duration::from_secs(1)) => {},
 					_ = shutdown.recv() => {
 						info!("Shutdown signal received. Exiting fetch_tip loop...");
 						break;
@@ -466,7 +477,13 @@ impl App {
 				}
 
 				match app.bitcoind.tip() {
-					Ok(t) => *app.chain_tip.lock().await = t,
+					Ok(t) => {
+						let mut lock = app.chain_tip.lock().await;
+						if t != *lock {
+							*lock = t;
+							slog!(TipUpdated, height: t.height, hash: t.hash);
+						}
+					}
 					Err(e) => {
 						warn!("Error getting chain tip from bitcoind: {}", e);
 					},
@@ -653,7 +670,9 @@ impl App {
 	pub fn cosign_onboard(&self, user_part: ark::onboard::UserPart) -> ark::onboard::AspPart {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
-		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount);
+		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
+			reveal_txid: ark::onboard::create_reveal_tx(&user_part.spec, user_part.utxo, None).compute_txid(),
+		);
 		ret
 	}
 
@@ -666,7 +685,7 @@ impl App {
 
 		//TODO(stevenroose) make this more robust
 		if spec.expiry_height < tip {
-			bail!("invalid expiry height: {} >= {}", spec.expiry_height, tip);
+			bail!("vtxo already expired: {} (tip = {})", spec.expiry_height, tip);
 		}
 
 		if spec.exit_delta != self.config.vtxo_exit_delta {
@@ -676,24 +695,50 @@ impl App {
 		Ok(())
 	}
 
-	pub fn register_onboards(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
-		for vtxo in vtxos {
-			if let Vtxo::Onboard(v) = vtxo {
-				self.validate_onboard_spec(&v.spec)?;
-				//TODO(stevenroose) verify confirmed? probably a good idea
-				//should at least verify confirmed when submitted to round
-			} else {
-				bail!("vtxo {} is not an onboard vtxo", vtxo.id());
-			}
-		}
-		//TODO(stevenroose) add onboard tx to txindex
-		self.db.insert_onboard_vtxos(vtxos).context("db error")?;
+	pub async fn register_onboard(
+		&self,
+		vtxo: OnboardVtxo,
+		tx: Transaction,
+	) -> anyhow::Result<()> {
+		self.validate_onboard_spec(&vtxo.spec).context("invalid onboard vtxo spec")?;
+		vtxo.validate_tx(&tx).context("onboard tx doesn't match vtxo spec")?;
 
-		for vtxo in vtxos {
-			if let Vtxo::Onboard(v) = vtxo {
-				slog!(RegisteredOnboard, utxo: vtxo.point(), amount: v.spec.amount);
-			}
+		// Since the user might have just created and broadcast this tx very recently,
+		// it's very likely that we won't have it in our mempool yet.
+		// We will first check if we have it, if not, try to broadcast it.
+		match self.bitcoind.get_raw_transaction_info(&vtxo.onchain_output.txid, None) {
+			Ok(txinfo) => {
+				let conf = txinfo.confirmations.unwrap_or(0);
+				trace!("Onboard tx {} has {} confirmations", vtxo.onchain_output.txid, conf);
+			},
+			Err(e) if e.is_not_found() => {
+				// First check if the tx is actually standard and inputs are unspent.
+				let ret = self.bitcoind.test_mempool_accept(&[&tx])?
+					.into_iter().next().expect("we submitted one");
+				if !ret.allowed {
+					bail!("Tx not allowed in mempool: {}",
+						ret.reject_reason.as_ref().map(|s| s.as_str()).unwrap_or("unknown"),
+					);
+				}
+
+				// Then broadcast to our own mempool and peers.
+				if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
+					if !e.is_already_in_mempool() {
+						bail!("onboard tx not accepted in mempool");
+					}
+				}
+				trace!("We submitted onboard tx with txid {} to mempool", vtxo.onchain_output.txid);
+			},
+			Err(e) => return Err(anyhow!("error fetching tx info for onboard tx: {e}")),
 		}
+
+		// Accepted, let's register
+		self.txindex.register(vtxo.reveal_tx()).await;
+		self.db.insert_onboard_vtxos(&[&vtxo]).context("db error")?;
+
+		slog!(RegisteredOnboard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
+			amount: vtxo.spec.amount,
+		);
 
 		Ok(())
 	}

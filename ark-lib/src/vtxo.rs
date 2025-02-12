@@ -6,7 +6,7 @@ use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Transaction, TxOut, Txid, We
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
-use crate::{musig, oor, util};
+use crate::{musig, onboard, oor, util};
 
 
 /// The input weight required to claim a VTXO.
@@ -170,6 +170,19 @@ impl VtxoSpec {
 	}
 }
 
+#[derive(Debug, Clone)]
+pub struct OnboardTxValidationError(String);
+
+impl fmt::Display for OnboardTxValidationError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "onboard tx validation error: {}", self.0)
+	}
+}
+
+impl std::error::Error for OnboardTxValidationError {}
+
+
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OnboardVtxo {
 	pub spec: VtxoSpec,
@@ -192,6 +205,36 @@ impl OnboardVtxo {
 
 	pub fn id(&self) -> VtxoId {
 		self.point().into()
+	}
+
+	pub fn validate_tx(&self, onboard_tx: &Transaction) -> Result<(), OnboardTxValidationError> {
+		let id = self.id();
+		if self.onchain_output.txid != onboard_tx.compute_txid() {
+			return Err(OnboardTxValidationError(format!(
+				"onchain tx and vtxo onboard txid don't match",
+			)));
+		}
+
+		// Check that the output actually has the right script.
+		let output_idx = self.onchain_output.vout as usize;
+		if onboard_tx.output.len() < output_idx {
+			return Err(OnboardTxValidationError(format!(
+				"non-existing point {} in tx {}", self.onchain_output, self.onchain_output.txid,
+			)));
+		}
+		let spk = &onboard_tx.output[output_idx].script_pubkey;
+		if *spk != onboard::onboard_spk(&self.spec) {
+			return Err(OnboardTxValidationError(format!(
+				"vtxo {} has incorrect onboard script: {}", id, spk,
+			)));
+		}
+		let amount = onboard_tx.output[output_idx].value;
+		if amount != onboard::onboard_amount(&self.spec) {
+			return Err(OnboardTxValidationError(format!(
+				"vtxo {} has incorrect onboard amount: {}", id, amount,
+			)));
+		}
+		Ok(())
 	}
 }
 

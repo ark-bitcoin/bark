@@ -72,6 +72,14 @@ pub trait BitcoinRpcErrorExt: Borrow<Error> {
 			false
 		}
 	}
+
+	fn is_already_in_mempool(&self) -> bool {
+		if let Error::JsonRpc(jsonrpc::Error::Rpc(e)) = self.borrow() {
+			e.message.contains("txn-already-in-mempool")
+		} else {
+			false
+		}
+	}
 }
 impl BitcoinRpcErrorExt for Error {}
 

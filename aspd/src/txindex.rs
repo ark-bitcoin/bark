@@ -123,7 +123,7 @@ impl IndexedTx {
 			if let Some(s) = *self.status.lock().await {
 				return s;
 			}
-			trace!("waiting for tx status...");
+			trace!("waiting for tx status of {}...", self.txid);
 			tokio::time::sleep(Duration::from_millis(100)).await;
 		}
 	}
@@ -232,6 +232,14 @@ impl TxIndex {
 		for tx in txs {
 			let txid = tx.compute_txid();
 			state.entry(txid).or_insert_with(|| IndexedTx::new(txid, tx));
+		}
+	}
+
+	/// Unregister a transaction
+	pub async fn unregister(&self, tx: impl TxOrTxid) {
+		let mut state = self.tx_map.write().await;
+		if let Some(tx) = state.remove(&tx.txid()) {
+			*tx.status.lock().await = Some(TxStatus::Unregistered);
 		}
 	}
 

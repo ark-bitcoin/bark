@@ -1,5 +1,7 @@
 
 
+use std::borrow::Cow;
+
 use bitcoin::{Amount, OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 
@@ -19,17 +21,18 @@ pub struct NotSweeping {
 impl_slog!(NotSweeping, Info, "Not sweeping rounds");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SweepingRounds {
+pub struct SweepingVtxos {
 	pub total_surplus: Amount,
 	pub inputs: Vec<OutPoint>,
 }
-impl_slog!(SweepingRounds, Info, "Sweeping rounds");
+impl_slog!(SweepingVtxos, Info, "Sweeping vtxos");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SweepingOutput {
 	pub outpoint: OutPoint,
 	pub amount: Amount,
 	pub surplus: Amount,
+	pub sweep_type: Cow<'static, str>,
 }
 impl_slog!(SweepingOutput, Debug, "Sweeping output");
 
@@ -39,6 +42,14 @@ pub struct SweepBroadcast {
 	pub surplus: Amount,
 }
 impl_slog!(SweepBroadcast, Info, "Completed a sweep tx");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnboardFullySwept {
+	pub onboard_utxo: OutPoint,
+	pub sweep_tx: Txid,
+}
+impl_slog!(OnboardFullySwept, Info, "Succesfully swept and fully confirmed an onboard vtxo");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,3 +64,24 @@ pub struct ReceivedSweepTrigger {}
 impl_slog!(ReceivedSweepTrigger, Info, "Received a trigger to sweep over RPC");
 
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepTxFullyConfirmed {
+	pub txid: Txid,
+}
+impl_slog!(SweepTxFullyConfirmed, Info, "a sweep tx is deeply confirmed");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepTxAbandoned {
+	pub txid: Txid,
+	pub tx: String,
+}
+impl_slog!(SweepTxAbandoned, Warn, "a sweep tx is no longer needed, but unconfirmed");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweeperStats {
+	pub nb_pending_txs: usize,
+	pub nb_pending_utxos: usize,
+}
+impl_slog!(SweeperStats, Info, "sweep process statistics");

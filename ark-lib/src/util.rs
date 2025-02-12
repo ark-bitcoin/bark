@@ -1,10 +1,11 @@
 
 use std::borrow::Borrow;
+use std::collections::BTreeMap;
 
-use bitcoin::hashes::Hash;
-use bitcoin::{opcodes, taproot, OutPoint, ScriptBuf, Transaction};
+use bitcoin::{opcodes, OutPoint, ScriptBuf, Transaction};
+use bitcoin::hashes::{sha256, ripemd160, Hash};
 use bitcoin::secp256k1::{self, schnorr, Keypair, XOnlyPublicKey};
-use bitcoin::hashes::{sha256, ripemd160};
+use bitcoin::taproot::{self, ControlBlock};
 
 use crate::fee;
 
@@ -103,3 +104,17 @@ pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
 		debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
 	}
 }
+
+/// An extension trait on the [taproot::TaprootSpendInfo] struct.
+pub trait TaprootSpendInfoExt: Borrow<taproot::TaprootSpendInfo> {
+	/// Return the existing tapscripts in the format that PSBT expects.
+	fn psbt_tap_scripts(&self) -> BTreeMap<ControlBlock, (ScriptBuf, taproot::LeafVersion)> {
+		let s = self.borrow();
+		s.script_map().keys().map(|pair| {
+			let cb = s.control_block(pair).unwrap();
+			let (ref script, leaf_version) = pair;
+			(cb, (script.clone(), *leaf_version))
+		}).collect()
+	}
+}
+impl TaprootSpendInfoExt for taproot::TaprootSpendInfo {}

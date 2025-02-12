@@ -2,7 +2,7 @@
 pub mod proxy;
 
 use std::env;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::path::PathBuf;
 
 use aspd_rpc as rpc;
@@ -11,7 +11,7 @@ use bitcoin::address::{Address, NetworkUnchecked};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
-use aspd_log::{LogMsg, ParsedRecord};
+use aspd_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
 
 use crate::{Bitcoind, Daemon, DaemonHelper, Lightningd};
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
@@ -41,6 +41,7 @@ pub struct AspdConfig {
 	pub vtxo_exit_delta: u16,
 	pub nb_round_nonces: usize,
 	pub sweep_threshold: Amount,
+	pub round_onboard_confirmations: u64,
 
 	/// Whether the apsd will use user+password for connection to bitcoind (true)
 	/// or cookies (false).
@@ -111,6 +112,13 @@ impl Aspd {
 	}
 
 	pub async fn trigger_round(&self) {
+		let start = Instant::now();
+		let minimum_wait = tokio::time::sleep(Duration::from_millis(500));
+		let mut l1 = self.subscribe_log::<TipUpdated>().await;
+		let mut l2 = self.subscribe_log::<TxIndexUpdateFinished>().await;
+		self.bitcoind().generate(1).await;
+		let _ = tokio::join!(l1.recv(), l2.recv(), minimum_wait);
+		trace!("Waited {} ms before starting round", start.elapsed().as_millis());
 		self.get_admin_client().await.trigger_round(rpc::Empty {}).await.unwrap();
 	}
 
@@ -283,6 +291,7 @@ impl AspdHelper {
 			let vtxo_expiry_delta = cfg.vtxo_expiry_delta.to_string();
 			let vtxo_exit_delta = cfg.vtxo_exit_delta.to_string();
 			let sweep_threshold = cfg.sweep_threshold.to_string();
+			let onboard_confs = cfg.round_onboard_confirmations.to_string();
 
 			let mut args = vec![
 				"create",
@@ -296,6 +305,7 @@ impl AspdHelper {
 				"--vtxo-expiry-delta", &vtxo_expiry_delta,
 				"--vtxo-exit-delta", &vtxo_exit_delta,
 				"--sweep-threshold", &sweep_threshold,
+				"--round-onboard-confirmations", &onboard_confs,
 			];
 
 			let bitcoind_auth = if cfg.use_bitcoind_auth_pass {

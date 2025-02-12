@@ -3,8 +3,9 @@ extern crate log;
 
 use bitcoin::Amount;
 
-use ark_testing::TestContext;
 use bark_cln::grpc;
+
+use ark_testing::TestContext;
 
 #[tokio::test]
 async fn start_lightningd() {
