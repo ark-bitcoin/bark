@@ -20,6 +20,8 @@ pub mod vtxo;
 mod napkin;
 
 
+use std::fmt;
+
 use bitcoin::{Amount, BlockHash, FeeRate, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
 
@@ -87,6 +89,19 @@ pub struct VtxoRequest {
 	pub cosign_pk: PublicKey,
 }
 
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InvalidOffboardRequestError(&'static str);
+
+impl fmt::Display for InvalidOffboardRequestError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "invalid offboard request: {}", self.0)
+	}
+}
+
+impl std::error::Error for InvalidOffboardRequestError {}
+
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct OffboardRequest {
 	pub script_pubkey: ScriptBuf,
@@ -125,9 +140,9 @@ impl OffboardRequest {
 	}
 
 	/// Validate that the offboard has a valid script.
-	pub fn validate(&self) -> Result<(), &'static str> {
+	pub fn validate(&self) -> Result<(), InvalidOffboardRequestError> {
 		if Self::calculate_fee(&self.script_pubkey, FeeRate::ZERO).is_none() {
-			Err("invalid script")
+			Err(InvalidOffboardRequestError("invalid script"))
 		} else {
 			Ok(())
 		}
