@@ -482,14 +482,19 @@ impl <P>Wallet<P> where
 		self.onboard(spec, user_keypair, onboard_all_tx).await
 	}
 
-	async fn onboard(&mut self, spec: VtxoSpec, user_keypair: Keypair, onboard_tx: Psbt) -> anyhow::Result<Onboard> {
+	async fn onboard(
+		&mut self,
+		spec: VtxoSpec,
+		user_keypair: Keypair,
+		onboard_tx: Psbt,
+	) -> anyhow::Result<Onboard> {
 		let mut asp = self.require_asp()?;
 
 		// This is manually enforced in prepare_tx
 		const VTXO_VOUT: u32 = 0;
 
 		let utxo = OutPoint::new(onboard_tx.unsigned_tx.compute_txid(), VTXO_VOUT);
-		// We ask the ASP to cosign our onboard vtxo reveal tx.
+		// We ask the ASP to cosign our onboard vtxo exit tx.
 		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
 		let asp_part = {
 			let res = asp.client.request_onboard_cosign(rpc::OnboardCosignRequest {
@@ -510,7 +515,7 @@ impl <P>Wallet<P> where
 		}
 
 		// Store vtxo first before we actually make the on-chain tx.
-		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &user_keypair);
+		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &user_keypair).into();
 
 		self.db.register_receive(&vtxo).context("db error storing vtxo")?;
 		let tx = self.onchain.finish_tx(onboard_tx)?;

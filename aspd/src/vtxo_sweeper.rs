@@ -70,7 +70,7 @@ impl OnboardSweepInput {
 	}
 
 	fn weight(&self) -> Weight {
-		ark::onboard::REVEAL_TX_WEIGHT
+		ark::vtxo::EXIT_TX_WEIGHT
 	}
 
 	/// Calculate the surplus that can be gained from sweeping this input.
@@ -275,12 +275,12 @@ impl<'a> SweepBuilder<'a> {
 
 	async fn process_onboard(&mut self, onboard: &OnboardVtxo, done_height: BlockHeight) {
 		let id = onboard.id();
-		let reveal_tx = onboard.reveal_tx();
-		let reveal_txid = reveal_tx.compute_txid();
-		let reveal_tx = self.sweeper.app.txindex.get(&reveal_txid).await
-			.expect("txindex should contain all onboard reveal txs");
+		let exit_tx = onboard.exit_tx();
+		let exit_txid = exit_tx.compute_txid();
+		let exit_tx = self.sweeper.app.txindex.get(&exit_txid).await
+			.expect("txindex should contain all onboard exit txs");
 
-		if !reveal_tx.confirmed().await {
+		if !exit_tx.confirmed().await {
 			if let Some((h, txid)) = self.sweeper.is_swept(onboard.onchain_output).await {
 				trace!("Onboard {id} is already swept by us at height {h}");
 				if h <= done_height {
@@ -292,7 +292,7 @@ impl<'a> SweepBuilder<'a> {
 				self.add_onboard_output(onboard.onchain_output, onboard.spec.clone());
 			}
 		} else {
-			trace!("User has broadcast reveal tx {} of onboard vtxo {id}", reveal_txid);
+			trace!("User has broadcast onboard exit tx {} of onboard vtxo {id}", exit_txid);
 			self.sweeper.clear_onboard(onboard).await;
 		}
 	}
@@ -604,13 +604,13 @@ impl VtxoSweeper {
 	}
 
 	/// Clear the onboard data from our database because we either swept it, or the user
-	/// has broadcast the reveal tx, doing a unilateral exit.
+	/// has broadcast the exit tx, doing a unilateral exit.
 	async fn clear_onboard(&mut self, onboard: &OnboardVtxo) {
 		if let Err(e) = self.app.db.remove_onboard(onboard) {
 			error!("Failed to remove onboard vtxo {} from database: {}", onboard.id(), e);
 		}
 
-		let reveal = onboard.reveal_tx().compute_txid();
+		let reveal = onboard.exit_tx().compute_txid();
 		self.app.txindex.unregister_batch(&[&onboard.onchain_output.txid, &reveal]).await;
 
 		self.pending_tx_by_utxo.remove(&onboard.onchain_output);

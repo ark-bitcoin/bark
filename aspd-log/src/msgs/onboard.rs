@@ -6,7 +6,7 @@ use bitcoin::{Amount, OutPoint, Txid};
 pub struct CosignedOnboard {
 	pub utxo: OutPoint,
 	pub amount: Amount,
-	pub reveal_txid: Txid,
+	pub exit_txid: Txid,
 }
 impl_slog!(CosignedOnboard, Trace, "cosigned onboard tx for user");
 

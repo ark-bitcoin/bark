@@ -2,12 +2,17 @@
 use std::{fmt, io};
 use std::str::FromStr;
 
-use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Transaction, TxOut, Txid, Weight};
+use bitcoin::absolute::LockTime;
+use bitcoin::sighash::{self, SighashCache};
+use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Sequence, TapSighash, Transaction, TxIn, TxOut, Txid, Weight, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
-use crate::{musig, onboard, oor, util};
+use crate::{fee, musig, onboard, oor, util};
 
+
+/// The total signed tx weight of a exit tx.
+pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
 
 /// The input weight required to claim a VTXO.
 const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
@@ -133,13 +138,64 @@ pub fn exit_spk(
 	ScriptBuf::new_p2tr_tweaked(taproot.output_key())
 }
 
+/// Create an exit tx.
+///
+/// When the `signature` argument is provided,
+/// it will be placed in the input witness.
+pub fn create_exit_tx(
+	user_pubkey: PublicKey,
+	asp_pubkey: PublicKey,
+	exit_delta: u16,
+	amount: Amount,
+	prevout: OutPoint,
+	signature: Option<&schnorr::Signature>,
+) -> Transaction {
+	Transaction {
+		version: bitcoin::transaction::Version(3),
+		lock_time: LockTime::ZERO,
+		input: vec![TxIn {
+			previous_output: prevout,
+			script_sig: ScriptBuf::new(),
+			sequence: Sequence::MAX,
+			witness: {
+				let mut ret = Witness::new();
+				if let Some(sig) = signature {
+					ret.push(&sig[..]);
+				}
+				ret
+			},
+		}],
+		output: vec![
+			TxOut {
+				script_pubkey: exit_spk(user_pubkey, asp_pubkey, exit_delta),
+				value: amount,
+			},
+			fee::dust_anchor(),
+		],
+	}
+}
+
+pub fn exit_tx_sighash(
+	spec: &VtxoSpec,
+	utxo: OutPoint,
+	prev_utxo: &TxOut,
+) -> (TapSighash, Transaction) {
+	let exit_tx = create_exit_tx(
+		spec.user_pubkey, spec.asp_pubkey, spec.exit_delta, spec.amount, utxo, None,
+	);
+	let sighash = SighashCache::new(&exit_tx).taproot_key_spend_signature_hash(
+		0, &sighash::Prevouts::All(&[prev_utxo]), sighash::TapSighashType::Default,
+	).expect("matching prevouts");
+	(sighash, exit_tx)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VtxoSpec {
 	pub user_pubkey: PublicKey,
 	pub asp_pubkey: PublicKey,
 	pub expiry_height: u32,
 	pub exit_delta: u16,
-	/// The amount of the vtxo itself, this is either the reveal tx our the
+	/// The amount of the vtxo itself, this is either the exit tx our the
 	/// vtxo tree output. It does not include budget for fees, so f.e. to
 	/// calculate the onboard amount needed for this vtxo, fee budget should
 	/// be added.
@@ -186,21 +242,28 @@ impl std::error::Error for OnboardTxValidationError {}
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OnboardVtxo {
 	pub spec: VtxoSpec,
-	/// The output of the onboard. This will be the input to the reveal tx.
+	/// The output of the onboard. This will be the input to the exit tx.
 	pub onchain_output: OutPoint,
-	pub reveal_tx_signature: schnorr::Signature,
+	pub exit_tx_signature: schnorr::Signature,
 }
 
 impl OnboardVtxo {
-	pub fn reveal_tx(&self) -> Transaction {
-		crate::onboard::create_reveal_tx(
-			&self.spec, self.onchain_output, Some(&self.reveal_tx_signature),
-		)
+	pub fn exit_tx(&self) -> Transaction {
+		let ret = create_exit_tx(
+			self.spec.user_pubkey,
+			self.spec.asp_pubkey,
+			self.spec.exit_delta,
+			self.spec.amount,
+			self.onchain_output,
+			Some(&self.exit_tx_signature),
+		);
+		assert_eq!(ret.weight(), crate::vtxo::EXIT_TX_WEIGHT);
+		ret
 	}
 
 	pub fn point(&self) -> OutPoint {
 		//TODO(stevenroose) consider caching this so that we don't have to calculate it
-		OutPoint::new(self.reveal_tx().compute_txid(), 0)
+		OutPoint::new(self.exit_tx().compute_txid(), 0)
 	}
 
 	pub fn id(&self) -> VtxoId {
@@ -353,7 +416,7 @@ impl Vtxo {
 
 	pub fn vtxo_tx(&self) -> Transaction {
 		match self {
-			Vtxo::Onboard(v) => v.reveal_tx(),
+			Vtxo::Onboard(v) => v.exit_tx(),
 			Vtxo::Round(v) => v.exit_branch.last().unwrap().clone(),
 			Vtxo::Arkoor(v) => {
 				let tx = oor::signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs);
@@ -579,7 +642,7 @@ use oor::unsigned_oor_transaction;
 				amount: Amount::from_sat(5),
 			},
 			onchain_output: point,
-			reveal_tx_signature: sig,
+			exit_tx_signature: sig,
 		});
 		assert_eq!(onboard, Vtxo::decode(&onboard.encode()).unwrap());
 

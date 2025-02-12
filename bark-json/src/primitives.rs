@@ -1,7 +1,7 @@
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 
-use ark::{VtxoId, Vtxo};
+use ark::{OnboardVtxo, Vtxo, VtxoId};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UtxoInfo {
@@ -51,5 +51,11 @@ impl From<Vtxo> for VtxoInfo {
 			expiry_height: v.spec().expiry_height,
 			exit_delta: v.spec().exit_delta,
 		}
+	}
+}
+
+impl From<OnboardVtxo> for VtxoInfo {
+	fn from(v: OnboardVtxo) -> VtxoInfo {
+		Vtxo::Onboard(v).into()
 	}
 }

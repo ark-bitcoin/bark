@@ -141,28 +141,14 @@ impl VtxoTreeSpec {
 	}
 
 	fn leaf_tx(&self, vtxo: &VtxoRequest) -> Transaction {
-		let exit_spk = crate::vtxo::exit_spk(
+		crate::vtxo::create_exit_tx(
 			vtxo.pubkey,
 			self.asp_pk,
 			self.exit_delta,
-		);
-		Transaction {
-			version: bitcoin::transaction::Version(3),
-			lock_time: bitcoin::absolute::LockTime::ZERO,
-			input: vec![TxIn {
-				previous_output: OutPoint::null(),
-				sequence: Sequence::MAX,
-				script_sig: ScriptBuf::new(),
-				witness: Witness::new(),
-			}],
-			output: vec![
-				TxOut {
-					script_pubkey: exit_spk,
-					value: vtxo.amount,
-				},
-				fee::dust_anchor(),
-			],
-		}
+			vtxo.amount,
+			OutPoint::null(),
+			None,
+		)
 	}
 
 	/// Calculate all the aggregate cosign pubkeys by aggregating the leaf and asp pubkeys.

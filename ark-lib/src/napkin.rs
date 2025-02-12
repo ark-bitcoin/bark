@@ -136,7 +136,7 @@ fn calc_exit_cost(n: usize, radix: usize) {
 	// edge it might be less. we'll simplify this as it's not significant.
 	// for exit cost the largest radix has to be taken anyway
 
-	let exit_tx = Transaction {
+	let exit_claim_tx = Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: iter::repeat(anchor_input()).take(levels).chain(Some(taproot_input())).collect(),
@@ -145,12 +145,12 @@ fn calc_exit_cost(n: usize, radix: usize) {
 
 	println!("Calculations for n={}, radix={}: levels={}", n, radix, levels);
 
-	let ctv_exit_cost = levels * ctv_node_tx(radix).size() + ctv_leaf_tx().size() + exit_tx.size();
+	let ctv_exit_cost = levels * ctv_node_tx(radix).size() + ctv_leaf_tx().size() + exit_claim_tx.size();
 	println!("CTV exit cost: {}", ctv_exit_cost);
 	let ctv_total_tree = nodes * ctv_node_tx(radix).size() + n * ctv_leaf_tx().size();
 	println!("CTV total tree size: {}", ctv_total_tree);
 
-	let clark_exit_cost = levels * clark_node_tx(radix).size() + clark_leaf_tx().size() + exit_tx.size();
+	let clark_exit_cost = levels * clark_node_tx(radix).size() + clark_leaf_tx().size() + exit_claim_tx.size();
 	println!("clArk exit cost: {}", clark_exit_cost);
 	let clark_total_tree = nodes * clark_node_tx(radix).size() + n * clark_leaf_tx().size();
 	println!("clArk total tree size: {}", clark_total_tree);
