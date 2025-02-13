@@ -821,7 +821,7 @@ impl <P>Wallet<P> where
 			&asp_part_sigs,
 		);
 		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
-		let vtxos = signed.output_vtxos();
+		let vtxos = signed.output_vtxos().into_iter().map(|v| Vtxo::from(v)).collect::<Vec<_>>();
 
 		// The first one is of the recipient, we will post it to their mailbox.
 		let user_vtxo = &vtxos[0];
