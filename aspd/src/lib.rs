@@ -33,6 +33,7 @@ use anyhow::Context;
 use bitcoin::{bip32, Address, Amount, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use error::ContextExt;
 use lightning_invoice::Bolt11Invoice;
 use opentelemetry::KeyValue;
 use tokio::time::MissedTickBehavior;
@@ -581,8 +582,8 @@ impl App {
 		vtxo: OnboardVtxo,
 		tx: Transaction,
 	) -> anyhow::Result<()> {
-		self.validate_onboard_spec(&vtxo.spec).context("invalid onboard vtxo spec")?;
-		vtxo.validate_tx(&tx).context("onboard tx doesn't match vtxo spec")?;
+		self.validate_onboard_spec(&vtxo.spec).badarg("invalid onboard vtxo spec")?;
+		vtxo.validate_tx(&tx).badarg("onboard tx doesn't match vtxo spec")?;
 
 		// Since the user might have just created and broadcast this tx very recently,
 		// it's very likely that we won't have it in our mempool yet.
@@ -598,7 +599,7 @@ impl App {
 					.into_iter().next().expect("we submitted one");
 				// NB if the only reject reason is that tx is already in mempool, then we can continue
 				if !ret.allowed && ret.reject_reason.iter().any(|s| s != "txn-already-in-mempool") {
-					bail!("Tx not allowed in mempool: {}",
+					return badarg!("Tx not allowed in mempool: {}",
 						ret.reject_reason.as_ref().map(|s| s.as_str()).unwrap_or("unknown"),
 					);
 				}
@@ -606,12 +607,12 @@ impl App {
 				// Then broadcast to our own mempool and peers.
 				if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
 					if !e.is_already_in_mempool() {
-						bail!("onboard tx not accepted in mempool");
+						return badarg!("onboard tx not accepted in mempool");
 					}
 				}
 				trace!("We submitted onboard tx with txid {} to mempool", vtxo.onchain_output.txid);
 			},
-			Err(e) => return Err(anyhow!("error fetching tx info for onboard tx: {e}")),
+			Err(e) => bail!("error fetching tx info for onboard tx: {e}"),
 		}
 
 		// Accepted, let's register
@@ -633,14 +634,14 @@ impl App {
 		let ids = payment.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 
 		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
-			bail!("attempted to sign OOR for vtxo already in flux: {}", id);
+			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
 		}
 
 		let txid = payment.txid();
 		let new_vtxos = payment.unsigned_output_vtxos();
 		let ret = match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos) {
 			Ok(Some(dup)) => {
-				Err(anyhow!("attempted to sign OOR for already spent vtxo {}", dup))
+				return badarg!("attempted to sign OOR for already spent vtxo {}", dup);
 			},
 			Ok(None) => {
 				info!("Cosigning OOR tx {} with inputs: {:?}", txid, ids);
@@ -691,7 +692,7 @@ impl App {
 			exit_delta: self.config.vtxo_exit_delta,
 		};
 		if !details.check_amounts() {
-			bail!("invalid amounts");
+			return badarg!("invalid amounts");
 		}
 
 		// let's sign the tx

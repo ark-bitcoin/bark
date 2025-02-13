@@ -19,6 +19,8 @@ use rocksdb::{
 use ark::{ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 
+use crate::error::ContextExt;
+
 use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
 
@@ -565,7 +567,8 @@ impl Db {
 			let tx = self.db.transaction_opt(&opts, &oopts);
 
 			for id in spent_ids {
-				let encoded = tx.get_cf(&self.cf_vtxos(), id)?.context("vtxo not found")?;
+				let encoded = tx.get_cf(&self.cf_vtxos(), id)?
+					.not_found([id], "vtxo not found")?;
 				let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
 				if !vtxo_state.is_spendable() {
 					return Ok(Some(*id));
