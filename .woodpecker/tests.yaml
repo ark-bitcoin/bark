@@ -15,7 +15,13 @@ clone:
       lfs: false
 
 steps:
+  - name: prechecks
+    image: registry.2nd.dev/build:7
+    commands:
+      - just check-commits
+
   - name: merge-master
+    depends_on: prechecks
     image: registry.2nd.dev/build:7
     commands:
       - git fetch --no-tags --depth=200 origin master
@@ -28,24 +34,17 @@ steps:
       - git merge prtip || { git merge --abort; git checkout prtip; }
       - git log --oneline | head
 
-  - name: prechecks
-    depends_on: merge-master
-    image: registry.2nd.dev/build:7
-    commands:
-      - bash contrib/prechecks.sh rust_no_spaces_for_indent
-      - bash contrib/prechecks.sh unused_aspd_logs
-
   - name: build
-    depends_on: prechecks
+    depends_on: merge-master
     image: registry.2nd.dev/build:7
     commands:
       - git log --oneline | head -n 1
       - cargo version
-      - cargo build --workspace
+      - just build
       - ls -al ./target/debug
 
   - name: test-unit
-    depends_on: prechecks
+    depends_on: merge-master
     image: registry.2nd.dev/build:7
     commands:
       - git log --oneline | head -n 1
@@ -66,7 +65,7 @@ steps:
       - TEST_DIRECTORY=./test/btc28 cargo test --package ark-testing
 
   - name: use-bark-as-dependency
-    depends_on: prechecks
+    depends_on: merge-master
     image: registry.2nd.dev/build:7
     commands:
       - git log --oneline | head -n 1
@@ -97,11 +96,7 @@ steps:
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
     commands:
-      - cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
-      - cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path bark/Cargo.toml
-      - cargo build    --release --target x86_64-pc-windows-gnu    --locked --manifest-path bark/Cargo.toml
-      - cargo zigbuild --release --target x86_64-apple-darwin      --locked --manifest-path bark/Cargo.toml
-      - cargo zigbuild --release --target aarch64-apple-darwin     --locked --manifest-path bark/Cargo.toml
+      - just release-all
       - cd ./target
       - cp x86_64-unknown-linux-gnu/release/aspd  aspd-linux-x86_64
       - cp x86_64-unknown-linux-gnu/release/bark  bark-linux-x86_64
