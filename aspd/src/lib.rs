@@ -715,7 +715,8 @@ impl App {
 				// First check if the tx is actually standard and inputs are unspent.
 				let ret = self.bitcoind.test_mempool_accept(&[&tx])?
 					.into_iter().next().expect("we submitted one");
-				if !ret.allowed {
+				// NB if the only reject reason is that tx is already in mempool, then we can continue
+				if !ret.allowed && ret.reject_reason.iter().any(|s| s != "txn-already-in-mempool") {
 					bail!("Tx not allowed in mempool: {}",
 						ret.reject_reason.as_ref().map(|s| s.as_str()).unwrap_or("unknown"),
 					);
