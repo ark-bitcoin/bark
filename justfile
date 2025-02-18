@@ -74,3 +74,6 @@ clean:
 # run a single clippy lint
 clippy LINT:
 	cargo clippy -- -A clippy::all -W clippy::{{LINT}}
+
+default-aspd-config:
+	cargo run -p bark-aspd --example dump-default-config
