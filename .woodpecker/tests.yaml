@@ -81,6 +81,15 @@ steps:
       - ls -al $${ELECTRS_EXEC}
       - TEST_DIRECTORY=./test/esplora cargo test --package ark-testing -- --skip exit --test-threads=$${MAX_THREADS}
 
+  - name: aspd-default-config-file
+    depends_on: build
+    image: registry.2nd.dev/build:7
+    commands:
+      - git log --oneline | head -n 1
+      - cargo run --locked --offline -p bark-aspd --example dump-default-config
+      - git diff | cat
+      - ./contrib/check-clean-git.sh
+
   - name: use-bark-as-dependency
     depends_on: merge-master
     image: registry.2nd.dev/build:7
