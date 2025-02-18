@@ -122,6 +122,8 @@ impl TestContext {
 			None
 		};
 
+		// NB we don't auto-complete `..Default::default()` here
+		// to force us to evaluate every value in test context.
 		Config {
 			data_dir,
 			network: Regtest,
@@ -139,6 +141,7 @@ impl TestContext {
 			sweep_threshold: Amount::from_sat(1_000_000),
 			round_onboard_confirmations: constants::ONBOARD_CONFIRMATIONS as usize,
 			max_onboard_value: None,
+			rpc_rich_errors: true,
 			otel_collector_endpoint: None,
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty

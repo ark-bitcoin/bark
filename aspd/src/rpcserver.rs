@@ -2,6 +2,7 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
 use std::time::Instant;
 use std::pin::Pin;
 use std::future::Future;
@@ -27,6 +28,13 @@ use crate::error::{BadArgument, NotFound};
 use crate::{telemetry, App};
 use crate::round::RoundInput;
 use crate::lightning::pay_bolt11;
+
+
+/// Whether or not to provide rich internal errors to RPC users.
+///
+/// We keep this static because it's hard to propagate the config
+/// into all error conversions.
+static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
 
 macro_rules! badarg {
 	($($arg:tt)*) => { return $crate::badarg!($($arg)*).to_status(); };
@@ -59,7 +67,11 @@ impl<T> ToStatus<T> for anyhow::Result<T> {
 			} else if let Some(e) = e.downcast_ref::<BadArgument>() {
 				tonic::Status::invalid_argument(format!("bad user input: {:?}", e))
 			} else {
-				tonic::Status::internal(format!("internal error: {:?}", e))
+				if RPC_RICH_ERRORS.load(atomic::Ordering::Relaxed) {
+					tonic::Status::internal(format!("internal error: {:?}", e))
+				} else {
+					tonic::Status::internal("internal error")
+				}
 			}
 		})
 	}
@@ -923,14 +935,13 @@ fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'stati
 
 /// Run the public gRPC endpoint.
 pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+
 	let addr = app.config.rpc.public_address;
-
 	info!("Starting public gRPC service on address {}", addr);
-
 	let ark_server = rpc::server::ArkServiceServer::from_arc(app.clone());
 
 	let mut shutdown = app.shutdown_channel.subscribe();
-
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
@@ -963,14 +974,13 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 
 /// Run the public gRPC endpoint.
 pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+
 	let addr = app.config.rpc.admin_address.expect("shouldn't call this method otherwise");
-
 	info!("Starting admin gRPC service on address {}", addr);
-
 	let admin_server = rpc::server::AdminServiceServer::from_arc(app.clone());
 
 	let mut shutdown = app.shutdown_channel.subscribe();
-
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)

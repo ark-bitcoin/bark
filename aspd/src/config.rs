@@ -72,6 +72,9 @@ pub struct Config {
 	pub max_onboard_value: Option<Amount>,
 	/// Don't make sweep txs for amounts lower than this amount.
 	pub sweep_threshold: Amount,
+	/// Whether or not to add full error information to RPC internal errors.
+	pub rpc_rich_errors: bool,
+
 	pub otel_collector_endpoint: Option<String>,
 
 	pub rpc: Rpc,
@@ -171,6 +174,7 @@ impl Default for Config {
 			round_onboard_confirmations: 12,
 			max_onboard_value: None,
 			sweep_threshold: Amount::from_sat(1_000_000),
+			rpc_rich_errors: true,
 			otel_collector_endpoint: None,
 			rpc: Rpc {
 				public_address: "127.0.0.1:3535".parse().unwrap(),
