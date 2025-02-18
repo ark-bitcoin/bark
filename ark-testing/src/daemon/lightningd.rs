@@ -232,9 +232,6 @@ impl DaemonHelper for LightningDHelper {
 		state.grpc_port = Some(grpc_port);
 		state.port = Some(port);
 
-		drop(state);
-
-		self.write_config_file().await;
 		Ok(())
 	}
 
@@ -251,6 +248,7 @@ impl DaemonHelper for LightningDHelper {
 		if !self.config.lightning_dir.exists() {
 			fs::create_dir_all(&self.config.lightning_dir).await?;
 		}
+		self.write_config_file().await;
 		Ok(())
 	}
 
