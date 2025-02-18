@@ -15,6 +15,9 @@ check:
 
 checks: prechecks check
 
+check-commits:
+	bash contrib/check_commits.sh
+
 build:
 	cargo build --workspace
 
@@ -30,6 +33,14 @@ test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
 
 test: test-unit test-integration
+
+release-all:
+	cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
+	cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path bark/Cargo.toml
+	cargo build    --release --target x86_64-pc-windows-gnu    --locked --manifest-path bark/Cargo.toml
+	cargo zigbuild --release --target x86_64-apple-darwin      --locked --manifest-path bark/Cargo.toml
+	cargo zigbuild --release --target aarch64-apple-darwin     --locked --manifest-path bark/Cargo.toml
+
 
 RUSTDOCSDIR := justfile_directory() / "rustdocs"
 DEFAULT_CRATE := "bark" # This is opinionated, but doesn't matter. Any page has full search.
