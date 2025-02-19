@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libsqlite3-dev \
 	libpq5 \
 	librocksdb-dev \
+	postgresql \
+	postgresql-contrib \
 	lzma-dev \
 	protobuf-compiler \
 	jq \
@@ -24,7 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	gcc-mingw-w64 \
 	llvm \
 	libxml2-dev \
-	python3
+	python3 \
+	sudo
 
 ENV RUST_BACKTRACE=1 \
 	RUSTUP_TOOLCHAIN_VERSION=1.84 \
@@ -32,9 +35,15 @@ ENV RUST_BACKTRACE=1 \
 	CLN_VERSION=24.08.2 \
 	MACOS_SDK_VERSION=15.1 \
 	ELECTRS_HASH=a9a39b1616591fb08514fba4df1c1ca11b24a500 \
-	PATH=/root/.cargo/bin:${PATH} \
+	PATH=/root/.cargo/bin:/usr/lib/postgresql/16/bin:${PATH} \
 	ROCKSDB_LIB_DIR=/usr/lib/x86_64-linux-gnu \
 	ZIG_VERSION=0.13.0
+
+ENV POSTGRES_USER=postgres
+ENV POSTGRES_PASSWORD=postgres
+
+RUN service postgresql start && \
+	sudo -u postgres psql -c "ALTER USER $POSTGRES_USER WITH PASSWORD '$POSTGRES_PASSWORD';"
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \

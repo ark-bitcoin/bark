@@ -1,6 +1,6 @@
-FROM rust:1.77.2 AS builder
+FROM rust:1.84.1 AS builder
 
-RUN apt update && apt install -y build-essential clang protobuf-compiler librocksdb-dev 
+RUN apt update && apt install -y build-essential clang protobuf-compiler postgresql postgresql-contrib sudo
 
 WORKDIR /usr/src
 
@@ -23,6 +23,11 @@ RUN --mount=type=bind,source=Cargo.toml,target=/usr/src/Cargo.toml \
   --mount=type=cache,target=/usr/local/cargo/registry \
   cargo build --package bark-aspd --release --locked
 
+ENV POSTGRES_USER=postgres
+ENV POSTGRES_PASSWORD=postgres
+
+RUN service postgresql start && \
+	sudo -u postgres psql -c "ALTER USER $POSTGRES_USER WITH PASSWORD '$POSTGRES_PASSWORD';"
 
 RUN --mount=type=cache,target=/usr/src/target \
   cp /usr/src/target/release/aspd /usr/local/bin/aspd
