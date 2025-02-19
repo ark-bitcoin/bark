@@ -240,9 +240,10 @@ impl BitcoindHelper {
 		// Without this time-out there is a race-condition which can prevent
 		// this method from returning
 		check_init
-			.wait(500)
+			.try_wait(500)
 			.await
-			.unwrap_or(false) // Not initialized if the task fails
+			.unwrap_or(Ok(false)) // Not initialized if the task fails
+			.unwrap_or(false)
 	}
 }
 
@@ -304,7 +305,7 @@ impl DaemonHelper for BitcoindHelper {
 
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
-		let sleep_duration = Duration::from_millis(100);
+		let sleep_duration = Duration::from_millis(1000);
 		while !self.is_initialized().await
 		{
 				tokio::time::sleep(sleep_duration).await;
