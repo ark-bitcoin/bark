@@ -43,14 +43,15 @@ release-all:
 
 
 RUSTDOCSDIR := justfile_directory() / "rustdocs"
-DEFAULT_CRATE := "bark" # This is opinionated, but doesn't matter. Any page has full search.
+# This is opinionated, but doesn't matter. Any page has full search.
+DEFAULT_DOCS_PATH := "bark/struct.Wallet.html"
 
 # Generate rustdoc documentation for all crates and dependencies
 [unix]
 rustdocs:
 	mkdir -p {{RUSTDOCSDIR}}
 	cargo doc --target-dir {{RUSTDOCSDIR}} --locked --all --lib --examples --document-private-items
-	echo "Open Rust docs at file://{{RUSTDOCSDIR}}/doc/{{DEFAULT_CRATE}}/index.html"
+	echo "Open Rust docs at file://{{RUSTDOCSDIR}}/doc/{{DEFAULT_DOCS_PATH}}"
 
 [windows]
 rustdocs:
@@ -59,7 +60,7 @@ rustdocs:
 	# sed is converting C:\path\to\justfile_folder into /c/path/to/justfile_folder
 	mkdir -p $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
 	cargo doc --target-dir $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs --locked --all --lib --examples --document-private-items
-	echo "Open Rust docs at file://$(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs/doc/{{DEFAULT_CRATE}}/index.html"
+	echo "Open Rust docs at file://$(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs/doc/{{DEFAULT_DOCS_PATH}}"
 
 
 # cleans most of our crates, doesn't clean grpc gens, they are sometimes slow to build
