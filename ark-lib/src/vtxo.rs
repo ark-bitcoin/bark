@@ -17,6 +17,19 @@ pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
 /// The input weight required to claim a VTXO.
 const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VtxoIdParseError;
+
+impl fmt::Display for VtxoIdParseError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "failed to parse vtxo id, must be 36 bytes")
+	}
+}
+
+impl std::error::Error for VtxoIdParseError {}
+
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VtxoId([u8; 36]);
 
@@ -24,13 +37,13 @@ impl VtxoId {
 	/// Size in bytes of an encoded [VtxoId].
 	pub const ENCODE_SIZE: usize = 36;
 
-	pub fn from_slice(b: &[u8]) -> Result<VtxoId, &'static str> {
+	pub fn from_slice(b: &[u8]) -> Result<VtxoId, VtxoIdParseError> {
 		if b.len() == 36 {
 			let mut ret = [0u8; 36];
 			ret[..].copy_from_slice(&b[0..36]);
 			Ok(Self(ret))
 		} else {
-			Err("invalid vtxo id length; must be 36 bytes")
+			Err(VtxoIdParseError)
 		}
 	}
 
@@ -72,9 +85,9 @@ impl fmt::Debug for VtxoId {
 }
 
 impl FromStr for VtxoId {
-	type Err = <OutPoint as FromStr>::Err;
+	type Err = VtxoIdParseError;
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		Ok(OutPoint::from_str(s)?.into())
+		Ok(OutPoint::from_str(s).map_err(|_| VtxoIdParseError)?.into())
 	}
 }
 

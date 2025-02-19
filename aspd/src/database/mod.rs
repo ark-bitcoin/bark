@@ -16,8 +16,10 @@ use rocksdb::{
 	WriteBatchWithTransaction, WriteOptions,
 };
 
-use ark::{BlockHeight, OnboardVtxo, Vtxo, VtxoId};
+use ark::{ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
+
+use crate::error::ContextExt;
 
 use self::wallet::{CF_BDK_CHANGESETS, ChangeSetDbState};
 
@@ -552,7 +554,7 @@ impl Db {
 		&self,
 		spent_ids: &[VtxoId],
 		spending_tx: Txid,
-		new_vtxos: &[Vtxo],
+		new_vtxos: &[ArkoorVtxo],
 	) -> anyhow::Result<Option<VtxoId>> {
 		let mut opts = WriteOptions::default();
 		opts.set_sync(true);
@@ -565,7 +567,8 @@ impl Db {
 			let tx = self.db.transaction_opt(&opts, &oopts);
 
 			for id in spent_ids {
-				let encoded = tx.get_cf(&self.cf_vtxos(), id)?.context("vtxo not found")?;
+				let encoded = tx.get_cf(&self.cf_vtxos(), id)?
+					.not_found([id], "vtxo not found")?;
 				let mut vtxo_state = VtxoState::decode(&encoded).expect("corrupt db: vtxostate");
 				if !vtxo_state.is_spendable() {
 					return Ok(Some(*id));
@@ -575,11 +578,8 @@ impl Db {
 			}
 
 			for vtxo in new_vtxos {
-				if !vtxo.is_oor() {
-					bail!("vtxo {} is not an OOR vtxo", vtxo.id());
-				}
 				let state = VtxoState {
-					vtxo: vtxo.clone(),
+					vtxo: vtxo.clone().into(),
 					oor_spent: None,
 					forfeit_sigs: None,
 				};

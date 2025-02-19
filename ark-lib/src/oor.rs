@@ -241,18 +241,18 @@ impl OorPayment {
 	/// Construct the vtxos of the outputs of this OOR tx.
 	///
 	/// These vtxos are not valid vtxos because they lack the signature.
-	pub fn unsigned_output_vtxos(&self) -> Vec<Vtxo> {
+	pub fn unsigned_output_vtxos(&self) -> Vec<ArkoorVtxo> {
 		let outputs = self.output_specs();
 		let inputs = self.inputs.clone();
 		let tx = unsigned_oor_transaction(&inputs, &outputs);
 
 		self.outputs.iter().enumerate().map(|(idx, _output)| {
-			Vtxo::Arkoor(ArkoorVtxo {
+			ArkoorVtxo {
 				inputs: self.inputs.clone(),
 				signatures: vec![],
 				output_specs: outputs.clone(),
 				point: OutPoint::new(tx.compute_txid(), idx as u32)
-			})
+			}
 		}).collect()
 	}
 
@@ -286,14 +286,10 @@ impl SignedOorPayment {
 	}
 
 	/// Construct the vtxos of the outputs of this OOR tx.
-	pub fn output_vtxos(&self) -> Vec<Vtxo> {
+	pub fn output_vtxos(&self) -> Vec<ArkoorVtxo> {
 		let mut ret = self.payment.unsigned_output_vtxos();
 		for vtxo in ret.iter_mut() {
-			if let Vtxo::Arkoor(v) = vtxo {
-				v.signatures = self.signatures.clone();
-			} else {
-				unreachable!("vtxos are all OOR");
-			}
+			vtxo.signatures = self.signatures.clone();
 		}
 		ret
 	}

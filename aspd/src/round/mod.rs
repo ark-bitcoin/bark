@@ -813,7 +813,8 @@ impl SigningForfeits {
 		let finalized = self.wallet_lock.sign(&mut self.round_tx_psbt, opts)?;
 		assert!(finalized);
 		let signed_round_tx = self.round_tx_psbt.extract_tx()?;
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Unix epoch is in the past").as_secs();
+		let now = SystemTime::now().duration_since(UNIX_EPOCH)
+			.expect("Unix epoch is in the past").as_secs();
 		self.wallet_lock.apply_unconfirmed_txs([(Arc::new(signed_round_tx.clone()), now)]);
 		if let Some(change) = self.wallet_lock.take_staged() {
 			app.db.store_changeset(&change).await?;

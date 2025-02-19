@@ -1,6 +1,8 @@
 
+use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
 use std::time::Instant;
 use std::pin::Pin;
 use std::future::Future;
@@ -22,45 +24,107 @@ use ark::lightning::SignedBolt11Payment;
 use ark::{musig, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use aspd_rpc as rpc;
 
+use crate::error::{BadArgument, NotFound};
 use crate::{telemetry, App};
 use crate::round::RoundInput;
 use crate::lightning::pay_bolt11;
 
-macro_rules! badarg {
-	($($arg:tt)*) => {{
-		tonic::Status::invalid_argument(format!($($arg)*))
-	}};
-}
 
-macro_rules! internal {
-	($($arg:tt)*) => {{
-		tonic::Status::internal(format!($($arg)*))
-	}};
+/// Whether or not to provide rich internal errors to RPC users.
+///
+/// We keep this static because it's hard to propagate the config
+/// into all error conversions.
+static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
+
+macro_rules! badarg {
+	($($arg:tt)*) => { return $crate::badarg!($($arg)*).to_status(); };
 }
 
 macro_rules! not_found {
-	($($arg:tt)*) => {{
-		tonic::Status::not_found(format!($($arg)*))
-	}};
+	($($arg:tt)*) => { return $crate::not_found!($($arg)*).to_status(); };
 }
 
-/// Just a trait to easily convert some kind of errors to tonic things.
+/// A trait to easily convert [anyhow] errors to tonic [Status].
 trait ToStatus<T> {
+	/// Convert the error into a tonic error.
 	fn to_status(self) -> Result<T, tonic::Status>;
 }
 
 impl<T> ToStatus<T> for anyhow::Result<T> {
 	fn to_status(self) -> Result<T, tonic::Status> {
 		self.map_err(|e| {
-			let mut msg = "internal error".to_owned();
-			for err in e.chain() {
-				msg.push_str(": ");
-				msg.push_str(&err.to_string());
+			// NB it's important that not found goes first as a bad argument could
+			// have been added afterwards
+			if let Some(e) = e.downcast_ref::<NotFound>() {
+				let mut metadata = tonic::metadata::MetadataMap::new();
+				let ids = e.identifiers().join(",").parse().expect("non-ascii identifier");
+				metadata.insert("identifiers", ids);
+				tonic::Status::with_metadata(
+					tonic::Code::NotFound,
+					format!("not found: {:?}", e),
+					metadata,
+				)
+			} else if let Some(e) = e.downcast_ref::<BadArgument>() {
+				tonic::Status::invalid_argument(format!("bad user input: {:?}", e))
+			} else {
+				if RPC_RICH_ERRORS.load(atomic::Ordering::Relaxed) {
+					tonic::Status::internal(format!("internal error: {:?}", e))
+				} else {
+					tonic::Status::internal("internal error")
+				}
 			}
-			tonic::Status::internal(msg)
 		})
 	}
 }
+
+/// A trait to add context to errors that return tonic [Status] errors.
+trait StatusContext<T, E> {
+	/// Shortcut for `.context(..).to_status()`.
+	fn context<C>(self, context: C) -> Result<T, tonic::Status>
+	where
+		C: fmt::Display + Send + Sync + 'static;
+
+	/// Shortcut for `.badarg(..).to_status()`.
+	fn badarg<C>(self, context: C) -> Result<T, tonic::Status>
+	where
+		C: fmt::Display + Send + Sync + 'static;
+
+	/// Shortcut for `.not_found(..).to_status()`.
+	fn not_found<I, V, C>(self, ids: V, context: C) -> Result<T, tonic::Status>
+	where
+		V: IntoIterator<Item = I>,
+		I: fmt::Display,
+		C: fmt::Display + Send + Sync + 'static;
+}
+
+impl<R, T, E> StatusContext<T, E> for R
+where
+	R: crate::error::ContextExt<T, E>,
+{
+	fn context<C>(self, context: C) -> Result<T, tonic::Status>
+	where
+		C: fmt::Display + Send + Sync + 'static
+	{
+		anyhow::Context::context(self, context).to_status()
+	}
+
+	fn badarg<C>(self, context: C) -> Result<T, tonic::Status>
+	where
+		C: fmt::Display + Send + Sync + 'static
+	{
+		crate::error::ContextExt::badarg(self, context).to_status()
+	}
+
+	fn not_found<I, V, C>(self, ids: V, context: C) -> Result<T, tonic::Status>
+	where
+		V: IntoIterator<Item = I>,
+		I: fmt::Display,
+		C: fmt::Display + Send + Sync + 'static,
+	{
+		crate::error::ContextExt::not_found(self, ids, context).to_status()
+	}
+}
+
 
 const RPC_SYSTEM_HTTP: &'static str = "http";
 const RPC_SYSTEM_GRPC: &'static str = "grpc";
@@ -177,10 +241,12 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<rpc::FreshRounds>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_GET_FRESH_ROUNDS);
 
-		add_tracing_attributes(vec![KeyValue::new("start_height", format!("{:?}", req.get_ref().start_height))]);
+		add_tracing_attributes(vec![
+			KeyValue::new("start_height", format!("{:?}", req.get_ref().start_height)),
+		]);
 
 		let ids = self.db.get_fresh_round_ids(req.get_ref().start_height)
-			.map_err(|e| internal!("db error: {}", e))?;
+			.context("db error")?;
 
 		let response = rpc::FreshRounds {
 			txids: ids.into_iter().map(|t| t.to_byte_array().to_vec()).collect(),
@@ -198,12 +264,12 @@ impl rpc::server::ArkService for App {
 		add_tracing_attributes(vec![KeyValue::new("txid", format!("{:?}", req.get_ref().txid))]);
 
 		let txid = Txid::from_slice(req.get_ref().txid.as_slice())
-			.map_err(|e| badarg!("invalid txid: {}", e))?;
+			.badarg("invalid txid")?;
 
 
 		let ret = self.db.get_round(txid)
-			.map_err(|e| internal!("db error: {}", e))?
-			.ok_or_else(|| not_found!("round with txid {} not found", txid))?;
+			.context("db error")?
+			.not_found([txid], "round with txid {} not found")?;
 
 		let response = rpc::RoundInfo {
 			round_tx: bitcoin::consensus::serialize(&ret.tx),
@@ -223,16 +289,17 @@ impl rpc::server::ArkService for App {
 
 		add_tracing_attributes(vec![KeyValue::new("user_part", format!("{:?}", req.get_ref().user_part))]);
 
-		let user_part = ciborium::from_reader::<ark::onboard::UserPart, _>(&req.get_ref().user_part[..])
-			.map_err(|e| badarg!("invalid user part: {}", e))?;
+		let user_part = ciborium::from_reader::<ark::onboard::UserPart, _>(
+			&req.get_ref().user_part[..],
+		).badarg("invalid user part")?;
 
 		if user_part.spec.asp_pubkey != self.asp_key.public_key() {
-			return Err(badarg!("ASP public key is incorrect!"));
+			badarg!("ASP public key is incorrect!");
 		}
 
 		if let Some(max) = self.config.max_onboard_value {
 			if user_part.spec.amount > max {
-				return Err(badarg!("onboard amount exceeds limit of {}", max));
+				badarg!("onboard amount exceeds limit of {}", max);
 			}
 		}
 
@@ -262,11 +329,11 @@ impl rpc::server::ArkService for App {
 
 		let req = req.into_inner();
 		let vtxo = Vtxo::decode(&req.onboard_vtxo)
-			.map_err(|e| badarg!("invalid vtxo: {}", e))?
+			.badarg("invalid vtxo")?
 			.into_onboard()
-			.ok_or_else(|| badarg!("vtxo not an onboard vtxo"))?;
+			.badarg("vtxo not an onboard vtxo")?;
 		let onboard_tx = bitcoin::consensus::deserialize(&req.onboard_tx)
-			.map_err(|e| badarg!("invalid onboard tx: {}", e))?;
+			.badarg("invalid onboard tx")?;
 		self.register_onboard(vtxo, onboard_tx).await.to_status()?;
 
 		Ok(tonic::Response::new(rpc::Empty {}))
@@ -279,22 +346,21 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<rpc::OorCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_OOR_COSIGN);
 
-		add_tracing_attributes(
-			vec![
-				KeyValue::new("payment", format!("{:?}", req.get_ref().payment)),
-				KeyValue::new("pub_nonces", format!("{:?}", req.get_ref().pub_nonces)),
-			]);
+		add_tracing_attributes(vec![
+			KeyValue::new("payment", format!("{:?}", req.get_ref().payment)),
+			KeyValue::new("pub_nonces", format!("{:?}", req.get_ref().pub_nonces)),
+		]);
 
 		let payment = ark::oor::OorPayment::decode(&req.get_ref().payment)
-			.map_err(|e| badarg!("invalid oor payment request: {}", e))?;
+			.badarg("invalid oor payment request")?;
 
 		let user_nonces = req.get_ref().pub_nonces.iter().map(|b| {
 			musig::MusigPubNonce::from_slice(b)
-				.map_err(|e| badarg!("invalid public nonce: {}", e))
-		}).collect::<Result<Vec<_>, tonic::Status>>()?;
+				.badarg("invalid public nonce")
+		}).collect::<Result<Vec<_>, _>>()?;
 
 		if payment.inputs.len() != user_nonces.len() {
-			return Err(badarg!("wrong number of user nonces"));
+			badarg!("wrong number of user nonces");
 		}
 
 		let (nonces, sigs) = self.cosign_oor(&payment, &user_nonces).await.to_status()?;
@@ -312,17 +378,16 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_POST_OOR_MAILBOX);
 
-		add_tracing_attributes(
-			vec![
-				KeyValue::new("pubkey", format!("{:?}", req.get_ref().pubkey)),
-				KeyValue::new("vtxo", format!("{:?}", req.get_ref().vtxo)),
-			]);
+		add_tracing_attributes(vec![
+			KeyValue::new("pubkey", format!("{:?}", req.get_ref().pubkey)),
+			KeyValue::new("vtxo", format!("{:?}", req.get_ref().vtxo)),
+		]);
 
 		let pubkey = PublicKey::from_slice(&req.get_ref().pubkey)
-			.map_err(|e| badarg!("invalid pubkey: {}", e))?;
+			.badarg("invalid pubkey")?;
 
 		let vtxo = Vtxo::decode(&req.get_ref().vtxo)
-			.map_err(|e| badarg!("invalid vtxo: {}", e))?;
+			.badarg("invalid vtxo")?;
 
 		self.db.store_oor(pubkey, vtxo).to_status()?;
 
@@ -335,10 +400,12 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<rpc::OorVtxosResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX);
 
-		add_tracing_attributes(vec![KeyValue::new("pubkey", format!("{:?}", req.get_ref().pubkey))]);
+		add_tracing_attributes(vec![
+			KeyValue::new("pubkey", format!("{:?}", req.get_ref().pubkey)),
+		]);
 
 		let pubkey = PublicKey::from_slice(&req.get_ref().pubkey)
-			.map_err(|e| badarg!("invalid pubkey: {}", e))?;
+			.badarg("invalid pubkey")?;
 
 		let vtxos = self.db.pull_oors(pubkey).to_status()?;
 
@@ -364,32 +431,32 @@ impl rpc::server::ArkService for App {
 			]);
 
 		let invoice = Bolt11Invoice::from_str(&req.get_ref().invoice)
-			.map_err(|e| badarg!("invalid invoice: {}", e))?;
-		invoice.check_signature().map_err(|_| badarg!("invalid invoice signature"))?;
+			.badarg("invalid invoice")?;
+		invoice.check_signature().badarg("invalid invoice signature")?;
 
 		let inv_amount = invoice.amount_milli_satoshis()
 			.map(|v| Amount::from_sat(v.div_ceil(1000)));
 
 		if let (Some(_), Some(inv)) = (req.get_ref().amount_sats, inv_amount) {
-			return Err(badarg!("Invoice has amount of {} encoded. Please omit amount field", inv));
+			badarg!("Invoice has amount of {} encoded. Please omit amount field", inv);
 		}
 
 		let amount = req.get_ref().amount_sats.map(|v| Amount::from_sat(v)).or(inv_amount)
-			.ok_or(badarg!("amount field required for invoice without amount"))?;
+			.badarg("amount field required for invoice without amount")?;
 
 		let input_vtxos = req.get_ref().input_vtxos.iter().map(|v| Vtxo::decode(v))
 			.collect::<Result<Vec<_>, _>>()
-			.map_err(|e| badarg!("invalid vtxo: {}", e))?;
+			.badarg("invalid vtxo")?;
 		let user_pubkey = PublicKey::from_slice(&req.get_ref().user_pubkey)
-			.map_err(|e| badarg!("invalid user pubkey: {}", e))?;
+			.badarg("invalid user pubkey")?;
 		let user_nonces = req.get_ref().user_nonces.iter().map(|b| {
 			musig::MusigPubNonce::from_slice(&b)
-				.map_err(|e| badarg!("invalid public nonce: {}", e))
-		}).collect::<Result<Vec<_>, tonic::Status>>()?;
+				.badarg("invalid public nonce")
+		}).collect::<Result<Vec<_>, _>>()?;
 
 		let (details, asp_nonces, part_sigs) = self.start_bolt11(
 			invoice, amount, input_vtxos, user_pubkey, &user_nonces,
-		).map_err(|e| internal!("error making payment: {}", e))?;
+		).context("error making payment")?;
 
 		let response = rpc::Bolt11PaymentDetails {
 			details: details.encode(),
@@ -410,19 +477,23 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT);
 
-		add_tracing_attributes(vec![KeyValue::new("signed_payment", format!("{:?}", req.get_ref().signed_payment))]);
+		add_tracing_attributes(vec![
+			KeyValue::new("signed_payment", format!("{:?}", req.get_ref().signed_payment)),
+		]);
 
 		let signed = SignedBolt11Payment::decode(&req.get_ref().signed_payment)
-			.map_err(|e| badarg!("invalid payment encoding: {}", e))?;
+			.badarg("invalid payment encoding")?;
 		if let Err(e) = signed.validate_signatures(&crate::SECP) {
-			return Err(badarg!("bad signatures on payment: {}", e));
+			badarg!("bad signatures on payment: {}", e);
 		}
 
 		let invoice = signed.payment.invoice.clone();
 
 		// Connecting to the grpc-client
-		let cln_config = self.config.lightningd.as_ref().ok_or(not_found!("This asp does not support lightning"))?;
-		let cln_client = cln_config.grpc_client().await.map_err(|_| internal!("Failed to connect to lightning"))?;
+		let cln_config = self.config.lightningd.as_ref()
+			.context("This asp does not support lightning")?;
+		let cln_client = cln_config.grpc_client().await
+			.context("failed to connect to lightning")?;
 		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
 
 		// Spawn a task that performs the payment
@@ -486,9 +557,7 @@ impl rpc::server::ArkService for App {
 		let stream = BroadcastStream::new(chan);
 
 		Ok(tonic::Response::new(Box::new(stream.map(|e| {
-			let e = e.map_err(|e| internal!("broken stream: {}", e))?;
-
-			Ok(e.into())
+			Ok(e.context("broken stream")?.into())
 		}))))
 	}
 
@@ -498,37 +567,36 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBMIT_PAYMENT);
 
-		add_tracing_attributes(
-			vec![
-				KeyValue::new("input_vtxos_count", format!("{:?}", req.get_ref().input_vtxos.len())),
-				KeyValue::new("vtxo_requests_count", format!("{:?}", req.get_ref().vtxo_requests.len())),
-				KeyValue::new("offboard_requests_count", format!("{:?}", req.get_ref().offboard_requests.len())),
-			]);
+		add_tracing_attributes(vec![
+			KeyValue::new("input_vtxos_count", format!("{:?}", req.get_ref().input_vtxos.len())),
+			KeyValue::new("vtxo_requests_count", format!("{:?}", req.get_ref().vtxo_requests.len())),
+			KeyValue::new("offboard_requests_count", format!("{:?}", req.get_ref().offboard_requests.len())),
+		]);
 
 		let inputs =  req.get_ref().input_vtxos.iter().map(|vtxo| {
-			Ok(VtxoId::from_slice(vtxo).map_err(|e| badarg!("invalid vtxo: {}", e))?)
-		}).collect::<Result<_, tonic::Status>>()?;
+			Ok(VtxoId::from_slice(vtxo).badarg("invalid vtxo")?)
+		}).collect::<Result<Vec<_>, tonic::Status>>()?;
 
 		let mut vtxo_requests = Vec::with_capacity(req.get_ref().vtxo_requests.len());
 		let mut cosign_pub_nonces = Vec::with_capacity(req.get_ref().vtxo_requests.len());
 		for r in req.get_ref().vtxo_requests.clone() {
 			let amount = Amount::from_sat(r.amount);
 			let pubkey= PublicKey::from_slice(&r.vtxo_public_key)
-				.map_err(|e| badarg!("malformed pubkey: {}", e))?;
+				.badarg("malformed pubkey")?;
 			let cosign_pk = PublicKey::from_slice(&r.cosign_pubkey)
-				.map_err(|e| badarg!("malformed cosign pubkey: {}", e))?;
+				.badarg("malformed cosign pubkey")?;
 			vtxo_requests.push(VtxoRequest { amount, pubkey, cosign_pk });
 
 			// Make sure users provided right number of nonces.
 			if r.public_nonces.len() != self.config.nb_round_nonces {
-				return Err(badarg!("need exactly {} public nonces", self.config.nb_round_nonces));
+				badarg!("need exactly {} public nonces", self.config.nb_round_nonces);
 			}
 			let public_nonces = r.public_nonces.into_iter()
 				.take(self.config.nb_round_nonces)
 				.map(|n| {
 					musig::MusigPubNonce::from_slice(&n)
-						.map_err(|e| badarg!("invalid public nonce: {}", e))
-				}).collect::<Result<_, tonic::Status>>()?;
+						.badarg("invalid public nonce")
+				}).collect::<Result<Vec<_>, _>>()?;
 			cosign_pub_nonces.push(public_nonces);
 		}
 
@@ -536,7 +604,7 @@ impl rpc::server::ArkService for App {
 			let amount = Amount::from_sat(r.amount);
 			let script_pubkey = ScriptBuf::from_bytes(r.clone().offboard_spk);
 			let ret = OffboardRequest { script_pubkey, amount };
-			ret.validate().map_err(|e| badarg!("invalid offboard request: {}", e))?;
+			ret.validate().badarg("invalid offboard request")?;
 			Ok(ret)
 		}).collect::<Result<_, tonic::Status>>()?;
 
@@ -554,19 +622,18 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES);
 
-		add_tracing_attributes(
-			vec![
-				KeyValue::new("pubkey", format!("{:?}", req.get_ref().pubkey)),
-				KeyValue::new("signatures_count", format!("{:?}", req.get_ref().signatures.len())),
-			]);
+		add_tracing_attributes(vec![
+			KeyValue::new("pubkey", format!("{:?}", req.get_ref().pubkey)),
+			KeyValue::new("signatures_count", format!("{:?}", req.get_ref().signatures.len())),
+		]);
 
 		let inp = RoundInput::VtxoSignatures {
 			pubkey: PublicKey::from_slice(&req.get_ref().pubkey)
-				.map_err(|e| badarg!("invalid pubkey: {}", e))?,
+				.badarg("invalid pubkey")?,
 			signatures: req.get_ref().signatures.iter().map(|s| {
 				musig::MusigPartialSignature::from_slice(s)
-					.map_err(|e| badarg!("invalid signature: {}", e))
-			}).collect::<Result<_, tonic::Status>>()?,
+					.badarg("invalid signature")
+			}).collect::<Result<_, _>>()?,
 		};
 		self.try_rounds().to_status()?.round_input_tx.send(inp).expect("input channel closed");
 
@@ -579,20 +646,22 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES);
 
-		add_tracing_attributes(vec![ KeyValue::new("signatures_count", format!("{:?}", req.get_ref().signatures.len()))]);
+		add_tracing_attributes(vec![
+			KeyValue::new("signatures_count", format!("{:?}", req.get_ref().signatures.len())),
+		]);
 
 		let inp = RoundInput::ForfeitSignatures {
 			signatures: req.get_ref().signatures.iter().map(|ff| {
 				let id = VtxoId::from_slice(&ff.input_vtxo_id)
-					.map_err(|e|  badarg!("invalid vtxo id: {}", e))?;
+					.badarg("invalid vtxo id")?;
 				let nonces = ff.pub_nonces.iter().map(|n| {
 					musig::MusigPubNonce::from_slice(n)
-						.map_err(|e| badarg!("invalid forfeit nonce: {}", e))
-				}).collect::<Result<_, tonic::Status>>()?;
+						.badarg("invalid forfeit nonce")
+				}).collect::<Result<_, _>>()?;
 				let signatures = ff.signatures.iter().map(|s| {
 					musig::MusigPartialSignature::from_slice(s)
-						.map_err(|e| badarg!("invalid forfeit sig: {}", e))
-				}).collect::<Result<_, tonic::Status>>()?;
+						.badarg("invalid forfeit sig")
+				}).collect::<Result<_, _>>()?;
 				Ok((id, nonces, signatures))
 			}).collect::<Result<_, tonic::Status>>()?
 		};
@@ -866,14 +935,13 @@ fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'stati
 
 /// Run the public gRPC endpoint.
 pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+
 	let addr = app.config.rpc.public_address;
-
 	info!("Starting public gRPC service on address {}", addr);
-
 	let ark_server = rpc::server::ArkServiceServer::from_arc(app.clone());
 
 	let mut shutdown = app.shutdown_channel.subscribe();
-
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
@@ -906,14 +974,13 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 
 /// Run the public gRPC endpoint.
 pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+
 	let addr = app.config.rpc.admin_address.expect("shouldn't call this method otherwise");
-
 	info!("Starting admin gRPC service on address {}", addr);
-
 	let admin_server = rpc::server::AdminServiceServer::from_arc(app.clone());
 
 	let mut shutdown = app.shutdown_channel.subscribe();
-
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
