@@ -4,7 +4,6 @@ extern crate log;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::amount::Amount;
 use bitcoin::secp256k1::PublicKey;
 use tokio::sync::Mutex;
 
@@ -14,7 +13,7 @@ use aspd_log::{
 };
 use aspd_rpc as rpc;
 
-use ark_testing::{Aspd, TestContext};
+use ark_testing::{Aspd, TestContext, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::aspd;
@@ -52,7 +51,7 @@ async fn bitcoind_auth_connection() {
 
 
 	let mut admin = aspd.get_admin_client().await;
-	ctx.fund_asp(&aspd, Amount::from_sat(1_000_000)).await;
+	ctx.fund_asp(&aspd, sat(1_000_000)).await;
 
 	let response = admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
 	assert_eq!(response.balance, 1_000_000);
@@ -65,7 +64,7 @@ async fn bitcoind_cookie_connection() {
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	let mut admin = aspd.get_admin_client().await;
-	ctx.fund_asp(&aspd, Amount::from_sat(1_000_000)).await;
+	ctx.fund_asp(&aspd, sat(1_000_000)).await;
 
 	let response = admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
 	assert_eq!(response.balance, 1_000_000);
@@ -100,7 +99,7 @@ async fn fund_asp() {
 	assert_eq!(response.balance, 0);
 
 	// Fund the aspd
-	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
 	ctx.bitcoind.generate(1).await;
 
 	// Confirm that the balance is updated
@@ -128,7 +127,7 @@ async fn restart_key_stability() {
 	};
 
 	// Fund the aspd's addr
-	ctx.bitcoind.fund_addr(&addr1, Amount::from_int_btc(1)).await;
+	ctx.bitcoind.fund_addr(&addr1, btc(1)).await;
 	ctx.bitcoind.generate(1).await;
 
 	// Restart aspd.
@@ -164,10 +163,10 @@ async fn sweep_vtxos() {
 	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
 		round_interval: Duration::from_millis(500000000),
 		vtxo_expiry_delta: 64,
-		sweep_threshold: Amount::from_sat(100_000),
+		sweep_threshold: sat(100_000),
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, Amount::from_sat(100_000)).await);
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, sat(100_000)).await);
 	let mut admin = aspd.get_admin_client().await;
 
 	// subscribe to a few log messages
@@ -177,19 +176,19 @@ async fn sweep_vtxos() {
 	let mut log_round_done = aspd.subscribe_log::<RoundFullySwept>().await;
 	let mut log_sweeps = aspd.subscribe_log::<SweepingOutput>().await;
 
-	ctx.fund_asp(&aspd, Amount::from_sat(1_000_000)).await;
-	ctx.fund_bark(&bark, Amount::from_sat(400_000)).await;
+	ctx.fund_asp(&aspd, sat(1_000_000)).await;
+	ctx.fund_bark(&bark, sat(400_000)).await;
 
 	// we onboard one vtxo and then a few blocks later another
-	bark.onboard(Amount::from_sat(75_000)).await;
+	bark.onboard(sat(75_000)).await;
 	ctx.bitcoind.generate(5).await;
-	bark.onboard(Amount::from_sat(75_000)).await;
+	bark.onboard(sat(75_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// before either expires not sweeping yet because nothing available
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(0), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
+	assert_eq!(sat(0), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
 	ctx.bitcoind.generate(18).await;
@@ -203,13 +202,13 @@ async fn sweep_vtxos() {
 	// now we expire the first one, still not sweeping because not enough surplus
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(73790), log_not_sweeping.recv().wait(1500).await.unwrap().available_surplus);
+	assert_eq!(sat(73790), log_not_sweeping.recv().wait(1500).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
 	ctx.bitcoind.generate(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(147580), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	assert_eq!(sat(147580), log_sweeping.recv().wait(1500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "onboard");
@@ -219,18 +218,18 @@ async fn sweep_vtxos() {
 	ctx.bitcoind.generate(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(149980), log_sweeping.recv().wait(2500).await.unwrap().surplus);
+	assert_eq!(sat(149980), log_sweeping.recv().wait(2500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "vtxo");
 
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another onboard
-	bark.onboard(Amount::from_sat(101_000)).await;
+	bark.onboard(sat(101_000)).await;
 	ctx.bitcoind.generate(70).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(Amount::from_sat(100285), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	assert_eq!(sat(100285), log_sweeping.recv().wait(1500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "connector");
@@ -263,7 +262,7 @@ async fn restart_fresh_aspd() {
 async fn restart_funded_aspd() {
 	let ctx = TestContext::new("aspd/restart_funded_aspd").await;
 	let mut aspd = ctx.new_aspd("aspd", None).await;
-	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
 	aspd.stop().await.unwrap();
 	aspd.start().await.unwrap();
 }
@@ -271,21 +270,21 @@ async fn restart_funded_aspd() {
 #[tokio::test]
 async fn restart_aspd_with_payments() {
 	let ctx = TestContext::new("aspd/restart_aspd_with_payments").await;
-	let mut aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let mut aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark("bark1", &aspd).await;
 	let bark2 = ctx.new_bark("bark2", &aspd).await;
-	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
-	ctx.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
-	ctx.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
+	ctx.fund_bark(&bark1, sat(1_000_000)).await;
+	ctx.fund_bark(&bark2, sat(1_000_000)).await;
 
-	bark2.onboard(Amount::from_sat(800_000)).await;
-	bark1.onboard(Amount::from_sat(200_000)).await;
+	bark2.onboard(sat(800_000)).await;
+	bark1.onboard(sat(200_000)).await;
 
 	ctx.bitcoind.generate(12).await;
 	bark1.refresh_all().await;
 
-	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
-	bark1.send_oor(&bark2.vtxo_pubkey().await, Amount::from_sat(350_000)).await;
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(350_000)).await;
 	aspd.stop().await.unwrap();
 	aspd.start().await.unwrap();
 }
@@ -319,15 +318,15 @@ async fn double_spend_oor() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let last_req = Arc::new(Mutex::new(None));
 	let proxy = Proxy(aspd.get_public_client().await, last_req.clone());
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark.onboard(Amount::from_sat(800_000)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
+	bark.onboard(sat(800_000)).await;
 
-	bark.send_oor(&*RANDOM_PK, Amount::from_sat(100_000)).await;
+	bark.send_oor(&*RANDOM_PK, sat(100_000)).await;
 
 	// then after it's done, fire the request again, which should fail.
 	let req = last_req.lock().await.take().unwrap();
@@ -358,11 +357,11 @@ async fn double_spend_round() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark.onboard(Amount::from_sat(800_000)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
+	bark.onboard(sat(800_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
@@ -386,11 +385,11 @@ async fn spend_unregistered_onboard() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark.onboard(Amount::from_sat(800_000)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
+	bark.onboard(sat(800_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;
