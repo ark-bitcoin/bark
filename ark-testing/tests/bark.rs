@@ -61,7 +61,7 @@ async fn onboard_bark() {
 	let setup = setup_simple("bark/onboard_bark").await;
 
 	// Get the bark-address and fund it
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
+	setup.ctx.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
 
 	setup.bark1.onboard(Amount::from_sat(ONBOARD_AMOUNT)).await;
 
@@ -73,7 +73,7 @@ async fn onboard_all_bark() {
 	let setup = setup_simple("bark/onboard_all_bark").await;
 
 	// Get the bark-address and fund it
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
+	setup.ctx.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
 	assert_eq!(setup.bark1.onchain_balance().await, Amount::from_sat(100_000));
 
 	let onboard_txid = setup.bark1.onboard_all().await.funding_txid;
@@ -186,9 +186,9 @@ async fn oor() {
 	let setup = setup_asp_funded("bark/oor").await;
 
 	// Fund clients
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(90_000)).await;
-	setup.context.fund_bark(&setup.bark2, Amount::from_sat(5_000)).await;
-	setup.context.bitcoind.generate(1).await;
+	setup.ctx.fund_bark(&setup.bark1, Amount::from_sat(90_000)).await;
+	setup.ctx.fund_bark(&setup.bark2, Amount::from_sat(5_000)).await;
+	setup.ctx.bitcoind.generate(1).await;
 	setup.bark1.onboard(Amount::from_sat(80_000)).await;
 
 	let pk2 = setup.bark2.vtxo_pubkey().await;
@@ -203,11 +203,11 @@ async fn refresh() {
 	let setup = setup_asp_funded("bark/refresh").await;
 
 	// Fund clients
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(1_000_000)).await;
-	setup.context.fund_bark(&setup.bark2, Amount::from_sat(1_000_000)).await;
+	setup.ctx.fund_bark(&setup.bark1, Amount::from_sat(1_000_000)).await;
+	setup.ctx.fund_bark(&setup.bark2, Amount::from_sat(1_000_000)).await;
 	setup.bark1.onboard(Amount::from_sat(800_000)).await;
 	setup.bark2.onboard(Amount::from_sat(800_000)).await;
-	setup.context.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	setup.ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// We want bark2 to have a refresh, onboard, round and oor vtxo
 	let pk1 = setup.bark1.vtxo_pubkey().await;
@@ -216,7 +216,7 @@ async fn refresh() {
 	setup.bark1.refresh_all().await;
 	setup.bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
 	setup.bark2.onboard(Amount::from_sat(20_000)).await;
-	setup.context.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	setup.ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	assert_eq!(3, setup.bark2.vtxos().await.len());
 	setup.bark2.refresh_all().await;
@@ -337,7 +337,7 @@ async fn multiple_spends_in_payment() {
 async fn offboard_all() {
 	let setup = setup_full("bark/offboard_all").await;
 
-	let address = setup.context.bitcoind.get_new_address();
+	let address = setup.ctx.bitcoind.get_new_address();
 
 	let init_balance = setup.bark1.offchain_balance().await;
 	assert_eq!(init_balance, Amount::from_sat(830_000));
@@ -353,8 +353,8 @@ async fn offboard_all() {
 	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
-	setup.context.bitcoind.generate(1).await;
-	let balance = setup.context.bitcoind.get_received_by_address(&address);
+	setup.ctx.bitcoind.generate(1).await;
+	let balance = setup.ctx.bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, init_balance - OFFBOARD_FEES);
 }
 
@@ -365,7 +365,7 @@ async fn offboard_vtxos() {
 	let vtxos = setup.bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
 
-	let address = setup.context.bitcoind.get_new_address();
+	let address = setup.ctx.bitcoind.get_new_address();
 	let vtxo_to_offboard = &vtxos[1];
 
 	setup.bark1.offboard_vtxo(vtxo_to_offboard.id, address.clone()).await;
@@ -386,8 +386,8 @@ async fn offboard_vtxos() {
 	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
-	setup.context.bitcoind.generate(1).await;
-	let balance = setup.context.bitcoind.get_received_by_address(&address);
+	setup.ctx.bitcoind.generate(1).await;
+	let balance = setup.ctx.bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, vtxo_to_offboard.amount - OFFBOARD_FEES);
 }
 
@@ -400,6 +400,11 @@ async fn drop_vtxos() {
 	let balance = setup.bark1.offchain_balance_no_sync().await;
 
 	assert_eq!(balance, Amount::ZERO);
+}
+
+#[tokio::test]
+async fn refresh_expired() {
+
 }
 
 #[tokio::test]
@@ -448,7 +453,7 @@ async fn reject_oor_with_bad_signature() {
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(setup.aspd.get_public_client().await)).await;
 
 	// create a third wallet to receive the invalid arkoor
-	let bark3 = setup.context.new_bark("bark3".to_string(), &proxy.address).await;
+	let bark3 = setup.ctx.new_bark("bark3".to_string(), &proxy.address).await;
 
 	setup.bark2.send_oor(bark3.vtxo_pubkey().await, Amount::from_sat(10_000)).await;
 

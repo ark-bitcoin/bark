@@ -18,7 +18,6 @@ use ark_testing::{Aspd, TestContext};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::aspd;
-use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
 use ark_testing::util::{FutureExt, ReceiverExt};
 
 lazy_static::lazy_static! {
@@ -254,23 +253,41 @@ async fn sweep_vtxos() {
 
 #[tokio::test]
 async fn restart_fresh_aspd() {
-	let mut setup = setup_simple("aspd/restart_fresh_aspd").await;
-	setup.aspd.stop().await.unwrap();
-	setup.aspd.start().await.unwrap();
+	let ctx = TestContext::new("aspd/restart_fresh_aspd").await;
+	let mut aspd = ctx.new_aspd("aspd", None).await;
+	aspd.stop().await.unwrap();
+	aspd.start().await.unwrap();
 }
 
 #[tokio::test]
 async fn restart_funded_aspd() {
-	let mut setup = setup_asp_funded("aspd/restart_funded_aspd").await;
-	setup.aspd.stop().await.unwrap();
-	setup.aspd.start().await.unwrap();
+	let ctx = TestContext::new("aspd/restart_funded_aspd").await;
+	let mut aspd = ctx.new_aspd("aspd", None).await;
+	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
+	aspd.stop().await.unwrap();
+	aspd.start().await.unwrap();
 }
 
 #[tokio::test]
 async fn restart_aspd_with_payments() {
-	let mut setup = setup_full("aspd/restart_aspd_with_payments").await;
-	setup.aspd.stop().await.unwrap();
-	setup.aspd.start().await.unwrap();
+	let ctx = TestContext::new("aspd/restart_aspd_with_payments").await;
+	let mut aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let bark1 = ctx.new_bark("bark1", &aspd).await;
+	let bark2 = ctx.new_bark("bark2", &aspd).await;
+	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
+	ctx.fund_bark(&bark1, Amount::from_sat(1_000_000)).await;
+	ctx.fund_bark(&bark2, Amount::from_sat(1_000_000)).await;
+
+	bark2.onboard(Amount::from_sat(800_000)).await;
+	bark1.onboard(Amount::from_sat(200_000)).await;
+
+	ctx.bitcoind.generate(12).await;
+	bark1.refresh_all().await;
+
+	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
+	bark1.send_oor(&bark2.vtxo_pubkey().await, Amount::from_sat(350_000)).await;
+	aspd.stop().await.unwrap();
+	aspd.start().await.unwrap();
 }
 
 #[tokio::test]
