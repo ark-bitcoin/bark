@@ -133,7 +133,7 @@ where
 		C: fmt::Display + Send + Sync + 'static,
 		F: FnOnce() -> C,
 	{
-		self.context(BadArgument::new(f()))
+		self.with_context(|| BadArgument::new(f()))
 	}
 
 	fn not_found<I, V, C>(self, ids: V, context: C) -> anyhow::Result<T>
@@ -152,7 +152,7 @@ where
 		C: fmt::Display + Send + Sync + 'static,
 		F: FnOnce() -> C,
 	{
-		self.context(NotFound::new(ids, f()))
+		self.with_context(|| NotFound::new(ids, f()))
 	}
 }
 
