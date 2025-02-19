@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ -d $APD_DATADIR ]
+if [ -d $ASPD_DATADIR ]
 then
   echo "The directory already exists"
   echo "The configuration will be updated"

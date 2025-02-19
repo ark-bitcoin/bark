@@ -12,7 +12,7 @@ RUN --mount=type=bind,source=Cargo.toml,target=/usr/src/Cargo.toml \
   --mount=type=bind,source=ark-lib,target=/usr/src/ark-lib \
   --mount=type=bind,source=aspd,target=/usr/src/aspd \
   --mount=type=bind,source=aspd-log,target=/usr/src/aspd-log \
-  --mount=type=bind,source=aspd-rpc-client,target=/usr/src/aspd-rpc-client \
+  --mount=type=bind,source=aspd-rpc,target=/usr/src/aspd-rpc \
   --mount=type=bind,source=ark-testing,target=/usr/src/ark-testing \
   --mount=type=bind,source=bark,target=/usr/src/bark \
   --mount=type=bind,source=bark-json,target=/usr/src/bark-json \
