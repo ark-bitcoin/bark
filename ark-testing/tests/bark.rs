@@ -59,10 +59,7 @@ async fn onboard_bark() {
 	const ONBOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/onboard_bark").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark1 = ctx.new_bark("bark1", &aspd).await;
-
-	// Get the bark-address and fund it
-	ctx.fund_bark(&bark1, sat(100_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(100_000)).await;
 
 	bark1.onboard(sat(ONBOARD_AMOUNT)).await;
 
@@ -107,13 +104,12 @@ async fn list_utxos() {
 
 	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
-
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -144,13 +140,13 @@ async fn list_vtxos() {
 
 	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	bark1.refresh_all().await;
 
 	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -188,11 +184,8 @@ async fn large_round() {
 		nb_round_nonces: 200,
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
-
-	// Fund the asp
 	ctx.fund_asp(&aspd, btc(10)).await;
 
-	// Create a few clients
 	let barks = {
 		let mut barks = Vec::new();
 		// TODO: This might be parallelized
@@ -225,14 +218,10 @@ async fn large_round() {
 async fn oor() {
 	let ctx = TestContext::new("bark/oor").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark("bark1", &aspd).await;
-	let bark2 = ctx.new_bark("bark2", &aspd).await;
-
-	// Fund clients
-	ctx.fund_bark(&bark1, sat(90_000)).await;
-	ctx.fund_bark(&bark2, sat(5_000)).await;
-	ctx.bitcoind.generate(1).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
 	bark1.onboard(sat(80_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	let pk2 = bark2.vtxo_pubkey().await;
 	bark1.send_oor(pk2, sat(20_000)).await;
@@ -277,13 +266,12 @@ async fn refresh_counterparty() {
 
 	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
-
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -314,13 +302,12 @@ async fn compute_balance() {
 
 	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
-
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -344,11 +331,7 @@ async fn list_movements() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	ctx.bitcoind.generate(1).await;
-
 	bark2.onboard(sat(800_000)).await;
-
-	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 	let payments = bark1.list_movements().await;
@@ -394,8 +377,6 @@ async fn multiple_spends_in_payment() {
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
 
-	ctx.bitcoind.generate(1).await;
-
 	bark1.onboard(sat(100_000)).await;
 	bark1.onboard(sat(200_000)).await;
 	bark1.onboard(sat(300_000)).await;
@@ -419,17 +400,14 @@ async fn offboard_all() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	bark2.onboard(sat(800_000)).await;
-
-	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
+	bark2.onboard(sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
+	// refresh and onboard more
 	bark1.refresh_all().await;
-
-	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -466,13 +444,13 @@ async fn offboard_vtxos() {
 
 	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	bark1.refresh_all().await;
 
 	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -514,7 +492,7 @@ async fn drop_vtxos() {
 
 	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 	ctx.bitcoind.generate(1).await;
 
@@ -570,7 +548,7 @@ async fn reject_oor_with_bad_signature() {
 
 	// refresh vtxo
 	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// create a proxy to return an arkoor with invalid signatures
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(aspd.get_public_client().await)).await;
