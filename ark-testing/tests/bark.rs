@@ -14,20 +14,19 @@ use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed}
 use ark::{ArkoorVtxo, Vtxo};
 use aspd_rpc as rpc;
 
-use ark_testing::TestContext;
+use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 use ark_testing::daemon::aspd;
-use ark_testing::setup::{setup_asp_funded, setup_full, setup_simple};
 use ark_testing::util::FutureExt;
 
-const OFFBOARD_FEES: Amount = Amount::from_sat(900);
+const OFFBOARD_FEES: Amount = sat(900);
 
 #[tokio::test]
 async fn bark_version() {
-	let setup = setup_simple("bark/bark_version").await;
-
-	let result = setup.bark1.run(&[&"--version"]).await;
-
+	let ctx = TestContext::new("bark/bark_version").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+	let bark1 = ctx.new_bark("bark1", &aspd).await;
+	let result = bark1.run(&[&"--version"]).await;
 	assert!(result.starts_with("bark-client"));
 }
 
@@ -58,50 +57,70 @@ async fn bark_create_is_atomic() {
 #[tokio::test]
 async fn onboard_bark() {
 	const ONBOARD_AMOUNT: u64 = 90_000;
-	let setup = setup_simple("bark/onboard_bark").await;
+	let ctx = TestContext::new("bark/onboard_bark").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(100_000)).await;
 
-	// Get the bark-address and fund it
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
+	bark1.onboard(sat(ONBOARD_AMOUNT)).await;
 
-	setup.bark1.onboard(Amount::from_sat(ONBOARD_AMOUNT)).await;
-
-	assert_eq!(Amount::from_sat(ONBOARD_AMOUNT), setup.bark1.offchain_balance().await);
+	assert_eq!(sat(ONBOARD_AMOUNT), bark1.offchain_balance().await);
 }
 
 #[tokio::test]
 async fn onboard_all_bark() {
-	let setup = setup_simple("bark/onboard_all_bark").await;
+	let ctx = TestContext::new("bark/onboard_all_bark").await;
+
+	let aspd = ctx.new_aspd("aspd", None).await;
+	let bark1 = ctx.new_bark("bark1", &aspd).await;
 
 	// Get the bark-address and fund it
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(100_000)).await;
-	assert_eq!(setup.bark1.onchain_balance().await, Amount::from_sat(100_000));
+	ctx.fund_bark(&bark1, sat(100_000)).await;
+	assert_eq!(bark1.onchain_balance().await, sat(100_000));
 
-	let onboard_txid = setup.bark1.onboard_all().await.funding_txid;
+	let onboard_txid = bark1.onboard_all().await.funding_txid;
 
 	// Check that we emptied our on-chain balance
-	assert_eq!(setup.bark1.onchain_balance().await, Amount::ZERO);
+	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the onboarding tx's output value is the same as our off-chain balance
-	let sync_client = setup.bark1.bitcoind().sync_client();
+	let sync_client = bark1.bitcoind().sync_client();
 	let onboard_tx = sync_client.get_raw_transaction(&onboard_txid, None).unwrap();
 	assert_eq!(
-		setup.bark1.offchain_balance().await,
+		bark1.offchain_balance().await,
 		onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus(),
 	);
-	assert_eq!(setup.bark1.onchain_balance().await, Amount::ZERO);
+	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 }
 
 #[tokio::test]
 async fn list_utxos() {
-	let setup = setup_full("bark/list_utxos").await;
+	let ctx = TestContext::new("bark/list_utxos").await;
 
-	let bark1_address = setup.bark1.get_onchain_address().await;
-	setup.bark1.offboard_all(bark1_address.clone()).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark2.onboard(sat(800_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark1.refresh_all().await;
+
+	// onboard vtxo
+	bark1.onboard(sat(300_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+
+	let bark1_address = bark1.get_onchain_address().await;
+	bark1.offboard_all(bark1_address.clone()).await;
 
 	// If this test gets flaky, try add some delay here:
 	// tokio::time::sleep(Duration::from_millis(500)).await;
 
-	let utxos = setup.bark1.utxos().await;
+	let utxos = bark1.utxos().await;
 
 	assert_eq!(2, utxos.len());
 	// onboard change utxo
@@ -112,18 +131,36 @@ async fn list_utxos() {
 
 #[tokio::test]
 async fn list_vtxos() {
-	let setup = setup_full("bark/list_vtxos").await;
+	let ctx = TestContext::new("bark/list_vtxos").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	let vtxos = setup.bark1.vtxos().await;
+	bark2.onboard(sat(800_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	bark1.refresh_all().await;
+
+	// onboard vtxo
+	bark1.onboard(sat(300_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+
+	let vtxos = bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 200_000));
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 300_000));
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 330_000));
 
 	// Should have the same behaviour when ASP is offline
-	setup.aspd.stop().await.unwrap();
+	aspd.stop().await.unwrap();
 
-	let vtxos = setup.bark1.vtxos().await;
+	let vtxos = bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 200_000));
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 300_000));
@@ -147,18 +184,15 @@ async fn large_round() {
 		nb_round_nonces: 200,
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
 
-	// Fund the asp
-	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
-
-	// Create a few clients
 	let barks = {
 		let mut barks = Vec::new();
 		// TODO: This might be parallelized
 		// Currently, each creation of bark is waiting, in sequence, for its funding transaction
 		for i in 0..N {
 			let name = format!("bark{}", i);
-			barks.push(ctx.new_bark_with_funds(name, &aspd, Amount::from_sat(90_000)).await);
+			barks.push(ctx.new_bark_with_funds(name, &aspd, sat(90_000)).await);
 		}
 		barks
 	};
@@ -168,7 +202,7 @@ async fn large_round() {
 	// Fund and onboard all clients.
 	for chunk in barks.chunks(20) {
 		futures::future::join_all(chunk.iter().map(|b| async {
-			b.onboard(Amount::from_sat(80_000)).await;
+			b.onboard(sat(80_000)).await;
 		})).await;
 	}
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
@@ -182,58 +216,73 @@ async fn large_round() {
 
 #[tokio::test]
 async fn oor() {
-	// Initialize the test
-	let setup = setup_asp_funded("bark/oor").await;
+	let ctx = TestContext::new("bark/oor").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
+	bark1.onboard(sat(80_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
-	// Fund clients
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(90_000)).await;
-	setup.context.fund_bark(&setup.bark2, Amount::from_sat(5_000)).await;
-	setup.context.bitcoind.generate(1).await;
-	setup.bark1.onboard(Amount::from_sat(80_000)).await;
+	let pk2 = bark2.vtxo_pubkey().await;
+	bark1.send_oor(pk2, sat(20_000)).await;
 
-	let pk2 = setup.bark2.vtxo_pubkey().await;
-	setup.bark1.send_oor(pk2, Amount::from_sat(20_000)).await;
-
-	assert_eq!(58_035, setup.bark1.offchain_balance().await.to_sat());
-	assert_eq!(20_000, setup.bark2.offchain_balance().await.to_sat());
+	assert_eq!(58_035, bark1.offchain_balance().await.to_sat());
+	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
 }
 
 #[tokio::test]
 async fn refresh() {
-	let setup = setup_asp_funded("bark/refresh").await;
+	let ctx = TestContext::new("bark/refresh").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	// Fund clients
-	setup.context.fund_bark(&setup.bark1, Amount::from_sat(1_000_000)).await;
-	setup.context.fund_bark(&setup.bark2, Amount::from_sat(1_000_000)).await;
-	setup.bark1.onboard(Amount::from_sat(800_000)).await;
-	setup.bark2.onboard(Amount::from_sat(800_000)).await;
-	setup.context.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark1.onboard(sat(800_000)).await;
+	bark2.onboard(sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// We want bark2 to have a refresh, onboard, round and oor vtxo
-	let pk1 = setup.bark1.vtxo_pubkey().await;
-	let pk2 = setup.bark2.vtxo_pubkey().await;
-	setup.bark2.send_oor(&pk1, Amount::from_sat(20_000)).await; // generates change
-	setup.bark1.refresh_all().await;
-	setup.bark1.send_oor(&pk2, Amount::from_sat(20_000)).await;
-	setup.bark2.onboard(Amount::from_sat(20_000)).await;
-	setup.context.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	let pk1 = bark1.vtxo_pubkey().await;
+	let pk2 = bark2.vtxo_pubkey().await;
+	bark2.send_oor(&pk1, sat(20_000)).await; // generates change
+	bark1.refresh_all().await;
+	bark1.send_oor(&pk2, sat(20_000)).await;
+	bark2.onboard(sat(20_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
-	assert_eq!(3, setup.bark2.vtxos().await.len());
-	setup.bark2.refresh_all().await;
-	assert_eq!(1, setup.bark2.vtxos().await.len());
+	assert_eq!(3, bark2.vtxos().await.len());
+	bark2.refresh_all().await;
+	assert_eq!(1, bark2.vtxos().await.len());
 }
 
 #[tokio::test]
 async fn refresh_counterparty() {
-	let setup = setup_full("bark/refresh_counterparty").await;
+	let ctx = TestContext::new("bark/refresh_counterparty").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	let (oor_vtxo, others): (Vec<_>, Vec<_>) = setup.bark1.vtxos().await
+	bark2.onboard(sat(800_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark1.refresh_all().await;
+
+	// onboard vtxo
+	bark1.onboard(sat(300_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+
+	let (oor_vtxo, others): (Vec<_>, Vec<_>) = bark1.vtxos().await
 		.into_iter()
-		.partition(|v| v.amount == Amount::from_sat(330_000));
+		.partition(|v| v.amount == sat(330_000));
 
-	setup.bark1.refresh_counterparty().await;
+	bark1.refresh_counterparty().await;
 
-	let vtxos = setup.bark1.vtxos().await;
+	let vtxos = bark1.vtxos().await;
 	// there should still be 3 vtxos
 	assert_eq!(3, vtxos.len());
 	// received oor vtxo should be refreshed
@@ -244,16 +293,33 @@ async fn refresh_counterparty() {
 
 #[tokio::test]
 async fn compute_balance() {
-	let setup = setup_full("bark/compute_balance").await;
+	let ctx = TestContext::new("bark/compute_balance").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	let balance = setup.bark1.offchain_balance().await;
-	assert_eq!(balance, Amount::from_sat(830_000));
+	bark2.onboard(sat(800_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark1.refresh_all().await;
+
+	// onboard vtxo
+	bark1.onboard(sat(300_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+
+	let balance = bark1.offchain_balance().await;
+	assert_eq!(balance, sat(830_000));
 
 	// Should have the same behaviour when ASP is offline
-	setup.aspd.stop().await.unwrap();
+	aspd.stop().await.unwrap();
 
-	let balance = setup.bark1.offchain_balance().await;
-	assert_eq!(balance, Amount::from_sat(830_000));
+	let balance = bark1.offchain_balance().await;
+	assert_eq!(balance, sat(830_000));
 }
 
 #[tokio::test]
@@ -261,30 +327,26 @@ async fn list_movements() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/list_movements").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, Amount::from_sat(1_000_000)).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	ctx.bitcoind.generate(1).await;
-
-	bark2.onboard(Amount::from_sat(800_000)).await;
-
-	// onboard vtxo
-	bark1.onboard(Amount::from_sat(300_000)).await;
+	bark2.onboard(sat(800_000)).await;
+	bark1.onboard(sat(300_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 1);
 	assert_eq!(payments[0].spends.len(), 0);
-	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(300_000));
+	assert_eq!(payments[0].receives[0].amount, sat(300_000));
 	assert_eq!(payments[0].fees.to_sat(), 0);
 	assert!(payments[0].destination.is_none());
 
 	// oor change
-	bark1.send_oor(&bark2.vtxo_pubkey().await, Amount::from_sat(150_000)).await;
+	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(150_000)).await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 2);
-	assert_eq!(payments[0].spends[0].amount, Amount::from_sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(148_035));
+	assert_eq!(payments[0].spends[0].amount, sat(300_000));
+	assert_eq!(payments[0].receives[0].amount, sat(148_035));
 	assert_eq!(payments[0].fees.to_sat(), 1965);
 	assert!(payments[0].destination.is_some());
 
@@ -292,17 +354,17 @@ async fn list_movements() {
 	bark1.refresh_all().await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, Amount::from_sat(148_035));
-	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(148_035));
+	assert_eq!(payments[0].spends[0].amount, sat(148_035));
+	assert_eq!(payments[0].receives[0].amount, sat(148_035));
 	assert_eq!(payments[0].fees.to_sat(), 0);
 	assert!(payments[0].destination.is_none());
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, Amount::from_sat(330_000)).await;
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 4);
 	assert_eq!(payments[0].spends.len(), 0);
-	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(330_000));
+	assert_eq!(payments[0].receives[0].amount, sat(330_000));
 	assert_eq!(payments[0].fees.to_sat(), 0);
 	assert!(payments[0].destination.is_none());
 }
@@ -312,66 +374,97 @@ async fn multiple_spends_in_payment() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/multiple_spends_in_payment").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
 
-	ctx.bitcoind.generate(1).await;
-
-	bark1.onboard(Amount::from_sat(100_000)).await;
-	bark1.onboard(Amount::from_sat(200_000)).await;
-	bark1.onboard(Amount::from_sat(300_000)).await;
+	bark1.onboard(sat(100_000)).await;
+	bark1.onboard(sat(200_000)).await;
+	bark1.onboard(sat(300_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// refresh vtxos
 	bark1.refresh_all().await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments[0].spends.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, Amount::from_sat(100_000));
-	assert_eq!(payments[0].spends[1].amount, Amount::from_sat(200_000));
-	assert_eq!(payments[0].spends[2].amount, Amount::from_sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, Amount::from_sat(600_000));
+	assert_eq!(payments[0].spends[0].amount, sat(100_000));
+	assert_eq!(payments[0].spends[1].amount, sat(200_000));
+	assert_eq!(payments[0].spends[2].amount, sat(300_000));
+	assert_eq!(payments[0].receives[0].amount, sat(600_000));
 	assert_eq!(payments[0].fees.to_sat(), 0);
 }
 
 #[tokio::test]
 async fn offboard_all() {
-	let setup = setup_full("bark/offboard_all").await;
+	let ctx = TestContext::new("bark/offboard_all").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	let address = setup.context.bitcoind.get_new_address();
+	bark1.onboard(sat(200_000)).await;
+	bark2.onboard(sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
-	let init_balance = setup.bark1.offchain_balance().await;
-	assert_eq!(init_balance, Amount::from_sat(830_000));
+	// refresh and onboard more
+	bark1.refresh_all().await;
+	bark1.onboard(sat(300_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
-	setup.bark1.offboard_all(address.clone()).await;
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+
+	let address = ctx.bitcoind.get_new_address();
+
+	let init_balance = bark1.offchain_balance().await;
+	assert_eq!(init_balance, sat(830_000));
+
+	bark1.offboard_all(address.clone()).await;
 
 	// We check that all vtxos have been offboarded
-	assert_eq!(Amount::ZERO, setup.bark1.offchain_balance().await);
+	assert_eq!(Amount::ZERO, bark1.offchain_balance().await);
 
-	let movements = setup.bark1.list_movements().await;
+	let movements = bark1.list_movements().await;
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 3, "all offboard vtxos should be in movement");
 	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
-	setup.context.bitcoind.generate(1).await;
-	let balance = setup.context.bitcoind.get_received_by_address(&address);
+	ctx.bitcoind.generate(1).await;
+	let balance = ctx.bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, init_balance - OFFBOARD_FEES);
 }
 
 #[tokio::test]
 async fn offboard_vtxos() {
-	let setup = setup_full("bark/offboard_vtxos").await;
+	let ctx = TestContext::new("bark/offboard_vtxos").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	let vtxos = setup.bark1.vtxos().await;
+	bark2.onboard(sat(800_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	bark1.refresh_all().await;
+
+	// onboard vtxo
+	bark1.onboard(sat(300_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+
+	let vtxos = bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
 
-	let address = setup.context.bitcoind.get_new_address();
+	let address = ctx.bitcoind.get_new_address();
 	let vtxo_to_offboard = &vtxos[1];
 
-	setup.bark1.offboard_vtxo(vtxo_to_offboard.id, address.clone()).await;
+	bark1.offboard_vtxo(vtxo_to_offboard.id, address.clone()).await;
 
 	// We check that only selected vtxo has been touched
-	let updated_vtxos = setup.bark1.vtxos().await
+	let updated_vtxos = bark1.vtxos().await
 		.into_iter()
 		.map(|vtxo| vtxo.id)
 		.collect::<Vec<_>>();
@@ -379,31 +472,40 @@ async fn offboard_vtxos() {
 	assert!(updated_vtxos.contains(&vtxos[0].id));
 	assert!(updated_vtxos.contains(&vtxos[2].id));
 
-	let movements = setup.bark1.list_movements().await;
+	let movements = bark1.list_movements().await;
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 1, "only provided vtxo should be offboarded");
 	assert_eq!(offb_movement.spends[0].id, vtxo_to_offboard.id, "only provided vtxo should be offboarded");
 	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
-	setup.context.bitcoind.generate(1).await;
-	let balance = setup.context.bitcoind.get_received_by_address(&address);
+	ctx.bitcoind.generate(1).await;
+	let balance = ctx.bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, vtxo_to_offboard.amount - OFFBOARD_FEES);
 }
 
 #[tokio::test]
 async fn drop_vtxos() {
-	// Initialize the test
-	let setup = setup_full("bark/drop_vtxos").await;
+	let ctx = TestContext::new("bark/drop_vtxos").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 
-	setup.bark1.drop_vtxos().await;
-	let balance = setup.bark1.offchain_balance_no_sync().await;
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark1.refresh_all().await;
+	ctx.bitcoind.generate(1).await;
+
+	bark1.drop_vtxos().await;
+	let balance = bark1.offchain_balance_no_sync().await;
 
 	assert_eq!(balance, Amount::ZERO);
 }
 
 #[tokio::test]
 async fn reject_oor_with_bad_signature() {
+	let ctx = TestContext::new("bark/reject_oor_with_bad_signature").await;
+
 	#[derive(Clone)]
 	struct InvalidSigProxy(rpc::ArkServiceClient<tonic::transport::Channel>);
 
@@ -441,23 +543,27 @@ async fn reject_oor_with_bad_signature() {
 		}
 	}
 
-	// Initialize the test
-	let setup = setup_full("bark/reject_oor_with_bad_signature").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// create a proxy to return an arkoor with invalid signatures
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(setup.aspd.get_public_client().await)).await;
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(aspd.get_public_client().await)).await;
 
 	// create a third wallet to receive the invalid arkoor
-	let bark3 = setup.context.new_bark("bark3".to_string(), &proxy.address).await;
+	let bark2 = ctx.new_bark("bark3".to_string(), &proxy.address).await;
 
-	setup.bark2.send_oor(bark3.vtxo_pubkey().await, Amount::from_sat(10_000)).await;
+	bark1.send_oor(bark2.vtxo_pubkey().await, sat(10_000)).await;
 
 	// we should drop invalid arkoors
-	assert_eq!(bark3.vtxos().await.len(), 0);
+	assert_eq!(bark2.vtxos().await.len(), 0);
 
 	// check that we saw a log
 	tokio::time::sleep(Duration::from_millis(250)).await;
-	assert!(io::BufReader::new(fs::File::open(bark3.command_log_file()).unwrap()).lines().any(|line| {
+	assert!(io::BufReader::new(fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
 		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. signature failed verification")
 	}));
 }
@@ -491,16 +597,16 @@ async fn second_round_attempt() {
 		round_interval: Duration::from_secs(3600),
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
-	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
-	bark1.onboard(Amount::from_sat(800_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	bark1.onboard(sat(800_000)).await;
 
 	let proxy = Proxy(aspd.get_public_client().await, Arc::new(AtomicBool::new(true)));
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
-	bark1.send_oor(bark2.vtxo_pubkey().await, Amount::from_sat(200_000)).await;
+	bark1.send_oor(bark2.vtxo_pubkey().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
 	let mut log_missing_forfeits = aspd.subscribe_log::<MissingForfeits>().await;

@@ -9,9 +9,8 @@ use bitcoincore_rpc::RpcApi;
 use ark::vtxo::exit_spk;
 use bark_json::primitives::VtxoType;
 
-use ark_testing::{TestContext, Bark};
+use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
-use ark_testing::setup::setup_full;
 
 async fn progress_exit(bark: &Bark) {
 	let mut flip = false;
@@ -46,7 +45,7 @@ async fn exit_round() {
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Fund the asp
-	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
 
 	// Create a few clients
 	let bark1 = ctx.new_bark("bark1".to_string(), &aspd).await;
@@ -59,26 +58,26 @@ async fn exit_round() {
 	let bark8 = ctx.new_bark("bark8".to_string(), &aspd).await;
 
 	tokio::join!(
-		ctx.fund_bark(&bark1, Amount::from_sat(1_000_000)),
-		ctx.fund_bark(&bark2, Amount::from_sat(1_000_000)),
-		ctx.fund_bark(&bark3, Amount::from_sat(1_000_000)),
-		ctx.fund_bark(&bark4, Amount::from_sat(1_000_000)),
-		ctx.fund_bark(&bark5, Amount::from_sat(1_000_000)),
-		ctx.fund_bark(&bark6, Amount::from_sat(1_000_000)),
-		ctx.fund_bark(&bark7, Amount::from_sat(1_000_000)),
-		ctx.fund_bark(&bark8, Amount::from_sat(1_000_000)),
+		ctx.fund_bark(&bark1, sat(1_000_000)),
+		ctx.fund_bark(&bark2, sat(1_000_000)),
+		ctx.fund_bark(&bark3, sat(1_000_000)),
+		ctx.fund_bark(&bark4, sat(1_000_000)),
+		ctx.fund_bark(&bark5, sat(1_000_000)),
+		ctx.fund_bark(&bark6, sat(1_000_000)),
+		ctx.fund_bark(&bark7, sat(1_000_000)),
+		ctx.fund_bark(&bark8, sat(1_000_000)),
 	);
 	ctx.bitcoind.generate(1).await;
 
 	tokio::join!(
-		bark1.onboard(Amount::from_sat(500_000)),
-		bark2.onboard(Amount::from_sat(500_000)),
-		bark3.onboard(Amount::from_sat(500_000)),
-		bark4.onboard(Amount::from_sat(500_000)),
-		bark5.onboard(Amount::from_sat(500_000)),
-		bark6.onboard(Amount::from_sat(500_000)),
-		bark7.onboard(Amount::from_sat(500_000)),
-		bark8.onboard(Amount::from_sat(500_000)),
+		bark1.onboard(sat(500_000)),
+		bark2.onboard(sat(500_000)),
+		bark3.onboard(sat(500_000)),
+		bark4.onboard(sat(500_000)),
+		bark5.onboard(sat(500_000)),
+		bark6.onboard(sat(500_000)),
+		bark7.onboard(sat(500_000)),
+		bark8.onboard(sat(500_000)),
 	);
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
@@ -161,10 +160,10 @@ async fn exit_after_onboard() {
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Fund the bark instance
-	let bark = ctx.new_bark_with_funds("bark", &aspd, Amount::from_sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
 
 	// Onboard funds
-	bark.onboard(Amount::from_sat(900_000)).await;
+	bark.onboard(sat(900_000)).await;
 
 	let onboard_vtxo = &bark.vtxos().await[0];
 
@@ -173,7 +172,7 @@ async fn exit_after_onboard() {
 	progress_exit(&bark).await;
 
 	let balance = bark.onchain_balance().await;
-	assert!(balance > Amount::from_sat(900_000), "balance: {balance}");
+	assert!(balance > sat(900_000), "balance: {balance}");
 
 	// Verify exit output is considered as part of the wallet
 	let utxos = bark.utxos().await;
@@ -191,15 +190,15 @@ async fn exit_oor() {
 
 	// Bark1 will pay bark2 oor.
 	// Bark2 will attempt an exit
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, Amount::from_sat(1_000_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
 	ctx.bitcoind.generate(1).await;
 
 	// Bark1 onboard funds and sends some part to bark2
-	bark1.onboard(Amount::from_sat(900_000)).await;
+	bark1.onboard(sat(900_000)).await;
 	let bark2_pubkey = bark2.vtxo_pubkey().await;
-	bark1.send_oor(bark2_pubkey, Amount::from_sat(100_000)).await;
+	bark1.send_oor(bark2_pubkey, sat(100_000)).await;
 
 	// By calling bark2 vtxos we ensure the wallet is synced
 	// This ensures bark2 knows the vtxo exists
@@ -214,7 +213,7 @@ async fn exit_oor() {
 	// Make bark2 exit and check the balance
 	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
 	progress_exit(&bark2).await;
-	assert_eq!(bark2.onchain_balance().await, Amount::from_sat(1_089_521));
+	assert_eq!(bark2.onchain_balance().await, sat(1_089_521));
 
 	// Verify exit output is considered as part of the wallet
 	let utxos = bark2.utxos().await;
@@ -227,14 +226,33 @@ async fn exit_oor() {
 
 #[tokio::test]
 async fn double_exit_call() {
-	let setup = setup_full("bark/double_exit_call").await;
+	let ctx = TestContext::new("bark/double_exit_call").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	let vtxos = setup.bark1.vtxos().await;
+	bark2.onboard(sat(800_000)).await;
 
-	progress_exit(&setup.bark1).await;
-	assert_eq!(setup.bark1.onchain_balance().await, Amount::from_sat(1_305_941));
+	// refresh vtxo
+	bark1.onboard(sat(200_000)).await;
+	ctx.bitcoind.generate(12).await;
+	bark1.refresh_all().await;
 
-	let movements = setup.bark1.list_movements().await;
+	// onboard vtxo
+	bark1.onboard(sat(300_000)).await;
+	ctx.bitcoind.generate(12).await;
+
+	// oor vtxo
+	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+
+
+
+	let vtxos = bark1.vtxos().await;
+
+	progress_exit(&bark1).await;
+	assert_eq!(bark1.onchain_balance().await, sat(1_305_941));
+
+	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 7);
 
 	let last_moves = &movements[0..=2];
@@ -245,17 +263,17 @@ async fn double_exit_call() {
 				exit_spk(v.user_pubkey, v.asp_pubkey, v.exit_delta).to_string()
 		)), "each exited vtxo should be linked to a movement with exit_spk as destination"
 	);
-	assert_eq!(setup.bark1.vtxos().await.len(), 0, "all vtxos should be marked as spent");
+	assert_eq!(bark1.vtxos().await.len(), 0, "all vtxos should be marked as spent");
 
 	// create a new vtxo to exit
-	setup.bark2.send_oor(setup.bark1.vtxo_pubkey().await, Amount::from_sat(145_000)).await;
-	let vtxos = setup.bark1.vtxos().await;
+	bark2.send_oor(bark1.vtxo_pubkey().await, sat(145_000)).await;
+	let vtxos = bark1.vtxos().await;
 	assert_eq!(vtxos.len(), 1);
 	let vtxo = vtxos.first().unwrap();
 
-	progress_exit(&setup.bark1).await;
+	progress_exit(&bark1).await;
 
-	let movements = setup.bark1.list_movements().await;
+	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 9);
 
 	// check we only exited last vtxo
@@ -264,8 +282,8 @@ async fn double_exit_call() {
 	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
 	let exit_spk = exit_spk(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta).to_string();
 	assert_eq!(last_move.destination.clone().unwrap(), exit_spk, "movement destination should be exit_spk");
-	assert_eq!(setup.bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
+	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
-	progress_exit(&setup.bark1).await;
-	assert_eq!(setup.bark1.list_movements().await.len(), 9, "should not create new movement when no new vtxo to exit");
+	progress_exit(&bark1).await;
+	assert_eq!(bark1.list_movements().await.len(), 9, "should not create new movement when no new vtxo to exit");
 }

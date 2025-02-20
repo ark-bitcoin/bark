@@ -1,11 +1,9 @@
 #[macro_use]
 extern crate log;
 
-use bitcoin::Amount;
-
 use bark_cln::grpc;
 
-use ark_testing::TestContext;
+use ark_testing::{TestContext, btc, sat};
 
 #[tokio::test]
 async fn start_lightningd() {
@@ -51,21 +49,21 @@ async fn cln_can_pay_lightning() {
 
 	// Fund lightningd_1
 	info!("Funding lightningd_1");
-	ctx.fund_lightning(&lightningd_1, Amount::from_int_btc(5)).await;
+	ctx.fund_lightning(&lightningd_1, btc(5)).await;
 	ctx.bitcoind.generate(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 
 	info!("Lightningd_1 opens channel to lightningd_2");
 	// Open a channel from lightningd_1 to lightningd_2
-	lightningd_1.fund_channel(&lightningd_2, Amount::from_int_btc(1)).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(1)).await;
 	lightningd_1.bitcoind().generate(6).await;
 	lightningd_1.wait_for_block_sync().await;
 	lightningd_2.wait_for_block_sync().await;
 
 	// Pay an invoice from lightningd_1 to lightningd_2
 	trace!("Lightningd_2 creates an invoice");
-	let invoice = lightningd_2.invoice(Some(Amount::from_sat(1000)), "test_label", "Test Description").await;
+	let invoice = lightningd_2.invoice(Some(sat(1000)), "test_label", "Test Description").await;
 	trace!("lightningd_1 pays the invoice");
 	lightningd_1.pay_bolt11(invoice).await;
 	lightningd_2.wait_invoice_paid("test_label").await;
@@ -82,13 +80,13 @@ async fn bark_pay_ln_succeeds() {
 	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
 
 	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, Amount::from_int_btc(10)).await;
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
 	ctx.bitcoind.generate(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creeating channesl between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, Amount::from_int_btc(8)).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
 	// TODO: find a way how to remove this sleep
 	// maybe: let ctx.bitcoind wait for channel funding transaction
@@ -102,8 +100,8 @@ async fn bark_pay_ln_succeeds() {
 	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
-	let onchain_amount = Amount::from_int_btc(7);
-	let onboard_amount = Amount::from_int_btc(5);
+	let onchain_amount = btc(7);
+	let onboard_amount = btc(5);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.onboard(onboard_amount).await;
@@ -111,20 +109,20 @@ async fn bark_pay_ln_succeeds() {
 
 	{
 		// Create a payable invoice
-		let invoice_amount = Amount::from_int_btc(2);
+		let invoice_amount = btc(2);
 		let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 		assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 		bark_1.send_bolt11(invoice, None).await;
-		assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(299999320));
+		assert_eq!(bark_1.offchain_balance().await, sat(299999320));
 	}
 
 	{
 		// Test invoice without amount
-		let invoice_amount = Amount::from_int_btc(1);
+		let invoice_amount = btc(1);
 		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
 		bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
-		assert_eq!(bark_1.offchain_balance().await, Amount::from_sat(199998640));
+		assert_eq!(bark_1.offchain_balance().await, sat(199998640));
 	}
 }
 
@@ -145,15 +143,15 @@ async fn bark_pay_ln_fails() {
 	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
-	let onchain_amount = Amount::from_int_btc(3);
-	let onboard_amount = Amount::from_int_btc(2);
+	let onchain_amount = btc(3);
+	let onboard_amount = btc(2);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.onboard(onboard_amount).await;
 	ctx.bitcoind.generate(6).await;
 
 	// Create a payable invoice
-	let invoice_amount = Amount::from_int_btc(1);
+	let invoice_amount = btc(1);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Onboard funds into the Ark
