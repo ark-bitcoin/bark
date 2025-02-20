@@ -1,0 +1,23 @@
+data_dir = "./aspd"
+network = "regtest"
+vtxo_expiry_delta = 144
+vtxo_exit_delta = 12
+htlc_delta = 6
+htlc_expiry_delta = 6
+round_interval = "10s"
+round_submit_time = "2s"
+round_sign_time = "2s"
+nb_round_nonces = 64
+round_tx_feerate = "2500sat/kwu"
+sweep_tx_fallback_feerate = "2500sat/kwu"
+round_sweep_interval = "1h"
+round_onboard_confirmations = 12
+sweep_threshold = 1000000
+rpc_rich_errors = true
+
+[rpc]
+public_address = "127.0.0.1:3535"
+admin_address = "127.0.0.1:3536"
+
+[bitcoind]
+url = "http://127.0.0.1:18443"

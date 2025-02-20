@@ -15,27 +15,48 @@ clone:
       lfs: false
 
 steps:
+  - name: push-github-mirror
+    when:
+      - event: push
+        branch: master
+    failure: ignore
+    image: appleboy/drone-git-push@sha256:b7fbe3c66653f36d5898ccaf142be65274dc18ba260783b3a99ccc3098eed7b2
+    settings:
+      remote: git@github.com:ark-bitcoin/bark.git
+      branch: master
+      local_branch: master
+      force: true
+      ssh_key:
+        from_secret: github-mirror-push-key
+
   - name: prechecks
+    image: registry.2nd.dev/build:7
+    commands:
+      - just prechecks
+
+  - name: check-commits
+    depends_on: prechecks
     image: registry.2nd.dev/build:7
     commands:
       - just check-commits
 
-  - name: merge-master
-    depends_on: prechecks
+  - name: test-unit
+    depends_on: check-commits
     image: registry.2nd.dev/build:7
     commands:
-      - git fetch --no-tags --depth=200 origin master
-      - git log --oneline | head
-      - git log --oneline origin/master | head
-      - git branch prtip
-      - git checkout origin/master
-      - git config --global user.email "ci@codeberg.org"
-      - git config --global user.name "ci"
-      - git merge prtip || { git merge --abort; git checkout prtip; }
-      - git log --oneline | head
+      - git log --oneline | head -n 1
+      - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
+
+  - name: check-versions
+    when:
+      - event: tag
+    depends_on: check-commits
+    image: registry.2nd.dev/build:7
+    commands:
+      - bash ./contrib/check-versions.sh
 
   - name: build
-    depends_on: merge-master
+    depends_on: check-commits
     image: registry.2nd.dev/build:7
     commands:
       - git log --oneline | head -n 1
@@ -43,12 +64,37 @@ steps:
       - just build
       - ls -al ./target/debug
 
-  - name: test-unit
-    depends_on: merge-master
+  - name: aspd-default-config-file
+    depends_on: build
     image: registry.2nd.dev/build:7
     commands:
       - git log --oneline | head -n 1
-      - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
+      - just default-aspd-config
+      - bash contrib/check-clean-default-config.sh
+
+  - name: generate-rustdocs
+    when:
+      - event: push
+        branch: master
+    depends_on: build
+    failure: ignore
+    image: registry.2nd.dev/build:7
+    volumes:
+      - /data:/host/data
+    commands:
+      - just rustdocs
+      - cp -r rustdocs /host/data/
+      - bash contrib/generate-index.sh
+
+  - name: use-bark-as-dependency
+    depends_on: build
+    image: registry.2nd.dev/build:7
+    commands:
+      - git log --oneline | head -n 1
+      - cargo init barktest && cd barktest
+      - cargo add bark-client
+      - cargo update
+      - cargo build
 
   - name: test-integration-btc28.0
     depends_on: build
@@ -81,64 +127,124 @@ steps:
       - ls -al $${ELECTRS_EXEC}
       - TEST_DIRECTORY=./test/esplora cargo test --package ark-testing -- --skip exit --test-threads=$${MAX_THREADS}
 
-  - name: use-bark-as-dependency
-    depends_on: merge-master
-    image: registry.2nd.dev/build:7
-    commands:
-      - git log --oneline | head -n 1
-      - cargo init barktest && cd barktest
-      - cargo add bark-client
-      - cargo update
-      - cargo build
-
-  - name: push-github-mirror
-    when:
-      - event: push
-        branch: master
-    failure: ignore
-    image: appleboy/drone-git-push@sha256:b7fbe3c66653f36d5898ccaf142be65274dc18ba260783b3a99ccc3098eed7b2
-    settings:
-      remote: git@github.com:ark-bitcoin/bark.git
-      branch: master
-      local_branch: master
-      force: true
-      ssh_key:
-        from_secret: github-mirror-push-key
-
-  - name: release-macos15.1-windows-linux
+# Parse version from tag
+  - name: parse-versions
     when:
       - event: tag
-    depends_on: test-integration-btc28.0
+        ref: refs/tags/aspd-*
+      - event: tag
+        ref: refs/tags/bark-*
+      - event: tag
+        ref: refs/tags/all-*
+    depends_on: check-versions
     image: registry.2nd.dev/build:7
-    environment:
-      SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
     commands:
-      - just release-all
+      - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
+      - cat VERSION
+
+# ASPD tag
+  - name: release-aspd-linux
+    when:
+      - event: tag
+        ref: refs/tags/aspd-*
+    depends_on: parse-versions
+    image: registry.2nd.dev/build:7
+    commands:
+      - cat VERSION
+      - just release-aspd
       - cd ./target
-      - cp x86_64-unknown-linux-gnu/release/aspd  aspd-linux-x86_64
-      - cp x86_64-unknown-linux-gnu/release/bark  bark-linux-x86_64
-      - cp x86_64-pc-windows-gnu/release/bark.exe bark-windows-x86_64.exe
-      - cp x86_64-apple-darwin/release/bark       bark-apple-x86_64
-      - cp aarch64-apple-darwin/release/bark      bark-apple-aarch64
-      - sha256sum aspd-linux-x86_64        > SHA256SUMS
-      - sha256sum bark-linux-x86_64       >> SHA256SUMS
-      - sha256sum bark-windows-x86_64.exe >> SHA256SUMS
-      - sha256sum bark-apple-x86_64       >> SHA256SUMS
-      - sha256sum bark-apple-aarch64      >> SHA256SUMS
+      - cp x86_64-unknown-linux-gnu/release/aspd "aspd-$(cat ../VERSION)-linux-x86_64"
+      - sha256sum "aspd-$(cat ../VERSION)-linux-x86_64" > SHA256SUMS
 
-  - name: publish
+  - name: publish-aspd
     when:
       - event: tag
-    depends_on: release-macos15.1-windows-linux
+        ref: refs/tags/aspd-*
+    depends_on: release-aspd-linux
     image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
     settings:
       files:
-        - "./target/aspd-linux-x86_64"
-        - "./target/bark-linux-x86_64"
-        - "./target/bark-windows-x86_64.exe"
-        - "./target/bark-apple-x86_64"
-        - "./target/bark-apple-aarch64"
+        - "./target/aspd-*-linux-x86_64"
         - "./target/SHA256SUMS"
       api_key:
         from_secret: RELEASE
 
+# BARK tag
+  - name: release-bark-macos15.1-windows-linux
+    when:
+      - event: tag
+        ref: refs/tags/bark-*
+    depends_on: parse-versions
+    image: registry.2nd.dev/build:7
+    environment:
+      SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
+    commands:
+      - cat VERSION
+      - just release-bark
+      - cd ./target
+      - cp x86_64-unknown-linux-gnu/release/bark  "bark-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-pc-windows-gnu/release/bark.exe "bark-$(cat ../VERSION)-windows-x86_64.exe"
+      - cp x86_64-apple-darwin/release/bark       "bark-$(cat ../VERSION)-apple-x86_64"
+      - cp aarch64-apple-darwin/release/bark      "bark-$(cat ../VERSION)-apple-aarch64"
+      - sha256sum "bark-$(cat ../VERSION)-linux-x86_64"       >  SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-windows-x86_64.exe" >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-apple-x86_64"       >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-apple-aarch64"      >> SHA256SUMS
+
+  - name: publish-bark
+    when:
+      - event: tag
+        ref: refs/tags/bark-*
+    depends_on: release-bark-macos15.1-windows-linux
+    image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
+    settings:
+      files:
+        - "./target/bark-*-linux-x86_64"
+        - "./target/bark-*-windows-x86_64.exe"
+        - "./target/bark-*-apple-x86_64"
+        - "./target/bark-*-apple-aarch64"
+        - "./target/SHA256SUMS"
+      api_key:
+        from_secret: RELEASE
+
+#ALL tag
+  - name: release-all
+    when:
+      - event: tag
+        ref: refs/tags/all-*
+    depends_on: parse-versions
+    image: registry.2nd.dev/build:7
+    environment:
+      SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
+    commands:
+      - cat VERSION
+      - just release-aspd
+      - just release-bark
+      - cd ./target
+      - cp x86_64-unknown-linux-gnu/release/aspd  "aspd-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-unknown-linux-gnu/release/bark  "bark-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-pc-windows-gnu/release/bark.exe "bark-$(cat ../VERSION)-windows-x86_64.exe"
+      - cp x86_64-apple-darwin/release/bark       "bark-$(cat ../VERSION)-apple-x86_64"
+      - cp aarch64-apple-darwin/release/bark      "bark-$(cat ../VERSION)-apple-aarch64"
+      - sha256sum "aspd-$(cat ../VERSION)-linux-x86_64"       >  SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-linux-x86_64"       >  SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-windows-x86_64.exe" >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-apple-x86_64"       >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-apple-aarch64"      >> SHA256SUMS
+
+  - name: publish-all
+    when:
+      - event: tag
+        ref: refs/tags/all-*
+    depends_on: release-all
+    image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
+    settings:
+      files:
+        - "./target/aspd-*-linux-x86_64"
+        - "./target/bark-*-linux-x86_64"
+        - "./target/bark-*-windows-x86_64.exe"
+        - "./target/bark-*-apple-x86_64"
+        - "./target/bark-*-apple-aarch64"
+        - "./target/SHA256SUMS"
+      api_key:
+        from_secret: RELEASE
