@@ -293,17 +293,7 @@ impl rpc::server::ArkService for App {
 			&req.get_ref().user_part[..],
 		).badarg("invalid user part")?;
 
-		if user_part.spec.asp_pubkey != self.asp_key.public_key() {
-			badarg!("ASP public key is incorrect!");
-		}
-
-		if let Some(max) = self.config.max_onboard_value {
-			if user_part.spec.amount > max {
-				badarg!("onboard amount exceeds limit of {}", max);
-			}
-		}
-
-		let asp_part = self.cosign_onboard(user_part);
+		let asp_part = self.cosign_onboard(user_part).to_status()?;
 		let response = rpc::OnboardCosignResponse {
 			asp_part: {
 				let mut buf = Vec::new();

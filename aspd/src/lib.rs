@@ -549,13 +549,26 @@ impl App {
 		self.vtxos_in_flux.lock().await.release(ids)
 	}
 
-	pub fn cosign_onboard(&self, user_part: ark::onboard::UserPart) -> ark::onboard::AspPart {
+	pub fn cosign_onboard(
+		&self,
+		user_part: ark::onboard::UserPart,
+	) -> anyhow::Result<ark::onboard::AspPart> {
+		if user_part.spec.asp_pubkey != self.asp_key.public_key() {
+			return badarg!("ASP public key is incorrect!");
+		}
+
+		if let Some(max) = self.config.max_onboard_value {
+			if user_part.spec.amount > max {
+				return badarg!("onboard amount exceeds limit of {}", max);
+			}
+		}
+
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
 		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
 			exit_txid: user_part.exit_tx().compute_txid(),
 		);
-		ret
+		Ok(ret)
 	}
 
 	pub fn validate_onboard_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
