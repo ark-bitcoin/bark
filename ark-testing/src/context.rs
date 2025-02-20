@@ -159,7 +159,7 @@ impl TestContext {
 			round_sweep_interval: Duration::from_secs(60),
 			sweep_threshold: Amount::from_sat(1_000_000),
 			round_onboard_confirmations: constants::ONBOARD_CONFIRMATIONS as usize,
-			max_onboard_value: None,
+			max_vtxo_amount: None,
 			rpc_rich_errors: true,
 			otel_collector_endpoint: None,
 			rpc: config::Rpc {

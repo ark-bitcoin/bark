@@ -68,8 +68,9 @@ pub struct Config {
 	pub round_sweep_interval: Duration,
 	/// Number of confirmations needed for onboard vtxos to be spend in rounds.
 	pub round_onboard_confirmations: usize,
+	/// Maximum value any vtxo can have.
 	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
-	pub max_onboard_value: Option<Amount>,
+	pub max_vtxo_amount: Option<Amount>,
 	/// Don't make sweep txs for amounts lower than this amount.
 	pub sweep_threshold: Amount,
 	/// Whether or not to add full error information to RPC internal errors.
@@ -172,7 +173,7 @@ impl Default for Config {
 			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
 			round_sweep_interval: Duration::from_secs(60 * 60),
 			round_onboard_confirmations: 12,
-			max_onboard_value: None,
+			max_vtxo_amount: None,
 			sweep_threshold: Amount::from_sat(1_000_000),
 			rpc_rich_errors: true,
 			otel_collector_endpoint: None,

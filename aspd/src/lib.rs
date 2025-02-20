@@ -557,9 +557,9 @@ impl App {
 			return badarg!("ASP public key is incorrect!");
 		}
 
-		if let Some(max) = self.config.max_onboard_value {
+		if let Some(max) = self.config.max_vtxo_amount {
 			if user_part.spec.amount > max {
-				return badarg!("onboard amount exceeds limit of {}", max);
+				return badarg!("onboard amount exceeds limit of {max}");
 			}
 		}
 
@@ -645,6 +645,14 @@ impl App {
 		user_nonces: &[musig::MusigPubNonce],
 	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
 		let ids = payment.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+
+		if let Some(max) = self.config.max_vtxo_amount {
+			for r in &payment.outputs {
+				if r.amount > max {
+					return badarg!("output exceeds maximum vtxo amount of {max}");
+				}
+			}
+		}
 
 		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
 			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
