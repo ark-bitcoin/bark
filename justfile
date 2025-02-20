@@ -16,7 +16,7 @@ check:
 checks: prechecks check
 
 check-commits:
-	bash contrib/check_commits.sh
+	bash contrib/check-commits.sh
 
 build:
 	cargo build --workspace
@@ -38,8 +38,10 @@ test-integration-esplora TEST="": build docker-pull
 
 test: test-unit test-integration test-integration-esplora
 
-release-all:
+release-aspd:
 	cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
+
+release-bark:
 	cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path bark/Cargo.toml
 	cargo build    --release --target x86_64-pc-windows-gnu    --locked --manifest-path bark/Cargo.toml
 	cargo zigbuild --release --target x86_64-apple-darwin      --locked --manifest-path bark/Cargo.toml
