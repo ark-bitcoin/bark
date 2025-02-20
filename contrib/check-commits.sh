@@ -26,12 +26,12 @@ run_checks() {
 
 CI_CONTEXT=true
 # Trying to find the base branch named master either from origin or locally
-BASE_BRANCH="origin/master"
+MASTER_BRANCH="origin/master"
 if git ls-remote --heads "origin" "master" | grep -q "master"; then
 	log_info "origin/master branch found"
 elif git show-ref --verify --quiet refs/heads/master; then
 	log_info "local master branch found"
-	BASE_BRANCH="master"
+	MASTER_BRANCH="master"
 else
 	log_error "No master branch found"
 fi
@@ -58,7 +58,7 @@ else
 	fi
 fi
 
-log_info "Rebasing: ${FEATURE_BRANCH} into ${BASE_BRANCH}"
+log_info "Rebasing: ${FEATURE_BRANCH} into ${MASTER_BRANCH}"
 
 if [ "$CI_CONTEXT" = "true" ]; then
 	git fetch --prune origin "+refs/heads/*:refs/remotes/origin/*"
@@ -67,9 +67,9 @@ if [ "$CI_CONTEXT" = "true" ]; then
 fi
 
 # Trying to find where the feature branch branched away from master
-BASE_COMMIT=$(git merge-base ${BASE_BRANCH} ${FEATURE_BRANCH})
+BASE_COMMIT=$(git merge-base ${MASTER_BRANCH} ${FEATURE_BRANCH})
 if [ -z "$BASE_COMMIT" ]; then
-	log_error "Could not determine base commit between ${BASE_BRANCH} and ${FEATURE_BRANCH}"
+	log_error "Could not determine base commit between ${MASTER_BRANCH} and ${FEATURE_BRANCH}"
 fi
 log_info "Branch base commit: ${BASE_COMMIT}"
 
@@ -80,14 +80,10 @@ if [ -z "$COMMITS" ]; then
 fi
 
 # Checkout the master branch
-git checkout ${BASE_BRANCH}
+git checkout ${MASTER_BRANCH}
 
-CHERRY_PICK_FAILURE=false
 # Attempt to cherry pick all commits from the branch one by one
 echo "$COMMITS" | while IFS= read -r COMMIT; do
-	# Skip empty lines
-	[ -z "$COMMIT" ] && continue
-
 	parse_commit "$COMMIT"
 
 	if git cherry-pick ${COMMIT_HASH}; then
@@ -95,21 +91,16 @@ echo "$COMMITS" | while IFS= read -r COMMIT; do
 	else
 		git cherry-pick --abort
 		log_info "Cherry pick failure for commit $COMMIT_HASH"
-		CHERRY_PICK_FAILURE=true
+		echo "true" > CHERRY_PICK_FAILURE
+
 		break
 	fi
 done
 
-if [ "$CHERRY_PICK_FAILURE" = "true" ]; then
-	log_info "Cherry-picking failed, running alternative workflow..."
-
-	# Checkout the master branch again for a clean slate
-	git checkout ${BASE_BRANCH}
+if [ "$(cat CHERRY_PICK_FAILURE)" = "true" ]; then
+	log_info "Cherry-picking failed, running alternative workflow using ${BASE_COMMIT}..."
 
 	echo "$COMMITS" | while IFS= read -r COMMIT; do
-		# Skip empty lines
-		[ -z "$COMMIT" ] && continue
-
 		parse_commit "$COMMIT"
 
 		git checkout ${COMMIT_HASH}

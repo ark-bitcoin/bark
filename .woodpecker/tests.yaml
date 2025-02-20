@@ -72,6 +72,20 @@ steps:
       - just default-aspd-config
       - bash contrib/check-clean-default-config.sh
 
+  - name: generate-rustdocs
+    when:
+      - event: push
+        branch: master
+    depends_on: build
+    failure: ignore
+    image: registry.2nd.dev/build:7
+    volumes:
+      - /data:/host/data
+    commands:
+      - just rustdocs
+      - cp -r rustdocs /host/data/
+      - bash contrib/generate-index.sh
+
   - name: use-bark-as-dependency
     depends_on: build
     image: registry.2nd.dev/build:7
