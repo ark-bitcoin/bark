@@ -76,7 +76,11 @@ log_info "Branch base commit: ${BASE_COMMIT}"
 # Listing all commits from the branch until the point it branched off from in the order they were committed
 COMMITS=$(git log --oneline --reverse ${BASE_COMMIT}..${FEATURE_BRANCH})
 if [ -z "$COMMITS" ]; then
-	log_error "No commits found between ${BASE_COMMIT} and ${FEATURE_BRANCH}."
+	log_info "No commits found between ${BASE_COMMIT} and ${FEATURE_BRANCH}."
+
+	run_checks
+
+	exit 0
 fi
 
 # Checkout the master branch
