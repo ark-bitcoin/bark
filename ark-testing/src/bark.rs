@@ -7,7 +7,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, Network, OutPoint};
+use bitcoin::{Address, Amount, Network, OutPoint, Txid};
+use bitcoincore_rpc::RpcApi;
 use serde_json;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,7 +19,7 @@ use ark::Movement;
 use bark::UtxoInfo;
 use bark_json::cli as json;
 
-use crate::Bitcoind;
+use crate::{Bitcoind, Electrs};
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
@@ -38,6 +39,7 @@ pub struct Bark {
 	counter: AtomicUsize,
 	timeout: Duration,
 	bitcoind: Bitcoind,
+	electrs: Option<Electrs>,
 	command_log: Mutex<fs::File>,
 }
 
@@ -49,8 +51,8 @@ impl Bark {
 	}
 
 	/// Creates Bark client with a dedicated bitcoind daemon.
-	pub async fn new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: BarkConfig) -> Bark {
-		Self::try_new(name, bitcoind, cfg).await.unwrap()
+	pub async fn new(name: impl AsRef<str>, bitcoind: Bitcoind, electrs: Option<Electrs>, cfg: BarkConfig) -> Bark {
+		Self::try_new(name, bitcoind, electrs, cfg).await.unwrap()
 	}
 
 	/// Returns bitcoind daemon associated with this Bark client.
@@ -58,22 +60,36 @@ impl Bark {
 		&self.bitcoind
 	}
 
-	pub async fn try_new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: BarkConfig) -> anyhow::Result<Bark> {
-		let output = Bark::cmd()
+	/// Returns electrs daemon associated with this Bark client.
+	pub fn electrs(&self) -> &Option<Electrs> {
+		&self.electrs
+	}
+
+	pub async fn try_new(name: impl AsRef<str>, bitcoind: Bitcoind, electrs: Option<Electrs>, cfg: BarkConfig) -> anyhow::Result<Bark> {
+		let mut cmd = Self::cmd();
+		cmd
 			.arg("create")
 			.arg("--datadir")
 			.arg(&cfg.datadir)
 			.arg("--verbose")
 			.arg("--asp")
 			.arg(&cfg.asp_url)
-			.arg(format!("--{}", cfg.network))
-			.arg("--bitcoind-cookie")
-			.arg(bitcoind.rpc_cookie())
-			.arg("--bitcoind")
-			.arg(bitcoind.rpc_url())
-			.output()
-			.await?;
+			.arg(format!("--{}", &cfg.network));
 
+		// Configure barks' chain source
+		match electrs {
+			Some(ref electrs) =>
+				cmd.args([
+					"--esplora", &electrs.rest_url()
+				]),
+			None =>
+				cmd.args([
+					"--bitcoind", &bitcoind.rpc_url(),
+					"--bitcoind-cookie", &bitcoind.rpc_cookie().display().to_string(),
+				]),
+		};
+
+		let output = cmd.output().await?;
 		if !output.status.success() {
 			error!("Failure creating new bark wallet");
 			let stdout = String::from_utf8(output.stdout)?;
@@ -91,6 +107,7 @@ impl Bark {
 			timeout: Duration::from_millis(60_000),
 			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
 			bitcoind,
+			electrs,
 			config: cfg,
 		})
 	}
@@ -101,6 +118,22 @@ impl Bark {
 
 	pub fn command_log_file(&self) -> PathBuf {
 		self.config.datadir.join(COMMAND_LOG_FILE)
+	}
+
+	/// Waits until a transaction with the given ID is synced by the chain source in use by the bark
+	/// instance.
+	pub async fn await_transaction_propagation(&self, txid: &Txid) {
+		if let Some(electrs) = &self.electrs {
+			let client = electrs.async_client();
+			while client.get_tx(&txid).await.ok().flatten().is_none() {
+				tokio::time::sleep(Duration::from_millis(200)).await;
+			}
+		} else {
+			let client = self.bitcoind.sync_client();
+			while client.get_raw_transaction(&txid, None).is_err() {
+				tokio::time::sleep(Duration::from_millis(200)).await;
+			}
+		}
 	}
 
 	pub async fn onchain_balance(&self) -> Amount {
@@ -249,7 +282,7 @@ impl Bark {
 		command.stderr(fs::File::create(&stderr_path).await?.into_std().await);
 		command.stdout(Stdio::piped());
 
-		let mut child = command.spawn().unwrap();
+		let mut child = command.spawn()?;
 
 		let exit_result = tokio::time::timeout(
 			self.timeout,
@@ -264,7 +297,7 @@ impl Bark {
 		let out = {
 			let mut buf = String::new();
 			if let Some(mut o) = child.stdout {
-				o.read_to_string(&mut buf).await.unwrap();
+				o.read_to_string(&mut buf).await?;
 			}
 			buf
 		};

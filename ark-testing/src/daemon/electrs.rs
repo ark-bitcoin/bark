@@ -1,6 +1,7 @@
+use std::fmt;
 use std::path::PathBuf;
 
-use bdk_esplora::esplora_client::Builder;
+use bdk_esplora::esplora_client::{AsyncClient, Builder};
 use tokio::fs;
 use tokio::process::Command;
 
@@ -10,6 +11,12 @@ use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
 pub type Electrs = Daemon<ElectrsHelper>;
+
+impl fmt::Debug for Electrs {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "esplora-electrs in {}", self.inner.datadir().display())
+	}
+}
 
 impl Electrs {
 	fn exec() -> PathBuf {
@@ -29,6 +36,10 @@ impl Electrs {
 			state: ElectrsHelperState::default()
 		};
 		Daemon::wrap(inner)
+	}
+
+	pub fn async_client(&self) -> AsyncClient {
+		Builder::new(&self.rest_url()).build_async().unwrap()
 	}
 
 	pub fn electrum_port(&self) -> u16 {
