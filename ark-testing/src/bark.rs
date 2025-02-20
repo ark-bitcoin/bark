@@ -116,6 +116,24 @@ impl Bark {
 		&self.name
 	}
 
+	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet<bark::SqliteClient>> {
+		const MNEMONIC_FILE: &str = "mnemonic";
+		const DB_FILE: &str = "db.sqlite";
+
+		// read mnemonic file
+		let mnemonic_path = self.config.datadir.join(MNEMONIC_FILE);
+		let mnemonic_str = fs::read_to_string(&mnemonic_path).await
+			.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
+		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
+
+		let db = bark::SqliteClient::open(self.config.datadir.join(DB_FILE))?;
+		Ok(bark::Wallet::open(&mnemonic, db).await?)
+	}
+
+	pub async fn client(&self) -> bark::Wallet<bark::SqliteClient> {
+		self.try_client().await.expect("failed to create bark::Wallet client")
+	}
+
 	pub fn command_log_file(&self) -> PathBuf {
 		self.config.datadir.join(COMMAND_LOG_FILE)
 	}
