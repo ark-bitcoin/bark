@@ -19,5 +19,10 @@ rpc_rich_errors = true
 public_address = "127.0.0.1:3535"
 admin_address = "127.0.0.1:3536"
 
+[postgres]
+host = "localhost"
+port = 5432
+name = "aspdb"
+
 [bitcoind]
 url = "http://127.0.0.1:18443"

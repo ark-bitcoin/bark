@@ -276,7 +276,7 @@ impl CollectingPayments {
 		}
 
 		// Check if the input vtxos exist and are unspent.
-		let input_vtxos = match app.db.check_fetch_unspent_vtxos(&inputs) {
+		let input_vtxos = match app.db.check_fetch_unspent_vtxos(&inputs).await {
 			Ok(i) => i,
 			Err(e) => {
 				let id = e.downcast_ref::<VtxoId>().cloned();
@@ -848,7 +848,7 @@ impl SigningForfeits {
 			slog!(StoringForfeitVtxo, round_id: self.round_id, attempt: self.attempt,
 				out_point: vtxo.point(),
 			);
-			app.db.set_vtxo_forfeited(id, forfeit_sigs)?;
+			app.db.set_vtxo_forfeited(id, forfeit_sigs).await?;
 		}
 		app.release_vtxos_in_flux(self.locked_inputs).await;
 
@@ -861,7 +861,7 @@ impl SigningForfeits {
 		trace!("Storing round result");
 		app.txindex.register_batch(self.signed_vtxos.all_signed_txs().iter().cloned()).await;
 		app.txindex.register_batch(self.connectors.iter_signed_txs(&app.asp_key)).await;
-		app.db.store_round(signed_round_tx.tx.clone(), self.signed_vtxos, self.connectors.len())?;
+		app.db.store_round(signed_round_tx.tx.clone(), self.signed_vtxos, self.connectors.len()).await?;
 
 		slog!(RoundFinished, round_id: self.round_id, attempt: self.attempt,
 			txid: signed_round_tx.txid, vtxo_expiry_block_height: self.expiry_height,

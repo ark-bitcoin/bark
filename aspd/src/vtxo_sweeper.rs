@@ -52,9 +52,10 @@ use bitcoin::{
 use ark::{BlockHeight, OnboardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::util::{KeypairExt, TaprootSpendInfoExt};
+use futures::StreamExt;
 
 use crate::bitcoind::RpcApi;
-use crate::database::StoredRound;
+use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtInputExt, SweepMeta};
 use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
 
@@ -566,7 +567,7 @@ impl VtxoSweeper {
 
 	/// Load the [VtxoSweeper] by loading all pending txs from the database.
 	async fn load(app: Arc<App>) -> anyhow::Result<VtxoSweeper> {
-		let raw_pending = app.db.fetch_pending_sweeps().context("error fetching pending sweeps")?;
+		let raw_pending = app.db.fetch_pending_sweeps().await.context("error fetching pending sweeps")?;
 		// Register all pending in the txindex.
 		let mut ret = VtxoSweeper {
 			app,
@@ -584,7 +585,7 @@ impl VtxoSweeper {
 
 	/// Store the pending tx both in the db and mem cache.
 	async fn add_new_pending(&mut self, txid: Txid, tx: Transaction) -> anyhow::Result<()> {
-		self.app.db.store_pending_sweep(&txid, &tx).context("db error storing pending sweep")?;
+		self.app.db.store_pending_sweep(&txid, &tx).await.context("db error storing pending sweep")?;
 
 		let tx = self.app.txindex.broadcast_tx(tx).await;
 		self.store_pending(tx);
@@ -606,7 +607,7 @@ impl VtxoSweeper {
 	/// Clear the onboard data from our database because we either swept it, or the user
 	/// has broadcast the exit tx, doing a unilateral exit.
 	async fn clear_onboard(&mut self, onboard: &OnboardVtxo) {
-		if let Err(e) = self.app.db.remove_onboard(onboard) {
+		if let Err(e) = self.app.db.remove_onboard(onboard).await {
 			error!("Failed to remove onboard vtxo {} from database: {}", onboard.id(), e);
 		}
 
@@ -645,7 +646,7 @@ impl VtxoSweeper {
 		trace!("Removing connector txs from txindex...");
 		self.app.txindex.unregister_batch(round.connectors.iter_unsigned_txs()).await;
 
-		if let Err(e) = self.app.db.remove_round(round.txid) {
+		if let Err(e) = self.app.db.remove_round(round.txid).await {
 			error!("Failed to remove round from db after successful sweeping: {}", e);
 		}
 	}
@@ -654,14 +655,17 @@ impl VtxoSweeper {
 		let sweep_threshold = self.app.config.sweep_threshold;
 		let tip = self.app.bitcoind.get_block_count()? as BlockHeight;
 
-		let expired_rounds = self.app.db.get_expired_rounds(tip)?.into_iter().map(|txid| {
-			let round = self.app.db.get_round(txid)?.expect("db has round");
-			Ok(ExpiredRound::new(txid, round))
-		}).collect::<anyhow::Result<Vec<_>>>()?;
+		let mut expired_rounds = Vec::new();
+		for txid in self.app.db.get_expired_rounds(tip).await? {
+			let round = self.app.db.get_round(txid).await?.expect("db has round");
+			expired_rounds.push(ExpiredRound::new(txid, round));
+		}
 		trace!("{} expired rounds fetched", expired_rounds.len());
 
-		let expired_onboards = self.app.db.get_expired_onboards(tip)
-			.collect::<anyhow::Result<Vec<_>>>()?;
+		let expired_onboards = self.app.db
+			.get_expired_onboards(tip).await?
+			.filter_map(|o| async { o.ok() })
+			.collect::<Vec<_>>().await;
 		trace!("{} expired onboards fetched", expired_onboards.len());
 
 		let feerate = self.app.config.sweep_tx_fallback_feerate;
@@ -741,7 +745,7 @@ impl VtxoSweeper {
 				);
 			}
 
-			self.app.db.drop_pending_sweep(txid)?;
+			self.app.db.drop_pending_sweep(txid).await?;
 			self.app.txindex.unregister(txid).await;
 			to_remove.insert(*txid);
 		}

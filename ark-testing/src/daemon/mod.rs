@@ -54,6 +54,8 @@ pub trait DaemonHelper {
 	fn prepare(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
 	fn get_command(&self) -> impl Future<Output = anyhow::Result<Command>> + Send;
 	fn wait_for_init(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+	fn prepare_kill(&mut self, _child: &mut Child) {}
 }
 
 pub struct Daemon<T>
@@ -97,7 +99,9 @@ impl<T> Daemon<T>
 				},
 				Err(err) => {
 					warn!("{:?}", err);
-					warn!("Failed attempt to start {}. This was attempt {} of {}", self.name, i, retries);
+					warn!("Failed attempt to start {}. This was attempt {} of {}",
+						self.name, i, retries,
+					);
 				}
 			}
 		}
@@ -120,6 +124,7 @@ impl<T> Daemon<T>
 		let stderr_path = self.inner.datadir().join(STDERR_LOGFILE);
 		cmd.stdout(std::fs::File::create(&stdout_path)?);
 		cmd.stderr(std::fs::File::create(&stderr_path)?);
+
 		let mut child = cmd.spawn()?;
 
 		// Read the log-file for stdout
@@ -208,9 +213,15 @@ impl<T> Drop for Daemon<T>
 	where T: DaemonHelper + Send + Sync + 'static
 {
 	fn drop(&mut self) {
-		match self.child.get_mut() {
-			Some(ref mut c) => { let _ = c.kill(); },
-			None => {}
+		if let Some(child) = self.child.get_mut() {
+			self.inner.prepare_kill(child);
+
+			// Then just sigkill.
+			if let Some(pid) = child.id() {
+				let pid = nix::unistd::Pid::from_raw(pid as i32);
+				nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL)
+					.expect("error sending SIGKILL");
+			}
 		}
 	}
 }
@@ -237,3 +248,4 @@ async fn process_log_file<P: AsRef<Path>>(
 		}
 	}
 }
+

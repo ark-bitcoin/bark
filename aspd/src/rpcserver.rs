@@ -245,7 +245,7 @@ impl rpc::server::ArkService for App {
 			KeyValue::new("start_height", format!("{:?}", req.get_ref().start_height)),
 		]);
 
-		let ids = self.db.get_fresh_round_ids(req.get_ref().start_height)
+		let ids = self.db.get_fresh_round_ids(req.get_ref().start_height).await
 			.context("db error")?;
 
 		let response = rpc::FreshRounds {
@@ -267,7 +267,7 @@ impl rpc::server::ArkService for App {
 			.badarg("invalid txid")?;
 
 
-		let ret = self.db.get_round(txid)
+		let ret = self.db.get_round(txid).await
 			.context("db error")?
 			.not_found([txid], "round with txid {} not found")?;
 
@@ -379,7 +379,7 @@ impl rpc::server::ArkService for App {
 		let vtxo = Vtxo::decode(&req.get_ref().vtxo)
 			.badarg("invalid vtxo")?;
 
-		self.db.store_oor(pubkey, vtxo).to_status()?;
+		self.db.store_oor(pubkey, vtxo).await.to_status()?;
 
 		Ok(tonic::Response::new(rpc::Empty{}))
 	}
@@ -397,7 +397,7 @@ impl rpc::server::ArkService for App {
 		let pubkey = PublicKey::from_slice(&req.get_ref().pubkey)
 			.badarg("invalid pubkey")?;
 
-		let vtxos = self.db.pull_oors(pubkey).to_status()?;
+		let vtxos = self.db.pull_oors(pubkey).await.to_status()?;
 
 		let response = rpc::OorVtxosResponse {
 			vtxos: vtxos.into_iter().map(|v| v.encode()).collect(),

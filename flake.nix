@@ -130,6 +130,8 @@
 						bitcoin
 						clightning
 						electrs
+						pksg.glibcLocales
+						pkgs.postgresql
 					] ++ (if isDarwin then [
 						pkgs.darwin.apple_sdk.frameworks.Security
 						pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
@@ -138,11 +140,6 @@
 
 					LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 
-					ROCKSDB_LIB_DIR = "${pkgs.rocksdb}/lib/";
-					"ROCKSDB_${target}_LIB_DIR" = "${pkgs.rocksdb}/lib/";
-					#ROCKSDB_STATIC = "true"; # NB do this for prod
-					#"ROCKSDB_${target}_STATIC" = "true"; # NB do this for prod
-
 					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
 					ELECTRS_EXEC = "${electrs}/bin/electrs";
 
@@ -150,6 +147,8 @@
 					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
 					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "elementsproject/lightningd:v${lightningVersion}" else null);
 					LIGHTNINGD_PLUGINS = "${cln-grpc}/bin/";
+
+					POSTGRES_BINS = "${pkgs.postgresql}/bin";
 				};
 			}
 		);

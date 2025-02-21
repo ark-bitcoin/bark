@@ -1,6 +1,6 @@
 FROM rust:1.77.2 AS builder
 
-RUN apt update && apt install -y build-essential clang protobuf-compiler librocksdb-dev 
+RUN apt update && apt install -y build-essential clang protobuf-compiler
 
 WORKDIR /usr/src
 

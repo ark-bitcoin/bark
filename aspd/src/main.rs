@@ -172,8 +172,7 @@ async fn inner_main() -> anyhow::Result<()> {
 		}
 		Command::GetMnemonic => {
 			let app = App::open(config_path).await.context("server init")?;
-
-			println!("{}", app.get_master_mnemonic()?);
+			println!("{}", app.get_master_mnemonic().await?);
 		}
 	}
 

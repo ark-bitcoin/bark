@@ -13,7 +13,7 @@ against Linux and macOS. You can use it with one of the following methods in the
 the bark repository:
 
 - Run `nix develop`
-  - You may need to use the following flag: 
+  - You may need to use the following flag:
     - `--extra-experimental-features "nix-command flakes"`
 - Alternatively, use [direnv](https://github.com/direnv/direnv) to do this automatically:
   - `echo "use flake" > .envrc`
@@ -49,24 +49,29 @@ $ rustup toolchain install 1.84
 
 # Running tests
 
-If you're using the Nix flake then [just](https://github.com/casey/just?tab=readme-ov-file#cross-platform) 
-will come preinstalled. If you aren't using Nix then you must manually install `just` and ensure 
-that you have [bitcoind](https://bitcoincore.org/en/download/) and [clightning](https://github.com/ElementsProject/lightning) 
+If you're using the Nix flake then [just](https://github.com/casey/just?tab=readme-ov-file#cross-platform)
+will come preinstalled. If you aren't using Nix then you must manually install `just` and ensure
+that you have [bitcoind](https://bitcoincore.org/en/download/) and [clightning](https://github.com/ElementsProject/lightning)
 in your `PATH` variable, alternatively you can set the following environmental variables:
 - `BITCOIND_EXEC`: e.g. `export BITCOIND_EXEC="${PATH_TO_BITCOIND}/bin/bitcoind"`
 - `LIGHTNINGD_EXEC`: e.g. `export LIGHTNINGD_EXEC="${PATH_TO_LIGHTNINGD}/bin/lightningd"`
 
-Unit and integration tests are configured in the [justfile](justfile) and can be run using the 
+Unit and integration tests are configured in the [justfile](justfile) and can be run using the
 following command:
 
 ```shell
 $ just test
 ```
 
+If you have a PostgreSQL database running on your system, you can use it by running tests
+command with `USE_GLOBAL_DATABASE` env variable set to `true`.
+Else tests will look for `initdb` and `postgres` binaries to spin up a dedicated database server
+on different ports for every `aspd` test.
+
 ### macOS differences
 
-On macOS we use [Docker](https://www.docker.com/) for running Core Lightning. If Docker is not 
-installed then the lightning tests will fail. If you are not using the Nix Flake then you must set 
+On macOS we use [Docker](https://www.docker.com/) for running Core Lightning. If Docker is not
+installed then the lightning tests will fail. If you are not using the Nix Flake then you must set
 environmental variable for the Docker image to pull:
 - `LIGHTNINGD_DOCKER_IMAGE`: e.g. `export LIGHTNINGD_DOCKER_IMAGE="elementsproject/lightningd:v24.08.2"`
 

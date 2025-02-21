@@ -172,18 +172,27 @@ impl App {
 			Ok::<_, anyhow::Error>(block_id)
 		})().context("failed to fetch deep tip from bitcoind")?;
 
-		// create mnemonic and store in empty db
-		let db_path = data_dir.join("aspd_db");
-		info!("Loading db at {}", db_path.display());
-		let db = database::Db::open(&db_path).context("failed to open db")?;
+		// write the config to disk
+		let config_str = serde_json::to_string_pretty(&cfg)
+			.expect("serialization can't error");
+		fs::write(data_dir.join("config.json"), config_str.as_bytes())
+			.context("failed to write config file")?;
+
+		let db = database::Db::create(&cfg).await?;
 
 		// Initiate key material.
-		let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
-		db.store_master_mnemonic_and_seed(&mnemonic)
-			.context("failed to store mnemonic")?;
+		let seed = {
+			let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
+			db.store_master_mnemonic_and_seed(&mnemonic)
+				.await
+				.context("failed to store mnemonic")?;
+
+			let seed = mnemonic.to_seed("");
+
+			seed.to_vec()
+		};
 
 		// Store initial wallet state to avoid full chain sync.
-		let seed = mnemonic.to_seed("");
 		let (mut wallet, _) = Self::wallet_from_seed(cfg.network, &seed, None)
 			.expect("shouldn't fail on empty state");
 		wallet.apply_update(bdk_wallet::Update {
@@ -206,9 +215,12 @@ impl App {
 
 		let db_path = cfg.data_dir.join("aspd_db");
 		info!("Loading db at {}", db_path.display());
-		let db = database::Db::open(&db_path).context("failed to open db")?;
+		let db = database::Db::connect(&cfg)
+			.await
+			.context("failed to open db")?;
 
 		let seed = db.get_master_seed()
+			.await
 			.context("db error")?
 			.context("db doesn't contain seed")?;
 		let init = db.read_aggregate_changeset().await?;
@@ -237,20 +249,25 @@ impl App {
 
 	/// Load all relevant txs from the database into the tx index.
 	pub async fn fill_txindex(self: &Arc<Self>) -> anyhow::Result<()> {
+		let rounds = self.db.fetch_all_rounds().await?;
+		tokio::pin!(rounds);
+
 		// Load all round txs into the txindex.
-		for res in self.db.fetch_all_rounds() {
-			let round = res?;
-			trace!("Adding txs for round {} to txindex", round.id());
+		while let Some(Ok(round)) = rounds.next().await {
+			trace!("Adding txs for round {} to txindex", round.id);
 			self.txindex.register(round.tx).await;
 			self.txindex.register_batch(round.signed_tree.all_signed_txs()).await;
 		}
 
+		let onboards = self.db.get_expired_onboards(BlockHeight::MAX).await?;
+		tokio::pin!(onboards);
+
 		// Load all onboard exit txs into the txindex.
-		for res in self.db.get_expired_onboards(BlockHeight::MAX) {
-			let onboard = res?;
+		while let Some(Ok(onboard)) = onboards.next().await {
 			trace!("Adding onboard vtxo {} to txindex", onboard.id());
 			self.txindex.register(onboard.exit_tx()).await;
 		}
+
 		Ok(())
 	}
 
@@ -630,7 +647,7 @@ impl App {
 
 		// Accepted, let's register
 		self.txindex.register(vtxo.exit_tx()).await;
-		self.db.insert_onboard_vtxos(&[&vtxo]).context("db error")?;
+		self.db.insert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
 
 		slog!(RegisteredOnboard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
 			amount: vtxo.spec.amount,
@@ -660,7 +677,7 @@ impl App {
 
 		let txid = payment.txid();
 		let new_vtxos = payment.unsigned_output_vtxos();
-		let ret = match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos) {
+		let ret = match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
 				return badarg!("attempted to sign OOR for already spent vtxo {}", dup);
 			},
@@ -764,8 +781,8 @@ impl App {
 
 	// ** SOME ADMIN COMMANDS **
 
-	pub fn get_master_mnemonic(&self) -> anyhow::Result<String> {
-		Ok(self.db.get_master_mnemonic()?.expect("app running"))
+	pub async fn get_master_mnemonic(&self) -> anyhow::Result<String> {
+		Ok(self.db.get_master_mnemonic().await?.expect("app running"))
 	}
 }
 

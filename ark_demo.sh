@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Set up useful 
+# Set up useful
 BITCOIN_DATADIR=$PWD/test/bitcoindatadir
 BITCOIN_CLI=bitcoin-cli
 BITCOIND=bitcoind
@@ -10,7 +10,12 @@ BITCOIND_RPC_HOST=127.0.0.1
 BITCOIND_URL=http://${BITCOIND_RPC_HOST}:${BITCOIND_RPC_PORT}
 BITCOIND_COOKIE=$PWD/test/bitcoindatadir/regtest/.cookie
 
+export DB_NAME=aspdb
+export DB_USER=postgres
+export DB_PASSWORD=postgres
+
 mkdir -p ${BITCOIN_DATADIR}
+
 
 # Define useful aliases
 alias bcli="$BITCOIN_CLI -regtest --rpcconnect=$BITCOIND_RPC_HOST --rpcport=$BITCOIND_RPC_PORT --rpccookiefile=$BITCOIND_COOKIE"
@@ -18,7 +23,7 @@ alias aspd="cargo run --bin aspd --"
 alias bark="cargo run --bin bark --"
 alias bd="$BITCOIND -regtest -datadir=${BITCOIN_DATADIR} -server -txindex -fallbackfee=0.0002"
 
-# Print some help and documentation 
+# Print some help and documentation
 echo "-------------------------------------------"
 echo "- Ark Demo                                -"
 echo "-------------------------------------------"

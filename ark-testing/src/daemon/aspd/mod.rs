@@ -1,5 +1,6 @@
 
 pub mod proxy;
+pub mod postgresd;
 
 use std::env;
 use std::net::SocketAddr;
@@ -39,6 +40,10 @@ impl Aspd {
 		&self.inner.bitcoind
 	}
 
+	pub fn config(&self) -> &Config {
+		&self.inner.cfg
+	}
+
 	/// Gracefully shutdown bitcoind associated with this ASP.
 	pub async fn shutdown_bitcoind(&self) {
 		use bitcoincore_rpc::RpcApi;
@@ -69,10 +74,6 @@ impl Aspd {
 
 	pub fn asp_url(&self) -> String {
 		self.inner.asp_url()
-	}
-
-	pub fn config(&self) -> &Config {
-		&self.inner.cfg
 	}
 
 	pub async fn get_admin_client(&self) -> AdminClient {
