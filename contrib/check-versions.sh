@@ -3,6 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TAG_NAME=$1
 
 log_info() { echo "[INFO] $1"; }
 log_error() { echo "[ERROR] $1" >&2; exit 1; }
@@ -18,7 +19,7 @@ check_version() {
 
 	cd "$PROJECT_DIR" || exit 1
 
-    REF_VERSION="${CI_COMMIT_TAG#"${prefix}"}"
+    REF_VERSION="${TAG_NAME#"${prefix}"}"
     PROJECT_VERSION=$(cargo pkgid | cut -d "@" -f2 | cut -d ' ' -f1)
 
     if [ "$REF_VERSION" != "$PROJECT_VERSION" ]; then
@@ -28,7 +29,7 @@ check_version() {
     fi
 }
 
-case "$CI_COMMIT_TAG" in
+case "$TAG_NAME" in
 	all-*)
 		check_version aspd all-
 		check_version bark all-

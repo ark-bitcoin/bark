@@ -1,16 +1,13 @@
 #!/usr/bin/env sh
 set -e
 
-# only makes sense if you use this in a CI environment
-if [ -z "$CI_COMMIT_SHA" ]; then
-	exit 2
-fi
+PATH_PREFIX=$1
 
 # Define the path you want to redirect to
 TARGET_PATH="bark/struct.Wallet.html"
 
 # Create the index.html file with an auto-redirect
-cat > /host/data/rustdocs/doc/index.html <<EOF
+cat > "${PATH_PREFIX}/index.html" <<EOF
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -26,4 +23,4 @@ cat > /host/data/rustdocs/doc/index.html <<EOF
 </html>
 EOF
 
-echo "index.html created and redirects to $TARGET_PATH"
+echo "${PATH_PREFIX}/index.html created and redirects to $TARGET_PATH"
