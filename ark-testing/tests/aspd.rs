@@ -4,6 +4,7 @@ extern crate log;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bitcoin::Amount;
 use bitcoin::secp256k1::PublicKey;
 use tokio::sync::Mutex;
 
@@ -145,6 +146,39 @@ async fn restart_key_stability() {
 
 	assert_eq!(asp_key1, asp_key2);
 	assert_ne!(addr1, addr2);
+}
+
+#[tokio::test]
+async fn max_vtxo_amount() {
+	let ctx = TestContext::new("aspd/max_vtxo_amount").await;
+	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
+		max_vtxo_amount: Some(Amount::from_sat(500_000)),
+		..ctx.aspd_default_cfg("aspd", None).await
+	}).await;
+	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_500_000)).await;
+	ctx.bitcoind.generate(1).await;
+
+	// exceeds limit, should fail
+	// TODO(stevenroose) once we have better error reporting, assert error content
+	assert!(bark1.try_onboard(Amount::from_sat(600_000)).await.is_err());
+	bark1.onboard(Amount::from_sat(500_000)).await;
+	bark1.onboard(Amount::from_sat(500_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	// try send OOR exceeding limit
+	assert!(bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.is_err());
+	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
+
+	// then try send in a round
+	assert!(bark1.try_refresh_all().try_wait(5000).await.is_err());
+
+	// but we can offboard the entire amount!
+	let address = ctx.bitcoind.get_new_address();
+	bark1.offboard_all(address.clone()).await;
+	ctx.bitcoind.generate(1).await;
+	let balance = ctx.bitcoind.get_received_by_address(&address);
+	assert_eq!(balance, Amount::from_sat(597_135));
 }
 
 #[tokio::test]
