@@ -130,7 +130,7 @@
 						bitcoin
 						clightning
 						electrs
-						pksg.glibcLocales
+						pkgs.glibcLocales
 						pkgs.postgresql
 					] ++ (if isDarwin then [
 						pkgs.darwin.apple_sdk.frameworks.Security
