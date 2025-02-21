@@ -41,8 +41,7 @@ use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
-	oor, ArkoorVtxo, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
-	VtxoId, VtxoRequest, VtxoSpec,
+	oor, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
@@ -56,7 +55,7 @@ pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
 use crate::exit::Exit;
 use crate::onchain::Utxo;
 use crate::persist::BarkPersister;
-use crate::vtxo_selection::{ExpiredAtHeight, SelectVtxo};
+use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::VtxoState;
 
 lazy_static::lazy_static! {
@@ -394,18 +393,17 @@ impl <P>Wallet<P> where
 	}
 
 	/// Returns all unspent vtxos matching the provided predicate
-	pub fn vtxos_with<S>(&self, selection_algorithm: S) -> anyhow::Result<Vec<Vtxo>>
-		where S: SelectVtxo
-	{
+	pub fn vtxos_with(&self, filter: impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
 		let vtxos = self.vtxos()?;
-		Ok(selection_algorithm.select(&vtxos))
+		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
 	/// Returns all vtxos that will expire within
 	/// `threshold_blocks` blocks
 	pub async fn get_expiring_vtxos(&mut self, threshold: u32) -> anyhow::Result<Vec<Vtxo>> {
-		let selector = ExpiredAtHeight(self.onchain.tip().await? + threshold);
-		Ok(self.vtxos_with(selector)?)
+		let expiry = self.onchain.tip().await? - threshold;
+		let filter = VtxoFilter::new(&self).expires_before(expiry as BlockHeight);
+		Ok(self.vtxos_with(filter)?)
 	}
 
 	/// Sync status of unilateral exits.

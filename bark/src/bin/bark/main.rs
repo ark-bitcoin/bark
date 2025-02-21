@@ -10,8 +10,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::{Vtxo, VtxoId};
-use bark::vtxo_selection::WithCounterpartyRisk;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
@@ -19,7 +17,10 @@ use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 
+use ark::{Vtxo, VtxoId};
+
 use bark::{Config, Pagination, UtxoInfo};
+use bark::vtxo_selection::VtxoFilter;
 use bark_json::cli as json;
 
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
@@ -441,8 +442,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(Some(b), None, false, false, None) => w.get_expiring_vtxos(b).await?,
 				(None, Some(h), false, false, None) => w.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
-					let selector = WithCounterpartyRisk { wallet: &w };
-					w.vtxos_with(selector)?
+					let filter = VtxoFilter::new(&w).counterparty();
+					w.vtxos_with(filter)?
 				},
 				(None, None, false, true, None) => w.vtxos()?,
 				(None, None, false, false, Some(vs)) => {
