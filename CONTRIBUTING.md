@@ -64,7 +64,7 @@ $ just test
 ```
 
 If you have a PostgreSQL database running on your system, you can use it by running tests
-command with `USE_GLOBAL_DATABASE` env variable set to `true`.
+command with `TEST_POSTGRES_HOST` env variable set.
 Else tests will look for `initdb` and `postgres` binaries to spin up a dedicated database server
 on different ports for every `aspd` test.
 
