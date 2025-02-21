@@ -116,6 +116,24 @@ impl Bark {
 		&self.name
 	}
 
+	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet<bark::SqliteClient>> {
+		const MNEMONIC_FILE: &str = "mnemonic";
+		const DB_FILE: &str = "db.sqlite";
+
+		// read mnemonic file
+		let mnemonic_path = self.config.datadir.join(MNEMONIC_FILE);
+		let mnemonic_str = fs::read_to_string(&mnemonic_path).await
+			.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
+		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
+
+		let db = bark::SqliteClient::open(self.config.datadir.join(DB_FILE))?;
+		Ok(bark::Wallet::open(&mnemonic, db).await?)
+	}
+
+	pub async fn client(&self) -> bark::Wallet<bark::SqliteClient> {
+		self.try_client().await.expect("failed to create bark::Wallet client")
+	}
+
 	pub fn command_log_file(&self) -> PathBuf {
 		self.config.datadir.join(COMMAND_LOG_FILE)
 	}
@@ -196,10 +214,15 @@ impl Bark {
 		self.run(["send-onchain", &destination, &amount, "--verbose"]).await;
 	}
 
-	pub async fn send_oor(&self, destination: impl fmt::Display, amount: Amount) {
-		let destination = destination.to_string();
+	pub async fn try_send_oor(&self, dest: impl fmt::Display, amount: Amount) -> anyhow::Result<()> {
+		let dest = dest.to_string();
 		let amount = amount.to_string();
-		self.run(["send", &destination, &amount, "--verbose"]).await;
+		self.try_run(["send", &dest, &amount, "--verbose"]).await?;
+		Ok(())
+	}
+
+	pub async fn send_oor(&self, dest: impl fmt::Display, amount: Amount) {
+		self.try_send_oor(dest, amount).await.expect("send-oor command failed");
 	}
 
 	pub async fn try_send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>)-> anyhow::Result<()> {
@@ -217,9 +240,13 @@ impl Bark {
 		self.try_send_bolt11(destination, amount).await.unwrap();
 	}
 
-	pub async fn onboard(&self, amount: Amount) -> json::Onboard {
+	pub async fn try_onboard(&self, amount: Amount) -> anyhow::Result<json::Onboard> {
 		info!("{}: Onboard {}", self.name, amount);
-		self.run_json(["onboard", &amount.to_string()]).await
+		self.try_run_json(["onboard", &amount.to_string()]).await
+	}
+
+	pub async fn onboard(&self, amount: Amount) -> json::Onboard {
+		self.try_onboard(amount).await.expect("onboard command failed")
 	}
 
 	pub async fn onboard_all(&self) -> json::Onboard {
@@ -227,8 +254,13 @@ impl Bark {
 		self.run_json(["onboard", "--all"]).await
 	}
 
+	pub async fn try_refresh_all(&self) -> anyhow::Result<()> {
+		self.try_run(["refresh", "--all"]).await?;
+		Ok(())
+	}
+
 	pub async fn refresh_all(&self) {
-		self.run(["refresh", "--all"]).await;
+		self.try_refresh_all().await.expect("refresh --all command failed")
 	}
 
 	pub async fn refresh_counterparty(&self) {

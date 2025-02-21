@@ -150,6 +150,7 @@ dependencies = [
  "bark-cln",
  "bark-json",
  "bdk_esplora",
+ "bip39",
  "bitcoin",
  "bitcoincore-rpc",
  "chrono",

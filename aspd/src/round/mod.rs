@@ -62,6 +62,7 @@ pub struct RoundData {
 	max_output_vtxos: usize,
 	nb_vtxo_nonces: usize,
 	offboard_feerate: FeeRate,
+	max_vtxo_amount: Option<Amount>,
 }
 
 pub struct CollectingPayments {
@@ -173,6 +174,14 @@ impl CollectingPayments {
 		outputs: &[VtxoRequest],
 		cosign_pub_nonces: &[Vec<musig::MusigPubNonce>],
 	) -> anyhow::Result<()> {
+		if let Some(max) = self.round_data.max_vtxo_amount {
+			for out in outputs {
+				if out.amount > max {
+					return badarg!("output exceeds maximum vtxo amount of {max}");
+				}
+			}
+		}
+
 		if self.all_outputs.len() + outputs.len() > self.round_data.max_output_vtxos {
 			warn!("Got payment we don't have space for, dropping");
 			bail!("not enough outputs left in this round, try next round");
@@ -992,6 +1001,7 @@ pub async fn run_round_coordinator(
 			// of vtxo tree nonces we require users to provide.
 			max_output_vtxos: (app.config.nb_round_nonces * 3 ) / 4,
 			nb_vtxo_nonces: app.config.nb_round_nonces,
+			max_vtxo_amount: app.config.max_vtxo_amount,
 			offboard_feerate,
 		};
 		let mut round_state = RoundState::CollectingPayments(
@@ -1299,6 +1309,7 @@ mod tests {
 			max_output_vtxos: max_output_vtxos,
 			nb_vtxo_nonces: (max_output_vtxos * 4) / 3,
 			offboard_feerate: FeeRate::ZERO,
+			max_vtxo_amount: None,
 		};
 		CollectingPayments::new(0, 0, round_data, HashSet::new(), None)
 	}

@@ -56,7 +56,9 @@ pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
 			KeyValue::new("aspd.pubic_key", app.asp_key.public_key().to_string()),
 			KeyValue::new("aspd.network", app.config.network.to_string()),
 			KeyValue::new("aspd.round_interval", app.config.round_interval.as_secs().to_string()),
-			KeyValue::new("aspd.maximum_onboard_value", app.config.max_onboard_value.unwrap_or_else(|| Amount::ZERO).to_string())
+			KeyValue::new("aspd.maximum_vtxo_amount",
+				app.config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
+			)
 		]);
 
 	let otel_collector_endpoint = app.config.otel_collector_endpoint.clone();

@@ -549,13 +549,26 @@ impl App {
 		self.vtxos_in_flux.lock().await.release(ids)
 	}
 
-	pub fn cosign_onboard(&self, user_part: ark::onboard::UserPart) -> ark::onboard::AspPart {
+	pub fn cosign_onboard(
+		&self,
+		user_part: ark::onboard::UserPart,
+	) -> anyhow::Result<ark::onboard::AspPart> {
+		if user_part.spec.asp_pubkey != self.asp_key.public_key() {
+			return badarg!("ASP public key is incorrect!");
+		}
+
+		if let Some(max) = self.config.max_vtxo_amount {
+			if user_part.spec.amount > max {
+				return badarg!("onboard amount exceeds limit of {max}");
+			}
+		}
+
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
 		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
 			exit_txid: user_part.exit_tx().compute_txid(),
 		);
-		ret
+		Ok(ret)
 	}
 
 	pub fn validate_onboard_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
@@ -632,6 +645,14 @@ impl App {
 		user_nonces: &[musig::MusigPubNonce],
 	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
 		let ids = payment.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+
+		if let Some(max) = self.config.max_vtxo_amount {
+			for r in &payment.outputs {
+				if r.amount > max {
+					return badarg!("output exceeds maximum vtxo amount of {max}");
+				}
+			}
+		}
 
 		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
 			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
