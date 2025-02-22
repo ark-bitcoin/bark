@@ -174,7 +174,9 @@ async fn max_vtxo_amount() {
 	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
 
 	// then try send in a round
-	assert!(bark1.try_refresh_all().try_wait(5000).await.is_err());
+	assert!(bark1
+		.try_refresh_all().await
+		.unwrap_err().to_string().contains("bad user input: output exceeds maximum vtxo amount of 0.00500000 BTC"));
 
 	// but we can offboard the entire amount!
 	let address = ctx.bitcoind.get_new_address();
