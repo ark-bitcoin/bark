@@ -554,7 +554,7 @@ async fn reject_oor_with_bad_signature() {
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(aspd.get_public_client().await)).await;
 
 	// create a third wallet to receive the invalid arkoor
-	let bark2 = ctx.new_bark("bark3".to_string(), &proxy.address).await;
+	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
 
 	bark1.send_oor(bark2.vtxo_pubkey().await, sat(10_000)).await;
 
