@@ -121,24 +121,22 @@ impl Db {
 	{
 		// Store all vtxos created in this round.
 		let statement = client.prepare_typed("
-			INSERT INTO vtxo (id, vtxo, expiry) VALUES ($1, $2, $3);
-		", &[Type::TEXT, Type::BYTEA, Type::INT4]).await?;
+			INSERT INTO vtxo (id, vtxo, expiry) VALUES (
+				UNNEST($1), UNNEST($2), UNNEST($3))
+		", &[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
 
-		for vtxo in vtxos {
-			let vtxo_id = vtxo.id();
+		let ids = vtxos.iter().map(|v| v.id().to_string()).collect::<Vec<_>>();
+		let data = vtxos.iter().map(|v| Vtxo::encode(&v)).collect::<Vec<_>>();
+		let expiry = vtxos.iter().map(|v| v.spec().expiry_height as i32).collect::<Vec<_>>();
 
-			client.execute(
-				&statement,
-				&[
-					&vtxo_id.to_string(),
-					&Vtxo::encode(&vtxo),
-					&(vtxo.spec().expiry_height as i32)
-				]
-			).await?;
-		}
+		client.execute(
+			&statement,
+			&[&ids, &data, &expiry]
+		).await?;
 
 		Ok(())
 	}
+
 
 	/// Atomically insert the given vtxos.
 	pub async fn insert_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
