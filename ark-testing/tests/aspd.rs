@@ -4,7 +4,8 @@ extern crate log;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::Amount;
+use ark::VtxoId;
+use bitcoin::amount::Amount;
 use bitcoin::secp256k1::PublicKey;
 use tokio::sync::Mutex;
 
@@ -12,7 +13,7 @@ use aspd_log::{
 	NotSweeping, OnboardFullySwept, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished
 };
-use aspd_rpc as rpc;
+use aspd_rpc::{self as rpc, ForfeitSignaturesRequest, VtxoSignaturesRequest};
 
 use ark_testing::{Aspd, TestContext, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
@@ -173,7 +174,9 @@ async fn max_vtxo_amount() {
 	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
 
 	// then try send in a round
-	assert!(bark1.try_refresh_all().try_wait(5000).await.is_err());
+	assert!(bark1
+		.try_refresh_all().await
+		.unwrap_err().to_string().contains("bad user input: output exceeds maximum vtxo amount of 0.00500000 BTC"));
 
 	// but we can offboard the entire amount!
 	let address = ctx.bitcoind.get_new_address();
@@ -373,13 +376,14 @@ async fn double_spend_round() {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
+			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0]).unwrap();
+
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
-			let (res1, res2) = tokio::join!(
-				c1.submit_payment(req.clone()),
-				c2.submit_payment(req),
-			);
+			let res1 = c1.submit_payment(req.clone()).await;
+			let res2 = c2.submit_payment(req).await;
+
 			assert!(res1.is_ok());
-			assert!(res2.is_ok());
+			assert!(res2.unwrap_err().message().contains(&format!("vtxo {} already registered", vtxoid)));
 			Ok(rpc::Empty{})
 		}
 	}
@@ -394,6 +398,77 @@ async fn double_spend_round() {
 	let mut l = aspd.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
 	bark.refresh_all().await;
 	l.recv().wait(2500).await;
+}
+
+#[tokio::test]
+async fn test_participate_round_wrong_step() {
+	let ctx = TestContext::new("aspd/test_participate_round_wrong_step").await;
+
+	/// This proxy will send a `provide_vtxo_signatures` req instead of `submit_payment` one
+	#[derive(Clone)]
+	struct ProxyA(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for ProxyA {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+		async fn submit_payment(&mut self, _req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
+			self.0.provide_vtxo_signatures(VtxoSignaturesRequest {
+				pubkey: RANDOM_PK.serialize().to_vec(), signatures: vec![]
+			}).await?;
+			Ok(rpc::Empty{})
+		}
+	}
+
+	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	bark.onboard(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	let res = bark.try_refresh_all().await;
+	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is payment registration"));
+
+	/// This proxy will send a `provide_forfeit_signatures` req instead of `provide_vtxo_signatures` one
+	#[derive(Clone)]
+	struct ProxyB(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for ProxyB {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+		async fn provide_vtxo_signatures(&mut self, _req: rpc::VtxoSignaturesRequest) -> Result<rpc::Empty, tonic::Status> {
+			self.0.provide_forfeit_signatures(ForfeitSignaturesRequest { signatures: vec![] }).await?;
+			Ok(rpc::Empty{})
+		}
+	}
+
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	bark2.onboard(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	let res = bark2.try_refresh_all().await;
+	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is vtxo signatures submission"));
+
+	/// This proxy will send a `submit_payment` req instead of `provide_forfeit_signatures` one
+	#[derive(Clone)]
+	struct ProxyC(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for ProxyC {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+		async fn provide_forfeit_signatures(&mut self, _req: rpc::ForfeitSignaturesRequest) -> Result<rpc::Empty, tonic::Status> {
+			self.0.submit_payment(rpc::SubmitPaymentRequest {
+				input_vtxos: vec![], vtxo_requests: vec![], offboard_requests: vec![]
+			}).await?;
+			Ok(rpc::Empty{})
+		}
+	}
+
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
+	let bark3 = ctx.new_bark_with_funds("bark3".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	bark3.onboard(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	let res = bark3.try_refresh_all().await;
+	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is forfeit signatures submission"));
 }
 
 #[tokio::test]
