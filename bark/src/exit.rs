@@ -51,22 +51,6 @@ enum TxStatus {
 	ConfirmedIn(u32),
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ExitStatus {
-	/// Not all txs were able to be broadcast and confirmed.
-	///
-	/// Note that this is considering the whole process,
-	/// some VTXOs might already be spendable if all their exit branch have been confirmed
-	NeedMoreTxs,
-	/// All txs were confirmed, waiting for height to be able spend all outputs
-	///
-	/// Note that this is the highest height needed,
-	/// some outputs might be spendable before it
-	WaitingForHeight(u32),
-	/// All txs were confirmed sufficiently deep, all exit outputs are spendable
-	CanSpendAllOutputs,
-}
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ExitIndex {
 	/// The vtxos in process of exit
@@ -198,9 +182,9 @@ impl <P>Exit<P> where
 	/// ### Return
 	///
 	/// Return exit status if there are vtxos to exit, else `None`
-	pub async fn progress_exit(&mut self, onchain: &mut onchain::Wallet<P>) -> anyhow::Result<Option<ExitStatus>> {
+	pub async fn progress_exit(&mut self, onchain: &mut onchain::Wallet<P>) -> anyhow::Result<()> {
 		if self.index.is_empty() {
-			return Ok(None);
+			return Ok(());
 		}
 
 		// Go over each tx and see if we can make progress on it.
@@ -273,33 +257,7 @@ impl <P>Exit<P> where
 		// Save the updated exit state.
 		self.persist_exit()?;
 
-		// The height at which all exit will be spendable. If None, this means some exit txs are not confirmed yet
-		let mut highest_spendable_height = None;
-		for vtxo in self.index.vtxos.iter() {
-			match self.index.spendable_at_height(vtxo) {
-				Some(spendable_at_height) => {
-					highest_spendable_height = cmp::max(highest_spendable_height, Some(spendable_at_height));
-				},
-				None => {
-					highest_spendable_height = None;
-					// If at least one of the VTXO exits is not confirmed yet,
-					// highest_height should remain `None`: we break the loop
-					break;
-				}
-			}
-		}
-
-		let current_height = self.chain_source.tip().await?;
-		if let Some(height) = highest_spendable_height {
-			if current_height < height {
-				return Ok(Some(ExitStatus::WaitingForHeight(height)))
-			} else {
-				return Ok(Some(ExitStatus::CanSpendAllOutputs))
-			}
-		}
-
-		// Some exit txs are not fully confirmed
-		Ok(Some(ExitStatus::NeedMoreTxs))
+		Ok(())
 	}
 
 	/// Partition VTXOs by their exit output's status
@@ -339,6 +297,32 @@ impl <P>Exit<P> where
 
 	pub (crate) async fn list_spendable_exits(&self) -> anyhow::Result<Vec<SpendableVtxo>> {
 		Ok(self.partition_vtxos().await?.spendable)
+	}
+
+	pub async fn list_pending_exits(&self) -> anyhow::Result<Vec<Vtxo>> {
+		Ok(self.partition_vtxos().await?.pending)
+	}
+
+	/// The height at which all exits will be spendable.
+	///
+	/// If None, this means some exit txs are not confirmed yet
+	pub async fn all_spendable_at_height(&self) -> Option<u32> {
+		let mut highest_spendable_height = None;
+		for vtxo in self.index.vtxos.iter() {
+			match self.index.spendable_at_height(vtxo) {
+				Some(spendable_at_height) => {
+					highest_spendable_height = cmp::max(highest_spendable_height, Some(spendable_at_height));
+				},
+				None => {
+					highest_spendable_height = None;
+					// If at least one of the VTXO exits is not confirmed yet,
+					// highest_height should remain `None`: we break the loop
+					break;
+				}
+			}
+		}
+
+		highest_spendable_height
 	}
 
 	/// Sync to check if spendable vtxos have been spent

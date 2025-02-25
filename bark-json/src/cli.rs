@@ -14,7 +14,9 @@ pub struct Balance {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExitStatus {
+	/// Whether or not all txs have been confirmed
 	pub done: bool,
+	/// Height at which all exit outputs will be spendable
 	pub height: Option<u32>,
 }
 

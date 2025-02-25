@@ -13,7 +13,6 @@ pub mod persist;
 pub use persist::sqlite::SqliteClient;
 pub mod vtxo_selection;
 mod exit;
-pub use exit::ExitStatus;
 mod lnurl;
 pub mod onchain;
 mod psbtext;

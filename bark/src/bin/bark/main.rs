@@ -583,27 +583,16 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				let wallet_mut = wallet.as_mut().unwrap();
 
-				let res = wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
+				wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
 					.context("error making progress on exit process")?;
 
-				// Print the output as json
-				let json_output = match res {
-					Some(ref status) => match status {
-						bark::ExitStatus::NeedMoreTxs => {
-							json::ExitStatus { done: false, height: None }
-						},
-						bark::ExitStatus::WaitingForHeight(h) => {
-							json::ExitStatus { done: false, height: Some(*h) }
-						},
-						bark::ExitStatus::CanSpendAllOutputs => {
-							json::ExitStatus { done: true, height: None }
-						},
-					},
-					None => json::ExitStatus { done: false, height: None }
-				};
-				serde_json::to_writer_pretty(io::stdout(), &json_output).unwrap();
+				let done = wallet_mut.exit.list_pending_exits().await?.is_empty();
+				let height = wallet_mut.exit.all_spendable_at_height().await;
 
-				if !wait || res.is_none() || res.unwrap() == bark::ExitStatus::CanSpendAllOutputs {
+				// Print the output as json
+				serde_json::to_writer_pretty(io::stdout(), &json::ExitStatus { done, height }).unwrap();
+
+				if !wait || done {
 					break;
 				}
 
