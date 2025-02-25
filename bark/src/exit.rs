@@ -136,9 +136,15 @@ impl <P>Exit<P> where
 
 		// The idea is to convert all our vtxos into an exit process structure,
 		// that we then store in the database and we can gradually proceed on.
+		self.start_exit_for_vtxos(&vtxos).await?;
 
+		Ok(())
+	}
+
+	/// Add provided vtxo to the exit process.
+	pub async fn start_exit_for_vtxos(&mut self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
 		for vtxo in vtxos {
-			let added = self.index.add_vtxo(vtxo);
+			let added = self.index.add_vtxo(vtxo.clone());
 			if let Some(added) = added {
 				self.db.register_send(
 					vec![&added],
@@ -150,7 +156,6 @@ impl <P>Exit<P> where
 		}
 
 		self.persist_exit()?;
-
 		Ok(())
 	}
 

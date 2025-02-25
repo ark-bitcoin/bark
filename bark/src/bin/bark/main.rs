@@ -227,15 +227,20 @@ enum Command {
 	#[command()]
 	Exit {
 		/// If set, it will exit all VTXOs still owned by the wallet.
+		///
+		/// If neither `all` or `vtxos` arg is set, the command will only try to progress already ongoing exits
 		#[arg(long)]
 		all: bool,
+
+		/// List of vtxos that should be exited
+		///
+		/// If neither `all` or `vtxos` arg is set, the command will only try to progress already ongoing exits
+		#[arg(long)]
+		vtxos: Option<Vec<String>>,
 
 		/// Keep running until the entire exit is finished. This can take several hours
 		#[arg(long)]
 		wait: bool,
-
-		//TODO(stevenroose) add a option to claim claimable exits while others are not claimable
-		//yet
 	},
 
 	/// Dev command to drop the vtxo database
@@ -564,14 +569,32 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			}
 		},
-		Command::Exit { all, wait } => {
-			if all {
-				if let Err(e) = w.sync_ark().await {
-					warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
-				}
+		Command::Exit { wait, all,  vtxos } => {
+			match (all, vtxos) {
+				(false, Some(vtxos)) => {
+					let vtxos = vtxos
+						.into_iter()
+						.map(|vtxo| {
+							VtxoId::from_str(&vtxo).context(format!("invalid vtxoid: {}", vtxo))
+						})
+						.collect::<anyhow::Result<Vec<_>>>()?;
 
-				w.exit.start_exit_for_entire_wallet().await
-					.context("error starting exit process for existing vtxos")?;
+					let filter = VtxoFilter::new(&w).include_many(vtxos.into_iter());
+					let vtxos = w.vtxos_with(filter)?;
+
+					w.exit.start_exit_for_vtxos(&vtxos).await
+						.context("error starting exit process for existing vtxos")?;
+				},
+				(true, None) => {
+					if let Err(e) = w.sync_ark().await {
+						warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
+					}
+
+					w.exit.start_exit_for_entire_wallet().await
+						.context("error starting exit process for existing vtxos")?;
+				},
+				(false, None) => info!("Progressing exit txs broadcast"),
+				(true, Some(_)) => bail!("You must specify either `all` or `vtxos` argument to exit")
 			}
 
 			let mut wallet = Some(w);

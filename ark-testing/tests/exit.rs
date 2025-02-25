@@ -12,10 +12,10 @@ use bark_json::primitives::VtxoType;
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 
-async fn progress_exit(bark: &Bark) {
+async fn complete_exit(bark: &Bark) {
 	let mut flip = false;
 	for _ in 0..20 {
-		let res = bark.exit_all().await;
+		let res = bark.progress_exit().await;
 
 		if res.done {
 			return;
@@ -104,14 +104,24 @@ async fn exit_round() {
 
 	// We don't need ASP for exits.
 	aspd.stop().await.unwrap();
-	progress_exit(&bark1).await;
-	progress_exit(&bark2).await;
-	progress_exit(&bark3).await;
-	progress_exit(&bark4).await;
-	progress_exit(&bark5).await;
-	progress_exit(&bark6).await;
-	progress_exit(&bark7).await;
-	progress_exit(&bark8).await;
+
+	bark1.exit_all().await;
+	bark2.exit_all().await;
+	bark3.exit_all().await;
+	bark4.exit_all().await;
+	bark5.exit_all().await;
+	bark6.exit_all().await;
+	bark7.exit_all().await;
+	bark8.exit_all().await;
+
+	complete_exit(&bark1).await;
+	complete_exit(&bark2).await;
+	complete_exit(&bark3).await;
+	complete_exit(&bark4).await;
+	complete_exit(&bark5).await;
+	complete_exit(&bark6).await;
+	complete_exit(&bark7).await;
+	complete_exit(&bark8).await;
 
 	// All wallets have 1_000_000 sats of funds minus fees
 	//
@@ -152,6 +162,42 @@ async fn exit_round() {
 }
 
 #[tokio::test]
+async fn exit_vtxo() {
+	let ctx = TestContext::new("exit/exit_vtxo").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+
+	ctx.bitcoind.generate(1).await;
+
+	bark.onboard(sat(900_000)).await;
+	ctx.bitcoind.generate(15).await;
+	bark.refresh_all().await;
+
+	// By calling bark vtxos we ensure the wallet is synced
+	// This ensures bark knows the vtxo exists
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 1, "We have refreshed one vtxo");
+	let vtxo = &vtxos[0];
+
+	// We stop the asp
+	aspd.stop().await.unwrap();
+
+	// Make bark exit and check the balance
+	bark.exit_vtxo(vtxo.id).await;
+	complete_exit(&bark).await;
+
+	// Verify exit output is considered as part of the wallet
+	let utxos = bark.utxos().await;
+	assert_eq!(utxos.len(), 2, "We have cpfp change (spent in exit process) + exited utxo");
+	assert!(utxos.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount));
+
+	// Verify we can send both utxos
+	bark.onchain_send(bark.get_onchain_address().await, vtxo.amount + Amount::ONE_SAT).await;
+}
+
+
+#[tokio::test]
 async fn exit_after_onboard() {
 	let random_addr = Address::from_str(
 		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
@@ -170,7 +216,8 @@ async fn exit_after_onboard() {
 
 	// Exit unilaterally
 	aspd.stop().await.unwrap();
-	progress_exit(&bark).await;
+	bark.exit_all().await;
+	complete_exit(&bark).await;
 
 	let balance = bark.onchain_balance().await;
 	assert!(balance > sat(900_000), "balance: {balance}");
@@ -213,7 +260,8 @@ async fn exit_oor() {
 
 	// Make bark2 exit and check the balance
 	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
-	progress_exit(&bark2).await;
+	bark2.exit_all().await;
+	complete_exit(&bark2).await;
 	assert_eq!(bark2.onchain_balance().await, sat(1_089_521));
 
 	// Verify exit output is considered as part of the wallet
@@ -250,7 +298,8 @@ async fn double_exit_call() {
 
 	let vtxos = bark1.vtxos().await;
 
-	progress_exit(&bark1).await;
+	bark1.exit_all().await;
+	complete_exit(&bark1).await;
 	assert_eq!(bark1.onchain_balance().await, sat(1_305_941));
 
 	let movements = bark1.list_movements().await;
@@ -272,7 +321,8 @@ async fn double_exit_call() {
 	assert_eq!(vtxos.len(), 1);
 	let vtxo = vtxos.first().unwrap();
 
-	progress_exit(&bark1).await;
+	bark1.exit_all().await;
+	complete_exit(&bark1).await;
 
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 9);
@@ -285,6 +335,7 @@ async fn double_exit_call() {
 	assert_eq!(last_move.destination.clone().unwrap(), exit_spk, "movement destination should be exit_spk");
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
-	progress_exit(&bark1).await;
+	bark1.exit_all().await;
+	complete_exit(&bark1).await;
 	assert_eq!(bark1.list_movements().await.len(), 9, "should not create new movement when no new vtxo to exit");
 }
