@@ -3,20 +3,67 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
-use aspd::config;
 use tokio::fs;
 use tokio::process::{Child, Command};
 use tokio_postgres::{Client, Config, NoTls};
+
+use aspd::config;
 
 use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
-pub type Postgres = Daemon<PostgresHelper>;
-
 pub fn use_global_database() -> bool {
-	env::var("USE_GLOBAL_DATABASE").unwrap_or_default() == "true".to_string()
+	env::var("USE_GLOBAL_DATABASE").unwrap_or_default() == "true"
 }
+
+pub async fn global_client() -> Client {
+	let mut config = Config::new();
+
+	// we use default database and user to connect and create testing ones
+	config.dbname("postgres");
+	config.user("postgres");
+	config.password("postgres");
+
+	config.host("localhost");
+	config.port(5432);
+
+	let (client, connection) = config.connect(NoTls).await
+		.expect("failed to connect to global postgres client");
+	tokio::spawn(async move {
+		if let Err(e) = connection.await {
+			panic!("postgres daemon connection error: {}", e);
+		}
+	});
+
+	client
+}
+
+pub fn global_base_config() -> config::Postgres {
+	config::Postgres {
+		name: String::new(), // left empty to be filled
+		host: String::from("localhost"),
+		port: 5432,
+		user: Some("postgres".into()),
+		password: Some("postgres".into()),
+	}
+}
+
+pub async fn cleanup_dbs(client: &Client, name: &str) {
+	let rows = client
+		.query(
+			"SELECT datname FROM pg_database WHERE datname LIKE $1",
+			&[&format!("{}%", name)],
+		).await.expect("failed to execute first cleanup query");
+
+	for row in rows {
+		let db_name = row.get::<_, &str>(0);
+		client.execute(&format!("DROP DATABASE \"{}\"", db_name), &[]).await
+			.expect("failed to drop db during cleanup");
+	}
+}
+
+pub type Postgres = Daemon<PostgresHelper>;
 
 impl Postgres {
 	fn initdb() -> PathBuf {
@@ -53,8 +100,7 @@ impl Postgres {
 #[derive(Clone)]
 pub struct PostgresHelper {
 	pub name: String,
-	pub datadir: Option<PathBuf>,
-	pub auth: Option<(String, String)>,
+	pub datadir: PathBuf,
 	pub port: Option<u16>
 }
 
@@ -62,18 +108,8 @@ impl PostgresHelper {
 	pub fn new(name: impl AsRef<str>, datadir: PathBuf) -> PostgresHelper {
 		PostgresHelper {
 			name: name.as_ref().to_string(),
-			datadir: Some(datadir.join("pg_data")),
-			auth: None,
+			datadir: datadir,
 			port: None
-		}
-	}
-
-	pub fn new_global(name: impl AsRef<str>) -> PostgresHelper {
-		PostgresHelper {
-			name: name.as_ref().to_string(),
-			datadir: None,
-			auth: Some(("postgres".to_string(), "postgres".to_string())),
-			port: Some(5432)
 		}
 	}
 
@@ -82,61 +118,39 @@ impl PostgresHelper {
 	}
 
 	pub fn as_base_config(&self) -> config::Postgres {
-		let (user, password) = self.auth.as_ref()
-			.map(|(u, p)| (Some(u.clone()), Some(p.clone())))
-			.unwrap_or((None, None));
-
 		config::Postgres {
 			host: String::from("localhost"),
 			port: self.port(),
 			name: String::new(),
-			user: user,
-			password: password,
+			user: None,
+			password: None,
 		}
 	}
 
-	async fn connect(&self) -> anyhow::Result<Client> {
+	async fn try_connect(&self) -> anyhow::Result<Client> {
 		let mut config = Config::new();
 
 		// we use default database and user to connect and create testing ones
 		config.dbname("postgres");
-		if let Some((user, pwd)) = &self.auth {
-			config.user(user.clone());
-			config.password(pwd.clone());
-		}
-
 		config.host("localhost");
 		config.port(self.port());
 
 		let (client, connection) = config.connect(NoTls).await?;
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {
-				println!("daemon connection error: {}", e);
+				panic!("postgres daemon connection error: {}", e);
 			}
 		});
 
 		Ok(client)
 	}
 
-	pub async fn cleanup_dbs(&self, name: &str) -> anyhow::Result<()> {
-		let client = self.connect().await?;
-
-		let rows = client
-			.query(
-				"SELECT datname FROM pg_database WHERE datname LIKE $1",
-				&[&format!("{}%", name)],
-			).await?;
-
-		for row in rows {
-			let db_name = row.get::<_, &str>(0);
-			client.execute(&format!("DROP DATABASE \"{}\"", db_name), &[]).await?;
-		}
-
-		Ok(())
+	pub async fn is_ready(&self) -> bool {
+		self.try_connect().await.is_ok()
 	}
 
-	pub async fn is_ready(&self) -> bool {
-		self.connect().await.is_ok()
+	pub fn pgdata(&self) -> PathBuf {
+		self.datadir.join("pg_data")
 	}
 }
 
@@ -146,7 +160,7 @@ impl DaemonHelper for PostgresHelper {
 	}
 
 	fn datadir(&self) -> PathBuf {
-		self.datadir.clone().expect("datadir should be set when helper used as daemon").clone()
+		self.datadir.clone()
 	}
 
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
@@ -159,10 +173,16 @@ impl DaemonHelper for PostgresHelper {
 	}
 
 	async fn prepare(&self) -> anyhow::Result<()> {
+		if self.datadir.exists() {
+			fs::remove_dir_all(&self.datadir).await.expect("failed to clear postgres datadir");
+		}
 		fs::create_dir_all(&self.datadir()).await?;
-		let pgdata = &self.datadir().display().to_string();
 
-		let output = Command::new(Postgres::initdb()).args(["-D", &pgdata])
+		// also create dedicated dir for pgdata
+		fs::create_dir_all(&self.pgdata()).await?;
+
+		let output = Command::new(Postgres::initdb())
+			.args(["-D", &self.pgdata().display().to_string()])
 			.output()
 			.await
 			.expect("cannot init postgres");
@@ -180,7 +200,7 @@ impl DaemonHelper for PostgresHelper {
 	async fn get_command(&self) -> anyhow::Result<Command> {
 		let mut cmd = Command::new(Postgres::postgres());
 		cmd.args([
-			"-D", &self.datadir().display().to_string(),
+			"-D", &self.pgdata().display().to_string(),
 			"-p", &self.port.expect("a port should be configured").to_string()
 			]);
 
