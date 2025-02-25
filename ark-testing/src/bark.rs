@@ -279,8 +279,8 @@ impl Bark {
 		self.run(["drop-vtxos"]).await;
 	}
 
-	pub async fn exit(&self) -> json::ExitStatus {
-		self.run_json(["exit"]).await
+	pub async fn exit_all(&self) -> json::ExitStatus {
+		self.run_json(["exit", "--all"]).await
 	}
 
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>

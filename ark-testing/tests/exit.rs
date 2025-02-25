@@ -15,7 +15,8 @@ use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 async fn progress_exit(bark: &Bark) {
 	let mut flip = false;
 	for _ in 0..20 {
-		let res = bark.exit().await;
+		let res = bark.exit_all().await;
+
 		if res.done {
 			return;
 		}

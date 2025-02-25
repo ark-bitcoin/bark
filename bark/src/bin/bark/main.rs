@@ -226,10 +226,9 @@ enum Command {
 	/// Perform a unilateral exit from the Ark
 	#[command()]
 	Exit {
-		/// If set, only try to make progress on pending exits and don't
-		/// initiate exits on VTXOs in wallet
+		/// If set, it will exit all VTXOs still owned by the wallet.
 		#[arg(long)]
-		only_progress: bool,
+		all: bool,
 
 		/// Keep running until the entire exit is finished. This can take several hours
 		#[arg(long)]
@@ -565,8 +564,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			}
 		},
-		Command::Exit { only_progress, wait } => {
-			if !only_progress {
+		Command::Exit { all, wait } => {
+			if all {
 				if let Err(e) = w.sync_ark().await {
 					warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
 				}
