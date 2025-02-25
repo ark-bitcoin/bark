@@ -52,7 +52,7 @@ enum TxStatus {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-pub struct ExitIndex {
+pub (crate) struct ExitIndex {
 	/// The vtxos in process of exit
 	vtxos: Vec<Vtxo>,
 	/// The status of the exit outputs, kept to know when it's ok to remove vtxo from exit index
@@ -69,7 +69,7 @@ impl ExitIndex {
 	/// Add vtxo to the exit, if not already in
 	///
 	/// Returns the vtxo if it was added to the exit
-	fn add_vtxo(&mut self, vtxo: Vtxo) -> Option<Vtxo> {
+	pub fn add_vtxo(&mut self, vtxo: Vtxo) -> Option<Vtxo> {
 		if self.vtxos.iter().any(|v| v.id() == vtxo.id()) {
 			return None
 		}
@@ -77,13 +77,13 @@ impl ExitIndex {
 		Some(vtxo)
 	}
 
-	fn remove_vtxo(&mut self, vtxoid: VtxoId) {
+	pub fn remove_vtxo(&mut self, vtxoid: VtxoId) {
 		if let Some((idx, _v)) = self.vtxos.iter().enumerate().find(|(_i, v)| v.id() == vtxoid) {
 			self.vtxos.remove(idx);
 		}
 	}
 
-	pub (crate) fn is_empty(&self) -> bool {
+	pub fn is_empty(&self) -> bool {
 		self.vtxos.is_empty()
 	}
 
@@ -105,7 +105,7 @@ pub struct Exit<P: BarkPersister> {
 	index: ExitIndex,
 
 	db: P,
-	pub (crate)	chain_source: ChainSourceClient,
+	chain_source: ChainSourceClient,
 }
 
 
@@ -295,7 +295,7 @@ impl <P>Exit<P> where
 		Ok(VtxoPartition { spendable, spent, pending })
 	}
 
-	pub (crate) async fn list_spendable_exits(&self) -> anyhow::Result<Vec<SpendableVtxo>> {
+	pub async fn list_spendable_exits(&self) -> anyhow::Result<Vec<SpendableVtxo>> {
 		Ok(self.partition_vtxos().await?.spendable)
 	}
 
