@@ -128,13 +128,10 @@ impl<T> Daemon<T>
 		let mut child = cmd.spawn()?;
 
 		// Read the log-file for stdout
-		info!("Process the file");
 		let (path,handler) = (stdout_path.clone(), self.stdout_handler.clone());
 		let _jh = tokio::spawn(async move {
 			process_log_file(path, handler).await
 		});
-		info!("Spawn completed the file");
-
 
 		// Wait for initialization
 		let init_timeout = std::env::var(DAEMON_INIT_TIMEOUT_MILLIS)
