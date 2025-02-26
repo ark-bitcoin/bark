@@ -137,9 +137,8 @@ impl Db {
 	pub async fn remove_onboard(&self, vtxo: &OnboardVtxo) -> anyhow::Result<()> {
 		let conn = self.client.get().await?;
 
-		// TODO: implement soft deletion
 		let statement = conn.prepare("
-			DELETE FROM vtxo WHERE id = $1;
+			UPDATE vtxo SET deleted_at = NOW() WHERE id = $1;
 		").await?;
 
 		conn.execute(&statement, &[&vtxo.id().to_string()]).await?;
@@ -269,9 +268,8 @@ impl Db {
 			.map(|row| -> anyhow::Result<Vtxo> { Ok(MailboxArkoor::try_from(row).expect("corrupt db").vtxo) })
 			.collect::<Result<Vec<_>, _>>()?;
 
-		// TODO: implement soft deletion
 		let statement = conn.prepare("
-			DELETE FROM arkoor_mailbox WHERE pubkey = $1;
+			UPDATE arkoor_mailbox SET deleted_at = NOW() WHERE pubkey = $1;
 		").await?;
 		let result = conn.execute(&statement, &[&pubkey.serialize().to_vec()]).await?;
 		assert_eq!(result, oors.len() as u64);
@@ -352,9 +350,8 @@ impl Db {
 	pub async fn remove_round(&self, id: Txid) -> anyhow::Result<()> {
 		let conn = self.client.get().await?;
 
-		// TODO: implement soft deletion
 		let statement = conn.prepare("
-			DELETE FROM round WHERE id = $1;
+			UPDATE round SET deleted_at = NOW() WHERE id = $1;
 		").await?;
 
 		conn.execute(&statement, &[&id.to_string()]).await?;
@@ -405,9 +402,8 @@ impl Db {
 	pub async fn drop_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
 		let conn = self.client.get().await?;
 
-		// TODO: implement soft deletion
 		let statement = conn.prepare("
-			DELETE FROM pending_sweep WHERE txid = $1;
+			UPDATE pending_sweep SET deleted_at = NOW() WHERE txid = $1;
 		").await?;
 		conn.execute(&statement, &[&txid.to_string()]).await?;
 
