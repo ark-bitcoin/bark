@@ -76,9 +76,9 @@ impl TestContext {
 		bitcoind.init_wallet().await;
 		bitcoind.prepare_funds().await;
 
-		let (postgres_config, postgresd) = if postgresd::use_global_database() {
+		let (postgres_config, postgresd) = if postgresd::use_host_database() {
 			postgresd::cleanup_dbs(&postgresd::global_client().await, name).await;
-			let cfg = postgresd::global_base_config();
+			let cfg = postgresd::host_base_config();
 			(cfg, None)
 		} else {
 			let postgresd = Self::new_postgres("postgres", datadir.join("postgres")).await;

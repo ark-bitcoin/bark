@@ -13,8 +13,8 @@ use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
-pub fn use_global_database() -> bool {
-	env::var("USE_GLOBAL_DATABASE").unwrap_or_default() == "true"
+pub fn use_host_database() -> bool {
+	env::var("TEST_POSTGRES_HOST").is_ok()
 }
 
 pub async fn global_client() -> Client {
@@ -39,10 +39,10 @@ pub async fn global_client() -> Client {
 	client
 }
 
-pub fn global_base_config() -> config::Postgres {
+pub fn host_base_config() -> config::Postgres {
 	config::Postgres {
 		name: String::new(), // left empty to be filled
-		host: String::from("localhost"),
+		host: env::var("TEST_POSTGRES_HOST").unwrap_or(String::from("localhost")),
 		port: 5432,
 		user: Some("postgres".into()),
 		password: Some("postgres".into()),
