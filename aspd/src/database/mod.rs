@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 use ark::{tree::signed::CachedSignedVtxoTree, ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
@@ -184,7 +184,8 @@ impl Db {
 	}
 
 	async fn get_vtxo<T>(client: &T, id: &VtxoId) -> anyhow::Result<VtxoState>
-		where T: GenericClient {
+		where T: GenericClient + Sized
+	{
 		let statement = client.prepare("
 			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs FROM vtxo WHERE id = $1
 		").await?;
@@ -196,6 +197,42 @@ impl Db {
 		Ok(VtxoState::try_from(row).expect("corrupt db"))
 	}
 
+	async fn get_vtxos_by_id<T>(client: &T, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>>
+		where T : GenericClient + Sized
+	{
+		let statement = client.prepare_typed("
+			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs
+			FROM vtxo
+			WHERE id = any($1);
+		", &[Type::TEXT_ARRAY]).await?;
+
+		let id_str = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+		let rows = client.query(&statement, &[&id_str]).await
+			.context("Query get_vtxos_by_id failed")?;
+
+		// Parse all rows
+		let vtxos = rows.into_iter()
+			.map(|row| VtxoState::try_from(row))
+			.collect::<Result<Vec<_>,_>>()
+			.context("Failed to parse VtxoState from database")?;
+
+		// Bail if one of the id's could not be found
+		if vtxos.len() != ids.len() {
+			let found_ids = vtxos.iter().map(|v| v.vtxo.id()).collect::<HashSet<_>>();
+
+			for id in ids {
+				if !found_ids.contains(id) {
+					return Err(anyhow::anyhow!("vtxo {} does not exist", id))
+						.context(*id);
+				}
+			}
+		}
+
+		Ok(vtxos)
+	}
+
+
+
 	/// Check whether the vtxos were already spent, and fetch them if not.
 	///
 	/// There is no guarantee that the vtxos are still all unspent by
@@ -203,20 +240,13 @@ impl Db {
 	/// are made to them meanwhile.
 	pub async fn check_fetch_unspent_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.pool.get().await?;
-		let mut ret = Vec::with_capacity(ids.len());
 
-		for id in ids {
-			let vtxo_state = Self::get_vtxo(&*conn, id).await?;
-
-			if !vtxo_state.is_spendable() {
-				return Err(anyhow!("vtxo {} is not spendable: {:?}", id, vtxo_state)
-					.context(*id));
-			}
-
-			ret.push(vtxo_state.vtxo.clone());
+		let vtxo_states: Vec<VtxoState> = Self::get_vtxos_by_id(&*conn, ids).await?;
+		if let Some(unspendable) = vtxo_states.iter().find(|v| !v.is_spendable()) {
+			bail!("vtxo {} is not spendable", unspendable.vtxo.id());
 		}
 
-		Ok(ret)
+		Ok(vtxo_states.into_iter().map(|v| v.vtxo).collect())
 	}
 
 	/// Set the vtxo as being forfeited.
