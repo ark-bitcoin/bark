@@ -11,7 +11,7 @@ use tonic::transport::Uri;
 
 use aspd::config::{self, Config};
 
-use crate::daemon::aspd::postgresd::{use_global_database, Postgres, PostgresHelper};
+use crate::daemon::aspd::postgresd::{self, Postgres};
 use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
@@ -41,7 +41,7 @@ pub struct TestContext {
 
 	// ensures postgres daemon, if any, stays alive the TestContext's lifetime
 	_postgresd: Option<Postgres>,
-	postgres_config: config::Postgres
+	postgres_config: config::Postgres,
 }
 
 impl TestContext {
@@ -76,16 +76,14 @@ impl TestContext {
 		bitcoind.init_wallet().await;
 		bitcoind.prepare_funds().await;
 
-		let (postgres_config, postgresd) = if use_global_database() {
-			let helper = PostgresHelper::new_global(name);
-			// NB: we only need to clean up database when using global one: local dirs get wiped on each tests
-			helper.cleanup_dbs(name).await.expect("could not cleanup postgres databases");
-			(helper.as_base_config(), None)
+		let (postgres_config, postgresd) = if postgresd::use_global_database() {
+			postgresd::cleanup_dbs(&postgresd::global_client().await, name).await;
+			let cfg = postgresd::global_base_config();
+			(cfg, None)
 		} else {
-			let postgresd = Self::new_postgres("postgres", datadir.clone()).await;
+			let postgresd = Self::new_postgres("postgres", datadir.join("postgres")).await;
 			(postgresd.helper().as_base_config(), Some(postgresd))
 		};
-
 
 		TestContext {
 			name: name.to_string(),

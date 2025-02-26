@@ -26,6 +26,7 @@ pub fn init_logging() -> anyhow::Result<()> {
 		.level(log::LevelFilter::Trace)
 		.level_for("rustls", log::LevelFilter::Off)
 		.level_for("tonic", log::LevelFilter::Off)
+		.level_for("tokio_postgres", log::LevelFilter::Off)
 		.format(|out, msg, rec| {
 			let now = chrono::Local::now();
 			let stamp = now.format("%H:%M:%S.%3f");
