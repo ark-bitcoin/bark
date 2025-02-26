@@ -75,6 +75,10 @@ installed then the lightning tests will fail. If you are not using the Nix Flake
 environmental variable for the Docker image to pull:
 - `LIGHTNINGD_DOCKER_IMAGE`: e.g. `export LIGHTNINGD_DOCKER_IMAGE="elementsproject/lightningd:v24.08.2"`
 
+Please also make sure "Host networking" feature is enabled, so that Docker-based lightning node
+can connect to a bitcoind outside of the container. To do so, please refer to
+[Docker Desktop documentation](https://docs.docker.com/engine/network/drivers/host/)
+
 
 # Code hygiene
 
