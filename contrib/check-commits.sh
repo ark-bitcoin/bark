@@ -84,7 +84,7 @@ if [ -z "$COMMITS" ]; then
 fi
 
 # Checkout the master branch
-git checkout ${MASTER_BRANCH}
+git checkout -f ${MASTER_BRANCH}
 
 # Attempt to cherry pick all commits from the branch one by one
 echo "$COMMITS" | while IFS= read -r COMMIT; do
@@ -93,7 +93,7 @@ echo "$COMMITS" | while IFS= read -r COMMIT; do
 	if git cherry-pick ${COMMIT_HASH}; then
 		run_checks
 	else
-		git cherry-pick --abort
+		git cherry-pick --abort || echo "Ignoring cherry pick abort failure."
 		log_info "Cherry pick failure for commit $COMMIT_HASH"
 		echo "true" > CHERRY_PICK_FAILURE
 
@@ -101,13 +101,13 @@ echo "$COMMITS" | while IFS= read -r COMMIT; do
 	fi
 done
 
-if [ "$(cat CHERRY_PICK_FAILURE)" = "true" ]; then
+if [ -r CHERRY_PICK_FAILURE ] && [ "$(cat CHERRY_PICK_FAILURE)" = "true" ]; then
 	log_info "Cherry-picking failed, running alternative workflow using ${BASE_COMMIT}..."
 
 	echo "$COMMITS" | while IFS= read -r COMMIT; do
 		parse_commit "$COMMIT"
 
-		git checkout ${COMMIT_HASH}
+		git checkout -f ${COMMIT_HASH}
 
 		run_checks
 	done
