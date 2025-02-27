@@ -137,17 +137,15 @@ impl App {
 		cfg.validate().expect("invalid configuration");
 		info!("Resulting configuration: {:#?}", cfg);
 
-		let data_dir = {
-			if !cfg.data_dir.exists() {
-				fs::create_dir_all(&cfg.data_dir).context("failed to create datadir")?;
-			}
-			cfg.data_dir.canonicalize().context("canonicalizing path")?
-		};
+		// Check for mnemonic file to see if aspd was already initialized.
+		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
+			bail!("Found existing mnemonic file in datadir, aspd probably already initialized!");
+		}
 
-		info!("Creating aspd server at {}", data_dir.display());
+		info!("Creating aspd server at {}", cfg.data_dir.display());
 
 		// create dir if not exit, but check that it's empty
-		fs::create_dir_all(&data_dir).context("can't create dir")?;
+		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
@@ -169,7 +167,7 @@ impl App {
 		let seed = {
 			let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
 
-			fs::write(data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes())
+			fs::write(cfg.data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes())
 				.context("failed to store mnemonic")?;
 
 			mnemonic.to_seed("")
