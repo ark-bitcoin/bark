@@ -10,8 +10,8 @@ use bitcoin::secp256k1::PublicKey;
 use tokio::sync::Mutex;
 
 use aspd_log::{
-	NotSweeping, OnboardFullySwept, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
-	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished
+	NotSweeping, OnboardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
+	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 };
 use aspd_rpc::{self as rpc, ForfeitSignaturesRequest, VtxoSignaturesRequest};
 
@@ -230,6 +230,7 @@ async fn sweep_vtxos() {
 		b.refresh_all().await;
 	});
 	aspd.trigger_round().await;
+	let _ = aspd.wait_for_log::<RoundFinished>().try_wait(1000).await;
 	ctx.bitcoind.generate(30).await;
 
 	// now we expire the first one, still not sweeping because not enough surplus
