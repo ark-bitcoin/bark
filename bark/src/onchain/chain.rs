@@ -128,13 +128,21 @@ impl ChainSourceClient {
 		let balance = wallet.balance();
 
 		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
-		for tx in wallet.transactions() {
-			if let ChainPosition::Unconfirmed { last_seen: Some(last_seen) } = tx.chain_position {
-				if last_seen < now {
-					if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
-						warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
+		let transactions = wallet
+			.transactions()
+			.filter(|tx| {
+				if let ChainPosition::Unconfirmed { last_seen } = tx.chain_position {
+					match last_seen {
+						Some(last_seen) => last_seen < now,
+						None => true,
 					}
+				} else {
+					false
 				}
+			}).collect::<Vec<_>>();
+		for tx in transactions {
+			if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
+				warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
 			}
 		}
 
