@@ -59,7 +59,7 @@ impl MigrationContext {
 		let from_version = migration.from_version();
 
 		if current_version == from_version {
-			info!("Performing migration {}", migration.summary());
+			debug!("Performing migration {}", migration.summary());
 			migration.do_migration(&tx)?;
 			self.update_version(&tx, migration.to_version())?;
 		}
