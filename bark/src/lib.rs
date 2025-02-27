@@ -315,22 +315,30 @@ impl <P>Wallet<P> where
 
 		let asp = match rpc::ArkServiceClient::connect(endpoint).await {
 			Ok(mut client) => {
-				let res = client.handshake(rpc::HandshakeRequest { version: "".into() ,})
+				let version = env!("CARGO_PKG_VERSION").into();
+				let res = client.handshake(rpc::HandshakeRequest { version })
 					.await.context("ark info request failed")?.into_inner();
 
-				let info = res.ark_info.unwrap();
-				if properties.network != info.network.parse().context("invalid network from asp")? {
-					bail!("ASP is for net {} while we are on net {}", info.network, properties.network);
+				if let Some(ref msg) = res.message {
+					warn!("Message from Ark server: \"{}\"", msg);
 				}
 
-				let info = ArkInfo {
-					asp_pubkey: PublicKey::from_slice(&info.pubkey).context("asp pubkey")?,
-					nb_round_nonces: info.nb_round_nonces as usize,
-					vtxo_expiry_delta: info.vtxo_expiry_delta as u16,
-					vtxo_exit_delta: info.vtxo_exit_delta as u16,
-				};
+				if let Some(info) = res.ark_info {
+					if properties.network != info.network.parse().context("invalid network from asp")? {
+						bail!("ASP is for net {} while we are on net {}", info.network, properties.network);
+					}
 
-				Some(AspConnection { info, client })
+					let info = ArkInfo {
+						asp_pubkey: PublicKey::from_slice(&info.pubkey).context("asp pubkey")?,
+						nb_round_nonces: info.nb_round_nonces as usize,
+						vtxo_expiry_delta: info.vtxo_expiry_delta as u16,
+						vtxo_exit_delta: info.vtxo_exit_delta as u16,
+					};
+					Some(AspConnection { info, client })
+				} else {
+					let msg = res.message.as_ref().map(|s| s.as_str()).unwrap_or("NO MESSAGE");
+					bail!("Ark server handshake failed: {}", msg);
+				}
 			},
 			_ => None
 		};
