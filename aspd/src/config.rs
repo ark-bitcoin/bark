@@ -97,7 +97,11 @@ pub struct Config {
 }
 
 impl Config {
-	pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
+	fn load_with_custom_env(
+		config_file: Option<&Path>,
+		#[cfg(test)]
+		custom_env: Option<std::collections::HashMap<String, String>>,
+	) -> anyhow::Result<Self> {
 		let default = config::Config::try_from(&Self::default())
 			.expect("default config failed to deconstruct");
 
@@ -111,10 +115,18 @@ impl Config {
 		if let Some(file) = config_file {
 			builder = builder.add_source(File::from(file));
 		}
-		builder = builder.add_source(Environment::with_prefix("ASPD").separator("_"));
+		let env = Environment::with_prefix("ASPD")
+			.separator("__");
+		#[cfg(test)]
+		let env = env.source(custom_env);
+		builder = builder.add_source(env);
 
 		let cfg = builder.build().context("error building config")?;
 		Ok(cfg.try_deserialize().context("error parsing config")?)
+	}
+
+	pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
+		Self::load_with_custom_env(config_file, #[cfg(test)] None)
 	}
 
 	/// Verifies if the specified configuration is valid
@@ -211,7 +223,7 @@ impl Default for Config {
 
 #[cfg(test)]
 mod test {
-	use std::env;
+	use std::collections::HashMap;
 	use std::str::FromStr;
 	use tonic::transport::Uri;
 	use super::*;
@@ -223,32 +235,32 @@ mod test {
 		let bitcoind_rpc_user = Some(String::from("erlich"));
 		let bitcoind_rpc_pass = Some(String::from("belson"));
 
-		let mut configurations = Config::load(None).unwrap();
-		configurations.bitcoind.url = bitcoind_url.clone();
-		configurations.bitcoind.cookie = bitcoind_cookie.clone();
-		configurations.validate().expect("This config should be valid");
+		let mut cfg = Config::load(None).unwrap();
+		cfg.bitcoind.url = bitcoind_url.clone();
+		cfg.bitcoind.cookie = bitcoind_cookie.clone();
+		cfg.validate().expect("This config should be valid");
 
-		let mut configurations = Config::load(None).unwrap();
-		configurations.bitcoind.url = bitcoind_url.clone();
-		configurations.bitcoind.rpc_user = bitcoind_rpc_user.clone();
-		configurations.bitcoind.rpc_pass = bitcoind_rpc_pass.clone();
-		configurations.validate().expect("This config should be valid");
+		let mut cfg = Config::load(None).unwrap();
+		cfg.bitcoind.url = bitcoind_url.clone();
+		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
+		cfg.bitcoind.rpc_pass = bitcoind_rpc_pass.clone();
+		cfg.validate().expect("This config should be valid");
 
-		let mut configurations = Config::load(None).unwrap();
-		configurations.bitcoind.url = bitcoind_url.clone();
-		configurations.validate().expect_err("Invalid because auth info is missing");
+		let mut cfg = Config::load(None).unwrap();
+		cfg.bitcoind.url = bitcoind_url.clone();
+		cfg.validate().expect_err("Invalid because auth info is missing");
 
-		let mut configurations = Config::load(None).unwrap();
-		configurations.bitcoind.url = bitcoind_url.clone();
-		configurations.bitcoind.rpc_user = bitcoind_rpc_user.clone();
-		configurations.validate().expect_err("Invalid because pass is missing");
+		let mut cfg = Config::load(None).unwrap();
+		cfg.bitcoind.url = bitcoind_url.clone();
+		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
+		cfg.validate().expect_err("Invalid because pass is missing");
 
-		let mut configurations = Config::load(None).unwrap();
-		configurations.bitcoind.url = bitcoind_url.clone();
-		configurations.bitcoind.cookie = bitcoind_cookie.clone();
-		configurations.bitcoind.rpc_user = bitcoind_rpc_user.clone();
-		configurations.bitcoind.rpc_pass = bitcoind_rpc_pass.clone();
-		configurations.validate().expect_err("Invalid. Either cookie or pass but not both");
+		let mut cfg = Config::load(None).unwrap();
+		cfg.bitcoind.url = bitcoind_url.clone();
+		cfg.bitcoind.cookie = bitcoind_cookie.clone();
+		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
+		cfg.bitcoind.rpc_pass = bitcoind_rpc_pass.clone();
+		cfg.validate().expect_err("Invalid. Either cookie or pass but not both");
 	}
 
 	#[test]
@@ -259,7 +271,7 @@ mod test {
 		let client_cert_path = "/hooli/http_public/certs/client.crt".to_string();
 		let client_key_path = "/hooli/http_public/certs/client.key".to_string();
 
-		let mut configurations = Config::load(None).unwrap();
+		let mut cfg = Config::load(None).unwrap();
 
 		let cln = Lightningd {
 			uri: Uri::from_str(uri.clone().as_str()).unwrap(),
@@ -268,43 +280,44 @@ mod test {
 			client_key_path: PathBuf::from(client_key_path.clone()),
 		};
 
-		configurations.bitcoind.cookie = bitcoind_cookie.clone();
-		configurations.lightningd = Some(cln);
+		cfg.bitcoind.cookie = bitcoind_cookie.clone();
+		cfg.lightningd = Some(cln);
 
-		configurations.validate().expect("invalid configuration");
+		cfg.validate().expect("invalid configuration");
 
-		assert_eq!(configurations.clone().lightningd.unwrap().uri, Uri::from_str(uri.clone().as_str()).unwrap());
-		assert_eq!(configurations.clone().lightningd.unwrap().server_cert_path, PathBuf::from(server_cert_path));
-		assert_eq!(configurations.clone().lightningd.unwrap().client_cert_path, PathBuf::from(client_cert_path));
-		assert_eq!(configurations.clone().lightningd.unwrap().client_key_path, PathBuf::from(client_key_path));
+		let lncfg = cfg.lightningd.as_ref().unwrap();
+		assert_eq!(lncfg.uri, Uri::from_str(uri.clone().as_str()).unwrap());
+		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
+		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
+		assert_eq!(lncfg.client_key_path, PathBuf::from(client_key_path));
 	}
 
 	#[test]
-	#[ignore]
 	// ignoring this test because concurrency with environment variables is causing problems.
 	fn cln_config_from_env_vars() {
-		let uri = "http://belson.labs:12345".to_string();
-		let server_cert_path = "/hooli/http_public/certs/server.crt".to_string();
-		let client_cert_path = "/hooli/http_public/certs/client.crt".to_string();
-		let client_key_path = "/hooli/http_public/certs/client.key".to_string();
+		let uri = "http://belson.labs:12345";
+		let server_cert_path = "/hooli/http_public/certs/server.crt";
+		let client_cert_path = "/hooli/http_public/certs/client.crt";
+		let client_key_path = "/hooli/http_public/certs/client.key";
 
-		env::set_var("ASPD_CLN_URI", uri.clone());
-		env::set_var("ASPD_CLN_SERVER_CERT_PATH", server_cert_path.clone());
-		env::set_var("ASPD_CLN_CLIENT_CERT_PATH", client_cert_path.clone());
-		env::set_var("ASPD_CLN_CLIENT_KEY_PATH", client_key_path.clone());
+		let env = [
+			("ASPD__VTXO_EXPIRY_DELTA", "42"),
+			("ASPD__BITCOIND__COOKIE", "/not/hot/dog/but/cookie"),
+			("ASPD__LIGHTNINGD__URI", uri),
+			("ASPD__LIGHTNINGD__SERVER_CERT_PATH", server_cert_path),
+			("ASPD__LIGHTNINGD__CLIENT_CERT_PATH", client_cert_path),
+			("ASPD__LIGHTNINGD__CLIENT_KEY_PATH", client_key_path),
+		].into_iter().map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
 
-		let configurations = Config::load(None).unwrap();
+		let cfg = Config::load_with_custom_env(None, Some(env)).unwrap();
+		cfg.validate().expect("invalid configuration");
 
-		configurations.validate().expect("invalid configuration");
-
-		assert_eq!(configurations.clone().lightningd.unwrap().uri, Uri::from_str(uri.clone().as_str()).unwrap());
-		assert_eq!(configurations.clone().lightningd.unwrap().server_cert_path, PathBuf::from(server_cert_path));
-		assert_eq!(configurations.clone().lightningd.unwrap().client_cert_path, PathBuf::from(client_cert_path));
-		assert_eq!(configurations.clone().lightningd.unwrap().client_key_path, PathBuf::from(client_key_path));
-
-		env::remove_var("ASPD_CLN_URI");
-		env::remove_var("ASPD_CLN_SERVER_CERT_PATH");
-		env::remove_var("ASPD_CLN_CLIENT_CERT_PATH");
-		env::remove_var("ASPD_CLN_CLIENT_KEY_PATH");
+		assert_eq!(cfg.vtxo_expiry_delta, 42);
+		assert_eq!(cfg.bitcoind.cookie, Some("/not/hot/dog/but/cookie".into()));
+		let lncfg = cfg.lightningd.as_ref().unwrap();
+		assert_eq!(lncfg.uri, Uri::from_str(uri).unwrap());
+		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
+		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
+		assert_eq!(lncfg.client_key_path, PathBuf::from(client_key_path));
 	}
 }

@@ -64,7 +64,6 @@ const DEEPLY_CONFIRMED: BlockHeight = 12;
 
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";
-pub const ASPD_CONFIG_FILE: &str = "config.toml";
 
 const MNEMONIC_FILE: &str = "mnemonic";
 
@@ -138,33 +137,15 @@ impl App {
 		cfg.validate().expect("invalid configuration");
 		info!("Resulting configuration: {:#?}", cfg);
 
-		let data_dir = {
-			let data_dir = cfg.data_dir.clone();
-			if !data_dir.exists() {
-				fs::create_dir_all(&data_dir).context("failed to create datadir")?;
-			}
-			data_dir.canonicalize().context("canonicalizing path")?
-		};
+		// Check for mnemonic file to see if aspd was already initialized.
+		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
+			bail!("Found existing mnemonic file in datadir, aspd probably already initialized!");
+		}
 
-		info!("Creating aspd server at {}", data_dir.display());
+		info!("Creating aspd server at {}", cfg.data_dir.display());
 
 		// create dir if not exit, but check that it's empty
-		fs::create_dir_all(&data_dir).context("can't create dir")?;
-
-		let entries = fs::read_dir(&data_dir).context("can't read dir")?;
-		let mut clean_folder = true;
-
-		for entry in entries {
-			let entry = entry.context("can't read entry")?;
-
-			if !entry.file_name().to_string_lossy().ends_with(ASPD_CONFIG_FILE) {
-				clean_folder = false;
-			}
-		}
-
-		if !clean_folder {
-			bail!("aspd is already initialized");
-		}
+		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
@@ -180,19 +161,13 @@ impl App {
 			Ok::<_, anyhow::Error>(block_id)
 		})().context("failed to fetch deep tip from bitcoind")?;
 
-		// write the config to disk
-		let config_str = serde_json::to_string_pretty(&cfg)
-			.expect("serialization can't error");
-		fs::write(data_dir.join("config.json"), config_str.as_bytes())
-			.context("failed to write config file")?;
-
 		let db = database::Db::create(&cfg).await?;
 
 		// Initiate key material.
 		let seed = {
 			let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
 
-			fs::write(data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes())
+			fs::write(cfg.data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes())
 				.context("failed to store mnemonic")?;
 
 			mnemonic.to_seed("")
