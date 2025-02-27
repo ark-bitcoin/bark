@@ -19,7 +19,7 @@ pub struct SqliteClient {
 
 impl SqliteClient {
 	pub fn open(path: PathBuf) -> anyhow::Result<SqliteClient> {
-		info!("Opening database at {}", path.display());
+		debug!("Opening database at {}", path.display());
 		let mut conn = rusqlite::Connection::open(&path)
 			.with_context(|| format!("Error connecting to database {}", path.display()))?;
 
