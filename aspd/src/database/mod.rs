@@ -22,12 +22,12 @@ mod embedded {
 const DEFAULT_DATABASE: &str = "postgres";
 
 pub struct Db {
-	client: Pool<PostgresConnectionManager<NoTls>>
+	pool: Pool<PostgresConnectionManager<NoTls>>
 }
 
 impl Db {
-	async fn run_migrations<'a>(manager: &Pool<PostgresConnectionManager<NoTls>>) -> anyhow::Result<()> {
-		let mut conn = manager.get().await?;
+	async fn run_migrations(&self) -> anyhow::Result<()> {
+		let mut conn = self.pool.get().await?;
 		embedded::migrations::runner().run_async::<Client>(&mut conn).await?;
 		info!("All migrations got successfully run");
 		Ok(())
@@ -48,29 +48,68 @@ impl Db {
 		config
 	}
 
-	pub async fn create(app_config: &Config) -> anyhow::Result<Self> {
-		let config = Self::config(DEFAULT_DATABASE, app_config);
+	async fn raw_connect(app_config: &Config) -> anyhow::Result<Client> {
+		let config = Self::config(&app_config.postgres.name, app_config);
+		let (client, connection) = config.connect(NoTls).await?;
 
-		let manager = PostgresConnectionManager::new(config, NoTls);
-		let pool = Pool::builder().build(manager).await.expect("Failed to create pool");
+		tokio::spawn(async move {
+			if let Err(e) = connection.await {
+				panic!("postgres daemon connection error: {}", e);
+			}
+		});
 
-		let conn = pool.get().await?;
-		let statement = conn.prepare(
-			&format!("CREATE DATABASE \"{}\"", app_config.postgres.name)
-		).await?;
-		conn.execute(&statement, &[]).await?;
-
-		Self::connect(app_config).await
+		Ok(client)
 	}
 
-	pub async fn connect(app_config: &Config) -> anyhow::Result<Self> {
-		let config = Self::config(&app_config.postgres.name, app_config);
+	async fn pool_connect(database: &str, app_config: &Config) -> anyhow::Result<Pool<PostgresConnectionManager<NoTls>>> {
+		let config = Self::config(database, app_config);
 
 		let manager = PostgresConnectionManager::new(config, NoTls);
-		let pool = Pool::builder().build(manager).await.expect("Failed to create pool");
+		Ok(Pool::builder().build(manager).await?)
+	}
 
-		Self::run_migrations(&pool).await?;
-		Ok(Self { client: pool })
+	async fn check_database_emptiness(conn: &Client) -> anyhow::Result<()> {
+		let statement = conn.prepare("
+			SELECT COUNT(*)
+			FROM pg_catalog.pg_tables
+			WHERE schemaname NOT IN ('pg_catalog', 'information_schema');
+		").await?;
+
+		if conn.query_one(&statement, &[]).await?.get::<_, i64>(0) > 0 {
+			bail!("Database must be empty to create an Ark Server in it.")
+		}
+
+		Ok(())
+	}
+
+	pub async fn connect(app_config: &Config)  -> anyhow::Result<Self> {
+		let pool = Self::pool_connect(&app_config.postgres.name, app_config).await?;
+
+		let db = Db { pool };
+		db.run_migrations().await?;
+
+		Ok(db)
+	}
+
+	pub async fn create(app_config: &Config) -> anyhow::Result<Self> {
+		info!("Checking if a database exists...");
+		let connect = Self::raw_connect(app_config).await;
+
+		if let Ok(conn) = connect {
+			info!("A database already exists for the server, checking if it is empty.");
+			Self::check_database_emptiness(&conn).await?;
+		} else {
+			info!("No database set up yet, creating a new one.");
+			let pool = Self::pool_connect(DEFAULT_DATABASE, app_config).await?;
+			let conn= pool.get().await?;
+
+			let statement = conn.prepare(
+				&format!("CREATE DATABASE \"{}\"", app_config.postgres.name)
+			).await?;
+			conn.execute(&statement, &[]).await?;
+		}
+
+		Self::connect(app_config).await
 	}
 
 	/**
@@ -103,7 +142,7 @@ impl Db {
 
 	/// Atomically insert the given vtxos.
 	pub async fn insert_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
-		let mut conn = self.client.get().await?;
+		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
 		Self::inner_insert_vtxos(&tx, vtxos).await?;
@@ -117,7 +156,7 @@ impl Db {
 		&self,
 		height: BlockHeight,
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<OnboardVtxo>> + '_> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 
 		// TODO: maybe store kind in a column to filter onboard at the db level
 		let statement = conn.prepare_typed("
@@ -135,7 +174,7 @@ impl Db {
 	}
 
 	pub async fn remove_onboard(&self, vtxo: &OnboardVtxo) -> anyhow::Result<()> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
 			UPDATE vtxo SET deleted_at = NOW() WHERE id = $1;
@@ -165,7 +204,7 @@ impl Db {
 	/// the time this call returns. The caller should ensure no changes
 	/// are made to them meanwhile.
 	pub async fn check_fetch_unspent_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let mut ret = Vec::with_capacity(ids.len());
 
 		for id in ids {
@@ -184,7 +223,7 @@ impl Db {
 
 	/// Set the vtxo as being forfeited.
 	pub async fn set_vtxo_forfeited(&self, id: VtxoId, sigs: Vec<schnorr::Signature>) -> anyhow::Result<()> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare_typed("
 			UPDATE vtxo SET forfeit_sigs = $2 WHERE id = $1;
 		", &[Type::TEXT, Type::BYTEA_ARRAY]).await?;
@@ -216,7 +255,7 @@ impl Db {
 		spending_tx: Txid,
 		new_vtxos: &[ArkoorVtxo],
 	) -> anyhow::Result<Option<VtxoId>> {
-		let mut conn = self.client.get().await?;
+		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
 		let statement = tx.prepare_typed("
@@ -244,7 +283,7 @@ impl Db {
 	*/
 
 	pub async fn store_oor(&self, pubkey: PublicKey, vtxo: Vtxo) -> anyhow::Result<()> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			INSERT INTO arkoor_mailbox (id, pubkey, vtxo) VALUES ($1, $2, $3);
 		").await?;
@@ -257,7 +296,7 @@ impl Db {
 	}
 
 	pub async fn pull_oors(&self, pubkey: PublicKey) -> anyhow::Result<Vec<Vtxo>> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, pubkey, vtxo FROM arkoor_mailbox WHERE pubkey = $1
 		").await?;
@@ -289,7 +328,7 @@ impl Db {
 	) -> anyhow::Result<()> {
 		let round_id = round_tx.compute_txid();
 
-		let mut conn = self.client.get().await?;
+		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
 		let statement = tx.prepare_typed("
@@ -317,7 +356,7 @@ impl Db {
 	///
 	/// No particular order is guaranteed.
 	pub async fn fetch_all_rounds(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<StoredRound>> + '_> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, tx, signed_tree, nb_input_vtxos FROM round
 		").await?;
@@ -333,7 +372,7 @@ impl Db {
 	}
 
 	pub async fn get_round(&self, id: Txid) -> anyhow::Result<Option<StoredRound>> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE id = $1;
 		").await?;
@@ -348,7 +387,7 @@ impl Db {
 	}
 
 	pub async fn remove_round(&self, id: Txid) -> anyhow::Result<()> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
 			UPDATE round SET deleted_at = NOW() WHERE id = $1;
@@ -361,7 +400,7 @@ impl Db {
 
 	/// Get all round IDs of rounds that expired before or on `height`.
 	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<Txid>> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry <= $1
 		").await?;
@@ -371,7 +410,7 @@ impl Db {
 	}
 
 	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<Txid>> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry > $1
 		").await?;
@@ -386,7 +425,7 @@ impl Db {
 
 	/// Add the pending sweep tx.
 	pub async fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare_typed("
 			INSERT INTO pending_sweep (txid, tx) VALUES ($1, $2);
 		", &[Type::TEXT, Type::BYTEA]).await?;
@@ -400,7 +439,7 @@ impl Db {
 
 	/// Drop the pending sweep tx by txid.
 	pub async fn drop_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
 			UPDATE pending_sweep SET deleted_at = NOW() WHERE txid = $1;
@@ -412,7 +451,7 @@ impl Db {
 
 	/// Fetch all pending sweep txs.
 	pub async fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT txid, tx FROM pending_sweep
 		").await?;
@@ -438,7 +477,7 @@ impl Db {
 		let mut buf = Vec::new();
 		ciborium::into_writer(c, &mut buf).unwrap();
 
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare_typed("
 			INSERT INTO wallet_changeset (content) VALUES ($1);
 		", &[Type::BYTEA]).await?;
@@ -450,7 +489,7 @@ impl Db {
 	pub async fn read_aggregate_changeset(&self) -> anyhow::Result<Option<ChangeSet>> {
 		let mut ret = Option::<ChangeSet>::None;
 
-		let conn = self.client.get().await?;
+		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT content FROM wallet_changeset
 		").await?;
