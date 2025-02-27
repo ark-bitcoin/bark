@@ -258,7 +258,20 @@ impl ChainSourceClient {
 				}
 				Ok(())
 			},
-			ChainSourceClient::Esplora(ref _client) => unimplemented!(),
+			ChainSourceClient::Esplora(ref client) => {
+				let txs = txs.iter().map(|t| t.borrow().clone()).collect::<Vec<_>>();
+				let res = client.submit_package(&txs, None, None).await?;
+				if res.package_msg != "success" {
+					let errors = res.tx_results.values()
+						.map(|t| format!("tx {}: {}",
+							t.txid, t.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)"),
+						))
+						.collect::<Vec<_>>();
+					bail!("msg: '{}', errors: {:?}", res.package_msg, errors);
+				}
+
+				Ok(())
+			},
 		}
 	}
 

@@ -58,9 +58,9 @@ futures = {version = "0.3.30"}
 bip39 = { version = "2.0.0", features = [ "rand", "serde" ] }
 miniscript = "12.2"
 rand = { version = "0.8.5", features = [ "std", "std_rng" ] }
-bdk_wallet = "1.0.0"
-bdk_esplora = { version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false }
-bdk_bitcoind_rpc = "0.17.1"
+bdk_wallet = { package = "bdk_wallet", version = "1.0.0", git = "https://github.com/acidbunny21/bdk.git", rev = "7bfde8de554b260214a380fb301f5cfa9966d95e" }
+bdk_esplora = { package = "bdk_esplora", version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false, git = "https://github.com/acidbunny21/bdk.git", rev = "7bfde8de554b260214a380fb301f5cfa9966d95e" }
+bdk_bitcoind_rpc = { package = "bdk_bitcoind_rpc", version = "0.18.0", git = "https://github.com/acidbunny21/bdk.git", rev = "7bfde8de554b260214a380fb301f5cfa9966d95e" }
 # tracing and monitoring
 opentelemetry = "0.27.1"
 opentelemetry_sdk = { version = "0.27.0", features = ["tracing", "rt-tokio"] }
