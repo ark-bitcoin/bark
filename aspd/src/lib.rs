@@ -180,12 +180,6 @@ impl App {
 			Ok::<_, anyhow::Error>(block_id)
 		})().context("failed to fetch deep tip from bitcoind")?;
 
-		// write the config to disk
-		let config_str = serde_json::to_string_pretty(&cfg)
-			.expect("serialization can't error");
-		fs::write(data_dir.join("config.json"), config_str.as_bytes())
-			.context("failed to write config file")?;
-
 		let db = database::Db::create(&cfg).await?;
 
 		// Initiate key material.
