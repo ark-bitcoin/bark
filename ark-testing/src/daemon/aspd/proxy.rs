@@ -14,8 +14,8 @@ use crate::util::FutureExt;
 pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 	fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel>;
 
-	async fn get_ark_info(&mut self, req: rpc::Empty) -> Result<rpc::ArkInfo, tonic::Status> {
-		Ok(self.upstream().get_ark_info(req).await?.into_inner())
+	async fn handshake(&mut self, req: rpc::HandshakeRequest) -> Result<rpc::HandshakeResponse, tonic::Status> {
+		Ok(self.upstream().handshake(req).await?.into_inner())
 	}
 
 	async fn get_fresh_rounds(&mut self, req: rpc::FreshRoundsRequest) -> Result<rpc::FreshRounds, tonic::Status> {
@@ -139,10 +139,10 @@ struct AspdRpcProxyWrapper<T: AspdRpcProxy>(T);
 
 #[tonic::async_trait]
 impl<T: AspdRpcProxy> rpc::ark_service_server::ArkService for AspdRpcProxyWrapper<T> {
-	async fn get_ark_info(
-		&self, req: tonic::Request<rpc::Empty>,
-	) -> Result<tonic::Response<rpc::ArkInfo>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::get_ark_info(&mut self.0.clone(), req.into_inner()).await?))
+	async fn handshake(
+		&self, req: tonic::Request<rpc::HandshakeRequest>,
+	) -> Result<tonic::Response<rpc::HandshakeResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::handshake(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_fresh_rounds(

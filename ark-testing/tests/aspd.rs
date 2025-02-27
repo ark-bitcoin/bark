@@ -114,8 +114,10 @@ async fn restart_key_stability() {
 
 	let asp_key1 = {
 		let mut client = aspd.get_public_client().await;
-		let res = client.get_ark_info(rpc::Empty {}).await.unwrap().into_inner();
-		PublicKey::from_slice(&res.pubkey).unwrap()
+		let res = client.handshake(rpc::HandshakeRequest {
+			version: "testing".into(),
+		}).await.unwrap().into_inner();
+		PublicKey::from_slice(&res.ark_info.unwrap().pubkey).unwrap()
 	};
 	let addr1 = {
 		let mut admin_client = aspd.get_admin_client().await;
@@ -138,8 +140,10 @@ async fn restart_key_stability() {
 	let aspd = ctx.new_aspd_with_cfg("aspd", cfg).await;
 	let asp_key2 = {
 		let mut client = aspd.get_public_client().await;
-		let res = client.get_ark_info(rpc::Empty {}).await.unwrap().into_inner();
-		PublicKey::from_slice(&res.pubkey).unwrap()
+		let res = client.handshake(rpc::HandshakeRequest {
+			version: "testing".into(),
+		}).await.unwrap().into_inner();
+		PublicKey::from_slice(&res.ark_info.unwrap().pubkey).unwrap()
 	};
 	let addr2 = {
 		let mut admin_client = aspd.get_admin_client().await;

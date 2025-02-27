@@ -219,7 +219,11 @@ impl AspdHelper {
 
 	async fn public_grpc_is_ready(&self) -> bool {
 		match self.connect_public_client().await {
-			Ok(mut c) => c.get_ark_info(rpc::Empty {}).await.is_ok(),
+			Ok(mut c) => {
+				c.handshake(rpc::HandshakeRequest {
+					version: "testing".into(),
+				}).await.is_ok()
+			},
 			Err(_e) => false,
 		}
 	}

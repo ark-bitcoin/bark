@@ -315,18 +315,19 @@ impl <P>Wallet<P> where
 
 		let asp = match rpc::ArkServiceClient::connect(endpoint).await {
 			Ok(mut client) => {
-				let res = client.get_ark_info(rpc::Empty{})
+				let res = client.handshake(rpc::HandshakeRequest { version: "".into() ,})
 					.await.context("ark info request failed")?.into_inner();
 
-				if properties.network != res.network.parse().context("invalid network from asp")? {
-					bail!("ASP is for net {} while we are on net {}", res.network, properties.network);
+				let info = res.ark_info.unwrap();
+				if properties.network != info.network.parse().context("invalid network from asp")? {
+					bail!("ASP is for net {} while we are on net {}", info.network, properties.network);
 				}
 
 				let info = ArkInfo {
-					asp_pubkey: PublicKey::from_slice(&res.pubkey).context("asp pubkey")?,
-					nb_round_nonces: res.nb_round_nonces as usize,
-					vtxo_expiry_delta: res.vtxo_expiry_delta as u16,
-					vtxo_exit_delta: res.vtxo_exit_delta as u16,
+					asp_pubkey: PublicKey::from_slice(&info.pubkey).context("asp pubkey")?,
+					nb_round_nonces: info.nb_round_nonces as usize,
+					vtxo_expiry_delta: info.vtxo_expiry_delta as u16,
+					vtxo_exit_delta: info.vtxo_exit_delta as u16,
 				};
 
 				Some(AspConnection { info, client })
