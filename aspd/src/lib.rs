@@ -64,7 +64,6 @@ const DEEPLY_CONFIRMED: BlockHeight = 12;
 
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";
-pub const ASPD_CONFIG_FILE: &str = "config.toml";
 
 const MNEMONIC_FILE: &str = "mnemonic";
 
@@ -139,32 +138,16 @@ impl App {
 		info!("Resulting configuration: {:#?}", cfg);
 
 		let data_dir = {
-			let data_dir = cfg.data_dir.clone();
-			if !data_dir.exists() {
-				fs::create_dir_all(&data_dir).context("failed to create datadir")?;
+			if !cfg.data_dir.exists() {
+				fs::create_dir_all(&cfg.data_dir).context("failed to create datadir")?;
 			}
-			data_dir.canonicalize().context("canonicalizing path")?
+			cfg.data_dir.canonicalize().context("canonicalizing path")?
 		};
 
 		info!("Creating aspd server at {}", data_dir.display());
 
 		// create dir if not exit, but check that it's empty
 		fs::create_dir_all(&data_dir).context("can't create dir")?;
-
-		let entries = fs::read_dir(&data_dir).context("can't read dir")?;
-		let mut clean_folder = true;
-
-		for entry in entries {
-			let entry = entry.context("can't read entry")?;
-
-			if !entry.file_name().to_string_lossy().ends_with(ASPD_CONFIG_FILE) {
-				clean_folder = false;
-			}
-		}
-
-		if !clean_folder {
-			bail!("aspd is already initialized");
-		}
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;

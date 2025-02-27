@@ -15,7 +15,6 @@ use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
 use aspd_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
-use aspd::ASPD_CONFIG_FILE;
 use aspd_rpc as rpc;
 pub use aspd::config::{self, Config};
 
@@ -28,6 +27,8 @@ pub type Aspd = Daemon<AspdHelper>;
 pub type AdminClient = rpc::AdminServiceClient<tonic::transport::Channel>;
 pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 
+
+pub const ASPD_CONFIG_FILE: &str = "config.toml";
 
 pub struct AspdHelper {
 	name: String,
