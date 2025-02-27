@@ -434,43 +434,6 @@ impl Db {
 	 * Wallet
 	*/
 
-	pub async fn get_master_seed(&self) -> anyhow::Result<Option<Vec<u8>>> {
-		let conn = self.client.get().await?;
-		let statement = conn.prepare("
-			SELECT seed FROM wallet
-		").await?;
-		let rows = conn.query(&statement, &[]).await?;
-
-		Ok(rows.get(0).map(|row| row.get::<_, Vec<u8>>(0)))
-	}
-
-	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Option<String>> {
-		let conn = self.client.get().await?;
-		let statement = conn.prepare("
-			SELECT mnemonic FROM wallet
-		").await?;
-		let rows = conn.query(&statement, &[]).await?;
-
-		Ok(rows.get(0).map(|row| row.get::<_, String>(0)))
-	}
-
-	pub async fn store_master_mnemonic_and_seed(&self, mnemonic: &bip39::Mnemonic) -> anyhow::Result<()> {
-		if self.get_master_seed().await?.is_some() {
-			bail!("a wallet already exists in this DB")
-		}
-
-		let conn = self.client.get().await?;
-		let statement = conn.prepare_typed("
-			INSERT INTO wallet (mnemonic, seed) VALUES ($1, $2);
-		", &[Type::TEXT, Type::BYTEA]).await?;
-		conn.execute(
-			&statement,
-			&[&mnemonic.to_string(), &mnemonic.to_seed("").to_vec()]
-		).await?;
-
-		Ok(())
-	}
-
 	pub async fn store_changeset(&self, c: &ChangeSet) -> anyhow::Result<()> {
 		let mut buf = Vec::new();
 		ciborium::into_writer(c, &mut buf).unwrap();

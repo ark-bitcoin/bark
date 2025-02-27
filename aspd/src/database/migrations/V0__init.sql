@@ -45,12 +45,6 @@ CREATE TABLE IF NOT EXISTS all_pending_sweep (
 CREATE VIEW pending_sweep AS
 SELECT * FROM all_pending_sweep WHERE deleted_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS wallet (
-	id 				SERIAL PRIMARY KEY,
-	mnemonic 		TEXT NOT NULL,
-	seed 			BYTEA
-);
-
 CREATE TABLE IF NOT EXISTS wallet_changeset (
 	id 				SERIAL PRIMARY KEY,
 	content			BYTEA

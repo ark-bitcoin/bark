@@ -24,12 +24,13 @@ pub use crate::config::Config;
 use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -64,6 +65,9 @@ const DEEPLY_CONFIRMED: BlockHeight = 12;
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";
 pub const ASPD_CONFIG_FILE: &str = "config.toml";
+
+const MNEMONIC_FILE: &str = "mnemonic";
+
 
 pub struct RoundHandle {
 	round_event_tx: tokio::sync::broadcast::Sender<RoundEvent>,
@@ -124,6 +128,11 @@ impl App {
 		Ok((wallet, asp_key))
 	}
 
+	fn get_mnemonic_from_path(data_dir: &PathBuf) -> anyhow::Result<Mnemonic> {
+		let mnemonic = fs::read_to_string(data_dir.join(MNEMONIC_FILE)).context("failed to read mnemonic")?;
+		Ok(Mnemonic::from_str(&mnemonic)?)
+	}
+
 	pub async fn create(config_file: Option<&Path>) -> anyhow::Result<()> {
 		let cfg = Config::load(config_file)?;
 		cfg.validate().expect("invalid configuration");
@@ -182,13 +191,11 @@ impl App {
 		// Initiate key material.
 		let seed = {
 			let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
-			db.store_master_mnemonic_and_seed(&mnemonic)
-				.await
+
+			fs::write(data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes())
 				.context("failed to store mnemonic")?;
 
-			let seed = mnemonic.to_seed("");
-
-			seed.to_vec()
+			mnemonic.to_seed("")
 		};
 
 		// Store initial wallet state to avoid full chain sync.
@@ -218,10 +225,8 @@ impl App {
 			.await
 			.context("failed to open db")?;
 
-		let seed = db.get_master_seed()
-			.await
-			.context("db error")?
-			.context("db doesn't contain seed")?;
+		let seed = Self::get_mnemonic_from_path(&cfg.data_dir)?.to_seed("");
+
 		let init = db.read_aggregate_changeset().await?;
 		let (wallet, asp_key) = Self::wallet_from_seed(cfg.network, &seed, init)
 			.context("error loading wallet")?;
@@ -780,8 +785,8 @@ impl App {
 
 	// ** SOME ADMIN COMMANDS **
 
-	pub async fn get_master_mnemonic(&self) -> anyhow::Result<String> {
-		Ok(self.db.get_master_mnemonic().await?.expect("app running"))
+	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Mnemonic> {
+		Ok(Self::get_mnemonic_from_path(&self.config.data_dir)?)
 	}
 }
 
