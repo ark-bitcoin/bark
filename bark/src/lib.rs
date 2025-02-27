@@ -293,7 +293,7 @@ impl <P>Wallet<P> where
 		let asp_uri = tonic::transport::Uri::from_str(&config.asp_address)
 			.context("invalid asp addr")?;
 
-		let scheme = asp_uri.scheme_str().expect("no scheme?");
+		let scheme = asp_uri.scheme_str().unwrap_or("https");
 		if scheme != "http" && scheme != "https" {
 			bail!("ASP scheme must be either http or https");
 		}
