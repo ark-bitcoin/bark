@@ -116,7 +116,7 @@ impl Config {
 			builder = builder.add_source(File::from(file));
 		}
 		let env = Environment::with_prefix("ASPD")
-			.separator("_");
+			.separator("__");
 		#[cfg(test)]
 		let env = env.source(custom_env);
 		builder = builder.add_source(env);
@@ -293,7 +293,6 @@ mod test {
 	}
 
 	#[test]
-	#[ignore]
 	// ignoring this test because concurrency with environment variables is causing problems.
 	fn cln_config_from_env_vars() {
 		let uri = "http://belson.labs:12345";
@@ -302,12 +301,12 @@ mod test {
 		let client_key_path = "/hooli/http_public/certs/client.key";
 
 		let env = [
-			("ASPD_VTXO_EXPIRY_DELTA", "42"),
-			("ASPD_BITCOIND_COOKIE", "/not/hot/dog/but/cookie"),
-			("ASPD_LIGHTNINGD_URI", uri),
-			("ASPD_LIGHTNINGD_SERVER_CERT_PATH", server_cert_path),
-			("ASPD_LIGHTNINGD_CLIENT_CERT_PATH", client_cert_path),
-			("ASPD_LIGHTNINGD_CLIENT_KEY_PATH", client_key_path),
+			("ASPD__VTXO_EXPIRY_DELTA", "42"),
+			("ASPD__BITCOIND__COOKIE", "/not/hot/dog/but/cookie"),
+			("ASPD__LIGHTNINGD__URI", uri),
+			("ASPD__LIGHTNINGD__SERVER_CERT_PATH", server_cert_path),
+			("ASPD__LIGHTNINGD__CLIENT_CERT_PATH", client_cert_path),
+			("ASPD__LIGHTNINGD__CLIENT_KEY_PATH", client_key_path),
 		].into_iter().map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
 
 		let cfg = Config::load_with_custom_env(None, Some(env)).unwrap();
