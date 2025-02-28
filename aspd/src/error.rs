@@ -176,10 +176,13 @@ mod test {
 	fn downcast() {
 		let e = Result::<(), _>::Err(TestError)
 			.context("inner_context")
-			.badarg("badarg_context")
+			.badarg("badarg1_context")
+			.badarg("badarg2_context")
 			.context("outer_context")
 			.unwrap_err();
-		let _ = e.downcast_ref::<BadArgument>().unwrap();
+		let b = e.downcast_ref::<BadArgument>().unwrap();
+		assert_eq!(format!("{}", b), "bad user input: badarg2_context");
+		assert_eq!(format!("{:?}", b), "bad user input: badarg2_context");
 
 		// both
 		let e = Result::<(), _>::Err(TestError)
@@ -190,7 +193,8 @@ mod test {
 			.context("outer_context")
 			.unwrap_err();
 		let _ = e.downcast_ref::<BadArgument>().unwrap();
-		let _ = e.downcast_ref::<NotFound>().unwrap();
+		let nf = e.downcast_ref::<NotFound>().unwrap();
+		assert_eq!(nf.identifiers(), &vec!["42".to_owned()])
 	}
 
 	#[test]
