@@ -52,7 +52,7 @@ enum TxStatus {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-pub (crate) struct ExitIndex {
+pub struct ExitIndex {
 	/// The vtxos in process of exit
 	vtxos: Vec<Vtxo>,
 	/// The status of the exit outputs, kept to know when it's ok to remove vtxo from exit index
