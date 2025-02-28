@@ -19,6 +19,7 @@ use ark::Movement;
 use bark::UtxoInfo;
 use bark_json::cli as json;
 
+use crate::context::ToAspUrl;
 use crate::{Bitcoind, Electrs};
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
@@ -136,6 +137,12 @@ impl Bark {
 
 	pub fn command_log_file(&self) -> PathBuf {
 		self.config.datadir.join(COMMAND_LOG_FILE)
+	}
+
+	/// Set the bark's ASP address.
+	pub async fn set_asp(&self, asp: &dyn ToAspUrl) {
+		let url = asp.asp_url();
+		self.run(["config", "--dangerous", "--asp", &url]).await;
 	}
 
 	/// Waits until a transaction with the given ID is synced by the chain source in use by the bark
