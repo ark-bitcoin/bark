@@ -226,17 +226,21 @@ enum Command {
 	/// Perform a unilateral exit from the Ark
 	#[command()]
 	Exit {
-		/// If set, only try to make progress on pending exits and don't
-		/// initiate exits on VTXOs in wallet
+		/// If set, it will exit all VTXOs still owned by the wallet.
+		///
+		/// If neither `all` or `vtxos` arg is set, the command will only try to progress already ongoing exits
 		#[arg(long)]
-		only_progress: bool,
+		all: bool,
+
+		/// List of vtxos that should be exited
+		///
+		/// If neither `all` or `vtxos` arg is set, the command will only try to progress already ongoing exits
+		#[arg(long)]
+		vtxos: Option<Vec<String>>,
 
 		/// Keep running until the entire exit is finished. This can take several hours
 		#[arg(long)]
 		wait: bool,
-
-		//TODO(stevenroose) add a option to claim claimable exits while others are not claimable
-		//yet
 	},
 
 	/// Dev command to drop the vtxo database
@@ -565,14 +569,32 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			}
 		},
-		Command::Exit { only_progress, wait } => {
-			if !only_progress {
-				if let Err(e) = w.sync_ark().await {
-					warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
-				}
+		Command::Exit { wait, all,  vtxos } => {
+			match (all, vtxos) {
+				(false, Some(vtxos)) => {
+					let vtxos = vtxos
+						.into_iter()
+						.map(|vtxo| {
+							VtxoId::from_str(&vtxo).context(format!("invalid vtxoid: {}", vtxo))
+						})
+						.collect::<anyhow::Result<Vec<_>>>()?;
 
-				w.exit.start_exit_for_entire_wallet().await
-					.context("error starting exit process for existing vtxos")?;
+					let filter = VtxoFilter::new(&w).include_many(vtxos.into_iter());
+					let vtxos = w.vtxos_with(filter)?;
+
+					w.exit.start_exit_for_vtxos(&vtxos).await
+						.context("error starting exit process for existing vtxos")?;
+				},
+				(true, None) => {
+					if let Err(e) = w.sync_ark().await {
+						warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
+					}
+
+					w.exit.start_exit_for_entire_wallet().await
+						.context("error starting exit process for existing vtxos")?;
+				},
+				(false, None) => info!("Progressing exit txs broadcast"),
+				(true, Some(_)) => bail!("You must specify either `all` or `vtxos` argument to exit")
 			}
 
 			let mut wallet = Some(w);
@@ -583,27 +605,16 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				let wallet_mut = wallet.as_mut().unwrap();
 
-				let res = wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
+				wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
 					.context("error making progress on exit process")?;
 
-				// Print the output as json
-				let json_output = match res {
-					Some(ref status) => match status {
-						bark::ExitStatus::NeedMoreTxs => {
-							json::ExitStatus { done: false, height: None }
-						},
-						bark::ExitStatus::WaitingForHeight(h) => {
-							json::ExitStatus { done: false, height: Some(*h) }
-						},
-						bark::ExitStatus::CanSpendAllOutputs => {
-							json::ExitStatus { done: true, height: None }
-						},
-					},
-					None => json::ExitStatus { done: false, height: None }
-				};
-				serde_json::to_writer_pretty(io::stdout(), &json_output).unwrap();
+				let done = wallet_mut.exit.list_pending_exits().await?.is_empty();
+				let height = wallet_mut.exit.all_spendable_at_height().await;
 
-				if !wait || res.is_none() || res.unwrap() == bark::ExitStatus::CanSpendAllOutputs {
+				// Print the output as json
+				serde_json::to_writer_pretty(io::stdout(), &json::ExitStatus { done, height }).unwrap();
+
+				if !wait || done {
 					break;
 				}
 
