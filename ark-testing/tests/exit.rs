@@ -36,6 +36,45 @@ async fn complete_exit(bark: &Bark) {
 }
 
 #[tokio::test]
+async fn simple_exit() {
+	let random_addr = Address::from_str(
+		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
+	).unwrap().assume_checked();
+
+	// Initialize the test
+	let ctx = TestContext::new("exit/simple_exit").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	ctx.bitcoind.generate(1).await;
+
+	bark.onboard(sat(500_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	bark.refresh_all().await;
+	let vtxo = &bark.vtxos().await[0];
+
+	aspd.stop().await.unwrap();
+	bark.exit_all().await;
+	complete_exit(&bark).await;
+	ctx.bitcoind.generate(1).await;
+
+	// Wallet has 1_000_000 sats of funds minus fees
+	assert_eq!(bark.onchain_balance().await, sat(993_210));
+
+	// Verify exit output is considered as part of the wallets
+	let utxos = bark.utxos().await;
+	assert!(
+		utxos.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount),
+		"vtxo={:?}; utxos: {:?}", vtxo, utxos,
+	);
+
+	// Verify we can send exited utxo
+	// Sending sats more than vtxo amount ensure we spend all available utxos
+	// (vtxo output and cpfp change)
+	bark.onchain_send(&random_addr, vtxo.amount + Amount::ONE_SAT).await;
+}
+
+#[tokio::test]
 async fn exit_round() {
 	let random_addr = Address::from_str(
 		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
