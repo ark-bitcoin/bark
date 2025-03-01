@@ -41,11 +41,10 @@ pub struct NotFound {
 }
 
 impl NotFound {
-	pub fn new<I, V>(ids: V, context: impl fmt::Display + Send + Sync + 'static) -> NotFound
-	where
-		V: IntoIterator<Item = I>,
-		I: fmt::Display,
-	{
+	pub fn new(
+		ids: impl IntoIterator<Item = impl fmt::Display>,
+		context: impl fmt::Display + Send + Sync + 'static,
+	) -> NotFound {
 		NotFound {
 			ids: ids.into_iter().map(|i| i.to_string()).collect(),
 			context: Box::new(context),
