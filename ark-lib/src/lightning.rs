@@ -1,7 +1,7 @@
 
 use std::{fmt, io};
 
-use bitcoin::{Amount, FeeRate, OutPoint, ScriptBuf, Sequence, TapSighash, Transaction, TxIn, TxOut, Weight, Witness};
+use bitcoin::{Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
@@ -109,13 +109,13 @@ impl Bolt11Payment {
 		let dust_anchor_output = fee::dust_anchor();
 
 		Transaction {
-			version: bitcoin::blockdata::transaction::Version::TWO,
+			version: bitcoin::blockdata::transaction::Version(3),
 			lock_time: bitcoin::absolute::LockTime::ZERO,
 			input: self.inputs.iter().map(|vtxo| {
 				TxIn {
 					previous_output: vtxo.point(),
 					script_sig: ScriptBuf::new(),
-					sequence: Sequence::from_height(self.htlc_delta),
+					sequence: Sequence::ZERO,
 					witness: Witness::new()
 				}
 			}).collect(),
@@ -155,20 +155,16 @@ impl Bolt11Payment {
 		}
 	}
 
-	pub fn htlc_sighashes(&self) -> Vec<TapSighash> {
+	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
 		let tx = self.unsigned_transaction();
 
 		let prevouts = self.inputs.iter().map(|v| v.txout()).collect::<Vec<_>>();
 		let prevouts = bitcoin::sighash::Prevouts::All(&prevouts);
 
-		let mut shc = bitcoin::sighash::SighashCache::new(&tx);
-		self.inputs.iter().enumerate().map(|(idx, _input)| {
-			shc.taproot_signature_hash(
-				idx,
-				&prevouts,
-				None,
-				None,
-				bitcoin::TapSighashType::All,
+		let mut shc = bitcoin::sighash::SighashCache::new(tx);
+		(0..self.inputs.len()).map(|idx| {
+			shc.taproot_key_spend_signature_hash(
+				idx, &prevouts, bitcoin::TapSighashType::Default,
 			).expect("sighash error")
 		}).collect()
 	}
@@ -230,7 +226,7 @@ impl Bolt11Payment {
 				&final_sig,
 				&sighashes[idx].into(),
 				&input.spec().exit_taproot().output_key().to_inner(),
-			).is_ok(), "invalid oor tx signature produced");
+			).is_ok(), "invalid htlc tx signature produced");
 			sigs.push(final_sig);
 		}
 
