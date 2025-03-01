@@ -19,7 +19,7 @@
 				bitcoinVersion = "28.0";
 				lightningVersion = "24.08.2";
 				protobufVersion = "3.12.4";
-				electrsRevision = "a9a39b1616591fb08514fba4df1c1ca11b24a500";
+				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 
 				lib = nixpkgs.lib;
 				isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
@@ -49,7 +49,7 @@
 						owner = "stevenroose";
 						repo = "electrs";
 						rev = electrsRevision;
-						hash = "sha256-7AANp7WIS7Xa2KiHsOi+YE6/yCi4UDWk2FoEisI/zms=";
+						hash = "sha256-3/0dl+HhUQdCX66ALj+gMndhQAx3AoPJMCqQyq/PK+g=";
 					};
 
 					ROCKSDB_LIB_DIR = "${pkgs.rocksdb}/lib/";

@@ -131,7 +131,7 @@ steps:
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
-      - cargo test --package ark-testing -- --skip exit --test-threads=$${MAX_THREADS}
+      - cargo test --package ark-testing -- --test-threads=$${MAX_THREADS}
 
 # Parse version from tag
   - name: parse-versions

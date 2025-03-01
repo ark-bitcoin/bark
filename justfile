@@ -34,7 +34,7 @@ test-integration TEST="": build docker-pull
 
 alias int-esplora := test-integration-esplora
 test-integration-esplora TEST="": build docker-pull
-	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}} -- --skip exit
+	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}}
 
 test: test-unit test-integration test-integration-esplora
 
