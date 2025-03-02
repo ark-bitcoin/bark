@@ -193,11 +193,12 @@ impl TxIndex {
 	/// Register a new tx in the index and return the tx handle.
 	pub async fn register(&self, tx: Transaction) -> Tx {
 		let txid = tx.compute_txid();
-		if let Some(tx) = self.get(&txid).await {
-			tx
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.get(&txid) {
+			tx.clone()
 		} else {
 			let ret = IndexedTx::new(txid, tx);
-			self.tx_map.write().await.insert(txid, ret.clone());
+			tx_map.insert(txid, ret.clone());
 			ret
 		}
 	}
@@ -205,11 +206,12 @@ impl TxIndex {
 	/// Register a new tx in the index and return the tx handle.
 	pub async fn register_as(&self, tx: Transaction, status: TxStatus) -> Tx {
 		let txid = tx.compute_txid();
-		if let Some(tx) = self.get(&txid).await {
-			tx
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.get(&txid) {
+			tx.clone()
 		} else {
 			let ret = IndexedTx::new_as(txid, tx, status);
-			self.tx_map.write().await.insert(txid, ret.clone());
+			tx_map.insert(txid, ret.clone());
 			ret
 		}
 	}
@@ -217,38 +219,39 @@ impl TxIndex {
 	/// Register a new tx in the index and return the tx handle.
 	pub async fn register_incomplete(&self, tx: Transaction) -> Tx {
 		let txid = tx.compute_txid();
-		if let Some(tx) = self.get(&txid).await {
-			tx
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.get(&txid) {
+			tx.clone()
 		} else {
 			let ret = IndexedTx::new_incomplete(txid, tx);
-			self.tx_map.write().await.insert(txid, ret.clone());
+			tx_map.insert(txid, ret.clone());
 			ret
 		}
 	}
 
 	/// Register a batch of transactions at once.
 	pub async fn register_batch(&self, txs: impl IntoIterator<Item = Transaction>) {
-		let mut state = self.tx_map.write().await;
+		let mut tx_map = self.tx_map.write().await;
 		for tx in txs {
 			let txid = tx.compute_txid();
-			state.entry(txid).or_insert_with(|| IndexedTx::new(txid, tx));
+			tx_map.entry(txid).or_insert_with(|| IndexedTx::new(txid, tx));
 		}
 	}
 
 	/// Unregister a transaction
 	pub async fn unregister(&self, tx: impl TxOrTxid) {
-		let mut state = self.tx_map.write().await;
-		if let Some(tx) = state.remove(&tx.txid()) {
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.remove(&tx.txid()) {
 			*tx.status.lock().await = Some(TxStatus::Unregistered);
 		}
 	}
 
 	/// Unregister a batch of transactions at once.
 	pub async fn unregister_batch(&self, txs: impl IntoIterator<Item = impl TxOrTxid>) {
-		let mut state = self.tx_map.write().await;
+		let mut tx_map = self.tx_map.write().await;
 		for tx in txs {
 			let txid = tx.txid();
-			if let Some(tx) = state.remove(&txid) {
+			if let Some(tx) = tx_map.remove(&txid) {
 				*tx.status.lock().await = Some(TxStatus::Unregistered);
 			}
 		}
