@@ -1,5 +1,6 @@
 
 
+use bitcoin::secp256k1::schnorr;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
@@ -13,7 +14,12 @@ use crate::connectors::ConnectorChain;
 //TODO(stevenroose) fix
 pub const SIGNED_FORFEIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(0);
 
-pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
+pub fn create_forfeit_tx(
+	vtxo: &Vtxo,
+	connector: OutPoint,
+	forfeit_sig: Option<&schnorr::Signature>,
+	connector_sig: Option<&schnorr::Signature>,
+) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -22,13 +28,13 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 				previous_output: vtxo.point(),
 				sequence: Sequence::MAX,
 				script_sig: ScriptBuf::new(),
-				witness: Witness::new(),
+				witness: forfeit_sig.map(|s| Witness::from_slice(&[&s[..]])).unwrap_or_default(),
 			},
 			TxIn {
 				previous_output: connector,
 				sequence: Sequence::MAX,
 				script_sig: ScriptBuf::new(),
-				witness: Witness::new(),
+				witness: connector_sig.map(|s| Witness::from_slice(&[&s[..]])).unwrap_or_default(),
 			},
 		],
 		output: vec![
@@ -56,7 +62,7 @@ fn forfeit_input_sighash(
 		script_pubkey: ConnectorChain::output_script(connector_pk),
 		value: P2WSH_DUST,
 	};
-	let tx = create_forfeit_tx(vtxo, connector);
+	let tx = create_forfeit_tx(vtxo, connector, None, None);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
 		input_idx,
 		&sighash::Prevouts::All(&[exit_prevout, connector_prevout]),

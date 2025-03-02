@@ -432,8 +432,9 @@ impl Vtxo {
 		self.spec().exit_taproot().output_key().to_inner()
 	}
 
+	/// The exit tx of the vtxo.
 	pub fn vtxo_tx(&self) -> Transaction {
-		match self {
+		let ret = match self {
 			Vtxo::Onboard(v) => v.exit_tx(),
 			Vtxo::Round(v) => v.exit_branch.last().unwrap().clone(),
 			Vtxo::Arkoor(v) => {
@@ -442,7 +443,9 @@ impl Vtxo {
 				tx
 			},
 			Vtxo::Bolt11Change(v) => v.htlc_tx.clone(),
-		}
+		};
+		debug_assert_eq!(ret.compute_txid(), self.id().utxo().txid);
+		ret
 	}
 
 	/// Collect all off-chain txs required for the exit of this entire vtxo.
