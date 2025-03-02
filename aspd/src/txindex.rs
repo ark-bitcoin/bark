@@ -71,6 +71,8 @@ impl TxStatus {
 pub type Tx = Arc<IndexedTx>;
 
 /// A [Transaction] accompanied with their [Txid] and with access to their confirmation status.
+///
+/// Implementations of [PartialEq], [Eq] and [Hash] are delegated to the txid.
 pub struct IndexedTx {
 	pub txid: Txid,
 	pub tx: Transaction,
@@ -142,6 +144,19 @@ impl IndexedTx {
 impl fmt::Debug for IndexedTx {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{}", self.txid)
+	}
+}
+
+impl PartialEq for IndexedTx {
+	fn eq(&self, other: &Self) -> bool {
+		self.txid.eq(&other.txid)
+	}
+}
+impl Eq for IndexedTx {}
+
+impl std::hash::Hash for IndexedTx {
+	fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+		self.txid.hash(h)
 	}
 }
 
