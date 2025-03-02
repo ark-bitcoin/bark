@@ -7,7 +7,8 @@ use std::time::Instant;
 use std::pin::Pin;
 use std::future::Future;
 
-use bitcoin::{Amount, ScriptBuf, Txid};
+use ark::rounds::RoundId;
+use bitcoin::{Amount, ScriptBuf};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
@@ -286,13 +287,13 @@ impl rpc::server::ArkService for App {
 
 		add_tracing_attributes(vec![KeyValue::new("txid", format!("{:?}", req.get_ref().txid))]);
 
-		let txid = Txid::from_slice(req.get_ref().txid.as_slice())
+		let id = RoundId::from_slice(req.get_ref().txid.as_slice())
 			.badarg("invalid txid")?;
 
 
-		let ret = self.db.get_round(txid).await
+		let ret = self.db.get_round(id).await
 			.context("db error")?
-			.not_found([txid], "round with txid {} not found")?;
+			.not_found([id], "round with txid {} not found")?;
 
 		let response = rpc::RoundInfo {
 			round_tx: bitcoin::consensus::serialize(&ret.tx),

@@ -2,11 +2,14 @@
 use std::{fmt, io};
 use std::str::FromStr;
 
+use bitcoin::{
+	taproot, Amount, OutPoint, ScriptBuf, Sequence, TapSighash, Transaction, TxIn, TxOut, Txid,
+	Weight, Witness,
+};
 use bitcoin::absolute::LockTime;
-use bitcoin::sighash::{self, SighashCache};
-use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Sequence, TapSighash, Transaction, TxIn, TxOut, Txid, Weight, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
+use bitcoin::sighash::{self, SighashCache};
 
 use crate::{fee, musig, onboard, oor, util};
 

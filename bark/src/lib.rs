@@ -44,7 +44,7 @@ use ark::{
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::RoundEvent;
+use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc as rpc;
 
@@ -657,7 +657,7 @@ impl <P>Wallet<P> where
 			None => self.onchain.address()?,
 		};
 
-		let txid = self.participate_round(move |round| {
+		let round = self.participate_round(move |round| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), round.offboard_feerate)
 				.expect("bdk created invalid scriptPubkey");
 
@@ -669,7 +669,7 @@ impl <P>Wallet<P> where
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(Offboard { round_txid : txid})
+		Ok(Offboard { round })
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
@@ -700,15 +700,14 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	/// Refresh vtxo's
+	/// Refresh vtxo's.
 	///
-	/// Returns the [Txid] of the round-transaction
-	/// if a successful refresh occured. It will return
-	/// [None] if no [Vtxo] needed to be refreshed.
+	/// Returns the [RoundId] of the round if a successful refresh occured.
+	/// It will return [None] if no [Vtxo] needed to be refreshed.
 	pub async fn refresh_vtxos(
 		&mut self,
 		vtxos: Vec<Vtxo>
-	) -> anyhow::Result<Option<Txid>> {
+	) -> anyhow::Result<Option<RoundId>> {
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to refresh!");
 			return Ok(None)
@@ -722,10 +721,10 @@ impl <P>Wallet<P> where
 			amount: total_amount
 		};
 
-		let txid = self.participate_round(move |_| {
+		let round = self.participate_round(move |_| {
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
-		Ok(Some(txid))
+		Ok(Some(round))
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
@@ -1007,7 +1006,7 @@ impl <P>Wallet<P> where
 			bail!("Balance too low");
 		}
 
-		let txid = self.participate_round(move |round| {
+		let round = self.participate_round(move |round| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
@@ -1032,7 +1031,7 @@ impl <P>Wallet<P> where
 			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(SendOnchain { round_txid: txid})
+		Ok(SendOnchain { round })
 	}
 
 	/// Participate in a round.
@@ -1047,7 +1046,7 @@ impl <P>Wallet<P> where
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
-	) -> anyhow::Result<Txid> {
+	) -> anyhow::Result<RoundId> {
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
@@ -1395,7 +1394,7 @@ impl <P>Wallet<P> where
 				}
 
 				info!("Round finished");
-				return Ok(signed_round_tx.compute_txid())
+				return Ok(signed_round_tx.compute_txid().into())
 			}
 		}
 	}

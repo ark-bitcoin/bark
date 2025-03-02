@@ -1,4 +1,5 @@
 
+use ark::rounds::RoundId;
 use bitcoin::{Amount, Txid};
 use crate::primitives::{VtxoInfo, UtxoInfo};
 
@@ -57,8 +58,8 @@ pub mod onchain {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Offboard {
-	/// The [Txid] of the round in which the offboard occured
-	pub round_txid: Txid,
+	/// The [RoundId] of the round in which the offboard occured
+	pub round: RoundId,
 }
 
 /// The output of the `bark refresh` command
@@ -68,14 +69,14 @@ pub struct Refresh {
 	/// in a round. If no [Vtxo] was refreshed this variable
 	/// will be set to [false] and otherwise [true]
 	pub participate_round: bool,
-	/// The [Txid] of the round if the client participated in a round
-	pub round_txid: Option<Txid>,
+	/// The [RoundId] of the round if the client participated in a round
+	pub round: Option<RoundId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendOnchain {
-	/// The [Txid] of the round in which the send occured
-	pub round_txid: Txid,
+	/// The [RoundId] of the round in which the send occured
+	pub round: RoundId,
 	// TODO: List the [OutPoint] and [Amount] here
 }
 

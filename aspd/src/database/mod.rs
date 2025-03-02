@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use ark::{tree::signed::CachedSignedVtxoTree, ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
+use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
@@ -399,7 +399,7 @@ impl Db {
 		)
 	}
 
-	pub async fn get_round(&self, id: Txid) -> anyhow::Result<Option<StoredRound>> {
+	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE id = $1;
@@ -414,7 +414,7 @@ impl Db {
 		Ok(round)
 	}
 
-	pub async fn remove_round(&self, id: Txid) -> anyhow::Result<()> {
+	pub async fn remove_round(&self, id: RoundId) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
@@ -427,7 +427,7 @@ impl Db {
 	}
 
 	/// Get all round IDs of rounds that expired before or on `height`.
-	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<Txid>> {
+	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry <= $1
@@ -437,7 +437,7 @@ impl Db {
 		Ok(rows.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id).try_collect::<Vec<_>>().await?)
 	}
 
-	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<Txid>> {
+	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry > $1
