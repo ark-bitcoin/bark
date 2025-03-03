@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitcoin_ext::bdk::WalletExt;
 use serde::ser::StdError;
 
 use ark::{BlockHeight, Vtxo, VtxoId};
@@ -243,7 +244,8 @@ impl <P>Exit<P> where
 
 						// Ok let's confirm this bastard.
 						let fee_rate = self.chain_source.urgent_feerate();
-						let cpfp = onchain.make_cpfp(&[&tx], fee_rate).await?;
+						let cpfp_psbt = onchain.wallet.make_cpfp(&[&tx], fee_rate)?;
+						let cpfp = onchain.finish_tx(cpfp_psbt)?;
 						info!("Broadcasting package with CPFP tx {} to confirm tx {}",
 							cpfp.compute_txid(), txid,
 						);

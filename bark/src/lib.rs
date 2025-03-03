@@ -18,6 +18,9 @@ pub mod onchain;
 mod psbtext;
 mod vtxo_state;
 
+pub use bark_json::primitives::UtxoInfo;
+pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
+
 
 use std::iter;
 use std::convert::TryFrom;
@@ -40,22 +43,22 @@ use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
-	oor, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec
+	oor, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest,
+	RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec,
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc as rpc;
-
-pub use bark_json::primitives::UtxoInfo;
-pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
+use bitcoin_ext::P2TR_DUST;
 
 use crate::exit::Exit;
 use crate::onchain::Utxo;
 use crate::persist::BarkPersister;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::VtxoState;
+
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -776,7 +779,7 @@ impl <P>Wallet<P> where
 				let avail = Amount::from_sat(sum.to_sat().saturating_sub(account_for_fee.to_sat()));
 				if avail < output.amount {
 					bail!("Balance too low: {}", sum);
-				} else if avail < output.amount + ark::P2TR_DUST {
+				} else if avail < output.amount + P2TR_DUST {
 					None
 				} else {
 					let change_amount = avail - output.amount;
@@ -1044,7 +1047,7 @@ impl <P>Wallet<P> where
 			let change = {
 				if in_sum < out_value {
 					bail!("Balance too low");
-				} else if in_sum <= out_value + ark::P2TR_DUST {
+				} else if in_sum <= out_value + P2TR_DUST {
 					info!("No change, emptying wallet.");
 					None
 				} else {

@@ -5,14 +5,14 @@ pub use self::chain::ChainSource;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use ark::fee;
-use ark::util::{TransactionExt, SECP};
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
 use bdk_wallet::{LocalOutput, PersistedWallet, SignOptions, TxBuilder, TxOrdering, WalletPersister};
 use bitcoin::{
-	bip32, psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight
+	bip32, psbt, sighash, Address, Amount, Network, Psbt, Sequence, Transaction, TxOut, Txid,
 };
 use serde::ser::StdError;
+
+use ark::util::SECP;
 
 use crate::psbtext::PsbtInputExt;
 use crate::VtxoSeed;
@@ -59,7 +59,7 @@ pub struct Wallet<P: BarkPersister> {
 	seed: [u8; 64],
 	network: Network,
 
-	wallet: PersistedWallet<P>,
+	pub(crate) wallet: PersistedWallet<P>,
 	db: P,
 
 	pub (crate) exit_outputs: Vec<SpendableVtxo>,
@@ -218,82 +218,5 @@ impl <P>Wallet<P> where
 		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		self.wallet.persist(&mut self.db)?;
 		Ok(ret)
-	}
-
-	fn add_anchors<A>(b: &mut bdk_wallet::TxBuilder<A>, anchors: &[OutPoint])
-	where
-		A: bdk_wallet::coin_selection::CoinSelectionAlgorithm,
-	{
-		for utxo in anchors {
-			let psbt_in = psbt::Input {
-				witness_utxo: Some(ark::fee::dust_anchor()),
-				final_script_witness: Some(ark::fee::dust_anchor_witness()),
-				..Default::default()
-			};
-			b.add_foreign_utxo(*utxo, psbt_in, fee::DUST_ANCHOR_SPEND_WEIGHT)
-				.expect("adding foreign utxo");
-		}
-	}
-
-	/// Create a cpfp spend that spends the fee anchors in the given txs.
-	///
-	/// This method doesn't broadcast any txs.
-	pub (crate) async fn make_cpfp(
-		&mut self,
-		txs: &[&Transaction],
-		fee_rate: FeeRate,
-	) -> anyhow::Result<Transaction> {
-		assert!(!txs.is_empty());
-		let anchors = txs.iter().map(|tx| {
-			tx.fee_anchor().with_context(|| format!("tx {} has no fee anchor", tx.compute_txid()))
-		}).collect::<Result<Vec<_>, _>>()?;
-
-		// Since BDK doesn't support adding extra weight for fees, we have to
-		// first build the tx regularly, and then build it again.
-		// Since we have to guarantee that we have enough money in the inputs,
-		// we will "fake" create an output on the first attempt. This might
-		// overshoot the fee, but we prefer that over undershooting it.
-
-		let package_weight = txs.iter().map(|t| t.weight()).sum::<Weight>();
-		let extra_fee_needed = fee_rate * package_weight;
-
-		// Since BDK doesn't allow tx without recipients, we add a drain output.
-		let change_addr = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
-
-		let template_weight = {
-			let mut b = self.wallet.build_tx();
-			b.ordering(TxOrdering::Untouched);
-			b.only_witness_utxo();
-			Self::add_anchors(&mut b, &anchors);
-			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + ark::P2TR_DUST);
-			b.fee_rate(fee_rate);
-			let mut psbt = b.finish().expect("failed to craft anchor spend template");
-			let opts = SignOptions {
-				trust_witness_utxo: true,
-				..Default::default()
-			};
-			let finalized = self.wallet.sign(&mut psbt, opts)
-				.expect("failed to sign anchor spend template");
-			assert!(finalized);
-			let tx = psbt.extract_tx()?;
-			debug_assert_eq!(tx.input[0].witness.size() as u64, fee::DUST_ANCHOR_SPEND_WEIGHT.to_wu());
-			tx.weight()
-		};
-
-		let total_weight = template_weight + package_weight;
-		let total_fee = fee_rate * total_weight;
-		let extra_fee_needed = total_fee;
-
-		// Then build actual tx.
-		let mut b = self.wallet.build_tx();
-		b.only_witness_utxo();
-		b.version(3); // for 1p1c package relay
-		Self::add_anchors(&mut b, &anchors);
-		b.drain_to(change_addr.address.script_pubkey());
-		b.fee_absolute(extra_fee_needed);
-		let psbt = b.finish().expect("failed to craft anchor spend tx");
-		let tx = self.finish_tx(psbt).context("error finalizing anchor spend tx")?;
-
-		Ok(tx)
 	}
 }

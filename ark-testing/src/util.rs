@@ -1,13 +1,10 @@
 
 use std::env;
-use std::borrow::Borrow;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Denomination, FeeRate, Weight};
-
 use tokio::fs;
 use tokio::process::Child;
 
@@ -119,13 +116,6 @@ pub fn should_use_electrs() -> bool {
 		false
 	}
 }
-
-pub trait FeeRateExt: Borrow<FeeRate> {
-	fn to_btc_per_kvb(&self) -> String {
-		(*self.borrow() * Weight::from_vb(1000).unwrap()).to_string_in(Denomination::Bitcoin)
-	}
-}
-impl FeeRateExt for FeeRate {}
 
 /// Extension trait for futures.
 #[async_trait]

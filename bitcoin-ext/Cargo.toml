@@ -1,0 +1,20 @@
+[package]
+name = "bark-bitcoin-ext"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "bitcoin_ext"
+
+[features]
+default = [ "bdk" ]
+bdk = [ "bdk_wallet" ]
+
+[dependencies]
+lazy_static.workspace = true
+
+# bitcoin
+bitcoin.workspace = true
+
+# bdk
+bdk_wallet = { workspace = true, features = ["rusqlite"], optional = true }

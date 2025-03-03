@@ -16,6 +16,7 @@ bitcoin.workspace = true
 serde.workspace = true
 
 # * INTERNAL DEPS
+bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false }
 lazy_static.workspace = true
 ciborium.workspace = true
 rand.workspace = true

@@ -52,7 +52,7 @@ use bitcoin::{
 
 use ark::{BlockHeight, OnboardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use ark::util::{KeypairExt, TaprootSpendInfoExt};
+use bitcoin_ext::{KeypairExt, TaprootSpendInfoExt};
 use futures::StreamExt;
 
 use crate::bitcoind::RpcApi;
@@ -498,7 +498,7 @@ impl<'a> SweepBuilder<'a> {
 			.map(|i| i.witness_utxo.clone().unwrap())
 			.collect::<Vec<_>>();
 
-		let connector_keypair = self.sweeper.app.asp_key.for_keyspend();
+		let connector_keypair = self.sweeper.app.asp_key.for_keyspend(&*SECP);
 		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
 			if let Some(meta) = input.get_sweep_meta().context("corrupt psbt")? {
 				match meta {

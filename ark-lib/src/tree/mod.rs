@@ -1,10 +1,7 @@
 
-use std::cmp;
-
-
-
-
 pub mod signed;
+
+use std::cmp;
 
 /// The max radix of this tree is 4.
 const RADIX: usize = 4;
@@ -246,7 +243,7 @@ use super::*;
 				if !node.is_leaf() {
 					assert_eq!(
 						node.leaves().count(),
-						node.children().map(|c| tree.nodes[c].leaves().count()).sum(),
+						node.children().map(|c| tree.nodes[c].leaves().count()).sum::<usize>(),
 						"idx: {}", node.idx(),
 					);
 				}
