@@ -108,7 +108,7 @@ pub struct ParsedRecordKv<'a> {
 	#[serde(rename = "slog_id")]
 	pub id: &'a str,
 	#[serde(rename = "slog_trace_id")]
-	pub trace_id: &'a str,
+	pub trace_id: Option<&'a str>,
 	#[serde(rename = "slog_data")]
 	pub data: &'a serde_json::value::RawValue,
 }
@@ -144,11 +144,11 @@ impl<'a> ParsedRecord<'a> {
 		}
 	}
 
-	pub fn trace_id<T: LogMsg>(&self) -> &str {
+	pub fn trace_id<T: LogMsg>(&self) -> Option<&str> {
 		if let Some(ref kv) = self.kv {
 			kv.trace_id
 		} else {
-			""
+			None
 		}
 	}
 
@@ -245,7 +245,7 @@ mod test {
 		assert!(parsed.is::<TestLog>());
 		let inner = parsed.try_as::<TestLog>().unwrap();
 		assert_eq!(inner, m);
-		assert_eq!(parsed.trace_id::<TestLog>().to_string(), kv.trace_id.unwrap().as_str());
+		assert_eq!(parsed.trace_id::<TestLog>().unwrap().to_string(), kv.trace_id.unwrap().as_str());
 	}
 
 	#[test]
@@ -268,8 +268,27 @@ mod test {
 		assert!(parsed.is::<TestLog>());
 		let _ = parsed.try_as::<TestLog>().unwrap();
 		let trace_id = parsed.trace_id::<TestLog>();
-		assert_eq!(trace_id, "test123");
-		
+		assert_eq!(trace_id, Some("test123"));
+
+		// Check that deserialization works if trace_id is missing
+				let json = serde_json::to_string(&serde_json::json!({
+			"msg": "test",
+			"target": SLOG_TARGET,
+			"level": "info",
+			"file": "test.rs",
+			"line": 35,
+			"kv": {
+				"slog_id": "TestLog",
+				"slog_data": {"nb": 35},
+				"extra": {"extra": 3},
+			},
+		})).unwrap();
+		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
+		assert!(parsed.is::<TestLog>());
+		let _ = parsed.try_as::<TestLog>().unwrap();
+		let trace_id = parsed.trace_id::<TestLog>();
+		assert_eq!(trace_id, None);
+
 		// And without slog stuff
 		let json = serde_json::to_string(&serde_json::json!({
 			"msg": "test",
@@ -284,6 +303,6 @@ mod test {
 		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
 		assert!(!parsed.is::<TestLog>());
 		let trace_id = parsed.trace_id::<TestLog>();
-		assert_eq!(trace_id, "");
+		assert_eq!(trace_id, None);
 	}
 }
