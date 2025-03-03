@@ -38,6 +38,8 @@ impl TryFrom<Row> for StoredRound {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VtxoState {
+	/// The id of the VTXO
+	pub id: VtxoId,
 	/// The raw vtxo encoded.
 	pub vtxo: Vtxo,
 	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
@@ -59,11 +61,12 @@ impl TryFrom<Row> for VtxoState {
 	type Error = anyhow::Error;
 
 	fn try_from(value: Row) -> Result<Self, Self::Error> {
-		let vtxoid = value.get::<_, String>("id");
+		let vtxo_id = VtxoId::from_str(value.get::<_, &str>("id"))?;
 		let vtxo = Vtxo::decode(value.get("vtxo"))?;
-		debug_assert_eq!(vtxoid, vtxo.id().to_string());
+		debug_assert_eq!(vtxo_id, vtxo.id());
 
 		Ok(Self {
+			id: vtxo_id,
 			vtxo,
 			expiry: u32::try_from(value.get::<_, i32>("expiry"))?,
 			oor_spent: value
