@@ -794,7 +794,7 @@ impl SigningForfeits {
 				let connectors = self.connectors.connectors();
 				let mut sigs = Vec::with_capacity(self.all_inputs.len());
 				for (i, (conn, sec)) in connectors.zip(sec_nonces.into_iter()).enumerate() {
-					let (sighash, _) = ark::forfeit::forfeit_sighash(&vtxo, conn);
+					let (sighash, _) = ark::forfeit::forfeit_sighash_exit(&vtxo, conn);
 					let agg_nonce = musig::nonce_agg(&[&user_nonces[i], &pub_nonces[i]]);
 					let (_, sig) = musig::partial_sign(
 						[app.asp_key.public_key(), vtxo.spec().user_pubkey],

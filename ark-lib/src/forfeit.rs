@@ -40,7 +40,11 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 	}
 }
 
-pub fn forfeit_sighash(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transaction) {
+fn forfeit_input_sighash(
+	vtxo: &Vtxo,
+	connector: OutPoint,
+	input_idx: usize,
+) -> (TapSighash, Transaction) {
 	let spec = vtxo.spec();
 	let exit_spk = spec.exit_spk();
 	let exit_prevout = TxOut {
@@ -53,9 +57,19 @@ pub fn forfeit_sighash(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transac
 	};
 	let tx = create_forfeit_tx(vtxo, connector);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
-		0,
+		input_idx,
 		&sighash::Prevouts::All(&[exit_prevout, connector_prevout]),
 		TapSighashType::Default,
 	).expect("sighash error");
 	(sighash, tx)
+}
+
+/// The sighash of the exit tx input of a forfeit tx.
+pub fn forfeit_sighash_exit(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transaction) {
+	forfeit_input_sighash(vtxo, connector, 0)
+}
+
+/// The sighash of the connector input of a forfeit tx.
+pub fn forfeit_sighash_connector(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transaction) {
+	forfeit_input_sighash(vtxo, connector, 1)
 }

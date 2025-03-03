@@ -1327,7 +1327,7 @@ impl <P>Wallet<P> where
 					let vtxo_keypair = self.vtxo_seed.derive_keypair(keypair_idx);
 
 					let sigs = connectors.connectors().enumerate().map(|(i, conn)| {
-						let (sighash, _tx) = ark::forfeit::forfeit_sighash(v, conn);
+						let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(v, conn);
 						let asp_nonce = forfeit_nonces.get(&v.id())
 							.with_context(|| format!("missing asp forfeit nonce for {}", v.id()))?
 							.get(i)
