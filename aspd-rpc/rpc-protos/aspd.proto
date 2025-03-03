@@ -5,7 +5,8 @@ package aspd;
 
 /// Public ark service for arkd.
 service ArkService {
-	rpc GetArkInfo(Empty) returns (ArkInfo) {}
+	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
+
 	rpc GetFreshRounds(FreshRoundsRequest) returns (FreshRounds) {}
 	rpc GetRound(RoundId) returns (RoundInfo) {}
 
@@ -35,6 +36,15 @@ message ArkInfo {
 	uint32 nb_round_nonces = 3;
 	uint32 vtxo_exit_delta = 4;
 	uint32 vtxo_expiry_delta = 5;
+}
+
+message HandshakeRequest {
+	string version = 1;
+}
+
+message HandshakeResponse {
+	optional string message = 1;
+	optional ArkInfo ark_info = 2;
 }
 
 message FreshRoundsRequest {

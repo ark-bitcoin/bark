@@ -138,7 +138,7 @@ const RPC_SERVICES: [&str; 2] = [RPC_SERVICE_ARK, RPC_SERVICE_ADMIN];
 
 const RPC_SERVICE_ARK: &'static str = "ArkService";
 
-const RPC_SERVICE_ARK_GET_ARK_INFO: &'static str = "get_ark_info";
+const RPC_SERVICE_ARK_HANDSHAKE: &'static str = "handshake";
 const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
 const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
 const RPC_SERVICE_ARK_REQUEST_ONBOARD_COSIGN: &'static str = "request_onboard_cosign";
@@ -154,7 +154,7 @@ const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_sign
 const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
 
 const RPC_SERVICE_ARK_METHODS: [&str; 14] = [
-	RPC_SERVICE_ARK_GET_ARK_INFO,
+	RPC_SERVICE_ARK_HANDSHAKE,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
 	RPC_SERVICE_ARK_GET_ROUND,
 	RPC_SERVICE_ARK_REQUEST_ONBOARD_COSIGN,
@@ -242,18 +242,21 @@ fn add_tracing_attributes(attributes: Vec<KeyValue>) -> () {
 
 #[tonic::async_trait]
 impl rpc::server::ArkService for App {
-	async fn get_ark_info(
+	async fn handshake(
 		&self,
-		_req: tonic::Request<rpc::Empty>,
-	) -> Result<tonic::Response<rpc::ArkInfo>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_GET_ARK_INFO);
+		_req: tonic::Request<rpc::HandshakeRequest>,
+	) -> Result<tonic::Response<rpc::HandshakeResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_HANDSHAKE);
 
-		let ret = rpc::ArkInfo {
-			network: self.config.network.to_string(),
-			pubkey: self.asp_key.public_key().serialize().to_vec(),
-			nb_round_nonces: self.config.nb_round_nonces as u32,
-			vtxo_exit_delta: self.config.vtxo_exit_delta as u32,
-			vtxo_expiry_delta: self.config.vtxo_expiry_delta as u32,
+		let ret = rpc::HandshakeResponse {
+			message: None,
+			ark_info: Some(rpc::ArkInfo {
+				network: self.config.network.to_string(),
+				pubkey: self.asp_key.public_key().serialize().to_vec(),
+				nb_round_nonces: self.config.nb_round_nonces as u32,
+				vtxo_exit_delta: self.config.vtxo_exit_delta as u32,
+				vtxo_expiry_delta: self.config.vtxo_expiry_delta as u32,
+			}),
 		};
 
 		Ok(tonic::Response::new(ret))

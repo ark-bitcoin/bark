@@ -191,6 +191,72 @@ struct AspConnection {
 	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
 }
 
+impl AspConnection {
+	fn create_endpoint(asp_address: &str) -> anyhow::Result<tonic::transport::Endpoint> {
+		let asp_uri = tonic::transport::Uri::from_str(asp_address)
+			.context("failed to parse Ark server as a URI")?;
+
+		let scheme = asp_uri.scheme_str().unwrap_or("https");
+		if scheme != "http" && scheme != "https" {
+			bail!("ASP scheme must be either http or https. Found: {}", scheme);
+		}
+
+		let mut endpoint = tonic::transport::Channel::builder(asp_uri.clone())
+			.keep_alive_timeout(Duration::from_secs(600))
+			.timeout(Duration::from_secs(600));
+
+		if scheme == "https" {
+			info!("Connecting to ASP using TLS...");
+			let uri_auth = asp_uri.clone().into_parts().authority
+				.context("Ark server URI is missing an authority part")?;
+			let domain = uri_auth.host();
+
+			let tls_config = tonic::transport::ClientTlsConfig::new()
+				.domain_name(domain);
+			endpoint = endpoint.tls_config(tls_config)?
+		} else {
+			info!("Connecting to ASP without TLS...");
+		};
+		Ok(endpoint)
+	}
+
+	/// Try to perform the handshake with the ASP.
+	async fn handshake(
+		asp_address: &str,
+		network: bitcoin::Network,
+	) -> anyhow::Result<AspConnection> {
+		let our_version = env!("CARGO_PKG_VERSION").into();
+
+		let endpoint = AspConnection::create_endpoint(asp_address)?;
+		let mut client = rpc::ArkServiceClient::connect(endpoint).await
+			.context("couldn't connect to Ark server")?;
+
+		let res = client.handshake(rpc::HandshakeRequest { version: our_version })
+			.await.context("ark info request failed")?.into_inner();
+
+		if let Some(ref msg) = res.message {
+			warn!("Message from Ark server: \"{}\"", msg);
+		}
+
+		if let Some(info) = res.ark_info {
+			if network != info.network.parse().context("invalid network from asp")? {
+				bail!("ASP is for net {} while we are on net {}", info.network, network);
+			}
+
+			let info = ArkInfo {
+				asp_pubkey: PublicKey::from_slice(&info.pubkey).context("asp pubkey")?,
+				nb_round_nonces: info.nb_round_nonces as usize,
+				vtxo_expiry_delta: info.vtxo_expiry_delta as u16,
+				vtxo_exit_delta: info.vtxo_exit_delta as u16,
+			};
+			Ok(AspConnection { info, client })
+		} else {
+			let msg = res.message.as_ref().map(|s| s.as_str()).unwrap_or("NO MESSAGE");
+			bail!("Ark server handshake failed: {}", msg);
+		}
+	}
+}
+
 pub struct Wallet<P: BarkPersister> {
 	pub onchain: onchain::Wallet<P>,
 	pub exit: Exit<P>,
@@ -289,49 +355,12 @@ impl <P>Wallet<P> where
 		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source.clone())
 			.context("failed to create onchain wallet")?;
 
-		let asp_uri = tonic::transport::Uri::from_str(&config.asp_address)
-			.context("invalid asp addr")?;
-
-		let scheme = asp_uri.scheme_str().unwrap_or("https");
-		if scheme != "http" && scheme != "https" {
-			bail!("ASP scheme must be either http or https");
-		}
-
-		let mut endpoint = tonic::transport::Channel::builder(asp_uri.clone())
-			.keep_alive_timeout(Duration::from_secs(600))
-			.timeout(Duration::from_secs(600));
-
-		if scheme == "https" {
-			info!("Connecting to ASP using SSL...");
-			let uri_auth = asp_uri.clone().into_parts().authority.expect("need authority");
-			let domain = uri_auth.host();
-
-			let tls_config = tonic::transport::ClientTlsConfig::new()
-				.domain_name(domain);
-			endpoint = endpoint.tls_config(tls_config)?
-		} else {
-			info!("Connecting to ASP without TLS...");
-		};
-
-		let asp = match rpc::ArkServiceClient::connect(endpoint).await {
-			Ok(mut client) => {
-				let res = client.get_ark_info(rpc::Empty{})
-					.await.context("ark info request failed")?.into_inner();
-
-				if properties.network != res.network.parse().context("invalid network from asp")? {
-					bail!("ASP is for net {} while we are on net {}", res.network, properties.network);
-				}
-
-				let info = ArkInfo {
-					asp_pubkey: PublicKey::from_slice(&res.pubkey).context("asp pubkey")?,
-					nb_round_nonces: res.nb_round_nonces as usize,
-					vtxo_expiry_delta: res.vtxo_expiry_delta as u16,
-					vtxo_exit_delta: res.vtxo_exit_delta as u16,
-				};
-
-				Some(AspConnection { info, client })
-			},
-			_ => None
+		let asp = match AspConnection::handshake(&config.asp_address, properties.network).await {
+			Ok(asp) => Some(asp),
+			Err(e) => {
+				warn!("Ark server handshake failed: {}", e);
+				None
+			}
 		};
 
 		let exit = Exit::new(db.clone(), chain_source.clone())?;

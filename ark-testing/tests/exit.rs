@@ -2,12 +2,14 @@
 
 use std::str::FromStr;
 
+use ark_testing::daemon::aspd;
 use bitcoin::Address;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
 
-use ark::vtxo::exit_spk;
 use bark_json::primitives::VtxoType;
+use ark::vtxo::exit_spk;
+use aspd_rpc as rpc;
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
@@ -33,6 +35,83 @@ async fn complete_exit(bark: &Bark) {
 		}
 	}
 	panic!("failed to finish unilateral exit of bark {}", bark.name());
+}
+
+#[tokio::test]
+async fn simple_exit() {
+	let random_addr = Address::from_str(
+		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
+	).unwrap().assume_checked();
+
+	// Initialize the test
+	let ctx = TestContext::new("exit/simple_exit").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	ctx.bitcoind.generate(1).await;
+
+	bark.onboard(sat(500_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	bark.refresh_all().await;
+	let vtxo = &bark.vtxos().await[0];
+
+	aspd.stop().await.unwrap();
+	bark.exit_all().await;
+	complete_exit(&bark).await;
+	ctx.bitcoind.generate(1).await;
+
+	// Wallet has 1_000_000 sats of funds minus fees
+	assert_eq!(bark.onchain_balance().await, sat(993_210));
+
+	// Verify exit output is considered as part of the wallets
+	let utxos = bark.utxos().await;
+	assert!(
+		utxos.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount),
+		"vtxo={:?}; utxos: {:?}", vtxo, utxos,
+	);
+
+	// Verify we can send exited utxo
+	// Sending sats more than vtxo amount ensure we spend all available utxos
+	// (vtxo output and cpfp change)
+	bark.onchain_send(&random_addr, vtxo.amount + Amount::ONE_SAT).await;
+}
+
+#[tokio::test]
+async fn fail_handshake() {
+	//! Test that we can still access our balance and exit if server handshake fails.
+	let ctx = TestContext::new("exit/fail_handshake").await;
+
+	#[derive(Clone)]
+	struct NoHandshakeProxy(rpc::ArkServiceClient<tonic::transport::Channel>);
+
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for NoHandshakeProxy {
+		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+
+		async fn handshake(&mut self, _: rpc::HandshakeRequest) -> Result<rpc::HandshakeResponse, tonic::Status>  {
+			Ok(rpc::HandshakeResponse {
+				message: Some("don't like you".into()),
+				ark_info: None,
+			})
+		}
+	}
+
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(100_000)).await;
+
+	bark.onboard(sat(90_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark.refresh_all().await;
+	ctx.bitcoind.generate(1).await;
+	assert_eq!(sat(90_000), bark.offchain_balance().await);
+
+	// now create bad proxy
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(NoHandshakeProxy(aspd.get_public_client().await)).await;
+	bark.set_asp(&proxy.address).await;
+	assert_eq!(sat(90_000), bark.offchain_balance().await);
+	bark.exit_all().await;
+	complete_exit(&bark).await;
+	assert_eq!(bark.onchain_balance().await, sat(93_210));
 }
 
 #[tokio::test]
