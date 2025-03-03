@@ -5,13 +5,12 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
-use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
+use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use log::{trace, debug, info, warn, error};
+use bitcoin::consensus::encode::serialize;
 use opentelemetry::global;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
@@ -27,6 +26,7 @@ use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use ark::util::Encodable;
 
 use crate::{Server, SECP};
+use crate::database::model::{ForfeitState, DangerousMusigSecNonce};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::error::{ContextExt, AnyhowErrorExt};
 use crate::telemetry::{self, SpanExt};
@@ -709,7 +709,6 @@ impl SigningVtxoTree {
 			forfeit_sec_nonces: Some(forfeit_sec_nonces),
 			forfeit_pub_nonces,
 			forfeit_part_sigs: HashMap::with_capacity(self.all_inputs.len()),
-			forfeit_sigs: None,
 			signed_vtxos,
 			all_inputs: self.all_inputs,
 			locked_inputs: self.locked_inputs,
@@ -732,7 +731,6 @@ pub struct SigningForfeits {
 	forfeit_sec_nonces: Option<HashMap<VtxoId, Vec<MusigSecNonce>>>,
 	forfeit_pub_nonces: HashMap<VtxoId, Vec<MusigPubNonce>>,
 	forfeit_part_sigs: HashMap<VtxoId, (Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
-	forfeit_sigs: Option<HashMap<VtxoId, Vec<schnorr::Signature>>>,
 
 	// data from earlier
 	signed_vtxos: CachedSignedVtxoTree,
@@ -817,44 +815,19 @@ impl SigningForfeits {
 		)
 	}
 
-	fn check_forfeits(mut self, server: &Server) -> RoundState {
-		// Finish the forfeit signatures.
-		let mut forfeit_sec_nonces = self.forfeit_sec_nonces.take().unwrap();
-		let mut forfeit_sigs = HashMap::with_capacity(self.all_inputs.len());
+	fn check_forfeits(&self) -> Option<HashSet<VtxoId>> {
+		// Check for partial signatures.
 		let mut missing = HashSet::new();
-		for (id, vtxo) in &self.all_inputs {
-			if let Some((user_nonces, partial_sigs)) = self.forfeit_part_sigs.get(id) {
-				let sec_nonces = forfeit_sec_nonces.remove(id).unwrap().into_iter();
-				let pub_nonces = self.forfeit_pub_nonces.get(id).unwrap();
-				let connectors = self.connectors.connectors();
-				let mut sigs = Vec::with_capacity(self.all_inputs.len());
-				for (i, ((conn, _), sec)) in connectors.zip(sec_nonces.into_iter()).enumerate() {
-					let (sighash, _) = ark::forfeit::forfeit_sighash_exit(
-						&vtxo, conn, self.connector_key.public_key(),
-					);
-					let agg_nonce = musig::nonce_agg(&[&user_nonces[i], &pub_nonces[i]]);
-					let (_, sig) = musig::partial_sign(
-						[server.asp_key.public_key(), vtxo.spec().user_pubkey],
-						agg_nonce,
-						&server.asp_key,
-						sec,
-						sighash.to_byte_array(),
-						Some(vtxo.spec().vtxo_taptweak().to_byte_array()),
-						Some(&[&partial_sigs[i]]),
-					);
-					sigs.push(sig.expect("should be signed"));
-				}
-				forfeit_sigs.insert(*id, sigs);
-			} else {
+		for id in self.all_inputs.keys() {
+			if !self.forfeit_part_sigs.contains_key(id) {
 				missing.insert(*id);
 			}
 		}
 
 		if !missing.is_empty() {
-			RoundState::CollectingPayments(self.restart_missing_forfeits(Some(missing)))
+			Some(missing)
 		} else {
-			self.forfeit_sigs = Some(forfeit_sigs);
-			RoundState::SigningForfeits(self)
+			None
 		}
 	}
 
@@ -892,9 +865,7 @@ impl SigningForfeits {
 		});
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
-
 		let parent_context = opentelemetry::Context::current();
-
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
 			.start_with_context(&tracer_provider, &parent_context.clone());
@@ -902,13 +873,22 @@ impl SigningForfeits {
 		span.set_int_attr("connectors-count", self.connectors.len());
 
 		trace!("Storing round result");
-		let mut forfeit_sigs = self.forfeit_sigs.take().unwrap();
+		let mut sec_nonces = self.forfeit_sec_nonces.take().unwrap();
 		let forfeit_vtxos = self.all_inputs.iter().map(|(id, vtxo)| {
-			let forfeit_sigs = forfeit_sigs.remove(&id).expect("checked have all forfeits");
 			slog!(StoringForfeitVtxo, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 				out_point: vtxo.point(),
 			);
-			(*id, forfeit_sigs)
+			let (user_nonces, user_part_sigs) = self.forfeit_part_sigs.remove(id)
+				.expect("missing part sigs");
+			let forfeit_state = ForfeitState {
+				round_id: round_txid.into(),
+				user_nonces, user_part_sigs,
+				pub_nonces: self.forfeit_pub_nonces.remove(id).expect("missing vtxo"),
+				sec_nonces: sec_nonces.remove(id).expect("missing vtxo").into_iter()
+					.map(DangerousMusigSecNonce::new)
+					.collect(),
+			};
+			(*id, forfeit_state)
 		}).collect();
 		let result = server.db.finish_round(
 			&signed_round_tx.tx,
@@ -927,7 +907,7 @@ impl SigningForfeits {
 		}
 
 		slog!(RoundFinished, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			txid: signed_round_tx.txid, vtxo_expiry_block_height: self.expiry_height,
+			txid: round_txid, vtxo_expiry_block_height: self.expiry_height,
 			duration: Instant::now().duration_since(self.attempt_start),
 			nb_input_vtxos: self.all_inputs.len(),
 		);
@@ -1338,15 +1318,10 @@ async fn perform_round(
 			duration: Instant::now().duration_since(receive_forfeit_signatures_start),
 		);
 
-		match round_state.into_signing_forfeits().check_forfeits(&server) {
-			s @ RoundState::CollectingPayments(_) => {
-				round_state = s;
-				continue 'attempt;
-			},
-			s @ RoundState::SigningForfeits(_) => {
-				round_state = s;
-			},
-			_ => unreachable!(),
+		let state = round_state.into_signing_forfeits();
+		if let Some(missing) = state.check_forfeits() {
+			round_state = RoundState::CollectingPayments(state.restart_missing_forfeits(Some(missing)));
+			continue 'attempt;
 		}
 
 		// ****************************************************************
@@ -1359,7 +1334,7 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		return match round_state.into_signing_forfeits().finish(&server).await {
+		return match state.finish(&server).await {
 			Ok(()) => RoundResult::Success,
 			Err(e) => RoundResult::Err(e),
 		};
@@ -1426,11 +1401,12 @@ mod tests {
 	use std::collections::HashSet;
 	use std::str::FromStr;
 
-	use ark::vtxo::VtxoSpkSpec;
-	use bitcoin::secp256k1::{PublicKey, Secp256k1};
 	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+	use bitcoin::hashes::Hash;
+	use bitcoin::secp256k1::{PublicKey, Secp256k1};
 	use bitcoin::secp256k1::schnorr::Signature;
 
+	use ark::vtxo::VtxoSpkSpec;
 	use ark::{RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 	use bitcoin_ext::fee;
 

@@ -181,7 +181,7 @@ impl ExpiredRound {
 		Self {
 			vtxo_txs: round.signed_tree.all_signed_txs(),
 			connectors: ConnectorChain::new(
-				round.nb_input_vtxos as usize,
+				round.nb_input_vtxos,
 				OutPoint::new(id.as_round_txid(), 1),
 				round.connector_key.public_key(&*SECP),
 			),

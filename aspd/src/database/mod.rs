@@ -1,13 +1,13 @@
 
-pub mod model;
-mod cln;
-
-pub use self::cln::ClnNodeId;
 
 mod embedded {
 	use refinery::embed_migrations;
 	embed_migrations!("src/database/migrations");
 }
+mod cln;
+
+pub mod model;
+pub use self::cln::ClnNodeId;
 
 
 use std::borrow::Borrow;
@@ -19,7 +19,7 @@ use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
-use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
+use bitcoin::secp256k1::{PublicKey, SecretKey};
 use bitcoin_ext::BlockHeight;
 use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
@@ -32,7 +32,7 @@ use ark::util::{Decodable, Encodable};
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
-use crate::database::model::{PendingSweep, StoredRound, VtxoState};
+use crate::database::model::{ForfeitState, PendingSweep, StoredRound, VtxoState};
 
 const DEFAULT_DATABASE: &str = "postgres";
 
@@ -188,7 +188,7 @@ impl Db {
 
 		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs, board_swept FROM vtxo \
+			SELECT id, vtxo, expiry, oor_spent, forfeit_state, board_swept FROM vtxo \
 			WHERE expiry <= $1 AND board_swept = false
 		", &[Type::INT4]).await?;
 
@@ -218,7 +218,7 @@ impl Db {
 		where T : GenericClient + Sized
 	{
 		let statement = client.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs, board_swept
+			SELECT id, vtxo, expiry, oor_spent, forfeit_state, board_swept
 			FROM vtxo
 			WHERE id = any($1);
 		", &[Type::TEXT_ARRAY]).await?;
@@ -251,6 +251,28 @@ impl Db {
 	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
 		let conn = self.pool.get().await?;
 		Self::get_vtxos_by_id_with_client(&*conn, ids).await
+	}
+
+	/// Fetch all vtxos that have been forfeited.
+	pub async fn fetch_all_forfeited_vtxos(
+		&self,
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Vtxo, ForfeitState)>> + '_> {
+		let conn = self.pool.get().await?;
+		let statement = conn.prepare("
+			SELECT id, vtxo, expiry, oor_spent, forfeit_state, board_swept \
+			FROM vtxo WHERE forfeit_state IS NOT NULL
+		").await?;
+
+		let params: Vec<String> = vec![];
+		let rows = conn.query_raw(&statement, params).await?;
+		Ok(rows.try_filter_map(|row| async {
+			let vtxo = VtxoState::try_from(row).expect("corrupt db");
+			if let Some(state) = vtxo.forfeit_state {
+				Ok(Some((vtxo.vtxo, state)))
+			} else {
+				Ok(None)
+			}
+		}).err_into())
 	}
 
 	/// Returns [None] if all the ids were not previously marked as signed
@@ -333,7 +355,7 @@ impl Db {
 		round_tx: &Transaction,
 		vtxos: &CachedSignedVtxoTree,
 		connector_key: &SecretKey,
-		forfeit_vtxos: Vec<(VtxoId, Vec<schnorr::Signature>)>,
+		forfeit_vtxos: Vec<(VtxoId, ForfeitState)>,
 	) -> anyhow::Result<()> {
 		let round_id = round_tx.compute_txid();
 
@@ -359,12 +381,17 @@ impl Db {
 
 		// Then mark inputs as forfeited.
 		let statement = tx.prepare_typed("
-			UPDATE vtxo SET forfeit_sigs = $2 WHERE id = $1 AND spendable = true;
-		", &[Type::TEXT, Type::BYTEA_ARRAY]).await?;
-		for (id, sigs) in forfeit_vtxos.into_iter() {
+			UPDATE vtxo SET forfeit_state = $2 WHERE id = $1 AND spendable = true;
+		", &[Type::TEXT, Type::BYTEA]).await?;
+		for (id, forfeit_state) in forfeit_vtxos {
+			let state_bytes = {
+				let mut buf = Vec::new();
+				ciborium::into_writer(&forfeit_state, &mut buf).expect("write into buf");
+				buf
+			};
 			let rows_affected = tx.execute(&statement, &[
 				&id.to_string(),
-				&sigs.into_iter().map(|s| s.serialize().to_vec()).collect::<Vec<_>>()
+				&state_bytes,
 			]).await?;
 			if rows_affected == 0 {
 				bail!("tried to mark unspendable vtxo as forfeited: {}", id);
