@@ -16,3 +16,7 @@ chrono.workspace = true
 
 bdk_wallet.workspace = true
 bitcoin.workspace = true
+
+tracing.workspace = true
+opentelemetry.workspace = true
+tracing-opentelemetry.workspace = true

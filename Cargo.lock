@@ -196,8 +196,11 @@ dependencies = [
  "bitcoin",
  "chrono",
  "log",
+ "opentelemetry",
  "serde",
  "serde_json",
+ "tracing",
+ "tracing-opentelemetry",
 ]
 
 [[package]]

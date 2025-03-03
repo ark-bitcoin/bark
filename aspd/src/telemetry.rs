@@ -14,8 +14,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 use crate::App;
 
-pub const TRACER_RPC: &str = "rpc_server";
-pub const TRACER_RUN_ROUND_COORDINATOR: &str = "round_coordinator";
+pub const TRACER_ASPD: &str = "aspd";
 
 pub const TRACE_RUN_ROUND: &str = "round";
 pub const TRACE_RUN_ROUND_EMPTY: &str = "round_empty";
@@ -83,13 +82,13 @@ pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
 		.with_resource(resource.clone())
 		.build();
 
-	let rpc_tracer = tracer_provider.tracer(TRACER_RPC);
+	let aspd_tracer = tracer_provider.tracer(TRACER_ASPD);
 
 	global::set_tracer_provider(tracer_provider);
 
 	// Set up the tracing subscriber
-	let rpc_telemetry = OpenTelemetryLayer::new(rpc_tracer);
-	let subscriber = Registry::default().with(rpc_telemetry);
+	let aspd_telemetry = OpenTelemetryLayer::new(aspd_tracer);
+	let subscriber = Registry::default().with(aspd_telemetry);
 	tracing::subscriber::set_global_default(subscriber)
 		.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err))?;
 

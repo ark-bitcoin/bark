@@ -13,8 +13,8 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
-use opentelemetry::{global, KeyValue};
-use opentelemetry::trace::{get_active_span, Span, SpanKind, Tracer, TracerProvider};
+use opentelemetry::{global, Context, KeyValue};
+use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
 use opentelemetry_semantic_conventions as semconv;
 use opentelemetry_semantic_conventions::trace::RPC_GRPC_STATUS_CODE;
 use stream_until::{StreamExt as StreamExtUntil, StreamUntilItem};
@@ -772,7 +772,7 @@ impl TelemetryMetrics {
 	fn new() -> TelemetryMetrics {
 		let meter = global::meter_provider().meter(telemetry::METER_RPC);
 		TelemetryMetrics {
-			tracer: Arc::new(global::tracer_provider().tracer(telemetry::TRACER_RPC)),
+			tracer: Arc::new(global::tracer_provider().tracer(telemetry::TRACER_ASPD)),
 			in_progress_counter: meter.i64_up_down_counter(
 				telemetry::METER_COUNTER_UD_GRPC_IN_PROCESS,
 			).build(),
@@ -857,6 +857,8 @@ where
 
 		span.add_event(format!("Processing {} request", rpc_method_details.format_path()), vec![]);
 
+		let span_context = Context::current_with_span(span);
+		
 		let metrics = self.metrics.clone();
 		let start_time = Instant::now();
 		let future = self.inner.call(req);
@@ -883,7 +885,7 @@ where
 					rpc_method_details.format_path(), duration, error_string,
 				);
 			} else {
-				span.set_attribute(KeyValue::new(RPC_GRPC_STATUS_CODE, tonic::Code::Ok as i64));
+				span_context.span().set_attribute(KeyValue::new(RPC_GRPC_STATUS_CODE, tonic::Code::Ok as i64));
 
 				trace!("Completed gRPC call: {} in {:?}, status: OK",
 					rpc_method_details.format_path(), duration,
