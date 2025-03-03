@@ -602,7 +602,7 @@ impl SigningVtxoTree {
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 		let parent_context = opentelemetry::Context::current();
-		
+
 		let _span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_COMBINE_VTXO_SIGNATURES)
 			.start_with_context(&tracer_provider, &parent_context.clone());
@@ -865,7 +865,7 @@ impl SigningForfeits {
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 		let parent_context = opentelemetry::Context::current();
-		
+
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
 			.start_with_context(&tracer_provider, &parent_context.clone());
@@ -995,7 +995,7 @@ pub async fn run_round_coordinator(
 			app.config.round_interval.as_millis()) as usize;
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
-		
+
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND)
 			.with_kind(SpanKind::Server)
@@ -1003,15 +1003,15 @@ pub async fn run_round_coordinator(
 		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 
 		let parent_context = opentelemetry::Context::current_with_span(span);
-		
+
 		let tracing_span = info_span!(telemetry::TRACE_RUN_ROUND);
 		tracing_span.set_parent(parent_context.clone());
-		
+
 		// this is to make sure slog has access to the span information.
 		let _guard = tracing_span.enter();
-		
+
 		slog!(RoundStarted, round_seq);
-		
+
 		// Start new round, announce.
 		let offboard_feerate = app.config.round_tx_feerate;
 		app.rounds().round_event_tx.send(RoundEvent::Start {
@@ -1156,7 +1156,7 @@ pub async fn run_round_coordinator(
 
 			let vtxo_signatures_receive_start = Instant::now();
 
-			let mut span = tracer_provider
+			let _span = tracer_provider
 				.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_VTXO_SIGNATURES)
 				.with_kind(SpanKind::Internal)
 				.start_with_context(&tracer_provider, &parent_context);
