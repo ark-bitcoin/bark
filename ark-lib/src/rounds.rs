@@ -101,7 +101,7 @@ pub enum RoundEvent {
 	},
 	Attempt {
 		round_seq: usize,
-		attempt: u64,
+		attempt_seq: usize,
 	},
 	VtxoProposal {
 		round_seq: usize,
@@ -130,10 +130,10 @@ impl fmt::Display for RoundEvent {
 					.field("offboard_feerate", offboard_feerate)
 					.finish()
 			},
-			Self::Attempt { round_seq, attempt } => {
+			Self::Attempt { round_seq, attempt_seq } => {
 				f.debug_struct("Attempt")
 					.field("round_seq", round_seq)
-					.field("attempt", attempt)
+					.field("attempt_seq", attempt_seq)
 					.finish()
 			},
 			Self::VtxoProposal { round_seq, unsigned_round_tx, .. } => {

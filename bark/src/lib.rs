@@ -1081,9 +1081,9 @@ impl <P>Wallet<P> where
 				}
 				// then we expect the first attempt message
 				match events.next().await.context("events stream broke")?? {
-					RoundEvent::Attempt { attempt, .. } => {
-						if attempt != 0 {
-							error!("First attempt message didn't have number 0, but {attempt}");
+					RoundEvent::Attempt { attempt_seq, .. } => {
+						if attempt_seq != 0 {
+							error!("First attempt message didn't have number 0, but {attempt_seq}");
 						}
 					},
 					_ => trace!("ignoring irrelevant message"),
@@ -1402,7 +1402,7 @@ impl <P>Wallet<P> where
 
 struct RoundInfo {
 	round_seq: usize,
-	attempt: u64,
+	attempt_seq: usize,
 	offboard_feerate: FeeRate,
 }
 
@@ -1412,7 +1412,7 @@ impl RoundInfo {
 	/// Panics if any other event type is passed.
 	fn new_from_start(event: RoundEvent) -> RoundInfo {
 		if let RoundEvent::Start { round_seq, offboard_feerate } = event {
-			RoundInfo { round_seq, attempt: 0, offboard_feerate }
+			RoundInfo { round_seq, attempt_seq: 0, offboard_feerate }
 		} else {
 			panic!("called new_from_start with a wrong event type: {}", event);
 		}
@@ -1423,10 +1423,10 @@ impl RoundInfo {
 	/// If it belongs to the same round, returns the updated round info.
 	/// If it belongs to another round, we return None.
 	fn process_attempt(mut self, event: RoundEvent) -> Option<RoundInfo> {
-		if let RoundEvent::Attempt { round_seq, attempt } = event {
+		if let RoundEvent::Attempt { round_seq, attempt_seq } = event {
 			if self.round_seq == round_seq {
 				debug!("New round attempt...");
-				self.attempt = attempt;
+				self.attempt_seq = attempt_seq;
 				Some(self)
 			} else {
 				warn!("Received a new attempt message for a different round. Restarting...");

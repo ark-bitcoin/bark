@@ -135,7 +135,7 @@ message RoundStart {
 
 message RoundAttempt {
 	uint64 round_seq = 1;
-	uint64 attempt = 2;
+	uint64 attempt_seq = 2;
 }
 
 message ForfeitNonces {

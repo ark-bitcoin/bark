@@ -48,10 +48,10 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 						offboard_feerate_sat_vkb: offboard_feerate.to_sat_per_kwu() * 4,
 					})
 				},
-				ark::rounds::RoundEvent::Attempt { round_seq, attempt } => {
+				ark::rounds::RoundEvent::Attempt { round_seq, attempt_seq } => {
 					crate::round_event::Event::Attempt(crate::RoundAttempt {
 						round_seq: round_seq as u64,
-						attempt,
+						attempt_seq: attempt_seq as u64,
 					})
 				},
 				ark::rounds::RoundEvent::VtxoProposal {
@@ -107,7 +107,7 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 			crate::round_event::Event::Attempt(m) => {
 				ark::rounds::RoundEvent::Attempt {
 					round_seq: m.round_seq as usize,
-					attempt: m.attempt,
+					attempt_seq: m.attempt_seq as usize,
 				}
 			},
 			crate::round_event::Event::VtxoProposal(m) => {
