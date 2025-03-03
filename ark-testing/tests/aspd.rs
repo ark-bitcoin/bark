@@ -267,7 +267,7 @@ async fn sweep_vtxos() {
 	ctx.bitcoind.generate(70).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(sat(100285), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	assert_eq!(sat(100615), log_sweeping.recv().wait(1500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "connector");

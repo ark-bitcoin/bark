@@ -9,13 +9,13 @@ use bitcoin::{
 };
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighashType};
-use bitcoin_ext::{KeypairExt, P2WSH_DUST};
+use bitcoin_ext::{fee, KeypairExt, P2WSH_DUST};
 
 use crate::util::{self, SECP};
 
 
 /// The weight of each connector tx.
-const TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
+const TX_WEIGHT: Weight = Weight::from_vb_unchecked(197);
 
 /// The witness weight of a connector input.
 pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
@@ -47,13 +47,26 @@ impl ConnectorChain {
 	}
 
 	/// The budget needed for a chain of length [len] to pay for
-	/// - dust on 2 outputs per tx
-	/// - minrelayfee per tx
+	/// - one dust for the connector output per tx
+	/// - a fee anchor per tx
+	/// - one extra dust on the last tx
 	pub fn required_budget(len: usize) -> Amount {
 		assert_ne!(len, 0);
 
-		// We need n times dust for connectors.
-		P2WSH_DUST * len as u64
+		if len == 1 {
+			// in this case we don't have a connector chain and the
+			// single connector is on the round tx
+			P2WSH_DUST
+		} else {
+			// We need n times dust for connectors.
+			let connector_dust = P2WSH_DUST * len as u64;
+
+			// And one fee anchor dust for each tx in the chain.
+			let nb_txs = len - 1;
+			let fee_anchor_dust = P2WSH_DUST * nb_txs as u64;
+
+			connector_dust + fee_anchor_dust
+		}
 	}
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
@@ -102,14 +115,20 @@ impl ConnectorChain {
 				witness: Witness::new(),
 			}],
 			output: vec![
+				// this is the continuation of the chain
+				// (or a connector output if the last tx)
 				TxOut {
 					script_pubkey: self.spk.to_owned(),
 					value: ConnectorChain::required_budget(self.len - idx - 1),
 				},
+				// this is the connector output
+				// (or the second one if the last tx)
 				TxOut {
 					script_pubkey: self.spk.to_owned(),
 					value: P2WSH_DUST,
 				},
+				// this is the fee anchor output
+				fee::dust_anchor(),
 			],
 		}
 	}
