@@ -58,9 +58,9 @@ futures = {version = "0.3.30"}
 bip39 = { version = "2.0.0", features = [ "rand", "serde" ] }
 miniscript = "12.2"
 rand = { version = "0.8.5", features = [ "std", "std_rng" ] }
-bdk_wallet = { package = "bdk_wallet", version = "1.0.0", git = "https://github.com/acidbunny21/bdk.git", rev = "7bfde8de554b260214a380fb301f5cfa9966d95e" }
-bdk_esplora = { package = "bdk_esplora", version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false, git = "https://github.com/acidbunny21/bdk.git", rev = "7bfde8de554b260214a380fb301f5cfa9966d95e" }
-bdk_bitcoind_rpc = { package = "bdk_bitcoind_rpc", version = "0.18.0", git = "https://github.com/acidbunny21/bdk.git", rev = "7bfde8de554b260214a380fb301f5cfa9966d95e" }
+bdk_wallet = { package = "bdk_wallet", version = "1.0.0" }
+bdk_esplora = { package = "bdk_esplora", version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false }
+bdk_bitcoind_rpc = { package = "bdk_bitcoind_rpc", version = "0.17.1" }
 # tracing and monitoring
 opentelemetry = "0.27.1"
 opentelemetry_sdk = { version = "0.27.0", features = ["tracing", "rt-tokio"] }
@@ -69,3 +69,22 @@ opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_
 tracing = { version = "0.1.41", features = ["std", "attributes"] }
 tracing-opentelemetry = "0.28.0"
 tracing-subscriber = { version = "0.3.19", features = ["std", "registry", "ansi", "fmt", "env-filter"] }
+
+# bdk dep overrides (should be replaced under # bitcoin category later)
+[patch.crates-io.bdk_wallet]
+package = "bdk_wallet"
+version = "1.0.0"
+git = "https://github.com/stevenroose/bdk.git"
+rev = "fa11b2763b50a41f11217caf52ffa322ccb018a3"
+[patch.crates-io.bdk_esplora]
+package = "bdk_esplora"
+version = "0.20.1"
+features = [ "std", "async-https-rustls", "tokio" ]
+default-features = false
+git = "https://github.com/stevenroose/bdk.git"
+rev = "fa11b2763b50a41f11217caf52ffa322ccb018a3"
+[patch.crates-io.bdk_bitcoind_rpc]
+package = "bdk_bitcoind_rpc"
+version = "0.17.1"
+git = "https://github.com/stevenroose/bdk.git"
+rev = "fa11b2763b50a41f11217caf52ffa322ccb018a3"
