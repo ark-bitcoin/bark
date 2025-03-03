@@ -9,7 +9,6 @@ mod serde_utils;
 pub use crate::msgs::*;
 
 use std::fmt;
-
 use serde::de::{Deserialize, DeserializeOwned};
 use serde::ser::{Serialize, Serializer, SerializeMap};
 
@@ -18,7 +17,27 @@ use serde::ser::{Serialize, Serializer, SerializeMap};
 pub const SLOG_TARGET: &str = "aspd-slog";
 
 pub const LOGID_FIELD: &str = "slog_id";
+pub const TRACEID_FIELD: &str = "slog_trace_id";
 pub const DATA_FIELD: &str = "slog_data";
+
+/// Retrieves the current trace ID from OpenTelemetry
+fn get_trace_id() -> Option<String> {
+	// let context = tracing::Span::current().context();
+	// let span = context.span();
+	// let span_context = span.span_context();
+	// span_context.is_valid().then(|| span_context.trace_id().to_string())
+	
+	// let context = Context::current();
+	// let span = context.span();
+	// let span_context = span.span_context();
+	// if span_context.is_valid() {
+	// 	Some(span_context.trace_id().to_string())
+	// } else {
+	// 	None
+	// }
+	
+	None
+}
 
 pub trait LogMsg: Sized + Send + fmt::Debug + Serialize + DeserializeOwned + 'static {
 	const LOGID: &'static str;
@@ -40,14 +59,20 @@ pub fn log<T: LogMsg>(
 		.module_path(Some(module))
 		.file(Some(file))
 		.line(Some(line))
-		.key_values(&LogMsgSourceWrapper(obj))
+		.key_values(&LogMsgSourceWrapper{
+			obj,
+			trace_id: get_trace_id(),
+		})
 		.build());
 }
 
 
 /// A wrapper around our [LogMsg] structs that implements [log::kv::Source]
 /// so that we can pass them into the kv structure of a log record.
-struct LogMsgSourceWrapper<'a, T: LogMsg>(&'a T);
+struct LogMsgSourceWrapper<'a, T: LogMsg> {
+	obj: &'a T,
+	trace_id: Option<String>,
+}
 
 impl<'a, T: LogMsg> log::kv::Source for LogMsgSourceWrapper<'a, T> {
 	fn visit<'k>(
@@ -58,9 +83,15 @@ impl<'a, T: LogMsg> log::kv::Source for LogMsgSourceWrapper<'a, T> {
 			LOGID_FIELD.into(),
 			T::LOGID.into(),
 		)?;
+		if let Some(trace_id) = self.trace_id.as_ref() {
+			visitor.visit_pair(
+				TRACEID_FIELD.into(),
+				log::kv::Value::from(trace_id.as_str()),
+			)?;
+		}
 		visitor.visit_pair(
 			DATA_FIELD.into(),
-			log::kv::Value::from_serde(self.0),
+			log::kv::Value::from_serde(self.obj),
 		)?;
 		Ok(())
 	}
@@ -76,6 +107,8 @@ pub enum RecordParseError {
 pub struct ParsedRecordKv<'a> {
 	#[serde(rename = "slog_id")]
 	pub id: &'a str,
+	#[serde(rename = "slog_trace_id")]
+	pub trace_id: &'a str,
 	#[serde(rename = "slog_data")]
 	pub data: &'a serde_json::value::RawValue,
 }
@@ -108,6 +141,14 @@ impl<'a> ParsedRecord<'a> {
 			kv.id == T::LOGID
 		} else {
 			false
+		}
+	}
+
+	pub fn trace_id<T: LogMsg>(&self) -> &str {
+		if let Some(ref kv) = self.kv {
+			kv.trace_id
+		} else {
+			""
 		}
 	}
 
@@ -187,7 +228,10 @@ mod test {
 	#[test]
 	fn json_roundtrip() {
 		let m = TestLog { nb: 42 };
-		let kv = LogMsgSourceWrapper(&m);
+		let kv = LogMsgSourceWrapper{
+			obj: &m,
+			trace_id: Some("test123".to_string()),
+		};
 		let record = log::Record::builder()
 			.target(SLOG_TARGET)
 			.level(RoundStarted::LEVEL)
@@ -201,6 +245,7 @@ mod test {
 		assert!(parsed.is::<TestLog>());
 		let inner = parsed.try_as::<TestLog>().unwrap();
 		assert_eq!(inner, m);
+		assert_eq!(parsed.trace_id::<TestLog>().to_string(), kv.trace_id.unwrap().as_str());
 	}
 
 	#[test]
@@ -214,6 +259,7 @@ mod test {
 			"line": 35,
 			"kv": {
 				"slog_id": "TestLog",
+				"slog_trace_id": "test123",
 				"slog_data": {"nb": 35},
 				"extra": {"extra": 3},
 			},
@@ -221,7 +267,9 @@ mod test {
 		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
 		assert!(parsed.is::<TestLog>());
 		let _ = parsed.try_as::<TestLog>().unwrap();
-
+		let trace_id = parsed.trace_id::<TestLog>();
+		assert_eq!(trace_id, "test123");
+		
 		// And without slog stuff
 		let json = serde_json::to_string(&serde_json::json!({
 			"msg": "test",
@@ -235,5 +283,7 @@ mod test {
 		})).unwrap();
 		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
 		assert!(!parsed.is::<TestLog>());
+		let trace_id = parsed.trace_id::<TestLog>();
+		assert_eq!(trace_id, "");
 	}
 }
