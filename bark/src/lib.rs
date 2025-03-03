@@ -1165,12 +1165,12 @@ impl <P>Wallet<P> where
 				let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
 					match events.next().await.context("events stream broke")?? {
 						RoundEvent::VtxoProposal {
-							round_id,
+							round_seq,
 							unsigned_round_tx,
 							vtxos_spec,
 							cosign_agg_nonces,
 						} => {
-							if round_id != round.round_id {
+							if round_seq != round.round_seq {
 								warn!("Unexpected different round id");
 								round_info = None;
 								continue 'round;
@@ -1254,8 +1254,8 @@ impl <P>Wallet<P> where
 				debug!("Wait for round proposal from asp...");
 				let (vtxo_cosign_sigs, forfeit_nonces) = {
 					match events.next().await.context("events stream broke")?? {
-						RoundEvent::RoundProposal { round_id, cosign_sigs, forfeit_nonces } => {
-							if round_id != round.round_id {
+						RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
+							if round_seq != round.round_seq {
 								warn!("Unexpected different round id");
 								round_info = None;
 								continue 'round;
@@ -1336,10 +1336,10 @@ impl <P>Wallet<P> where
 
 				debug!("Waiting for round to finish...");
 				let signed_round_tx = match events.next().await.context("events stream broke")?? {
-					RoundEvent::Finished { round_id, signed_round_tx } => {
-						if round_id != round.round_id {
+					RoundEvent::Finished { round_seq, signed_round_tx } => {
+						if round_seq != round.round_seq {
 							bail!("Unexpected round ID from round finished event: {} != {}",
-								round_id, round.round_id);
+								round_seq, round.round_seq);
 						}
 						signed_round_tx
 					},
@@ -1401,7 +1401,7 @@ impl <P>Wallet<P> where
 }
 
 struct RoundInfo {
-	round_id: u64,
+	round_seq: usize,
 	attempt: u64,
 	offboard_feerate: FeeRate,
 }
@@ -1411,8 +1411,8 @@ impl RoundInfo {
 	///
 	/// Panics if any other event type is passed.
 	fn new_from_start(event: RoundEvent) -> RoundInfo {
-		if let RoundEvent::Start { round_id, offboard_feerate } = event {
-			RoundInfo { round_id, attempt: 0, offboard_feerate }
+		if let RoundEvent::Start { round_seq, offboard_feerate } = event {
+			RoundInfo { round_seq, attempt: 0, offboard_feerate }
 		} else {
 			panic!("called new_from_start with a wrong event type: {}", event);
 		}
@@ -1423,8 +1423,8 @@ impl RoundInfo {
 	/// If it belongs to the same round, returns the updated round info.
 	/// If it belongs to another round, we return None.
 	fn process_attempt(mut self, event: RoundEvent) -> Option<RoundInfo> {
-		if let RoundEvent::Attempt { round_id, attempt } = event {
-			if self.round_id == round_id {
+		if let RoundEvent::Attempt { round_seq, attempt } = event {
+			if self.round_seq == round_seq {
 				debug!("New round attempt...");
 				self.attempt = attempt;
 				Some(self)

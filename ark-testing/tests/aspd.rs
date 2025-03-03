@@ -74,12 +74,12 @@ async fn round_started_log_can_be_captured() {
 
 	let mut log_stream = aspd.subscribe_log::<aspd_log::RoundStarted>().await;
 	while let Some(l) = log_stream.recv().await {
-		info!("Captured log: Round started at {}", l.round_id);
+		info!("Captured log: Round started at {}", l.round_seq);
 		break;
 	}
 
 	let l = aspd.wait_for_log::<aspd_log::RoundStarted>().await;
-	info!("Captured log: Round started with round_num {}", l.round_id);
+	info!("Captured log: Round started with round_num {}", l.round_seq);
 
 	// make sure we only capture the log once.
 	assert!(aspd.wait_for_log::<aspd_log::RoundStarted>().try_fast().await.is_err());

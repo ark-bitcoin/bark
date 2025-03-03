@@ -96,26 +96,26 @@ impl<'de> serde::Deserialize<'de> for RoundId {
 #[derive(Debug, Clone)]
 pub enum RoundEvent {
 	Start {
-		round_id: u64,
+		round_seq: usize,
 		offboard_feerate: FeeRate,
 	},
 	Attempt {
-		round_id: u64,
+		round_seq: usize,
 		attempt: u64,
 	},
 	VtxoProposal {
-		round_id: u64,
+		round_seq: usize,
 		unsigned_round_tx: Transaction,
 		vtxos_spec: VtxoTreeSpec,
 		cosign_agg_nonces: Vec<musig::MusigAggNonce>,
 	},
 	RoundProposal {
-		round_id: u64,
+		round_seq: usize,
 		cosign_sigs: Vec<schnorr::Signature>,
 		forfeit_nonces: HashMap<VtxoId, Vec<musig::MusigPubNonce>>,
 	},
 	Finished {
-		round_id: u64,
+		round_seq: usize,
 		signed_round_tx: Transaction,
 	},
 }
@@ -124,32 +124,32 @@ pub enum RoundEvent {
 impl fmt::Display for RoundEvent {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::Start { round_id, offboard_feerate } => {
+			Self::Start { round_seq, offboard_feerate } => {
 				f.debug_struct("Start")
-					.field("round_id", round_id)
+					.field("round_seq", round_seq)
 					.field("offboard_feerate", offboard_feerate)
 					.finish()
 			},
-			Self::Attempt { round_id, attempt } => {
+			Self::Attempt { round_seq, attempt } => {
 				f.debug_struct("Attempt")
-					.field("round_id", round_id)
+					.field("round_seq", round_seq)
 					.field("attempt", attempt)
 					.finish()
 			},
-			Self::VtxoProposal { round_id, unsigned_round_tx, .. } => {
+			Self::VtxoProposal { round_seq, unsigned_round_tx, .. } => {
 				f.debug_struct("VtxoProposal")
-					.field("round_id", round_id)
+					.field("round_seq", round_seq)
 					.field("unsigned_round_txid", &unsigned_round_tx.compute_txid())
 					.finish()
 			},
-			Self::RoundProposal { round_id, .. } => {
+			Self::RoundProposal { round_seq, .. } => {
 				f.debug_struct("RoundProposal")
-					.field("round_id", round_id)
+					.field("round_seq", round_seq)
 					.finish()
 			},
-			Self::Finished { round_id, signed_round_tx } => {
+			Self::Finished { round_seq, signed_round_tx } => {
 				f.debug_struct("Finished")
-					.field("round_id", round_id)
+					.field("round_seq", round_seq)
 					.field("signed_round_txid", &signed_round_tx.compute_txid())
 					.finish()
 			},

@@ -66,7 +66,7 @@ pub struct RoundData {
 }
 
 pub struct CollectingPayments {
-	round_id: u64,
+	round_seq: usize,
 	attempt: usize,
 	round_data: RoundData,
 
@@ -86,14 +86,14 @@ pub struct CollectingPayments {
 
 impl CollectingPayments {
 	fn new(
-		round_id: u64,
+		round_seq: usize,
 		attempt: usize,
 		round_data: RoundData,
 		locked_inputs: HashSet<VtxoId>,
 		allowed_inputs: Option<HashSet<VtxoId>>,
 	) -> CollectingPayments {
 		CollectingPayments {
-			round_id,
+			round_seq,
 			attempt,
 			round_data,
 			locked_inputs,
@@ -191,13 +191,13 @@ impl CollectingPayments {
 		let mut unique_inputs = HashSet::with_capacity(inputs.len());
 		for input in inputs {
 			if !unique_inputs.insert(input) {
-				slog!(RoundUserVtxoDuplicateInput, round_id: self.round_id, attempt: self.attempt,
+				slog!(RoundUserVtxoDuplicateInput, round_seq: self.round_seq, attempt: self.attempt,
 					vtxo: *input,
 				);
 				bail!("user provided duplicate inputs");
 			}
 			if self.all_inputs.contains_key(input) {
-				slog!(RoundUserVtxoAlreadyRegistered, round_id: self.round_id, attempt: self.attempt,
+				slog!(RoundUserVtxoAlreadyRegistered, round_seq: self.round_seq, attempt: self.attempt,
 					vtxo: *input,
 				);
 				bail!("vtxo {input} already registered");
@@ -207,7 +207,7 @@ impl CollectingPayments {
 		if let Some(ref allowed) = self.allowed_inputs {
 			// This means we're not trying first time and we filter inputs.
 			if let Some(bad) = inputs.iter().find(|i| !allowed.contains(&i)) {
-				slog!(RoundUserVtxoNotAllowed, round_id: self.round_id, attempt: self.attempt,
+				slog!(RoundUserVtxoNotAllowed, round_seq: self.round_seq, attempt: self.attempt,
 					vtxo: *bad,
 				);
 				bail!("input vtxo {} has been banned for this round", bad);
@@ -242,7 +242,7 @@ impl CollectingPayments {
 				Ok(tx) => {
 					let confs = tx.confirmations.unwrap_or(0) as usize;
 					if confs < app.config.round_onboard_confirmations {
-						slog!(RoundUserVtxoUnconfirmedOnboard, round_id: self.round_id,
+						slog!(RoundUserVtxoUnconfirmedOnboard, round_seq: self.round_seq,
 							vtxo: id, confirmations: confs,
 						);
 						bail!("input onboard vtxo not deeply confirmed (has {confs} confs, \
@@ -271,7 +271,7 @@ impl CollectingPayments {
 		self.validate_payment_data(&inputs, &vtxo_requests, &cosign_pub_nonces)?;
 
 		if let Err(id) = app.atomic_check_put_vtxo_in_flux(&inputs).await {
-			slog!(RoundUserVtxoInFlux, round_id: self.round_id, attempt: self.attempt, vtxo: id);
+			slog!(RoundUserVtxoInFlux, round_seq: self.round_seq, attempt: self.attempt, vtxo: id);
 			bail!("vtxo {id} already in flux");
 		}
 
@@ -280,14 +280,14 @@ impl CollectingPayments {
 			Ok(i) => i,
 			Err(e) => {
 				let id = e.downcast_ref::<VtxoId>().cloned();
-				slog!(RoundUserVtxoUnknown, round_id: self.round_id, vtxo: id);
+				slog!(RoundUserVtxoUnknown, round_seq: self.round_seq, vtxo: id);
 				app.release_vtxos_in_flux(&inputs).await;
 				bail!("unknown vtxo {:?}", id);
 			},
 		};
 
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
-			slog!(RoundPaymentRegistrationFailed, round_id: self.round_id,
+			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt: self.attempt, error: e.to_string(),
 			);
 			app.release_vtxos_in_flux(&inputs).await;
@@ -295,7 +295,7 @@ impl CollectingPayments {
 		}
 
 		if let Err(e) = self.validate_onboard_inputs(app, &input_vtxos) {
-			slog!(RoundPaymentRegistrationFailed, round_id: self.round_id,
+			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt: self.attempt, error: e.to_string(),
 			);
 			app.release_vtxos_in_flux(&inputs).await;
@@ -315,7 +315,7 @@ impl CollectingPayments {
 		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
 		offboards: Vec<OffboardRequest>,
 	) {
-		slog!(RoundPaymentRegistered, round_id: self.round_id, attempt: self.attempt,
+		slog!(RoundPaymentRegistered, round_seq: self.round_seq, attempt: self.attempt,
 			nb_inputs: inputs.len(), nb_outputs: vtxo_requests.len(), nb_offboards: offboards.len(),
 		);
 
@@ -339,7 +339,7 @@ impl CollectingPayments {
 
 		// Check whether our round is full.
 		if self.all_outputs.len() == self.round_data.max_output_vtxos {
-			slog!(FullRound, round_id: self.round_id, attempt: self.attempt,
+			slog!(FullRound, round_seq: self.round_seq, attempt: self.attempt,
 				nb_outputs: self.all_outputs.len(), max_output_vtxos: self.round_data.max_output_vtxos,
 			);
 			self.proceed = true;
@@ -356,7 +356,7 @@ impl CollectingPayments {
 		span.set_attribute(KeyValue::new("expiry_height", expiry_height.to_string()));
 		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_BLOCKHEIGHT, tip.to_string()));
 
-		slog!(ConstructingRoundVtxoTree, round_id: self.round_id, attempt: self.attempt,
+		slog!(ConstructingRoundVtxoTree, round_seq: self.round_seq, attempt: self.attempt,
 			tip_block_height: tip, vtxo_expiry_block_height: expiry_height,
 		);
 
@@ -450,7 +450,7 @@ impl CollectingPayments {
 
 		// Send out vtxo proposal to signers.
 		app.rounds().round_event_tx.send(RoundEvent::VtxoProposal {
-			round_id: self.round_id,
+			round_seq: self.round_seq,
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
@@ -473,7 +473,7 @@ impl CollectingPayments {
 		}
 
 		SigningVtxoTree {
-			round_id: self.round_id,
+			round_seq: self.round_seq,
 			round_data: self.round_data,
 			attempt: self.attempt,
 			expiry_height,
@@ -497,7 +497,7 @@ impl CollectingPayments {
 }
 
 pub struct SigningVtxoTree {
-	round_id: u64,
+	round_seq: usize,
 	attempt: usize,
 	round_data: RoundData,
 	expiry_height: BlockHeight,
@@ -543,7 +543,7 @@ impl SigningVtxoTree {
 				bail!("pubkey is not part of cosigner group");
 			},
 		};
-		slog!(RoundVtxoSignaturesRegistered, round_id: self.round_id, attempt: self.attempt,
+		slog!(RoundVtxoSignaturesRegistered, round_seq: self.round_seq, attempt: self.attempt,
 			nb_vtxo_signatures: signatures.len(), cosigner: pubkey,
 		);
 
@@ -572,7 +572,7 @@ impl SigningVtxoTree {
 		for (pk, vtxos) in self.inputs_per_cosigner.iter() {
 			if !self.cosign_part_sigs.contains_key(pk) {
 				// Disallow all inputs by this cosigner.
-				slog!(DroppingLateVtxoSignatureVtxos, round_id: self.round_id,
+				slog!(DroppingLateVtxoSignatureVtxos, round_seq: self.round_seq,
 					attempt: self.attempt, disallowed_vtxos: vtxos.clone(),
 				);
 				for id in vtxos {
@@ -581,7 +581,7 @@ impl SigningVtxoTree {
 			}
 		}
 		CollectingPayments::new(
-			self.round_id,
+			self.round_seq,
 			self.attempt + 1,
 			self.round_data,
 			self.locked_inputs,
@@ -619,7 +619,7 @@ impl SigningVtxoTree {
 		let signed_vtxos = self.unsigned_vtxo_tree
 			.into_signed_tree(cosign_sigs)
 			.into_cached_tree();
-		slog!(CreatedSignedVtxoTree, round_id: self.round_id, attempt: self.attempt,
+		slog!(CreatedSignedVtxoTree, round_seq: self.round_seq, attempt: self.attempt,
 			nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(),
 			duration: Instant::now().duration_since(combine_signatures_start),
 		);
@@ -646,7 +646,7 @@ impl SigningVtxoTree {
 
 		// Send out round proposal to signers.
 		app.rounds().round_event_tx.send(RoundEvent::RoundProposal {
-			round_id: self.round_id,
+			round_seq: self.round_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
 		}).expect("round event channel broken");
@@ -657,7 +657,7 @@ impl SigningVtxoTree {
 		);
 
 		SigningForfeits {
-			round_id: self.round_id,
+			round_seq: self.round_seq,
 			attempt: self.attempt,
 			round_data: self.round_data,
 			expiry_height: self.expiry_height,
@@ -678,7 +678,7 @@ impl SigningVtxoTree {
 }
 
 pub struct SigningForfeits {
-	round_id: u64,
+	round_seq: usize,
 	attempt: usize,
 	round_data: RoundData,
 	expiry_height: BlockHeight,
@@ -709,7 +709,7 @@ impl SigningForfeits {
 		&mut self,
 		signatures: Vec<(VtxoId, Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
 	) -> anyhow::Result<()> {
-		slog!(ReceivedForfeitSignatures, round_id: self.round_id, attempt: self.attempt,
+		slog!(ReceivedForfeitSignatures, round_seq: self.round_seq, attempt: self.attempt,
 			nb_forfeits: signatures.len(), vtxo_ids: signatures.iter().map(|v| v.0).collect::<Vec<_>>(),
 		);
 
@@ -724,7 +724,7 @@ impl SigningForfeits {
 					Err(e) => debug!("Invalid forfeit sigs for {}: {}", id, e),
 				}
 			} else {
-				slog!(UnknownForfeitSignature, round_id: self.round_id,
+				slog!(UnknownForfeitSignature, round_seq: self.round_seq,
 					attempt: self.attempt, vtxo_id: id,
 				);
 			}
@@ -740,7 +740,7 @@ impl SigningForfeits {
 	fn restart_missing_forfeits(self, missing: Option<HashSet<VtxoId>>) -> CollectingPayments {
 		let allowed_inputs = if let Some(missing) = missing {
 			for input in &missing {
-				slog!(MissingForfeits, round_id: self.round_id,
+				slog!(MissingForfeits, round_seq: self.round_seq,
 					attempt: self.attempt, input: *input,
 				);
 			}
@@ -751,7 +751,7 @@ impl SigningForfeits {
 		} else {
 			self.all_inputs.keys().copied().filter(|v| {
 				if !self.forfeit_part_sigs.contains_key(v) {
-					slog!(MissingForfeits, round_id: self.round_id,
+					slog!(MissingForfeits, round_seq: self.round_seq,
 						attempt: self.attempt, input: *v,
 					);
 					false
@@ -760,9 +760,9 @@ impl SigningForfeits {
 				}
 			}).collect()
 		};
-		slog!(RestartMissingForfeits, round_id: self.round_id, attempt: self.attempt);
+		slog!(RestartMissingForfeits, round_seq: self.round_seq, attempt: self.attempt);
 		CollectingPayments::new(
-			self.round_id,
+			self.round_seq,
 			self.attempt + 1,
 			self.round_data,
 			self.locked_inputs,
@@ -829,7 +829,7 @@ impl SigningForfeits {
 			app.db.store_changeset(&change).await?;
 		}
 		drop(self.wallet_lock); // we no longer need the lock
-		slog!(BroadcastingFinalizedRoundTransaction, round_id: self.round_id, attempt: self.attempt,
+		slog!(BroadcastingFinalizedRoundTransaction, round_seq: self.round_seq, attempt: self.attempt,
 			tx_hex: signed_round_tx.raw_hex(), signing_time: Instant::now().duration_since(sign_start),
 		);
 		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
@@ -837,7 +837,7 @@ impl SigningForfeits {
 		// Send out the finished round to users.
 		trace!("Sending out finish event.");
 		app.rounds().round_event_tx.send(RoundEvent::Finished {
-			round_id: self.round_id,
+			round_seq: self.round_seq,
 			signed_round_tx: signed_round_tx.tx.clone(),
 		}).expect("round event channel broken");
 
@@ -845,7 +845,7 @@ impl SigningForfeits {
 		let mut forfeit_sigs = self.forfeit_sigs.take().unwrap();
 		for (id, vtxo) in self.all_inputs {
 			let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
-			slog!(StoringForfeitVtxo, round_id: self.round_id, attempt: self.attempt,
+			slog!(StoringForfeitVtxo, round_seq: self.round_seq, attempt: self.attempt,
 				out_point: vtxo.point(),
 			);
 			app.db.set_vtxo_forfeited(id, forfeit_sigs).await?;
@@ -863,7 +863,7 @@ impl SigningForfeits {
 		app.txindex.register_batch(self.connectors.iter_signed_txs(&app.asp_key)).await;
 		app.db.store_round(signed_round_tx.tx.clone(), self.signed_vtxos, self.connectors.len()).await?;
 
-		slog!(RoundFinished, round_id: self.round_id, attempt: self.attempt,
+		slog!(RoundFinished, round_seq: self.round_seq, attempt: self.attempt,
 			txid: signed_round_tx.txid, vtxo_expiry_block_height: self.expiry_height,
 			duration: Instant::now().duration_since(self.attempt_start),
 		);
@@ -977,18 +977,18 @@ pub async fn run_round_coordinator(
 			}
 		}
 
-		let round_id = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
-			app.config.round_interval.as_millis()) as u64;
-		slog!(RoundStarted, round_id);
+		let round_seq = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
+			app.config.round_interval.as_millis()) as usize;
+		slog!(RoundStarted, round_seq);
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_RUN_ROUND_COORDINATOR);
 		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND);
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 
 		// Start new round, announce.
 		let offboard_feerate = app.config.round_tx_feerate;
 		app.rounds().round_event_tx.send(RoundEvent::Start {
-			round_id,
+			round_seq,
 			offboard_feerate,
 		}).expect("round event channel broken");
 
@@ -1005,20 +1005,20 @@ pub async fn run_round_coordinator(
 			offboard_feerate,
 		};
 		let mut round_state = RoundState::CollectingPayments(
-			CollectingPayments::new(round_id, 0, round_data, HashSet::new(), None)
+			CollectingPayments::new(round_seq, 0, round_data, HashSet::new(), None)
 		);
 
 		// In this loop we will try to finish the round and make new attempts.
 		'attempt: loop {
 			let attempt = round_state.collecting_payments().attempt;
-			slog!(AttemptingRound, round_id, attempt);
+			slog!(AttemptingRound, round_seq, attempt);
 			if sync_next_attempt {
 				app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
 			}
 			sync_next_attempt = true;
 
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_ATTEMPT);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 
 			// Release all vtxos in flux from previous attempt
@@ -1028,14 +1028,14 @@ pub async fn run_round_coordinator(
 			}
 
 			app.rounds().round_event_tx.send(RoundEvent::Attempt {
-				round_id,
+				round_seq,
 				attempt: attempt as u64,
 			}).expect("round event channel broken");
 			// Start receiving payments.
 			let receive_payments_start = Instant::now();
 
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 
 			tokio::pin! { let timeout = tokio::time::sleep(app.config.round_submit_time); }
@@ -1076,21 +1076,21 @@ pub async fn run_round_coordinator(
 			if !round_state.collecting_payments().have_payments() {
 				tracer_provider.start(telemetry::TRACE_RUN_ROUND_EMPTY);
 
-				slog!(NoRoundPayments, round_id, attempt,
+				slog!(NoRoundPayments, round_seq, attempt,
 					max_round_submit_time: app.config.round_submit_time,
 				);
 
 				continue 'round;
 			}
 			let receive_payment_duration = Instant::now().duration_since(receive_payments_start);
-			slog!(ReceivedRoundPayments, round_id, attempt,
+			slog!(ReceivedRoundPayments, round_seq, attempt,
 				nb_inputs: round_state.collecting_payments().all_inputs.len(),
 				nb_outputs: round_state.collecting_payments().all_outputs.len(),
 				duration: receive_payment_duration, max_round_submit_time: app.config.round_submit_time,
 			);
 
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_POPULATED);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 			span.set_attribute(KeyValue::new("input-count", round_state.collecting_payments().all_inputs.len().to_string()));
 			span.set_attribute(KeyValue::new("output-count", round_state.collecting_payments().all_outputs.len().to_string()));
@@ -1105,12 +1105,12 @@ pub async fn run_round_coordinator(
 			let send_vtxo_proposal_start = Instant::now();
 
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 
 			round_state = round_state.progress(app).await;
 			// Wait for signatures from users.
-			slog!(AwaitingRoundSignatures, round_id, attempt,
+			slog!(AwaitingRoundSignatures, round_seq, attempt,
 				max_round_sign_time: app.config.round_sign_time,
 				duration_since_sending: Instant::now().duration_since(send_vtxo_proposal_start),
 			);
@@ -1118,7 +1118,7 @@ pub async fn run_round_coordinator(
 			let vtxo_signatures_receive_start = Instant::now();
 
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVE_VTXO_SIGNATURES);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 
 			tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
@@ -1148,7 +1148,7 @@ pub async fn run_round_coordinator(
 								state
 									.register_signature(pubkey, signatures)
 									.map_err(|e| {
-										slog!(VtxoSignatureRegistrationFailed, round_id, attempt, error: e.to_string());
+										slog!(VtxoSignatureRegistrationFailed, round_seq, attempt, error: e.to_string());
 										e
 									})
 							},
@@ -1166,20 +1166,20 @@ pub async fn run_round_coordinator(
 					}
 				}
 			}
-			slog!(ReceivedRoundVtxoSignatures, round_id, attempt, duration: Instant::now().duration_since(vtxo_signatures_receive_start),
+			slog!(ReceivedRoundVtxoSignatures, round_seq, attempt, duration: Instant::now().duration_since(vtxo_signatures_receive_start),
 				max_round_sign_time: app.config.round_sign_time,
 			);
 
 			let send_round_proposal_start = Instant::now();
 
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 
 			round_state = round_state.progress(&app).await;
 
 			// Wait for signatures from users.
-			slog!(AwaitingRoundForfeits, round_id, attempt,
+			slog!(AwaitingRoundForfeits, round_seq, attempt,
 				max_round_sign_time: app.config.round_sign_time,
 				duration_since_sending: Instant::now().duration_since(send_round_proposal_start),
 			);
@@ -1187,7 +1187,7 @@ pub async fn run_round_coordinator(
 			let receive_forfeit_signatures_start = Instant::now();
 
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 
 			tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
@@ -1214,7 +1214,7 @@ pub async fn run_round_coordinator(
 									.signing_forfeits()
 									.register_forfeits(signatures)
 									.map_err(|e| {
-										slog!(ForfeitRegistrationFailed, round_id, attempt, error: e.to_string());
+										slog!(ForfeitRegistrationFailed, round_seq, attempt, error: e.to_string());
 										e
 									})
 							},
@@ -1232,7 +1232,7 @@ pub async fn run_round_coordinator(
 					}
 				}
 			}
-			slog!(ReceivedRoundForfeits, round_id, attempt,
+			slog!(ReceivedRoundForfeits, round_seq, attempt,
 				max_round_sign_time: app.config.round_sign_time,
 				nb_forfeits: round_state.signing_forfeits().forfeit_part_sigs.len(),
 				duration: Instant::now().duration_since(receive_forfeit_signatures_start),
@@ -1253,7 +1253,7 @@ pub async fn run_round_coordinator(
 			// * Finish the round
 			// ****************************************************************
 			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_FINALIZING);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_id.to_string()));
+			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt", attempt.to_string()));
 
 			round_state.into_signing_forfeits().finish(&app).await.context("error finishing round")?;

@@ -129,12 +129,12 @@ message Bolt11PaymentUpdate {
 // round
 
 message RoundStart {
-	uint64 round_id = 1;
+	uint64 round_seq = 1;
 	uint64 offboard_feerate_sat_vkb = 2;
 }
 
 message RoundAttempt {
-	uint64 round_id = 1;
+	uint64 round_seq = 1;
 	uint64 attempt = 2;
 }
 
@@ -144,21 +144,21 @@ message ForfeitNonces {
 }
 
 message VtxoProposal {
-	uint64 round_id = 1;
+	uint64 round_seq = 1;
 	bytes vtxos_spec = 2;
 	bytes unsigned_round_tx = 3;
 	repeated bytes vtxos_agg_nonces = 4;
 }
 
 message RoundProposal {
-	uint64 round_id = 1;
+	uint64 round_seq = 1;
 	/// The cosign signatures to plug into the vtxo tree.
 	repeated bytes vtxo_cosign_signatures = 2;
 	repeated ForfeitNonces forfeit_nonces = 3;
 }
 
 message RoundFinished {
-	uint64 round_id = 1;
+	uint64 round_seq = 1;
 	/// The signed round tx.
 	bytes signed_round_tx = 3;
 }
