@@ -194,11 +194,10 @@ impl App {
 
 		info!("Starting aspd at {}", cfg.data_dir.display());
 
-		let db_path = cfg.data_dir.join("aspd_db");
-		info!("Loading db at {}", db_path.display());
+		info!("Connecting to db at {}:{}", cfg.postgres.host, cfg.postgres.port);
 		let db = database::Db::connect(&cfg)
 			.await
-			.context("failed to open db")?;
+			.context("failed to connect to db")?;
 
 		let seed = Self::get_mnemonic_from_path(&cfg.data_dir)?.to_seed("");
 
