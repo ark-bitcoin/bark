@@ -233,7 +233,7 @@ steps:
       - cp x86_64-apple-darwin/release/bark       "bark-$(cat ../VERSION)-apple-x86_64"
       - cp aarch64-apple-darwin/release/bark      "bark-$(cat ../VERSION)-apple-aarch64"
       - sha256sum "aspd-$(cat ../VERSION)-linux-x86_64"       >  SHA256SUMS
-      - sha256sum "bark-$(cat ../VERSION)-linux-x86_64"       >  SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-linux-x86_64"       >> SHA256SUMS
       - sha256sum "bark-$(cat ../VERSION)-windows-x86_64.exe" >> SHA256SUMS
       - sha256sum "bark-$(cat ../VERSION)-apple-x86_64"       >> SHA256SUMS
       - sha256sum "bark-$(cat ../VERSION)-apple-aarch64"      >> SHA256SUMS
