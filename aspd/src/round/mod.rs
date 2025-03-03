@@ -832,7 +832,7 @@ impl SigningForfeits {
 				let pub_nonces = self.forfeit_pub_nonces.get(id).unwrap();
 				let connectors = self.connectors.connectors();
 				let mut sigs = Vec::with_capacity(self.all_inputs.len());
-				for (i, (conn, sec)) in connectors.zip(sec_nonces.into_iter()).enumerate() {
+				for (i, ((conn, _), sec)) in connectors.zip(sec_nonces.into_iter()).enumerate() {
 					let (sighash, _) = ark::forfeit::forfeit_sighash_exit(
 						&vtxo, conn, self.connector_key.public_key(),
 					);
@@ -909,7 +909,7 @@ impl SigningForfeits {
 
 		trace!("Storing round result");
 		app.txindex.register_batch(self.signed_vtxos.all_signed_txs().iter().cloned()).await;
-		app.txindex.register_batch(self.connectors.iter_signed_txs(&self.connector_key)).await;
+		app.txindex.register_batch(self.connectors.iter_signed_txs(&self.connector_key).unwrap()).await;
 		app.db.store_round(
 			&signed_round_tx.tx.clone(),
 			&self.signed_vtxos,

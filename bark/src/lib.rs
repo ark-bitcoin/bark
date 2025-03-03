@@ -1344,7 +1344,7 @@ impl <P>Wallet<P> where
 					let keypair_idx = self.db.get_vtxo_key_index(&v)?;
 					let vtxo_keypair = self.vtxo_seed.derive_keypair(keypair_idx);
 
-					let sigs = connectors.connectors().enumerate().map(|(i, conn)| {
+					let sigs = connectors.connectors().enumerate().map(|(i, (conn, _))| {
 						let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
 							v, conn, connector_pubkey,
 						);
