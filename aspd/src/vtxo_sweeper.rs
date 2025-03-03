@@ -41,6 +41,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use ark::rounds::RoundId;
 use bdk_wallet::ChangeSet;
 use bitcoin::absolute::LockTime;
 use bitcoin::secp256k1::XOnlyPublicKey;
@@ -146,7 +147,7 @@ impl<'a> RoundSweepInput<'a> {
 }
 
 struct ExpiredRound {
-	txid: Txid,
+	id: RoundId,
 	round: StoredRound,
 	connectors: ConnectorChain,
 
@@ -155,15 +156,15 @@ struct ExpiredRound {
 }
 
 impl ExpiredRound {
-	fn new(txid: Txid, round: StoredRound) -> Self {
+	fn new(id: RoundId, round: StoredRound) -> Self {
 		Self {
 			vtxo_txs: round.signed_tree.all_signed_txs(),
 			connectors: ConnectorChain::new(
 				round.nb_input_vtxos as usize,
-				OutPoint::new(txid, 1),
+				OutPoint::new(id.as_round_txid(), 1),
 				round.signed_tree.spec.asp_pk,
 			),
-			txid, round,
+			id, round,
 		}
 	}
 }
@@ -310,7 +311,7 @@ impl<'a> SweepBuilder<'a> {
 
 		if !tree_root.confirmed().await {
 			trace!("Tree root tx {} not yet confirmed, sweeping round tx...", tree_root.txid);
-			let point = OutPoint::new(round.txid, 0);
+			let point = OutPoint::new(round.id.as_round_txid(), 0);
 			if let Some((h, txid)) = self.sweeper.is_swept(point).await {
 				trace!("Round tx vtxo tree output {point} is already swept \
 					by us at height {h} with tx {txid}");
@@ -376,7 +377,7 @@ impl<'a> SweepBuilder<'a> {
 		// NB we don't really know the number of connectors, because we don't know the number
 		// of inputs to the round. it doesn't matter, though, they are pre-signed, so
 		// we can generate any chain of connector txs and check if the txs are on the chain or not
-		let round_point = OutPoint::new(round.txid, 1);
+		let round_point = OutPoint::new(round.id.as_round_txid(), 1);
 		let mut conn_txs = round.connectors.iter_unsigned_txs();
 
 		let mut last = (round_point, round.round.tx.output[1].clone());
@@ -433,7 +434,7 @@ impl<'a> SweepBuilder<'a> {
 	}
 
 	async fn process_round(&mut self, round: &'a ExpiredRound, done_height: BlockHeight) {
-		trace!("Processing vtxo tree for round {}", round.txid);
+		trace!("Processing vtxo tree for round {}", round.id);
 		let vtxos_done = self.process_vtxos(round).await;
 		if vtxos_done.is_none() || vtxos_done.unwrap() > done_height {
 			trace!("Pending vtxo sweeps for this round (height {:?}), waiting for {}",
@@ -442,7 +443,7 @@ impl<'a> SweepBuilder<'a> {
 			return;
 		}
 
-		trace!("Processing connectors for round {}", round.txid);
+		trace!("Processing connectors for round {}", round.id);
 		let connectors_done = self.process_connectors(round).await;
 		if connectors_done.is_none() || connectors_done.unwrap() > done_height {
 			trace!("Pending connector sweeps for this round (height {:?}), waiting for {}",
@@ -452,7 +453,7 @@ impl<'a> SweepBuilder<'a> {
 		}
 
 		//TODO(stevenroose) do this elsewhere
-		slog!(RoundFullySwept, round_id: round.txid);
+		slog!(RoundFullySwept, round_id: round.id);
 		self.sweeper.round_finished(round).await;
 	}
 
@@ -620,9 +621,9 @@ impl VtxoSweeper {
 	/// Clean up all artifacts after a round has been swept.
 	async fn round_finished(&mut self, round: &ExpiredRound) {
 		// round tx root
-		self.pending_tx_by_utxo.remove(&OutPoint::new(round.txid, 0));
-		self.pending_tx_by_utxo.remove(&OutPoint::new(round.txid, 1));
-		self.app.txindex.unregister(round.txid).await;
+		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), 0));
+		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), 1));
+		self.app.txindex.unregister(round.id.as_round_txid()).await;
 
 		// vtxo tree txs
 		let vtxo_txs = round.round.signed_tree.all_signed_txs();
@@ -646,7 +647,7 @@ impl VtxoSweeper {
 		trace!("Removing connector txs from txindex...");
 		self.app.txindex.unregister_batch(round.connectors.iter_unsigned_txs()).await;
 
-		if let Err(e) = self.app.db.remove_round(round.txid).await {
+		if let Err(e) = self.app.db.remove_round(round.id).await {
 			error!("Failed to remove round from db after successful sweeping: {}", e);
 		}
 	}
@@ -656,9 +657,9 @@ impl VtxoSweeper {
 		let tip = self.app.bitcoind.get_block_count()? as BlockHeight;
 
 		let mut expired_rounds = Vec::new();
-		for txid in self.app.db.get_expired_rounds(tip).await? {
-			let round = self.app.db.get_round(txid).await?.expect("db has round");
-			expired_rounds.push(ExpiredRound::new(txid, round));
+		for id in self.app.db.get_expired_rounds(tip).await? {
+			let round = self.app.db.get_round(id).await?.expect("db has round");
+			expired_rounds.push(ExpiredRound::new(id, round));
 		}
 		trace!("{} expired rounds fetched", expired_rounds.len());
 
@@ -673,7 +674,7 @@ impl VtxoSweeper {
 
 		let done_height = tip - DEEPLY_CONFIRMED + 1;
 		for round in &expired_rounds {
-			trace!("Processing round {}", round.txid);
+			trace!("Processing round {}", round.id);
 			builder.process_round(round, done_height).await;
 			builder.purge_uneconomical();
 			//TODO(stevenroose) check if we exceeded some builder limits

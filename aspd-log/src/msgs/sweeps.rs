@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use ark::rounds::RoundId;
 use bitcoin::{Amount, OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +55,7 @@ impl_slog!(OnboardFullySwept, Info, "Succesfully swept and fully confirmed an on
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundFullySwept {
-	pub round_id: Txid,
+	pub round_id: RoundId,
 }
 impl_slog!(RoundFullySwept, Info, "An expired round was successfully swept");
 

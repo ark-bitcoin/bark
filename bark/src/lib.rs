@@ -44,7 +44,7 @@ use ark::{
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::RoundEvent;
+use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc as rpc;
 
@@ -657,7 +657,7 @@ impl <P>Wallet<P> where
 			None => self.onchain.address()?,
 		};
 
-		let txid = self.participate_round(move |round| {
+		let round = self.participate_round(move |round| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), round.offboard_feerate)
 				.expect("bdk created invalid scriptPubkey");
 
@@ -669,7 +669,7 @@ impl <P>Wallet<P> where
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(Offboard { round_txid : txid})
+		Ok(Offboard { round })
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
@@ -700,15 +700,14 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	/// Refresh vtxo's
+	/// Refresh vtxo's.
 	///
-	/// Returns the [Txid] of the round-transaction
-	/// if a successful refresh occured. It will return
-	/// [None] if no [Vtxo] needed to be refreshed.
+	/// Returns the [RoundId] of the round if a successful refresh occured.
+	/// It will return [None] if no [Vtxo] needed to be refreshed.
 	pub async fn refresh_vtxos(
 		&mut self,
 		vtxos: Vec<Vtxo>
-	) -> anyhow::Result<Option<Txid>> {
+	) -> anyhow::Result<Option<RoundId>> {
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to refresh!");
 			return Ok(None)
@@ -722,10 +721,10 @@ impl <P>Wallet<P> where
 			amount: total_amount
 		};
 
-		let txid = self.participate_round(move |_| {
+		let round = self.participate_round(move |_| {
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
-		Ok(Some(txid))
+		Ok(Some(round))
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
@@ -1007,7 +1006,7 @@ impl <P>Wallet<P> where
 			bail!("Balance too low");
 		}
 
-		let txid = self.participate_round(move |round| {
+		let round = self.participate_round(move |round| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
@@ -1032,7 +1031,7 @@ impl <P>Wallet<P> where
 			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(SendOnchain { round_txid: txid})
+		Ok(SendOnchain { round })
 	}
 
 	/// Participate in a round.
@@ -1047,7 +1046,7 @@ impl <P>Wallet<P> where
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
-	) -> anyhow::Result<Txid> {
+	) -> anyhow::Result<RoundId> {
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
@@ -1082,9 +1081,9 @@ impl <P>Wallet<P> where
 				}
 				// then we expect the first attempt message
 				match events.next().await.context("events stream broke")?? {
-					RoundEvent::Attempt { attempt, .. } => {
-						if attempt != 0 {
-							error!("First attempt message didn't have number 0, but {attempt}");
+					RoundEvent::Attempt { attempt_seq, .. } => {
+						if attempt_seq != 0 {
+							error!("First attempt message didn't have number 0, but {attempt_seq}");
 						}
 					},
 					_ => trace!("ignoring irrelevant message"),
@@ -1166,12 +1165,12 @@ impl <P>Wallet<P> where
 				let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
 					match events.next().await.context("events stream broke")?? {
 						RoundEvent::VtxoProposal {
-							round_id,
+							round_seq,
 							unsigned_round_tx,
 							vtxos_spec,
 							cosign_agg_nonces,
 						} => {
-							if round_id != round.round_id {
+							if round_seq != round.round_seq {
 								warn!("Unexpected different round id");
 								round_info = None;
 								continue 'round;
@@ -1255,8 +1254,8 @@ impl <P>Wallet<P> where
 				debug!("Wait for round proposal from asp...");
 				let (vtxo_cosign_sigs, forfeit_nonces) = {
 					match events.next().await.context("events stream broke")?? {
-						RoundEvent::RoundProposal { round_id, cosign_sigs, forfeit_nonces } => {
-							if round_id != round.round_id {
+						RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
+							if round_seq != round.round_seq {
 								warn!("Unexpected different round id");
 								round_info = None;
 								continue 'round;
@@ -1337,10 +1336,10 @@ impl <P>Wallet<P> where
 
 				debug!("Waiting for round to finish...");
 				let signed_round_tx = match events.next().await.context("events stream broke")?? {
-					RoundEvent::Finished { round_id, signed_round_tx } => {
-						if round_id != round.round_id {
+					RoundEvent::Finished { round_seq, signed_round_tx } => {
+						if round_seq != round.round_seq {
 							bail!("Unexpected round ID from round finished event: {} != {}",
-								round_id, round.round_id);
+								round_seq, round.round_seq);
 						}
 						signed_round_tx
 					},
@@ -1395,15 +1394,15 @@ impl <P>Wallet<P> where
 				}
 
 				info!("Round finished");
-				return Ok(signed_round_tx.compute_txid())
+				return Ok(signed_round_tx.compute_txid().into())
 			}
 		}
 	}
 }
 
 struct RoundInfo {
-	round_id: u64,
-	attempt: u64,
+	round_seq: usize,
+	attempt_seq: usize,
 	offboard_feerate: FeeRate,
 }
 
@@ -1412,8 +1411,8 @@ impl RoundInfo {
 	///
 	/// Panics if any other event type is passed.
 	fn new_from_start(event: RoundEvent) -> RoundInfo {
-		if let RoundEvent::Start { round_id, offboard_feerate } = event {
-			RoundInfo { round_id, attempt: 0, offboard_feerate }
+		if let RoundEvent::Start { round_seq, offboard_feerate } = event {
+			RoundInfo { round_seq, attempt_seq: 0, offboard_feerate }
 		} else {
 			panic!("called new_from_start with a wrong event type: {}", event);
 		}
@@ -1424,10 +1423,10 @@ impl RoundInfo {
 	/// If it belongs to the same round, returns the updated round info.
 	/// If it belongs to another round, we return None.
 	fn process_attempt(mut self, event: RoundEvent) -> Option<RoundInfo> {
-		if let RoundEvent::Attempt { round_id, attempt } = event {
-			if self.round_id == round_id {
+		if let RoundEvent::Attempt { round_seq, attempt_seq } = event {
+			if self.round_seq == round_seq {
 				debug!("New round attempt...");
-				self.attempt = attempt;
+				self.attempt_seq = attempt_seq;
 				Some(self)
 			} else {
 				warn!("Received a new attempt message for a different round. Restarting...");

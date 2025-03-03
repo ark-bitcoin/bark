@@ -42,22 +42,23 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 	fn from(e: ark::rounds::RoundEvent) -> Self {
 		crate::RoundEvent {
 			event: Some(match e {
-				ark::rounds::RoundEvent::Start { round_id, offboard_feerate } => {
+				ark::rounds::RoundEvent::Start { round_seq, offboard_feerate } => {
 					crate::round_event::Event::Start(crate::RoundStart {
-						round_id,
+						round_seq: round_seq as u64,
 						offboard_feerate_sat_vkb: offboard_feerate.to_sat_per_kwu() * 4,
 					})
 				},
-				ark::rounds::RoundEvent::Attempt { round_id, attempt } => {
+				ark::rounds::RoundEvent::Attempt { round_seq, attempt_seq } => {
 					crate::round_event::Event::Attempt(crate::RoundAttempt {
-						round_id, attempt,
+						round_seq: round_seq as u64,
+						attempt_seq: attempt_seq as u64,
 					})
 				},
 				ark::rounds::RoundEvent::VtxoProposal {
-					round_id, vtxos_spec, unsigned_round_tx, cosign_agg_nonces,
+					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces,
 				} => {
 					crate::round_event::Event::VtxoProposal(crate::VtxoProposal {
-						round_id,
+						round_seq: round_seq as u64,
 						vtxos_spec: vtxos_spec.encode(),
 						unsigned_round_tx: bitcoin::consensus::serialize(&unsigned_round_tx),
 						vtxos_agg_nonces: cosign_agg_nonces.into_iter()
@@ -65,9 +66,9 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 							.collect(),
 					})
 				},
-				ark::rounds::RoundEvent::RoundProposal { round_id, cosign_sigs, forfeit_nonces } => {
+				ark::rounds::RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
 					crate::round_event::Event::RoundProposal(crate::RoundProposal {
-						round_id,
+						round_seq: round_seq as u64,
 						vtxo_cosign_signatures: cosign_sigs.into_iter()
 							.map(|s| s.serialize().to_vec()).collect(),
 						forfeit_nonces: forfeit_nonces.into_iter().map(|(id, nonces)| {
@@ -80,9 +81,9 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 						}).collect(),
 					})
 				},
-				ark::rounds::RoundEvent::Finished { round_id, signed_round_tx } => {
+				ark::rounds::RoundEvent::Finished { round_seq, signed_round_tx } => {
 					crate::round_event::Event::Finished(crate::RoundFinished {
-						round_id,
+						round_seq: round_seq as u64,
 						signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 					})
 				},
@@ -98,14 +99,20 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 		Ok(match m.event.unwrap() {
 			crate::round_event::Event::Start(m) => {
 				let offboard_feerate = FeeRate::from_sat_per_kwu(m.offboard_feerate_sat_vkb / 4);
-				ark::rounds::RoundEvent::Start { round_id: m.round_id, offboard_feerate }
+				ark::rounds::RoundEvent::Start {
+					round_seq: m.round_seq as usize,
+					offboard_feerate,
+				}
 			},
 			crate::round_event::Event::Attempt(m) => {
-				ark::rounds::RoundEvent::Attempt { round_id: m.round_id, attempt: m.attempt }
+				ark::rounds::RoundEvent::Attempt {
+					round_seq: m.round_seq as usize,
+					attempt_seq: m.attempt_seq as usize,
+				}
 			},
 			crate::round_event::Event::VtxoProposal(m) => {
 				ark::rounds::RoundEvent::VtxoProposal {
-					round_id: m.round_id,
+					round_seq: m.round_seq as usize,
 					unsigned_round_tx: bitcoin::consensus::deserialize(&m.unsigned_round_tx)
 						.map_err(|_| "invalid unsigned_round_tx")?,
 					vtxos_spec: VtxoTreeSpec::decode(&m.vtxos_spec)
@@ -118,7 +125,7 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 			},
 			crate::round_event::Event::RoundProposal(m) => {
 				ark::rounds::RoundEvent::RoundProposal {
-					round_id: m.round_id,
+					round_seq: m.round_seq as usize,
 					cosign_sigs: m.vtxo_cosign_signatures.into_iter().map(|s| {
 						schnorr::Signature::from_slice(&s)
 							.map_err(|_| "invalid vtxo_cosign_signatures")
@@ -136,7 +143,7 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 			},
 			crate::round_event::Event::Finished(m) => {
 				ark::rounds::RoundEvent::Finished {
-					round_id: m.round_id,
+					round_seq: m.round_seq as usize,
 					signed_round_tx: bitcoin::consensus::deserialize(&m.signed_round_tx)
 						.map_err(|_| "invalid signed_round_tx")?,
 				}
