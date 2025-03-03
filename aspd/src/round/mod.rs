@@ -350,7 +350,7 @@ impl CollectingPayments {
 		let tip = app.chain_tip().await.height;
 		let expiry_height = tip + app.config.vtxo_expiry_delta as BlockHeight;
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_RUN_ROUND_COORDINATOR);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_CONSTRUCT_VTXO_TREE);
 		span.set_attribute(KeyValue::new("expiry_height", expiry_height.to_string()));
@@ -593,7 +593,7 @@ impl SigningVtxoTree {
 		// Combine the vtxo signatures.
 		let combine_signatures_start = Instant::now();
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_RUN_ROUND_COORDINATOR);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 		let _ = tracer_provider.start(telemetry::TRACE_RUN_ROUND_COMBINE_VTXO_SIGNATURES);
 
@@ -852,7 +852,7 @@ impl SigningForfeits {
 		}
 		app.release_vtxos_in_flux(self.locked_inputs).await;
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_RUN_ROUND_COORDINATOR);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_PERSIST);
 		span.set_attribute(KeyValue::new("signed-vtxo-count", self.signed_vtxos.all_signed_txs().len().to_string()));
@@ -981,7 +981,7 @@ pub async fn run_round_coordinator(
 			app.config.round_interval.as_millis()) as usize;
 		slog!(RoundStarted, round_seq);
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_RUN_ROUND_COORDINATOR);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND);
 		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 

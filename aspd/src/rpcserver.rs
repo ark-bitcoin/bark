@@ -772,7 +772,7 @@ impl TelemetryMetrics {
 	fn new() -> TelemetryMetrics {
 		let meter = global::meter_provider().meter(telemetry::METER_RPC);
 		TelemetryMetrics {
-			tracer: Arc::new(global::tracer_provider().tracer(telemetry::TRACER_RPC)),
+			tracer: Arc::new(global::tracer_provider().tracer(telemetry::TRACER_ASPD)),
 			in_progress_counter: meter.i64_up_down_counter(
 				telemetry::METER_COUNTER_UD_GRPC_IN_PROCESS,
 			).build(),
