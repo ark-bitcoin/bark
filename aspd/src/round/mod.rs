@@ -11,9 +11,11 @@ use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use opentelemetry::{global, KeyValue};
-use opentelemetry::trace::{Span, Tracer, TracerProvider};
+use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
+use tracing::info_span;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use ark::{musig, BlockHeight, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
@@ -352,7 +354,11 @@ impl CollectingPayments {
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
-		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_CONSTRUCT_VTXO_TREE);
+		let parent_context = opentelemetry::Context::current();
+
+		let mut span = tracer_provider
+			.span_builder(telemetry::TRACE_RUN_ROUND_CONSTRUCT_VTXO_TREE)
+			.start_with_context(&tracer_provider, &parent_context.clone());
 		span.set_attribute(KeyValue::new("expiry_height", expiry_height.to_string()));
 		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_BLOCKHEIGHT, tip.to_string()));
 
@@ -595,7 +601,11 @@ impl SigningVtxoTree {
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
-		let _ = tracer_provider.start(telemetry::TRACE_RUN_ROUND_COMBINE_VTXO_SIGNATURES);
+		let parent_context = opentelemetry::Context::current();
+		
+		let _span = tracer_provider
+			.span_builder(telemetry::TRACE_RUN_ROUND_COMBINE_VTXO_SIGNATURES)
+			.start_with_context(&tracer_provider, &parent_context.clone());
 
 		let asp_cosign_sigs = self.unsigned_vtxo_tree.cosign_tree(
 			&self.cosign_agg_nonces,
@@ -854,7 +864,11 @@ impl SigningForfeits {
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
-		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_PERSIST);
+		let parent_context = opentelemetry::Context::current();
+		
+		let mut span = tracer_provider
+			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
+			.start_with_context(&tracer_provider, &parent_context.clone());
 		span.set_attribute(KeyValue::new("signed-vtxo-count", self.signed_vtxos.all_signed_txs().len().to_string()));
 		span.set_attribute(KeyValue::new("connectors-count", self.connectors.iter_signed_txs(&app.asp_key).len().to_string()));
 
@@ -979,12 +993,25 @@ pub async fn run_round_coordinator(
 
 		let round_seq = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
 			app.config.round_interval.as_millis()) as usize;
-		slog!(RoundStarted, round_seq);
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
-		let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND);
+		
+		let mut span = tracer_provider
+			.span_builder(telemetry::TRACE_RUN_ROUND)
+			.with_kind(SpanKind::Server)
+			.start(&tracer_provider);
 		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 
+		let parent_context = opentelemetry::Context::current_with_span(span);
+		
+		let tracing_span = info_span!(telemetry::TRACE_RUN_ROUND);
+		tracing_span.set_parent(parent_context.clone());
+		
+		// this is to make sure slog has access to the span information.
+		let _guard = tracing_span.enter();
+		
+		slog!(RoundStarted, round_seq);
+		
 		// Start new round, announce.
 		let offboard_feerate = app.config.round_tx_feerate;
 		app.rounds().round_event_tx.send(RoundEvent::Start {
@@ -1017,7 +1044,10 @@ pub async fn run_round_coordinator(
 			}
 			sync_next_attempt = true;
 
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_ATTEMPT);
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_ATTEMPT)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
 
@@ -1032,7 +1062,10 @@ pub async fn run_round_coordinator(
 			// Start receiving payments.
 			let receive_payments_start = Instant::now();
 
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS);
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
 
@@ -1072,7 +1105,10 @@ pub async fn run_round_coordinator(
 				}
 			}
 			if !round_state.collecting_payments().have_payments() {
-				tracer_provider.start(telemetry::TRACE_RUN_ROUND_EMPTY);
+				let _span = tracer_provider
+					.span_builder(telemetry::TRACE_RUN_ROUND_EMPTY)
+					.with_kind(SpanKind::Internal)
+					.start_with_context(&tracer_provider, &parent_context);
 
 				slog!(NoRoundPayments, round_seq, attempt_seq,
 					max_round_submit_time: app.config.round_submit_time,
@@ -1087,8 +1123,10 @@ pub async fn run_round_coordinator(
 				duration: receive_payment_duration, max_round_submit_time: app.config.round_submit_time,
 			);
 
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_POPULATED);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_POPULATED)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
 			span.set_attribute(KeyValue::new("input-count", round_state.collecting_payments().all_inputs.len().to_string()));
 			span.set_attribute(KeyValue::new("output-count", round_state.collecting_payments().all_outputs.len().to_string()));
@@ -1102,7 +1140,10 @@ pub async fn run_round_coordinator(
 			// ****************************************************************
 			let send_vtxo_proposal_start = Instant::now();
 
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL);
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
 
@@ -1115,9 +1156,10 @@ pub async fn run_round_coordinator(
 
 			let vtxo_signatures_receive_start = Instant::now();
 
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVE_VTXO_SIGNATURES);
-			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
-			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_VTXO_SIGNATURES)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 
 			tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
 
@@ -1170,7 +1212,10 @@ pub async fn run_round_coordinator(
 
 			let send_round_proposal_start = Instant::now();
 
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL);
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
 
@@ -1184,7 +1229,10 @@ pub async fn run_round_coordinator(
 
 			let receive_forfeit_signatures_start = Instant::now();
 
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES);
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
 
@@ -1250,7 +1298,10 @@ pub async fn run_round_coordinator(
 			// ****************************************************************
 			// * Finish the round
 			// ****************************************************************
-			let mut span = tracer_provider.start(telemetry::TRACE_RUN_ROUND_FINALIZING);
+			let mut span = tracer_provider
+				.span_builder(telemetry::TRACE_RUN_ROUND_FINALIZING)
+				.with_kind(SpanKind::Internal)
+				.start_with_context(&tracer_provider, &parent_context);
 			span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
 			span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
 
