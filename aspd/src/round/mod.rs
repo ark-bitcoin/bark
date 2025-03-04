@@ -414,7 +414,7 @@ impl CollectingPayments {
 		//TODO(stevenroose) this is inefficient, improve this with direct getter
 		let nb_nodes = vtxos_spec.nb_nodes();
 		assert!(nb_nodes <= app.config.nb_round_nonces);
-		let connector_key = app.asp_key.clone();
+		let connector_key = Keypair::new(&*SECP, &mut rand::thread_rng());
 		let connector_output = ConnectorChain::output(
 			self.all_inputs.len(), connector_key.public_key(),
 		);
