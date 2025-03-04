@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS all_round (
 	tx 				BYTEA NOT NULL,
 	signed_tree 	BYTEA NOT NULL,
 	nb_input_vtxos 	INTEGER NOT NULL,
+	connector_key	BYTEA NOT NULL,
 	expiry 			INTEGER NOT NULL,
 
 	deleted_at 		TIMESTAMPTZ

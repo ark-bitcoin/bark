@@ -1,9 +1,14 @@
 use std::str::FromStr;
 
-use bitcoin::{consensus::deserialize, secp256k1::PublicKey, Transaction, Txid};
-
-use ark::{musig::secpm::schnorr, rounds::RoundId, tree::signed::SignedVtxoTreeSpec, Vtxo, VtxoId};
+use bitcoin::{Transaction, Txid};
+use bitcoin::consensus::deserialize;
+use bitcoin::secp256k1::{PublicKey, SecretKey};
 use tokio_postgres::Row;
+
+use ark::{Vtxo, VtxoId};
+use ark::musig::secpm::schnorr;
+use ark::rounds::RoundId;
+use ark::tree::signed::SignedVtxoTreeSpec;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoredRound {
@@ -11,20 +16,22 @@ pub struct StoredRound {
 	pub tx: Transaction,
 	pub signed_tree: SignedVtxoTreeSpec,
 	pub nb_input_vtxos: u64,
+	pub connector_key: SecretKey,
 }
 
 impl TryFrom<Row> for StoredRound {
 	type Error = anyhow::Error;
 
 	fn try_from(value: Row) -> Result<Self, Self::Error> {
-		let id = RoundId::from_str(&value.get::<_, String>("id"))?;
+		let id = RoundId::from_str(&value.get::<_, &str>("id"))?;
 		let tx: Transaction = deserialize::<Transaction>(value.get("tx"))?;
 		debug_assert_eq!(tx.compute_txid(), id.as_round_txid());
 
 		Ok(Self {
 			id, tx,
 			signed_tree: SignedVtxoTreeSpec::decode(value.get("signed_tree"))?,
-			nb_input_vtxos: u64::try_from(value.get::<_, i32>("nb_input_vtxos"))?
+			nb_input_vtxos: u64::try_from(value.get::<_, i32>("nb_input_vtxos"))?,
+			connector_key: SecretKey::from_slice(value.get("connector_key"))?,
 		})
 	}
 }
