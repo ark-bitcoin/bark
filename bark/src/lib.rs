@@ -1111,15 +1111,22 @@ impl <P>Wallet<P> where
 						_ => trace!("ignoring irrelevant message"),
 					}
 				}
-				// then we expect the first attempt message
-				match events.next().await.context("events stream broke")?? {
-					RoundEvent::Attempt { attempt_seq, .. } => {
-						if attempt_seq != 0 {
-							error!("First attempt message didn't have number 0, but {attempt_seq}");
-						}
-					},
-					_ => trace!("ignoring irrelevant message"),
-				}
+			}
+
+			// then we expect the first attempt message
+			match events.next().await.context("events stream broke")?? {
+				RoundEvent::Attempt { attempt_seq, .. } => {
+					if attempt_seq != 0 {
+						error!("First attempt message didn't have number 0, but {attempt_seq}");
+					}
+				},
+				e @ RoundEvent::Start { .. } => {
+					warn!("Unexpected new round started...");
+					round_info = Some(RoundInfo::new_from_start(e));
+					continue 'round;
+				},
+				//TODO(stevenroose) make this robust
+				other => panic!("Unexpected message: {:?}", other),
 			}
 
 			info!("Round started");
