@@ -414,8 +414,9 @@ impl CollectingPayments {
 		//TODO(stevenroose) this is inefficient, improve this with direct getter
 		let nb_nodes = vtxos_spec.nb_nodes();
 		assert!(nb_nodes <= app.config.nb_round_nonces);
+		let connector_key = app.asp_key.clone();
 		let connector_output = ConnectorChain::output(
-			self.all_inputs.len(), app.asp_key.public_key(),
+			self.all_inputs.len(), connector_key.public_key(),
 		);
 
 		// Build round tx.
@@ -462,6 +463,7 @@ impl CollectingPayments {
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
+			connector_pubkey: connector_key.public_key(),
 		}).expect("round event channel broken");
 
 		let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(vtxos_utxo);
@@ -496,6 +498,7 @@ impl CollectingPayments {
 			wallet_lock,
 			round_tx_psbt,
 			round_txid,
+			connector_key,
 			user_cosign_nonces,
 			inputs_per_cosigner: self.inputs_per_cosigner,
 			attempt_start: self.attempt_start,
@@ -519,6 +522,7 @@ pub struct SigningVtxoTree {
 	wallet_lock: OwnedMutexGuard<bdk_wallet::Wallet>,
 	round_tx_psbt: Psbt,
 	round_txid: Txid,
+	connector_key: Keypair,
 
 	// data from earlier
 	all_inputs: HashMap<VtxoId, Vtxo>,
@@ -665,7 +669,7 @@ impl SigningVtxoTree {
 
 		let conns_utxo = OutPoint::new(self.round_txid, 1);
 		let connectors = ConnectorChain::new(
-			self.all_inputs.len(), conns_utxo, app.asp_key.public_key(),
+			self.all_inputs.len(), conns_utxo, self.connector_key.public_key(),
 		);
 
 		SigningForfeits {
@@ -681,6 +685,7 @@ impl SigningVtxoTree {
 			all_inputs: self.all_inputs,
 			locked_inputs: self.locked_inputs,
 			connectors,
+			connector_key: self.connector_key,
 			wallet_lock: self.wallet_lock,
 			round_tx_psbt: self.round_tx_psbt,
 			attempt_start: self.attempt_start,
@@ -708,6 +713,7 @@ pub struct SigningForfeits {
 
 	// other public data
 	connectors: ConnectorChain,
+	connector_key: Keypair,
 
 	wallet_lock: OwnedMutexGuard<bdk_wallet::Wallet>,
 	round_tx_psbt: Psbt,
@@ -794,7 +800,9 @@ impl SigningForfeits {
 				let connectors = self.connectors.connectors();
 				let mut sigs = Vec::with_capacity(self.all_inputs.len());
 				for (i, (conn, sec)) in connectors.zip(sec_nonces.into_iter()).enumerate() {
-					let (sighash, _) = ark::forfeit::forfeit_sighash_exit(&vtxo, conn);
+					let (sighash, _) = ark::forfeit::forfeit_sighash_exit(
+						&vtxo, conn, self.connector_key.public_key(),
+					);
 					let agg_nonce = musig::nonce_agg(&[&user_nonces[i], &pub_nonces[i]]);
 					let (_, sig) = musig::partial_sign(
 						[app.asp_key.public_key(), vtxo.spec().user_pubkey],

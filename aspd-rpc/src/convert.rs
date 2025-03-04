@@ -2,7 +2,7 @@
 use std::convert::TryFrom;
 use std::fmt;
 
-use bitcoin::secp256k1::schnorr;
+use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, FeeRate};
 
 use ark::{musig, VtxoId};
@@ -55,7 +55,7 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 					})
 				},
 				ark::rounds::RoundEvent::VtxoProposal {
-					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces,
+					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey,
 				} => {
 					crate::round_event::Event::VtxoProposal(crate::VtxoProposal {
 						round_seq: round_seq as u64,
@@ -64,6 +64,7 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 						vtxos_agg_nonces: cosign_agg_nonces.into_iter()
 							.map(|n| n.serialize().to_vec())
 							.collect(),
+						connector_pubkey: connector_pubkey.serialize().to_vec(),
 					})
 				},
 				ark::rounds::RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
@@ -121,6 +122,8 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 						musig::MusigAggNonce::from_slice(&n)
 							.map_err(|_| "invalid vtxos_agg_nonces")
 					}).collect::<Result<_, _>>()?,
+					connector_pubkey: PublicKey::from_slice(&m.connector_pubkey)
+						.map_err(|_| "invaid connector pubkey")?,
 				}
 			},
 			crate::round_event::Event::RoundProposal(m) => {

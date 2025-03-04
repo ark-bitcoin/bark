@@ -1,6 +1,7 @@
 
 
 use bitcoin::{OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2WSH_DUST};
@@ -43,16 +44,16 @@ pub fn create_forfeit_tx(vtxo: &Vtxo, connector: OutPoint) -> Transaction {
 fn forfeit_input_sighash(
 	vtxo: &Vtxo,
 	connector: OutPoint,
+	connector_pk: PublicKey,
 	input_idx: usize,
 ) -> (TapSighash, Transaction) {
 	let spec = vtxo.spec();
-	let exit_spk = spec.exit_spk();
 	let exit_prevout = TxOut {
-		script_pubkey: exit_spk,
+		script_pubkey: spec.exit_spk(),
 		value: vtxo.amount(),
 	};
 	let connector_prevout = TxOut {
-		script_pubkey: ConnectorChain::output_script(spec.asp_pubkey),
+		script_pubkey: ConnectorChain::output_script(connector_pk),
 		value: P2WSH_DUST,
 	};
 	let tx = create_forfeit_tx(vtxo, connector);
@@ -65,11 +66,19 @@ fn forfeit_input_sighash(
 }
 
 /// The sighash of the exit tx input of a forfeit tx.
-pub fn forfeit_sighash_exit(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transaction) {
-	forfeit_input_sighash(vtxo, connector, 0)
+pub fn forfeit_sighash_exit(
+	vtxo: &Vtxo,
+	connector: OutPoint,
+	connector_pk: PublicKey,
+) -> (TapSighash, Transaction) {
+	forfeit_input_sighash(vtxo, connector, connector_pk, 0)
 }
 
 /// The sighash of the connector input of a forfeit tx.
-pub fn forfeit_sighash_connector(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transaction) {
-	forfeit_input_sighash(vtxo, connector, 1)
+pub fn forfeit_sighash_connector(
+	vtxo: &Vtxo,
+	connector: OutPoint,
+	connector_pk: PublicKey,
+) -> (TapSighash, Transaction) {
+	forfeit_input_sighash(vtxo, connector, connector_pk, 1)
 }
