@@ -22,6 +22,7 @@ pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
 
 
+use std::borrow::Borrow;
 use std::iter;
 use std::convert::TryFrom;
 use std::time::Duration;
@@ -1228,7 +1229,7 @@ impl <P>Wallet<P> where
 							continue 'round;
 						},
 						e @ RoundEvent::Attempt { .. } => {
-							round_info = round_info.unwrap().process_attempt(e);
+							e.process_attempt(round_info.as_mut().expect("should be some"));
 							continue 'attempt;
 						},
 						//TODO(stevenroose) make this robust
@@ -1313,7 +1314,7 @@ impl <P>Wallet<P> where
 							continue 'round;
 						},
 						e @ RoundEvent::Attempt { .. } => {
-							round_info = round_info.unwrap().process_attempt(e);
+							e.process_attempt(round_info.as_mut().expect("should be some"));
 							continue 'attempt;
 						},
 						//TODO(stevenroose) make this robust
@@ -1396,7 +1397,7 @@ impl <P>Wallet<P> where
 						continue 'round;
 					},
 					e @ RoundEvent::Attempt { .. } => {
-						round_info = round_info.unwrap().process_attempt(e);
+						e.process_attempt(round_info.as_mut().expect("should be some"));
 						continue 'attempt;
 					},
 					//TODO(stevenroose) make this robust
@@ -1447,6 +1448,27 @@ impl <P>Wallet<P> where
 	}
 }
 
+trait RoundEventExt: Borrow<RoundEvent> {
+	/// Process a new round attempt message.
+	///
+	/// If it belongs to the same round, returns the updated round info.
+	/// If it belongs to another round, we return None.
+	fn process_attempt(&self, round_info: &mut RoundInfo) {
+		if let RoundEvent::Attempt { round_seq, attempt_seq } = self.borrow() {
+			if round_info.round_seq == *round_seq {
+				debug!("New round attempt...");
+				round_info.attempt_seq = *attempt_seq;
+			} else {
+				warn!("Received a new attempt message for a different round. Restarting...");
+			}
+		} else {
+			panic!("called process_attempt with a wrong event type: {}", self.borrow());
+		}
+	}
+}
+
+impl RoundEventExt for RoundEvent {}
+
 struct RoundInfo {
 	round_seq: usize,
 	attempt_seq: usize,
@@ -1462,25 +1484,6 @@ impl RoundInfo {
 			RoundInfo { round_seq, attempt_seq: 0, offboard_feerate }
 		} else {
 			panic!("called new_from_start with a wrong event type: {}", event);
-		}
-	}
-
-	/// Process a new round attempt message.
-	///
-	/// If it belongs to the same round, returns the updated round info.
-	/// If it belongs to another round, we return None.
-	fn process_attempt(mut self, event: RoundEvent) -> Option<RoundInfo> {
-		if let RoundEvent::Attempt { round_seq, attempt_seq } = event {
-			if self.round_seq == round_seq {
-				debug!("New round attempt...");
-				self.attempt_seq = attempt_seq;
-				Some(self)
-			} else {
-				warn!("Received a new attempt message for a different round. Restarting...");
-				None
-			}
-		} else {
-			panic!("called process_attempt with a wrong event type: {}", event);
 		}
 	}
 }
