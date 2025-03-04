@@ -45,6 +45,7 @@ fern.workspace = true
 chrono.workspace = true
 clap.workspace = true
 futures.workspace = true
+async-trait.workspace = true
 serde_json.workspace = true
 ciborium.workspace = true
 config.workspace = true

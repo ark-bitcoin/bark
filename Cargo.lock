@@ -332,6 +332,7 @@ dependencies = [
  "ark-lib",
  "aspd-log",
  "aspd-rpc",
+ "async-trait",
  "bark-bitcoin-ext",
  "bark-cln",
  "bb8",

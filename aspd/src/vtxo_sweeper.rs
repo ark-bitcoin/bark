@@ -38,11 +38,9 @@
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::rounds::RoundId;
-use bdk_wallet::ChangeSet;
 use bitcoin::absolute::LockTime;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::{
@@ -58,6 +56,7 @@ use futures::StreamExt;
 use crate::bitcoind::RpcApi;
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtInputExt, SweepMeta};
+use crate::wallet::BdkWalletExt;
 use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
 
 
@@ -457,10 +456,7 @@ impl<'a> SweepBuilder<'a> {
 		self.sweeper.round_finished(round).await;
 	}
 
-	async fn create_tx(
-		&self,
-		tip: BlockHeight,
-	) -> anyhow::Result<(Transaction, ChangeSet)> {
+	async fn create_tx(&self, tip: BlockHeight) -> anyhow::Result<Transaction> {
 		let mut wallet = self.sweeper.app.wallet.lock().await;
 		let drain_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal).address;
 
@@ -535,17 +531,9 @@ impl<'a> SweepBuilder<'a> {
 			}
 		}
 
-		let opts = bdk_wallet::SignOptions {
-			trust_witness_utxo: true,
-			..Default::default()
-		};
-		let finalized = wallet.sign(&mut psbt, opts)?;
-		assert!(finalized);
-		let signed = psbt.extract_tx()?;
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Unix epoch is in the past").as_secs();
-		wallet.apply_unconfirmed_txs([(Arc::new(signed.clone()), now)]);
-		let changeset = wallet.take_staged().expect("inserted new tx");
-		Ok((signed, changeset))
+		let signed = wallet.finish_tx(psbt)?;
+		wallet.persist(&self.sweeper.app.db).await?;
+		Ok(signed)
 	}
 }
 
@@ -713,9 +701,7 @@ impl VtxoSweeper {
 			);
 		}
 
-		let (signed, changeset) = builder.create_tx(tip).await.context("creating sweep tx")?;
-		self.app.db.store_changeset(&changeset).await?;
-
+		let signed = builder.create_tx(tip).await.context("creating sweep tx")?;
 		let txid = signed.compute_txid();
 		self.add_new_pending(txid, signed.clone()).await?;
 		slog!(SweepBroadcast, txid, surplus: surplus);

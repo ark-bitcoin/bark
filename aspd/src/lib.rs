@@ -1,6 +1,7 @@
 
 
 #[macro_use] extern crate anyhow;
+#[macro_use] extern crate async_trait;
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
@@ -18,6 +19,7 @@ mod rpcserver;
 mod round;
 mod txindex;
 mod telemetry;
+mod wallet;
 pub mod config;
 pub use crate::config::Config;
 
@@ -34,7 +36,6 @@ use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, Network, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
-use error::ContextExt;
 use lightning_invoice::Bolt11Invoice;
 use opentelemetry::KeyValue;
 use tokio::time::MissedTickBehavior;
@@ -49,9 +50,11 @@ use aspd_rpc as rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
+use crate::error::ContextExt;
 use crate::round::RoundInput;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
+use crate::wallet::BdkWalletExt;
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -439,9 +442,7 @@ impl App {
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {
 		let mut wallet = self.wallet.lock().await;
 		let ret = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		if let Some(change) = wallet.take_staged() {
-			self.db.store_changeset(&change).await?;
-		}
+		wallet.persist(&self.db).await?;
 		Ok(ret)
 	}
 
@@ -460,18 +461,14 @@ impl App {
 
 			if em.block_height() % 10_000 == 0 {
 				slog!(WalletSyncCommittingProgress, block_height: prev_tip.height());
-				if let Some(change) = wallet.take_staged() {
-					self.db.store_changeset(&change).await?;
-				}
+				wallet.persist(&self.db).await?;
 			}
 		}
 
 		// mempool
 		let mempool = emitter.mempool()?;
 		wallet.apply_unconfirmed_txs(mempool.into_iter().map(|(tx, time)| (tx, time)));
-		if let Some(change) = wallet.take_staged() {
-			self.db.store_changeset(&change).await?;
-		}
+		wallet.persist(&self.db).await?;
 
 		// rebroadcast unconfirmed txs
 		// NB during some round failures we commit a tx but fail to broadcast it,
@@ -508,13 +505,10 @@ impl App {
 		let mut b = wallet.build_tx();
 		b.drain_to(addr.script_pubkey());
 		b.drain_wallet();
-		let mut psbt = b.finish().context("error building tx")?;
-		let finalized = wallet.sign(&mut psbt, bdk_wallet::SignOptions::default())?;
-		assert!(finalized);
-		let tx = psbt.extract_tx()?;
-		if let Some(change) = wallet.take_staged() {
-			self.db.store_changeset(&change).await?;
-		}
+		let psbt = b.finish().context("error building tx")?;
+
+		let tx = wallet.finish_tx(psbt)?;
+		wallet.persist(&self.db).await?;
 		drop(wallet);
 
 		if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
