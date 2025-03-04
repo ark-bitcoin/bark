@@ -1131,7 +1131,12 @@ impl <P>Wallet<P> where
 			debug!("Spending vtxos: {:?}", vtxo_ids);
 
 			'attempt: loop {
-				let round = round_info.as_mut().unwrap();
+				let round = if let Some(round_info) = round_info.as_mut() {
+					round_info
+				} else {
+					info!("Round info is not set anymore, restarting round.");
+					continue 'round;
+				};
 
 				// Assign cosign pubkeys to the payment requests.
 				let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
