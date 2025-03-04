@@ -44,20 +44,19 @@ use ark::rounds::RoundId;
 use bitcoin::absolute::LockTime;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::{
-	psbt, sighash, taproot, Amount, FeeRate, OutPoint, Sequence,
-	Transaction, TxOut, Txid, Weight, Witness,
+	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
 };
 
 use ark::{BlockHeight, OnboardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use bitcoin_ext::{KeypairExt, TaprootSpendInfoExt};
+use bitcoin_ext::TaprootSpendInfoExt;
 use futures::StreamExt;
 
 use crate::bitcoind::RpcApi;
 use crate::database::model::StoredRound;
-use crate::psbtext::{PsbtInputExt, SweepMeta};
+use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::wallet::BdkWalletExt;
-use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
+use crate::{txindex, App, DEEPLY_CONFIRMED};
 
 
 struct OnboardSweepInput {
@@ -489,48 +488,7 @@ impl<'a> SweepBuilder<'a> {
 
 		// SIGNING
 
-		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
-		let prevouts = psbt.inputs.iter()
-			.map(|i| i.witness_utxo.clone().unwrap())
-			.collect::<Vec<_>>();
-
-		let connector_keypair = self.sweeper.app.asp_key.for_keyspend(&*SECP);
-		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
-			if let Some(meta) = input.get_sweep_meta().context("corrupt psbt")? {
-				match meta {
-					// onboard and vtxo happen to be exactly the same signing logic
-					SweepMeta::Vtxo | SweepMeta::Onboard => {
-						let (control, (script, lv)) = input.tap_scripts.iter().next()
-							.context("corrupt psbt: missing tap_scripts")?;
-						let leaf_hash = taproot::TapLeafHash::from_script(script, *lv);
-						let sighash = shc.taproot_script_spend_signature_hash(
-							idx,
-							&sighash::Prevouts::All(&prevouts),
-							leaf_hash,
-							sighash::TapSighashType::Default,
-						).expect("all prevouts provided");
-						trace!("Signing expired VTXO input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &self.sweeper.app.asp_key);
-						let wit = Witness::from_slice(
-							&[&sig[..], script.as_bytes(), &control.serialize()],
-						);
-						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
-						input.final_script_witness = Some(wit);
-					},
-					SweepMeta::Connector => {
-						let sighash = shc.taproot_key_spend_signature_hash(
-							idx,
-							&sighash::Prevouts::All(&prevouts),
-							sighash::TapSighashType::Default,
-						).expect("all prevouts provided");
-						trace!("Signing expired connector input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &connector_keypair);
-						input.final_script_witness = Some(Witness::from_slice(&[sig[..].to_vec()]));
-					},
-				}
-			}
-		}
-
+		psbt.try_sign_sweeps(&self.sweeper.app.asp_key)?;
 		let signed = wallet.finish_tx(psbt)?;
 		wallet.persist(&self.sweeper.app.db).await?;
 		Ok(signed)
