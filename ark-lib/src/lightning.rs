@@ -269,7 +269,7 @@ impl SignedBolt11Payment {
 	) -> Result<(), InvalidSignature> {
 		for (idx, sighash) in self.payment.htlc_sighashes().into_iter().enumerate() {
 			let sig = self.signatures.get(idx).ok_or(InvalidSignature::Missing { idx })?;
-			let pubkey = self.payment.inputs[idx].taproot_pubkey();
+			let pubkey = self.payment.inputs[idx].spec().taproot_pubkey();
 			let msg = secp256k1::Message::from_digest(*sighash.as_byte_array());
 			if secp.verify_schnorr(sig, &msg, &pubkey).is_err() {
 				return Err(InvalidSignature::Invalid { idx, pubkey });

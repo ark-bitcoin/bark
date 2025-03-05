@@ -235,6 +235,10 @@ impl VtxoSpec {
 		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta)
 	}
 
+	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
+		self.exit_taproot().output_key().to_inner()
+	}
+
 	pub fn exit_taptweak(&self) -> taproot::TapTweakHash {
 		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta).tap_tweak()
 	}
@@ -426,10 +430,6 @@ impl Vtxo {
 			script_pubkey: self.spec().exit_spk(),
 			value: self.amount(),
 		}
-	}
-
-	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
-		self.spec().exit_taproot().output_key().to_inner()
 	}
 
 	/// The exit tx of the vtxo.
