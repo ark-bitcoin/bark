@@ -16,11 +16,13 @@ use tokio::sync::{oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
 use tracing::info_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+
 use ark::{musig, BlockHeight, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{MusigPubNonce, MusigSecNonce};
 use ark::rounds::RoundEvent;
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
+use bitcoin_ext::P2WSH_DUST;
 
 use crate::{telemetry, App, SECP};
 
@@ -390,7 +392,7 @@ impl CollectingPayments {
 			};
 			let req = VtxoRequest {
 				pubkey: *UNSPENDABLE,
-				amount: ark::fee::DUST,
+				amount: P2WSH_DUST,
 				cosign_pk: cosign_key.public_key(),
 			};
 			self.all_outputs.push(VtxoParticipant {
@@ -1315,11 +1317,15 @@ pub async fn run_round_coordinator(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use ark::{fee, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
-	use bitcoin::secp256k1::{PublicKey, Secp256k1};
-	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+
 	use std::collections::HashSet;
 	use std::str::FromStr;
+
+	use bitcoin::secp256k1::{PublicKey, Secp256k1};
+	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+
+	use ark::{RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
+	use bitcoin_ext::fee;
 
 	fn generate_pubkey() -> PublicKey {
 		let secp = Secp256k1::new();

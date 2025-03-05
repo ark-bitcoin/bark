@@ -11,7 +11,9 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use crate::{fee, musig, util, BlockHeight, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
+use bitcoin_ext::{fee, P2WSH_DUST};
+
+use crate::{musig, util, BlockHeight, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
 
 
@@ -77,7 +79,7 @@ impl VtxoTreeSpec {
 	/// - a dust fee anchor at each node, both internal and leaves
 	pub fn total_required_value(&self) -> Amount {
 		self.vtxos.iter().map(|d| d.amount).sum::<Amount>()
-			+ fee::DUST * Tree::nb_nodes_for_leaves(self.nb_leaves()) as u64
+			+ P2WSH_DUST * Tree::nb_nodes_for_leaves(self.nb_leaves()) as u64
 	}
 
 	/// The expiry clause hidden in the node taproot as only script.

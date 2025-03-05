@@ -8,12 +8,14 @@ use anyhow::Context;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
-
 use tokio::process::Command;
+
+use bitcoin_ext::FeeRateExt;
+
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
 use crate::daemon::{Daemon, DaemonHelper};
-use crate::util::{FeeRateExt, FutureExt, resolve_path};
+use crate::util::{FutureExt, resolve_path};
 
 #[derive(Clone)]
 pub struct BitcoindHelper {
@@ -230,7 +232,7 @@ impl BitcoindHelper {
 
 		// We do need an additional time-out here to ensure this method returns
 		//
-		// In a normal scenario connecting to bitcoind and requesting 
+		// In a normal scenario connecting to bitcoind and requesting
 		// `get_network_info` will always succeed in 100 ms
 		//
 		// However, if the `BitcoindClient` tries to connect before `bitcoind`

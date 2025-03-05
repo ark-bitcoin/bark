@@ -11,7 +11,9 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache};
 
-use crate::{fee, musig, onboard, oor, util};
+use bitcoin_ext::fee;
+
+use crate::{musig, onboard, oor, util};
 
 
 /// The total signed tx weight of a exit tx.

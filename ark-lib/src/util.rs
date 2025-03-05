@@ -1,43 +1,14 @@
 
-use std::borrow::Borrow;
-use std::collections::BTreeMap;
-
-use bitcoin::{opcodes, OutPoint, ScriptBuf, Transaction};
+use bitcoin::{opcodes, ScriptBuf, Transaction};
 use bitcoin::hashes::{sha256, ripemd160, Hash};
-use bitcoin::secp256k1::{self, schnorr, Keypair, XOnlyPublicKey};
-use bitcoin::taproot::{self, ControlBlock};
+use bitcoin::secp256k1::{self, schnorr, XOnlyPublicKey};
 
-use crate::fee;
+use bitcoin_ext::TAPROOT_KEYSPEND_WEIGHT;
 
-lazy_static::lazy_static! {
+lazy_static! {
 	/// Global secp context.
 	pub static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
-
-pub trait KeypairExt: Borrow<Keypair> {
-	/// Adapt this key pair to be used in a key-spend-only taproot.
-	fn for_keyspend(&self) -> Keypair {
-		let tweak = taproot::TapTweakHash::from_key_and_tweak(
-			self.borrow().x_only_public_key().0, None,
-		).to_scalar();
-		self.borrow().add_xonly_tweak(&SECP, &tweak).expect("hashed values")
-	}
-}
-impl KeypairExt for Keypair {}
-
-pub trait TransactionExt: Borrow<Transaction> {
-	/// Check if this tx has a dust fee anchor output and return the outpoint if so.
-	fn fee_anchor(&self) -> Option<OutPoint> {
-		let anchor = fee::dust_anchor();
-		for (i, out) in self.borrow().output.iter().enumerate() {
-			if *out == anchor {
-				return Some(OutPoint::new(self.borrow().compute_txid(), i as u32));
-			}
-		}
-		None
-	}
-}
-impl TransactionExt for Transaction {}
 
 /// Create a tapscript that is a checksig and a relative timelock.
 pub fn delayed_sign(delay_blocks: u16, pubkey: XOnlyPublicKey) -> ScriptBuf {
@@ -101,20 +72,6 @@ pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
 	for (input, sig) in tx.input.iter_mut().zip(sigs.iter()) {
 		assert!(input.witness.is_empty());
 		input.witness.push(&sig[..]);
-		debug_assert_eq!(crate::TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
+		debug_assert_eq!(TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
 	}
 }
-
-/// An extension trait on the [taproot::TaprootSpendInfo] struct.
-pub trait TaprootSpendInfoExt: Borrow<taproot::TaprootSpendInfo> {
-	/// Return the existing tapscripts in the format that PSBT expects.
-	fn psbt_tap_scripts(&self) -> BTreeMap<ControlBlock, (ScriptBuf, taproot::LeafVersion)> {
-		let s = self.borrow();
-		s.script_map().keys().map(|pair| {
-			let cb = s.control_block(pair).unwrap();
-			let (ref script, leaf_version) = pair;
-			(cb, (script.clone(), *leaf_version))
-		}).collect()
-	}
-}
-impl TaprootSpendInfoExt for taproot::TaprootSpendInfo {}

@@ -7,11 +7,13 @@ use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
 use lightning_invoice::Bolt11Invoice;
 
-use crate::{fee, musig, util, Bolt11ChangeVtxo, Vtxo, VtxoSpec, P2TR_DUST_SAT};
+use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
+
+use crate::{musig, util, Bolt11ChangeVtxo, Vtxo, VtxoSpec};
 
 
 /// The minimum fee we consider for an HTLC transaction.
-pub const HTLC_MIN_FEE: Amount = crate::P2TR_DUST;
+pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Bolt11Payment {
@@ -34,7 +36,7 @@ impl Bolt11Payment {
 	pub fn check_amounts(&self) -> bool {
 		let inputs = self.inputs.iter().map(|v| v.amount()).sum::<Amount>();
 		//TODO(stevenroose) account for relay fee
-		inputs >= (self.payment_amount + self.forwarding_fee + fee::DUST)
+		inputs >= (self.payment_amount + self.forwarding_fee + P2WSH_DUST)
 	}
 
 	pub fn htlc_taproot(&self) -> TaprootSpendInfo {
@@ -125,7 +127,7 @@ impl Bolt11Payment {
 
 	pub fn total_weight(&self) -> Weight {
 		let tx = self.unsigned_transaction();
-		let spend_weight = Weight::from_wu(crate::TAPROOT_KEYSPEND_WEIGHT as u64);
+		let spend_weight = Weight::from_wu(TAPROOT_KEYSPEND_WEIGHT as u64);
 		let nb_inputs = self.inputs.len() as u64;
 		tx.weight() + nb_inputs * spend_weight
 	}

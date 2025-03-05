@@ -127,6 +127,7 @@ dependencies = [
 name = "ark-lib"
 version = "0.0.0-alpha01"
 dependencies = [
+ "bark-bitcoin-ext",
  "bitcoin",
  "bitcoinconsensus",
  "ciborium",
@@ -147,6 +148,7 @@ dependencies = [
  "aspd-rpc",
  "async-trait",
  "bark-aspd",
+ "bark-bitcoin-ext",
  "bark-client",
  "bark-cln",
  "bark-json",
@@ -330,6 +332,7 @@ dependencies = [
  "ark-lib",
  "aspd-log",
  "aspd-rpc",
+ "bark-bitcoin-ext",
  "bark-cln",
  "bb8",
  "bb8-postgres",
@@ -370,12 +373,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bark-bitcoin-ext"
+version = "0.1.0"
+dependencies = [
+ "bdk_wallet",
+ "bitcoin",
+ "lazy_static",
+]
+
+[[package]]
 name = "bark-client"
 version = "0.0.0-alpha01"
 dependencies = [
  "anyhow",
  "ark-lib",
  "aspd-rpc",
+ "bark-bitcoin-ext",
  "bark-json",
  "bdk_bitcoind_rpc",
  "bdk_esplora",

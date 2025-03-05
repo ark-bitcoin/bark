@@ -11,11 +11,13 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Error, schnorr, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use crate::{fee, musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
+use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
+
+use crate::{musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
 
 
 /// The minimum fee we consider for an oor transaction.
-pub const OOR_MIN_FEE: Amount = crate::P2TR_DUST;
+pub const OOR_MIN_FEE: Amount = P2TR_DUST;
 
 pub fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction) -> Vec<TapSighash> {
 	let prevs = input_vtxos.iter().map(|i| i.borrow().txout()).collect::<Vec<_>>();
@@ -145,7 +147,7 @@ impl OorPayment {
 
 	pub fn total_weight(&self) -> Weight {
 		let tx = unsigned_oor_transaction(&self.inputs, &self.output_specs());
-		let spend_weight = Weight::from_wu(crate::TAPROOT_KEYSPEND_WEIGHT as u64);
+		let spend_weight = Weight::from_wu(TAPROOT_KEYSPEND_WEIGHT as u64);
 		let nb_inputs = self.inputs.len() as u64;
 		tx.weight() + nb_inputs * spend_weight
 	}

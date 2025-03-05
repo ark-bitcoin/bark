@@ -7,6 +7,7 @@ members = [
   "aspd",
   "aspd-log",
   "bark",
+  "bitcoin-ext",
   "bark-cln",
   "bark-json",
   "stream-until",
@@ -54,6 +55,7 @@ tokio-postgres = "0.7.12"
 bb8 = "0.9.0"
 bb8-postgres = "0.9.0"
 futures = {version = "0.3.30"}
+async-trait = "0.1.83"
 # bitcoin
 bip39 = { version = "2.0.0", features = [ "rand", "serde" ] }
 miniscript = "12.2"

@@ -9,7 +9,9 @@ use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Transaction, TxOut};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::Keypair;
 
-use crate::{fee, musig, util, vtxo, OnboardVtxo, VtxoSpec};
+use bitcoin_ext::P2WSH_DUST;
+
+use crate::{musig, util, vtxo, OnboardVtxo, VtxoSpec};
 
 
 pub fn onboard_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
@@ -37,7 +39,7 @@ pub fn onboard_spk(spec: &VtxoSpec) -> ScriptBuf {
 
 /// The additional amount that needs to be sent into the onboard tx.
 pub fn onboard_surplus() -> Amount {
-	fee::DUST
+	P2WSH_DUST
 }
 
 /// The amount that should be sent into the onboard output.

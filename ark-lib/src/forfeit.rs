@@ -3,7 +3,9 @@
 use bitcoin::{OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use crate::{fee, util, Vtxo};
+use bitcoin_ext::{fee, P2WSH_DUST};
+
+use crate::{util, Vtxo};
 use crate::connectors::ConnectorChain;
 
 
@@ -47,7 +49,7 @@ pub fn forfeit_sighash(vtxo: &Vtxo, connector: OutPoint) -> (TapSighash, Transac
 	};
 	let connector_prevout = TxOut {
 		script_pubkey: ConnectorChain::output_script(spec.asp_pubkey),
-		value: fee::DUST,
+		value: P2WSH_DUST,
 	};
 	let tx = create_forfeit_tx(vtxo, connector);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(

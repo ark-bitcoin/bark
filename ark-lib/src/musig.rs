@@ -9,7 +9,7 @@ use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey, SecretKey, XOnlyPubl
 
 use crate::util;
 
-lazy_static::lazy_static! {
+lazy_static! {
 	/// Global secp context.
 	pub static ref SECP: secpm::Secp256k1<secpm::All> = secpm::Secp256k1::new();
 }

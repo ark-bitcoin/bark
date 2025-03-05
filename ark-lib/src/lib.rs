@@ -5,7 +5,6 @@ pub extern crate bitcoin;
 #[macro_use] extern crate lazy_static;
 
 pub mod connectors;
-pub mod fee;
 pub mod forfeit;
 pub mod lightning;
 pub mod musig;
@@ -16,6 +15,8 @@ pub mod tree;
 pub mod util;
 pub mod vtxo;
 
+pub use crate::vtxo::{ArkoorVtxo, Bolt11ChangeVtxo, OnboardVtxo, RoundVtxo, VtxoId, VtxoSpec, Vtxo};
+
 #[cfg(test)]
 mod napkin;
 
@@ -25,36 +26,7 @@ use std::fmt;
 use bitcoin::{Amount, BlockHash, FeeRate, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
 
-pub use crate::vtxo::{ArkoorVtxo, Bolt11ChangeVtxo, OnboardVtxo, RoundVtxo, VtxoId, VtxoSpec, Vtxo};
-
-
-pub const P2TR_DUST_VB: u64 = 110;
-/// 330 satoshis
-pub const P2TR_DUST_SAT: u64 = P2TR_DUST_VB * 3;
-pub const P2TR_DUST: Amount = Amount::from_sat(P2TR_DUST_SAT);
-
-pub const P2WPKH_DUST_VB: u64 = 90;
-/// 294 satoshis
-pub const P2WPKH_DUST_SAT: u64 = P2WPKH_DUST_VB * 3;
-pub const P2WPKH_DUST: Amount = Amount::from_sat(P2WPKH_DUST_SAT);
-
-pub const P2PKH_DUST_VB: u64 = 182;
-/// 546 satoshis
-pub const P2PKH_DUST_SAT: u64 = P2PKH_DUST_VB * 3;
-pub const P2PKH_DUST: Amount = Amount::from_sat(P2PKH_DUST_SAT);
-
-pub const P2SH_DUST_VB: u64 = 180;
-/// 540 satoshis
-pub const P2SH_DUST_SAT: u64 = P2PKH_DUST_VB * 3;
-pub const P2SH_DUST: Amount = Amount::from_sat(P2SH_DUST_SAT);
-
-pub const P2WSH_DUST_VB: u64 = 110;
-/// 330 satoshis
-pub const P2WSH_DUST_SAT: u64 = P2TR_DUST_VB * 3;
-pub const P2WSH_DUST: Amount = Amount::from_sat(P2WSH_DUST_SAT);
-
-/// Witness weight of a taproot keyspend.
-pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
+use bitcoin_ext::{P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
 
 
 /// Type representing a block height in the bitcoin blockchain.
