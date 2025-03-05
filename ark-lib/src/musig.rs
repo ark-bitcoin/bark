@@ -42,6 +42,9 @@ pub fn sig_from(s: secpm::schnorr::Signature) -> schnorr::Signature {
 	schnorr::Signature::from_slice(&s.to_byte_array()).unwrap()
 }
 
+/// Returns the key agg cache and the resulting pubkey.
+///
+/// Key order is not important as keys are sorted before aggregation.
 pub fn key_agg<'a>(keys: impl IntoIterator<Item = PublicKey>) -> MusigKeyAggCache {
 	let mut keys = keys.into_iter().map(|k| pubkey_to(k)).collect::<Vec<_>>();
 	keys.sort_by_key(|k| k.serialize());
@@ -49,14 +52,20 @@ pub fn key_agg<'a>(keys: impl IntoIterator<Item = PublicKey>) -> MusigKeyAggCach
 	MusigKeyAggCache::new(&SECP, &keys)
 }
 
-/// Returns the key agg cache with the tweak applied and the resulting pubkey with the tweak
-/// applied.
-pub fn tweaked_key_agg<'a>(keys: impl IntoIterator<Item = PublicKey>, tweak: [u8; 32]) -> (MusigKeyAggCache, PublicKey) {
+/// Returns the key agg cache with the tweak applied and the resulting pubkey
+/// with the tweak applied.
+///
+/// Key order is not important as keys are sorted before aggregation.
+pub fn tweaked_key_agg<'a>(
+	keys: impl IntoIterator<Item = PublicKey>,
+	tweak: [u8; 32],
+) -> (MusigKeyAggCache, PublicKey) {
 	let mut keys = keys.into_iter().map(|k| pubkey_to(k)).collect::<Vec<_>>();
 	keys.sort_by_key(|k| k.serialize());
 	let keys = keys.iter().collect::<Vec<_>>(); //TODO(stevenroose) remove when musig pr merged
 	let mut ret = MusigKeyAggCache::new(&SECP, &keys);
-	let pk = ret.pubkey_xonly_tweak_add(&SECP, &secpm::Scalar::from_be_bytes(tweak).unwrap()).unwrap();
+	let tweak_scalar = secpm::Scalar::from_be_bytes(tweak).unwrap();
+	let pk = ret.pubkey_xonly_tweak_add(&SECP, &tweak_scalar).unwrap();
 	(ret, pubkey_from(pk))
 }
 
@@ -131,6 +140,9 @@ pub fn partial_sign(
 
 /// Perform a deterministic partial sign for the given message and the
 /// given counterparty key and nonce.
+///
+/// This is only possible for the first party to sign if it has all the
+/// counterparty nonces.
 pub fn deterministic_partial_sign(
 	my_key: &Keypair,
 	their_pubkeys: impl IntoIterator<Item = PublicKey>,
