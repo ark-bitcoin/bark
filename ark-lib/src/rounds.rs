@@ -24,10 +24,6 @@ impl VtxoOwnershipChallenge {
 		Self(value)
 	}
 
-	pub fn replace(&mut self, challenge: &VtxoOwnershipChallenge) {
-		self.0 = challenge.inner();
-	}
-
 	pub fn generate() -> Self {
 		Self(rand::thread_rng().gen())
 	}
@@ -141,16 +137,22 @@ impl<'de> serde::Deserialize<'de> for RoundId {
 
 
 #[derive(Debug, Clone)]
+pub struct RoundInfo {
+	pub round_seq: usize,
+	pub offboard_feerate: FeeRate,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoundAttempt {
+	pub round_seq: usize,
+	pub attempt_seq: usize,
+	pub challenge: VtxoOwnershipChallenge,
+}
+
+#[derive(Debug, Clone)]
 pub enum RoundEvent {
-	Start {
-		round_seq: usize,
-		offboard_feerate: FeeRate,
-	},
-	Attempt {
-		round_seq: usize,
-		attempt_seq: usize,
-		challenge: VtxoOwnershipChallenge,
-	},
+	Start(RoundInfo),
+	Attempt(RoundAttempt),
 	VtxoProposal {
 		round_seq: usize,
 		unsigned_round_tx: Transaction,
@@ -173,13 +175,13 @@ pub enum RoundEvent {
 impl fmt::Display for RoundEvent {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::Start { round_seq, offboard_feerate } => {
+			Self::Start(RoundInfo { round_seq, offboard_feerate }) => {
 				f.debug_struct("Start")
 					.field("round_seq", round_seq)
 					.field("offboard_feerate", offboard_feerate)
 					.finish()
 			},
-			Self::Attempt { round_seq, attempt_seq, challenge } => {
+			Self::Attempt(RoundAttempt { round_seq, attempt_seq, challenge }) => {
 				f.debug_struct("Attempt")
 					.field("round_seq", round_seq)
 					.field("attempt_seq", attempt_seq)

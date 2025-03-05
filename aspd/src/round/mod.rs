@@ -19,7 +19,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use ark::{BlockHeight, OffboardRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::{VtxoOwnershipChallenge, RoundEvent};
+use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use bitcoin_ext::P2WSH_DUST;
 
@@ -1049,10 +1049,10 @@ pub async fn run_round_coordinator(
 
 		// Start new round, announce.
 		let offboard_feerate = app.config.round_tx_feerate;
-		app.rounds().round_event_tx.send(RoundEvent::Start {
+		app.rounds().round_event_tx.send(RoundEvent::Start(RoundInfo {
 			round_seq,
 			offboard_feerate,
-		}).expect("round event channel broken");
+		})).expect("round event channel broken");
 
 		// Allocate this data once per round so that we can keep them
 		// Perhaps we could even keep allocations between all rounds, but time
@@ -1092,11 +1092,11 @@ pub async fn run_round_coordinator(
 				app.release_vtxos_in_flux(state.locked_inputs.drain()).await;
 			}
 
-			app.rounds().round_event_tx.send(RoundEvent::Attempt {
+			app.rounds().round_event_tx.send(RoundEvent::Attempt(RoundAttempt {
 				round_seq,
 				attempt_seq,
 				challenge: state.vtxo_ownership_challenge
-			}).expect("round event channel broken");
+			})).expect("round event channel broken");
 			// Start receiving payments.
 			let receive_payments_start = Instant::now();
 
