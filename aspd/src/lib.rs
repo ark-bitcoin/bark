@@ -739,7 +739,7 @@ impl App {
 					status: rpc::PaymentStatus::from(v.status.clone()) as i32,
 					progress_message: format!(
 						"{} payment-part for hash {:?} - Attempt {} part {} to status {}",
-						v.kind, v.payment_hash, v.group_id, v.part_id, v.status,
+						v.kind.as_str_name(), v.payment_hash, v.group_id, v.part_id, v.status,
 					),
 					payment_hash: payment_hash.as_byte_array().to_vec(),
 					payment_preimage: v.payment_preimage.map(|h| h.as_byte_array().to_vec())

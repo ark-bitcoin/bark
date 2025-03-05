@@ -7,6 +7,7 @@ use ark::lightning::PaymentStatus;
 use bitcoin::hashes::{ripemd160, sha256, Hash};
 
 use crate::grpc;
+use crate::grpc::listsendpays_request::ListsendpaysIndex;
 use crate::grpc::node_client::NodeClient;
 
 type GrpcClient = NodeClient<Channel>;
@@ -47,7 +48,7 @@ impl SubscribeSendpay {
 
 #[derive(Debug, Clone)]
 pub struct  SendpaySubscriptionItem {
-	pub kind: SendpaySubscriptionIndex,
+	pub kind: ListsendpaysIndex,
 	pub status: PaymentStatus,
 	pub part_id: u64,
 	pub group_id: u64,
@@ -64,26 +65,13 @@ impl fmt::Display for SendpaySubscriptionItem {
 	}
 }
 
-#[derive(Debug, Clone)]
-pub enum SendpaySubscriptionIndex {
-	Created,
-	Updated,
-	Deleted
-}
-
-impl fmt::Display for SendpaySubscriptionIndex {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		fmt::Debug::fmt(self, f)
-	}
-}
-
 async fn updated_loop(
 	mut updated_index: u64,
 	mut client: NodeClient<Channel>,
 	sender: broadcast::Sender<SendpaySubscriptionItem>,
 ) -> anyhow::Result<()> {
 	loop {
-		// Wait for new updates
+		// Wait for sendpay updates
 		let request = grpc::WaitRequest {
 			subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
 			indexname: grpc::wait_request::WaitIndexname::Updated as i32,
@@ -94,7 +82,12 @@ async fn updated_loop(
 			Ok(_) => {
 				// We know that an update exist
 				// We retreive all the updates and process them
-				updated_index = process_updated(&mut client, updated_index, &sender).await? + 1;
+				updated_index = process_sendpay(
+					&mut client,
+					ListsendpaysIndex::Updated,
+					updated_index,
+					&sender
+				).await? + 1;
 			}
 			Err(e) => {
 				trace!("Error in wait sendpay updated: {:?}", e)
@@ -109,7 +102,7 @@ async fn created_loop(
 	sender: broadcast::Sender<SendpaySubscriptionItem>,
 ) -> anyhow::Result<()> {
 	loop {
-		// Wait for new updates
+		// Wait for new sendpay creation
 		let request = grpc::WaitRequest {
 			subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
 			indexname: grpc::wait_request::WaitIndexname::Created as i32,
@@ -120,17 +113,21 @@ async fn created_loop(
 			Ok(_) => {
 				// We know that at least one item was created
 				// We query them all and update them
-				created_index = process_created(&mut client, created_index, &sender).await? + 1;
+				created_index = process_sendpay(
+					&mut client,
+					ListsendpaysIndex::Created,
+					created_index,
+					&sender
+				).await? + 1;
 			}
-			Err(e) => {
-				trace!("Error in wait sendpay updated: {:?}", e)
-			}
+			Err(e) => trace!("Error in wait sendpay updated: {:?}", e)
 		}
 	}
 }
 
-async fn process_updated(
+async fn process_sendpay(
 	client: &mut GrpcClient,
+	kind: ListsendpaysIndex,
 	start_index: u64,
 	tx: &broadcast::Sender<SendpaySubscriptionItem>
 )-> anyhow::Result<u64> {
@@ -138,7 +135,7 @@ async fn process_updated(
 		bolt11: None,
 		payment_hash: None,
 		status: None,
-		index: Some(grpc::listsendpays_request::ListsendpaysIndex::Updated as i32),
+		index: Some(kind as i32),
 		start: Some(start_index),
 		limit: None
 	};
@@ -150,7 +147,7 @@ async fn process_updated(
 		let updated_index = update.updated_index();
 
 		let item = SendpaySubscriptionItem {
-			kind: SendpaySubscriptionIndex::Updated,
+			kind: kind,
 			status: update.status().into(),
 			part_id: update.partid(),
 			group_id: update.groupid,
@@ -164,49 +161,12 @@ async fn process_updated(
 			max_index = updated_index;
 		}
 
-		trace!("Updated idx={} {:?}", updated_index, item);
-		tx.send(item)?;
-	}
-
-	Ok(max_index)
-}
-
-async fn process_created(
-	client: &mut GrpcClient,
-	start_index: u64,
-	tx: &broadcast::Sender<SendpaySubscriptionItem>
-)-> anyhow::Result<u64> {
-	let listsendpaysrequest = grpc::ListsendpaysRequest {
-		bolt11: None,
-		payment_hash: None,
-		status: None,
-		index: Some(grpc::listsendpays_request::ListsendpaysIndex::Created as i32),
-		start: Some(start_index),
-		limit: None
-	};
-
-	let mut max_index = start_index;
-
-	let updates = client.list_send_pays(listsendpaysrequest).await?.into_inner();
-	for update in updates.payments {
-		let updated_index = update.updated_index();
-
-		let item = SendpaySubscriptionItem {
-			kind: SendpaySubscriptionIndex::Created,
-			status: update.status().into(),
-			part_id: update.partid(),
-			group_id: update.groupid,
-			payment_hash: sha256::Hash::from_slice(&update.payment_hash)?,
-			payment_preimage: update.payment_preimage
-				.map(|x| ripemd160::Hash::from_slice(&x))
-				.transpose()?
-		};
-
-		if max_index < updated_index {
-			max_index = updated_index;
+		match kind {
+			ListsendpaysIndex::Created => trace!("Created {:?}", item),
+			ListsendpaysIndex::Updated =>
+				trace!("Updated idx={} {:?}", updated_index, item),
 		}
 
-		trace!("Created {:?}", item);
 		tx.send(item)?;
 	}
 
