@@ -773,7 +773,7 @@ pub struct TelemetryMetrics {
 
 impl TelemetryMetrics {
 	fn new() -> TelemetryMetrics {
-		let meter = global::meter_provider().meter(telemetry::METER_RPC);
+		let meter = global::meter_provider().meter(telemetry::METER_ASPD);
 		TelemetryMetrics {
 			tracer: Arc::new(global::tracer_provider().tracer(telemetry::TRACER_ASPD)),
 			in_progress_counter: meter.i64_up_down_counter(
