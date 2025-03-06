@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use bitcoin_ext::{fee, P2WSH_DUST};
+use bitcoin_ext::{fee, P2WSH_DUST, TransactionExt};
 
 use crate::{musig, util, BlockHeight, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
@@ -136,7 +136,7 @@ impl VtxoTreeSpec {
 			output: children.map(|(tx, agg_pk)| {
 				TxOut {
 					script_pubkey: self.cosign_spk(*agg_pk),
-					value: tx.output.iter().map(|o| o.value).sum(),
+					value: tx.output_value(),
 				}
 			}).chain(Some(fee::dust_anchor())).collect(),
 		}
@@ -730,15 +730,14 @@ mod test {
 				map.get(&prev.txid).expect(&format!("tx {} not found", prev.txid))
 					.output[prev.vout as usize].value
 			}).sum::<Amount>();
-			let output = tx.output.iter().map(|o| o.value).sum::<Amount>();
+			let output = tx.output_value();
 			assert!(input >= output);
 			assert_eq!(input, output);
 		}
 
 		// check the root
 		let root = tree.txs.last().unwrap();
-		let output = root.output.iter().map(|o| o.value).sum::<Amount>();
-		assert_eq!(root_value, output);
+		assert_eq!(root_value, root.output_value());
 	}
 
 	#[test]
