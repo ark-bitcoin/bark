@@ -42,6 +42,16 @@
 					doCheck = false;
 				});
 
+				hal = pkgs.rustPlatform.buildRustPackage rec {
+					pname = "hal";
+					version = "0.9.5";
+					src = pkgs.fetchCrate {
+						inherit pname version;
+						sha256 = "sha256-rwVny9i0vFycoeAesy2iP7sA16fECLu1UPbqrOJa1is=";
+					};
+					cargoSha256 = "sha256-dATviea1btnIVYKKgU1fMtZxKJitp/wXAuoIsxCSgf4=";
+				};
+
 				electrs = pkgs.rustPlatform.buildRustPackage rec {
 					pname = "esplora-electrs";
 					version = "99.99.99";
@@ -125,6 +135,7 @@
 						pkgs.sqlite
 						# For development & testing
 						pkgs.just
+						hal
 						pkgs.jq
 						pkgs.python3 # for clightning
 						bitcoin
