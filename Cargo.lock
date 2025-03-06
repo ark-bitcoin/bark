@@ -401,6 +401,7 @@ dependencies = [
  "clap",
  "fern",
  "home",
+ "humantime",
  "lazy_static",
  "lightning-invoice",
  "lnurl-rs",
@@ -438,6 +439,7 @@ version = "0.0.0"
 dependencies = [
  "ark-lib",
  "bitcoin",
+ "humantime",
  "serde",
 ]
 

@@ -93,9 +93,10 @@ impl From<Utxo> for UtxoInfo {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArkInfo {
 	pub asp_pubkey: PublicKey,
+	pub round_interval: Duration,
 	pub nb_round_nonces: usize,
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
@@ -249,6 +250,7 @@ impl AspConnection {
 
 			let info = ArkInfo {
 				asp_pubkey: PublicKey::from_slice(&info.pubkey).context("asp pubkey")?,
+				round_interval: Duration::from_secs(info.round_interval_secs as u64),
 				nb_round_nonces: info.nb_round_nonces as usize,
 				vtxo_expiry_delta: info.vtxo_expiry_delta as u16,
 				vtxo_exit_delta: info.vtxo_exit_delta as u16,
@@ -394,6 +396,11 @@ impl <P>Wallet<P> where
 
 	fn require_asp(&self) -> anyhow::Result<AspConnection> {
 		self.asp.clone().context("You should be connected to ASP to perform this action")
+	}
+
+	/// Return ArkInfo fetched on last handshake
+	pub fn ark_info(&self) -> Option<&ArkInfo> {
+		self.asp.as_ref().map(|a| &a.info)
 	}
 
 	/// Retrieve the off-chain balance of the wallet.
