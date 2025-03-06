@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Transaction, Txid, Wtxid};
 use chrono::{DateTime, Local};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -71,6 +71,8 @@ impl TxStatus {
 pub type Tx = Arc<IndexedTx>;
 
 /// A [Transaction] accompanied with their [Txid] and with access to their confirmation status.
+///
+/// Implementations of [PartialEq], [Eq] and [Hash] are delegated to the txid.
 pub struct IndexedTx {
 	pub txid: Txid,
 	pub tx: Transaction,
@@ -145,6 +147,19 @@ impl fmt::Debug for IndexedTx {
 	}
 }
 
+impl PartialEq for IndexedTx {
+	fn eq(&self, other: &Self) -> bool {
+		self.txid.eq(&other.txid)
+	}
+}
+impl Eq for IndexedTx {}
+
+impl std::hash::Hash for IndexedTx {
+	fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+		self.txid.hash(h)
+	}
+}
+
 pub trait TxOrTxid {
 	fn txid(&self) -> Txid;
 }
@@ -166,7 +181,7 @@ impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
 #[derive(Clone)]
 pub struct TxIndex {
 	tx_map: Arc<RwLock<HashMap<Txid, Tx>>>,
-	broadcast_tx: Option<mpsc::UnboundedSender<Txid>>,
+	broadcast_pkg: Option<mpsc::UnboundedSender<Vec<Txid>>>,
 }
 //TODO(stevenroose) consider persisting all this state
 // - this would make it easier to entirely rely on new blocks and incoming mempool txs
@@ -193,11 +208,12 @@ impl TxIndex {
 	/// Register a new tx in the index and return the tx handle.
 	pub async fn register(&self, tx: Transaction) -> Tx {
 		let txid = tx.compute_txid();
-		if let Some(tx) = self.get(&txid).await {
-			tx
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.get(&txid) {
+			tx.clone()
 		} else {
 			let ret = IndexedTx::new(txid, tx);
-			self.tx_map.write().await.insert(txid, ret.clone());
+			tx_map.insert(txid, ret.clone());
 			ret
 		}
 	}
@@ -205,11 +221,12 @@ impl TxIndex {
 	/// Register a new tx in the index and return the tx handle.
 	pub async fn register_as(&self, tx: Transaction, status: TxStatus) -> Tx {
 		let txid = tx.compute_txid();
-		if let Some(tx) = self.get(&txid).await {
-			tx
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.get(&txid) {
+			tx.clone()
 		} else {
 			let ret = IndexedTx::new_as(txid, tx, status);
-			self.tx_map.write().await.insert(txid, ret.clone());
+			tx_map.insert(txid, ret.clone());
 			ret
 		}
 	}
@@ -217,38 +234,39 @@ impl TxIndex {
 	/// Register a new tx in the index and return the tx handle.
 	pub async fn register_incomplete(&self, tx: Transaction) -> Tx {
 		let txid = tx.compute_txid();
-		if let Some(tx) = self.get(&txid).await {
-			tx
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.get(&txid) {
+			tx.clone()
 		} else {
 			let ret = IndexedTx::new_incomplete(txid, tx);
-			self.tx_map.write().await.insert(txid, ret.clone());
+			tx_map.insert(txid, ret.clone());
 			ret
 		}
 	}
 
 	/// Register a batch of transactions at once.
 	pub async fn register_batch(&self, txs: impl IntoIterator<Item = Transaction>) {
-		let mut state = self.tx_map.write().await;
+		let mut tx_map = self.tx_map.write().await;
 		for tx in txs {
 			let txid = tx.compute_txid();
-			state.entry(txid).or_insert_with(|| IndexedTx::new(txid, tx));
+			tx_map.entry(txid).or_insert_with(|| IndexedTx::new(txid, tx));
 		}
 	}
 
 	/// Unregister a transaction
 	pub async fn unregister(&self, tx: impl TxOrTxid) {
-		let mut state = self.tx_map.write().await;
-		if let Some(tx) = state.remove(&tx.txid()) {
+		let mut tx_map = self.tx_map.write().await;
+		if let Some(tx) = tx_map.remove(&tx.txid()) {
 			*tx.status.lock().await = Some(TxStatus::Unregistered);
 		}
 	}
 
 	/// Unregister a batch of transactions at once.
 	pub async fn unregister_batch(&self, txs: impl IntoIterator<Item = impl TxOrTxid>) {
-		let mut state = self.tx_map.write().await;
+		let mut tx_map = self.tx_map.write().await;
 		for tx in txs {
 			let txid = tx.txid();
-			if let Some(tx) = state.remove(&txid) {
+			if let Some(tx) = tx_map.remove(&txid) {
 				*tx.status.lock().await = Some(TxStatus::Unregistered);
 			}
 		}
@@ -257,22 +275,33 @@ impl TxIndex {
 	/// Tell the tx index to broadcast the given tx and return a tx handle.
 	pub async fn broadcast_tx(&self, tx: Transaction) -> Tx {
 		let ret = self.register_as(tx, TxStatus::Unseen).await;
-		self.broadcast(ret.txid);
+		self.broadcast(vec![ret.txid]);
 		ret
 	}
 
-	/// Tell the tx index to broadcast the given tx.
+	/// Tell the tx index to broadcast the given tx package and return handles.
+	pub async fn broadcast_pkg(&self, pkg: impl Into<Vec<Transaction>>) -> Vec<Tx> {
+		let pkg = pkg.into();
+		let mut ret = Vec::with_capacity(pkg.len());
+		for tx in pkg {
+			ret.push(self.register_as(tx, TxStatus::Unseen).await);
+		}
+		self.broadcast(ret.iter().map(|t| t.txid).collect::<Vec<_>>());
+		ret
+	}
+
+	/// Tell the tx index to broadcast the given tx package.
 	///
-	/// You'll probably prefer to use [broadcast_tx] instead.
-	pub fn broadcast(&self, txid: Txid) {
-		self.broadcast_tx.as_ref().expect("txindex not started yet")
-			.send(txid).expect("txindex shut down");
+	/// You'll probably prefer to use [broadcast_tx] or [broadcast_pkg] instead.
+	pub fn broadcast(&self, pkg: impl Into<Vec<Txid>>) {
+		self.broadcast_pkg.as_ref().expect("txindex not started yet")
+			.send(pkg.into()).expect("txindex shut down");
 	}
 
 	pub fn new() -> TxIndex {
 		TxIndex {
 			tx_map: Arc::new(RwLock::new(HashMap::new())),
-			broadcast_tx: None,
+			broadcast_pkg: None,
 		}
 	}
 
@@ -284,7 +313,7 @@ impl TxIndex {
 		shutdown: broadcast::Receiver<()>,
 	) -> JoinHandle<anyhow::Result<()>> {
 		let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel();
-		self.broadcast_tx = Some(broadcast_tx);
+		self.broadcast_pkg = Some(broadcast_tx);
 
 		let proc = TxIndexProcess {
 			bitcoind, interval, broadcast_rx, shutdown,
@@ -304,9 +333,9 @@ struct TxIndexProcess {
 	interval: Duration,
 
 	txs: Arc<RwLock<HashMap<Txid, Tx>>>,
-	broadcast: HashSet<Txid>,
+	broadcast: HashSet<Vec<Txid>>,
 
-	broadcast_rx: mpsc::UnboundedReceiver<Txid>,
+	broadcast_rx: mpsc::UnboundedReceiver<Vec<Txid>>,
 	shutdown: broadcast::Receiver<()>,
 }
 
@@ -335,12 +364,7 @@ impl TxIndexProcess {
 					}
 				},
 				Err(e) if e.is_not_found() => {
-					// Node doesn't know about tx. If it's in broadcast, let's rebroadcast.
-					if self.broadcast.contains(&tx.txid) {
-						self.broadcast_tx(tx).await;
-					} else {
-						*tx.status.lock().await = Some(TxStatus::Unseen);
-					}
+					*tx.status.lock().await = Some(TxStatus::Unseen);
 				},
 				Err(e) => warn!("bitcoin error: {}", e),
 			}
@@ -348,6 +372,11 @@ impl TxIndexProcess {
 	}
 
 	async fn broadcast_tx(&self, tx: &Tx) {
+		// Skip if tx already in mempol.
+		if tx.seen().await {
+			return;
+		}
+
 		let bytes = serialize(&tx.tx);
 		if let Err(e) = self.bitcoind.send_raw_transaction(&bytes) {
 			warn!("Error when re-broadcasting one of our txs: {}", e);
@@ -361,11 +390,78 @@ impl TxIndexProcess {
 		}
 	}
 
-	async fn broadcast(&mut self, txid: Txid) {
-		if let Some(tx) = self.txs.read().await.get(&txid) {
-			self.broadcast_tx(tx).await;
+	async fn broadcast_pkg(&self, pkg: &[&Tx]) {
+		// Skip if all txs in mempool.
+		let mut skip = true;
+		for tx in pkg {
+			if !tx.seen().await {
+				skip = false;
+			}
+		}
+		if skip {
+			return;
+		}
+
+		#[derive(Debug, Deserialize)]
+		struct PackageTxInfo {
+			txid: Txid,
+			error: Option<String>,
+		}
+		#[derive(Debug, Deserialize)]
+		struct SubmitPackageResponse {
+			#[serde(rename = "tx-results")]
+			tx_results: HashMap<Wtxid, PackageTxInfo>,
+			package_msg: String,
+		}
+
+		let hexes = pkg.iter()
+			.map(|t| bitcoin::consensus::encode::serialize_hex(&t.tx))
+			.collect::<Vec<_>>();
+		match self.bitcoind.call::<SubmitPackageResponse>("submitpackage", &[hexes.into()]) {
+			Ok(r) if r.package_msg != "success" => {
+				let errors = r.tx_results.values()
+					.map(|t| format!("tx {}: {}",
+						t.txid, t.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)"),
+					))
+					.collect::<Vec<_>>();
+				warn!("Error broadcasting tx package: msg: '{}', errors: {:?}",
+					r.package_msg, errors,
+				);
+			}
+			Err(e) => {
+				warn!("Error broadcasting tx package: {}", e);
+			},
+			Ok(_) => {},
+		}
+	}
+
+	async fn broadcast(&self, pkg: &[Txid]) {
+		if pkg.len() == 1 {
+			let txid = pkg[0];
+			if let Some(tx) = self.txs.read().await.get(&txid) {
+				self.broadcast_tx(tx).await;
+			} else {
+				debug!("Instructed to broadcast a tx we don't know: {}", txid);
+				return;
+			}
 		} else {
-			debug!("Instructed to broadcast a tx we don't know: {}", txid);
+			let mut txs = Vec::with_capacity(pkg.len());
+			let lock = self.txs.read().await;
+			for txid in pkg {
+				if let Some(tx) = lock.get(&*txid) {
+					txs.push(tx);
+				} else {
+					debug!("Instructed to broadcast a tx we don't know: {}", txid);
+					return;
+				}
+			}
+			self.broadcast_pkg(&txs).await;
+		}
+	}
+
+	async fn rebroadcast(&self) {
+		for pkg in &self.broadcast {
+			self.broadcast(pkg).await;
 		}
 	}
 
@@ -383,8 +479,8 @@ impl TxIndexProcess {
 			tokio::select! {
 				bc = self.broadcast_rx.recv() => {
 					if let Some(bc) = bc {
+						self.broadcast(&bc).await;
 						self.broadcast.insert(bc);
-						self.broadcast(bc).await;
 					} else {
 						return Ok(());
 					}
@@ -392,6 +488,7 @@ impl TxIndexProcess {
 				_ = interval.tick() => {
 					trace!("Starting update of all txs...");
 					self.update_txs().await;
+					self.rebroadcast().await;
 					slog!(TxIndexUpdateFinished);
 				},
 				_ = self.shutdown.recv() => {
