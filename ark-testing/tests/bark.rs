@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
-use bitcoin::key::Keypair;
+use bitcoin::secp256k1::Keypair;
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 
 use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
