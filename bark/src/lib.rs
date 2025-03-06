@@ -968,8 +968,9 @@ impl <P>Wallet<P> where
 			&asp_pub_nonces,
 			&asp_part_sigs,
 		);
-		info!("Adding change VTXO of {}", signed.change_vtxo().amount());
-		trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
+		let change_vtxo = signed.change_vtxo();
+		info!("Adding change VTXO of {}", change_vtxo.pseudo_spec.amount);
+		trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&change_vtxo.htlc_tx));
 
 		let req = rpc::SignedBolt11PaymentDetails {
 			signed_payment: signed.encode()
@@ -997,7 +998,7 @@ impl <P>Wallet<P> where
 		self.db.register_send(
 			&input_vtxos,
 			invoice.to_string(),
-			Some(&signed.change_vtxo()),
+			Some(&Vtxo::Bolt11Change(signed.change_vtxo())),
 			Some(account_for_fee)).context("failed to store OOR vtxo")?;
 
 		info!("Bolt11 payment succeeded");

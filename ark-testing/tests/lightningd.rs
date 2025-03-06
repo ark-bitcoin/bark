@@ -4,6 +4,7 @@ extern crate log;
 use bark_cln::grpc;
 
 use ark_testing::{TestContext, btc, sat};
+use bark_json::VtxoType;
 
 #[tokio::test]
 async fn start_lightningd() {
@@ -209,5 +210,8 @@ async fn bark_refresh_ln_change_vtxo() {
 	assert_eq!(bark_1.offchain_balance().await, sat(299999320));
 
 	bark_1.refresh_all().await;
-	assert_eq!(bark_1.offchain_balance().await, sat(299999320), "balance should stay the same");
+	let vtxos = bark_1.vtxos().await;
+	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
+	assert_eq!(vtxos[0].vtxo_type, VtxoType::Round);
+	assert_eq!(vtxos[0].amount, sat(299999320));
 }

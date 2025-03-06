@@ -471,7 +471,7 @@ impl rpc::server::ArkService for App {
 
 		let (details, asp_nonces, part_sigs) = self.start_bolt11_payment(
 			invoice, amount, input_vtxos, user_pubkey, &user_nonces,
-		).context("error making payment")?;
+		).await.context("error making payment")?;
 
 		let response = rpc::Bolt11PaymentDetails {
 			details: details.encode(),

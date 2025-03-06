@@ -650,7 +650,11 @@ impl App {
 		}
 
 		let txid = payment.txid();
-		let new_vtxos = payment.unsigned_output_vtxos();
+		let new_vtxos = payment
+			.unsigned_output_vtxos()
+			.into_iter()
+			.map(|a| a.into())
+			.collect::<Vec<_>>();
 		let ret = match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
 				return badarg!("attempted to sign OOR for already spent vtxo {}", dup);
@@ -670,7 +674,7 @@ impl App {
 
 	// lightning
 
-	pub fn start_bolt11_payment(
+	pub async fn start_bolt11_payment(
 		&self,
 		invoice: Bolt11Invoice,
 		amount: Amount,
@@ -682,38 +686,60 @@ impl App {
 		Vec<musig::MusigPubNonce>,
 		Vec<musig::MusigPartialSignature>,
 	)> {
-		//TODO(stevenroose) check that vtxos are valid
+		let ids = input_vtxos.iter().map(|i| i.id()).collect::<Vec<_>>();
+		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
+			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
+		}
 
-		//TODO(stevenroose) sanity check that inputs match up to the amount
+		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {
 			//TODO(stevenroose) bikeshed this
 			let tip = self.bitcoind.get_block_count()? as u32;
 			tip + 7 * 18
 		};
-		let details = Bolt11Payment {
-			invoice,
-			inputs: input_vtxos,
-			asp_pubkey: self.asp_key.public_key(),
-			user_pubkey: user_pk,
-			payment_amount: amount,
-			forwarding_fee: Amount::from_sat(350), //TODO(stevenroose) set fee schedule
-			htlc_delta: self.config.htlc_delta,
-			htlc_expiry_delta: self.config.htlc_expiry_delta,
-			htlc_expiry: expiry,
-			exit_delta: self.config.vtxo_exit_delta,
+
+		let ret = 'htlc_cosign: {
+			let details = Bolt11Payment {
+				invoice,
+				inputs: input_vtxos,
+				asp_pubkey: self.asp_key.public_key(),
+				user_pubkey: user_pk,
+				payment_amount: amount,
+				forwarding_fee: Amount::from_sat(350), //TODO(stevenroose) set fee schedule
+				htlc_delta: self.config.htlc_delta,
+				htlc_expiry_delta: self.config.htlc_expiry_delta,
+				htlc_expiry: expiry,
+				exit_delta: self.config.vtxo_exit_delta,
+			};
+
+			if !details.check_amounts() {
+				break 'htlc_cosign badarg!("invalid amounts");
+			}
+
+			let txid = details.unsigned_transaction().compute_txid();
+			let new_vtxos = vec![details.unsigned_change_vtxo().into()];
+
+			match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
+				Ok(Some(dup)) => {
+					badarg!("attempted to sign OOR for already spent vtxo {}", dup)
+				},
+				Ok(None) => {
+					info!("Cosigning HTLC tx {} with inputs: {:?}", txid, ids);
+					// let's sign the tx
+					let (nonces, part_sigs) = details.sign_asp(
+						&self.asp_key,
+						user_nonces,
+					);
+					Ok((details, nonces, part_sigs))
+				},
+				Err(e) => Err(e),
+			}
 		};
-		if !details.check_amounts() {
-			return badarg!("invalid amounts");
-		}
 
-		// let's sign the tx
-		let (nonces, part_sigs) = details.sign_asp(
-			&self.asp_key,
-			user_nonces,
-		);
+		self.release_vtxos_in_flux(ids).await;
 
-		Ok((details, nonces, part_sigs))
+		ret
 	}
 
 
