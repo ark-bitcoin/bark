@@ -4,7 +4,7 @@
 mod wallet;
 mod util;
 
-use std::{env, io, process};
+use std::{env, process};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
@@ -22,6 +22,7 @@ use ark::{Vtxo, VtxoId};
 use bark::{Config, Pagination, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::cli as json;
+use util::output_json;
 
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
 
@@ -368,13 +369,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				let total = w.onchain.balance();
-				let json_output  = json::onchain::Balance { total };
-				serde_json::to_writer_pretty(io::stdout(), &json_output).unwrap();
+				let onchain_balance  = json::onchain::Balance { total };
+				output_json(&onchain_balance);
 			},
 			OnchainCommand::Address => {
-					let address = w.onchain.address().expect("Wallet failed to generate address");
-					let output = json::onchain::Address { address: address.into_unchecked() };
-					serde_json::to_writer_pretty(io::stdout(), &output).unwrap();
+				let address = w.onchain.address().expect("Wallet failed to generate address");
+				let output = json::onchain::Address { address: address.into_unchecked() };
+				output_json(&output);
 			},
 			OnchainCommand::Send { destination: address, amount } => {
 				let addr = address.require_network(net).with_context(|| {
@@ -387,7 +388,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				let txid = w.onchain.send(addr, amount).await?;
 				let output = json::onchain::Send { txid };
-				serde_json::to_writer_pretty(io::stdout(), &output).unwrap();
+				output_json(&output);
 			},
 			OnchainCommand::Utxos { no_sync } => {
 				if !no_sync {
@@ -397,7 +398,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				let utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<json::onchain::Utxos>();
-				serde_json::to_writer_pretty(io::stdout(), &utxos).unwrap();
+				output_json(&utxos);
 			},
 		},
 		Command::VtxoPubkey => println!("{}", w.oor_pubkey()),
@@ -411,9 +412,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let onchain = w.onchain.balance();
 			let offchain =  w.offchain_balance().await?;
 			let pending_exit = w.exit.pending_total().await?;
-			serde_json::to_writer_pretty(io::stdout(), &json::Balance {
-				onchain, offchain, pending_exit,
-			}).unwrap();
+			let balance = json::Balance {onchain, offchain, pending_exit };
+			output_json(&balance);
 		},
 		Command::Vtxos { no_sync } => {
 			if !no_sync {
@@ -423,8 +423,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let res = w.vtxos()?;
-			let json : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
-			serde_json::to_writer_pretty(io::stdout(), &json).unwrap();
+			let vtxos : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
+			output_json(&vtxos);
 		},
 		Command::ListMovements { page_index, page_size } => {
 			if let Err(e) = w.sync_ark().await.context("sync error") {
@@ -437,7 +437,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 
 			let movements = w.list_movements(pagination)?;
-			serde_json::to_writer_pretty(io::stdout(), &movements).unwrap();
+			output_json(&movements);
 		},
 		Command::Refresh { vtxos: vtxo, threshold_blocks, threshold_hours, counterparty, all } => {
 			w.sync_ark().await.context("sync error")?;
@@ -468,7 +468,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				participate_round: round_id.is_some(),
 				round: round_id,
 			};
-			serde_json::to_writer_pretty(io::stdout(), &refresh_output).unwrap();
+			output_json(&refresh_output);
 		},
 		Command::Onboard { amount, all } => {
 			w.onchain.sync().await.context("sync error")?;
@@ -477,8 +477,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(None, true) => w.onboard_all().await?,
 				_ => bail!("please provide either an amount or --all"),
 			};
-
-			serde_json::to_writer_pretty(io::stdout(), &onboard).unwrap();
+			output_json(&onboard);
 		}
 		Command::Send { destination, amount, comment } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
@@ -612,7 +611,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				let height = wallet_mut.exit.all_spendable_at_height().await;
 
 				// Print the output as json
-				serde_json::to_writer_pretty(io::stdout(), &json::ExitStatus { done, height }).unwrap();
+				output_json(&json::ExitStatus { done, height});
 
 				if !wait || done {
 					break;

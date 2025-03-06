@@ -1,7 +1,10 @@
 
-
+use std::io::{self, Write};
 use std::fmt;
 use std::time::Duration;
+
+use serde::Serialize;
+use serde_json;
 
 
 /// Wrap a [Duration] so that it implements [fmt::Display] to show a
@@ -28,6 +31,15 @@ impl fmt::Display for PrettyDuration {
 			write!(f, "{:.2} days", dur.as_secs() as f64 / (24 * 60 * 60) as f64)
 		}
 	}
+}
+
+/// Writes a [`Serializable`] value to stdout
+pub fn output_json<T>(value: &T) -> ()
+where
+	T: ?Sized + Serialize,
+{
+	serde_json::to_writer_pretty(io::stdout(), value).expect("value is serializable");
+	write!(io::stdout(), "\n").expect("Failed to write newline to stdout");
 }
 
 
