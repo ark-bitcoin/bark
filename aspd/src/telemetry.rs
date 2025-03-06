@@ -31,8 +31,7 @@ pub const TRACE_RUN_ROUND_FINALIZING: &str = "round_final_stage";
 pub const TRACE_RUN_ROUND_PERSIST: &str = "round_persist";
 
 
-pub const METER_MAIN: &str = "main";
-pub const METER_RPC: &str = "rpc";
+pub const METER_ASPD: &str = "aspd";
 
 pub const METER_COUNTER_MAIN_SPAWN: &str = "main_spawn_counter";
 pub const METER_COUNTER_GRPC_REQUEST: &str = "grpc_requests_total";
@@ -107,7 +106,7 @@ pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
 		.build();
 	global::set_meter_provider(provider);
 
-	let meter = global::meter_provider().meter(METER_MAIN);
+	let meter = global::meter_provider().meter(METER_ASPD);
 	let spawn_counter = meter.u64_counter(METER_COUNTER_MAIN_SPAWN).build();
 
 	Ok(Some(spawn_counter))
