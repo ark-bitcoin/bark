@@ -2,6 +2,7 @@
 use std::convert::TryFrom;
 use std::fmt;
 
+use ark::rounds::VtxoOwnershipChallenge;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, FeeRate};
 
@@ -42,16 +43,21 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 	fn from(e: ark::rounds::RoundEvent) -> Self {
 		crate::RoundEvent {
 			event: Some(match e {
-				ark::rounds::RoundEvent::Start { round_seq, offboard_feerate } => {
+				ark::rounds::RoundEvent::Start(ark::rounds::RoundInfo {
+					round_seq, offboard_feerate,
+				}) => {
 					crate::round_event::Event::Start(crate::RoundStart {
 						round_seq: round_seq as u64,
 						offboard_feerate_sat_vkb: offboard_feerate.to_sat_per_kwu() * 4,
 					})
 				},
-				ark::rounds::RoundEvent::Attempt { round_seq, attempt_seq } => {
+				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
+					round_seq, attempt_seq, challenge,
+				}) => {
 					crate::round_event::Event::Attempt(crate::RoundAttempt {
 						round_seq: round_seq as u64,
 						attempt_seq: attempt_seq as u64,
+						vtxo_ownership_challenge: challenge.inner().to_vec(),
 					})
 				},
 				ark::rounds::RoundEvent::VtxoProposal {
@@ -100,16 +106,19 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 		Ok(match m.event.unwrap() {
 			crate::round_event::Event::Start(m) => {
 				let offboard_feerate = FeeRate::from_sat_per_kwu(m.offboard_feerate_sat_vkb / 4);
-				ark::rounds::RoundEvent::Start {
+				ark::rounds::RoundEvent::Start(ark::rounds::RoundInfo {
 					round_seq: m.round_seq as usize,
 					offboard_feerate,
-				}
+				})
 			},
 			crate::round_event::Event::Attempt(m) => {
-				ark::rounds::RoundEvent::Attempt {
+				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq: m.round_seq as usize,
 					attempt_seq: m.attempt_seq as usize,
-				}
+					challenge: VtxoOwnershipChallenge::new(
+						m.vtxo_ownership_challenge.try_into().map_err(|_| "invalid challenge")?
+					),
+				})
 			},
 			crate::round_event::Event::VtxoProposal(m) => {
 				ark::rounds::RoundEvent::VtxoProposal {

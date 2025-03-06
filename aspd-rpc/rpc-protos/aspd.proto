@@ -146,6 +146,7 @@ message RoundStart {
 message RoundAttempt {
 	uint64 round_seq = 1;
 	uint64 attempt_seq = 2;
+	bytes vtxo_ownership_challenge = 3;
 }
 
 message ForfeitNonces {
@@ -184,6 +185,12 @@ message RoundEvent {
 	};
 }
 
+message InputVtxo {
+	// vtxo id of input vtxos
+	bytes vtxo_id = 1;
+	bytes ownership_proof = 2;
+}
+
 message VtxoRequest {
 	// amount in sats
 	uint64 amount = 1;
@@ -199,12 +206,9 @@ message OffboardRequest {
 }
 
 message SubmitPaymentRequest {
-	//TODO(stevenroose) add proof of vtxo ownership
-
-	// vtxo ids of input vtxos
-	repeated bytes input_vtxos = 1;
-	repeated VtxoRequest vtxo_requests = 2;
-	repeated OffboardRequest offboard_requests = 3;
+	repeated InputVtxo input_vtxos = 2;
+	repeated VtxoRequest vtxo_requests = 3;
+	repeated OffboardRequest offboard_requests = 4;
 }
 
 message ForfeitSignatures {

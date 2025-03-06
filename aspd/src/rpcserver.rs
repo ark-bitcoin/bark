@@ -11,7 +11,7 @@ use ark::rounds::RoundId;
 use bitcoin::{Amount, ScriptBuf};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{schnorr::Signature, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
@@ -23,7 +23,7 @@ use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
 use ark::lightning::SignedBolt11Payment;
-use ark::{musig, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
+use ark::{musig, VtxoIdInput, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use aspd_rpc as rpc;
 use tonic::async_trait;
 
@@ -590,9 +590,11 @@ impl rpc::server::ArkService for App {
 			KeyValue::new("offboard_requests_count", format!("{:?}", req.get_ref().offboard_requests.len())),
 		]);
 
-		let inputs =  req.get_ref().input_vtxos.iter().map(|vtxo| {
-			Ok(VtxoId::from_slice(vtxo).badarg("invalid vtxo")?)
-		}).collect::<Result<Vec<_>, tonic::Status>>()?;
+		let inputs =  req.get_ref().input_vtxos.iter().map(|input| {
+			let vtxo_id = VtxoId::from_slice(&input.vtxo_id).badarg("invalid vtxo")?;
+			let ownership_proof = Signature::from_slice(&input.ownership_proof).badarg("invalid round input signature")?;
+			Ok(VtxoIdInput { vtxo_id, ownership_proof })
+		}).collect::<Result<_, tonic::Status>>()?;
 
 		let mut vtxo_requests = Vec::with_capacity(req.get_ref().vtxo_requests.len());
 		let mut cosign_pub_nonces = Vec::with_capacity(req.get_ref().vtxo_requests.len());

@@ -48,7 +48,7 @@ use ark::{
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::{RoundEvent, RoundId};
+use ark::rounds::{RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc as rpc;
 use bitcoin_ext::P2TR_DUST;
@@ -67,6 +67,7 @@ lazy_static::lazy_static! {
 
 const OOR_PUB_KEY_INDEX: u32 = 0;
 const MIN_DERIVED_INDEX: u32 = OOR_PUB_KEY_INDEX + 1;
+
 
 pub struct Pagination {
 	pub page_index: u16,
@@ -1095,43 +1096,48 @@ impl <P>Wallet<P> where
 		// - when a new attempt starts, we update the info and restart
 		// - when a new round starts, we set it to the new round info and restart
 		// - when the asp misbehaves, we set it to None and restart
-		let mut round_info = None;
+		let mut next_round_info = None;
 
 		'round: loop {
-
 			// If we don't have a round info yet, wait for round start.
-			if round_info.is_none() {
+			let mut round_state = if let Some(info) = next_round_info.take() {
+				warn!("Unexpected new round started...");
+				RoundState::new(info)
+			} else {
 				debug!("Waiting for a new round to start...");
 				loop {
 					match events.next().await.context("events stream broke")?? {
-						e @ RoundEvent::Start { .. } => {
-							round_info = Some(RoundInfo::new_from_start(e));
-							break;
+						RoundEvent::Start(e) => {
+							break RoundState::new(e);
 						},
 						_ => trace!("ignoring irrelevant message"),
 					}
 				}
-				// then we expect the first attempt message
-				match events.next().await.context("events stream broke")?? {
-					RoundEvent::Attempt { attempt_seq, .. } => {
-						if attempt_seq != 0 {
-							error!("First attempt message didn't have number 0, but {attempt_seq}");
-						}
-					},
-					_ => trace!("ignoring irrelevant message"),
-				}
-			}
+			};
+
+			// then we expect the first attempt message
+			match events.next().await.context("events stream broke")?? {
+				RoundEvent::Attempt(attempt) => {
+					round_state.process_attempt(attempt);
+				},
+				RoundEvent::Start(e) => {
+					next_round_info = Some(e);
+					continue 'round;
+				},
+				//TODO(stevenroose) make this robust
+				other => panic!("Unexpected message: {:?}", other),
+			};
 
 			info!("Round started");
 
-			let (input_vtxos, pay_reqs, offb_reqs) = round_input(round_info.as_ref().unwrap())
+			let (input_vtxos, pay_reqs, offb_reqs) = round_input(&round_state.info)
 				.context("error providing round input")?;
 
 			let vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
 			debug!("Spending vtxos: {:?}", vtxo_ids);
 
 			'attempt: loop {
-				let round = round_info.as_mut().unwrap();
+				assert!(round_state.attempt.is_some());
 
 				// Assign cosign pubkeys to the payment requests.
 				let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
@@ -1164,8 +1170,21 @@ impl <P>Wallet<P> where
 				debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
 					input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
 				);
+
 				let res = asp.client.submit_payment(rpc::SubmitPaymentRequest {
-					input_vtxos: input_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+					input_vtxos: input_vtxos.iter().map(|vtxo| {
+						let vtxo_id = vtxo.id();
+						let key = self.vtxo_seed.derive_keypair(
+							self.db.get_vtxo_key_index(vtxo).expect("owned vtxo key should be in database")
+						);
+						rpc::InputVtxo {
+							vtxo_id: vtxo_id.to_bytes().to_vec(),
+							ownership_proof: {
+								let sig = round_state.challenge().sign_with(vtxo_id, key);
+								sig.serialize().to_vec()
+							},
+						}
+					}).collect(),
 					vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
 						rpc::VtxoRequest {
 							amount: r.amount.to_sat(),
@@ -1184,7 +1203,6 @@ impl <P>Wallet<P> where
 
 				if let Err(e) = res {
 					warn!("Could not submit payment, trying next round: {}", e);
-					round_info = None;
 					continue 'round
 				}
 
@@ -1203,21 +1221,22 @@ impl <P>Wallet<P> where
 							cosign_agg_nonces,
 							connector_pubkey,
 						} => {
-							if round_seq != round.round_seq {
+							if round_seq != round_state.info.round_seq {
 								warn!("Unexpected different round id");
-								round_info = None;
 								continue 'round;
 							}
 							(vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey)
 						},
-						e @ RoundEvent::Start { .. } => {
-							warn!("Unexpected new round started...");
-							round_info = Some(RoundInfo::new_from_start(e));
+						RoundEvent::Start(e) => {
+							next_round_info = Some(e);
 							continue 'round;
 						},
-						e @ RoundEvent::Attempt { .. } => {
-							round_info = round_info.unwrap().process_attempt(e);
-							continue 'attempt;
+						RoundEvent::Attempt(e) => {
+							if round_state.process_attempt(e) {
+								continue 'attempt;
+							} else {
+								continue 'round;
+							}
 						},
 						//TODO(stevenroose) make this robust
 						other => panic!("Unexpected message: {:?}", other),
@@ -1238,7 +1257,6 @@ impl <P>Wallet<P> where
 					}
 					if !my_vtxos.is_empty() {
 						error!("asp didn't include all of our vtxos, missing: {:?}", my_vtxos);
-						round_info = None;
 						continue 'round;
 					}
 
@@ -1250,7 +1268,6 @@ impl <P>Wallet<P> where
 					}
 					if !my_offbs.is_empty() {
 						error!("asp didn't include all of our offboards, missing: {:?}", my_offbs);
-						round_info = None;
 						continue 'round;
 					}
 				}
@@ -1274,7 +1291,6 @@ impl <P>Wallet<P> where
 
 					if let Err(e) = res {
 						warn!("Could not provide vtxo signatures, trying next round: {}", e);
-						round_info = None;
 						continue 'round
 					}
 				}
@@ -1288,21 +1304,22 @@ impl <P>Wallet<P> where
 				let (vtxo_cosign_sigs, forfeit_nonces) = {
 					match events.next().await.context("events stream broke")?? {
 						RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
-							if round_seq != round.round_seq {
+							if round_seq != round_state.info.round_seq {
 								warn!("Unexpected different round id");
-								round_info = None;
 								continue 'round;
 							}
 							(cosign_sigs, forfeit_nonces)
 						},
-						e @ RoundEvent::Start { .. } => {
-							warn!("Unexpected new round started...");
-							round_info = Some(RoundInfo::new_from_start(e));
+						RoundEvent::Start(e) => {
+							next_round_info = Some(e);
 							continue 'round;
 						},
-						e @ RoundEvent::Attempt { .. } => {
-							round_info = round_info.unwrap().process_attempt(e);
-							continue 'attempt;
+						RoundEvent::Attempt(e) => {
+							if round_state.process_attempt(e) {
+								continue 'attempt;
+							} else {
+								continue 'round;
+							}
 						},
 						//TODO(stevenroose) make this robust
 						other => panic!("Unexpected message: {:?}", other),
@@ -1360,7 +1377,6 @@ impl <P>Wallet<P> where
 
 				if let Err(e) = res {
 					warn!("Could not provide forfeit signatures, trying next round: {}", e);
-					round_info = None;
 					continue 'round
 				}
 
@@ -1372,20 +1388,22 @@ impl <P>Wallet<P> where
 				debug!("Waiting for round to finish...");
 				let signed_round_tx = match events.next().await.context("events stream broke")?? {
 					RoundEvent::Finished { round_seq, signed_round_tx } => {
-						if round_seq != round.round_seq {
+						if round_seq != round_state.info.round_seq {
 							bail!("Unexpected round ID from round finished event: {} != {}",
-								round_seq, round.round_seq);
+								round_seq, round_state.info.round_seq);
 						}
 						signed_round_tx
 					},
-					e @ RoundEvent::Start { .. } => {
-						warn!("Unexpected new round started...");
-						round_info = Some(RoundInfo::new_from_start(e));
+					RoundEvent::Start(e) => {
+						next_round_info = Some(e);
 						continue 'round;
 					},
-					e @ RoundEvent::Attempt { .. } => {
-						round_info = round_info.unwrap().process_attempt(e);
-						continue 'attempt;
+					RoundEvent::Attempt(e) => {
+						if round_state.process_attempt(e) {
+							continue 'attempt;
+						} else {
+							continue 'round;
+						}
 					},
 					//TODO(stevenroose) make this robust
 					other => panic!("Unexpected message: {:?}", other),
@@ -1435,40 +1453,35 @@ impl <P>Wallet<P> where
 	}
 }
 
-struct RoundInfo {
-	round_seq: usize,
-	attempt_seq: usize,
-	offboard_feerate: FeeRate,
+struct RoundState {
+	info: RoundInfo,
+	attempt: Option<RoundAttempt>,
 }
 
-impl RoundInfo {
-	/// Create a new [RoundInfo] from a [RoundEvent::Start].
+impl RoundState {
+	/// Create a new [RoundState] from a [RoundEvent::Start].
 	///
 	/// Panics if any other event type is passed.
-	fn new_from_start(event: RoundEvent) -> RoundInfo {
-		if let RoundEvent::Start { round_seq, offboard_feerate } = event {
-			RoundInfo { round_seq, attempt_seq: 0, offboard_feerate }
-		} else {
-			panic!("called new_from_start with a wrong event type: {}", event);
-		}
+	fn new(info: RoundInfo) -> RoundState {
+		RoundState { info, attempt: None }
 	}
 
 	/// Process a new round attempt message.
 	///
-	/// If it belongs to the same round, returns the updated round info.
-	/// If it belongs to another round, we return None.
-	fn process_attempt(mut self, event: RoundEvent) -> Option<RoundInfo> {
-		if let RoundEvent::Attempt { round_seq, attempt_seq } = event {
-			if self.round_seq == round_seq {
-				debug!("New round attempt...");
-				self.attempt_seq = attempt_seq;
-				Some(self)
-			} else {
-				warn!("Received a new attempt message for a different round. Restarting...");
-				None
-			}
+	/// If the attempt event belonged to the same round and we could
+	/// succesfully update, we return true.
+	/// If the attempt belongs to a different round and we have to restart,
+	/// we return false.
+	fn process_attempt(&mut self, attempt: RoundAttempt) -> bool {
+		if attempt.round_seq == self.info.round_seq {
+			self.attempt = Some(attempt);
+			true
 		} else {
-			panic!("called process_attempt with a wrong event type: {}", event);
+			false
 		}
+	}
+
+	fn challenge(&self) -> VtxoOwnershipChallenge {
+		self.attempt.as_ref().expect("called challenge outside attempt loop").challenge
 	}
 }

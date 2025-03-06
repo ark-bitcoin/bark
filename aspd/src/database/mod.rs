@@ -185,21 +185,7 @@ impl Db {
 		Ok(())
 	}
 
-	async fn get_vtxo<T>(client: &T, id: &VtxoId) -> anyhow::Result<VtxoState>
-		where T: GenericClient + Sized
-	{
-		let statement = client.prepare("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs FROM vtxo WHERE id = $1
-		").await?;
-
-		let row = client.query_opt(&statement, &[&id.to_string()]).await?
-			.context(*id)
-			.with_context(|| format!("vtxo {} not found", id))?;
-
-		Ok(VtxoState::try_from(row).expect("corrupt db"))
-	}
-
-	async fn get_vtxos_by_id<T>(client: &T, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>>
+	async fn get_vtxos_by_id_with_client<T>(client: &T, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>>
 		where T : GenericClient + Sized
 	{
 		let statement = client.prepare_typed("
@@ -220,7 +206,7 @@ impl Db {
 
 		// Bail if one of the id's could not be found
 		if vtxos.len() != ids.len() {
-			let found_ids = vtxos.iter().map(|v| v.vtxo.id()).collect::<HashSet<_>>();
+			let found_ids = vtxos.iter().map(|v| v.id).collect::<HashSet<_>>();
 
 			for id in ids {
 				if !found_ids.contains(id) {
@@ -233,22 +219,9 @@ impl Db {
 		Ok(vtxos)
 	}
 
-
-
-	/// Check whether the vtxos were already spent, and fetch them if not.
-	///
-	/// There is no guarantee that the vtxos are still all unspent by
-	/// the time this call returns. The caller should ensure no changes
-	/// are made to them meanwhile.
-	pub async fn check_fetch_unspent_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
 		let conn = self.pool.get().await?;
-
-		let vtxo_states: Vec<VtxoState> = Self::get_vtxos_by_id(&*conn, ids).await?;
-		if let Some(unspendable) = vtxo_states.iter().find(|v| !v.is_spendable()) {
-			bail!("vtxo {} is not spendable", unspendable.vtxo.id());
-		}
-
-		Ok(vtxo_states.into_iter().map(|v| v.vtxo).collect())
+		Self::get_vtxos_by_id_with_client(&*conn, ids).await
 	}
 
 	/// Set the vtxo as being forfeited.
@@ -258,7 +231,9 @@ impl Db {
 			UPDATE vtxo SET forfeit_sigs = $2 WHERE id = $1;
 		", &[Type::TEXT, Type::BYTEA_ARRAY]).await?;
 
-		let vtxo_state = Self::get_vtxo(&*conn, &id).await?;
+		let vtxos = Self::get_vtxos_by_id_with_client(&*conn, &[id]).await?;
+
+		let vtxo_state = vtxos.first().expect("vtxo is found");
 		if !vtxo_state.is_spendable() {
 			error!("Marking unspendable vtxo as forfeited: {:?}", vtxo_state);
 		}
@@ -292,13 +267,13 @@ impl Db {
 			UPDATE vtxo SET oor_spent = $2 WHERE id = $1;
 		", &[Type::TEXT, Type::BYTEA]).await?;
 
-		for id in spent_ids {
-			let vtxo_state = Self::get_vtxo(&tx, id).await?;
+		let vtxos = Self::get_vtxos_by_id_with_client(&tx, spent_ids).await?;
+		for vtxo_state in vtxos {
 			if !vtxo_state.is_spendable() {
-				return Ok(Some(*id));
+				return Ok(Some(vtxo_state.id));
 			}
 
-			tx.execute(&statement, &[&id.to_string(), &serialize(&spending_tx)]).await?;
+			tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&spending_tx)]).await?;
 		}
 
 		let new_vtxos = new_vtxos.into_iter().map(|a| a.clone().into()).collect::<Vec<_>>();
