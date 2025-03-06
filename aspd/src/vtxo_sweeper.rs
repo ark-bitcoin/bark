@@ -38,27 +38,25 @@
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::rounds::RoundId;
-use bdk_wallet::ChangeSet;
 use bitcoin::absolute::LockTime;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::{
-	psbt, sighash, taproot, Amount, FeeRate, OutPoint, Sequence,
-	Transaction, TxOut, Txid, Weight, Witness,
+	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
 };
 
 use ark::{BlockHeight, OnboardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use bitcoin_ext::{KeypairExt, TaprootSpendInfoExt};
+use bitcoin_ext::TaprootSpendInfoExt;
 use futures::StreamExt;
 
 use crate::bitcoind::RpcApi;
 use crate::database::model::StoredRound;
-use crate::psbtext::{PsbtInputExt, SweepMeta};
-use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
+use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
+use crate::wallet::BdkWalletExt;
+use crate::{txindex, App, DEEPLY_CONFIRMED};
 
 
 struct OnboardSweepInput {
@@ -457,10 +455,7 @@ impl<'a> SweepBuilder<'a> {
 		self.sweeper.round_finished(round).await;
 	}
 
-	async fn create_tx(
-		&self,
-		tip: BlockHeight,
-	) -> anyhow::Result<(Transaction, ChangeSet)> {
+	async fn create_tx(&self, tip: BlockHeight) -> anyhow::Result<Transaction> {
 		let mut wallet = self.sweeper.app.wallet.lock().await;
 		let drain_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal).address;
 
@@ -493,59 +488,10 @@ impl<'a> SweepBuilder<'a> {
 
 		// SIGNING
 
-		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
-		let prevouts = psbt.inputs.iter()
-			.map(|i| i.witness_utxo.clone().unwrap())
-			.collect::<Vec<_>>();
-
-		let connector_keypair = self.sweeper.app.asp_key.for_keyspend(&*SECP);
-		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
-			if let Some(meta) = input.get_sweep_meta().context("corrupt psbt")? {
-				match meta {
-					// onboard and vtxo happen to be exactly the same signing logic
-					SweepMeta::Vtxo | SweepMeta::Onboard => {
-						let (control, (script, lv)) = input.tap_scripts.iter().next()
-							.context("corrupt psbt: missing tap_scripts")?;
-						let leaf_hash = taproot::TapLeafHash::from_script(script, *lv);
-						let sighash = shc.taproot_script_spend_signature_hash(
-							idx,
-							&sighash::Prevouts::All(&prevouts),
-							leaf_hash,
-							sighash::TapSighashType::Default,
-						).expect("all prevouts provided");
-						trace!("Signing expired VTXO input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &self.sweeper.app.asp_key);
-						let wit = Witness::from_slice(
-							&[&sig[..], script.as_bytes(), &control.serialize()],
-						);
-						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
-						input.final_script_witness = Some(wit);
-					},
-					SweepMeta::Connector => {
-						let sighash = shc.taproot_key_spend_signature_hash(
-							idx,
-							&sighash::Prevouts::All(&prevouts),
-							sighash::TapSighashType::Default,
-						).expect("all prevouts provided");
-						trace!("Signing expired connector input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &connector_keypair);
-						input.final_script_witness = Some(Witness::from_slice(&[sig[..].to_vec()]));
-					},
-				}
-			}
-		}
-
-		let opts = bdk_wallet::SignOptions {
-			trust_witness_utxo: true,
-			..Default::default()
-		};
-		let finalized = wallet.sign(&mut psbt, opts)?;
-		assert!(finalized);
-		let signed = psbt.extract_tx()?;
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Unix epoch is in the past").as_secs();
-		wallet.apply_unconfirmed_txs([(Arc::new(signed.clone()), now)]);
-		let changeset = wallet.take_staged().expect("inserted new tx");
-		Ok((signed, changeset))
+		psbt.try_sign_sweeps(&self.sweeper.app.asp_key)?;
+		let signed = wallet.finish_tx(psbt)?;
+		wallet.persist(&self.sweeper.app.db).await?;
+		Ok(signed)
 	}
 }
 
@@ -713,9 +659,7 @@ impl VtxoSweeper {
 			);
 		}
 
-		let (signed, changeset) = builder.create_tx(tip).await.context("creating sweep tx")?;
-		self.app.db.store_changeset(&changeset).await?;
-
+		let signed = builder.create_tx(tip).await.context("creating sweep tx")?;
 		let txid = signed.compute_txid();
 		self.add_new_pending(txid, signed.clone()).await?;
 		slog!(SweepBroadcast, txid, surplus: surplus);

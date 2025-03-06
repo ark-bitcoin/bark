@@ -1,7 +1,6 @@
 
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -25,6 +24,7 @@ use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use bitcoin_ext::P2WSH_DUST;
 
 use crate::{telemetry, App, SECP};
+use crate::wallet::BdkWalletExt;
 
 #[derive(Debug)]
 pub enum RoundInput {
@@ -827,22 +827,13 @@ impl SigningForfeits {
 	) -> anyhow::Result<()> {
 		// Sign the on-chain tx.
 		let sign_start = Instant::now();
-		let opts = bdk_wallet::SignOptions {
-			trust_witness_utxo: true,
-			..Default::default()
-		};
-		let finalized = self.wallet_lock.sign(&mut self.round_tx_psbt, opts)?;
-		assert!(finalized);
-		let signed_round_tx = self.round_tx_psbt.extract_tx()?;
-		let now = SystemTime::now().duration_since(UNIX_EPOCH)
-			.expect("Unix epoch is in the past").as_secs();
-		self.wallet_lock.apply_unconfirmed_txs([(Arc::new(signed_round_tx.clone()), now)]);
-		if let Some(change) = self.wallet_lock.take_staged() {
-			app.db.store_changeset(&change).await?;
-		}
+		let signed_round_tx = self.wallet_lock.finish_tx(self.round_tx_psbt)
+			.context("round tx signing error")?;
+		self.wallet_lock.persist(&app.db).await?;
 		drop(self.wallet_lock); // we no longer need the lock
-		slog!(BroadcastingFinalizedRoundTransaction, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			tx_hex: signed_round_tx.raw_hex(), signing_time: Instant::now().duration_since(sign_start),
+		slog!(BroadcastingFinalizedRoundTransaction, round_seq: self.round_seq,
+			attempt_seq: self.attempt_seq, tx_hex: signed_round_tx.raw_hex(),
+			signing_time: Instant::now().duration_since(sign_start),
 		);
 		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
 
