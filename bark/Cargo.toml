@@ -1,6 +1,6 @@
 [package]
 name = "bark-client"
-version = "0.0.0-alpha01"
+version = "0.0.0-alpha"
 license = "CC0-1.0"
 authors = ["Steven Roose <steven@roose.io>"]
 edition = "2021"
