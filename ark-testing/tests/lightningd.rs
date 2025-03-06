@@ -84,7 +84,7 @@ async fn bark_pay_ln_succeeds() {
 	ctx.bitcoind.generate(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
-	trace!("Creeating channesl between lightning nodes");
+	trace!("Creating channel between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
 	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
@@ -118,7 +118,7 @@ async fn bark_pay_ln_succeeds() {
 	}
 
 	{
-		// Test invoice without amount
+		// Test invoice without amount, reusing previous change output
 		let invoice_amount = btc(1);
 		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
 		bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
@@ -161,3 +161,5 @@ async fn bark_pay_ln_fails() {
 	// The payment fails, the user still has all their funds
 	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 }
+
+// TODO: add a test to refreshing Bolt11Change vtxo

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use bitcoin_ext::bdk::WalletExt;
 use serde::ser::StdError;
@@ -197,7 +198,12 @@ impl <P>Exit<P> where
 		//
 		// NB cpfp should be done on individual txs for now, because we will utilize 1p1c
 		for vtxo in self.index.vtxos.iter_mut() {
-			'tx: for tx in vtxo.exit_txs() {
+			trace!("exiting vtxo: {} / {:#?}", vtxo.id(), vtxo);
+
+			let txs = vtxo.exit_txs();
+			'tx: for tx in txs {
+				trace!("broadcasting transaction: {} / {}", tx.compute_txid(), serialize_hex(&tx));
+
 				let txid = tx.compute_txid();
 				match self.index.exit_tx_status.entry(txid).or_default() {
 					TxStatus::ConfirmedIn(_) => {

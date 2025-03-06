@@ -467,7 +467,8 @@ impl Vtxo {
 				for input in &v.inputs {
 					input.collect_exit_txs(txs);
 				}
-				txs.push(v.htlc_tx.clone());
+
+				txs.push(self.vtxo_tx());
 			},
 		}
 	}
