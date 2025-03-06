@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use bitcoin::hashes::Hash;
 use bitcoin::{FeeRate, Transaction, Txid};
-use bitcoin::secp256k1::schnorr;
+use bitcoin::secp256k1::{schnorr, PublicKey};
 
 use crate::{musig, VtxoId};
 use crate::tree::signed::VtxoTreeSpec;
@@ -108,6 +108,7 @@ pub enum RoundEvent {
 		unsigned_round_tx: Transaction,
 		vtxos_spec: VtxoTreeSpec,
 		cosign_agg_nonces: Vec<musig::MusigAggNonce>,
+		connector_pubkey: PublicKey,
 	},
 	RoundProposal {
 		round_seq: usize,
@@ -136,10 +137,11 @@ impl fmt::Display for RoundEvent {
 					.field("attempt_seq", attempt_seq)
 					.finish()
 			},
-			Self::VtxoProposal { round_seq, unsigned_round_tx, .. } => {
+			Self::VtxoProposal { round_seq, unsigned_round_tx, connector_pubkey, .. } => {
 				f.debug_struct("VtxoProposal")
 					.field("round_seq", round_seq)
 					.field("unsigned_round_txid", &unsigned_round_tx.compute_txid())
+					.field("connector_pubkey", connector_pubkey)
 					.finish()
 			},
 			Self::RoundProposal { round_seq, .. } => {

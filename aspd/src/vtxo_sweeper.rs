@@ -56,7 +56,7 @@ use crate::bitcoind::RpcApi;
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::wallet::BdkWalletExt;
-use crate::{txindex, App, DEEPLY_CONFIRMED};
+use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
 
 
 struct OnboardSweepInput {
@@ -160,7 +160,7 @@ impl ExpiredRound {
 			connectors: ConnectorChain::new(
 				round.nb_input_vtxos as usize,
 				OutPoint::new(id.as_round_txid(), 1),
-				round.signed_tree.spec.asp_pk,
+				round.connector_key.public_key(&*SECP),
 			),
 			id, round,
 		}
@@ -228,7 +228,7 @@ impl<'a> SweepBuilder<'a> {
 		self.sweeps.push(RoundSweepInput {
 			point, utxo, round,
 			internal_key: round.round.signed_tree.spec.asp_pk.x_only_public_key().0,
-			sweep_meta: SweepMeta::Connector,
+			sweep_meta: SweepMeta::Connector(round.round.connector_key),
 			weight: ark::connectors::INPUT_WEIGHT,
 		});
 	}
@@ -646,7 +646,7 @@ impl VtxoSweeper {
 		for s in &builder.sweeps {
 			let tp = match s.sweep_meta {
 				SweepMeta::Vtxo => "vtxo",
-				SweepMeta::Connector => "connector",
+				SweepMeta::Connector(_) => "connector",
 				SweepMeta::Onboard => unreachable!(),
 			};
 			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),

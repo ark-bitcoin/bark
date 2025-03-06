@@ -5,7 +5,9 @@ use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, ArkoorVtxo, Block
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
-use bitcoin::{consensus::serialize, secp256k1::{schnorr, PublicKey}, Transaction, Txid};
+use bitcoin::{Transaction, Txid};
+use bitcoin::consensus::serialize;
+use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
 use futures::{Stream, StreamExt, TryStreamExt};
 use model::{MailboxArkoor, PendingSweep, StoredRound, VtxoState};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
@@ -350,9 +352,10 @@ impl Db {
 
 	pub async fn store_round(
 		&self,
-		round_tx: Transaction,
-		vtxos: CachedSignedVtxoTree,
+		round_tx: &Transaction,
+		vtxos: &CachedSignedVtxoTree,
 		nb_input_vtxos: usize,
+		connector_key: &SecretKey,
 	) -> anyhow::Result<()> {
 		let round_id = round_tx.compute_txid();
 
@@ -360,9 +363,9 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		let statement = tx.prepare_typed("
-			INSERT INTO round (id, tx, signed_tree, nb_input_vtxos, expiry)
-			VALUES ($1, $2, $3, $4, $5);
-		", &[Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::INT4]).await?;
+			INSERT INTO round (id, tx, signed_tree, nb_input_vtxos, connector_key, expiry)
+			VALUES ($1, $2, $3, $4, $5, $6);
+		", &[Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4]).await?;
 		tx.execute(
 			&statement,
 			&[
@@ -370,6 +373,7 @@ impl Db {
 				&serialize(&round_tx),
 				&vtxos.spec.encode(),
 				&(nb_input_vtxos as i32),
+				&connector_key.secret_bytes().to_vec(),
 				&(vtxos.spec.spec.expiry_height as i32)
 			]
 		).await?;
@@ -386,7 +390,7 @@ impl Db {
 	pub async fn fetch_all_rounds(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<StoredRound>> + '_> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos FROM round
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round
 		").await?;
 
 		let params: Vec<String> = vec![];
@@ -402,7 +406,7 @@ impl Db {
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE id = $1;
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE id = $1;
 		").await?;
 
 		let rows = conn.query(&statement, &[&id.to_string()]).await?;
@@ -430,7 +434,7 @@ impl Db {
 	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry <= $1
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE expiry <= $1
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
@@ -440,7 +444,7 @@ impl Db {
 	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos FROM round WHERE expiry > $1
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE expiry > $1
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;

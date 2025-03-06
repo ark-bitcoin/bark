@@ -158,6 +158,7 @@ message VtxoProposal {
 	bytes vtxos_spec = 2;
 	bytes unsigned_round_tx = 3;
 	repeated bytes vtxos_agg_nonces = 4;
+	bytes connector_pubkey = 5;
 }
 
 message RoundProposal {

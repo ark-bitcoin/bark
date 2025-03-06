@@ -3,7 +3,7 @@
 use std::borrow::BorrowMut;
 
 use anyhow::Context;
-use bitcoin::key::Keypair;
+use bitcoin::secp256k1::{Keypair, SecretKey};
 use bitcoin::{psbt, sighash, taproot, Psbt, Witness};
 use bitcoin_ext::KeypairExt;
 
@@ -13,7 +13,7 @@ use crate::SECP;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum SweepMeta {
 	Onboard,
-	Connector,
+	Connector(SecretKey),
 	Vtxo,
 }
 
@@ -60,7 +60,6 @@ pub trait PsbtExt: BorrowMut<Psbt> {
 			.map(|i| i.witness_utxo.clone().unwrap())
 			.collect::<Vec<_>>();
 
-		let connector_key = asp_key.for_keyspend(&*SECP);
 		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
 			if let Some(meta) = input.get_sweep_meta().context("corrupt psbt")? {
 				match meta {
@@ -83,14 +82,15 @@ pub trait PsbtExt: BorrowMut<Psbt> {
 						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
 						input.final_script_witness = Some(wit);
 					},
-					SweepMeta::Connector => {
+					SweepMeta::Connector(key) => {
 						let sighash = shc.taproot_key_spend_signature_hash(
 							idx,
 							&sighash::Prevouts::All(&prevouts),
 							sighash::TapSighashType::Default,
 						).expect("all prevouts provided");
 						trace!("Signing expired connector input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &connector_key);
+						let keypair = Keypair::from_secret_key(&*SECP, &key).for_keyspend(&*SECP);
+						let sig = SECP.sign_schnorr(&sighash.into(), &keypair);
 						input.final_script_witness = Some(Witness::from_slice(&[sig[..].to_vec()]));
 					},
 				}

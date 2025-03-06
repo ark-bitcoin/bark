@@ -3,12 +3,11 @@
 use std::borrow::Borrow;
 use std::io;
 
-use bitcoin::key::Keypair;
 use bitcoin::{
 	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{Error, schnorr, PublicKey};
+use bitcoin::secp256k1::{Error, schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};

@@ -1194,20 +1194,21 @@ impl <P>Wallet<P> where
 				// ****************************************************************
 
 				debug!("Waiting for vtxo proposal from asp...");
-				let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
+				let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces, connector_pubkey) = {
 					match events.next().await.context("events stream broke")?? {
 						RoundEvent::VtxoProposal {
 							round_seq,
 							unsigned_round_tx,
 							vtxos_spec,
 							cosign_agg_nonces,
+							connector_pubkey,
 						} => {
 							if round_seq != round.round_seq {
 								warn!("Unexpected different round id");
 								round_info = None;
 								continue 'round;
 							}
-							(vtxos_spec, unsigned_round_tx, cosign_agg_nonces)
+							(vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey)
 						},
 						e @ RoundEvent::Start { .. } => {
 							warn!("Unexpected new round started...");
@@ -1320,14 +1321,16 @@ impl <P>Wallet<P> where
 				let connectors = ConnectorChain::new(
 					forfeit_nonces.values().next().unwrap().len(),
 					conns_utxo,
-					asp.info.asp_pubkey,
+					connector_pubkey,
 				);
 				let forfeit_sigs = input_vtxos.iter().map(|v| {
 					let keypair_idx = self.db.get_vtxo_key_index(&v)?;
 					let vtxo_keypair = self.vtxo_seed.derive_keypair(keypair_idx);
 
 					let sigs = connectors.connectors().enumerate().map(|(i, conn)| {
-						let (sighash, _tx) = ark::forfeit::forfeit_sighash(v, conn);
+						let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
+							v, conn, connector_pubkey,
+						);
 						let asp_nonce = forfeit_nonces.get(&v.id())
 							.with_context(|| format!("missing asp forfeit nonce for {}", v.id()))?
 							.get(i)
