@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use cbitcoin::taproot::ControlBlock;
-use cbitcoin::{taproot, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, Weight};
+use cbitcoin::{taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, Weight};
 use cbitcoin::secp256k1::{self, Keypair, Secp256k1};
 
 use crate::fee;
@@ -31,6 +31,11 @@ pub trait TransactionExt: Borrow<Transaction> {
 			}
 		}
 		None
+	}
+
+	/// Returns total output value of the transaction.
+	fn output_value(&self) -> Amount {
+		self.borrow().output.iter().map(|o| o.value).sum()
 	}
 }
 impl TransactionExt for Transaction {}
