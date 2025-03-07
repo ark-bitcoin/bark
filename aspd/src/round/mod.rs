@@ -942,6 +942,8 @@ impl SigningForfeits {
 			);
 			return Err(RoundError::Fatal(e));
 		}
+		server.forfeits.register_forfeits(self.all_inputs.keys().copied().collect())
+			.expect("forfeit watcher shut down");
 
 		slog!(RoundFinished, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			txid: round_txid, vtxo_expiry_block_height: self.expiry_height,
@@ -1103,7 +1105,7 @@ async fn perform_round(
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
 
-		if let Err(e) = server.rounds_wallet.lock().await.sync(&server.bitcoind).await {
+		if let Err(e) = server.rounds_wallet.lock().await.sync(&server.bitcoind, false).await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}
 
@@ -1407,8 +1409,9 @@ pub async fn run_round_coordinator(
 			},
 		}
 
-		// Sync our wallet so that it sees the broadcasted tx.
-		if let Err(e) = server.rounds_wallet.lock().await.sync(&server.bitcoind).await {
+		// We sync all wallets now so that we are sure it doesn't interfere with
+		// rounds happening.
+		if let Err(e) = server.sync_wallets().await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};
 

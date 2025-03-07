@@ -765,7 +765,9 @@ impl rpc::server::AdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_SYNC);
-		self.rounds_wallet.lock().await.sync(&self.bitcoind).await.to_status()?;
+
+		self.sync_wallets().await.to_status()?;
+
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
@@ -775,10 +777,18 @@ impl rpc::server::AdminService for Server {
 	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_STATUS);
 
-		let rounds = self.rounds_wallet.lock().await.status().await;
+		let rounds = async {
+			Ok(self.rounds_wallet.lock().await.status().await)
+		};
+		let forfeits = async {
+			self.forfeits.wallet_status().await
+		};
+
+		let (rounds, forfeits) = tokio::try_join!(rounds, forfeits).to_status()?;
 
 		Ok(tonic::Response::new(protos::WalletStatusResponse {
 			rounds: Some(rounds.into()),
+			forfeits: Some(forfeits.into()),
 		}))
 	}
 

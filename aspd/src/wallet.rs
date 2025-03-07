@@ -8,12 +8,12 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bdk_wallet::{SignOptions, Wallet, Balance, KeychainKind};
 use bip39::Mnemonic;
-use bitcoin::{bip32, Address, Network};
+use bitcoin::{bip32, Network, Address, FeeRate, Amount};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
-use log::error;
+use log::{error, trace};
 
 use crate::database;
 
@@ -160,7 +160,7 @@ impl PersistedWallet {
 		Ok(())
 	}
 
-	pub async fn sync(&mut self, bitcoind: &impl RpcApi) -> anyhow::Result<Balance> {
+	pub async fn sync(&mut self, bitcoind: &impl RpcApi, mempool: bool) -> anyhow::Result<Balance> {
 		let start_time = Instant::now();
 
 		let prev_tip = self.latest_checkpoint();
@@ -182,6 +182,13 @@ impl PersistedWallet {
 				self.persist().await?;
 			}
 		}
+
+		if mempool {
+			let mempool = emitter.mempool()?;
+			trace!("Syncing {} mempool txs...", mempool.len());
+			self.apply_unconfirmed_txs(mempool);
+		}
+
 		self.persist().await?;
 
 		// rebroadcast unconfirmed txs
@@ -231,6 +238,24 @@ impl PersistedWallet {
 			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint).collect(),
 			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint).collect(),
 		}
+	}
+
+	/// Send money to an address.
+	pub async fn send(
+		&mut self,
+		addr: &Address,
+		amount: Amount,
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Transaction> {
+		let untrusted = self.untrusted_utxos(None);
+		let mut b = self.build_tx();
+		b.unspendable(untrusted);
+		b.add_recipient(addr.script_pubkey(), amount);
+		b.fee_rate(fee_rate);
+		let psbt = b.finish()?;
+		let tx = self.finish_tx(psbt)?;
+		self.persist().await?;
+		Ok(tx)
 	}
 
 	/// This function is primarily intended for dev, not prod usage.

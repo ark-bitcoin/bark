@@ -11,6 +11,7 @@ mod error;
 mod cln;
 pub(crate) mod flux;
 pub mod database;
+pub mod forfeits;
 mod psbtext;
 mod serde_util;
 pub mod sweeps;
@@ -52,6 +53,7 @@ use crate::cln::ClnManager;
 use crate::database::model::LightningPaymentStatus;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
+use crate::forfeits::ForfeitWatcher;
 use crate::round::RoundInput;
 use crate::system::RuntimeManager;
 use crate::telemetry::TelemetryMetrics;
@@ -88,6 +90,7 @@ pub struct Server {
 	txindex: TxIndex,
 	vtxo_sweeper: VtxoSweeper,
 	rounds: RoundHandle,
+	forfeits: ForfeitWatcher,
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
@@ -225,6 +228,18 @@ impl Server {
 			).address,
 		).await.context("failed to start VtxoSweeper")?;
 
+		let forfeits = ForfeitWatcher::start(
+			rtmgr.clone(),
+			cfg.forfeit_watcher.clone(),
+			cfg.network,
+			bitcoind.clone(),
+			db.clone(),
+			txindex.clone(),
+			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
+				.expect("can't error"),
+			asp_key.clone(),
+		).await.context("failed to start VtxoSweeper")?;
+
 		let cln = ClnManager::start(
 			rtmgr.clone(),
 			&cfg,
@@ -248,6 +263,7 @@ impl Server {
 			rtmgr,
 			txindex,
 			vtxo_sweeper,
+			forfeits,
 			cln,
 			telemetry_metrics,
 		};
@@ -301,6 +317,56 @@ impl Server {
 
 	pub async fn chain_tip(&self) -> BlockRef {
 		self.chain_tip.lock().await.clone()
+	}
+
+	/// Sync all the system's wallets.
+	///
+	/// This includes the rounds wallet sending new funds to the forfeits
+	/// wallet if it's running low.
+	pub async fn sync_wallets(&self) -> anyhow::Result<()> {
+		// First sync both wallets.
+		let (rounds_balance, _) = tokio::try_join!(
+			async { self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await },
+			async { self.forfeits.wallet_sync().await },
+		)?;
+
+		// Then try rebalance.
+		let forfeit_wallet = self.forfeits.wallet_status().await?;
+		if forfeit_wallet.total_balance < self.config.forfeit_watcher_min_balance {
+			let amount = self.config.forfeit_watcher_min_balance * 2;
+			if rounds_balance.total() < amount {
+				warn!("Rounds wallet doesn't have sufficient funds to fund forfeit watcher.");
+			} else {
+				let mut wallet = self.rounds_wallet.lock().await;
+				let addr = forfeit_wallet.address.assume_checked();
+				let feerate = self.config.round_tx_feerate; //TODO(stevenroose) fix this
+				info!("Sending {amount} to forfeit wallet address {addr}...");
+				let tx = match wallet.send(&addr, amount, feerate).await {
+					Ok(tx) => tx,
+					Err(e) => {
+						warn!("Error sending from round to forfeit wallet: {:?}", e);
+						return Err(e).context("error sending tx from round to forfeit wallet");
+					},
+				};
+				drop(wallet);
+
+				let tx = self.txindex.broadcast_tx(tx).await;
+				// wait until it's actually broadcast
+				tokio::time::timeout(Duration::from_millis(5_000), async {
+					loop {
+						if tx.status().await.seen() {
+							break;
+						}
+						tokio::time::sleep(Duration::from_millis(500)).await;
+					}
+				}).await.context("waiting for tx broadcast timed out")?;
+
+				// then re-sync
+				self.forfeits.wallet_sync().await?;
+			}
+		}
+
+		Ok(())
 	}
 
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {

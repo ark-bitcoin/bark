@@ -265,6 +265,7 @@ message WalletStatus {
 
 message WalletStatusResponse {
 	WalletStatus rounds = 1;
+	WalletStatus forfeits = 2;
 }
 
 message Empty {}

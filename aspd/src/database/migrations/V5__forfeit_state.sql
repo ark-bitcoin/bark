@@ -18,3 +18,19 @@ CREATE TABLE forfeits_wallet_changeset (
 );
 
 
+CREATE TABLE forfeits_round_state (
+	round_id            TEXT NOT NULL PRIMARY KEY,
+	nb_connectors_used  INTEGER NOT NULL
+);
+
+
+CREATE TABLE forfeits_claim_state (
+	vtxo_id          TEXT NOT NULL PRIMARY KEY,
+	connector_tx     BYTEA,
+	connector_cpfp   BYTEA,
+	connector_point  BYTEA NOT NULL,
+	forfeit_tx       BYTEA NOT NULL,
+	forfeit_cpfp     BYTEA
+);
+
+

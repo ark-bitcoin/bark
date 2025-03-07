@@ -1,9 +1,10 @@
 
 use std::fmt;
+use std::borrow::Cow;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{OutPoint, Transaction, Txid};
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::SecretKey;
@@ -236,6 +237,68 @@ impl<'a> From<&'a Row> for LightningPaymentAttempt {
 		}
 	}
 }
+
+// FORFEIT WATCHER
+
+#[derive(Debug)]
+pub struct ForfeitRoundState {
+	pub round_id: RoundId,
+	pub nb_input_vtxos: u32,
+	pub nb_connectors_used: u32,
+	pub connector_key: SecretKey,
+}
+
+impl TryFrom<Row> for ForfeitRoundState {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> Result<Self, Self::Error> {
+		Ok(ForfeitRoundState {
+			round_id: RoundId::from_str(&row.get::<_, &str>("id"))
+				.context("bad round_id stored in forfeit state")?,
+			nb_input_vtxos: row.get("nb_input_vtxos"),
+			nb_connectors_used: row.get("nb_connectors_used"),
+			connector_key: SecretKey::from_slice(&row.get::<_, &[u8]>("connector_key"))
+				.context("bad connector key stored in forfeit state")?,
+		})
+	}
+}
+
+#[derive(Debug)]
+pub struct ForfeitClaimState<'a> {
+	pub vtxo: VtxoId,
+	pub connector_tx: Option<Cow<'a, Transaction>>,
+	pub connector_cpfp: Option<Cow<'a, Transaction>>,
+	pub connector: OutPoint,
+	pub forfeit_tx: Cow<'a, Transaction>,
+	pub forfeit_cpfp: Option<Cow<'a, Transaction>>,
+}
+
+impl TryFrom<Row> for ForfeitClaimState<'static> {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> Result<Self, Self::Error> {
+		Ok(ForfeitClaimState {
+			vtxo: VtxoId::from_str(row.get::<_, &str>("vtxo_id"))?,
+			connector_tx: row.get::<_, Option<&[u8]>>("connector_tx")
+				.map(deserialize).transpose()
+				.context("invalid connector_tx")?
+				.map(Cow::Owned),
+			connector_cpfp: row.get::<_, Option<&[u8]>>("connector_cpfp")
+				.map(deserialize).transpose()
+				.context("invalid connector_cpfp")?
+				.map(Cow::Owned),
+			connector: deserialize(row.get::<_, &[u8]>("connector"))
+				.context("invalid connector point")?,
+			forfeit_tx: Cow::Owned(deserialize(row.get::<_, &[u8]>("forfeit_tx"))
+				.context("invalid forfeit_tx")?),
+			forfeit_cpfp: row.get::<_, Option<&[u8]>>("forfeit_cpfp")
+				.map(deserialize).transpose()
+				.context("invalid forfeit_cpfp")?
+				.map(Cow::Owned),
+		})
+	}
+}
+
 
 /// A type that actually represents a [MusigSecNonce] but without the
 /// typesystem defenses for dangerous usage.

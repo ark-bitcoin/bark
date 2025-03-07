@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
-use crate::{serde_util, sweeps};
+use crate::{forfeits, serde_util, sweeps};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Bitcoind {
@@ -126,6 +126,11 @@ pub struct Config {
 
 	/// Config for the VtxoSweeper process.
 	pub vtxo_sweeper: sweeps::Config,
+	/// Config for the ForfeitWatcher process.
+	pub forfeit_watcher: forfeits::Config,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub forfeit_watcher_min_balance: Amount,
+
 	pub rpc: Rpc,
 	pub postgres: Postgres,
 
@@ -181,6 +186,9 @@ impl Default for Config {
 
 			otel_collector_endpoint: None,
 			vtxo_sweeper: Default::default(),
+			forfeit_watcher: Default::default(),
+			forfeit_watcher_min_balance: Amount::from_sat(10_000_000),
+
 			rpc: Rpc {
 				public_address: "127.0.0.1:3535".parse().unwrap(),
 				admin_address: Some("127.0.0.1:3536".parse().unwrap()),
