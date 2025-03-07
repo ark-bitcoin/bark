@@ -65,7 +65,7 @@ pub struct Daemon<T>
 	inner: T,
 	daemon_state: Mutex<DaemonState>,
 	child: Mutex<Option<Child>>,
-	stdout_handler: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>,
+	stdout_handlers: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>,
 }
 
 impl<T> Daemon<T>
@@ -77,7 +77,7 @@ impl<T> Daemon<T>
 			inner: inner,
 			daemon_state: Mutex::new(DaemonState::Init),
 			child: Mutex::new(None),
-			stdout_handler: Arc::new(Mutex::new(vec![])),
+			stdout_handlers: Arc::new(Mutex::new(vec![])),
 		}
 	}
 
@@ -128,9 +128,9 @@ impl<T> Daemon<T>
 		let mut child = cmd.spawn()?;
 
 		// Read the log-file for stdout
-		let (path,handler) = (stdout_path.clone(), self.stdout_handler.clone());
+		let (path, handlers) = (stdout_path.clone(), self.stdout_handlers.clone());
 		let _jh = tokio::spawn(async move {
-			process_log_file(path, handler).await
+			process_log_file(path, handlers).await
 		});
 
 		// Wait for initialization
@@ -201,7 +201,7 @@ impl<T> Daemon<T>
 	}
 
 	pub async fn add_stdout_handler<L: LogHandler + Send + Sync + 'static>(&self, log_handler: L) {
-		let mut handlers = self.stdout_handler.lock().await;
+		let mut handlers = self.stdout_handlers.lock().await;
 		handlers.push(Box::new(log_handler));
 	}
 }

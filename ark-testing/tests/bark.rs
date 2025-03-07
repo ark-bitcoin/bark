@@ -215,8 +215,8 @@ async fn large_round() {
 }
 
 #[tokio::test]
-async fn oor() {
-	let ctx = TestContext::new("bark/oor").await;
+async fn just_oor() {
+	let ctx = TestContext::new("bark/just_oor").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
