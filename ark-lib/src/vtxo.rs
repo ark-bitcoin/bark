@@ -438,7 +438,13 @@ impl Vtxo {
 			Vtxo::Onboard(v) => v.exit_tx(),
 			Vtxo::Round(v) => v.exit_branch.last().unwrap().clone(),
 			Vtxo::Arkoor(v) => {
-				let tx = oor::signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs);
+				let tx = if v.signatures.is_empty() {
+					//TODO(stevenroose) either improve API for or get rid of unsigned vtxos
+					oor::unsigned_oor_tx(&v.inputs, &v.output_specs)
+				} else {
+					assert_eq!(v.signatures.len(), v.inputs.len(), "incorrect number of inputs");
+					oor::signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs)
+				};
 				assert_eq!(tx.compute_txid(), v.point.txid);
 				tx
 			},
