@@ -1379,7 +1379,7 @@ impl <P>Wallet<P> where
 
 						let (nonce, sig) = musig::deterministic_partial_sign(
 							&vtxo_keypair,
-							[vtxo_keypair.public_key(), asp.info.asp_pubkey],
+							[asp.info.asp_pubkey],
 							&[asp_nonce],
 							sighash.to_byte_array(),
 							Some(vtxo.spec().exit_taptweak().to_byte_array()),
