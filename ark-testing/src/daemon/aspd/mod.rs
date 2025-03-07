@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::Network;
+use bitcoin::{Network, Amount};
 use bitcoin::address::{Address, NetworkUnchecked};
 use log::{info, trace};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -49,6 +49,18 @@ where
 {
 	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
 		self(log)
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct WalletStatuses {
+	pub rounds: rpc::WalletStatus,
+	pub forfeits: rpc::WalletStatus,
+}
+
+impl WalletStatuses {
+	pub fn total(&self) -> Amount {
+		self.rounds.total_balance + self.forfeits.total_balance
 	}
 }
 
@@ -109,11 +121,14 @@ impl Aspd {
 		}).await.unwrap().into_inner().ark_info.unwrap().try_into().expect("invalid ark info")
 	}
 
-	pub async fn wallet_status(&self) -> rpc::WalletStatus {
+	pub async fn wallet_status(&self) -> WalletStatuses {
 		let mut rpc = self.get_admin_client().await;
 		rpc.wallet_sync(protos::Empty{}).await.expect("sync error");
-		rpc.wallet_status(protos::Empty{}).await.expect("sync error").into_inner()
-			.rounds.unwrap().try_into().unwrap()
+		let res = rpc.wallet_status(protos::Empty{}).await.expect("sync error").into_inner();
+		WalletStatuses {
+			rounds: res.rounds.unwrap().try_into().unwrap(),
+			forfeits: res.forfeits.unwrap().try_into().unwrap(),
+		}
 	}
 
 	pub async fn get_rounds_funding_address(&self) -> Address {
