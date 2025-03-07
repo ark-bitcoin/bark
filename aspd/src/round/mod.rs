@@ -904,7 +904,7 @@ impl SigningForfeits {
 
 		trace!("Storing round result");
 		app.txindex.register_batch(self.signed_vtxos.all_signed_txs().iter().cloned()).await;
-		app.txindex.register_batch(self.connectors.iter_signed_txs(&app.asp_key)).await;
+		app.txindex.register_batch(self.connectors.iter_signed_txs(&self.connector_key)).await;
 		app.db.store_round(
 			&signed_round_tx.tx.clone(),
 			&self.signed_vtxos,
