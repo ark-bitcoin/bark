@@ -62,6 +62,13 @@ pub struct Config {
 	pub vtxo_exit_delta: u16,
 	pub htlc_delta: u16,
 	pub htlc_expiry_delta: u16,
+
+	/// Maximum value any vtxo can have.
+	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
+	pub max_vtxo_amount: Option<Amount>,
+	/// Number of confirmations needed for onboard vtxos to be spend in rounds.
+	pub round_onboard_confirmations: usize,
+
 	#[serde(with = "serde_util::duration")]
 	pub round_interval: Duration,
 	#[serde(with = "serde_util::duration")]
@@ -71,15 +78,11 @@ pub struct Config {
 	pub nb_round_nonces: usize,
 	#[serde(with = "serde_util::fee_rate")]
 	pub round_tx_feerate: FeeRate,
+
 	#[serde(with = "serde_util::fee_rate")]
 	pub sweep_tx_fallback_feerate: FeeRate,
 	#[serde(with = "serde_util::duration")]
 	pub round_sweep_interval: Duration,
-	/// Number of confirmations needed for onboard vtxos to be spend in rounds.
-	pub round_onboard_confirmations: usize,
-	/// Maximum value any vtxo can have.
-	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
-	pub max_vtxo_amount: Option<Amount>,
 	/// Don't make sweep txs for amounts lower than this amount.
 	pub sweep_threshold: Amount,
 	/// Whether or not to add full error information to RPC internal errors.
@@ -94,6 +97,53 @@ pub struct Config {
 
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub lightningd: Option<Lightningd>,
+}
+
+impl Default for Config {
+	fn default() -> Self {
+		Config {
+			data_dir: "./aspd".into(),
+			network: bitcoin::Network::Regtest,
+			vtxo_expiry_delta: 24 * 6,
+			vtxo_exit_delta: 2 * 6,
+			htlc_delta: 6,
+			htlc_expiry_delta: 6,
+
+			max_vtxo_amount: None,
+			round_onboard_confirmations: 12,
+
+			round_interval: Duration::from_secs(10),
+			round_submit_time: Duration::from_millis(2000),
+			round_sign_time: Duration::from_millis(2000),
+			nb_round_nonces: 64,
+			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
+
+			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
+			round_sweep_interval: Duration::from_secs(60 * 60),
+			sweep_threshold: Amount::from_sat(1_000_000),
+
+			rpc_rich_errors: true,
+			otel_collector_endpoint: None,
+			rpc: Rpc {
+				public_address: "127.0.0.1:3535".parse().unwrap(),
+				admin_address: Some("127.0.0.1:3536".parse().unwrap()),
+			},
+			bitcoind: Bitcoind {
+				url: "http://127.0.0.1:18443".into(),
+				cookie: None,
+				rpc_user: None,
+				rpc_pass: None,
+			},
+			postgres: Postgres {
+				host: String::from("localhost"),
+				port: 5432,
+				name: String::from("aspdb"),
+				user: None,
+				password: None
+			},
+			lightningd : None,
+		}
+	}
 }
 
 impl Config {
@@ -175,49 +225,6 @@ impl Config {
 		std::fs::write(path, &s)
 			.with_context(|| format!("error writing config to {}", path.display()))?;
 		Ok(())
-	}
-}
-
-impl Default for Config {
-	fn default() -> Self {
-		Config {
-			data_dir: "./aspd".into(),
-			network: bitcoin::Network::Regtest,
-			vtxo_expiry_delta: 24 * 6,
-			vtxo_exit_delta: 2 * 6,
-			htlc_delta: 6,
-			htlc_expiry_delta: 6,
-			round_interval: Duration::from_secs(10),
-			round_submit_time: Duration::from_millis(2000),
-			round_sign_time: Duration::from_millis(2000),
-			nb_round_nonces: 64,
-			round_tx_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
-			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb(10).unwrap(),
-			round_sweep_interval: Duration::from_secs(60 * 60),
-			round_onboard_confirmations: 12,
-			max_vtxo_amount: None,
-			sweep_threshold: Amount::from_sat(1_000_000),
-			rpc_rich_errors: true,
-			otel_collector_endpoint: None,
-			rpc: Rpc {
-				public_address: "127.0.0.1:3535".parse().unwrap(),
-				admin_address: Some("127.0.0.1:3536".parse().unwrap()),
-			},
-			bitcoind: Bitcoind {
-				url: "http://127.0.0.1:18443".into(),
-				cookie: None,
-				rpc_user: None,
-				rpc_pass: None,
-			},
-			postgres: Postgres {
-				host: String::from("localhost"),
-				port: 5432,
-				name: String::from("aspdb"),
-				user: None,
-				password: None
-			},
-			lightningd : None,
-		}
 	}
 }
 

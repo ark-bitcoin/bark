@@ -616,6 +616,10 @@ impl SignedVtxoTreeSpec {
 		SignedVtxoTreeSpec { spec, utxo, cosign_sigs: signatures }
 	}
 
+	pub fn nb_leaves(&self) -> usize {
+		self.spec.nb_leaves()
+	}
+
 	pub fn encode(&self) -> Vec<u8> {
 		let mut buf = Vec::new();
 		ciborium::into_writer(self, &mut buf).unwrap();
@@ -676,6 +680,10 @@ impl CachedSignedVtxoTree {
 			.collect::<Vec<_>>();
 		ret.reverse();
 		Some(ret)
+	}
+
+	pub fn nb_leaves(&self) -> usize {
+		self.spec.nb_leaves()
 	}
 
 	/// Get all signed txs in this tree, starting with the leaves, towards the root.

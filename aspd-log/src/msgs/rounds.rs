@@ -251,13 +251,15 @@ impl_slog!(RestartMissingForfeits, Debug, "Restarting round because of missing f
 // ****************************************************************************
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BroadcastingFinalizedRoundTransaction {
+pub struct BroadcastedFinalizedRoundTransaction {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
-	pub tx_hex: String,
+	pub txid: Txid,
 	pub signing_time: Duration,
 }
-impl_slog!(BroadcastingFinalizedRoundTransaction, Info, "Broadcasting round transaction to the network and all participants");
+impl_slog!(BroadcastedFinalizedRoundTransaction, Info,
+	"Broadcasted round transaction to the network and all participants"
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoringForfeitVtxo {
@@ -274,5 +276,6 @@ pub struct RoundFinished {
 	pub txid: Txid,
 	pub vtxo_expiry_block_height: BlockHeight,
 	pub duration: Duration,
+	pub nb_input_vtxos: usize,
 }
 impl_slog!(RoundFinished, Info, "Round finished");

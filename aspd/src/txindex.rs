@@ -222,8 +222,14 @@ impl TxIndex {
 	pub async fn register_as(&self, tx: Transaction, status: TxStatus) -> Tx {
 		let txid = tx.compute_txid();
 		let mut tx_map = self.tx_map.write().await;
-		if let Some(tx) = tx_map.get(&txid) {
-			tx.clone()
+		if let Some(original) = tx_map.get(&txid) {
+			if original.tx != tx {
+				slog!(DifferentDuplicate, txid,
+					raw_tx_original: serialize(&original.tx),
+					raw_tx_duplicate: serialize(&tx),
+				);
+			}
+			original.clone()
 		} else {
 			let ret = IndexedTx::new_as(txid, tx, status);
 			tx_map.insert(txid, ret.clone());
@@ -286,7 +292,9 @@ impl TxIndex {
 		for tx in pkg {
 			ret.push(self.register_as(tx, TxStatus::Unseen).await);
 		}
-		self.broadcast(ret.iter().map(|t| t.txid).collect::<Vec<_>>());
+		let txids = ret.iter().map(|t| t.txid).collect::<Vec<_>>();
+		debug!("Registering tx package for broadcast: {:?}", txids);
+		self.broadcast(txids);
 		ret
 	}
 
@@ -419,11 +427,14 @@ impl TxIndexProcess {
 			.collect::<Vec<_>>();
 		match self.bitcoind.call::<SubmitPackageResponse>("submitpackage", &[hexes.into()]) {
 			Ok(r) if r.package_msg != "success" => {
-				let errors = r.tx_results.values()
-					.map(|t| format!("tx {}: {}",
-						t.txid, t.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)"),
-					))
-					.collect::<Vec<_>>();
+				let errors = r.tx_results.values().map(|tx| {
+					let raw_tx = pkg.iter().find(|t| t.txid == tx.txid)
+						.map(|t| serialize(&t.tx))
+						.expect("tx is part of our package");
+					let error = tx.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)");
+					slog!(TxBroadcastError, txid: tx.txid, raw_tx, error: error.to_owned());
+					format!("tx {}: {}", tx.txid, error)
+				}).collect::<Vec<_>>();
 				warn!("Error broadcasting tx package: msg: '{}', errors: {:?}",
 					r.package_msg, errors,
 				);
@@ -439,6 +450,7 @@ impl TxIndexProcess {
 		if pkg.len() == 1 {
 			let txid = pkg[0];
 			if let Some(tx) = self.txs.read().await.get(&txid) {
+				slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
 				self.broadcast_tx(tx).await;
 			} else {
 				debug!("Instructed to broadcast a tx we don't know: {}", txid);
@@ -449,6 +461,7 @@ impl TxIndexProcess {
 			let lock = self.txs.read().await;
 			for txid in pkg {
 				if let Some(tx) = lock.get(&*txid) {
+					slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
 					txs.push(tx);
 				} else {
 					debug!("Instructed to broadcast a tx we don't know: {}", txid);

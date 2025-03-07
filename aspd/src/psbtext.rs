@@ -91,7 +91,7 @@ pub trait PsbtExt: BorrowMut<Psbt> {
 						trace!("Signing expired connector input for sighash {}", sighash);
 						let keypair = Keypair::from_secret_key(&*SECP, &key).for_keyspend(&*SECP);
 						let sig = SECP.sign_schnorr(&sighash.into(), &keypair);
-						input.final_script_witness = Some(Witness::from_slice(&[sig[..].to_vec()]));
+						input.final_script_witness = Some(Witness::from_slice(&[&sig[..]]));
 					},
 				}
 			}

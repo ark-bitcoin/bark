@@ -334,7 +334,7 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
-			let ret = vtxo_sweeper::run_vtxo_sweeper(&app, sweep_trigger_rx)
+			let ret = vtxo_sweeper::run_vtxo_sweeper(app, sweep_trigger_rx)
 				.await.context("error from round sweeper");
 			info!("Round sweeper exited with {:?}", ret);
 			ret
@@ -374,7 +374,7 @@ impl App {
 
 			Ok(())
 		});
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "fetch_tip")]));
+		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "tip_fetcher")]));
 
 		// The tasks that always run
 		let mut jhs = vec![
