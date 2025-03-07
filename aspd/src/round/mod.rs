@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc::{RawTx, RpcApi};
+use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
@@ -25,6 +25,10 @@ use bitcoin_ext::P2WSH_DUST;
 
 use crate::{telemetry, App, SECP};
 use crate::wallet::BdkWalletExt;
+
+
+/// The output index of the connector output in the round tx.
+pub const ROUND_TX_CONNECTOR_VOUT: u32 = 1;
 
 #[derive(Debug)]
 pub enum RoundInput {
@@ -696,7 +700,7 @@ impl SigningVtxoTree {
 			forfeit_nonces: forfeit_pub_nonces.clone(),
 		}).expect("round event channel broken");
 
-		let conns_utxo = OutPoint::new(self.round_txid, 1);
+		let conns_utxo = OutPoint::new(self.round_txid, ROUND_TX_CONNECTOR_VOUT);
 		let connectors = ConnectorChain::new(
 			self.all_inputs.len(), conns_utxo, self.connector_key.public_key(),
 		);
@@ -868,11 +872,12 @@ impl SigningForfeits {
 			.context("round tx signing error")?;
 		self.wallet_lock.persist(&app.db).await?;
 		drop(self.wallet_lock); // we no longer need the lock
-		slog!(BroadcastingFinalizedRoundTransaction, round_seq: self.round_seq,
-			attempt_seq: self.attempt_seq, tx_hex: signed_round_tx.raw_hex(),
+		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
+		let round_txid = signed_round_tx.txid;
+		slog!(BroadcastedFinalizedRoundTransaction, round_seq: self.round_seq,
+			attempt_seq: self.attempt_seq, txid: round_txid,
 			signing_time: Instant::now().duration_since(sign_start),
 		);
-		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
 
 		// Send out the finished round to users.
 		trace!("Sending out finish event.");
@@ -883,12 +888,12 @@ impl SigningForfeits {
 
 		// Store forfeit txs and round info in database.
 		let mut forfeit_sigs = self.forfeit_sigs.take().unwrap();
-		for (id, vtxo) in self.all_inputs {
+		for (id, vtxo) in &self.all_inputs {
 			let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
 			slog!(StoringForfeitVtxo, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 				out_point: vtxo.point(),
 			);
-			app.db.set_vtxo_forfeited(id, forfeit_sigs).await?;
+			app.db.set_vtxo_forfeited(*id, forfeit_sigs).await?;
 		}
 		app.release_vtxos_in_flux(self.locked_inputs).await;
 
@@ -915,6 +920,7 @@ impl SigningForfeits {
 		slog!(RoundFinished, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			txid: signed_round_tx.txid, vtxo_expiry_block_height: self.expiry_height,
 			duration: Instant::now().duration_since(self.attempt_start),
+			nb_input_vtxos: self.all_inputs.len(),
 		);
 
 		// Sync our wallet so that it sees the broadcasted tx.

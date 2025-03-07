@@ -10,7 +10,7 @@ use ark::musig::secpm::schnorr;
 use ark::rounds::RoundId;
 use ark::tree::signed::SignedVtxoTreeSpec;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub struct StoredRound {
 	pub id: RoundId,
 	pub tx: Transaction,
@@ -36,7 +36,7 @@ impl TryFrom<Row> for StoredRound {
 	}
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub struct VtxoState {
 	/// The id of the VTXO
 	pub id: VtxoId,
@@ -85,7 +85,7 @@ impl TryFrom<Row> for VtxoState {
 	}
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub struct MailboxArkoor {
 	pub id: VtxoId,
 	pub pubkey: PublicKey,
@@ -108,7 +108,7 @@ impl TryFrom<Row> for MailboxArkoor {
 	}
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub struct PendingSweep {
 	pub txid: Txid,
 	pub tx: Transaction
