@@ -899,8 +899,8 @@ impl SigningForfeits {
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
 			.start_with_context(&tracer_provider, &parent_context.clone());
-		span.set_attribute(KeyValue::new("signed-vtxo-count", self.signed_vtxos.all_signed_txs().len().to_string()));
-		span.set_attribute(KeyValue::new("connectors-count", self.connectors.iter_signed_txs(&app.asp_key).len().to_string()));
+		span.set_attribute(KeyValue::new("signed-vtxo-count", self.signed_vtxos.nb_leaves().to_string()));
+		span.set_attribute(KeyValue::new("connectors-count", self.connectors.len().to_string()));
 
 		trace!("Storing round result");
 		app.txindex.register_batch(self.signed_vtxos.all_signed_txs().iter().cloned()).await;
