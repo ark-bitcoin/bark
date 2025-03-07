@@ -7,8 +7,9 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2WSH_DUST};
 
-use crate::{util, Vtxo};
+use crate::Vtxo;
 use crate::connectors::ConnectorChain;
+use crate::util::SECP;
 
 
 //TODO(stevenroose) fix
@@ -40,7 +41,7 @@ pub fn create_forfeit_tx(
 		output: vec![
 			TxOut {
 				value: vtxo.amount(),
-				script_pubkey: ScriptBuf::new_p2tr(&util::SECP, vtxo.spec().combined_pubkey(), None),
+				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.spec().asp_pubkey.into(), None),
 			},
 			fee::dust_anchor(),
 		],
