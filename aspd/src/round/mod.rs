@@ -6,11 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
+use bitcoin::consensus::encode::serialize;
+use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use log::{trace, debug, info, warn, error};
-use bitcoin::consensus::encode::serialize;
 use opentelemetry::global;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
@@ -51,7 +52,10 @@ pub enum RoundInput {
 }
 
 fn validate_forfeit_sigs(
+	vtxo: &Vtxo,
 	connectors: &ConnectorChain,
+	connector_pk: PublicKey,
+	asp_nonces: &[musig::MusigPubNonce],
 	user_nonces: &[musig::MusigPubNonce],
 	part_sigs: &[musig::MusigPartialSignature],
 ) -> anyhow::Result<()> {
@@ -59,6 +63,36 @@ fn validate_forfeit_sigs(
 		bail!("not enough forfeit signatures provided");
 	}
 
+	let (key_agg, _) = musig::tweaked_key_agg(
+		[vtxo.spec().user_pubkey, vtxo.spec().asp_pubkey],
+		vtxo.spec().vtxo_taptweak().to_byte_array(),
+	);
+	for (idx, (conn, _tx)) in connectors.connectors().enumerate() {
+		let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
+			vtxo, conn, connector_pk,
+		);
+		let part_sig = part_sigs.get(idx).expect("we checked length");
+		let asp_nonce = asp_nonces.get(idx).expect("we checked length");
+		let user_nonce = user_nonces.get(idx).expect("we checked length");
+		let agg_nonce = musig::nonce_agg(&[&user_nonce, &asp_nonce]);
+
+		let session = musig::MusigSession::new(
+			&musig::SECP,
+			&key_agg,
+			agg_nonce,
+			musig::secpm::Message::from_digest(sighash.to_byte_array()),
+		);
+		let success = session.partial_verify(
+			&musig::SECP,
+			&key_agg,
+			*part_sig,
+			*user_nonce,
+			musig::pubkey_to(vtxo.spec().user_pubkey),
+		);
+		if !success {
+			bail!("Invalid partial forfeit signature");
+		}
+	}
 	Ok(())
 }
 
@@ -759,9 +793,12 @@ impl SigningForfeits {
 		);
 
 		for (id, nonces, sigs) in signatures {
-			if let Some(_vtxo) = self.all_inputs.get(&id) {
+			if let Some(vtxo) = self.all_inputs.get(&id) {
 				match validate_forfeit_sigs(
+					vtxo,
 					&self.connectors,
+					self.connector_key.public_key(),
+					self.forfeit_pub_nonces.get(&id).expect("vtxo part of round"),
 					&nonces,
 					&sigs,
 				) {
