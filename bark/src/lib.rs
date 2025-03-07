@@ -663,7 +663,8 @@ impl <P>Wallet<P> where
 		debug!("ASP has {} OOR vtxos for us", oors.len());
 		for vtxo in oors {
 			// TODO: we need to test receiving arkoors with invalid signatures
-			if let Err(e) = oor::verify_oor(vtxo.clone(), Some(self.oor_pubkey())) {
+			let arkoor = vtxo.as_arkoor().context("asp gave non-arkoor vtxo for arkoor sync")?;
+			if let Err(e) = oor::verify_oor(arkoor, Some(self.oor_pubkey())) {
 				warn!("Could not validate OOR signature, dropping vtxo. {}", e);
 				continue;
 			}

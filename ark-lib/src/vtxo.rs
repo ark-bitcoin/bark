@@ -642,7 +642,7 @@ impl From<Bolt11ChangeVtxo> for Vtxo {
 mod test {
 	use super::*;
 	use bitcoin::hashes::hex::FromHex;
-use oor::unsigned_oor_transaction;
+	use oor::unsigned_oor_tx;
 
 	#[test]
 	fn vtxo_roundtrip() {
@@ -692,7 +692,7 @@ use oor::unsigned_oor_transaction;
 			exit_delta: 7,
 			amount: Amount::from_sat(5),
 		}];
-		let tx = unsigned_oor_transaction(&inputs, &output_specs);
+		let tx = unsigned_oor_tx(&inputs, &output_specs);
 		let oor = Vtxo::Arkoor(ArkoorVtxo {
 			inputs,
 			output_specs,
@@ -716,7 +716,7 @@ use oor::unsigned_oor_transaction;
 			exit_delta: 7,
 			amount: Amount::from_sat(5),
 		}];
-		let tx_recursive = unsigned_oor_transaction(&inputs_recursive, &output_specs_recursive);
+		let tx_recursive = unsigned_oor_tx(&inputs_recursive, &output_specs_recursive);
 		let oor_recursive = Vtxo::Arkoor(ArkoorVtxo {
 			inputs: inputs_recursive,
 			output_specs: output_specs_recursive,

@@ -528,7 +528,7 @@ async fn reject_oor_with_bad_signature() {
 			let mut fake_sigs = Vec::with_capacity(inputs.len());
 
 			let sighashes = ark::oor::oor_sighashes(
-				&inputs, &ark::oor::unsigned_oor_transaction(&inputs, &output_specs),
+				&inputs, &ark::oor::unsigned_oor_tx(&inputs, &output_specs),
 			);
 			for sighash in sighashes.into_iter() {
 				let sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
@@ -564,7 +564,8 @@ async fn reject_oor_with_bad_signature() {
 	// check that we saw a log
 	tokio::time::sleep(Duration::from_millis(250)).await;
 	assert!(io::BufReader::new(fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
-		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. signature failed verification")
+		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. \
+			schnorr signature verification error: signature failed verification")
 	}));
 }
 

@@ -7,11 +7,12 @@ use bitcoin::{
 	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{Error, schnorr, Keypair, PublicKey};
+use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
+use crate::util::SECP;
 use crate::{musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
 
 
@@ -29,7 +30,7 @@ pub fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction
 	}).collect()
 }
 
-pub fn unsigned_oor_transaction<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSpec]) -> Transaction {
+pub fn unsigned_oor_tx<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSpec]) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -62,39 +63,35 @@ pub fn signed_oor_tx<V: Borrow<Vtxo>>(
 	signatures: &[schnorr::Signature],
 	outputs: &[VtxoSpec]
 ) -> Transaction {
-	// build the oor_tx
-	let mut tx = unsigned_oor_transaction(inputs, outputs);
-
+	let mut tx = unsigned_oor_tx(inputs, outputs);
 	util::fill_taproot_sigs(&mut tx, signatures);
-
 	tx
 }
 
 /// Build the oor tx with signatures and verify it
 ///
-/// If a pubkey is provided, it'll check that vtxo's output user pubkey match it (later want to check it's derived from it)
-pub fn verify_oor(vtxo: Vtxo, pubkey: Option<PublicKey>) -> Result<(), Error> {
-	match vtxo {
-		Vtxo::Arkoor(v) => {
-			// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
+/// If a pubkey is provided, it'll check that vtxo's output user pubkey match
+/// it (later want to check it's derived from it)
+pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), String> {
+	// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
 
-			let tx = signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs);
+	if vtxo.inputs.len() != vtxo.signatures.len() {
+		return Err(format!("number of signatures doesn't match number of inputs"));
+	}
 
-			let sighashes = oor_sighashes(&v.inputs, &tx);
-			for (idx, input) in v.inputs.iter().enumerate() {
-				util::SECP.verify_schnorr(
-					&schnorr::Signature::from_slice(&tx.input[idx].witness.to_vec()[0][..]).unwrap(),
-					&sighashes[idx].into(),
-					&input.spec().exit_taproot().output_key().to_inner(),
-				)?;
-			}
+	let tx = signed_oor_tx(&vtxo.inputs, &vtxo.signatures, &vtxo.output_specs);
+	let sighashes = oor_sighashes(&vtxo.inputs, &tx);
+	for (idx, input) in vtxo.inputs.iter().enumerate() {
+		SECP.verify_schnorr(
+			&vtxo.signatures[idx],
+			&sighashes[idx].into(),
+			&input.spec().exit_taproot().output_key().to_inner(),
+		).map_err(|e| format!("schnorr signature verification error: {}", e))?;
+	}
 
-			if let Some(pubkey) = pubkey {
-				//TODO: handle derived keys here
-				assert_eq!(pubkey, v.output_specs[v.point.vout as usize].user_pubkey)
-			}
-		},
-		_ => {}
+	if let Some(pubkey) = pubkey {
+		//TODO: handle derived keys here
+		assert_eq!(pubkey, vtxo.output_specs[vtxo.point.vout as usize].user_pubkey)
 	}
 
 	Ok(())
@@ -134,18 +131,18 @@ impl OorPayment {
 	}
 
 	pub fn txid(&self) -> Txid {
-		unsigned_oor_transaction(&self.inputs, &self.output_specs()).compute_txid()
+		unsigned_oor_tx(&self.inputs, &self.output_specs()).compute_txid()
 	}
 
 	pub fn sighashes(&self) -> Vec<TapSighash> {
 		oor_sighashes(
 			&self.inputs,
-			&unsigned_oor_transaction(&self.inputs, &self.output_specs())
+			&unsigned_oor_tx(&self.inputs, &self.output_specs())
 		)
 	}
 
 	pub fn total_weight(&self) -> Weight {
-		let tx = unsigned_oor_transaction(&self.inputs, &self.output_specs());
+		let tx = unsigned_oor_tx(&self.inputs, &self.output_specs());
 		let spend_weight = Weight::from_wu(TAPROOT_KEYSPEND_WEIGHT as u64);
 		let nb_inputs = self.inputs.len() as u64;
 		tx.weight() + nb_inputs * spend_weight
@@ -245,7 +242,7 @@ impl OorPayment {
 	pub fn unsigned_output_vtxos(&self) -> Vec<ArkoorVtxo> {
 		let outputs = self.output_specs();
 		let inputs = self.inputs.clone();
-		let tx = unsigned_oor_transaction(&inputs, &outputs);
+		let tx = unsigned_oor_tx(&inputs, &outputs);
 
 		self.outputs.iter().enumerate().map(|(idx, _output)| {
 			ArkoorVtxo {
