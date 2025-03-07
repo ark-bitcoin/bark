@@ -82,8 +82,8 @@ impl Bolt11Payment {
 	}
 
 	pub fn unsigned_transaction(&self) -> Transaction {
-		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).fold(Amount::ZERO, |a,b| a+b);
-		let payment_amount =self.payment_amount;
+		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
+		let payment_amount = self.payment_amount;
 
 		// This is the fee collected by the ASP for forwarding the payment
 		// We will calculate this later as base_fee + ppm * payment_amount
@@ -294,31 +294,6 @@ impl SignedBolt11Payment {
 			htlc_tx: tx,
 		})
 	}
-
-	//TODO(stevenroose) make change_vtxo method here
-	// pub fn output_vtxos(&self, asp_pubkey: PublicKey, exit_delta: u16) -> Vec<Vtxo> {
-	// 	let inputs = self.payment.inputs.iter()
-	// 		.map(|input| Box::new(input.clone()))
-	// 		.collect::<Vec<_>>();
-	//
-	// 	let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
-	// 	let oor_tx = self.signed_transaction();
-	// 	let oor_txid = oor_tx.compute_txid();
-	// 	self.payment.outputs.iter().enumerate().map(|(idx, output)| {
-	// 		Vtxo::Oor {
-	// 			inputs: inputs.clone(),
-	// 			pseudo_spec: VtxoSpec {
-	// 				amount: output.amount,
-	// 				exit_delta,
-	// 				expiry_height,
-	// 				asp_pubkey,
-	// 				user_pubkey: output.pubkey,
-	// 			},
-	// 			oor_tx: oor_tx.clone(),
-	// 			final_point: OutPoint::new(oor_txid, idx as u32),
-	// 		}
-	// 	}).collect()
-	// }
 
 	pub fn encode(&self) -> Vec<u8> {
 		let mut buf = Vec::new();
