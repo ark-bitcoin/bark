@@ -1254,6 +1254,11 @@ impl <P>Wallet<P> where
 				};
 
 				//TODO(stevenroose) remove these magic numbers
+				if unsigned_round_tx.output.len() < 2 {
+					bail!("asp sent round tx with less than 2 outputs: {}",
+						bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx),
+					);
+				}
 				let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 0);
 				let conns_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 1);
 
@@ -1343,6 +1348,15 @@ impl <P>Wallet<P> where
 				let signed_vtxos = unsigned_vtxos
 					.into_signed_tree(vtxo_cosign_sigs)
 					.into_cached_tree();
+
+				// Check that the connector key is correct.
+				let conn_txout = unsigned_round_tx.output.get(1).expect("checked before");
+				let expected_conn_txout = ConnectorChain::output(forfeit_nonces.len(), connector_pubkey);
+				if *conn_txout != expected_conn_txout {
+					bail!("round tx from asp has unexpected connector output: {:?} (expected {:?})",
+						conn_txout, expected_conn_txout,
+					);
+				}
 
 				// Make forfeit signatures.
 				let connectors = ConnectorChain::new(
