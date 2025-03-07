@@ -20,7 +20,7 @@ pub struct ArkInfo {
 	pub vtxo_exit_delta: u16,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Balance {
 	#[serde(rename = "onchain_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub onchain: Amount,
@@ -29,7 +29,8 @@ pub struct Balance {
 	#[serde(rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_exit: Amount,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ExitStatus {
 	/// Whether or not all txs have been confirmed
 	pub done: bool,
@@ -37,7 +38,7 @@ pub struct ExitStatus {
 	pub height: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Onboard {
 	/// The [Txid] of the funding-transaction.
 	/// This is the transaction that has to be confirmed
@@ -53,33 +54,33 @@ pub struct Onboard {
 pub mod onchain {
 	use super::*;
 
-	#[derive(Debug, Clone, Deserialize, Serialize)]
+	#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 	pub struct Send {
 		pub txid: Txid,
 	}
 
-	#[derive(Debug, Clone, Serialize, Deserialize)]
+	#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 	pub struct Address {
 		pub address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
 	}
 
 	pub type Utxos = Vec<UtxoInfo>;
 
-	#[derive(Debug, Clone, Serialize, Deserialize)]
+	#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 	pub struct Balance {
 		#[serde(rename="total_sat", with="bitcoin::amount::serde::as_sat")]
 		pub total: bitcoin::Amount
 	}
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offboard {
 	/// The [RoundId] of the round in which the offboard occured
 	pub round: RoundId,
 }
 
 /// The output of the `bark refresh` command
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refresh {
 	/// A boolean indicated if the command participated
 	/// in a round. If no [Vtxo] was refreshed this variable
@@ -89,7 +90,7 @@ pub struct Refresh {
 	pub round: Option<RoundId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SendOnchain {
 	/// The [RoundId] of the round in which the send occured
 	pub round: RoundId,
