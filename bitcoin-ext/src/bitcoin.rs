@@ -13,9 +13,10 @@ pub trait KeypairExt: Borrow<Keypair> {
 	/// Adapt this key pair to be used in a key-spend-only taproot.
 	fn for_keyspend(&self, secp: &Secp256k1<impl secp256k1::Verification>) -> Keypair {
 		let tweak = taproot::TapTweakHash::from_key_and_tweak(
-			self.borrow().x_only_public_key().0, None,
-		).to_scalar();
-		self.borrow().add_xonly_tweak(secp, &tweak).expect("hashed values")
+			self.borrow().x_only_public_key().0,
+			None, // keyspend has no script merkle root
+		);
+		self.borrow().add_xonly_tweak(secp, &tweak.to_scalar()).expect("hashed values")
 	}
 }
 impl KeypairExt for Keypair {}
