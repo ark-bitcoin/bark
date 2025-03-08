@@ -26,7 +26,7 @@ use ark::{musig, VtxoIdInput, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use aspd_rpc as rpc;
 use tonic::async_trait;
 
-use crate::error::{BadArgument, NotFound};
+use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
 use crate::{telemetry, App};
 use crate::round::RoundInput;
 
@@ -45,7 +45,7 @@ macro_rules! not_found {
 	($($arg:tt)*) => { return $crate::not_found!($($arg)*).to_status(); };
 }
 
-/// A trait to easily convert [anyhow] errors to tonic [Status].
+/// A trait to easily convert [anyhow] errors to [tonic::Status].
 trait ToStatus<T> {
 	/// Convert the error into a tonic error.
 	fn to_status(self) -> Result<T, tonic::Status>;
@@ -53,23 +53,27 @@ trait ToStatus<T> {
 
 impl<T> ToStatus<T> for anyhow::Result<T> {
 	fn to_status(self) -> Result<T, tonic::Status> {
-		self.map_err(|e| {
+		self.map_err(|err| {
+			// NB tonic seems to have an undocumented limit on the body size
+			// of error messages. We don't return the full stack trace, which
+			// is included when we format the error with Debug.
+
 			// NB it's important that not found goes first as a bad argument could
 			// have been added afterwards
-			if let Some(e) = e.downcast_ref::<NotFound>() {
+			if let Some(nf) = err.downcast_ref::<NotFound>() {
 				let mut metadata = tonic::metadata::MetadataMap::new();
-				let ids = e.identifiers().join(",").parse().expect("non-ascii identifier");
+				let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");
 				metadata.insert("identifiers", ids);
 				tonic::Status::with_metadata(
 					tonic::Code::NotFound,
-					format!("not found: {:?}", e),
+					err.full_msg(),
 					metadata,
 				)
-			} else if let Some(e) = e.downcast_ref::<BadArgument>() {
-				tonic::Status::invalid_argument(format!("bad user input: {:?}", e))
+			} else if let Some(_) = err.downcast_ref::<BadArgument>() {
+				tonic::Status::invalid_argument(err.full_msg())
 			} else {
 				if RPC_RICH_ERRORS.load(atomic::Ordering::Relaxed) {
-					tonic::Status::internal(format!("internal error: {:?}", e))
+					tonic::Status::internal(err.full_msg())
 				} else {
 					tonic::Status::internal("internal error")
 				}
@@ -543,7 +547,8 @@ impl rpc::server::ArkService for App {
 
 		let inputs =  req.get_ref().input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_slice(&input.vtxo_id).badarg("invalid vtxo")?;
-			let ownership_proof = Signature::from_slice(&input.ownership_proof).badarg("invalid round input signature")?;
+			let ownership_proof = Signature::from_slice(&input.ownership_proof)
+				.badarg("invalid round input signature")?;
 			Ok(VtxoIdInput { vtxo_id, ownership_proof })
 		}).collect::<Result<_, tonic::Status>>()?;
 
@@ -583,7 +588,8 @@ impl rpc::server::ArkService for App {
 			inputs, vtxo_requests, cosign_pub_nonces, offboards,
 		};
 
-		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
+		self.try_rounds().to_status()?.round_input_tx.send((inp, tx))
+			.expect("input channel closed");
 		rx.wait_for_status().await?;
 
 		Ok(tonic::Response::new(rpc::Empty {}))
