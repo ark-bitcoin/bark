@@ -190,7 +190,7 @@ mod test {
 	impl StdError for TestError {}
 
 	#[test]
-	fn downcast() {
+	fn error_downcast() {
 		let e = Result::<(), _>::Err(TestError)
 			.context("inner_context")
 			.badarg("badarg1_context")
@@ -200,6 +200,14 @@ mod test {
 		let b = e.downcast_ref::<BadArgument>().unwrap();
 		assert_eq!(format!("{}", b), "bad user input: badarg2_context");
 		assert_eq!(format!("{:?}", b), "bad user input: badarg2_context");
+
+		let r: anyhow::Result<()> = badarg!("badarg")
+			.context("inner_context")
+			.context("outer_context");
+		let e = r.unwrap_err();
+		let b = e.downcast_ref::<BadArgument>().unwrap();
+		assert_eq!(format!("{}", b), "bad user input: badarg");
+		assert_eq!(format!("{:?}", b), "bad user input: badarg");
 
 		// both
 		let e = Result::<(), _>::Err(TestError)
