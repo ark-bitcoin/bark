@@ -91,7 +91,7 @@ pub async fn run_process_sendpay_updates(
 /// Calls the pay-command over gRPC.
 /// If the payment completes successfully it will return the pre-image
 /// Otherwise, an error will be returned
-pub async fn call_pay_bolt11(
+async fn call_pay_bolt11(
 	grpc_client: &mut ClnGrpcClient,
 	invoice: &Bolt11Invoice,
 	amount: Option<Amount>,
@@ -210,7 +210,7 @@ pub async fn pay_bolt11(
 	// We will now start polling `sendpay` to see if the payment succeeded.
 	//
 	// We will create a stream that indicates when we should poll `sendpay`.
-	// The stream doesn't contain any data. All items are `()`. But whenver
+	// The stream doesn't contain any data. All items are `()`. But whenever
 	// a new item appears we will poll `sendpay`.
 
 	// The heart-beat ensures we triggers every 10 seconds
@@ -246,7 +246,7 @@ pub async fn pay_bolt11(
 	panic!("Error making payment. We should never get here as the stream above should never close");
 }
 
-pub async fn invoice_pay_status(
+async fn invoice_pay_status(
 	cln_client: &mut ClnGrpcClient,
 	bolt11_invoice: &Bolt11Invoice,
 	since: SystemTime,

@@ -169,6 +169,23 @@ impl Bolt11Payment {
 		}).collect()
 	}
 
+	pub fn unsigned_change_vtxo(&self) -> Bolt11ChangeVtxo {
+		let tx = self.unsigned_transaction();
+		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
+		Bolt11ChangeVtxo {
+			inputs: self.inputs.clone(),
+			pseudo_spec: VtxoSpec {
+				amount: self.change_amount(),
+				exit_delta: self.exit_delta,
+				expiry_height: expiry_height,
+				asp_pubkey: self.asp_pubkey,
+				user_pubkey: self.user_pubkey,
+			},
+			final_point: OutPoint::new(tx.compute_txid(), 1),
+			htlc_tx: tx,
+		}
+	}
+
 	pub fn sign_asp(
 		&self,
 		keypair: &Keypair,
@@ -254,15 +271,6 @@ pub struct SignedBolt11Payment {
 }
 
 impl SignedBolt11Payment {
-	pub fn signed_transaction(&self) -> Transaction {
-		let mut tx = self.payment.unsigned_transaction();
-		util::fill_taproot_sigs(&mut tx, &self.signatures);
-		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
-		// this +2 might be fixed later
-		debug_assert_eq!(tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
-		tx
-	}
-
 	pub fn validate_signatures(
 		&self,
 		secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
@@ -278,47 +286,14 @@ impl SignedBolt11Payment {
 		Ok(())
 	}
 
-	pub fn change_vtxo(&self) -> Vtxo {
-		let tx = self.signed_transaction();
-		let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
-		Vtxo::Bolt11Change(Bolt11ChangeVtxo {
-			inputs: self.payment.inputs.clone(),
-			pseudo_spec: VtxoSpec {
-				amount: self.payment.change_amount(),
-				exit_delta: self.payment.exit_delta,
-				expiry_height: expiry_height,
-				asp_pubkey: self.payment.asp_pubkey,
-				user_pubkey: self.payment.user_pubkey,
-			},
-			final_point: OutPoint::new(tx.compute_txid(), 1),
-			htlc_tx: tx,
-		})
+	pub fn change_vtxo(&self) -> Bolt11ChangeVtxo {
+		let mut vtxo = self.payment.unsigned_change_vtxo();
+		util::fill_taproot_sigs(&mut vtxo.htlc_tx, &self.signatures);
+		//TODO(stevenroose) there seems to be a bug in the vtxo.htlc_tx.weight method,
+		// this +2 might be fixed later
+		debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
+		vtxo
 	}
-
-	//TODO(stevenroose) make change_vtxo method here
-	// pub fn output_vtxos(&self, asp_pubkey: PublicKey, exit_delta: u16) -> Vec<Vtxo> {
-	// 	let inputs = self.payment.inputs.iter()
-	// 		.map(|input| Box::new(input.clone()))
-	// 		.collect::<Vec<_>>();
-	//
-	// 	let expiry_height = self.payment.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
-	// 	let oor_tx = self.signed_transaction();
-	// 	let oor_txid = oor_tx.compute_txid();
-	// 	self.payment.outputs.iter().enumerate().map(|(idx, output)| {
-	// 		Vtxo::Oor {
-	// 			inputs: inputs.clone(),
-	// 			pseudo_spec: VtxoSpec {
-	// 				amount: output.amount,
-	// 				exit_delta,
-	// 				expiry_height,
-	// 				asp_pubkey,
-	// 				user_pubkey: output.pubkey,
-	// 			},
-	// 			oor_tx: oor_tx.clone(),
-	// 			final_point: OutPoint::new(oor_txid, idx as u32),
-	// 		}
-	// 	}).collect()
-	// }
 
 	pub fn encode(&self) -> Vec<u8> {
 		let mut buf = Vec::new();

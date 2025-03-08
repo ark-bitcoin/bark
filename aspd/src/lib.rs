@@ -34,17 +34,19 @@ use std::time::Duration;
 use anyhow::Context;
 use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, Network, Transaction};
-use bitcoin::hashes::{sha256, Hash};
+use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use lightning::pay_bolt11;
 use lightning_invoice::Bolt11Invoice;
 use opentelemetry::KeyValue;
+use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
 use tokio::sync::{broadcast, oneshot, Mutex};
-use tokio_stream::{StreamExt, Stream};
+use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
 use ark::{musig, BlockHeight, BlockRef, OnboardVtxo, Vtxo, VtxoId, VtxoSpec};
-use ark::lightning::Bolt11Payment;
+use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
@@ -648,7 +650,11 @@ impl App {
 		}
 
 		let txid = payment.txid();
-		let new_vtxos = payment.unsigned_output_vtxos();
+		let new_vtxos = payment
+			.unsigned_output_vtxos()
+			.into_iter()
+			.map(|a| a.into())
+			.collect::<Vec<_>>();
 		let ret = match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
 				return badarg!("attempted to sign OOR for already spent vtxo {}", dup);
@@ -668,7 +674,7 @@ impl App {
 
 	// lightning
 
-	pub fn start_bolt11(
+	pub async fn start_bolt11_payment(
 		&self,
 		invoice: Bolt11Invoice,
 		amount: Amount,
@@ -680,47 +686,80 @@ impl App {
 		Vec<musig::MusigPubNonce>,
 		Vec<musig::MusigPartialSignature>,
 	)> {
-		//TODO(stevenroose) check that vtxos are valid
+		let ids = input_vtxos.iter().map(|i| i.id()).collect::<Vec<_>>();
+		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
+			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
+		}
 
-		//TODO(stevenroose) sanity check that inputs match up to the amount
+		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {
 			//TODO(stevenroose) bikeshed this
 			let tip = self.bitcoind.get_block_count()? as u32;
 			tip + 7 * 18
 		};
-		let details = Bolt11Payment {
-			invoice,
-			inputs: input_vtxos,
-			asp_pubkey: self.asp_key.public_key(),
-			user_pubkey: user_pk,
-			payment_amount: amount,
-			forwarding_fee: Amount::from_sat(350), //TODO(stevenroose) set fee schedule
-			htlc_delta: self.config.htlc_delta,
-			htlc_expiry_delta: self.config.htlc_expiry_delta,
-			htlc_expiry: expiry,
-			exit_delta: self.config.vtxo_exit_delta,
+
+		let ret = 'htlc_cosign: {
+			let details = Bolt11Payment {
+				invoice,
+				inputs: input_vtxos,
+				asp_pubkey: self.asp_key.public_key(),
+				user_pubkey: user_pk,
+				payment_amount: amount,
+				forwarding_fee: Amount::from_sat(350), //TODO(stevenroose) set fee schedule
+				htlc_delta: self.config.htlc_delta,
+				htlc_expiry_delta: self.config.htlc_expiry_delta,
+				htlc_expiry: expiry,
+				exit_delta: self.config.vtxo_exit_delta,
+			};
+
+			if !details.check_amounts() {
+				break 'htlc_cosign badarg!("invalid amounts");
+			}
+
+			let txid = details.unsigned_transaction().compute_txid();
+			let new_vtxos = vec![details.unsigned_change_vtxo().into()];
+
+			match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
+				Ok(Some(dup)) => {
+					badarg!("attempted to sign OOR for already spent vtxo {}", dup)
+				},
+				Ok(None) => {
+					info!("Cosigning HTLC tx {} with inputs: {:?}", txid, ids);
+					// let's sign the tx
+					let (nonces, part_sigs) = details.sign_asp(
+						&self.asp_key,
+						user_nonces,
+					);
+					Ok((details, nonces, part_sigs))
+				},
+				Err(e) => Err(e),
+			}
 		};
-		if !details.check_amounts() {
-			return badarg!("invalid amounts");
-		}
 
-		// let's sign the tx
-		let (nonces, part_sigs) = details.sign_asp(
-			&self.asp_key,
-			user_nonces,
-		);
+		self.release_vtxos_in_flux(ids).await;
 
-		Ok((details, nonces, part_sigs))
+		ret
 	}
 
 
 	/// Returns a stream of updates related to the payment with hash
-	fn get_payment_update_stream(&self, payment_hash: sha256::Hash) -> impl Stream<Item = rpc::Bolt11PaymentUpdate> {
+	async fn finish_bolt11_payment(&self, signed: SignedBolt11Payment) -> anyhow::Result<impl Stream<Item = anyhow::Result<rpc::Bolt11PaymentUpdate>>> {
+		let payment_hash = signed.payment.invoice.payment_hash().clone();
+
+		// Connecting to the grpc-client
+		let cln_config = self.config.lightningd.as_ref()
+			.context("This asp does not support lightning")?;
+		let cln_client = cln_config.grpc_client().await
+			.context("failed to connect to lightning")?;
+
+		// Spawn a task that performs the payment
+		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
+		let pay_jh = tokio::task::spawn(pay_bolt11(cln_client, signed, sendpay_rx.resubscribe()));
+
 		// A progress update is sent every five seconds to give the user an nidication of progress
 		let mut interval = tokio::time::interval(Duration::from_secs(5));
 		interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
 		let heartbeat_stream = IntervalStream::new(interval).map(move |_| {
 				rpc::Bolt11PaymentUpdate {
 					progress_message: String::from("Your payment is being routed through the lightning network..."),
@@ -732,14 +771,15 @@ impl App {
 
 
 		// Let event-stream
-		let rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
-		let event_stream = BroadcastStream::new(rx).filter_map(move |v| match v {
+		let event_stream = BroadcastStream::new(sendpay_rx.resubscribe()).filter_map(move |v| match v {
 			Ok(v) => {
+				// TODO: revoke payment in case of lightning failure
+
 				Some(rpc::Bolt11PaymentUpdate {
-					status: rpc::PaymentStatus::from(v.status.clone()) as i32,
+					status: rpc::PaymentStatus::from(v.status.clone()).into(),
 					progress_message: format!(
 						"{} payment-part for hash {:?} - Attempt {} part {} to status {}",
-						v.kind, v.payment_hash, v.group_id, v.part_id, v.status,
+						v.kind.as_str_name(), v.payment_hash, v.group_id, v.part_id, v.status,
 					),
 					payment_hash: payment_hash.as_byte_array().to_vec(),
 					payment_preimage: v.payment_preimage.map(|h| h.as_byte_array().to_vec())
@@ -748,7 +788,45 @@ impl App {
 			Err(_) => None,
 		});
 
-		heartbeat_stream.merge(event_stream)
+		let update_stream = heartbeat_stream.merge(event_stream);
+
+		// We create an update stream until payment handle is resolved
+		let result = update_stream.until(pay_jh).map(move |item| {
+			let item = match item {
+				StreamUntilItem::Stream(v) => v,
+				StreamUntilItem::Future(payment) => {
+					match payment {
+						Ok(Ok(preimage)) => {
+							rpc::Bolt11PaymentUpdate {
+								progress_message: "Payment completed".to_string(),
+								status: rpc::PaymentStatus::Complete.into(),
+								payment_hash: payment_hash.as_byte_array().to_vec(),
+								payment_preimage: Some(preimage)
+							}
+						},
+						Ok(Err(err)) => {
+							rpc::Bolt11PaymentUpdate {
+								progress_message: format!("Payment failed: {}", err),
+								status: rpc::PaymentStatus::Failed.into(),
+								payment_hash: payment_hash.as_byte_array().to_vec(),
+								payment_preimage: None
+							}
+						},
+						Err(err) => {
+							rpc::Bolt11PaymentUpdate {
+								progress_message: format!("Error during payment. Payment state unknown {:?}", err),
+								status: rpc::PaymentStatus::Failed.into(),
+								payment_hash: payment_hash.as_byte_array().to_vec(),
+								payment_preimage: None
+							}
+						}
+					}
+				}
+			};
+			Ok(item)
+		});
+
+		Ok(result)
 	}
 
 	// ** SOME ADMIN COMMANDS **

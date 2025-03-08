@@ -17,7 +17,6 @@ use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
 use opentelemetry_semantic_conventions as semconv;
 use opentelemetry_semantic_conventions::trace::RPC_GRPC_STATUS_CODE;
-use stream_until::{StreamExt as StreamExtUntil, StreamUntilItem};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
@@ -30,7 +29,6 @@ use tonic::async_trait;
 use crate::error::{BadArgument, NotFound};
 use crate::{telemetry, App};
 use crate::round::RoundInput;
-use crate::lightning::pay_bolt11;
 
 
 /// Whether or not to provide rich internal errors to RPC users.
@@ -471,9 +469,9 @@ impl rpc::server::ArkService for App {
 				.badarg("invalid public nonce")
 		}).collect::<Result<Vec<_>, _>>()?;
 
-		let (details, asp_nonces, part_sigs) = self.start_bolt11(
+		let (details, asp_nonces, part_sigs) = self.start_bolt11_payment(
 			invoice, amount, input_vtxos, user_pubkey, &user_nonces,
-		).context("error making payment")?;
+		).await.context("error making payment")?;
 
 		let response = rpc::Bolt11PaymentDetails {
 			details: details.encode(),
@@ -504,58 +502,10 @@ impl rpc::server::ArkService for App {
 			badarg!("bad signatures on payment: {}", e);
 		}
 
-		let invoice = signed.payment.invoice.clone();
+		let update_stream = self.finish_bolt11_payment(signed).await
+			.context("Could not finalise")?;
 
-		// Connecting to the grpc-client
-		let cln_config = self.config.lightningd.as_ref()
-			.context("This asp does not support lightning")?;
-		let cln_client = cln_config.grpc_client().await
-			.context("failed to connect to lightning")?;
-		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
-
-		// Spawn a task that performs the payment
-		let rx2 = sendpay_rx.resubscribe();
-		let pay_jh = tokio::task::spawn(pay_bolt11(cln_client, signed, rx2));
-
-		let payment_hash = invoice.payment_hash().clone();
-		let update_stream = self.get_payment_update_stream(payment_hash.clone());
-
-		let result = update_stream.until(pay_jh).map(move |item| {
-			let item = match item {
-				StreamUntilItem::Stream(v) => v,
-				StreamUntilItem::Future(payment) => {
-					match payment {
-						Ok(Ok(preimage)) => {
-							rpc::Bolt11PaymentUpdate {
-								progress_message: "Payment completed".to_string(),
-								status: rpc::PaymentStatus::Complete.into(),
-								payment_hash: payment_hash.as_byte_array().to_vec(),
-								payment_preimage: Some(preimage)
-							}
-						},
-						Ok(Err(err)) => {
-							rpc::Bolt11PaymentUpdate {
-								progress_message: format!("Payment failed: {}", err),
-								status: rpc::PaymentStatus::Failed as i32,
-								payment_hash: payment_hash.as_byte_array().to_vec(),
-								payment_preimage: None
-							}
-						},
-						Err(err) => {
-							rpc::Bolt11PaymentUpdate {
-								progress_message: format!("Error during payment. Payment state unknown {:?}", err),
-								status: rpc::PaymentStatus::Failed as i32,
-								payment_hash: payment_hash.as_byte_array().to_vec(),
-								payment_preimage: None
-							}
-						}
-					}
-				}
-			};
-			Ok(item)
-		});
-
-		Ok(tonic::Response::new(Box::new(result)))
+		Ok(tonic::Response::new(Box::new(update_stream.map(|r| r.to_status()))))
 	}
 
 	// round
@@ -863,7 +813,7 @@ where
 		span.add_event(format!("Processing {} request", rpc_method_details.format_path()), vec![]);
 
 		let span_context = Context::current_with_span(span);
-		
+
 		let metrics = self.metrics.clone();
 		let start_time = Instant::now();
 		let future = self.inner.call(req);

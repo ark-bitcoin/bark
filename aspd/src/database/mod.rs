@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, ArkoorVtxo, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
+use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
@@ -258,7 +258,7 @@ impl Db {
 		&self,
 		spent_ids: &[VtxoId],
 		spending_tx: Txid,
-		new_vtxos: &[ArkoorVtxo],
+		new_vtxos: &[Vtxo],
 	) -> anyhow::Result<Option<VtxoId>> {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
@@ -276,7 +276,6 @@ impl Db {
 			tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&spending_tx)]).await?;
 		}
 
-		let new_vtxos = new_vtxos.into_iter().map(|a| a.clone().into()).collect::<Vec<_>>();
 		Self::inner_insert_vtxos(&tx, &new_vtxos).await?;
 
 		tx.commit().await?;
