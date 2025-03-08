@@ -1,7 +1,9 @@
-use std::{path::Path, str::FromStr};
+
+use std::path::Path;
+use std::str::FromStr;
 
 use anyhow::Context;
-use bip39::Mnemonic;
+use bitcoin::Network;
 use clap::Args;
 use tokio::fs;
 
@@ -39,52 +41,11 @@ pub struct CreateOpts {
 pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<()> {
 	debug!("Creating wallet in {}", datadir.display());
 
-	if opts.force && datadir.exists() {
-		fs::remove_dir_all(datadir).await?;
-	}
-
-	// check if dir doesn't exists, then creates it
-	if datadir.exists() {
-		bail!("Directory {} already exists", datadir.display());
-	}
-	fs::create_dir_all(&datadir).await.context("can't create dir")?;
-
-	// generate seed
-	let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
-
-	// write it to file
-	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
-		.context("failed to write mnemonic")?;
-
-	info!("Creating new bark Wallet at {}", datadir.display());
-
-	let db = SqliteClient::open(datadir.join(DB_FILE))?;
-
-	match try_create_wallet(&mnemonic, db, opts).await {
-		Ok(ok) => Ok(ok),
-		Err(err) => {
-			// Remove the datadir if it exists
-			if datadir.exists() {
-				if let Err(e) = fs::remove_dir_all(datadir).await {
-					warn!("Failed to remove '{}", datadir.display());
-					warn!("{}", e.to_string());
-				}
-			}
-			Err(err)
-		}
-	}
-}
-
-async fn try_create_wallet(mnemonic: &Mnemonic, db: SqliteClient, opts: CreateOpts) -> anyhow::Result<()> {
-	let net = if opts.regtest && !opts.signet && !opts.bitcoin{
-		bitcoin::Network::Regtest
-	} else if opts.signet && !opts.regtest && !opts.bitcoin{
-		bitcoin::Network::Signet
-	} else if opts.bitcoin && !opts.regtest && !opts.signet {
-		warn!("bark is experimental and not yet suited for usage in production");
-		bitcoin::Network::Bitcoin
-	} else {
-		bail!("A network must be specified. Use either --signet, --regtest or --bitcoin");
+	let net = match (opts.bitcoin, opts.signet, opts.regtest) {
+		(true, false, false) => Network::Bitcoin,
+		(false, true, false) => Network::Signet,
+		(false, false, true) => Network::Regtest,
+		_ => bail!("A network must be specified. Use either --signet, --regtest or --bitcoin"),
 	};
 
 	let mut config = Config {
@@ -92,12 +53,48 @@ async fn try_create_wallet(mnemonic: &Mnemonic, db: SqliteClient, opts: CreateOp
 		asp_address: opts.config.asp.clone().context("ASP address missing, use --asp")?,
 		..Default::default()
 	};
-
 	opts.config.merge_into(&mut config).context("invalid configuration")?;
+
+	// check if dir doesn't exists, then create it
+	if datadir.exists() {
+		if opts.force {
+			fs::remove_dir_all(datadir).await?;
+		} else {
+			bail!("Directory {} already exists", datadir.display());
+		}
+	}
+
+	// Everything that errors after this will wipe the datadir again.
+	if let Err(e) = try_create_wallet(&datadir, net, config).await {
+		// Remove the datadir if it exists
+		if datadir.exists() {
+			if let Err(e) = fs::remove_dir_all(datadir).await {
+				warn!("Failed to remove '{}", datadir.display());
+				warn!("{}", e.to_string());
+			}
+		}
+		bail!("Error while creating wallet: {}", e);
+	}
+	Ok(())
+}
+
+/// In this method we create the wallet and if it fails, the datadir will be wiped again.
+async fn try_create_wallet(datadir: &Path, net: Network, config: Config) -> anyhow::Result<()> {
+	info!("Creating new bark Wallet at {}", datadir.display());
+
+	fs::create_dir_all(datadir).await.context("can't create dir")?;
+
+	// generate seed
+	let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
+	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
+		.context("failed to write mnemonic")?;
+
+	// open db
+	let db = SqliteClient::open(datadir.join(DB_FILE))?;
 
 	Wallet::create(&mnemonic, net, config, db).await.context("error creating wallet")?;
 
-	return Ok(())
+	Ok(())
 }
 
 pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Wallet<SqliteClient>> {
