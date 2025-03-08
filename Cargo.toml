@@ -59,7 +59,7 @@ async-trait = "0.1.83"
 # bitcoin
 bip39 = { version = "2.0.0", features = [ "rand", "serde" ] }
 miniscript = "12.2"
-rand = { version = "0.8.5", features = [ "std", "std_rng" ] }
+rand = { version = "0.9.0", features = [ "std", "std_rng" ] }
 bdk_wallet = { package = "bdk_wallet", version = "1.0.0" }
 bdk_esplora = { package = "bdk_esplora", version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false }
 bdk_bitcoind_rpc = { package = "bdk_bitcoind_rpc", version = "0.17.1" }

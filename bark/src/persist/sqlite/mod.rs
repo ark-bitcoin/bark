@@ -258,7 +258,7 @@ mod test {
 
 	use bdk_wallet::chain::DescriptorExt;
 	use bitcoin::bip32;
-	use rand::{Rng, distributions::Alphanumeric};
+	use rand::{distr, Rng};
 
 	use ark::{OnboardVtxo, VtxoSpec};
 
@@ -278,8 +278,8 @@ mod test {
 		// in a new database a random file-name is generated.
 		//
 		// This database is deleted once all connections are dropped
-		let mut rng = rand::thread_rng();
-		let filename: String = (&mut rng).sample_iter(Alphanumeric)
+		let mut rng = rand::rng();
+		let filename: String = (&mut rng).sample_iter(distr::Alphanumeric)
 			.take(16).map(char::from).collect();
 
 		let connection_string = format!("file:{}?mode=memory&cache=shared", filename);
