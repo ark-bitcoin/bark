@@ -24,6 +24,7 @@ use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use bitcoin_ext::P2WSH_DUST;
 
 use crate::{telemetry, App, SECP};
+use crate::error::ContextExt;
 use crate::wallet::BdkWalletExt;
 
 
@@ -164,10 +165,8 @@ impl CollectingPayments {
 			}
 		}
 		for offboard in offboards {
-			let fee = match offboard.fee(self.round_data.offboard_feerate) {
-				Some(v) => v,
-				None => bail!("invalid offboard address"),
-			};
+			let fee = offboard.fee(self.round_data.offboard_feerate)
+				.badarg("invalid offboard request")?;
 			out_sum += offboard.amount + fee;
 			if out_sum > in_sum {
 				bail!("total output amount (with offboards) exceeds total input amount");
