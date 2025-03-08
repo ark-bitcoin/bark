@@ -661,7 +661,6 @@ async fn main() {
 				eprintln!("	{}", error);
 			}
 		}
-		eprintln!();
 
 		if verbose {
 			eprintln!();
