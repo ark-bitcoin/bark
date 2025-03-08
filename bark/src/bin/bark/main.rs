@@ -72,7 +72,7 @@ struct ConfigOpts {
 }
 
 impl ConfigOpts {
-	fn merge_info(self, cfg: &mut Config) -> anyhow::Result<()> {
+	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
 		if let Some(v) = self.asp {
 			cfg.asp_address = v;
 		}
@@ -351,7 +351,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 							If you insist, use the --dangerous flag.");
 					}
 				}
-				new_cfg.merge_info(&mut cfg).context("invalid configuration")?;
+				new_cfg.merge_into(&mut cfg).context("invalid configuration")?;
 				w.set_config(cfg);
 				w.persist_config().context("failed to persist config")?;
 			}

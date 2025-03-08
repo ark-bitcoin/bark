@@ -93,7 +93,7 @@ async fn try_create_wallet(mnemonic: &Mnemonic, db: SqliteClient, opts: CreateOp
 		..Default::default()
 	};
 
-	opts.config.merge_info(&mut config).context("invalid configuration")?;
+	opts.config.merge_into(&mut config).context("invalid configuration")?;
 
 	Wallet::create(&mnemonic, net, config, db).await.context("error creating wallet")?;
 
