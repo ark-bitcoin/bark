@@ -18,12 +18,11 @@ use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 
 use ark::{Vtxo, VtxoId};
-
 use bark::{Config, Pagination, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::cli as json;
-use util::output_json;
 
+use crate::util::output_json;
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
 
 const DEFAULT_PAGE_SIZE: u16 = 10;
@@ -73,11 +72,14 @@ struct ConfigOpts {
 
 impl ConfigOpts {
 	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
-		if let Some(v) = self.asp {
-			cfg.asp_address = v;
+		if let Some(url) = self.asp {
+			cfg.asp_address = util::https_default_scheme(url).context("invalid asp url")?;
 		}
 		if let Some(v) = self.esplora {
-			cfg.esplora_address = if v == "" { None } else { Some(v) };
+			cfg.esplora_address = match v.is_empty() {
+				true => None,
+				false => Some(util::https_default_scheme(v).context("invalid esplora url")?),
+			};
 		}
 		if let Some(v) = self.bitcoind {
 			cfg.bitcoind_address = if v == "" { None } else { Some(v) };

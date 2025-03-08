@@ -54,10 +54,12 @@ impl ChainSourceClient {
 				bitcoincore_rpc::Client::new(&url, auth)
 					.context("failed to create bitcoind rpc client")?
 			),
-			ChainSource::Esplora { url } => ChainSourceClient::Esplora(
-				esplora_client::Builder::new(&url).build_async()
+			ChainSource::Esplora { url } => ChainSourceClient::Esplora({
+				// the esplora client doesn't deal well with trailing slash in url
+				let url = url.strip_suffix("/").unwrap_or(&url);
+				esplora_client::Builder::new(url).build_async()
 					.with_context(|| format!("failed to create esplora client for url {}", url))?
-			),
+			}),
 		})
 	}
 

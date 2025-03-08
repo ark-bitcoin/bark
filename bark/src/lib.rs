@@ -200,7 +200,7 @@ impl AspConnection {
 		let asp_uri = tonic::transport::Uri::from_str(asp_address)
 			.context("failed to parse Ark server as a URI")?;
 
-		let scheme = asp_uri.scheme_str().unwrap_or("https");
+		let scheme = asp_uri.scheme_str().unwrap_or("");
 		if scheme != "http" && scheme != "https" {
 			bail!("ASP scheme must be either http or https. Found: {}", scheme);
 		}
