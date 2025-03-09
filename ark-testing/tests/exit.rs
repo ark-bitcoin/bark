@@ -333,7 +333,7 @@ async fn exit_oor() {
 	let vtxos = bark2.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "We have received one vtxo");
 	let oor_vtxo = &vtxos[0];
-	assert_eq!(oor_vtxo.vtxo_type, VtxoType::Oor);
+	assert_eq!(oor_vtxo.vtxo_type, VtxoType::Arkoor);
 
 	// We stop the asp
 	aspd.stop().await.unwrap();

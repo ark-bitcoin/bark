@@ -16,7 +16,7 @@ pub struct UtxoInfo {
 pub enum VtxoType {
 	Onboard,
 	Round,
-	Oor,
+	Arkoor,
 	Bolt11Change,
 }
 
@@ -42,7 +42,7 @@ impl From<Vtxo> for VtxoInfo {
 			vtxo_type: match v {
 				Vtxo::Onboard { .. } => VtxoType::Onboard,
 				Vtxo::Round { .. } => VtxoType::Round,
-				Vtxo::Arkoor { .. } => VtxoType::Oor,
+				Vtxo::Arkoor { .. } => VtxoType::Arkoor,
 				Vtxo::Bolt11Change { .. } => VtxoType::Bolt11Change,
 			},
 			utxo: v.point(),
