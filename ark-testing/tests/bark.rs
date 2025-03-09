@@ -9,9 +9,10 @@ use std::time::Duration;
 
 use bitcoin::secp256k1::Keypair;
 use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
+use futures::future::join_all;
 
-use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use ark::{ArkoorVtxo, Vtxo};
+use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use aspd_rpc as rpc;
 
 use ark_testing::{TestContext, btc, sat};
@@ -186,22 +187,15 @@ async fn large_round() {
 	}).await;
 	ctx.fund_asp(&aspd, btc(10)).await;
 
-	let barks = {
-		let mut barks = Vec::new();
-		// TODO: This might be parallelized
-		// Currently, each creation of bark is waiting, in sequence, for its funding transaction
-		for i in 0..N {
-			let name = format!("bark{}", i);
-			barks.push(ctx.new_bark_with_funds(name, &aspd, sat(90_000)).await);
-		}
-		barks
-	};
-
+	let barks = join_all((0..N).map(|i| {
+		let name = format!("bark{}", i);
+		ctx.new_bark_with_funds(name, &aspd, sat(90_000))
+	})).await;
 	ctx.bitcoind.generate(1).await;
 
 	// Fund and onboard all clients.
 	for chunk in barks.chunks(20) {
-		futures::future::join_all(chunk.iter().map(|b| async {
+		join_all(chunk.iter().map(|b| async {
 			b.onboard(sat(80_000)).await;
 		})).await;
 	}
@@ -209,7 +203,7 @@ async fn large_round() {
 
 	// Refresh all vtxos
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
-	futures::future::join_all(barks.iter().map(|b| {
+	join_all(barks.iter().map(|b| {
 		b.refresh_all()
 	})).await;
 }

@@ -4,11 +4,12 @@ extern crate log;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ark::VtxoId;
 use bitcoin::amount::Amount;
 use bitcoin::secp256k1::PublicKey;
-use tokio::sync::Mutex;
+use futures::future::join_all;
+use tokio::sync::{mpsc, Mutex};
 
+use ark::VtxoId;
 use aspd_log::{
 	NotSweeping, OnboardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
@@ -322,6 +323,78 @@ async fn restart_aspd_with_payments() {
 	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(350_000)).await;
 	aspd.stop().await.unwrap();
 	aspd.start().await.unwrap();
+}
+
+#[tokio::test]
+async fn full_round() {
+	let ctx = TestContext::new("aspd/full_round").await;
+	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
+		round_interval: Duration::from_millis(2_000),
+		round_submit_time: Duration::from_millis(10_000),
+		round_sign_time: Duration::from_millis(10_000),
+		nb_round_nonces: 2,
+		..ctx.aspd_default_cfg("aspd", None).await
+	}).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
+
+	// based on nb_round_nonces
+	const MAX_OUTPUTS: usize = 16;
+
+	let barks = join_all((0..MAX_OUTPUTS+1).map(|i| {
+		let name = format!("bark{}", i);
+		ctx.new_bark_with_funds(name, &aspd, sat(10_000))
+	})).await;
+	ctx.bitcoind.generate(1).await;
+
+	futures::future::join_all(barks.iter().map(|bark| {
+		bark.onboard(sat(1_000))
+	})).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	let (tx, mut rx) = mpsc::channel(10);
+
+	/// This proxy will keep track of how many times `submit payment` has been called.
+	/// Once it reaches MAX_OUTPUTS, it asserts the next one fails.
+	/// Once that happened succesfully, it fullfils the result channel.
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient, Arc<Mutex<usize>>, Arc<mpsc::Sender<tonic::Status>>);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn submit_payment(&mut self, req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
+			let mut lock = self.1.lock().await;
+			let res = self.upstream().submit_payment(req).await;
+			let ret = if *lock == MAX_OUTPUTS {
+				let err = res.expect_err("must error at max");
+				trace!("proxy: NOK: {}", err);
+				self.2.send(err.clone()).await.unwrap();
+				Err(err)
+			} else {
+				Ok(res.unwrap().into_inner())
+			};
+			*lock += 1;
+			ret
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await, Arc::new(Mutex::new(0)), Arc::new(tx));
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+	futures::future::join_all(barks.iter().map(|bark| {
+		bark.set_asp(&proxy.address)
+	})).await;
+
+	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
+	tokio::spawn(async move {
+		futures::future::join_all(barks.iter().map(|bark| async {
+			// ignoring error as last one will fail
+			let _ = bark.refresh_all().await;
+		})).await;
+	});
+
+	// then we wait for the error to happen
+	let err = rx.recv().wait(30_000).await.unwrap();
+	assert!(err.to_string().contains("unexpected message"));
 }
 
 #[tokio::test]
