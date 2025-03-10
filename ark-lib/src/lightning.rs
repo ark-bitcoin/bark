@@ -1,5 +1,5 @@
 
-use std::{fmt, io};
+use std::{fmt, io, iter};
 
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::hashes::Hash;
@@ -11,6 +11,8 @@ use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WE
 
 use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
 
+const HTLC_VOUT: u32 = 0;
+const CHANGE_VOUT: u32 = 1;
 
 /// The minimum fee we consider for an HTLC transaction.
 pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
@@ -57,11 +59,16 @@ impl Bolt11Payment {
 		ScriptBuf::new_p2tr_tweaked(taproot.output_key())
 	}
 
-	fn change_output(&self) -> TxOut {
-		let spk = crate::vtxo::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
-		TxOut {
-			value: self.change_amount(),
-			script_pubkey: spk,
+	fn change_txout(&self) -> Option<TxOut> {
+		let amount = self.change_amount();
+		if  amount > Amount::ZERO {
+			let spk = crate::vtxo::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
+			Some(TxOut {
+				value: amount,
+				script_pubkey: spk,
+			})
+		} else {
+			None
 		}
 	}
 
@@ -71,7 +78,6 @@ impl Bolt11Payment {
 			script_pubkey: self.htlc_spk()
 		}
 	}
-
 
 	pub fn change_amount(&self) -> Amount {
 		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).fold(Amount::ZERO, |a,b| a+b);
@@ -97,8 +103,8 @@ impl Bolt11Payment {
 
 		// Just checking the computed fees work
 		// Our input's should equal our outputs + onchain fees
-		let change_output = self.change_output();
-		let change_amount = change_output.value;
+		let change_output = self.change_txout();
+		let change_amount = change_output.as_ref().map(|o| o.value).unwrap_or_default();
 
 		assert_eq!(input_amount, htlc_amount + dust_amount + change_amount,
 			"htlc = {htlc_amount}, dust={dust_amount}, change={change_amount}",
@@ -119,9 +125,10 @@ impl Bolt11Payment {
 					witness: Witness::new()
 				}
 			}).collect(),
-			output: vec![
-				htlc_output, change_output, dust_anchor_output
-			]
+			output: iter::once(htlc_output)
+				.chain(change_output)
+				.chain(Some(dust_anchor_output))
+				.collect(),
 		}
 	}
 
@@ -146,21 +153,24 @@ impl Bolt11Payment {
 		}).collect()
 	}
 
-	pub fn unsigned_change_vtxo(&self) -> Bolt11ChangeVtxo {
+	pub fn unsigned_change_vtxo(&self) -> Option<Bolt11ChangeVtxo> {
 		let tx = self.unsigned_transaction();
 		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
-		Bolt11ChangeVtxo {
-			inputs: self.inputs.clone(),
-			pseudo_spec: VtxoSpec {
-				amount: self.change_amount(),
-				exit_delta: self.exit_delta,
-				expiry_height: expiry_height,
-				asp_pubkey: self.asp_pubkey,
-				user_pubkey: self.user_pubkey,
-			},
-			final_point: OutPoint::new(tx.compute_txid(), 1),
-			htlc_tx: tx,
-		}
+
+		self.change_txout().map(|txout| {
+			Bolt11ChangeVtxo {
+				inputs: self.inputs.clone(),
+				pseudo_spec: VtxoSpec {
+					amount: txout.value,
+					exit_delta: self.exit_delta,
+					expiry_height: expiry_height,
+					asp_pubkey: self.asp_pubkey,
+					user_pubkey: self.user_pubkey,
+				},
+				final_point: OutPoint::new(tx.compute_txid(), CHANGE_VOUT),
+				htlc_tx: tx,
+			}
+		})
 	}
 
 	pub fn sign_asp(
@@ -263,13 +273,14 @@ impl SignedBolt11Payment {
 		Ok(())
 	}
 
-	pub fn change_vtxo(&self) -> Bolt11ChangeVtxo {
-		let mut vtxo = self.payment.unsigned_change_vtxo();
-		util::fill_taproot_sigs(&mut vtxo.htlc_tx, &self.signatures);
-		//TODO(stevenroose) there seems to be a bug in the vtxo.htlc_tx.weight method,
-		// this +2 might be fixed later
-		debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
-		vtxo
+	pub fn change_vtxo(&self) -> Option<Bolt11ChangeVtxo> {
+		self.payment.unsigned_change_vtxo().map(|mut vtxo| {
+			util::fill_taproot_sigs(&mut vtxo.htlc_tx, &self.signatures);
+			//TODO(stevenroose) there seems to be a bug in the vtxo.htlc_tx.weight method,
+			// this +2 might be fixed later
+			debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
+			vtxo
+		})
 	}
 
 	pub fn encode(&self) -> Vec<u8> {
