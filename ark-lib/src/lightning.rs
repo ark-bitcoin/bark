@@ -21,7 +21,7 @@ const CHANGE_VOUT: u32 = 1;
 /// The minimum fee we consider for an HTLC transaction.
 pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bolt11Payment {
 	pub invoice: Bolt11Invoice,
 	pub inputs: Vec<Vtxo>,
@@ -287,7 +287,7 @@ impl Bolt11Payment {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedBolt11Payment {
 	pub payment: Bolt11Payment,
 	pub signatures: Vec<schnorr::Signature>,

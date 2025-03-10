@@ -5,6 +5,7 @@ use bark_cln::grpc;
 
 use ark_testing::{TestContext, btc, sat};
 use bark_json::VtxoType;
+use bitcoin_ext::fee::dust_anchor;
 
 #[tokio::test]
 async fn start_lightningd() {
@@ -206,8 +207,16 @@ async fn bark_pay_ln_fails() {
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
 
-	// The payment fails, the user still has all their funds
-	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	let vtxos = bark_1.vtxos().await;
+	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
+	assert!(
+		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Bolt11Change && v.amount == sat(99_999_320)),
+		"user should get a change VTXO of 1btc - dust");
+	// NB: fees here are subject to change when we implement a fee schedule
+	let expected_revoked_amount = sat(100000000) + sat(350) - dust_anchor().value;
+	assert!(
+		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == expected_revoked_amount),
+		"user should get a revocation arkoor of payment_amount + forwarding fee - dust anchor");
 }
 
 #[tokio::test]

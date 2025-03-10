@@ -1018,7 +1018,7 @@ impl <P>Wallet<P> where
 		);
 
 		let req = rpc::SignedBolt11PaymentDetails {
-			signed_payment: signed.encode()
+			signed_payment: signed.clone().encode()
 		};
 
 		let mut payment_preimage = None;
@@ -1034,7 +1034,6 @@ impl <P>Wallet<P> where
 			}
 		}
 
-		let payment_preimage = payment_preimage.ok_or_else(|| anyhow!("Payment failed: {}", last_msg))?;
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
 			info!("Adding change VTXO of {}", change_vtxo.pseudo_spec.amount);
 			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&change_vtxo.htlc_tx));
@@ -1043,17 +1042,66 @@ impl <P>Wallet<P> where
 			None
 		};
 
-		self.db.register_movement(MovementArgs {
-			spends: &input_vtxos,
-			receives: change_vtxo.as_ref(),
-			recipients: vec![
-				(invoice.to_string(), amount)
-			],
-			fees: Some(anchor_amount + forwarding_fee)
-		}).context("failed to store OOR vtxo")?;
+		if let Some(payment_preimage) = payment_preimage {
+			self.db.register_movement(MovementArgs {
+				spends: &input_vtxos,
+				receives: change_vtxo.as_ref(),
+				recipients: vec![
+					(invoice.to_string(), amount)
+				],
+				fees: Some(anchor_amount + forwarding_fee)
+			}).context("failed to store OOR vtxo")?;
+			Ok(payment_preimage)
+		} else {
+			let htlc_vtxo = signed.htlc_vtxo().into();
 
-		info!("Bolt11 payment succeeded");
-		Ok(payment_preimage)
+			let keypair_idx = self.db.get_vtxo_key_index(&htlc_vtxo)?;
+			let keypair = self.vtxo_seed.derive_keypair(keypair_idx);
+			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+
+			let req = rpc::RevokeBolt11PaymentRequest {
+				signed_payment: signed.encode(),
+				pub_nonces: vec![pub_nonce.serialize().to_vec()],
+			};
+
+			let resp = asp.client.revoke_bolt11_payment(req).await?.into_inner();
+
+			let asp_pub_nonces = resp.pub_nonces.into_iter()
+				.map(|b| musig::MusigPubNonce::from_slice(&b))
+				.collect::<Result<Vec<_>, _>>()
+				.context("invalid asp pub nonces")?;
+			let asp_part_sigs = resp.partial_sigs.into_iter()
+				.map(|b| musig::MusigPartialSignature::from_slice(&b))
+				.collect::<Result<Vec<_>, _>>()
+				.context("invalid asp part sigs")?;
+
+			let revocation_payment = signed.revocation_payment();
+			let signed_revocation = revocation_payment.sign_finalize_user(
+				vec![sec_nonce],
+				&[pub_nonce],
+				&[keypair],
+				&asp_pub_nonces,
+				&asp_part_sigs,
+			);
+
+			trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_revocation.signed_transaction()));
+
+			let vtxo = Vtxo::from(signed_revocation
+				.output_vtxos()
+				.first()
+				.expect("there should be only one output")
+				.clone());
+
+			let receives = iter::once(&vtxo).chain(change_vtxo.as_ref());
+			self.db.register_movement(MovementArgs {
+				spends: &input_vtxos,
+				receives: receives,
+				recipients: None,
+				fees: None
+			})?;
+
+			bail!("Payment failed: {}", last_msg);
+		}
 	}
 
 	/// Send to a lightning address.
