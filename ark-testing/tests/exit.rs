@@ -15,7 +15,7 @@ use aspd_rpc as rpc;
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 
-async fn complete_exit(bark: &Bark) {
+async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	let mut flip = false;
 	for _ in 0..20 {
 		let res = bark.progress_exit().await;
@@ -24,11 +24,11 @@ async fn complete_exit(bark: &Bark) {
 			return;
 		}
 		if let Some(height) = res.height {
-			let current = bark.bitcoind().sync_client().get_block_count().unwrap();
-			bark.bitcoind().generate(height as u64 - current).await;
+			let current = ctx.bitcoind.sync_client().get_block_count().unwrap();
+			ctx.bitcoind.generate(height as u64 - current).await;
 		} else {
 			flip = if flip {
-				bark.bitcoind().generate(1).await;
+				ctx.bitcoind.generate(1).await;
 				false
 			} else {
 				true
@@ -58,7 +58,7 @@ async fn simple_exit() {
 
 	aspd.stop().await.unwrap();
 	bark.exit_all().await;
-	complete_exit(&bark).await;
+	complete_exit(&ctx, &bark).await;
 	ctx.bitcoind.generate(1).await;
 
 	// Wallet has 1_000_000 sats of funds minus fees
@@ -111,7 +111,7 @@ async fn fail_handshake() {
 	bark.set_asp(&proxy.address).await;
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 	bark.exit_all().await;
-	complete_exit(&bark).await;
+	complete_exit(&ctx, &bark).await;
 	assert_eq!(bark.onchain_balance().await, sat(93_210));
 }
 
@@ -194,14 +194,14 @@ async fn exit_round() {
 	bark7.exit_all().await;
 	bark8.exit_all().await;
 
-	complete_exit(&bark1).await;
-	complete_exit(&bark2).await;
-	complete_exit(&bark3).await;
-	complete_exit(&bark4).await;
-	complete_exit(&bark5).await;
-	complete_exit(&bark6).await;
-	complete_exit(&bark7).await;
-	complete_exit(&bark8).await;
+	complete_exit(&ctx, &bark1).await;
+	complete_exit(&ctx, &bark2).await;
+	complete_exit(&ctx, &bark3).await;
+	complete_exit(&ctx, &bark4).await;
+	complete_exit(&ctx, &bark5).await;
+	complete_exit(&ctx, &bark6).await;
+	complete_exit(&ctx, &bark7).await;
+	complete_exit(&ctx, &bark8).await;
 
 	// All wallets have 1_000_000 sats of funds minus fees
 	//
@@ -265,7 +265,7 @@ async fn exit_vtxo() {
 
 	// Make bark exit and check the balance
 	bark.exit_vtxo(vtxo.id).await;
-	complete_exit(&bark).await;
+	complete_exit(&ctx, &bark).await;
 
 	// Verify exit output is considered as part of the wallet
 	let utxos = bark.utxos().await;
@@ -297,7 +297,7 @@ async fn exit_after_onboard() {
 	// Exit unilaterally
 	aspd.stop().await.unwrap();
 	bark.exit_all().await;
-	complete_exit(&bark).await;
+	complete_exit(&ctx, &bark).await;
 
 	let balance = bark.onchain_balance().await;
 	assert!(balance > sat(900_000), "balance: {balance}");
@@ -341,7 +341,7 @@ async fn exit_oor() {
 	// Make bark2 exit and check the balance
 	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
 	bark2.exit_all().await;
-	complete_exit(&bark2).await;
+	complete_exit(&ctx, &bark2).await;
 	assert_eq!(bark2.onchain_balance().await, sat(1_089_521));
 
 	// Verify exit output is considered as part of the wallet
@@ -379,7 +379,7 @@ async fn double_exit_call() {
 	let vtxos = bark1.vtxos().await;
 
 	bark1.exit_all().await;
-	complete_exit(&bark1).await;
+	complete_exit(&ctx, &bark1).await;
 	assert_eq!(bark1.onchain_balance().await, sat(1_305_941));
 
 	let movements = bark1.list_movements().await;
@@ -402,7 +402,7 @@ async fn double_exit_call() {
 	let vtxo = vtxos.first().unwrap();
 
 	bark1.exit_all().await;
-	complete_exit(&bark1).await;
+	complete_exit(&ctx, &bark1).await;
 
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 9);
@@ -416,7 +416,7 @@ async fn double_exit_call() {
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
 	bark1.exit_all().await;
-	complete_exit(&bark1).await;
+	complete_exit(&ctx, &bark1).await;
 	assert_eq!(bark1.list_movements().await.len(), 9, "should not create new movement when no new vtxo to exit");
 }
 
@@ -469,7 +469,7 @@ async fn exit_bolt11_change() {
 
 	aspd_1.stop().await.unwrap();
 	bark_1.exit_all().await;
-	complete_exit(&bark_1).await;
+	complete_exit(&ctx, &bark_1).await;
 
 	assert_eq!(bark_1.offchain_balance().await, Amount::ZERO);
 	assert!(bark_1.onchain_balance().await >= vtxo.amount + Amount::ONE_SAT);

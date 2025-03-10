@@ -7,8 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, Network, OutPoint, Txid};
-use bitcoincore_rpc::RpcApi;
+use bitcoin::{Address, Amount, Network, OutPoint};
 use serde_json;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,18 +18,25 @@ use ark::Movement;
 use bark::UtxoInfo;
 pub use bark_json::cli as json;
 
+use crate::Bitcoind;
 use crate::context::ToAspUrl;
-use crate::{Bitcoind, Electrs};
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
 const COMMAND_LOG_FILE: &str = "commands.log";
 
 #[derive(Debug)]
+pub enum ChainSource {
+	Bitcoind,
+	Esplora { url: String },
+}
+
+#[derive(Debug)]
 pub struct BarkConfig {
 	pub datadir: PathBuf,
 	pub asp_url: String,
 	pub network: Network,
+	pub chain_source: ChainSource,
 }
 
 #[derive(Debug)]
@@ -39,8 +45,7 @@ pub struct Bark {
 	config: BarkConfig,
 	counter: AtomicUsize,
 	timeout: Duration,
-	bitcoind: Bitcoind,
-	electrs: Option<Electrs>,
+	bitcoind: Option<Bitcoind>,
 	command_log: Mutex<fs::File>,
 }
 
@@ -52,21 +57,15 @@ impl Bark {
 	}
 
 	/// Creates Bark client with a dedicated bitcoind daemon.
-	pub async fn new(name: impl AsRef<str>, bitcoind: Bitcoind, electrs: Option<Electrs>, cfg: BarkConfig) -> Bark {
-		Self::try_new(name, bitcoind, electrs, cfg).await.unwrap()
+	pub async fn new(name: impl AsRef<str>, bitcoind: Option<Bitcoind>, cfg: BarkConfig) -> Bark {
+		Self::try_new(name, bitcoind, cfg).await.unwrap()
 	}
 
-	/// Returns bitcoind daemon associated with this Bark client.
-	pub fn bitcoind(&self) -> &Bitcoind {
-		&self.bitcoind
-	}
-
-	/// Returns electrs daemon associated with this Bark client.
-	pub fn electrs(&self) -> &Option<Electrs> {
-		&self.electrs
-	}
-
-	pub async fn try_new(name: impl AsRef<str>, bitcoind: Bitcoind, electrs: Option<Electrs>, cfg: BarkConfig) -> anyhow::Result<Bark> {
+	pub async fn try_new(
+		name: impl AsRef<str>,
+		bitcoind: Option<Bitcoind>,
+		cfg: BarkConfig
+	) -> anyhow::Result<Bark> {
 		let mut cmd = Self::cmd();
 		cmd
 			.arg("create")
@@ -78,17 +77,24 @@ impl Bark {
 			.arg(format!("--{}", &cfg.network));
 
 		// Configure barks' chain source
-		match electrs {
-			Some(ref electrs) =>
+		match &cfg.chain_source {
+			ChainSource::Bitcoind => {
+				if let Some(ref bitcoind) = &bitcoind {
+					cmd.args([
+						"--bitcoind", &bitcoind.rpc_url(),
+						"--bitcoind-cookie", &bitcoind.rpc_cookie().display().to_string(),
+					]);
+				}
+				else {
+					panic!("Bark requires a bitcoind instance if you wish to use it as a chain source");
+				}
+			}
+			ChainSource::Esplora { url } => {
 				cmd.args([
-					"--esplora", &electrs.rest_url()
-				]),
-			None =>
-				cmd.args([
-					"--bitcoind", &bitcoind.rpc_url(),
-					"--bitcoind-cookie", &bitcoind.rpc_cookie().display().to_string(),
-				]),
-		};
+					"--esplora", &url
+				]);
+			}
+		}
 
 		let output = cmd.output().await?;
 		if !output.status.success() {
@@ -103,12 +109,11 @@ impl Bark {
 		}
 
 		Ok(Bark {
+			bitcoind,
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
 			timeout: Duration::from_millis(60_000),
 			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
-			bitcoind,
-			electrs,
 			config: cfg,
 		})
 	}
@@ -143,22 +148,6 @@ impl Bark {
 	pub async fn set_asp(&self, asp: &dyn ToAspUrl) {
 		let url = asp.asp_url();
 		self.run(["config", "--dangerous", "--asp", &url]).await;
-	}
-
-	/// Waits until a transaction with the given ID is synced by the chain source in use by the bark
-	/// instance.
-	pub async fn await_transaction_propagation(&self, txid: &Txid) {
-		if let Some(electrs) = &self.electrs {
-			let client = electrs.async_client();
-			while client.get_tx(&txid).await.ok().flatten().is_none() {
-				tokio::time::sleep(Duration::from_millis(200)).await;
-			}
-		} else {
-			let client = self.bitcoind.sync_client();
-			while client.get_raw_transaction(&txid, None).is_err() {
-				tokio::time::sleep(Duration::from_millis(200)).await;
-			}
-		}
 	}
 
 	pub async fn onchain_balance(&self) -> Amount {
