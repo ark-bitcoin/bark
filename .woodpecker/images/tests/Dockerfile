@@ -31,8 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV RUST_BACKTRACE=1 \
 	RUSTUP_TOOLCHAIN_VERSION=1.84 \
-	BITCOIN_VERSION=28.0 \
-	CLN_VERSION=24.08.2 \
+	BITCOIN_VERSION=28.1 \
+	CLN_VERSION=25.02 \
 	MACOS_SDK_VERSION=15.1 \
 	ELECTRS_HASH=a9a39b1616591fb08514fba4df1c1ca11b24a500 \
 	PATH=/root/.cargo/bin:/usr/lib/postgresql/16/bin:${PATH} \
@@ -59,13 +59,13 @@ RUN echo "Installing bitcoin core in /bitcoin/${BITCOIN_VERSION}/bin/" && \
 	wget https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}/bitcoin-${BITCOIN_VERSION}-x86_64-linux-gnu.tar.gz && \
 	tar xvzf bitcoin-${BITCOIN_VERSION}-x86_64-linux-gnu.tar.gz && \
 	mv bitcoin-${BITCOIN_VERSION} ${BITCOIN_VERSION} && \
-	cp /bitcoin/28.0/bin/bitcoin-cli /usr/bin/bitcoin-cli
+	cp /bitcoin/${BITCOIN_VERSION}/bin/bitcoin-cli /usr/bin/bitcoin-cli
 RUN echo "Installing c-lightning in /lightning/${CLN_VERSION}/bin/" && \
 	mkdir /lightning && \
 	cd /lightning && \
-	wget https://github.com/ElementsProject/lightning/releases/download/v${CLN_VERSION}/clightning-v${CLN_VERSION}-Ubuntu-24.04.tar.xz && \
+	wget https://github.com/ElementsProject/lightning/releases/download/v${CLN_VERSION}/clightning-v${CLN_VERSION}-Ubuntu-24.04-amd64.tar.xz && \
 	mkdir ${CLN_VERSION} && \
-	tar -xvf clightning-v${CLN_VERSION}-Ubuntu-24.04.tar.xz -C ./${CLN_VERSION} --strip-components=2
+	tar -xvf clightning-v${CLN_VERSION}-Ubuntu-24.04-amd64.tar.xz -C ./${CLN_VERSION} --strip-components=2
 RUN cd /root/ && \
 	git clone https://github.com/tpoechtrager/osxcross.git && \
 	cd /root/osxcross/tarballs/ && \

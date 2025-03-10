@@ -199,6 +199,9 @@ pub async fn pay_bolt11(
 		bolt11: Some(invoice.to_string()),
 		payment_hash: None,
 		status: None,
+		start: None,
+		index: None,
+		limit: None,
 	}).await.context("internal error occured: Payment status is unknown")?.into_inner();
 
 	if listpays_response.pays.len() == 0 {
@@ -258,6 +261,9 @@ async fn invoice_pay_status(
 		bolt11: Some(bolt11_invoice.to_string()),
 		payment_hash: None,
 		status: None,
+		limit: None,
+		index: None,
+		start: None,
 	}).await.context("Internal error occured: Payment status is unknown")?.into_inner();
 
 	for pay in listpays_response.pays.iter() {

@@ -17,7 +17,7 @@ steps:
       - event: push
         branch: master
     failure: ignore
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     volumes:
       - /data:/host/data
     commands:
@@ -28,7 +28,7 @@ steps:
   - name: check-versions
     when:
       - event: tag
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     commands:
       - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
 

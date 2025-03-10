@@ -17,7 +17,7 @@
 			let
 				rustVersion = "1.75.0";
 				bitcoinVersion = "28.0";
-				lightningVersion = "24.08.2";
+				lightningVersion = "25.02";
 				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 
 				lib = nixpkgs.lib;
@@ -80,8 +80,13 @@
 					version = lightningVersion;
 					src = pkgs.fetchurl {
 						url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-						hash = "sha256-U54HNOreulhvCYeULyBbl/WHQ7F9WQnSCSMGg5WUAdg=";
+						hash = "sha256-00cG/DkRAwR/fMuuKXml2QAiE0yC6TlQUqXELbbDPRE=";
 					};
+					# some makefile bug: https://github.com/ElementsProject/lightning/issues/8141
+					preInstall = ''
+					mkdir -p $out/libexec/c-lightning/plugins/
+					touch $out/libexec/c-lightning/plugins/clnrest
+					'';
 				}));
 				cln-grpc = pkgs.rustPlatform.buildRustPackage rec {
 					pname = "cln-grpc";
@@ -90,7 +95,7 @@
 						owner = "ElementsProject";
 						repo = "lightning";
 						rev = "v${lightningVersion}";
-						hash = "sha256-MWU75e55Zt/P4aaIuMte7iRcrFGMw0P81b8VNHQBe2g=";
+						hash = "sha256-Xkh4ggUSX2xLJQes8cE5jyu2DZut/YRcQq5vsDH7S+k=";
 					};
 					buildAndTestSubdir = "plugins/grpc-plugin";
 					nativeBuildInputs = [ pkgs.protobuf ];
@@ -98,7 +103,7 @@
 					cargoDeps = pkgs.rustPlatform.importCargoLock {
 						lockFile = "${src}/Cargo.lock";
 					};
-					cargoHash = "sha256-6s1NtTx9LnRXaPVHosKRlU7NMeAHKC/EalRtS+bZXkU=";
+					cargoHash = "sha256-UOhoqVs7nxZ98v2lJrAOc/qT8bcSPHekloUObI7wuJc=";
 					# Avoid doing the configure step of the clightning C project
 					postUnpack = ''
 						rm ${src.name}/configure
