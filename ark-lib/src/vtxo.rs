@@ -235,6 +235,10 @@ impl VtxoSpec {
 		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta)
 	}
 
+	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
+		self.exit_taproot().output_key().to_inner()
+	}
+
 	pub fn exit_taptweak(&self) -> taproot::TapTweakHash {
 		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta).tap_tweak()
 	}
@@ -428,21 +432,26 @@ impl Vtxo {
 		}
 	}
 
-	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
-		self.spec().exit_taproot().output_key().to_inner()
-	}
-
+	/// The exit tx of the vtxo.
 	pub fn vtxo_tx(&self) -> Transaction {
-		match self {
+		let ret = match self {
 			Vtxo::Onboard(v) => v.exit_tx(),
 			Vtxo::Round(v) => v.exit_branch.last().unwrap().clone(),
 			Vtxo::Arkoor(v) => {
-				let tx = oor::signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs);
+				let tx = if v.signatures.is_empty() {
+					//TODO(stevenroose) either improve API for or get rid of unsigned vtxos
+					oor::unsigned_oor_tx(&v.inputs, &v.output_specs)
+				} else {
+					assert_eq!(v.signatures.len(), v.inputs.len(), "incorrect number of inputs");
+					oor::signed_oor_tx(&v.inputs, &v.signatures, &v.output_specs)
+				};
 				assert_eq!(tx.compute_txid(), v.point.txid);
 				tx
 			},
 			Vtxo::Bolt11Change(v) => v.htlc_tx.clone(),
-		}
+		};
+		debug_assert_eq!(ret.compute_txid(), self.id().utxo().txid);
+		ret
 	}
 
 	/// Collect all off-chain txs required for the exit of this entire vtxo.
@@ -639,7 +648,7 @@ impl From<Bolt11ChangeVtxo> for Vtxo {
 mod test {
 	use super::*;
 	use bitcoin::hashes::hex::FromHex;
-use oor::unsigned_oor_transaction;
+	use oor::unsigned_oor_tx;
 
 	#[test]
 	fn vtxo_roundtrip() {
@@ -689,7 +698,7 @@ use oor::unsigned_oor_transaction;
 			exit_delta: 7,
 			amount: Amount::from_sat(5),
 		}];
-		let tx = unsigned_oor_transaction(&inputs, &output_specs);
+		let tx = unsigned_oor_tx(&inputs, &output_specs);
 		let oor = Vtxo::Arkoor(ArkoorVtxo {
 			inputs,
 			output_specs,
@@ -713,7 +722,7 @@ use oor::unsigned_oor_transaction;
 			exit_delta: 7,
 			amount: Amount::from_sat(5),
 		}];
-		let tx_recursive = unsigned_oor_transaction(&inputs_recursive, &output_specs_recursive);
+		let tx_recursive = unsigned_oor_tx(&inputs_recursive, &output_specs_recursive);
 		let oor_recursive = Vtxo::Arkoor(ArkoorVtxo {
 			inputs: inputs_recursive,
 			output_specs: output_specs_recursive,

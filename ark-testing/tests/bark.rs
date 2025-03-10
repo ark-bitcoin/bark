@@ -209,8 +209,8 @@ async fn large_round() {
 }
 
 #[tokio::test]
-async fn oor() {
-	let ctx = TestContext::new("bark/oor").await;
+async fn just_oor() {
+	let ctx = TestContext::new("bark/just_oor").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
@@ -522,7 +522,7 @@ async fn reject_oor_with_bad_signature() {
 			let mut fake_sigs = Vec::with_capacity(inputs.len());
 
 			let sighashes = ark::oor::oor_sighashes(
-				&inputs, &ark::oor::unsigned_oor_transaction(&inputs, &output_specs),
+				&inputs, &ark::oor::unsigned_oor_tx(&inputs, &output_specs),
 			);
 			for sighash in sighashes.into_iter() {
 				let sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
@@ -558,7 +558,8 @@ async fn reject_oor_with_bad_signature() {
 	// check that we saw a log
 	tokio::time::sleep(Duration::from_millis(250)).await;
 	assert!(io::BufReader::new(fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
-		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. signature failed verification")
+		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. \
+			schnorr signature verification error: signature failed verification")
 	}));
 }
 

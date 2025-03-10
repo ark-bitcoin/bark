@@ -82,8 +82,8 @@ impl Bolt11Payment {
 	}
 
 	pub fn unsigned_transaction(&self) -> Transaction {
-		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).fold(Amount::ZERO, |a,b| a+b);
-		let payment_amount =self.payment_amount;
+		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
+		let payment_amount = self.payment_amount;
 
 		// This is the fee collected by the ASP for forwarding the payment
 		// We will calculate this later as base_fee + ppm * payment_amount
@@ -277,7 +277,7 @@ impl SignedBolt11Payment {
 	) -> Result<(), InvalidSignature> {
 		for (idx, sighash) in self.payment.htlc_sighashes().into_iter().enumerate() {
 			let sig = self.signatures.get(idx).ok_or(InvalidSignature::Missing { idx })?;
-			let pubkey = self.payment.inputs[idx].taproot_pubkey();
+			let pubkey = self.payment.inputs[idx].spec().taproot_pubkey();
 			let msg = secp256k1::Message::from_digest(*sighash.as_byte_array());
 			if secp.verify_schnorr(sig, &msg, &pubkey).is_err() {
 				return Err(InvalidSignature::Invalid { idx, pubkey });

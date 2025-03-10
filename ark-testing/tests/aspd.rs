@@ -20,6 +20,7 @@ use ark_testing::{Aspd, TestContext, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::aspd;
+use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
 use ark_testing::util::{FutureExt, ReceiverExt};
 
 lazy_static::lazy_static! {
@@ -179,9 +180,9 @@ async fn max_vtxo_amount() {
 	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
 
 	// then try send in a round
-	assert!(bark1
-		.try_refresh_all().await
-		.unwrap_err().to_string().contains("bad user input: output exceeds maximum vtxo amount of 0.00500000 BTC"));
+	assert!(bark1.try_refresh_all().await.unwrap_err().to_string()
+		.contains("bad user input: output exceeds maximum vtxo amount of 0.00500000 BTC"),
+	);
 
 	// but we can offboard the entire amount!
 	let address = ctx.bitcoind.get_new_address();
@@ -268,7 +269,7 @@ async fn sweep_vtxos() {
 	ctx.bitcoind.generate(70).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
-	assert_eq!(sat(100285), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	assert_eq!(sat(100615), log_sweeping.recv().wait(1500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "connector");
@@ -429,7 +430,7 @@ async fn double_spend_oor() {
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let last_req = Arc::new(Mutex::new(None));
 	let proxy = Proxy(aspd.get_public_client().await, last_req.clone());
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+	let proxy = AspdRpcProxyServer::start(proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.onboard(sat(800_000)).await;
@@ -467,7 +468,7 @@ async fn double_spend_round() {
 	}
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.onboard(sat(800_000)).await;
@@ -498,7 +499,7 @@ async fn test_participate_round_wrong_step() {
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.onboard(Amount::from_sat(800_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
@@ -518,7 +519,7 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark2.onboard(Amount::from_sat(800_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
@@ -540,7 +541,7 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
 	let bark3 = ctx.new_bark_with_funds("bark3".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark3.onboard(Amount::from_sat(800_000)).await;
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
@@ -566,7 +567,7 @@ async fn spend_unregistered_onboard() {
 	}
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.onboard(sat(800_000)).await;

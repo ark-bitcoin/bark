@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 
 use ark::Movement;
 use bark::UtxoInfo;
-use bark_json::cli as json;
+pub use bark_json::cli as json;
 
 use crate::context::ToAspUrl;
 use crate::{Bitcoind, Electrs};

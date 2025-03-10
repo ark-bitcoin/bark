@@ -1,6 +1,7 @@
 
 
-use std::iter;
+use std::{fmt, iter};
+use std::borrow::Cow;
 
 use bitcoin::{
 	Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
@@ -8,14 +9,15 @@ use bitcoin::{
 };
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighashType};
-
-use bitcoin_ext::{KeypairExt, P2WSH_DUST};
+use bitcoin_ext::{fee, KeypairExt, P2WSH_DUST};
 
 use crate::util::{self, SECP};
 
 
-/// The size in vbytes of each connector tx.
-const TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
+/// The weight of each connector tx.
+const TX_WEIGHT: Weight = Weight::from_vb_unchecked(197);
+
+/// The witness weight of a connector input.
 pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
 
 
@@ -25,8 +27,15 @@ pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
 /// Each connector has the p2tr dust value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectorChain {
+	/// The total number of connectors in the connector chain.
 	len: usize,
+
+	/// The scriptPubkey used by all connector outputs.
 	spk: ScriptBuf,
+
+	/// The prevout from where the chain starts.
+	///
+	/// This should be an output of the round transaction.
 	utxo: OutPoint,
 }
 
@@ -38,13 +47,26 @@ impl ConnectorChain {
 	}
 
 	/// The budget needed for a chain of length [len] to pay for
-	/// - dust on 2 outputs per tx
-	/// - minrelayfee per tx
+	/// - one dust for the connector output per tx
+	/// - a fee anchor per tx
+	/// - one extra dust on the last tx
 	pub fn required_budget(len: usize) -> Amount {
 		assert_ne!(len, 0);
 
-		// We need n times dust for connectors.
-		P2WSH_DUST * len as u64
+		if len == 1 {
+			// in this case we don't have a connector chain and the
+			// single connector is on the round tx
+			P2WSH_DUST
+		} else {
+			// We need n times dust for connectors.
+			let connector_dust = P2WSH_DUST * len as u64;
+
+			// And one fee anchor dust for each tx in the chain.
+			let nb_txs = len - 1;
+			let fee_anchor_dust = P2WSH_DUST * nb_txs as u64;
+
+			connector_dust + fee_anchor_dust
+		}
 	}
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
@@ -70,7 +92,7 @@ impl ConnectorChain {
 	/// Before calling this method, a utxo should be created with a scriptPubkey
 	/// as specified by [ConnectorChain::output_script] or [ConnectorChain::address].
 	/// The amount in this output is expected to be exaclty equal to
-	/// [ConnectorChain::required_budget].
+	/// [ConnectorChain::required_budget] for the given length.
 	pub fn new(len: usize, utxo: OutPoint, pubkey: PublicKey) -> ConnectorChain {
 		assert_ne!(len, 0);
 		let spk = Self::output_script(pubkey);
@@ -93,18 +115,25 @@ impl ConnectorChain {
 				witness: Witness::new(),
 			}],
 			output: vec![
+				// this is the continuation of the chain
+				// (or a connector output if the last tx)
 				TxOut {
 					script_pubkey: self.spk.to_owned(),
 					value: ConnectorChain::required_budget(self.len - idx - 1),
 				},
+				// this is the connector output
+				// (or the second one if the last tx)
 				TxOut {
 					script_pubkey: self.spk.to_owned(),
 					value: P2WSH_DUST,
 				},
+				// this is the fee anchor output
+				fee::dust_anchor(),
 			],
 		}
 	}
 
+	/// NB we expect the output key here, not the internal key
 	fn sign_tx(&self, tx: &mut Transaction, idx: usize, keypair: &Keypair) {
 		let prevout = TxOut {
 			script_pubkey: self.spk.to_owned(),
@@ -112,47 +141,90 @@ impl ConnectorChain {
 		};
 		let mut shc = SighashCache::new(&*tx);
 		let sighash = shc.taproot_key_spend_signature_hash(
-			0, &sighash::Prevouts::All(&[&prevout]), TapSighashType::Default,
+			0, &sighash::Prevouts::All(&[prevout]), TapSighashType::Default,
 		).expect("sighash error");
-		let sig = util::SECP.sign_schnorr(&sighash.into(), &keypair);
-		tx.input[0].witness = Witness::from_slice(&[sig[..].to_vec()]);
+		let sig = SECP.sign_schnorr(&sighash.into(), &keypair);
+		tx.input[0].witness = Witness::from_slice(&[&sig[..]]);
 	}
 
 	/// Iterator over the signed transactions in this chain.
-	pub fn iter_signed_txs<'a>(&'a self, sign_key: &'a Keypair) -> ConnectorTxIter<'a> {
-		ConnectorTxIter {
-			chain: self,
-			sign_key: Some(sign_key.for_keyspend(&*SECP)),
-			prev: self.utxo,
-			idx: 0,
+	///
+	/// We expect the internal key here, not the output key.
+	pub fn iter_signed_txs(
+		&self,
+		sign_key: &Keypair,
+	) -> Result<ConnectorTxIter, InvalidSigningKeyError> {
+		if self.spk == ConnectorChain::output_script(sign_key.public_key()) {
+			Ok(ConnectorTxIter {
+				chain: Cow::Borrowed(self),
+				sign_key: Some(sign_key.for_keyspend(&*SECP)),
+				prev: self.utxo,
+				idx: 0,
+			})
+		} else {
+			Err(InvalidSigningKeyError)
 		}
 	}
 
 	/// Iterator over the transactions in this chain.
 	pub fn iter_unsigned_txs(&self) -> ConnectorTxIter {
 		ConnectorTxIter {
-			chain: self,
+			chain: Cow::Borrowed(self),
 			sign_key: None,
 			prev: self.utxo,
 			idx: 0,
 		}
 	}
 
-	/// Iterator over the connector outpoints in this chain.
-	pub fn connectors<'a>(&'a self) -> ConnectorIter<'a> {
+	/// Iterator over the connector outpoints and unsigned txs in this chain.
+	pub fn connectors(&self) -> ConnectorIter {
 		ConnectorIter {
 			txs: self.iter_unsigned_txs(),
-			maybe_last: Some(self.utxo),
+			maybe_last: Some((self.utxo, None)),
 		}
+	}
+
+	/// Iterator over the connector outpoints and signed txs in this chain.
+	///
+	/// We expect the internal key here, not the output key.
+	pub fn connectors_signed(
+		&self,
+		sign_key: &Keypair,
+	) -> Result<ConnectorIter, InvalidSigningKeyError> {
+		Ok(ConnectorIter {
+			txs: self.iter_signed_txs(sign_key)?,
+			maybe_last: Some((self.utxo, None)),
+		})
 	}
 }
 
+/// An iterator over transactions in a [ConnectorChain].
+///
+/// See [ConnectorChain::iter_unsigned_txs] and
+/// [ConnectorChain::iter_signed_txs] for more info.
 pub struct ConnectorTxIter<'a> {
-	chain: &'a ConnectorChain,
+	chain: Cow<'a, ConnectorChain>,
 	sign_key: Option<Keypair>,
 
 	prev: OutPoint,
 	idx: usize,
+}
+
+impl<'a> ConnectorTxIter<'a> {
+	/// Upgrade this iterator to a signing iterator.
+	pub fn signing(&mut self, sign_key: Keypair) {
+		self.sign_key = Some(sign_key);
+	}
+
+	/// Convert into owned iterator.
+	pub fn into_owned(self) -> ConnectorTxIter<'static> {
+		ConnectorTxIter {
+			chain: Cow::Owned(self.chain.into_owned()),
+			sign_key: self.sign_key,
+			prev: self.prev,
+			idx: self.idx,
+		}
+	}
 }
 
 impl<'a> iter::Iterator for ConnectorTxIter<'a> {
@@ -174,11 +246,15 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		let s = self.chain.len - 1;
-		(s, Some(s))
+		let len = (self.chain.len - 1).saturating_sub(self.idx);
+		(len, Some(len))
 	}
 }
 
+/// An iterator over the connectors in a [ConnectorChain].
+///
+/// See [ConnectorChain::connectors] and [ConnectorChain::connectors_signed]
+/// for more info.
 pub struct ConnectorIter<'a> {
 	txs: ConnectorTxIter<'a>,
 	// On all intermediate txs, only the second output is a connector and
@@ -187,11 +263,26 @@ pub struct ConnectorIter<'a> {
 	// the first output of the last tx we say, so that we can return it once
 	// the tx iterator does no longer yield new txs (hence we reached the
 	// last tx).
-	maybe_last: Option<OutPoint>,
+	maybe_last: Option<<Self as Iterator>::Item>,
+}
+
+impl<'a> ConnectorIter<'a> {
+	/// Upgrade this iterator to a signing iterator.
+	pub fn signing(&mut self, sign_key: Keypair) {
+		self.txs.signing(sign_key)
+	}
+
+	/// Convert into owned iterator.
+	pub fn into_owned(self) -> ConnectorIter<'static> {
+		ConnectorIter {
+			txs: self.txs.into_owned(),
+			maybe_last: self.maybe_last,
+		}
+	}
 }
 
 impl<'a> iter::Iterator for ConnectorIter<'a> {
-	type Item = OutPoint;
+	type Item = (OutPoint, Option<Transaction>);
 
 	fn next(&mut self) -> Option<Self::Item> {
 		if self.maybe_last.is_none() {
@@ -200,15 +291,16 @@ impl<'a> iter::Iterator for ConnectorIter<'a> {
 
 		if let Some(tx) = self.txs.next() {
 			let txid = tx.compute_txid();
-			self.maybe_last = Some(OutPoint::new(txid, 0));
-			Some(OutPoint::new(txid, 1))
+			self.maybe_last = Some((OutPoint::new(txid, 0), Some(tx.clone())));
+			Some((OutPoint::new(txid, 1), Some(tx)))
 		} else {
 			Some(self.maybe_last.take().expect("broken"))
 		}
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		(self.txs.chain.len, Some(self.txs.chain.len))
+		let len = self.txs.size_hint().0 + 1;
+		(len, Some(len))
 	}
 }
 
@@ -216,63 +308,84 @@ impl<'a> iter::ExactSizeIterator for ConnectorTxIter<'a> {}
 impl<'a> iter::FusedIterator for ConnectorTxIter<'a> {}
 
 
+/// The signing key passed into [ConnectorChain::iter_signed_txs] or
+/// [ConnectorChain::connectors_signed] is incorrect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidSigningKeyError;
+
+impl fmt::Display for InvalidSigningKeyError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "signing key doesn't match connector chain")
+	}
+}
+
+impl std::error::Error for InvalidSigningKeyError {}
+
+
 #[cfg(test)]
 mod test {
 	use super::*;
 	use bitcoin::Txid;
 	use bitcoin::hashes::Hash;
+	use bitcoin_ext::TransactionExt;
 	use rand;
 
 	#[test]
 	fn test_budget() {
 		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
-		let utxo = OutPoint::new(Txid::all_zeros(), 0);
+		let utxo = OutPoint::new(Txid::all_zeros(), 3);
 
 		let chain = ConnectorChain::new(1, utxo, key.public_key());
 		assert_eq!(chain.connectors().count(), 1);
 		assert_eq!(chain.iter_unsigned_txs().count(), 0);
-		assert_eq!(chain.connectors().next().unwrap(), utxo);
+		assert_eq!(chain.connectors().next().unwrap().0, utxo);
 
 		let chain = ConnectorChain::new(2, utxo, key.public_key());
 		assert_eq!(chain.connectors().count(), 2);
 		assert_eq!(chain.iter_unsigned_txs().count(), 1);
-		assert_eq!(chain.iter_signed_txs(&key).count(), 1);
-		let tx = chain.iter_signed_txs(&key).next().unwrap();
+		assert_eq!(chain.iter_signed_txs(&key).unwrap().count(), 1);
+		let tx = chain.iter_signed_txs(&key).unwrap().next().unwrap();
 		assert_eq!(TX_WEIGHT, tx.weight());
+		assert_eq!(tx.output_value(), ConnectorChain::required_budget(2));
+
+		let chain = ConnectorChain::new(3, utxo, key.public_key());
+		assert_eq!(chain.connectors().count(), 3);
+		assert_eq!(chain.iter_unsigned_txs().count(), 2);
+		let mut txs = chain.iter_signed_txs(&key).unwrap();
+		let tx = txs.next().unwrap();
+		assert_eq!(TX_WEIGHT, tx.weight());
+		assert_eq!(tx.output_value(), ConnectorChain::required_budget(3));
+		let tx = txs.next().unwrap();
+		assert_eq!(TX_WEIGHT, tx.weight());
+		assert_eq!(tx.output_value(), ConnectorChain::required_budget(2));
+		assert!(txs.next().is_none());
 
 		let chain = ConnectorChain::new(100, utxo, key.public_key());
 		assert_eq!(chain.connectors().count(), 100);
 		assert_eq!(chain.iter_unsigned_txs().count(), 99);
-		assert_eq!(chain.iter_signed_txs(&key).count(), 99);
-		for tx in chain.iter_signed_txs(&key) {
+		assert_eq!(chain.iter_signed_txs(&key).unwrap().count(), 99);
+		let tx = chain.iter_signed_txs(&key).unwrap().next().unwrap();
+		assert_eq!(TX_WEIGHT, tx.weight());
+		assert_eq!(tx.output_value(), ConnectorChain::required_budget(100));
+		for tx in chain.iter_signed_txs(&key).unwrap() {
 			assert_eq!(tx.weight(), TX_WEIGHT);
 			assert_eq!(tx.input[0].witness.size(), INPUT_WEIGHT.to_wu() as usize);
 		}
-		let weight = chain.iter_signed_txs(&key).map(|t| t.weight()).sum::<Weight>();
+		let weight = chain.iter_signed_txs(&key).unwrap().map(|t| t.weight()).sum::<Weight>();
 		assert_eq!(weight, ConnectorChain::total_weight(100));
 		chain.iter_unsigned_txs().for_each(|t| assert_eq!(t.output[1].value, P2WSH_DUST));
 		assert_eq!(P2WSH_DUST, chain.iter_unsigned_txs().last().unwrap().output[0].value);
-
-		let total_value = chain.iter_unsigned_txs().map(|t| t.output[1].value).sum::<Amount>()
-			+ chain.iter_unsigned_txs().last().unwrap().output[0].value;
-		assert_eq!(ConnectorChain::required_budget(100), total_value);
-
-		// random checks
-		let mut txs = chain.iter_unsigned_txs();
-		assert_eq!(txs.next().unwrap().output[0].value, ConnectorChain::required_budget(99));
-		assert_eq!(txs.next().unwrap().output[0].value, ConnectorChain::required_budget(98));
 	}
 
 	#[test]
 	fn test_signatures() {
 		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
-		let utxo = OutPoint::new(Txid::all_zeros(), 0);
+		let utxo = OutPoint::new(Txid::all_zeros(), 3);
 		let spk = ConnectorChain::output_script(key.public_key());
 
-		let mut n = 10;
-		let chain = ConnectorChain::new(n, utxo, key.public_key());
-		for tx in chain.iter_signed_txs(&key) {
-			let amount = ConnectorChain::required_budget(n).to_sat();
+		let chain = ConnectorChain::new(10, utxo, key.public_key());
+		for (i, tx) in chain.iter_signed_txs(&key).unwrap().enumerate() {
+			let amount = ConnectorChain::required_budget(chain.len - i).to_sat();
 			let inputs = vec![bitcoinconsensus::Utxo {
 				script_pubkey: spk.as_bytes().as_ptr(),
 				script_pubkey_len: spk.len() as u32,
@@ -285,7 +398,6 @@ mod test {
 				Some(&inputs),
 				0,
 			).expect("verification failed");
-			n -= 1;
 		}
 	}
 }
