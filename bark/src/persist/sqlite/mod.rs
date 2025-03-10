@@ -200,7 +200,7 @@ impl BarkPersister for SqliteClient {
 
 	fn get_vtxo_key_index(&self, vtxo: &Vtxo) -> anyhow::Result<u32> {
 		// TODO: implement key derivation for arkoors
-		if vtxo.vtxo_type() == "arkoor" {
+		if let Vtxo::Arkoor(_) = vtxo {
 			Ok(0)
 		} else {
 			let conn = self.connect()?;
