@@ -4,7 +4,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use bitcoin::{Amount, FeeRate, Network, Txid};
-use bitcoin::Network::Regtest;
 use bitcoincore_rpc::RpcApi;
 use tokio::fs;
 use tonic::transport::Uri;
@@ -126,7 +125,7 @@ impl TestContext {
 		let datadir = self.datadir.join(name.as_ref());
 
 		let cfg = ElectrsConfig {
-			network: String::from("regtest"),
+			network: Network::Regtest,
 			bitcoin_dir: bitcoind.datadir(),
 			bitcoin_rpc_port: bitcoind.rpc_port(),
 			bitcoin_zmq_port: bitcoind.zmq_port(),
@@ -175,7 +174,7 @@ impl TestContext {
 		// to force us to evaluate every value in test context.
 		Config {
 			data_dir,
-			network: Regtest,
+			network: Network::Regtest,
 			vtxo_expiry_delta: 144,
 			vtxo_exit_delta: 12,
 			htlc_delta: 6,
@@ -266,7 +265,7 @@ impl TestContext {
 		let cfg = BarkConfig {
 			datadir,
 			asp_url: aspd.asp_url(),
-			network: Regtest.to_string(),
+			network: Network::Regtest,
 		};
 		Bark::try_new(name, bitcoind, electrs, cfg).await
 	}

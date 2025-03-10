@@ -30,7 +30,7 @@ const COMMAND_LOG_FILE: &str = "commands.log";
 pub struct BarkConfig {
 	pub datadir: PathBuf,
 	pub asp_url: String,
-	pub network: String,
+	pub network: Network,
 }
 
 #[derive(Debug)]
