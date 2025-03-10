@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Integration Tests (electrs)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
     <option name="buildProfileId" value="dev" />
-    <option name="command" value="test --package ark-testing -- --skip exit" />
+    <option name="command" value="test --package ark-testing" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
       <env name="ASPD_EXEC" value="../target/debug/aspd" />

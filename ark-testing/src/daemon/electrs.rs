@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use bdk_esplora::esplora_client::{AsyncClient, Builder};
+use bitcoin::Network;
 use tokio::fs;
 use tokio::process::Command;
 
@@ -75,7 +76,7 @@ struct ElectrsHelperState {
 }
 
 pub struct ElectrsConfig {
-	pub network: String,
+	pub network: Network,
 	pub bitcoin_rpc_port: u16,
 	pub bitcoin_zmq_port: u16,
 	pub bitcoin_dir: PathBuf,
@@ -156,7 +157,7 @@ impl DaemonHelper for ElectrsHelper {
 		let mut cmd = Command::new(Electrs::exec());
 		cmd.args([
 			"-vvvv",
-			"--network", &self.config.network,
+			"--network", &self.config.network.to_string(),
 			"--db-dir", &self.config.electrs_dir.to_string_lossy(),
 			"--daemon-rpc-addr", &format!("127.0.0.1:{}", self.config.bitcoin_rpc_port),
 			"--zmq-addr", &format!("127.0.0.1:{}", self.config.bitcoin_zmq_port),

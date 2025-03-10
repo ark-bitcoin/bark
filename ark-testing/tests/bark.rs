@@ -84,8 +84,7 @@ async fn onboard_all_bark() {
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the onboarding tx's output value is the same as our off-chain balance
-	let sync_client = bark1.bitcoind().sync_client();
-	let onboard_tx = sync_client.get_raw_transaction(&onboard_txid, None).unwrap();
+	let onboard_tx = ctx.await_transaction(&onboard_txid).await;
 	assert_eq!(
 		bark1.offchain_balance().await,
 		onboard_tx.output.last().unwrap().value - ark::onboard::onboard_surplus(),
