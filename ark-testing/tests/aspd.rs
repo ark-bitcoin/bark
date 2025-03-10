@@ -394,7 +394,7 @@ async fn full_round() {
 
 	// then we wait for the error to happen
 	let err = rx.recv().wait(30_000).await.unwrap();
-	assert!(err.to_string().contains("unexpected message"));
+	assert!(err.to_string().contains("Message arrived late or round was full"));
 }
 
 #[tokio::test]

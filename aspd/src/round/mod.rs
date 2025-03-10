@@ -1236,6 +1236,9 @@ pub async fn run_round_coordinator(
 										e
 									})
 							},
+							RoundInput::RegisterPayment { .. } => {
+								badarg!("Round already started. Message arrived late or round was full.")
+							},
 							_ => badarg!("unexpected message. current step is vtxo signatures submission"),
 						};
 
@@ -1307,6 +1310,9 @@ pub async fn run_round_coordinator(
 										slog!(ForfeitRegistrationFailed, round_seq, attempt_seq, error: e.to_string());
 										e
 									})
+							},
+							RoundInput::RegisterPayment { .. } => {
+								badarg!("Round already started. Message arrived late or round was full.")
 							},
 							_ => badarg!("unexpected message. current step is forfeit signatures submission"),
 						};
