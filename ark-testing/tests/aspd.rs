@@ -525,7 +525,11 @@ async fn test_participate_round_wrong_step() {
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	let res = bark2.try_refresh_all().await;
-	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is vtxo signatures submission"));
+	let error_string = res.unwrap_err().to_string();
+	assert!(error_string.contains("current step is vtxo signatures submission"),
+			"Error: {}",
+			error_string
+	);
 
 	/// This proxy will send a `submit_payment` req instead of `provide_forfeit_signatures` one
 	#[derive(Clone)]
@@ -547,7 +551,11 @@ async fn test_participate_round_wrong_step() {
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	let res = bark3.try_refresh_all().await;
-	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is forfeit signatures submission"));
+	let err_string = res.unwrap_err().to_string();
+	assert!(err_string.contains("Message arrived late or round was full."),
+			"Error: {}",
+			err_string
+	);
 }
 
 #[tokio::test]
