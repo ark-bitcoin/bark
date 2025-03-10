@@ -318,7 +318,7 @@ impl rpc::server::ArkService for App {
 			&req.get_ref().user_part[..],
 		).badarg("invalid user part")?;
 
-		let asp_part = self.cosign_onboard(user_part).to_status()?;
+		let asp_part = self.cosign_onboard(user_part).await.to_status()?;
 		let response = rpc::OnboardCosignResponse {
 			asp_part: {
 				let mut buf = Vec::new();

@@ -540,7 +540,7 @@ impl App {
 		self.vtxos_in_flux.lock().await.release(ids)
 	}
 
-	pub fn cosign_onboard(
+	pub async fn cosign_onboard(
 		&self,
 		user_part: ark::onboard::UserPart,
 	) -> anyhow::Result<ark::onboard::AspPart> {
@@ -556,9 +556,11 @@ impl App {
 
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
+		let exit_tx = user_part.exit_tx();
 		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
-			exit_txid: user_part.exit_tx().compute_txid(),
+			exit_txid: exit_tx.compute_txid(),
 		);
+		self.txindex.register_incomplete(exit_tx).await;
 		Ok(ret)
 	}
 
