@@ -11,8 +11,8 @@ use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
 use bitcoin_ext::fee;
 
+use crate::lightning::{Bolt11ChangeVtxo, Bolt11HtlcVtxo};
 use crate::board::BoardVtxo;
-use crate::lightning::Bolt11ChangeVtxo;
 use crate::oor::ArkoorVtxo;
 use crate::rounds::RoundVtxo;
 use crate::{musig, oor, util};
@@ -282,6 +282,7 @@ pub enum Vtxo {
 	Round(RoundVtxo),
 	Arkoor(ArkoorVtxo),
 	Bolt11Change(Bolt11ChangeVtxo),
+	Bolt11Htlc(Bolt11HtlcVtxo)
 }
 
 impl Vtxo {
@@ -299,6 +300,7 @@ impl Vtxo {
 			Vtxo::Round(v) => v.point(),
 			Vtxo::Arkoor(v) => v.point,
 			Vtxo::Bolt11Change(v) => v.final_point,
+			Vtxo::Bolt11Htlc(v) => v.final_point,
 		}
 	}
 
@@ -308,18 +310,12 @@ impl Vtxo {
 			Vtxo::Round(v) => &v.spec,
 			Vtxo::Arkoor(v) => &v.output_specs[v.point.vout as usize],
 			Vtxo::Bolt11Change(v) => &v.pseudo_spec,
+			Vtxo::Bolt11Htlc(v) => &v.pseudo_spec,
 		}
 	}
 
 	pub fn amount(&self) -> Amount {
-		match self {
-			Vtxo::Board(v) => v.spec.amount,
-			Vtxo::Round(v) => v.spec.amount,
-			Vtxo::Arkoor(_) => self.spec().amount,
-			Vtxo::Bolt11Change(v) => {
-				v.htlc_tx.output[v.final_point.vout as usize].value
-			},
-		}
+		self.spec().amount
 	}
 
 	/// The exit tx of the vtxo.
@@ -339,6 +335,7 @@ impl Vtxo {
 				tx
 			},
 			Vtxo::Bolt11Change(v) => v.htlc_tx.clone(),
+			Vtxo::Bolt11Htlc(v) => v.htlc_tx.clone(),
 		};
 		debug_assert_eq!(ret.compute_txid(), self.id().utxo().txid);
 		ret
@@ -363,6 +360,13 @@ impl Vtxo {
 				txs.push(self.vtxo_tx());
 			},
 			Vtxo::Bolt11Change(v) => {
+				for input in &v.inputs {
+					input.collect_exit_txs(txs);
+				}
+
+				txs.push(self.vtxo_tx());
+			},
+			Vtxo::Bolt11Htlc(v) => {
 				for input in &v.inputs {
 					input.collect_exit_txs(txs);
 				}
@@ -396,6 +400,7 @@ impl Vtxo {
 			Vtxo::Round { .. } => false,
 			Vtxo::Arkoor { .. } => true,
 			Vtxo::Bolt11Change { .. } => true,
+			Vtxo::Bolt11Htlc { .. } => true,
 		}
 	}
 
@@ -419,6 +424,7 @@ impl Vtxo {
 			Vtxo::Round { .. } => "round",
 			Vtxo::Arkoor { .. } => "arkoor",
 			Vtxo::Bolt11Change { .. } => "bolt11change",
+			Vtxo::Bolt11Htlc { .. } => "bolt11htlc",
 		}
 	}
 
@@ -481,6 +487,20 @@ impl Vtxo {
 			_ => None,
 		}
 	}
+
+	pub fn as_bolt11htlc(&self) -> Option<&Bolt11HtlcVtxo> {
+		match self {
+			Vtxo::Bolt11Htlc(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn into_bolt11htlc(self) -> Option<Bolt11HtlcVtxo> {
+		match self {
+			Vtxo::Bolt11Htlc(v) => Some(v),
+			_ => None,
+		}
+	}
 }
 
 impl PartialEq for Vtxo {
@@ -530,6 +550,12 @@ impl From<ArkoorVtxo> for Vtxo {
 impl From<Bolt11ChangeVtxo> for Vtxo {
 	fn from(v: Bolt11ChangeVtxo) -> Vtxo {
 		Vtxo::Bolt11Change(v)
+	}
+}
+
+impl From<Bolt11HtlcVtxo> for Vtxo {
+	fn from(v: Bolt11HtlcVtxo) -> Vtxo {
+		Vtxo::Bolt11Htlc(v)
 	}
 }
 

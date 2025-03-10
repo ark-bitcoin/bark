@@ -350,3 +350,21 @@ impl Bolt11ChangeVtxo {
 		self.final_point.into()
 	}
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Bolt11HtlcVtxo {
+	pub inputs: Vec<Vtxo>,
+	/// This has the fields for the spec, but were not necessarily
+	/// actually being used for the generation of the vtxos.
+	/// Primarily, the expiry height is the first of all the parents
+	/// expiry heights.
+	pub pseudo_spec: VtxoSpec,
+	pub htlc_tx: Transaction,
+	pub final_point: OutPoint,
+}
+
+impl Bolt11HtlcVtxo {
+	pub fn id(&self) -> VtxoId {
+		self.final_point.into()
+	}
+}

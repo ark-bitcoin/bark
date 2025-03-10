@@ -10,6 +10,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
+use ark::lightning::Bolt11HtlcVtxo;
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
@@ -645,6 +646,7 @@ impl <P>Wallet<P> where
 		match vtxo {
 			Vtxo::Arkoor(ArkoorVtxo { inputs, .. }) => iterate_over_inputs(inputs),
 			Vtxo::Bolt11Change(Bolt11ChangeVtxo { inputs, .. }) => iterate_over_inputs(inputs),
+			Vtxo::Bolt11Htlc(Bolt11HtlcVtxo { inputs, .. }) => iterate_over_inputs(inputs),
 			Vtxo::Board(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 			Vtxo::Round(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 		}
