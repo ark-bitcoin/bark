@@ -121,8 +121,6 @@ steps:
       LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
       ELECTRS_EXEC: /root/.cargo/bin/electrs
       CHAIN_SOURCE: esplora
-      # It's unclear why but using too many threads causes bitcoind and bark instances to fail when launching
-      MAX_THREADS: 4
       TEST_DIRECTORY: ./test/esplora
       TEST_POSTGRES_HOST: localhost
     commands:
@@ -131,7 +129,7 @@ steps:
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
-      - cargo test --package ark-testing -- --test-threads=$${MAX_THREADS}
+      - cargo test --package ark-testing
 
 # Parse version from tag
   - name: parse-versions
