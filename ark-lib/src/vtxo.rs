@@ -195,7 +195,7 @@ pub enum VtxoSpkSpec {
 	Htlc {
 		payment_hash: sha256::Hash,
 		htlc_expiry: u32,
-		htlc_expiry_delta: u16
+		htlc_expiry_delta: u16,
 	}
 }
 

@@ -5,15 +5,18 @@ use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, W
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
+use bitcoin_ext::fee::dust_anchor;
 use lightning_invoice::Bolt11Invoice;
 
 use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
+use crate::oor::OorPayment;
 use crate::vtxo::{exit_spk, VtxoSpkSpec};
-use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
+use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 
 const HTLC_VOUT: u32 = 0;
 const CHANGE_VOUT: u32 = 1;
+
 
 /// The minimum fee we consider for an HTLC transaction.
 pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
@@ -184,6 +187,28 @@ impl Bolt11Payment {
 		})
 	}
 
+	pub fn unsigned_htlc_vtxo(&self) -> Bolt11HtlcVtxo {
+		let tx = self.unsigned_transaction();
+		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
+
+		Bolt11HtlcVtxo {
+			inputs: self.inputs.clone(),
+			pseudo_spec: VtxoSpec {
+				amount: self.htlc_amount(),
+				expiry_height: expiry_height,
+				asp_pubkey: self.asp_pubkey,
+				user_pubkey: self.user_pubkey,
+				spk: VtxoSpkSpec::Htlc {
+					payment_hash: *self.invoice.payment_hash(),
+					htlc_expiry: self.htlc_expiry,
+					htlc_expiry_delta: self.htlc_expiry_delta,
+				}
+			},
+			final_point: OutPoint::new(tx.compute_txid(), HTLC_VOUT),
+			htlc_tx: tx,
+		}
+	}
+
 	pub fn sign_asp(
 		&self,
 		keypair: &Keypair,
@@ -292,6 +317,33 @@ impl SignedBolt11Payment {
 			debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
 			vtxo
 		})
+	}
+
+	pub fn htlc_vtxo(&self) -> Bolt11HtlcVtxo {
+		let mut vtxo = self.payment.unsigned_htlc_vtxo();
+		util::fill_taproot_sigs(&mut vtxo.htlc_tx, &self.signatures);
+		//TODO(stevenroose) there seems to be a bug in the vtxo.htlc_tx.weight method,
+		// this +2 might be fixed later
+		debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
+		vtxo
+	}
+
+	pub fn revocation_payment(&self) -> OorPayment {
+		let htlc_vtxo = Vtxo::from(self.htlc_vtxo());
+
+		// We need to keep budget for the dust anchor
+		let revoke_amount = htlc_vtxo.amount() - dust_anchor().value;
+		let pay_req = PaymentRequest {
+			pubkey: htlc_vtxo.spec().user_pubkey,
+			amount: revoke_amount
+		};
+
+		OorPayment {
+			asp_pubkey: htlc_vtxo.spec().asp_pubkey,
+			exit_delta: self.payment.exit_delta,
+			inputs: vec![htlc_vtxo],
+			outputs: vec![pay_req],
+		}
 	}
 
 	pub fn encode(&self) -> Vec<u8> {

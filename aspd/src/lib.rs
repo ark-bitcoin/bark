@@ -818,7 +818,6 @@ impl App {
 			}
 		});
 
-
 		// Let event-stream
 		let event_stream = BroadcastStream::new(sendpay_rx.resubscribe()).filter_map(move |v| match v {
 			Ok(v) => {
@@ -874,6 +873,21 @@ impl App {
 		});
 
 		Ok(result)
+	}
+
+	async fn revoke_bolt11_payment(&self, signed: &SignedBolt11Payment, user_nonces: &[musig::MusigPubNonce])
+		-> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>
+	{
+		// TODO: verify payment actually failed
+
+		let htlc_vtxo = signed.htlc_vtxo();
+		let revocation_oor = signed.revocation_payment();
+
+		self.db.upsert_vtxos(&vec![htlc_vtxo.into()]).await?;
+
+		let parts = self.cosign_oor(&revocation_oor, user_nonces).await?;
+
+		Ok(parts)
 	}
 
 	// ** SOME ADMIN COMMANDS **
