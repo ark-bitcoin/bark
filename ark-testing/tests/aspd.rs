@@ -340,25 +340,33 @@ async fn full_round() {
 
 	// based on nb_round_nonces
 	const MAX_OUTPUTS: usize = 16;
+	const NB_BARKS: usize = 5;
+	const VTXOS_PER_BARK: usize = 4;
+	assert!(NB_BARKS * VTXOS_PER_BARK > MAX_OUTPUTS);
 
-	let barks = join_all((0..MAX_OUTPUTS+1).map(|i| {
+	// Since we can have 16 inputs, we will create 5 barks with 4 vtxos each.
+
+	let barks = join_all((1..=NB_BARKS).map(|i| {
 		let name = format!("bark{}", i);
-		ctx.new_bark_with_funds(name, &aspd, sat(10_000))
+		ctx.new_bark_with_funds(name, &aspd, sat(40_000))
 	})).await;
 	ctx.bitcoind.generate(1).await;
 
-	futures::future::join_all(barks.iter().map(|bark| {
-		bark.onboard(sat(1_000))
-	})).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	// have each onboard 4 times
+	for _ in 0..VTXOS_PER_BARK {
+		futures::future::join_all(barks.iter().map(|bark| async {
+			bark.onboard(sat(1_000)).await;
+		})).await;
+		ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	}
 
-	let (tx, mut rx) = mpsc::channel(10);
+	let (tx, mut rx) = mpsc::unbounded_channel();
 
 	/// This proxy will keep track of how many times `submit payment` has been called.
 	/// Once it reaches MAX_OUTPUTS, it asserts the next one fails.
 	/// Once that happened succesfully, it fullfils the result channel.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient, Arc<Mutex<usize>>, Arc<mpsc::Sender<tonic::Status>>);
+	struct Proxy(aspd::ArkClient, Arc<Mutex<usize>>, Arc<mpsc::UnboundedSender<tonic::Status>>);
 	#[tonic::async_trait]
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
@@ -366,13 +374,15 @@ async fn full_round() {
 		async fn submit_payment(&mut self, req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
 			let mut lock = self.1.lock().await;
 			let res = self.upstream().submit_payment(req).await;
-			let ret = if *lock == MAX_OUTPUTS {
+			// the last bark should fail being registered
+			let ret = if *lock == NB_BARKS-1 {
 				let err = res.expect_err("must error at max");
 				trace!("proxy: NOK: {}", err);
-				self.2.send(err.clone()).await.unwrap();
+				self.2.send(err.clone()).unwrap();
 				Err(err)
 			} else {
-				Ok(res.unwrap().into_inner())
+				trace!("proxy: OK (nb={})", *lock);
+				res.map(|r| r.into_inner())
 			};
 			*lock += 1;
 			ret
