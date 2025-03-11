@@ -95,7 +95,7 @@ impl From<Utxo> for UtxoInfo {
 					amount: e.vtxo.amount(),
 					confirmation_height: {
 						let exit_delta = e.vtxo.spec().exit_delta();
-						exit_delta.map(|exit_delta| e.spendable_at_height - exit_delta as u32)
+						Some(e.spendable_at_height + exit_delta.unwrap_or_default() as u32)
 					},
 				}
 		}

@@ -99,7 +99,7 @@ impl ExitIndex {
 		match self.exit_tx_status.get(&txid) {
 			Some(TxStatus::ConfirmedIn(height)) => {
 				let exit_delta = vtxo.spec().exit_delta();
-				exit_delta.map(|exit_delta| height + exit_delta as u32)
+				Some(height + exit_delta.unwrap_or_default() as u32)
 			},
 			_ => None
 		}

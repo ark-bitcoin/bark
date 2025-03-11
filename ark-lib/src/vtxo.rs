@@ -6,12 +6,12 @@ use bitcoin::{
 	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::absolute::LockTime;
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
 use bitcoin_ext::fee;
 
-use crate::lightning::{Bolt11ChangeVtxo, Bolt11HtlcVtxo};
+use crate::lightning::{htlc_taproot, Bolt11ChangeVtxo, Bolt11HtlcVtxo};
 use crate::board::BoardVtxo;
 use crate::oor::ArkoorVtxo;
 use crate::rounds::RoundVtxo;
@@ -192,12 +192,18 @@ pub fn create_exit_tx(
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum VtxoSpkSpec {
 	Exit { exit_delta: u16 },
+	Htlc {
+		payment_hash: sha256::Hash,
+		htlc_expiry: u32,
+		htlc_expiry_delta: u16
+	}
 }
 
 impl VtxoSpkSpec {
 	pub fn exit_delta(&self) -> Option<u16> {
 		match self {
 			VtxoSpkSpec::Exit { exit_delta } => Some(*exit_delta),
+			VtxoSpkSpec::Htlc { .. } => None,
 		}
 	}
 }
@@ -206,6 +212,7 @@ impl fmt::Display for VtxoSpkSpec {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match &self {
 			VtxoSpkSpec::Exit { .. } => write!(f, "exit"),
+			VtxoSpkSpec::Htlc { .. } => write!(f, "htlc"),
 		}
 	}
 }
@@ -234,6 +241,7 @@ impl VtxoSpec {
 	pub fn exit_clause(&self) -> Option<ScriptBuf> {
 		match self.spk {
 			VtxoSpkSpec::Exit { exit_delta } => Some(exit_clause(self.user_pubkey, exit_delta)),
+			VtxoSpkSpec::Htlc { .. } => None,
 		}
 	}
 
@@ -241,6 +249,9 @@ impl VtxoSpec {
 		match self.spk {
 			VtxoSpkSpec::Exit { exit_delta } => {
 				exit_taproot(self.user_pubkey, self.asp_pubkey, exit_delta)
+			},
+			VtxoSpkSpec::Htlc { payment_hash, htlc_expiry, htlc_expiry_delta } => {
+				htlc_taproot(payment_hash, self.asp_pubkey, self.user_pubkey, htlc_expiry_delta, htlc_expiry)
 			}
 		}
 	}

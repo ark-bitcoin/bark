@@ -576,7 +576,7 @@ impl App {
 
 		let exit_delta = spec.spk
 			.exit_delta()
-			.context(anyhow!("VTXO spk must be exit variant. Found: {}", spec.spk))?;
+			.with_context(|| format!("VTXO spk must be exit variant. Found: {}", spec.spk))?;
 
 		if exit_delta != self.config.vtxo_exit_delta {
 			bail!("invalid exit delta: {} != {}", exit_delta, self.config.vtxo_exit_delta);
