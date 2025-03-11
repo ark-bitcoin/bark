@@ -2,14 +2,14 @@
 use std::{fmt, io, iter};
 
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
 use lightning_invoice::Bolt11Invoice;
 
 use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
-use crate::vtxo::VtxoSpkSpec;
+use crate::vtxo::{exit_spk, VtxoSpkSpec};
 use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
 
 const HTLC_VOUT: u32 = 0;
@@ -35,6 +35,23 @@ pub struct Bolt11Payment {
 	pub exit_delta: u16,
 }
 
+pub fn htlc_taproot(
+	payment_hash: sha256::Hash,
+	asp_pubkey: PublicKey,
+	user_pubkey: PublicKey,
+	htlc_expiry_delta: u16,
+	htlc_expiry: u32) -> TaprootSpendInfo
+{
+	let asp_branch = util::hash_and_sign(payment_hash, asp_pubkey.x_only_public_key().0);
+	let user_branch = util::delay_timelock_sign(htlc_expiry_delta, htlc_expiry, user_pubkey.x_only_public_key().0);
+
+	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
+	bitcoin::taproot::TaprootBuilder::new()
+		.add_leaf(1, asp_branch).unwrap()
+		.add_leaf(1, user_branch).unwrap()
+		.finalize(&util::SECP, combined_pk).unwrap()
+}
+
 impl Bolt11Payment {
 	pub fn check_amounts(&self) -> bool {
 		let inputs = self.inputs.iter().map(|v| v.amount()).sum::<Amount>();
@@ -42,40 +59,42 @@ impl Bolt11Payment {
 		inputs >= (self.payment_amount + self.forwarding_fee + P2WSH_DUST)
 	}
 
-	pub fn htlc_taproot(&self) -> TaprootSpendInfo {
-		let payment_hash = self.invoice.payment_hash();
+	fn htlc_spk(&self) -> ScriptBuf {
+		let taproot = htlc_taproot(
+			*self.invoice.payment_hash(),
+			self.asp_pubkey,
+			self.user_pubkey,
+			self.htlc_expiry_delta,
+			self.htlc_expiry);
 
-		let asp_branch = util::hash_and_sign(*payment_hash, self.asp_pubkey.x_only_public_key().0);
-		let client_branch = util::delay_timelock_sign(self.htlc_expiry_delta, self.htlc_expiry, self.user_pubkey.x_only_public_key().0);
-
-		let combined_pk = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
-		bitcoin::taproot::TaprootBuilder::new()
-			.add_leaf(1, asp_branch).unwrap()
-			.add_leaf(1, client_branch).unwrap()
-			.finalize(&util::SECP, combined_pk).unwrap()
-	}
-
-	pub fn htlc_spk(&self) -> ScriptBuf {
-		let taproot = self.htlc_taproot();
 		ScriptBuf::new_p2tr_tweaked(taproot.output_key())
 	}
 
 	fn change_txout(&self) -> Option<TxOut> {
 		let amount = self.change_amount();
-		if  amount > Amount::ZERO {
-			let spk = crate::vtxo::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
+		if amount > Amount::ZERO {
 			Some(TxOut {
 				value: amount,
-				script_pubkey: spk,
+				script_pubkey: exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta)
 			})
 		} else {
 			None
 		}
 	}
 
-	fn htlc_output(&self, amount: Amount) -> TxOut {
+	pub fn htlc_amount(&self) -> Amount {
+		// This is the fee collected by the ASP for forwarding the payment
+		// We will calculate this later as base_fee + ppm * payment_amount
+		//
+		// The ASP uses this to pay for it's operation and pay for all routing-fees.
+		let forwarding_fee = self.forwarding_fee;
+
+		self.payment_amount + forwarding_fee
+	}
+
+	fn htlc_txout(&self) -> TxOut {
 		TxOut {
-			value: amount,
+			value: self.htlc_amount(),
 			script_pubkey: self.htlc_spk()
 		}
 	}
@@ -90,17 +109,12 @@ impl Bolt11Payment {
 
 	pub fn unsigned_transaction(&self) -> Transaction {
 		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
-		let payment_amount = self.payment_amount;
 
-		// This is the fee collected by the ASP for forwarding the payment
-		// We will calculate this later as base_fee + ppm * payment_amount
-		//
-		// The ASP uses this to pay for it's operation and pay for all routing-fees.
-		// The ASP can set this number similarly to how an LSP using trampoline payments would do it.
-		let forwarding_fee = self.forwarding_fee;
+		// Let's draft the output transactions
+		let htlc_output = self.htlc_txout();
+		let htlc_amount = htlc_output.value;
 
 		let dust_amount = Amount::from_sat(P2TR_DUST_SAT);
-		let htlc_amount = payment_amount + forwarding_fee;
 
 		// Just checking the computed fees work
 		// Our input's should equal our outputs + onchain fees
@@ -108,11 +122,9 @@ impl Bolt11Payment {
 		let change_amount = change_output.as_ref().map(|o| o.value).unwrap_or_default();
 
 		assert_eq!(input_amount, htlc_amount + dust_amount + change_amount,
-			"htlc = {htlc_amount}, dust={dust_amount}, change={change_amount}",
+			"htlc={htlc_amount}, dust={dust_amount}, change={change_amount}",
 		);
 
-		// Let's draft the output transactions
-		let htlc_output = self.htlc_output(htlc_amount);
 		let dust_anchor_output = fee::dust_anchor();
 
 		Transaction {
@@ -141,15 +153,13 @@ impl Bolt11Payment {
 	}
 
 	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
-		let tx = self.unsigned_transaction();
-
 		let prevouts = self.inputs.iter().map(|v| v.spec().txout()).collect::<Vec<_>>();
-		let prevouts = bitcoin::sighash::Prevouts::All(&prevouts);
 
+		let tx = self.unsigned_transaction();
 		let mut shc = bitcoin::sighash::SighashCache::new(tx);
 		(0..self.inputs.len()).map(|idx| {
 			shc.taproot_key_spend_signature_hash(
-				idx, &prevouts, bitcoin::TapSighashType::Default,
+				idx, &bitcoin::sighash::Prevouts::All(&prevouts), bitcoin::TapSighashType::Default,
 			).expect("sighash error")
 		}).collect()
 	}
