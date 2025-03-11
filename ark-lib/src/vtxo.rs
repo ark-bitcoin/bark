@@ -131,14 +131,16 @@ impl<'de> serde::Deserialize<'de> for VtxoId {
 	}
 }
 
-pub fn exit_clause(
+/// Returns the clause to unilaterally spend a VTXO
+fn exit_clause(
 	user_pubkey: PublicKey,
 	exit_delta: u16,
 ) -> ScriptBuf {
 	util::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
 }
 
-pub fn exit_taproot(
+/// Returns taproot spend infos to build an exit spk
+fn exit_taproot(
 	user_pubkey: PublicKey,
 	asp_pubkey: PublicKey,
 	exit_delta: u16,
@@ -149,6 +151,8 @@ pub fn exit_taproot(
 		.finalize(&util::SECP, combined_pk).unwrap()
 }
 
+/// Returns a scriptPubkey that can be used as a VTXO spk to let user
+/// unilaterally exit the Ark
 pub fn exit_spk(
 	user_pubkey: PublicKey,
 	asp_pubkey: PublicKey,

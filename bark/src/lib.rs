@@ -1089,8 +1089,9 @@ impl <P>Wallet<P> where
 			let vtxo = Vtxo::from(signed_revocation
 				.output_vtxos()
 				.first()
-				.expect("there should be only one output")
-				.clone());
+				.expect("there should be one output")
+				.clone()
+			);
 
 			let receives = iter::once(&vtxo).chain(change_vtxo.as_ref());
 			self.db.register_movement(MovementArgs {
