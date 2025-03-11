@@ -9,7 +9,7 @@ use lightning_invoice::Bolt11Invoice;
 
 use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
-use crate::{musig, util, Bolt11ChangeVtxo, Vtxo, VtxoSpec};
+use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
 
 
 /// The minimum fee we consider for an HTLC transaction.
@@ -318,5 +318,23 @@ pub enum PaymentStatus {
 impl fmt::Display for PaymentStatus {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		fmt::Debug::fmt(self, f)
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Bolt11ChangeVtxo {
+	pub inputs: Vec<Vtxo>,
+	/// This has the fields for the spec, but were not necessarily
+	/// actually being used for the generation of the vtxos.
+	/// Primarily, the expiry height is the first of all the parents
+	/// expiry heights.
+	pub pseudo_spec: VtxoSpec,
+	pub htlc_tx: Transaction,
+	pub final_point: OutPoint,
+}
+
+impl Bolt11ChangeVtxo {
+	pub fn id(&self) -> VtxoId {
+		self.final_point.into()
 	}
 }

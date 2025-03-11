@@ -13,7 +13,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::util::SECP;
-use crate::{musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
+use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 
 
 /// The minimum fee we consider for an oor transaction.
@@ -298,4 +298,18 @@ pub struct InsufficientFunds {
 	pub required: Amount,
 	pub missing: Amount,
 	pub fee: Amount,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArkoorVtxo {
+	pub inputs: Vec<Vtxo>,
+	pub signatures: Vec<schnorr::Signature>,
+	pub output_specs:  Vec<VtxoSpec>,
+	pub point: OutPoint,
+}
+
+impl ArkoorVtxo {
+	pub fn id(&self) -> VtxoId {
+		self.point.into()
+	}
 }

@@ -15,7 +15,11 @@ pub mod tree;
 pub mod util;
 pub mod vtxo;
 
-pub use crate::vtxo::{ArkoorVtxo, Bolt11ChangeVtxo, BoardVtxo, RoundVtxo, VtxoId, VtxoSpec, Vtxo};
+pub use crate::oor::ArkoorVtxo;
+pub use crate::lightning::Bolt11ChangeVtxo;
+pub use crate::board::BoardVtxo;
+pub use crate::rounds::RoundVtxo;
+pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};
 
 #[cfg(test)]
 mod napkin;
