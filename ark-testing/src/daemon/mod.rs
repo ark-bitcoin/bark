@@ -4,7 +4,6 @@ pub mod aspd;
 pub mod lightningd;
 
 use std::fs;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,14 +46,21 @@ where
 	}
 }
 
+#[tonic::async_trait]
 pub trait DaemonHelper {
 	fn name(&self) -> &str;
 	fn datadir(&self) -> PathBuf;
-	fn make_reservations(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
-	fn prepare(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
-	fn get_command(&self) -> impl Future<Output = anyhow::Result<Command>> + Send;
-	fn wait_for_init(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
+	async fn get_command(&self) -> anyhow::Result<Command>;
 
+	async fn make_reservations(&mut self) -> anyhow::Result<()>;
+	async fn prepare(&self) -> anyhow::Result<()>;
+
+	/// A hook to run right after daemon succesfully started.
+	async fn post_start(&mut self) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn wait_for_init(&self) -> anyhow::Result<()>;
 	fn prepare_kill(&mut self, _child: &mut Child) {}
 }
 
@@ -89,26 +95,40 @@ impl<T> Daemon<T>
 		info!("Starting {}", self.name);
 		*self.daemon_state.get_mut() = DaemonState::Starting;
 
-		let retries = 3;
-		for i in 0..retries {
+		let mut tries = 3;
+		let res = loop {
 			match self.try_start().await {
-				Ok(_) => {
-					info!("Started {}", self.name);
-					*self.daemon_state.get_mut() = DaemonState::Running;
-					return Ok(());
-				},
+				Ok(_) => break Ok(()),
 				Err(err) => {
 					warn!("{:?}", err);
-					warn!("Failed attempt to start {}. This was attempt {} of {}",
-						self.name, i, retries,
-					);
+					if tries == 0 {
+						break Err(err);
+					} else {
+						tries -= 1;
+						warn!("Failed attempt to start {}. Retrying {} more times...",
+							self.name, tries,
+						);
+					}
 				}
 			}
-		}
+		};
 
-		error!("Failed to start {}", self.name);
-		*self.daemon_state.get_mut() = DaemonState::Error;
-		anyhow::bail!("Failed to launch daemon");
+		match res {
+			Ok(()) => {
+				if let Err(e) = self.inner.post_start().await {
+					*self.daemon_state.get_mut() = DaemonState::Error;
+					bail!("post_start hook failed for '{}': {}", e, self.name);
+				}
+
+				info!("Started {}", self.name);
+				*self.daemon_state.get_mut() = DaemonState::Running;
+				Ok(())
+			},
+			Err(e) => {
+				*self.daemon_state.get_mut() = DaemonState::Error;
+				bail!("Failed to launch daemon: {}", e);
+			},
+		}
 	}
 
 	pub async fn try_start(&mut self) -> anyhow::Result<()> {
@@ -173,7 +193,6 @@ impl<T> Daemon<T>
 			}
 		}
 	}
-
 
 	pub async fn stop(&self) -> anyhow::Result<()> {
 		trace!("Stopping {}", self.name);

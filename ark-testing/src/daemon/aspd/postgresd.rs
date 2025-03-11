@@ -154,6 +154,7 @@ impl PostgresHelper {
 	}
 }
 
+#[tonic::async_trait]
 impl DaemonHelper for PostgresHelper {
 	fn name(&self) -> &str {
 		&self.name

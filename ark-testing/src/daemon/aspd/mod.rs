@@ -4,6 +4,7 @@ pub mod postgresd;
 
 use std::env;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -11,10 +12,11 @@ use std::str::FromStr;
 use anyhow::Context;
 use bitcoin::Network;
 use bitcoin::address::{Address, NetworkUnchecked};
-use tokio::sync::{self, mpsc};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::{self, mpsc, Mutex};
 use tokio::process::Command;
 
-use aspd_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
+use aspd_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
 use aspd_rpc as rpc;
 pub use aspd::config::{self, Config};
 
@@ -30,10 +32,26 @@ pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 
 pub const ASPD_CONFIG_FILE: &str = "config.toml";
 
+
+pub trait SlogHandler {
+	/// Process a log line. Return true when you're done.
+	fn process_slog(&mut self, log: &ParsedRecord) -> bool;
+}
+
+impl<F> SlogHandler for F
+where
+	F: FnMut(&ParsedRecord) -> bool,
+{
+	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
+		self(log)
+	}
+}
+
 pub struct AspdHelper {
 	name: String,
 	cfg: Config,
-	bitcoind: Bitcoind
+	bitcoind: Bitcoind,
+	slog_handlers: Arc<Mutex<Vec<Box<dyn SlogHandler + Send + Sync + 'static>>>>,
 }
 
 impl Aspd {
@@ -68,6 +86,7 @@ impl Aspd {
 			name: name.as_ref().to_string(),
 			cfg,
 			bitcoind,
+			slog_handlers: Arc::new(Mutex::new(Vec::new())),
 		};
 
 		Daemon::wrap(helper)
@@ -103,16 +122,16 @@ impl Aspd {
 		self.get_admin_client().await.trigger_round(rpc::Empty {}).await.unwrap();
 	}
 
+	pub async fn add_slog_handler<L: SlogHandler + Send + Sync + 'static>(&self, handler: L) {
+		self.inner.slog_handlers.lock().await.push(Box::new(handler));
+	}
+
 	/// Subscribe to all structured logs of the given type.
 	pub async fn subscribe_log<L: LogMsg>(&self) -> mpsc::UnboundedReceiver<L> {
 		let (tx, rx) = sync::mpsc::unbounded_channel();
-		self.add_stdout_handler(move |l: &str| {
-			if l.starts_with("{") {
-				let rec = serde_json::from_str::<ParsedRecord>(l)
-					.expect("invalid slog struct");
-				if rec.is::<L>() {
-					return tx.send(rec.try_as().expect("invalid slog data")).is_err();
-				}
+		self.add_slog_handler(move |log: &ParsedRecord| {
+			if log.is::<L>() {
+				return tx.send(log.try_as().expect("invalid slog data")).is_err();
 			}
 			false
 		}).await;
@@ -122,16 +141,12 @@ impl Aspd {
 	/// Wait for the first occurrence of the given log message type and return it.
 	pub async fn wait_for_log<L: LogMsg>(&self) -> L {
 		let (tx, mut rx) = sync::mpsc::channel(1);
-		self.add_stdout_handler(move |l: &str| {
-			if l.starts_with("{") {
-				let rec = serde_json::from_str::<ParsedRecord>(l)
-					.expect("invalid slog struct");
-				if rec.is::<L>() {
-					let msg = rec.try_as().expect("invalid slog data");
-					// if channel already closed, user is no longer interested
-					let _ = tx.try_send(msg);
-					return true;
-				}
+		self.add_slog_handler(move |log: &ParsedRecord| {
+			if log.is::<L>() {
+				let msg = log.try_as().expect("invalid slog data");
+				// if channel already closed, user is no longer interested
+				let _ = tx.try_send(msg);
+				return true;
 			}
 			false
 		}).await;
@@ -139,6 +154,7 @@ impl Aspd {
 	}
 }
 
+#[tonic::async_trait]
 impl DaemonHelper for AspdHelper {
 	fn name(&self) -> &str {
 		&self.name
@@ -146,6 +162,21 @@ impl DaemonHelper for AspdHelper {
 
 	fn datadir(&self) -> PathBuf {
 		self.cfg.data_dir.clone()
+	}
+
+	async fn get_command(&self) -> anyhow::Result<Command> {
+		let config_file = self.datadir().join(ASPD_CONFIG_FILE);
+
+		let mut cmd = Aspd::base_cmd();
+		let args = vec![
+			"start",
+			"--config",
+			config_file.to_str().unwrap(),
+		];
+		trace!("base_cmd={:?}; args={:?}", cmd, args);
+		cmd.args(args);
+
+		Ok(cmd)
 	}
 
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
@@ -189,19 +220,35 @@ impl DaemonHelper for AspdHelper {
 		Ok(())
 	}
 
-	async fn get_command(&self) -> anyhow::Result<Command> {
-		let config_file = self.datadir().join(ASPD_CONFIG_FILE);
+	async fn post_start(&mut self) -> anyhow::Result<()> {
+		// setup slog handling
+		let log_dir = match self.cfg.log_dir {
+			Some(ref d) => d,
+			None => return Ok(()),
+		};
+		let file = tokio::fs::File::open(log_dir.join(SLOG_FILENAME)).await
+			.expect("failed to open log file");
 
-		let mut cmd = Aspd::base_cmd();
-		let args = vec![
-			"start",
-			"--config",
-			config_file.to_str().unwrap(),
-		];
-		trace!("base_cmd={:?}; args={:?}", cmd, args);
-		cmd.args(args);
-
-		Ok(cmd)
+		let buf_reader = BufReader::new(file);
+		let mut lines = buf_reader.lines();
+		let handlers = self.slog_handlers.clone();
+		let _ = tokio::spawn(async move {
+			loop {
+				match lines.next_line().await.expect("I/O error on log file handle") {
+					Some(line) => {
+						let log = serde_json::from_str::<ParsedRecord>(&line)
+							.expect("error parsing slog line");
+						for handler in handlers.lock().await.iter_mut() {
+							handler.process_slog(&log);
+						}
+					},
+					None => {
+						tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+					},
+				}
+			}
+		});
+		Ok(())
 	}
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {

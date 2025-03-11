@@ -174,8 +174,8 @@ impl TestContext {
 		// NB we don't auto-complete `..Default::default()` here
 		// to force us to evaluate every value in test context.
 		Config {
-			data_dir,
-			log_dir: None,
+			data_dir: data_dir.clone(),
+			log_dir: Some(data_dir),
 			network: Network::Regtest,
 			vtxo_expiry_delta: 144,
 			vtxo_exit_delta: 12,
