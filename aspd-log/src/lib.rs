@@ -22,6 +22,8 @@ pub const LOGID_FIELD: &str = "slog_id";
 pub const TRACEID_FIELD: &str = "slog_trace_id";
 pub const DATA_FIELD: &str = "slog_data";
 
+pub const SLOG_FILENAME: &str = "structured.log";
+
 /// Retrieves the current trace ID from OpenTelemetry
 fn get_trace_id() -> Option<TraceId> {
 	let context = tracing::Span::current().context();

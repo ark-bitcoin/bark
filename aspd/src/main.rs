@@ -1,18 +1,18 @@
 
 #[macro_use] extern crate log;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 
 use anyhow::Context;
-use aspd_log::RecordSerializeWrapper;
+use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use aspd_rpc as rpc;
 use bitcoin::{Address, Amount};
 use clap::Parser;
 use tonic::transport::Uri;
 
-use aspd::App;
+use aspd::{App, Config};
 
 /// Defaults to our default port on localhost.
 const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
@@ -94,9 +94,9 @@ async fn main() {
 	}
 }
 
-fn init_logging() {
+fn init_logging(slog_dir: Option<&Path>) {
 	//TODO(stevenroose) add filename and line number when verbose logging
-	fern::Dispatch::new()
+	let mut dispatch = fern::Dispatch::new()
 		.level(log::LevelFilter::Trace)
 		.level_for("rustls", log::LevelFilter::Warn)
 		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
@@ -120,9 +120,12 @@ fn init_logging() {
 				))
 			})
 			.chain(std::io::stdout())
-		)
+		);
+
+	if let Some(dir) = slog_dir {
 		// structured logging dispatch
-		.chain(fern::Dispatch::new()
+		let slog_file = fern::log_file(dir.join(SLOG_FILENAME)).expect("failed to open log file");
+		dispatch = dispatch.chain(fern::Dispatch::new()
 			.filter(|m| m.target() == aspd_log::SLOG_TARGET)
 			.format(|out, _msg, rec| {
 				#[derive(serde::Serialize)]
@@ -137,28 +140,33 @@ fn init_logging() {
 				};
 				out.finish(format_args!("{}", serde_json::to_string(&rec).unwrap()));
 			})
-			.chain(std::io::stdout()) //TODO(stevenroose) pipe to file?
-		)
-		.apply().expect("error setting up logging");
+			.chain(slog_file)
+		);
+	}
+
+	dispatch.apply().expect("error setting up logging");
 }
 
 async fn inner_main() -> anyhow::Result<()> {
 	let cli = Cli::parse();
-	let config_path = cli.config.as_ref().map(|p| p.as_path());
 
 	if let Command::Rpc { cmd, addr } = cli.command {
 		return run_rpc(&addr, cmd).await;
 	}
 
-	init_logging();
+	let cfg = Config::load(cli.config.as_ref().map(|p| p.as_path()))?;
+	cfg.validate().expect("invalid configuration");
+
+	init_logging(cfg.log_dir.as_ref().map(|p| p.as_path()));
+	info!("Running with config: {:#?}", cfg);
 
 	match cli.command {
 		Command::Rpc { .. } => unreachable!(),
 		Command::Create => {
-			App::create(config_path).await?;
+			App::create(cfg).await?;
 		}
 		Command::Start => {
-			let mut app = App::open(config_path).await.context("server init")?;
+			let mut app = App::open(cfg).await.context("server init")?;
 
 			if let Err(e) = app.start().await {
 				error!("Shutdown error from aspd {:?}", e);
@@ -167,12 +175,12 @@ async fn inner_main() -> anyhow::Result<()> {
 			};
 		}
 		Command::Drain { address } => {
-			let app = App::open(config_path).await.context("server init")?;
+			let app = App::open(cfg).await.context("server init")?;
 
 			println!("{}", app.drain(address).await?.compute_txid());
 		}
 		Command::GetMnemonic => {
-			let app = App::open(config_path).await.context("server init")?;
+			let app = App::open(cfg).await.context("server init")?;
 			println!("{}", app.get_master_mnemonic().await?);
 		}
 	}
