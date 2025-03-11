@@ -64,10 +64,7 @@ fn exit_tx_sighash(
 	prev_utxo: &TxOut,
 ) -> (TapSighash, Transaction) {
 	let exit_tx = vtxo::create_exit_tx(
-		spec.user_pubkey,
-		spec.asp_pubkey,
-		spec.exit_delta,
-		spec.amount,
+		&spec,
 		utxo,
 		None);
 	let sighash = SighashCache::new(&exit_tx).taproot_key_spend_signature_hash(
@@ -86,14 +83,7 @@ pub struct UserPart {
 
 impl UserPart {
 	pub fn exit_tx(&self) -> Transaction {
-		vtxo::create_exit_tx(
-			self.spec.user_pubkey,
-			self.spec.asp_pubkey,
-			self.spec.exit_delta,
-			self.spec.amount,
-			self.utxo,
-			None,
-		)
+		vtxo::create_exit_tx(&self.spec, self.utxo, None)
 	}
 }
 
@@ -228,10 +218,7 @@ pub struct BoardVtxo {
 impl BoardVtxo {
 	pub fn exit_tx(&self) -> Transaction {
 		let ret = vtxo::create_exit_tx(
-			self.spec.user_pubkey,
-			self.spec.asp_pubkey,
-			self.spec.exit_delta,
-			self.spec.amount,
+			&self.spec,
 			self.onchain_output,
 			Some(&self.exit_tx_signature),
 		);

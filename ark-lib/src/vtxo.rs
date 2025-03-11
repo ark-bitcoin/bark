@@ -163,10 +163,7 @@ pub fn exit_spk(
 /// When the `signature` argument is provided,
 /// it will be placed in the input witness.
 pub fn create_exit_tx(
-	user_pubkey: PublicKey,
-	asp_pubkey: PublicKey,
-	exit_delta: u16,
-	amount: Amount,
+	spec: &VtxoSpec,
 	prevout: OutPoint,
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
@@ -186,10 +183,7 @@ pub fn create_exit_tx(
 			},
 		}],
 		output: vec![
-			TxOut {
-				script_pubkey: exit_spk(user_pubkey, asp_pubkey, exit_delta),
-				value: amount,
-			},
+			spec.txout(),
 			fee::dust_anchor(),
 		],
 	}
