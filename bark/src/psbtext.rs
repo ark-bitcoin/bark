@@ -56,7 +56,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		};
 
 		// Now we need to sign for this.
-		let exit_script = claim.spec().exit_clause();
+		let exit_script = claim.spec().exit_clause().expect("a VTXO without exit clause should not be exited");
 		let leaf_hash = taproot::TapLeafHash::from_script(
 			&exit_script,
 			taproot::LeafVersion::TapScript,

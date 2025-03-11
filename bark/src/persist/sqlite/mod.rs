@@ -236,7 +236,7 @@ mod test {
 	use bitcoin::bip32;
 	use rand::{distr, Rng};
 
-	use ark::{BoardVtxo, VtxoSpec};
+	use ark::{vtxo::VtxoSpkSpec, BoardVtxo, VtxoSpec};
 
 	use super::*;
 
@@ -283,7 +283,7 @@ mod test {
 				user_pubkey: pk,
 				asp_pubkey: pk,
 				expiry_height: 1001,
-				exit_delta: 40,
+				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
 				amount: Amount::from_sat(500)
 			},
 		});
@@ -295,7 +295,7 @@ mod test {
 				user_pubkey: pk,
 				asp_pubkey: pk,
 				expiry_height: 1002,
-				exit_delta: 40,
+				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
 				amount: Amount::from_sat(500)
 			},
 		});
@@ -307,7 +307,7 @@ mod test {
 				user_pubkey: pk,
 				asp_pubkey: pk,
 				expiry_height: 1003,
-				exit_delta: 40,
+				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
 				amount: Amount::from_sat(500)
 			},
 		});

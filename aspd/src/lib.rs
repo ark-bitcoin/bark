@@ -574,8 +574,12 @@ impl App {
 			bail!("vtxo already expired: {} (tip = {})", spec.expiry_height, tip);
 		}
 
-		if spec.exit_delta != self.config.vtxo_exit_delta {
-			bail!("invalid exit delta: {} != {}", spec.exit_delta, self.config.vtxo_exit_delta);
+		let exit_delta = spec.spk
+			.exit_delta()
+			.context(anyhow!("VTXO spk must be exit variant. Found: {}", spec.spk))?;
+
+		if exit_delta != self.config.vtxo_exit_delta {
+			bail!("invalid exit delta: {} != {}", exit_delta, self.config.vtxo_exit_delta);
 		}
 
 		Ok(())
@@ -818,8 +822,6 @@ impl App {
 		// Let event-stream
 		let event_stream = BroadcastStream::new(sendpay_rx.resubscribe()).filter_map(move |v| match v {
 			Ok(v) => {
-				// TODO: revoke payment in case of lightning failure
-
 				Some(rpc::Bolt11PaymentUpdate {
 					status: rpc::PaymentStatus::from(v.status.clone()).into(),
 					progress_message: format!(

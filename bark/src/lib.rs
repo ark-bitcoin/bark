@@ -10,6 +10,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
+use ark::vtxo::VtxoSpkSpec;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
 use movement::{Movement, MovementArgs};
@@ -91,7 +92,10 @@ impl From<Utxo> for UtxoInfo {
 				UtxoInfo {
 					outpoint: e.vtxo.point(),
 					amount: e.vtxo.amount(),
-					confirmation_height: Some(e.spendable_at_height - e.vtxo.spec().exit_delta as u32)
+					confirmation_height: {
+						let exit_delta = e.vtxo.spec().exit_delta();
+						exit_delta.map(|exit_delta| e.spendable_at_height - exit_delta as u32)
+					},
 				}
 		}
 	}
@@ -497,7 +501,7 @@ impl <P>Wallet<P> where
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
 			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
-			exit_delta: asp.info.vtxo_exit_delta,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
 			amount: amount,
 		};
 
@@ -520,7 +524,7 @@ impl <P>Wallet<P> where
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
 			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
-			exit_delta: asp.info.vtxo_exit_delta,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
 			// amount is temporarily set to total balance but will
 			// have fees deducted after psbt construction
 			amount: self.onchain.balance()
@@ -608,7 +612,7 @@ impl <P>Wallet<P> where
 				user_pubkey: dest.pubkey,
 				asp_pubkey: vtxos.spec.spec.asp_pk,
 				expiry_height: vtxos.spec.spec.expiry_height,
-				exit_delta: vtxos.spec.spec.exit_delta,
+				spk: VtxoSpkSpec::Exit { exit_delta: vtxos.spec.spec.exit_delta },
 				amount: dest.amount,
 			},
 			leaf_idx: leaf_idx,

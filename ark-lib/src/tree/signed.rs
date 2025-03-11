@@ -13,6 +13,7 @@ use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce
 
 use bitcoin_ext::{fee, P2WSH_DUST, TransactionExt};
 
+use crate::vtxo::VtxoSpkSpec;
 use crate::{musig, util, BlockHeight, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
 
@@ -147,7 +148,7 @@ impl VtxoTreeSpec {
 			user_pubkey: vtxo.pubkey,
 			asp_pubkey: self.asp_pk,
 			expiry_height: self.expiry_height,
-			exit_delta: self.exit_delta,
+			spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
 			amount: vtxo.amount
 		};
 
@@ -706,8 +707,8 @@ impl CachedSignedVtxoTree {
 					user_pubkey: req.pubkey,
 					asp_pubkey: self.spec.spec.asp_pk,
 					expiry_height: self.spec.spec.expiry_height,
-					exit_delta: self.spec.spec.exit_delta,
 					amount: req.amount,
+					spk: VtxoSpkSpec::Exit { exit_delta: self.spec.spec.exit_delta },
 				},
 				leaf_idx: idx,
 				exit_branch: self.exit_branch(idx).unwrap().into_iter().cloned().collect(),

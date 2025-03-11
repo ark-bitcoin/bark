@@ -97,7 +97,10 @@ impl ExitIndex {
 	pub (crate) fn spendable_at_height(&self, vtxo: &Vtxo) -> Option<u32> {
 		let txid = vtxo.point().txid;
 		match self.exit_tx_status.get(&txid) {
-			Some(TxStatus::ConfirmedIn(height)) => Some(height + vtxo.spec().exit_delta as u32),
+			Some(TxStatus::ConfirmedIn(height)) => {
+				let exit_delta = vtxo.spec().exit_delta();
+				exit_delta.map(|exit_delta| height + exit_delta as u32)
+			},
 			_ => None
 		}
 	}

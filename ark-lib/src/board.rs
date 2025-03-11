@@ -269,6 +269,8 @@ impl BoardVtxo {
 
 #[cfg(test)]
 mod test {
+	use crate::vtxo::VtxoSpkSpec;
+
 	use super::*;
 
 	#[test]
@@ -282,7 +284,7 @@ mod test {
 			user_pubkey: key.public_key(),
 			asp_pubkey: key.public_key(),
 			expiry_height: 100_000,
-			exit_delta: 2016,
+			spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
 			amount: Amount::from_btc(1.5).unwrap(),
 		};
 		let (user, upriv) = new_user(spec, utxo);

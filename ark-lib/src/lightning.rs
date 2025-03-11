@@ -9,6 +9,7 @@ use lightning_invoice::Bolt11Invoice;
 
 use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
+use crate::vtxo::VtxoSpkSpec;
 use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
 
 const HTLC_VOUT: u32 = 0;
@@ -162,10 +163,10 @@ impl Bolt11Payment {
 				inputs: self.inputs.clone(),
 				pseudo_spec: VtxoSpec {
 					amount: txout.value,
-					exit_delta: self.exit_delta,
 					expiry_height: expiry_height,
 					asp_pubkey: self.asp_pubkey,
 					user_pubkey: self.user_pubkey,
+					spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
 				},
 				final_point: OutPoint::new(tx.compute_txid(), CHANGE_VOUT),
 				htlc_tx: tx,

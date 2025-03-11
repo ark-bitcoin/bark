@@ -190,11 +190,32 @@ pub fn create_exit_tx(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub enum VtxoSpkSpec {
+	Exit { exit_delta: u16 },
+}
+
+impl VtxoSpkSpec {
+	pub fn exit_delta(&self) -> Option<u16> {
+		match self {
+			VtxoSpkSpec::Exit { exit_delta } => Some(*exit_delta),
+		}
+	}
+}
+
+impl fmt::Display for VtxoSpkSpec {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match &self {
+			VtxoSpkSpec::Exit { .. } => write!(f, "exit"),
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VtxoSpec {
 	pub user_pubkey: PublicKey,
 	pub asp_pubkey: PublicKey,
 	pub expiry_height: u32,
-	pub exit_delta: u16,
+	pub spk: VtxoSpkSpec,
 	/// The amount of the vtxo itself, this is either the exit tx our the
 	/// vtxo tree output. It does not include budget for fees, so f.e. to
 	/// calculate the board amount needed for this vtxo, fee budget should
@@ -209,12 +230,19 @@ impl VtxoSpec {
 		musig::combine_keys([self.user_pubkey, self.asp_pubkey])
 	}
 
-	pub fn exit_clause(&self) -> ScriptBuf {
-		exit_clause(self.user_pubkey, self.exit_delta)
+	/// Returns the clause to unilaterally spend a VTXO, if any
+	pub fn exit_clause(&self) -> Option<ScriptBuf> {
+		match self.spk {
+			VtxoSpkSpec::Exit { exit_delta } => Some(exit_clause(self.user_pubkey, exit_delta)),
+		}
 	}
 
 	pub fn vtxo_taproot(&self) -> taproot::TaprootSpendInfo {
-		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta)
+		match self.spk {
+			VtxoSpkSpec::Exit { exit_delta } => {
+				exit_taproot(self.user_pubkey, self.asp_pubkey, exit_delta)
+			}
+		}
 	}
 
 	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
@@ -237,6 +265,10 @@ impl VtxoSpec {
 			script_pubkey: self.vtxo_spk(),
 			value: self.amount,
 		}
+	}
+
+	pub fn exit_delta(&self) -> Option<u16> {
+		self.spk.exit_delta()
 	}
 }
 
@@ -526,7 +558,7 @@ use super::*;
 				user_pubkey: pk,
 				asp_pubkey: pk,
 				expiry_height: 15,
-				exit_delta: 7,
+				spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 				amount: Amount::from_sat(5),
 			},
 			onchain_output: point,
@@ -539,7 +571,7 @@ use super::*;
 				user_pubkey: pk,
 				asp_pubkey: pk,
 				expiry_height: 15,
-				exit_delta: 7,
+				spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 				amount: Amount::from_sat(5),
 			},
 			leaf_idx: 3,
@@ -555,7 +587,7 @@ use super::*;
 			user_pubkey: pk,
 			asp_pubkey: pk,
 			expiry_height: 15,
-			exit_delta: 7,
+			spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 			amount: Amount::from_sat(5),
 		}];
 		let tx = unsigned_oor_tx(&inputs, &output_specs);
@@ -579,7 +611,7 @@ use super::*;
 			user_pubkey: pk,
 			asp_pubkey: pk,
 			expiry_height: 15,
-			exit_delta: 7,
+			spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 			amount: Amount::from_sat(5),
 		}];
 		let tx_recursive = unsigned_oor_tx(&inputs_recursive, &output_specs_recursive);
