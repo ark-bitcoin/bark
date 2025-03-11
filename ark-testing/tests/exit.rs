@@ -486,4 +486,50 @@ async fn exit_bolt11_change() {
 	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount));
 }
 
+#[tokio::test]
+async fn exit_revoked_lightning_payment() {
+	let ctx = TestContext::new("exit/exit_revoked_lightning_payment").await;
 
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	// No channels are created so that payment will fail
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(3);
+	let board_amount = btc(2);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+
+	// Board funds into the Ark
+	bark_1.board(board_amount).await;
+	ctx.bitcoind.generate(6).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(1);
+	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	// Try send coins through lightning
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+
+	let vtxos = bark_1.vtxos().await;
+	let [vtxo_a, vtxo_b] = vtxos.try_into().expect("should have 2 vtxos");
+
+	aspd_1.stop().await.unwrap();
+	bark_1.start_exit_all().await;
+	complete_exit(&ctx, &bark_1).await;
+
+	assert_eq!(bark_1.offchain_balance().await, Amount::ZERO);
+
+	assert!(bark_1.onchain_balance().await >= vtxo_a.amount + vtxo_b.amount + Amount::ONE_SAT);
+
+	// check both change and revocation VTXOs were exited
+	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo_a.utxo && u.amount == vtxo_a.amount));
+	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo_b.utxo && u.amount == vtxo_b.amount));
+}

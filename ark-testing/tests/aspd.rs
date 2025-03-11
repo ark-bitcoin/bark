@@ -643,7 +643,6 @@ async fn bad_round_input() {
 	bark.board(btc(0.5)).await;
 	let [vtxo] = bark.vtxos().await.try_into().unwrap();
 
-
 	let ark_info = aspd.ark_info().await;
 	let mut rpc = aspd.get_public_client().await;
 	let mut stream = rpc.subscribe_rounds(rpc::Empty {}).await.unwrap().into_inner();
