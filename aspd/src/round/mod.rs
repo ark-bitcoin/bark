@@ -849,7 +849,7 @@ impl SigningForfeits {
 						&app.asp_key,
 						sec,
 						sighash.to_byte_array(),
-						Some(vtxo.spec().exit_taptweak().to_byte_array()),
+						Some(vtxo.spec().vtxo_taptweak().to_byte_array()),
 						Some(&[&partial_sigs[i]]),
 					);
 					sigs.push(sig.expect("should be signed"));
@@ -1423,7 +1423,7 @@ mod tests {
 			}],
 			output: vec![
 				TxOut {
-					script_pubkey: spec.exit_spk(),
+					script_pubkey: spec.vtxo_spk(),
 					value: spec.amount,
 				},
 				fee::dust_anchor(),

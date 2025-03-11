@@ -219,20 +219,30 @@ impl VtxoSpec {
 		exit_clause(self.user_pubkey, self.exit_delta)
 	}
 
-	pub fn exit_taproot(&self) -> taproot::TaprootSpendInfo {
+	pub fn vtxo_taproot(&self) -> taproot::TaprootSpendInfo {
 		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta)
 	}
 
 	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
-		self.exit_taproot().output_key().to_inner()
+		self.vtxo_taproot().output_key().to_inner()
 	}
 
-	pub fn exit_taptweak(&self) -> taproot::TapTweakHash {
-		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta).tap_tweak()
+	pub fn vtxo_taptweak(&self) -> taproot::TapTweakHash {
+		self.vtxo_taproot().tap_tweak()
 	}
 
-	pub fn exit_spk(&self) -> ScriptBuf {
-		exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta)
+	/// Return the spk to spend the VTXO
+	///
+	/// In most cases, VTXO spk includes a unilateral exit clause
+	pub fn vtxo_spk(&self) -> ScriptBuf {
+		ScriptBuf::new_p2tr_tweaked(self.vtxo_taproot().output_key())
+	}
+
+	pub fn txout(&self) -> TxOut {
+		TxOut {
+			script_pubkey: self.vtxo_spk(),
+			value: self.amount,
+		}
 	}
 }
 
@@ -283,13 +293,6 @@ impl Vtxo {
 			Vtxo::Bolt11Change(v) => {
 				v.htlc_tx.output[v.final_point.vout as usize].value
 			},
-		}
-	}
-
-	pub fn txout(&self) -> TxOut {
-		TxOut {
-			script_pubkey: self.spec().exit_spk(),
-			value: self.amount(),
 		}
 	}
 

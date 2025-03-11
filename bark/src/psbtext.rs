@@ -68,7 +68,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		assert_eq!(vtxo_key.public_key(), claim.spec().user_pubkey);
 		let sig = secp.sign_schnorr(&sighash.into(), &vtxo_key);
 
-		let cb = claim.spec().exit_taproot()
+		let cb = claim.spec().vtxo_taproot()
 			.control_block(&(exit_script.clone(), taproot::LeafVersion::TapScript))
 			.expect("script is in taproot");
 

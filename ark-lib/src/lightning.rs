@@ -135,7 +135,7 @@ impl Bolt11Payment {
 	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
 		let tx = self.unsigned_transaction();
 
-		let prevouts = self.inputs.iter().map(|v| v.txout()).collect::<Vec<_>>();
+		let prevouts = self.inputs.iter().map(|v| v.spec().txout()).collect::<Vec<_>>();
 		let prevouts = bitcoin::sighash::Prevouts::All(&prevouts);
 
 		let mut shc = bitcoin::sighash::SighashCache::new(tx);
@@ -178,7 +178,7 @@ impl Bolt11Payment {
 				[input.spec().user_pubkey],
 				&[&user_nonces[idx]],
 				sighashes[idx].to_byte_array(),
-				Some(input.spec().exit_taptweak().to_byte_array()),
+				Some(input.spec().vtxo_taptweak().to_byte_array()),
 			);
 			pub_nonces.push(pub_nonce);
 			part_sigs.push(part_sig);
@@ -212,14 +212,14 @@ impl Bolt11Payment {
 				keypair,
 				sec_nonce,
 				sighashes[idx].to_byte_array(),
-				Some(input.spec().exit_taptweak().to_byte_array()),
+				Some(input.spec().vtxo_taptweak().to_byte_array()),
 				Some(&[&asp_part_sigs[idx]]),
 			);
 			let final_sig = final_sig.expect("we provided the other sig");
 			debug_assert!(util::SECP.verify_schnorr(
 				&final_sig,
 				&sighashes[idx].into(),
-				&input.spec().exit_taproot().output_key().to_inner(),
+				&input.spec().taproot_pubkey(),
 			).is_ok(), "invalid htlc tx signature produced");
 			sigs.push(final_sig);
 		}

@@ -872,7 +872,7 @@ impl <P>Wallet<P> where
 			.collect::<Result<Vec<_>, _>>()
 			.context("invalid asp part sigs")?;
 
-		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
+		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
 			sec_nonces,
@@ -980,7 +980,7 @@ impl <P>Wallet<P> where
 			.collect::<Result<Vec<_>, _>>()
 			.context("invalid asp part sigs")?;
 
-		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
+		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
 			sec_nonces,
@@ -1396,7 +1396,7 @@ impl <P>Wallet<P> where
 							[asp.info.asp_pubkey],
 							&[asp_nonce],
 							sighash.to_byte_array(),
-							Some(vtxo.spec().exit_taptweak().to_byte_array()),
+							Some(vtxo.spec().vtxo_taptweak().to_byte_array()),
 						);
 						Ok((nonce, sig))
 					}).collect::<anyhow::Result<Vec<_>>>()?;

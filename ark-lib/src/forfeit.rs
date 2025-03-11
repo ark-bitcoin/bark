@@ -56,7 +56,7 @@ fn forfeit_input_sighash(
 ) -> (TapSighash, Transaction) {
 	let spec = vtxo.spec();
 	let exit_prevout = TxOut {
-		script_pubkey: spec.exit_spk(),
+		script_pubkey: spec.vtxo_spk(),
 		value: vtxo.amount(),
 	};
 	let connector_prevout = TxOut {

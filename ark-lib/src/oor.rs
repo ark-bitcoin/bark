@@ -20,7 +20,7 @@ use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 pub const OOR_MIN_FEE: Amount = P2TR_DUST;
 
 pub fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction) -> Vec<TapSighash> {
-	let prevs = input_vtxos.iter().map(|i| i.borrow().txout()).collect::<Vec<_>>();
+	let prevs = input_vtxos.iter().map(|i| i.borrow().spec().txout()).collect::<Vec<_>>();
 	let mut shc = SighashCache::new(oor_tx);
 
 	(0..input_vtxos.len()).map(|idx| {
@@ -34,21 +34,17 @@ pub fn unsigned_oor_tx<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSpec]) -> T
 	Transaction {
 		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: inputs.into_iter().map(|input| {
-			TxIn {
-				previous_output: input.borrow().point(),
-				script_sig: ScriptBuf::new(),
-				sequence: Sequence::ZERO,
-				witness: Witness::new(),
-			}
+		input: inputs.into_iter().map(|input| TxIn {
+			previous_output: input.borrow().point(),
+			script_sig: ScriptBuf::new(),
+			sequence: Sequence::ZERO,
+			witness: Witness::new(),
 		}).collect(),
-		output: outputs.into_iter().map(|output| {
-			let spk = crate::vtxo::exit_spk(output.user_pubkey, output.asp_pubkey, output.exit_delta);
-			TxOut {
-				value: output.amount,
-				script_pubkey: spk,
-			}
-		}).chain([fee::dust_anchor()]).collect(),
+		output: outputs
+			.into_iter()
+			.map(VtxoSpec::txout)
+			.chain([fee::dust_anchor()])
+			.collect(),
 	}
 }
 
@@ -85,7 +81,7 @@ pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), St
 		SECP.verify_schnorr(
 			&vtxo.signatures[idx],
 			&sighashes[idx].into(),
-			&input.spec().exit_taproot().output_key().to_inner(),
+			&input.spec().taproot_pubkey(),
 		).map_err(|e| format!("schnorr signature verification error: {}", e))?;
 	}
 
@@ -183,7 +179,7 @@ impl OorPayment {
 				[input.spec().user_pubkey],
 				&[&user_nonces[idx]],
 				sighashes[idx].to_byte_array(),
-				Some(input.spec().exit_taptweak().to_byte_array()),
+				Some(input.spec().vtxo_taptweak().to_byte_array()),
 			);
 			pub_nonces.push(pub_nonce);
 			part_sigs.push(part_sig);
@@ -218,14 +214,14 @@ impl OorPayment {
 				keypair,
 				sec_nonce,
 				sighashes[idx].to_byte_array(),
-				Some(input.spec().exit_taptweak().to_byte_array()),
+				Some(input.spec().vtxo_taptweak().to_byte_array()),
 				Some(&[&asp_part_sigs[idx]]),
 			);
 			let final_sig = final_sig.expect("we provided the other sig");
 			debug_assert!(util::SECP.verify_schnorr(
 				&final_sig,
 				&sighashes[idx].into(),
-				&input.spec().exit_taproot().output_key().to_inner(),
+				&input.spec().taproot_pubkey(),
 			).is_ok(), "invalid oor tx signature produced");
 			sigs.push(final_sig);
 		}
