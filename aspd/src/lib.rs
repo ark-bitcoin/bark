@@ -55,6 +55,7 @@ use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use tokio_util::sync::CancellationToken;
+use tracing_subscriber::fmt::format;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::error::ContextExt;
@@ -906,7 +907,12 @@ impl App {
 			}
 		}
 
-		// TODO: verify payment signature (if we signed payment but can't find on CLN, then it must have failed)
+		signed.validate_signatures(&crate::SECP)
+			.badarg("bad signatures on payment")?;
+
+		if signed.htlc_vtxo().pseudo_spec.asp_pubkey != self.asp_key.public_key() {
+			bail!("Payment wasn't signed with ASP's pubkey")
+		}
 
 		let htlc_vtxo = signed.htlc_vtxo();
 		let revocation_oor = signed.revocation_payment();

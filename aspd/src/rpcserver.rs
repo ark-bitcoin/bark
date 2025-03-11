@@ -547,9 +547,6 @@ impl rpc::server::ArkService for App {
 
 		let signed = SignedBolt11Payment::decode(&req.get_ref().signed_payment)
 			.badarg("invalid payment encoding")?;
-		if let Err(e) = signed.validate_signatures(&crate::SECP) {
-			badarg!("bad signatures on payment: {}", e);
-		}
 
 		let user_nonces = req.get_ref().pub_nonces.iter().map(|b| {
 			musig::MusigPubNonce::from_slice(b)
