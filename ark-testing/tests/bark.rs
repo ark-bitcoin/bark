@@ -32,6 +32,15 @@ async fn bark_version() {
 }
 
 #[tokio::test]
+async fn bark_ark_info() {
+	let ctx = TestContext::new("bark/bark_ark_info").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+	let bark1 = ctx.new_bark("bark1", &aspd).await;
+	let result = bark1.run(&[&"ark-info"]).await;
+	serde_json::from_str::<bark_json::cli::ArkInfo>(&result).expect("should deserialise");
+}
+
+#[tokio::test]
 async fn bark_create_is_atomic() {
 	let ctx = TestContext::new("bark/bark_create_is_atomic").await;
 	let aspd = ctx.new_aspd("aspd", None).await;

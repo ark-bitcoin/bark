@@ -120,6 +120,10 @@ enum Command {
 		dangerous: bool,
 	},
 
+	/// Prints informations related to the Ark Server
+	#[command()]
+	ArkInfo,
+
 	/// Use the built-in onchain wallet
 	#[command(subcommand)]
 	Onchain(OnchainCommand),
@@ -359,6 +363,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 			println!("{:#?}", w.config());
 		},
+		Command::ArkInfo => {
+			if let Some(info) = w.ark_info() {
+				output_json(&bark_json::cli::ArkInfo {
+					asp_pubkey: info.asp_pubkey.to_string(),
+					round_interval: info.round_interval,
+					nb_round_nonces: info.nb_round_nonces,
+					vtxo_expiry_delta: info.vtxo_expiry_delta,
+					vtxo_exit_delta: info.vtxo_exit_delta,
+				});
+			} else {
+				warn!("Could not connect with Ark server.")
+			}
+		}
 		Command::Onchain(cmd) => match cmd {
 			OnchainCommand::Balance { no_sync } => {
 				if !no_sync {

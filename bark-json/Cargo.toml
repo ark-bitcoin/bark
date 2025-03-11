@@ -13,3 +13,4 @@ ark-lib = { path = "../ark-lib" }
 # EXPORTED
 bitcoin.workspace = true
 serde.workspace = true
+humantime.workspace = true

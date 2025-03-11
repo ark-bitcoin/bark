@@ -6,6 +6,7 @@ pub extern crate bitcoin;
 
 pub mod cli;
 pub mod primitives;
+mod serde_utils;
 
 pub use primitives::*;
 

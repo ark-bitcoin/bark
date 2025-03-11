@@ -1,7 +1,24 @@
 
+use std::time::Duration;
+
 use ark::rounds::RoundId;
 use bitcoin::{Amount, Txid};
-use crate::primitives::{VtxoInfo, UtxoInfo};
+use crate::{primitives::{UtxoInfo, VtxoInfo}, serde_utils};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArkInfo {
+	/// The Ark server pubkey
+	pub asp_pubkey: String,
+	/// The interval between each round
+	#[serde(with = "serde_utils::duration")]
+	pub round_interval: Duration,
+	/// Number of nonces per round
+	pub nb_round_nonces: usize,
+	/// Expiration delta of the VTXO
+	pub vtxo_expiry_delta: u16,
+	/// Delta between exit confirmation and coins becoming spendable
+	pub vtxo_exit_delta: u16,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Balance {
@@ -12,7 +29,6 @@ pub struct Balance {
 	#[serde(rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_exit: Amount,
 }
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExitStatus {
 	/// Whether or not all txs have been confirmed
