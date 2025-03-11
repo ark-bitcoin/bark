@@ -32,7 +32,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use bark_cln::grpc::listpays_pays::ListpaysPaysStatus;
 use bip39::Mnemonic;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -878,7 +880,33 @@ impl App {
 	async fn revoke_bolt11_payment(&self, signed: &SignedBolt11Payment, user_nonces: &[musig::MusigPubNonce])
 		-> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>
 	{
-		// TODO: verify payment actually failed
+		// Connecting to the grpc-client
+		let cln_config = self.config.lightningd.as_ref()
+			.context("This asp does not support lightning")?;
+		let mut cln_client = cln_config.grpc_client().await
+			.context("failed to connect to lightning")?;
+
+		let req = bark_cln::grpc::ListpaysRequest {
+			bolt11: Some(signed.payment.invoice.to_string()),
+			payment_hash: None,
+			status: None,
+		};
+		let listpays_response = cln_client
+			.list_pays(req).await
+			.context("Could not fetch cln payments")?
+			.into_inner();
+
+		for pay in listpays_response.pays {
+			if pay.status() == ListpaysPaysStatus::Pending {
+				return badarg!("This lightning payment is not eligible for revocation yet")
+			}
+			if pay.status() == ListpaysPaysStatus::Complete {
+				return badarg!("This lightning payment has completed. preimage: {}",
+					serialize_hex(&pay.preimage.unwrap()))
+			}
+		}
+
+		// TODO: verify payment signature (if we signed payment but can't find on CLN, then it must have failed)
 
 		let htlc_vtxo = signed.htlc_vtxo();
 		let revocation_oor = signed.revocation_payment();
