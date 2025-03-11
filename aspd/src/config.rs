@@ -57,6 +57,8 @@ pub struct Postgres {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
 	pub data_dir: PathBuf,
+	/// Directory to place structured log files.
+	pub log_dir: Option<PathBuf>,
 	pub network: bitcoin::Network,
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
@@ -103,6 +105,7 @@ impl Default for Config {
 	fn default() -> Self {
 		Config {
 			data_dir: "./aspd".into(),
+			log_dir: None,
 			network: bitcoin::Network::Regtest,
 			vtxo_expiry_delta: 24 * 6,
 			vtxo_exit_delta: 2 * 6,

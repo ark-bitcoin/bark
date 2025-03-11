@@ -1,3 +1,4 @@
+
 #[macro_use]
 extern crate log;
 
@@ -7,8 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
+use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
-use bitcoincore_rpc::{bitcoin::amount::Amount, RpcApi};
 use futures::future::join_all;
 
 use ark::{ArkoorVtxo, Vtxo};

@@ -124,6 +124,7 @@ impl ElectrsHelper {
 	}
 }
 
+#[tonic::async_trait]
 impl DaemonHelper for ElectrsHelper {
 	fn name(&self) -> &str {
 		&self.name

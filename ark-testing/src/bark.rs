@@ -45,7 +45,7 @@ pub struct Bark {
 	config: BarkConfig,
 	counter: AtomicUsize,
 	timeout: Duration,
-	bitcoind: Option<Bitcoind>,
+	_bitcoind: Option<Bitcoind>,
 	command_log: Mutex<fs::File>,
 }
 
@@ -109,7 +109,7 @@ impl Bark {
 		}
 
 		Ok(Bark {
-			bitcoind,
+			_bitcoind: bitcoind,
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
 			timeout: Duration::from_millis(60_000),

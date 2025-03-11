@@ -26,7 +26,7 @@ pub use crate::config::Config;
 use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -137,11 +137,7 @@ impl App {
 		Ok(Mnemonic::from_str(&mnemonic)?)
 	}
 
-	pub async fn create(config_file: Option<&Path>) -> anyhow::Result<()> {
-		let cfg = Config::load(config_file)?;
-		cfg.validate().expect("invalid configuration");
-		info!("Resulting configuration: {:#?}", cfg);
-
+	pub async fn create(cfg: Config) -> anyhow::Result<()> {
 		// Check for mnemonic file to see if aspd was already initialized.
 		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
 			bail!("Found existing mnemonic file in datadir, aspd probably already initialized!");
@@ -192,11 +188,7 @@ impl App {
 		Ok(())
 	}
 
-	pub async fn open(config_file: Option<&Path>) -> anyhow::Result<Arc<Self>> {
-		let cfg = Config::load(config_file)?;
-		cfg.validate().expect("invalid configuration");
-		info!("Resulting configuration: {:#?}", cfg);
-
+	pub async fn open(cfg: Config) -> anyhow::Result<Arc<Self>> {
 		info!("Starting aspd at {}", cfg.data_dir.display());
 
 		info!("Connecting to db at {}:{}", cfg.postgres.host, cfg.postgres.port);
