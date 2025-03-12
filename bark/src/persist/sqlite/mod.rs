@@ -179,12 +179,15 @@ impl BarkPersister for SqliteClient {
 	}
 
 	fn get_vtxo_key_index(&self, vtxo: &Vtxo) -> anyhow::Result<u32> {
+		let conn = self.connect()?;
+		let key_index = query::get_vtxo_key_index(&conn, vtxo)?;
+
+		// NB: change arkoor already implement VTXO but not receive ones
 		// TODO: implement key derivation for arkoors
 		if let Vtxo::Arkoor(_) = vtxo {
-			Ok(0)
+			Ok(key_index.unwrap_or(0))
 		} else {
-			let conn = self.connect()?;
-			query::get_vtxo_key_index(&conn, vtxo)?.context("vtxo not found in the db")
+			key_index.context("vtxo not found in the db")
 		}
 	}
 

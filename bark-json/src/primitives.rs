@@ -18,8 +18,6 @@ pub enum VtxoType {
 	Board,
 	Round,
 	Arkoor,
-	Bolt11Change,
-	Bolt11Htlc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -45,8 +43,6 @@ impl From<Vtxo> for VtxoInfo {
 				Vtxo::Board { .. } => VtxoType::Board,
 				Vtxo::Round { .. } => VtxoType::Round,
 				Vtxo::Arkoor { .. } => VtxoType::Arkoor,
-				Vtxo::Bolt11Change { .. } => VtxoType::Bolt11Change,
-				Vtxo::Bolt11Htlc { .. } => VtxoType::Bolt11Htlc,
 			},
 			utxo: v.point(),
 			user_pubkey: v.spec().user_pubkey,

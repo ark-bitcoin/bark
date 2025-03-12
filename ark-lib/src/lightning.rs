@@ -12,7 +12,7 @@ use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WE
 
 use crate::oor::OorPayment;
 use crate::vtxo::{exit_spk, VtxoSpkSpec};
-use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
+use crate::{musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
 
 const HTLC_VOUT: u32 = 0;
 const CHANGE_VOUT: u32 = 1;
@@ -167,45 +167,56 @@ impl Bolt11Payment {
 		}).collect()
 	}
 
-	pub fn unsigned_change_vtxo(&self) -> Option<Bolt11ChangeVtxo> {
-		let tx = self.unsigned_transaction();
+	fn outputs(&self) -> Vec<VtxoSpec> {
 		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
 
-		self.change_txout().map(|txout| {
-			Bolt11ChangeVtxo {
-				inputs: self.inputs.clone(),
-				pseudo_spec: VtxoSpec {
-					amount: txout.value,
-					expiry_height: expiry_height,
-					asp_pubkey: self.asp_pubkey,
-					user_pubkey: self.user_pubkey,
-					spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
-				},
-				final_point: OutPoint::new(tx.compute_txid(), CHANGE_VOUT),
-				htlc_tx: tx,
+		let htlc_output = VtxoSpec {
+			amount: self.htlc_amount(),
+			expiry_height: expiry_height,
+			asp_pubkey: self.asp_pubkey,
+			user_pubkey: self.user_pubkey,
+			spk: VtxoSpkSpec::Htlc {
+				payment_hash: *self.invoice.payment_hash(),
+				htlc_expiry: self.htlc_expiry,
+				htlc_expiry_delta: self.htlc_expiry_delta
 			}
-		})
-	}
+		};
 
-	pub fn unsigned_htlc_vtxo(&self) -> Bolt11HtlcVtxo {
-		let tx = self.unsigned_transaction();
-		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
-
-		Bolt11HtlcVtxo {
-			inputs: self.inputs.clone(),
-			pseudo_spec: VtxoSpec {
-				amount: self.htlc_amount(),
+		if let Some(txout) = self.change_txout() {
+			let change_output = VtxoSpec {
+				amount: txout.value,
 				expiry_height: expiry_height,
 				asp_pubkey: self.asp_pubkey,
 				user_pubkey: self.user_pubkey,
-				spk: VtxoSpkSpec::Htlc {
-					payment_hash: *self.invoice.payment_hash(),
-					htlc_expiry: self.htlc_expiry,
-					htlc_expiry_delta: self.htlc_expiry_delta,
-				}
-			},
-			final_point: OutPoint::new(tx.compute_txid(), HTLC_VOUT),
-			htlc_tx: tx,
+				spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
+			};
+
+			return vec![htlc_output, change_output]
+		}
+
+		vec![htlc_output]
+	}
+
+	pub fn unsigned_change_vtxo(&self) -> Option<ArkoorVtxo> {
+		let tx = self.unsigned_transaction();
+		let outputs = self.outputs();
+
+		outputs.get(CHANGE_VOUT as usize).map(|_txout| ArkoorVtxo {
+			inputs: self.inputs.clone(),
+			output_specs: self.outputs(),
+			point: OutPoint::new(tx.compute_txid(), CHANGE_VOUT),
+			signatures: vec![]
+		})
+	}
+
+	pub fn unsigned_htlc_vtxo(&self) -> ArkoorVtxo {
+		let tx = self.unsigned_transaction();
+
+		ArkoorVtxo {
+			inputs: self.inputs.clone(),
+			output_specs: self.outputs(),
+			point: OutPoint::new(tx.compute_txid(), HTLC_VOUT),
+			signatures: vec![]
 		}
 	}
 
@@ -309,22 +320,16 @@ impl SignedBolt11Payment {
 		Ok(())
 	}
 
-	pub fn change_vtxo(&self) -> Option<Bolt11ChangeVtxo> {
+	pub fn change_vtxo(&self) -> Option<ArkoorVtxo> {
 		self.payment.unsigned_change_vtxo().map(|mut vtxo| {
-			util::fill_taproot_sigs(&mut vtxo.htlc_tx, &self.signatures);
-			//TODO(stevenroose) there seems to be a bug in the vtxo.htlc_tx.weight method,
-			// this +2 might be fixed later
-			debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
+			vtxo.signatures = self.signatures.clone();
 			vtxo
 		})
 	}
 
-	pub fn htlc_vtxo(&self) -> Bolt11HtlcVtxo {
+	pub fn htlc_vtxo(&self) -> ArkoorVtxo {
 		let mut vtxo = self.payment.unsigned_htlc_vtxo();
-		util::fill_taproot_sigs(&mut vtxo.htlc_tx, &self.signatures);
-		//TODO(stevenroose) there seems to be a bug in the vtxo.htlc_tx.weight method,
-		// this +2 might be fixed later
-		debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
+		vtxo.signatures = self.signatures.clone();
 		vtxo
 	}
 
@@ -392,41 +397,5 @@ pub enum PaymentStatus {
 impl fmt::Display for PaymentStatus {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		fmt::Debug::fmt(self, f)
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Bolt11ChangeVtxo {
-	pub inputs: Vec<Vtxo>,
-	/// This has the fields for the spec, but were not necessarily
-	/// actually being used for the generation of the vtxos.
-	/// Primarily, the expiry height is the first of all the parents
-	/// expiry heights.
-	pub pseudo_spec: VtxoSpec,
-	pub htlc_tx: Transaction,
-	pub final_point: OutPoint,
-}
-
-impl Bolt11ChangeVtxo {
-	pub fn id(&self) -> VtxoId {
-		self.final_point.into()
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Bolt11HtlcVtxo {
-	pub inputs: Vec<Vtxo>,
-	/// This has the fields for the spec, but were not necessarily
-	/// actually being used for the generation of the vtxos.
-	/// Primarily, the expiry height is the first of all the parents
-	/// expiry heights.
-	pub pseudo_spec: VtxoSpec,
-	pub htlc_tx: Transaction,
-	pub final_point: OutPoint,
-}
-
-impl Bolt11HtlcVtxo {
-	pub fn id(&self) -> VtxoId {
-		self.final_point.into()
 	}
 }
