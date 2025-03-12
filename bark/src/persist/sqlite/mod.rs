@@ -126,12 +126,16 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn register_refresh(&self, input_vtxos: &[Vtxo], output_vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	fn register_refresh<'a>(
+		&self,
+		input_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
+		output_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
+	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
-		let sent_amount = input_vtxos.iter().fold(Amount::ZERO, |acc, v| acc + v.amount());
-		let received_amount = output_vtxos.iter().fold(Amount::ZERO, |acc, v| acc + v.amount());
+		let sent_amount = input_vtxos.clone().into_iter().map(|v| v.amount()).sum::<Amount>();
+		let received_amount = output_vtxos.clone().into_iter().map(|v| v.amount()).sum::<Amount>();
 
 		// This works as long as wallet owns all inputs and all outputs of the in-round send (refresh)
 		let fees = sent_amount - received_amount;
@@ -143,7 +147,7 @@ impl BarkPersister for SqliteClient {
 				.context("Failed to store new vtxo")?;
 		}
 
-		// And mark input vtxos as spent
+		// Mark input vtxos as spent
 		for v in input_vtxos {
 			self.mark_vtxo_as_spent(&tx, v.id(), movement_id)
 				.context("Failed to mark vtxo as spent")?;

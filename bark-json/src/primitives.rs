@@ -3,7 +3,7 @@ use bitcoin::secp256k1::PublicKey;
 
 use ark::{OnboardVtxo, Vtxo, VtxoId};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UtxoInfo {
 	pub outpoint: OutPoint,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
@@ -20,7 +20,7 @@ pub enum VtxoType {
 	Bolt11Change,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VtxoInfo {
 	pub id: VtxoId,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]

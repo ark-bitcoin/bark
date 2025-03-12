@@ -23,11 +23,11 @@ pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
 
 
 use std::iter;
+use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::time::Duration;
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bdk_wallet::WalletPersister;
@@ -1141,9 +1141,11 @@ impl <P>Wallet<P> where
 
 			let (input_vtxos, pay_reqs, offb_reqs) = round_input(&round_state.info)
 				.context("error providing round input")?;
-
-			let vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
-			debug!("Spending vtxos: {:?}", vtxo_ids);
+			// Convert the input vtxos to a map to cache their ids.
+			let input_vtxos = input_vtxos.into_iter()
+				.map(|v| (v.id(), v))
+				.collect::<HashMap<_, _>>();
+			debug!("Spending vtxos: {:?}", input_vtxos.keys());
 
 			'attempt: loop {
 				assert!(round_state.attempt.is_some());
@@ -1181,15 +1183,14 @@ impl <P>Wallet<P> where
 				);
 
 				let res = asp.client.submit_payment(rpc::SubmitPaymentRequest {
-					input_vtxos: input_vtxos.iter().map(|vtxo| {
-						let vtxo_id = vtxo.id();
+					input_vtxos: input_vtxos.iter().map(|(id, vtxo)| {
 						let key = self.vtxo_seed.derive_keypair(
 							self.db.get_vtxo_key_index(vtxo).expect("owned vtxo key should be in database")
 						);
 						rpc::InputVtxo {
-							vtxo_id: vtxo_id.to_bytes().to_vec(),
+							vtxo_id: id.to_bytes().to_vec(),
 							ownership_proof: {
-								let sig = round_state.challenge().sign_with(vtxo_id, key);
+								let sig = round_state.challenge().sign_with(*id, key);
 								sig.serialize().to_vec()
 							},
 						}
@@ -1253,6 +1254,11 @@ impl <P>Wallet<P> where
 				};
 
 				//TODO(stevenroose) remove these magic numbers
+				if unsigned_round_tx.output.len() < 2 {
+					bail!("asp sent round tx with less than 2 outputs: {}",
+						bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx),
+					);
+				}
 				let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 0);
 				let conns_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 1);
 
@@ -1343,35 +1349,44 @@ impl <P>Wallet<P> where
 					.into_signed_tree(vtxo_cosign_sigs)
 					.into_cached_tree();
 
+				// Check that the connector key is correct.
+				let conn_txout = unsigned_round_tx.output.get(1).expect("checked before");
+				let expected_conn_txout = ConnectorChain::output(forfeit_nonces.len(), connector_pubkey);
+				if *conn_txout != expected_conn_txout {
+					bail!("round tx from asp has unexpected connector output: {:?} (expected {:?})",
+						conn_txout, expected_conn_txout,
+					);
+				}
+
 				// Make forfeit signatures.
 				let connectors = ConnectorChain::new(
 					forfeit_nonces.values().next().unwrap().len(),
 					conns_utxo,
 					connector_pubkey,
 				);
-				let forfeit_sigs = input_vtxos.iter().map(|v| {
-					let keypair_idx = self.db.get_vtxo_key_index(&v)?;
+				let forfeit_sigs = input_vtxos.iter().map(|(id, vtxo)| {
+					let keypair_idx = self.db.get_vtxo_key_index(&vtxo)?;
 					let vtxo_keypair = self.vtxo_seed.derive_keypair(keypair_idx);
 
 					let sigs = connectors.connectors().enumerate().map(|(i, (conn, _))| {
 						let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
-							v, conn, connector_pubkey,
+							vtxo, conn, connector_pubkey,
 						);
-						let asp_nonce = forfeit_nonces.get(&v.id())
-							.with_context(|| format!("missing asp forfeit nonce for {}", v.id()))?
+						let asp_nonce = forfeit_nonces.get(&id)
+							.with_context(|| format!("missing asp forfeit nonce for {}", id))?
 							.get(i)
 							.context("asp didn't provide enough forfeit nonces")?;
 
 						let (nonce, sig) = musig::deterministic_partial_sign(
 							&vtxo_keypair,
-							[vtxo_keypair.public_key(), asp.info.asp_pubkey],
+							[asp.info.asp_pubkey],
 							&[asp_nonce],
 							sighash.to_byte_array(),
-							Some(v.spec().exit_taptweak().to_byte_array()),
+							Some(vtxo.spec().exit_taptweak().to_byte_array()),
 						);
 						Ok((nonce, sig))
 					}).collect::<anyhow::Result<Vec<_>>>()?;
-					Ok((v.id(), sigs))
+					Ok((id, sigs))
 				}).collect::<anyhow::Result<HashMap<_, _>>>()?;
 				debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
 				let res = asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
@@ -1447,12 +1462,12 @@ impl <P>Wallet<P> where
 				// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
 				if let Some(offboard) = offb_reqs.get(0) {
 					self.db.register_send(
-						&input_vtxos,
+						input_vtxos.values(),
 						offboard.script_pubkey.to_string(),
 						new_vtxos.get(0), None
 					)?;
 				} else {
-					self.db.register_refresh(&input_vtxos, &new_vtxos)?;
+					self.db.register_refresh(input_vtxos.values(), &new_vtxos)?;
 				}
 
 				info!("Round finished");

@@ -29,7 +29,11 @@ pub trait BarkPersister: Clone + WalletPersister {
 		fees: Option<Amount>
 	) -> anyhow::Result<()>;
 	/// Register in-round refresh
-	fn register_refresh(&self, input_vtxos: &[Vtxo], output_vtxos: &[Vtxo]) -> anyhow::Result<()>;
+	fn register_refresh<'a>(
+		&self,
+		input_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
+		output_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
+	) -> anyhow::Result<()>;
 
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
