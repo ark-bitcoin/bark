@@ -31,7 +31,7 @@ use crate::{telemetry, App};
 use crate::round::RoundInput;
 
 
-/// Whether or not to provide rich internal errors to RPC users.
+/// Whether to provide rich internal errors to RPC users.
 ///
 /// We keep this static because it's hard to propagate the config
 /// into all error conversions.
@@ -242,10 +242,24 @@ fn add_tracing_attributes(attributes: Vec<KeyValue>) -> () {
 impl rpc::server::ArkService for App {
 	async fn handshake(
 		&self,
-		_req: tonic::Request<rpc::HandshakeRequest>,
+		req: tonic::Request<rpc::HandshakeRequest>,
 	) -> Result<tonic::Response<rpc::HandshakeResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_HANDSHAKE);
+		let method_details = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_HANDSHAKE);
+		
+		let version = req.into_inner().version;
 
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
+
+		let parent_context = Context::current();
+
+		let mut span = tracer_provider
+			.span_builder(method_details.method)
+			.start_with_context(&tracer_provider, &parent_context);
+		span.set_attribute(KeyValue::new("version", version.clone()));
+
+		self.telemetry_metrics.as_ref().map(|tm| tm.handshake_version_counter
+			.add(1u64, &[KeyValue::new("version", version)]));
+		
 		let ret = rpc::HandshakeResponse {
 			message: None,
 			ark_info: Some(rpc::ArkInfo {
