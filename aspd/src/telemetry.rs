@@ -1,8 +1,6 @@
 use std::time::Duration;
-use anyhow::Error;
 use bitcoin::Amount;
 use opentelemetry::{global, propagation::Extractor, KeyValue};
-use opentelemetry::metrics::Counter;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
@@ -12,7 +10,7 @@ use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
-use crate::App;
+use crate::{Config, TelemetryMetrics};
 
 pub const TRACER_ASPD: &str = "aspd";
 
@@ -30,7 +28,6 @@ pub const TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES: &str = "round_receiving_
 pub const TRACE_RUN_ROUND_FINALIZING: &str = "round_final_stage";
 pub const TRACE_RUN_ROUND_PERSIST: &str = "round_persist";
 
-
 pub const METER_ASPD: &str = "aspd";
 
 pub const METER_COUNTER_MAIN_SPAWN: &str = "main_spawn_counter";
@@ -38,6 +35,7 @@ pub const METER_COUNTER_GRPC_REQUEST: &str = "grpc_requests_total";
 pub const METER_COUNTER_GRPC_ERROR: &str = "grpc_errors_total";
 pub const METER_COUNTER_UD_GRPC_IN_PROCESS: &str = "grpc_requests_in_progress";
 pub const METER_HISTOGRAM_GRPC_LATENCY: &str = "grpc_request_duration_ms";
+pub const METER_COUNTER_HANDSHAKE_VERSION: &str = "handshake_version_counter";
 
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
 pub const ATTRIBUTE_BLOCKHEIGHT: &str = "blockheight";
@@ -47,21 +45,21 @@ pub const ATTRIBUTE_METHOD: &str = "method";
 pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 
 
-pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
+pub fn init_telemetry(config: &Config, public_key: String) -> Option<TelemetryMetrics> {
 	let resource = Resource::new(
 		vec![
 			KeyValue::new("service.name", "aspd"),
-			KeyValue::new("aspd.pubic_key", app.asp_key.public_key().to_string()),
-			KeyValue::new("aspd.network", app.config.network.to_string()),
-			KeyValue::new("aspd.round_interval", app.config.round_interval.as_secs().to_string()),
+			KeyValue::new("aspd.pubic_key", public_key),
+			KeyValue::new("aspd.network", config.network.to_string()),
+			KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()),
 			KeyValue::new("aspd.maximum_vtxo_amount",
-				app.config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
+				config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
 			)
 		]);
 
-	let otel_collector_endpoint = app.config.otel_collector_endpoint.clone();
+	let otel_collector_endpoint = config.otel_collector_endpoint.clone();
 	if otel_collector_endpoint.is_none() {
-		return Ok(None);
+		return None;
 	}
 
 	global::set_text_map_propagator(TraceContextPropagator::new());
@@ -70,7 +68,7 @@ pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
 		.with_tonic()
 		.with_endpoint(otel_collector_endpoint.clone().unwrap())
 		.with_timeout(Duration::from_secs(3))
-		.build()?;
+		.build().unwrap();
 
 	let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
 		.with_batch_exporter(trace_exporter, opentelemetry_sdk::runtime::Tokio)
@@ -89,7 +87,7 @@ pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
 	let aspd_telemetry = OpenTelemetryLayer::new(aspd_tracer);
 	let subscriber = Registry::default().with(aspd_telemetry);
 	tracing::subscriber::set_global_default(subscriber)
-		.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err))?;
+		.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err)).unwrap();
 
 	let metrics_exporter = opentelemetry_otlp::MetricExporter::builder()
 		// Build exporter using Delta Temporality (Defaults to Temporality::Cumulative)
@@ -97,7 +95,7 @@ pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
 		.with_tonic()
 		.with_endpoint(otel_collector_endpoint.clone().unwrap())
 		.with_timeout(Duration::from_secs(3))
-		.build()?;
+		.build().unwrap();
 
 	let metrics_reader = PeriodicReader::builder(metrics_exporter, opentelemetry_sdk::runtime::Tokio).build();
 	let provider = SdkMeterProvider::builder()
@@ -108,8 +106,12 @@ pub fn init_telemetry(app: &App) -> Result<Option<Counter<u64>>, Error> {
 
 	let meter = global::meter_provider().meter(METER_ASPD);
 	let spawn_counter = meter.u64_counter(METER_COUNTER_MAIN_SPAWN).build();
+	let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
 
-	Ok(Some(spawn_counter))
+	Some(TelemetryMetrics{
+		handshake_version_counter,
+		spawn_counter,
+	})
 }
 
 pub struct MetadataMap<'a>(pub &'a tonic::metadata::MetadataMap);

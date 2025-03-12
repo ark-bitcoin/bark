@@ -38,7 +38,8 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning::pay_bolt11;
 use lightning_invoice::Bolt11Invoice;
-use opentelemetry::KeyValue;
+use opentelemetry::{global, KeyValue};
+use opentelemetry::metrics::Counter;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
 use tokio::sync::{broadcast, oneshot, Mutex};
@@ -54,7 +55,7 @@ use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::error::ContextExt;
 use crate::round::RoundInput;
-use crate::telemetry::init_telemetry;
+use crate::telemetry::{init_telemetry, METER_ASPD, METER_COUNTER_HANDSHAKE_VERSION, METER_COUNTER_MAIN_SPAWN};
 use crate::txindex::TxIndex;
 use crate::wallet::BdkWalletExt;
 
@@ -83,6 +84,11 @@ pub struct SendpayHandle {
 	sendpay_rx: tokio::sync::broadcast::Receiver<SendpaySubscriptionItem>
 }
 
+pub struct TelemetryMetrics {
+	spawn_counter: Counter<u64>,
+	handshake_version_counter: Counter<u64>,
+}
+
 pub struct App {
 	config: Config,
 	db: database::Db,
@@ -100,6 +106,7 @@ pub struct App {
 	vtxos_in_flux: Mutex<VtxosInFlux>,
 	sendpay_updates: Option<SendpayHandle>,
 	trigger_round_sweep_tx: Option<tokio::sync::mpsc::Sender<()>>,
+	telemetry_metrics: Option<TelemetryMetrics>,
 }
 
 impl App {
@@ -219,6 +226,7 @@ impl App {
 			shutdown_channel,
 			asp_key,
 			bitcoind,
+			telemetry_metrics: None,
 		}))
 	}
 
@@ -269,6 +277,8 @@ impl App {
 		let (sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
+		let telemetry_metrics = init_telemetry(&self.config, self.asp_key.public_key().to_string());
+		
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
@@ -278,16 +288,12 @@ impl App {
 			Duration::from_secs(2),
 			mut_self.shutdown_channel.subscribe(),
 		);
-
+		mut_self.telemetry_metrics = telemetry_metrics;
 
 		// First perform all startup tasks...
 		info!("Starting startup tasks...");
 		self.startup().await.context("startup error")?;
 		info!("Startup tasks done");
-
-
-		// Then start all our subprocesses
-		let spawn_counter = init_telemetry(self)?;
 
 		// Spawn a task to handle Ctrl+C
 		let shutdown_channel = self.shutdown_channel.clone();
@@ -304,6 +310,7 @@ impl App {
 			std::process::exit(0);
 		});
 
+		// Then start all our subprocesses
 		let app = self.clone();
 		let jh_rpc_public = tokio::spawn(async move {
 			let ret = rpcserver::run_public_rpc_server(app)
@@ -311,9 +318,8 @@ impl App {
 			info!("RPC server exited with {:?}", ret);
 			ret
 		});
-		spawn_counter.as_ref().map(|sc| {
-			sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_public_rpc_server")])
-		});
+		self.telemetry_metrics.as_ref().map(|tm| tm.spawn_counter
+			.add(1, &[KeyValue::new("spawn", "rpcserver::run_public_rpc_server")]));
 
 		let app = self.clone();
 		let jh_round_coord = tokio::spawn(async move {
@@ -322,9 +328,8 @@ impl App {
 			info!("Round coordinator exited with {:?}", ret);
 			ret
 		});
-		spawn_counter.as_ref().map(|sc| {
-			sc.add(1, &[KeyValue::new("spawn", "round::run_round_coordinator")])
-		});
+		self.telemetry_metrics.as_ref().map(|tm| tm.spawn_counter
+			.add(1, &[KeyValue::new("spawn", "round::run_round_coordinator")]));
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
@@ -333,9 +338,8 @@ impl App {
 			info!("Round sweeper exited with {:?}", ret);
 			ret
 		});
-		spawn_counter.as_ref().map(|sc| {
-			sc.add(1, &[KeyValue::new("spawn", "vtxo_sweeper::run_vtxo_sweeper")])
-		});
+		self.telemetry_metrics.as_ref().map(|tm| tm.spawn_counter
+			.add(1, &[KeyValue::new("spawn", "vtxo_sweeper::run_vtxo_sweeper")]));
 
 		let app = self.clone();
 		let mut shutdown = app.shutdown_channel.clone().subscribe();
@@ -368,7 +372,8 @@ impl App {
 
 			Ok(())
 		});
-		spawn_counter.as_ref().map(|sc| sc.add(1, &[KeyValue::new("spawn", "tip_fetcher")]));
+		self.telemetry_metrics.as_ref().map(|tm| tm.spawn_counter
+			.add(1, &[KeyValue::new("spawn", "tip_fetcher")]));
 
 		// The tasks that always run
 		let mut jhs = vec![
@@ -388,9 +393,8 @@ impl App {
 				info!("Admin RPC server exited with {:?}", ret);
 				ret
 			});
-			spawn_counter.as_ref().map(|sc| {
-				sc.add(1, &[KeyValue::new("spawn", "rpcserver::run_admin_rpc_server")])
-			});
+			self.telemetry_metrics.as_ref().map(|tm| tm.spawn_counter
+				.add(1, &[KeyValue::new("spawn", "rpcserver::run_admin_rpc_server")]));
 
 			jhs.push(jh_rpc_admin)
 		}
@@ -405,9 +409,8 @@ impl App {
 				info!("Sendpay updater process exited with {:?}", ret);
 				ret
 			});
-			spawn_counter.as_ref().map(|sc| {
-				sc.add(1, &[KeyValue::new("spawn", "lightning::run_process_sendpay_updates")])
-			});
+			self.telemetry_metrics.as_ref().map(|tm| tm.spawn_counter
+				.add(1, &[KeyValue::new("spawn", "lightning::run_process_sendpay_updates")]));
 
 			jhs.push(jh_sendpay)
 		}
