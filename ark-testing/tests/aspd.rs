@@ -172,8 +172,8 @@ async fn max_vtxo_amount() {
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_500_000)).await;
-	ctx.bitcoind.generate(1).await;
+	let mut bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_500_000)).await;
+	bark1.timeout = Duration::from_millis(2_500);
 
 	// exceeds limit, should fail
 	// TODO(stevenroose) once we have better error reporting, assert error content
@@ -183,13 +183,13 @@ async fn max_vtxo_amount() {
 	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// try send OOR exceeding limit
-	assert!(bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.is_err());
+	let err = bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.unwrap_err();
+	assert!(err.to_string().contains("output exceeds maximum vtxo amount of"));
 	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
 
 	// then try send in a round
-	assert!(bark1.try_refresh_all().await.unwrap_err().to_string()
-		.contains("bad user input: output exceeds maximum vtxo amount of 0.00500000 BTC"),
-	);
+	let err = bark1.try_refresh_all().await.unwrap_err();
+	assert!(err.to_string().contains("output exceeds maximum vtxo amount of"));
 
 	// but we can offboard the entire amount!
 	let address = ctx.bitcoind.get_new_address();
