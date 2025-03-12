@@ -38,7 +38,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning::pay_bolt11;
 use lightning_invoice::Bolt11Invoice;
-use opentelemetry::{global, KeyValue};
+use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
@@ -55,7 +55,7 @@ use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::error::ContextExt;
 use crate::round::RoundInput;
-use crate::telemetry::{init_telemetry, METER_ASPD, METER_COUNTER_HANDSHAKE_VERSION, METER_COUNTER_MAIN_SPAWN};
+use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
 use crate::wallet::BdkWalletExt;
 
@@ -278,7 +278,7 @@ impl App {
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
 		let telemetry_metrics = init_telemetry(&self.config, self.asp_key.public_key().to_string());
-		
+
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });

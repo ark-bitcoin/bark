@@ -32,4 +32,4 @@ features = [ "serde" ]
 
 [dev-dependencies]
 bitcoinconsensus = "0.106.0+26.0"
-rand = { version = "*", features = [ "small_rng" ] }
+rand = { version = "0.9.0", features = [ "small_rng" ] }
