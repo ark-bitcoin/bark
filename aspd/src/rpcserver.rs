@@ -249,7 +249,7 @@ impl rpc::server::ArkService for App {
 		req: tonic::Request<rpc::HandshakeRequest>,
 	) -> Result<tonic::Response<rpc::HandshakeResponse>, tonic::Status> {
 		let method_details = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_HANDSHAKE);
-		
+
 		let version = req.into_inner().version;
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
@@ -261,9 +261,8 @@ impl rpc::server::ArkService for App {
 			.start_with_context(&tracer_provider, &parent_context);
 		span.set_attribute(KeyValue::new("version", version.clone()));
 
-		self.telemetry_metrics.as_ref().map(|tm| tm.handshake_version_counter
-			.add(1u64, &[KeyValue::new("version", version)]));
-		
+		self.telemetry_metrics.count_version(&version);
+
 		let ret = rpc::HandshakeResponse {
 			message: None,
 			ark_info: Some(rpc::ArkInfo {

@@ -51,13 +51,38 @@ pub const ATTRIBUTE_METHOD: &str = "method";
 pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 
 
-pub struct TelemetryMetrics {
-	pub spawn_counter: Counter<u64>,
-	pub handshake_version_counter: Counter<u64>,
+struct InnerMetrics {
+	spawn_counter: Counter<u64>,
+	handshake_version_counter: Counter<u64>,
 }
 
-pub fn init_telemetry(config: &Config, public_key: PublicKey) -> Option<TelemetryMetrics> {
-	let endpoint = config.otel_collector_endpoint.as_ref()?;
+pub struct TelemetryMetrics {
+	inner: Option<InnerMetrics>,
+}
+
+impl TelemetryMetrics {
+	pub const fn disabled() -> Self {
+		Self { inner: None }
+	}
+
+	pub fn count_spawn(&self, spawn_id: &'static str) {
+		if let Some(ref m) = self.inner {
+			m.spawn_counter.add(1, &[KeyValue::new("spawn", spawn_id)]);
+		}
+	}
+
+	pub fn count_version(&self, version: &str) {
+		if let Some(ref m) = self.inner {
+			m.handshake_version_counter.add(1, &[KeyValue::new("version", version.to_owned())]);
+		}
+	}
+}
+
+pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetrics {
+	let endpoint = match config.otel_collector_endpoint {
+		Some(ref e) => e,
+		None => return TelemetryMetrics::disabled(),
+	};
 
 	let resource = Resource::new(vec![
 		KeyValue::new("service.name", "aspd"),
@@ -119,10 +144,12 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> Option<Telemetr
 
 	version_counter.add(1u64, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
 
-	Some(TelemetryMetrics {
-		handshake_version_counter,
-		spawn_counter,
-	})
+	TelemetryMetrics {
+		inner: Some(InnerMetrics {
+			handshake_version_counter,
+			spawn_counter,
+		})
+	}
 }
 
 pub struct MetadataMap<'a>(pub &'a tonic::metadata::MetadataMap);
