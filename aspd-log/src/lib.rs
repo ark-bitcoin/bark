@@ -117,6 +117,7 @@ where
 
 #[derive(Debug, Deserialize)]
 pub struct ParsedRecord<'a> {
+	#[serde(rename = "message")]
 	pub msg: &'a str,
 	pub level: log::Level,
 	pub target: &'a str,
@@ -188,7 +189,7 @@ pub struct RecordSerializeWrapper<'a>(pub &'a log::Record<'a>);
 impl<'a> Serialize for RecordSerializeWrapper<'a> {
 	fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
 		let mut m = s.serialize_map(None)?;
-		m.serialize_entry("msg", self.0.args())?;
+		m.serialize_entry("message", self.0.args())?;
 		m.serialize_entry("level", &self.0.level())?;
 		m.serialize_entry("target", self.0.target())?;
 		if let Some(module) = self.0.module_path() {
@@ -245,7 +246,7 @@ mod test {
 	fn json_parse() {
 		// Check that we can parse messages with extra values.
 		let json = serde_json::to_string(&serde_json::json!({
-			"msg": "test",
+			"message": "test",
 			"target": SLOG_TARGET,
 			"level": "info",
 			"file": "test.rs",
@@ -265,7 +266,7 @@ mod test {
 
 		// Check that deserialization works if trace_id is missing
 				let json = serde_json::to_string(&serde_json::json!({
-			"msg": "test",
+			"message": "test",
 			"target": SLOG_TARGET,
 			"level": "info",
 			"file": "test.rs",
@@ -284,7 +285,7 @@ mod test {
 
 		// And without slog stuff
 		let json = serde_json::to_string(&serde_json::json!({
-			"msg": "test",
+			"message": "test",
 			"target": "random",
 			"level": "info",
 			"file": "test.rs",
