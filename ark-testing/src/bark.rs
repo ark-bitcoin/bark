@@ -44,7 +44,7 @@ pub struct Bark {
 	name: String,
 	config: BarkConfig,
 	counter: AtomicUsize,
-	timeout: Duration,
+	pub timeout: Duration,
 	_bitcoind: Option<Bitcoind>,
 	command_log: Mutex<fs::File>,
 }
