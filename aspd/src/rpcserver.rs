@@ -735,7 +735,7 @@ impl rpc::server::AdminService for App {
 
 
 #[derive(Clone)]
-pub struct TelemetryMetrics {
+struct TelemetryMetrics {
 	tracer: Arc<opentelemetry::global::BoxedTracer>,
 	in_progress_counter: opentelemetry::metrics::UpDownCounter<i64>,
 	latency_histogram: opentelemetry::metrics::Histogram<u64>,
@@ -761,7 +761,7 @@ impl TelemetryMetrics {
 }
 
 #[derive(Clone)]
-pub struct TelemetryMetricsService<S> {
+struct TelemetryMetricsService<S> {
 	inner: S,
 	// NB this needs to be an Arc so we can pass it into our response future
 	metrics: Arc<TelemetryMetrics>,
