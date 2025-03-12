@@ -277,8 +277,12 @@ impl<'a> SweepBuilder<'a> {
 		let id = onboard.id();
 		let exit_tx = onboard.exit_tx();
 		let exit_txid = exit_tx.compute_txid();
-		let exit_tx = self.sweeper.app.txindex.get(&exit_txid).await
-			.expect("txindex should contain all onboard exit txs");
+		let exit_tx = self.sweeper.app.txindex.get_or_insert(&exit_txid, move || {
+			error!("Txindex should contain all onboard exit txs. Missing tx {} for vtxo {}",
+				exit_txid, id,
+			);
+			exit_tx
+		}).await;
 
 		if !exit_tx.confirmed().await {
 			if let Some((h, txid)) = self.sweeper.is_swept(onboard.onchain_output).await {
@@ -304,8 +308,13 @@ impl<'a> SweepBuilder<'a> {
 	async fn process_vtxos(&mut self, round: &'a ExpiredRound) -> Option<BlockHeight> {
 		// First check if the round tx is still available for sweeping, that'd be ideal.
 		let tree_root = round.vtxo_txs.last().unwrap();
-		let tree_root = self.sweeper.app.txindex.get(&tree_root.compute_txid()).await
-			.expect("txindex should contain all round txs");
+		let tree_root_txid = tree_root.compute_txid();
+		let tree_root = self.sweeper.app.txindex.get_or_insert(&tree_root_txid, || {
+			error!("Txindex should contain all round txs. Missing root {} for round {}",
+				tree_root_txid, round.id,
+			);
+			tree_root.clone()
+		}).await;
 
 		if !tree_root.confirmed().await {
 			trace!("Tree root tx {} not yet confirmed, sweeping round tx...", tree_root.txid);
@@ -337,8 +346,13 @@ impl<'a> SweepBuilder<'a> {
 		let signed_txs = round.round.signed_tree.all_signed_txs();
 		let agg_pkgs = round.round.signed_tree.spec.cosign_agg_pks();
 		for (signed_tx, agg_pk) in signed_txs.into_iter().zip(agg_pkgs).rev() {
-			let tx = self.sweeper.app.txindex.get(&signed_tx.compute_txid()).await
-				.expect("txindex should contain all round txs");
+			let txid = signed_tx.compute_txid();
+			let tx = self.sweeper.app.txindex.get_or_insert(&txid, || {
+				error!("Txindex should contain all round txs. Missing {} for round {}",
+					txid, round.id,
+				);
+				signed_tx.clone()
+			}).await;
 			if !tx.confirmed().await {
 				trace!("tx {} did not confirm yet, not sweeping", tx.txid);
 				continue;
@@ -386,8 +400,13 @@ impl<'a> SweepBuilder<'a> {
 				Some(c) => c,
 			};
 
-			let tx = self.sweeper.app.txindex.get(&tx.compute_txid()).await
-				.expect("txindex should contain all connector txs");
+			let txid = tx.compute_txid();
+			let tx = self.sweeper.app.txindex.get_or_insert(&txid, move || {
+				error!("Txindex should have all connector txs. Missing {} for round {}",
+					txid, round.id,
+				);
+				tx
+			}).await;
 
 			if tx.confirmed().await {
 				// Check if the connector output is still unspent.

@@ -205,6 +205,18 @@ impl TxIndex {
 		}
 	}
 
+	/// Get a tx from the index or insert when not present.
+	pub async fn get_or_insert(&self, txid: &Txid, register: impl FnOnce() -> Transaction) -> Tx {
+		if let Some(tx) = self.tx_map.read().await.get(txid) {
+			tx.clone()
+		} else {
+			let tx = register();
+			let ret = IndexedTx::new(*txid, tx);
+			self.tx_map.write().await.insert(*txid, ret.clone());
+			ret
+		}
+	}
+
 	/// Register a new tx in the index and return the tx handle.
 	pub async fn register(&self, tx: Transaction) -> Tx {
 		let txid = tx.compute_txid();
