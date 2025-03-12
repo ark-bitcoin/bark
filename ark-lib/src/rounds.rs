@@ -9,7 +9,6 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
 use bitcoin::secp256k1::{schnorr::{self, Signature}, Message};
-use rand::Rng;
 
 use crate::{musig, util, Vtxo, VtxoId};
 use crate::tree::signed::VtxoTreeSpec;
@@ -25,7 +24,7 @@ impl VtxoOwnershipChallenge {
 	}
 
 	pub fn generate() -> Self {
-		Self(rand::thread_rng().gen())
+		Self(rand::random())
 	}
 
 	pub fn inner(&self) -> [u8; 32] {

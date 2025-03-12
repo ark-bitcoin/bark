@@ -1,8 +1,25 @@
 
-use std::fmt;
-use core::error::Error as StdError;
+use std::fmt::{self, Write};
+use std::borrow::Borrow;
+use std::error::Error as StdError;
 
 use anyhow::Context;
+
+
+pub trait AnyhowErrorExt: Borrow<anyhow::Error> {
+	fn full_msg(&self) -> String {
+		let mut ret = String::new();
+		for (i, e) in self.borrow().chain().enumerate() {
+			if i == 0 {
+				write!(ret, "{}", e).expect("write to buf");
+			} else {
+				write!(ret, ": {}", e).expect("write to buf");
+			}
+		}
+		ret
+	}
+}
+impl AnyhowErrorExt for anyhow::Error {}
 
 
 /// An error type to add context to anyhow to indicate any form
@@ -173,7 +190,7 @@ mod test {
 	impl StdError for TestError {}
 
 	#[test]
-	fn downcast() {
+	fn error_downcast() {
 		let e = Result::<(), _>::Err(TestError)
 			.context("inner_context")
 			.badarg("badarg1_context")
@@ -183,6 +200,14 @@ mod test {
 		let b = e.downcast_ref::<BadArgument>().unwrap();
 		assert_eq!(format!("{}", b), "bad user input: badarg2_context");
 		assert_eq!(format!("{:?}", b), "bad user input: badarg2_context");
+
+		let r: anyhow::Result<()> = badarg!("badarg")
+			.context("inner_context")
+			.context("outer_context");
+		let e = r.unwrap_err();
+		let b = e.downcast_ref::<BadArgument>().unwrap();
+		assert_eq!(format!("{}", b), "bad user input: badarg");
+		assert_eq!(format!("{:?}", b), "bad user input: badarg");
 
 		// both
 		let e = Result::<(), _>::Err(TestError)

@@ -328,11 +328,10 @@ mod test {
 	use bitcoin::Txid;
 	use bitcoin::hashes::Hash;
 	use bitcoin_ext::TransactionExt;
-	use rand;
 
 	#[test]
 	fn test_budget() {
-		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
+		let key = Keypair::new(&util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 		let utxo = OutPoint::new(Txid::all_zeros(), 3);
 
 		let chain = ConnectorChain::new(1, utxo, key.public_key());
@@ -379,7 +378,7 @@ mod test {
 
 	#[test]
 	fn test_signatures() {
-		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
+		let key = Keypair::new(&util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 		let utxo = OutPoint::new(Txid::all_zeros(), 3);
 		let spk = ConnectorChain::output_script(key.public_key());
 

@@ -8,7 +8,6 @@
 use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Transaction, TxOut};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::Keypair;
-
 use bitcoin_ext::P2WSH_DUST;
 
 use crate::{musig, util, vtxo, OnboardVtxo, VtxoSpec};
@@ -194,7 +193,7 @@ mod test {
 		//! Passes through the entire flow so that all assertions
 		//! inside the code are ran at least once.
 
-		let key = Keypair::new(&util::SECP, &mut rand::thread_rng());
+		let key = Keypair::new(&util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 		let utxo = "0000000000000000000000000000000000000000000000000000000000000001:1".parse().unwrap();
 		let spec = VtxoSpec {
 			user_pubkey: key.public_key(),

@@ -24,6 +24,7 @@ use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use bitcoin_ext::P2WSH_DUST;
 
 use crate::{telemetry, App, SECP};
+use crate::error::ContextExt;
 use crate::wallet::BdkWalletExt;
 
 
@@ -149,10 +150,10 @@ impl CollectingPayments {
 		for input in inputs {
 			in_sum += input.amount();
 			if in_sum > Amount::MAX_MONEY{
-				bail!("total input amount overflow");
+				return badarg!("total input amount overflow");
 			}
 			if !in_set.insert(input.id()) {
-				bail!("duplicate input");
+				return badarg!("duplicate input");
 			}
 		}
 
@@ -160,17 +161,15 @@ impl CollectingPayments {
 		for output in outputs {
 			out_sum += output.amount;
 			if out_sum > in_sum {
-				bail!("total output amount exceeds total input amount");
+				return badarg!("total output amount exceeds total input amount");
 			}
 		}
 		for offboard in offboards {
-			let fee = match offboard.fee(self.round_data.offboard_feerate) {
-				Some(v) => v,
-				None => bail!("invalid offboard address"),
-			};
+			let fee = offboard.fee(self.round_data.offboard_feerate)
+				.badarg("invalid offboard request")?;
 			out_sum += offboard.amount + fee;
 			if out_sum > in_sum {
-				bail!("total output amount (with offboards) exceeds total input amount");
+				return badarg!("total output amount (with offboards) exceeds total input amount");
 			}
 		}
 
@@ -256,7 +255,7 @@ impl CollectingPayments {
 						slog!(RoundUserVtxoUnconfirmedOnboard, round_seq: self.round_seq,
 							vtxo: id, confirmations: confs,
 						);
-						bail!("input onboard vtxo not deeply confirmed (has {confs} confs, \
+						return badarg!("input onboard vtxo not deeply confirmed (has {confs} confs, \
 							but requires {})", app.config.round_onboard_confirmations,
 						);
 					}
@@ -316,10 +315,14 @@ impl CollectingPayments {
 		let input_vtxos = match self.check_fetch_round_input_vtxos(app, &inputs).await {
 			Ok(i) => i,
 			Err(e) => {
-				let id = e.downcast_ref::<VtxoId>().cloned();
-				slog!(RoundUserVtxoUnknown, round_seq: self.round_seq, vtxo: id);
+				let ret = if let Some(id) = e.downcast_ref::<VtxoId>().cloned() {
+					slog!(RoundUserVtxoUnknown, round_seq: self.round_seq, vtxo: Some(id));
+					Err(e).not_found([id], "input vtxo does not exist")
+				} else {
+					Err(e)
+				};
 				app.release_vtxos_in_flux(&input_ids).await;
-				return Err(e)
+				return ret;
 			}
 		};
 
@@ -328,7 +331,7 @@ impl CollectingPayments {
 				attempt_seq: self.attempt_seq, error: e.to_string(),
 			);
 			app.release_vtxos_in_flux(&input_ids).await;
-			bail!("registration failed: {e}");
+			return Err(e).context("registration failed");
 		}
 
 		if let Err(e) = self.validate_onboard_inputs(app, &input_vtxos) {
@@ -336,7 +339,7 @@ impl CollectingPayments {
 				attempt_seq: self.attempt_seq, error: e.to_string(),
 			);
 			app.release_vtxos_in_flux(&input_ids).await;
-			bail!("registration failed: {e}");
+			return Err(e).context("registration failed");
 		}
 
 		// Finally we are done

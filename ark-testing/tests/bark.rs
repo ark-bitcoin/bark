@@ -521,7 +521,7 @@ async fn reject_oor_with_bad_signature() {
 			let response = self.upstream().empty_oor_mailbox(req).await?;
 			info!("proxy received real response");
 
-			let keypair = Keypair::new(&ark::util::SECP, &mut rand::thread_rng());
+			let keypair = Keypair::new(&ark::util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 			let (inputs, output_specs, point) = match
 				Vtxo::decode(&response.into_inner().vtxos[0]).unwrap() {
 					Vtxo::Arkoor(v) => (v.inputs, v.output_specs, v.point),

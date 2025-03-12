@@ -1,20 +1,26 @@
 #[macro_use]
 extern crate log;
 
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::amount::Amount;
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::Amount;
+use bitcoin::hashes::Hash;
+use bitcoin::script::PushBytes;
+use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin::{ScriptBuf, WPubkeyHash};
 use futures::future::join_all;
 use tokio::sync::{mpsc, Mutex};
 
-use ark::VtxoId;
+use ark::{musig, VtxoId};
+use ark::rounds::VtxoOwnershipChallenge;
+use ark::util::SECP;
 use aspd_log::{
 	NotSweeping, OnboardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 };
-use aspd_rpc::{self as rpc, ForfeitSignaturesRequest, VtxoSignaturesRequest};
+use aspd_rpc as rpc;
 
 use ark_testing::{Aspd, TestContext, btc, sat};
 use ark_testing::constants::ONBOARD_CONFIRMATIONS;
@@ -22,6 +28,7 @@ use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST
 use ark_testing::daemon::aspd;
 use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
 use ark_testing::util::{FutureExt, ReceiverExt};
+use tokio_stream::StreamExt;
 
 lazy_static::lazy_static! {
 	static ref RANDOM_PK: PublicKey = "02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49".parse().unwrap();
@@ -500,7 +507,7 @@ async fn test_participate_round_wrong_step() {
 	impl aspd::proxy::AspdRpcProxy for ProxyA {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 		async fn submit_payment(&mut self, _req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
-			self.0.provide_vtxo_signatures(VtxoSignaturesRequest {
+			self.0.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
 				pubkey: RANDOM_PK.serialize().to_vec(), signatures: vec![]
 			}).await?;
 			Ok(rpc::Empty{})
@@ -524,7 +531,7 @@ async fn test_participate_round_wrong_step() {
 	impl aspd::proxy::AspdRpcProxy for ProxyB {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 		async fn provide_vtxo_signatures(&mut self, _req: rpc::VtxoSignaturesRequest) -> Result<rpc::Empty, tonic::Status> {
-			self.0.provide_forfeit_signatures(ForfeitSignaturesRequest { signatures: vec![] }).await?;
+			self.0.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest { signatures: vec![] }).await?;
 			Ok(rpc::Empty{})
 		}
 	}
@@ -599,5 +606,118 @@ async fn spend_unregistered_onboard() {
 	l.recv().wait(2500).await;
 }
 
+#[tokio::test]
+async fn bad_round_input() {
+	let ctx = TestContext::new("aspd/bad_round_input").await;
+	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
+		round_interval: Duration::from_secs(10000000),
+		round_submit_time: Duration::from_secs(30),
+		..ctx.aspd_default_cfg("aspd", None).await
+	}).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, btc(1)).await;
+	bark.onboard(btc(0.5)).await;
+	let [vtxo] = bark.vtxos().await.try_into().unwrap();
 
+
+	let mut rpc = aspd.get_public_client().await;
+	let ark_info = rpc.handshake(rpc::HandshakeRequest {
+		version: "0.0.0".into(),
+	}).await.unwrap().into_inner().ark_info.unwrap();
+	let mut stream = rpc.subscribe_rounds(rpc::Empty {}).await.unwrap().into_inner();
+	aspd.get_admin_client().await.trigger_round(rpc::Empty {}).await.unwrap();
+	let challenge = loop {
+		match stream.next().await.unwrap().unwrap() {
+			rpc::RoundEvent { event: Some(event) } => match event {
+				rpc::round_event::Event::Attempt(a) => {
+					break VtxoOwnershipChallenge::new(a.vtxo_ownership_challenge.try_into().unwrap());
+				},
+				_ => {},
+			},
+			_ => panic!("unexpected msg"),
+		}
+	};
+
+	// build some legit params
+	let key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+	let key2 = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+	let input = rpc::InputVtxo {
+		vtxo_id: vtxo.id.to_bytes().to_vec(),
+		ownership_proof: challenge.sign_with(vtxo.id, key).serialize().to_vec(),
+	};
+	let vtxo_req = rpc::VtxoRequest {
+		amount: 1000,
+		vtxo_public_key: key.public_key().serialize().to_vec(),
+		cosign_pubkey: key2.public_key().serialize().to_vec(),
+		public_nonces: iter::repeat_n({
+			let (_sec, pb) = musig::nonce_pair(&key);
+			pb.serialize().to_vec()
+		}, ark_info.nb_round_nonces as usize).collect(),
+	};
+	let offb_req = rpc::OffboardRequest {
+		amount: 1000,
+		offboard_spk: ScriptBuf::new_p2wpkh(&WPubkeyHash::from_byte_array(rand::random())).to_bytes(),
+	};
+
+	// let's fire some bad attempts
+
+	info!("no inputs");
+	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+		input_vtxos: vec![],
+		vtxo_requests: vec![vtxo_req.clone()],
+		offboard_requests: vec![],
+	}).fast().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+		input_vtxos: vec![],
+		vtxo_requests: vec![],
+		offboard_requests: vec![offb_req.clone()],
+	}).fast().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+
+	info!("no outputs");
+	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+		input_vtxos: vec![input.clone()],
+		vtxo_requests: vec![],
+		offboard_requests: vec![],
+	}).fast().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+
+	info!("unknown input");
+	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
+	let fake_input = rpc::InputVtxo {
+		vtxo_id: fake_vtxo.to_bytes().to_vec(),
+		ownership_proof: challenge.sign_with(fake_vtxo, key).serialize().to_vec(),
+	};
+	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+		input_vtxos: vec![fake_input],
+		vtxo_requests: vec![vtxo_req.clone()],
+		offboard_requests: vec![],
+	}).fast().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::NotFound, "[{}]: {}", err.code(), err.message());
+	assert_eq!(err.metadata().get("identifiers").unwrap().to_str().unwrap(), fake_vtxo.to_string());
+
+	info!("non-standard script");
+	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+		input_vtxos: vec![input.clone()],
+		vtxo_requests: vec![],
+		offboard_requests: vec![rpc::OffboardRequest {
+			amount: 1000,
+			offboard_spk: vec![0x00],
+		}],
+	}).fast().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("non-standard"), "{}", err.message());
+
+	info!("op_return too large");
+	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+		input_vtxos: vec![input.clone()],
+		vtxo_requests: vec![],
+		offboard_requests: vec![rpc::OffboardRequest {
+			amount: 1000,
+			offboard_spk: ScriptBuf::new_op_return(<&PushBytes>::try_from(&[1u8; 84][..]).unwrap()).to_bytes(),
+		}],
+	}).fast().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("OP_RETURN"), "{}", err.message());
+}
 
