@@ -30,6 +30,7 @@ pub const TRACE_RUN_ROUND_PERSIST: &str = "round_persist";
 
 pub const METER_ASPD: &str = "aspd";
 
+pub const METER_COUNTER_VERSION: &str = "version_counter";
 pub const METER_COUNTER_MAIN_SPAWN: &str = "main_spawn_counter";
 pub const METER_COUNTER_GRPC_REQUEST: &str = "grpc_requests_total";
 pub const METER_COUNTER_GRPC_ERROR: &str = "grpc_errors_total";
@@ -49,6 +50,7 @@ pub fn init_telemetry(config: &Config, public_key: String) -> Option<TelemetryMe
 	let resource = Resource::new(
 		vec![
 			KeyValue::new("service.name", "aspd"),
+			KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
 			KeyValue::new("aspd.pubic_key", public_key),
 			KeyValue::new("aspd.network", config.network.to_string()),
 			KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()),
@@ -105,9 +107,12 @@ pub fn init_telemetry(config: &Config, public_key: String) -> Option<TelemetryMe
 	global::set_meter_provider(provider);
 
 	let meter = global::meter_provider().meter(METER_ASPD);
+	let version_counter = meter.u64_counter(METER_COUNTER_VERSION).build();
 	let spawn_counter = meter.u64_counter(METER_COUNTER_MAIN_SPAWN).build();
 	let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
 
+	version_counter.add(1u64, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
+	
 	Some(TelemetryMetrics{
 		handshake_version_counter,
 		spawn_counter,
