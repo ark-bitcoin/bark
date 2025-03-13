@@ -468,7 +468,6 @@ impl CollectingPayments {
 				b.add_recipient(offb.script_pubkey.clone(), offb.amount);
 			}
 			b.fee_rate(app.config.round_tx_feerate);
-			b.only_spend_confirmed();
 			b.finish().expect("bdk failed to create round tx")
 		};
 		let unsigned_round_tx = round_tx_psbt.clone().extract_tx()

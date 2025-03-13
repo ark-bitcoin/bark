@@ -481,7 +481,6 @@ impl<'a> SweepBuilder<'a> {
 		let mut txb = wallet.build_tx();
 		txb.ordering(bdk_wallet::TxOrdering::Untouched);
 		txb.nlocktime(LockTime::from_height(tip as u32).expect("actual height"));
-		txb.only_spend_confirmed();
 
 		for sweep in &self.sweeps {
 			txb.add_foreign_utxo_with_sequence(
