@@ -37,6 +37,7 @@ pub struct BarkConfig {
 	pub asp_url: String,
 	pub network: Network,
 	pub chain_source: ChainSource,
+	pub extra_create_args: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -75,6 +76,11 @@ impl Bark {
 			.arg("--asp")
 			.arg(&cfg.asp_url)
 			.arg(format!("--{}", &cfg.network));
+
+		// allow extra args
+		for arg in &cfg.extra_create_args {
+			cmd.arg(arg);
+		}
 
 		// Configure barks' chain source
 		match &cfg.chain_source {
@@ -120,6 +126,10 @@ impl Bark {
 
 	pub fn name(&self) -> &str {
 		&self.name
+	}
+
+	pub fn config(&self) -> &BarkConfig {
+		&self.config
 	}
 
 	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet<bark::SqliteClient>> {
