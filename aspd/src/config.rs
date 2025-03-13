@@ -90,6 +90,10 @@ pub struct Config {
 	/// Whether or not to add full error information to RPC internal errors.
 	pub rpc_rich_errors: bool,
 
+	/// The interval at which the txindex checks tx statuses.
+	#[serde(with = "serde_util::duration")]
+	pub txindex_check_interval: Duration,
+
 	pub otel_collector_endpoint: Option<String>,
 
 	pub rpc: Rpc,
@@ -126,6 +130,9 @@ impl Default for Config {
 			sweep_threshold: Amount::from_sat(1_000_000),
 
 			rpc_rich_errors: true,
+
+			txindex_check_interval: Duration::from_secs(30),
+
 			otel_collector_endpoint: None,
 			rpc: Rpc {
 				public_address: "127.0.0.1:3535".parse().unwrap(),

@@ -503,6 +503,7 @@ impl TxIndexProcess {
 		tokio::time::sleep(Duration::from_secs(1)).await;
 
 		let mut interval = tokio::time::interval(self.interval);
+		interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 		loop {
 			tokio::select! {
 				bc = self.broadcast_rx.recv() => {

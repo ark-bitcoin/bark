@@ -192,6 +192,7 @@ impl TestContext {
 			round_onboard_confirmations: constants::ONBOARD_CONFIRMATIONS as usize,
 			max_vtxo_amount: None,
 			rpc_rich_errors: true,
+			txindex_check_interval: Duration::from_millis(800),
 			otel_collector_endpoint: None,
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty
