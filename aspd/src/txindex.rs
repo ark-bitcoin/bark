@@ -361,6 +361,7 @@ struct TxIndexProcess {
 
 impl TxIndexProcess {
 	async fn update_txs(&mut self) {
+		trace!("Starting TxIndexProcess::update_txs...");
 		for (txid, tx) in self.txs.read().await.iter() {
 			//TODO(stevenroose) entirely rewrite this based on zmq
 			// because right now it's super inefficient and sets the same status over and over
@@ -389,6 +390,7 @@ impl TxIndexProcess {
 				Err(e) => warn!("bitcoin error: {}", e),
 			}
 		}
+		trace!("Finished TxIndexProcess::update_txs");
 	}
 
 	async fn broadcast_tx(&self, tx: &Tx) {
@@ -410,7 +412,7 @@ impl TxIndexProcess {
 		}
 	}
 
-	async fn broadcast_pkg(&self, pkg: &[&Tx]) {
+	async fn broadcast_pkg(&self, pkg: &[Tx]) {
 		// Skip if all txs in mempool.
 		let mut skip = true;
 		for tx in pkg {
@@ -461,9 +463,9 @@ impl TxIndexProcess {
 	async fn broadcast(&self, pkg: &[Txid]) {
 		if pkg.len() == 1 {
 			let txid = pkg[0];
-			if let Some(tx) = self.txs.read().await.get(&txid) {
+			if let Some(tx) = self.txs.read().await.get(&txid).cloned() {
 				slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
-				self.broadcast_tx(tx).await;
+				self.broadcast_tx(&tx).await;
 			} else {
 				debug!("Instructed to broadcast a tx we don't know: {}", txid);
 				return;
@@ -474,12 +476,13 @@ impl TxIndexProcess {
 			for txid in pkg {
 				if let Some(tx) = lock.get(&*txid) {
 					slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
-					txs.push(tx);
+					txs.push(tx.clone());
 				} else {
 					debug!("Instructed to broadcast a tx we don't know: {}", txid);
 					return;
 				}
 			}
+			drop(lock);
 			self.broadcast_pkg(&txs).await;
 		}
 	}
