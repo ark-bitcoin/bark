@@ -103,6 +103,7 @@ impl_slog!(FullRound, Warn, "Round is full, no longer adding payments");
 pub struct NoRoundPayments {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub max_round_submit_time: Duration,
 }
 impl_slog!(NoRoundPayments, Info, "Nothing to do this round, sitting it out...");
@@ -113,7 +114,9 @@ pub struct ReceivedRoundPayments {
 	pub attempt_seq: usize,
 	pub nb_inputs: usize,
 	pub nb_outputs: usize,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub duration: Duration,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub max_round_submit_time: Duration,
 }
 impl_slog!(ReceivedRoundPayments, Info, "Finished collecting round payments");
@@ -135,7 +138,9 @@ impl_slog!(ConstructingRoundVtxoTree, Debug, "Beginning VTXO tree construction a
 pub struct AwaitingRoundSignatures {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub duration_since_sending: Duration,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub max_round_sign_time: Duration,
 }
 impl_slog!(AwaitingRoundSignatures, Debug, "Waiting for VTXO tree signatures to be received");
@@ -169,7 +174,9 @@ impl_slog!(RoundVtxoSignaturesRegistered, Trace, "Registered VTXO tree signature
 pub struct ReceivedRoundVtxoSignatures {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub duration: Duration,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub max_round_sign_time: Duration,
 }
 impl_slog!(ReceivedRoundVtxoSignatures, Debug, "Finished receiving VTXO tree signatures");
@@ -179,6 +186,7 @@ pub struct CreatedSignedVtxoTree {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
 	pub nb_vtxo_signatures: usize,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub duration: Duration,
 }
 impl_slog!(CreatedSignedVtxoTree, Debug, "Created the final signed VTXO tree, ready to broadcast to participants");
@@ -191,7 +199,9 @@ impl_slog!(CreatedSignedVtxoTree, Debug, "Created the final signed VTXO tree, re
 pub struct AwaitingRoundForfeits {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub duration_since_sending: Duration,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub max_round_sign_time: Duration,
 }
 impl_slog!(AwaitingRoundForfeits, Debug, "Sent the round proposal to participants and awaiting any round forfeits");
@@ -226,7 +236,9 @@ pub struct ReceivedRoundForfeits {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
 	pub nb_forfeits: usize,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub duration: Duration,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub max_round_sign_time: Duration,
 }
 impl_slog!(ReceivedRoundForfeits, Debug, "Finished receiving round forfeits");
@@ -255,6 +267,7 @@ pub struct BroadcastedFinalizedRoundTransaction {
 	pub round_seq: usize,
 	pub attempt_seq: usize,
 	pub txid: Txid,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub signing_time: Duration,
 }
 impl_slog!(BroadcastedFinalizedRoundTransaction, Info,
@@ -275,6 +288,7 @@ pub struct RoundFinished {
 	pub attempt_seq: usize,
 	pub txid: Txid,
 	pub vtxo_expiry_block_height: BlockHeight,
+	#[serde(with = "crate::serde_utils::duration")]
 	pub duration: Duration,
 	pub nb_input_vtxos: usize,
 }

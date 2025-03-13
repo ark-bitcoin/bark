@@ -197,6 +197,7 @@ dependencies = [
  "bdk_wallet",
  "bitcoin",
  "chrono",
+ "humantime",
  "log",
  "opentelemetry",
  "serde",
