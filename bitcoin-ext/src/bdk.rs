@@ -1,9 +1,9 @@
 
-use std::borrow::BorrowMut;
 use std::fmt;
+use std::borrow::BorrowMut;
 
 use bdk_wallet::coin_selection::InsufficientFunds;
-use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
+use bdk_wallet::{KeychainKind, SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::{psbt, FeeRate, OutPoint, Transaction, Txid, Weight};
@@ -15,6 +15,7 @@ use crate::bitcoin::TransactionExt;
 
 /// An extension trait for [TxBuilder].
 pub trait TxBuilderExt<'a, A>: BorrowMut<TxBuilder<'a, A>> {
+	/// Add an input to the tx that spends a dust fee anchor.
 	fn add_dust_fee_anchor_spend(&mut self, anchor: OutPoint)
 	where
 		A: bdk_wallet::coin_selection::CoinSelectionAlgorithm,
@@ -56,20 +57,13 @@ impl std::error::Error for CpfpError {}
 
 /// An extension trait for [Wallet].
 pub trait WalletExt: BorrowMut<Wallet> {
-	/// Collect all utxos that are either being spent or created by pending txs.
-	fn pending_utxos(&self) -> Vec<OutPoint> {
+	/// Return all vtxos that are untrusted: unconfirmed and on external address.
+	fn untrusted_utxos(&self) -> Vec<OutPoint> {
 		let mut ret = Vec::new();
-		for tx in self.borrow().transactions() {
-			if tx.chain_position.is_confirmed() {
-				continue;
+		for utxo in self.borrow().list_unspent() {
+			if !utxo.chain_position.is_confirmed() && utxo.keychain == KeychainKind::External {
+				ret.push(utxo.outpoint);
 			}
-
-			// add its inputs
-			ret.extend(tx.tx_node.tx.input.iter().map(|i| i.previous_output));
-			// add its outputs
-			ret.extend((0..tx.tx_node.tx.output.len())
-				.map(|i| OutPoint::new(tx.tx_node.txid, i as u32)),
-			);
 		}
 		ret
 	}
