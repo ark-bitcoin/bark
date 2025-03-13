@@ -552,10 +552,9 @@ impl App {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
 		let exit_tx = user_part.exit_tx();
-		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
-			exit_txid: exit_tx.compute_txid(),
-		);
+		let exit_txid = exit_tx.compute_txid();
 		self.txindex.register_incomplete(exit_tx).await;
+		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount, exit_txid);
 		Ok(ret)
 	}
 
