@@ -109,7 +109,7 @@ enum Command {
 	/// Configuration will pass in default values when --signet is used, but will
 	/// require full configuration for regtest
 	#[command()]
-	Create (CreateOpts),
+	Create(CreateOpts),
 
 	/// Use the built-in onchain wallet
 	#[command(subcommand)]

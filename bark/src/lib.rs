@@ -625,8 +625,10 @@ impl <P>Wallet<P> where
 		//TODO(stevenroose) we won't do reorg handling here
 		let current_height = self.onchain.tip().await?;
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
+		debug!("Querying ark for rounds since height {}", last_sync_height);
 		let req = rpc::FreshRoundsRequest { start_height: last_sync_height };
 		let fresh_rounds = asp.client.get_fresh_rounds(req).await?.into_inner();
+		debug!("Received {} new rounds from ark", fresh_rounds.txids.len());
 
 		for txid in fresh_rounds.txids {
 			let txid = Txid::from_slice(&txid).context("invalid txid from asp")?;
