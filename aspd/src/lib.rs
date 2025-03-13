@@ -29,7 +29,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bip39::Mnemonic;
@@ -444,10 +444,11 @@ impl App {
 	}
 
 	pub async fn sync_onchain_wallet(&self) -> anyhow::Result<Amount> {
+		let start_time = Instant::now();
+
 		let mut wallet = self.wallet.lock().await;
 		let prev_tip = wallet.latest_checkpoint();
 		let prev_balance = wallet.balance();
-		// let keychain_spks = self.wallet.spks_of_all_keychains();
 
 		slog!(WalletSyncStarting, block_height: prev_tip.height());
 		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
@@ -456,15 +457,13 @@ impl App {
 		while let Some(em) = emitter.next_block()? {
 			wallet.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
 
+			// this is to make sure that during initial sync we don't lose all
+			// progress if we halt the process mid-way
 			if em.block_height() % 10_000 == 0 {
-				slog!(WalletSyncCommittingProgress, block_height: prev_tip.height());
+				slog!(WalletSyncCommittingProgress, block_height: em.block_height());
 				wallet.persist(&self.db).await?;
 			}
 		}
-
-		// mempool
-		let mempool = emitter.mempool()?;
-		wallet.apply_unconfirmed_txs(mempool.into_iter().map(|(tx, time)| (tx, time)));
 		wallet.persist(&self.db).await?;
 
 		// rebroadcast unconfirmed txs
@@ -479,13 +478,15 @@ impl App {
 		}
 
 		let checkpoint = wallet.latest_checkpoint();
-		slog!(WalletSyncComplete, new_block_height: checkpoint.height(), previous_block_height: prev_tip.height());
+		slog!(WalletSyncComplete, sync_time: start_time.elapsed(),
+			new_block_height: checkpoint.height(), previous_block_height: prev_tip.height(),
+		);
 
 		let balance = wallet.balance();
 		if balance != prev_balance {
-			slog!(WalletBalanceUpdated, balance: balance.clone(), network: wallet.network(), block_height: checkpoint.height());
+			slog!(WalletBalanceUpdated, balance: balance.clone(), block_height: checkpoint.height());
 		} else {
-			slog!(WalletBalanceUnchanged, balance: balance.clone(), network: wallet.network(), block_height: checkpoint.height());
+			slog!(WalletBalanceUnchanged, balance: balance.clone(), block_height: checkpoint.height());
 		}
 		Ok(balance.total())
 	}

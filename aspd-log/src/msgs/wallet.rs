@@ -1,10 +1,13 @@
-use bdk_wallet::{Balance};
-use bitcoin::{Network, Txid};
+
+use std::time::Duration;
+
+use bdk_wallet::Balance;
+use bitcoin::Txid;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletBalanceUnchanged {
 	pub balance: Balance,
-	pub network: Network,
 	pub block_height: u32,
 }
 impl_slog!(WalletBalanceUnchanged, Trace, "Wallet balance has not unchanged since the previous sync");
@@ -12,7 +15,6 @@ impl_slog!(WalletBalanceUnchanged, Trace, "Wallet balance has not unchanged sinc
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletBalanceUpdated {
 	pub balance: Balance,
-	pub network: Network,
 	pub block_height: u32,
 }
 impl_slog!(WalletBalanceUpdated, Info, "Wallet balance has changed");
@@ -33,6 +35,8 @@ impl_slog!(WalletSyncCommittingProgress, Debug, "Wallet partially synced, commit
 pub struct WalletSyncComplete {
 	pub new_block_height: u32,
 	pub previous_block_height: u32,
+	#[serde(with = "crate::serde_utils::duration")]
+	pub sync_time: Duration,
 }
 impl_slog!(WalletSyncComplete, Debug, "Wallet synced to latest block");
 
