@@ -1,10 +1,15 @@
 use std::fmt;
 use std::str::FromStr;
 
+const UNREGISTERED_BOARD : &'static str = "UnregisteredBoard";
+const READY: &'static str = "Ready";
+const SPENT: &'static str = "Spent";
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum VtxoState {
 	Ready,
-	Spent
+	Spent,
+	UnregisteredBoard,
 }
 
 impl fmt::Display for VtxoState {
@@ -19,8 +24,9 @@ impl FromStr for VtxoState {
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s {
-			"Ready" => Ok(VtxoState::Ready),
-			"Spent" => Ok(VtxoState::Spent),
+			UNREGISTERED_BOARD => Ok(VtxoState::UnregisteredBoard),
+			READY => Ok(VtxoState::Ready),
+			SPENT => Ok(VtxoState::Spent),
 			_ => bail!("Invalid VtxoState: {}", s)
 		}
 	}
@@ -29,8 +35,9 @@ impl FromStr for VtxoState {
 impl VtxoState {
 	pub fn as_str(&self) -> &str {
 		match self {
-			Self::Ready => "Ready",
-			Self::Spent => "Spent"
+			Self::UnregisteredBoard => UNREGISTERED_BOARD,
+			Self::Ready => READY,
+			Self::Spent => SPENT,
 		}
 	}
 }
@@ -44,16 +51,19 @@ mod test {
 		// From str to vtxostate
 		assert_eq!(VtxoState::from_str("Ready").unwrap(), VtxoState::Ready);
 		assert_eq!(VtxoState::from_str("Spent").unwrap(), VtxoState::Spent);
+		assert_eq!(VtxoState::from_str("UnregisteredBoard").unwrap(), VtxoState::UnregisteredBoard);
 
 		// From VtxoState to str
 		assert_eq!(VtxoState::Ready.as_str(), "Ready");
 		assert_eq!(VtxoState::Spent.as_str(), "Spent");
+		assert_eq!(VtxoState::UnregisteredBoard.as_str(), "UnregisteredBoard");
 
 		// If a compiler error occurs,
-		// TThis is a reminder that you should update the test above
+		// This is a reminder that you should update the test above
 		match VtxoState::Spent {
 			VtxoState::Ready => {},
-			VtxoState::Spent => {}
+			VtxoState::Spent => {},
+			VtxoState::UnregisteredBoard => (),
 		}
 	}
 }
