@@ -14,6 +14,7 @@ sweep_tx_fallback_feerate = "2500sat/kwu"
 round_sweep_interval = "1h"
 sweep_threshold = 1000000
 rpc_rich_errors = true
+txindex_check_interval = "30s"
 
 [rpc]
 public_address = "127.0.0.1:3535"

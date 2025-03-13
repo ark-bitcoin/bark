@@ -285,7 +285,7 @@ impl App {
 		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
 		let jh_txindex = mut_self.txindex.start(
 			mut_self.bitcoind.clone(),
-			Duration::from_secs(2),
+			mut_self.config.round_sign_time,
 			mut_self.shutdown_channel.subscribe(),
 		);
 		mut_self.telemetry_metrics = telemetry_metrics;
@@ -552,10 +552,9 @@ impl App {
 		info!("Cosigning onboard request for utxo {}", user_part.utxo);
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
 		let exit_tx = user_part.exit_tx();
-		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount,
-			exit_txid: exit_tx.compute_txid(),
-		);
+		let exit_txid = exit_tx.compute_txid();
 		self.txindex.register_incomplete(exit_tx).await;
+		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount, exit_txid);
 		Ok(ret)
 	}
 
