@@ -223,30 +223,6 @@ impl App {
 		}))
 	}
 
-	/// Load all relevant txs from the database into the tx index.
-	pub async fn fill_txindex(self: &Arc<Self>) -> anyhow::Result<()> {
-		let rounds = self.db.fetch_all_rounds().await?;
-		tokio::pin!(rounds);
-
-		// Load all round txs into the txindex.
-		while let Some(Ok(round)) = rounds.next().await {
-			trace!("Adding txs for round {} to txindex", round.id);
-			self.txindex.register(round.tx).await;
-			self.txindex.register_batch(round.signed_tree.all_signed_txs()).await;
-		}
-
-		let onboards = self.db.get_expired_onboards(BlockHeight::MAX).await?;
-		tokio::pin!(onboards);
-
-		// Load all onboard exit txs into the txindex.
-		while let Some(Ok(onboard)) = onboards.next().await {
-			trace!("Adding onboard vtxo {} to txindex", onboard.id());
-			self.txindex.register(onboard.exit_tx()).await;
-		}
-
-		Ok(())
-	}
-
 	/// Perform all startup processes.
 	async fn startup(self: &Arc<Self>) -> anyhow::Result<()> {
 		// Check if our bitcoind is on the expected network.
@@ -256,9 +232,6 @@ impl App {
 				chain_info.chain, self.config.network,
 			);
 		}
-
-		// Start loading txindex.
-		self.fill_txindex().await.context("error filling txindex")?;
 
 		Ok(())
 	}
@@ -541,7 +514,6 @@ impl App {
 		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
 		let exit_tx = user_part.exit_tx();
 		let exit_txid = exit_tx.compute_txid();
-		self.txindex.register_incomplete(exit_tx).await;
 		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount, exit_txid);
 		Ok(ret)
 	}
