@@ -198,7 +198,10 @@ impl TxIndex {
 	///
 	/// Returns [None] for a tx not in the index.
 	pub async fn status_of(&self, txid: &Txid) -> Option<TxStatus> {
-		if let Some(tx) = self.tx_map.read().await.get(txid).cloned() {
+		let tx_map = self.tx_map.read().await;
+		let tx = tx_map.get(txid).cloned();
+		drop(tx_map);
+		if let Some(tx) = tx {
 			Some(tx.status().await)
 		} else {
 			None
@@ -207,9 +210,11 @@ impl TxIndex {
 
 	/// Get a tx from the index or insert when not present.
 	pub async fn get_or_insert(&self, txid: &Txid, register: impl FnOnce() -> Transaction) -> Tx {
-		if let Some(tx) = self.tx_map.read().await.get(txid) {
+		let tx_map_read_lock = self.tx_map.read().await;
+		if let Some(tx) = tx_map_read_lock.get(txid) {
 			tx.clone()
 		} else {
+			drop(tx_map_read_lock);
 			let tx = register();
 			let ret = IndexedTx::new(*txid, tx);
 			self.tx_map.write().await.insert(*txid, ret.clone());
@@ -274,7 +279,9 @@ impl TxIndex {
 	/// Unregister a transaction
 	pub async fn unregister(&self, tx: impl TxOrTxid) {
 		let mut tx_map = self.tx_map.write().await;
-		if let Some(tx) = tx_map.remove(&tx.txid()) {
+		let tx = tx_map.remove(&tx.txid());
+		drop(tx_map);
+		if let Some(tx) = tx {
 			*tx.status.lock().await = Some(TxStatus::Unregistered);
 		}
 	}
@@ -282,11 +289,16 @@ impl TxIndex {
 	/// Unregister a batch of transactions at once.
 	pub async fn unregister_batch(&self, txs: impl IntoIterator<Item = impl TxOrTxid>) {
 		let mut tx_map = self.tx_map.write().await;
+		let mut unregister = Vec::new();
 		for tx in txs {
 			let txid = tx.txid();
 			if let Some(tx) = tx_map.remove(&txid) {
-				*tx.status.lock().await = Some(TxStatus::Unregistered);
+				unregister.push(tx);
 			}
+		}
+		drop(tx_map);
+		for tx in unregister {
+			*tx.status.lock().await = Some(TxStatus::Unregistered);
 		}
 	}
 
@@ -463,7 +475,10 @@ impl TxIndexProcess {
 	async fn broadcast(&self, pkg: &[Txid]) {
 		if pkg.len() == 1 {
 			let txid = pkg[0];
-			if let Some(tx) = self.txs.read().await.get(&txid).cloned() {
+			let lock = self.txs.read().await;
+			let tx = lock.get(&txid).cloned();
+			drop(lock);
+			if let Some(tx) = tx {
 				slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
 				self.broadcast_tx(&tx).await;
 			} else {
