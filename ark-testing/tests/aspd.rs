@@ -707,7 +707,6 @@ async fn bad_round_input() {
 	assert!(err.message().contains("OP_RETURN"), "{}", err.message());
 }
 
-#[ignore]
 #[tokio::test]
 async fn register_onboard_is_idempotent() {
 	let ctx = TestContext::new("aspd/register_onboard_is_idempotent").await;

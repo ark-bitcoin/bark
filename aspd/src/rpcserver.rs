@@ -351,6 +351,9 @@ impl rpc::server::ArkService for App {
 		Ok(tonic::Response::new(response))
 	}
 
+	/// Registers a board vtxo
+	///
+	/// This method is idempotent
 	async fn register_board_vtxo(
 		&self,
 		req: tonic::Request<rpc::BoardVtxoRequest>,

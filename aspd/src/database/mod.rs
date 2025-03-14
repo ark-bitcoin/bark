@@ -121,13 +121,14 @@ impl Db {
 	 * VTXOs
 	*/
 
-	async fn inner_insert_vtxos<T>(client: &T, vtxos: &[Vtxo]) -> anyhow::Result<()>
+	async fn inner_upsert_vtxos<T>(client: &T, vtxos: &[Vtxo]) -> anyhow::Result<()>
 		where T: GenericClient
 	{
 		// Store all vtxos created in this round.
 		let statement = client.prepare_typed("
 			INSERT INTO vtxo (id, vtxo, expiry) VALUES (
 				UNNEST($1), UNNEST($2), UNNEST($3))
+			ON CONFLICT DO NOTHING
 		", &[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
 
 		let ids = vtxos.iter().map(|v| v.id().to_string()).collect::<Vec<_>>();
@@ -144,11 +145,14 @@ impl Db {
 
 
 	/// Atomically insert the given vtxos.
-	pub async fn insert_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	///
+	/// If one or more vtxo's is already present in the database
+	/// the query will succeed.
+	pub async fn upsert_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
-		Self::inner_insert_vtxos(&tx, vtxos).await?;
+		Self::inner_upsert_vtxos(&tx, vtxos).await?;
 
 		tx.commit().await?;
 		Ok(())
@@ -280,7 +284,7 @@ impl Db {
 			tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&spending_tx)]).await?;
 		}
 
-		Self::inner_insert_vtxos(&tx, &new_vtxos).await?;
+		Self::inner_upsert_vtxos(&tx, &new_vtxos).await?;
 
 		tx.commit().await?;
 		Ok(None)
@@ -356,7 +360,7 @@ impl Db {
 			]
 		).await?;
 
-		Self::inner_insert_vtxos(&tx, &vtxos.all_vtxos().collect::<Vec<_>>()).await?;
+		Self::inner_upsert_vtxos(&tx, &vtxos.all_vtxos().collect::<Vec<_>>()).await?;
 
 		tx.commit().await?;
 		Ok(())
