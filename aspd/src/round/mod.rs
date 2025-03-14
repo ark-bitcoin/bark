@@ -911,8 +911,6 @@ impl SigningForfeits {
 		span.set_attribute(KeyValue::new("connectors-count", self.connectors.len().to_string()));
 
 		trace!("Storing round result");
-		app.txindex.register_batch(self.signed_vtxos.all_signed_txs().iter().cloned()).await;
-		app.txindex.register_batch(self.connectors.iter_signed_txs(&self.connector_key).unwrap()).await;
 		app.db.store_round(
 			&signed_round_tx.tx.clone(),
 			&self.signed_vtxos,

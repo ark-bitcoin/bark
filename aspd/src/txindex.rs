@@ -198,7 +198,7 @@ impl TxIndex {
 	///
 	/// Returns [None] for a tx not in the index.
 	pub async fn status_of(&self, txid: &Txid) -> Option<TxStatus> {
-		if let Some(tx) = self.tx_map.read().await.get(txid) {
+		if let Some(tx) = self.tx_map.read().await.get(txid).cloned() {
 			Some(tx.status().await)
 		} else {
 			None
