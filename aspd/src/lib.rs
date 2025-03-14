@@ -576,7 +576,6 @@ impl App {
 		}
 
 		// Accepted, let's register
-		self.txindex.register(vtxo.exit_tx()).await;
 		self.db.insert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
 
 		slog!(RegisteredOnboard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
