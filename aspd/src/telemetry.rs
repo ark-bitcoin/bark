@@ -1,5 +1,8 @@
 use std::time::Duration;
+
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::Amount;
+use opentelemetry::metrics::Counter;
 use opentelemetry::{global, propagation::Extractor, KeyValue};
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
@@ -10,7 +13,9 @@ use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
-use crate::{Config, TelemetryMetrics};
+
+use crate::Config;
+
 
 pub const TRACER_ASPD: &str = "aspd";
 
@@ -46,29 +51,55 @@ pub const ATTRIBUTE_METHOD: &str = "method";
 pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 
 
-pub fn init_telemetry(config: &Config, public_key: String) -> Option<TelemetryMetrics> {
-	let resource = Resource::new(
-		vec![
-			KeyValue::new("service.name", "aspd"),
-			KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-			KeyValue::new("aspd.pubic_key", public_key),
-			KeyValue::new("aspd.network", config.network.to_string()),
-			KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()),
-			KeyValue::new("aspd.maximum_vtxo_amount",
-				config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
-			)
-		]);
+struct InnerMetrics {
+	spawn_counter: Counter<u64>,
+	handshake_version_counter: Counter<u64>,
+}
 
-	let otel_collector_endpoint = config.otel_collector_endpoint.clone();
-	if otel_collector_endpoint.is_none() {
-		return None;
+pub struct TelemetryMetrics {
+	inner: Option<InnerMetrics>,
+}
+
+impl TelemetryMetrics {
+	pub const fn disabled() -> Self {
+		Self { inner: None }
 	}
+
+	pub fn count_spawn(&self, spawn_id: &'static str) {
+		if let Some(ref m) = self.inner {
+			m.spawn_counter.add(1, &[KeyValue::new("spawn", spawn_id)]);
+		}
+	}
+
+	pub fn count_version(&self, version: &str) {
+		if let Some(ref m) = self.inner {
+			m.handshake_version_counter.add(1, &[KeyValue::new("version", version.to_owned())]);
+		}
+	}
+}
+
+pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetrics {
+	let endpoint = match config.otel_collector_endpoint {
+		Some(ref e) => e,
+		None => return TelemetryMetrics::disabled(),
+	};
+
+	let resource = Resource::new(vec![
+		KeyValue::new("service.name", "aspd"),
+		KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+		KeyValue::new("aspd.public_key", public_key.to_string()),
+		KeyValue::new("aspd.network", config.network.to_string()),
+		KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()),
+		KeyValue::new("aspd.maximum_vtxo_amount",
+			config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
+		)
+	]);
 
 	global::set_text_map_propagator(TraceContextPropagator::new());
 
 	let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
 		.with_tonic()
-		.with_endpoint(otel_collector_endpoint.clone().unwrap())
+		.with_endpoint(endpoint)
 		.with_timeout(Duration::from_secs(3))
 		.build().unwrap();
 
@@ -95,7 +126,7 @@ pub fn init_telemetry(config: &Config, public_key: String) -> Option<TelemetryMe
 		// Build exporter using Delta Temporality (Defaults to Temporality::Cumulative)
 		// .with_temporality(opentelemetry_sdk::metrics::Temporality::Delta)
 		.with_tonic()
-		.with_endpoint(otel_collector_endpoint.clone().unwrap())
+		.with_endpoint(endpoint)
 		.with_timeout(Duration::from_secs(3))
 		.build().unwrap();
 
@@ -112,11 +143,13 @@ pub fn init_telemetry(config: &Config, public_key: String) -> Option<TelemetryMe
 	let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
 
 	version_counter.add(1u64, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
-	
-	Some(TelemetryMetrics{
-		handshake_version_counter,
-		spawn_counter,
-	})
+
+	TelemetryMetrics {
+		inner: Some(InnerMetrics {
+			handshake_version_counter,
+			spawn_counter,
+		})
+	}
 }
 
 pub struct MetadataMap<'a>(pub &'a tonic::metadata::MetadataMap);
