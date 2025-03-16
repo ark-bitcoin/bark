@@ -358,25 +358,6 @@ impl Db {
 		Ok(())
 	}
 
-	/// Get an iterator that yields each round in the database.
-	///
-	/// No particular order is guaranteed.
-	pub async fn fetch_all_rounds(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<StoredRound>> + '_> {
-		let conn = self.pool.get().await?;
-		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round
-		").await?;
-
-		let params: Vec<String> = vec![];
-		let rows = conn.query_raw(&statement, params).await?;
-
-		Ok(
-			rows
-				.map_ok(|row| StoredRound::try_from(row).expect("corrupt db"))
-				.map_err(Into::into)
-		)
-	}
-
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
