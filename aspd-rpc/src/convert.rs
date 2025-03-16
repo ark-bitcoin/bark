@@ -1,6 +1,7 @@
 
 use std::convert::TryFrom;
 use std::fmt;
+use std::time::Duration;
 
 use ark::rounds::VtxoOwnershipChallenge;
 use bitcoin::secp256k1::{schnorr, PublicKey};
@@ -28,6 +29,35 @@ impl fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
+
+impl From<ark::ArkInfo> for crate::ArkInfo {
+	fn from(v: ark::ArkInfo) -> Self {
+		crate::ArkInfo {
+			network: v.network.to_string(),
+			asp_pubkey: v.asp_pubkey.serialize().to_vec(),
+			round_interval_secs: v.round_interval.as_secs() as u32,
+			nb_round_nonces: v.nb_round_nonces as u32,
+			vtxo_exit_delta: v.vtxo_exit_delta as u32,
+			vtxo_expiry_delta: v.vtxo_expiry_delta as u32,
+		}
+	}
+}
+
+impl TryFrom<crate::ArkInfo> for ark::ArkInfo {
+	type Error = ConvertError;
+	fn try_from(v: crate::ArkInfo) -> Result<Self, Self::Error> {
+		Ok(ark::ArkInfo {
+			network: v.network.parse().map_err(|_| "invalid network")?,
+			asp_pubkey: PublicKey::from_slice(&v.asp_pubkey).map_err(|_| "invalid asp pubkey")?,
+			round_interval: Duration::from_secs(v.round_interval_secs as u64),
+			nb_round_nonces: v.nb_round_nonces as usize,
+			vtxo_exit_delta: v.vtxo_exit_delta.try_into()
+				.map_err(|_| "invalid vtxo exit delta")?,
+			vtxo_expiry_delta: v.vtxo_expiry_delta.try_into()
+				.map_err(|_| "invalid vtxo expiry delta")?,
+		})
+	}
+}
 
 impl From<ark::lightning::PaymentStatus> for crate::PaymentStatus {
 	fn from(value: ark::lightning::PaymentStatus) -> Self {

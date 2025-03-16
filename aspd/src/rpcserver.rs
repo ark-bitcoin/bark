@@ -263,16 +263,18 @@ impl rpc::server::ArkService for App {
 
 		self.telemetry_metrics.count_version(&version);
 
+		// NB future note to always accept version "testing" which our tests use
+
 		let ret = rpc::HandshakeResponse {
 			message: None,
-			ark_info: Some(rpc::ArkInfo {
-				network: self.config.network.to_string(),
-				pubkey: self.asp_key.public_key().serialize().to_vec(),
-				round_interval_secs: self.config.round_interval.as_secs() as u32,
-				nb_round_nonces: self.config.nb_round_nonces as u32,
-				vtxo_exit_delta: self.config.vtxo_exit_delta as u32,
-				vtxo_expiry_delta: self.config.vtxo_expiry_delta as u32,
-			}),
+			ark_info: Some(ark::ArkInfo {
+				network: self.config.network,
+				asp_pubkey: self.asp_key.public_key(),
+				round_interval: self.config.round_interval,
+				nb_round_nonces: self.config.nb_round_nonces,
+				vtxo_exit_delta: self.config.vtxo_exit_delta,
+				vtxo_expiry_delta: self.config.vtxo_expiry_delta,
+			}.into()),
 		};
 
 		Ok(tonic::Response::new(ret))

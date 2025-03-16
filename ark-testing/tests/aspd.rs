@@ -126,7 +126,7 @@ async fn restart_key_stability() {
 		let res = client.handshake(rpc::HandshakeRequest {
 			version: "testing".into(),
 		}).await.unwrap().into_inner();
-		PublicKey::from_slice(&res.ark_info.unwrap().pubkey).unwrap()
+		PublicKey::from_slice(&res.ark_info.unwrap().asp_pubkey).unwrap()
 	};
 	let addr1 = {
 		let mut admin_client = aspd.get_admin_client().await;
@@ -152,7 +152,7 @@ async fn restart_key_stability() {
 		let res = client.handshake(rpc::HandshakeRequest {
 			version: "testing".into(),
 		}).await.unwrap().into_inner();
-		PublicKey::from_slice(&res.ark_info.unwrap().pubkey).unwrap()
+		PublicKey::from_slice(&res.ark_info.unwrap().asp_pubkey).unwrap()
 	};
 	let addr2 = {
 		let mut admin_client = aspd.get_admin_client().await;
