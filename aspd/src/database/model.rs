@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::deserialize;
-use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::secp256k1::SecretKey;
 use tokio_postgres::Row;
 
 use ark::{Vtxo, VtxoId};
@@ -81,29 +81,6 @@ impl TryFrom<Row> for VtxoState {
 					.collect::<anyhow::Result<Vec<_>>>()
 				)
 				.transpose()?
-		})
-	}
-}
-
-#[derive(Debug, Clone)]
-pub struct MailboxArkoor {
-	pub id: VtxoId,
-	pub pubkey: PublicKey,
-	pub vtxo: Vtxo,
-}
-
-impl TryFrom<Row> for MailboxArkoor {
-	type Error = anyhow::Error;
-
-	fn try_from(value: Row) -> Result<Self, Self::Error> {
-		let vtxoid = VtxoId::from_str(&value.get::<_, String>("id"))?;
-		let vtxo = Vtxo::decode(value.get("vtxo"))?;
-		debug_assert_eq!(vtxoid, vtxo.id());
-
-		Ok(Self {
-			id: vtxoid,
-			vtxo,
-			pubkey: PublicKey::from_slice(&value.get::<_, &[u8]>("pubkey"))?
 		})
 	}
 }
