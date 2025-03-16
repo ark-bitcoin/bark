@@ -121,13 +121,7 @@ async fn restart_key_stability() {
 	let ctx = TestContext::new("aspd/restart_key_stability").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
-	let asp_key1 = {
-		let mut client = aspd.get_public_client().await;
-		let res = client.handshake(rpc::HandshakeRequest {
-			version: "testing".into(),
-		}).await.unwrap().into_inner();
-		PublicKey::from_slice(&res.ark_info.unwrap().asp_pubkey).unwrap()
-	};
+	let asp_key1 = aspd.ark_info().await.asp_pubkey;
 	let addr1 = {
 		let mut admin_client = aspd.get_admin_client().await;
 		let res = admin_client.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
@@ -147,13 +141,7 @@ async fn restart_key_stability() {
 	let mut cfg = aspd.config().clone();
 	cfg.bitcoind.url = String::new();
 	let aspd = ctx.new_aspd_with_cfg("aspd", cfg).await;
-	let asp_key2 = {
-		let mut client = aspd.get_public_client().await;
-		let res = client.handshake(rpc::HandshakeRequest {
-			version: "testing".into(),
-		}).await.unwrap().into_inner();
-		PublicKey::from_slice(&res.ark_info.unwrap().asp_pubkey).unwrap()
-	};
+	let asp_key2 = aspd.ark_info().await.asp_pubkey;
 	let addr2 = {
 		let mut admin_client = aspd.get_admin_client().await;
 		let res = admin_client.wallet_status(rpc::Empty {}).await.expect("Get response").into_inner();
@@ -619,10 +607,8 @@ async fn bad_round_input() {
 	let [vtxo] = bark.vtxos().await.try_into().unwrap();
 
 
+	let ark_info = aspd.ark_info().await;
 	let mut rpc = aspd.get_public_client().await;
-	let ark_info = rpc.handshake(rpc::HandshakeRequest {
-		version: "0.0.0".into(),
-	}).await.unwrap().into_inner().ark_info.unwrap();
 	let mut stream = rpc.subscribe_rounds(rpc::Empty {}).await.unwrap().into_inner();
 	aspd.get_admin_client().await.trigger_round(rpc::Empty {}).await.unwrap();
 	let challenge = loop {
