@@ -29,8 +29,8 @@ impl Lightningd {
 		let (docker_exec, docker_image) = Self::docker();
 		let lightningd_exec = Self::exec();
 		if docker_exec.is_some() && docker_image.is_some() {
-			let uid = users::get_current_uid();
-			let gid = users::get_current_gid();
+			let uid = unsafe { libc::getuid() };
+			let gid = unsafe { libc::getgid() };
 			let mut cmd = Command::new(docker_exec.unwrap());
 			cmd.args([
 				"run",
