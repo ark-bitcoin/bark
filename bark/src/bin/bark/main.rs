@@ -762,7 +762,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			})
 			.transpose()?;
 
-			if let Some(vtxos) = vtxos {
+			let ret = if let Some(vtxos) = vtxos {
 				let vtxos = vtxos
 					.into_iter()
 					.map(|vtxo| {
@@ -778,7 +778,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				info!("Offboarding {} vtxos...", vtxos.len());
-				w.offboard_vtxos(vtxos, address).await?;
+				w.offboard_vtxos(vtxos, address).await?
 			} else if all {
 				if !no_sync {
 					info!("Syncing wallet...");
@@ -787,10 +787,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 				info!("Offboarding all off-chain funds...");
-				w.offboard_all(address).await?;
+				w.offboard_all(address).await?
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
-			}
+			};
+			output_json(&ret);
 		},
 		Command::Exit(cmd) => {
 			exit::execute_exit_command(cmd, &mut w).await?;

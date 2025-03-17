@@ -299,12 +299,18 @@ impl Bark {
 		self.run(["refresh", "--counterparty"]).await;
 	}
 
-	pub async fn offboard_all(&self, address: impl fmt::Display) {
-		self.run(["offboard", "--all", "--address", &address.to_string()]).await;
+	pub async fn offboard_all(&self, address: impl fmt::Display) -> json::Offboard {
+		self.run_json(["offboard", "--all", "--address", &address.to_string()]).await
 	}
 
-	pub async fn offboard_vtxo(&self, vtxo: impl fmt::Display, address: impl fmt::Display) {
-		self.run(["offboard", "--vtxos", &vtxo.to_string(), "--address", &address.to_string()]).await;
+	pub async fn offboard_vtxo(
+		&self,
+		vtxo: impl fmt::Display,
+		address: impl fmt::Display,
+	) -> json::Offboard {
+		self.run_json([
+			"offboard", "--vtxos", &vtxo.to_string(), "--address", &address.to_string(),
+		]).await
 	}
 
 	pub async fn drop_vtxos(&self) {
