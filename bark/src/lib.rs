@@ -440,6 +440,14 @@ impl <P>Wallet<P> where
 		self.onchain.sync().await?;
 		self.exit.sync_exit(&mut self.onchain).await?;
 		self.sync_ark().await?;
+
+		Ok(())
+	}
+
+	/// Drop a specific vtxo from the database
+	pub async fn drop_vtxo(&mut self, vtxo_id: VtxoId) -> anyhow::Result<()> {
+		warn!("Drop vtxo {} from the database", vtxo_id);
+		self.db.remove_vtxo(vtxo_id)?;
 		Ok(())
 	}
 
