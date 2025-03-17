@@ -715,8 +715,6 @@ impl <P>Wallet<P> where
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
 	pub async fn offboard_all(&mut self, address: Option<Address>) -> anyhow::Result<()> {
-		self.sync_ark().await.context("failed to sync with ark")?;
-
 		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
 		self.offboard(input_vtxos, address).await?;
@@ -726,8 +724,6 @@ impl <P>Wallet<P> where
 
 	/// Offboard vtxos selection to a given address or default to bark onchain address
 	pub async fn offboard_vtxos(&mut self, vtxos: Vec<VtxoId>, address: Option<Address>) -> anyhow::Result<()> {
-		self.sync_ark().await.context("failed to sync with ark")?;
-
 		let input_vtxos =  vtxos
 				.into_iter()
 				.map(|vtxoid| match self.db.get_vtxo(vtxoid)? {

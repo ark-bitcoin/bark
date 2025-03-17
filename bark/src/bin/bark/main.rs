@@ -111,6 +111,10 @@ enum Command {
 	#[command()]
 	Create (CreateOpts),
 
+	/// Use the built-in onchain wallet
+	#[command(subcommand)]
+	Onchain(OnchainCommand),
+
 	/// Change the configuration of your bark wallet
 	#[command()]
 	Config {
@@ -123,10 +127,6 @@ enum Command {
 	/// Prints informations related to the Ark Server
 	#[command()]
 	ArkInfo,
-
-	/// Use the built-in onchain wallet
-	#[command(subcommand)]
-	Onchain(OnchainCommand),
 
 	/// The public key used to receive VTXOs
 	#[command()]
@@ -159,6 +159,10 @@ enum Command {
 		/// Page size to return, default to 10
 		#[arg(long)]
 		page_size: Option<u16>,
+
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 
 	/// Refresh expiring VTXOs
@@ -182,6 +186,9 @@ enum Command {
 		/// regardless of expiry height
 		#[arg(long)]
 		counterparty: bool,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 
 	/// Onboard from the onchain wallet into the Ark
@@ -192,6 +199,9 @@ enum Command {
 		// Whether or not all funds in on-chain wallet should be onboarded
 		#[arg(long)]
 		all: bool,
+		/// Skip syncing wallet before onboard
+		#[arg(long)]
+		no_sync: bool,
 	},
 
 	/// Send money using an Ark (out-of-round) transaction
@@ -203,6 +213,9 @@ enum Command {
 		amount: Option<Amount>,
 		/// An optional comment
 		comment: Option<String>,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 
 	/// Send money from your vtxo's to an onchain address
@@ -213,6 +226,9 @@ enum Command {
 		/// or an Ark VTXO public key
 		destination: String,
 		amount: Amount,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 
 	/// Turn VTXOs into UTXOs
@@ -228,6 +244,9 @@ enum Command {
 		/// Whether or not all VTXOs should be offboarded. Either this or --vtxos should be provided
 		#[arg(long)]
 		all: bool,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 
 	/// Perform a unilateral exit from the Ark
@@ -274,6 +293,9 @@ enum OnchainCommand {
 	Send {
 		destination: Address<address::NetworkUnchecked>,
 		amount: Amount,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 
 	/// List our wallet's UTXOs
@@ -379,11 +401,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Onchain(cmd) => match cmd {
 			OnchainCommand::Balance { no_sync } => {
 				if !no_sync {
+					info!("Syncing wallet...");
 					if let Err(e) = w.onchain.sync().await {
-						warn!("Failed to sync onchain wallet: {}", e)
+						warn!("Onchain sync error: {}", e)
 					}
 					if let Err(e) = w.sync_exits().await {
-						warn!("Failed to sync exits: {}", e)
+						warn!("Exit sync error: {}", e)
 					}
 				}
 
@@ -396,13 +419,16 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				let output = json::onchain::Address { address: address.into_unchecked() };
 				output_json(&output);
 			},
-			OnchainCommand::Send { destination: address, amount } => {
+			OnchainCommand::Send { destination: address, amount, no_sync } => {
 				let addr = address.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
 
-				if let Err(e) = w.sync().await {
-					warn!("Failed to sync utxos. {}", e)
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync().await {
+						warn!("Sync error: {}", e)
+					}
 				}
 
 				let txid = w.onchain.send(addr, amount).await?;
@@ -411,8 +437,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			},
 			OnchainCommand::Utxos { no_sync } => {
 				if !no_sync {
+					info!("Syncing wallet...");
 					if let Err(e) = w.sync().await {
-						warn!("Failed to sync utxos. {}", e)
+						warn!("Sync error: {}", e)
 					}
 				}
 
@@ -423,8 +450,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::VtxoPubkey => println!("{}", w.oor_pubkey()),
 		Command::Balance { no_sync } => {
 			if !no_sync {
-				if let Err(e) = w.sync().await.context("sync error") {
-					warn!("Failed to sync balance. {}", e)
+				info!("Syncing wallet...");
+				if let Err(e) = w.sync().await {
+					warn!("Sync error: {}", e)
 				}
 			}
 
@@ -436,8 +464,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Vtxos { no_sync } => {
 			if !no_sync {
-				if let Err(e) = w.sync().await.context("sync error") {
-					warn!("Failed to sync balance. {}", e)
+				info!("Syncing wallet...");
+				if let Err(e) = w.sync().await {
+					warn!("Sync error: {}", e)
 				}
 			}
 
@@ -445,9 +474,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let vtxos : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
 			output_json(&vtxos);
 		},
-		Command::ListMovements { page_index, page_size } => {
-			if let Err(e) = w.sync_ark().await.context("sync error") {
-				warn!("Failed to sync with ASP. Some payments might not be shown. {}", e)
+		Command::ListMovements { page_index, page_size, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				if let Err(e) = w.sync_ark().await {
+					warn!("Sync error: {}", e)
+				}
 			}
 
 			let pagination = Pagination {
@@ -458,9 +490,15 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let movements = w.list_movements(pagination)?;
 			output_json(&movements);
 		},
-		Command::Refresh { vtxos: vtxo, threshold_blocks, threshold_hours, counterparty, all } => {
-			w.sync_ark().await.context("sync error")?;
-			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxo) {
+		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				if let Err(e) = w.sync_ark().await {
+					warn!("Sync error: {}", e)
+				}
+			}
+
+			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxos) {
 				(None, None, false, false, None) => w.get_expiring_vtxos(w.config().vtxo_refresh_threshold).await?,
 				(Some(b), None, false, false, None) => w.get_expiring_vtxos(b).await?,
 				(None, Some(h), false, false, None) => w.get_expiring_vtxos(h*6).await?,
@@ -482,6 +520,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
 			};
 
+			info!("Refreshing {} vtxos...", vtxos.len());
 			let round_id = w.refresh_vtxos(vtxos).await?;
 			let refresh_output = json::Refresh {
 				participate_round: round_id.is_some(),
@@ -489,24 +528,40 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 			output_json(&refresh_output);
 		},
-		Command::Onboard { amount, all } => {
-			w.onchain.sync().await.context("sync error")?;
+		Command::Onboard { amount, all, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				if let Err(e) = w.onchain.sync().await {
+					warn!("Sync error: {}", e)
+				}
+			}
 			let onboard = match (amount, all) {
-				(Some(a), false) => w.onboard_amount(a).await?,
-				(None, true) => w.onboard_all().await?,
+				(Some(a), false) => {
+					info!("Onboarding {}...", a);
+					w.onboard_amount(a).await?
+				},
+				(None, true) => {
+					info!("Onboarding total balance...");
+					w.onboard_all().await?
+				},
 				_ => bail!("please provide either an amount or --all"),
 			};
 			output_json(&onboard);
 		}
-		Command::Send { destination, amount, comment } => {
+		Command::Send { destination, amount, comment, no_sync } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
 				if comment.is_some() {
 					bail!("comment not supported for VTXO pubkey");
 				}
 
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync_ark().await {
+						warn!("Sync error: {}", e)
+					}
+				}
 				info!("Sending arkoor payment of {} to pubkey {}", amount, pk);
-				w.sync_ark().await.context("sync error")?;
 				w.send_oor_payment(pk, amount).await?;
 			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
 				let inv_amount = inv.amount_milli_satoshis()
@@ -520,16 +575,25 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					bail!("comment not supported for bolt11 invoice");
 				}
 
-				info!("Sending bolt11 payment to invoice {}", inv);
-				w.sync_ark().await.context("sync error")?;
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync_ark().await {
+						warn!("Sync error: {}", e)
+					}
+				}
 				info!("Sending bolt11 payment of {} to invoice {}", final_amount, inv);
 				let preimage = w.send_bolt11_payment(&inv, amount).await?;
 				info!("Payment preimage received: {}", preimage.as_hex());
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
 
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync_ark().await {
+						warn!("Sync error: {}", e)
+					}
+				}
 				info!("Sending {} to lightning address {}", amount, addr);
-				w.sync_ark().await.context("sync error")?;
 				let comment = comment.as_ref().map(|c| c.as_str());
 				let (inv, preimage) = w.send_lnaddr(&addr, amount, comment).await?;
 				info!("Paid invoice {}", inv);
@@ -539,25 +603,28 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					VTXO pubkeys, bolt11 invoices, lightning addresses",
 				);
 			}
-			info!("Success");
+			info!("Payment sent succesfully!");
 		},
-		Command::SendOnchain { destination, amount } => {
+		Command::SendOnchain { destination, amount, no_sync } => {
 			if let Ok(addr) = Address::from_str(&destination) {
 				let addr = addr.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
-				debug!("Sending to on-chain address {}", addr);
 
-				if let Err(e) = w.sync().await.context("sync error") {
-					warn!("Failed to sync before onchain send. {}", e)
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync().await {
+						warn!("Sync error: {}", e)
+					}
 				}
 
+				info!("Sending on-chain payment of {} to {} through round...", amount, addr);
 				w.send_round_onchain_payment(addr, amount).await?;
 			} else {
 				bail!("Invalid destination");
 			}
 		},
-		Command::Offboard { address, vtxos , all} => {
+		Command::Offboard { address, vtxos , all, no_sync } => {
 			let address = address
 			.map(|address| {
 				let address = Address::from_str(&address)?
@@ -578,10 +645,25 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					.map(|vtxo| {
 						VtxoId::from_str(&vtxo).with_context(|| format!("invalid vtxoid: {}", vtxo))
 					})
-					.collect::<anyhow::Result<_>>()?;
+					.collect::<anyhow::Result<Vec<_>>>()?;
 
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync_ark().await {
+						warn!("Sync error: {}", e)
+					}
+				}
+
+				info!("Offboarding {} vtxos...", vtxos.len());
 				w.offboard_vtxos(vtxos, address).await?;
 			} else if all {
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync_ark().await {
+						warn!("Sync error: {}", e)
+					}
+				}
+				info!("Offboarding all off-chain funds...");
 				w.offboard_all(address).await?;
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
