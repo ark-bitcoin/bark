@@ -219,7 +219,7 @@ impl AspConnection {
 	/// Try to perform the handshake with the ASP.
 	async fn handshake(
 		asp_address: &str,
-		network: bitcoin::Network,
+		network: Network,
 	) -> anyhow::Result<AspConnection> {
 		let our_version = env!("CARGO_PKG_VERSION").into();
 
@@ -882,6 +882,11 @@ impl <P>Wallet<P> where
 		invoice: &Bolt11Invoice,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Vec<u8>> {
+		let properties = self.db.read_properties()?.context("Missing config")?;
+		if invoice.network() != properties.network {
+			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
+		}
+
 		let mut asp = self.require_asp()?;
 
 		let inv_amount = invoice.amount_milli_satoshis()
