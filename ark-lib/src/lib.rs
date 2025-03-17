@@ -22,11 +22,11 @@ mod napkin;
 
 
 use std::fmt;
+use std::time::Duration;
 
 use bitcoin::secp256k1::schnorr::Signature;
-use bitcoin::{Amount, BlockHash, FeeRate, Script, ScriptBuf, TxOut, Weight};
+use bitcoin::{Amount, BlockHash, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
-
 use bitcoin_ext::{P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
 
 
@@ -37,6 +37,16 @@ pub type BlockHeight = u64;
 pub struct BlockRef {
 	pub height: BlockHeight,
 	pub hash: BlockHash,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArkInfo {
+	pub network: Network,
+	pub asp_pubkey: PublicKey,
+	pub round_interval: Duration,
+	pub nb_round_nonces: usize,
+	pub vtxo_exit_delta: u16,
+	pub vtxo_expiry_delta: u16,
 }
 
 /// Input of a round

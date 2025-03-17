@@ -43,8 +43,8 @@ use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
-	oor, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, Movement, OffboardRequest, PaymentRequest,
-	RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec,
+	oor, ArkInfo, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, Movement, OffboardRequest,
+	PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec,
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
@@ -91,15 +91,6 @@ impl From<Utxo> for UtxoInfo {
 				}
 		}
 	}
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArkInfo {
-	pub asp_pubkey: PublicKey,
-	pub round_interval: Duration,
-	pub nb_round_nonces: usize,
-	pub vtxo_expiry_delta: u16,
-	pub vtxo_exit_delta: u16,
 }
 
 /// Configuration of the Bark wallet.
@@ -244,17 +235,10 @@ impl AspConnection {
 		}
 
 		if let Some(info) = res.ark_info {
-			if network != info.network.parse().context("invalid network from asp")? {
+			let info = ArkInfo::try_from(info).context("invalid ark info from asp")?;
+			if network != info.network {
 				bail!("ASP is for net {} while we are on net {}", info.network, network);
 			}
-
-			let info = ArkInfo {
-				asp_pubkey: PublicKey::from_slice(&info.pubkey).context("asp pubkey")?,
-				round_interval: Duration::from_secs(info.round_interval_secs as u64),
-				nb_round_nonces: info.nb_round_nonces as usize,
-				vtxo_expiry_delta: info.vtxo_expiry_delta as u16,
-				vtxo_exit_delta: info.vtxo_exit_delta as u16,
-			};
 			Ok(AspConnection { info, client })
 		} else {
 			let msg = res.message.as_ref().map(|s| s.as_str()).unwrap_or("NO MESSAGE");

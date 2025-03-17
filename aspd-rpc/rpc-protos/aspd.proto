@@ -32,7 +32,7 @@ service ArkService {
 
 message ArkInfo {
 	string network = 1;
-	bytes pubkey = 2;
+	bytes asp_pubkey = 2;
 	uint32 round_interval_secs = 3;
 	uint32 nb_round_nonces = 4;
 	uint32 vtxo_exit_delta = 5;
