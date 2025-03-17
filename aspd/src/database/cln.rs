@@ -145,7 +145,7 @@ impl Db {
 			&stmt, &[&status_failed, &status_succeeded, &node_id]
 		).await?;
 
-		Ok(rows.iter().map(Into::into).collect::<Vec<_>>())
+		Ok(rows.iter().map(Into::into).collect())
 	}
 
 	pub async fn get_open_lightning_payment_attempt_by_payment_hash(
@@ -492,6 +492,49 @@ impl Db {
 		Ok(())
 	}
 
+	pub async fn store_lightning_htlc_subscription_status(
+		&self,
+		htlc_subscription_id: i64,
+		status: LightningHtlcSubscriptionStatus,
+	) -> anyhow::Result<()> {
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare("
+			UPDATE lightning_htlc_subscription
+			SET status = $2, updated_at = NOW()
+			WHERE lightning_htlc_subscription_id = $1
+		").await?;
+
+		conn.execute(&stmt, &[&htlc_subscription_id, &status]).await?;
+
+		Ok(())
+	}
+
+	pub async fn get_created_lightning_htlc_subscriptions(
+		&self,
+		node_id: ClnNodeId,
+	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare("
+			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+				subscription.status, subscription.created_at, subscription.updated_at,
+				invoice.invoice
+			FROM lightning_htlc_subscription subscription
+			JOIN lightning_invoice invoice ON
+				subscription.lightning_invoice_id = invoice.lightning_invoice_id
+			WHERE status = $1 AND lightning_node_id = $2
+			ORDER BY created_at DESC;
+		").await?;
+
+		let status_started = LightningHtlcSubscriptionStatus::Created;
+		let rows = conn.query(
+			&stmt, &[&status_started, &node_id]
+		).await?;
+
+		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
+	}
+
 	/// Retrieves all htlc subscriptions for the provided payment hash.
 	pub async fn get_htlc_subscriptions_by_payment_hash(
 		&self,
@@ -515,5 +558,42 @@ impl Db {
 		).await?;
 
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
+	}
+
+	pub async fn get_htlc_subscription_by_payment_hash(
+		&self,
+		payment_hash: &sha256::Hash,
+		status: LightningHtlcSubscriptionStatus,
+	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare("
+			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+				subscription.status, subscription.created_at, subscription.updated_at,
+				invoice.invoice
+			FROM lightning_htlc_subscription subscription
+			JOIN lightning_invoice invoice ON
+				subscription.lightning_invoice_id = invoice.lightning_invoice_id
+			WHERE invoice.payment_hash = $1 AND subscription.status = $2
+			ORDER BY created_at DESC;
+		").await?;
+
+		let rows = conn.query(
+			&stmt, &[&&payment_hash[..], &status]
+		).await?;
+
+		if rows.is_empty() {
+			return Ok(None);
+		}
+
+		if rows.len() > 1 {
+			warn!("Multiple htlc subscriptions with status {} for payment hash: {}", status, payment_hash);
+		}
+
+		if let Some(row) = rows.get(0) {
+			Ok(Some(row.try_into()?))
+		} else {
+			Ok(None)
+		}
 	}
 }
