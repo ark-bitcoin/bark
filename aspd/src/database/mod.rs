@@ -9,7 +9,7 @@ use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
 use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
 use futures::{Stream, StreamExt, TryStreamExt};
-use model::{MailboxArkoor, PendingSweep, StoredRound, VtxoState};
+use model::{PendingSweep, StoredRound, VtxoState};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 
 use crate::Config;
@@ -302,13 +302,13 @@ impl Db {
 	pub async fn pull_oors(&self, pubkey: PublicKey) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, pubkey, vtxo FROM arkoor_mailbox WHERE pubkey = $1
+			SELECT vtxo FROM arkoor_mailbox WHERE pubkey = $1
 		").await?;
 
 		let rows = conn.query(&statement, &[&pubkey.serialize().to_vec()]).await?;
 		let oors = rows
 			.into_iter()
-			.map(|row| -> anyhow::Result<Vtxo> { Ok(MailboxArkoor::try_from(row).expect("corrupt db").vtxo) })
+			.map(|row| -> anyhow::Result<Vtxo> { Ok(Vtxo::decode(row.get("vtxo"))?) })
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let statement = conn.prepare("
@@ -356,25 +356,6 @@ impl Db {
 
 		tx.commit().await?;
 		Ok(())
-	}
-
-	/// Get an iterator that yields each round in the database.
-	///
-	/// No particular order is guaranteed.
-	pub async fn fetch_all_rounds(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<StoredRound>> + '_> {
-		let conn = self.pool.get().await?;
-		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round
-		").await?;
-
-		let params: Vec<String> = vec![];
-		let rows = conn.query_raw(&statement, params).await?;
-
-		Ok(
-			rows
-				.map_ok(|row| StoredRound::try_from(row).expect("corrupt db"))
-				.map_err(Into::into)
-		)
 	}
 
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
