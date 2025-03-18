@@ -661,7 +661,7 @@ impl App {
 				asp_pubkey: self.asp_key.public_key(),
 				user_pubkey: user_pk,
 				payment_amount: amount,
-				forwarding_fee: Amount::from_sat(350), //TODO(stevenroose) set fee schedule
+				forwarding_fee: Amount::from_sat(0), //TODO(stevenroose) set fee schedule
 				htlc_delta: self.config.htlc_delta,
 				htlc_expiry_delta: self.config.htlc_expiry_delta,
 				htlc_expiry: expiry,

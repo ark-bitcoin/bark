@@ -115,7 +115,7 @@ async fn bark_pay_ln_succeeds() {
 
 		assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 		bark_1.send_bolt11(invoice, None).await;
-		assert_eq!(bark_1.offchain_balance().await, sat(299999320));
+		assert_eq!(bark_1.offchain_balance().await, sat(299999670));
 	}
 
 	{
@@ -123,7 +123,7 @@ async fn bark_pay_ln_succeeds() {
 		let invoice_amount = btc(1);
 		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
 		bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
-		assert_eq!(bark_1.offchain_balance().await, sat(199998640));
+		assert_eq!(bark_1.offchain_balance().await, sat(199999340));
 	}
 }
 
@@ -207,11 +207,11 @@ async fn bark_refresh_ln_change_vtxo() {
 
 	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 	bark_1.send_bolt11(invoice, None).await;
-	assert_eq!(bark_1.offchain_balance().await, sat(299999320));
+	assert_eq!(bark_1.offchain_balance().await, sat(299999670));
 
 	bark_1.refresh_all().await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
 	assert_eq!(vtxos[0].vtxo_type, VtxoType::Round);
-	assert_eq!(vtxos[0].amount, sat(299999320));
+	assert_eq!(vtxos[0].amount, sat(299999670));
 }
