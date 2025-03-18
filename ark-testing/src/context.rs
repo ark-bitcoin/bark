@@ -360,6 +360,6 @@ impl TestContext {
 
 impl Drop for TestContext {
 	fn drop(&mut self) {
-		log::info!("Textcontext: Datadir is located at {:?}", self.datadir);
+		log::info!("TestContext: Datadir is located at {:?}", self.datadir);
 	}
 }
