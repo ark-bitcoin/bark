@@ -198,7 +198,7 @@ impl <P>Exit<P> where
 		//
 		// NB cpfp should be done on individual txs for now, because we will utilize 1p1c
 		for vtxo in self.index.vtxos.iter_mut() {
-			trace!("exiting vtxo: {} / {:#?}", vtxo.id(), vtxo);
+			trace!("exiting vtxo: {} / {:?}", vtxo.id(), vtxo);
 
 			let txs = vtxo.exit_txs();
 			'tx: for tx in txs {
