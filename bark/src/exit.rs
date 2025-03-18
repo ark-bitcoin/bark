@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitcoin::{Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
 use bitcoin_ext::bdk::WalletExt;
 use serde::ser::StdError;
 
@@ -133,18 +133,33 @@ impl <P>Exit<P> where
 	/// Add all vtxos in the current wallet to the exit process.
 	///
 	/// It is recommended to sync with ASP before calling this
-	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
+	pub async fn start_exit_for_entire_wallet(
+		&mut self,
+		onchain: &mut onchain::Wallet<P>,
+	) -> anyhow::Result<()> {
 		let vtxos = self.db.get_all_spendable_vtxos()?;
 
 		// The idea is to convert all our vtxos into an exit process structure,
 		// that we then store in the database and we can gradually proceed on.
-		self.start_exit_for_vtxos(&vtxos).await?;
+		self.start_exit_for_vtxos(&vtxos, onchain).await?;
 
 		Ok(())
 	}
 
 	/// Add provided vtxo to the exit process.
-	pub async fn start_exit_for_vtxos(&mut self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	pub async fn start_exit_for_vtxos(
+		&mut self,
+		vtxos: &[Vtxo],
+		onchain: &mut onchain::Wallet<P>,
+	) -> anyhow::Result<()> {
+		// To avoid starting an exit we can't afford, let's do some napkin math.
+		let fee_rate = self.chain_source.urgent_feerate();
+		let total_fee = estimate_exit_weight(vtxos, fee_rate);
+		let balance = onchain.balance();
+		if balance < total_fee {
+			bail!("total exit fee estimate is {total_fee}, wallet only has {balance}")
+		}
+
 		for vtxo in vtxos {
 			let added = self.index.add_vtxo(vtxo.clone());
 			if let Some(added) = added {
@@ -403,4 +418,16 @@ impl <P>Exit<P> where
 
 		Ok(())
 	}
+}
+
+/// Do a rudimentary check of the total exit cost for a set of vtxos.
+/// We estimate the CPCP part by multiplying the exit tx weight by 2.
+fn estimate_exit_weight(vtxos: &[Vtxo], fee_rate: FeeRate) -> Amount {
+	let mut all_txs = Vec::with_capacity(vtxos.len() * 2);
+	for vtxo in vtxos {
+		vtxo.collect_exit_txs(&mut all_txs);
+	}
+	let total_weight = all_txs.iter().map(|t| t.weight()).sum::<Weight>();
+	// we multiply by two as a rough upper bound of all the CPFP txs
+	fee_rate * total_weight * 2
 }
