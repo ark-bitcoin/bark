@@ -1,13 +1,13 @@
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate log;
 
+mod exit;
 mod wallet;
 mod util;
 
 use std::{env, process};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::hex::DisplayHex;
@@ -257,24 +257,8 @@ enum Command {
 	},
 
 	/// Perform a unilateral exit from the Ark
-	#[command()]
-	Exit {
-		/// If set, it will exit all VTXOs still owned by the wallet.
-		///
-		/// If neither `all` or `vtxos` arg is set, the command will only try to progress already ongoing exits
-		#[arg(long)]
-		all: bool,
-
-		/// List of vtxos that should be exited
-		///
-		/// If neither `all` or `vtxos` arg is set, the command will only try to progress already ongoing exits
-		#[arg(long)]
-		vtxos: Option<Vec<String>>,
-
-		/// Keep running until the entire exit is finished. This can take several hours
-		#[arg(long)]
-		wait: bool,
-	},
+	#[command(subcommand)]
+	Exit(exit::ExitCommand),
 
 	/// Dev command to drop the vtxo database
 	#[command(hide = true)]
@@ -404,7 +388,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				warn!("Could not connect with Ark server.")
 			}
-		}
+		},
 		Command::Onchain(cmd) => match cmd {
 			OnchainCommand::Balance { no_sync } => {
 				if !no_sync {
@@ -676,75 +660,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			}
 		},
-		Command::Exit { wait, all,  vtxos } => {
-			match (all, vtxos) {
-				(false, Some(vtxos)) => {
-					let vtxos = vtxos
-						.into_iter()
-						.map(|vtxo| {
-							VtxoId::from_str(&vtxo).context(format!("invalid vtxoid: {}", vtxo))
-						})
-						.collect::<anyhow::Result<Vec<_>>>()?;
-
-					let filter = VtxoFilter::new(&w).include_many(vtxos.into_iter());
-					let vtxos = w.vtxos_with(filter)?;
-
-					w.exit.start_exit_for_vtxos(&vtxos, &mut w.onchain).await
-						.context("error starting exit process for existing vtxos")?;
-				},
-				(true, None) => {
-					if let Err(e) = w.sync_ark().await {
-						warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
-					}
-
-					w.exit.start_exit_for_entire_wallet(&mut w.onchain).await
-						.context("error starting exit process for existing vtxos")?;
-				},
-				(false, None) => info!("Progressing exit txs broadcast"),
-				(true, Some(_)) => bail!("You must specify either `all` or `vtxos` argument to exit")
-			}
-
-			let mut wallet = Some(w);
-			loop {
-				let wallet_mut = wallet.as_mut().unwrap();
-				if let Err(e) = wallet_mut.onchain.sync().await {
-					warn!("Failed to perform on-chain sync before progressing exit: {}", e);
-				}
-
-				wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
-					.context("error making progress on exit process")?;
-
-				let done = wallet_mut.exit.list_pending_exits().await?.is_empty();
-				let height = wallet_mut.exit.all_spendable_at_height().await;
-
-				// Print the output as json
-				output_json(&json::ExitStatus { done, height});
-
-				if !wait || done {
-					break;
-				}
-
-				info!("Sleeping for a minute, then will continue...");
-
-				drop(wallet.take());
-				tokio::time::sleep(Duration::from_secs(60)).await;
-				'w: loop {
-					match open_wallet(&datadir).await {
-						Ok(w) => {
-							wallet = Some(w);
-							break 'w;
-						},
-						Err(e) => {
-							debug!("Error re-opening wallet, waiting a little... ({})", e);
-							tokio::time::sleep(Duration::from_secs(2)).await;
-						},
-					}
-				}
-			}
-		},
-
+		Command::Exit(cmd) => {
+			exit::execute_exit_command(cmd, &mut w).await?;
+		}
 		// dev commands
-
 		Command::DropVtxos => {
 			w.drop_vtxos().await?;
 			info!("Dropped all vtxos");

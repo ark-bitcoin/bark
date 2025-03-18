@@ -57,7 +57,7 @@ async fn simple_exit() {
 	let vtxo = &bark.vtxos().await[0];
 
 	aspd.stop().await.unwrap();
-	bark.exit_all().await;
+	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
 	ctx.bitcoind.generate(1).await;
 
@@ -110,7 +110,7 @@ async fn fail_handshake() {
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(NoHandshakeProxy(aspd.get_public_client().await)).await;
 	bark.set_asp(&proxy.address).await;
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
-	bark.exit_all().await;
+	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
 	assert_eq!(bark.onchain_balance().await, sat(96_779));
 }
@@ -185,14 +185,14 @@ async fn exit_round() {
 	// We don't need ASP for exits.
 	aspd.stop().await.unwrap();
 
-	bark1.exit_all().await;
-	bark2.exit_all().await;
-	bark3.exit_all().await;
-	bark4.exit_all().await;
-	bark5.exit_all().await;
-	bark6.exit_all().await;
-	bark7.exit_all().await;
-	bark8.exit_all().await;
+	bark1.start_exit_all().await;
+	bark2.start_exit_all().await;
+	bark3.start_exit_all().await;
+	bark4.start_exit_all().await;
+	bark5.start_exit_all().await;
+	bark6.start_exit_all().await;
+	bark7.start_exit_all().await;
+	bark8.start_exit_all().await;
 
 	complete_exit(&ctx, &bark1).await;
 	complete_exit(&ctx, &bark2).await;
@@ -264,7 +264,7 @@ async fn exit_vtxo() {
 	aspd.stop().await.unwrap();
 
 	// Make bark exit and check the balance
-	bark.exit_vtxo(vtxo.id).await;
+	bark.start_exit_vtxo(vtxo.id).await;
 	complete_exit(&ctx, &bark).await;
 
 	// Verify exit output is considered as part of the wallet
@@ -296,7 +296,7 @@ async fn exit_after_board() {
 
 	// Exit unilaterally
 	aspd.stop().await.unwrap();
-	bark.exit_all().await;
+	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
 
 	let balance = bark.onchain_balance().await;
@@ -340,7 +340,7 @@ async fn exit_oor() {
 
 	// Make bark2 exit and check the balance
 	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
-	bark2.exit_all().await;
+	bark2.start_exit_all().await;
 	complete_exit(&ctx, &bark2).await;
 	assert_eq!(bark2.onchain_balance().await, sat(1_095_461));
 
@@ -377,7 +377,7 @@ async fn double_exit_call() {
 
 	let vtxos = bark1.vtxos().await;
 
-	bark1.exit_all().await;
+	bark1.start_exit_all().await;
 	complete_exit(&ctx, &bark1).await;
 	assert_eq!(bark1.onchain_balance().await, sat(1_319_019));
 
@@ -400,7 +400,7 @@ async fn double_exit_call() {
 	assert_eq!(vtxos.len(), 1);
 	let vtxo = vtxos.first().unwrap();
 
-	bark1.exit_all().await;
+	bark1.start_exit_all().await;
 	complete_exit(&ctx, &bark1).await;
 
 	let movements = bark1.list_movements().await;
@@ -414,7 +414,7 @@ async fn double_exit_call() {
 	assert_eq!(last_move.destination.clone().unwrap(), exit_spk, "movement destination should be exit_spk");
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
-	bark1.exit_all().await;
+	bark1.start_exit_all().await;
 	complete_exit(&ctx, &bark1).await;
 	assert_eq!(bark1.list_movements().await.len(), 9, "should not create new movement when no new vtxo to exit");
 }
@@ -467,10 +467,12 @@ async fn exit_bolt11_change() {
 	let vtxo = &bark_1.vtxos().await[0];
 
 	aspd_1.stop().await.unwrap();
-	bark_1.exit_all().await;
+	bark_1.start_exit_all().await;
 	complete_exit(&ctx, &bark_1).await;
 
 	assert_eq!(bark_1.offchain_balance().await, Amount::ZERO);
 	assert!(bark_1.onchain_balance().await >= vtxo.amount + Amount::ONE_SAT);
 	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount));
 }
+
+
