@@ -3,6 +3,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::Context;
+use ark::BlockHeight;
 use bitcoin::Network;
 use clap::Args;
 use tokio::fs;
@@ -34,6 +35,15 @@ pub struct CreateOpts {
 	#[arg(long)]
 	bitcoin: bool,
 
+	/// Recover a wallet with an existing mnemonic.
+	/// This currently only works for on-chain funds.
+	#[arg(long)]
+	mnemonic: Option<bip39::Mnemonic>,
+
+	/// The wallet/mnemonic's birthday blockheight to start syncing when recovering.
+	#[arg(long)]
+	birthday_height: Option<BlockHeight>,
+
 	#[command(flatten)]
 	config: ConfigOpts,
 }
@@ -64,8 +74,21 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		}
 	}
 
+	if opts.mnemonic.is_some() {
+		if opts.birthday_height.is_none() {
+			bail!("You need to set the --birthday-height field when recovering from mnemonic.");
+		}
+		warn!("Recovering from mnemonic currently only supports recovering on-chain funds!");
+	} else {
+		if opts.birthday_height.is_some() {
+			bail!("Can't set --birthday-height if --mnemonic is not set.");
+		}
+	}
+
 	// Everything that errors after this will wipe the datadir again.
-	if let Err(e) = try_create_wallet(&datadir, net, config).await {
+	if let Err(e) = try_create_wallet(
+		&datadir, net, config, opts.mnemonic, opts.birthday_height,
+	).await {
 		// Remove the datadir if it exists
 		if datadir.exists() {
 			if let Err(e) = fs::remove_dir_all(datadir).await {
@@ -73,26 +96,32 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 				warn!("{}", e.to_string());
 			}
 		}
-		bail!("Error while creating wallet: {}", e);
+		bail!("Error while creating wallet: {:?}", e);
 	}
 	Ok(())
 }
 
 /// In this method we create the wallet and if it fails, the datadir will be wiped again.
-async fn try_create_wallet(datadir: &Path, net: Network, config: Config) -> anyhow::Result<()> {
+async fn try_create_wallet(
+	datadir: &Path,
+	net: Network,
+	config: Config,
+	mnemonic: Option<bip39::Mnemonic>,
+	birthday: Option<BlockHeight>,
+) -> anyhow::Result<()> {
 	info!("Creating new bark Wallet at {}", datadir.display());
 
 	fs::create_dir_all(datadir).await.context("can't create dir")?;
 
 	// generate seed
-	let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
+	let mnemonic = mnemonic.unwrap_or_else(|| bip39::Mnemonic::generate(12).expect("12 is valid"));
 	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
 		.context("failed to write mnemonic")?;
 
 	// open db
 	let db = SqliteClient::open(datadir.join(DB_FILE))?;
 
-	Wallet::create(&mnemonic, net, config, db).await.context("error creating wallet")?;
+	Wallet::create(&mnemonic, net, config, db, birthday).await.context("error creating wallet")?;
 
 	Ok(())
 }

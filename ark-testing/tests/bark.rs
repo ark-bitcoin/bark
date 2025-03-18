@@ -2,7 +2,6 @@
 #[macro_use]
 extern crate log;
 
-use std::fs;
 use std::io::{self, BufRead};
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
@@ -11,6 +10,7 @@ use std::time::Duration;
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
 use futures::future::join_all;
+use tokio::fs;
 
 use ark::{ArkoorVtxo, Vtxo};
 use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
@@ -567,7 +567,7 @@ async fn reject_oor_with_bad_signature() {
 
 	// check that we saw a log
 	tokio::time::sleep(Duration::from_millis(250)).await;
-	assert!(io::BufReader::new(fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
+	assert!(io::BufReader::new(std::fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
 		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. \
 			schnorr signature verification error: signature failed verification")
 	}));
@@ -636,3 +636,36 @@ async fn second_round_attempt() {
 	res2.await.unwrap();
 }
 
+#[tokio::test]
+async fn recover_mnemonic() {
+	let ctx = TestContext::new("bark/recover_mnemonic").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(2_000_000)).await;
+	bark.onboard(sat(800_000)).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+
+	// make sure we have a round and an onboard vtxo (arkoor doesn't work)
+	bark.refresh_all().await;
+	bark.onboard(sat(800_000)).await;
+	ctx.bitcoind.generate(1).await;
+	let onchain = bark.onchain_balance().await;
+	let _offchain = bark.offchain_balance().await;
+
+	const MNEMONIC_FILE: &str = "mnemonic";
+	let mnemonic = fs::read_to_string(bark.config().datadir.join(MNEMONIC_FILE)).await.unwrap();
+	let _ = bip39::Mnemonic::parse(&mnemonic).expect("invalid mnemonic?");
+
+	// first check we need birthday
+	let args = &["--mnemonic", &mnemonic];
+	// it's not easy to get a grip of what the actual error was
+	let err = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, args).await.unwrap_err();
+	assert!(err.to_string().contains(
+		"You need to set the --birthday-height field when recovering from mnemonic.",
+	));
+
+	let args = &["--mnemonic", &mnemonic, "--birthday-height", "0"];
+	let recovered = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, args).await.unwrap();
+	assert_eq!(onchain, recovered.onchain_balance().await);
+	//TODO(stevenroose) implement offchain recovery
+	// assert_eq!(offchain, recovered.offchain_balance().await);
+}

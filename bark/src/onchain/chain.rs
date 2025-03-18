@@ -7,10 +7,11 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Context;
 use ark::BlockHeight;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
+use bdk_bitcoind_rpc::BitcoindRpcErrorExt;
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
-use bitcoin::{Amount, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
 use serde::ser::StdError;
 
 use crate::persist::BarkPersister;
@@ -87,6 +88,21 @@ impl ChainSourceClient {
 		}
 	}
 
+	pub async fn block(&self, hash: &BlockHash) -> anyhow::Result<Option<Block>> {
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				match bitcoind.get_block(hash) {
+					Ok(b) => Ok(Some(b)),
+					Err(e) if e.is_not_found_error() => Ok(None),
+					Err(e) => Err(e.into()),
+				}
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				Ok(client.get_block_by_hash(hash).await?)
+			},
+		}
+	}
+
 	pub async fn sync_wallet<P>(&self, wallet: &mut PersistedWallet<P>, db: &mut P) -> anyhow::Result<Amount>
 		where
 			P: BarkPersister,
@@ -98,14 +114,21 @@ impl ChainSourceClient {
 		let prev_tip = wallet.latest_checkpoint();
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				debug!("Syncing with bitcoind...");
+				debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
 				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
 					bitcoind, prev_tip.clone(), prev_tip.height(),
 				);
+				let mut count = 0;
 				while let Some(em) = emitter.next_block()? {
 					wallet.apply_block_connected_to(
 						&em.block, em.block_height(), em.connected_to(),
 					)?;
+					count += 1;
+
+					if count % 10_000 == 0 {
+						wallet.persist(db)?;
+						info!("Synced until block height {}", em.block_height());
+					}
 				}
 
 				let mempool = emitter.mempool()?;

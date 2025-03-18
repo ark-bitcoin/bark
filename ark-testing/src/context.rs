@@ -251,10 +251,11 @@ impl TestContext {
 		asp
 	}
 
-	pub async fn try_new_bark(
+	pub async fn try_new_bark_with_create_args<T: AsRef<str>>(
 		&self,
 		name: impl AsRef<str>,
 		aspd: &dyn ToAspUrl,
+		extra_create_args: impl IntoIterator<Item = T>,
 	) -> anyhow::Result<Bark> {
 		let datadir = self.datadir.join(name.as_ref());
 
@@ -269,8 +270,19 @@ impl TestContext {
 			asp_url: aspd.asp_url(),
 			network: Network::Regtest,
 			chain_source,
+			extra_create_args: extra_create_args.into_iter()
+				.map(|s| s.as_ref().to_owned())
+				.collect(),
 		};
 		Bark::try_new(name, bitcoind, cfg).await
+	}
+
+	pub async fn try_new_bark(
+		&self,
+		name: impl AsRef<str>,
+		aspd: &dyn ToAspUrl,
+	) -> anyhow::Result<Bark> {
+		self.try_new_bark_with_create_args::<&str>(name, aspd, []).await
 	}
 
 	/// Creates new bark without any funds.
