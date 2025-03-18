@@ -111,7 +111,7 @@ impl Bark {
 			error!("{}", stderr);
 			error!("{}", stdout);
 
-			bail!("Failed to create {}", name.as_ref());
+			bail!("Failed to create {}: stderr: {}; stdout: {}", name.as_ref(), stderr, stdout);
 		}
 
 		Ok(Bark {

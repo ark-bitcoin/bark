@@ -7,10 +7,11 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Context;
 use ark::BlockHeight;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
+use bdk_bitcoind_rpc::BitcoindRpcErrorExt;
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
-use bitcoin::{Amount, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
 use serde::ser::StdError;
 
 use crate::persist::BarkPersister;
@@ -83,6 +84,21 @@ impl ChainSourceClient {
 			ChainSourceClient::Esplora(ref client) => {
 				let hash = client.get_block_hash(height).await?;
 				Ok(BlockId::from((height, hash)))
+			},
+		}
+	}
+
+	pub async fn block(&self, hash: &BlockHash) -> anyhow::Result<Option<Block>> {
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				match bitcoind.get_block(hash) {
+					Ok(b) => Ok(Some(b)),
+					Err(e) if e.is_not_found_error() => Ok(None),
+					Err(e) => Err(e.into()),
+				}
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				Ok(client.get_block_by_hash(hash).await?)
 			},
 		}
 	}

@@ -36,6 +36,7 @@ use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, Network, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use bitcoin_ext::bdk::WalletExt;
 use lightning::pay_bolt11;
 use lightning_invoice::Bolt11Invoice;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
@@ -177,10 +178,7 @@ impl App {
 		// Store initial wallet state to avoid full chain sync.
 		let (mut wallet, _) = Self::wallet_from_seed(cfg.network, &seed, None)
 			.expect("shouldn't fail on empty state");
-		wallet.apply_update(bdk_wallet::Update {
-			chain: Some(wallet.latest_checkpoint().insert(deep_tip)),
-			..Default::default()
-		}).expect("should work, might fail if tip is genesis");
+		wallet.set_checkpoint(deep_tip);
 		let cs = wallet.take_staged().expect("should have stored tip");
 		ensure!(db.read_aggregate_changeset().await.context("db error")?.is_none(), "db not empty");
 		db.store_changeset(&cs).await.context("error storing initial wallet state")?;

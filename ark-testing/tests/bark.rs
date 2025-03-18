@@ -654,7 +654,15 @@ async fn recover_mnemonic() {
 	let mnemonic = fs::read_to_string(bark.config().datadir.join(MNEMONIC_FILE)).await.unwrap();
 	let _ = bip39::Mnemonic::parse(&mnemonic).expect("invalid mnemonic?");
 
+	// first check we need birthday
 	let args = &["--mnemonic", &mnemonic];
+	// it's not easy to get a grip of what the actual error was
+	let err = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, args).await.unwrap_err();
+	assert!(err.to_string().contains(
+		"You need to set the --birthday-height field when recovering from mnemonic.",
+	));
+
+	let args = &["--mnemonic", &mnemonic, "--birthday-height", "0"];
 	let recovered = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, args).await.unwrap();
 	assert_eq!(onchain, recovered.onchain_balance().await);
 	//TODO(stevenroose) implement offchain recovery

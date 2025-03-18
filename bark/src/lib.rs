@@ -10,6 +10,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
+use bitcoin_ext::bdk::WalletExt;
 pub use persist::sqlite::SqliteClient;
 pub mod vtxo_selection;
 mod exit;
@@ -280,7 +281,13 @@ impl <P>Wallet<P> where
 	}
 
 	/// Create new wallet.
-	pub async fn create(mnemonic: &Mnemonic, network: Network, config: Config, db: P) -> anyhow::Result<Wallet<P>> {
+	pub async fn create(
+		mnemonic: &Mnemonic,
+		network: Network,
+		config: Config,
+		db: P,
+		mnemonic_birthday: Option<BlockHeight>,
+	) -> anyhow::Result<Wallet<P>> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
 			trace!("Existing config: {:?}", existing);
@@ -290,19 +297,31 @@ impl <P>Wallet<P> where
 		let wallet_fingerprint = VtxoSeed::new(network, &mnemonic.to_seed("")).fingerprint();
 		let properties = WalletProperties {
 			network: network,
-			fingerprint: wallet_fingerprint
+			fingerprint: wallet_fingerprint,
 		};
 
 		// write the config to db
 		db.init_wallet(&config, &properties).context("cannot init wallet in the database")?;
 
 		// from then on we can open the wallet
-		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
+		let mut wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
 		wallet.onchain.require_chainsource_version()?;
 
 		if wallet.asp.is_none() {
 			bail!("Cannot create bark if asp is not available");
 		}
+
+		let bday = if let Some(bday) = mnemonic_birthday {
+			bday
+		} else {
+			wallet.onchain.tip().await
+				.context("failed to fetch tip from chain source")?
+				as BlockHeight
+		};
+		let id = wallet.onchain.chain_source.block_id(bday as u32).await
+			.with_context(|| format!("failed to get block height {} from chain source", bday))?;
+		wallet.onchain.wallet.set_checkpoint(id);
+		wallet.onchain.wallet.persist(&mut wallet.db)?;
 
 		Ok(wallet)
 	}

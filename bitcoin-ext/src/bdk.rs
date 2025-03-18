@@ -2,6 +2,7 @@
 use std::borrow::BorrowMut;
 use std::fmt;
 
+use bdk_wallet::chain::BlockId;
 use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
 use bitcoin::{psbt, FeeRate, OutPoint, Transaction, Txid, Weight};
 use cbitcoin::Psbt;
@@ -133,6 +134,17 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);
 		Ok(b.finish().expect("failed to craft anchor spend tx"))
+	}
+
+	/// Insert a checkpoint into the wallet.
+	///
+	/// It's advised to use this only when recovering a wallet with a birthday.
+	fn set_checkpoint(&mut self, checkpoint: BlockId) {
+		let wallet = self.borrow_mut();
+		wallet.apply_update(bdk_wallet::Update {
+			chain: Some(wallet.latest_checkpoint().insert(checkpoint)),
+			..Default::default()
+		}).expect("should work, might fail if tip is genesis");
 	}
 }
 impl WalletExt for Wallet {}
