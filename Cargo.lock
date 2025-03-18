@@ -497,7 +497,7 @@ dependencies = [
 [[package]]
 name = "bdk_bitcoind_rpc"
 version = "0.17.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=09f8fcbdd95da1781f7f7a682da16bc427f43fc6#09f8fcbdd95da1781f7f7a682da16bc427f43fc6"
+source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -507,7 +507,7 @@ dependencies = [
 [[package]]
 name = "bdk_chain"
 version = "0.21.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=09f8fcbdd95da1781f7f7a682da16bc427f43fc6#09f8fcbdd95da1781f7f7a682da16bc427f43fc6"
+source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -519,7 +519,7 @@ dependencies = [
 [[package]]
 name = "bdk_core"
 version = "0.4.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=09f8fcbdd95da1781f7f7a682da16bc427f43fc6#09f8fcbdd95da1781f7f7a682da16bc427f43fc6"
+source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
 dependencies = [
  "bitcoin",
  "hashbrown 0.14.5",
@@ -529,7 +529,7 @@ dependencies = [
 [[package]]
 name = "bdk_esplora"
 version = "0.20.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=09f8fcbdd95da1781f7f7a682da16bc427f43fc6#09f8fcbdd95da1781f7f7a682da16bc427f43fc6"
+source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
 dependencies = [
  "async-trait",
  "bdk_core",
@@ -541,7 +541,7 @@ dependencies = [
 [[package]]
 name = "bdk_wallet"
 version = "1.0.0"
-source = "git+https://github.com/stevenroose/bdk.git?rev=09f8fcbdd95da1781f7f7a682da16bc427f43fc6#09f8fcbdd95da1781f7f7a682da16bc427f43fc6"
+source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
 dependencies = [
  "bdk_chain",
  "bitcoin",
@@ -1071,7 +1071,7 @@ dependencies = [
 [[package]]
 name = "esplora-client"
 version = "0.11.0"
-source = "git+https://github.com/acidbunny21/rust-esplora-client.git?rev=cb707fbbd69dd44afe8ae1b439bbb8a69eaeee85#cb707fbbd69dd44afe8ae1b439bbb8a69eaeee85"
+source = "git+https://github.com/acidbunny21/rust-esplora-client.git?rev=c0ed77e8fdb84b294bb2d444d9268dae9fd92cfc#c0ed77e8fdb84b294bb2d444d9268dae9fd92cfc"
 dependencies = [
  "bitcoin",
  "hex-conservative 0.2.1",
