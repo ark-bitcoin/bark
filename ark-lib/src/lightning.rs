@@ -1,7 +1,7 @@
 
 use std::{fmt, io};
 
-use bitcoin::{Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
+use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
@@ -130,29 +130,6 @@ impl Bolt11Payment {
 		let spend_weight = Weight::from_wu(TAPROOT_KEYSPEND_WEIGHT as u64);
 		let nb_inputs = self.inputs.len() as u64;
 		tx.weight() + nb_inputs * spend_weight
-	}
-
-	/// Check if there is sufficient fee provided for the given feerate.
-	pub fn check_fee(
-		&self,
-		amount: Amount,
-		change: Amount,
-		fee_rate: FeeRate,
-	) -> Result<(), InsufficientFunds> {
-		let total_input = self.inputs.iter().map(|i| i.amount()).sum::<Amount>();
-		let total_output = amount + change;
-
-		let weight = self.total_weight();
-		let fee = fee_rate * weight + self.forwarding_fee;
-
-		let required = total_output + fee;
-		if required > total_input {
-			Err(InsufficientFunds {
-				required, fee, missing: required - total_input,
-			})
-		} else {
-			Ok(())
-		}
 	}
 
 	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
