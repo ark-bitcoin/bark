@@ -319,11 +319,11 @@ impl ChainSourceClient {
 
 	/// Fee rate to use for regular txs like onboards.
 	pub (crate) fn regular_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(10).unwrap()
+		FeeRate::from_sat_per_vb(5).unwrap()
 	}
 
 	/// Fee rate to use for urgent txs like exits.
 	pub (crate) fn urgent_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(15).unwrap()
+		FeeRate::from_sat_per_vb(7).unwrap()
 	}
 }

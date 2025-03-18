@@ -682,7 +682,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					let filter = VtxoFilter::new(&w).include_many(vtxos.into_iter());
 					let vtxos = w.vtxos_with(filter)?;
 
-					w.exit.start_exit_for_vtxos(&vtxos).await
+					w.exit.start_exit_for_vtxos(&vtxos, &mut w.onchain).await
 						.context("error starting exit process for existing vtxos")?;
 				},
 				(true, None) => {
@@ -690,7 +690,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 						warn!("Failed to sync incoming Ark payments, still doing exit: {}", e);
 					}
 
-					w.exit.start_exit_for_entire_wallet().await
+					w.exit.start_exit_for_entire_wallet(&mut w.onchain).await
 						.context("error starting exit process for existing vtxos")?;
 				},
 				(false, None) => info!("Progressing exit txs broadcast"),

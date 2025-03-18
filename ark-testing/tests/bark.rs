@@ -132,9 +132,10 @@ async fn list_utxos() {
 
 	let utxos = bark1.utxos().await;
 
+	println!("utxos: {:?}", utxos);
 	assert_eq!(2, utxos.len());
 	// onboard change utxo
-	assert!(utxos.iter().any(|u| u.amount.to_sat() == 496_254));
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 497_796));
 	// offboard utxo
 	assert!(utxos.iter().any(|u| u.amount.to_sat() == 828_900));
 }
@@ -229,7 +230,7 @@ async fn just_oor() {
 	let pk2 = bark2.vtxo_pubkey().await;
 	bark1.send_oor(pk2, sat(20_000)).await;
 
-	assert_eq!(58_035, bark1.offchain_balance().await.to_sat());
+	assert_eq!(59_017, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
 }
 
@@ -349,16 +350,16 @@ async fn list_movements() {
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 2);
 	assert_eq!(payments[0].spends[0].amount, sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, sat(148_035));
-	assert_eq!(payments[0].fees.to_sat(), 1965);
+	assert_eq!(payments[0].receives[0].amount, sat(149_017));
+	assert_eq!(payments[0].fees.to_sat(), 983);
 	assert!(payments[0].destination.is_some());
 
 	// refresh vtxos
 	bark1.refresh_all().await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, sat(148_035));
-	assert_eq!(payments[0].receives[0].amount, sat(148_035));
+	assert_eq!(payments[0].spends[0].amount, sat(149_017));
+	assert_eq!(payments[0].receives[0].amount, sat(149_017));
 	assert_eq!(payments[0].fees.to_sat(), 0);
 	assert!(payments[0].destination.is_none());
 
