@@ -224,6 +224,13 @@ impl <P>Wallet<P> where
 		Ok(tx.compute_txid())
 	}
 
+	pub async fn drain(&mut self, dest: Address) -> anyhow::Result<Txid> {
+		let psbt = self.prepare_send_all_tx(dest)?;
+		let tx = self.finish_tx(psbt)?;
+		self.broadcast_tx(&tx).await?;
+		Ok(tx.compute_txid())
+	}
+
 	/// Reveals a new onchain address
 	///
 	/// The revealed address is directly persisted, so calling this method twice in a row will result in 2 different addresses

@@ -331,6 +331,15 @@ enum OnchainCommand {
 		no_sync: bool,
 	},
 
+	/// Send all wallet funds to provided destination
+	#[command()]
+	Drain {
+		destination: Address<address::NetworkUnchecked>,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
+	},
+
 	/// List our wallet's UTXOs
 	#[command()]
 	Utxos {
@@ -465,6 +474,24 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				let txid = w.onchain.send(addr, amount).await?;
+
+				let output = json::onchain::Send { txid };
+				output_json(&output);
+			},
+			OnchainCommand::Drain { destination: address, no_sync } => {
+				let addr = address.require_network(net).with_context(|| {
+					format!("address is not valid for configured network {}", net)
+				})?;
+
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync().await {
+						warn!("Sync error: {}", e)
+					}
+				}
+
+				let txid = w.onchain.drain(addr).await?;
+
 				let output = json::onchain::Send { txid };
 				output_json(&output);
 			},

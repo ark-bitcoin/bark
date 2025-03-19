@@ -194,6 +194,11 @@ impl Bark {
 		self.run(["onchain", "send", &destination, &amount, "--verbose"]).await;
 	}
 
+	pub async fn onchain_drain(&self, destination: impl fmt::Display) {
+		let destination = destination.to_string();
+		self.run(["onchain", "drain", &destination, "--verbose"]).await;
+	}
+
 	/// Use onchain wallet to send to many recipients
 	pub async fn onchain_send_many<T1, T2>(&self, addresses: T1, amounts: T2)
 	where

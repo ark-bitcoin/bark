@@ -732,3 +732,20 @@ async fn onchain_send_many() {
 	assert_eq!(recipient.onchain_balance().await, sat(1_500_000));
 	assert!(sender.onchain_balance().await < sat(8_500_000));
 }
+
+#[tokio::test]
+async fn onchain_drain() {
+	let ctx = TestContext::new("bark/onchain_drain").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+	let sender = ctx.new_bark_with_funds("bark_sender", &aspd, sat(1_000_000)).await;
+	let recipient = ctx.new_bark("bark_recipient", &aspd).await;
+
+	sender.onchain_drain(recipient.get_onchain_address().await).await;
+	ctx.bitcoind.generate(1).await;
+
+	let sender_balance = sender.onchain_balance().await;
+	assert_eq!(sender_balance, Amount::ZERO);
+
+	let recipient_balance = recipient.onchain_balance().await;
+	assert_eq!(recipient_balance, sat(999443));
+}
