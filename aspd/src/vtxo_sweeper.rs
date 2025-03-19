@@ -560,8 +560,8 @@ impl VtxoSweeper {
 	/// Clear the board data from our database because we either swept it, or the user
 	/// has broadcast the exit tx, doing a unilateral exit.
 	async fn clear_board(&mut self, board: &BoardVtxo) {
-		if let Err(e) = self.app.db.remove_board(board).await {
-			error!("Failed to remove board vtxo {} from database: {}", board.id(), e);
+		if let Err(e) = self.app.db.mark_board_swept(board).await {
+			error!("Failed to mark board vtxo {} as swept: {}", board.id(), e);
 		}
 
 		let reveal = board.exit_tx().compute_txid();

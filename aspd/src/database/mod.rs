@@ -163,7 +163,8 @@ impl Db {
 
 		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs, board_swept FROM vtxo WHERE expiry <= $1
+			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs, board_swept FROM vtxo \
+			WHERE expiry <= $1 AND board_swept = false
 		", &[Type::INT4]).await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
@@ -176,11 +177,11 @@ impl Db {
 		}).fuse())
 	}
 
-	pub async fn remove_board(&self, vtxo: &BoardVtxo) -> anyhow::Result<()> {
+	pub async fn mark_board_swept(&self, vtxo: &BoardVtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
-			UPDATE vtxo SET deleted_at = NOW() WHERE id = $1;
+			UPDATE vtxo SET board_swept = true WHERE id = $1;
 		").await?;
 
 		conn.execute(&statement, &[&vtxo.id().to_string()]).await?;
