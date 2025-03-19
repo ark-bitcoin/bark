@@ -1,6 +1,7 @@
 
 
 use std::str::FromStr;
+use std::time::Duration;
 
 use ark_testing::daemon::aspd;
 use bitcoin::Address;
@@ -369,11 +370,10 @@ async fn double_exit_call() {
 
 	// onboard vtxo
 	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
-
 
 
 	let vtxos = bark1.vtxos().await;

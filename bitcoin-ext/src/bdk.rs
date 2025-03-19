@@ -2,8 +2,10 @@
 use std::borrow::BorrowMut;
 use std::fmt;
 
-use bdk_wallet::chain::BlockId;
+use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
+use bdk_wallet::chain::BlockId;
+use bdk_wallet::error::CreateTxError;
 use bitcoin::{psbt, FeeRate, OutPoint, Transaction, Txid, Weight};
 use cbitcoin::Psbt;
 
@@ -34,12 +36,17 @@ impl<'a, A> TxBuilderExt<'a, A> for TxBuilder<'a, A> {}
 pub enum CpfpError {
 	/// The given tx doesn't have a fee anchor.
 	NoFeeAnchor(Txid),
+	/// Onchain funds don't have enough confirmations.
+	NeedConfirmations(InsufficientFunds),
 }
 
 impl fmt::Display for CpfpError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			Self::NoFeeAnchor(t) => write!(f, "tx has no fee anchor: {}", t),
+			Self::NeedConfirmations(e) => {
+				write!(f, "you need more confirmations on your on-chain funds: {}", e)
+			},
 		}
 	}
 }
@@ -94,16 +101,25 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
 
+		let balance = wallet.balance().total();
+
 		let template_weight = {
 			let mut b = wallet.build_tx();
 			b.ordering(TxOrdering::Untouched);
 			b.only_witness_utxo();
+			b.only_spend_confirmed();
 			for anchor in &anchors {
 				b.add_dust_fee_anchor_spend(*anchor);
 			}
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + P2TR_DUST);
 			b.fee_rate(fee_rate);
-			let mut psbt = b.finish().expect("failed to craft anchor spend template");
+			let mut psbt = match b.finish() {
+				Ok(psbt) => psbt,
+				Err(CreateTxError::CoinSelection(e)) if e.needed <= balance => {
+					return Err(CpfpError::NeedConfirmations(e));
+				},
+				Err(e) => panic!("error creating tx: {}", e),
+			};
 			let opts = SignOptions {
 				trust_witness_utxo: true,
 				..Default::default()

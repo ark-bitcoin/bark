@@ -706,11 +706,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			let mut wallet = Some(w);
 			loop {
-				if let Err(e) = wallet.as_mut().unwrap().onchain.sync().await {
+				let wallet_mut = wallet.as_mut().unwrap();
+				if let Err(e) = wallet_mut.onchain.sync().await {
 					warn!("Failed to perform on-chain sync before progressing exit: {}", e);
 				}
-
-				let wallet_mut = wallet.as_mut().unwrap();
 
 				wallet_mut.exit.progress_exit(&mut wallet_mut.onchain).await
 					.context("error making progress on exit process")?;
