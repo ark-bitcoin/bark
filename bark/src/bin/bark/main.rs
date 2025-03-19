@@ -5,7 +5,8 @@ mod wallet;
 mod util;
 
 use std::{env, process};
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -49,6 +50,9 @@ struct Cli {
 	/// Enable verbose logging
 	#[arg(long, short = 'v', global = true)]
 	verbose: bool,
+	/// Disable all terminal logging
+	#[arg(long, short = 'q', global = true)]
+	quiet: bool,
 
 	/// The datadir of the bark wallet
 	#[arg(long, global = true, default_value_t = default_datadir())]
@@ -361,23 +365,17 @@ enum OnchainCommand {
 	},
 }
 
-fn init_logging(verbose: bool) {
+fn init_logging(verbose: bool, quiet: bool, datadir: &Path) -> anyhow::Result<()> {
+	if verbose && quiet {
+		bail!("Can't set both --verbose and --quiet");
+	}
+
 	let colors = fern::colors::ColoredLevelConfig::default();
 
-	let mut l = fern::Dispatch::new()
+	let dispatch = fern::Dispatch::new()
 		.level_for("rusqlite", log::LevelFilter::Warn)
 		.level_for("rustls", log::LevelFilter::Warn)
-		.level_for("reqwest", log::LevelFilter::Warn);
-	if verbose {
-		l = l
-			.level(log::LevelFilter::Trace)
-			.level_for("bitcoincore_rpc", log::LevelFilter::Trace);
-	} else {
-		l = l
-			.level(log::LevelFilter::Info)
-			.level_for("bitcoincore_rpc", log::LevelFilter::Warn);
-	}
-	l
+		.level_for("reqwest", log::LevelFilter::Warn)
 		.format(move |out, msg, rec| {
 			let now = chrono::Local::now();
 			// only time, not date
@@ -399,15 +397,49 @@ fn init_logging(verbose: bool) {
 			} else {
 				out.finish(format_args!("[{stamp} {: >5}] {}", colors.color(rec.level()), msg))
 			}
-		})
-		.chain(std::io::stderr())
-		.apply().expect("error setting up logging");
+		});
+
+	// one dispatch for the debug.log file
+	let logfile = if datadir.exists() {
+		if let Ok(mut file) = fern::log_file(datadir.join("debug.log")) {
+			// try write a newline into the file to separate commands
+			let _ = file.write_all("\n\n".as_bytes());
+			fern::Dispatch::new()
+				.level(log::LevelFilter::Trace)
+				.level_for("bitcoincore_rpc", log::LevelFilter::Trace)
+				.chain(file)
+		} else {
+			fern::Dispatch::new()
+		}
+	} else {
+		fern::Dispatch::new()
+	};
+
+	// then also one for terminal output
+	let terminal = if verbose {
+		fern::Dispatch::new()
+			.level(log::LevelFilter::Trace)
+			.level_for("bitcoincore_rpc", log::LevelFilter::Trace)
+	} else if quiet {
+		fern::Dispatch::new()
+	} else {
+		fern::Dispatch::new()
+			.level(log::LevelFilter::Info)
+			.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
+	}.chain(std::io::stderr());
+
+	dispatch.chain(logfile).chain(terminal).apply()
+		.context("error applying logging configuration")?;
+	Ok(())
 }
 
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
-	init_logging(cli.verbose);
-
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
+
+	if let Err(e) = init_logging(cli.verbose, cli.quiet, &datadir) {
+		eprintln!("Error setting up logging: {}", e);
+		process::exit(1);
+	}
 
 	// Handle create command differently.
 	if let Command::Create ( create_opts ) = cli.command {
@@ -451,7 +483,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				warn!("Could not connect with Ark server.")
 			}
-		}
+		},
 		Command::Onchain(cmd) => match cmd {
 			OnchainCommand::Balance { no_sync } => {
 				if !no_sync {
@@ -654,7 +686,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				_ => bail!("please provide either an amount or --all"),
 			};
 			output_json(&board);
-		}
+		},
 		Command::Send { destination, amount, comment, no_sync } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
