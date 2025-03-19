@@ -462,7 +462,7 @@ async fn exit_bolt11_change() {
 
 	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
 	bark_1.send_bolt11(invoice, None).await;
-	assert_eq!(bark_1.offchain_balance().await, sat(299999320));
+	assert_eq!(bark_1.offchain_balance().await, sat(299999670));
 
 	// We try to perform an exit for ln payment change
 	let vtxo = &bark_1.vtxos().await[0];

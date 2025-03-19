@@ -33,7 +33,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use bdk_wallet::WalletPersister;
 use bip39::Mnemonic;
-use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid, Weight};
+use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
 use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
@@ -925,27 +925,13 @@ impl <P>Wallet<P> where
 		}
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
 
-		let fr = self.onchain.chain_source.regular_feerate();
 		let change_keypair = self.derive_store_next_keypair()?;
 
-		// We do some kind of naive fee estimation: we try create a tx,
-		// if we don't have enough fee, we add the fee we were short to
-		// the desired input amount and try again.
-		let mut account_for_fee = ark::lightning::HTLC_MIN_FEE;
-		let inputs = loop {
-			let input_vtxos = self.db.get_expiring_vtxos(amount + account_for_fee)?;
+		// The anchor output has an amount
+		let anchor_amount = bitcoin_ext::P2WSH_DUST;
+		let forwarding_fee = Amount::from_sat(350);
+		let inputs = self.db.get_expiring_vtxos(amount + anchor_amount + forwarding_fee)?;
 
-			//TODO(stevenroose) we need a way for the user to calculate the htlc tx feerate,
-			//like in the oor way (it would be nicer if the user makes the bolt11payment info)
-			// soon we might ignore this because zero relayfee
-
-			let vb = Weight::from_vb(300 + 20 * input_vtxos.len() as u64).unwrap();
-			if vb * fr > account_for_fee {
-				account_for_fee = vb * fr;
-			} else {
-				break input_vtxos;
-			}
-		};
 
 		let (sec_nonces, pub_nonces, keypairs) = {
 			let mut secs = Vec::with_capacity(inputs.len());
@@ -1029,7 +1015,7 @@ impl <P>Wallet<P> where
 			&input_vtxos,
 			invoice.to_string(),
 			Some(&Vtxo::Bolt11Change(signed.change_vtxo())),
-			Some(account_for_fee)).context("failed to store OOR vtxo")?;
+			Some(anchor_amount + forwarding_fee)).context("failed to store OOR vtxo")?;
 
 		info!("Bolt11 payment succeeded");
 		Ok(payment_preimage)
