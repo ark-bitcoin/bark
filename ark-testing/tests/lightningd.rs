@@ -102,10 +102,10 @@ async fn bark_pay_ln_succeeds() {
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
-	let onboard_amount = btc(5);
+	let board_amount = btc(5);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
-	bark_1.onboard(onboard_amount).await;
+	bark_1.board(board_amount).await;
 	ctx.bitcoind.generate(6).await;
 
 	{
@@ -113,7 +113,7 @@ async fn bark_pay_ln_succeeds() {
 		let invoice_amount = btc(2);
 		let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
-		assert_eq!(bark_1.offchain_balance().await, onboard_amount);
+		assert_eq!(bark_1.offchain_balance().await, board_amount);
 		bark_1.send_bolt11(invoice, None).await;
 		assert_eq!(bark_1.offchain_balance().await, sat(299999670));
 	}
@@ -145,22 +145,22 @@ async fn bark_pay_ln_fails() {
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
-	let onboard_amount = btc(2);
+	let board_amount = btc(2);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
-	bark_1.onboard(onboard_amount).await;
+	bark_1.board(board_amount).await;
 	ctx.bitcoind.generate(6).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
-	// Onboard funds into the Ark
-	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
+	// board funds into the Ark
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
 
 	// The payment fails, the user still has all their funds
-	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
 }
 
 #[tokio::test]
@@ -195,17 +195,17 @@ async fn bark_refresh_ln_change_vtxo() {
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
-	let onboard_amount = btc(5);
+	let board_amount = btc(5);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
-	bark_1.onboard(onboard_amount).await;
+	bark_1.board(board_amount).await;
 	ctx.bitcoind.generate(6).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
-	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.send_bolt11(invoice, None).await;
 	assert_eq!(bark_1.offchain_balance().await, sat(299999670));
 

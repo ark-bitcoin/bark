@@ -1,7 +1,6 @@
 
 
 use std::str::FromStr;
-use std::time::Duration;
 
 use ark_testing::daemon::aspd;
 use bitcoin::Address;
@@ -14,7 +13,7 @@ use ark::vtxo::exit_spk;
 use aspd_rpc as rpc;
 
 use ark_testing::{TestContext, Bark, btc, sat};
-use ark_testing::constants::ONBOARD_CONFIRMATIONS;
+use ark_testing::constants::BOARD_CONFIRMATIONS;
 
 async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	let mut flip = false;
@@ -51,8 +50,8 @@ async fn simple_exit() {
 	let bark = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
 	ctx.bitcoind.generate(1).await;
 
-	bark.onboard(sat(500_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark.board(sat(500_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	bark.refresh_all().await;
 	let vtxo = &bark.vtxos().await[0];
@@ -101,8 +100,8 @@ async fn fail_handshake() {
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(100_000)).await;
 
-	bark.onboard(sat(90_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark.board(sat(90_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 	bark.refresh_all().await;
 	ctx.bitcoind.generate(1).await;
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
@@ -152,16 +151,16 @@ async fn exit_round() {
 	ctx.bitcoind.generate(1).await;
 
 	tokio::join!(
-		bark1.onboard(sat(500_000)),
-		bark2.onboard(sat(500_000)),
-		bark3.onboard(sat(500_000)),
-		bark4.onboard(sat(500_000)),
-		bark5.onboard(sat(500_000)),
-		bark6.onboard(sat(500_000)),
-		bark7.onboard(sat(500_000)),
-		bark8.onboard(sat(500_000)),
+		bark1.board(sat(500_000)),
+		bark2.board(sat(500_000)),
+		bark3.board(sat(500_000)),
+		bark4.board(sat(500_000)),
+		bark5.board(sat(500_000)),
+		bark6.board(sat(500_000)),
+		bark7.board(sat(500_000)),
+		bark8.board(sat(500_000)),
 	);
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	tokio::join!(
 		bark1.refresh_all(),
@@ -251,7 +250,7 @@ async fn exit_vtxo() {
 
 	ctx.bitcoind.generate(1).await;
 
-	bark.onboard(sat(900_000)).await;
+	bark.board(sat(900_000)).await;
 	ctx.bitcoind.generate(15).await;
 	bark.refresh_all().await;
 
@@ -279,21 +278,21 @@ async fn exit_vtxo() {
 
 
 #[tokio::test]
-async fn exit_after_onboard() {
+async fn exit_after_board() {
 	let random_addr = Address::from_str(
 		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
 	).unwrap().assume_checked();
 
-	let ctx = TestContext::new("exit/exit_after_onboard").await;
+	let ctx = TestContext::new("exit/exit_after_board").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Fund the bark instance
 	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
 
-	// Onboard funds
-	bark.onboard(sat(900_000)).await;
+	// board funds
+	bark.board(sat(900_000)).await;
 
-	let onboard_vtxo = &bark.vtxos().await[0];
+	let board_vtxo = &bark.vtxos().await[0];
 
 	// Exit unilaterally
 	aspd.stop().await.unwrap();
@@ -306,10 +305,10 @@ async fn exit_after_onboard() {
 	// Verify exit output is considered as part of the wallet
 	let utxos = bark.utxos().await;
 	assert_eq!(utxos.len(), 2, "We have cpfp change (spent in exit process) + exited utxo");
-	assert!(utxos.iter().any(|u| u.outpoint == onboard_vtxo.utxo && u.amount == onboard_vtxo.amount));
+	assert!(utxos.iter().any(|u| u.outpoint == board_vtxo.utxo && u.amount == board_vtxo.amount));
 
 	// Verify we can send both utxos
-	bark.onchain_send(random_addr, onboard_vtxo.amount + Amount::ONE_SAT).await;
+	bark.onchain_send(random_addr, board_vtxo.amount + Amount::ONE_SAT).await;
 }
 
 #[tokio::test]
@@ -324,8 +323,8 @@ async fn exit_oor() {
 
 	ctx.bitcoind.generate(1).await;
 
-	// Bark1 onboard funds and sends some part to bark2
-	bark1.onboard(sat(900_000)).await;
+	// Bark1 board funds and sends some part to bark2
+	bark1.board(sat(900_000)).await;
 	let bark2_pubkey = bark2.vtxo_pubkey().await;
 	bark1.send_oor(bark2_pubkey, sat(100_000)).await;
 
@@ -361,16 +360,16 @@ async fn double_exit_call() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	bark2.onboard(sat(800_000)).await;
+	bark2.board(sat(800_000)).await;
 
 	// refresh vtxo
-	bark1.onboard(sat(200_000)).await;
+	bark1.board(sat(200_000)).await;
 	ctx.bitcoind.generate(12).await;
 	bark1.refresh_all().await;
 
-	// onboard vtxo
-	bark1.onboard(sat(300_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	// board vtxo
+	bark1.board(sat(300_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -453,14 +452,14 @@ async fn exit_bolt11_change() {
 	// Start a bark and create a VTXO
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, btc(7)).await;
 
-	let onboard_amount = btc(5);
-	bark_1.onboard(onboard_amount).await;
+	let board_amount = btc(5);
+	bark_1.board(board_amount).await;
 	ctx.bitcoind.generate(6).await;
 
 	let invoice_amount = btc(2);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
-	assert_eq!(bark_1.offchain_balance().await, onboard_amount);
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.send_bolt11(invoice, None).await;
 	assert_eq!(bark_1.offchain_balance().await, sat(299999670));
 

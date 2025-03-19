@@ -12,7 +12,7 @@ use crate::SECP;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum SweepMeta {
-	Onboard,
+	Board,
 	Connector(SecretKey),
 	Vtxo,
 }
@@ -63,8 +63,8 @@ pub trait PsbtExt: BorrowMut<Psbt> {
 		for (idx, input) in psbt.inputs.iter_mut().enumerate() {
 			if let Some(meta) = input.get_sweep_meta().context("corrupt psbt")? {
 				match meta {
-					// onboard and vtxo happen to be exactly the same signing logic
-					SweepMeta::Vtxo | SweepMeta::Onboard => {
+					// board and vtxo happen to be exactly the same signing logic
+					SweepMeta::Vtxo | SweepMeta::Board => {
 						let (control, (script, lv)) = input.tap_scripts.iter().next()
 							.context("corrupt psbt: missing tap_scripts")?;
 						let leaf_hash = taproot::TapLeafHash::from_script(script, *lv);

@@ -13,7 +13,7 @@ use bitcoin::sighash::{self, SighashCache};
 
 use bitcoin_ext::fee;
 
-use crate::{musig, onboard, oor, util};
+use crate::{musig, board, oor, util};
 
 
 /// The total signed tx weight of a exit tx.
@@ -215,7 +215,7 @@ pub struct VtxoSpec {
 	pub exit_delta: u16,
 	/// The amount of the vtxo itself, this is either the exit tx our the
 	/// vtxo tree output. It does not include budget for fees, so f.e. to
-	/// calculate the onboard amount needed for this vtxo, fee budget should
+	/// calculate the board amount needed for this vtxo, fee budget should
 	/// be added.
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
@@ -249,27 +249,27 @@ impl VtxoSpec {
 }
 
 #[derive(Debug, Clone)]
-pub struct OnboardTxValidationError(String);
+pub struct BoardTxValidationError(String);
 
-impl fmt::Display for OnboardTxValidationError {
+impl fmt::Display for BoardTxValidationError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "onboard tx validation error: {}", self.0)
+		write!(f, "board tx validation error: {}", self.0)
 	}
 }
 
-impl std::error::Error for OnboardTxValidationError {}
+impl std::error::Error for BoardTxValidationError {}
 
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct OnboardVtxo {
+pub struct BoardVtxo {
 	pub spec: VtxoSpec,
-	/// The output of the onboard. This will be the input to the exit tx.
+	/// The output of the board. This will be the input to the exit tx.
 	pub onchain_output: OutPoint,
 	pub exit_tx_signature: schnorr::Signature,
 }
 
-impl OnboardVtxo {
+impl BoardVtxo {
 	pub fn exit_tx(&self) -> Transaction {
 		let ret = create_exit_tx(
 			self.spec.user_pubkey,
@@ -292,31 +292,31 @@ impl OnboardVtxo {
 		self.point().into()
 	}
 
-	pub fn validate_tx(&self, onboard_tx: &Transaction) -> Result<(), OnboardTxValidationError> {
+	pub fn validate_tx(&self, board_tx: &Transaction) -> Result<(), BoardTxValidationError> {
 		let id = self.id();
-		if self.onchain_output.txid != onboard_tx.compute_txid() {
-			return Err(OnboardTxValidationError(format!(
-				"onchain tx and vtxo onboard txid don't match",
+		if self.onchain_output.txid != board_tx.compute_txid() {
+			return Err(BoardTxValidationError(format!(
+				"onchain tx and vtxo board txid don't match",
 			)));
 		}
 
 		// Check that the output actually has the right script.
 		let output_idx = self.onchain_output.vout as usize;
-		if onboard_tx.output.len() < output_idx {
-			return Err(OnboardTxValidationError(format!(
+		if board_tx.output.len() < output_idx {
+			return Err(BoardTxValidationError(format!(
 				"non-existing point {} in tx {}", self.onchain_output, self.onchain_output.txid,
 			)));
 		}
-		let spk = &onboard_tx.output[output_idx].script_pubkey;
-		if *spk != onboard::onboard_spk(&self.spec) {
-			return Err(OnboardTxValidationError(format!(
-				"vtxo {} has incorrect onboard script: {}", id, spk,
+		let spk = &board_tx.output[output_idx].script_pubkey;
+		if *spk != board::board_spk(&self.spec) {
+			return Err(BoardTxValidationError(format!(
+				"vtxo {} has incorrect board script: {}", id, spk,
 			)));
 		}
-		let amount = onboard_tx.output[output_idx].value;
-		if amount != onboard::onboard_amount(&self.spec) {
-			return Err(OnboardTxValidationError(format!(
-				"vtxo {} has incorrect onboard amount: {}", id, amount,
+		let amount = board_tx.output[output_idx].value;
+		if amount != board::board_amount(&self.spec) {
+			return Err(BoardTxValidationError(format!(
+				"vtxo {} has incorrect board amount: {}", id, amount,
 			)));
 		}
 		Ok(())
@@ -381,7 +381,7 @@ impl Bolt11ChangeVtxo {
 /// proxied to the implementation on [Vtxo::id].
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum Vtxo {
-	Onboard(OnboardVtxo),
+	Board(BoardVtxo),
 	Round(RoundVtxo),
 	Arkoor(ArkoorVtxo),
 	Bolt11Change(Bolt11ChangeVtxo),
@@ -398,7 +398,7 @@ impl Vtxo {
 	/// This can be an on-chain utxo or an off-chain vtxo.
 	pub fn point(&self) -> OutPoint {
 		match self {
-			Vtxo::Onboard(v) => v.point(),
+			Vtxo::Board(v) => v.point(),
 			Vtxo::Round(v) => v.point(),
 			Vtxo::Arkoor(v) => v.point,
 			Vtxo::Bolt11Change(v) => v.final_point,
@@ -407,7 +407,7 @@ impl Vtxo {
 
 	pub fn spec(&self) -> &VtxoSpec {
 		match self {
-			Vtxo::Onboard(v) => &v.spec,
+			Vtxo::Board(v) => &v.spec,
 			Vtxo::Round(v) => &v.spec,
 			Vtxo::Arkoor(v) => &v.output_specs[v.point.vout as usize],
 			Vtxo::Bolt11Change(v) => &v.pseudo_spec,
@@ -416,7 +416,7 @@ impl Vtxo {
 
 	pub fn amount(&self) -> Amount {
 		match self {
-			Vtxo::Onboard(v) => v.spec.amount,
+			Vtxo::Board(v) => v.spec.amount,
 			Vtxo::Round(v) => v.spec.amount,
 			Vtxo::Arkoor(_) => self.spec().amount,
 			Vtxo::Bolt11Change(v) => {
@@ -435,7 +435,7 @@ impl Vtxo {
 	/// The exit tx of the vtxo.
 	pub fn vtxo_tx(&self) -> Transaction {
 		let ret = match self {
-			Vtxo::Onboard(v) => v.exit_tx(),
+			Vtxo::Board(v) => v.exit_tx(),
 			Vtxo::Round(v) => v.exit_branch.last().unwrap().clone(),
 			Vtxo::Arkoor(v) => {
 				let tx = if v.signatures.is_empty() {
@@ -459,7 +459,7 @@ impl Vtxo {
 	/// The [vtxo_tx] is always included.
 	pub fn collect_exit_txs(&self, txs: &mut Vec<Transaction>) {
 		match self {
-			Vtxo::Onboard(_) => {
+			Vtxo::Board(_) => {
 				txs.push(self.vtxo_tx());
 			},
 			Vtxo::Round(v) => {
@@ -491,9 +491,9 @@ impl Vtxo {
 		ret
 	}
 
-	pub fn is_onboard(&self) -> bool {
+	pub fn is_board(&self) -> bool {
 		match self {
-			Vtxo::Onboard { .. } => true,
+			Vtxo::Board { .. } => true,
 			_ => false,
 		}
 	}
@@ -502,7 +502,7 @@ impl Vtxo {
 	/// arkoor and lightning vtxos.
 	pub fn is_oor(&self) -> bool {
 		match self {
-			Vtxo::Onboard { .. } => false,
+			Vtxo::Board { .. } => false,
 			Vtxo::Round { .. } => false,
 			Vtxo::Arkoor { .. } => true,
 			Vtxo::Bolt11Change { .. } => true,
@@ -525,7 +525,7 @@ impl Vtxo {
 
 	pub fn vtxo_type(&self) -> &'static str {
 		match self {
-			Vtxo::Onboard { .. } => "onboard",
+			Vtxo::Board { .. } => "board",
 			Vtxo::Round { .. } => "round",
 			Vtxo::Arkoor { .. } => "arkoor",
 			Vtxo::Bolt11Change { .. } => "bolt11change",
@@ -536,16 +536,16 @@ impl Vtxo {
 		VTXO_CLAIM_INPUT_WEIGHT
 	}
 
-	pub fn as_onboard(&self) -> Option<&OnboardVtxo> {
+	pub fn as_board(&self) -> Option<&BoardVtxo> {
 		match self {
-			Vtxo::Onboard(v) => Some(v),
+			Vtxo::Board(v) => Some(v),
 			_ => None,
 		}
 	}
 
-	pub fn into_onboard(self) -> Option<OnboardVtxo> {
+	pub fn into_board(self) -> Option<BoardVtxo> {
 		match self {
-			Vtxo::Onboard(v) => Some(v),
+			Vtxo::Board(v) => Some(v),
 			_ => None,
 		}
 	}
@@ -619,9 +619,9 @@ impl std::hash::Hash for Vtxo {
 	}
 }
 
-impl From<OnboardVtxo> for Vtxo {
-	fn from(v: OnboardVtxo) -> Vtxo {
-		Vtxo::Onboard(v)
+impl From<BoardVtxo> for Vtxo {
+	fn from(v: BoardVtxo) -> Vtxo {
+		Vtxo::Board(v)
 	}
 }
 
@@ -661,7 +661,7 @@ mod test {
 		let oor_sig2 = schnorr::Signature::from_str("115e203be50944e96c00b30f88be5d4523397f66a1845addc95851fbe27ecd82b8e4d5bbd96229b8167a9196de77b3cd62a27c368d00774889900cffe2c932da").unwrap();
 		let oor_sig3 = schnorr::Signature::from_str("4be220ff1dabd0f7c35798eb19d587de1ad88e80369ef037c5e803f9d776e1c74bc4458698a783add458730d1dbd144c86f3b848cff5486b0fcbd1c17ecc5f76").unwrap();
 
-		let onboard = Vtxo::Onboard(OnboardVtxo {
+		let board = Vtxo::Board(BoardVtxo {
 			spec: VtxoSpec {
 				user_pubkey: pk,
 				asp_pubkey: pk,
@@ -672,7 +672,7 @@ mod test {
 			onchain_output: point,
 			exit_tx_signature: sig,
 		});
-		assert_eq!(onboard, Vtxo::decode(&onboard.encode()).unwrap());
+		assert_eq!(board, Vtxo::decode(&board.encode()).unwrap());
 
 		let round = Vtxo::Round(RoundVtxo {
 			spec: VtxoSpec {
@@ -689,7 +689,7 @@ mod test {
 
 		let inputs = vec![
 			round.clone(),
-			onboard.clone(),
+			board.clone(),
 		];
 		let output_specs = vec![VtxoSpec {
 			user_pubkey: pk,
@@ -712,7 +712,7 @@ mod test {
 
 		let inputs_recursive = vec![
 			round.clone(),
-			onboard.clone(),
+			board.clone(),
 			oor.clone()
 		];
 		let output_specs_recursive = vec![VtxoSpec {

@@ -1,5 +1,5 @@
 
-//! Onboard flow:
+//! Board flow:
 //!
 //! * User starts by using the [new_user] function that crates the user's parts.
 //! * ASP does a deterministic sign and sends ASP part using [new_asp].
@@ -10,10 +10,10 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::P2WSH_DUST;
 
-use crate::{musig, util, vtxo, OnboardVtxo, VtxoSpec};
+use crate::{musig, util, vtxo, BoardVtxo, VtxoSpec};
 
 
-pub fn onboard_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
+pub fn board_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
 	let expiry = util::timelock_sign(spec.expiry_height, spec.asp_pubkey.x_only_public_key().0);
 	let ret = taproot::TaprootBuilder::new()
 		.add_leaf(0, expiry).unwrap()
@@ -28,29 +28,29 @@ pub fn onboard_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
 	ret
 }
 
-pub fn onboard_taptweak(spec: &VtxoSpec) -> taproot::TapTweakHash {
-	onboard_taproot(spec).tap_tweak()
+pub fn board_taptweak(spec: &VtxoSpec) -> taproot::TapTweakHash {
+	board_taproot(spec).tap_tweak()
 }
 
-pub fn onboard_spk(spec: &VtxoSpec) -> ScriptBuf {
-	ScriptBuf::new_p2tr_tweaked(onboard_taproot(spec).output_key())
+pub fn board_spk(spec: &VtxoSpec) -> ScriptBuf {
+	ScriptBuf::new_p2tr_tweaked(board_taproot(spec).output_key())
 }
 
-/// The additional amount that needs to be sent into the onboard tx.
-pub fn onboard_surplus() -> Amount {
+/// The additional amount that needs to be sent into the board tx.
+pub fn board_surplus() -> Amount {
 	P2WSH_DUST
 }
 
-/// The amount that should be sent into the onboard output.
-pub fn onboard_amount(spec: &VtxoSpec) -> Amount {
-	spec.amount + onboard_surplus()
+/// The amount that should be sent into the board output.
+pub fn board_amount(spec: &VtxoSpec) -> Amount {
+	spec.amount + board_surplus()
 }
 
-fn onboard_txout(spec: &VtxoSpec) -> TxOut {
+fn board_txout(spec: &VtxoSpec) -> TxOut {
 	TxOut {
-		script_pubkey: onboard_spk(&spec),
+		script_pubkey: board_spk(&spec),
 		//TODO(stevenroose) consider storing both leaf and input values in vtxo struct
-		value: spec.amount + onboard_surplus(),
+		value: spec.amount + board_surplus(),
 	}
 }
 
@@ -81,10 +81,10 @@ pub struct PrivateUserPart {
 }
 
 pub fn new_user(spec: VtxoSpec, utxo: OutPoint) -> (UserPart, PrivateUserPart) {
-	let onboard_prev = onboard_txout(&spec);
-	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&spec, utxo, &onboard_prev);
+	let board_prev = board_txout(&spec);
+	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&spec, utxo, &board_prev);
 	let (agg, _) = musig::tweaked_key_agg(
-		[spec.user_pubkey, spec.asp_pubkey], onboard_taptweak(&spec).to_byte_array(),
+		[spec.user_pubkey, spec.asp_pubkey], board_taptweak(&spec).to_byte_array(),
 	);
 	let (sec_nonce, pub_nonce) = agg.nonce_gen(
 		&musig::SECP,
@@ -110,16 +110,16 @@ pub struct AspPart {
 impl AspPart {
 	/// Validate the ASP's partial signature.
 	pub fn verify_partial_sig(&self, user_part: &UserPart) -> bool {
-		let onboard_prev = onboard_txout(&user_part.spec);
+		let board_prev = board_txout(&user_part.spec);
 		let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(
 			&user_part.spec,
 			user_part.utxo,
-			&onboard_prev,
+			&board_prev,
 		);
 		let agg_nonce = musig::nonce_agg(&[&user_part.nonce, &self.nonce]);
 		let agg_pk = musig::tweaked_key_agg(
 			[user_part.spec.user_pubkey, user_part.spec.asp_pubkey],
-			onboard_taptweak(&user_part.spec).to_byte_array(),
+			board_taptweak(&user_part.spec).to_byte_array(),
 		).0;
 
 		let session = musig::MusigSession::new(
@@ -139,10 +139,10 @@ impl AspPart {
 }
 
 pub fn new_asp(user: &UserPart, key: &Keypair) -> AspPart {
-	let onboard_prev = onboard_txout(&user.spec);
-	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &onboard_prev);
+	let board_prev = board_txout(&user.spec);
+	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &board_prev);
 	let msg = reveal_sighash.to_byte_array();
-	let tweak = onboard_taptweak(&user.spec);
+	let tweak = board_taptweak(&user.spec);
 	let (pub_nonce, sig) = musig::deterministic_partial_sign(
 		key, [user.spec.user_pubkey], &[&user.nonce], msg, Some(tweak.to_byte_array()),
 	);
@@ -157,9 +157,9 @@ pub fn finish(
 	asp: AspPart,
 	private: PrivateUserPart,
 	key: &Keypair,
-) -> OnboardVtxo {
-	let onboard_prev = onboard_txout(&user.spec);
-	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &onboard_prev);
+) -> BoardVtxo {
+	let board_prev = board_txout(&user.spec);
+	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &board_prev);
 	let agg_nonce = musig::nonce_agg(&[&user.nonce, &asp.nonce]);
 	let (_user_sig, final_sig) = musig::partial_sign(
 		[user.spec.user_pubkey, user.spec.asp_pubkey],
@@ -167,17 +167,17 @@ pub fn finish(
 		key,
 		private.sec_nonce,
 		reveal_sighash.to_byte_array(),
-		Some(onboard_taptweak(&user.spec).to_byte_array()),
+		Some(board_taptweak(&user.spec).to_byte_array()),
 		Some(&[&asp.signature]),
 	);
 	let final_sig = final_sig.expect("we provided the other sig");
 	debug_assert!(util::SECP.verify_schnorr(
 		&final_sig,
 		&reveal_sighash.into(),
-		&onboard_taproot(&user.spec).output_key().to_inner(),
-	).is_ok(), "invalid onboard exit tx signature produced");
+		&board_taproot(&user.spec).output_key().to_inner(),
+	).is_ok(), "invalid board exit tx signature produced");
 
-	OnboardVtxo {
+	BoardVtxo {
 		spec: user.spec,
 		onchain_output: user.utxo,
 		exit_tx_signature: final_sig,

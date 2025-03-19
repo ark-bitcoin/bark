@@ -45,7 +45,7 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use ark::{musig, BlockHeight, BlockRef, OnboardVtxo, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BlockHeight, BlockRef, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
@@ -494,29 +494,29 @@ impl App {
 		self.vtxos_in_flux.lock().await.release(ids)
 	}
 
-	pub async fn cosign_onboard(
+	pub async fn cosign_board(
 		&self,
-		user_part: ark::onboard::UserPart,
-	) -> anyhow::Result<ark::onboard::AspPart> {
+		user_part: ark::board::UserPart,
+	) -> anyhow::Result<ark::board::AspPart> {
 		if user_part.spec.asp_pubkey != self.asp_key.public_key() {
 			return badarg!("ASP public key is incorrect!");
 		}
 
 		if let Some(max) = self.config.max_vtxo_amount {
 			if user_part.spec.amount > max {
-				return badarg!("onboard amount exceeds limit of {max}");
+				return badarg!("board amount exceeds limit of {max}");
 			}
 		}
 
-		info!("Cosigning onboard request for utxo {}", user_part.utxo);
-		let ret = ark::onboard::new_asp(&user_part, &self.asp_key);
+		info!("Cosigning board request for utxo {}", user_part.utxo);
+		let ret = ark::board::new_asp(&user_part, &self.asp_key);
 		let exit_tx = user_part.exit_tx();
 		let exit_txid = exit_tx.compute_txid();
-		slog!(CosignedOnboard, utxo: user_part.utxo, amount: user_part.spec.amount, exit_txid);
+		slog!(CosignedBoard, utxo: user_part.utxo, amount: user_part.spec.amount, exit_txid);
 		Ok(ret)
 	}
 
-	pub fn validate_onboard_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
+	pub fn validate_board_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
 		let tip = self.bitcoind.get_block_count()? as u32;
 
 		if spec.asp_pubkey != self.asp_key.public_key() {
@@ -535,13 +535,13 @@ impl App {
 		Ok(())
 	}
 
-	pub async fn register_onboard(
+	pub async fn register_board(
 		&self,
-		vtxo: OnboardVtxo,
+		vtxo: BoardVtxo,
 		tx: Transaction,
 	) -> anyhow::Result<()> {
-		self.validate_onboard_spec(&vtxo.spec).badarg("invalid onboard vtxo spec")?;
-		vtxo.validate_tx(&tx).badarg("onboard tx doesn't match vtxo spec")?;
+		self.validate_board_spec(&vtxo.spec).badarg("invalid board vtxo spec")?;
+		vtxo.validate_tx(&tx).badarg("board tx doesn't match vtxo spec")?;
 
 		// Since the user might have just created and broadcast this tx very recently,
 		// it's very likely that we won't have it in our mempool yet.
@@ -549,7 +549,7 @@ impl App {
 		match self.bitcoind.get_raw_transaction_info(&vtxo.onchain_output.txid, None) {
 			Ok(txinfo) => {
 				let conf = txinfo.confirmations.unwrap_or(0);
-				trace!("Onboard tx {} has {} confirmations", vtxo.onchain_output.txid, conf);
+				trace!("Board tx {} has {} confirmations", vtxo.onchain_output.txid, conf);
 			},
 			Err(e) if e.is_not_found() => {
 				// First check if the tx is actually standard and inputs are unspent.
@@ -565,18 +565,18 @@ impl App {
 				// Then broadcast to our own mempool and peers.
 				if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
 					if !e.is_already_in_mempool() {
-						return badarg!("onboard tx not accepted in mempool");
+						return badarg!("board tx not accepted in mempool");
 					}
 				}
-				trace!("We submitted onboard tx with txid {} to mempool", vtxo.onchain_output.txid);
+				trace!("We submitted board tx with txid {} to mempool", vtxo.onchain_output.txid);
 			},
-			Err(e) => bail!("error fetching tx info for onboard tx: {e}"),
+			Err(e) => bail!("error fetching tx info for board tx: {e}"),
 		}
 
 		// Accepted, let's register
 		self.db.insert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
 
-		slog!(RegisteredOnboard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
+		slog!(RegisteredBoard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
 			amount: vtxo.spec.amount,
 		);
 

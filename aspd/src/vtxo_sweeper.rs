@@ -47,7 +47,7 @@ use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
 };
 
-use ark::{BlockHeight, OnboardVtxo, VtxoSpec};
+use ark::{BlockHeight, BoardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use bitcoin_ext::TaprootSpendInfoExt;
 use futures::StreamExt;
@@ -59,14 +59,14 @@ use crate::wallet::BdkWalletExt;
 use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
 
 
-struct OnboardSweepInput {
+struct BoardSweepInput {
 	point: OutPoint,
 	vtxo_spec: VtxoSpec,
 }
 
-impl OnboardSweepInput {
+impl BoardSweepInput {
 	fn amount(&self) -> Amount {
-		ark::onboard::onboard_amount(&self.vtxo_spec)
+		ark::board::board_amount(&self.vtxo_spec)
 	}
 
 	fn weight(&self) -> Weight {
@@ -84,10 +84,10 @@ impl OnboardSweepInput {
 	}
 
 	fn psbt(&self) -> psbt::Input {
-		let taproot = ark::onboard::onboard_taproot(&self.vtxo_spec);
+		let taproot = ark::board::board_taproot(&self.vtxo_spec);
 		let utxo = TxOut {
-			script_pubkey: ark::onboard::onboard_spk(&self.vtxo_spec),
-			value: ark::onboard::onboard_amount(&self.vtxo_spec),
+			script_pubkey: ark::board::board_spk(&self.vtxo_spec),
+			value: ark::board::board_amount(&self.vtxo_spec),
 		};
 		let mut ret = psbt::Input{
 			witness_utxo: Some(utxo),
@@ -98,7 +98,7 @@ impl OnboardSweepInput {
 			non_witness_utxo: None,
 			..Default::default()
 		};
-		ret.set_sweep_meta(SweepMeta::Onboard);
+		ret.set_sweep_meta(SweepMeta::Board);
 		ret
 	}
 }
@@ -171,7 +171,7 @@ impl ExpiredRound {
 struct SweepBuilder<'a> {
 	sweeper: &'a mut VtxoSweeper,
 	sweeps: Vec<RoundSweepInput<'a>>,
-	onboard_sweeps: Vec<OnboardSweepInput>,
+	board_sweeps: Vec<BoardSweepInput>,
 	feerate: FeeRate,
 }
 
@@ -179,25 +179,25 @@ impl<'a> SweepBuilder<'a> {
 	fn new(sweeper: &'a mut VtxoSweeper, feerate: FeeRate) -> Self {
 		Self {
 			sweeps: Vec::new(),
-			onboard_sweeps: Vec::new(),
+			board_sweeps: Vec::new(),
 			sweeper, feerate,
 		}
 	}
 
 	fn total_surplus(&self) -> Amount {
-		self.onboard_sweeps.iter().map(|s| s.surplus(self.feerate).unwrap_or(Amount::ZERO))
+		self.board_sweeps.iter().map(|s| s.surplus(self.feerate).unwrap_or(Amount::ZERO))
 			.chain(self.sweeps.iter().map(|s| s.surplus(self.feerate).unwrap_or(Amount::ZERO)))
 			.sum()
 	}
 
 	fn total_nb_sweeps(&self) -> usize {
-		self.sweeps.len() + self.onboard_sweeps.len()
+		self.sweeps.len() + self.board_sweeps.len()
 	}
 
-	/// Add sweep for the given onboard output.
-	fn add_onboard_output(&mut self, point: OutPoint, vtxo_spec: VtxoSpec) {
-		trace!("Adding onboard sweep input {}", point);
-		self.onboard_sweeps.push(OnboardSweepInput { point, vtxo_spec });
+	/// Add sweep for the given board output.
+	fn add_board_output(&mut self, point: OutPoint, vtxo_spec: VtxoSpec) {
+		trace!("Adding board sweep input {}", point);
+		self.board_sweeps.push(BoardSweepInput { point, vtxo_spec });
 	}
 
 	/// Add sweep for the given vtxo tree output.
@@ -243,9 +243,9 @@ impl<'a> SweepBuilder<'a> {
 				true
 			}
 		});
-		self.onboard_sweeps.retain(|s| {
+		self.board_sweeps.retain(|s| {
 			if s.point != *point {
-				trace!("purging onboard sweep for {} because successor tx confirmed", point);
+				trace!("purging board sweep for {} because successor tx confirmed", point);
 				false
 			} else {
 				true
@@ -263,7 +263,7 @@ impl<'a> SweepBuilder<'a> {
 				true
 			}
 		});
-		self.onboard_sweeps.retain(|s| {
+		self.board_sweeps.retain(|s| {
 			if s.surplus(self.feerate).is_none() {
 				slog!(UneconomicalSweepInput, outpoint: s.point, value: s.amount());
 				false
@@ -273,26 +273,26 @@ impl<'a> SweepBuilder<'a> {
 		});
 	}
 
-	async fn process_onboard(&mut self, onboard: &OnboardVtxo, done_height: BlockHeight) {
-		let id = onboard.id();
-		let exit_tx = onboard.exit_tx();
+	async fn process_board(&mut self, board: &BoardVtxo, done_height: BlockHeight) {
+		let id = board.id();
+		let exit_tx = board.exit_tx();
 		let exit_txid = exit_tx.compute_txid();
 		let exit_tx = self.sweeper.app.txindex.get_or_insert(&exit_txid, move || exit_tx).await;
 
 		if !exit_tx.confirmed().await {
-			if let Some((h, txid)) = self.sweeper.is_swept(onboard.onchain_output).await {
-				trace!("Onboard {id} is already swept by us at height {h}");
+			if let Some((h, txid)) = self.sweeper.is_swept(board.onchain_output).await {
+				trace!("Board {id} is already swept by us at height {h}");
 				if h <= done_height {
-					slog!(OnboardFullySwept, onboard_utxo: onboard.onchain_output, sweep_tx: txid);
-					self.sweeper.clear_onboard(onboard).await;
+					slog!(BoardFullySwept, board_utxo: board.onchain_output, sweep_tx: txid);
+					self.sweeper.clear_board(board).await;
 				}
 			} else {
-				trace!("Sweeping onboard vtxo {id}");
-				self.add_onboard_output(onboard.onchain_output, onboard.spec.clone());
+				trace!("Sweeping board vtxo {id}");
+				self.add_board_output(board.onchain_output, board.spec.clone());
 			}
 		} else {
-			trace!("User has broadcast onboard exit tx {} of onboard vtxo {id}", exit_txid);
-			self.sweeper.clear_onboard(onboard).await;
+			trace!("User has broadcast board exit tx {} of board vtxo {id}", exit_txid);
+			self.sweeper.clear_board(board).await;
 		}
 	}
 
@@ -477,7 +477,7 @@ impl<'a> SweepBuilder<'a> {
 				Sequence::ZERO,
 			).expect("bdk rejected foreign utxo");
 		}
-		for sweep in &self.onboard_sweeps {
+		for sweep in &self.board_sweeps {
 			txb.add_foreign_utxo_with_sequence(
 				sweep.point,
 				sweep.psbt(),
@@ -557,17 +557,17 @@ impl VtxoSweeper {
 		None
 	}
 
-	/// Clear the onboard data from our database because we either swept it, or the user
+	/// Clear the board data from our database because we either swept it, or the user
 	/// has broadcast the exit tx, doing a unilateral exit.
-	async fn clear_onboard(&mut self, onboard: &OnboardVtxo) {
-		if let Err(e) = self.app.db.remove_onboard(onboard).await {
-			error!("Failed to remove onboard vtxo {} from database: {}", onboard.id(), e);
+	async fn clear_board(&mut self, board: &BoardVtxo) {
+		if let Err(e) = self.app.db.remove_board(board).await {
+			error!("Failed to remove board vtxo {} from database: {}", board.id(), e);
 		}
 
-		let reveal = onboard.exit_tx().compute_txid();
-		self.app.txindex.unregister_batch(&[&onboard.onchain_output.txid, &reveal]).await;
+		let reveal = board.exit_tx().compute_txid();
+		self.app.txindex.unregister_batch(&[&board.onchain_output.txid, &reveal]).await;
 
-		self.pending_tx_by_utxo.remove(&onboard.onchain_output);
+		self.pending_tx_by_utxo.remove(&board.onchain_output);
 	}
 
 	/// Clean up all artifacts after a round has been swept.
@@ -615,11 +615,11 @@ impl VtxoSweeper {
 		}
 		trace!("{} expired rounds fetched", expired_rounds.len());
 
-		let expired_onboards = self.app.db
-			.get_expired_onboards(tip).await?
+		let expired_boards = self.app.db
+			.get_expired_boards(tip).await?
 			.filter_map(|o| async { o.ok() })
 			.collect::<Vec<_>>().await;
-		trace!("{} expired onboards fetched", expired_onboards.len());
+		trace!("{} expired boards fetched", expired_boards.len());
 
 		let feerate = self.app.config.sweep_tx_fallback_feerate;
 		let mut builder = SweepBuilder::new(self, feerate);
@@ -631,9 +631,9 @@ impl VtxoSweeper {
 			builder.purge_uneconomical();
 			//TODO(stevenroose) check if we exceeded some builder limits
 		}
-		for onboard in &expired_onboards {
-			trace!("Processing onboard {}", onboard.id());
-			builder.process_onboard(&onboard, done_height).await;
+		for board in &expired_boards {
+			trace!("Processing board {}", board.id());
+			builder.process_board(&board, done_height).await;
 			builder.purge_uneconomical();
 		}
 
@@ -646,22 +646,22 @@ impl VtxoSweeper {
 		}
 
 		let sweep_points = builder.sweeps.iter().map(|s| s.point)
-			.chain(builder.onboard_sweeps.iter().map(|s| s.point))
+			.chain(builder.board_sweeps.iter().map(|s| s.point))
 			.collect();
 		slog!(SweepingVtxos, total_surplus: surplus, inputs: sweep_points);
 		for s in &builder.sweeps {
 			let tp = match s.sweep_meta {
 				SweepMeta::Vtxo => "vtxo",
 				SweepMeta::Connector(_) => "connector",
-				SweepMeta::Onboard => unreachable!(),
+				SweepMeta::Board => unreachable!(),
 			};
 			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
 				surplus: s.surplus(feerate).unwrap(), sweep_type: tp.into(),
 			);
 		}
-		for s in &builder.onboard_sweeps {
+		for s in &builder.board_sweeps {
 			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
-				surplus: s.surplus(feerate).unwrap(), sweep_type: "onboard".into(),
+				surplus: s.surplus(feerate).unwrap(), sweep_type: "board".into(),
 			);
 		}
 

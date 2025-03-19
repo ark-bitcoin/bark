@@ -39,13 +39,13 @@ pub struct ExitStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct Onboard {
+pub struct Board {
 	/// The [Txid] of the funding-transaction.
 	/// This is the transaction that has to be confirmed
-	/// onchain for the onboard to succeed.
+	/// onchain for the board to succeed.
 	pub funding_txid: Txid,
 	/// The info for each <Vtxo> that was created
-	/// in this onboard.
+	/// in this board.
 	///
 	/// Currently, this is always a vector of length 1
 	pub vtxos: Vec<VtxoInfo>,
