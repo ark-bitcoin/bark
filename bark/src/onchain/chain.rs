@@ -340,7 +340,7 @@ impl ChainSourceClient {
 		Ok(tx.output.get(outpoint.vout as usize).context("outpoint vout out of range")?.value)
 	}
 
-	/// Fee rate to use for regular txs like onboards.
+	/// Fee rate to use for regular txs like boards.
 	pub (crate) fn regular_feerate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(5).unwrap()
 	}

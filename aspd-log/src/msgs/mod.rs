@@ -1,6 +1,6 @@
 
-mod onboard;
-pub use self::onboard::*;
+mod board;
+pub use self::board::*;
 mod rounds;
 pub use self::rounds::*;
 mod sweeps;

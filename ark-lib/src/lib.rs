@@ -8,14 +8,14 @@ pub mod connectors;
 pub mod forfeit;
 pub mod lightning;
 pub mod musig;
-pub mod onboard;
+pub mod board;
 pub mod oor;
 pub mod rounds;
 pub mod tree;
 pub mod util;
 pub mod vtxo;
 
-pub use crate::vtxo::{ArkoorVtxo, Bolt11ChangeVtxo, OnboardVtxo, RoundVtxo, VtxoId, VtxoSpec, Vtxo};
+pub use crate::vtxo::{ArkoorVtxo, Bolt11ChangeVtxo, BoardVtxo, RoundVtxo, VtxoId, VtxoSpec, Vtxo};
 
 #[cfg(test)]
 mod napkin;

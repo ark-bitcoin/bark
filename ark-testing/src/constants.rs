@@ -1,5 +1,5 @@
 
-pub const ONBOARD_CONFIRMATIONS: u64 = 12;
+pub const BOARD_CONFIRMATIONS: u64 = 12;
 
 pub mod env {
 	pub const TEST_DIRECTORY: &str = "TEST_DIRECTORY";

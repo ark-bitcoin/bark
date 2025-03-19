@@ -198,15 +198,15 @@ enum Command {
 		no_sync: bool,
 	},
 
-	/// Onboard from the onchain wallet into the Ark
+	/// Board from the onchain wallet into the Ark
 	#[command()]
-	Onboard {
-		// Optional amount of on-chain funds to onboard. Either this or --all should be provided
+	Board {
+		// Optional amount of on-chain funds to board. Either this or --all should be provided
 		amount: Option<Amount>,
-		// Whether or not all funds in on-chain wallet should be onboarded
+		// Whether or not all funds in on-chain wallet should be boarded
 		#[arg(long)]
 		all: bool,
-		/// Skip syncing wallet before onboard
+		/// Skip syncing wallet before board
 		#[arg(long)]
 		no_sync: bool,
 	},
@@ -535,25 +535,25 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 			output_json(&refresh_output);
 		},
-		Command::Onboard { amount, all, no_sync } => {
+		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				if let Err(e) = w.onchain.sync().await {
 					warn!("Sync error: {}", e)
 				}
 			}
-			let onboard = match (amount, all) {
+			let board = match (amount, all) {
 				(Some(a), false) => {
-					info!("Onboarding {}...", a);
-					w.onboard_amount(a).await?
+					info!("Boarding {}...", a);
+					w.board_amount(a).await?
 				},
 				(None, true) => {
-					info!("Onboarding total balance...");
-					w.onboard_all().await?
+					info!("Boarding total balance...");
+					w.board_all().await?
 				},
 				_ => bail!("please provide either an amount or --all"),
 			};
-			output_json(&onboard);
+			output_json(&board);
 		}
 		Command::Send { destination, amount, comment, no_sync } => {
 			if let Ok(pk) = PublicKey::from_str(&destination) {

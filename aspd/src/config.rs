@@ -68,8 +68,8 @@ pub struct Config {
 	/// Maximum value any vtxo can have.
 	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
 	pub max_vtxo_amount: Option<Amount>,
-	/// Number of confirmations needed for onboard vtxos to be spend in rounds.
-	pub round_onboard_confirmations: usize,
+	/// Number of confirmations needed for board vtxos to be spend in rounds.
+	pub round_board_confirmations: usize,
 
 	#[serde(with = "serde_util::duration")]
 	pub round_interval: Duration,
@@ -117,7 +117,7 @@ impl Default for Config {
 			htlc_expiry_delta: 6,
 
 			max_vtxo_amount: None,
-			round_onboard_confirmations: 12,
+			round_board_confirmations: 12,
 
 			round_interval: Duration::from_secs(10),
 			round_submit_time: Duration::from_millis(2000),

@@ -20,7 +20,7 @@ mod psbtext;
 mod vtxo_state;
 
 pub use bark_json::primitives::UtxoInfo;
-pub use bark_json::cli::{Offboard, Onboard, SendOnchain};
+pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
 
 use std::iter;
@@ -481,10 +481,10 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	// Onboard a vtxo with the given vtxo amount.
+	// Board a vtxo with the given vtxo amount.
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
-	pub async fn onboard_amount(&mut self, amount: Amount) -> anyhow::Result<Onboard> {
+	pub async fn board_amount(&mut self, amount: Amount) -> anyhow::Result<Board> {
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
@@ -498,16 +498,16 @@ impl <P>Wallet<P> where
 			amount: amount,
 		};
 
-		let onboard_amount = amount + ark::onboard::onboard_surplus();
-		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), properties.network).unwrap();
+		let board_amount = amount + ark::board::board_surplus();
+		let addr = Address::from_script(&ark::board::board_spk(&spec), properties.network).unwrap();
 
-		// We create the onboard tx template, but don't sign it yet.
-		let onboard_tx = self.onchain.prepare_tx(addr, onboard_amount)?;
+		// We create the board tx template, but don't sign it yet.
+		let board_tx = self.onchain.prepare_tx(addr, board_amount)?;
 
-		self.onboard(spec, user_keypair, onboard_tx).await
+		self.board(spec, user_keypair, board_tx).await
 	}
 
-	pub async fn onboard_all(&mut self) -> anyhow::Result<Onboard> {
+	pub async fn board_all(&mut self) -> anyhow::Result<Board> {
 		let asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
@@ -523,68 +523,68 @@ impl <P>Wallet<P> where
 			amount: self.onchain.balance()
 		};
 
-		let addr = Address::from_script(&ark::onboard::onboard_spk(&spec), properties.network).unwrap();
-		let onboard_all_tx = self.onchain.prepare_send_all_tx(addr)?;
+		let addr = Address::from_script(&ark::board::board_spk(&spec), properties.network).unwrap();
+		let board_all_tx = self.onchain.prepare_send_all_tx(addr)?;
 
 		// Deduct fee from vtxo spec
-		let fee = onboard_all_tx.fee().context("Unable to calculate fee")?;
-		spec.amount = spec.amount.checked_sub(fee + ark::onboard::onboard_surplus()).unwrap();
+		let fee = board_all_tx.fee().context("Unable to calculate fee")?;
+		spec.amount = spec.amount.checked_sub(fee + ark::board::board_surplus()).unwrap();
 
-		assert_eq!(onboard_all_tx.outputs.len(), 1);
-		assert_eq!(onboard_all_tx.unsigned_tx.tx_out(0).unwrap().value, spec.amount + ark::onboard::onboard_surplus());
+		assert_eq!(board_all_tx.outputs.len(), 1);
+		assert_eq!(board_all_tx.unsigned_tx.tx_out(0).unwrap().value, spec.amount + ark::board::board_surplus());
 
-		self.onboard(spec, user_keypair, onboard_all_tx).await
+		self.board(spec, user_keypair, board_all_tx).await
 	}
 
-	async fn onboard(
+	async fn board(
 		&mut self,
 		spec: VtxoSpec,
 		user_keypair: Keypair,
-		onboard_tx: Psbt,
-	) -> anyhow::Result<Onboard> {
+		board_tx: Psbt,
+	) -> anyhow::Result<Board> {
 		let mut asp = self.require_asp()?;
 
 		// This is manually enforced in prepare_tx
 		const VTXO_VOUT: u32 = 0;
 
-		let utxo = OutPoint::new(onboard_tx.unsigned_tx.compute_txid(), VTXO_VOUT);
-		// We ask the ASP to cosign our onboard vtxo exit tx.
-		let (user_part, priv_user_part) = ark::onboard::new_user(spec, utxo);
+		let utxo = OutPoint::new(board_tx.unsigned_tx.compute_txid(), VTXO_VOUT);
+		// We ask the ASP to cosign our board vtxo exit tx.
+		let (user_part, priv_user_part) = ark::board::new_user(spec, utxo);
 		let asp_part = {
-			let res = asp.client.request_onboard_cosign(rpc::OnboardCosignRequest {
+			let res = asp.client.request_board_cosign(rpc::BoardCosignRequest {
 				user_part: {
 					let mut buf = Vec::new();
 					ciborium::into_writer(&user_part, &mut buf).unwrap();
 					buf
 				},
-			}).await.context("error requesting onboard cosign")?;
-			ciborium::from_reader::<ark::onboard::AspPart, _>(&res.into_inner().asp_part[..])
+			}).await.context("error requesting board cosign")?;
+			ciborium::from_reader::<ark::board::AspPart, _>(&res.into_inner().asp_part[..])
 				.context("invalid ASP part in response")?
 		};
 
 		if !asp_part.verify_partial_sig(&user_part) {
-			bail!("invalid ASP onboard cosignature received. user_part={:?}, asp_part={:?}",
+			bail!("invalid ASP board cosignature received. user_part={:?}, asp_part={:?}",
 				user_part, asp_part,
 			);
 		}
 
 		// Store vtxo first before we actually make the on-chain tx.
-		let vtxo = ark::onboard::finish(user_part, asp_part, priv_user_part, &user_keypair).into();
+		let vtxo = ark::board::finish(user_part, asp_part, priv_user_part, &user_keypair).into();
 
 		self.db.register_receive(&vtxo).context("db error storing vtxo")?;
-		let tx = self.onchain.finish_tx(onboard_tx)?;
-		trace!("Broadcasting onboard tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
+		let tx = self.onchain.finish_tx(board_tx)?;
+		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
-		asp.client.register_onboard_vtxo(rpc::OnboardVtxoRequest {
-			onboard_vtxo: vtxo.encode(),
-			onboard_tx: bitcoin::consensus::serialize(&tx),
-		}).await.context("error registering onboard with the asp")?;
+		asp.client.register_board_vtxo(rpc::BoardVtxoRequest {
+			board_vtxo: vtxo.encode(),
+			board_tx: bitcoin::consensus::serialize(&tx),
+		}).await.context("error registering board with the asp")?;
 
-		info!("Onboard successful");
+		info!("Board successful");
 
 		Ok(
-			Onboard {
+			Board {
 				funding_txid: tx.compute_txid(),
 				vtxos: vec![vtxo.into()],
 			}
@@ -632,7 +632,7 @@ impl <P>Wallet<P> where
 		match vtxo {
 			Vtxo::Arkoor(ArkoorVtxo { inputs, .. }) => iterate_over_inputs(inputs),
 			Vtxo::Bolt11Change(Bolt11ChangeVtxo { inputs, .. }) => iterate_over_inputs(inputs),
-			Vtxo::Onboard(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
+			Vtxo::Board(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 			Vtxo::Round(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 		}
 	}

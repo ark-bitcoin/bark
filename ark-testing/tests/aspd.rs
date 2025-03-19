@@ -17,13 +17,13 @@ use ark::{musig, VtxoId};
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::util::SECP;
 use aspd_log::{
-	NotSweeping, OnboardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
+	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 };
 use aspd_rpc as rpc;
 
 use ark_testing::{Aspd, TestContext, btc, sat};
-use ark_testing::constants::ONBOARD_CONFIRMATIONS;
+use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::aspd;
 use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
@@ -165,10 +165,10 @@ async fn max_vtxo_amount() {
 
 	// exceeds limit, should fail
 	// TODO(stevenroose) once we have better error reporting, assert error content
-	assert!(bark1.try_onboard(Amount::from_sat(600_000)).await.is_err());
-	bark1.onboard(Amount::from_sat(500_000)).await;
-	bark1.onboard(Amount::from_sat(500_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	assert!(bark1.try_board(Amount::from_sat(600_000)).await.is_err());
+	bark1.board(Amount::from_sat(500_000)).await;
+	bark1.board(Amount::from_sat(500_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// try send OOR exceeding limit
 	let err = bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.unwrap_err();
@@ -209,15 +209,15 @@ async fn sweep_vtxos() {
 	// subscribe to a few log messages
 	let mut log_not_sweeping = aspd.subscribe_log::<NotSweeping>().await;
 	let mut log_sweeping = aspd.subscribe_log::<SweepBroadcast>().await;
-	let mut log_onboard_done = aspd.subscribe_log::<OnboardFullySwept>().await;
+	let mut log_board_done = aspd.subscribe_log::<BoardFullySwept>().await;
 	let mut log_round_done = aspd.subscribe_log::<RoundFullySwept>().await;
 	let mut log_sweeps = aspd.subscribe_log::<SweepingOutput>().await;
 
-	// we onboard one vtxo and then a few blocks later another
-	bark.onboard(sat(75_000)).await;
+	// we board one vtxo and then a few blocks later another
+	bark.board(sat(75_000)).await;
 	ctx.bitcoind.generate(5).await;
-	bark.onboard(sat(75_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark.board(sat(75_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// before either expires not sweeping yet because nothing available
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
@@ -246,10 +246,10 @@ async fn sweep_vtxos() {
 	assert_eq!(sat(147580), log_sweeping.recv().wait(1500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
-	assert_eq!(sweeps[0].sweep_type, "onboard");
-	assert_eq!(sweeps[1].sweep_type, "onboard");
+	assert_eq!(sweeps[0].sweep_type, "board");
+	assert_eq!(sweeps[1].sweep_type, "board");
 
-	// now we swept both onboard vtxos, let's sweep the round we created above
+	// now we swept both board vtxos, let's sweep the round we created above
 	ctx.bitcoind.generate(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
@@ -259,8 +259,8 @@ async fn sweep_vtxos() {
 	assert_eq!(sweeps[0].sweep_type, "vtxo");
 
 	// then after a while, we should sweep the connectors,
-	// but they don't make the surplus threshold, so we add another onboard
-	bark.onboard(sat(101_000)).await;
+	// but they don't make the surplus threshold, so we add another board
+	bark.board(sat(101_000)).await;
 	ctx.bitcoind.generate(70).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
@@ -268,7 +268,7 @@ async fn sweep_vtxos() {
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "connector");
-	assert_eq!(sweeps[1].sweep_type, "onboard");
+	assert_eq!(sweeps[1].sweep_type, "board");
 
 	ctx.bitcoind.generate(65).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
@@ -276,8 +276,8 @@ async fn sweep_vtxos() {
 	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
 
 	// and eventually the round should be finished
-	log_onboard_done.recv().wait(1000).await.unwrap();
-	info!("Onboard done signal received");
+	log_board_done.recv().wait(1000).await.unwrap();
+	info!("board done signal received");
 	log_round_done.recv().wait(1000).await.unwrap();
 	info!("Round done signal received");
 	let stats = log_stats.recv().fast().await.unwrap();
@@ -310,9 +310,9 @@ async fn restart_aspd_with_payments() {
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
 	ctx.fund_bark(&bark2, sat(1_000_000)).await;
 
-	bark2.onboard(sat(800_000)).await;
-	bark1.onboard(sat(200_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark2.board(sat(800_000)).await;
+	bark1.board(sat(200_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -347,12 +347,12 @@ async fn full_round() {
 	})).await;
 	ctx.bitcoind.generate(1).await;
 
-	// have each onboard 4 times
+	// have each board 4 times
 	for _ in 0..VTXOS_PER_BARK {
 		futures::future::join_all(barks.iter().map(|bark| async {
-			bark.onboard(sat(1_000)).await;
+			bark.board(sat(1_000)).await;
 		})).await;
-		ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+		ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 	}
 
 	let (tx, mut rx) = mpsc::unbounded_channel();
@@ -438,7 +438,7 @@ async fn double_spend_oor() {
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
-	bark.onboard(sat(800_000)).await;
+	bark.board(sat(800_000)).await;
 
 	bark.send_oor(&*RANDOM_PK, sat(100_000)).await;
 
@@ -476,8 +476,8 @@ async fn double_spend_round() {
 	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
-	bark.onboard(sat(800_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
 	bark.refresh_all().await;
@@ -506,8 +506,8 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark.onboard(Amount::from_sat(800_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark.board(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	let res = bark.try_refresh_all().await;
 	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is payment registration"));
@@ -526,8 +526,8 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark2.onboard(Amount::from_sat(800_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark2.board(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	let res = bark2.try_refresh_all().await;
 	let error_string = res.unwrap_err().to_string();
@@ -552,8 +552,8 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
 	let bark3 = ctx.new_bark_with_funds("bark3".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark3.onboard(Amount::from_sat(800_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark3.board(Amount::from_sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	let res = bark3.try_refresh_all().await;
 	let err_string = res.unwrap_err().to_string();
@@ -564,8 +564,8 @@ async fn test_participate_round_wrong_step() {
 }
 
 #[tokio::test]
-async fn spend_unregistered_onboard() {
-	let ctx = TestContext::new("aspd/spend_unregistered_onboard").await;
+async fn spend_unregistered_board() {
+	let ctx = TestContext::new("aspd/spend_unregistered_board").await;
 
 	#[derive(Clone)]
 	struct Proxy(aspd::ArkClient);
@@ -573,7 +573,7 @@ async fn spend_unregistered_onboard() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn register_onboard_vtxo(&mut self, _req: rpc::OnboardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
+		async fn register_board_vtxo(&mut self, _req: rpc::BoardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
 			// drop the request
 			Ok(rpc::Empty{})
 		}
@@ -583,8 +583,8 @@ async fn spend_unregistered_onboard() {
 	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
-	bark.onboard(sat(800_000)).await;
-	ctx.bitcoind.generate(ONBOARD_CONFIRMATIONS).await;
+	bark.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;
 	tokio::spawn(async move {
@@ -603,7 +603,7 @@ async fn bad_round_input() {
 		..ctx.aspd_default_cfg("aspd", None).await
 	}).await;
 	let bark = ctx.new_bark_with_funds("bark", &aspd, btc(1)).await;
-	bark.onboard(btc(0.5)).await;
+	bark.board(btc(0.5)).await;
 	let [vtxo] = bark.vtxos().await.try_into().unwrap();
 
 

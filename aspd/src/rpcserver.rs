@@ -143,8 +143,8 @@ const RPC_SERVICE_ARK: &'static str = "ArkService";
 const RPC_SERVICE_ARK_HANDSHAKE: &'static str = "handshake";
 const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
 const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
-const RPC_SERVICE_ARK_REQUEST_ONBOARD_COSIGN: &'static str = "request_onboard_cosign";
-const RPC_SERVICE_ARK_REGISTER_ONBOARD_VTXOS: &'static str = "register_onboard_vtxos";
+const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
+const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_vtxos";
 const RPC_SERVICE_ARK_REQUEST_OOR_COSIGN: &'static str = "request_oor_cosign";
 const RPC_SERVICE_ARK_POST_OOR_MAILBOX: &'static str = "post_oor_mailbox";
 const RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX: &'static str = "empty_oor_mailbox";
@@ -159,8 +159,8 @@ const RPC_SERVICE_ARK_METHODS: [&str; 14] = [
 	RPC_SERVICE_ARK_HANDSHAKE,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
 	RPC_SERVICE_ARK_GET_ROUND,
-	RPC_SERVICE_ARK_REQUEST_ONBOARD_COSIGN,
-	RPC_SERVICE_ARK_REGISTER_ONBOARD_VTXOS,
+	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
+	RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS,
 	RPC_SERVICE_ARK_REQUEST_OOR_COSIGN,
 	RPC_SERVICE_ARK_POST_OOR_MAILBOX,
 	RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX,
@@ -324,22 +324,22 @@ impl rpc::server::ArkService for App {
 		Ok(tonic::Response::new(response))
 	}
 
-	// onboard
+	// boarding
 
-	async fn request_onboard_cosign(
+	async fn request_board_cosign(
 		&self,
-		req: tonic::Request<rpc::OnboardCosignRequest>,
-	) -> Result<tonic::Response<rpc::OnboardCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_ONBOARD_COSIGN);
+		req: tonic::Request<rpc::BoardCosignRequest>,
+	) -> Result<tonic::Response<rpc::BoardCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN);
 
 		add_tracing_attributes(vec![KeyValue::new("user_part", format!("{:?}", req.get_ref().user_part))]);
 
-		let user_part = ciborium::from_reader::<ark::onboard::UserPart, _>(
+		let user_part = ciborium::from_reader::<ark::board::UserPart, _>(
 			&req.get_ref().user_part[..],
 		).badarg("invalid user part")?;
 
-		let asp_part = self.cosign_onboard(user_part).await.to_status()?;
-		let response = rpc::OnboardCosignResponse {
+		let asp_part = self.cosign_board(user_part).await.to_status()?;
+		let response = rpc::BoardCosignResponse {
 			asp_part: {
 				let mut buf = Vec::new();
 				ciborium::into_writer(&asp_part, &mut buf).unwrap();
@@ -351,25 +351,25 @@ impl rpc::server::ArkService for App {
 		Ok(tonic::Response::new(response))
 	}
 
-	async fn register_onboard_vtxo(
+	async fn register_board_vtxo(
 		&self,
-		req: tonic::Request<rpc::OnboardVtxoRequest>,
+		req: tonic::Request<rpc::BoardVtxoRequest>,
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REGISTER_ONBOARD_VTXOS);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS);
 
 		add_tracing_attributes(vec![
-			KeyValue::new("onboard_vtxo", format!("{:?}", req.get_ref().onboard_vtxo.as_hex())),
-			KeyValue::new("onboard_txid", format!("{:?}", req.get_ref().onboard_tx.as_hex())),
+			KeyValue::new("board_vtxo", format!("{:?}", req.get_ref().board_vtxo.as_hex())),
+			KeyValue::new("board_txid", format!("{:?}", req.get_ref().board_tx.as_hex())),
 		]);
 
 		let req = req.into_inner();
-		let vtxo = Vtxo::decode(&req.onboard_vtxo)
+		let vtxo = Vtxo::decode(&req.board_vtxo)
 			.badarg("invalid vtxo")?
-			.into_onboard()
-			.badarg("vtxo not an onboard vtxo")?;
-		let onboard_tx = bitcoin::consensus::deserialize(&req.onboard_tx)
-			.badarg("invalid onboard tx")?;
-		self.register_onboard(vtxo, onboard_tx).await.to_status()?;
+			.into_board()
+			.badarg("vtxo not an board vtxo")?;
+		let board_tx = bitcoin::consensus::deserialize(&req.board_tx)
+			.badarg("invalid board tx")?;
+		self.register_board(vtxo, board_tx).await.to_status()?;
 
 		Ok(tonic::Response::new(rpc::Empty {}))
 	}

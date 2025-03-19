@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, BlockHeight, OnboardVtxo, Vtxo, VtxoId};
+use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, BlockHeight, BoardVtxo, Vtxo, VtxoId};
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
@@ -151,14 +151,14 @@ impl Db {
 		Ok(())
 	}
 
-	/// Get all onboard vtxos that expired before or on `height`.
-	pub async fn get_expired_onboards(
+	/// Get all board vtxos that expired before or on `height`.
+	pub async fn get_expired_boards(
 		&self,
 		height: BlockHeight,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<OnboardVtxo>> + '_> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<BoardVtxo>> + '_> {
 		let conn = self.pool.get().await?;
 
-		// TODO: maybe store kind in a column to filter onboard at the db level
+		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
 			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs FROM vtxo WHERE expiry <= $1
 		", &[Type::INT4]).await?;
@@ -167,13 +167,13 @@ impl Db {
 
 		Ok(rows.filter_map(|row| async move {
 			row
-				.map(|row | VtxoState::try_from(row).expect("corrupt db").vtxo.into_onboard())
+				.map(|row | VtxoState::try_from(row).expect("corrupt db").vtxo.into_board())
 				.map_err(Into::into)
 				.transpose()
 		}).fuse())
 	}
 
-	pub async fn remove_onboard(&self, vtxo: &OnboardVtxo) -> anyhow::Result<()> {
+	pub async fn remove_board(&self, vtxo: &BoardVtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("

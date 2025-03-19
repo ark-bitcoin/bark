@@ -26,12 +26,12 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().get_round(req).await?.into_inner())
 	}
 
-	async fn request_onboard_cosign(&mut self, req: rpc::OnboardCosignRequest) -> Result<rpc::OnboardCosignResponse, tonic::Status> {
-		Ok(self.upstream().request_onboard_cosign(req).await?.into_inner())
+	async fn request_board_cosign(&mut self, req: rpc::BoardCosignRequest) -> Result<rpc::BoardCosignResponse, tonic::Status> {
+		Ok(self.upstream().request_board_cosign(req).await?.into_inner())
 	}
 
-	async fn register_onboard_vtxo(&mut self, req: rpc::OnboardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
-		Ok(self.upstream().register_onboard_vtxo(req).await?.into_inner())
+	async fn register_board_vtxo(&mut self, req: rpc::BoardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
+		Ok(self.upstream().register_board_vtxo(req).await?.into_inner())
 	}
 
 	async fn request_oor_cosign(&mut self, req: rpc::OorCosignRequest) -> Result<rpc::OorCosignResponse, tonic::Status> {
@@ -157,16 +157,16 @@ impl<T: AspdRpcProxy> rpc::ark_service_server::ArkService for AspdRpcProxyWrappe
 		Ok(tonic::Response::new(AspdRpcProxy::get_round(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn request_onboard_cosign(
-		&self, req: tonic::Request<rpc::OnboardCosignRequest>,
-	) -> Result<tonic::Response<rpc::OnboardCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::request_onboard_cosign(&mut self.0.clone(), req.into_inner()).await?))
+	async fn request_board_cosign(
+		&self, req: tonic::Request<rpc::BoardCosignRequest>,
+	) -> Result<tonic::Response<rpc::BoardCosignResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::request_board_cosign(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn register_onboard_vtxo(
-		&self, req: tonic::Request<rpc::OnboardVtxoRequest>,
+	async fn register_board_vtxo(
+		&self, req: tonic::Request<rpc::BoardVtxoRequest>,
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::register_onboard_vtxo(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(AspdRpcProxy::register_board_vtxo(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_oor_cosign(

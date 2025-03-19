@@ -1,7 +1,7 @@
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 
-use ark::{OnboardVtxo, Vtxo, VtxoId};
+use ark::{BoardVtxo, Vtxo, VtxoId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UtxoInfo {
@@ -14,7 +14,7 @@ pub struct UtxoInfo {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum VtxoType {
-	Onboard,
+	Board,
 	Round,
 	Arkoor,
 	Bolt11Change,
@@ -40,7 +40,7 @@ impl From<Vtxo> for VtxoInfo {
 			id: v.id(),
 			amount: v.amount(),
 			vtxo_type: match v {
-				Vtxo::Onboard { .. } => VtxoType::Onboard,
+				Vtxo::Board { .. } => VtxoType::Board,
 				Vtxo::Round { .. } => VtxoType::Round,
 				Vtxo::Arkoor { .. } => VtxoType::Arkoor,
 				Vtxo::Bolt11Change { .. } => VtxoType::Bolt11Change,
@@ -54,8 +54,8 @@ impl From<Vtxo> for VtxoInfo {
 	}
 }
 
-impl From<OnboardVtxo> for VtxoInfo {
-	fn from(v: OnboardVtxo) -> VtxoInfo {
-		Vtxo::Onboard(v).into()
+impl From<BoardVtxo> for VtxoInfo {
+	fn from(v: BoardVtxo) -> VtxoInfo {
+		Vtxo::Board(v).into()
 	}
 }

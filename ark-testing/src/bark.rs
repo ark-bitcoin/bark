@@ -246,18 +246,18 @@ impl Bark {
 		self.try_send_bolt11(destination, amount).await.unwrap();
 	}
 
-	pub async fn try_onboard(&self, amount: Amount) -> anyhow::Result<json::Onboard> {
-		info!("{}: Onboard {}", self.name, amount);
-		self.try_run_json(["onboard", &amount.to_string()]).await
+	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::Board> {
+		info!("{}: Board {}", self.name, amount);
+		self.try_run_json(["board", &amount.to_string()]).await
 	}
 
-	pub async fn onboard(&self, amount: Amount) -> json::Onboard {
-		self.try_onboard(amount).await.expect("onboard command failed")
+	pub async fn board(&self, amount: Amount) -> json::Board {
+		self.try_board(amount).await.expect("board command failed")
 	}
 
-	pub async fn onboard_all(&self) -> json::Onboard {
-		info!("{}: Onboarding all on-chain funds", self.name);
-		self.run_json(["onboard", "--all"]).await
+	pub async fn board_all(&self) -> json::Board {
+		info!("{}: Boarding all on-chain funds", self.name);
+		self.run_json(["board", "--all"]).await
 	}
 
 	pub async fn try_refresh_all(&self) -> anyhow::Result<()> {

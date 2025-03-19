@@ -3,20 +3,20 @@ use bitcoin::{Amount, OutPoint, Txid};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CosignedOnboard {
+pub struct CosignedBoard {
 	pub utxo: OutPoint,
 	pub amount: Amount,
 	pub exit_txid: Txid,
 }
-impl_slog!(CosignedOnboard, Trace, "cosigned onboard tx for user");
+impl_slog!(CosignedBoard, Trace, "cosigned board tx for user");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegisteredOnboard {
+pub struct RegisteredBoard {
 	/// The utxo of the vtxo.
 	pub vtxo: OutPoint,
-	/// The on-chain utxo of the onboard.
+	/// The on-chain utxo of the board.
 	pub onchain_utxo: OutPoint,
 	pub amount: Amount,
 }
-impl_slog!(RegisteredOnboard, Trace, "registered onboard vtxo");
+impl_slog!(RegisteredBoard, Trace, "registered board vtxo");
 
