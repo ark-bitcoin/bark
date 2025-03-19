@@ -105,7 +105,7 @@ fn init_logging(slog_dir: Option<&Path>) {
 		.chain(fern::Dispatch::new()
 			.format(|out, msg, rec| {
 				let now = chrono::Local::now();
-				let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
+				let stamp = now.to_rfc3339();
 				let kv = if rec.key_values().count() > 0 {
 					let mut buf = Vec::new();
 					buf.extend(" -- ".as_bytes());
