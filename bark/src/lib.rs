@@ -704,6 +704,10 @@ impl <P>Wallet<P> where
 	}
 
 	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Option<Address>) -> anyhow::Result<Offboard> {
+		if vtxos.is_empty() {
+			bail!("no VTXO to offboard");
+		}
+
 		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let addr = match address {
@@ -714,6 +718,10 @@ impl <P>Wallet<P> where
 		let round = self.participate_round(move |round| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), round.offboard_feerate)
 				.expect("bdk created invalid scriptPubkey");
+
+			if fee > vtxo_sum {
+				bail!("offboarded amount is lower than fees. Need {fee}, got: {vtxo_sum}");
+			}
 
 			let offb = OffboardRequest {
 				amount: vtxo_sum - fee,
