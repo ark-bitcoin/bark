@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::deserialize;
+use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::SecretKey;
 use tokio_postgres::Row;
 
@@ -49,6 +50,8 @@ pub struct VtxoState {
 	pub oor_spent: Option<Txid>,
 	/// The forfeit tx signatures of the user if the vtxo was forfeited.
 	pub forfeit_sigs: Option<Vec<schnorr::Signature>>,
+	/// If this is an board vtxo, true after it has been swept.
+	pub board_swept: bool,
 }
 
 impl VtxoState {
@@ -80,7 +83,8 @@ impl TryFrom<Row> for VtxoState {
 					.map(|sig|  Ok(schnorr::Signature::from_byte_array(sig.try_into()?)))
 					.collect::<anyhow::Result<Vec<_>>>()
 				)
-				.transpose()?
+				.transpose()?,
+			board_swept: value.get::<_, bool>("board_swept"),
 		})
 	}
 }

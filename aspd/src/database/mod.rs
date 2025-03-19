@@ -1,18 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
-use anyhow::Context;
-use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, BlockHeight, BoardVtxo, Vtxo, VtxoId};
-use bb8::Pool;
-use bb8_postgres::PostgresConnectionManager;
-use bdk_wallet::{chain::Merge, ChangeSet};
-use bitcoin::{Transaction, Txid};
-use bitcoin::consensus::serialize;
-use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
-use futures::{Stream, StreamExt, TryStreamExt};
-use model::{PendingSweep, StoredRound, VtxoState};
-use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
-
-use crate::Config;
 
 pub mod model;
 
@@ -20,6 +5,24 @@ mod embedded {
 	use refinery::embed_migrations;
 	embed_migrations!("src/database/migrations");
 }
+
+
+use std::collections::{HashMap, HashSet};
+
+use anyhow::Context;
+use bb8::Pool;
+use bb8_postgres::PostgresConnectionManager;
+use bdk_wallet::{chain::Merge, ChangeSet};
+use bitcoin::{Transaction, Txid};
+use bitcoin::consensus::serialize;
+use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
+use futures::{Stream, StreamExt, TryStreamExt};
+use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
+
+use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, BlockHeight, BoardVtxo, Vtxo, VtxoId};
+
+use crate::Config;
+use self::model::{PendingSweep, StoredRound, VtxoState};
 
 const DEFAULT_DATABASE: &str = "postgres";
 
@@ -160,7 +163,7 @@ impl Db {
 
 		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs FROM vtxo WHERE expiry <= $1
+			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs, board_swept FROM vtxo WHERE expiry <= $1
 		", &[Type::INT4]).await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
@@ -189,7 +192,7 @@ impl Db {
 		where T : GenericClient + Sized
 	{
 		let statement = client.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs
+			SELECT id, vtxo, expiry, oor_spent, forfeit_sigs, board_swept
 			FROM vtxo
 			WHERE id = any($1);
 		", &[Type::TEXT_ARRAY]).await?;
