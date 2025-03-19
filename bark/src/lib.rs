@@ -501,8 +501,8 @@ impl <P>Wallet<P> where
 		let board_amount = amount + ark::board::board_surplus();
 		let addr = Address::from_script(&ark::board::board_spk(&spec), properties.network).unwrap();
 
-		// We create the board tx template, but don't sign it yet.
-		let board_tx = self.onchain.prepare_tx(addr, board_amount)?;
+		// We create the onboard tx template, but don't sign it yet.
+		let board_tx = self.onchain.prepare_tx([(addr, board_amount)])?;
 
 		self.board(spec, user_keypair, board_tx).await
 	}

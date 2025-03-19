@@ -305,6 +305,32 @@ enum OnchainCommand {
 		no_sync: bool,
 	},
 
+	#[command(
+		about = "\
+			Send using the on-chain wallet to multiple destinations. \n\
+			Example usage: send-many --address bc1p1... --address bc1p2... --amount 10000sat --amount 20000sat\n\
+			This will send 10,000 sats to bc1p1... and 20,000 sats to bc1p2...",
+	)]
+	SendMany {
+		/// Adds an output to the given address, this can be specified multiple times and requires a
+		/// corresponding --amount parameter
+		#[arg(long, required = true)]
+		address: Vec<Address<address::NetworkUnchecked>>,
+
+		/// Sets the amount to send an address, this is applied in the order you supplied the
+		/// addresses.
+		#[arg(long, required = true)]
+		amount: Vec<Amount>,
+
+		/// Sends the transaction immediately instead of printing the summary before continuing
+		#[arg(long)]
+		immediate: bool,
+
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
+	},
+
 	/// List our wallet's UTXOs
 	#[command()]
 	Utxos {
@@ -439,6 +465,41 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				let txid = w.onchain.send(addr, amount).await?;
+				let output = json::onchain::Send { txid };
+				output_json(&output);
+			},
+			OnchainCommand::SendMany { address, amount, immediate, no_sync } => {
+				if address.len() != amount.len() {
+					bail!("You must provide an equal number of addresses and amounts. You provided {} addresses and {} amounts",
+						address.len(),
+						amount.len(),
+					);
+				}
+				let addresses = address
+					.iter().map(|a| a
+						.clone()
+						.require_network(net)
+						.expect(&format!("address is not valid for the configured network: {}, {:?}", net, a))
+					);
+				let outputs = addresses.zip(amount.into_iter()).collect::<Vec<_>>();
+				info!("Attempting to send the following:");
+				for (address, amount) in &outputs {
+					info!("{} to {}", amount, address);
+				}
+
+				if !immediate {
+					info!("Will continue after 10 seconds...");
+					tokio::time::sleep(Duration::from_secs(10)).await;
+				}
+
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = w.sync().await {
+						warn!("Sync error: {}", e)
+					}
+				}
+
+				let txid = w.onchain.send_many(outputs).await?;
 				let output = json::onchain::Send { txid };
 				output_json(&output);
 			},

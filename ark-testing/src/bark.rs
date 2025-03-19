@@ -194,6 +194,22 @@ impl Bark {
 		self.run(["onchain", "send", &destination, &amount, "--verbose"]).await;
 	}
 
+	/// Use onchain wallet to send to many recipients
+	pub async fn onchain_send_many<T1, T2>(&self, addresses: T1, amounts: T2)
+	where
+		T1: IntoIterator<Item = Address>,
+		T2: IntoIterator<Item = Amount>,
+	{
+		let mut command : Vec<String> = ["onchain", "send-many", "--immediate", "--verbose"]
+			.iter()
+			.map(|s| s.to_string())
+			.collect();
+		command.extend(addresses.into_iter().flat_map(|a| vec!["--address".into(), a.to_string()]));
+		command.extend(amounts.into_iter().flat_map(|a| vec!["--amount".into(), a.to_string()]));
+
+		self.run(command).await;
+	}
+
 	pub async fn utxos(&self) -> Vec<UtxoInfo> {
 		let res = self.run(["onchain", "utxos"]).await;
 		serde_json::from_str(&res).expect("json error")
@@ -300,7 +316,7 @@ impl Bark {
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>
 		where I: IntoIterator<Item = S>, S : AsRef<str>
 	{
-		let args: Vec<String>  = args.into_iter().map(|x| x.as_ref().to_string()).collect();
+		let args: Vec<String> = args.into_iter().map(|x| x.as_ref().to_string()).collect();
 
 		let mut command = Bark::cmd();
 		command.args(&[
