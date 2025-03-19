@@ -29,7 +29,7 @@ async fn bark_version() {
 	let aspd = ctx.new_aspd("aspd", None).await;
 	let bark1 = ctx.new_bark("bark1", &aspd).await;
 	let result = bark1.run(&[&"--version"]).await;
-	assert!(result.starts_with("bark-client"));
+	assert!(result.starts_with("bark "));
 }
 
 #[tokio::test]
