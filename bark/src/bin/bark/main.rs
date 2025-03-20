@@ -201,9 +201,13 @@ enum Command {
 	/// Board from the onchain wallet into the Ark
 	#[command()]
 	Board {
-		// Optional amount of on-chain funds to board. Either this or --all should be provided
+		/// Optional amount of on-chain funds to board.
+		///
+		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
+		///
+		/// Either this or --all should be provided.
 		amount: Option<Amount>,
-		// Whether or not all funds in on-chain wallet should be boarded
+		/// Whether or not all funds in on-chain wallet should be boarded
 		#[arg(long)]
 		all: bool,
 		/// Skip syncing wallet before board
@@ -217,6 +221,8 @@ enum Command {
 		/// The destination
 		destination: String,
 		/// The amount to send (optional for bolt11)
+		///
+		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
 		amount: Option<Amount>,
 		/// An optional comment
 		comment: Option<String>,
@@ -232,6 +238,9 @@ enum Command {
 		/// Destination for the payment, this can either be an on-chain address
 		/// or an Ark VTXO public key
 		destination: String,
+		/// Amount to send.
+		///
+		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
 		amount: Amount,
 		/// Skip syncing wallet
 		#[arg(long)]
@@ -299,6 +308,9 @@ enum OnchainCommand {
 	#[command()]
 	Send {
 		destination: Address<address::NetworkUnchecked>,
+		/// Amount to send
+		///
+		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
 		amount: Amount,
 		/// Skip syncing wallet
 		#[arg(long)]
