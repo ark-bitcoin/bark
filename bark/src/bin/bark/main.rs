@@ -215,10 +215,10 @@ enum Command {
 		no_sync: bool,
 	},
 
-	/// Send money using an Ark (out-of-round) transaction
+	/// Send money using Ark
 	#[command()]
 	Send {
-		/// The destination
+		/// The destination can be a VtxoPubkey, a BOLT11-invoice, LNURL or a lightning address
 		destination: String,
 		/// The amount to send (optional for bolt11)
 		///
@@ -235,8 +235,7 @@ enum Command {
 	/// This method requires to wait for a round
 	#[command()]
 	SendOnchain {
-		/// Destination for the payment, this can either be an on-chain address
-		/// or an Ark VTXO public key
+		/// The bitcoin address to which money will be sent
 		destination: String,
 		/// Amount to send.
 		///
