@@ -1,4 +1,4 @@
-FROM rust:1.84.1 AS builder
+FROM docker.io/rust:1.84.1 AS builder
 
 RUN apt update && apt install -y build-essential clang protobuf-compiler postgresql postgresql-contrib sudo
 
@@ -32,7 +32,7 @@ RUN service postgresql start && \
 RUN --mount=type=cache,target=/usr/src/target \
   cp /usr/src/target/release/aspd /usr/local/bin/aspd
 
-FROM debian:12 AS runner
+FROM docker.io/debian:12 AS runner
 
 # Create the datadir
 RUN mkdir /data

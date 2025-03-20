@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM docker.io/ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
@@ -49,7 +49,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
 	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION} && \
 	rustup target add x86_64-pc-windows-gnu && \
-#	rustup target add aarch64-pc-windows-msvc && \
+	rustup target add aarch64-unknown-linux-gnu && \
+	rustup target add armv7-unknown-linux-gnueabihf && \
 	rustup target add x86_64-apple-darwin && \
 	rustup target add aarch64-apple-darwin
 RUN echo "Installing bitcoin core in /bitcoin/${BITCOIN_VERSION}/bin/" && \
@@ -99,10 +100,11 @@ RUN echo "pre-build bark" && \
 	cargo test --workspace --exclude ark-testing --target-dir ./target-unit && \
 	cargo install --locked --path bark && \
 	cargo install --locked --path aspd && \
-	cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path bark/Cargo.toml && \
-#	cargo build --release --target aarch64-pc-windows-msvc --locked --manifest-path bark/Cargo.toml && \
-	cargo build --release --target x86_64-pc-windows-gnu --locked --manifest-path bark/Cargo.toml && \
-	cargo zigbuild --release --target x86_64-apple-darwin --locked --manifest-path bark/Cargo.toml && \
-	cargo zigbuild --release --target aarch64-apple-darwin --locked --manifest-path bark/Cargo.toml
+	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \
+	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml && \
+	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml && \
+	cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark/Cargo.toml && \
+	cargo zigbuild --release --target x86_64-apple-darwin           --locked --manifest-path bark/Cargo.toml && \
+	cargo zigbuild --release --target aarch64-apple-darwin          --locked --manifest-path bark/Cargo.toml
 RUN rm -rf /root/bark
 RUN echo "Done"

@@ -1,0 +1,30 @@
+when:
+  - event: pull_request
+  - event: manual
+  - event: tag
+  - event: push
+    branch: master
+
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git@sha256:2aaacedd7da067f2f6b54a3ef3d39cc69cc0c1152e377fd8df266bd34acd317e
+    settings:
+      partial: false
+      depth: 100
+      lfs: false
+
+steps:
+  - name: push-github-mirror
+    when:
+      - event: push
+        branch: master
+    failure: ignore
+    image: appleboy/drone-git-push@sha256:b7fbe3c66653f36d5898ccaf142be65274dc18ba260783b3a99ccc3098eed7b2
+    settings:
+      remote: git@github.com:ark-bitcoin/bark.git
+      branch: master
+      local_branch: master
+      force: true
+      ssh_key:
+        from_secret: github-mirror-push-key
+

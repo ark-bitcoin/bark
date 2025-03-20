@@ -1,4 +1,4 @@
-FROM rust:1.77.2 AS builder
+FROM docker.io/rust:1.77.2 AS builder
 
 RUN apt update && apt install -y build-essential clang protobuf-compiler
 
@@ -27,7 +27,7 @@ RUN --mount=type=bind,source=Cargo.toml,target=/usr/src/Cargo.toml \
 RUN --mount=type=cache,target=/usr/src/target \
   cp /usr/src/target/release/bark /usr/local/bin/bark
 
-FROM debian:12 AS runner
+FROM docker.io/debian:12 AS runner
 
 COPY --from=builder /usr/local/bin/bark /usr/local/bin/bark
 

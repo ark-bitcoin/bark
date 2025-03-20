@@ -1,0 +1,36 @@
+when:
+  - event: tag
+  - event: push
+    branch: master
+
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git@sha256:2aaacedd7da067f2f6b54a3ef3d39cc69cc0c1152e377fd8df266bd34acd317e
+    settings:
+      partial: false
+      depth: 100
+      lfs: false
+
+steps:
+  - name: generate-rustdocs
+    when:
+      - event: push
+        branch: master
+    failure: ignore
+    image: registry.2nd.dev/build:12
+    volumes:
+      - /data:/host/data
+    commands:
+      - just rustdocs
+      - cp -r rustdocs /host/data/
+      - bash contrib/generate-index.sh /host/data/rustdocs/doc
+
+  - name: check-versions
+    when:
+      - event: tag
+    image: registry.2nd.dev/build:12
+    commands:
+      - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
+
+depends_on:
+  - tests

@@ -1,0 +1,83 @@
+when:
+  - event: tag
+
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git@sha256:2aaacedd7da067f2f6b54a3ef3d39cc69cc0c1152e377fd8df266bd34acd317e
+    settings:
+      partial: false
+      depth: 100
+      lfs: false
+
+steps:
+  - name: parse-versions
+    when:
+      - event: tag
+        ref: refs/tags/aspd-*
+    image: registry.2nd.dev/build:12
+    commands:
+      - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
+      - cat VERSION
+
+  - name: build-aspd
+    when:
+      - event: tag
+        ref: refs/tags/aspd-*
+    depends_on: parse-versions
+    image: registry.2nd.dev/build:12
+    environment:
+      SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
+    commands:
+      - cat VERSION
+      - just release-aspd
+      - cp ./target/x86_64-unknown-linux-gnu/release/aspd      aspd-linux-x86_64
+
+  - name: build-and-push-aspd-dockerhub
+    when:
+      - event: tag
+        ref: refs/tags/aspd-*
+    depends_on: build-aspd
+    image: quay.io/buildah/stable@sha256:64eb66966df97e361407aaa2d555cd10e50a38d5241c8b12b91779baa4741ca6
+    environment:
+      REGISTRY_LOGIN_TOKEN:
+        from_secret: REGISTRY_LOGIN_TOKEN
+    #      DOCKERHUB_LOGIN_TOKEN:
+    #        from_secret: DOCKERHUB_LOGIN_TOKEN
+    pull: true
+    privileged: true
+    commands:
+      - cat VERSION
+      #      - echo $DOCKERHUB_LOGIN_TOKEN | buildah login -u steven@second.tech --password-stdin docker.io
+      - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile --tag registry.2nd.dev/aspd:latest .
+      - buildah push registry.2nd.dev/aspd:latest
+      - buildah tag registry.2nd.dev/aspd:latest "registry.2nd.dev/aspd:$(cat ../VERSION)"
+      - buildah push "registry.2nd.dev/aspd:$(cat ../VERSION)"
+
+  - name: release-aspd
+    when:
+      - event: tag
+        ref: refs/tags/aspd-*
+    depends_on: build-aspd
+    image: registry.2nd.dev/build:12
+    commands:
+      - cat VERSION
+      - cd ./target
+      - cp x86_64-unknown-linux-gnu/release/aspd       "aspd-$(cat ../VERSION)-linux-x86_64"
+      - sha256sum "aspd-$(cat ../VERSION)-linux-x86_64"       >  SHA256SUMS
+
+  - name: publish-aspd
+    when:
+      - event: tag
+        ref: refs/tags/aspd-*
+    depends_on: release-aspd
+    image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
+    settings:
+      files:
+        - "./target/aspd-*-linux-x86_64"
+        - "./target/SHA256SUMS"
+      api_key:
+        from_secret: RELEASE
+
+depends_on:
+  - helpers
