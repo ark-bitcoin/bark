@@ -138,12 +138,16 @@ impl <P>Wallet<P> where
 		utxos
 	}
 
-	pub (crate) fn prepare_tx(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Psbt> {
+	pub (crate) fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
+		&mut self, outputs: T
+	) -> anyhow::Result<Psbt> {
 		let fee_rate = self.chain_source.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.ordering(TxOrdering::Untouched);
-		b.add_recipient(dest.script_pubkey(), amount);
+		for (dest, amount) in outputs {
+			b.add_recipient(dest.script_pubkey(), amount);
+		}
 		b.fee_rate(fee_rate);
 		Ok(b.finish()?)
 	}
@@ -205,8 +209,17 @@ impl <P>Wallet<P> where
 	}
 
 	pub async fn send(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
-		let psbt = self.prepare_tx(dest, amount)?;
+		let psbt = self.prepare_tx([(dest, amount)])?;
 		let tx = self.finish_tx(psbt)?;
+		self.broadcast_tx(&tx).await?;
+		Ok(tx.compute_txid())
+	}
+
+	pub async fn send_many<T: IntoIterator<Item = (Address, Amount)>>(
+		&mut self, dests: T
+	) -> anyhow::Result<Txid> {
+		let pbst = self.prepare_tx(dests)?;
+		let tx = self.finish_tx(pbst)?;
 		self.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
+use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
 use tokio::fs;
 
@@ -668,4 +669,66 @@ async fn recover_mnemonic() {
 	assert_eq!(onchain, recovered.onchain_balance().await);
 	//TODO(stevenroose) implement offchain recovery
 	// assert_eq!(offchain, recovered.offchain_balance().await);
+}
+
+#[tokio::test]
+async fn onchain_send() {
+	let ctx = TestContext::new("bark/onchain_send").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+	let sender = ctx.new_bark_with_funds("bark_sender", &aspd, sat(1_000_000)).await;
+	let recipient = ctx.new_bark("bark_recipient", &aspd).await;
+
+	sender.onchain_send(recipient.get_onchain_address().await, sat(200_000)).await;
+	ctx.bitcoind.generate(1).await;
+
+	let recipient_balance = recipient.onchain_balance().await;
+	assert_eq!(recipient_balance, sat(200_000));
+
+	sender.onchain_send(recipient.get_onchain_address().await, sat(300_000)).await;
+	ctx.bitcoind.generate(1).await;
+
+	let sender_balance = sender.onchain_balance().await;
+	let recipient_balance = recipient.onchain_balance().await;
+	assert_eq!(recipient_balance, sat(500_000));
+	assert!(sender_balance < sat(500_0000));
+}
+
+#[tokio::test]
+async fn onchain_send_many() {
+	let ctx = TestContext::new("bark/onchain_send_many").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+	let sender = ctx.new_bark_with_funds("bark_sender", &aspd, sat(10_000_000)).await;
+	let recipient = ctx.new_bark("bark_recipient", &aspd).await;
+	let addresses = [
+		recipient.get_onchain_address().await,
+		recipient.get_onchain_address().await,
+		recipient.get_onchain_address().await,
+		recipient.get_onchain_address().await,
+		recipient.get_onchain_address().await,
+	];
+	let amounts = [
+		sat(100_000),
+		sat(200_000),
+		sat(300_000),
+		sat(400_000),
+		sat(500_000),
+	];
+
+	// Send the transaction assuming each address gets mapped to amounts sequentially
+	sender.onchain_send_many(addresses, amounts).await;
+	ctx.bitcoind.generate(1).await;
+
+	let utxos = recipient.utxos().await;
+	let client = ctx.bitcoind.sync_client();
+
+	// Every utxo should be in the same transaction and the vout should correspond to the amount array
+	let tx = client.get_raw_transaction(&utxos[0].outpoint.txid, None).unwrap();
+	for utxo in utxos {
+		let vout = utxo.outpoint.vout as usize;
+		assert_eq!(tx.output[vout].value, amounts[vout]);
+	}
+
+	// Finally verify our balances
+	assert_eq!(recipient.onchain_balance().await, sat(1_500_000));
+	assert!(sender.onchain_balance().await < sat(8_500_000));
 }
