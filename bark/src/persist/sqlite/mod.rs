@@ -85,7 +85,12 @@ impl BarkPersister for SqliteClient {
 		Ok(query::fetch_config(&conn)?)
 	}
 
-	fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+	fn get_all_movements_by_destination(&self, destination: &str) -> anyhow::Result<Vec<Movement>> {
+		let conn = self.connect()?;
+		query::get_all_movements_by_destination(&conn, destination)
+	}
+
+	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
 		let conn = self.connect()?;
 		query::get_paginated_movements(&conn, pagination)
 	}

@@ -5,6 +5,8 @@ use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
 use rusqlite::{Connection, named_params, Transaction};
 use crate::{exit::ExitIndex, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
+use super::convert::MovementExt;
+
 /// Set read-only properties for the wallet
 ///
 /// This is fail if properties aren't already set for the wallet
@@ -122,6 +124,26 @@ pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>, destination:
 	Ok(movement_id)
 }
 
+pub fn get_all_movements_by_destination(conn: &Connection, destination: &str) -> anyhow::Result<Vec<Movement>> {
+	let query = "
+		SELECT * FROM movement_view
+		WHERE destination = :dest
+		ORDER BY movement_view.created_at DESC
+	";
+
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(named_params! {
+		":dest" : destination,
+	})?;
+
+	let mut movements = Vec::new();
+	while let Some(row) = rows.next()? {
+		movements.push(Movement::try_from_row(row)?);
+	}
+
+	Ok(movements)
+}
+
 pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
 	let take = pagination.page_size;
 	let skip = pagination.page_index * take;
@@ -141,18 +163,7 @@ pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> any
 
 	let mut movements = Vec::with_capacity(take as usize);
 	while let Some(row) = rows.next()? {
-		let fees = Amount::from_sat(row.get("fees_sat")?);
-		let spends: String = row.get("spends")?;
-		let receives: String = row.get("receives")?;
-
-		movements.push(Movement {
-			id: row.get("id")?,
-			destination: row.get("destination")?,
-			fees: fees,
-			created_at: row.get("created_at")?,
-			spends: serde_json::from_str(&spends)?,
-			receives: serde_json::from_str(&receives)?,
-		});
+		movements.push(Movement::try_from_row(row)?);
 	}
 
 	Ok(movements)

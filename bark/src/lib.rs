@@ -426,7 +426,7 @@ impl <P>Wallet<P> where
 	}
 
 	pub fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
-		Ok(self.db.list_movements(pagination)?)
+		Ok(self.db.get_paginated_movements(pagination)?)
 	}
 
 	/// Returns all unspent vtxos
@@ -914,6 +914,10 @@ impl <P>Wallet<P> where
 		let properties = self.db.read_properties()?.context("Missing config")?;
 		if invoice.network() != properties.network {
 			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
+		}
+
+		if !self.db.get_all_movements_by_destination(&invoice.to_string())?.is_empty() {
+			bail!("Invoice has already been paid");
 		}
 
 		let mut asp = self.require_asp()?;
