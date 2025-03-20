@@ -72,7 +72,7 @@ async fn cln_can_pay_lightning() {
 
 #[tokio::test]
 async fn bark_pay_ln_succeeds() {
-	let ctx = TestContext::new("lightningd/bark_pay_ln").await;
+	let ctx = TestContext::new("lightningd/bark_pay_ln_succeeds").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
