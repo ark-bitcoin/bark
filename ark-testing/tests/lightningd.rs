@@ -128,6 +128,53 @@ async fn bark_pay_ln_succeeds() {
 }
 
 #[tokio::test]
+async fn bark_pay_invoice_twice() {
+	let ctx = TestContext::new("lightningd/bark_pay_invoice_twice").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.bitcoind.generate(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.bitcoind.generate(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+
+	// Start a bark and create a VTXO
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, btc(7)).await;
+
+	bark_1.board(btc(5)).await;
+	ctx.bitcoind.generate(6).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(2);
+	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	bark_1.send_bolt11(invoice.clone(), None).await;
+
+	let res = bark_1.try_send_bolt11(invoice, None).await;
+	assert!(res.unwrap_err().to_string().contains("Invoice has already been paid"))
+}
+
+
+#[tokio::test]
 async fn bark_pay_ln_fails() {
 	let ctx = TestContext::new("lightningd/bark_pay_ln_fails").await;
 
