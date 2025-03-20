@@ -1,8 +1,8 @@
-use ark::Movement;
 use bitcoin::Amount;
 use rusqlite::{Result, Row};
 use rusqlite::types::{ToSql, ToSqlOutput};
 
+use crate::movement::{Movement, VtxoSubset};
 use crate::VtxoState;
 
 impl ToSql for VtxoState {
@@ -11,23 +11,18 @@ impl ToSql for VtxoState {
 	}
 }
 
-pub trait MovementExt {
-	fn try_from_row(value: &Row<'_>) -> anyhow::Result<Movement>;
-}
+pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
+	let fees: Amount = Amount::from_sat(row.get("fees_sat")?);
 
-impl MovementExt for Movement {
-	fn try_from_row(value: &Row<'_>) -> anyhow::Result<Movement> {
-		let fees = Amount::from_sat(value.get("fees_sat")?);
-		let spends: String = value.get("spends")?;
-		let receives: String = value.get("receives")?;
+	let spends = serde_json::from_str::<Vec<VtxoSubset>>(&row.get::<_, String>("spends")?)?;
+	let receives = serde_json::from_str::<Vec<VtxoSubset>>(&row.get::<_, String>("receives")?)?;
 
-		Ok(Movement {
-			id: value.get("id")?,
-			destination: value.get("destination")?,
-			fees: fees,
-			created_at: value.get("created_at")?,
-			spends: serde_json::from_str(&spends)?,
-			receives: serde_json::from_str(&receives)?,
-		})
-	}
+	Ok(Movement {
+		id: row.get("id")?,
+		destination: row.get("destination")?,
+		fees: fees,
+		spends: spends,
+		receives: receives,
+		created_at: row.get("created_at")?,
+	})
 }

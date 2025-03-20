@@ -12,6 +12,7 @@ pub extern crate lnurl as lnurllib;
 pub mod persist;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
+use movement::Movement;
 pub use persist::sqlite::SqliteClient;
 pub mod vtxo_selection;
 mod exit;
@@ -19,6 +20,7 @@ mod lnurl;
 pub mod onchain;
 mod psbtext;
 mod vtxo_state;
+pub mod movement;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
@@ -45,7 +47,7 @@ use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
-	oor, ArkInfo, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, Movement, OffboardRequest,
+	oor, ArkInfo, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, OffboardRequest,
 	PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec,
 };
 use ark::connectors::ConnectorChain;

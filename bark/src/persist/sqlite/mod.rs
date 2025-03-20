@@ -5,12 +5,11 @@ mod query;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use ark::Movement;
 use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::{secp256k1::PublicKey, Amount};
 
-use crate::{exit::ExitIndex, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{exit::ExitIndex, movement::Movement, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 #[derive(Clone)]
 pub struct SqliteClient {

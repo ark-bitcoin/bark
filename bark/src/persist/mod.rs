@@ -1,10 +1,10 @@
 pub mod sqlite;
 
-use ark::{Movement, Vtxo, VtxoId};
+use ark::{Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::{secp256k1::PublicKey, Amount};
 
-use crate::{exit::ExitIndex, Config, Pagination, WalletProperties};
+use crate::{exit::ExitIndex, movement::Movement, Config, Pagination, WalletProperties};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database

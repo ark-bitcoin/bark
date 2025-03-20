@@ -1,11 +1,10 @@
 use std::{path::PathBuf, str::FromStr};
 use anyhow::Context;
-use ark::Movement;
 use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
 use rusqlite::{Connection, named_params, Transaction};
-use crate::{exit::ExitIndex, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{exit::ExitIndex, movement::Movement, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
-use super::convert::MovementExt;
+use super::convert::row_to_movement;
 
 /// Set read-only properties for the wallet
 ///
@@ -138,7 +137,7 @@ pub fn get_all_movements_by_destination(conn: &Connection, destination: &str) ->
 
 	let mut movements = Vec::new();
 	while let Some(row) = rows.next()? {
-		movements.push(Movement::try_from_row(row)?);
+		movements.push(row_to_movement(row)?);
 	}
 
 	Ok(movements)
@@ -163,7 +162,7 @@ pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> any
 
 	let mut movements = Vec::with_capacity(take as usize);
 	while let Some(row) = rows.next()? {
-		movements.push(Movement::try_from_row(row)?);
+		movements.push(row_to_movement(row)?);
 	}
 
 	Ok(movements)
