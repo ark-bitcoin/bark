@@ -425,7 +425,7 @@ impl <P>Wallet<P> where
 		Ok(vtxo)
 	}
 
-	pub fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+	pub fn movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
 		Ok(self.db.get_paginated_movements(pagination)?)
 	}
 
