@@ -10,8 +10,8 @@ use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use bitcoin_ext::P2WSH_DUST;
-use opentelemetry::{global, KeyValue};
-use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
+use opentelemetry::global;
+use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
 use tracing::info_span;
@@ -23,8 +23,9 @@ use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 
-use crate::{telemetry, AllowUntrusted, App, SECP};
+use crate::{AllowUntrusted, App, SECP};
 use crate::error::ContextExt;
+use crate::telemetry::{self, SpanExt};
 use crate::wallet::BdkWalletExt;
 
 
@@ -397,8 +398,8 @@ impl CollectingPayments {
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_CONSTRUCT_VTXO_TREE)
 			.start_with_context(&tracer_provider, &parent_context.clone());
-		span.set_attribute(KeyValue::new("expiry_height", expiry_height.to_string()));
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_BLOCKHEIGHT, tip.to_string()));
+		span.set_int_attr("expiry_height", expiry_height);
+		span.set_int_attr(telemetry::ATTRIBUTE_BLOCKHEIGHT, tip);
 
 		slog!(ConstructingRoundVtxoTree, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			tip_block_height: tip, vtxo_expiry_block_height: expiry_height,
@@ -911,8 +912,8 @@ impl SigningForfeits {
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
 			.start_with_context(&tracer_provider, &parent_context.clone());
-		span.set_attribute(KeyValue::new("signed-vtxo-count", self.signed_vtxos.nb_leaves().to_string()));
-		span.set_attribute(KeyValue::new("connectors-count", self.connectors.len().to_string()));
+		span.set_int_attr("signed-vtxo-count", self.signed_vtxos.nb_leaves());
+		span.set_int_attr("connectors-count", self.connectors.len());
 
 		trace!("Storing round result");
 		app.db.store_round(
@@ -1019,7 +1020,7 @@ async fn perform_round(
 		.span_builder(telemetry::TRACE_RUN_ROUND)
 		.with_kind(SpanKind::Server)
 		.start(&tracer_provider);
-	span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
+	span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 
 	let parent_context = opentelemetry::Context::current_with_span(span);
 
@@ -1064,8 +1065,8 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_ATTEMPT)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
-		span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr("attempt_seq", attempt_seq);
 
 		// Release all vtxos in flux from previous attempt
 		let state = round_state.collecting_payments();
@@ -1085,8 +1086,8 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
-		span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr("attempt_seq", attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_submit_time); }
 		'receive: loop {
@@ -1146,10 +1147,10 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_POPULATED)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
-		span.set_attribute(KeyValue::new("input-count", round_state.collecting_payments().all_inputs.len().to_string()));
-		span.set_attribute(KeyValue::new("output-count", round_state.collecting_payments().all_outputs.len().to_string()));
-		span.set_attribute(KeyValue::new("offboard-count", round_state.collecting_payments().all_offboards.len().to_string()));
+		span.set_int_attr("attempt_seq", attempt_seq);
+		span.set_int_attr("input-count", round_state.collecting_payments().all_inputs.len());
+		span.set_int_attr("output-count", round_state.collecting_payments().all_outputs.len());
+		span.set_int_attr("offboard-count", round_state.collecting_payments().all_offboards.len());
 
 		// ****************************************************************
 		// * Vtxo tree construction and signing
@@ -1163,8 +1164,8 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
-		span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr("attempt_seq", attempt_seq);
 
 		round_state = round_state.progress(app).await;
 		// Wait for signatures from users.
@@ -1238,8 +1239,8 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
-		span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr("attempt_seq", attempt_seq);
 
 		round_state = round_state.progress(&app).await;
 
@@ -1255,8 +1256,8 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
-		span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr("attempt_seq", attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
 
@@ -1327,8 +1328,8 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_FINALIZING)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new(telemetry::ATTRIBUTE_ROUND_ID, round_seq.to_string()));
-		span.set_attribute(KeyValue::new("attempt_seq", attempt_seq.to_string()));
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr("attempt_seq", attempt_seq);
 
 		round_state.into_signing_forfeits().finish(&app).await.context("error finishing round")?;
 
