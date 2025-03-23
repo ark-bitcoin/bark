@@ -873,6 +873,7 @@ impl SigningForfeits {
 		let sign_start = Instant::now();
 		let signed_round_tx = self.wallet_lock.finish_tx(self.round_tx_psbt)
 			.context("round tx signing error")?;
+		self.wallet_lock.commit_tx(&signed_round_tx);
 		self.wallet_lock.persist(&app.db).await?;
 		drop(self.wallet_lock); // we no longer need the lock
 		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;

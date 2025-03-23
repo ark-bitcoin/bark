@@ -42,6 +42,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use ark::rounds::RoundId;
 use bitcoin::absolute::LockTime;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
@@ -495,9 +496,7 @@ impl<'a> SweepBuilder<'a> {
 		// SIGNING
 
 		psbt.try_sign_sweeps(&self.sweeper.app.asp_key)?;
-		let signed = wallet.finish_tx(psbt)?;
-		wallet.persist(&self.sweeper.app.db).await?;
-		Ok(signed)
+		Ok(wallet.finish_tx(psbt)?)
 	}
 }
 
@@ -538,7 +537,8 @@ impl VtxoSweeper {
 
 	/// Store the pending tx both in the db and mem cache.
 	async fn add_new_pending(&mut self, txid: Txid, tx: Transaction) -> anyhow::Result<()> {
-		self.app.db.store_pending_sweep(&txid, &tx).await.context("db error storing pending sweep")?;
+		self.app.db.store_pending_sweep(&txid, &tx).await
+			.with_context(|| format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
 
 		let tx = self.app.txindex.broadcast_tx(tx).await;
 		self.store_pending(tx);

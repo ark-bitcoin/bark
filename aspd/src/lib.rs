@@ -464,6 +464,7 @@ impl App {
 		let psbt = b.finish().context("error building tx")?;
 
 		let tx = wallet.finish_tx(psbt)?;
+		wallet.commit_tx(&tx);
 		wallet.persist(&self.db).await?;
 		drop(wallet);
 
