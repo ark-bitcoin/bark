@@ -293,3 +293,10 @@ pub struct RoundFinished {
 	pub nb_input_vtxos: usize,
 }
 impl_slog!(RoundFinished, Info, "Round finished");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundError {
+	pub round_seq: usize,
+	pub error: String,
+}
+impl_slog!(RoundError, Error, "error during round, restarting");
