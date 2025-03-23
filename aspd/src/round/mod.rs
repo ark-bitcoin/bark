@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
@@ -387,7 +388,7 @@ impl CollectingPayments {
 		}
 	}
 
-	async fn progress(mut self, app: &App) -> SigningVtxoTree {
+	async fn progress(mut self, app: &App) -> Result<SigningVtxoTree, RoundError> {
 		let tip = app.chain_tip().await.height;
 		let expiry_height = tip + app.config.vtxo_expiry_delta as BlockHeight;
 
@@ -472,10 +473,16 @@ impl CollectingPayments {
 				b.add_recipient(offb.script_pubkey.clone(), offb.amount);
 			}
 			b.fee_rate(app.config.round_tx_feerate);
-			b.finish().expect("bdk failed to create round tx")
+			match b.finish().context("bdk failed to create round tx") {
+				Ok(psbt) => psbt,
+				Err(e) => return Err(RoundError::Recoverable(e)),
+			}
 		};
-		let unsigned_round_tx = round_tx_psbt.clone().extract_tx()
-			.expect("failed to extract tx from psbt");
+		let res = round_tx_psbt.clone().extract_tx().context("failed to extract tx from psbt");
+		let unsigned_round_tx = match res {
+			Ok(tx) => tx,
+			Err(e) => return Err(RoundError::Recoverable(e)),
+		};
 		let round_txid = unsigned_round_tx.compute_txid();
 		let vtxos_utxo = OutPoint::new(round_txid, 0);
 
@@ -522,7 +529,7 @@ impl CollectingPayments {
 			proceed = true;
 		}
 
-		SigningVtxoTree {
+		Ok(SigningVtxoTree {
 			round_seq: self.round_seq,
 			round_data: self.round_data,
 			attempt_seq: self.attempt_seq,
@@ -543,7 +550,7 @@ impl CollectingPayments {
 			inputs_per_cosigner: self.inputs_per_cosigner,
 			attempt_start: self.attempt_start,
 			proceed,
-		}
+		})
 	}
 }
 
@@ -668,7 +675,7 @@ impl SigningVtxoTree {
 			&self.cosign_agg_nonces,
 			&self.cosign_part_sigs,
 			asp_cosign_sigs,
-		).expect("failed to combine partial vtxo cosign signatures");
+		).expect("failed to combine partial vtxo cosign signatures: should have checked partials");
 		debug_assert_eq!(self.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
 		// Then construct the final signed vtxo tree.
@@ -872,11 +879,13 @@ impl SigningForfeits {
 	async fn finish(
 		mut self,
 		app: &App,
-	) -> anyhow::Result<()> {
+	) -> Result<(), RoundError> {
 		// Sign the on-chain tx.
 		let sign_start = Instant::now();
-		let signed_round_tx = self.wallet_lock.finish_tx(self.round_tx_psbt)
-			.context("round tx signing error")?;
+		let signed_round_tx = match self.wallet_lock.finish_tx(self.round_tx_psbt) {
+			Ok(tx) => tx,
+			Err(e) => return Err(RoundError::Recoverable(e.context("round tx signing error"))),
+		};
 		self.wallet_lock.commit_tx(&signed_round_tx);
 		if let Err(e) = self.wallet_lock.persist(&app.db).await {
 			// Failing to persist the tx data at this point means that we might
@@ -900,17 +909,6 @@ impl SigningForfeits {
 			signed_round_tx: signed_round_tx.tx.clone(),
 		}).expect("round event channel broken");
 
-		// Store forfeit txs and round info in database.
-		let mut forfeit_sigs = self.forfeit_sigs.take().unwrap();
-		for (id, vtxo) in &self.all_inputs {
-			let forfeit_sigs = forfeit_sigs.remove(&id).unwrap();
-			slog!(StoringForfeitVtxo, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-				out_point: vtxo.point(),
-			);
-			app.db.set_vtxo_forfeited(*id, forfeit_sigs).await?;
-		}
-		app.release_vtxos_in_flux(self.locked_inputs).await;
-
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 		let parent_context = opentelemetry::Context::current();
@@ -922,12 +920,30 @@ impl SigningForfeits {
 		span.set_int_attr("connectors-count", self.connectors.len());
 
 		trace!("Storing round result");
-		app.db.store_round(
-			&signed_round_tx.tx.clone(),
+		let mut forfeit_sigs = self.forfeit_sigs.take().unwrap();
+		let forfeit_vtxos = self.all_inputs.iter().map(|(id, vtxo)| {
+			let forfeit_sigs = forfeit_sigs.remove(&id).expect("checked have all forfeits");
+			slog!(StoringForfeitVtxo, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
+				out_point: vtxo.point(),
+			);
+			(*id, forfeit_sigs)
+		}).collect();
+		let result = app.db.finish_round(
+			&signed_round_tx.tx,
 			&self.signed_vtxos,
-			self.connectors.len(),
 			&self.connector_key.secret_key(),
-		).await?;
+			forfeit_vtxos,
+		).await;
+		if let Err(e) = result {
+			slog!(FatalStoringRound, round_seq: self.round_seq, error: format!("{:?}", e),
+				signed_tx: serialize(&signed_round_tx.tx),
+				vtxo_tree: self.signed_vtxos.spec.encode(),
+				connector_key: self.connector_key.secret_key(),
+				forfeit_vtxos: self.all_inputs.keys().copied().collect(),
+			);
+			return Err(RoundError::Fatal(e));
+		}
+		app.release_vtxos_in_flux(self.locked_inputs).await;
 
 		slog!(RoundFinished, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			txid: signed_round_tx.txid, vtxo_expiry_block_height: self.expiry_height,
@@ -990,11 +1006,11 @@ impl RoundState {
 		}
 	}
 
-	async fn progress(self, app: &App) -> Self {
+	async fn progress(self, app: &App) -> Result<Self, RoundError> {
 		match self {
-			Self::CollectingPayments(s) => s.progress(app).await.into(),
-			Self::SigningVtxoTree(s) => s.progress(app).into(),
-			Self::SigningForfeits(_) => panic!("can't progress from signingforfeits"),
+			Self::CollectingPayments(s) => Ok(s.progress(app).await?.into()),
+			Self::SigningVtxoTree(s) => Ok(s.progress(app).into()),
+			Self::SigningForfeits(_) => unreachable!("can't progress from signingforfeits"),
 		}
 	}
 }
@@ -1017,11 +1033,36 @@ impl From<SigningForfeits> for RoundState {
 	}
 }
 
+#[derive(Debug)]
+enum RoundError {
+	/// An error occurred, but we can just restart.
+	Recoverable(anyhow::Error),
+	/// A fatal error occurred that we can't recover from. Halt operations.
+	Fatal(anyhow::Error),
+}
+
+#[derive(Debug)]
+enum RoundResult {
+	/// Nothing to do, skipping round.
+	Empty,
+	/// All users abandoned the round.
+	Abandoned,
+	/// Round finished with success.
+	Success,
+	Err(RoundError),
+}
+
+impl From<RoundError> for RoundResult {
+	fn from(e: RoundError) -> Self {
+		Self::Err(e)
+	}
+}
+
 async fn perform_round(
 	app: &App,
 	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_seq: usize,
-) -> anyhow::Result<()> {
+) -> RoundResult {
 	let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 	let mut span = tracer_provider
@@ -1145,7 +1186,7 @@ async fn perform_round(
 				max_round_submit_time: app.config.round_submit_time,
 			);
 
-			return Ok(());
+			return RoundResult::Empty;
 		}
 		let receive_payment_duration = Instant::now().duration_since(receive_payments_start);
 		slog!(ReceivedRoundPayments, round_seq, attempt_seq,
@@ -1178,7 +1219,10 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		round_state = round_state.progress(app).await;
+		round_state = match round_state.progress(app).await {
+			Ok(s) => s,
+			Err(e) => return RoundResult::Err(e),
+		};
 		// Wait for signatures from users.
 		slog!(AwaitingRoundSignatures, round_seq, attempt_seq,
 			max_round_sign_time: app.config.round_sign_time,
@@ -1193,7 +1237,6 @@ async fn perform_round(
 			.start_with_context(&tracer_provider, &parent_context);
 
 		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
-
 		'receive: loop {
 			if round_state.proceed() {
 				break 'receive;
@@ -1204,7 +1247,7 @@ async fn perform_round(
 					let new = round_state.into_signing_vtxo_tree().restart();
 					if new.need_new_round() {
 						app.release_vtxos_in_flux(new.locked_inputs).await;
-						return Ok(());
+						return RoundResult::Abandoned;
 					} else {
 						round_state = new.into();
 						continue 'attempt;
@@ -1216,12 +1259,12 @@ async fn perform_round(
 
 					let res = match input {
 						RoundInput::VtxoSignatures { pubkey, signatures } => {
-							state
-								.register_signature(pubkey, signatures)
-								.map_err(|e| {
-									slog!(VtxoSignatureRegistrationFailed, round_seq, attempt_seq, error: e.to_string());
-									e
-								})
+							state.register_signature(pubkey, signatures).map_err(|e| {
+								slog!(VtxoSignatureRegistrationFailed, round_seq, attempt_seq,
+									error: e.to_string(),
+								);
+								e
+							})
 						},
 						RoundInput::RegisterPayment { .. } => {
 							badarg!("Round already started. Message arrived late or round was full.")
@@ -1240,7 +1283,8 @@ async fn perform_round(
 				}
 			}
 		}
-		slog!(ReceivedRoundVtxoSignatures, round_seq, attempt_seq, duration: Instant::now().duration_since(vtxo_signatures_receive_start),
+		slog!(ReceivedRoundVtxoSignatures, round_seq, attempt_seq,
+			duration: Instant::now().duration_since(vtxo_signatures_receive_start),
 			max_round_sign_time: app.config.round_sign_time,
 		);
 
@@ -1253,7 +1297,10 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		round_state = round_state.progress(&app).await;
+		round_state = match round_state.progress(&app).await {
+			Ok(s) => s,
+			Err(e) => return RoundResult::Err(e),
+		};
 
 		// Wait for signatures from users.
 		slog!(AwaitingRoundForfeits, round_seq, attempt_seq,
@@ -1279,7 +1326,7 @@ async fn perform_round(
 					let new = round_state.into_signing_forfeits().restart_missing_forfeits(None);
 					if new.need_new_round() {
 						app.release_vtxos_in_flux(new.locked_inputs).await;
-						return Ok(());
+						return RoundResult::Abandoned;
 					} else {
 						round_state = new.into();
 						continue 'attempt;
@@ -1342,9 +1389,10 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		round_state.into_signing_forfeits().finish(&app).await.context("error finishing round")?;
-
-		return Ok(());
+		return match round_state.into_signing_forfeits().finish(&app).await {
+			Ok(()) => RoundResult::Success,
+			Err(e) => RoundResult::Err(e),
+		};
 	}
 }
 
@@ -1355,6 +1403,27 @@ pub async fn run_round_coordinator(
 	mut round_trigger_rx: mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
 	loop {
+		let round_seq = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
+			app.config.round_interval.as_millis()) as usize;
+
+		match perform_round(app, &mut round_input_rx, round_seq).await {
+			RoundResult::Success => {},
+			RoundResult::Empty => {},
+			// Round got abandoned, immediatelly start a new one.
+			RoundResult::Abandoned => continue,
+			// Internal error, retry immediatelly.
+			RoundResult::Err(RoundError::Recoverable(e)) => {
+				slog!(RoundError, round_seq, error: format!("{:?}", e));
+				continue;
+			},
+			// Fatal error, halt operations.
+			RoundResult::Err(RoundError::Fatal(e)) => {
+				error!("Fatal round error: {:?}", e);
+				app.shutdown.cancel();
+				return Err(e);
+			},
+		}
+
 		// Sleep for the round interval, but discard all incoming messages.
 		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_interval); }
 		'sleep: loop {
@@ -1369,16 +1438,6 @@ pub async fn run_round_coordinator(
 					info!("Shutdown signal received. Exiting round coordinator loop...");
 					return Ok(());
 				}
-			}
-		}
-
-		let round_seq = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
-			app.config.round_interval.as_millis()) as usize;
-
-		match perform_round(app, &mut round_input_rx, round_seq).await {
-			Ok(()) => {},
-			Err(e) => {
-				slog!(RoundError, round_seq, error: format!("{:?}", e));
 			}
 		}
 	}

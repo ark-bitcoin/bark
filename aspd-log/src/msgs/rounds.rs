@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bitcoin::{OutPoint, Txid};
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{PublicKey, SecretKey};
 use ark::{BlockHeight, VtxoId};
 
 // ****************************************************************************
@@ -307,3 +307,15 @@ pub struct RoundSyncError {
 }
 impl_slog!(RoundSyncError, Warn, "onchain wallet sync failed during round");
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FatalStoringRound {
+	pub round_seq: usize,
+	pub error: String,
+	#[serde(with = "crate::serde_utils::hex")]
+	pub signed_tx: Vec<u8>,
+	#[serde(with = "crate::serde_utils::hex")]
+	pub vtxo_tree: Vec<u8>,
+	pub connector_key: SecretKey,
+	pub forfeit_vtxos: Vec<VtxoId>,
+}
+impl_slog!(FatalStoringRound, Error, "failed to store finished and signed round");
