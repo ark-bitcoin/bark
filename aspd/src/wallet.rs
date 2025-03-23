@@ -15,9 +15,12 @@ use crate::database::Db;
 pub trait BdkWalletExt: WalletExt {
 	/// Persist the committed wallet changes to the database.
 	async fn persist(&mut self, db: &Db) -> anyhow::Result<()> {
-		if let Some(change) = self.borrow_mut().take_staged() {
+		// NB we make sure that we don't erase the changeset if an error happened
+		// in the db.
+		if let Some(change) = self.borrow().staged() {
 			db.store_changeset(&change).await
 				.context("error persisting wallet changes to db")?;
+			self.borrow_mut().take_staged();
 		}
 		Ok(())
 	}

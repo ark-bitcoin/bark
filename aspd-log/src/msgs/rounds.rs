@@ -300,3 +300,10 @@ pub struct RoundError {
 	pub error: String,
 }
 impl_slog!(RoundError, Error, "error during round, restarting");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundSyncError {
+	pub error: String,
+}
+impl_slog!(RoundSyncError, Warn, "onchain wallet sync failed during round");
+

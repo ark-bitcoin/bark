@@ -878,7 +878,13 @@ impl SigningForfeits {
 		let signed_round_tx = self.wallet_lock.finish_tx(self.round_tx_psbt)
 			.context("round tx signing error")?;
 		self.wallet_lock.commit_tx(&signed_round_tx);
-		self.wallet_lock.persist(&app.db).await?;
+		if let Err(e) = self.wallet_lock.persist(&app.db).await {
+			// Failing to persist the tx data at this point means that we might
+			// accidentally re-use certain inputs if we reboot the aspd.
+			// We keep the change set in the wallet if this happens.
+			warn!("Failed to persist BDK wallet to db: {:?}", e);
+		}
+
 		drop(self.wallet_lock); // we no longer need the lock
 		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
 		let round_txid = signed_round_tx.txid;
@@ -930,7 +936,9 @@ impl SigningForfeits {
 		);
 
 		// Sync our wallet so that it sees the broadcasted tx.
-		app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
+		if let Err(e) = app.sync_onchain_wallet().await {
+			slog!(RoundSyncError, error: format!("{:?}", e));
+		};
 
 		Ok(())
 	}
@@ -1059,7 +1067,10 @@ async fn perform_round(
 	'attempt: loop {
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
-		app.sync_onchain_wallet().await.context("error syncing onchain wallet")?;
+
+		if let Err(e) = app.sync_onchain_wallet().await {
+			slog!(RoundSyncError, error: format!("{:?}", e));
+		}
 
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_ATTEMPT)
