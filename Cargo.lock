@@ -497,7 +497,7 @@ dependencies = [
 [[package]]
 name = "bdk_bitcoind_rpc"
 version = "0.17.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -507,7 +507,7 @@ dependencies = [
 [[package]]
 name = "bdk_chain"
 version = "0.21.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -519,7 +519,7 @@ dependencies = [
 [[package]]
 name = "bdk_core"
 version = "0.4.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
 dependencies = [
  "bitcoin",
  "hashbrown 0.14.5",
@@ -529,7 +529,7 @@ dependencies = [
 [[package]]
 name = "bdk_esplora"
 version = "0.20.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
 dependencies = [
  "async-trait",
  "bdk_core",
@@ -541,7 +541,7 @@ dependencies = [
 [[package]]
 name = "bdk_wallet"
 version = "1.0.0"
-source = "git+https://github.com/stevenroose/bdk.git?rev=4b6738b3d43ffcf9e91238eb6a12c293b90d6701#4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
 dependencies = [
  "bdk_chain",
  "bitcoin",
