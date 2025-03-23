@@ -1343,8 +1343,6 @@ pub async fn run_round_coordinator(
 	mut round_input_rx: mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	mut round_trigger_rx: mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
-	let mut shutdown = app.shutdown_channel.subscribe();
-
 	loop {
 		// Sleep for the round interval, but discard all incoming messages.
 		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_interval); }
@@ -1356,7 +1354,7 @@ pub async fn run_round_coordinator(
 					break 'sleep;
 				},
 				_ = round_input_rx.recv() => {},
-				_ = shutdown.recv() => {
+				_ = app.shutdown.cancelled() => {
 					info!("Shutdown signal received. Exiting round coordinator loop...");
 					return Ok(());
 				}

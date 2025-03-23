@@ -11,6 +11,7 @@ hex.workspace = true
 futures.workspace = true
 log.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tonic.workspace = true
 prost.workspace = true
 

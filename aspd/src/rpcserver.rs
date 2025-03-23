@@ -734,11 +734,8 @@ impl rpc::server::AdminService for App {
 		_req: tonic::Request<rpc::Empty>,
 	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_STOP);
-
 		info!("Shutting down because of RPC stop command...");
-
-		let _ = self.shutdown_channel.send(());
-
+		self.shutdown.cancel();
 		Ok(tonic::Response::new(rpc::Empty {}))
 	}
 }
@@ -951,13 +948,13 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	info!("Starting public gRPC service on address {}", addr);
 	let ark_server = rpc::server::ArkServiceServer::from_arc(app.clone());
 
-	let mut shutdown = app.shutdown_channel.subscribe();
+	let shutdown = app.shutdown.clone();
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
 			.add_service(ark_server)
 			.serve_with_shutdown(addr, async move {
-				shutdown.recv().await.expect("Shutdown channel failure");
+				shutdown.cancelled().await;
 				info!("Shutdown command received. Stopping gRPC server...");
 			}).await
 			.map_err(|e| {
@@ -968,7 +965,7 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 		tonic::transport::Server::builder()
 			.add_service(ark_server)
 			.serve_with_shutdown(addr, async move {
-				shutdown.recv().await.expect("Shutdown channel failure");
+				shutdown.cancelled().await;
 				info!("Shutdown command received. Stopping gRPC server...");
 			}).await
 			.map_err(|e| {
@@ -990,13 +987,13 @@ pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	info!("Starting admin gRPC service on address {}", addr);
 	let admin_server = rpc::server::AdminServiceServer::from_arc(app.clone());
 
-	let mut shutdown = app.shutdown_channel.subscribe();
+	let shutdown = app.shutdown.clone();
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
 			.add_service(admin_server)
 			.serve_with_shutdown(addr, async move {
-				shutdown.recv().await.expect("Shutdown channel failure");
+				shutdown.cancelled().await;
 				info!("Shutdown command received. Stopping gRPC server...");
 			})
 			.await
@@ -1009,7 +1006,7 @@ pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 		tonic::transport::Server::builder()
 			.add_service(admin_server)
 			.serve_with_shutdown(addr, async move {
-				shutdown.recv().await.expect("Shutdown channel failure");
+				shutdown.cancelled().await;
 				info!("Shutdown command received. Stopping gRPC server...");
 			})
 			.await

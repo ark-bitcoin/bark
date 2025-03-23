@@ -365,6 +365,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-stream",
+ "tokio-util",
  "toml",
  "tonic",
  "tonic-build",
@@ -430,6 +431,7 @@ dependencies = [
  "log",
  "prost",
  "tokio",
+ "tokio-util",
  "tonic",
  "tonic-build",
 ]
