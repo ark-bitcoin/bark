@@ -11,6 +11,7 @@ use serde::ser::StdError;
 
 use ark::{BlockHeight, Vtxo, VtxoId};
 
+use crate::movement::MovementArgs;
 use crate::onchain::{self, ChainSource, ChainSourceClient};
 use crate::persist::BarkPersister;
 
@@ -163,12 +164,12 @@ impl <P>Exit<P> where
 		for vtxo in vtxos {
 			let added = self.index.add_vtxo(vtxo.clone());
 			if let Some(added) = added {
-				self.db.register_send(
-					vec![&added],
-					added.spec().vtxo_spk().to_string(),
-					None,
-					None
-				).context("Failed to register send")?;
+				self.db.register_movement(MovementArgs {
+					spends: vec![&added],
+					receives: None,
+					destination: Some(added.spec().vtxo_spk().to_string()),
+					fees: None
+				}).context("Failed to register send")?;
 			}
 		}
 

@@ -4,7 +4,7 @@ use ark::{Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::{secp256k1::PublicKey, Amount};
 
-use crate::{exit::ExitIndex, movement::Movement, Config, Pagination, WalletProperties};
+use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, Config, Pagination, WalletProperties};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database
@@ -20,22 +20,14 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn get_all_movements_by_destination(&self, destination: &str) -> anyhow::Result<Vec<Movement>>;
 	/// Returns a paginated list of movements
 	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
-	/// Register incoming payment
-	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()>;
-	/// Register outgoint payment
-	fn register_send<'a>(
+	/// Register a movement
+	fn register_movement<'a, S, R>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo>,
-		destination: String,
-		change: Option<&Vtxo>,
-		fees: Option<Amount>
-	) -> anyhow::Result<()>;
-	/// Register in-round refresh
-	fn register_refresh<'a>(
-		&self,
-		input_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
-		output_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
-	) -> anyhow::Result<()>;
+		movement: MovementArgs<'a, S, R>
+	) -> anyhow::Result<()>
+		where
+			S: IntoIterator<Item = &'a Vtxo>,
+			R: IntoIterator<Item = &'a Vtxo>;
 
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;

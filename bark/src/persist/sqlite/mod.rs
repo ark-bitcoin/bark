@@ -9,7 +9,7 @@ use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::{secp256k1::PublicKey, Amount};
 
-use crate::{exit::ExitIndex, movement::Movement, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -94,35 +94,25 @@ impl BarkPersister for SqliteClient {
 		query::get_paginated_movements(&conn, pagination)
 	}
 
-	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-
-		let movement_id = self.create_movement(&tx, None, None)?;
-		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, VtxoState::Ready)?;
-
-		tx.commit()?;
-		Ok(())
-	}
-
-	fn register_send<'a>(
+	fn register_movement<'a, S, R>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo>,
-		destination: String,
-		change: Option<&Vtxo>,
-		fees: Option<Amount>
-	) -> anyhow::Result<()> {
+		movement: MovementArgs<'a, S, R>
+	) -> anyhow::Result<()>
+		where
+			S: IntoIterator<Item = &'a Vtxo>,
+			R: IntoIterator<Item = &'a Vtxo>,
+	{
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
-		let movement_id = self.create_movement(&tx, fees, Some(destination))?;
+		let movement_id = self.create_movement(&tx, movement.fees, movement.destination)?;
 
-		if let Some(change_vtxo) = change {
-			self.store_vtxo(&tx, change_vtxo, movement_id)
+		for v in movement.receives {
+			self.store_vtxo(&tx, v, movement_id)
 				.context("Failed to store change VTXOs")?
 		}
 
-		for v in vtxos {
+		for v in movement.spends {
 			self.mark_vtxo_as_spent(&tx, v.id(), movement_id).context("Failed to mark vtxo as spent")?;
 		}
 
@@ -130,36 +120,6 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn register_refresh<'a>(
-		&self,
-		input_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
-		output_vtxos: impl IntoIterator<Item = &'a Vtxo> + Clone,
-	) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-
-		let sent_amount = input_vtxos.clone().into_iter().map(|v| v.amount()).sum::<Amount>();
-		let received_amount = output_vtxos.clone().into_iter().map(|v| v.amount()).sum::<Amount>();
-
-		// This works as long as wallet owns all inputs and all outputs of the in-round send (refresh)
-		let fees = sent_amount - received_amount;
-		let movement_id = self.create_movement(&tx, Some(fees), None)?;
-
-		// Then add our new vtxo(s) by just checking all vtxos that might be ours.
-		for v in output_vtxos {
-			self.store_vtxo(&tx, &v, movement_id)
-				.context("Failed to store new vtxo")?;
-		}
-
-		// Mark input vtxos as spent
-		for v in input_vtxos {
-			self.mark_vtxo_as_spent(&tx, v.id(), movement_id)
-				.context("Failed to mark vtxo as spent")?;
-		}
-
-		tx.commit()?;
-		Ok(())
-	}
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxo_by_id(&conn, id)
@@ -342,8 +302,14 @@ mod test {
 
 		let (cs, conn) = in_memory();
 		let db = SqliteClient::open(cs).unwrap();
-		db.register_receive(&vtxo_1).unwrap();
-		db.register_receive(&vtxo_2).unwrap();
+
+		db.register_movement(MovementArgs {
+			spends: None, receives: vec![&vtxo_1], destination: None, fees: None
+		}).unwrap();
+
+		db.register_movement(MovementArgs {
+			spends: None, receives: vec![&vtxo_2], destination: None, fees: None
+		}).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
 		let vtxo_1_db = db.get_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
@@ -360,7 +326,9 @@ mod test {
 		assert!(! vtxos.contains(&vtxo_3));
 
 		// Add the third entry to the database
-		db.register_receive(&vtxo_3).unwrap();
+		db.register_movement(MovementArgs {
+			spends: None, receives: vec![&vtxo_3], destination: None, fees: None
+		}).unwrap();
 
 		// Get expiring vtxo's
 		// Matches exactly the first vtxo
@@ -372,7 +340,10 @@ mod test {
 		assert_eq!(vs, [vtxo_1.clone(), vtxo_2.clone()]);
 
 		// Verify that we can mark a vtxo as spent
-		db.register_send(&vec![vtxo_1.clone()], pk.to_string(), None, None).unwrap();
+		db.register_movement(MovementArgs {
+			spends: vec![&vtxo_1], receives: None, destination: Some(pk.to_string()), fees: None
+		}).unwrap();
+
 		assert!(db.has_spent_vtxo(vtxo_1.id()).unwrap());
 		assert!(! db.has_spent_vtxo(vtxo_2.id()).unwrap());
 		assert!(! db.has_spent_vtxo(vtxo_3.id()).unwrap());
