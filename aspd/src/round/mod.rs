@@ -9,6 +9,8 @@ use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
+use bitcoin_ext::P2WSH_DUST;
+use bitcoin_ext::bdk::WalletExt;
 use opentelemetry::{global, KeyValue};
 use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{oneshot, OwnedMutexGuard};
@@ -21,9 +23,8 @@ use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
-use bitcoin_ext::P2WSH_DUST;
 
-use crate::{telemetry, App, SECP};
+use crate::{telemetry, AllowUntrusted, App, SECP};
 use crate::error::ContextExt;
 use crate::wallet::BdkWalletExt;
 
@@ -458,10 +459,13 @@ impl CollectingPayments {
 		// Build round tx.
 		//TODO(stevenroose) think about if we can release lock sooner
 		let mut wallet_lock = app.wallet.clone().lock_owned().await;
+		let unspendable = app.untrusted_utxos(&*wallet_lock, AllowUntrusted::None).await
+			.expect("TODO CHANGE ON REBASE");
 		let round_tx_psbt = {
 			let mut b = wallet_lock.build_tx();
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
 			b.nlocktime(LockTime::from_height(tip as u32).expect("actual height"));
+			b.unspendable(unspendable);
 			b.add_recipient(vtxos_spec.round_tx_spk(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
 			for offb in &self.all_offboards {
@@ -873,6 +877,7 @@ impl SigningForfeits {
 		let sign_start = Instant::now();
 		let signed_round_tx = self.wallet_lock.finish_tx(self.round_tx_psbt)
 			.context("round tx signing error")?;
+		self.wallet_lock.commit_tx(&signed_round_tx);
 		self.wallet_lock.persist(&app.db).await?;
 		drop(self.wallet_lock); // we no longer need the lock
 		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;

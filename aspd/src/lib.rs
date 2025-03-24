@@ -33,10 +33,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bip39::Mnemonic;
-use bitcoin::{bip32, Address, Amount, Network, Transaction};
+use bitcoin::{bip32, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
+use bitcoin_ext::TransactionExt;
 use lightning::pay_bolt11;
 use lightning_invoice::Bolt11Invoice;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
@@ -464,6 +465,7 @@ impl App {
 		let psbt = b.finish().context("error building tx")?;
 
 		let tx = wallet.finish_tx(psbt)?;
+		wallet.commit_tx(&tx);
 		wallet.persist(&self.db).await?;
 		drop(wallet);
 
@@ -492,6 +494,34 @@ impl App {
 		ids: impl IntoIterator<Item = V>,
 	) {
 		self.vtxos_in_flux.lock().await.release(ids)
+	}
+
+	/// Fetch all the utxos in our wallet that are being spent or created by txs
+	/// from the VtxoSweeper.
+	pub async fn pending_sweep_utxos(&self) -> anyhow::Result<HashSet<OutPoint>> {
+		let ret = self.db.fetch_pending_sweeps().await?.values()
+			.map(|tx| tx.all_related_utxos())
+			.flatten().collect();
+		Ok(ret)
+	}
+
+	/// Return all untrusted vtxos in the wallet.
+	pub async fn untrusted_utxos(
+		&self,
+		wallet: &bdk_wallet::Wallet,
+		allow: AllowUntrusted,
+	) -> anyhow::Result<Vec<OutPoint>> {
+		let untrusted = wallet.untrusted_utxos();
+		let pending_sweeps = if allow == AllowUntrusted::VtxoSweeper {
+			HashSet::new()
+		} else {
+			self.pending_sweep_utxos().await?
+		};
+		let mut ret = Vec::with_capacity(pending_sweeps.len() + untrusted.len());
+		ret.extend(pending_sweeps);
+		ret.extend(untrusted);
+		ret.shrink_to_fit();
+		Ok(ret)
 	}
 
 	pub async fn cosign_board(
@@ -787,6 +817,16 @@ impl App {
 	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Mnemonic> {
 		Ok(Self::get_mnemonic_from_path(&self.config.data_dir)?)
 	}
+}
+
+/// This type is used as an argument into [App::untrusted_utxos] to indicate
+/// a source of untrusted vtxos that should be skipped.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AllowUntrusted {
+	/// Don't allow any untrusted utxos.
+	None,
+	/// Allow untrusted utxos from the VtxoSweeper.
+	VtxoSweeper,
 }
 
 /// Simple locking structure to keep track of vtxos that are currently in flux.

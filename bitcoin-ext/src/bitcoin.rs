@@ -38,6 +38,15 @@ pub trait TransactionExt: Borrow<Transaction> {
 	fn output_value(&self) -> Amount {
 		self.borrow().output.iter().map(|o| o.value).sum()
 	}
+
+	/// Returns an iterator over all input and output UTXOs related to this tx.
+	fn all_related_utxos(&self) -> impl Iterator<Item = OutPoint> {
+		let tx = self.borrow();
+		let inputs = tx.input.iter().map(|i| i.previous_output);
+		let txid = tx.compute_txid();
+		let outputs = (0..tx.output.len()).map(move |idx| OutPoint::new(txid, idx as u32));
+		inputs.chain(outputs)
+	}
 }
 impl TransactionExt for Transaction {}
 

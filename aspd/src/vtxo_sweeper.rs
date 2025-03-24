@@ -42,6 +42,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use ark::rounds::RoundId;
 use bitcoin::absolute::LockTime;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
@@ -49,6 +50,7 @@ use bitcoin::{
 
 use ark::{BlockHeight, BoardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
+use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::TaprootSpendInfoExt;
 use futures::StreamExt;
 
@@ -56,7 +58,7 @@ use crate::bitcoind::RpcApi;
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::wallet::BdkWalletExt;
-use crate::{txindex, App, DEEPLY_CONFIRMED, SECP};
+use crate::{txindex, AllowUntrusted, App, DEEPLY_CONFIRMED, SECP};
 
 
 struct BoardSweepInput {
@@ -464,10 +466,13 @@ impl<'a> SweepBuilder<'a> {
 	async fn create_tx(&self, tip: BlockHeight) -> anyhow::Result<Transaction> {
 		let mut wallet = self.sweeper.app.wallet.lock().await;
 		let drain_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal).address;
-
+		let untrusted = self.sweeper.app.untrusted_utxos(
+			&*wallet, AllowUntrusted::VtxoSweeper,
+		).await?;
 		let mut txb = wallet.build_tx();
 		txb.ordering(bdk_wallet::TxOrdering::Untouched);
 		txb.nlocktime(LockTime::from_height(tip as u32).expect("actual height"));
+		txb.unspendable(untrusted);
 
 		for sweep in &self.sweeps {
 			txb.add_foreign_utxo_with_sequence(
@@ -495,9 +500,7 @@ impl<'a> SweepBuilder<'a> {
 		// SIGNING
 
 		psbt.try_sign_sweeps(&self.sweeper.app.asp_key)?;
-		let signed = wallet.finish_tx(psbt)?;
-		wallet.persist(&self.sweeper.app.db).await?;
-		Ok(signed)
+		Ok(wallet.finish_tx(psbt)?)
 	}
 }
 
@@ -538,7 +541,8 @@ impl VtxoSweeper {
 
 	/// Store the pending tx both in the db and mem cache.
 	async fn add_new_pending(&mut self, txid: Txid, tx: Transaction) -> anyhow::Result<()> {
-		self.app.db.store_pending_sweep(&txid, &tx).await.context("db error storing pending sweep")?;
+		self.app.db.store_pending_sweep(&txid, &tx).await
+			.with_context(|| format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
 
 		let tx = self.app.txindex.broadcast_tx(tx).await;
 		self.store_pending(tx);

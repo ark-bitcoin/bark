@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bdk_wallet::{SignOptions, Wallet};
-use bitcoin::{Psbt, Transaction};
+use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 
 use bitcoin_ext::bdk::WalletExt;
 
@@ -32,12 +32,15 @@ pub trait BdkWalletExt: WalletExt {
 		};
 		let wallet = self.borrow_mut();
 		let finalized = wallet.sign(&mut psbt, opts).context("error signing psbt")?;
-		assert!(finalized);
-		let signed = psbt.extract_tx().context("error extracting finalized tx from psbt")?;
+		ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
+		Ok(psbt.extract_tx().context("error extracting finalized tx from psbt")?)
+	}
+
+	/// Commit the tx into our BDK wallet.
+	fn commit_tx(&mut self, tx: &Transaction) {
 		let now = SystemTime::now().duration_since(UNIX_EPOCH)
 			.expect("Unix epoch is in the past").as_secs();
-		self.borrow_mut().apply_unconfirmed_txs([(signed.clone(), now)]);
-		Ok(signed)
+		self.borrow_mut().apply_unconfirmed_txs([(tx.clone(), now)]);
 	}
 }
 impl BdkWalletExt for Wallet {}
