@@ -307,15 +307,15 @@ impl Bark {
 	}
 
 	pub async fn progress_exit(&self) -> json::ExitStatus {
-		self.run_json(["exit"]).await
+		self.run_json(["exit", "progress"]).await
 	}
 
-	pub async fn exit_all(&self) -> json::ExitStatus {
-		self.run_json(["exit", "--all"]).await
+	pub async fn start_exit_all(&self) {
+		self.run(["exit", "start", "--all"]).await;
 	}
 
-	pub async fn exit_vtxo(&self, vtxo: impl fmt::Display) -> json::ExitStatus {
-		self.run_json(["exit", "--vtxos", &vtxo.to_string(),]).await
+	pub async fn start_exit_vtxo(&self, vtxo: impl fmt::Display) {
+		self.run(["exit", "start", "--vtxos", &vtxo.to_string(),]).await;
 	}
 
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>
