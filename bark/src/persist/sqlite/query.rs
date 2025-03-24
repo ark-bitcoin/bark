@@ -111,36 +111,42 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 	}
 }
 
-pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>, destination: Option<String>) -> anyhow::Result<i32> {
+pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>) -> anyhow::Result<i32> {
 	// Store the vtxo
-	let query = "INSERT INTO bark_movement (fees_sat, destination) VALUES (:fees_sat, :destination) RETURNING *;";
+	let query = "INSERT INTO bark_movement (fees_sat) VALUES (:fees_sat) RETURNING *;";
 	let mut statement = conn.prepare(query)?;
 	let movement_id = statement.query_row(named_params! {
-		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat(),
-		":destination": destination
+		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat()
 	}, |row| row.get::<_, i32>(0))?;
 
 	Ok(movement_id)
 }
 
-pub fn get_all_movements_by_destination(conn: &Connection, destination: &str) -> anyhow::Result<Vec<Movement>> {
+pub fn create_recipient(conn: &Connection, movement: i32, recipient: String, amount: Amount) -> anyhow::Result<i32> {
+	// Store the vtxo
 	let query = "
-		SELECT * FROM movement_view
-		WHERE destination = :dest
-		ORDER BY movement_view.created_at DESC
-	";
+		INSERT INTO bark_recipient (movement, recipient, amount_sat)
+		VALUES (:movement, :recipient, :amount_sat) RETURNING *;";
 
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query(named_params! {
-		":dest" : destination,
-	})?;
+	let recipient_id = statement.query_row(named_params! {
+		":movement": movement,
+		":recipient" : recipient,
+		":amount_sat": amount.to_sat()
+	}, |row| row.get::<_, i32>(0))?;
 
-	let mut movements = Vec::new();
-	while let Some(row) = rows.next()? {
-		movements.push(row_to_movement(row)?);
-	}
+	Ok(recipient_id)
+}
 
-	Ok(movements)
+pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Result<bool> {
+	let query = "SELECT COUNT(*) FROM bark_recipient WHERE recipient = :recipient";
+
+	let mut statement = conn.prepare(query)?;
+	let exists = statement.query_row(named_params! {
+		":recipient" : recipient,
+	}, |row| Ok(row.get::<_, i32>(0)? > 0))?;
+
+	Ok(exists)
 }
 
 pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {

@@ -389,7 +389,7 @@ async fn double_exit_call() {
 	assert!(
 		vtxos.iter().all(|v| last_moves.iter().any(|m|
 			m.spends.first().unwrap().id == v.id &&
-			m.destination.clone().unwrap() ==
+			m.recipients.first().as_ref().unwrap().recipient ==
 				exit_spk(v.user_pubkey, v.asp_pubkey, v.exit_delta).to_string()
 		)), "each exited vtxo should be linked to a movement with exit_spk as destination"
 	);
@@ -412,7 +412,7 @@ async fn double_exit_call() {
 	assert_eq!(last_move.spends.len(), 1, "we should only exit last spendable vtxo");
 	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
 	let exit_spk = exit_spk(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta).to_string();
-	assert_eq!(last_move.destination.clone().unwrap(), exit_spk, "movement destination should be exit_spk");
+	assert_eq!(last_move.recipients.first().as_ref().unwrap().recipient, exit_spk, "movement destination should be exit_spk");
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
 	bark1.start_exit_all().await;

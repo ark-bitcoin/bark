@@ -34,10 +34,16 @@ impl SqliteClient {
 	}
 
 	/// Create a movement to link VTXOs to it
-	fn create_movement(&self, tx: &Transaction, fees: Option<Amount>, destination: Option<String>) -> anyhow::Result<i32> {
-		let movement_id = query::create_movement(&tx, fees, destination)?;
+	fn create_movement(&self, tx: &Transaction, fees: Option<Amount>) -> anyhow::Result<i32> {
+		let movement_id = query::create_movement(&tx, fees)?;
 
 		Ok(movement_id)
+	}
+
+	/// Stores a movement recipient
+	fn create_recipient(&self, tx: &Transaction, movement: i32, recipient: String, amount: Amount) -> anyhow::Result<()> {
+		query::create_recipient(&tx, movement, recipient, amount)?;
+		Ok(())
 	}
 
 	/// Stores a vtxo in the database
@@ -84,9 +90,9 @@ impl BarkPersister for SqliteClient {
 		Ok(query::fetch_config(&conn)?)
 	}
 
-	fn get_all_movements_by_destination(&self, destination: &str) -> anyhow::Result<Vec<Movement>> {
+	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
-		query::get_all_movements_by_destination(&conn, destination)
+		query::check_recipient_exists(&conn, recipient)
 	}
 
 	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
@@ -94,18 +100,19 @@ impl BarkPersister for SqliteClient {
 		query::get_paginated_movements(&conn, pagination)
 	}
 
-	fn register_movement<'a, S, R>(
+	fn register_movement<'a, S, R, Re>(
 		&self,
-		movement: MovementArgs<'a, S, R>
+		movement: MovementArgs<'a, S, R, Re>
 	) -> anyhow::Result<()>
 		where
 			S: IntoIterator<Item = &'a Vtxo>,
 			R: IntoIterator<Item = &'a Vtxo>,
+			Re: IntoIterator<Item = (String, Amount)>,
 	{
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
-		let movement_id = self.create_movement(&tx, movement.fees, movement.destination)?;
+		let movement_id = self.create_movement(&tx, movement.fees)?;
 
 		for v in movement.receives {
 			self.store_vtxo(&tx, v, movement_id)
@@ -114,6 +121,11 @@ impl BarkPersister for SqliteClient {
 
 		for v in movement.spends {
 			self.mark_vtxo_as_spent(&tx, v.id(), movement_id).context("Failed to mark vtxo as spent")?;
+		}
+
+		for (recipient, amount) in movement.recipients {
+			self.create_recipient(&tx, movement_id, recipient, amount)
+				.context("Failed to store change VTXOs")?
 		}
 
 		tx.commit()?;
@@ -304,11 +316,11 @@ mod test {
 		let db = SqliteClient::open(cs).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_1], destination: None, fees: None
+			spends: None, receives: vec![&vtxo_1], recipients: None, fees: None
 		}).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_2], destination: None, fees: None
+			spends: None, receives: vec![&vtxo_2], recipients: None, fees: None
 		}).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
@@ -327,7 +339,7 @@ mod test {
 
 		// Add the third entry to the database
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_3], destination: None, fees: None
+			spends: None, receives: vec![&vtxo_3], recipients: None, fees: None
 		}).unwrap();
 
 		// Get expiring vtxo's
@@ -341,7 +353,12 @@ mod test {
 
 		// Verify that we can mark a vtxo as spent
 		db.register_movement(MovementArgs {
-			spends: vec![&vtxo_1], receives: None, destination: Some(pk.to_string()), fees: None
+			spends: vec![&vtxo_1],
+			receives: None,
+			recipients: vec![
+				(pk.to_string(), Amount::from_sat(501))
+			],
+			fees: None
 		}).unwrap();
 
 		assert!(db.has_spent_vtxo(vtxo_1.id()).unwrap());

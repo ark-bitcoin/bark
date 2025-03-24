@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
+use bark::movement::MovementRecipient;
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
 use bitcoincore_rpc::RpcApi;
@@ -333,7 +334,7 @@ async fn list_movements() {
 	assert_eq!(payments[0].spends.len(), 0);
 	assert_eq!(payments[0].receives[0].amount, sat(300_000));
 	assert_eq!(payments[0].fees.to_sat(), 0);
-	assert!(payments[0].destination.is_none());
+	assert!(payments[0].recipients.first().is_none());
 
 	// oor change
 	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(150_000)).await;
@@ -342,7 +343,7 @@ async fn list_movements() {
 	assert_eq!(payments[0].spends[0].amount, sat(300_000));
 	assert_eq!(payments[0].receives[0].amount, sat(149_017));
 	assert_eq!(payments[0].fees.to_sat(), 983);
-	assert!(payments[0].destination.is_some());
+	assert!(payments[0].recipients.first().is_some());
 
 	// refresh vtxos
 	bark1.refresh_all().await;
@@ -351,7 +352,7 @@ async fn list_movements() {
 	assert_eq!(payments[0].spends[0].amount, sat(149_017));
 	assert_eq!(payments[0].receives[0].amount, sat(149_017));
 	assert_eq!(payments[0].fees.to_sat(), 0);
-	assert!(payments[0].destination.is_none());
+	assert!(payments[0].recipients.first().is_none());
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -360,7 +361,7 @@ async fn list_movements() {
 	assert_eq!(payments[0].spends.len(), 0);
 	assert_eq!(payments[0].receives[0].amount, sat(330_000));
 	assert_eq!(payments[0].fees.to_sat(), 0);
-	assert!(payments[0].destination.is_none());
+	assert!(payments[0].recipients.first().is_none());
 }
 
 #[tokio::test]
@@ -419,7 +420,13 @@ async fn offboard_all() {
 	let movements = bark1.list_movements().await;
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 3, "all offboard vtxos should be in movement");
-	assert_eq!(offb_movement.destination, Some(address.to_string()), "destination should be correct");
+	assert_eq!(
+		offb_movement.recipients.first(),
+		Some(MovementRecipient {
+			recipient: address.to_string(),
+			amount: sat(829100),
+		}).as_ref(), "destination should be correct"
+	);
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;
@@ -470,7 +477,13 @@ async fn offboard_vtxos() {
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 1, "only provided vtxo should be offboarded");
 	assert_eq!(offb_movement.spends[0].id, vtxo_to_offboard.id, "only provided vtxo should be offboarded");
-	assert_eq!(offb_movement.destination, Some(address.to_string()), "destination should be correct");
+	assert_eq!(
+		offb_movement.recipients.first(),
+		Some(MovementRecipient {
+			recipient: address.to_string(),
+			amount: vtxo_to_offboard.amount - sat(900),
+		}).as_ref(), "destination should be correct"
+	);
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;
@@ -501,7 +514,13 @@ async fn bark_send_onchain() {
 	let movements = bark1.list_movements().await;
 	let send_movement = movements.first().unwrap();
 	assert_eq!(send_movement.spends[0].id, sent_vtxos.id);
-	assert_eq!(send_movement.destination, Some(addr.to_string()), "destination should be correct");
+	assert_eq!(
+		send_movement.recipients.first(),
+		Some(MovementRecipient {
+			recipient: addr.to_string(),
+			amount: sat(300_000),
+		}).as_ref(), "destination should be correct"
+	);
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;

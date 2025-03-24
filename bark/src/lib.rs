@@ -577,7 +577,7 @@ impl <P>Wallet<P> where
 		self.db.register_movement(MovementArgs {
 			spends: None,
 			receives: vec![&vtxo],
-			destination: None,
+			recipients: None,
 			fees: None
 		}).context("db error storing vtxo")?;
 
@@ -673,7 +673,7 @@ impl <P>Wallet<P> where
 						self.db.register_movement(MovementArgs {
 							spends: None,
 							receives: vec![&vtxo],
-							destination: None,
+							recipients: None,
 							fees: None
 						})?;
 					}
@@ -713,7 +713,7 @@ impl <P>Wallet<P> where
 				self.db.register_movement(MovementArgs {
 					spends: None,
 					receives: vec![&vtxo],
-					destination: None,
+					recipients: None,
 					fees: None
 				}).context("failed to store OOR vtxo")?;
 			}
@@ -919,7 +919,9 @@ impl <P>Wallet<P> where
 		self.db.register_movement(MovementArgs {
 			spends: &input_vtxos,
 			receives: change,
-			destination: Some(output.pubkey.to_string()),
+			recipients: vec![
+				(output.pubkey.to_string(), output.amount)
+			],
 			fees: Some(account_for_fee)
 		}).context("failed to store OOR vtxo")?;
 
@@ -936,7 +938,7 @@ impl <P>Wallet<P> where
 			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
 		}
 
-		if !self.db.get_all_movements_by_destination(&invoice.to_string())?.is_empty() {
+		if self.db.check_recipient_exists(&invoice.to_string())? {
 			bail!("Invoice has already been paid");
 		}
 
@@ -1038,7 +1040,9 @@ impl <P>Wallet<P> where
 		self.db.register_movement(MovementArgs {
 			spends: &input_vtxos,
 			receives: change_vtxo.as_ref(),
-			destination: Some(invoice.to_string()),
+			recipients: vec![
+				(invoice.to_string(), amount)
+			],
 			fees: Some(anchor_amount + forwarding_fee)
 		}).context("failed to store OOR vtxo")?;
 
@@ -1500,14 +1504,16 @@ impl <P>Wallet<P> where
 					self.db.register_movement(MovementArgs {
 						spends: input_vtxos.values(),
 						receives: new_vtxos.get(0),
-						destination: Some(address.to_string()),
+						recipients: vec![
+							(address.to_string(), offboard.amount)
+						],
 						fees: None
 					}).context("failed to store OOR vtxo")?;
 				} else {
 					self.db.register_movement(MovementArgs {
 						spends: input_vtxos.values(),
 						receives: &new_vtxos,
-						destination: None,
+						recipients: None,
 						fees: None
 					}).context("failed to store OOR vtxo")?;
 				}

@@ -16,18 +16,19 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
 	fn read_config(&self) -> anyhow::Result<Option<Config>>;
 
-	/// Returns a list of movements matching provided destination
-	fn get_all_movements_by_destination(&self, destination: &str) -> anyhow::Result<Vec<Movement>>;
+	/// Check if given recipient exists in the database
+	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool>;
 	/// Returns a paginated list of movements
 	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
 	/// Register a movement
-	fn register_movement<'a, S, R>(
+	fn register_movement<'a, S, R, Re>(
 		&self,
-		movement: MovementArgs<'a, S, R>
+		movement: MovementArgs<'a, S, R, Re>
 	) -> anyhow::Result<()>
 		where
 			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = &'a Vtxo>;
+			R: IntoIterator<Item = &'a Vtxo>,
+			Re: IntoIterator<Item = (String, Amount)>;
 
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;

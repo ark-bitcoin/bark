@@ -167,7 +167,9 @@ impl <P>Exit<P> where
 				self.db.register_movement(MovementArgs {
 					spends: vec![&added],
 					receives: None,
-					destination: Some(added.spec().vtxo_spk().to_string()),
+					recipients: vec![
+						(added.spec().vtxo_spk().to_string(), added.amount())
+					],
 					fees: None
 				}).context("Failed to register send")?;
 			}
