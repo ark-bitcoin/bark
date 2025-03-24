@@ -77,16 +77,16 @@ tracing-subscriber = { version = "0.3.19", features = ["std", "registry", "ansi"
 package = "bdk_wallet"
 version = "1.0.0"
 git = "https://github.com/stevenroose/bdk.git"
-rev = "4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+rev = "c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
 [patch.crates-io.bdk_esplora]
 package = "bdk_esplora"
 version = "0.20.1"
 features = [ "std", "async-https-rustls", "tokio" ]
 default-features = false
 git = "https://github.com/stevenroose/bdk.git"
-rev = "4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+rev = "c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
 [patch.crates-io.bdk_bitcoind_rpc]
 package = "bdk_bitcoind_rpc"
 version = "0.17.1"
 git = "https://github.com/stevenroose/bdk.git"
-rev = "4b6738b3d43ffcf9e91238eb6a12c293b90d6701"
+rev = "c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
