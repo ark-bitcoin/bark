@@ -193,6 +193,7 @@ impl TestContext {
 			max_vtxo_amount: None,
 			rpc_rich_errors: true,
 			txindex_check_interval: Duration::from_millis(800),
+			handshake_message: None,
 			otel_collector_endpoint: None,
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty
