@@ -94,6 +94,10 @@ pub struct Config {
 	#[serde(with = "serde_util::duration")]
 	pub txindex_check_interval: Duration,
 
+	/// A message that can be used by the operator to make
+	/// announcements to all cliens.
+	pub handshake_message: Option<String>,
+
 	pub otel_collector_endpoint: Option<String>,
 
 	pub rpc: Rpc,
@@ -130,6 +134,8 @@ impl Default for Config {
 			sweep_threshold: Amount::from_sat(1_000_000),
 
 			rpc_rich_errors: true,
+
+			handshake_message: None,
 
 			txindex_check_interval: Duration::from_secs(30),
 
