@@ -66,13 +66,9 @@ enum Command {
 
 #[derive(clap::Subcommand)]
 enum RpcCommand {
-	/// Get asp balance
+	/// Report aspd wallet status
 	#[command()]
-	Balance,
-
-	/// Get asp address
-	#[command()]
-	GetAddress,
+	Wallet,
 
 	/// Start a new asp round
 	#[command()]
@@ -219,13 +215,18 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		.await.context("failed to connect to asp")?;
 
 	match cmd {
-		RpcCommand::Balance => {
+		RpcCommand::Wallet => {
 			let res = asp.wallet_status(rpc::Empty {}).await?.into_inner();
-			println!("{}", Amount::from_sat(res.balance));
-		},
-		RpcCommand::GetAddress => {
-			let res = asp.wallet_status(rpc::Empty {}).await?.into_inner();
-			println!("{}", res.address);
+			println!("balance: {}", Amount::from_sat(res.balance));
+			println!("address: {}", res.address);
+			println!("confirmed utxos:");
+			for utxo in res.confirmed_utxos {
+				println!(" - {}", utxo);
+			}
+			println!("unconfirmed utxos:");
+			for utxo in res.unconfirmed_utxos {
+				println!(" - {}", utxo);
+			}
 		},
 		RpcCommand::TriggerRound => {
 			asp.trigger_round(rpc::Empty {}).await?.into_inner();

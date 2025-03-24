@@ -678,10 +678,14 @@ impl rpc::server::AdminService for App {
 	) -> Result<tonic::Response<rpc::WalletStatusResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_STATUS);
 
+		let balance = self.sync_onchain_wallet().await.to_status()?;
+		let (confirmed, unconfirmed) = self.wallet.lock().await.list_unspent()
+			.partition::<Vec<_>, _>(|u| u.chain_position.is_confirmed());
 		let response = rpc::WalletStatusResponse {
-			// NB the order matters here, we want to sync first
-			balance: self.sync_onchain_wallet().await.to_status()?.to_sat(),
+			balance: balance.to_sat(),
 			address: self.new_onchain_address().await.to_status()?.to_string(),
+			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
+			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
 		};
 
 		Ok(tonic::Response::new(response))

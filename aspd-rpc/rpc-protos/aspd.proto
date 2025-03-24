@@ -240,6 +240,8 @@ service AdminService {
 message WalletStatusResponse {
 	string address = 1;
 	uint64 balance = 2;
+	repeated string confirmed_utxos = 3;
+	repeated string unconfirmed_utxos = 4;
 }
 
 message Empty {}
