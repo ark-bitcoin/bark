@@ -50,7 +50,7 @@ impl SqliteClient {
 	fn store_vtxo(&self, tx: &Transaction, vtxo: &Vtxo, movement_id: i32) -> anyhow::Result<()> {
 		// TODO: Use a better name.In most cases we don't want new vtxo's to get the state
 		// ready
-		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, VtxoState::Ready)?;
+		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, VtxoState::Spendable)?;
 
 		Ok(())
 	}
@@ -139,7 +139,7 @@ impl BarkPersister for SqliteClient {
 
 	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
-		query::get_vtxos_by_state(&conn, &[VtxoState::Ready])
+		query::get_vtxos_by_state(&conn, &[VtxoState::Spendable])
 	}
 
 	/// Get the soonest-expiring vtxos with total value at least `min_value`.

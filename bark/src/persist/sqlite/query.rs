@@ -252,7 +252,7 @@ pub fn get_expiring_vtxos(
 		WHERE state = ?1
 		ORDER BY expiry_height ASC";
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([VtxoState::Ready])?;
+	let mut rows = statement.query([VtxoState::Spendable])?;
 
 	// Iterate over all rows until the required amount is reached
 	let mut result = Vec::new();
