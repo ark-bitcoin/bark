@@ -430,7 +430,7 @@ async fn offboard_all() {
 	let movements = bark1.list_movements().await;
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 3, "all offboard vtxos should be in movement");
-	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
+	assert_eq!(offb_movement.destination, Some(address.to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;
@@ -481,7 +481,7 @@ async fn offboard_vtxos() {
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 1, "only provided vtxo should be offboarded");
 	assert_eq!(offb_movement.spends[0].id, vtxo_to_offboard.id, "only provided vtxo should be offboarded");
-	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
+	assert_eq!(offb_movement.destination, Some(address.to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;
@@ -516,8 +516,7 @@ async fn bark_send_onchain() {
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;
-	let balance = ctx.bitcoind.get_received_by_address(&addr);
-	assert_eq!(balance, sat(300_000));
+	assert_eq!(bark2.onchain_balance().await, sat(300_000));
 }
 
 #[tokio::test]

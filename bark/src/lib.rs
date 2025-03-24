@@ -10,6 +10,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
+use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
 pub use persist::sqlite::SqliteClient;
 pub mod vtxo_selection;
@@ -1065,6 +1066,7 @@ impl <P>Wallet<P> where
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
 			};
+
 			let out_value = amount + offb.fee(round.offboard_feerate).expect("script from address");
 			let change = {
 				if in_sum < out_value {
@@ -1473,9 +1475,11 @@ impl <P>Wallet<P> where
 				// if there is one offboard req, we register as a spend, else as a refresh
 				// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
 				if let Some(offboard) = offb_reqs.get(0) {
+					let params = Params::new(self.properties().unwrap().network);
+					let address = Address::from_script(&offboard.script_pubkey, params)?;
 					self.db.register_send(
 						input_vtxos.values(),
-						offboard.script_pubkey.to_string(),
+						address.to_string(),
 						new_vtxos.get(0), None
 					)?;
 				} else {
