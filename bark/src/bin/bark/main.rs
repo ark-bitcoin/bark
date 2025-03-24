@@ -5,6 +5,7 @@ mod exit;
 mod wallet;
 mod util;
 
+use std::time::Duration;
 use std::{env, process};
 use std::io::Write;
 use std::path::{Path, PathBuf};
