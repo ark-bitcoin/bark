@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::deserialize;
-use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::SecretKey;
 use tokio_postgres::Row;
 

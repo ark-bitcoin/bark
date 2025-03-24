@@ -714,12 +714,12 @@ impl App {
 		let mut interval = tokio::time::interval(Duration::from_secs(5));
 		interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 		let heartbeat_stream = IntervalStream::new(interval).map(move |_| {
-				rpc::Bolt11PaymentUpdate {
-					progress_message: String::from("Your payment is being routed through the lightning network..."),
-					payment_hash: payment_hash.as_byte_array().to_vec(),
-					status: rpc::PaymentStatus::Pending as i32,
-					payment_preimage: None
-				}
+			rpc::Bolt11PaymentUpdate {
+				progress_message: String::from("Your payment is being routed through the lightning network..."),
+				payment_hash: payment_hash.as_byte_array().to_vec(),
+				status: rpc::PaymentStatus::Pending as i32,
+				payment_preimage: None
+			}
 		});
 
 
