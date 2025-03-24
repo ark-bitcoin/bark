@@ -319,14 +319,15 @@ impl AspdHelper {
 		];
 		trace!("base_cmd={:?}; args={:?}", cmd, args);
 
-		let output = cmd.args(args).output().await?;
-		if output.status.success() {
+		let stdout_path = self.datadir().join("create_stdout.log");
+		let stderr_path = self.datadir().join("create_stderr.log");
+		cmd.stdout(std::fs::File::create(&stdout_path)?);
+		cmd.stderr(std::fs::File::create(&stderr_path)?);
+
+		let status = cmd.args(args).status().await?;
+		if status.success() {
 			Ok(())
 		} else {
-			let stdout = String::from_utf8(output.stdout)?;
-			error!("Failed to create aspd '{}' with stdout: {}", self.name, stdout);
-			let stderr = String::from_utf8(output.stderr)?;
-			error!("Failed to create aspd '{}' with stderr: {}", self.name, stderr);
 			bail!("Failed to create aspd '{}'", self.name);
 		}
 	}
