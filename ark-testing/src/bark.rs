@@ -226,7 +226,7 @@ impl Bark {
 	}
 
 	pub async fn list_movements(&self) -> Vec<Movement> {
-		let res = self.run(["list-movements"]).await;
+		let res = self.run(["movements"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 

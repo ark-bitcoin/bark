@@ -164,7 +164,7 @@ enum Command {
 	///
 	/// By default will fetch the 10 first items
 	#[command()]
-	ListMovements {
+	Movements {
 		/// Page index to return, default to 0
 		#[arg(long)]
 		page_index: Option<u16>,
@@ -597,7 +597,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let vtxos : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
 			output_json(&vtxos);
 		},
-		Command::ListMovements { page_index, page_size, no_sync } => {
+		Command::Movements { page_index, page_size, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				if let Err(e) = w.sync_ark().await {
@@ -610,7 +610,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
 			};
 
-			let movements = w.list_movements(pagination)?;
+			let movements = w.movements(pagination)?;
 			output_json(&movements);
 		},
 		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {

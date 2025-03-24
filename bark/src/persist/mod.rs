@@ -16,8 +16,10 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
 	fn read_config(&self) -> anyhow::Result<Option<Config>>;
 
+	/// Returns a list of movements matching provided destination
+	fn get_all_movements_by_destination(&self, destination: &str) -> anyhow::Result<Vec<Movement>>;
 	/// Returns a paginated list of movements
-	fn list_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
+	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
 	/// Register incoming payment
 	fn register_receive(&self, vtxo: &Vtxo) -> anyhow::Result<()>;
 	/// Register outgoint payment
