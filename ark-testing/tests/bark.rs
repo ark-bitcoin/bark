@@ -430,7 +430,7 @@ async fn offboard_all() {
 	let movements = bark1.list_movements().await;
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 3, "all offboard vtxos should be in movement");
-	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
+	assert_eq!(offb_movement.destination, Some(address.to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;
@@ -481,12 +481,62 @@ async fn offboard_vtxos() {
 	let offb_movement = movements.first().unwrap();
 	assert_eq!(offb_movement.spends.len(), 1, "only provided vtxo should be offboarded");
 	assert_eq!(offb_movement.spends[0].id, vtxo_to_offboard.id, "only provided vtxo should be offboarded");
-	assert_eq!(offb_movement.destination, Some(address.script_pubkey().to_string()), "destination should be correct");
+	assert_eq!(offb_movement.destination, Some(address.to_string()), "destination should be correct");
 
 	// We check that provided address received the coins
 	ctx.bitcoind.generate(1).await;
 	let balance = ctx.bitcoind.get_received_by_address(&address);
 	assert_eq!(balance, vtxo_to_offboard.amount - OFFBOARD_FEES);
+}
+
+#[tokio::test]
+async fn bark_send_onchain() {
+	let ctx = TestContext::new("bark/bark_send_onchain").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2", &aspd).await;
+
+	bark1.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	let [sent_vtxos] = bark1.vtxos().await.try_into().expect("should have one vtxo");
+	let addr = bark2.get_onchain_address().await;
+
+	// board vtxo
+	bark1.send_onchain(&addr, sat(300_000)).await;
+	ctx.bitcoind.generate(1).await;
+
+	let [change_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
+	assert_eq!(change_vtxo.amount, sat(498_900));
+
+	let movements = bark1.list_movements().await;
+	let send_movement = movements.first().unwrap();
+	assert_eq!(send_movement.spends[0].id, sent_vtxos.id);
+	assert_eq!(send_movement.destination, Some(addr.to_string()), "destination should be correct");
+
+	// We check that provided address received the coins
+	ctx.bitcoind.generate(1).await;
+	assert_eq!(bark2.onchain_balance().await, sat(300_000));
+}
+
+#[tokio::test]
+async fn bark_send_onchain_too_much() {
+	let ctx = TestContext::new("bark/bark_send_onchain_too_much").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	let addr = bark2.get_onchain_address().await;
+
+	// board vtxo
+	let ret = bark1.try_send_onchain(&addr, sat(1_000_000)).await;
+
+	assert!(ret.unwrap_err().to_string().contains("An error occurred: Balance too low"));
+	assert_eq!(bark1.offchain_balance().await, sat(800_000), "offchain balance shouldn't have changed");
+	assert_eq!(bark1.list_movements().await.len(), 1, "Should only have board movement");
 }
 
 #[tokio::test]
