@@ -225,11 +225,13 @@ pub fn get_vtxo_by_id(
 
 pub fn get_vtxos_by_state(
 	conn: &Connection,
-	state: VtxoState
+	state: &[VtxoState]
 ) -> anyhow::Result<Vec<Vtxo>> {
-	let query = "SELECT raw_vtxo FROM vtxo_view WHERE state = ?1";
+	let query = "SELECT raw_vtxo FROM vtxo_view WHERE state IN (SELECT atom FROM json_each(?))";
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([state.to_string()])?;
+
+	let json_state = serde_json::to_string(state)?;
+	let mut rows = statement.query(&[&json_state])?;
 
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
