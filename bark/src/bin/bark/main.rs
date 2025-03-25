@@ -4,6 +4,7 @@
 mod exit;
 mod wallet;
 mod util;
+mod lightning;
 
 use std::time::Duration;
 use std::{env, process};
@@ -272,6 +273,11 @@ enum Command {
 	/// Perform a unilateral exit from the Ark
 	#[command(subcommand)]
 	Exit(exit::ExitCommand),
+
+	/// Perform any lightning-related command
+	#[command(subcommand)]
+	Lightning(lightning::LightningCommand),
+
 
 	/// Dev command to drop the vtxo database
 	#[command(hide = true)]
@@ -686,27 +692,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 				info!("Sending arkoor payment of {} to pubkey {}", amount, pk);
 				w.send_oor_payment(pk, amount).await?;
-			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
-				let inv_amount = inv.amount_milli_satoshis()
-					.map(|v| Amount::from_sat(v.div_ceil(1000)));
-				if let (Some(_), Some(inv)) = (amount, inv_amount) {
-					bail!("Invoice has amount of {} encoded. Please omit amount argument", inv);
-				}
-				let final_amount = amount.or(inv_amount)
-					.context("amount required on invoice without amount")?;
-				if comment.is_some() {
-					bail!("comment not supported for bolt11 invoice");
-				}
-
-				if !no_sync {
-					info!("Syncing wallet...");
-					if let Err(e) = w.sync_ark().await {
-						warn!("Sync error: {}", e)
-					}
-				}
-				info!("Sending bolt11 payment of {} to invoice {}", final_amount, inv);
-				let preimage = w.send_bolt11_payment(&inv, amount).await?;
-				info!("Payment preimage received: {}", preimage.as_hex());
+			} else if let Ok(invoice) = Bolt11Invoice::from_str(&destination) {
+				lightning::pay(invoice, amount, comment, no_sync,&mut w).await?;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
 
@@ -795,6 +782,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Exit(cmd) => {
 			exit::execute_exit_command(cmd, &mut w).await?;
+		},
+		Command::Lightning(cmd) => {
+			lightning::execute_lightning_command(cmd, &mut w).await?;
 		}
 		// dev commands
 		Command::DropVtxos => {
