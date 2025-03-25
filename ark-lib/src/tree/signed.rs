@@ -137,7 +137,7 @@ impl VtxoTreeSpec {
 			user_pubkey: vtxo.pubkey,
 			asp_pubkey: self.asp_pk,
 			expiry_height: self.expiry_height,
-			spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
+			spk: vtxo.spk,
 			amount: vtxo.amount
 		};
 
@@ -751,6 +751,7 @@ mod test {
 					pubkey: self.key.public_key(),
 					amount: self.amount,
 					cosign_pk: self.cosign_key.public_key(),
+					spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
 				}
 			}
 		}

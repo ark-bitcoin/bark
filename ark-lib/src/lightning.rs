@@ -357,7 +357,8 @@ impl SignedBolt11Payment {
 
 		let pay_req = PaymentRequest {
 			pubkey: htlc_vtxo.spec().user_pubkey,
-			amount: htlc_vtxo.amount()
+			amount: htlc_vtxo.amount(),
+			spk: VtxoSpkSpec::Exit { exit_delta: self.payment.exit_delta },
 		};
 
 		OorPayment {

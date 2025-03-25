@@ -32,6 +32,7 @@ use bitcoin::{Amount, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
 use util::{Decodable, Encodable};
+use vtxo::VtxoSpkSpec;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +69,8 @@ pub struct PaymentRequest {
 	pub pubkey: PublicKey,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
+	/// Specifications for the script pubkey locking the VTXO
+	pub spk: VtxoSpkSpec,
 }
 
 impl Encodable for PaymentRequest {}
@@ -81,6 +84,8 @@ pub struct VtxoRequest {
 	/// The public key used by the client to cosign the transaction tree
 	/// The client SHOULD forget this key after signing it
 	pub cosign_pk: PublicKey,
+	/// Specifications for the script pubkey locking the VTXO
+	pub spk: VtxoSpkSpec,
 }
 
 

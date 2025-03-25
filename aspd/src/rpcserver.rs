@@ -23,6 +23,7 @@ use ark::board::UserPart;
 use ark::lightning::SignedBolt11Payment;
 use ark::{musig, VtxoIdInput, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::rounds::RoundId;
+use ark::vtxo::VtxoSpkSpec;
 use ark::util::{Decodable, Encodable};
 use aspd_rpc::{self as rpc, protos};
 use tonic::async_trait;
@@ -683,7 +684,10 @@ impl rpc::server::ArkService for Server {
 				.badarg("malformed pubkey")?;
 			let cosign_pk = PublicKey::from_slice(&r.cosign_pubkey)
 				.badarg("malformed cosign pubkey")?;
-			vtxo_requests.push(VtxoRequest { amount, pubkey, cosign_pk });
+			let spk = VtxoSpkSpec::decode(&r.vtxo_spk)
+				.badarg("malformed vtxo script pubkey")?;
+
+			vtxo_requests.push(VtxoRequest { amount, pubkey, cosign_pk, spk });
 
 			// Make sure users provided right number of nonces.
 			if r.public_nonces.len() != self.config.nb_round_nonces {

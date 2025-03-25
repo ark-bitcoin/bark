@@ -747,8 +747,8 @@ impl Wallet {
 				user_pubkey: dest.pubkey,
 				asp_pubkey: vtxos.spec.spec.asp_pk,
 				expiry_height: vtxos.spec.spec.expiry_height,
-				spk: VtxoSpkSpec::Exit { exit_delta: vtxos.spec.spec.exit_delta },
 				amount: dest.amount,
+				spk: dest.spk,
 			},
 			leaf_idx: leaf_idx,
 			exit_branch: exit_branch.into_iter().cloned().collect(),
@@ -823,12 +823,15 @@ impl Wallet {
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
 				if pubkeys.contains(&dest.pubkey) {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-						self.db.register_movement(MovementArgs {
-							spends: &[],
-							receives: &[(&vtxo, VtxoState::Spendable)],
-							recipients: &[],
-							fees: None
-						})?;
+						match vtxo.spec().spk {
+							VtxoSpkSpec::Exit { .. } => self.db.register_movement(MovementArgs {
+								spends: &[],
+								receives: &[(&vtxo, VtxoState::Spendable)],
+								recipients: &[],
+								fees: None,
+							})?,
+							VtxoSpkSpec::Htlc { .. } => {}
+						}
 					}
 				}
 			}
@@ -889,7 +892,7 @@ impl Wallet {
 					spends: &[],
 					receives: &[(&vtxo, VtxoState::Spendable)],
 					recipients: &[],
-					fees: None
+					fees: None,
 				}).context("failed to store OOR vtxo")?;
 			}
 		}
@@ -960,6 +963,7 @@ impl Wallet {
 		&mut self,
 		vtxos: Vec<Vtxo>
 	) -> anyhow::Result<Option<RoundId>> {
+		let asp = self.require_asp()?;
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to refresh!");
 			return Ok(None)
@@ -970,7 +974,8 @@ impl Wallet {
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let payment_request = PaymentRequest {
 			pubkey: user_keypair.public_key(),
-			amount: total_amount
+			amount: total_amount,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
@@ -985,7 +990,11 @@ impl Wallet {
 		let mut asp = self.require_asp()?;
 		let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
 
-		let output = PaymentRequest { pubkey: destination, amount };
+		let output = PaymentRequest {
+			pubkey: destination,
+			amount: amount,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
+		};
 
 		// TODO: implement oor fees. Once implemented, we should add an additional
 		// output to each impacted oor payment else the tx would be valid
@@ -1004,6 +1013,7 @@ impl Wallet {
 				Some(PaymentRequest {
 					pubkey: change_pubkey,
 					amount: change_amount,
+					spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
 				})
 			} else {
 				None
@@ -1335,6 +1345,8 @@ impl Wallet {
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
+		let asp = self.require_asp()?;
+
 		let balance = self.offchain_balance()?;
 
 		// do a quick check to fail early and not wait for round if we don't have enough money
@@ -1371,6 +1383,7 @@ impl Wallet {
 					Some(PaymentRequest {
 						pubkey: change_keypair.public_key(),
 						amount: amount,
+						spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
 					})
 				}
 			};
@@ -1402,6 +1415,7 @@ impl Wallet {
 				pubkey: req.pubkey,
 				amount: req.amount,
 				cosign_pk: ck.public_key(),
+				spk: req.spk,
 			}
 		}).collect::<Vec<_>>();
 
@@ -1446,6 +1460,7 @@ impl Wallet {
 					vtxo_public_key: r.pubkey.serialize().to_vec(),
 					cosign_pubkey: r.cosign_pk.serialize().to_vec(),
 					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
+					vtxo_spk: r.spk.encode().to_vec(),
 				}
 			}).collect(),
 			offboard_requests: offb_reqs.iter().map(|r| {

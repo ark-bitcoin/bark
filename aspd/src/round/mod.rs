@@ -25,6 +25,7 @@ use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use ark::util::Encodable;
+use ark::vtxo::VtxoSpkSpec;
 
 use crate::{Server, SECP};
 use crate::database::model::{ForfeitState, DangerousMusigSecNonce};
@@ -444,6 +445,7 @@ impl CollectingPayments {
 				pubkey: *UNSPENDABLE,
 				amount: P2WSH_DUST,
 				cosign_pk: cosign_key.public_key(),
+				spk: VtxoSpkSpec::Exit { exit_delta: server.config.vtxo_exit_delta },
 			};
 			self.all_outputs.push(VtxoParticipant {
 				req: req.clone(),
@@ -1630,11 +1632,12 @@ mod tests {
 		})
 	}
 
-	fn create_vtxo_request(amount: u64) -> VtxoRequest {
+	fn create_exit_vtxo_request(amount: u64) -> VtxoRequest {
 		VtxoRequest {
 			pubkey: generate_pubkey(),
 			amount: Amount::from_sat(amount),
 			cosign_pk: generate_pubkey(),
+			spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
 		}
 	}
 
@@ -1667,7 +1670,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap();
@@ -1695,7 +1698,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap();
@@ -1716,7 +1719,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap_err();
@@ -1738,8 +1741,8 @@ mod tests {
 			.collect::<Vec<_>>();
 
 		let outputs = vec![
-			create_vtxo_request(OUTPUT_AMOUNT_1),
-			create_vtxo_request(OUTPUT_AMOUNT_2),
+			create_exit_vtxo_request(OUTPUT_AMOUNT_1),
+			create_exit_vtxo_request(OUTPUT_AMOUNT_2),
 		];
 		let nonces = create_nonces(2, &state.round_data);
 
@@ -1760,7 +1763,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap_err();
@@ -1785,9 +1788,9 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_vtxo_request(OUTPUT_AMOUNT_1)];
+		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT_1)];
 		let nonces1 = create_nonces(1, &state.round_data);
-		let mut outputs2 = vec![create_vtxo_request(OUTPUT_AMOUNT_2)];
+		let mut outputs2 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT_2)];
 		outputs2[0].cosign_pk = outputs1[0].cosign_pk;
 		let nonces2 = create_nonces(1, &state.round_data);
 
@@ -1810,7 +1813,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_vtxo_request(OUTPUT_AMOUNT), create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces1 = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids1, &outputs1, &nonces1).unwrap_err();
@@ -1834,9 +1837,9 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_vtxo_request(OUTPUT_AMOUNT), create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces1 = create_nonces(2, &state.round_data);
-		let outputs2 = vec![create_vtxo_request(OUTPUT_AMOUNT), create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs2 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces2 = create_nonces(2, &state.round_data);
 
 		let flux = VtxosInFlux::new();

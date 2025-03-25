@@ -186,7 +186,7 @@ pub fn create_exit_tx(
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub enum VtxoSpkSpec {
 	Exit { exit_delta: u16 },
 	Htlc {
@@ -204,6 +204,9 @@ impl VtxoSpkSpec {
 		}
 	}
 }
+
+impl Decodable for VtxoSpkSpec {}
+impl Encodable for VtxoSpkSpec {}
 
 impl fmt::Display for VtxoSpkSpec {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

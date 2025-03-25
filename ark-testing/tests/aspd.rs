@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use ark::board::UserPart;
 use ark::oor::OorPayment;
+use ark::vtxo::VtxoSpkSpec;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
@@ -831,6 +832,9 @@ async fn bad_round_input() {
 			let (_sec, pb) = musig::nonce_pair(&key);
 			pb.serialize().to_vec()
 		}).take(ark_info.nb_round_nonces as usize).collect(),
+		vtxo_spk: VtxoSpkSpec::Exit {
+			exit_delta: aspd.config().vtxo_exit_delta,
+		}.encode().to_vec(),
 	};
 	let offb_req = protos::OffboardRequest {
 		amount: 1000,
@@ -1099,6 +1103,8 @@ async fn reject_subdust_vtxo_request() {
 	let ctx = TestContext::new("aspd/reject_subdust_vtxo_request").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
+	let vtxo_exit_delta = aspd.config().vtxo_exit_delta;
+
 	#[derive(Clone)]
 	struct Proxy(aspd::ArkClient);
 	#[tonic::async_trait]
@@ -1113,6 +1119,7 @@ async fn reject_subdust_vtxo_request() {
 					vtxo_public_key: req.vtxo_requests[0].vtxo_public_key.clone(),
 					cosign_pubkey: req.vtxo_requests[0].cosign_pubkey.clone(),
 					public_nonces: req.vtxo_requests[0].public_nonces.clone(),
+					vtxo_spk: req.vtxo_requests[0].vtxo_spk.clone(),
 				}],
 				offboard_requests: req.offboard_requests,
 			}).await?.into_inner())

@@ -223,6 +223,7 @@ message VtxoRequest {
 	bytes vtxo_public_key = 2;
 	bytes cosign_pubkey = 3;
 	repeated bytes public_nonces = 4;
+	bytes vtxo_spk = 5;
 }
 
 message OffboardRequest {
