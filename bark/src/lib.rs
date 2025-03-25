@@ -153,6 +153,11 @@ impl Default for Config {
 	}
 }
 
+struct RoundResult {
+	round_id: RoundId,
+	created_vtxos: Vec<Vtxo>
+}
+
 /// Read-only properties of the Bark wallet.
 #[derive(Debug, Clone)]
 pub struct WalletProperties {
@@ -738,7 +743,7 @@ impl <P>Wallet<P> where
 			None => self.onchain.address()?,
 		};
 
-		let round = self.participate_round(move |round| {
+		let RoundResult { round_id, .. } = self.participate_round(move |round| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), round.offboard_feerate)
 				.expect("bdk created invalid scriptPubkey");
 
@@ -754,7 +759,7 @@ impl <P>Wallet<P> where
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(Offboard { round })
+		Ok(Offboard { round: round_id })
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
@@ -802,10 +807,10 @@ impl <P>Wallet<P> where
 			amount: total_amount
 		};
 
-		let round = self.participate_round(move |_| {
+		let RoundResult { round_id, .. } = self.participate_round(move |_| {
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
-		Ok(Some(round))
+		Ok(Some(round_id))
 	}
 
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
@@ -1138,7 +1143,7 @@ impl <P>Wallet<P> where
 			bail!("Balance too low");
 		}
 
-		let round = self.participate_round(move |round| {
+		let RoundResult { round_id, .. } = self.participate_round(move |round| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
@@ -1164,7 +1169,7 @@ impl <P>Wallet<P> where
 			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(SendOnchain { round })
+		Ok(SendOnchain { round: round_id })
 	}
 
 	/// Participate in a round.
@@ -1179,7 +1184,7 @@ impl <P>Wallet<P> where
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
-	) -> anyhow::Result<RoundId> {
+	) -> anyhow::Result<RoundResult> {
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
@@ -1572,7 +1577,10 @@ impl <P>Wallet<P> where
 				}
 
 				info!("Round finished");
-				return Ok(signed_round_tx.compute_txid().into())
+				return Ok(RoundResult {
+					round_id: signed_round_tx.compute_txid().into(),
+					created_vtxos: new_vtxos
+				})
 			}
 		}
 	}
