@@ -1103,8 +1103,6 @@ async fn reject_subdust_vtxo_request() {
 	let ctx = TestContext::new("aspd/reject_subdust_vtxo_request").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
-	let vtxo_exit_delta = aspd.config().vtxo_exit_delta;
-
 	#[derive(Clone)]
 	struct Proxy(aspd::ArkClient);
 	#[tonic::async_trait]

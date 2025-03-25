@@ -830,7 +830,8 @@ impl Wallet {
 								recipients: &[],
 								fees: None,
 							})?,
-							VtxoSpkSpec::Htlc { .. } => {}
+							VtxoSpkSpec::HtlcIn { .. } => {},
+							VtxoSpkSpec::HtlcOut { .. } => {}
 						}
 					}
 				}
