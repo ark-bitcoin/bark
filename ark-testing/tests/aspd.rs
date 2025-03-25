@@ -634,10 +634,10 @@ async fn bad_round_input() {
 		amount: 1000,
 		vtxo_public_key: key.public_key().serialize().to_vec(),
 		cosign_pubkey: key2.public_key().serialize().to_vec(),
-		public_nonces: iter::repeat_n({
+		public_nonces: iter::repeat({
 			let (_sec, pb) = musig::nonce_pair(&key);
 			pb.serialize().to_vec()
-		}, ark_info.nb_round_nonces as usize).collect(),
+		}).take(ark_info.nb_round_nonces as usize).collect(),
 	};
 	let offb_req = rpc::OffboardRequest {
 		amount: 1000,
