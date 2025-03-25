@@ -1,4 +1,7 @@
 
+use std::sync::Arc;
+
+use bitcoin::Amount;
 use cln_rpc as rpc;
 
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
@@ -357,4 +360,79 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 		let res = bark_1.try_send_bolt11(invoice, Some(sat(P2TR_DUST_SAT - 1))).await;
 		assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
 	}
+}
+
+#[tokio::test]
+async fn bark_can_onboard_from_lightning() {
+	let ctx = TestContext::new("lightningd/bark_can_onboard_from_lightning").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to onboard
+	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd_1, btc(3)).await);
+	bark_1.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice_info = bark_1.bolt11_invoice(btc(1)).await;
+
+	let cloned = bark_1.clone();
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move {
+		cloned.bolt11_onboard(cloned_invoice_info.invoice).await
+	});
+	lightningd_1.pay_bolt11(invoice_info.invoice).await;
+	res1.await.unwrap();
+
+	let vtxos = bark_1.vtxos().await;
+	assert!(vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == btc(1)), "should have received lightning amount");
+	assert!(vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == sat(199999650)), "should have fees change");
+
+	let [ln_onboard_mvt, fee_split_mvt, board_mvt] = bark_1.list_movements().await.try_into().expect("should have 3 movements");
+	assert!(
+		board_mvt.spends.is_empty() &&
+		board_mvt.fees == Amount::ZERO &&
+		board_mvt.receives[0].amount == btc(2) &&
+		board_mvt.recipients.is_empty()
+	);
+
+	assert!(
+		fee_split_mvt.spends[0].amount == btc(2) &&
+		fee_split_mvt.fees == Amount::ZERO &&
+		fee_split_mvt.receives[0].amount == sat(350) &&
+		fee_split_mvt.receives[1].amount == sat(199999650) &&
+		board_mvt.recipients.is_empty()
+	);
+
+	assert!(
+		ln_onboard_mvt.spends[0].amount == sat(350) &&
+		ln_onboard_mvt.fees == sat(350) &&
+		ln_onboard_mvt.receives[0].amount == btc(1) &&
+		board_mvt.recipients.is_empty()
+	);
+
+	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
 }

@@ -454,7 +454,7 @@ impl Lightningd {
 			description: None,
 			localinvreqid: None,
 			partial_msat: None,
-		}).await.unwrap().into_inner();
+		}).await?.into_inner();
 
 		if response.status == cln_rpc::pay_response::PayStatus::Complete as i32 {
 			Ok(())
