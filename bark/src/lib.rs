@@ -14,7 +14,6 @@ use ark::oor::unsigned_oor_tx;
 use ark::util::{Decodable, Encodable};
 use ark::vtxo::VtxoSpkSpec;
 use bip39::rand::Rng;
-use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
 use movement::{Movement, MovementArgs};
@@ -49,7 +48,6 @@ use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
-use bitcoin_ext::{BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn, error};
@@ -73,6 +71,7 @@ use ark::rounds::{
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc::{self as rpc, protos};
+use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 
 use crate::exit::Exit;
 use crate::onchain::Utxo;
@@ -137,6 +136,11 @@ pub struct OffchainOnboard {
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
+}
+
+lazy_static::lazy_static! {
+	/// Arbitrary fee for Lightning onboarding. Subject to change when we have a fee schedule.
+	static ref LN_ONBOARD_FEE_SATS: Amount = Amount::from_sat(350);
 }
 
 struct OorCreateResult {
@@ -236,6 +240,8 @@ enum AttemptResult {
 #[derive(Debug)]
 struct RoundResult {
 	round_id: RoundId,
+	/// VTXOs created in the round
+	vtxos: Vec<Vtxo>,
 }
 
 /// Read-only properties of the Bark wallet.
@@ -1288,7 +1294,8 @@ impl Wallet {
 
 		let preimage = rand::thread_rng().gen::<[u8; 32]>();
 		let payment_hash = sha256::Hash::hash(&preimage);
-		info!("Start bolt11 onboard with preimage / payment hash: {} / {}", serialize_hex(&preimage), serialize_hex(&payment_hash));
+		info!("Start bolt11 onboard with preimage / payment hash: {} / {}",
+			preimage.as_hex(), payment_hash.as_byte_array().as_hex());
 
 		let req = protos::StartBolt11OnboardRequest {
 			payment_hash: payment_hash.as_byte_array().to_vec(),
@@ -1308,6 +1315,124 @@ impl Wallet {
 		)?;
 
 		Ok(invoice)
+	}
+
+	async fn create_fee_vtxo(&mut self, fees: Amount) -> anyhow::Result<Vtxo> {
+		let pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
+		let oor = self.create_oor_vtxo(pubkey, fees).await?;
+		let receives = [&oor.created].into_iter()
+			.chain(&oor.change)
+			.map(|v| (v, VtxoState::Spendable))
+			.collect::<Vec<_>>();
+
+		// TODO: we should ensure no fee is applied in this send
+		self.db.register_movement(MovementArgs {
+			spends: &oor.input.iter().collect::<Vec<_>>(),
+			receives: &receives,
+			recipients: &[],
+			fees: None
+		})?;
+
+		Ok(oor.created)
+	}
+
+	pub async fn claim_bolt11_payment(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+		let mut asp = self.require_asp()?;
+		let current_height = self.onchain.tip().await?;
+
+		let offchain_onboard = self.db.fetch_offchain_onboard_by_payment_hash(
+			invoice.payment_hash().as_byte_array()
+		)?.context("no offchain onboard found")?;
+
+		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+
+		let amount = Amount::from_msat_floor(
+			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
+		);
+
+		let req = protos::SubscribeBolt11OnboardRequest {
+			bolt11: invoice.to_string(),
+		};
+
+		info!("Waiting payment...");
+		asp.client.subscribe_bolt11_onboard(req).await?.into_inner();
+		info!("Lightning payment arrived!");
+
+		// Create a VTXO to pay receive fees:
+		let fee_vtxo = self.create_fee_vtxo(*LN_ONBOARD_FEE_SATS).await?;
+
+		let cloned = fee_vtxo.clone();
+		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
+			let inputs = vec![cloned.clone()];
+			let htlc_pay_req = PaymentRequest {
+				pubkey: keypair.public_key(),
+				amount: amount,
+				spk: VtxoSpkSpec::HtlcIn {
+					payment_hash: *invoice.payment_hash(),
+					htlc_expiry: current_height + asp.info.vtxo_expiry_delta as u32,
+					exit_delta: asp.info.vtxo_exit_delta,
+				}
+			};
+
+			Ok((inputs, vec![htlc_pay_req], vec![]))
+		}).await.context("round failed")?;
+
+		info!("Got HTLC vtxo in round: {}", vtxos.first().expect("should have one").id());
+
+		// Claiming arkoor against preimage
+		let pay_req = PaymentRequest {
+			pubkey: keypair.public_key(),
+			amount: amount,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
+		};
+
+		let payment = ark::oor::OorPayment::new(
+			asp.info.asp_pubkey,
+			asp.info.vtxo_exit_delta,
+			vtxos,
+			vec![pay_req],
+		);
+		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+
+		let req = protos::ClaimBolt11OnboardRequest {
+			payment: payment.encode(),
+			payment_preimage: offchain_onboard.payment_preimage.to_vec(),
+			pub_nonces: vec![pub_nonce.serialize().to_vec()],
+		};
+
+		info!("Claiming arkoor against payment preimage");
+		let resp = asp.client.claim_bolt11_onboard(req).await?.into_inner();
+		let asp_pub_nonces = resp.asp_pub_nonces()?;
+		let asp_part_sigs = resp.asp_part_sigs()?;
+		if asp_pub_nonces.len() != payment.inputs.len() || asp_part_sigs.len() != payment.inputs.len() {
+			bail!("invalid length of asp response");
+		}
+
+		let signed_payment = payment.sign_finalize_user(
+			vec![sec_nonce],
+			&vec![pub_nonce],
+			&vec![keypair],
+			&asp_pub_nonces,
+			&asp_part_sigs,
+		);
+
+		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_payment.signed_transaction()));
+		let vtxo = Vtxo::from(signed_payment
+			.output_vtxos()
+			.first()
+			.expect("there should be one output")
+			.clone()
+		);
+
+		info!("Got an arkoor from lightning! {}", vtxo.id());
+		self.db.register_movement(MovementArgs {
+			spends: &[&fee_vtxo],
+			receives: &[(&vtxo, VtxoState::Spendable)],
+			recipients: &[],
+			fees: Some(fee_vtxo.amount()),
+		})?;
+
+		Ok(())
 	}
 
 	/// Send to a lightning address.
@@ -1733,6 +1858,7 @@ impl Wallet {
 		info!("Round finished");
 		return Ok(AttemptResult::Success(RoundResult {
 			round_id: signed_round_tx.compute_txid().into(),
+			vtxos: new_vtxos,
 		}))
 	}
 

@@ -37,6 +37,11 @@ pub enum LightningCommand {
 	Invoice {
 		amount: Amount,
 	},
+	#[command()]
+	Claim {
+		/// The invoice to claim
+		invoice: String,
+	},
 }
 
 pub async fn execute_lightning_command(
@@ -55,6 +60,11 @@ pub async fn execute_lightning_command(
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 		},
+		LightningCommand::Claim { invoice } => {
+			let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
+
+			wallet.claim_bolt11_payment(invoice).await?;
+		}
 	}
 
 	Ok(())
