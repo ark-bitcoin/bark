@@ -3,6 +3,7 @@ mod chain;
 pub use self::chain::ChainSource;
 
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
 use anyhow::Context;
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
@@ -238,5 +239,17 @@ impl <P>Wallet<P> where
 		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		self.wallet.persist(&mut self.db)?;
 		Ok(ret)
+	}
+
+	/// Retrieves a transaction from the wallet
+	///
+	/// This method will only check the database and will not
+	/// use a chain-source to find the transaction
+	pub fn get_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
+		let tx = self.wallet
+			.get_tx(txid)?
+			.tx_node.tx;
+
+		Some(tx.clone())
 	}
 }
