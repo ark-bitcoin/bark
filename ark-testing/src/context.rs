@@ -9,7 +9,7 @@ use log::info;
 use tokio::fs;
 use tonic::transport::Uri;
 
-use aspd::config::{self, Config};
+use aspd::config::{self, Config, HodlInvoiceClnPlugin};
 use aspd_rpc as rpc;
 
 use crate::daemon::aspd::postgresd::{self, Postgres};
@@ -191,6 +191,7 @@ impl TestContext {
 
 		let cln_array = if let Some(lnd) = lightningd {
 			let grpc_details = lnd.grpc_details().await;
+			let hodl_details = lnd.hodl_details().await;
 
 			let lightningd = config::Lightningd {
 				uri: Uri::from_str(&grpc_details.uri).expect("failed to parse cln grpc uri"),
@@ -198,6 +199,12 @@ impl TestContext {
 				server_cert_path: grpc_details.server_cert_path,
 				client_cert_path: grpc_details.client_cert_path,
 				client_key_path: grpc_details.client_key_path,
+				hodl_invoice: Some(HodlInvoiceClnPlugin {
+					uri: Uri::from_str(&hodl_details.uri).expect("failed to parse hodl plugin uri"),
+					server_cert_path: hodl_details.server_cert_path,
+					client_cert_path: hodl_details.client_cert_path,
+					client_key_path: hodl_details.client_key_path,
+				})
 			};
 
 			let mut cln_array = Vec::new();
