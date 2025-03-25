@@ -689,7 +689,8 @@ impl rpc::server::ArkService for Server {
 		let (nonces, sigs) = self.claim_bolt11_htlc(
 			&payment,
 			&user_nonces,
-			&payment_preimage).await.to_status()?;
+			&payment_preimage,
+		).await.to_status()?;
 
 		let response = protos::OorCosignResponse {
 			pub_nonces: nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),

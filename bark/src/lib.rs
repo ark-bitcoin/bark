@@ -1056,19 +1056,12 @@ impl Wallet {
 			pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
 		};
 		let resp = asp.client.request_oor_cosign(req).await.context("cosign request failed")?.into_inner();
-		let len = payment.inputs.len();
-		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
+
+		let asp_pub_nonces = resp.asp_pub_nonces()?;
+		let asp_part_sigs = resp.asp_part_sigs()?;
+		if asp_pub_nonces.len() != payment.inputs.len() || asp_part_sigs.len() != payment.inputs.len() {
 			bail!("invalid length of asp response");
 		}
-
-		let asp_pub_nonces = resp.pub_nonces.into_iter()
-			.map(|b| musig::MusigPubNonce::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp pub nonces")?;
-		let asp_part_sigs = resp.partial_sigs.into_iter()
-			.map(|b| musig::MusigPartialSignature::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp part sigs")?;
 
 		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
@@ -1186,21 +1179,17 @@ impl Wallet {
 		};
 		let resp = asp.client.start_bolt11_payment(req).await
 			.context("htlc request failed")?.into_inner();
-		let len = inputs.len();
-		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
+
+		let asp_pub_nonces = resp.asp_pub_nonces()?;
+		let asp_part_sigs = resp.asp_part_sigs()?;
+		if asp_pub_nonces.len() != inputs.len() || asp_part_sigs.len() != inputs.len() {
 			bail!("invalid length of asp response");
 		}
+
 		let payment = ark::lightning::Bolt11Payment::decode(&resp.details)
 			.context("invalid bolt11 payment details from asp")?;
 
-		let asp_pub_nonces = resp.pub_nonces.into_iter()
-			.map(|b| musig::MusigPubNonce::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp pub nonces")?;
-		let asp_part_sigs = resp.partial_sigs.into_iter()
-			.map(|b| musig::MusigPartialSignature::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp part sigs")?;
+
 
 		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
@@ -1254,15 +1243,11 @@ impl Wallet {
 			};
 
 			let resp = asp.client.revoke_bolt11_payment(req).await?.into_inner();
-
-			let asp_pub_nonces = resp.pub_nonces.into_iter()
-				.map(|b| musig::MusigPubNonce::from_slice(&b))
-				.collect::<Result<Vec<_>, _>>()
-				.context("invalid asp pub nonces")?;
-			let asp_part_sigs = resp.partial_sigs.into_iter()
-				.map(|b| musig::MusigPartialSignature::from_slice(&b))
-				.collect::<Result<Vec<_>, _>>()
-				.context("invalid asp part sigs")?;
+			let asp_pub_nonces = resp.asp_pub_nonces()?;
+			let asp_part_sigs = resp.asp_part_sigs()?;
+			if asp_pub_nonces.len() != inputs.len() || asp_part_sigs.len() != inputs.len() {
+				bail!("invalid length of asp response");
+			}
 
 			let revocation_payment = signed.revocation_payment();
 			let signed_revocation = revocation_payment.sign_finalize_user(
