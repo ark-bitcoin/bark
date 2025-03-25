@@ -232,7 +232,7 @@ impl AspConnection {
 		let res = client.handshake(rpc::HandshakeRequest { version: our_version })
 			.await.context("ark info request failed")?.into_inner();
 
-		if let Some(ref msg) = res.message {
+		if let Some(ref msg) = res.psa {
 			warn!("Message from Ark server: \"{}\"", msg);
 		}
 
@@ -243,7 +243,7 @@ impl AspConnection {
 			}
 			Ok(AspConnection { info, client })
 		} else {
-			let msg = res.message.as_ref().map(|s| s.as_str()).unwrap_or("NO MESSAGE");
+			let msg = res.error.as_ref().map(|s| s.as_str()).unwrap_or("NO MESSAGE");
 			bail!("Ark server handshake failed: {}", msg);
 		}
 	}

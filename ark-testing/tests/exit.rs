@@ -91,7 +91,8 @@ async fn fail_handshake() {
 
 		async fn handshake(&mut self, _: rpc::HandshakeRequest) -> Result<rpc::HandshakeResponse, tonic::Status>  {
 			Ok(rpc::HandshakeResponse {
-				message: Some("don't like you".into()),
+				psa: None,
+				error: Some("don't like you".into()),
 				ark_info: None,
 			})
 		}

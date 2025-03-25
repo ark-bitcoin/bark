@@ -96,7 +96,7 @@ pub struct Config {
 
 	/// A message that can be used by the operator to make
 	/// announcements to all cliens.
-	pub handshake_message: Option<String>,
+	pub handshake_psa: Option<String>,
 
 	pub otel_collector_endpoint: Option<String>,
 
@@ -135,7 +135,7 @@ impl Default for Config {
 
 			rpc_rich_errors: true,
 
-			handshake_message: None,
+			handshake_psa: None,
 
 			txindex_check_interval: Duration::from_secs(30),
 
