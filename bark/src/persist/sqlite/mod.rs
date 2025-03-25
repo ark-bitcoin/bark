@@ -46,18 +46,6 @@ impl SqliteClient {
 		Ok(())
 	}
 
-	/// Stores a vtxo in the database
-	fn store_vtxo_with_initial_state(
-		&self,
-		tx: &Transaction,
-		vtxo: &Vtxo,
-		movement_id: i32,
-		vtxo_state: VtxoState
-	) -> anyhow::Result<()> {
-		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, vtxo_state)?;
-		Ok(())
-	}
-
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
 		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &[VtxoState::Spendable])?;
@@ -65,7 +53,6 @@ impl SqliteClient {
 		Ok(())
 	}
 }
-
 
 impl BarkPersister for SqliteClient {
 	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()> {
@@ -118,8 +105,7 @@ impl BarkPersister for SqliteClient {
 		let movement_id = self.create_movement(&tx, movement.fees)?;
 
 		for (v, s) in movement.receives {
-			self.store_vtxo_with_initial_state(&tx, v, movement_id, s)
-				.context("Failed to store change VTXOs")?
+			query::store_vtxo_with_initial_state(&tx, v, movement_id, s)?;
 		}
 
 		for v in movement.spends {
@@ -129,11 +115,12 @@ impl BarkPersister for SqliteClient {
 		for (recipient, amount) in movement.recipients {
 			self.create_recipient(&tx, movement_id, recipient, amount)
 				.context("Failed to store change VTXOs")?
-		}
-
+				}
 		tx.commit()?;
 		Ok(())
 	}
+
+
 
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let conn = self.connect()?;

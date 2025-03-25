@@ -596,19 +596,26 @@ impl <P>Wallet<P> where
 
 		self.db.register_movement(MovementArgs {
 			spends: None,
-			receives: vec![(&vtxo, VtxoState::Spendable)],
+			receives: vec![(&vtxo, VtxoState::UnregisteredBoard)],
 			recipients: None,
 			fees: None
 		}).context("db error storing vtxo")?;
 
 		let tx = self.onchain.finish_tx(board_tx)?;
+
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
+		// Register the vtxo with the server
 		asp.client.register_board_vtxo(rpc::BoardVtxoRequest {
 			board_vtxo: vtxo.encode(),
 			board_tx: bitcoin::consensus::serialize(&tx),
 		}).await.context("error registering board with the asp")?;
+
+		// Remember that we have stored the vtxo
+		// No need to complain if the vtxo is already registered
+		let allowed_states = &[VtxoState::UnregisteredBoard, VtxoState::Spendable];
+		self.db.update_vtxo_state_checked(vtxo.id(), VtxoState::Spendable, allowed_states)?;
 
 		info!("Board successful");
 
