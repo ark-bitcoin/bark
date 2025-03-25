@@ -74,6 +74,13 @@ lazy_static::lazy_static! {
 const OOR_PUB_KEY_INDEX: u32 = 0;
 const MIN_DERIVED_INDEX: u32 = OOR_PUB_KEY_INDEX + 1;
 
+struct OorCreateResult {
+	input: Vec<Vtxo>,
+	created: Vtxo,
+	change: Option<Vtxo>,
+	fee: Amount
+}
+
 
 pub struct Pagination {
 	pub page_index: u16,
@@ -813,7 +820,9 @@ impl <P>Wallet<P> where
 		Ok(Some(round_id))
 	}
 
-	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
+	async fn create_oor_vtxo(&mut self, destination: PublicKey, amount: Amount)
+		-> anyhow::Result<OorCreateResult>
+	{
 		let mut asp = self.require_asp()?;
 
 		let fr = self.onchain.chain_source.regular_feerate();
@@ -912,29 +921,45 @@ impl <P>Wallet<P> where
 		let vtxos = signed.output_vtxos().into_iter().map(|v| Vtxo::from(v)).collect::<Vec<_>>();
 
 		// The first one is of the recipient, we will post it to their mailbox.
-		let user_vtxo = &vtxos[0];
+		let user_vtxo = vtxos.get(0).context("no vtxo created")?.clone();
+		let change_vtxo = vtxos.last().map(|c| c.clone());
+
+		Ok(OorCreateResult {
+			input: input_vtxos,
+			created: user_vtxo,
+			change: change_vtxo,
+			fee: account_for_fee
+		})
+	}
+
+
+	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
+		let mut asp = self.require_asp()?;
+
+		let oor = self.create_oor_vtxo(destination, amount).await?;
+
 		let req = rpc::OorVtxo {
 			pubkey: destination.serialize().to_vec(),
-			vtxo: user_vtxo.encode(),
+			vtxo: oor.created.clone().encode(),
 		};
+
 		if let Err(e) = asp.client.post_oor_mailbox(req).await {
 			error!("Failed to post the OOR vtxo to the recipients mailbox: '{}'; vtxo: {}",
-				e, user_vtxo.encode().as_hex(),
+				e, oor.created.encode().as_hex(),
 			);
 			//NB we will continue to at least not lose our own change
 		}
 
-		let change = vtxos.get(1);
 		self.db.register_movement(MovementArgs {
-			spends: &input_vtxos,
-			receives: change,
+			spends: &oor.input,
+			receives: oor.change.as_ref(),
 			recipients: vec![
-				(output.pubkey.to_string(), output.amount)
+				(destination.to_string(), amount)
 			],
-			fees: Some(account_for_fee)
+			fees: Some(oor.fee)
 		}).context("failed to store OOR vtxo")?;
 
-		Ok(user_vtxo.id())
+		Ok(oor.created)
 	}
 
 	pub async fn send_bolt11_payment(
