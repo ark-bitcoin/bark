@@ -18,7 +18,7 @@ use cln_rpc::node_client::NodeClient;
 
 use crate::Bitcoind;
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
-use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGINS};
+use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_GRPC_PLUGIN};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
@@ -144,7 +144,7 @@ impl LightningDHelper {
 		writeln!(file, "bitcoin-rpcport={}", self.config.bitcoin_rpcport).unwrap();
 		writeln!(file, "bitcoin-rpcuser={}", BITCOINRPC_TEST_USER).unwrap();
 		writeln!(file, "bitcoin-rpcpassword={}", BITCOINRPC_TEST_PASSWORD).unwrap();
-		if let Ok(dir) = env::var(LIGHTNINGD_PLUGINS) {
+		if let Ok(dir) = env::var(LIGHTNINGD_GRPC_PLUGIN) {
 			trace!("Adding plugin-dir to lightningd: {}", dir);
 			writeln!(file, "plugin-dir={}", dir).unwrap();
 		}
