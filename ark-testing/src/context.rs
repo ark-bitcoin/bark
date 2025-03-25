@@ -192,7 +192,7 @@ impl TestContext {
 			round_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
 			max_vtxo_amount: None,
 			rpc_rich_errors: true,
-			txindex_check_interval: Duration::from_millis(800),
+			txindex_check_interval: Duration::from_millis(500),
 			handshake_message: None,
 			otel_collector_endpoint: None,
 			rpc: config::Rpc {
