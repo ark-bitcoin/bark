@@ -1,13 +1,10 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use bdk_wallet::WalletPersister;
 use clap;
-use serde::ser::StdError;
 
 use ark::VtxoId;
-use bark::Wallet;
-use bark::persist::BarkPersister;
+use bark::{SqliteClient, Wallet};
 use bark::vtxo_selection::VtxoFilter;
 use crate::util::output_json;
 
@@ -40,15 +37,10 @@ pub struct ProgressExitOpts {
 	wait: bool,
 }
 
-pub async fn execute_exit_command<P>(
+pub async fn execute_exit_command(
 	exit_command: ExitCommand,
-	wallet: &mut Wallet<P>,
-) -> anyhow::Result<()>
-where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display
-		+ Sync + std::marker::Send + StdError,
-{
+	wallet: &mut Wallet<SqliteClient>,
+) -> anyhow::Result<()> {
 	match exit_command {
 		ExitCommand::Start(opts) => {
 			start_exit(opts, wallet).await
@@ -59,15 +51,10 @@ where
 	}
 }
 
-pub async fn start_exit<P>(
+pub async fn start_exit(
 	args: StartExitOpts,
-	wallet: &mut Wallet<P>,
-) -> anyhow::Result<()>
-where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display
-		+ Sync + std::marker::Send + StdError
-{
+	wallet: &mut Wallet<SqliteClient>,
+) -> anyhow::Result<()> {
 	if !args.all && args.vtxos.len() == 0 {
 		bail!("No exit to start. Use either the --vtxos or --all flag.")
 	}
@@ -100,15 +87,10 @@ where
 	}
 }
 
-pub async fn progress_exit<P>(
+pub async fn progress_exit(
 	args: ProgressExitOpts,
-	wallet: &mut Wallet<P>,
-) -> anyhow::Result<()>
-where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display
-		+ Sync + Send + StdError
-{
+	wallet: &mut Wallet<SqliteClient>,
+) -> anyhow::Result<()> {
 	if args.wait {
 		loop {
 			let exit_status = progress_once(wallet).await?;
@@ -129,14 +111,9 @@ where
 	Ok(())
 }
 
-async fn progress_once<P>(
-	wallet: &mut Wallet<P>,
-) -> anyhow::Result<bark_json::cli::ExitStatus>
-where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display
-		+ Sync + std::marker::Send + StdError
-{
+async fn progress_once(
+	wallet: &mut Wallet<SqliteClient>,
+) -> anyhow::Result<bark_json::cli::ExitStatus> {
 	info!("Starting onchain sync");
 	if let Err(error) = wallet.onchain.sync().await {
 		warn!("Failed to perform onchain sync: {}", error)
