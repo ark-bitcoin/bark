@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
+use bark_json::InvoiceInfo;
 use bitcoin::hex::DisplayHex;
 use bitcoin::Amount;
 use clap;
@@ -9,6 +10,8 @@ use log::{info, warn};
 
 use bark::Wallet;
 
+
+use crate::util::output_json;
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
@@ -27,6 +30,13 @@ pub enum LightningCommand {
 		#[arg(long)]
 		no_sync: bool,
 	},
+	/// Creates a bolt11 invoice with the provided amount
+	///
+	/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
+	#[command()]
+	Invoice {
+		amount: Amount,
+	},
 }
 
 pub async fn execute_lightning_command(
@@ -38,9 +48,16 @@ pub async fn execute_lightning_command(
 			let invoice = Bolt11Invoice::from_str(&invoice)
 				.context("argument is not a valid bolt11 invoice")?;
 
-			pay(invoice, amount, comment, no_sync, wallet).await
+			pay(invoice, amount, comment, no_sync, wallet).await?;
+		},
+		LightningCommand::Invoice { amount } => {
+			wallet.onchain.sync().await.context("sync error")?;
+			let invoice = wallet.bolt11_invoice(amount).await?;
+			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 		},
 	}
+
+	Ok(())
 }
 
 pub async fn pay(

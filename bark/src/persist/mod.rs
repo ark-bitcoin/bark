@@ -5,7 +5,7 @@ use bdk_wallet::ChangeSet;
 use bitcoin::{secp256k1::PublicKey, Amount};
 use bitcoin_ext::BlockHeight;
 
-use crate::{exit::ExitIndex, vtxo_state::VtxoState, Config, KeychainKind, Movement, MovementArgs, Pagination, WalletProperties};
+use crate::{exit::ExitIndex, vtxo_state::VtxoState, Config, KeychainKind, Movement, MovementArgs, OffchainOnboard, OffchainPayment, Pagination, WalletProperties};
 
 
 pub trait BarkPersister: Send + Sync + 'static {
@@ -55,6 +55,11 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Checks if provided public key exists in the database,
 	/// meaning that it is owned by the wallet
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
+
+	/// Store an offchain onboard
+	fn store_offchain_onboard(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()>;
+	/// Fetch an offchain onboard by payment hash
+	fn fetch_offchain_onboard_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>>;
 
 	/// Store the ongoing exit process.
 	fn store_exit(&self, exit: &ExitIndex) -> anyhow::Result<()>;

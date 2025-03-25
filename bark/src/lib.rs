@@ -13,6 +13,8 @@ use ark::board::BOARD_TX_VTXO_VOUT;
 use ark::oor::unsigned_oor_tx;
 use ark::util::{Decodable, Encodable};
 use ark::vtxo::VtxoSpkSpec;
+use bip39::rand::Rng;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
 use movement::{Movement, MovementArgs};
@@ -44,7 +46,7 @@ use anyhow::{bail, Context};
 use bip39::Mnemonic;
 use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
@@ -116,6 +118,20 @@ impl ToSql for KeychainKind {
 			KeychainKind::External => Ok(1.into()),
 		}
 	}
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum OffchainPayment {
+	Lightning(Bolt11Invoice),
+}
+
+impl Encodable for OffchainPayment {}
+impl Decodable for OffchainPayment {}
+
+pub struct OffchainOnboard {
+	pub payment_hash: [u8; 32],
+	pub payment_preimage: [u8; 32],
+	pub payment: OffchainPayment,
 }
 
 lazy_static::lazy_static! {
@@ -1268,6 +1284,34 @@ impl Wallet {
 
 			bail!("Payment failed: {}", res.progress_message);
 		}
+	}
+
+	/// Create, store and return a bolt11 invoice for offchain onboarding
+	pub async fn bolt11_invoice(&mut self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+		let mut asp = self.require_asp()?;
+
+		let preimage = rand::thread_rng().gen::<[u8; 32]>();
+		let payment_hash = sha256::Hash::hash(&preimage);
+		info!("Start bolt11 onboard with preimage / payment hash: {} / {}", serialize_hex(&preimage), serialize_hex(&payment_hash));
+
+		let req = protos::StartBolt11OnboardRequest {
+			payment_hash: payment_hash.as_byte_array().to_vec(),
+			amount_sats: amount.to_sat()
+		};
+
+		let resp = asp.client.start_bolt11_onboard(req).await?.into_inner();
+		info!("Ark Server is ready to receive LN payment to invoice: {}.", resp.bolt11);
+
+		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
+			.context("invalid bolt11 invoice returned by asp")?;
+
+		self.db.store_offchain_onboard(
+			payment_hash.as_byte_array(),
+			&preimage,
+			OffchainPayment::Lightning(invoice.clone())
+		)?;
+
+		Ok(invoice)
 	}
 
 	/// Send to a lightning address.
