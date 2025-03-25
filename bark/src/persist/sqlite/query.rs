@@ -337,15 +337,29 @@ pub fn link_spent_vtxo_to_movement(
 	Ok(())
 }
 
-pub fn update_vtxo_state(
+pub fn update_vtxo_state_checked(
 	conn: &Connection,
-	id: VtxoId,
-	state: VtxoState
+	vtxo_id: VtxoId,
+	new_state: VtxoState,
+	old_state: &[VtxoState],
 ) -> anyhow::Result<()> {
-	let query = "INSERT INTO bark_vtxo_state (vtxo_id, state) VALUES (?1, ?2)";
+	let query = r"
+		INSERT INTO bark_vtxo_state (vtxo_id, state)
+		SELECT ?1, ?2 FROM most_recent_vtxo_state
+		WHERE
+			vtxo_id = ?1 AND
+			state IN (SELECT atom FROM json_each(?3))";
+
 	let mut statement = conn.prepare(query)?;
-	statement.execute([id.to_string(), state.to_string()])?;
-	Ok(())
+	let nb_inserted = statement.execute(
+		(vtxo_id.to_string(), new_state, &serde_json::to_string(old_state)?)
+	)?;
+
+	match nb_inserted {
+		0 => bail!("No vtxo with provided id or old states"),
+		1 => Ok(()),
+		_ => panic!("Corrupted database. A vtxo can have only one state"),
+	}
 }
 
 pub fn store_vtxo_key_index(
@@ -445,5 +459,48 @@ pub fn fetch_exit(conn: &Connection) -> anyhow::Result<Option<ExitIndex>> {
 	}
 	else {
 		Ok(None)
+	}
+}
+
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use crate::test::dummy_board;
+	use crate::persist::sqlite::test::in_memory;
+	use crate::persist::sqlite::migrations::MigrationContext;
+
+	#[test]
+	fn test_update_vtxo_state() {
+		let (_, mut conn) = in_memory();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		let tx = conn.transaction().unwrap();
+		let vtxo_1 = dummy_board(1);
+		let vtxo_2 = dummy_board(2);
+		let vtxo_3 = dummy_board(3);
+
+		let movement_id = create_movement(&tx, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, VtxoState::UnregisteredBoard).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, VtxoState::UnregisteredBoard).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, VtxoState::UnregisteredBoard).unwrap();
+
+		// This update will fail because the current state is UnregisteredOnboard
+		// We only allow the state to switch from VtxoState::Spendable
+		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoState::Spendable])
+			.expect_err("The vtxo isn't spendable and query should fail");
+
+		// Perform a state-update on vtxo_1
+		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spendable, &[VtxoState::UnregisteredBoard]).unwrap();
+
+		// Perform a second state-update on vtxo_1
+		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoState::Spendable]).unwrap();
+
+		// Ensure the state of vtxo_2 and vtxo_3 isn't modified
+		let state_2 = get_vtxo_state(&tx, vtxo_2.id()).unwrap().unwrap();
+		assert_eq!(state_2, VtxoState::UnregisteredBoard);
+		let state_2 = get_vtxo_state(&tx, vtxo_3.id()).unwrap().unwrap();
+		assert_eq!(state_2, VtxoState::UnregisteredBoard);
 	}
 }
