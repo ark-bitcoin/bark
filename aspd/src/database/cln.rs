@@ -596,4 +596,32 @@ impl Db {
 			Ok(None)
 		}
 	}
+
+	pub async fn get_htlc_subscription_by_id(
+		&self,
+		htlc_subscription_id: i64,
+	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare("
+			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+				subscription.status, subscription.created_at, subscription.updated_at,
+				invoice.invoice
+			FROM lightning_htlc_subscription subscription
+			JOIN lightning_invoice invoice ON
+				subscription.lightning_invoice_id = invoice.lightning_invoice_id
+			WHERE subscription.lightning_htlc_subscription_id = $1
+			ORDER BY created_at DESC;
+		").await?;
+
+		let row = conn.query_opt(
+			&stmt, &[&htlc_subscription_id]
+		).await?;
+
+		if let Some(ref row) = row {
+			Ok(Some(row.try_into()?))
+		} else {
+			Ok(None)
+		}
+	}
 }

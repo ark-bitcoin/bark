@@ -24,7 +24,10 @@ service ArkService {
 	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (Bolt11PaymentResult) {}
 	rpc CheckBolt11Payment(CheckBolt11PaymentRequest) returns (Bolt11PaymentResult) {}
 	rpc RevokeBolt11Payment(RevokeBolt11PaymentRequest) returns (OorCosignResponse) {}
+
 	rpc StartBolt11Onboard(StartBolt11OnboardRequest) returns (StartBolt11OnboardResponse) {}
+	rpc SubscribeBolt11Onboard(SubscribeBolt11OnboardRequest) returns (SubscribeBolt11OnboardResponse) {}
+	rpc ClaimBolt11Onboard(ClaimBolt11OnboardRequest) returns (OorCosignResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
@@ -160,6 +163,21 @@ message StartBolt11OnboardRequest {
 
 message StartBolt11OnboardResponse {
 	string bolt11 = 1;
+}
+
+message SubscribeBolt11OnboardRequest {
+	string bolt11 = 1;
+}
+
+message ClaimBolt11OnboardRequest {
+	bytes payment = 1;
+	repeated bytes pub_nonces = 2;
+	bytes payment_preimage = 3;
+}
+
+message SubscribeBolt11OnboardResponse {
+	string invoice = 1;
+	uint64 amount_sat = 2;
 }
 
 // round

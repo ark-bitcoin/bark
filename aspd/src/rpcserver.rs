@@ -160,6 +160,8 @@ const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payme
 const RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT: &'static str = "check_bolt11_payment";
 const RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT: &'static str = "revoke_bolt11_payment";
 const RPC_SERVICE_ARK_START_BOLT11_ONBOARD: &'static str = "start_bolt11_onboard";
+const RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_ONBOARD: &'static str = "subscribe_bolt11_onboard";
+const RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD: &'static str = "claim_bolt11_onboard";
 const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
 const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
@@ -635,6 +637,66 @@ impl rpc::server::ArkService for Server {
 		let resp = self.start_bolt11_onboard(payment_hash, amount).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
+	}
+
+	async fn subscribe_bolt11_onboard(
+		&self,
+		req: tonic::Request<protos::SubscribeBolt11OnboardRequest>,
+	) -> Result<tonic::Response<protos::SubscribeBolt11OnboardResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_ONBOARD);
+		let req = req.into_inner();
+
+		let invoice = &req.bolt11;
+		add_tracing_attributes(vec![
+			KeyValue::new("bolt11", format!("{:?}", invoice)),
+		]);
+
+		let invoice = Bolt11Invoice::from_str(invoice).badarg("invalid invoice")?;
+
+		let update = self.subscribe_bolt11_onboard(invoice).await.to_status()?;
+
+		Ok(tonic::Response::new(update))
+	}
+
+	async fn claim_bolt11_onboard(
+		&self,
+		req: tonic::Request<protos::ClaimBolt11OnboardRequest>
+	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD);
+		let req = req.into_inner();
+
+		add_tracing_attributes(vec![
+			KeyValue::new("payment", format!("{:?}", req.payment)),
+			KeyValue::new("pub_nonces", format!("{:?}", req.pub_nonces)),
+			KeyValue::new("payment_preimage", format!("{:?}", req.payment_preimage)),
+		]);
+
+		let payment = ark::oor::OorPayment::decode(&req.payment)
+			.badarg("invalid oor payment request")?;
+
+		let user_nonces = req.pub_nonces.iter().map(|b| {
+			musig::MusigPubNonce::from_slice(b)
+				.badarg("invalid public nonce")
+		}).collect::<Result<Vec<_>, _>>()?;
+
+		if payment.inputs.len() != user_nonces.len() {
+			badarg!("wrong number of user nonces");
+		}
+
+		let payment_preimage: [u8; 32] = req.payment_preimage.as_slice()
+			.try_into().badarg("invalid preimage, not 32 bytes")?;
+
+		let (nonces, sigs) = self.claim_bolt11_htlc(
+			&payment,
+			&user_nonces,
+			&payment_preimage).await.to_status()?;
+
+		let response = protos::OorCosignResponse {
+			pub_nonces: nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
+			partial_sigs: sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
+		};
+
+		Ok(tonic::Response::new(response))
 	}
 
 	// round

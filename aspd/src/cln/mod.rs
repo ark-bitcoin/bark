@@ -64,9 +64,9 @@ use crate::system::RuntimeManager;
 use crate::cln::node::ClnNodeMonitor;
 use crate::config::{self, Config};
 use crate::database::{self, ClnNodeId};
-use crate::database::model::{LightningPaymentAttempt, LightningPaymentStatus};
-use crate::telemetry;
+use crate::database::model::{LightningHtlcSubscriptionStatus, LightningPaymentAttempt, LightningPaymentStatus};
 use self::node::ClnNodeMonitorConfig;
+use crate::telemetry;
 
 
 type ClnGrpcClient = NodeClient<Channel>;
@@ -81,6 +81,9 @@ pub struct ClnManager {
 
 	/// This channel sends invoice generation requests to the process.
 	invoice_gen_tx: mpsc::UnboundedSender<((sha256::Hash, Amount), oneshot::Sender<Bolt11Invoice>)>,
+
+	/// This channel sends invoice settle requests to the process.
+	invoice_settle_tx: mpsc::UnboundedSender<((i64, [u8; 32]), oneshot::Sender<anyhow::Result<()>>)>,
 
 	/// We also keep a handle of the update channel to update from
 	/// payment request that fail before the hit the sendpay stream.
@@ -97,6 +100,7 @@ impl ClnManager {
 	) -> anyhow::Result<ClnManager> {
 		let (payment_tx, payment_rx) = mpsc::unbounded_channel();
 		let (invoice_gen_tx, invoice_gen_rx) = mpsc::unbounded_channel();
+		let (invoice_settle_tx, invoice_settle_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, _rx) = broadcast::channel(256);
 
 		let node_monitor_config = ClnNodeMonitorConfig {
@@ -111,6 +115,7 @@ impl ClnManager {
 			payment_rx,
 			node_monitor_config,
 			invoice_gen_rx,
+			invoice_settle_rx,
 			db: db.clone(),
 			payment_update_tx: payment_update_tx.clone(),
 			waker: Arc::new(Notify::new()),
@@ -130,6 +135,7 @@ impl ClnManager {
 			payment_tx,
 			payment_update_tx,
 			invoice_gen_tx,
+			invoice_settle_tx,
 			invoice_poll_interval: config.invoice_poll_interval,
 		})
 	}
@@ -244,9 +250,16 @@ impl ClnManager {
 
 	pub async fn generate_invoice(&self, payment_hash: sha256::Hash, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let (tx, rx) = oneshot::channel();
-		self.invoice_gen_tx.send(((payment_hash, amount), tx))
-			.context("invoice generation channel broken")?;
+		self.invoice_gen_tx.send(((payment_hash, amount), tx)).context("invoice channel broken")?;
 		rx.await.context("invoice return channel broken")
+	}
+
+	pub async fn settle_invoice(&self, subscription_id: i64, preimage: &[u8; 32]) -> anyhow::Result<anyhow::Result<()>> {
+		let (tx, rx) = oneshot::channel();
+		self.invoice_settle_tx
+			.send(((subscription_id, preimage.to_owned()), tx))
+			.context("invoice settle channel broken")?;
+		rx.await.context("invoice settle return channel broken")
 	}
 }
 
@@ -421,6 +434,7 @@ struct ClnManagerProcess {
 	rtmgr: RuntimeManager,
 	payment_rx: mpsc::UnboundedReceiver<(Bolt11Invoice, Option<Amount>)>,
 	invoice_gen_rx: mpsc::UnboundedReceiver<((sha256::Hash, Amount), oneshot::Sender<Bolt11Invoice>)>,
+	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, [u8; 32]), oneshot::Sender<anyhow::Result<()>>)>,
 	payment_update_tx: broadcast::Sender<sha256::Hash>,
 	waker: Arc<Notify>,
 
@@ -595,6 +609,31 @@ impl ClnManagerProcess {
 		Ok(invoice)
 	}
 
+	async fn settle_invoice(&self, subscription_id: i64, preimage: [u8; 32]) -> anyhow::Result<()> {
+		let htlc_subscription = self.db
+			.get_htlc_subscription_by_id(subscription_id).await?
+			.expect("can only settle known invoice");
+
+		// NB: we need to use the node that created the subscription because it is where the HTLCs were sent
+		// TODO: this unlikely to happen but at this point, the user already revealed the preimage, so we need
+		// to find a way to settle the invoice else he will go onchain and we won't be able to claim Lightning fees,
+		// so we'll lose the board amount
+		let mut hold_client = self.online_nodes()
+			.find(|(_, node)| node.id == htlc_subscription.lightning_node_id)
+			.map(|(_, node)| node)
+			.context("invoice cannot be settled: node is now offline")?
+			.hodl_rpc.clone().context("node doesn't support hodl anymore")?;
+
+		hold_client.settle(hold::SettleRequest {
+			payment_preimage: preimage.to_vec(),
+		}).await?;
+
+		self.db.store_lightning_htlc_subscription_status(
+			subscription_id, LightningHtlcSubscriptionStatus::Settled).await?;
+
+		Ok(())
+	}
+
 	async fn run(mut self, reconnect_interval: Duration) {
 		let _worker = self.rtmgr.spawn_critical("ClnManager");
 
@@ -641,6 +680,23 @@ impl ClnManagerProcess {
 					warn!("invoice channel closed, shutting down ClnManager");
 					break;
 				},
+
+				msg = self.invoice_settle_rx.recv() => if let Some(((subscription_id, preimage), sender)) = msg {
+					trace!("Invoice settle request received: payment_preimage={:?}", preimage);
+					match self.settle_invoice(subscription_id, preimage).await {
+						Ok(_) => {
+							trace!("Invoice settled successfully: payment_preimage={:?}", preimage);
+							sender.send(Ok(())).unwrap();
+						},
+						Err(e) => {
+							debug!("Error settling invoice: {}", e);
+							sender.send(Err(e)).unwrap();
+						},
+					}
+				} else {
+					warn!("invoice settle channel closed, shutting down ClnManager");
+					break;
+				}
 			};
 		}
 	}

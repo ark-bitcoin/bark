@@ -69,6 +69,17 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().start_bolt11_onboard(req).await?.into_inner())
 	}
 
+	async fn subscribe_bolt11_onboard(
+		&self,
+		req: protos::SubscribeBolt11OnboardRequest,
+	) -> Result<protos::SubscribeBolt11OnboardResponse, tonic::Status> {
+		Ok(self.upstream().subscribe_bolt11_onboard(req).await?.into_inner())
+	}
+
+	async fn claim_bolt11_onboard(&mut self, req: protos::ClaimBolt11OnboardRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+		Ok(self.upstream().claim_bolt11_onboard(req).await?.into_inner())
+	}
+
 	async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
 		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>, tonic::Status> {
@@ -229,6 +240,19 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		req: tonic::Request<protos::StartBolt11OnboardRequest>,
 	) -> Result<tonic::Response<protos::StartBolt11OnboardResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_onboard(&mut self.0.clone(), req.into_inner()).await?))
+	}
+
+	async fn subscribe_bolt11_onboard(
+		&self,
+		req: tonic::Request<protos::SubscribeBolt11OnboardRequest>,
+	) -> Result<tonic::Response<protos::SubscribeBolt11OnboardResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::subscribe_bolt11_onboard(&mut self.0.clone(), req.into_inner()).await?))
+	}
+
+	async fn claim_bolt11_onboard(
+		&self, req: tonic::Request<protos::ClaimBolt11OnboardRequest>,
+	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::claim_bolt11_onboard(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	type SubscribeRoundsStream = Box<
