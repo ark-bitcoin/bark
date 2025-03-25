@@ -707,3 +707,29 @@ async fn bad_round_input() {
 	assert!(err.message().contains("OP_RETURN"), "{}", err.message());
 }
 
+#[ignore]
+#[tokio::test]
+async fn register_onboard_is_idempotent() {
+	let ctx = TestContext::new("aspd/register_onboard_is_idempotent").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+	let bark_wallet = ctx.new_bark("bark", &aspd).await;
+
+	ctx.fund_bark(&bark_wallet, bitcoin::Amount::from_sat(50_000)).await;
+	let onboard = bark_wallet.board_all().await;
+
+	let bark_client = bark_wallet.client().await;
+	let vtxo = bark_client.get_vtxo_by_id(onboard.vtxos[0].id).unwrap();
+	let funding_tx = bark_client.onchain.get_tx(onboard.funding_txid).unwrap();
+
+
+	// We will now call the register_onboard a few times
+	let mut rpc = aspd.get_public_client().await;
+	let request = rpc::BoardVtxoRequest {
+		board_vtxo: vtxo.encode(),
+		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
+	};
+
+	for _ in 0..5 {
+		rpc.register_board_vtxo(request.clone()).await.unwrap();
+	}
+}
