@@ -506,7 +506,7 @@ impl App {
 	}
 
 	/// Return all untrusted vtxos in the wallet.
-	pub async fn untrusted_utxos(
+	pub(crate) async fn untrusted_utxos(
 		&self,
 		wallet: &bdk_wallet::Wallet,
 		allow: AllowUntrusted,

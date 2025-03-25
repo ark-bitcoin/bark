@@ -50,7 +50,6 @@ use bitcoin::{
 
 use ark::{BlockHeight, BoardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
-use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::TaprootSpendInfoExt;
 use futures::StreamExt;
 
