@@ -2,7 +2,7 @@
 	description = "ark";
 
 	inputs = {
-		nixpkgs.url = "nixpkgs/nixos-24.05";
+		nixpkgs.url = "nixpkgs/nixos-24.11";
 		flake-utils = {
 			url = "github:numtide/flake-utils";
 		};
@@ -18,7 +18,6 @@
 				rustVersion = "1.84.0";
 				bitcoinVersion = "28.0";
 				lightningVersion = "24.08.2";
-				protobufVersion = "3.12.4";
 				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 
 				lib = nixpkgs.lib;
@@ -94,7 +93,7 @@
 						hash = "sha256-MWU75e55Zt/P4aaIuMte7iRcrFGMw0P81b8VNHQBe2g=";
 					};
 					buildAndTestSubdir = "plugins/grpc-plugin";
-					nativeBuildInputs = [ protobuf ];
+					nativeBuildInputs = [ pkgs.protobuf ];
 					buildInputs = (if isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Security ] else []);
 					cargoDeps = pkgs.rustPlatform.importCargoLock {
 						lockFile = "${src}/Cargo.lock";
@@ -106,16 +105,6 @@
 					'';
 					doCheck = false; # tests are broken
 				};
-
-				protobuf = pkgs.protobuf3_20.overrideAttrs (old: {
-					version = protobufVersion;
-					src = pkgs.fetchFromGitHub {
-						owner = "protocolbuffers";
-						repo = "protobuf";
-						rev = "v{protobufVersion}";
-						hash = "sha256-VyzFq1agobjvei4o/fQ8iMOLySf38DQsLb3C8kCz+78=";
-					};
-				});
 			in
 			{
 				devShells.default = pkgs.mkShell {
@@ -131,7 +120,7 @@
 						pkgs.rustPlatform.bindgenHook
 						rust
 						pkgs.pkg-config
-						protobuf
+						pkgs.protobuf
 						pkgs.sqlite
 						# For development & testing
 						pkgs.just
