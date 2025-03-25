@@ -337,6 +337,13 @@ pub fn link_spent_vtxo_to_movement(
 	Ok(())
 }
 
+/// Updates the state of a VTXO from one of the
+/// values in `old_state` to `new_state`.
+///
+/// The method is atomic. If another process tries
+/// to update the state only one of them will succeed.
+///
+/// If an error is reported the state will remain unchanged.
 pub fn update_vtxo_state_checked(
 	conn: &Connection,
 	vtxo_id: VtxoId,

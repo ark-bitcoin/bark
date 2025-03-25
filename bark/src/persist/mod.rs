@@ -4,7 +4,7 @@ use ark::{Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::{secp256k1::PublicKey, Amount};
 
-use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, Config, Pagination, WalletProperties, vtxo_state::VtxoState};
+use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database
@@ -58,4 +58,6 @@ pub trait BarkPersister: Clone + WalletPersister {
 
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<u32>;
 	fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()>;
+
+	fn update_vtxo_state_checked(&self, vtxo_id: VtxoId, new_state: VtxoState, allowed_old_states: &[VtxoState]) -> anyhow::Result<()>;
 }

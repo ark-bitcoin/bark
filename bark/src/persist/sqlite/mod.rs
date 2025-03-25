@@ -217,6 +217,16 @@ impl BarkPersister for SqliteClient {
 		let conn = self.connect()?;
 		query::store_last_ark_sync_height(&conn, height)
 	}
+
+	fn update_vtxo_state_checked(
+		&self,
+		vtxo_id: VtxoId,
+		new_state: VtxoState,
+		allowed_old_states: &[VtxoState]
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
+	}
 }
 
 
