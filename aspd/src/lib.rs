@@ -1,5 +1,3 @@
-
-
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate async_trait;
 #[macro_use] extern crate serde;
@@ -24,7 +22,7 @@ pub mod wallet;
 pub mod config;
 pub use crate::config::Config;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::fs;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -36,8 +34,6 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
-use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
@@ -46,11 +42,12 @@ use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::musig::{MusigPartialSignature, MusigPubNonce};
 use ark::rounds::RoundEvent;
-use aspd_rpc::protos;
-use aspd_rpc::protos::Bolt11PaymentResult;
+use aspd_rpc::protos::{self, Bolt11PaymentResult};
+use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
 
 use crate::cln::ClnManager;
-use crate::database::model::LightningPaymentStatus;
+use crate::database::model::{LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
@@ -75,6 +72,8 @@ pub struct RoundHandle {
 	round_input_tx: mpsc::UnboundedSender<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_trigger_tx: mpsc::Sender<()>,
 }
+
+type SubscriptionsByStatus<'a> = HashMap<LightningHtlcSubscriptionStatus, Vec<&'a LightningHtlcSubscription>>;
 
 pub struct Server {
 	config: Config,
@@ -753,6 +752,46 @@ impl Server {
 		let parts = self.cosign_oor(&revocation_oor, user_nonces).await?;
 
 		Ok(parts)
+	}
+
+	async fn start_bolt11_onboard(&self, payment_hash: sha256::Hash, amount: Amount)
+		-> anyhow::Result<protos::StartBolt11OnboardResponse>
+	{
+		info!("Starting bolt11 onboard with payment_hash: {}", payment_hash.as_byte_array().as_hex());
+
+		let subscriptions = self.db
+			.get_htlc_subscriptions_by_payment_hash(&payment_hash)
+			.await?;
+
+		let subscriptions_by_status: SubscriptionsByStatus = subscriptions.iter()
+			.fold(HashMap::new(), |mut acc, sub| {
+				acc.entry(sub.status).or_default().push(sub);
+				acc
+			});
+
+		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::Settled) {
+			bail!("invoice already settled");
+		}
+
+		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::Accepted) {
+			bail!("invoice already accepted");
+		}
+
+		if let Some(created) = subscriptions_by_status.get(&LightningHtlcSubscriptionStatus::Created) {
+			if let Some(subscription) = created.first() {
+				trace!("Found existing created subscription, returning invoice: {}", subscription.invoice.to_string());
+				return Ok(protos::StartBolt11OnboardResponse {
+					bolt11: subscription.invoice.to_string()
+				})
+			}
+		}
+
+		let invoice = self.cln.generate_invoice(payment_hash, amount).await?;
+		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}", payment_hash, amount, invoice.to_string());
+
+		Ok(protos::StartBolt11OnboardResponse {
+			bolt11: invoice.to_string()
+		})
 	}
 }
 

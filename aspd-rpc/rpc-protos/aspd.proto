@@ -24,6 +24,7 @@ service ArkService {
 	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (Bolt11PaymentResult) {}
 	rpc CheckBolt11Payment(CheckBolt11PaymentRequest) returns (Bolt11PaymentResult) {}
 	rpc RevokeBolt11Payment(RevokeBolt11PaymentRequest) returns (OorCosignResponse) {}
+	rpc StartBolt11Onboard(StartBolt11OnboardRequest) returns (StartBolt11OnboardResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
@@ -150,6 +151,15 @@ message Bolt11PaymentResult {
 message RevokeBolt11PaymentRequest {
 	bytes signed_payment = 1;
 	repeated bytes pub_nonces = 2;
+}
+
+message StartBolt11OnboardRequest {
+	bytes payment_hash = 1;
+	uint64 amount_sats = 2;
+}
+
+message StartBolt11OnboardResponse {
+	string bolt11 = 1;
 }
 
 // round

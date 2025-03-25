@@ -158,6 +158,7 @@ const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment
 const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payment";
 const RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT: &'static str = "check_bolt11_payment";
 const RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT: &'static str = "revoke_bolt11_payment";
+const RPC_SERVICE_ARK_START_BOLT11_ONBOARD: &'static str = "start_bolt11_onboard";
 const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
 const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
@@ -612,6 +613,27 @@ impl rpc::server::ArkService for Server {
 		};
 
 		Ok(tonic::Response::new(response))
+	}
+
+	async fn start_bolt11_onboard(
+		&self,
+		req: tonic::Request<protos::StartBolt11OnboardRequest>,
+	) -> Result<tonic::Response<protos::StartBolt11OnboardResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_ONBOARD);
+		let req = req.into_inner();
+
+		add_tracing_attributes(vec![
+			KeyValue::new("payment_hash", format!("{:?}", req.payment_hash)),
+			KeyValue::new("amount_sats", format!("{:?}", req.amount_sats)),
+		]);
+
+		let payment_hash = Hash::from_slice(&req.payment_hash)
+			.badarg("invalid payment hash")?;
+		let amount = Amount::from_sat(req.amount_sats);
+
+		let resp = self.start_bolt11_onboard(payment_hash, amount).await.to_status()?;
+
+		Ok(tonic::Response::new(resp))
 	}
 
 	// round

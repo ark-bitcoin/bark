@@ -8,11 +8,14 @@ use log::{trace, warn};
 
 use crate::database::Db;
 use crate::database::model::{
-	LightningIndexes, LightningInvoice, LightningPaymentAttempt,
+	LightningHtlcSubscription,
+	LightningHtlcSubscriptionStatus,
+	LightningIndexes,
+	LightningInvoice,
+	LightningPaymentAttempt,
 	LightningPaymentStatus,
 };
 use crate::error::ContextExt;
-
 
 /// Identifier by which CLN nodes are stored in the database.
 pub type ClnNodeId = i64;
@@ -320,7 +323,6 @@ impl Db {
 		Ok(())
 	}
 
-
 	pub async fn update_lightning_invoice(
 		&self,
 		old_lightning_invoice: LightningInvoice,
@@ -389,5 +391,129 @@ impl Db {
 			&[&&payment_hash[..]],
 		).await.context("error fetching lightning invoice by payment_hash")?;
 		Ok(res.not_found([payment_hash], "payment not found")?.try_into()?)
+	}
+
+	pub async fn store_generated_lightning_invoice(
+		&self,
+		node_id: ClnNodeId,
+		invoice: &Bolt11Invoice,
+		amount_msat: u64,
+	) -> anyhow::Result<()> {
+		let mut conn = self.pool.get().await?;
+		let tx = conn.transaction().await?;
+
+		let select_stmt = tx.prepare("
+			SELECT lightning_invoice_id
+			FROM lightning_invoice
+			WHERE payment_hash = $1
+		").await?;
+
+		let payment_hash = invoice.payment_hash();
+		let existing = tx.query_opt(&select_stmt, &[&&payment_hash[..]]).await?;
+
+		let lightning_invoice_id = if let Some(row) = existing {
+			row.get("lightning_invoice_id")
+		} else {
+			let stmt = tx.prepare("
+				INSERT INTO lightning_invoice (
+					invoice,
+					payment_hash,
+					final_amount_msat,
+					created_at,
+					updated_at
+				) VALUES ($1, $2, $3, NOW(), NOW())
+				RETURNING lightning_invoice_id;
+			").await?;
+
+			let row = tx.query_one(
+				&stmt, &[&invoice.to_string(), &&payment_hash[..], &(amount_msat as i64)],
+			).await?;
+
+			row.get("lightning_invoice_id")
+		};
+
+		self.inner_store_lightning_htlc_subscription(&tx, lightning_invoice_id, node_id,).await?;
+
+		tx.commit().await?;
+
+		Ok(())
+	}
+
+	/// Store a new HTLC subscription for a given invoice.
+	///
+	/// CLN node monitor regularly queries open subscriptions to check if there are any incoming HTLCs.
+	async fn inner_store_lightning_htlc_subscription<T, C>(
+		&self,
+		conn: T,
+		lightning_invoice_id: i64,
+		node_id: ClnNodeId,
+	) -> anyhow::Result<(i64, DateTime<Utc>)>
+	where
+		T: std::ops::Deref<Target = C>,
+		C: tokio_postgres::GenericClient,
+	{
+		let requested_status = LightningHtlcSubscriptionStatus::Created;
+
+		let stmt = conn.prepare("
+			INSERT INTO lightning_htlc_subscription (
+				lightning_invoice_id,
+				lightning_node_id,
+				status,
+				created_at,
+				updated_at
+			) VALUES ($1, $2, $3, NOW(), NOW())
+			RETURNING lightning_htlc_subscription_id, updated_at;
+		").await?;
+
+		let row = conn
+			.query_one(
+				&stmt,
+				&[&lightning_invoice_id, &node_id, &requested_status],
+			).await?;
+
+		let lightning_htlc_subscription_id = row.get("lightning_htlc_subscription_id");
+		let updated_at = row.get("updated_at");
+
+		trace!("Stored htlc subscription {} with time {:#?}.",
+			lightning_htlc_subscription_id,
+			updated_at,
+		);
+
+		Ok((lightning_htlc_subscription_id, updated_at))
+	}
+
+	pub async fn store_lightning_htlc_subscription(
+		&self,
+		node_id: ClnNodeId,
+		lightning_invoice_id: i64,
+	) -> anyhow::Result<()> {
+		let conn = self.pool.get().await?;
+		self.inner_store_lightning_htlc_subscription(conn, lightning_invoice_id, node_id,).await?;
+		Ok(())
+	}
+
+	/// Retrieves all htlc subscriptions for the provided payment hash.
+	pub async fn get_htlc_subscriptions_by_payment_hash(
+		&self,
+		payment_hash: &sha256::Hash,
+	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare("
+			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+				subscription.status, subscription.created_at, subscription.updated_at,
+				invoice.invoice
+			FROM lightning_htlc_subscription subscription
+			JOIN lightning_invoice invoice ON
+				subscription.lightning_invoice_id = invoice.lightning_invoice_id
+			WHERE invoice.payment_hash = $1
+			ORDER BY created_at DESC;
+		").await?;
+
+		let rows = conn.query(
+			&stmt, &[&&payment_hash[..]]
+		).await?;
+
+		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
 	}
 }

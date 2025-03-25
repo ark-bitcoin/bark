@@ -1,16 +1,15 @@
-
-use std::fmt;
+use std::fmt::{self, Display};
 use std::borrow::Cow;
+use anyhow::Context;
+use postgres_types::{FromSql, ToSql};
 use std::str::FromStr;
 
-use anyhow::Context;
 use bitcoin::{OutPoint, Transaction, Txid};
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::SecretKey;
 use chrono::{DateTime, Utc};
 use lightning_invoice::Bolt11Invoice;
-use postgres_types::{FromSql, ToSql};
 use tokio_postgres::Row;
 
 use ark::{Vtxo, VtxoId};
@@ -237,6 +236,74 @@ impl<'a> From<&'a Row> for LightningPaymentAttempt {
 		}
 	}
 }
+
+/// The status of a lightning htlc subscription
+///
+/// Once the aspd receives an invoice subscription request, its status is `Started`.
+/// The aspd will monitor this invoice for incoming HTLCs
+/// Once one of the HTLCs got accepted, the subscription is set to `Completed`
+/// If no HTLC is accepted within the subscription lifetime, subscription will
+/// get automatically `Terminated`
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, ToSql, FromSql, PartialEq, Eq)]
+#[postgres(name = "lightning_htlc_subscription_status")]
+pub enum LightningHtlcSubscriptionStatus {
+	/// The invoice was created and received HTLCs does not match the invoice yet
+	#[postgres(name = "created")]
+	Created,
+	/// The invoice was accepted because sum of received HTLCs matches the invoice
+	#[postgres(name = "accepted")]
+	Accepted,
+	/// The invoice preimage was revealed and the invoice was settled
+	#[postgres(name = "settled")]
+	Settled,
+	/// The subscription was cancelled
+	///
+	/// Can be set either manually by the user or automatically by the
+	/// aspd after `htlc_subscription_timeout`
+	#[postgres(name = "cancelled")]
+	Cancelled,
+}
+
+impl Display for LightningHtlcSubscriptionStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			LightningHtlcSubscriptionStatus::Created => f.write_str("created"),
+			LightningHtlcSubscriptionStatus::Accepted => f.write_str("accepted"),
+			LightningHtlcSubscriptionStatus::Settled => f.write_str("settled"),
+			LightningHtlcSubscriptionStatus::Cancelled => f.write_str("cancelled"),
+		}
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct LightningHtlcSubscription {
+	pub lightning_htlc_subscription_id: i64,
+	pub lightning_invoice_id: i64,
+	pub lightning_node_id: ClnNodeId,
+	pub invoice: Bolt11Invoice,
+	pub status: LightningHtlcSubscriptionStatus,
+	pub created_at: DateTime<Utc>,
+	pub updated_at: DateTime<Utc>,
+}
+
+impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
+	type Error = anyhow::Error;
+
+	fn try_from(row: &'a Row) -> Result<Self, Self::Error> {
+		let invoice = Bolt11Invoice::from_str(row.get("invoice"))?;
+
+		Ok(LightningHtlcSubscription {
+			lightning_htlc_subscription_id: row.get("lightning_htlc_subscription_id"),
+			lightning_invoice_id: row.get("lightning_invoice_id"),
+			lightning_node_id: row.get("lightning_node_id"),
+			invoice: invoice,
+			status: row.get("status"),
+			created_at: row.get("created_at"),
+			updated_at: row.get("updated_at"),
+		})
+	}
+}
+
 
 // FORFEIT WATCHER
 
