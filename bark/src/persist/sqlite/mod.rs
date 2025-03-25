@@ -232,7 +232,7 @@ impl WalletPersister for SqliteClient {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
 	use std::str::FromStr;
 
 	use bdk_wallet::chain::DescriptorExt;
@@ -240,7 +240,7 @@ mod test {
 	use rand::{distr, Rng};
 
 	use ark::{vtxo::VtxoSpkSpec, BoardVtxo, VtxoSpec};
-
+	use crate::test::dummy_board;
 	use super::*;
 
 
@@ -250,7 +250,7 @@ mod test {
 	/// The user should ensure the [Connection] isn't dropped
 	/// until the test completes. If all connections are dropped during
 	/// the test the entire database might be cleared.
-	fn in_memory() -> (PathBuf, Connection) {
+	pub fn in_memory() -> (PathBuf, Connection) {
 
 		// All tests run in the same process and share the same
 		// cache. To ensure that each call to `in_memory` results
@@ -270,50 +270,12 @@ mod test {
 
 	#[test]
 	fn test_add_and_retreive_vtxos() {
-		// We can use stupid data here.
-		// If the vtxo/signatures are invalid the database does't care
-		// It is the job of the application to worry about this
-		let pk = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
-		let point_1 = "0000000000000000000000000000000000000000000000000000000000000000:1".parse().unwrap();
-		let point_2 = "0000000000000000000000000000000000000000000000000000000000000000:2".parse().unwrap();
-		let point_3 = "0000000000000000000000000000000000000000000000000000000000000000:3".parse().unwrap();
-		let sig = "cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd59320b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea".parse().unwrap();
 
-		let vtxo_1 = Vtxo::Board(BoardVtxo {
-			exit_tx_signature: sig,
-			onchain_output: point_1,
-			spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 1001,
-				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
-				amount: Amount::from_sat(500)
-			},
-		});
+	let pk: PublicKey = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
 
-		let vtxo_2 = Vtxo::Board(BoardVtxo {
-			exit_tx_signature: sig,
-			onchain_output: point_2,
-			spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 1002,
-				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
-				amount: Amount::from_sat(500)
-			},
-		});
-
-		let vtxo_3 = Vtxo::Board(BoardVtxo {
-			exit_tx_signature: sig,
-			onchain_output: point_3,
-			spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 1003,
-				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
-				amount: Amount::from_sat(500)
-			},
-		});
+		let vtxo_1 = dummy_board(1);
+		let vtxo_2 = dummy_board(2);
+		let vtxo_3 = dummy_board(3);
 
 		let (cs, conn) = in_memory();
 		let db = SqliteClient::open(cs).unwrap();

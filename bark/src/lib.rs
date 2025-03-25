@@ -24,6 +24,9 @@ mod psbtext;
 mod vtxo_state;
 pub mod movement;
 
+#[cfg(test)]
+pub mod test;
+
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
