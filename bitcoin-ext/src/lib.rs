@@ -3,7 +3,7 @@
 extern crate bitcoin as cbitcoin;
 
 mod bitcoin;
-pub use bitcoin::{FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt};
+pub use bitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt};
 
 pub mod fee;
 
