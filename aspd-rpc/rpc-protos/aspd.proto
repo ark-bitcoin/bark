@@ -44,7 +44,12 @@ message HandshakeRequest {
 }
 
 message HandshakeResponse {
-	optional string message = 1;
+	// Public Service Announcement, a generalized message from the server to be
+	// displayed to the user.
+	optional string psa = 1;
+	// Error message explaining why the handshake failed.
+	optional string error = 3;
+	// Ark info on succesful handshake.
 	optional ArkInfo ark_info = 2;
 }
 

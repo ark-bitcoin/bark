@@ -266,7 +266,8 @@ impl rpc::server::ArkService for App {
 		// NB future note to always accept version "testing" which our tests use
 
 		let ret = rpc::HandshakeResponse {
-			message: self.config.handshake_message.clone(),
+			psa: self.config.handshake_psa.clone(),
+			error: None,
 			ark_info: Some(ark::ArkInfo {
 				network: self.config.network,
 				asp_pubkey: self.asp_key.public_key(),
