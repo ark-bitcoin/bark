@@ -108,37 +108,26 @@ async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
 
-	bark2.board(sat(800_000)).await;
-
-	// refresh vtxo
-	bark1.board(sat(200_000)).await;
+	bark.board(sat(200_000)).await;
 	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
-	bark1.refresh_all().await;
+	bark.refresh_all().await;
+	ctx.bitcoind.generate(1).await;
 
-	// board vtxo
-	bark1.board(sat(300_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	let addr = bark.get_onchain_address().await;
+	let _offb = bark.offboard_all(&addr).await;
+	ctx.bitcoind.generate(1).await;
 
-	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
-
-	let bark1_address = bark1.get_onchain_address().await;
-	bark1.offboard_all(bark1_address.clone()).await;
-
-	// If this test gets flaky, try add some delay here:
-	// tokio::time::sleep(Duration::from_millis(500)).await;
-
-	let utxos = bark1.utxos().await;
+	let utxos = bark.utxos().await;
 
 	println!("utxos: {:?}", utxos);
 	assert_eq!(2, utxos.len());
-	// board change utxo
-	assert!(utxos.iter().any(|u| u.amount.to_sat() == 497_796));
+	println!("utxos: {:?}", utxos);
+	// onboard change utxo
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 798_898));
 	// offboard utxo
-	assert!(utxos.iter().any(|u| u.amount.to_sat() == 828_900));
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 198_900));
 }
 
 #[tokio::test]

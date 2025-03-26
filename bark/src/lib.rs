@@ -736,16 +736,18 @@ impl <P>Wallet<P> where
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
-	pub async fn offboard_all(&mut self, address: Option<Address>) -> anyhow::Result<()> {
+	pub async fn offboard_all(&mut self, address: Option<Address>) -> anyhow::Result<Offboard> {
 		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
-		self.offboard(input_vtxos, address).await?;
-
-		Ok(())
+		Ok(self.offboard(input_vtxos, address).await?)
 	}
 
 	/// Offboard vtxos selection to a given address or default to bark onchain address
-	pub async fn offboard_vtxos(&mut self, vtxos: Vec<VtxoId>, address: Option<Address>) -> anyhow::Result<()> {
+	pub async fn offboard_vtxos(
+		&mut self,
+		vtxos: Vec<VtxoId>,
+		address: Option<Address>,
+	) -> anyhow::Result<Offboard> {
 		let input_vtxos =  vtxos
 				.into_iter()
 				.map(|vtxoid| match self.db.get_vtxo(vtxoid)? {
@@ -754,9 +756,7 @@ impl <P>Wallet<P> where
 				})
 				.collect::<anyhow::Result<_>>()?;
 
-		self.offboard(input_vtxos, address).await?;
-
-		Ok(())
+		Ok(self.offboard(input_vtxos, address).await?)
 	}
 
 	/// Refresh vtxo's.
