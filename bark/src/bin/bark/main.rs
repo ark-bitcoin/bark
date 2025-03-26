@@ -580,7 +580,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.sync().await {
+				if let Err(e) = w.maintenance().await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -594,7 +594,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Vtxos { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.sync().await {
+				if let Err(e) = w.maintenance().await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -622,7 +622,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.sync_ark().await {
+				if let Err(e) = w.maintenance().await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -686,7 +686,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync_ark().await {
+					if let Err(e) = w.maintenance().await {
 						warn!("Sync error: {}", e)
 					}
 				}
@@ -723,7 +723,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync().await {
+					if let Err(e) = w.maintenance().await {
 						warn!("Sync error: {}", e)
 					}
 				}
@@ -759,7 +759,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync_ark().await {
+					if let Err(e) = w.maintenance().await {
 						warn!("Sync error: {}", e)
 					}
 				}

@@ -809,7 +809,6 @@ async fn onchain_drain() {
 	assert_eq!(recipient_balance, sat(999443));
 }
 
-#[ignore]
 #[tokio::test]
 async fn bark_recover_unregistered_board() {
 	let ctx = TestContext::new("bark/recover_unregistered_board").await;

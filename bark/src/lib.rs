@@ -474,6 +474,7 @@ impl <P>Wallet<P> where
 	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()>
 	{
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoState::UnregisteredBoard])?;
+		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
 		for board in unregistered_boards {
 			if let Err(e) = self.register_board(board.id()).await {
 				warn!("Failed to register board {}: {}", board.id(), e);
@@ -483,7 +484,7 @@ impl <P>Wallet<P> where
 		Ok(())
 	}
 
-	/// Provides maintenance tasks on the wallet
+	/// Performs maintenance tasks on the wallet
 	///
 	/// This tasks include onchain-sync, off-chain sync,
 	/// registering onboard with the server.
@@ -492,6 +493,7 @@ impl <P>Wallet<P> where
 	/// for a round. The maintenance call cannot be used to
 	/// refresh VTXOs.
 	pub async fn maintenance(&mut self) -> anyhow::Result<()> {
+		info!("Starting wallet maintenance");
 		self.sync().await?;
 		self.register_all_unregistered_boards().await?;
 		Ok(())
