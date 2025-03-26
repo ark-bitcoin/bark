@@ -58,14 +58,6 @@ pub struct RoundUserVtxoNotAllowed {
 impl_slog!(RoundUserVtxoNotAllowed, Trace, "user attempted to spend vtxo not allowed in this round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoundUserVtxoUnconfirmedBoard {
-	pub round_seq: usize,
-	pub vtxo: VtxoId,
-	pub confirmations: usize,
-}
-impl_slog!(RoundUserVtxoUnconfirmedBoard, Trace, "user attempted to spend board vtxo not deeply confirmed");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoInFlux {
 	pub round_seq: usize,
 	pub attempt_seq: usize,

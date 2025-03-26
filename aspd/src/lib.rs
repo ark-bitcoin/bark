@@ -617,6 +617,40 @@ impl App {
 		Ok(())
 	}
 
+	/// Validate all board inputs are deeply confirmed
+	fn validate_board_inputs(
+		&self,
+		inputs: &[Vtxo],
+	) -> anyhow::Result<Option<(VtxoId, usize)>> {
+		// TODO(stevenroose) cache this check
+		for board in inputs.iter().filter_map(|v| v.as_board()) {
+			let txid = board.onchain_output.txid;
+			let id = board.id();
+			match self.bitcoind.get_raw_transaction_info(&txid, None) {
+				Ok(tx) => {
+					let confs = tx.confirmations.unwrap_or(0) as usize;
+					if confs < self.config.round_board_confirmations {
+						slog!(UnconfirmedBoardSpendAttempt, vtxo: id, confirmations: confs);
+						return badarg!("input board vtxo tx not deeply confirmed (has {confs} confs, \
+							but requires {})", self.config.round_board_confirmations,
+						);
+					}
+				},
+				Err(e) if e.is_not_found() => {
+					slog!(UnconfirmedBoardSpendAttempt, vtxo: id, confirmations: 0);
+					return badarg!("input board vtxo tx was not found, \
+						requires {} confs)", self.config.round_board_confirmations,
+					);
+				},
+				Err(e) => {
+					bail!("error getting raw tx for board vtxo: {e}");
+				},
+			}
+		}
+
+		Ok(None)
+	}
+
 	pub async fn cosign_oor(
 		&self,
 		payment: &ark::oor::OorPayment,
@@ -634,6 +668,11 @@ impl App {
 
 		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
 			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
+		}
+
+		if let Err(e) = self.validate_board_inputs(&payment.inputs) {
+			self.release_vtxos_in_flux(&ids).await;
+			return Err(e).context("oor cosign failed");
 		}
 
 		let txid = payment.txid();
