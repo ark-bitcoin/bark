@@ -565,6 +565,10 @@ impl App {
 		Ok(())
 	}
 
+	/// Registers a board
+	///
+	/// It will broadcast the funding_transaction if it is unseen and
+	/// wil regisert the vtxo in the databse
 	pub async fn register_board(
 		&self,
 		vtxo: BoardVtxo,
@@ -604,7 +608,7 @@ impl App {
 		}
 
 		// Accepted, let's register
-		self.db.insert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
+		self.db.upsert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
 
 		slog!(RegisteredBoard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
 			amount: vtxo.spec.amount,
