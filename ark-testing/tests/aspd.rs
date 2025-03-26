@@ -241,7 +241,7 @@ async fn sweep_vtxos() {
 	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
 		cfg.round_interval = Duration::from_millis(500000000);
 		cfg.vtxo_expiry_delta = 64;
-		cfg.sweep_threshold = sat(100_000);
+		cfg.vtxo_sweeper.sweep_threshold = sat(100_000);
 	}).await;
 	ctx.fund_asp(&aspd, sat(1_000_000)).await;
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, sat(500_000)).await);

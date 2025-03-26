@@ -11,12 +11,14 @@ round_submit_time = "2s"
 round_sign_time = "2s"
 nb_round_nonces = 64
 round_tx_feerate = "2500sat/kwu"
-sweep_tx_fallback_feerate = "2500sat/kwu"
-round_sweep_interval = "1h"
-sweep_threshold = 1000000
 rpc_rich_errors = true
 txindex_check_interval = "30s"
 legacy_wallet = false
+
+[vtxo_sweeper]
+sweep_tx_fallback_feerate = "2500sat/kwu"
+round_sweep_interval = "1h"
+sweep_threshold = 1000000
 
 [rpc]
 public_address = "127.0.0.1:3535"

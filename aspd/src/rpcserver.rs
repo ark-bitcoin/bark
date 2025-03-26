@@ -719,7 +719,7 @@ impl rpc::server::AdminService for App {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_SYNC);
-		self.wallet.lock().await.sync(&self.bitcoind).await.to_status()?;
+		self.rounds_wallet.lock().await.sync(&self.bitcoind).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
@@ -729,7 +729,7 @@ impl rpc::server::AdminService for App {
 	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_STATUS);
 
-		let rounds = self.wallet.lock().await.status().await;
+		let rounds = self.rounds_wallet.lock().await.status().await;
 
 		Ok(tonic::Response::new(protos::WalletStatusResponse {
 			rounds: Some(rounds.into()),
@@ -758,15 +758,8 @@ impl rpc::server::AdminService for App {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_SWEEP);
-
-		match self.trigger_round_sweep_tx.as_ref().unwrap().try_send(()) {
-			Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
-				panic!("sweep trigger channel closed");
-			},
-			Err(e) => warn!("Failed to send sweep trigger: {:?}", e),
-			Ok(_) => trace!("round sweep not closed"),
-		}
-
+		self.vtxo_sweeper.as_ref().unwrap().trigger_sweep()
+			.context("VtxoSweeper down")?;
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 

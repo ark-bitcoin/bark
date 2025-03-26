@@ -15,7 +15,7 @@ pub(crate) mod flux;
 pub mod database;
 mod psbtext;
 mod serde_util;
-mod vtxo_sweeper;
+pub mod vtxo_sweeper;
 mod rpcserver;
 mod round;
 mod txindex;
@@ -59,6 +59,7 @@ use crate::flux::VtxosInFlux;
 use crate::round::RoundInput;
 use crate::telemetry::TelemetryMetrics;
 use crate::txindex::TxIndex;
+use crate::vtxo_sweeper::VtxoSweeper;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 lazy_static::lazy_static! {
@@ -87,17 +88,17 @@ pub struct App {
 	master_xpriv: bip32::Xpriv,
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
-	wallet: Arc<Mutex<PersistedWallet>>,
+	rounds_wallet: Arc<Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
 	chain_tip: Mutex<BlockRef>,
 	txindex: TxIndex,
+	vtxo_sweeper: Option<VtxoSweeper>,
 
 	rounds: Option<RoundHandle>,
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
 	sendpay_updates: Option<SendpayHandle>,
-	trigger_round_sweep_tx: Option<tokio::sync::mpsc::Sender<()>>,
 	telemetry_metrics: TelemetryMetrics,
 }
 
@@ -168,7 +169,7 @@ impl App {
 				.expect("can't error")
 		};
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-		let wallet = PersistedWallet::load_from_xpriv(
+		let rounds_wallet = PersistedWallet::load_from_xpriv(
 			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip, cfg.legacy_wallet,
 		).await.context("error loading wallet")?;
 
@@ -177,12 +178,12 @@ impl App {
 		let asp_key = Keypair::from_secret_key(&SECP, &asp_xpriv.private_key);
 
 		Ok(Arc::new(App {
-			wallet: Arc::new(Mutex::new(wallet)),
+			rounds_wallet: Arc::new(Mutex::new(rounds_wallet)),
 			txindex: TxIndex::new(),
+			vtxo_sweeper: None,
 			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: None,
 			vtxos_in_flux: VtxosInFlux::new(),
-			trigger_round_sweep_tx: None,
 			sendpay_updates: None,
 			config: cfg,
 			db,
@@ -211,7 +212,6 @@ impl App {
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
-		let (sweep_trigger_tx, sweep_trigger_rx) = tokio::sync::mpsc::channel(1);
 		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
 
 		let telemetry_metrics = telemetry::init_telemetry(&self.config, self.asp_key.public_key());
@@ -219,12 +219,23 @@ impl App {
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
-		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
 		let jh_txindex = mut_self.txindex.start(
 			mut_self.bitcoind.clone(),
 			mut_self.config.txindex_check_interval,
 			mut_self.shutdown.clone(),
 		);
+		//TODO(stevenroose) this will be cleaned up if we unify App::open and App::start
+		mut_self.vtxo_sweeper = Some(VtxoSweeper::start(
+			mut_self.config.vtxo_sweeper.clone(),
+			mut_self.config.network,
+			mut_self.bitcoind.clone(),
+			mut_self.db.clone(),
+			mut_self.txindex.clone(),
+			mut_self.asp_key.clone(),
+			mut_self.rounds_wallet.lock().await.reveal_next_address(
+				bdk_wallet::KeychainKind::External,
+			).address,
+		).await.context("failed to start VtxoSweeper")?);
 		mut_self.telemetry_metrics = telemetry_metrics;
 
 		// First perform all startup tasks...
@@ -283,12 +294,11 @@ impl App {
 
 		let app = self.clone();
 		let jh_round_sweeper = tokio::spawn(async move {
-			let ret = vtxo_sweeper::run_vtxo_sweeper(app, sweep_trigger_rx)
-				.await.context("error from round sweeper");
-			info!("Round sweeper exited with {:?}", ret);
-			ret
+			app.shutdown.cancelled().await;
+			app.vtxo_sweeper.as_ref().unwrap().stop().await;
+			Ok(())
 		});
-		self.telemetry_metrics.count_spawn("vtxo_sweeper::run_vtxo_sweeper");
+		self.telemetry_metrics.count_spawn("VtxoSweeper");
 
 		let app = self.clone();
 		let shutdown = app.shutdown.clone();
@@ -384,7 +394,7 @@ impl App {
 	}
 
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {
-		let mut wallet = self.wallet.lock().await;
+		let mut wallet = self.rounds_wallet.lock().await;
 		let ret = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		wallet.persist().await?;
 		Ok(ret)
@@ -398,7 +408,7 @@ impl App {
 
 		let addr = address.require_network(self.config.network)?;
 
-		let mut wallet = self.wallet.lock().await;
+		let mut wallet = self.rounds_wallet.lock().await;
 		let mut b = wallet.build_tx();
 		b.drain_to(addr.script_pubkey());
 		b.drain_wallet();

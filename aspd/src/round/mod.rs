@@ -435,7 +435,7 @@ impl CollectingPayments {
 			0 => None,
 			n => Some(tip.saturating_sub(n as BlockHeight - 1)),
 		};
-		let mut wallet_lock = app.wallet.clone().lock_owned().await;
+		let mut wallet_lock = app.rounds_wallet.clone().lock_owned().await;
 		let unspendable = wallet_lock.untrusted_utxos(trusted_height);
 		let round_tx_psbt = {
 			let mut b = wallet_lock.build_tx();
@@ -1079,7 +1079,7 @@ async fn perform_round(
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
 
-		if let Err(e) = app.wallet.lock().await.sync(&app.bitcoind).await {
+		if let Err(e) = app.rounds_wallet.lock().await.sync(&app.bitcoind).await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}
 
@@ -1389,7 +1389,7 @@ pub async fn run_round_coordinator(
 		}
 
 		// Sync our wallet so that it sees the broadcasted tx.
-		if let Err(e) = app.wallet.lock().await.sync(&app.bitcoind).await {
+		if let Err(e) = app.rounds_wallet.lock().await.sync(&app.bitcoind).await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};
 
