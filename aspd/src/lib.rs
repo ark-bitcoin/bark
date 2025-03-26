@@ -705,7 +705,10 @@ impl App {
 			}
 
 			let txid = details.unsigned_transaction().compute_txid();
-			let new_vtxos = vec![details.unsigned_change_vtxo().into()];
+			let new_vtxos = details
+				.unsigned_change_vtxo()
+				.map(|vtxo| vec![vtxo.into()])
+				.unwrap_or_default();
 
 			match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
 				Ok(Some(dup)) => {

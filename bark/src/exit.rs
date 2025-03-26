@@ -165,7 +165,7 @@ impl <P>Exit<P> where
 			if let Some(added) = added {
 				self.db.register_send(
 					vec![&added],
-					added.spec().exit_spk().to_string(),
+					added.spec().vtxo_spk().to_string(),
 					None,
 					None
 				).context("Failed to register send")?;

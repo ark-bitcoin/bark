@@ -872,7 +872,7 @@ impl <P>Wallet<P> where
 			.collect::<Result<Vec<_>, _>>()
 			.context("invalid asp part sigs")?;
 
-		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
+		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
 			sec_nonces,
@@ -980,7 +980,7 @@ impl <P>Wallet<P> where
 			.collect::<Result<Vec<_>, _>>()
 			.context("invalid asp part sigs")?;
 
-		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
+		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
 			sec_nonces,
@@ -989,9 +989,6 @@ impl <P>Wallet<P> where
 			&asp_pub_nonces,
 			&asp_part_sigs,
 		);
-		let change_vtxo = signed.change_vtxo();
-		info!("Adding change VTXO of {}", change_vtxo.pseudo_spec.amount);
-		trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&change_vtxo.htlc_tx));
 
 		let req = rpc::SignedBolt11PaymentDetails {
 			signed_payment: signed.encode()
@@ -1010,16 +1007,19 @@ impl <P>Wallet<P> where
 			}
 		}
 
-		if payment_preimage.is_none() {
-			bail!("Payment failed: {}", last_msg)
-		}
-		let payment_preimage = payment_preimage.unwrap();
+		let payment_preimage = payment_preimage.ok_or_else(|| anyhow!("Payment failed: {}", last_msg))?;
+		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
+			info!("Adding change VTXO of {}", change_vtxo.pseudo_spec.amount);
+			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&change_vtxo.htlc_tx));
+			Some(change_vtxo.into())
+		} else {
+			None
+		};
 
-		// TODO: this looks weird that signed.change_vtxo() is not an Option here. What happens if change is 0?
 		self.db.register_send(
 			&input_vtxos,
 			invoice.to_string(),
-			Some(&Vtxo::Bolt11Change(signed.change_vtxo())),
+			change_vtxo.as_ref(),
 			Some(anchor_amount + forwarding_fee)).context("failed to store OOR vtxo")?;
 
 		info!("Bolt11 payment succeeded");
@@ -1396,7 +1396,7 @@ impl <P>Wallet<P> where
 							[asp.info.asp_pubkey],
 							&[asp_nonce],
 							sighash.to_byte_array(),
-							Some(vtxo.spec().exit_taptweak().to_byte_array()),
+							Some(vtxo.spec().vtxo_taptweak().to_byte_array()),
 						);
 						Ok((nonce, sig))
 					}).collect::<anyhow::Result<Vec<_>>>()?;

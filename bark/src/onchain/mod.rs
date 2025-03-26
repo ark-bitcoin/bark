@@ -40,7 +40,7 @@ impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
 			let mut psbt_in = psbt::Input::default();
 			psbt_in.set_exit_claim_input(&input.vtxo);
 			psbt_in.witness_utxo = Some(TxOut {
-				script_pubkey: input.vtxo.spec().exit_spk(),
+				script_pubkey: input.vtxo.spec().vtxo_spk(),
 				value: input.vtxo.spec().amount,
 			});
 

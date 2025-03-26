@@ -143,11 +143,16 @@ impl VtxoTreeSpec {
 	}
 
 	fn leaf_tx(&self, vtxo: &VtxoRequest) -> Transaction {
+		let spec = VtxoSpec {
+			user_pubkey: vtxo.pubkey,
+			asp_pubkey: self.asp_pk,
+			expiry_height: self.expiry_height,
+			exit_delta: self.exit_delta,
+			amount: vtxo.amount
+		};
+
 		crate::vtxo::create_exit_tx(
-			vtxo.pubkey,
-			self.asp_pk,
-			self.exit_delta,
-			vtxo.amount,
+			&spec,
 			OutPoint::null(),
 			None,
 		)

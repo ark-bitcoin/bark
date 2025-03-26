@@ -5,12 +5,16 @@
 //! * ASP does a deterministic sign and sends ASP part using [new_asp].
 //! * User also signs and combines sigs using [finish] and stores vtxo.
 
-use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, Transaction, TxOut};
+use std::fmt;
+
+use bitcoin::sighash::{self, SighashCache};
+use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::Keypair;
+use bitcoin::secp256k1::{schnorr, Keypair};
+
 use bitcoin_ext::P2WSH_DUST;
 
-use crate::{musig, util, vtxo, BoardVtxo, VtxoSpec};
+use crate::{musig, util, vtxo, VtxoId, VtxoSpec};
 
 
 pub fn board_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
@@ -54,6 +58,21 @@ fn board_txout(spec: &VtxoSpec) -> TxOut {
 	}
 }
 
+fn exit_tx_sighash(
+	spec: &VtxoSpec,
+	utxo: OutPoint,
+	prev_utxo: &TxOut,
+) -> (TapSighash, Transaction) {
+	let exit_tx = vtxo::create_exit_tx(
+		&spec,
+		utxo,
+		None);
+	let sighash = SighashCache::new(&exit_tx).taproot_key_spend_signature_hash(
+		0, &sighash::Prevouts::All(&[prev_utxo]), sighash::TapSighashType::Default,
+	).expect("matching prevouts");
+	(sighash, exit_tx)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserPart {
 	pub spec: VtxoSpec,
@@ -64,14 +83,7 @@ pub struct UserPart {
 
 impl UserPart {
 	pub fn exit_tx(&self) -> Transaction {
-		vtxo::create_exit_tx(
-			self.spec.user_pubkey,
-			self.spec.asp_pubkey,
-			self.spec.exit_delta,
-			self.spec.amount,
-			self.utxo,
-			None,
-		)
+		vtxo::create_exit_tx(&self.spec, self.utxo, None)
 	}
 }
 
@@ -82,7 +94,7 @@ pub struct PrivateUserPart {
 
 pub fn new_user(spec: VtxoSpec, utxo: OutPoint) -> (UserPart, PrivateUserPart) {
 	let board_prev = board_txout(&spec);
-	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&spec, utxo, &board_prev);
+	let (reveal_sighash, _tx) = exit_tx_sighash(&spec, utxo, &board_prev);
 	let (agg, _) = musig::tweaked_key_agg(
 		[spec.user_pubkey, spec.asp_pubkey], board_taptweak(&spec).to_byte_array(),
 	);
@@ -111,7 +123,7 @@ impl AspPart {
 	/// Validate the ASP's partial signature.
 	pub fn verify_partial_sig(&self, user_part: &UserPart) -> bool {
 		let board_prev = board_txout(&user_part.spec);
-		let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(
+		let (reveal_sighash, _tx) = exit_tx_sighash(
 			&user_part.spec,
 			user_part.utxo,
 			&board_prev,
@@ -140,7 +152,7 @@ impl AspPart {
 
 pub fn new_asp(user: &UserPart, key: &Keypair) -> AspPart {
 	let board_prev = board_txout(&user.spec);
-	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &board_prev);
+	let (reveal_sighash, _tx) = exit_tx_sighash(&user.spec, user.utxo, &board_prev);
 	let msg = reveal_sighash.to_byte_array();
 	let tweak = board_taptweak(&user.spec);
 	let (pub_nonce, sig) = musig::deterministic_partial_sign(
@@ -159,7 +171,7 @@ pub fn finish(
 	key: &Keypair,
 ) -> BoardVtxo {
 	let board_prev = board_txout(&user.spec);
-	let (reveal_sighash, _tx) = vtxo::exit_tx_sighash(&user.spec, user.utxo, &board_prev);
+	let (reveal_sighash, _tx) = exit_tx_sighash(&user.spec, user.utxo, &board_prev);
 	let agg_nonce = musig::nonce_agg(&[&user.nonce, &asp.nonce]);
 	let (_user_sig, final_sig) = musig::partial_sign(
 		[user.spec.user_pubkey, user.spec.asp_pubkey],
@@ -183,6 +195,77 @@ pub fn finish(
 		exit_tx_signature: final_sig,
 	}
 }
+
+#[derive(Debug, Clone)]
+pub struct BoardTxValidationError(String);
+
+impl fmt::Display for BoardTxValidationError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "board tx validation error: {}", self.0)
+	}
+}
+
+impl std::error::Error for BoardTxValidationError {}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BoardVtxo {
+	pub spec: VtxoSpec,
+	/// The output of the board. This will be the input to the exit tx.
+	pub onchain_output: OutPoint,
+	pub exit_tx_signature: schnorr::Signature,
+}
+
+impl BoardVtxo {
+	pub fn exit_tx(&self) -> Transaction {
+		let ret = vtxo::create_exit_tx(
+			&self.spec,
+			self.onchain_output,
+			Some(&self.exit_tx_signature),
+		);
+		assert_eq!(ret.weight(), crate::vtxo::EXIT_TX_WEIGHT);
+		ret
+	}
+
+	pub fn point(&self) -> OutPoint {
+		//TODO(stevenroose) consider caching this so that we don't have to calculate it
+		OutPoint::new(self.exit_tx().compute_txid(), 0)
+	}
+
+	pub fn id(&self) -> VtxoId {
+		self.point().into()
+	}
+
+	pub fn validate_tx(&self, board_tx: &Transaction) -> Result<(), BoardTxValidationError> {
+		let id = self.id();
+		if self.onchain_output.txid != board_tx.compute_txid() {
+			return Err(BoardTxValidationError(format!(
+				"onchain tx and vtxo board txid don't match",
+			)));
+		}
+
+		// Check that the output actually has the right script.
+		let output_idx = self.onchain_output.vout as usize;
+		if board_tx.output.len() < output_idx {
+			return Err(BoardTxValidationError(format!(
+				"non-existing point {} in tx {}", self.onchain_output, self.onchain_output.txid,
+			)));
+		}
+		let spk = &board_tx.output[output_idx].script_pubkey;
+		if *spk != board_spk(&self.spec) {
+			return Err(BoardTxValidationError(format!(
+				"vtxo {} has incorrect board script: {}", id, spk,
+			)));
+		}
+		let amount = board_tx.output[output_idx].value;
+		if amount != board_amount(&self.spec) {
+			return Err(BoardTxValidationError(format!(
+				"vtxo {} has incorrect board amount: {}", id, amount,
+			)));
+		}
+		Ok(())
+	}
+}
+
 
 #[cfg(test)]
 mod test {

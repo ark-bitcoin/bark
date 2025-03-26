@@ -3,17 +3,19 @@ use std::{fmt, io};
 use std::str::FromStr;
 
 use bitcoin::{
-	taproot, Amount, OutPoint, ScriptBuf, Sequence, TapSighash, Transaction, TxIn, TxOut, Txid,
-	Weight, Witness,
+	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
-use bitcoin::sighash::{self, SighashCache};
 
 use bitcoin_ext::fee;
 
-use crate::{musig, board, oor, util};
+use crate::board::BoardVtxo;
+use crate::lightning::Bolt11ChangeVtxo;
+use crate::oor::ArkoorVtxo;
+use crate::rounds::RoundVtxo;
+use crate::{musig, oor, util};
 
 
 /// The total signed tx weight of a exit tx.
@@ -161,10 +163,7 @@ pub fn exit_spk(
 /// When the `signature` argument is provided,
 /// it will be placed in the input witness.
 pub fn create_exit_tx(
-	user_pubkey: PublicKey,
-	asp_pubkey: PublicKey,
-	exit_delta: u16,
-	amount: Amount,
+	spec: &VtxoSpec,
 	prevout: OutPoint,
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
@@ -184,27 +183,10 @@ pub fn create_exit_tx(
 			},
 		}],
 		output: vec![
-			TxOut {
-				script_pubkey: exit_spk(user_pubkey, asp_pubkey, exit_delta),
-				value: amount,
-			},
+			spec.txout(),
 			fee::dust_anchor(),
 		],
 	}
-}
-
-pub fn exit_tx_sighash(
-	spec: &VtxoSpec,
-	utxo: OutPoint,
-	prev_utxo: &TxOut,
-) -> (TapSighash, Transaction) {
-	let exit_tx = create_exit_tx(
-		spec.user_pubkey, spec.asp_pubkey, spec.exit_delta, spec.amount, utxo, None,
-	);
-	let sighash = SighashCache::new(&exit_tx).taproot_key_spend_signature_hash(
-		0, &sighash::Prevouts::All(&[prev_utxo]), sighash::TapSighashType::Default,
-	).expect("matching prevouts");
-	(sighash, exit_tx)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -231,147 +213,30 @@ impl VtxoSpec {
 		exit_clause(self.user_pubkey, self.exit_delta)
 	}
 
-	pub fn exit_taproot(&self) -> taproot::TaprootSpendInfo {
+	pub fn vtxo_taproot(&self) -> taproot::TaprootSpendInfo {
 		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta)
 	}
 
 	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
-		self.exit_taproot().output_key().to_inner()
+		self.vtxo_taproot().output_key().to_inner()
 	}
 
-	pub fn exit_taptweak(&self) -> taproot::TapTweakHash {
-		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta).tap_tweak()
+	pub fn vtxo_taptweak(&self) -> taproot::TapTweakHash {
+		self.vtxo_taproot().tap_tweak()
 	}
 
-	pub fn exit_spk(&self) -> ScriptBuf {
-		exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta)
-	}
-}
-
-#[derive(Debug, Clone)]
-pub struct BoardTxValidationError(String);
-
-impl fmt::Display for BoardTxValidationError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "board tx validation error: {}", self.0)
-	}
-}
-
-impl std::error::Error for BoardTxValidationError {}
-
-
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BoardVtxo {
-	pub spec: VtxoSpec,
-	/// The output of the board. This will be the input to the exit tx.
-	pub onchain_output: OutPoint,
-	pub exit_tx_signature: schnorr::Signature,
-}
-
-impl BoardVtxo {
-	pub fn exit_tx(&self) -> Transaction {
-		let ret = create_exit_tx(
-			self.spec.user_pubkey,
-			self.spec.asp_pubkey,
-			self.spec.exit_delta,
-			self.spec.amount,
-			self.onchain_output,
-			Some(&self.exit_tx_signature),
-		);
-		assert_eq!(ret.weight(), crate::vtxo::EXIT_TX_WEIGHT);
-		ret
+	/// Return the spk to spend the VTXO
+	///
+	/// In most cases, VTXO spk includes a unilateral exit clause
+	pub fn vtxo_spk(&self) -> ScriptBuf {
+		ScriptBuf::new_p2tr_tweaked(self.vtxo_taproot().output_key())
 	}
 
-	pub fn point(&self) -> OutPoint {
-		//TODO(stevenroose) consider caching this so that we don't have to calculate it
-		OutPoint::new(self.exit_tx().compute_txid(), 0)
-	}
-
-	pub fn id(&self) -> VtxoId {
-		self.point().into()
-	}
-
-	pub fn validate_tx(&self, board_tx: &Transaction) -> Result<(), BoardTxValidationError> {
-		let id = self.id();
-		if self.onchain_output.txid != board_tx.compute_txid() {
-			return Err(BoardTxValidationError(format!(
-				"onchain tx and vtxo board txid don't match",
-			)));
+	pub fn txout(&self) -> TxOut {
+		TxOut {
+			script_pubkey: self.vtxo_spk(),
+			value: self.amount,
 		}
-
-		// Check that the output actually has the right script.
-		let output_idx = self.onchain_output.vout as usize;
-		if board_tx.output.len() < output_idx {
-			return Err(BoardTxValidationError(format!(
-				"non-existing point {} in tx {}", self.onchain_output, self.onchain_output.txid,
-			)));
-		}
-		let spk = &board_tx.output[output_idx].script_pubkey;
-		if *spk != board::board_spk(&self.spec) {
-			return Err(BoardTxValidationError(format!(
-				"vtxo {} has incorrect board script: {}", id, spk,
-			)));
-		}
-		let amount = board_tx.output[output_idx].value;
-		if amount != board::board_amount(&self.spec) {
-			return Err(BoardTxValidationError(format!(
-				"vtxo {} has incorrect board amount: {}", id, amount,
-			)));
-		}
-		Ok(())
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RoundVtxo {
-	pub spec: VtxoSpec,
-	pub leaf_idx: usize,
-	//TODO(stevenroose) reduce this to just storing the signatures
-	// and calculate branch on exit
-	pub exit_branch: Vec<Transaction>,
-}
-
-impl RoundVtxo {
-	pub fn point(&self) -> OutPoint {
-		//TODO(stevenroose) consider caching this so that we don't have to calculate it
-		OutPoint::new(self.exit_branch.last().unwrap().compute_txid(), 0)
-	}
-
-	pub fn id(&self) -> VtxoId {
-		self.point().into()
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ArkoorVtxo {
-	pub inputs: Vec<Vtxo>,
-	pub signatures: Vec<schnorr::Signature>,
-	pub output_specs:  Vec<VtxoSpec>,
-	pub point: OutPoint,
-}
-
-impl ArkoorVtxo {
-	pub fn id(&self) -> VtxoId {
-		self.point.into()
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Bolt11ChangeVtxo {
-	pub inputs: Vec<Vtxo>,
-	/// This has the fields for the spec, but were not necessarily
-	/// actually being used for the generation of the vtxos.
-	/// Primarily, the expiry height is the first of all the parents
-	/// expiry heights.
-	pub pseudo_spec: VtxoSpec,
-	pub htlc_tx: Transaction,
-	pub final_point: OutPoint,
-}
-
-impl Bolt11ChangeVtxo {
-	pub fn id(&self) -> VtxoId {
-		self.final_point.into()
 	}
 }
 
@@ -422,13 +287,6 @@ impl Vtxo {
 			Vtxo::Bolt11Change(v) => {
 				v.htlc_tx.output[v.final_point.vout as usize].value
 			},
-		}
-	}
-
-	pub fn txout(&self) -> TxOut {
-		TxOut {
-			script_pubkey: self.spec().exit_spk(),
-			value: self.amount(),
 		}
 	}
 
@@ -646,7 +504,9 @@ impl From<Bolt11ChangeVtxo> for Vtxo {
 
 #[cfg(test)]
 mod test {
-	use super::*;
+	use crate::oor::ArkoorVtxo;
+
+use super::*;
 	use bitcoin::hashes::hex::FromHex;
 	use oor::unsigned_oor_tx;
 

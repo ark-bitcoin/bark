@@ -7,10 +7,11 @@ use std::str::FromStr;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
+use bitcoin::OutPoint;
 use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
 use bitcoin::secp256k1::{schnorr::{self, Signature}, Message};
 
-use crate::{musig, util, Vtxo, VtxoId};
+use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
 use crate::tree::signed::VtxoTreeSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,5 +207,25 @@ impl fmt::Display for RoundEvent {
 					.finish()
 			},
 		}
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RoundVtxo {
+	pub spec: VtxoSpec,
+	pub leaf_idx: usize,
+	//TODO(stevenroose) reduce this to just storing the signatures
+	// and calculate branch on exit
+	pub exit_branch: Vec<Transaction>,
+}
+
+impl RoundVtxo {
+	pub fn point(&self) -> OutPoint {
+		//TODO(stevenroose) consider caching this so that we don't have to calculate it
+		OutPoint::new(self.exit_branch.last().unwrap().compute_txid(), 0)
+	}
+
+	pub fn id(&self) -> VtxoId {
+		self.point().into()
 	}
 }
