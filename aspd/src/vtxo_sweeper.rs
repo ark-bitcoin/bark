@@ -719,8 +719,6 @@ pub async fn run_vtxo_sweeper(
 	app: Arc<App>,
 	mut sweep_trigger_rx: tokio::sync::mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
-	let mut shutdown = app.shutdown_channel.subscribe();
-
 	let mut state = VtxoSweeper::load(app).await.context("failed to load VtxoSweeper state")?;
 
 	info!("Starting expired vtxo sweep loop");
@@ -730,7 +728,7 @@ pub async fn run_vtxo_sweeper(
 			() = tokio::time::sleep(state.app.config.round_sweep_interval) => {},
 			// Trigger received via channel
 			Some(()) = sweep_trigger_rx.recv() => slog!(ReceivedSweepTrigger),
-			_ = shutdown.recv() => {
+			_ = state.app.shutdown.cancelled() => {
 				info!("Shutdown signal received. Exiting sweep loop...");
 				break;
 			}

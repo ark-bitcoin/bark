@@ -1,5 +1,6 @@
 use std::fmt;
 use anyhow::Context;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
 use tokio::sync::broadcast;
 
@@ -13,7 +14,7 @@ use crate::grpc::node_client::NodeClient;
 type GrpcClient = NodeClient<Channel>;
 
 pub struct SubscribeSendpay {
-	pub shutdown_channel: broadcast::Sender<()>,
+	pub shutdown: CancellationToken,
 	pub client: NodeClient<Channel>,
 	pub update_index: u64,
 	pub created_index: u64,
@@ -22,20 +23,20 @@ pub struct SubscribeSendpay {
 impl SubscribeSendpay {
 	pub async fn run(self, tx: broadcast::Sender<SendpaySubscriptionItem>) -> anyhow::Result<()> {
 		let (u_idx, u_grpc, u_rx) = (self.update_index, self.client.clone(), tx.clone());
-		let mut shutdown = self.shutdown_channel.subscribe();
+		let shutdown = self.shutdown.clone();
 		let jh1 = tokio::spawn(async move {
 			tokio::select! {
 				res = updated_loop(u_idx, u_grpc, u_rx) => res,
-				_ = shutdown.recv() => Ok(()),
+				_ = shutdown.cancelled() => Ok(()),
 			}
 		});
 
 		let (c_idx, c_grpc, c_rx) = (self.created_index, self.client.clone(), tx.clone());
-		let mut shutdown = self.shutdown_channel.subscribe();
+		let shutdown = self.shutdown.clone();
 		let jh2 = tokio::spawn(async move {
 			tokio::select! {
 				res = created_loop(c_idx, c_grpc, c_rx) => res,
-				_ = shutdown.recv() => Ok(()),
+				_ = shutdown.cancelled() => Ok(()),
 			}
 		});
 

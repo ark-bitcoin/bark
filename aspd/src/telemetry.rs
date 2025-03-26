@@ -3,8 +3,9 @@ use std::time::Duration;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Amount;
 use opentelemetry::metrics::Counter;
+use opentelemetry::{Key, Value};
 use opentelemetry::{global, propagation::Extractor, KeyValue};
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::{TracerProvider, Span};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
@@ -151,6 +152,14 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 		})
 	}
 }
+
+/// An extention trait for span tracing.
+pub trait SpanExt: Span {
+	fn set_int_attr(&mut self, key: impl Into<Key>, int: impl TryInto<i64>) {
+		self.set_attribute(KeyValue::new(key, Value::I64(int.try_into().unwrap_or(-1))));
+	}
+}
+impl<T: Span> SpanExt for T {}
 
 pub struct MetadataMap<'a>(pub &'a tonic::metadata::MetadataMap);
 

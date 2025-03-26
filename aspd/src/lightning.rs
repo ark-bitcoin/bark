@@ -5,6 +5,7 @@ use anyhow::Context;
 use bitcoin::hex::DisplayHex;
 use bitcoin::Amount;
 use lightning_invoice::Bolt11Invoice;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
 use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamExt;
@@ -49,7 +50,7 @@ impl Lightningd {
 }
 
 pub async fn run_process_sendpay_updates(
-	shutdown_channel: broadcast::Sender<()>,
+	shutdown: CancellationToken,
 	cln_config: &Lightningd,
 	tx: broadcast::Sender<SendpaySubscriptionItem>,
 ) -> anyhow::Result<()> {
@@ -76,7 +77,7 @@ pub async fn run_process_sendpay_updates(
 	);
 
 	let subscribe_send_pay = SubscribeSendpay {
-		shutdown_channel,
+		shutdown,
 		client: client.clone(),
 		created_index,
 		update_index: updated_index,

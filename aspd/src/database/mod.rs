@@ -7,6 +7,7 @@ mod embedded {
 }
 
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
@@ -121,7 +122,10 @@ impl Db {
 	 * VTXOs
 	*/
 
-	async fn inner_upsert_vtxos<T>(client: &T, vtxos: &[Vtxo]) -> anyhow::Result<()>
+	async fn inner_upsert_vtxos<T, V: Borrow<Vtxo>>(
+		client: &T,
+		vtxos: impl IntoIterator<Item = V>,
+	) -> Result<(), tokio_postgres::Error>
 		where T: GenericClient
 	{
 		// Store all vtxos created in this round.
@@ -131,9 +135,16 @@ impl Db {
 			ON CONFLICT DO NOTHING
 		", &[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
 
-		let ids = vtxos.iter().map(|v| v.id().to_string()).collect::<Vec<_>>();
-		let data = vtxos.iter().map(|v| Vtxo::encode(&v)).collect::<Vec<_>>();
-		let expiry = vtxos.iter().map(|v| v.spec().expiry_height as i32).collect::<Vec<_>>();
+		let vtxos = vtxos.into_iter();
+		let mut ids = Vec::with_capacity(vtxos.size_hint().0);
+		let mut data = Vec::with_capacity(vtxos.size_hint().0);
+		let mut expiry = Vec::with_capacity(vtxos.size_hint().0);
+		for vtxo in vtxos {
+			let vtxo = vtxo.borrow();
+			ids.push(vtxo.id().to_string());
+			data.push(vtxo.encode());
+			expiry.push(vtxo.spec().expiry_height as i32);
+		}
 
 		client.execute(
 			&statement,
@@ -232,31 +243,6 @@ impl Db {
 		Self::get_vtxos_by_id_with_client(&*conn, ids).await
 	}
 
-	/// Set the vtxo as being forfeited.
-	pub async fn set_vtxo_forfeited(&self, id: VtxoId, sigs: Vec<schnorr::Signature>) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
-		let statement = conn.prepare_typed("
-			UPDATE vtxo SET forfeit_sigs = $2 WHERE id = $1;
-		", &[Type::TEXT, Type::BYTEA_ARRAY]).await?;
-
-		let vtxos = Self::get_vtxos_by_id_with_client(&*conn, &[id]).await?;
-
-		let vtxo_state = vtxos.first().expect("vtxo is found");
-		if !vtxo_state.is_spendable() {
-			error!("Marking unspendable vtxo as forfeited: {:?}", vtxo_state);
-		}
-
-		conn.execute(
-			&statement,
-			&[
-				&id.to_string(),
-				&sigs.into_iter().map(|s| s.serialize().to_vec()).collect::<Vec<_>>()
-			]
-		).await?;
-
-		Ok(())
-	}
-
 	/// Returns [None] if all the ids were not previously marked as signed
 	/// and are now correctly marked as such.
 	/// Returns [Some] for the first vtxo that was already signed.
@@ -284,7 +270,7 @@ impl Db {
 			tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&spending_tx)]).await?;
 		}
 
-		Self::inner_upsert_vtxos(&tx, &new_vtxos).await?;
+		Self::inner_upsert_vtxos(&tx, new_vtxos).await?;
 
 		tx.commit().await?;
 		Ok(None)
@@ -332,18 +318,19 @@ impl Db {
 	 * Rounds
 	*/
 
-	pub async fn store_round(
+	pub async fn finish_round(
 		&self,
 		round_tx: &Transaction,
 		vtxos: &CachedSignedVtxoTree,
-		nb_input_vtxos: usize,
 		connector_key: &SecretKey,
+		forfeit_vtxos: Vec<(VtxoId, Vec<schnorr::Signature>)>,
 	) -> anyhow::Result<()> {
 		let round_id = round_tx.compute_txid();
 
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
+		// First, store the round itself.
 		let statement = tx.prepare_typed("
 			INSERT INTO round (id, tx, signed_tree, nb_input_vtxos, connector_key, expiry)
 			VALUES ($1, $2, $3, $4, $5, $6);
@@ -354,13 +341,28 @@ impl Db {
 				&round_id.to_string(),
 				&serialize(&round_tx),
 				&vtxos.spec.encode(),
-				&(nb_input_vtxos as i32),
+				&(forfeit_vtxos.len() as i32),
 				&connector_key.secret_bytes().to_vec(),
 				&(vtxos.spec.spec.expiry_height as i32)
 			]
 		).await?;
 
-		Self::inner_upsert_vtxos(&tx, &vtxos.all_vtxos().collect::<Vec<_>>()).await?;
+		// Then mark inputs as forfeited.
+		let statement = tx.prepare_typed("
+			UPDATE vtxo SET forfeit_sigs = $2 WHERE id = $1 AND spendable = true;
+		", &[Type::TEXT, Type::BYTEA_ARRAY]).await?;
+		for (id, sigs) in forfeit_vtxos.into_iter() {
+			let rows_affected = tx.execute(&statement, &[
+				&id.to_string(),
+				&sigs.into_iter().map(|s| s.serialize().to_vec()).collect::<Vec<_>>()
+			]).await?;
+			if rows_affected == 0 {
+				bail!("tried to mark unspendable vtxo as forfeited: {}", id);
+			}
+		}
+
+		// Finally insert new vtxos.
+		Self::inner_upsert_vtxos(&tx, vtxos.all_vtxos()).await?;
 
 		tx.commit().await?;
 		Ok(())

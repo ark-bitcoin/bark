@@ -10,10 +10,11 @@ use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid, Wtxid};
 use chrono::{DateTime, Local};
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use ark::BlockHeight;
+use tokio_util::sync::CancellationToken;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, RpcApi};
 
@@ -342,7 +343,7 @@ impl TxIndex {
 		&mut self,
 		bitcoind: BitcoinRpcClient,
 		interval: Duration,
-		shutdown: broadcast::Receiver<()>,
+		shutdown: CancellationToken,
 	) -> JoinHandle<anyhow::Result<()>> {
 		let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel();
 		self.broadcast_pkg = Some(broadcast_tx);
@@ -368,7 +369,7 @@ struct TxIndexProcess {
 	broadcast: HashSet<Vec<Txid>>,
 
 	broadcast_rx: mpsc::UnboundedReceiver<Vec<Txid>>,
-	shutdown: broadcast::Receiver<()>,
+	shutdown: CancellationToken,
 }
 
 impl TxIndexProcess {
@@ -535,7 +536,7 @@ impl TxIndexProcess {
 					self.rebroadcast().await;
 					slog!(TxIndexUpdateFinished);
 				},
-				_ = self.shutdown.recv() => {
+				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received. Exiting tx index loop...");
 					return Ok(());
 				}

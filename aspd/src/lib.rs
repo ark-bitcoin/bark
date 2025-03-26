@@ -51,6 +51,7 @@ use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
 use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
+use tokio_util::sync::CancellationToken;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::error::ContextExt;
@@ -87,7 +88,7 @@ pub struct SendpayHandle {
 pub struct App {
 	config: Config,
 	db: database::Db,
-	shutdown_channel: broadcast::Sender<()>,
+	shutdown: CancellationToken,
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
 	wallet: Arc<Mutex<bdk_wallet::Wallet>>,
@@ -204,7 +205,6 @@ impl App {
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
 
-		let (shutdown_channel, _) = broadcast::channel::<()>(1);
 		Ok(Arc::new(App {
 			wallet: Arc::new(Mutex::new(wallet)),
 			txindex: TxIndex::new(),
@@ -215,7 +215,7 @@ impl App {
 			sendpay_updates: None,
 			config: cfg,
 			db,
-			shutdown_channel,
+			shutdown: CancellationToken::new(),
 			asp_key,
 			bitcoind,
 			telemetry_metrics: TelemetryMetrics::disabled(),
@@ -251,7 +251,7 @@ impl App {
 		let jh_txindex = mut_self.txindex.start(
 			mut_self.bitcoind.clone(),
 			mut_self.config.txindex_check_interval,
-			mut_self.shutdown_channel.subscribe(),
+			mut_self.shutdown.clone(),
 		);
 		mut_self.telemetry_metrics = telemetry_metrics;
 
@@ -261,13 +261,13 @@ impl App {
 		info!("Startup tasks done");
 
 		// Spawn a task to handle Ctrl+C
-		let shutdown_channel = self.shutdown_channel.clone();
+		let shutdown = self.shutdown.clone();
 		tokio::spawn(async move {
 			tokio::signal::ctrl_c()
 				.await
 				.expect("Failed to listen for Ctrl+C");
 			info!("Ctrl+C received! Sending shutdown signal...");
-			let _ = shutdown_channel.send(());
+			let _ = shutdown.cancel();
 			for i in (1..=60).rev() {
 				info!("Forced exit in {} seconds...", i);
 				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -304,13 +304,13 @@ impl App {
 		self.telemetry_metrics.count_spawn("vtxo_sweeper::run_vtxo_sweeper");
 
 		let app = self.clone();
-		let mut shutdown = app.shutdown_channel.clone().subscribe();
+		let shutdown = app.shutdown.clone();
 		let jh_tip_fetcher = tokio::spawn(async move {
 			loop {
 				tokio::select! {
 					// Periodic interval for chain tip fetch
 					() = tokio::time::sleep(Duration::from_secs(1)) => {},
-					_ = shutdown.recv() => {
+					_ = shutdown.cancelled() => {
 						info!("Shutdown signal received. Exiting fetch_tip loop...");
 						break;
 					}
@@ -363,7 +363,7 @@ impl App {
 		if self.config.lightningd.is_some() {
 			let cln_config = self.config.lightningd.clone().unwrap();
 			let jh_sendpay = tokio::spawn(async move {
-				let shutdown = app.shutdown_channel.clone();
+				let shutdown = app.shutdown.clone();
 				let ret = lightning::run_process_sendpay_updates(shutdown, &cln_config, sendpay_tx)
 					.await.context("error processing sendpays");
 				info!("Sendpay updater process exited with {:?}", ret);
