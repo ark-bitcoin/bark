@@ -7,7 +7,7 @@ use bdk_wallet::{KeychainKind, SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::{psbt, FeeRate, OutPoint, Transaction, Txid, Weight};
-use cbitcoin::Psbt;
+use cbitcoin::{BlockHash, Psbt};
 
 use crate::{fee, P2TR_DUST};
 use crate::bitcoin::TransactionExt;
@@ -149,7 +149,8 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	/// Insert a checkpoint into the wallet.
 	///
 	/// It's advised to use this only when recovering a wallet with a birthday.
-	fn set_checkpoint(&mut self, checkpoint: BlockId) {
+	fn set_checkpoint(&mut self, height: u32, hash: BlockHash) {
+		let checkpoint = BlockId { height, hash };
 		let wallet = self.borrow_mut();
 		wallet.apply_update(bdk_wallet::Update {
 			chain: Some(wallet.latest_checkpoint().insert(checkpoint)),

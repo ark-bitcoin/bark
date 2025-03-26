@@ -152,17 +152,8 @@ impl App {
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
-		let deep_tip = (|| {
-			let tip = bitcoind.get_block_count()?;
-			let deep = tip.saturating_sub(DEEPLY_CONFIRMED);
-			let hash = bitcoind.get_block_hash(deep)?;
-			let header = bitcoind.get_block_header_info(&hash)?;
-			let block_id = bdk_wallet::chain::BlockId {
-				height: header.height as u32,
-				hash: header.hash,
-			};
-			Ok::<_, anyhow::Error>(block_id)
-		})().context("failed to fetch deep tip from bitcoind")?;
+		let deep_tip = bitcoind.deep_tip()
+			.context("failed to fetch deep tip from bitcoind")?;
 
 		let db = database::Db::create(&cfg).await?;
 
@@ -179,7 +170,7 @@ impl App {
 		// Store initial wallet state to avoid full chain sync.
 		let (mut wallet, _) = Self::wallet_from_seed(cfg.network, &seed, None)
 			.expect("shouldn't fail on empty state");
-		wallet.set_checkpoint(deep_tip);
+		wallet.set_checkpoint(deep_tip.height as u32, deep_tip.hash);
 		let cs = wallet.take_staged().expect("should have stored tip");
 		ensure!(db.read_aggregate_changeset().await.context("db error")?.is_none(), "db not empty");
 		db.store_changeset(&cs).await.context("error storing initial wallet state")?;

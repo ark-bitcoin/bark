@@ -46,7 +46,7 @@ use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
@@ -339,11 +339,12 @@ impl <P>Wallet<P> where
 		} else {
 			wallet.onchain.tip().await
 				.context("failed to fetch tip from chain source")?
+				.saturating_sub(DEEPLY_CONFIRMED as u32)
 				as BlockHeight
 		};
 		let id = wallet.onchain.chain_source.block_id(bday as u32).await
 			.with_context(|| format!("failed to get block height {} from chain source", bday))?;
-		wallet.onchain.wallet.set_checkpoint(id);
+		wallet.onchain.wallet.set_checkpoint(id.height, id.hash);
 		wallet.onchain.wallet.persist(&mut wallet.db)?;
 
 		Ok(wallet)
