@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
+use bitcoin::params::Params;
+use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
 use serde::ser::StdError;
 
@@ -164,11 +165,13 @@ impl <P>Exit<P> where
 		for vtxo in vtxos {
 			let added = self.index.add_vtxo(vtxo.clone());
 			if let Some(added) = added {
+				let params = Params::new(onchain.wallet.network());
+				let address = Address::from_script(&added.spec().vtxo_spk(), params)?;
 				self.db.register_movement(MovementArgs {
 					spends: vec![&added],
 					receives: None,
 					recipients: vec![
-						(added.spec().vtxo_spk().to_string(), added.amount())
+						(address.to_string(), added.amount())
 					],
 					fees: None
 				}).context("Failed to register send")?;
