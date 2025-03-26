@@ -32,9 +32,9 @@ pub trait BarkPersister: Clone + WalletPersister {
 
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
-	/// Fetch all currently spendable VTXOs in the database
-	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>>;
-	/// Get the soonest-expiring vtxos with total value at least `min_value`.
+	/// Fetch all VTXO's that are in a given state
+	fn get_vtxos_by_state(&self, state: &[VtxoState]) -> anyhow::Result<Vec<Vtxo>>;
+/// Get the soonest-expiring vtxos with total value at least `min_value`.
 	fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>>;
 	/// Remove a VTXO from the database
 	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
@@ -60,4 +60,9 @@ pub trait BarkPersister: Clone + WalletPersister {
 	fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()>;
 
 	fn update_vtxo_state_checked(&self, vtxo_id: VtxoId, new_state: VtxoState, allowed_old_states: &[VtxoState]) -> anyhow::Result<()>;
+
+	/// Fetch all currently spendable VTXOs in the database
+	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+		self.get_vtxos_by_state(&[VtxoState::Spendable])
+	}
 }

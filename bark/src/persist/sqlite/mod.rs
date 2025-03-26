@@ -127,9 +127,10 @@ impl BarkPersister for SqliteClient {
 		query::get_vtxo_by_id(&conn, id)
 	}
 
-	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+	/// Get all VTXOs that are in one of the provided states
+	fn get_vtxos_by_state(&self, state: &[VtxoState]) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
-		query::get_vtxos_by_state(&conn, &[VtxoState::Spendable])
+		query::get_vtxos_by_state(&conn, state)
 	}
 
 	/// Get the soonest-expiring vtxos with total value at least `min_value`.
