@@ -250,7 +250,7 @@ impl App {
 		mut_self.trigger_round_sweep_tx = Some(sweep_trigger_tx);
 		let jh_txindex = mut_self.txindex.start(
 			mut_self.bitcoind.clone(),
-			mut_self.config.round_sign_time,
+			mut_self.config.txindex_check_interval,
 			mut_self.shutdown_channel.subscribe(),
 		);
 		mut_self.telemetry_metrics = telemetry_metrics;
