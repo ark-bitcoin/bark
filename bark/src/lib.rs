@@ -471,6 +471,32 @@ impl <P>Wallet<P> where
 		Ok(self.vtxos_with(filter)?)
 	}
 
+	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()>
+	{
+		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoState::UnregisteredBoard])?;
+		for board in unregistered_boards {
+			if let Err(e) = self.register_board(board.id()).await {
+				warn!("Failed to register board {}: {}", board.id(), e);
+			}
+		};
+
+		Ok(())
+	}
+
+	/// Provides maintenance tasks on the wallet
+	///
+	/// This tasks include onchain-sync, off-chain sync,
+	/// registering onboard with the server.
+	///
+	/// This tasks will only include anything that has to wait
+	/// for a round. The maintenance call cannot be used to
+	/// refresh VTXOs.
+	pub async fn maintenance(&mut self) -> anyhow::Result<()> {
+		self.sync().await?;
+		self.register_all_unregistered_boards().await?;
+		Ok(())
+	}
+
 	/// Sync status of unilateral exits.
 	pub async fn sync_exits(&mut self) -> anyhow::Result<()> {
 		self.exit.sync_exit(&mut self.onchain).await?;
@@ -606,22 +632,40 @@ impl <P>Wallet<P> where
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
+		let res = self.register_board(vtxo.id()).await;
+		info!("Board successful");
+		res
+	}
+
+	/// Registers a board to the Ark server
+	async fn register_board(&self, vtxo_id: VtxoId) -> anyhow::Result<Board> {
+		trace!("Attempting to register board {} to server", vtxo_id);
+		let mut asp = self.require_asp()?;
+
+		// Get the vtxo and funding transaction from the database
+		let vtxo = self.db.get_vtxo(vtxo_id)?
+			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
+		let board_vtxo = vtxo.as_board()
+			.with_context(|| format!("Expected type 'board'. Received '{}'", vtxo.vtxo_type()))?;
+
+		let funding_tx = self.onchain.get_tx(board_vtxo.onchain_output.txid)
+			.context("Failed to find funding_tx for {}")?;
+
 		// Register the vtxo with the server
 		asp.client.register_board_vtxo(rpc::BoardVtxoRequest {
 			board_vtxo: vtxo.encode(),
-			board_tx: bitcoin::consensus::serialize(&tx),
+			board_tx: bitcoin::consensus::serialize(&funding_tx),
 		}).await.context("error registering board with the asp")?;
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
 		let allowed_states = &[VtxoState::UnregisteredBoard, VtxoState::Spendable];
-		self.db.update_vtxo_state_checked(vtxo.id(), VtxoState::Spendable, allowed_states)?;
+		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
 
-		info!("Board successful");
 
 		Ok(
 			Board {
-				funding_txid: tx.compute_txid(),
+				funding_txid: funding_tx.compute_txid(),
 				vtxos: vec![vtxo.into()],
 			}
 		)
