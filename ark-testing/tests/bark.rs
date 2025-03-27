@@ -179,12 +179,11 @@ async fn large_round() {
 
 	info!("Running multiple_round_test with N set to {}", N);
 
-	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
-		round_interval: Duration::from_millis(2_000),
-		round_submit_time: Duration::from_millis(100 * N as u64),
-		round_sign_time: Duration::from_millis(1000 * N as u64),
-		nb_round_nonces: 200,
-		..ctx.aspd_default_cfg("aspd", None).await
+	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+		cfg.round_interval = Duration::from_millis(2_000);
+		cfg.round_submit_time = Duration::from_millis(100 * N as u64);
+		cfg.round_sign_time = Duration::from_millis(1000 * N as u64);
+		cfg.nb_round_nonces = 200;
 	}).await;
 	ctx.fund_asp(&aspd, btc(10)).await;
 
@@ -657,9 +656,8 @@ async fn second_round_attempt() {
 	}
 
 	let ctx = TestContext::new("bark/second_round_attempt").await;
-	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
-		round_interval: Duration::from_secs(3600),
-		..ctx.aspd_default_cfg("aspd", None).await
+	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 	ctx.fund_asp(&aspd, btc(10)).await;
 

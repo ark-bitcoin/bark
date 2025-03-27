@@ -151,7 +151,7 @@ impl TestContext {
 		}
 	}
 
-	pub async fn aspd_default_cfg(
+	async fn aspd_default_cfg(
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
@@ -212,8 +212,15 @@ impl TestContext {
 		}
 	}
 
-	pub async fn new_aspd_with_cfg(&self, name: impl AsRef<str>, mut cfg: Config) -> Aspd {
+	pub async fn new_aspd_with_cfg(
+		&self,
+		name: impl AsRef<str>,
+		lightningd: Option<&Lightningd>,
+		mod_cfg: impl FnOnce(&mut aspd::Config),
+	) -> Aspd {
 		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+		let mut cfg = self.aspd_default_cfg(name.as_ref(), lightningd).await;
+		mod_cfg(&mut cfg);
 
 		assert_eq!("", cfg.bitcoind.url, "bitcoind url already set");
 		cfg.bitcoind.url = bitcoind.rpc_url();
@@ -235,8 +242,7 @@ impl TestContext {
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
 	) -> Aspd {
-		let cfg = self.aspd_default_cfg(name.as_ref(), lightningd).await;
-		self.new_aspd_with_cfg(name, cfg).await
+		self.new_aspd_with_cfg(name, lightningd, |_| {}).await
 	}
 
 	/// Creates new aspd and immediately funds it. Waits until the aspd's bitcoind
