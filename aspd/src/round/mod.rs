@@ -241,37 +241,6 @@ impl CollectingPayments {
 		Ok(())
 	}
 
-	fn validate_board_inputs(
-		&self,
-		app: &App,
-		inputs: &[Vtxo],
-	) -> anyhow::Result<()> {
-		// TODO(stevenroose) cache this check
-		for board in inputs.iter().filter_map(|v| v.as_board()) {
-			let id = board.id();
-			let txid = board.onchain_output.txid;
-			match app.bitcoind.get_raw_transaction_info(&txid, None) {
-				Ok(tx) => {
-					let confs = tx.confirmations.unwrap_or(0) as usize;
-					if confs < app.config.round_board_confirmations {
-						slog!(RoundUserVtxoUnconfirmedBoard, round_seq: self.round_seq,
-							vtxo: id, confirmations: confs,
-						);
-						return badarg!("input board vtxo not deeply confirmed (has {confs} confs, \
-							but requires {})", app.config.round_board_confirmations,
-						);
-					}
-				},
-				Err(e) => {
-					// might mean tx is not in mempool nor chain
-					bail!("error getting raw tx for board vtxo: {e}");
-				},
-			}
-		}
-
-		Ok(())
-	}
-
 	/// Fetch and check whether the vtxos are owned by user and
 	/// weren't already spent, then return them.
 	///
@@ -336,7 +305,7 @@ impl CollectingPayments {
 			return Err(e).context("registration failed");
 		}
 
-		if let Err(e) = self.validate_board_inputs(app, &input_vtxos) {
+		if let Err(e) = app.validate_board_inputs(&input_vtxos) {
 			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt_seq: self.attempt_seq, error: e.to_string(),
 			);

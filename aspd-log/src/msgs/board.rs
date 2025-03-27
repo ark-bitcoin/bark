@@ -1,4 +1,5 @@
 
+use ark::VtxoId;
 use bitcoin::{Amount, OutPoint, Txid};
 
 
@@ -20,3 +21,10 @@ pub struct RegisteredBoard {
 }
 impl_slog!(RegisteredBoard, Trace, "registered board vtxo");
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnconfirmedBoardSpendAttempt {
+	pub vtxo: VtxoId,
+	pub confirmations: usize,
+}
+impl_slog!(UnconfirmedBoardSpendAttempt, Trace, "user attempted to spend board vtxo not deeply confirmed");

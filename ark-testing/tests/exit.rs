@@ -326,6 +326,8 @@ async fn exit_oor() {
 
 	// Bark1 board funds and sends some part to bark2
 	bark1.board(sat(900_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
 	let bark2_pubkey = bark2.vtxo_pubkey().await;
 	bark1.send_oor(bark2_pubkey, sat(100_000)).await;
 
@@ -365,7 +367,7 @@ async fn double_exit_call() {
 
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
-	ctx.bitcoind.generate(12).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	// board vtxo

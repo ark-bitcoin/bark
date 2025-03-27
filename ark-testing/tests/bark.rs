@@ -646,6 +646,7 @@ async fn second_round_attempt() {
 
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
 	bark1.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	let proxy = Proxy(aspd.get_public_client().await, Arc::new(AtomicBool::new(true)));
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;

@@ -19,6 +19,7 @@ use ark::util::SECP;
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
+	UnconfirmedBoardSpendAttempt
 };
 use aspd_rpc as rpc;
 
@@ -439,6 +440,7 @@ async fn double_spend_oor() {
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	bark.send_oor(&*RANDOM_PK, sat(100_000)).await;
 
@@ -589,6 +591,41 @@ async fn spend_unregistered_board() {
 	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;
 	tokio::spawn(async move {
 		let _ = bark.refresh_all().await;
+		// we don't care that that call fails
+	});
+	l.recv().wait(2500).await;
+}
+
+#[tokio::test]
+async fn spend_unconfirmed_board_round() {
+	let ctx = TestContext::new("aspd/spend_unconfirmed_board_round").await;
+
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &aspd, sat(1_000_000)).await;
+	bark.board(sat(800_000)).await;
+
+	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	tokio::spawn(async move {
+		let _ = bark.refresh_all().await;
+		// we don't care that that call fails
+	});
+	l.recv().wait(2500).await;
+}
+
+#[tokio::test]
+async fn spend_unconfirmed_board_oor() {
+	let ctx = TestContext::new("aspd/spend_unconfirmed_board_oor").await;
+
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2".to_string(), &aspd).await;
+	bark1.board(sat(800_000)).await;
+
+	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	tokio::spawn(async move {
+		let _ = bark1.send_oor(bark2.vtxo_pubkey().await, sat(400_000)).await;
 		// we don't care that that call fails
 	});
 	l.recv().wait(2500).await;
