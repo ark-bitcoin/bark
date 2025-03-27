@@ -39,6 +39,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::{BlockRef, TransactionExt, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::WalletExt;
+use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
@@ -51,8 +52,7 @@ use tokio_util::sync::CancellationToken;
 use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
-use aspd_rpc as rpc;
-use cln_rpc::listpays_pays::ListpaysPaysStatus;
+use aspd_rpc::protos;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::cln::SendpaySubscriptionItem;
@@ -776,7 +776,7 @@ impl App {
 
 
 	/// Returns a stream of updates related to the payment with hash
-	async fn finish_bolt11_payment(&self, signed: SignedBolt11Payment) -> anyhow::Result<impl Stream<Item = anyhow::Result<rpc::Bolt11PaymentUpdate>>> {
+	async fn finish_bolt11_payment(&self, signed: SignedBolt11Payment) -> anyhow::Result<impl Stream<Item = anyhow::Result<protos::Bolt11PaymentUpdate>>> {
 		let payment_hash = signed.payment.invoice.payment_hash().clone();
 
 		// Connecting to the grpc-client
@@ -795,10 +795,10 @@ impl App {
 		let mut interval = tokio::time::interval(Duration::from_secs(5));
 		interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 		let heartbeat_stream = IntervalStream::new(interval).map(move |_| {
-			rpc::Bolt11PaymentUpdate {
+			protos::Bolt11PaymentUpdate {
 				progress_message: String::from("Your payment is being routed through the lightning network..."),
 				payment_hash: payment_hash.as_byte_array().to_vec(),
-				status: rpc::PaymentStatus::Pending as i32,
+				status: protos::PaymentStatus::Pending as i32,
 				payment_preimage: None
 			}
 		});
@@ -806,8 +806,8 @@ impl App {
 		// Let event-stream
 		let event_stream = BroadcastStream::new(sendpay_rx.resubscribe()).filter_map(move |v| match v {
 			Ok(v) => {
-				Some(rpc::Bolt11PaymentUpdate {
-					status: rpc::PaymentStatus::from(v.status.clone()).into(),
+				Some(protos::Bolt11PaymentUpdate {
+					status: protos::PaymentStatus::from(v.status.clone()).into(),
 					progress_message: format!(
 						"{} payment-part for hash {:?} - Attempt {} part {} to status {}",
 						v.kind.as_str_name(), v.payment_hash, v.group_id, v.part_id, v.status,
@@ -828,25 +828,25 @@ impl App {
 				StreamUntilItem::Future(payment) => {
 					match payment {
 						Ok(Ok(preimage)) => {
-							rpc::Bolt11PaymentUpdate {
+							protos::Bolt11PaymentUpdate {
 								progress_message: "Payment completed".to_string(),
-								status: rpc::PaymentStatus::Complete.into(),
+								status: protos::PaymentStatus::Complete.into(),
 								payment_hash: payment_hash.as_byte_array().to_vec(),
 								payment_preimage: Some(preimage)
 							}
 						},
 						Ok(Err(err)) => {
-							rpc::Bolt11PaymentUpdate {
+							protos::Bolt11PaymentUpdate {
 								progress_message: format!("Payment failed: {}", err),
-								status: rpc::PaymentStatus::Failed.into(),
+								status: protos::PaymentStatus::Failed.into(),
 								payment_hash: payment_hash.as_byte_array().to_vec(),
 								payment_preimage: None
 							}
 						},
 						Err(err) => {
-							rpc::Bolt11PaymentUpdate {
+							protos::Bolt11PaymentUpdate {
 								progress_message: format!("Error during payment. Payment state unknown {:?}", err),
-								status: rpc::PaymentStatus::Failed.into(),
+								status: protos::PaymentStatus::Failed.into(),
 								payment_hash: payment_hash.as_byte_array().to_vec(),
 								payment_preimage: None
 							}

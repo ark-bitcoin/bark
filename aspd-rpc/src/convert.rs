@@ -1,6 +1,6 @@
 
-use std::convert::TryFrom;
 use std::fmt;
+use std::convert::TryFrom;
 use std::time::Duration;
 
 use ark::rounds::VtxoOwnershipChallenge;
@@ -9,6 +9,8 @@ use bitcoin::{self, FeeRate};
 
 use ark::{musig, VtxoId};
 use ark::tree::signed::VtxoTreeSpec;
+
+use crate::protos;
 
 #[derive(Debug)]
 pub struct ConvertError {
@@ -30,9 +32,9 @@ impl fmt::Display for ConvertError {
 impl std::error::Error for ConvertError {}
 
 
-impl From<ark::ArkInfo> for crate::ArkInfo {
+impl From<ark::ArkInfo> for protos::ArkInfo {
 	fn from(v: ark::ArkInfo) -> Self {
-		crate::ArkInfo {
+		protos::ArkInfo {
 			network: v.network.to_string(),
 			asp_pubkey: v.asp_pubkey.serialize().to_vec(),
 			round_interval_secs: v.round_interval.as_secs() as u32,
@@ -43,9 +45,9 @@ impl From<ark::ArkInfo> for crate::ArkInfo {
 	}
 }
 
-impl TryFrom<crate::ArkInfo> for ark::ArkInfo {
+impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 	type Error = ConvertError;
-	fn try_from(v: crate::ArkInfo) -> Result<Self, Self::Error> {
+	fn try_from(v: protos::ArkInfo) -> Result<Self, Self::Error> {
 		Ok(ark::ArkInfo {
 			network: v.network.parse().map_err(|_| "invalid network")?,
 			asp_pubkey: PublicKey::from_slice(&v.asp_pubkey).map_err(|_| "invalid asp pubkey")?,
@@ -59,24 +61,24 @@ impl TryFrom<crate::ArkInfo> for ark::ArkInfo {
 	}
 }
 
-impl From<ark::lightning::PaymentStatus> for crate::PaymentStatus {
+impl From<ark::lightning::PaymentStatus> for protos::PaymentStatus {
 	fn from(value: ark::lightning::PaymentStatus) -> Self {
 		match value {
-			ark::lightning::PaymentStatus::Complete => crate::PaymentStatus::Complete,
-			ark::lightning::PaymentStatus::Pending => crate::PaymentStatus::Pending,
-			ark::lightning::PaymentStatus::Failed => crate::PaymentStatus::Failed,
+			ark::lightning::PaymentStatus::Complete => protos::PaymentStatus::Complete,
+			ark::lightning::PaymentStatus::Pending => protos::PaymentStatus::Pending,
+			ark::lightning::PaymentStatus::Failed => protos::PaymentStatus::Failed,
 		}
 	}
 }
 
-impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
+impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
 	fn from(e: ark::rounds::RoundEvent) -> Self {
-		crate::RoundEvent {
+		protos::RoundEvent {
 			event: Some(match e {
 				ark::rounds::RoundEvent::Start(ark::rounds::RoundInfo {
 					round_seq, offboard_feerate,
 				}) => {
-					crate::round_event::Event::Start(crate::RoundStart {
+					protos::round_event::Event::Start(protos::RoundStart {
 						round_seq: round_seq as u64,
 						offboard_feerate_sat_vkb: offboard_feerate.to_sat_per_kwu() * 4,
 					})
@@ -84,7 +86,7 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq, attempt_seq, challenge,
 				}) => {
-					crate::round_event::Event::Attempt(crate::RoundAttempt {
+					protos::round_event::Event::Attempt(protos::RoundAttempt {
 						round_seq: round_seq as u64,
 						attempt_seq: attempt_seq as u64,
 						vtxo_ownership_challenge: challenge.inner().to_vec(),
@@ -93,7 +95,7 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 				ark::rounds::RoundEvent::VtxoProposal {
 					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey,
 				} => {
-					crate::round_event::Event::VtxoProposal(crate::VtxoProposal {
+					protos::round_event::Event::VtxoProposal(protos::VtxoProposal {
 						round_seq: round_seq as u64,
 						vtxos_spec: vtxos_spec.encode(),
 						unsigned_round_tx: bitcoin::consensus::serialize(&unsigned_round_tx),
@@ -104,12 +106,12 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 					})
 				},
 				ark::rounds::RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
-					crate::round_event::Event::RoundProposal(crate::RoundProposal {
+					protos::round_event::Event::RoundProposal(protos::RoundProposal {
 						round_seq: round_seq as u64,
 						vtxo_cosign_signatures: cosign_sigs.into_iter()
 							.map(|s| s.serialize().to_vec()).collect(),
 						forfeit_nonces: forfeit_nonces.into_iter().map(|(id, nonces)| {
-							crate::ForfeitNonces {
+							protos::ForfeitNonces {
 								input_vtxo_id: id.to_bytes().to_vec(),
 								pub_nonces: nonces.into_iter()
 									.map(|n| n.serialize().to_vec())
@@ -119,7 +121,7 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 					})
 				},
 				ark::rounds::RoundEvent::Finished { round_seq, signed_round_tx } => {
-					crate::round_event::Event::Finished(crate::RoundFinished {
+					protos::round_event::Event::Finished(protos::RoundFinished {
 						round_seq: round_seq as u64,
 						signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 					})
@@ -129,19 +131,19 @@ impl From<ark::rounds::RoundEvent> for crate::RoundEvent {
 	}
 }
 
-impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
+impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 	type Error = ConvertError;
 
-	fn try_from(m: crate::RoundEvent) -> Result<ark::rounds::RoundEvent, Self::Error> {
+	fn try_from(m: protos::RoundEvent) -> Result<ark::rounds::RoundEvent, Self::Error> {
 		Ok(match m.event.unwrap() {
-			crate::round_event::Event::Start(m) => {
+			protos::round_event::Event::Start(m) => {
 				let offboard_feerate = FeeRate::from_sat_per_kwu(m.offboard_feerate_sat_vkb / 4);
 				ark::rounds::RoundEvent::Start(ark::rounds::RoundInfo {
 					round_seq: m.round_seq as usize,
 					offboard_feerate,
 				})
 			},
-			crate::round_event::Event::Attempt(m) => {
+			protos::round_event::Event::Attempt(m) => {
 				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq: m.round_seq as usize,
 					attempt_seq: m.attempt_seq as usize,
@@ -150,7 +152,7 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 					),
 				})
 			},
-			crate::round_event::Event::VtxoProposal(m) => {
+			protos::round_event::Event::VtxoProposal(m) => {
 				ark::rounds::RoundEvent::VtxoProposal {
 					round_seq: m.round_seq as usize,
 					unsigned_round_tx: bitcoin::consensus::deserialize(&m.unsigned_round_tx)
@@ -165,7 +167,7 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 						.map_err(|_| "invaid connector pubkey")?,
 				}
 			},
-			crate::round_event::Event::RoundProposal(m) => {
+			protos::round_event::Event::RoundProposal(m) => {
 				ark::rounds::RoundEvent::RoundProposal {
 					round_seq: m.round_seq as usize,
 					cosign_sigs: m.vtxo_cosign_signatures.into_iter().map(|s| {
@@ -183,7 +185,7 @@ impl TryFrom<crate::RoundEvent> for ark::rounds::RoundEvent {
 					}).collect::<Result<_, ConvertError>>()?,
 				}
 			},
-			crate::round_event::Event::Finished(m) => {
+			protos::round_event::Event::Finished(m) => {
 				ark::rounds::RoundEvent::Finished {
 					round_seq: m.round_seq as usize,
 					signed_round_tx: bitcoin::consensus::deserialize(&m.signed_round_tx)

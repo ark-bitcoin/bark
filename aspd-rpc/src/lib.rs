@@ -3,7 +3,9 @@ pub extern crate tonic;
 mod aspd; // generated
 mod convert;
 
-pub use crate::aspd::*;
+pub mod protos {
+	pub use crate::aspd::*;
+}
 pub use crate::aspd::ark_service_client::ArkServiceClient;
 pub use crate::aspd::admin_service_client::AdminServiceClient;
 

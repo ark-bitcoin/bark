@@ -8,6 +8,7 @@ use tokio::fs;
 use tonic::transport::Uri;
 
 use aspd::config::{self, Config};
+use aspd_rpc as rpc;
 
 use crate::daemon::aspd::postgresd::{self, Postgres};
 use crate::util::{should_use_electrs, test_data_directory};
@@ -327,7 +328,7 @@ impl TestContext {
 		let address = asp.get_funding_address().await;
 		let txid = self.bitcoind.fund_addr(address, amount).await;
 		self.bitcoind.generate(1).await;
-		asp.get_admin_client().await.wallet_status(aspd_rpc::Empty {}).await
+		asp.get_admin_client().await.wallet_status(rpc::protos::Empty {}).await
 			.expect("error calling wallet status after funding apsd");
 		txid
 	}

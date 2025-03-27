@@ -60,7 +60,7 @@ use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
-use aspd_rpc as rpc;
+use aspd_rpc::{self as rpc, protos};
 
 use crate::exit::Exit;
 use crate::onchain::Utxo;
@@ -251,7 +251,7 @@ impl AspConnection {
 		let mut client = rpc::ArkServiceClient::connect(endpoint).await
 			.context("couldn't connect to Ark server")?;
 
-		let res = client.handshake(rpc::HandshakeRequest { version: our_version })
+		let res = client.handshake(protos::HandshakeRequest { version: our_version })
 			.await.context("ark info request failed")?.into_inner();
 
 		if let Some(ref msg) = res.psa {
@@ -602,7 +602,7 @@ impl <P>Wallet<P> where
 		// We ask the ASP to cosign our board vtxo exit tx.
 		let (user_part, priv_user_part) = ark::board::new_user(spec, utxo);
 		let asp_part = {
-			let res = asp.client.request_board_cosign(rpc::BoardCosignRequest {
+			let res = asp.client.request_board_cosign(protos::BoardCosignRequest {
 				user_part: {
 					let mut buf = Vec::new();
 					ciborium::into_writer(&user_part, &mut buf).unwrap();
@@ -654,7 +654,7 @@ impl <P>Wallet<P> where
 			.context("Failed to find funding_tx for {}")?;
 
 		// Register the vtxo with the server
-		asp.client.register_board_vtxo(rpc::BoardVtxoRequest {
+		asp.client.register_board_vtxo(protos::BoardVtxoRequest {
 			board_vtxo: vtxo.encode(),
 			board_tx: bitcoin::consensus::serialize(&funding_tx),
 		}).await.context("error registering board with the asp")?;
@@ -726,13 +726,13 @@ impl <P>Wallet<P> where
 		let current_height = self.onchain.tip().await?;
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
 		debug!("Querying ark for rounds since height {}", last_sync_height);
-		let req = rpc::FreshRoundsRequest { start_height: last_sync_height };
+		let req = protos::FreshRoundsRequest { start_height: last_sync_height };
 		let fresh_rounds = asp.client.get_fresh_rounds(req).await?.into_inner();
 		debug!("Received {} new rounds from ark", fresh_rounds.txids.len());
 
 		for txid in fresh_rounds.txids {
 			let txid = Txid::from_slice(&txid).context("invalid txid from asp")?;
-			let req = rpc::RoundId { txid: txid.to_byte_array().to_vec() };
+			let req = protos::RoundId { txid: txid.to_byte_array().to_vec() };
 			let round = asp.client.get_round(req).await?.into_inner();
 
 			let tree = SignedVtxoTreeSpec::decode(&round.signed_vtxos)
@@ -761,7 +761,7 @@ impl <P>Wallet<P> where
 
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
-		let req = rpc::OorVtxosRequest { pubkey: self.oor_pubkey().serialize().to_vec() };
+		let req = protos::OorVtxosRequest { pubkey: self.oor_pubkey().serialize().to_vec() };
 		let resp = asp.client.empty_oor_mailbox(req).await.context("error fetching oors")?;
 		let oors = resp.into_inner().vtxos.into_iter()
 			.map(|b| Vtxo::decode(&b).context("invalid vtxo from asp"))
@@ -945,7 +945,7 @@ impl <P>Wallet<P> where
 			(secs, pubs, keypairs)
 		};
 
-		let req = rpc::OorCosignRequest {
+		let req = protos::OorCosignRequest {
 			payment: payment.encode(),
 			pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
 		};
@@ -994,7 +994,7 @@ impl <P>Wallet<P> where
 
 		let oor = self.create_oor_vtxo(destination, amount).await?;
 
-		let req = rpc::OorVtxo {
+		let req = protos::OorVtxo {
 			pubkey: destination.serialize().to_vec(),
 			vtxo: oor.created.clone().encode(),
 		};
@@ -1066,7 +1066,7 @@ impl <P>Wallet<P> where
 			(secs, pubs, keypairs)
 		};
 
-		let req = rpc::Bolt11PaymentRequest {
+		let req = protos::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
 			amount_sats: user_amount.map(|a| a.to_sat()),
 			input_vtxos: inputs.iter().map(|v| v.encode()).collect(),
@@ -1101,7 +1101,7 @@ impl <P>Wallet<P> where
 			&asp_part_sigs,
 		);
 
-		let req = rpc::SignedBolt11PaymentDetails {
+		let req = protos::SignedBolt11PaymentDetails {
 			signed_payment: signed.clone().encode()
 		};
 
@@ -1147,7 +1147,7 @@ impl <P>Wallet<P> where
 			let keypair = self.vtxo_seed.derive_keypair(keypair_idx);
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
-			let req = rpc::RevokeBolt11PaymentRequest {
+			let req = protos::RevokeBolt11PaymentRequest {
 				signed_payment: signed.encode(),
 				pub_nonces: vec![pub_nonce.serialize().to_vec()],
 			};
@@ -1273,7 +1273,7 @@ impl <P>Wallet<P> where
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
-		let mut events = asp.client.subscribe_rounds(rpc::Empty {}).await?.into_inner()
+		let mut events = asp.client.subscribe_rounds(protos::Empty {}).await?.into_inner()
 			.map(|m| {
 				let m = m.context("received error on event stream")?;
 				let e = RoundEvent::try_from(m).context("error converting rpc round event")?;
@@ -1363,12 +1363,12 @@ impl <P>Wallet<P> where
 					input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
 				);
 
-				let res = asp.client.submit_payment(rpc::SubmitPaymentRequest {
+				let res = asp.client.submit_payment(protos::SubmitPaymentRequest {
 					input_vtxos: input_vtxos.iter().map(|(id, vtxo)| {
 						let key = self.vtxo_seed.derive_keypair(
 							self.db.get_vtxo_key_index(vtxo).expect("owned vtxo key should be in database")
 						);
-						rpc::InputVtxo {
+						protos::InputVtxo {
 							vtxo_id: id.to_bytes().to_vec(),
 							ownership_proof: {
 								let sig = round_state.challenge().sign_with(*id, key);
@@ -1377,7 +1377,7 @@ impl <P>Wallet<P> where
 						}
 					}).collect(),
 					vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
-						rpc::VtxoRequest {
+						protos::VtxoRequest {
 							amount: r.amount.to_sat(),
 							vtxo_public_key: r.pubkey.serialize().to_vec(),
 							cosign_pubkey: r.cosign_pk.serialize().to_vec(),
@@ -1385,7 +1385,7 @@ impl <P>Wallet<P> where
 						}
 					}).collect(),
 					offboard_requests: offb_reqs.iter().map(|r| {
-						rpc::OffboardRequest {
+						protos::OffboardRequest {
 							amount: r.amount.to_sat(),
 							offboard_spk: r.script_pubkey.to_bytes(),
 						}
@@ -1480,7 +1480,7 @@ impl <P>Wallet<P> where
 					info!("Sending {} partial vtxo cosign signatures for pk {}",
 						part_sigs.len(), key.public_key(),
 					);
-					let res = asp.client.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
+					let res = asp.client.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
 						pubkey: key.public_key().serialize().to_vec(),
 						signatures: part_sigs.iter().map(|s| s.serialize().to_vec()).collect(),
 					}).await;
@@ -1570,9 +1570,9 @@ impl <P>Wallet<P> where
 					Ok((id, sigs))
 				}).collect::<anyhow::Result<HashMap<_, _>>>()?;
 				debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
-				let res = asp.client.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest {
+				let res = asp.client.provide_forfeit_signatures(protos::ForfeitSignaturesRequest {
 					signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
-						rpc::ForfeitSignatures {
+						protos::ForfeitSignatures {
 							input_vtxo_id: id.to_bytes().to_vec(),
 							pub_nonces: sigs.iter().map(|s| s.0.serialize().to_vec()).collect(),
 							signatures: sigs.iter().map(|s| s.1.serialize().to_vec()).collect(),

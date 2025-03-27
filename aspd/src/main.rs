@@ -6,13 +6,13 @@ use std::process;
 use std::str::FromStr;
 
 use anyhow::Context;
-use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
-use aspd_rpc as rpc;
 use bitcoin::{Address, Amount};
 use clap::Parser;
 use tonic::transport::Uri;
 
 use aspd::{App, Config};
+use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
+use aspd_rpc::{self as rpc, protos};
 
 /// Defaults to our default port on localhost.
 const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
@@ -216,7 +216,7 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 
 	match cmd {
 		RpcCommand::Wallet => {
-			let res = asp.wallet_status(rpc::Empty {}).await?.into_inner();
+			let res = asp.wallet_status(protos::Empty {}).await?.into_inner();
 			println!("balance: {}", Amount::from_sat(res.balance));
 			println!("address: {}", res.address);
 			println!("confirmed utxos:");
@@ -229,7 +229,7 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 			}
 		},
 		RpcCommand::TriggerRound => {
-			asp.trigger_round(rpc::Empty {}).await?.into_inner();
+			asp.trigger_round(protos::Empty {}).await?.into_inner();
 		}
 		RpcCommand::Stop => unimplemented!(),
 	}

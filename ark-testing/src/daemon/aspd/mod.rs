@@ -17,7 +17,7 @@ use tokio::sync::{self, mpsc, Mutex};
 use tokio::process::Command;
 
 use aspd_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
-use aspd_rpc as rpc;
+use aspd_rpc::{self as rpc, protos};
 pub use aspd::config::{self, Config};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
@@ -109,14 +109,14 @@ impl Aspd {
 	}
 
 	pub async fn ark_info(&self) -> ark::ArkInfo {
-		self.get_public_client().await.handshake(rpc::HandshakeRequest {
+		self.get_public_client().await.handshake(protos::HandshakeRequest {
 			version: TESTING_CLIENT_VERSION.into(),
 		}).await.unwrap().into_inner().ark_info.unwrap().try_into().expect("invalid ark info")
 	}
 
 	pub async fn get_funding_address(&self) -> Address {
 		let mut admin_client = self.get_admin_client().await;
-		let response = admin_client.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
+		let response = admin_client.wallet_status(protos::Empty {}).await.unwrap().into_inner();
 		response.address.parse::<Address<NetworkUnchecked>>().unwrap()
 			.require_network(Network::Regtest).unwrap()
 	}
@@ -129,7 +129,7 @@ impl Aspd {
 		self.bitcoind().generate(1).await;
 		let _ = tokio::join!(l1.recv(), l2.recv(), minimum_wait);
 		trace!("Waited {} ms before starting round", start.elapsed().as_millis());
-		self.get_admin_client().await.trigger_round(rpc::Empty {}).await.unwrap();
+		self.get_admin_client().await.trigger_round(protos::Empty {}).await.unwrap();
 	}
 
 	pub async fn add_slog_handler<L: SlogHandler + Send + Sync + 'static>(&self, handler: L) {
@@ -277,7 +277,7 @@ impl AspdHelper {
 	async fn public_grpc_is_ready(&self) -> bool {
 		match self.connect_public_client().await {
 			Ok(mut c) => {
-				c.handshake(rpc::HandshakeRequest {
+				c.handshake(protos::HandshakeRequest {
 					version: TESTING_CLIENT_VERSION.into(),
 				}).await.is_ok()
 			},
@@ -287,7 +287,7 @@ impl AspdHelper {
 
 	async fn admin_grpc_is_ready(&self) -> bool {
 		match self.connect_admin_client().await {
-			Ok(mut c) => c.wallet_status(rpc::Empty {}).await.is_ok(),
+			Ok(mut c) => c.wallet_status(protos::Empty {}).await.is_ok(),
 			Err(_e) => false,
 		}
 	}

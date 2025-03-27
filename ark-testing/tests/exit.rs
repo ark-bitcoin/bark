@@ -11,7 +11,7 @@ use log::trace;
 
 use bark_json::primitives::VtxoType;
 use ark::vtxo::exit_spk;
-use aspd_rpc as rpc;
+use aspd_rpc::{self as rpc, protos};
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -90,8 +90,8 @@ async fn fail_handshake() {
 	impl aspd::proxy::AspdRpcProxy for NoHandshakeProxy {
 		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
-		async fn handshake(&mut self, _: rpc::HandshakeRequest) -> Result<rpc::HandshakeResponse, tonic::Status>  {
-			Ok(rpc::HandshakeResponse {
+		async fn handshake(&mut self, _: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status>  {
+			Ok(protos::HandshakeResponse {
 				psa: None,
 				error: Some("don't like you".into()),
 				ark_info: None,

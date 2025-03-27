@@ -22,7 +22,7 @@ use aspd_log::{
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 	UnconfirmedBoardSpendAttempt
 };
-use aspd_rpc as rpc;
+use aspd_rpc::protos;
 
 use ark_testing::{Aspd, TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -60,7 +60,7 @@ async fn bitcoind_auth_connection() {
 	ctx.fund_asp(&aspd, sat(1_000_000)).await;
 
 	let mut admin = aspd.get_admin_client().await;
-	let response = admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
+	let response = admin.wallet_status(protos::Empty {}).await.unwrap().into_inner();
 	assert_eq!(response.balance, 1_000_000);
 }
 
@@ -70,7 +70,7 @@ async fn bitcoind_cookie_connection() {
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(0.01)).await;
 
 	let mut admin = aspd.get_admin_client().await;
-	let response = admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
+	let response = admin.wallet_status(protos::Empty {}).await.unwrap().into_inner();
 	assert_eq!(response.balance, 1_000_000);
 }
 
@@ -99,7 +99,7 @@ async fn fund_asp() {
 	let mut admin_client = aspd.get_admin_client().await;
 
 	// Query the wallet balance of the asp
-	let response = admin_client.wallet_status(rpc::Empty {}).await.expect("Get response").into_inner();
+	let response = admin_client.wallet_status(protos::Empty {}).await.expect("Get response").into_inner();
 	assert_eq!(response.balance, 0);
 
 	// Fund the aspd
@@ -107,7 +107,7 @@ async fn fund_asp() {
 	ctx.bitcoind.generate(1).await;
 
 	// Confirm that the balance is updated
-	let response = admin_client.wallet_status(rpc::Empty {}).await.expect("Get response").into_inner();
+	let response = admin_client.wallet_status(protos::Empty {}).await.expect("Get response").into_inner();
 	assert!(response.balance > 0);
 }
 
@@ -122,7 +122,7 @@ async fn restart_key_stability() {
 	let asp_key1 = aspd.ark_info().await.asp_pubkey;
 	let addr1 = {
 		let mut admin_client = aspd.get_admin_client().await;
-		let res = admin_client.wallet_status(rpc::Empty {}).await.unwrap().into_inner();
+		let res = admin_client.wallet_status(protos::Empty {}).await.unwrap().into_inner();
 		res.address
 	};
 
@@ -131,7 +131,7 @@ async fn restart_key_stability() {
 	ctx.bitcoind.generate(1).await;
 
 	// Restart aspd.
-	let _ = aspd.get_admin_client().await.stop(rpc::Empty {}).await;
+	let _ = aspd.get_admin_client().await.stop(protos::Empty {}).await;
 	// bitcoind must be shut down gracefully otherwise it will not restart properly
 	aspd.shutdown_bitcoind().await;
 	aspd.stop().await.unwrap();
@@ -144,7 +144,7 @@ async fn restart_key_stability() {
 	let asp_key2 = aspd.ark_info().await.asp_pubkey;
 	let addr2 = {
 		let mut admin_client = aspd.get_admin_client().await;
-		let res = admin_client.wallet_status(rpc::Empty {}).await.expect("Get response").into_inner();
+		let res = admin_client.wallet_status(protos::Empty {}).await.expect("Get response").into_inner();
 		res.address
 	};
 
@@ -219,7 +219,7 @@ async fn sweep_vtxos() {
 
 	// before either expires not sweeping yet because nothing available
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
+	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(0), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
@@ -234,13 +234,13 @@ async fn sweep_vtxos() {
 
 	// now we expire the first one, still not sweeping because not enough surplus
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
+	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(73790), log_not_sweeping.recv().wait(1500).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
 	ctx.bitcoind.generate(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
-	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
+	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(147580), log_sweeping.recv().wait(1500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
@@ -250,7 +250,7 @@ async fn sweep_vtxos() {
 	// now we swept both board vtxos, let's sweep the round we created above
 	ctx.bitcoind.generate(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
+	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(149980), log_sweeping.recv().wait(2500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len());
@@ -261,7 +261,7 @@ async fn sweep_vtxos() {
 	bark.board(sat(101_000)).await;
 	ctx.bitcoind.generate(70).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
+	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(100615), log_sweeping.recv().wait(1500).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
@@ -271,7 +271,7 @@ async fn sweep_vtxos() {
 	ctx.bitcoind.generate(65).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
-	admin.trigger_sweep(rpc::Empty{}).await.unwrap();
+	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 
 	// and eventually the round should be finished
 	log_board_done.recv().wait(1000).await.unwrap();
@@ -280,7 +280,7 @@ async fn sweep_vtxos() {
 	info!("Round done signal received");
 	let stats = log_stats.recv().fast().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);
-	assert_eq!(1241212, admin.wallet_status(rpc::Empty {}).await.unwrap().into_inner().balance);
+	assert_eq!(1241212, admin.wallet_status(protos::Empty {}).await.unwrap().into_inner().balance);
 }
 
 #[tokio::test]
@@ -363,7 +363,7 @@ async fn full_round() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn submit_payment(&mut self, req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
+		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			let mut lock = self.1.lock().await;
 			let res = self.upstream().submit_payment(req).await;
 			// the last bark should fail being registered
@@ -406,12 +406,12 @@ async fn double_spend_oor() {
 
 	/// This proxy will always duplicate OOR requests and store the latest request in the mutex.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient, Arc<Mutex<Option<rpc::OorCosignRequest>>>);
+	struct Proxy(aspd::ArkClient, Arc<Mutex<Option<protos::OorCosignRequest>>>);
 	#[tonic::async_trait]
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_oor_cosign(&mut self, req: rpc::OorCosignRequest) -> Result<rpc::OorCosignResponse, tonic::Status> {
+		async fn request_oor_cosign(&mut self, req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
 			let (res1, res2) = tokio::join!(
 				c1.request_oor_cosign(req.clone()),
@@ -457,7 +457,7 @@ async fn double_spend_round() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn submit_payment(&mut self, req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
+		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
 
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
@@ -466,7 +466,7 @@ async fn double_spend_round() {
 
 			assert!(res1.is_ok());
 			assert!(res2.unwrap_err().message().contains(&format!("vtxo {} already registered", vtxoid)));
-			Ok(rpc::Empty{})
+			Ok(protos::Empty{})
 		}
 	}
 
@@ -492,11 +492,11 @@ async fn test_participate_round_wrong_step() {
 	#[tonic::async_trait]
 	impl aspd::proxy::AspdRpcProxy for ProxyA {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
-		async fn submit_payment(&mut self, _req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
-			self.0.provide_vtxo_signatures(rpc::VtxoSignaturesRequest {
+		async fn submit_payment(&mut self, _req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			self.0.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
 				pubkey: RANDOM_PK.serialize().to_vec(), signatures: vec![]
 			}).await?;
-			Ok(rpc::Empty{})
+			Ok(protos::Empty{})
 		}
 	}
 
@@ -516,9 +516,9 @@ async fn test_participate_round_wrong_step() {
 	#[tonic::async_trait]
 	impl aspd::proxy::AspdRpcProxy for ProxyB {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
-		async fn provide_vtxo_signatures(&mut self, _req: rpc::VtxoSignaturesRequest) -> Result<rpc::Empty, tonic::Status> {
-			self.0.provide_forfeit_signatures(rpc::ForfeitSignaturesRequest { signatures: vec![] }).await?;
-			Ok(rpc::Empty{})
+		async fn provide_vtxo_signatures(&mut self, _req: protos::VtxoSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
+			self.0.provide_forfeit_signatures(protos::ForfeitSignaturesRequest { signatures: vec![] }).await?;
+			Ok(protos::Empty{})
 		}
 	}
 
@@ -540,11 +540,11 @@ async fn test_participate_round_wrong_step() {
 	#[tonic::async_trait]
 	impl aspd::proxy::AspdRpcProxy for ProxyC {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
-		async fn provide_forfeit_signatures(&mut self, _req: rpc::ForfeitSignaturesRequest) -> Result<rpc::Empty, tonic::Status> {
-			self.0.submit_payment(rpc::SubmitPaymentRequest {
+		async fn provide_forfeit_signatures(&mut self, _req: protos::ForfeitSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
+			self.0.submit_payment(protos::SubmitPaymentRequest {
 				input_vtxos: vec![], vtxo_requests: vec![], offboard_requests: vec![]
 			}).await?;
-			Ok(rpc::Empty{})
+			Ok(protos::Empty{})
 		}
 	}
 
@@ -571,9 +571,9 @@ async fn spend_unregistered_board() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn register_board_vtxo(&mut self, _req: rpc::BoardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
+		async fn register_board_vtxo(&mut self, _req: protos::BoardVtxoRequest) -> Result<protos::Empty, tonic::Status> {
 			// drop the request
-			Ok(rpc::Empty{})
+			Ok(protos::Empty{})
 		}
 	}
 
@@ -637,8 +637,8 @@ async fn reject_revocation_on_successful_ln_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn finish_bolt11_payment(&mut self, req: rpc::SignedBolt11PaymentDetails) -> Result<Box<
-			dyn Stream<Item = Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
+		async fn finish_bolt11_payment(&mut self, req: protos::SignedBolt11PaymentDetails) -> Result<Box<
+			dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
 		>, tonic::Status> {
 			// Wait until payment is successful then we drop update so client asks for revocation
 			let mut stream = self.upstream().finish_bolt11_payment(req).await?.into_inner();
@@ -731,12 +731,12 @@ async fn bad_round_input() {
 
 	let ark_info = aspd.ark_info().await;
 	let mut rpc = aspd.get_public_client().await;
-	let mut stream = rpc.subscribe_rounds(rpc::Empty {}).await.unwrap().into_inner();
-	aspd.get_admin_client().await.trigger_round(rpc::Empty {}).await.unwrap();
+	let mut stream = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
+	aspd.get_admin_client().await.trigger_round(protos::Empty {}).await.unwrap();
 	let challenge = loop {
 		match stream.next().await.unwrap().unwrap() {
-			rpc::RoundEvent { event: Some(event) } => match event {
-				rpc::round_event::Event::Attempt(a) => {
+			protos::RoundEvent { event: Some(event) } => match event {
+				protos::round_event::Event::Attempt(a) => {
 					break VtxoOwnershipChallenge::new(a.vtxo_ownership_challenge.try_into().unwrap());
 				},
 				_ => {},
@@ -748,11 +748,11 @@ async fn bad_round_input() {
 	// build some legit params
 	let key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 	let key2 = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
-	let input = rpc::InputVtxo {
+	let input = protos::InputVtxo {
 		vtxo_id: vtxo.id.to_bytes().to_vec(),
 		ownership_proof: challenge.sign_with(vtxo.id, key).serialize().to_vec(),
 	};
-	let vtxo_req = rpc::VtxoRequest {
+	let vtxo_req = protos::VtxoRequest {
 		amount: 1000,
 		vtxo_public_key: key.public_key().serialize().to_vec(),
 		cosign_pubkey: key2.public_key().serialize().to_vec(),
@@ -761,7 +761,7 @@ async fn bad_round_input() {
 			pb.serialize().to_vec()
 		}).take(ark_info.nb_round_nonces as usize).collect(),
 	};
-	let offb_req = rpc::OffboardRequest {
+	let offb_req = protos::OffboardRequest {
 		amount: 1000,
 		offboard_spk: ScriptBuf::new_p2wpkh(&WPubkeyHash::from_byte_array(rand::random())).to_bytes(),
 	};
@@ -769,13 +769,13 @@ async fn bad_round_input() {
 	// let's fire some bad attempts
 
 	info!("no inputs");
-	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![],
 		vtxo_requests: vec![vtxo_req.clone()],
 		offboard_requests: vec![],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
-	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![],
 		vtxo_requests: vec![],
 		offboard_requests: vec![offb_req.clone()],
@@ -783,7 +783,7 @@ async fn bad_round_input() {
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 
 	info!("no outputs");
-	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![input.clone()],
 		vtxo_requests: vec![],
 		offboard_requests: vec![],
@@ -792,11 +792,11 @@ async fn bad_round_input() {
 
 	info!("unknown input");
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
-	let fake_input = rpc::InputVtxo {
+	let fake_input = protos::InputVtxo {
 		vtxo_id: fake_vtxo.to_bytes().to_vec(),
 		ownership_proof: challenge.sign_with(fake_vtxo, key).serialize().to_vec(),
 	};
-	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![fake_input],
 		vtxo_requests: vec![vtxo_req.clone()],
 		offboard_requests: vec![],
@@ -805,10 +805,10 @@ async fn bad_round_input() {
 	assert_eq!(err.metadata().get("identifiers").unwrap().to_str().unwrap(), fake_vtxo.to_string());
 
 	info!("non-standard script");
-	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![input.clone()],
 		vtxo_requests: vec![],
-		offboard_requests: vec![rpc::OffboardRequest {
+		offboard_requests: vec![protos::OffboardRequest {
 			amount: 1000,
 			offboard_spk: vec![0x00],
 		}],
@@ -817,10 +817,10 @@ async fn bad_round_input() {
 	assert!(err.message().contains("non-standard"), "{}", err.message());
 
 	info!("op_return too large");
-	let err = rpc.submit_payment(rpc::SubmitPaymentRequest {
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![input.clone()],
 		vtxo_requests: vec![],
-		offboard_requests: vec![rpc::OffboardRequest {
+		offboard_requests: vec![protos::OffboardRequest {
 			amount: 1000,
 			offboard_spk: ScriptBuf::new_op_return(<&PushBytes>::try_from(&[1u8; 84][..]).unwrap()).to_bytes(),
 		}],
@@ -845,7 +845,7 @@ async fn register_onboard_is_idempotent() {
 
 	// We will now call the register_onboard a few times
 	let mut rpc = aspd.get_public_client().await;
-	let request = rpc::BoardVtxoRequest {
+	let request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.encode(),
 		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
 	};
