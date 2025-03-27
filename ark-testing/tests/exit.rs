@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use ark_testing::daemon::aspd;
+use bitcoin::params::Params;
 use bitcoin::Address;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
@@ -389,11 +390,15 @@ async fn double_exit_call() {
 
 	let last_moves = &movements[0..=2];
 	assert!(
-		vtxos.iter().all(|v| last_moves.iter().any(|m|
-			m.spends.first().unwrap().id == v.id &&
-			m.destination.clone().unwrap() ==
-				exit_spk(v.user_pubkey, v.asp_pubkey, v.exit_delta).to_string()
-		)), "each exited vtxo should be linked to a movement with exit_spk as destination"
+		vtxos.iter().all(|v| last_moves.iter().any(|m| {
+				let exit_spk = exit_spk(v.user_pubkey, v.asp_pubkey, v.exit_delta);
+				let address = Address::from_script(&exit_spk, Params::REGTEST)
+					.unwrap().to_string();
+				m.spends.first().unwrap().id == v.id &&
+					m.recipients[0].recipient == address.to_string()
+			})
+		),
+		"each exited vtxo should be linked to a movement with exit_spk as destination"
 	);
 	assert_eq!(bark1.vtxos().await.len(), 0, "all vtxos should be marked as spent");
 
@@ -413,8 +418,11 @@ async fn double_exit_call() {
 	let last_move = movements.first().unwrap();
 	assert_eq!(last_move.spends.len(), 1, "we should only exit last spendable vtxo");
 	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
-	let exit_spk = exit_spk(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta).to_string();
-	assert_eq!(last_move.destination.clone().unwrap(), exit_spk, "movement destination should be exit_spk");
+
+	let exit_spk = exit_spk(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta);
+	let address = Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string();
+	assert_eq!(last_move.recipients[0].recipient, address, "movement destination should be exit_spk");
+
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
 	bark1.start_exit_all().await;

@@ -7,6 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use bark::movement::Movement;
 use bitcoin::{Address, Amount, Network, OutPoint};
 use serde_json;
 use tokio::fs;
@@ -14,7 +15,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use ark::Movement;
 use bark::UtxoInfo;
 pub use bark_json::cli as json;
 

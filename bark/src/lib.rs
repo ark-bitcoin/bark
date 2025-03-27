@@ -12,6 +12,7 @@ pub extern crate lnurl as lnurllib;
 pub mod persist;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
+use movement::{Movement, MovementArgs};
 pub use persist::sqlite::SqliteClient;
 pub mod vtxo_selection;
 mod exit;
@@ -19,6 +20,7 @@ mod lnurl;
 pub mod onchain;
 mod psbtext;
 mod vtxo_state;
+pub mod movement;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
@@ -45,7 +47,7 @@ use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
-	oor, ArkInfo, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, Movement, OffboardRequest,
+	oor, ArkInfo, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, OffboardRequest,
 	PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec,
 };
 use ark::connectors::ConnectorChain;
@@ -572,7 +574,13 @@ impl <P>Wallet<P> where
 		// Store vtxo first before we actually make the on-chain tx.
 		let vtxo = ark::board::finish(user_part, asp_part, priv_user_part, &user_keypair).into();
 
-		self.db.register_receive(&vtxo).context("db error storing vtxo")?;
+		self.db.register_movement(MovementArgs {
+			spends: None,
+			receives: vec![&vtxo],
+			recipients: None,
+			fees: None
+		}).context("db error storing vtxo")?;
+
 		let tx = self.onchain.finish_tx(board_tx)?;
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
@@ -662,7 +670,12 @@ impl <P>Wallet<P> where
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
 				if self.db.check_vtxo_key_exists(&dest.pubkey)? {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-						self.db.register_receive(&vtxo)?;
+						self.db.register_movement(MovementArgs {
+							spends: None,
+							receives: vec![&vtxo],
+							recipients: None,
+							fees: None
+						})?;
 					}
 				}
 			}
@@ -697,7 +710,12 @@ impl <P>Wallet<P> where
 
 			if self.db.get_vtxo(vtxo.id())?.is_none() {
 				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
-				self.db.register_receive(&vtxo).context("failed to store OOR vtxo")?;
+				self.db.register_movement(MovementArgs {
+					spends: None,
+					receives: vec![&vtxo],
+					recipients: None,
+					fees: None
+				}).context("failed to store OOR vtxo")?;
 			}
 		}
 
@@ -898,11 +916,14 @@ impl <P>Wallet<P> where
 		}
 
 		let change = vtxos.get(1);
-		self.db.register_send(
-			&input_vtxos,
-			output.pubkey.to_string(),
-			change,
-			Some(account_for_fee)).context("failed to store OOR vtxo")?;
+		self.db.register_movement(MovementArgs {
+			spends: &input_vtxos,
+			receives: change,
+			recipients: vec![
+				(output.pubkey.to_string(), output.amount)
+			],
+			fees: Some(account_for_fee)
+		}).context("failed to store OOR vtxo")?;
 
 		Ok(user_vtxo.id())
 	}
@@ -917,7 +938,7 @@ impl <P>Wallet<P> where
 			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
 		}
 
-		if !self.db.get_all_movements_by_destination(&invoice.to_string())?.is_empty() {
+		if self.db.check_recipient_exists(&invoice.to_string())? {
 			bail!("Invoice has already been paid");
 		}
 
@@ -1016,11 +1037,14 @@ impl <P>Wallet<P> where
 			None
 		};
 
-		self.db.register_send(
-			&input_vtxos,
-			invoice.to_string(),
-			change_vtxo.as_ref(),
-			Some(anchor_amount + forwarding_fee)).context("failed to store OOR vtxo")?;
+		self.db.register_movement(MovementArgs {
+			spends: &input_vtxos,
+			receives: change_vtxo.as_ref(),
+			recipients: vec![
+				(invoice.to_string(), amount)
+			],
+			fees: Some(anchor_amount + forwarding_fee)
+		}).context("failed to store OOR vtxo")?;
 
 		info!("Bolt11 payment succeeded");
 		Ok(payment_preimage)
@@ -1477,13 +1501,21 @@ impl <P>Wallet<P> where
 				if let Some(offboard) = offb_reqs.get(0) {
 					let params = Params::new(self.properties().unwrap().network);
 					let address = Address::from_script(&offboard.script_pubkey, params)?;
-					self.db.register_send(
-						input_vtxos.values(),
-						address.to_string(),
-						new_vtxos.get(0), None
-					)?;
+					self.db.register_movement(MovementArgs {
+						spends: input_vtxos.values(),
+						receives: new_vtxos.get(0),
+						recipients: vec![
+							(address.to_string(), offboard.amount)
+						],
+						fees: None
+					}).context("failed to store OOR vtxo")?;
 				} else {
-					self.db.register_refresh(input_vtxos.values(), &new_vtxos)?;
+					self.db.register_movement(MovementArgs {
+						spends: input_vtxos.values(),
+						receives: &new_vtxos,
+						recipients: None,
+						fees: None
+					}).context("failed to store OOR vtxo")?;
 				}
 
 				info!("Round finished");

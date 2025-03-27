@@ -5,12 +5,14 @@ use std::collections::HashMap;
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
+use bitcoin::params::Params;
+use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
 use serde::ser::StdError;
 
 use ark::{BlockHeight, Vtxo, VtxoId};
 
+use crate::movement::MovementArgs;
 use crate::onchain::{self, ChainSource, ChainSourceClient};
 use crate::persist::BarkPersister;
 
@@ -163,12 +165,16 @@ impl <P>Exit<P> where
 		for vtxo in vtxos {
 			let added = self.index.add_vtxo(vtxo.clone());
 			if let Some(added) = added {
-				self.db.register_send(
-					vec![&added],
-					added.spec().vtxo_spk().to_string(),
-					None,
-					None
-				).context("Failed to register send")?;
+				let params = Params::new(onchain.wallet.network());
+				let address = Address::from_script(&added.spec().vtxo_spk(), params)?;
+				self.db.register_movement(MovementArgs {
+					spends: vec![&added],
+					receives: None,
+					recipients: vec![
+						(address.to_string(), added.amount())
+					],
+					fees: None
+				}).context("Failed to register send")?;
 			}
 		}
 
