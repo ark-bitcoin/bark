@@ -6,7 +6,7 @@ use std::process;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount};
+use bitcoin::Address;
 use clap::Parser;
 use tonic::transport::Uri;
 
@@ -217,16 +217,11 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 	match cmd {
 		RpcCommand::Wallet => {
 			let res = asp.wallet_status(protos::Empty {}).await?.into_inner();
-			println!("balance: {}", Amount::from_sat(res.balance));
-			println!("address: {}", res.address);
-			println!("confirmed utxos:");
-			for utxo in res.confirmed_utxos {
-				println!(" - {}", utxo);
-			}
-			println!("unconfirmed utxos:");
-			for utxo in res.unconfirmed_utxos {
-				println!(" - {}", utxo);
-			}
+			let ret = serde_json::json!({
+				"rounds": WalletStatus(res.rounds.unwrap().try_into().expect("invalid response")),
+			});
+			serde_json::to_writer_pretty(std::io::stdout(), &ret).unwrap();
+			println!("");
 		},
 		RpcCommand::TriggerRound => {
 			asp.trigger_round(protos::Empty {}).await?.into_inner();
@@ -234,4 +229,21 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		RpcCommand::Stop => unimplemented!(),
 	}
 	Ok(())
+}
+
+struct WalletStatus(rpc::WalletStatus);
+
+impl serde::Serialize for WalletStatus {
+	fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+		use serde::ser::SerializeStruct;
+		let mut s = ser.serialize_struct("", 7)?;
+		s.serialize_field("address", &self.0.address)?;
+		s.serialize_field("total_balance", &self.0.total_balance.to_sat())?;
+		s.serialize_field("trusted_pending_balance", &self.0.trusted_pending_balance.to_sat())?;
+		s.serialize_field("untrusted_pending_balance", &self.0.untrusted_pending_balance.to_sat())?;
+		s.serialize_field("confirmed_balance", &self.0.confirmed_balance.to_sat())?;
+		s.serialize_field("confirmed_utxos", &self.0.confirmed_utxos)?;
+		s.serialize_field("unconfirmed_utxos", &self.0.unconfirmed_utxos)?;
+		s.end()
+	}
 }

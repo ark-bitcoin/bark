@@ -114,10 +114,17 @@ impl Aspd {
 		}).await.unwrap().into_inner().ark_info.unwrap().try_into().expect("invalid ark info")
 	}
 
-	pub async fn get_funding_address(&self) -> Address {
+	pub async fn wallet_status(&self) -> rpc::WalletStatus {
+		let mut rpc = self.get_admin_client().await;
+		rpc.wallet_sync(protos::Empty{}).await.expect("sync error");
+		rpc.wallet_status(protos::Empty{}).await.expect("sync error").into_inner()
+			.rounds.unwrap().try_into().unwrap()
+	}
+
+	pub async fn get_rounds_funding_address(&self) -> Address {
 		let mut admin_client = self.get_admin_client().await;
 		let response = admin_client.wallet_status(protos::Empty {}).await.unwrap().into_inner();
-		response.address.parse::<Address<NetworkUnchecked>>().unwrap()
+		response.rounds.unwrap().address.parse::<Address<NetworkUnchecked>>().unwrap()
 			.require_network(Network::Regtest).unwrap()
 	}
 

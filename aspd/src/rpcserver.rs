@@ -176,12 +176,14 @@ const RPC_SERVICE_ARK_METHODS: [&str; 15] = [
 
 const RPC_SERVICE_ADMIN: &'static str = "AdminService";
 
+const RPC_SERVICE_ADMIN_WALLET_SYNC: &'static str = "wallet_sync";
 const RPC_SERVICE_ADMIN_WALLET_STATUS: &'static str = "wallet_status";
 const RPC_SERVICE_ADMIN_TRIGGER_ROUND: &'static str = "trigger_round";
 const RPC_SERVICE_ADMIN_TRIGGER_SWEEP: &'static str = "trigger_sweep";
 const RPC_SERVICE_ADMIN_STOP: &'static str = "stop";
 
-const RPC_SERVICE_ADMIN_METHODS: [&str; 4] = [
+const RPC_SERVICE_ADMIN_METHODS: [&str; 5] = [
+	RPC_SERVICE_ADMIN_WALLET_SYNC,
 	RPC_SERVICE_ADMIN_WALLET_STATUS,
 	RPC_SERVICE_ADMIN_TRIGGER_ROUND,
 	RPC_SERVICE_ADMIN_TRIGGER_SWEEP,
@@ -711,26 +713,26 @@ impl rpc::server::ArkService for App {
 
 #[tonic::async_trait]
 impl rpc::server::AdminService for App {
+	async fn wallet_sync(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_SYNC);
+		self.wallet.lock().await.sync(&self.bitcoind).await.to_status()?;
+		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
 	async fn wallet_status(
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_STATUS);
 
-		let mut wallet = self.wallet.lock().await;
-		let balance = wallet.sync(&self.bitcoind).await.to_status()?;
-		let (confirmed, unconfirmed) = wallet.list_unspent()
-			.partition::<Vec<_>, _>(|u| u.chain_position.is_confirmed());
-		let address = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		wallet.persist().await.to_status()?;
-		let response = protos::WalletStatusResponse {
-			balance: balance.total().to_sat(),
-			address: address.to_string(),
-			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
-			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
-		};
+		let rounds = self.wallet.lock().await.status().await;
 
-		Ok(tonic::Response::new(response))
+		Ok(tonic::Response::new(protos::WalletStatusResponse {
+			rounds: Some(rounds.into()),
+		}))
 	}
 
 	async fn trigger_round(

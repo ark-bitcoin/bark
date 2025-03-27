@@ -242,17 +242,25 @@ message VtxoSignaturesRequest {
 
 /// Administration service for arkd.
 service AdminService {
+	rpc WalletSync(Empty) returns (Empty) {}
 	rpc WalletStatus(Empty) returns (WalletStatusResponse) {}
 	rpc TriggerRound(Empty) returns (Empty) {}
 	rpc TriggerSweep(Empty) returns (Empty) {}
 	rpc Stop(Empty) returns (Empty) {}
 }
 
-message WalletStatusResponse {
+message WalletStatus {
 	string address = 1;
-	uint64 balance = 2;
-	repeated string confirmed_utxos = 3;
-	repeated string unconfirmed_utxos = 4;
+	uint64 total_balance = 2;
+	uint64 trusted_pending_balance = 3;
+	uint64 untrusted_pending_balance = 4;
+	uint64 confirmed_balance = 5;
+	repeated string confirmed_utxos = 6;
+	repeated string unconfirmed_utxos = 7;
+}
+
+message WalletStatusResponse {
+	WalletStatus rounds = 1;
 }
 
 message Empty {}

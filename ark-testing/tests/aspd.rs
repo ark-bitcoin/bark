@@ -5,7 +5,7 @@ use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::Amount;
+use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
@@ -59,19 +59,14 @@ async fn bitcoind_auth_connection() {
 	}).await;
 	ctx.fund_asp(&aspd, sat(1_000_000)).await;
 
-	let mut admin = aspd.get_admin_client().await;
-	let response = admin.wallet_status(protos::Empty {}).await.unwrap().into_inner();
-	assert_eq!(response.balance, 1_000_000);
+	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 1_000_000);
 }
 
 #[tokio::test]
 async fn bitcoind_cookie_connection() {
 	let ctx = TestContext::new("aspd/bitcoind_cookie_connection").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(0.01)).await;
-
-	let mut admin = aspd.get_admin_client().await;
-	let response = admin.wallet_status(protos::Empty {}).await.unwrap().into_inner();
-	assert_eq!(response.balance, 1_000_000);
+	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 1_000_000);
 }
 
 #[tokio::test]
@@ -96,19 +91,16 @@ async fn round_started_log_can_be_captured() {
 async fn fund_asp() {
 	let ctx = TestContext::new("aspd/fund_aspd").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
-	let mut admin_client = aspd.get_admin_client().await;
 
 	// Query the wallet balance of the asp
-	let response = admin_client.wallet_status(protos::Empty {}).await.expect("Get response").into_inner();
-	assert_eq!(response.balance, 0);
+	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
 
 	// Fund the aspd
 	ctx.fund_asp(&aspd, btc(10)).await;
 	ctx.bitcoind.generate(1).await;
 
 	// Confirm that the balance is updated
-	let response = admin_client.wallet_status(protos::Empty {}).await.expect("Get response").into_inner();
-	assert!(response.balance > 0);
+	assert!(aspd.wallet_status().await.total_balance.to_sat() > 0);
 }
 
 #[tokio::test]
@@ -120,11 +112,7 @@ async fn restart_key_stability() {
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	let asp_key1 = aspd.ark_info().await.asp_pubkey;
-	let addr1 = {
-		let mut admin_client = aspd.get_admin_client().await;
-		let res = admin_client.wallet_status(protos::Empty {}).await.unwrap().into_inner();
-		res.address
-	};
+	let addr1 = aspd.wallet_status().await.address.require_network(Network::Regtest).unwrap();
 
 	// Fund the aspd's addr
 	ctx.bitcoind.fund_addr(&addr1, btc(1)).await;
@@ -142,11 +130,7 @@ async fn restart_key_stability() {
 		*cfg = new_cfg;
 	}).await;
 	let asp_key2 = aspd.ark_info().await.asp_pubkey;
-	let addr2 = {
-		let mut admin_client = aspd.get_admin_client().await;
-		let res = admin_client.wallet_status(protos::Empty {}).await.expect("Get response").into_inner();
-		res.address
-	};
+	let addr2 = aspd.wallet_status().await.address.require_network(Network::Regtest).unwrap();
 
 	assert_eq!(asp_key1, asp_key2);
 	assert_ne!(addr1, addr2);
@@ -280,7 +264,7 @@ async fn sweep_vtxos() {
 	info!("Round done signal received");
 	let stats = log_stats.recv().fast().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);
-	assert_eq!(1241212, admin.wallet_status(protos::Empty {}).await.unwrap().into_inner().balance);
+	assert_eq!(1241212, aspd.wallet_status().await.total_balance.to_sat());
 }
 
 #[tokio::test]

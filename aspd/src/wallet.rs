@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bdk_wallet::{SignOptions, Wallet, Balance};
+use bdk_wallet::{SignOptions, Wallet, Balance, KeychainKind};
 use bip39::Mnemonic;
 use bitcoin::{bip32, Network};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
@@ -202,6 +202,24 @@ impl PersistedWallet {
 			);
 		}
 		Ok(balance)
+	}
+
+	pub async fn status(&mut self) -> aspd_rpc::WalletStatus {
+		// NB we decide not to persist the address reveal to make this call
+		// infallible even without database.
+		let address = self.reveal_next_address(KeychainKind::External).address;
+		let (confirmed, unconfirmed) = self.list_unspent()
+			.partition::<Vec<_>, _>(|u| u.chain_position.is_confirmed());
+		let balance = self.balance();
+		aspd_rpc::WalletStatus {
+			total_balance: balance.total(),
+			trusted_pending_balance: balance.trusted_pending,
+			untrusted_pending_balance: balance.untrusted_pending,
+			confirmed_balance: balance.confirmed,
+			address: address.into_unchecked(),
+			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint).collect(),
+			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint).collect(),
+		}
 	}
 }
 

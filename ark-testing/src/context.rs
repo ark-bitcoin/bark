@@ -324,14 +324,13 @@ impl TestContext {
 		ret
 	}
 
-	pub async fn fund_asp(&self, asp: &Aspd, amount: Amount) -> Txid {
+	pub async fn fund_asp(&self, asp: &Aspd, amount: Amount) {
 		info!("Fund {} {}", asp.name, amount);
-		let address = asp.get_funding_address().await;
-		let txid = self.bitcoind.fund_addr(address, amount).await;
+		let rounds_address = asp.get_rounds_funding_address().await;
+		self.bitcoind.fund_addr(rounds_address, amount).await;
 		self.bitcoind.generate(1).await;
 		asp.get_admin_client().await.wallet_status(rpc::protos::Empty {}).await
 			.expect("error calling wallet status after funding apsd");
-		txid
 	}
 
 	/// Send `amount` to an onchain address of this Bark client.

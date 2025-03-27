@@ -42,10 +42,10 @@ use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
-use tokio::signal::unix::{signal, SignalKind};
 use tokio_util::sync::CancellationToken;
 
 use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};

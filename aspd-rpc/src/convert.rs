@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use ark::rounds::VtxoOwnershipChallenge;
 use bitcoin::secp256k1::{schnorr, PublicKey};
-use bitcoin::{self, FeeRate};
+use bitcoin::{self, Amount, FeeRate};
 
 use ark::{musig, VtxoId};
 use ark::tree::signed::VtxoTreeSpec;
@@ -194,5 +194,37 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 			},
 		})
 	}
+}
 
+impl From<crate::WalletStatus> for protos::WalletStatus {
+	fn from(s: crate::WalletStatus) -> Self {
+		protos::WalletStatus {
+			address: s.address.assume_checked().to_string(),
+			total_balance: s.total_balance.to_sat(),
+			trusted_pending_balance: s.trusted_pending_balance.to_sat(),
+			untrusted_pending_balance: s.untrusted_pending_balance.to_sat(),
+			confirmed_balance: s.confirmed_balance.to_sat(),
+			confirmed_utxos: s.confirmed_utxos.iter().map(|u| u.to_string()).collect(),
+			unconfirmed_utxos: s.unconfirmed_utxos.iter().map(|u| u.to_string()).collect(),
+		}
+	}
+}
+
+impl TryFrom<protos::WalletStatus> for crate::WalletStatus {
+	type Error = ConvertError;
+	fn try_from(s: protos::WalletStatus) -> Result<Self, Self::Error> {
+		Ok(crate::WalletStatus {
+			address: s.address.parse().map_err(|_| "invalid address")?,
+			total_balance: Amount::from_sat(s.total_balance),
+			trusted_pending_balance: Amount::from_sat(s.trusted_pending_balance),
+			untrusted_pending_balance: Amount::from_sat(s.untrusted_pending_balance),
+			confirmed_balance: Amount::from_sat(s.confirmed_balance),
+			confirmed_utxos: s.confirmed_utxos.iter().map(|u| {
+				u.parse().map_err(|_| "invalid outpoint")
+			}).collect::<Result<_, _>>()?,
+			unconfirmed_utxos: s.unconfirmed_utxos.iter().map(|u| {
+				u.parse().map_err(|_| "invalid outpoint")
+			}).collect::<Result<_, _>>()?,
+		})
+	}
 }

@@ -679,7 +679,7 @@ async fn second_round_attempt() {
 	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
-	let _ = aspd.get_admin_client().await.wallet_status(protos::Empty {}).await.unwrap();
+	let _ = aspd.get_admin_client().await.wallet_sync(protos::Empty {}).await.unwrap();
 	aspd.trigger_round().await;
 	aspd.wait_for_log::<RestartMissingForfeits>().await;
 	res1.await.unwrap();
@@ -689,7 +689,7 @@ async fn second_round_attempt() {
 
 	// bark2 is kicked out of the first round, so we need to start another one
 	ctx.bitcoind.generate(1).await;
-	let _ = aspd.get_admin_client().await.wallet_status(protos::Empty {}).await.unwrap();
+	let _ = aspd.get_admin_client().await.wallet_sync(protos::Empty {}).await.unwrap();
 	aspd.trigger_round().await;
 	res2.await.unwrap();
 }
