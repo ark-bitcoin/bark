@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use bitcoin::{OutPoint, Txid};
 use bitcoin::secp256k1::{PublicKey, SecretKey};
-use ark::{BlockHeight, VtxoId};
+use bitcoin_ext::BlockHeight;
+use ark::VtxoId;
 
 // ****************************************************************************
 // * Round start

@@ -9,11 +9,10 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid, Wtxid};
+use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
-
-use ark::BlockHeight;
 use tokio_util::sync::CancellationToken;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, RpcApi};

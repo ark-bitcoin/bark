@@ -4,7 +4,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use bdk_wallet::{SignOptions, Wallet};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
-
 use bitcoin_ext::bdk::WalletExt;
 
 use crate::database::Db;

@@ -37,8 +37,8 @@ use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use bitcoin_ext::{BlockRef, TransactionExt, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::WalletExt;
-use bitcoin_ext::TransactionExt;
 use lightning_invoice::Bolt11Invoice;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
@@ -48,7 +48,7 @@ use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio_util::sync::CancellationToken;
 
-use ark::{musig, BlockHeight, BlockRef, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
@@ -67,10 +67,6 @@ lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
-
-/// The number of confirmations after which we consider the odds of a reorg
-/// happening negligible.
-const DEEPLY_CONFIRMED: BlockHeight = 12;
 
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";

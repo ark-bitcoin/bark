@@ -7,8 +7,7 @@ use std::borrow::Borrow;
 
 use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Auth, Client, Error};
 use bitcoin::Transaction;
-
-use ark::BlockRef;
+use bitcoin_ext::BlockRef;
 
 
 /// Error code for RPC_VERIFY_ALREADY_IN_UTXO_SET.

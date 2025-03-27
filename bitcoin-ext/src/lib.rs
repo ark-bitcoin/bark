@@ -11,7 +11,21 @@ pub mod fee;
 pub mod bdk;
 
 
-use cbitcoin::Amount;
+use cbitcoin::{Amount, BlockHash};
+
+
+/// Type representing a block height in the bitcoin blockchain.
+pub type BlockHeight = u64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BlockRef {
+	pub height: BlockHeight,
+	pub hash: BlockHash,
+}
+
+/// The number of confirmations after which we don't expect a
+/// re-org to ever happen.
+pub const DEEPLY_CONFIRMED: BlockHeight = 100;
 
 pub const P2TR_DUST_VB: u64 = 110;
 /// 330 satoshis

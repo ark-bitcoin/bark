@@ -40,24 +40,24 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context;
-use ark::rounds::RoundId;
 use bitcoin::absolute::LockTime;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
 };
-
-use ark::{BlockHeight, BoardVtxo, VtxoSpec};
-use ark::connectors::ConnectorChain;
-use bitcoin_ext::TaprootSpendInfoExt;
+use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
+
+use ark::{BoardVtxo, VtxoSpec};
+use ark::connectors::ConnectorChain;
+use ark::rounds::RoundId;
 
 use crate::bitcoind::RpcApi;
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::wallet::BdkWalletExt;
-use crate::{txindex, AllowUntrusted, App, DEEPLY_CONFIRMED, SECP};
+use crate::{txindex, AllowUntrusted, App, SECP};
 
 
 struct BoardSweepInput {

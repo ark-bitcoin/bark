@@ -46,21 +46,21 @@ use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
+use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
-	oor, ArkInfo, ArkoorVtxo, BlockHeight, OffboardRequest,
-	PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec,
+	oor, ArkInfo, ArkoorVtxo, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
+	VtxoId, VtxoRequest, VtxoSpec,
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc as rpc;
-use bitcoin_ext::P2TR_DUST;
 
 use crate::exit::Exit;
 use crate::onchain::Utxo;

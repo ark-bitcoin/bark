@@ -17,10 +17,13 @@ use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
 use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
-use futures::{Stream, StreamExt, TryStreamExt};
+use bitcoin_ext::BlockHeight;
+use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 
-use ark::{rounds::RoundId, tree::signed::CachedSignedVtxoTree, BlockHeight, BoardVtxo, Vtxo, VtxoId};
+use ark::{BoardVtxo, Vtxo, VtxoId};
+use ark::rounds::RoundId;
+use ark::tree::signed::CachedSignedVtxoTree;
 
 use crate::Config;
 use self::model::{PendingSweep, StoredRound, VtxoState};

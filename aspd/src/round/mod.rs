@@ -10,7 +10,7 @@ use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
-use bitcoin_ext::P2WSH_DUST;
+use bitcoin_ext::{BlockHeight, P2WSH_DUST};
 use opentelemetry::global;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
@@ -18,7 +18,7 @@ use tokio::time::Instant;
 use tracing::info_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use ark::{BlockHeight, OffboardRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
+use ark::{OffboardRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge};
