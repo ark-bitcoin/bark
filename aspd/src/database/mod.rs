@@ -25,11 +25,13 @@ use ark::{BoardVtxo, Vtxo, VtxoId};
 use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
 
+use crate::wallet::WalletKind;
 use crate::Config;
 use self::model::{PendingSweep, StoredRound, VtxoState};
 
 const DEFAULT_DATABASE: &str = "postgres";
 
+#[derive(Clone)]
 pub struct Db {
 	pool: Pool<PostgresConnectionManager<NoTls>>
 }
@@ -473,31 +475,36 @@ impl Db {
 	 * Wallet
 	*/
 
-	pub async fn store_changeset(&self, c: &ChangeSet) -> anyhow::Result<()> {
+	pub async fn store_changeset(&self, wallet: WalletKind, c: &ChangeSet) -> anyhow::Result<()> {
 		let mut buf = Vec::new();
 		ciborium::into_writer(c, &mut buf).unwrap();
 
 		let conn = self.pool.get().await?;
-		let statement = conn.prepare_typed("
-			INSERT INTO wallet_changeset (content) VALUES ($1);
-		", &[Type::BYTEA]).await?;
+		let table = wallet_table(wallet);
+		let statement = conn.prepare_typed(&format!("
+			INSERT INTO {table} (content) VALUES ($1);
+		"), &[Type::BYTEA]).await?;
 		conn.execute(&statement, &[&buf]).await?;
 
 		Ok(())
 	}
 
-	pub async fn read_aggregate_changeset(&self) -> anyhow::Result<Option<ChangeSet>> {
-		let mut ret = Option::<ChangeSet>::None;
-
+	pub async fn read_aggregate_changeset(
+		&self,
+		wallet: WalletKind,
+	) -> anyhow::Result<Option<ChangeSet>> {
 		let conn = self.pool.get().await?;
-		let statement = conn.prepare("
-			SELECT content FROM wallet_changeset
-		").await?;
+		let table = wallet_table(wallet);
+		let statement = conn.prepare(&format!("
+			SELECT content FROM {table}
+		")).await?;
 		let rows = conn.query(&statement, &[]).await?;
 
+		let mut ret = Option::<ChangeSet>::None;
 		for row in rows {
 			let value = row.get::<_, Vec<u8>>(0);
-			let cs = ciborium::from_reader::<ChangeSet, _>(&*value).context("corrupt db: changeset value")?;
+			let cs = ciborium::from_reader::<ChangeSet, _>(&*value)
+				.context("corrupt db: changeset value")?;
 
 			if let Some(ref mut r) = ret {
 				r.merge(cs);
@@ -507,5 +514,11 @@ impl Db {
 		}
 
 		Ok(ret)
+	}
+}
+
+fn wallet_table(kind: WalletKind) -> &'static str {
+	match kind {
+		WalletKind::Rounds => "wallet_changeset",
 	}
 }

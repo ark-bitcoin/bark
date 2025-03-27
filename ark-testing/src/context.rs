@@ -210,6 +210,7 @@ impl TestContext {
 			},
 			postgres: self.postgres_default_cfg(name),
 			lightningd,
+			legacy_wallet: false,
 		}
 	}
 

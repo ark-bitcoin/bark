@@ -107,6 +107,10 @@ pub struct Config {
 
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub lightningd: Option<Lightningd>,
+
+	// compatibility flags
+
+	pub legacy_wallet: bool,
 }
 
 impl Default for Config {
@@ -158,6 +162,8 @@ impl Default for Config {
 				password: None
 			},
 			lightningd : None,
+
+			legacy_wallet: false,
 		}
 	}
 }

@@ -26,15 +26,14 @@ pub use crate::config::Config;
 
 use std::fs;
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Context;
 use bip39::Mnemonic;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{bip32, Address, Amount, Network, OutPoint, Transaction};
+use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::{BlockRef, TransactionExt, DEEPLY_CONFIRMED};
@@ -61,7 +60,7 @@ use crate::flux::VtxosInFlux;
 use crate::round::RoundInput;
 use crate::telemetry::TelemetryMetrics;
 use crate::txindex::TxIndex;
-use crate::wallet::BdkWalletExt;
+use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -70,8 +69,6 @@ lazy_static::lazy_static! {
 
 /// The HD keypath to use for the ASP key.
 const ASP_KEY_PATH: &str = "m/2'/0'";
-
-const MNEMONIC_FILE: &str = "mnemonic";
 
 
 pub struct RoundHandle {
@@ -88,9 +85,10 @@ pub struct App {
 	config: Config,
 	db: database::Db,
 	shutdown: CancellationToken,
+	master_xpriv: bip32::Xpriv,
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
-	wallet: Arc<Mutex<bdk_wallet::Wallet>>,
+	wallet: Arc<Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
 	chain_tip: Mutex<BlockRef>,
 	txindex: TxIndex,
@@ -105,41 +103,11 @@ pub struct App {
 }
 
 impl App {
-	/// Return the bdk wallet struct and the ASP keypair.
-	fn wallet_from_seed(
-		network: Network,
-		seed: &[u8],
-		state: Option<bdk_wallet::ChangeSet>,
-	) -> anyhow::Result<(bdk_wallet::Wallet, Keypair)> {
-		let seed_xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
-
-		let desc = format!("tr({}/84'/0'/0'/0/*)", seed_xpriv);
-		let wallet = if let Some(changeset) = state {
-			bdk_wallet::Wallet::load()
-				.descriptor(bdk_wallet::KeychainKind::External, Some(desc))
-				.check_network(network)
-				.extract_keys()
-				.load_wallet_no_persist(changeset)?
-				.expect("wallet should be loaded")
-		} else {
-			bdk_wallet::Wallet::create_single(desc)
-				.network(network)
-				.create_wallet_no_persist()?
-		};
-
-		let asp_path = bip32::DerivationPath::from_str(ASP_KEY_PATH).unwrap();
-		let asp_xpriv = seed_xpriv.derive_priv(&SECP, &asp_path).unwrap();
-		let asp_key = Keypair::from_secret_key(&SECP, &asp_xpriv.private_key);
-
-		Ok((wallet, asp_key))
-	}
-
-	fn get_mnemonic_from_path(data_dir: &PathBuf) -> anyhow::Result<Mnemonic> {
-		let mnemonic = fs::read_to_string(data_dir.join(MNEMONIC_FILE)).context("failed to read mnemonic")?;
-		Ok(Mnemonic::from_str(&mnemonic)?)
-	}
-
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
+		if cfg.legacy_wallet {
+			bail!("We don't support creating new legacy wallets.");
+		}
+
 		// Check for mnemonic file to see if aspd was already initialized.
 		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
 			bail!("Found existing mnemonic file in datadir, aspd probably already initialized!");
@@ -166,14 +134,16 @@ impl App {
 
 			mnemonic.to_seed("")
 		};
+		let seed_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
-		// Store initial wallet state to avoid full chain sync.
-		let (mut wallet, _) = Self::wallet_from_seed(cfg.network, &seed, None)
-			.expect("shouldn't fail on empty state");
-		wallet.set_checkpoint(deep_tip.height as u32, deep_tip.hash);
-		let cs = wallet.take_staged().expect("should have stored tip");
-		ensure!(db.read_aggregate_changeset().await.context("db error")?.is_none(), "db not empty");
-		db.store_changeset(&cs).await.context("error storing initial wallet state")?;
+		// Store initial wallet states to avoid full chain sync.
+		for wallet in [WalletKind::Rounds] {
+			let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[wallet.child_number()])
+				.expect("can't error");
+			let _wallet = PersistedWallet::load_from_xpriv(
+				db.clone(), cfg.network, &wallet_xpriv, wallet, deep_tip, false,
+			);
+		}
 
 		Ok(())
 	}
@@ -186,14 +156,26 @@ impl App {
 			.await
 			.context("failed to connect to db")?;
 
-		let seed = Self::get_mnemonic_from_path(&cfg.data_dir)?.to_seed("");
-
-		let init = db.read_aggregate_changeset().await?;
-		let (wallet, asp_key) = Self::wallet_from_seed(cfg.network, &seed, init)
-			.context("error loading wallet")?;
-
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
+
+		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
+		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+
+		let wallet_xpriv = if cfg.legacy_wallet {
+			master_xpriv.clone()
+		} else {
+			master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
+				.expect("can't error")
+		};
+		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
+		let wallet = PersistedWallet::load_from_xpriv(
+			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip, cfg.legacy_wallet,
+		).await.context("error loading wallet")?;
+
+		let asp_path = bip32::DerivationPath::from_str(ASP_KEY_PATH).unwrap();
+		let asp_xpriv = master_xpriv.derive_priv(&SECP, &asp_path).unwrap();
+		let asp_key = Keypair::from_secret_key(&SECP, &asp_xpriv.private_key);
 
 		Ok(Arc::new(App {
 			wallet: Arc::new(Mutex::new(wallet)),
@@ -207,6 +189,7 @@ impl App {
 			db,
 			shutdown: CancellationToken::new(),
 			asp_key,
+			master_xpriv,
 			bitcoind,
 			telemetry_metrics: TelemetryMetrics::disabled(),
 		}))
@@ -404,59 +387,8 @@ impl App {
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {
 		let mut wallet = self.wallet.lock().await;
 		let ret = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		wallet.persist(&self.db).await?;
+		wallet.persist().await?;
 		Ok(ret)
-	}
-
-	pub async fn sync_onchain_wallet(&self) -> anyhow::Result<Amount> {
-		let start_time = Instant::now();
-
-		let mut wallet = self.wallet.lock().await;
-		let prev_tip = wallet.latest_checkpoint();
-		let prev_balance = wallet.balance();
-
-		slog!(WalletSyncStarting, block_height: prev_tip.height());
-		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-			&self.bitcoind, prev_tip.clone(), prev_tip.height(),
-		);
-		while let Some(em) = emitter.next_block()? {
-			wallet.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
-
-			// this is to make sure that during initial sync we don't lose all
-			// progress if we halt the process mid-way
-			if em.block_height() % 10_000 == 0 {
-				slog!(WalletSyncCommittingProgress, block_height: em.block_height());
-				wallet.persist(&self.db).await?;
-			}
-		}
-		wallet.persist(&self.db).await?;
-
-		// rebroadcast unconfirmed txs
-		// NB during some round failures we commit a tx but fail to broadcast it,
-		// so this ensures we still broadcast them afterwards
-		for tx in wallet.transactions() {
-			if !tx.chain_position.is_confirmed() {
-				if let Err(e) = self.bitcoind.broadcast_tx(&*tx.tx_node.tx) {
-					slog!(WalletTransactionBroadcastFailure, error: e.to_string(), txid: tx.tx_node.txid);
-				}
-			}
-		}
-
-		let checkpoint = wallet.latest_checkpoint();
-		slog!(WalletSyncComplete, sync_time: start_time.elapsed(),
-			new_block_height: checkpoint.height(), previous_block_height: prev_tip.height(),
-		);
-
-		let balance = wallet.balance();
-		if balance != prev_balance {
-			slog!(WalletBalanceUpdated, balance: balance.clone(), block_height: checkpoint.height());
-		} else {
-			slog!(WalletBalanceUnchanged, balance: balance.clone(), block_height: checkpoint.height());
-		}
-
-		let amount = balance.total();
-		self.telemetry_metrics.set_wallet_balance(amount);
-		Ok(amount)
 	}
 
 	pub async fn drain(
@@ -475,7 +407,7 @@ impl App {
 
 		let tx = wallet.finish_tx(psbt)?;
 		wallet.commit_tx(&tx);
-		wallet.persist(&self.db).await?;
+		wallet.persist().await?;
 		drop(wallet);
 
 		if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
@@ -903,7 +835,7 @@ impl App {
 	// ** SOME ADMIN COMMANDS **
 
 	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Mnemonic> {
-		Ok(Self::get_mnemonic_from_path(&self.config.data_dir)?)
+		Ok(wallet::read_mnemonic_from_datadir(&self.config.data_dir)?)
 	}
 }
 

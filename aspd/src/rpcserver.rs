@@ -717,12 +717,15 @@ impl rpc::server::AdminService for App {
 	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_STATUS);
 
-		let balance = self.sync_onchain_wallet().await.to_status()?;
-		let (confirmed, unconfirmed) = self.wallet.lock().await.list_unspent()
+		let mut wallet = self.wallet.lock().await;
+		let balance = wallet.sync(&self.bitcoind).await.to_status()?;
+		let (confirmed, unconfirmed) = wallet.list_unspent()
 			.partition::<Vec<_>, _>(|u| u.chain_position.is_confirmed());
+		let address = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
+		wallet.persist().await.to_status()?;
 		let response = protos::WalletStatusResponse {
-			balance: balance.to_sat(),
-			address: self.new_onchain_address().await.to_status()?.to_string(),
+			balance: balance.total().to_sat(),
+			address: address.to_string(),
 			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
 			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
 		};

@@ -8,7 +8,6 @@ use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
-use bitcoin::locktime::absolute::LockTime;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2WSH_DUST};
 use opentelemetry::global;
@@ -28,7 +27,7 @@ use crate::{AllowUntrusted, App, SECP};
 use crate::error::ContextExt;
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::telemetry::{self, SpanExt};
-use crate::wallet::BdkWalletExt;
+use crate::wallet::{BdkWalletExt, PersistedWallet};
 
 
 /// The output index of the connector output in the round tx.
@@ -437,7 +436,7 @@ impl CollectingPayments {
 		let round_tx_psbt = {
 			let mut b = wallet_lock.build_tx();
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
-			b.nlocktime(LockTime::from_height(tip as u32).expect("actual height"));
+			b.current_height(tip as u32);
 			b.unspendable(unspendable);
 			b.add_recipient(vtxos_spec.round_tx_spk(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
@@ -538,7 +537,7 @@ pub struct SigningVtxoTree {
 	cosign_part_sigs: HashMap<PublicKey, Vec<musig::MusigPartialSignature>>,
 	cosign_agg_nonces: Vec<musig::MusigAggNonce>,
 	unsigned_vtxo_tree: UnsignedVtxoTree,
-	wallet_lock: OwnedMutexGuard<bdk_wallet::Wallet>,
+	wallet_lock: OwnedMutexGuard<PersistedWallet>,
 	round_tx_psbt: Psbt,
 	round_txid: Txid,
 	connector_key: Keypair,
@@ -734,7 +733,7 @@ pub struct SigningForfeits {
 	connectors: ConnectorChain,
 	connector_key: Keypair,
 
-	wallet_lock: OwnedMutexGuard<bdk_wallet::Wallet>,
+	wallet_lock: OwnedMutexGuard<PersistedWallet>,
 	round_tx_psbt: Psbt,
 	attempt_start: Instant,
 
@@ -859,7 +858,7 @@ impl SigningForfeits {
 			Err(e) => return Err(RoundError::Recoverable(e.context("round tx signing error"))),
 		};
 		self.wallet_lock.commit_tx(&signed_round_tx);
-		if let Err(e) = self.wallet_lock.persist(&app.db).await {
+		if let Err(e) = self.wallet_lock.persist().await {
 			// Failing to persist the tx data at this point means that we might
 			// accidentally re-use certain inputs if we reboot the aspd.
 			// We keep the change set in the wallet if this happens.
@@ -1076,7 +1075,7 @@ async fn perform_round(
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
 
-		if let Err(e) = app.sync_onchain_wallet().await {
+		if let Err(e) = app.wallet.lock().await.sync(&app.bitcoind).await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}
 
@@ -1385,7 +1384,7 @@ pub async fn run_round_coordinator(
 		}
 
 		// Sync our wallet so that it sees the broadcasted tx.
-		if let Err(e) = app.sync_onchain_wallet().await {
+		if let Err(e) = app.wallet.lock().await.sync(&app.bitcoind).await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};
 
