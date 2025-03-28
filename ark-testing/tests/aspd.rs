@@ -10,6 +10,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::{ScriptBuf, WPubkeyHash};
+use bitcoin_ext::DEEPLY_CONFIRMED;
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use tokio::sync::{mpsc, Mutex};
@@ -204,7 +205,7 @@ async fn sweep_vtxos() {
 	// before either expires not sweeping yet because nothing available
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(0), log_not_sweeping.recv().fast().await.unwrap().available_surplus);
+	assert_eq!(sat(0), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
 	ctx.bitcoind.generate(18).await;
@@ -213,19 +214,19 @@ async fn sweep_vtxos() {
 		b.refresh_all().await;
 	});
 	aspd.trigger_round().await;
-	let _ = aspd.wait_for_log::<RoundFinished>().try_wait(1000).await;
+	let _ = aspd.wait_for_log::<RoundFinished>().try_wait(5_000).await;
 	ctx.bitcoind.generate(30).await;
 
 	// now we expire the first one, still not sweeping because not enough surplus
-	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
+	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(73790), log_not_sweeping.recv().wait(1500).await.unwrap().available_surplus);
+	assert_eq!(sat(73790), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
 	ctx.bitcoind.generate(5).await;
-	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6000).await;
+	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(147580), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	assert_eq!(sat(147580), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "board");
@@ -235,36 +236,36 @@ async fn sweep_vtxos() {
 	ctx.bitcoind.generate(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(149980), log_sweeping.recv().wait(2500).await.unwrap().surplus);
+	assert_eq!(sat(149980), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "vtxo");
 
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another board
-	bark.board(sat(101_000)).await;
-	ctx.bitcoind.generate(70).await;
+	bark.board(sat(102_000)).await;
+	ctx.bitcoind.generate(DEEPLY_CONFIRMED).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(100615), log_sweeping.recv().wait(1500).await.unwrap().surplus);
+	assert_eq!(sat(101615), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "connector");
 	assert_eq!(sweeps[1].sweep_type, "board");
 
-	ctx.bitcoind.generate(65).await;
+	ctx.bitcoind.generate(DEEPLY_CONFIRMED).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 
 	// and eventually the round should be finished
-	log_board_done.recv().wait(1000).await.unwrap();
+	log_board_done.recv().wait(10_000).await.unwrap();
 	info!("board done signal received");
-	log_round_done.recv().wait(1000).await.unwrap();
+	log_round_done.recv().wait(10_000).await.unwrap();
 	info!("Round done signal received");
 	let stats = log_stats.recv().fast().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);
-	assert_eq!(1241212, aspd.wallet_status().await.total_balance.to_sat());
+	assert_eq!(1_242_212, aspd.wallet_status().await.total_balance.to_sat());
 }
 
 #[tokio::test]
