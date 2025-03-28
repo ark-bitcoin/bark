@@ -11,3 +11,10 @@ SELECT *, (oor_spent IS NULL AND forfeit_state IS NULL) AS spendable
 FROM all_vtxo
 WHERE deleted_at IS NULL;
 
+
+CREATE TABLE forfeits_wallet_changeset (
+	id       SERIAL PRIMARY KEY,
+	content  BYTEA
+);
+
+

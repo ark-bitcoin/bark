@@ -106,11 +106,6 @@ impl Server {
 			bail!("Found existing mnemonic file in datadir, aspd probably already initialized!");
 		}
 
-		info!("Creating aspd server at {}", cfg.data_dir.display());
-
-		// create dir if not exit, but check that it's empty
-		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
-
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
 		// Check if our bitcoind is on the expected network.
@@ -122,6 +117,11 @@ impl Server {
 		}
 		let deep_tip = bitcoind.deep_tip()
 			.context("failed to fetch deep tip from bitcoind")?;
+
+		info!("Creating aspd server at {}", cfg.data_dir.display());
+
+		// create dir if not exit, but check that it's empty
+		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
 
 		let db = database::Db::create(&cfg.postgres).await?;
 
@@ -137,7 +137,7 @@ impl Server {
 		let seed_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
 		// Store initial wallet states to avoid full chain sync.
-		for wallet in [WalletKind::Rounds] {
+		for wallet in [WalletKind::Rounds, WalletKind::Forfeits] {
 			let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[wallet.child_number()])
 				.expect("can't error");
 			let _wallet = PersistedWallet::load_from_xpriv(

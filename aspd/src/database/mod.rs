@@ -503,9 +503,9 @@ impl Db {
 		Ok(pending_sweeps)
 	}
 
-	/**
-	 * Wallet
-	*/
+	// **********
+	// * WALLET *
+	// **********
 
 	pub async fn store_changeset(&self, wallet: WalletKind, c: &ChangeSet) -> anyhow::Result<()> {
 		let mut buf = Vec::new();
@@ -552,6 +552,7 @@ impl Db {
 fn wallet_table(kind: WalletKind) -> &'static str {
 	match kind {
 		WalletKind::Rounds => "wallet_changeset",
+		WalletKind::Forfeits => "forfeits_wallet_changeset",
 	}
 }
 
