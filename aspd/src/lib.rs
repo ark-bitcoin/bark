@@ -45,6 +45,7 @@ use tokio::time::MissedTickBehavior;
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
+use tokio::signal::unix::{signal, SignalKind};
 
 use ark::{musig, BlockHeight, BlockRef, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
@@ -263,10 +264,25 @@ impl App {
 		// Spawn a task to handle Ctrl+C
 		let shutdown = self.shutdown.clone();
 		tokio::spawn(async move {
-			tokio::signal::ctrl_c()
-				.await
-				.expect("Failed to listen for Ctrl+C");
-			info!("Ctrl+C received! Sending shutdown signal...");
+			let ctrl_c = async {
+				tokio::signal::ctrl_c()
+					.await
+					.expect("Failed to listen for Ctrl+C");
+				info!("Ctrl+C received! Sending shutdown signal...");
+			};
+
+			let sigterm = async {
+				let mut sigterm_stream =
+					signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
+				sigterm_stream.recv().await;
+				info!("SIGTERM received! Sending shutdown signal...");
+			};
+
+			tokio::select! {
+				_ = ctrl_c => {}
+				_ = sigterm => {}
+			}
+
 			let _ = shutdown.cancel();
 			for i in (1..=60).rev() {
 				info!("Forced exit in {} seconds...", i);
