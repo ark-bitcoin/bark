@@ -2,7 +2,7 @@
 
 
 use std::{cmp, fmt};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -350,7 +350,7 @@ impl TxIndex {
 		let proc = TxIndexProcess {
 			bitcoind, interval, broadcast_rx, shutdown,
 			txs: self.tx_map.clone(),
-			broadcast: HashSet::new(),
+			broadcast: Vec::new(),
 		};
 		tokio::spawn(async move {
 			proc.run().await.context("txindex exited with error")?;
@@ -365,7 +365,7 @@ struct TxIndexProcess {
 	interval: Duration,
 
 	txs: Arc<RwLock<HashMap<Txid, Tx>>>,
-	broadcast: HashSet<Vec<Txid>>,
+	broadcast: Vec<Vec<Txid>>,
 
 	broadcast_rx: mpsc::UnboundedReceiver<Vec<Txid>>,
 	shutdown: CancellationToken,
@@ -479,8 +479,10 @@ impl TxIndexProcess {
 			let tx = lock.get(&txid).cloned();
 			drop(lock);
 			if let Some(tx) = tx {
-				slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
-				self.broadcast_tx(&tx).await;
+				if !tx.status().await.confirmed() {
+					slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
+					self.broadcast_tx(&tx).await;
+				}
 			} else {
 				debug!("Instructed to broadcast a tx we don't know: {}", txid);
 				return;
@@ -490,8 +492,10 @@ impl TxIndexProcess {
 			let lock = self.txs.read().await;
 			for txid in pkg {
 				if let Some(tx) = lock.get(&*txid) {
-					slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
-					txs.push(tx.clone());
+					if !tx.status().await.confirmed() {
+						slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
+						txs.push(tx.clone());
+					}
 				} else {
 					debug!("Instructed to broadcast a tx we don't know: {}", txid);
 					return;
@@ -502,9 +506,21 @@ impl TxIndexProcess {
 		}
 	}
 
-	async fn rebroadcast(&self) {
-		for pkg in &self.broadcast {
+	async fn rebroadcast(&mut self) {
+		let mut i = 0;
+		'outer: while i < self.broadcast.len() {
+			let pkg = &self.broadcast[i];
+			let txs = self.txs.read().await;
+			for txid in pkg.iter() {
+				let res = txs.get(txid);
+				if res.is_none() || res.unwrap().status().await == TxStatus::Unregistered {
+					debug!("Broadcast pkg has unknown or unregistered tx {}. Dropping", txid);
+					self.broadcast.swap_remove(i);
+					continue 'outer;
+				}
+			}
 			self.broadcast(pkg).await;
+			i += 1;
 		}
 	}
 
@@ -524,7 +540,7 @@ impl TxIndexProcess {
 				bc = self.broadcast_rx.recv() => {
 					if let Some(bc) = bc {
 						self.broadcast(&bc).await;
-						self.broadcast.insert(bc);
+						self.broadcast.push(bc);
 					} else {
 						return Ok(());
 					}
