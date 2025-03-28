@@ -8,7 +8,7 @@ use bitcoin::{Amount, FeeRate};
 use config::{Environment, File};
 use serde::Deserialize;
 
-use crate::{serde_util, vtxo_sweeper};
+use crate::{serde_util, sweeps};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Bitcoind {
@@ -97,7 +97,7 @@ pub struct Config {
 	pub otel_collector_endpoint: Option<String>,
 
 	/// Config for the VtxoSweeper process.
-	pub vtxo_sweeper: vtxo_sweeper::Config,
+	pub vtxo_sweeper: sweeps::Config,
 	pub rpc: Rpc,
 	pub postgres: Postgres,
 

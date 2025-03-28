@@ -15,7 +15,7 @@ pub(crate) mod flux;
 pub mod database;
 mod psbtext;
 mod serde_util;
-pub mod vtxo_sweeper;
+pub mod sweeps;
 mod rpcserver;
 mod round;
 mod txindex;
@@ -59,7 +59,7 @@ use crate::flux::VtxosInFlux;
 use crate::round::RoundInput;
 use crate::telemetry::TelemetryMetrics;
 use crate::txindex::TxIndex;
-use crate::vtxo_sweeper::VtxoSweeper;
+use crate::sweeps::VtxoSweeper;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 lazy_static::lazy_static! {
