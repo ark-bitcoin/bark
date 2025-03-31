@@ -5,6 +5,7 @@ vtxo_exit_delta = 12
 htlc_delta = 6
 htlc_expiry_delta = 6
 round_board_confirmations = 12
+round_tx_untrusted_input_confirmations = 2
 round_interval = "10s"
 round_submit_time = "2s"
 round_sign_time = "2s"

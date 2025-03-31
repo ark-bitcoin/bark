@@ -3,13 +3,13 @@ use std::fmt;
 use std::borrow::BorrowMut;
 
 use bdk_wallet::coin_selection::InsufficientFunds;
-use bdk_wallet::{KeychainKind, SignOptions, TxBuilder, TxOrdering, Wallet};
+use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::{psbt, FeeRate, OutPoint, Transaction, Txid, Weight};
 use cbitcoin::{BlockHash, Psbt};
 
-use crate::{fee, P2TR_DUST};
+use crate::{fee, BlockHeight, P2TR_DUST};
 use crate::bitcoin::TransactionExt;
 
 
@@ -57,13 +57,34 @@ impl std::error::Error for CpfpError {}
 
 /// An extension trait for [Wallet].
 pub trait WalletExt: BorrowMut<Wallet> {
-	/// Return all vtxos that are untrusted: unconfirmed and on external address.
-	fn untrusted_utxos(&self) -> Vec<OutPoint> {
+	/// Return all vtxos that are untrusted: unconfirmed and not change.
+	fn untrusted_utxos(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
+		let w = self.borrow();
 		let mut ret = Vec::new();
-		for utxo in self.borrow().list_unspent() {
-			if !utxo.chain_position.is_confirmed() && utxo.keychain == KeychainKind::External {
-				ret.push(utxo.outpoint);
+		for utxo in w.list_unspent() {
+			// We trust confirmed utxos if they are confirmed enough.
+			if let Some(h) = utxo.chain_position.confirmation_height_upper_bound() {
+				if let Some(min) = confirmed_height {
+					if h as BlockHeight <= min {
+						continue;
+					}
+				} else {
+					continue;
+				}
 			}
+
+			// For unconfirmed, we only trust txs from which all inputs are ours.
+			// NB this is still not 100% safe, because this can mark a tx that spends
+			// an untrusted tx as trusted. We don't create such txs in our codebase,
+			// but we should be careful not to start doing this.
+			let txid = utxo.outpoint.txid;
+			if let Some(tx) = w.get_tx(txid) {
+				if tx.tx_node.tx.input.iter().all(|i| w.get_tx(i.previous_output.txid).is_some()) {
+					continue;
+				}
+			}
+
+			ret.push(utxo.outpoint);
 		}
 		ret
 	}

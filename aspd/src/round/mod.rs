@@ -9,6 +9,7 @@ use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
+use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2WSH_DUST};
 use opentelemetry::global;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
@@ -23,9 +24,9 @@ use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 
-use crate::{AllowUntrusted, App, SECP};
-use crate::error::ContextExt;
+use crate::{App, SECP};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
+use crate::error::{ContextExt, AnyhowErrorExt};
 use crate::telemetry::{self, SpanExt};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
@@ -430,9 +431,12 @@ impl CollectingPayments {
 
 		// Build round tx.
 		//TODO(stevenroose) think about if we can release lock sooner
+		let trusted_height = match app.config.round_tx_untrusted_input_confirmations {
+			0 => None,
+			n => Some(tip.saturating_sub(n as BlockHeight - 1)),
+		};
 		let mut wallet_lock = app.wallet.clone().lock_owned().await;
-		let unspendable = app.untrusted_utxos(&*wallet_lock, AllowUntrusted::None).await
-			.expect("TODO CHANGE ON REBASE");
+		let unspendable = wallet_lock.untrusted_utxos(trusted_height);
 		let round_tx_psbt = {
 			let mut b = wallet_lock.build_tx();
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
@@ -1372,7 +1376,8 @@ pub async fn run_round_coordinator(
 			RoundResult::Abandoned => continue,
 			// Internal error, retry immediatelly.
 			RoundResult::Err(RoundError::Recoverable(e)) => {
-				slog!(RoundError, round_seq, error: format!("{:?}", e));
+				error!("Full round error stack trace: {:?}", e);
+				slog!(RoundError, round_seq, error: format!("{}", e.full_msg()));
 				continue;
 			},
 			// Fatal error, halt operations.

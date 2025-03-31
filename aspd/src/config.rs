@@ -70,6 +70,8 @@ pub struct Config {
 	pub max_vtxo_amount: Option<Amount>,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.
 	pub round_board_confirmations: usize,
+	/// Number of confirmations untrusted inputs of the round tx need to have.
+	pub round_tx_untrusted_input_confirmations: usize,
 
 	#[serde(with = "serde_util::duration")]
 	pub round_interval: Duration,
@@ -126,6 +128,7 @@ impl Default for Config {
 
 			max_vtxo_amount: None,
 			round_board_confirmations: 12,
+			round_tx_untrusted_input_confirmations: 2,
 
 			round_interval: Duration::from_secs(10),
 			round_submit_time: Duration::from_millis(2000),

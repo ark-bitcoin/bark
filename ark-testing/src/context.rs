@@ -191,6 +191,7 @@ impl TestContext {
 			round_sweep_interval: Duration::from_secs(60),
 			sweep_threshold: Amount::from_sat(1_000_000),
 			round_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
+			round_tx_untrusted_input_confirmations: 1,
 			max_vtxo_amount: None,
 			rpc_rich_errors: true,
 			txindex_check_interval: Duration::from_millis(500),

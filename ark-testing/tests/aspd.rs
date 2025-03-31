@@ -21,7 +21,7 @@ use ark::util::SECP;
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
-	UnconfirmedBoardSpendAttempt
+	UnconfirmedBoardSpendAttempt, RoundError
 };
 use aspd_rpc::protos;
 
@@ -102,6 +102,64 @@ async fn fund_asp() {
 
 	// Confirm that the balance is updated
 	assert!(aspd.wallet_status().await.total_balance.to_sat() > 0);
+}
+
+#[tokio::test]
+async fn cant_spend_untrusted() {
+	let ctx = TestContext::new("aspd/cant_spend_untrusted").await;
+
+	const NEED_CONFS: usize = 2;
+
+	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS;
+	}).await;
+
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await);
+
+	bark.board(sat(200_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
+
+	// fund aspd without confirming
+	let addr = aspd.get_rounds_funding_address().await;
+	ctx.bitcoind.fund_addr(addr, btc(10)).await;
+	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
+
+	let mut log_round_err = aspd.subscribe_log::<RoundError>().await;
+
+	// we will launch bark to try refresh, it will produce an error log at first,
+	// then we'll confirm the aspd's money and then bark should succeed by retrying
+	let bark_clone = bark.clone();
+	let attempt_handle = tokio::spawn(async move {
+		bark_clone.try_refresh_all().await.unwrap_err();
+	});
+
+	// this will at first produce an error
+	let err = log_round_err.recv().wait(5_000).await.unwrap().error;
+	assert!(err.contains("Insufficient funds"), "err: {err}");
+
+	attempt_handle.await.unwrap();
+
+	// then confirm the money and it should work
+	ctx.bitcoind.generate(NEED_CONFS as u64).await;
+
+	log_round_err.clear();
+	if let Err(_err) = bark.try_refresh_all().await {
+		while let Ok(e) = log_round_err.try_recv() {
+			error!("round error: {:?}", e.error);
+		}
+		panic!("first refresh failed");
+	}
+	// and the unconfirmed change should be able to be used for a second round
+	assert!(log_round_err.try_recv().is_err());
+	if let Err(_err) = bark.try_refresh_all().await {
+		while let Ok(e) = log_round_err.try_recv() {
+			error!("round error: {:?}", e.error);
+		}
+		panic!("second refresh failed");
+	}
+	assert!(log_round_err.try_recv().is_err());
 }
 
 #[tokio::test]

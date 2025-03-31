@@ -37,7 +37,6 @@ use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::{BlockRef, TransactionExt, DEEPLY_CONFIRMED};
-use bitcoin_ext::bdk::WalletExt;
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
@@ -424,25 +423,6 @@ impl App {
 		let ret = self.db.fetch_pending_sweeps().await?.values()
 			.map(|tx| tx.all_related_utxos())
 			.flatten().collect();
-		Ok(ret)
-	}
-
-	/// Return all untrusted vtxos in the wallet.
-	pub(crate) async fn untrusted_utxos(
-		&self,
-		wallet: &bdk_wallet::Wallet,
-		allow: AllowUntrusted,
-	) -> anyhow::Result<Vec<OutPoint>> {
-		let untrusted = wallet.untrusted_utxos();
-		let pending_sweeps = if allow == AllowUntrusted::VtxoSweeper {
-			HashSet::new()
-		} else {
-			self.pending_sweep_utxos().await?
-		};
-		let mut ret = Vec::with_capacity(pending_sweeps.len() + untrusted.len());
-		ret.extend(pending_sweeps);
-		ret.extend(untrusted);
-		ret.shrink_to_fit();
 		Ok(ret)
 	}
 
@@ -839,12 +819,3 @@ impl App {
 	}
 }
 
-/// This type is used as an argument into [App::untrusted_utxos] to indicate
-/// a source of untrusted vtxos that should be skipped.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum AllowUntrusted {
-	/// Don't allow any untrusted utxos.
-	None,
-	/// Allow untrusted utxos from the VtxoSweeper.
-	VtxoSweeper,
-}
