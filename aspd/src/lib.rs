@@ -12,6 +12,7 @@ mod error;
 mod cln;
 mod bitcoind;
 mod database;
+pub(crate) mod flux;
 mod psbtext;
 mod serde_util;
 mod vtxo_sweeper;
@@ -23,9 +24,8 @@ mod wallet;
 pub mod config;
 pub use crate::config::Config;
 
-use std::borrow::Borrow;
-use std::collections::HashSet;
 use std::fs;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -57,6 +57,7 @@ use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::cln::SendpaySubscriptionItem;
 use crate::error::ContextExt;
+use crate::flux::VtxosInFlux;
 use crate::round::RoundInput;
 use crate::telemetry::TelemetryMetrics;
 use crate::txindex::TxIndex;
@@ -101,7 +102,7 @@ pub struct App {
 	rounds: Option<RoundHandle>,
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
-	vtxos_in_flux: Mutex<VtxosInFlux>,
+	vtxos_in_flux: VtxosInFlux,
 	sendpay_updates: Option<SendpayHandle>,
 	trigger_round_sweep_tx: Option<tokio::sync::mpsc::Sender<()>>,
 	telemetry_metrics: TelemetryMetrics,
@@ -212,7 +213,7 @@ impl App {
 			txindex: TxIndex::new(),
 			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: None,
-			vtxos_in_flux: Mutex::new(VtxosInFlux::default()),
+			vtxos_in_flux: VtxosInFlux::new(),
 			trigger_round_sweep_tx: None,
 			sendpay_updates: None,
 			config: cfg,
@@ -465,11 +466,9 @@ impl App {
 		} else {
 			slog!(WalletBalanceUnchanged, balance: balance.clone(), block_height: checkpoint.height());
 		}
-		
+
 		let amount = balance.total();
-		
 		self.telemetry_metrics.set_wallet_balance(amount);
-		
 		Ok(amount)
 	}
 
@@ -498,25 +497,6 @@ impl App {
 		}
 
 		Ok(tx)
-	}
-
-	/// Atomically store either all vtxos as being in flux, or none of them.
-	///
-	/// If one of them is already in flux, an error is returned containing it,
-	/// and none of the other ones are stored as in flux.
-	pub async fn atomic_check_put_vtxo_in_flux<V: Borrow<VtxoId>>(
-		&self,
-		ids: impl IntoIterator<Item = V>,
-	) -> Result<(), VtxoId> {
-		self.vtxos_in_flux.lock().await.atomic_check_put(ids)
-	}
-
-	/// Release the vtxos from flux.
-	pub async fn release_vtxos_in_flux<V: Borrow<VtxoId>>(
-		&self,
-		ids: impl IntoIterator<Item = V>,
-	) {
-		self.vtxos_in_flux.lock().await.release(ids)
 	}
 
 	/// Fetch all the utxos in our wallet that are being spent or created by txs
@@ -693,14 +673,13 @@ impl App {
 			}
 		}
 
-		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
-			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
-		}
+		let _lock = match self.vtxos_in_flux.lock(&ids) {
+			Ok(l) => l,
+			Err(id) => return badarg!("attempted to sign OOR for vtxo already in flux: {}", id),
+		};
 
-		if let Err(e) = self.validate_board_inputs(&payment.inputs) {
-			self.release_vtxos_in_flux(&ids).await;
-			return Err(e).context("oor cosign failed");
-		}
+		self.validate_board_inputs(&payment.inputs)
+			.map_err(|e| e.context("arkoor cosign failed"))?;
 
 		let txid = payment.txid();
 		let new_vtxos = payment
@@ -720,8 +699,6 @@ impl App {
 			Err(e) => Err(e),
 		};
 
-		self.release_vtxos_in_flux(ids).await;
-
 		ret
 	}
 
@@ -740,12 +717,12 @@ impl App {
 		Vec<musig::MusigPartialSignature>,
 	)> {
 		let ids = input_vtxos.iter().map(|i| i.id()).collect::<Vec<_>>();
-		if let Err(id) = self.atomic_check_put_vtxo_in_flux(&ids).await {
-			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
-		}
+		let _lock = match self.vtxos_in_flux.lock(&ids) {
+			Ok(l) => l,
+			Err(id) => return badarg!("attempted to sign OOR for vtxo already in flux: {}", id),
+		};
 
 		if let Err(e) = self.validate_board_inputs(&input_vtxos) {
-			self.release_vtxos_in_flux(&ids).await;
 			return Err(e).context("oor cosign failed");
 		}
 
@@ -797,8 +774,6 @@ impl App {
 				Err(e) => Err(e),
 			}
 		};
-
-		self.release_vtxos_in_flux(ids).await;
 
 		ret
 	}
@@ -953,75 +928,4 @@ pub(crate) enum AllowUntrusted {
 	None,
 	/// Allow untrusted utxos from the VtxoSweeper.
 	VtxoSweeper,
-}
-
-/// Simple locking structure to keep track of vtxos that are currently in flux.
-#[derive(Default)]
-struct VtxosInFlux {
-	vtxos: HashSet<VtxoId>,
-	buf: Vec<VtxoId>,
-}
-
-impl VtxosInFlux {
-	pub fn atomic_check_put<V: Borrow<VtxoId>>(
-		&mut self,
-		ids: impl IntoIterator<Item = V>,
-	) -> Result<(), VtxoId> {
-		let ids_iter = ids.into_iter();
-		let min_nb_vtxos = ids_iter.size_hint().0;
-		self.buf.clear();
-		self.vtxos.reserve(min_nb_vtxos);
-		self.buf.reserve(min_nb_vtxos);
-		for id in ids_iter {
-			let id = *id.borrow();
-			if !self.vtxos.insert(id) {
-				// abort
-				for take in &self.buf {
-					self.vtxos.remove(&take);
-				}
-				return Err(id);
-			}
-			self.buf.push(id);
-		}
-		Ok(())
-	}
-
-	pub fn release<V: Borrow<VtxoId>>(&mut self, ids: impl IntoIterator<Item = V>) {
-		for id in ids {
-			self.vtxos.remove(id.borrow());
-		}
-	}
-}
-
-#[cfg(test)]
-mod test {
-	use super::*;
-	use std::iter;
-	use bitcoin::secp256k1::rand;
-
-	fn random_vtxoid() -> VtxoId {
-		let mut b = [0u8; 36];
-		rand::Fill::try_fill(&mut b[..], &mut rand::thread_rng()).unwrap();
-		VtxoId::from_slice(&b).unwrap()
-	}
-
-	#[test]
-	fn test_in_flux() {
-		let mut flux = VtxosInFlux::default();
-		let vtxos = iter::from_fn(|| Some(random_vtxoid())).take(10).collect::<Vec<_>>();
-
-		flux.atomic_check_put(&[vtxos[0], vtxos[1]]).unwrap();
-		flux.atomic_check_put(&[vtxos[2], vtxos[3]]).unwrap();
-		assert_eq!(4, flux.vtxos.len());
-		flux.atomic_check_put(&[vtxos[0], vtxos[4]]).unwrap_err();
-		assert_eq!(4, flux.vtxos.len());
-		flux.release(&[vtxos[0]]);
-		assert_eq!(3, flux.vtxos.len());
-		flux.atomic_check_put(&[vtxos[0], vtxos[4]]).unwrap();
-		assert_eq!(5, flux.vtxos.len());
-
-		flux.atomic_check_put(&[vtxos[1], vtxos[5]]).unwrap_err();
-		assert_eq!(5, flux.vtxos.len());
-		assert!(!flux.vtxos.contains(&vtxos[5]));
-	}
 }
