@@ -47,11 +47,14 @@ impl SqliteClient {
 	}
 
 	/// Stores a vtxo in the database
-	fn store_vtxo(&self, tx: &Transaction, vtxo: &Vtxo, movement_id: i32) -> anyhow::Result<()> {
-		// TODO: Use a better name.In most cases we don't want new vtxo's to get the state
-		// ready
-		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, VtxoState::Spendable)?;
-
+	fn store_vtxo_with_initial_state(
+		&self,
+		tx: &Transaction,
+		vtxo: &Vtxo,
+		movement_id: i32,
+		vtxo_state: VtxoState
+	) -> anyhow::Result<()> {
+		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, vtxo_state)?;
 		Ok(())
 	}
 
@@ -106,7 +109,7 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<()>
 		where
 			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = &'a Vtxo>,
+			R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
 			Re: IntoIterator<Item = (String, Amount)>,
 	{
 		let mut conn = self.connect()?;
@@ -114,8 +117,8 @@ impl BarkPersister for SqliteClient {
 
 		let movement_id = self.create_movement(&tx, movement.fees)?;
 
-		for v in movement.receives {
-			self.store_vtxo(&tx, v, movement_id)
+		for (v, s) in movement.receives {
+			self.store_vtxo_with_initial_state(&tx, v, movement_id, s)
 				.context("Failed to store change VTXOs")?
 		}
 
@@ -281,11 +284,11 @@ pub mod test {
 		let db = SqliteClient::open(cs).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_1], recipients: None, fees: None
+			spends: None, receives: vec![(&vtxo_1, VtxoState::Spendable)], recipients: None, fees: None
 		}).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_2], recipients: None, fees: None
+			spends: None, receives: vec![(&vtxo_2, VtxoState::Spendable)], recipients: None, fees: None
 		}).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
@@ -304,7 +307,7 @@ pub mod test {
 
 		// Add the third entry to the database
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_3], recipients: None, fees: None
+			spends: None, receives: vec![(&vtxo_3, VtxoState::Spendable)], recipients: None, fees: None
 		}).unwrap();
 
 		// Get expiring vtxo's

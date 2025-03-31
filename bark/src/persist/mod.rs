@@ -4,7 +4,7 @@ use ark::{Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::{secp256k1::PublicKey, Amount};
 
-use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, Config, Pagination, WalletProperties};
+use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, Config, Pagination, WalletProperties, vtxo_state::VtxoState};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database
@@ -27,7 +27,7 @@ pub trait BarkPersister: Clone + WalletPersister {
 	) -> anyhow::Result<()>
 		where
 			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = &'a Vtxo>,
+			R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
 			Re: IntoIterator<Item = (String, Amount)>;
 
 	/// Fetch a VTXO by id in the database

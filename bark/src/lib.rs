@@ -596,7 +596,7 @@ impl <P>Wallet<P> where
 
 		self.db.register_movement(MovementArgs {
 			spends: None,
-			receives: vec![&vtxo],
+			receives: vec![(&vtxo, VtxoState::Spendable)],
 			recipients: None,
 			fees: None
 		}).context("db error storing vtxo")?;
@@ -691,7 +691,7 @@ impl <P>Wallet<P> where
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 						self.db.register_movement(MovementArgs {
 							spends: None,
-							receives: vec![&vtxo],
+							receives: vec![(&vtxo, VtxoState::Spendable)],
 							recipients: None,
 							fees: None
 						})?;
@@ -731,7 +731,7 @@ impl <P>Wallet<P> where
 				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
 				self.db.register_movement(MovementArgs {
 					spends: None,
-					receives: vec![&vtxo],
+					receives: vec![(&vtxo, VtxoState::Spendable)],
 					recipients: None,
 					fees: None
 				}).context("failed to store OOR vtxo")?;
@@ -955,7 +955,7 @@ impl <P>Wallet<P> where
 
 		self.db.register_movement(MovementArgs {
 			spends: &oor.input,
-			receives: oor.change.as_ref(),
+			receives: oor.change.as_ref().map(|v| (v, VtxoState::Spendable)),
 			recipients: vec![
 				(destination.to_string(), amount)
 			],
@@ -1065,6 +1065,7 @@ impl <P>Wallet<P> where
 			}
 		}
 
+		// The client will receive the change VTXO if it exists
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
 			info!("Adding change VTXO of {}", change_vtxo.spec().amount);
 			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_oor_tx(&change_vtxo.inputs, &change_vtxo.output_specs)));
@@ -1072,11 +1073,15 @@ impl <P>Wallet<P> where
 		} else {
 			None
 		};
+		let receive_vtxos = change_vtxo
+			.iter()
+			.map(|v| (v, VtxoState::Spendable))
+			.collect::<Vec<_>>();
 
 		if let Some(payment_preimage) = payment_preimage {
 			self.db.register_movement(MovementArgs {
 				spends: &input_vtxos,
-				receives: change_vtxo.as_ref(),
+				receives: receive_vtxos,
 				recipients: vec![
 					(invoice.to_string(), amount)
 				],
@@ -1085,7 +1090,6 @@ impl <P>Wallet<P> where
 			Ok(payment_preimage)
 		} else {
 			let htlc_vtxo = signed.htlc_vtxo().into();
-
 			let keypair_idx = self.db.get_vtxo_key_index(&htlc_vtxo)?;
 			let keypair = self.vtxo_seed.derive_keypair(keypair_idx);
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
@@ -1124,7 +1128,7 @@ impl <P>Wallet<P> where
 				.clone()
 			);
 
-			let receives = iter::once(&vtxo).chain(change_vtxo.as_ref());
+			let receives = iter::once((&vtxo, VtxoState::Spendable)).chain(change_vtxo.as_ref().map(|v| (v, VtxoState::Spendable)));
 			self.db.register_movement(MovementArgs {
 				spends: &input_vtxos,
 				receives: receives,
@@ -1592,12 +1596,13 @@ impl <P>Wallet<P> where
 					Ok((address.to_string(), o.amount))
 				}).collect::<anyhow::Result<Vec<_>>>()?;
 
-				let received = new_vtxos.iter().filter(|v| {
-					matches!(
+				let received = new_vtxos.iter()
+					.filter(|v| { matches!(
 						v.as_round().expect("comming from round").spec.spk,
 						VtxoSpkSpec::Exit { .. }
-					)
-				}).collect::<Vec<_>>();
+					)})
+					.map(|v| (v, VtxoState::Spendable))
+					.collect::<Vec<_>>();
 
 				// NB: if there is no received VTXO nor sent in the round, for now we assume
 				// the movement will be registered later (e.g: lightning receive use case)
@@ -1609,7 +1614,7 @@ impl <P>Wallet<P> where
 						spends: input_vtxos.values(),
 						receives: received,
 						recipients: sent,
-						fees: None
+					fees: None
 					}).context("failed to store OOR vtxo")?;
 				}
 

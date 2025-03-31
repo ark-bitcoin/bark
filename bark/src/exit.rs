@@ -172,7 +172,7 @@ impl <P>Exit<P> where
 				let address = Address::from_script(&added.spec().vtxo_spk(), params)?;
 				self.db.register_movement(MovementArgs {
 					spends: vec![&added],
-					receives: None,
+					receives: vec![],
 					recipients: vec![
 						(address.to_string(), added.amount())
 					],
