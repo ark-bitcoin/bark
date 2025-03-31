@@ -81,6 +81,13 @@ enum RpcCommand {
 
 #[tokio::main]
 async fn main() {
+	// Set a custom panic hook to make sure we print stack traces
+	// when one of our background processes panic.
+	std::panic::set_hook(Box::new(|panic_info| {
+		let backtrace = std::backtrace::Backtrace::force_capture();
+		eprintln!("Panic occurred: {}\n\nBacktrace:\n{}", panic_info, backtrace);
+	}));
+
 	if let Err(e) = inner_main().await {
 		println!("An error occurred: {}", e);
 		// maybe hide second print behind a verbose flag
@@ -165,7 +172,7 @@ async fn inner_main() -> anyhow::Result<()> {
 			let mut app = App::open(cfg).await.context("server init")?;
 
 			if let Err(e) = app.start().await {
-				error!("Shutdown error from aspd {:?}", e);
+				error!("Shutdown error from aspd: {:?}", e);
 
 				process::exit(1);
 			};
