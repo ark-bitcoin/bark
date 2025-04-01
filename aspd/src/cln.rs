@@ -1,3 +1,4 @@
+
 use std::fmt;
 use anyhow::Context;
 use tokio_util::sync::CancellationToken;
@@ -5,11 +6,10 @@ use tonic::transport::Channel;
 use tokio::sync::broadcast;
 
 use ark::lightning::PaymentStatus;
+use bitcoin::hashes::hex::DisplayHex;
 use bitcoin::hashes::{ripemd160, sha256, Hash};
-
-use crate::grpc;
-use crate::grpc::listsendpays_request::ListsendpaysIndex;
-use crate::grpc::node_client::NodeClient;
+use cln_rpc::listsendpays_request::ListsendpaysIndex;
+use cln_rpc::node_client::NodeClient;
 
 type GrpcClient = NodeClient<Channel>;
 
@@ -59,9 +59,9 @@ pub struct  SendpaySubscriptionItem {
 
 impl fmt::Display for SendpaySubscriptionItem {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let payment_hash = hex::encode(&self.payment_hash);
 		write!(f, "{:?} sendpay with status {:?}. Attempt {} part {} of payment {}",
-			self.kind, self.status, self.group_id, self.part_id, payment_hash,
+			self.kind, self.status, self.group_id, self.part_id,
+			self.payment_hash.to_byte_array().as_hex(),
 		)
 	}
 }
@@ -73,9 +73,9 @@ async fn updated_loop(
 ) -> anyhow::Result<()> {
 	loop {
 		// Wait for sendpay updates
-		let request = grpc::WaitRequest {
-			subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
-			indexname: grpc::wait_request::WaitIndexname::Updated as i32,
+		let request = cln_rpc::WaitRequest {
+			subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+			indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
 			nextvalue: updated_index,
 		};
 
@@ -104,9 +104,9 @@ async fn created_loop(
 ) -> anyhow::Result<()> {
 	loop {
 		// Wait for new sendpay creation
-		let request = grpc::WaitRequest {
-			subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
-			indexname: grpc::wait_request::WaitIndexname::Created as i32,
+		let request = cln_rpc::WaitRequest {
+			subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+			indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
 			nextvalue: created_index,
 		};
 
@@ -132,7 +132,7 @@ async fn process_sendpay(
 	start_index: u64,
 	tx: &broadcast::Sender<SendpaySubscriptionItem>
 )-> anyhow::Result<u64> {
-	let listsendpaysrequest = grpc::ListsendpaysRequest {
+	let listsendpaysrequest = cln_rpc::ListsendpaysRequest {
 		bolt11: None,
 		payment_hash: None,
 		status: None,

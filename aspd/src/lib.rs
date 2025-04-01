@@ -9,6 +9,7 @@
 #[macro_use]
 mod error;
 
+mod cln;
 mod bitcoind;
 mod database;
 mod lightning;
@@ -51,10 +52,10 @@ use ark::{musig, BlockHeight, BlockRef, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
-use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use tokio_util::sync::CancellationToken;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
+use crate::cln::SendpaySubscriptionItem;
 use crate::error::ContextExt;
 use crate::round::RoundInput;
 use crate::telemetry::TelemetryMetrics;

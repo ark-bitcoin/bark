@@ -150,7 +150,7 @@ dependencies = [
  "bark-aspd",
  "bark-bitcoin-ext",
  "bark-client",
- "bark-cln",
+ "bark-cln-rpc",
  "bark-json",
  "bdk_esplora",
  "bip39",
@@ -335,7 +335,7 @@ dependencies = [
  "aspd-rpc",
  "async-trait",
  "bark-bitcoin-ext",
- "bark-cln",
+ "bark-cln-rpc",
  "bb8",
  "bb8-postgres",
  "bdk_bitcoind_rpc",
@@ -420,18 +420,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "bark-cln"
+name = "bark-cln-rpc"
 version = "0.0.0"
 dependencies = [
- "anyhow",
  "ark-lib",
  "bitcoin",
- "futures",
- "hex",
- "log",
  "prost",
- "tokio",
- "tokio-util",
  "tonic",
  "tonic-build",
 ]

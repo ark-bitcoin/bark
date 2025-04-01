@@ -13,15 +13,13 @@ use tokio_stream::wrappers::{IntervalStream, BroadcastStream};
 use tokio::sync::broadcast;
 
 use ark::lightning::{SignedBolt11Payment, PaymentStatus};
-use bark_cln::ClnGrpcClient;
-use bark_cln::grpc;
-use bark_cln::grpc::node_client::NodeClient;
-use bark_cln::subscribe_sendpay::{SubscribeSendpay, SendpaySubscriptionItem};
+use cln_rpc::ClnGrpcClient;
+use cln_rpc::node_client::NodeClient;
 
+use crate::cln::{SubscribeSendpay, SendpaySubscriptionItem};
 use crate::config::Lightningd;
 
 impl Lightningd {
-
 	pub async fn grpc_client(&self) ->  anyhow::Result<NodeClient<tonic::transport::Channel>> {
 		// Client doesn't support grpc over http
 		// We need to use https using m-TLS authentication
@@ -44,7 +42,7 @@ impl Lightningd {
 	/// Verifies if the configuration is valid
 	pub async fn check_connection(&self) -> anyhow::Result<()> {
 		let mut grpc_client = self.grpc_client().await?;
-		let _ = grpc_client.getinfo(grpc::GetinfoRequest{}).await?.into_inner();
+		let _ = grpc_client.getinfo(cln_rpc::GetinfoRequest{}).await?.into_inner();
 		Ok(())
 	}
 }
@@ -60,15 +58,15 @@ pub async fn run_process_sendpay_updates(
 	// TODO: I now request the latest start-index from cln
 	// However, it is nicer to store the start-indcies somewhere in the database
 	// This would allow us to replay all send-pays if aspd crashes and cln keeps running
-	let updated_index = client.wait(grpc::WaitRequest {
-		subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
-		indexname: grpc::wait_request::WaitIndexname::Updated as i32,
+	let updated_index = client.wait(cln_rpc::WaitRequest {
+		subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+		indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
 		nextvalue: 0
 	}).await?.into_inner().updated() + 1;
 
-	let created_index = client.wait(grpc::WaitRequest {
-		subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
-		indexname: grpc::wait_request::WaitIndexname::Created as i32,
+	let created_index = client.wait(cln_rpc::WaitRequest {
+		subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+		indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
 		nextvalue: 0
 	}).await?.into_inner().created() + 1;
 
@@ -105,7 +103,7 @@ async fn call_pay_bolt11(
 	}
 
 	// Call the pay command
-	let pay_response = grpc_client.pay(grpc::PayRequest {
+	let pay_response = grpc_client.pay(cln_rpc::PayRequest {
 		bolt11: invoice.to_string(),
 		label: None,
 		maxfee: None,
@@ -193,7 +191,7 @@ pub async fn pay_bolt11(
 	// We should handle it better?
 	// This probably means cln went unavailable
 	// We don't know the payment status and just give up
-	let listpays_response = cln_client.list_pays(grpc::ListpaysRequest {
+	let listpays_response = cln_client.list_pays(cln_rpc::ListpaysRequest {
 		bolt11: Some(invoice.to_string()),
 		payment_hash: None,
 		status: None,
@@ -252,7 +250,7 @@ async fn invoice_pay_status(
 	bolt11_invoice: &Bolt11Invoice,
 	since: SystemTime,
 ) -> anyhow::Result<(PaymentStatus, Option<Vec<u8>>)> {
-	let listpays_response = cln_client.list_pays(grpc::ListpaysRequest {
+	let listpays_response = cln_client.list_pays(cln_rpc::ListpaysRequest {
 		bolt11: Some(bolt11_invoice.to_string()),
 		payment_hash: None,
 		status: None,

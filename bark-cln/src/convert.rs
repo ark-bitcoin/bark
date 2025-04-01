@@ -1,11 +1,9 @@
 
-use bitcoin::Amount;
-
 use ark::lightning::PaymentStatus;
 
-use crate::grpc;
-use crate::grpc::listpays_pays::ListpaysPaysStatus;
-use crate::grpc::listsendpays_payments::ListsendpaysPaymentsStatus;
+use crate::cln;
+use crate::listpays_pays::ListpaysPaysStatus;
+use crate::listsendpays_payments::ListsendpaysPaymentsStatus;
 
 impl From<ListpaysPaysStatus> for PaymentStatus {
 	fn from(value: ListpaysPaysStatus) -> Self {
@@ -28,9 +26,9 @@ impl From<ListsendpaysPaymentsStatus> for PaymentStatus {
 	}
 }
 
-impl From<Amount> for grpc::Amount {
-	fn from(amount: Amount) -> grpc::Amount {
-		grpc::Amount {
+impl From<bitcoin::Amount> for cln::Amount {
+	fn from(amount: bitcoin::Amount) -> cln::Amount {
+		cln::Amount {
 			msat: amount.to_sat() * 1000,
 		}
 	}

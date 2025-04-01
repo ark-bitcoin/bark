@@ -1,8 +1,7 @@
-#[macro_use]
-extern crate log;
 
-pub mod convert;
-pub mod grpc;
-pub mod subscribe_sendpay;
+mod cln;
+pub use cln::*;
 
-pub type ClnGrpcClient = grpc::node_client::NodeClient<tonic::transport::Channel>;
+mod convert;
+
+pub type ClnGrpcClient = cln::node_client::NodeClient<tonic::transport::Channel>;
