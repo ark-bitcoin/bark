@@ -2,22 +2,26 @@
 use std::{fmt, io, iter};
 
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
+use bitcoin_ext::fee::dust_anchor;
 use lightning_invoice::Bolt11Invoice;
 
 use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
-use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
+use crate::oor::OorPayment;
+use crate::vtxo::{exit_spk, VtxoSpkSpec};
+use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 
 const HTLC_VOUT: u32 = 0;
 const CHANGE_VOUT: u32 = 1;
 
+
 /// The minimum fee we consider for an HTLC transaction.
 pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bolt11Payment {
 	pub invoice: Bolt11Invoice,
 	pub inputs: Vec<Vtxo>,
@@ -34,6 +38,23 @@ pub struct Bolt11Payment {
 	pub exit_delta: u16,
 }
 
+pub fn htlc_taproot(
+	payment_hash: sha256::Hash,
+	asp_pubkey: PublicKey,
+	user_pubkey: PublicKey,
+	htlc_expiry_delta: u16,
+	htlc_expiry: u32) -> TaprootSpendInfo
+{
+	let asp_branch = util::hash_and_sign(payment_hash, asp_pubkey.x_only_public_key().0);
+	let user_branch = util::delay_timelock_sign(htlc_expiry_delta, htlc_expiry, user_pubkey.x_only_public_key().0);
+
+	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
+	bitcoin::taproot::TaprootBuilder::new()
+		.add_leaf(1, asp_branch).unwrap()
+		.add_leaf(1, user_branch).unwrap()
+		.finalize(&util::SECP, combined_pk).unwrap()
+}
+
 impl Bolt11Payment {
 	pub fn check_amounts(&self) -> bool {
 		let inputs = self.inputs.iter().map(|v| v.amount()).sum::<Amount>();
@@ -41,40 +62,42 @@ impl Bolt11Payment {
 		inputs >= (self.payment_amount + self.forwarding_fee + P2WSH_DUST)
 	}
 
-	pub fn htlc_taproot(&self) -> TaprootSpendInfo {
-		let payment_hash = self.invoice.payment_hash();
+	fn htlc_spk(&self) -> ScriptBuf {
+		let taproot = htlc_taproot(
+			*self.invoice.payment_hash(),
+			self.asp_pubkey,
+			self.user_pubkey,
+			self.htlc_expiry_delta,
+			self.htlc_expiry);
 
-		let asp_branch = util::hash_and_sign(*payment_hash, self.asp_pubkey.x_only_public_key().0);
-		let client_branch = util::delay_timelock_sign(self.htlc_expiry_delta, self.htlc_expiry, self.user_pubkey.x_only_public_key().0);
-
-		let combined_pk = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
-		bitcoin::taproot::TaprootBuilder::new()
-			.add_leaf(1, asp_branch).unwrap()
-			.add_leaf(1, client_branch).unwrap()
-			.finalize(&util::SECP, combined_pk).unwrap()
-	}
-
-	pub fn htlc_spk(&self) -> ScriptBuf {
-		let taproot = self.htlc_taproot();
 		ScriptBuf::new_p2tr_tweaked(taproot.output_key())
 	}
 
 	fn change_txout(&self) -> Option<TxOut> {
 		let amount = self.change_amount();
-		if  amount > Amount::ZERO {
-			let spk = crate::vtxo::exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta);
+		if amount > Amount::ZERO {
 			Some(TxOut {
 				value: amount,
-				script_pubkey: spk,
+				script_pubkey: exit_spk(self.user_pubkey, self.asp_pubkey, self.exit_delta)
 			})
 		} else {
 			None
 		}
 	}
 
-	fn htlc_output(&self, amount: Amount) -> TxOut {
+	pub fn htlc_amount(&self) -> Amount {
+		// This is the fee collected by the ASP for forwarding the payment
+		// We will calculate this later as base_fee + ppm * payment_amount
+		//
+		// The ASP uses this to pay for it's operation and pay for all routing-fees.
+		let forwarding_fee = self.forwarding_fee;
+
+		self.payment_amount + forwarding_fee
+	}
+
+	fn htlc_txout(&self) -> TxOut {
 		TxOut {
-			value: amount,
+			value: self.htlc_amount(),
 			script_pubkey: self.htlc_spk()
 		}
 	}
@@ -89,17 +112,12 @@ impl Bolt11Payment {
 
 	pub fn unsigned_transaction(&self) -> Transaction {
 		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
-		let payment_amount = self.payment_amount;
 
-		// This is the fee collected by the ASP for forwarding the payment
-		// We will calculate this later as base_fee + ppm * payment_amount
-		//
-		// The ASP uses this to pay for it's operation and pay for all routing-fees.
-		// The ASP can set this number similarly to how an LSP using trampoline payments would do it.
-		let forwarding_fee = self.forwarding_fee;
+		// Let's draft the output transactions
+		let htlc_output = self.htlc_txout();
+		let htlc_amount = htlc_output.value;
 
 		let dust_amount = Amount::from_sat(P2TR_DUST_SAT);
-		let htlc_amount = payment_amount + forwarding_fee;
 
 		// Just checking the computed fees work
 		// Our input's should equal our outputs + onchain fees
@@ -107,11 +125,9 @@ impl Bolt11Payment {
 		let change_amount = change_output.as_ref().map(|o| o.value).unwrap_or_default();
 
 		assert_eq!(input_amount, htlc_amount + dust_amount + change_amount,
-			"htlc = {htlc_amount}, dust={dust_amount}, change={change_amount}",
+			"htlc={htlc_amount}, dust={dust_amount}, change={change_amount}",
 		);
 
-		// Let's draft the output transactions
-		let htlc_output = self.htlc_output(htlc_amount);
 		let dust_anchor_output = fee::dust_anchor();
 
 		Transaction {
@@ -140,15 +156,13 @@ impl Bolt11Payment {
 	}
 
 	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
-		let tx = self.unsigned_transaction();
-
 		let prevouts = self.inputs.iter().map(|v| v.spec().txout()).collect::<Vec<_>>();
-		let prevouts = bitcoin::sighash::Prevouts::All(&prevouts);
 
+		let tx = self.unsigned_transaction();
 		let mut shc = bitcoin::sighash::SighashCache::new(tx);
 		(0..self.inputs.len()).map(|idx| {
 			shc.taproot_key_spend_signature_hash(
-				idx, &prevouts, bitcoin::TapSighashType::Default,
+				idx, &bitcoin::sighash::Prevouts::All(&prevouts), bitcoin::TapSighashType::Default,
 			).expect("sighash error")
 		}).collect()
 	}
@@ -162,15 +176,37 @@ impl Bolt11Payment {
 				inputs: self.inputs.clone(),
 				pseudo_spec: VtxoSpec {
 					amount: txout.value,
-					exit_delta: self.exit_delta,
 					expiry_height: expiry_height,
 					asp_pubkey: self.asp_pubkey,
 					user_pubkey: self.user_pubkey,
+					spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
 				},
 				final_point: OutPoint::new(tx.compute_txid(), CHANGE_VOUT),
 				htlc_tx: tx,
 			}
 		})
+	}
+
+	pub fn unsigned_htlc_vtxo(&self) -> Bolt11HtlcVtxo {
+		let tx = self.unsigned_transaction();
+		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
+
+		Bolt11HtlcVtxo {
+			inputs: self.inputs.clone(),
+			pseudo_spec: VtxoSpec {
+				amount: self.htlc_amount(),
+				expiry_height: expiry_height,
+				asp_pubkey: self.asp_pubkey,
+				user_pubkey: self.user_pubkey,
+				spk: VtxoSpkSpec::Htlc {
+					payment_hash: *self.invoice.payment_hash(),
+					htlc_expiry: self.htlc_expiry,
+					htlc_expiry_delta: self.htlc_expiry_delta,
+				}
+			},
+			final_point: OutPoint::new(tx.compute_txid(), HTLC_VOUT),
+			htlc_tx: tx,
+		}
 	}
 
 	pub fn sign_asp(
@@ -251,7 +287,7 @@ impl Bolt11Payment {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedBolt11Payment {
 	pub payment: Bolt11Payment,
 	pub signatures: Vec<schnorr::Signature>,
@@ -281,6 +317,33 @@ impl SignedBolt11Payment {
 			debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
 			vtxo
 		})
+	}
+
+	pub fn htlc_vtxo(&self) -> Bolt11HtlcVtxo {
+		let mut vtxo = self.payment.unsigned_htlc_vtxo();
+		util::fill_taproot_sigs(&mut vtxo.htlc_tx, &self.signatures);
+		//TODO(stevenroose) there seems to be a bug in the vtxo.htlc_tx.weight method,
+		// this +2 might be fixed later
+		debug_assert_eq!(vtxo.htlc_tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
+		vtxo
+	}
+
+	pub fn revocation_payment(&self) -> OorPayment {
+		let htlc_vtxo = Vtxo::from(self.htlc_vtxo());
+
+		// We need to keep budget for the dust anchor
+		let revoke_amount = htlc_vtxo.amount() - dust_anchor().value;
+		let pay_req = PaymentRequest {
+			pubkey: htlc_vtxo.spec().user_pubkey,
+			amount: revoke_amount
+		};
+
+		OorPayment {
+			asp_pubkey: htlc_vtxo.spec().asp_pubkey,
+			exit_delta: self.payment.exit_delta,
+			inputs: vec![htlc_vtxo],
+			outputs: vec![pay_req],
+		}
 	}
 
 	pub fn encode(&self) -> Vec<u8> {
@@ -345,6 +408,24 @@ pub struct Bolt11ChangeVtxo {
 }
 
 impl Bolt11ChangeVtxo {
+	pub fn id(&self) -> VtxoId {
+		self.final_point.into()
+	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Bolt11HtlcVtxo {
+	pub inputs: Vec<Vtxo>,
+	/// This has the fields for the spec, but were not necessarily
+	/// actually being used for the generation of the vtxos.
+	/// Primarily, the expiry height is the first of all the parents
+	/// expiry heights.
+	pub pseudo_spec: VtxoSpec,
+	pub htlc_tx: Transaction,
+	pub final_point: OutPoint,
+}
+
+impl Bolt11HtlcVtxo {
 	pub fn id(&self) -> VtxoId {
 		self.final_point.into()
 	}

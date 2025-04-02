@@ -1,3 +1,4 @@
+use ark::vtxo::VtxoSpkSpec;
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 
@@ -18,6 +19,7 @@ pub enum VtxoType {
 	Round,
 	Arkoor,
 	Bolt11Change,
+	Bolt11Htlc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -31,7 +33,7 @@ pub struct VtxoInfo {
 	pub user_pubkey: PublicKey,
 	pub asp_pubkey: PublicKey,
 	pub expiry_height: u32,
-	pub exit_delta: u16,
+	pub spk: VtxoSpkSpec,
 }
 
 impl From<Vtxo> for VtxoInfo {
@@ -44,12 +46,13 @@ impl From<Vtxo> for VtxoInfo {
 				Vtxo::Round { .. } => VtxoType::Round,
 				Vtxo::Arkoor { .. } => VtxoType::Arkoor,
 				Vtxo::Bolt11Change { .. } => VtxoType::Bolt11Change,
+				Vtxo::Bolt11Htlc { .. } => VtxoType::Bolt11Htlc,
 			},
 			utxo: v.point(),
 			user_pubkey: v.spec().user_pubkey,
 			asp_pubkey: v.spec().asp_pubkey,
 			expiry_height: v.spec().expiry_height,
-			exit_delta: v.spec().exit_delta,
+			spk: v.spec().spk.clone(),
 		}
 	}
 }

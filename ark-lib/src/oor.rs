@@ -13,6 +13,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::util::SECP;
+use crate::vtxo::VtxoSpkSpec;
 use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 
 
@@ -122,7 +123,7 @@ impl OorPayment {
 				amount: o.amount,
 				expiry_height: expiry_height,
 				asp_pubkey: self.asp_pubkey,
-				exit_delta: self.exit_delta,
+				spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
 		}).collect::<Vec<_>>()
 	}
 

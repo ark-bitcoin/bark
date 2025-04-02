@@ -32,7 +32,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use bark_cln::grpc::listpays_pays::ListpaysPaysStatus;
 use bip39::Mnemonic;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -51,6 +53,7 @@ use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
 use tokio_util::sync::CancellationToken;
+use tracing_subscriber::fmt::format;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::cln::SendpaySubscriptionItem;
@@ -573,8 +576,12 @@ impl App {
 			bail!("vtxo already expired: {} (tip = {})", spec.expiry_height, tip);
 		}
 
-		if spec.exit_delta != self.config.vtxo_exit_delta {
-			bail!("invalid exit delta: {} != {}", spec.exit_delta, self.config.vtxo_exit_delta);
+		let exit_delta = spec.spk
+			.exit_delta()
+			.with_context(|| format!("VTXO spk must be exit variant. Found: {}", spec.spk))?;
+
+		if exit_delta != self.config.vtxo_exit_delta {
+			bail!("invalid exit delta: {} != {}", exit_delta, self.config.vtxo_exit_delta);
 		}
 
 		Ok(())
@@ -815,12 +822,9 @@ impl App {
 			}
 		});
 
-
 		// Let event-stream
 		let event_stream = BroadcastStream::new(sendpay_rx.resubscribe()).filter_map(move |v| match v {
 			Ok(v) => {
-				// TODO: revoke payment in case of lightning failure
-
 				Some(rpc::Bolt11PaymentUpdate {
 					status: rpc::PaymentStatus::from(v.status.clone()).into(),
 					progress_message: format!(
@@ -873,6 +877,52 @@ impl App {
 		});
 
 		Ok(result)
+	}
+
+	async fn revoke_bolt11_payment(&self, signed: &SignedBolt11Payment, user_nonces: &[musig::MusigPubNonce])
+		-> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>
+	{
+		// Connecting to the grpc-client
+		let cln_config = self.config.lightningd.as_ref()
+			.context("This asp does not support lightning")?;
+		let mut cln_client = cln_config.grpc_client().await
+			.context("failed to connect to lightning")?;
+
+		let req = bark_cln::grpc::ListpaysRequest {
+			bolt11: Some(signed.payment.invoice.to_string()),
+			payment_hash: None,
+			status: None,
+		};
+		let listpays_response = cln_client
+			.list_pays(req).await
+			.context("Could not fetch cln payments")?
+			.into_inner();
+
+		for pay in listpays_response.pays {
+			if pay.status() == ListpaysPaysStatus::Pending {
+				return badarg!("This lightning payment is not eligible for revocation yet")
+			}
+			if pay.status() == ListpaysPaysStatus::Complete {
+				return badarg!("This lightning payment has completed. preimage: {}",
+					serialize_hex(&pay.preimage.unwrap()))
+			}
+		}
+
+		signed.validate_signatures(&crate::SECP)
+			.badarg("bad signatures on payment")?;
+
+		if signed.htlc_vtxo().pseudo_spec.asp_pubkey != self.asp_key.public_key() {
+			bail!("Payment wasn't signed with ASP's pubkey")
+		}
+
+		let htlc_vtxo = signed.htlc_vtxo();
+		let revocation_oor = signed.revocation_payment();
+
+		self.db.upsert_vtxos(&vec![htlc_vtxo.into()]).await?;
+
+		let parts = self.cosign_oor(&revocation_oor, user_nonces).await?;
+
+		Ok(parts)
 	}
 
 	// ** SOME ADMIN COMMANDS **

@@ -11,6 +11,7 @@ use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::{ScriptBuf, WPubkeyHash};
 use futures::future::join_all;
+use futures::{Stream, StreamExt};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, VtxoId};
@@ -29,7 +30,6 @@ use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST
 use ark_testing::daemon::aspd;
 use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
 use ark_testing::util::{FutureExt, ReceiverExt};
-use tokio_stream::StreamExt;
 
 lazy_static::lazy_static! {
 	static ref RANDOM_PK: PublicKey = "02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49".parse().unwrap();
@@ -631,6 +631,74 @@ async fn spend_unconfirmed_board_oor() {
 	l.recv().wait(2500).await;
 }
 
+async fn reject_revocation_on_successful_ln_payment() {
+	let ctx = TestContext::new("aspd/reject_revocation_on_successful_ln_payment").await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn finish_bolt11_payment(&mut self, req: rpc::SignedBolt11PaymentDetails) -> Result<Box<
+			dyn Stream<Item = Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
+		>, tonic::Status> {
+			// Wait until payment is successful then we drop update so client asks for revocation
+			let mut stream = self.upstream().finish_bolt11_payment(req).await?.into_inner();
+			while let Some(msg) = stream.next().await {
+				if msg.unwrap().payment_preimage().len() > 0 {
+					break;
+				}
+			}
+			Ok(Box::new(futures::stream::empty()))
+		}
+	}
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.bitcoind.generate(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.bitcoind.generate(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(7);
+	let board_amount = btc(5);
+
+	let proxy = AspdRpcProxyServer::start(Proxy(aspd_1.get_public_client().await)).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
+
+	bark_1.board(board_amount).await;
+	ctx.bitcoind.generate(6).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(2);
+	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	let res = bark_1.try_send_bolt11(invoice, None).await;
+	assert!(res.unwrap_err().to_string().contains("This lightning payment has completed. preimage: "));
+}
+
 #[tokio::test]
 async fn bad_round_input() {
 	let ctx = TestContext::new("aspd/bad_round_input").await;
@@ -642,7 +710,6 @@ async fn bad_round_input() {
 	let bark = ctx.new_bark_with_funds("bark", &aspd, btc(1)).await;
 	bark.board(btc(0.5)).await;
 	let [vtxo] = bark.vtxos().await.try_into().unwrap();
-
 
 	let ark_info = aspd.ark_info().await;
 	let mut rpc = aspd.get_public_client().await;

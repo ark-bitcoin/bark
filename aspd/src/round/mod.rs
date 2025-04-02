@@ -1419,6 +1419,7 @@ mod tests {
 	use std::collections::HashSet;
 	use std::str::FromStr;
 
+	use ark::vtxo::VtxoSpkSpec;
 	use bitcoin::secp256k1::{PublicKey, Secp256k1};
 	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
 	use bitcoin::secp256k1::schnorr::Signature;
@@ -1447,7 +1448,7 @@ mod tests {
 			user_pubkey: generate_pubkey(),
 			asp_pubkey: *TEST_ASP_PK,
 			expiry_height: 100_000,
-			exit_delta: 2016,
+			spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
 			amount: Amount::from_sat(amount),
 		}
 	}

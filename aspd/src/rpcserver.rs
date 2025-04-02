@@ -150,12 +150,13 @@ const RPC_SERVICE_ARK_POST_OOR_MAILBOX: &'static str = "post_oor_mailbox";
 const RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX: &'static str = "empty_oor_mailbox";
 const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment";
 const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payment";
+const RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT: &'static str = "revoke_bolt11_payment";
 const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
 const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
 const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
 
-const RPC_SERVICE_ARK_METHODS: [&str; 14] = [
+const RPC_SERVICE_ARK_METHODS: [&str; 15] = [
 	RPC_SERVICE_ARK_HANDSHAKE,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
 	RPC_SERVICE_ARK_GET_ROUND,
@@ -166,6 +167,7 @@ const RPC_SERVICE_ARK_METHODS: [&str; 14] = [
 	RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX,
 	RPC_SERVICE_ARK_START_BOLT11_PAYMENT,
 	RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT,
+	RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT,
 	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
 	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
 	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
@@ -530,6 +532,38 @@ impl rpc::server::ArkService for App {
 			.context("Could not finalise")?;
 
 		Ok(tonic::Response::new(Box::new(update_stream.map(|r| r.to_status()))))
+	}
+
+	async fn revoke_bolt11_payment(
+		&self,
+		req: tonic::Request<rpc::RevokeBolt11PaymentRequest>
+	) -> Result<tonic::Response<rpc::OorCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_OOR_COSIGN);
+
+		add_tracing_attributes(vec![
+			KeyValue::new("signed_payment", format!("{:?}", req.get_ref().signed_payment)),
+			KeyValue::new("pub_nonces", format!("{:?}", req.get_ref().pub_nonces)),
+		]);
+
+		let signed = SignedBolt11Payment::decode(&req.get_ref().signed_payment)
+			.badarg("invalid payment encoding")?;
+
+		let user_nonces = req.get_ref().pub_nonces.iter().map(|b| {
+			musig::MusigPubNonce::from_slice(b)
+				.badarg("invalid public nonce")
+		}).collect::<Result<Vec<_>, _>>()?;
+
+		if signed.payment.inputs.len() != user_nonces.len() {
+			badarg!("wrong number of user nonces");
+		}
+
+		let (nonces, sigs) = self.revoke_bolt11_payment(&signed, &user_nonces).await.to_status()?;
+		let response = rpc::OorCosignResponse {
+			pub_nonces: nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
+			partial_sigs: sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
+		};
+
+		Ok(tonic::Response::new(response))
 	}
 
 	// round

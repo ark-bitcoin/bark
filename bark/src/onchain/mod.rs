@@ -48,7 +48,7 @@ impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
 				input.vtxo.point(),
 				psbt_in,
 				input.vtxo.claim_satisfaction_weight(),
-				Sequence::from_height(input.vtxo.spec().exit_delta),
+				Sequence::from_height(input.vtxo.spec().exit_delta().expect("vtxo must be exitable here")),
 			).expect("error adding foreign utxo for claim input");
 		}
 	}

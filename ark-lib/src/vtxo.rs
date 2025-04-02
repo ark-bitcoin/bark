@@ -6,13 +6,13 @@ use bitcoin::{
 	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::absolute::LockTime;
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
 use bitcoin_ext::fee;
 
+use crate::lightning::{htlc_taproot, Bolt11ChangeVtxo, Bolt11HtlcVtxo};
 use crate::board::BoardVtxo;
-use crate::lightning::Bolt11ChangeVtxo;
 use crate::oor::ArkoorVtxo;
 use crate::rounds::RoundVtxo;
 use crate::{musig, oor, util};
@@ -131,14 +131,16 @@ impl<'de> serde::Deserialize<'de> for VtxoId {
 	}
 }
 
-pub fn exit_clause(
+/// Returns the clause to unilaterally spend a VTXO
+fn exit_clause(
 	user_pubkey: PublicKey,
 	exit_delta: u16,
 ) -> ScriptBuf {
 	util::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
 }
 
-pub fn exit_taproot(
+/// Returns taproot spend infos to build an exit spk
+fn exit_taproot(
 	user_pubkey: PublicKey,
 	asp_pubkey: PublicKey,
 	exit_delta: u16,
@@ -149,6 +151,8 @@ pub fn exit_taproot(
 		.finalize(&util::SECP, combined_pk).unwrap()
 }
 
+/// Returns a scriptPubkey that can be used as a VTXO spk to let user
+/// unilaterally exit the Ark
 pub fn exit_spk(
 	user_pubkey: PublicKey,
 	asp_pubkey: PublicKey,
@@ -190,11 +194,39 @@ pub fn create_exit_tx(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub enum VtxoSpkSpec {
+	Exit { exit_delta: u16 },
+	Htlc {
+		payment_hash: sha256::Hash,
+		htlc_expiry: u32,
+		htlc_expiry_delta: u16,
+	}
+}
+
+impl VtxoSpkSpec {
+	pub fn exit_delta(&self) -> Option<u16> {
+		match self {
+			VtxoSpkSpec::Exit { exit_delta } => Some(*exit_delta),
+			VtxoSpkSpec::Htlc { .. } => None,
+		}
+	}
+}
+
+impl fmt::Display for VtxoSpkSpec {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match &self {
+			VtxoSpkSpec::Exit { .. } => write!(f, "exit"),
+			VtxoSpkSpec::Htlc { .. } => write!(f, "htlc"),
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VtxoSpec {
 	pub user_pubkey: PublicKey,
 	pub asp_pubkey: PublicKey,
 	pub expiry_height: u32,
-	pub exit_delta: u16,
+	pub spk: VtxoSpkSpec,
 	/// The amount of the vtxo itself, this is either the exit tx our the
 	/// vtxo tree output. It does not include budget for fees, so f.e. to
 	/// calculate the board amount needed for this vtxo, fee budget should
@@ -209,12 +241,23 @@ impl VtxoSpec {
 		musig::combine_keys([self.user_pubkey, self.asp_pubkey])
 	}
 
-	pub fn exit_clause(&self) -> ScriptBuf {
-		exit_clause(self.user_pubkey, self.exit_delta)
+	/// Returns the clause to unilaterally spend a VTXO, if any
+	pub fn exit_clause(&self) -> Option<ScriptBuf> {
+		match self.spk {
+			VtxoSpkSpec::Exit { exit_delta } => Some(exit_clause(self.user_pubkey, exit_delta)),
+			VtxoSpkSpec::Htlc { .. } => None,
+		}
 	}
 
 	pub fn vtxo_taproot(&self) -> taproot::TaprootSpendInfo {
-		exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta)
+		match self.spk {
+			VtxoSpkSpec::Exit { exit_delta } => {
+				exit_taproot(self.user_pubkey, self.asp_pubkey, exit_delta)
+			},
+			VtxoSpkSpec::Htlc { payment_hash, htlc_expiry, htlc_expiry_delta } => {
+				htlc_taproot(payment_hash, self.asp_pubkey, self.user_pubkey, htlc_expiry_delta, htlc_expiry)
+			}
+		}
 	}
 
 	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
@@ -238,6 +281,10 @@ impl VtxoSpec {
 			value: self.amount,
 		}
 	}
+
+	pub fn exit_delta(&self) -> Option<u16> {
+		self.spk.exit_delta()
+	}
 }
 
 /// Represents a VTXO in the Ark.
@@ -250,6 +297,7 @@ pub enum Vtxo {
 	Round(RoundVtxo),
 	Arkoor(ArkoorVtxo),
 	Bolt11Change(Bolt11ChangeVtxo),
+	Bolt11Htlc(Bolt11HtlcVtxo)
 }
 
 impl Vtxo {
@@ -267,6 +315,7 @@ impl Vtxo {
 			Vtxo::Round(v) => v.point(),
 			Vtxo::Arkoor(v) => v.point,
 			Vtxo::Bolt11Change(v) => v.final_point,
+			Vtxo::Bolt11Htlc(v) => v.final_point,
 		}
 	}
 
@@ -276,18 +325,12 @@ impl Vtxo {
 			Vtxo::Round(v) => &v.spec,
 			Vtxo::Arkoor(v) => &v.output_specs[v.point.vout as usize],
 			Vtxo::Bolt11Change(v) => &v.pseudo_spec,
+			Vtxo::Bolt11Htlc(v) => &v.pseudo_spec,
 		}
 	}
 
 	pub fn amount(&self) -> Amount {
-		match self {
-			Vtxo::Board(v) => v.spec.amount,
-			Vtxo::Round(v) => v.spec.amount,
-			Vtxo::Arkoor(_) => self.spec().amount,
-			Vtxo::Bolt11Change(v) => {
-				v.htlc_tx.output[v.final_point.vout as usize].value
-			},
-		}
+		self.spec().amount
 	}
 
 	/// The exit tx of the vtxo.
@@ -307,6 +350,7 @@ impl Vtxo {
 				tx
 			},
 			Vtxo::Bolt11Change(v) => v.htlc_tx.clone(),
+			Vtxo::Bolt11Htlc(v) => v.htlc_tx.clone(),
 		};
 		debug_assert_eq!(ret.compute_txid(), self.id().utxo().txid);
 		ret
@@ -331,6 +375,13 @@ impl Vtxo {
 				txs.push(self.vtxo_tx());
 			},
 			Vtxo::Bolt11Change(v) => {
+				for input in &v.inputs {
+					input.collect_exit_txs(txs);
+				}
+
+				txs.push(self.vtxo_tx());
+			},
+			Vtxo::Bolt11Htlc(v) => {
 				for input in &v.inputs {
 					input.collect_exit_txs(txs);
 				}
@@ -364,6 +415,7 @@ impl Vtxo {
 			Vtxo::Round { .. } => false,
 			Vtxo::Arkoor { .. } => true,
 			Vtxo::Bolt11Change { .. } => true,
+			Vtxo::Bolt11Htlc { .. } => true,
 		}
 	}
 
@@ -387,6 +439,7 @@ impl Vtxo {
 			Vtxo::Round { .. } => "round",
 			Vtxo::Arkoor { .. } => "arkoor",
 			Vtxo::Bolt11Change { .. } => "bolt11change",
+			Vtxo::Bolt11Htlc { .. } => "bolt11htlc",
 		}
 	}
 
@@ -449,6 +502,20 @@ impl Vtxo {
 			_ => None,
 		}
 	}
+
+	pub fn as_bolt11htlc(&self) -> Option<&Bolt11HtlcVtxo> {
+		match self {
+			Vtxo::Bolt11Htlc(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn into_bolt11htlc(self) -> Option<Bolt11HtlcVtxo> {
+		match self {
+			Vtxo::Bolt11Htlc(v) => Some(v),
+			_ => None,
+		}
+	}
 }
 
 impl PartialEq for Vtxo {
@@ -501,6 +568,12 @@ impl From<Bolt11ChangeVtxo> for Vtxo {
 	}
 }
 
+impl From<Bolt11HtlcVtxo> for Vtxo {
+	fn from(v: Bolt11HtlcVtxo) -> Vtxo {
+		Vtxo::Bolt11Htlc(v)
+	}
+}
+
 
 #[cfg(test)]
 mod test {
@@ -526,7 +599,7 @@ use super::*;
 				user_pubkey: pk,
 				asp_pubkey: pk,
 				expiry_height: 15,
-				exit_delta: 7,
+				spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 				amount: Amount::from_sat(5),
 			},
 			onchain_output: point,
@@ -539,7 +612,7 @@ use super::*;
 				user_pubkey: pk,
 				asp_pubkey: pk,
 				expiry_height: 15,
-				exit_delta: 7,
+				spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 				amount: Amount::from_sat(5),
 			},
 			leaf_idx: 3,
@@ -555,7 +628,7 @@ use super::*;
 			user_pubkey: pk,
 			asp_pubkey: pk,
 			expiry_height: 15,
-			exit_delta: 7,
+			spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 			amount: Amount::from_sat(5),
 		}];
 		let tx = unsigned_oor_tx(&inputs, &output_specs);
@@ -579,7 +652,7 @@ use super::*;
 			user_pubkey: pk,
 			asp_pubkey: pk,
 			expiry_height: 15,
-			exit_delta: 7,
+			spk: VtxoSpkSpec::Exit { exit_delta: 7 },
 			amount: Amount::from_sat(5),
 		}];
 		let tx_recursive = unsigned_oor_tx(&inputs_recursive, &output_specs_recursive);

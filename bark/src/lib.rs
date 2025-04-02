@@ -10,6 +10,8 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
+use ark::lightning::Bolt11HtlcVtxo;
+use ark::vtxo::VtxoSpkSpec;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
 use movement::{Movement, MovementArgs};
@@ -91,7 +93,10 @@ impl From<Utxo> for UtxoInfo {
 				UtxoInfo {
 					outpoint: e.vtxo.point(),
 					amount: e.vtxo.amount(),
-					confirmation_height: Some(e.spendable_at_height - e.vtxo.spec().exit_delta as u32)
+					confirmation_height: {
+						let exit_delta = e.vtxo.spec().exit_delta();
+						Some(e.spendable_at_height + exit_delta.unwrap_or_default() as u32)
+					},
 				}
 		}
 	}
@@ -497,7 +502,7 @@ impl <P>Wallet<P> where
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
 			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
-			exit_delta: asp.info.vtxo_exit_delta,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
 			amount: amount,
 		};
 
@@ -520,7 +525,7 @@ impl <P>Wallet<P> where
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
 			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
-			exit_delta: asp.info.vtxo_exit_delta,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
 			// amount is temporarily set to total balance but will
 			// have fees deducted after psbt construction
 			amount: self.onchain.balance()
@@ -608,7 +613,7 @@ impl <P>Wallet<P> where
 				user_pubkey: dest.pubkey,
 				asp_pubkey: vtxos.spec.spec.asp_pk,
 				expiry_height: vtxos.spec.spec.expiry_height,
-				exit_delta: vtxos.spec.spec.exit_delta,
+				spk: VtxoSpkSpec::Exit { exit_delta: vtxos.spec.spec.exit_delta },
 				amount: dest.amount,
 			},
 			leaf_idx: leaf_idx,
@@ -641,6 +646,7 @@ impl <P>Wallet<P> where
 		match vtxo {
 			Vtxo::Arkoor(ArkoorVtxo { inputs, .. }) => iterate_over_inputs(inputs),
 			Vtxo::Bolt11Change(Bolt11ChangeVtxo { inputs, .. }) => iterate_over_inputs(inputs),
+			Vtxo::Bolt11Htlc(Bolt11HtlcVtxo { inputs, .. }) => iterate_over_inputs(inputs),
 			Vtxo::Board(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 			Vtxo::Round(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 		}
@@ -1012,7 +1018,7 @@ impl <P>Wallet<P> where
 		);
 
 		let req = rpc::SignedBolt11PaymentDetails {
-			signed_payment: signed.encode()
+			signed_payment: signed.clone().encode()
 		};
 
 		let mut payment_preimage = None;
@@ -1028,7 +1034,6 @@ impl <P>Wallet<P> where
 			}
 		}
 
-		let payment_preimage = payment_preimage.ok_or_else(|| anyhow!("Payment failed: {}", last_msg))?;
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
 			info!("Adding change VTXO of {}", change_vtxo.pseudo_spec.amount);
 			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&change_vtxo.htlc_tx));
@@ -1037,17 +1042,67 @@ impl <P>Wallet<P> where
 			None
 		};
 
-		self.db.register_movement(MovementArgs {
-			spends: &input_vtxos,
-			receives: change_vtxo.as_ref(),
-			recipients: vec![
-				(invoice.to_string(), amount)
-			],
-			fees: Some(anchor_amount + forwarding_fee)
-		}).context("failed to store OOR vtxo")?;
+		if let Some(payment_preimage) = payment_preimage {
+			self.db.register_movement(MovementArgs {
+				spends: &input_vtxos,
+				receives: change_vtxo.as_ref(),
+				recipients: vec![
+					(invoice.to_string(), amount)
+				],
+				fees: Some(anchor_amount + forwarding_fee)
+			}).context("failed to store OOR vtxo")?;
+			Ok(payment_preimage)
+		} else {
+			let htlc_vtxo = signed.htlc_vtxo().into();
 
-		info!("Bolt11 payment succeeded");
-		Ok(payment_preimage)
+			let keypair_idx = self.db.get_vtxo_key_index(&htlc_vtxo)?;
+			let keypair = self.vtxo_seed.derive_keypair(keypair_idx);
+			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+
+			let req = rpc::RevokeBolt11PaymentRequest {
+				signed_payment: signed.encode(),
+				pub_nonces: vec![pub_nonce.serialize().to_vec()],
+			};
+
+			let resp = asp.client.revoke_bolt11_payment(req).await?.into_inner();
+
+			let asp_pub_nonces = resp.pub_nonces.into_iter()
+				.map(|b| musig::MusigPubNonce::from_slice(&b))
+				.collect::<Result<Vec<_>, _>>()
+				.context("invalid asp pub nonces")?;
+			let asp_part_sigs = resp.partial_sigs.into_iter()
+				.map(|b| musig::MusigPartialSignature::from_slice(&b))
+				.collect::<Result<Vec<_>, _>>()
+				.context("invalid asp part sigs")?;
+
+			let revocation_payment = signed.revocation_payment();
+			let signed_revocation = revocation_payment.sign_finalize_user(
+				vec![sec_nonce],
+				&[pub_nonce],
+				&[keypair],
+				&asp_pub_nonces,
+				&asp_part_sigs,
+			);
+
+			trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_revocation.signed_transaction()));
+
+			let vtxo = Vtxo::from(signed_revocation
+				.output_vtxos()
+				.first()
+				.expect("there should be one output")
+				.clone()
+			);
+
+			let receives = iter::once(&vtxo).chain(change_vtxo.as_ref());
+			self.db.register_movement(MovementArgs {
+				spends: &input_vtxos,
+				receives: receives,
+				recipients: None,
+				fees: None
+			})?;
+
+			bail!("Payment failed: {}", last_msg);
+		}
 	}
 
 	/// Send to a lightning address.

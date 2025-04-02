@@ -5,6 +5,7 @@ use cln_rpc as rpc;
 
 use ark_testing::{TestContext, btc, sat};
 use bark_json::VtxoType;
+use bitcoin_ext::fee::dust_anchor;
 
 #[tokio::test]
 async fn start_lightningd() {
@@ -195,6 +196,7 @@ async fn bark_pay_ln_fails() {
 	let board_amount = btc(2);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
+	// Board funds into the Ark
 	bark_1.board(board_amount).await;
 	ctx.bitcoind.generate(6).await;
 
@@ -202,12 +204,21 @@ async fn bark_pay_ln_fails() {
 	let invoice_amount = btc(1);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
-	// board funds into the Ark
+	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
 
-	// The payment fails, the user still has all their funds
-	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	let vtxos = bark_1.vtxos().await;
+	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
+	let expected_change_amount = sat(100000000) - dust_anchor().value;
+	assert!(
+		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Bolt11Change && v.amount == expected_change_amount),
+		"user should get a change VTXO of 1btc - dust");
+	// NB: fees here are subject to change when we implement a fee schedule
+	let expected_revoked_amount = sat(100000000) - dust_anchor().value;
+	assert!(
+		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == expected_revoked_amount),
+		"user should get a revocation arkoor of payment_amount + forwarding fee - dust anchor");
 }
 
 #[tokio::test]
@@ -261,4 +272,44 @@ async fn bark_refresh_ln_change_vtxo() {
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
 	assert_eq!(vtxos[0].vtxo_type, VtxoType::Round);
 	assert_eq!(vtxos[0].amount, sat(299999670));
+}
+
+#[tokio::test]
+async fn bark_refresh_payment_revocation() {
+	let ctx = TestContext::new("lightningd/bark_refresh_payment_revocation").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	// No channels are created
+	// The payment must fail
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(3);
+	let board_amount = btc(2);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+
+	// Board funds into the Ark
+	bark_1.board(board_amount).await;
+	ctx.bitcoind.generate(6).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(1);
+	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	// Try send coins through lightning
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+
+	bark_1.refresh_all().await;
+	let vtxos = bark_1.vtxos().await;
+	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
+	assert_eq!(vtxos[0].vtxo_type, VtxoType::Round);
+	assert_eq!(vtxos[0].amount, sat(199999340));
 }
