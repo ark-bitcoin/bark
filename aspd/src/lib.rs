@@ -9,9 +9,9 @@
 #[macro_use]
 mod error;
 
+mod cln;
 mod bitcoind;
 mod database;
-mod lightning;
 mod psbtext;
 mod serde_util;
 mod vtxo_sweeper;
@@ -38,7 +38,6 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::TransactionExt;
-use lightning::pay_bolt11;
 use lightning_invoice::Bolt11Invoice;
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
@@ -51,10 +50,10 @@ use ark::{musig, BlockHeight, BlockRef, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
-use bark_cln::subscribe_sendpay::SendpaySubscriptionItem;
 use tokio_util::sync::CancellationToken;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
+use crate::cln::SendpaySubscriptionItem;
 use crate::error::ContextExt;
 use crate::round::RoundInput;
 use crate::telemetry::TelemetryMetrics;
@@ -380,7 +379,7 @@ impl App {
 			let cln_config = self.config.lightningd.clone().unwrap();
 			let jh_sendpay = tokio::spawn(async move {
 				let shutdown = app.shutdown.clone();
-				let ret = lightning::run_process_sendpay_updates(shutdown, &cln_config, sendpay_tx)
+				let ret = crate::cln::run_process_sendpay_updates(shutdown, &cln_config, sendpay_tx)
 					.await.context("error processing sendpays");
 				info!("Sendpay updater process exited with {:?}", ret);
 				ret
@@ -800,7 +799,9 @@ impl App {
 
 		// Spawn a task that performs the payment
 		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
-		let pay_jh = tokio::task::spawn(pay_bolt11(cln_client, signed, sendpay_rx.resubscribe()));
+		let pay_jh = tokio::task::spawn(crate::cln::pay_bolt11(
+			cln_client, signed, sendpay_rx.resubscribe(),
+		));
 
 		// A progress update is sent every five seconds to give the user an nidication of progress
 		let mut interval = tokio::time::interval(Duration::from_secs(5));

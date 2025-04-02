@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use bark_cln::grpc;
+use cln_rpc as rpc;
 
 use ark_testing::{TestContext, btc, sat};
 use bark_json::VtxoType;
@@ -16,7 +16,7 @@ async fn start_lightningd() {
 	// Start an instance of lightningd
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 	let mut client = lightningd_1.grpc_client().await;
-	let result = client.getinfo(grpc::GetinfoRequest{}).await.unwrap();
+	let result = client.getinfo(rpc::GetinfoRequest{}).await.unwrap();
 	let info = result.into_inner();
 
 	assert_eq!(info.alias.unwrap(), "lightningd-1");
@@ -41,7 +41,7 @@ async fn cln_can_pay_lightning() {
 	lightningd_1.wait_for_block_sync().await;
 	lightningd_1.connect(&lightningd_2).await;
 	let mut grpc_client = lightningd_1.grpc_client().await;
-	let peers = grpc_client.list_peers(grpc::ListpeersRequest{
+	let peers = grpc_client.list_peers(rpc::ListpeersRequest{
 		id: Some(lightningd_2.id().await),
 		level: None
 	}).await.unwrap().into_inner().peers;

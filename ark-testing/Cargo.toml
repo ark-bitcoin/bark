@@ -11,7 +11,7 @@ ark-lib = { path = "../ark-lib" }
 bark-aspd = { path = "../aspd" }
 aspd-log = { path = "../aspd-log" }
 aspd-rpc = { path = "../aspd-rpc", features = ["server"] }
-bark-cln = { path = "../bark-cln"}
+bark-cln-rpc = { path = "../cln-rpc"}
 bark-json = { path = "../bark-json"}
 bark-client = { path = "../bark" } 
 bark-bitcoin-ext = { path = "../bitcoin-ext" }

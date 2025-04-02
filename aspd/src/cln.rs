@@ -1,27 +1,29 @@
-use std::fs;
+
+use std::{fmt, fs};
 use std::time::{Duration, UNIX_EPOCH, SystemTime};
 
 use anyhow::Context;
-use bitcoin::hex::DisplayHex;
 use bitcoin::Amount;
+use bitcoin::hashes::hex::DisplayHex;
+use bitcoin::hashes::{ripemd160, sha256, Hash};
 use lightning_invoice::Bolt11Invoice;
-use tokio_util::sync::CancellationToken;
-use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
 use tokio::time::MissedTickBehavior;
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{IntervalStream, BroadcastStream};
-use tokio::sync::broadcast;
+use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
 
 use ark::lightning::{SignedBolt11Payment, PaymentStatus};
-use bark_cln::ClnGrpcClient;
-use bark_cln::grpc;
-use bark_cln::grpc::node_client::NodeClient;
-use bark_cln::subscribe_sendpay::{SubscribeSendpay, SendpaySubscriptionItem};
+use cln_rpc::ClnGrpcClient;
+use cln_rpc::listsendpays_request::ListsendpaysIndex;
+use cln_rpc::node_client::NodeClient;
 
 use crate::config::Lightningd;
 
-impl Lightningd {
+type GrpcClient = NodeClient<Channel>;
 
+impl Lightningd {
 	pub async fn grpc_client(&self) ->  anyhow::Result<NodeClient<tonic::transport::Channel>> {
 		// Client doesn't support grpc over http
 		// We need to use https using m-TLS authentication
@@ -44,7 +46,7 @@ impl Lightningd {
 	/// Verifies if the configuration is valid
 	pub async fn check_connection(&self) -> anyhow::Result<()> {
 		let mut grpc_client = self.grpc_client().await?;
-		let _ = grpc_client.getinfo(grpc::GetinfoRequest{}).await?.into_inner();
+		let _ = grpc_client.getinfo(cln_rpc::GetinfoRequest{}).await?.into_inner();
 		Ok(())
 	}
 }
@@ -60,15 +62,15 @@ pub async fn run_process_sendpay_updates(
 	// TODO: I now request the latest start-index from cln
 	// However, it is nicer to store the start-indcies somewhere in the database
 	// This would allow us to replay all send-pays if aspd crashes and cln keeps running
-	let updated_index = client.wait(grpc::WaitRequest {
-		subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
-		indexname: grpc::wait_request::WaitIndexname::Updated as i32,
+	let updated_index = client.wait(cln_rpc::WaitRequest {
+		subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+		indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
 		nextvalue: 0
 	}).await?.into_inner().updated() + 1;
 
-	let created_index = client.wait(grpc::WaitRequest {
-		subsystem: grpc::wait_request::WaitSubsystem::Sendpays as i32,
-		indexname: grpc::wait_request::WaitIndexname::Created as i32,
+	let created_index = client.wait(cln_rpc::WaitRequest {
+		subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+		indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
 		nextvalue: 0
 	}).await?.into_inner().created() + 1;
 
@@ -105,7 +107,7 @@ async fn call_pay_bolt11(
 	}
 
 	// Call the pay command
-	let pay_response = grpc_client.pay(grpc::PayRequest {
+	let pay_response = grpc_client.pay(cln_rpc::PayRequest {
 		bolt11: invoice.to_string(),
 		label: None,
 		maxfee: None,
@@ -193,7 +195,7 @@ pub async fn pay_bolt11(
 	// We should handle it better?
 	// This probably means cln went unavailable
 	// We don't know the payment status and just give up
-	let listpays_response = cln_client.list_pays(grpc::ListpaysRequest {
+	let listpays_response = cln_client.list_pays(cln_rpc::ListpaysRequest {
 		bolt11: Some(invoice.to_string()),
 		payment_hash: None,
 		status: None,
@@ -252,7 +254,7 @@ async fn invoice_pay_status(
 	bolt11_invoice: &Bolt11Invoice,
 	since: SystemTime,
 ) -> anyhow::Result<(PaymentStatus, Option<Vec<u8>>)> {
-	let listpays_response = cln_client.list_pays(grpc::ListpaysRequest {
+	let listpays_response = cln_client.list_pays(cln_rpc::ListpaysRequest {
 		bolt11: Some(bolt11_invoice.to_string()),
 		payment_hash: None,
 		status: None,
@@ -270,4 +272,165 @@ async fn invoice_pay_status(
 	}
 
 	return Ok((PaymentStatus::Failed, None))
+}
+
+pub struct SubscribeSendpay {
+	pub shutdown: CancellationToken,
+	pub client: NodeClient<Channel>,
+	pub update_index: u64,
+	pub created_index: u64,
+}
+
+impl SubscribeSendpay {
+	pub async fn run(self, tx: broadcast::Sender<SendpaySubscriptionItem>) -> anyhow::Result<()> {
+		let (u_idx, u_grpc, u_rx) = (self.update_index, self.client.clone(), tx.clone());
+		let shutdown = self.shutdown.clone();
+		let jh1 = tokio::spawn(async move {
+			tokio::select! {
+				res = updated_loop(u_idx, u_grpc, u_rx) => res,
+				_ = shutdown.cancelled() => Ok(()),
+			}
+		});
+
+		let (c_idx, c_grpc, c_rx) = (self.created_index, self.client.clone(), tx.clone());
+		let shutdown = self.shutdown.clone();
+		let jh2 = tokio::spawn(async move {
+			tokio::select! {
+				res = created_loop(c_idx, c_grpc, c_rx) => res,
+				_ = shutdown.cancelled() => Ok(()),
+			}
+		});
+
+		let _ = futures::future::try_join(jh1, jh2).await
+			.context("The task that processes sendpay-updates stopped unexpectedly")?;
+
+		Ok(())
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct  SendpaySubscriptionItem {
+	pub kind: ListsendpaysIndex,
+	pub status: PaymentStatus,
+	pub part_id: u64,
+	pub group_id: u64,
+	pub payment_hash: sha256::Hash,
+	pub payment_preimage: Option<ripemd160::Hash>,
+}
+
+impl fmt::Display for SendpaySubscriptionItem {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{:?} sendpay with status {:?}. Attempt {} part {} of payment {}",
+			self.kind, self.status, self.group_id, self.part_id,
+			self.payment_hash.to_byte_array().as_hex(),
+		)
+	}
+}
+
+async fn updated_loop(
+	mut updated_index: u64,
+	mut client: NodeClient<Channel>,
+	sender: broadcast::Sender<SendpaySubscriptionItem>,
+) -> anyhow::Result<()> {
+	loop {
+		// Wait for sendpay updates
+		let request = cln_rpc::WaitRequest {
+			subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+			indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
+			nextvalue: updated_index,
+		};
+
+		match client.wait(request).await {
+			Ok(_) => {
+				// We know that an update exist
+				// We retreive all the updates and process them
+				updated_index = process_sendpay(
+					&mut client,
+					ListsendpaysIndex::Updated,
+					updated_index,
+					&sender
+				).await? + 1;
+			}
+			Err(e) => {
+				trace!("Error in wait sendpay updated: {:?}", e)
+			}
+		}
+	}
+}
+
+async fn created_loop(
+	mut created_index: u64,
+	mut client: NodeClient<Channel>,
+	sender: broadcast::Sender<SendpaySubscriptionItem>,
+) -> anyhow::Result<()> {
+	loop {
+		// Wait for new sendpay creation
+		let request = cln_rpc::WaitRequest {
+			subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
+			indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
+			nextvalue: created_index,
+		};
+
+		match client.wait(request).await {
+			Ok(_) => {
+				// We know that at least one item was created
+				// We query them all and update them
+				created_index = process_sendpay(
+					&mut client,
+					ListsendpaysIndex::Created,
+					created_index,
+					&sender
+				).await? + 1;
+			}
+			Err(e) => trace!("Error in wait sendpay updated: {:?}", e)
+		}
+	}
+}
+
+async fn process_sendpay(
+	client: &mut GrpcClient,
+	kind: ListsendpaysIndex,
+	start_index: u64,
+	tx: &broadcast::Sender<SendpaySubscriptionItem>
+)-> anyhow::Result<u64> {
+	let listsendpaysrequest = cln_rpc::ListsendpaysRequest {
+		bolt11: None,
+		payment_hash: None,
+		status: None,
+		index: Some(kind as i32),
+		start: Some(start_index),
+		limit: None
+	};
+
+	let mut max_index = start_index;
+
+	let updates = client.list_send_pays(listsendpaysrequest).await?.into_inner();
+	for update in updates.payments {
+		let updated_index = update.updated_index();
+
+		let item = SendpaySubscriptionItem {
+			kind: kind,
+			status: update.status().into(),
+			part_id: update.partid(),
+			group_id: update.groupid,
+			payment_hash: sha256::Hash::from_slice(&update.payment_hash)?,
+			payment_preimage: update.payment_preimage
+				.map(|x| ripemd160::Hash::from_slice(&x))
+				.transpose()?
+		};
+
+		if max_index < updated_index {
+			max_index = updated_index;
+		}
+
+		match kind {
+			ListsendpaysIndex::Created => trace!("Created {:?}", item),
+			ListsendpaysIndex::Updated =>
+				trace!("Updated idx={} {:?}", updated_index, item),
+		}
+
+		tx.send(item)?;
+	}
+
+	Ok(max_index)
 }

@@ -8,7 +8,7 @@ members = [
   "aspd-log",
   "bark",
   "bitcoin-ext",
-  "bark-cln",
+  "cln-rpc",
   "bark-json",
   "stream-until",
 ]

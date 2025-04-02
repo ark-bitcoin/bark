@@ -13,8 +13,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tonic::transport::{Certificate, Channel, channel::ClientTlsConfig, Identity, Uri};
 
-use bark_cln::grpc;
-use bark_cln::grpc::node_client::NodeClient;
+use cln_rpc::node_client::NodeClient;
 
 use crate::Bitcoind;
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
@@ -106,22 +105,22 @@ pub struct GrpcDetails {
 	pub client_key_path: PathBuf
 }
 
-fn amount_or_all(amount: Amount) -> grpc::AmountOrAll {
-	grpc::AmountOrAll {
-		value : Some(grpc::amount_or_all::Value::Amount(grpc::Amount {
+fn amount_or_all(amount: Amount) -> cln_rpc::AmountOrAll {
+	cln_rpc::AmountOrAll {
+		value : Some(cln_rpc::amount_or_all::Value::Amount(cln_rpc::Amount {
 			msat : amount.to_sat()*1000,
 		})),
 	}
 }
 
-fn amount_or_any(amount: Option<Amount>) -> grpc::AmountOrAny {
-	grpc::AmountOrAny {
+fn amount_or_any(amount: Option<Amount>) -> cln_rpc::AmountOrAny {
+	cln_rpc::AmountOrAny {
 		value: Some(if let Some(amount) = amount {
-			grpc::amount_or_any::Value::Amount(grpc::Amount {
+			cln_rpc::amount_or_any::Value::Amount(cln_rpc::Amount {
 				msat : amount.to_sat()*1000,
 			})
 		} else {
-			grpc::amount_or_any::Value::Any(true)
+			cln_rpc::amount_or_any::Value::Any(true)
 		}),
 	}
 }
@@ -206,7 +205,7 @@ impl LightningDHelper {
 
 	async fn is_ready(&self) -> bool {
 		if let Ok(mut client) = self.try_grpc_client().await {
-			let req = grpc::GetinfoRequest{};
+			let req = cln_rpc::GetinfoRequest{};
 			client.getinfo(req).await.is_ok()
 		} else {
 			false
@@ -283,13 +282,13 @@ impl Lightningd {
 
 	pub async fn id(&self) -> Vec<u8> {
 		let mut client = self.grpc_client().await;
-		client.getinfo(grpc::GetinfoRequest {}).await.unwrap().into_inner().id
+		client.getinfo(cln_rpc::GetinfoRequest {}).await.unwrap().into_inner().id
 	}
 
 	pub async fn connect(&self, other : &Lightningd) {
 		// Get the  connection details of the other lightning Node
 		let other_id = other.grpc_client().await
-			.getinfo(grpc::GetinfoRequest{}).await.unwrap()
+			.getinfo(cln_rpc::GetinfoRequest{}).await.unwrap()
 			.into_inner().id;
 		let other_host = "localhost";
 		let other_port = other.port().await
@@ -298,7 +297,7 @@ impl Lightningd {
 		// Connect both nodes
 		let mut client = self.grpc_client().await;
 		client.connect_peer(
-			grpc::ConnectRequest {
+			cln_rpc::ConnectRequest {
 				id: hex::encode(other_id),
 				host: Some(other_host.to_owned()),
 				port: Some(u32::from(other_port))
@@ -310,7 +309,7 @@ impl Lightningd {
 	pub async fn wait_for_block(&self, blockheight: u64) {
 		trace!("{} - Wait for block {}", self.name, blockheight);
 		let mut client = self.grpc_client().await;
-		client.wait_block_height(grpc::WaitblockheightRequest {
+		client.wait_block_height(cln_rpc::WaitblockheightRequest {
 			blockheight: u32::try_from(blockheight).unwrap(),
 			timeout: None,
 		}).await.unwrap();
@@ -328,7 +327,7 @@ impl Lightningd {
 
 	pub async fn get_onchain_address(&self) -> bitcoin::Address {
 		let mut client = self.grpc_client().await;
-		let response = client.new_addr(grpc::NewaddrRequest {
+		let response = client.new_addr(cln_rpc::NewaddrRequest {
 			addresstype: None,
 		}).await.unwrap().into_inner();
 		let bech32 = response.bech32.unwrap();
@@ -338,7 +337,7 @@ impl Lightningd {
 
 	pub async fn fund_channel(&self, other: &Lightningd, amount: Amount) -> bitcoin::Txid {
 		let mut client = self.grpc_client().await;
-		let response = client.fund_channel(grpc::FundchannelRequest {
+		let response = client.fund_channel(cln_rpc::FundchannelRequest {
 			id: other.id().await,
 			amount: Some(amount_or_all(amount)),
 			feerate: None,
@@ -363,7 +362,7 @@ impl Lightningd {
 		description: impl AsRef<str>,
 	) -> String {
 		let mut client = self.grpc_client().await;
-		client.invoice(grpc::InvoiceRequest {
+		client.invoice(cln_rpc::InvoiceRequest {
 			description: description.as_ref().to_owned(),
 			label: label.as_ref().to_owned(),
 			amount_msat: Some(amount_or_any(amount)),
@@ -379,7 +378,7 @@ impl Lightningd {
 
 	pub async fn try_pay_bolt11(&self, bolt11: impl AsRef<str>) -> anyhow::Result<()> {
 		let mut client = self.grpc_client().await;
-		let response = client.pay(grpc::PayRequest {
+		let response = client.pay(cln_rpc::PayRequest {
 			bolt11: bolt11.as_ref().to_string(),
 			amount_msat: None,
 			label: None,
@@ -395,7 +394,7 @@ impl Lightningd {
 			partial_msat: None,
 		}).await.unwrap().into_inner();
 
-		if response.status == grpc::pay_response::PayStatus::Complete as i32 {
+		if response.status == cln_rpc::pay_response::PayStatus::Complete as i32 {
 			Ok(())
 		}
 		else {
@@ -413,7 +412,7 @@ impl Lightningd {
 		let mut client = self.grpc_client().await;
 
 		loop {
-			let req = grpc::ListchannelsRequest::default();
+			let req = cln_rpc::ListchannelsRequest::default();
 			let res = client.list_channels(req).await.unwrap().into_inner();
 
 			let channels = res.channels.iter()
@@ -433,11 +432,11 @@ impl Lightningd {
 
 	pub async fn wait_invoice_paid(&self, label: impl AsRef<str>) {
 		let mut client = self.grpc_client().await;
-		let invoice_status = client.wait_invoice(grpc::WaitinvoiceRequest {
+		let invoice_status = client.wait_invoice(cln_rpc::WaitinvoiceRequest {
 			label: label.as_ref().to_string(),
 		}).await.unwrap().into_inner();
 
-		if invoice_status.status != grpc::waitinvoice_response::WaitinvoiceStatus::Paid as i32 {
+		if invoice_status.status != cln_rpc::waitinvoice_response::WaitinvoiceStatus::Paid as i32 {
 			panic!("Invoice expired before payment");
 		}
 	}
