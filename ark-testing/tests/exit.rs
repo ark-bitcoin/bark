@@ -253,7 +253,7 @@ async fn exit_vtxo() {
 	ctx.bitcoind.generate(1).await;
 
 	bark.board(sat(900_000)).await;
-	ctx.bitcoind.generate(15).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 	bark.refresh_all().await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -465,7 +465,7 @@ async fn exit_bolt11_change() {
 
 	let board_amount = btc(5);
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	let invoice_amount = btc(2);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
@@ -508,7 +508,7 @@ async fn exit_revoked_lightning_payment() {
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);

@@ -689,7 +689,7 @@ async fn reject_revocation_on_successful_ln_payment() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
@@ -698,6 +698,28 @@ async fn reject_revocation_on_successful_ln_payment() {
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	let res = bark_1.try_send_bolt11(invoice, None).await;
 	assert!(res.unwrap_err().to_string().contains("This lightning payment has completed. preimage: "));
+}
+
+#[tokio::test]
+async fn spend_unconfirmed_board_ln() {
+	let ctx = TestContext::new("aspd/spend_unconfirmed_board_ln").await;
+
+	// Start a lightning node to generate an invoice, we won't perform any payment so no need for others
+	trace!("Start lightningd-1");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let invoice = lightningd_1.invoice(None, "a testing invoice", "my description").await;
+
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	bark1.board(sat(800_000)).await;
+
+	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	tokio::spawn(async move {
+		let _ = bark1.send_bolt11(invoice, Some(sat(400_000))).await;
+		// we don't care that that call fails
+	});
+	l.recv().wait(2500).await;
 }
 
 #[tokio::test]

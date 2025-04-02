@@ -738,6 +738,11 @@ impl App {
 			return badarg!("attempted to sign OOR for vtxo already in flux: {}", id);
 		}
 
+		if let Err(e) = self.validate_board_inputs(&input_vtxos) {
+			self.release_vtxos_in_flux(&ids).await;
+			return Err(e).context("oor cosign failed");
+		}
+
 		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {
