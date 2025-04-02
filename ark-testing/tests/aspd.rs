@@ -631,6 +631,7 @@ async fn spend_unconfirmed_board_oor() {
 	l.recv().wait(2500).await;
 }
 
+#[tokio::test]
 async fn reject_revocation_on_successful_ln_payment() {
 	let ctx = TestContext::new("aspd/reject_revocation_on_successful_ln_payment").await;
 

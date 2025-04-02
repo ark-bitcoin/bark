@@ -32,7 +32,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use bark_cln::grpc::listpays_pays::ListpaysPaysStatus;
 use bip39::Mnemonic;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, Network, OutPoint, Transaction};
@@ -47,13 +46,13 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 use tokio::signal::unix::{signal, SignalKind};
+use tokio_util::sync::CancellationToken;
 
 use ark::{musig, BlockHeight, BlockRef, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc as rpc;
-use tokio_util::sync::CancellationToken;
-use tracing_subscriber::fmt::format;
+use cln_rpc::listpays_pays::ListpaysPaysStatus;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use crate::cln::SendpaySubscriptionItem;
@@ -888,7 +887,7 @@ impl App {
 		let mut cln_client = cln_config.grpc_client().await
 			.context("failed to connect to lightning")?;
 
-		let req = bark_cln::grpc::ListpaysRequest {
+		let req = cln_rpc::ListpaysRequest {
 			bolt11: Some(signed.payment.invoice.to_string()),
 			payment_hash: None,
 			status: None,
