@@ -1,0 +1,95 @@
+when:
+  - event: pull_request
+  - event: manual
+  - event: tag
+  - event: push
+    branch: master
+
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git@sha256:2aaacedd7da067f2f6b54a3ef3d39cc69cc0c1152e377fd8df266bd34acd317e
+    settings:
+      partial: false
+      depth: 100
+      lfs: false
+
+steps:
+  - name: prechecks
+    image: registry.2nd.dev/build:12
+    commands:
+      - just prechecks
+
+  - name: check-commits
+    depends_on: prechecks
+    image: registry.2nd.dev/build:12
+    commands:
+      - just check-commits
+
+  - name: test-unit
+    depends_on: check-commits
+    image: registry.2nd.dev/build:12
+    commands:
+      - git log --oneline | head -n 1
+      - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
+
+  - name: build
+    depends_on: check-commits
+    image: registry.2nd.dev/build:12
+    commands:
+      - git log --oneline | head -n 1
+      - cargo version
+      - just build
+
+  - name: aspd-default-config-file
+    depends_on: build
+    image: registry.2nd.dev/build:12
+    commands:
+      - just default-aspd-config
+      - bash contrib/check-clean-default-config.sh
+
+  - name: use-bark-as-dependency
+    depends_on: build
+    image: registry.2nd.dev/build:12
+    commands:
+      - cargo init barktest && cd barktest
+      - cargo add bark-client
+      - cargo update
+      - cargo build
+
+  - name: test-integration-btc28.0
+    depends_on: build
+    image: registry.2nd.dev/build:12
+    environment:
+      BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
+      LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
+      TEST_DIRECTORY: ./test/btc28
+      TEST_POSTGRES_HOST: localhost
+    commands:
+      - git log --oneline | head -n 1
+      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
+      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
+      - ls -al $${BITCOIND_EXEC}
+      - ls -al $${LIGHTNINGD_EXEC}
+      - service postgresql start
+      - cargo test --package ark-testing
+
+  - name: test-integration-esplora
+    depends_on: build
+    image: registry.2nd.dev/build:12
+    environment:
+      BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
+      LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
+      ELECTRS_EXEC: /root/.cargo/bin/electrs
+      CHAIN_SOURCE: esplora
+      TEST_DIRECTORY: ./test/esplora
+      TEST_POSTGRES_HOST: localhost
+    commands:
+      - git log --oneline | head -n 1
+      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
+      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
+      - ls -al $${ELECTRS_EXEC}
+      - service postgresql start
+      - cargo test --package ark-testing
+
+depends_on:
+  - main
