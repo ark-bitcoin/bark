@@ -1,3 +1,8 @@
+//!
+//! This "example" is used in dev and CI to dump the default values
+//! for the aspd config into a file and ensure the checked-in
+//! config.default.toml file is up-to-date.
+//!
 
 use std::path::PathBuf;
 
