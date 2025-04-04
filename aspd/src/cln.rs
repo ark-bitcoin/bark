@@ -307,8 +307,11 @@ impl SubscribeSendpay {
 			}
 		});
 
-		let _ = futures::future::try_join(jh1, jh2).await
+		let (created_output, updated_output) = futures::future::try_join(jh1, jh2).await
 			.context("The task that processes sendpay-updates stopped unexpectedly")?;
+
+		created_output.context("created")?;
+		updated_output.context("updated")?;
 
 		Ok(())
 	}
