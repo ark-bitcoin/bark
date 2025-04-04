@@ -6,5 +6,6 @@ fn main() {
 		.compile_protos(&["./protos/node.proto"], &["./protos/"])
 		.expect("Failed to compile cln server protos");
 
+	println!("cargo:rerun-if-changed=src/cln.rs");
 	println!("cargo:rerun-if-changed=protos/node.proto");
 }
