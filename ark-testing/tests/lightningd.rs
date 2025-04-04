@@ -3,7 +3,7 @@ extern crate log;
 
 use cln_rpc as rpc;
 
-use ark_testing::{TestContext, btc, sat};
+use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use bark_json::VtxoType;
 use bitcoin_ext::fee::dust_anchor;
 
@@ -107,7 +107,7 @@ async fn bark_pay_ln_succeeds() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	{
 		// Create a payable invoice
@@ -162,7 +162,7 @@ async fn bark_pay_invoice_twice() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, btc(7)).await;
 
 	bark_1.board(btc(5)).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
@@ -198,7 +198,7 @@ async fn bark_pay_ln_fails() {
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
@@ -257,7 +257,7 @@ async fn bark_refresh_ln_change_vtxo() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
@@ -297,7 +297,7 @@ async fn bark_refresh_payment_revocation() {
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
