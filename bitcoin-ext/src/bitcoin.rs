@@ -65,6 +65,18 @@ pub trait TaprootSpendInfoExt: Borrow<taproot::TaprootSpendInfo> {
 }
 impl TaprootSpendInfoExt for taproot::TaprootSpendInfo {}
 
+/// Extension trait for [Amount].
+pub trait AmountExt: Borrow<Amount> {
+	fn to_msat(&self) -> u64 {
+		self.borrow().to_sat() * 1_000
+	}
+
+	fn from_msat(value: u64) -> Amount {
+		Amount::from_sat(value.div_euclid(1_000))
+	}
+}
+impl AmountExt for Amount {}
+
 
 /// Extension trait for [FeeRate].
 pub trait FeeRateExt: Borrow<FeeRate> {

@@ -1,6 +1,7 @@
 
 use anyhow::Context;
 use bitcoin::Amount;
+use bitcoin_ext::AmountExt;
 use lightning_invoice::Bolt11Invoice;
 use lnurllib::api::LnUrlResponse;
 use lnurllib::lightning_address::LightningAddress;
@@ -18,7 +19,7 @@ pub async fn lnurlp_invoice(
 		LnUrlResponse::LnUrlChannelResponse(_) => bail!("received lnurl channel"),
 	};
 
-	let invoice = client.get_invoice(&resp, amount.to_sat() * 1000, None, comment).await
+	let invoice = client.get_invoice(&resp, amount.to_msat(), None, comment).await
 		.context("failed to fetch invoice from lnurlpay")?.pr;
 
 	Ok(invoice.parse().with_context(|| format!("received invalid invoice: {}", invoice))?)
