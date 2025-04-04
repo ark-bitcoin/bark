@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	make \
 	pkg-config \
 	ripgrep \
+	libsodium-dev \
 	libssl-dev \
 	libclang-dev \
 	libsqlite3-dev \
