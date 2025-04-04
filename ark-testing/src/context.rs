@@ -36,17 +36,19 @@ pub struct TestContext {
 	pub name: String,
 	pub datadir: PathBuf,
 
-	pub bitcoind: Bitcoind,
+	pub bitcoind: Option<Bitcoind>,
 
 	// use a central Electrs for the Esplora API if necessary
 	pub electrs: Option<Electrs>,
 
 	// ensures postgres daemon, if any, stays alive the TestContext's lifetime
 	_postgresd: Option<Postgres>,
-	postgres_config: config::Postgres,
+	postgres_config: Option<config::Postgres>,
 }
 
 impl TestContext {
+
+
 	pub async fn new(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
 
@@ -58,11 +60,40 @@ impl TestContext {
 		}
 		fs::create_dir_all(&datadir).await.unwrap();
 
+		let mut ctx = TestContext {
+			name: name.to_string(),
+			datadir,
+			bitcoind: None,
+			electrs: None,
+			_postgresd: None,
+			postgres_config: None
+		};
+
+		ctx.init_central_bitcoind().await;
+		ctx.init_central_electrs().await;
+		ctx.init_central_postgres().await;
+
+		ctx
+	}
+
+	pub fn bitcoind_default_cfg(&self, name: impl AsRef<str>) -> BitcoindConfig {
+		let datadir = self.datadir.join(name.as_ref());
+		BitcoindConfig {
+			datadir,
+			wallet: false,
+			txindex: true,
+			network: Network::Regtest,
+			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
+			relay_fee: None,
+		}
+	}
+
+	pub async fn init_central_bitcoind(&mut self) -> () {
 		let bitcoind = {
 			let mut bitcoind = Bitcoind::new(
 				"bitcoind".to_string(),
 				BitcoindConfig {
-					datadir: datadir.join("bitcoind"),
+					datadir: self.datadir.join("bitcoind"),
 					wallet: true,
 					txindex: true,
 					network: Network::Regtest,
@@ -78,51 +109,47 @@ impl TestContext {
 		bitcoind.init_wallet().await;
 		bitcoind.prepare_funds().await;
 
+		self.bitcoind = Some(bitcoind);
+	}
+
+	pub async fn init_central_electrs(&mut self) -> () {
 		let electrs = if should_use_electrs() {
 			let cfg = ElectrsConfig {
 				network: Network::Regtest,
-				bitcoin_dir: bitcoind.datadir(),
-				bitcoin_rpc_port: bitcoind.rpc_port(),
-				bitcoin_zmq_port: bitcoind.zmq_port(),
-				electrs_dir: datadir.join("electrs"),
+				bitcoin_dir: self.bitcoind().datadir(),
+				bitcoin_rpc_port: self.bitcoind().rpc_port(),
+				bitcoin_zmq_port: self.bitcoind().zmq_port(),
+				electrs_dir: self.datadir.join("electrs"),
 			};
-			let mut electrs = Electrs::new(name, cfg);
+			let mut electrs = Electrs::new(&self.name, cfg);
 			electrs.start().await.unwrap();
 			Some(electrs)
 		} else {
 			None
 		};
 
+		self.electrs = electrs;
+	}
+
+	pub async fn init_central_postgres(&mut self) -> () {
 		let (postgres_config, postgresd) = if postgresd::use_host_database() {
-			postgresd::cleanup_dbs(&postgresd::global_client().await, name).await;
+			postgresd::cleanup_dbs(&postgresd::global_client().await, &self.name).await;
 			let cfg = postgresd::host_base_config();
 			(cfg, None)
 		} else {
-			let postgresd = Self::new_postgres("postgres", datadir.join("postgres")).await;
+			let postgresd = Self::new_postgres("postgres", self.datadir.join("postgres")).await;
 			(postgresd.helper().as_base_config(), Some(postgresd))
 		};
 
-		TestContext {
-			name: name.to_string(),
-			datadir,
-			bitcoind,
-			electrs,
-
-			postgres_config,
-			_postgresd: postgresd,
-		}
+		self.postgres_config = Some(postgres_config);
+		self._postgresd = postgresd
 	}
 
-	pub fn bitcoind_default_cfg(&self, name: impl AsRef<str>) -> BitcoindConfig {
-		let datadir = self.datadir.join(name.as_ref());
-		BitcoindConfig {
-			datadir,
-			wallet: false,
-			txindex: true,
-			network: Network::Regtest,
-			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
-			relay_fee: None,
-		}
+	/// Returns the `Bitcoind` which is central to this `TextContext`
+	/// Will panic if no central `BitcoinD` is present
+	pub fn bitcoind(&self) -> &Bitcoind {
+		self.bitcoind.as_ref()
+			.expect("The central bitcoind hasn't been initialized. Call init_central_bitcoind first")
 	}
 
 	pub async fn new_bitcoind(&self, name: impl AsRef<str>) -> Bitcoind {
@@ -131,7 +158,7 @@ impl TestContext {
 
 	pub async fn new_bitcoind_with_cfg(&self, name: impl AsRef<str>, cfg: BitcoindConfig) -> Bitcoind {
 		let wallet = cfg.wallet;
-		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), cfg, Some(self.bitcoind.p2p_url()));
+		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), cfg, Some(self.bitcoind().p2p_url()));
 		bitcoind.start().await.unwrap();
 		if wallet {
 			bitcoind.init_wallet().await;
@@ -148,7 +175,7 @@ impl TestContext {
 	fn postgres_default_cfg(&self, name: impl AsRef<str>) -> config::Postgres {
 		config::Postgres {
 			name: format!("{}/{}", &self.name, name.as_ref()),
-			..self.postgres_config.clone()
+			..self.postgres_config.as_ref().expect("postgresd not initialized yet").clone()
 		}
 	}
 
@@ -328,8 +355,8 @@ impl TestContext {
 	pub async fn fund_asp(&self, asp: &Aspd, amount: Amount) {
 		info!("Fund {} {}", asp.name, amount);
 		let rounds_address = asp.get_rounds_funding_address().await;
-		self.bitcoind.fund_addr(rounds_address, amount).await;
-		self.bitcoind.generate(1).await;
+		self.bitcoind().fund_addr(rounds_address, amount).await;
+		self.bitcoind().generate(1).await;
 		asp.get_admin_client().await.wallet_status(rpc::protos::Empty {}).await
 			.expect("error calling wallet status after funding apsd");
 	}
@@ -338,8 +365,8 @@ impl TestContext {
 	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> Txid {
 		info!("Fund {} {}", bark.name(), amount);
 		let address = bark.get_onchain_address().await;
-		let txid = self.bitcoind.fund_addr(address, amount).await;
-		self.bitcoind.generate(1).await;
+		let txid = self.bitcoind().fund_addr(address, amount).await;
+		self.bitcoind().generate(1).await;
 		txid
 	}
 
@@ -347,14 +374,14 @@ impl TestContext {
 		info!("Fund {} {}", lightning.name, amount);
 		let address = lightning.get_onchain_address().await;
 
-		let client = self.bitcoind.sync_client();
+		let client = self.bitcoind().sync_client();
 		client.send_to_address(
 			&address, amount, None, None, None, None, None, None,
 		).unwrap()
 	}
 
 	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {
-		let client = self.bitcoind.sync_client();
+		let client = self.bitcoind().sync_client();
 		let start = Instant::now();
 		while Instant::now().duration_since(start).as_millis() < 30_000 {
 			if let Ok(result) = client.get_raw_transaction(&txid, None) {
