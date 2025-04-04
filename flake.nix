@@ -82,6 +82,7 @@
 						url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
 						hash = "sha256-00cG/DkRAwR/fMuuKXml2QAiE0yC6TlQUqXELbbDPRE=";
 					};
+					makeFlags = [ "VERSION=v${lightningVersion}" ];
 					# some makefile bug: https://github.com/ElementsProject/lightning/issues/8141
 					preInstall = ''
 					mkdir -p $out/libexec/c-lightning/plugins/
