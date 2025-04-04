@@ -1581,22 +1581,31 @@ impl <P>Wallet<P> where
 
 				// if there is one offboard req, we register as a spend, else as a refresh
 				// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
-				if let Some(offboard) = offb_reqs.get(0) {
-					let params = Params::new(self.properties().unwrap().network);
-					let address = Address::from_script(&offboard.script_pubkey, params)?;
+
+
+				let params = Params::new(self.properties().unwrap().network);
+				let sent = offb_reqs.iter().map(|o| {
+					let address = Address::from_script(&o.script_pubkey, &params)?;
+					Ok((address.to_string(), o.amount))
+				}).collect::<anyhow::Result<Vec<_>>>()?;
+
+				let received = new_vtxos.iter().filter(|v| {
+					matches!(
+						v.as_round().expect("comming from round").spec.spk,
+						VtxoSpkSpec::Exit { .. }
+					)
+				}).collect::<Vec<_>>();
+
+				// NB: if there is no received VTXO nor sent in the round, for now we assume
+				// the movement will be registered later (e.g: lightning receive use case)
+				//
+				// Later, we will split the round participation and registration might be more
+				// manual
+				if !sent.is_empty() || !received.is_empty() {
 					self.db.register_movement(MovementArgs {
 						spends: input_vtxos.values(),
-						receives: new_vtxos.get(0),
-						recipients: vec![
-							(address.to_string(), offboard.amount)
-						],
-						fees: None
-					}).context("failed to store OOR vtxo")?;
-				} else {
-					self.db.register_movement(MovementArgs {
-						spends: input_vtxos.values(),
-						receives: &new_vtxos,
-						recipients: None,
+						receives: received,
+						recipients: sent,
 						fees: None
 					}).context("failed to store OOR vtxo")?;
 				}
