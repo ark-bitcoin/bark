@@ -338,6 +338,7 @@ impl App {
 						let mut lock = app.chain_tip.lock().await;
 						if t != *lock {
 							*lock = t;
+							app.telemetry_metrics.set_block_height(t.height);
 							slog!(TipUpdated, height: t.height, hash: t.hash);
 						}
 					}
@@ -464,7 +465,12 @@ impl App {
 		} else {
 			slog!(WalletBalanceUnchanged, balance: balance.clone(), block_height: checkpoint.height());
 		}
-		Ok(balance.total())
+		
+		let amount = balance.total();
+		
+		self.telemetry_metrics.set_wallet_balance(amount);
+		
+		Ok(amount)
 	}
 
 	pub async fn drain(

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Amount;
-use opentelemetry::metrics::Counter;
+use opentelemetry::metrics::{Counter, Gauge};
 use opentelemetry::{Key, Value};
 use opentelemetry::{global, propagation::Extractor, KeyValue};
 use opentelemetry::trace::{TracerProvider, Span};
@@ -43,6 +43,8 @@ pub const METER_COUNTER_GRPC_ERROR: &str = "grpc_errors_total";
 pub const METER_COUNTER_UD_GRPC_IN_PROCESS: &str = "grpc_requests_in_progress";
 pub const METER_HISTOGRAM_GRPC_LATENCY: &str = "grpc_request_duration_ms";
 pub const METER_COUNTER_HANDSHAKE_VERSION: &str = "handshake_version_counter";
+pub const METER_GAUGE_WALLET_BALANCE: &str = "wallet_balance_gauge";
+pub const METER_GAUGE_BLOCK_HEIGHT: &str = "block_gauge_gauge";
 
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
 pub const ATTRIBUTE_BLOCKHEIGHT: &str = "blockheight";
@@ -55,6 +57,8 @@ pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 struct InnerMetrics {
 	spawn_counter: Counter<u64>,
 	handshake_version_counter: Counter<u64>,
+	wallet_balance_gauge: Gauge<u64>,
+	block_height_gauge: Gauge<u64>,
 }
 
 pub struct TelemetryMetrics {
@@ -75,6 +79,18 @@ impl TelemetryMetrics {
 	pub fn count_version(&self, version: &str) {
 		if let Some(ref m) = self.inner {
 			m.handshake_version_counter.add(1, &[KeyValue::new("version", version.to_owned())]);
+		}
+	}
+
+	pub fn set_wallet_balance(&self, wallet_balance: Amount) {
+		if let Some(ref m) = self.inner {
+			m.wallet_balance_gauge.record(wallet_balance.to_sat(), &[]);
+		}
+	}
+
+	pub fn set_block_height(&self, block_height: u64) {
+		if let Some(ref m) = self.inner {
+			m.block_height_gauge.record(block_height, &[]);
 		}
 	}
 }
@@ -142,6 +158,8 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 	let version_counter = meter.u64_counter(METER_COUNTER_VERSION).build();
 	let spawn_counter = meter.u64_counter(METER_COUNTER_MAIN_SPAWN).build();
 	let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
+	let wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_WALLET_BALANCE).build();
+	let block_height_gauge = meter.u64_gauge(METER_GAUGE_BLOCK_HEIGHT).build();
 
 	version_counter.add(1u64, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
 
@@ -149,6 +167,8 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 		inner: Some(InnerMetrics {
 			handshake_version_counter,
 			spawn_counter,
+			wallet_balance_gauge,
+			block_height_gauge,
 		})
 	}
 }
