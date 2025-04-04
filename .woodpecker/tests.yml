@@ -15,26 +15,26 @@ clone:
 
 steps:
   - name: prechecks
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     commands:
       - just prechecks
 
   - name: check-commits
     depends_on: prechecks
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     commands:
       - just check-commits
 
   - name: test-unit
     depends_on: check-commits
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     commands:
       - git log --oneline | head -n 1
       - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
 
   - name: build
     depends_on: check-commits
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     commands:
       - git log --oneline | head -n 1
       - cargo version
@@ -42,26 +42,26 @@ steps:
 
   - name: aspd-default-config-file
     depends_on: build
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     commands:
       - just default-aspd-config
       - bash contrib/check-clean-default-config.sh
 
   - name: use-bark-as-dependency
     depends_on: build
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     commands:
       - cargo init barktest && cd barktest
       - cargo add bark-client
       - cargo update
       - cargo build
 
-  - name: test-integration-btc28.0
+  - name: test-integration-btc28.1
     depends_on: build
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     environment:
-      BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
+      BITCOIND_EXEC: /bitcoin/28.1/bin/bitcoind
+      LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
       TEST_DIRECTORY: ./test/btc28
       TEST_POSTGRES_HOST: localhost
     commands:
@@ -75,10 +75,10 @@ steps:
 
   - name: test-integration-esplora
     depends_on: build
-    image: registry.2nd.dev/build:12
+    image: registry.2nd.dev/build:13
     environment:
-      BITCOIND_EXEC: /bitcoin/28.0/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/24.08.2/bin/lightningd
+      BITCOIND_EXEC: /bitcoin/28.1/bin/bitcoind
+      LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
       ELECTRS_EXEC: /root/.cargo/bin/electrs
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora

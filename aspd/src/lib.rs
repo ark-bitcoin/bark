@@ -891,6 +891,9 @@ impl App {
 			bolt11: Some(signed.payment.invoice.to_string()),
 			payment_hash: None,
 			status: None,
+			index: None,
+			limit: None,
+			start: None,
 		};
 		let listpays_response = cln_client
 			.list_pays(req).await

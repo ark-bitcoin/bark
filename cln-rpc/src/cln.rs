@@ -34,8 +34,6 @@ pub mod amount_or_any {
         Any(bool),
     }
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct ChannelStateChangeCause {}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Outpoint {
     #[prost(bytes = "vec", tag = "1")]
@@ -170,6 +168,8 @@ pub enum ChannelState {
     DualopendOpenInit = 9,
     DualopendAwaitingLockin = 10,
     ChanneldAwaitingSplice = 11,
+    DualopendOpenCommitted = 12,
+    DualopendOpenCommittReady = 13,
 }
 impl ChannelState {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -190,6 +190,8 @@ impl ChannelState {
             Self::DualopendOpenInit => "DualopendOpenInit",
             Self::DualopendAwaitingLockin => "DualopendAwaitingLockin",
             Self::ChanneldAwaitingSplice => "ChanneldAwaitingSplice",
+            Self::DualopendOpenCommitted => "DualopendOpenCommitted",
+            Self::DualopendOpenCommittReady => "DualopendOpenCommittReady",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -207,6 +209,8 @@ impl ChannelState {
             "DualopendOpenInit" => Some(Self::DualopendOpenInit),
             "DualopendAwaitingLockin" => Some(Self::DualopendAwaitingLockin),
             "ChanneldAwaitingSplice" => Some(Self::ChanneldAwaitingSplice),
+            "DualopendOpenCommitted" => Some(Self::DualopendOpenCommitted),
+            "DualopendOpenCommittReady" => Some(Self::DualopendOpenCommittReady),
             _ => None,
         }
     }
@@ -299,6 +303,7 @@ pub enum ChannelTypeName {
     AnchorsZeroFeeHtlcTxEven = 2,
     ScidAliasEven = 3,
     ZeroconfEven = 4,
+    AnchorsEven = 5,
 }
 impl ChannelTypeName {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -312,6 +317,7 @@ impl ChannelTypeName {
             Self::AnchorsZeroFeeHtlcTxEven => "anchors_zero_fee_htlc_tx_even",
             Self::ScidAliasEven => "scid_alias_even",
             Self::ZeroconfEven => "zeroconf_even",
+            Self::AnchorsEven => "anchors_even",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -322,6 +328,7 @@ impl ChannelTypeName {
             "anchors_zero_fee_htlc_tx_even" => Some(Self::AnchorsZeroFeeHtlcTxEven),
             "scid_alias_even" => Some(Self::ScidAliasEven),
             "zeroconf_even" => Some(Self::ZeroconfEven),
+            "anchors_even" => Some(Self::AnchorsEven),
             _ => None,
         }
     }
@@ -1209,6 +1216,10 @@ pub struct CloseResponse {
     pub tx: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
     #[prost(bytes = "vec", optional, tag = "3")]
     pub txid: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", repeated, tag = "4")]
+    pub txs: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", repeated, tag = "5")]
+    pub txids: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
 /// Nested message and enum types in `CloseResponse`.
 pub mod close_response {
@@ -1756,6 +1767,27 @@ pub struct EmergencyrecoverRequest {}
 pub struct EmergencyrecoverResponse {
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub stubs: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct GetemergencyrecoverdataRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetemergencyrecoverdataResponse {
+    #[prost(bytes = "vec", tag = "1")]
+    pub filedata: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExposesecretRequest {
+    #[prost(string, tag = "1")]
+    pub passphrase: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "2")]
+    pub identifier: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExposesecretResponse {
+    #[prost(string, tag = "1")]
+    pub identifier: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub codex32: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RecoverRequest {
@@ -2679,8 +2711,8 @@ pub struct WaitanyinvoiceRequest {
 pub struct WaitanyinvoiceResponse {
     #[prost(string, tag = "1")]
     pub label: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub description: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "2")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(bytes = "vec", tag = "3")]
     pub payment_hash: ::prost::alloc::vec::Vec<u8>,
     #[prost(enumeration = "waitanyinvoice_response::WaitanyinvoiceStatus", tag = "4")]
@@ -2764,8 +2796,8 @@ pub struct WaitinvoiceRequest {
 pub struct WaitinvoiceResponse {
     #[prost(string, tag = "1")]
     pub label: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub description: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "2")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(bytes = "vec", tag = "3")]
     pub payment_hash: ::prost::alloc::vec::Vec<u8>,
     #[prost(enumeration = "waitinvoice_response::WaitinvoiceStatus", tag = "4")]
@@ -3020,6 +3052,8 @@ pub struct KeysendRequest {
     pub extratlvs: ::core::option::Option<TlvStream>,
     #[prost(message, optional, tag = "10")]
     pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "11")]
+    pub maxfee: ::core::option::Option<Amount>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeysendResponse {
@@ -3271,10 +3305,7 @@ pub struct ListpeerchannelsChannels {
     pub peer_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(bool, tag = "2")]
     pub peer_connected: bool,
-    #[prost(
-        enumeration = "listpeerchannels_channels::ListpeerchannelsChannelsState",
-        tag = "3"
-    )]
+    #[prost(enumeration = "ChannelState", tag = "3")]
     pub state: i32,
     #[prost(bytes = "vec", optional, tag = "4")]
     pub scratch_txid: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
@@ -3384,82 +3415,10 @@ pub struct ListpeerchannelsChannels {
     pub last_tx_fee_msat: ::core::option::Option<Amount>,
     #[prost(uint32, optional, tag = "60")]
     pub direction: ::core::option::Option<u32>,
-}
-/// Nested message and enum types in `ListpeerchannelsChannels`.
-pub mod listpeerchannels_channels {
-    /// ListPeerChannels.channels\[\].state
-    #[derive(
-        Clone,
-        Copy,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash,
-        PartialOrd,
-        Ord,
-        ::prost::Enumeration
-    )]
-    #[repr(i32)]
-    pub enum ListpeerchannelsChannelsState {
-        Openingd = 0,
-        ChanneldAwaitingLockin = 1,
-        ChanneldNormal = 2,
-        ChanneldShuttingDown = 3,
-        ClosingdSigexchange = 4,
-        ClosingdComplete = 5,
-        AwaitingUnilateral = 6,
-        FundingSpendSeen = 7,
-        Onchain = 8,
-        DualopendOpenInit = 9,
-        DualopendAwaitingLockin = 10,
-        ChanneldAwaitingSplice = 11,
-        DualopendOpenCommitted = 12,
-        DualopendOpenCommitReady = 13,
-    }
-    impl ListpeerchannelsChannelsState {
-        /// String value of the enum field names used in the ProtoBuf definition.
-        ///
-        /// The values are not transformed in any way and thus are considered stable
-        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-        pub fn as_str_name(&self) -> &'static str {
-            match self {
-                Self::Openingd => "OPENINGD",
-                Self::ChanneldAwaitingLockin => "CHANNELD_AWAITING_LOCKIN",
-                Self::ChanneldNormal => "CHANNELD_NORMAL",
-                Self::ChanneldShuttingDown => "CHANNELD_SHUTTING_DOWN",
-                Self::ClosingdSigexchange => "CLOSINGD_SIGEXCHANGE",
-                Self::ClosingdComplete => "CLOSINGD_COMPLETE",
-                Self::AwaitingUnilateral => "AWAITING_UNILATERAL",
-                Self::FundingSpendSeen => "FUNDING_SPEND_SEEN",
-                Self::Onchain => "ONCHAIN",
-                Self::DualopendOpenInit => "DUALOPEND_OPEN_INIT",
-                Self::DualopendAwaitingLockin => "DUALOPEND_AWAITING_LOCKIN",
-                Self::ChanneldAwaitingSplice => "CHANNELD_AWAITING_SPLICE",
-                Self::DualopendOpenCommitted => "DUALOPEND_OPEN_COMMITTED",
-                Self::DualopendOpenCommitReady => "DUALOPEND_OPEN_COMMIT_READY",
-            }
-        }
-        /// Creates an enum from field names used in the ProtoBuf definition.
-        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-            match value {
-                "OPENINGD" => Some(Self::Openingd),
-                "CHANNELD_AWAITING_LOCKIN" => Some(Self::ChanneldAwaitingLockin),
-                "CHANNELD_NORMAL" => Some(Self::ChanneldNormal),
-                "CHANNELD_SHUTTING_DOWN" => Some(Self::ChanneldShuttingDown),
-                "CLOSINGD_SIGEXCHANGE" => Some(Self::ClosingdSigexchange),
-                "CLOSINGD_COMPLETE" => Some(Self::ClosingdComplete),
-                "AWAITING_UNILATERAL" => Some(Self::AwaitingUnilateral),
-                "FUNDING_SPEND_SEEN" => Some(Self::FundingSpendSeen),
-                "ONCHAIN" => Some(Self::Onchain),
-                "DUALOPEND_OPEN_INIT" => Some(Self::DualopendOpenInit),
-                "DUALOPEND_AWAITING_LOCKIN" => Some(Self::DualopendAwaitingLockin),
-                "CHANNELD_AWAITING_SPLICE" => Some(Self::ChanneldAwaitingSplice),
-                "DUALOPEND_OPEN_COMMITTED" => Some(Self::DualopendOpenCommitted),
-                "DUALOPEND_OPEN_COMMIT_READY" => Some(Self::DualopendOpenCommitReady),
-                _ => None,
-            }
-        }
-    }
+    #[prost(message, optional, tag = "61")]
+    pub their_max_htlc_value_in_flight_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "62")]
+    pub our_max_htlc_value_in_flight_msat: ::core::option::Option<Amount>,
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct ListpeerchannelsChannelsUpdates {
@@ -4043,6 +4002,16 @@ pub struct DecodeResponse {
     pub warning_empty_blinded_path: ::core::option::Option<
         ::prost::alloc::string::String,
     >,
+    #[prost(message, optional, tag = "87")]
+    pub invreq_bip_353_name: ::core::option::Option<DecodeInvreqBip353Name>,
+    #[prost(string, optional, tag = "88")]
+    pub warning_invreq_bip_353_name_name_invalid: ::core::option::Option<
+        ::prost::alloc::string::String,
+    >,
+    #[prost(string, optional, tag = "89")]
+    pub warning_invreq_bip_353_name_domain_invalid: ::core::option::Option<
+        ::prost::alloc::string::String,
+    >,
 }
 /// Nested message and enum types in `DecodeResponse`.
 pub mod decode_response {
@@ -4100,12 +4069,14 @@ pub mod decode_response {
 pub struct DecodeOfferPaths {
     #[prost(bytes = "vec", optional, tag = "1")]
     pub first_node_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
-    #[prost(bytes = "vec", tag = "2")]
-    pub blinding: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", optional, tag = "2")]
+    pub blinding: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint32, optional, tag = "4")]
     pub first_scid_dir: ::core::option::Option<u32>,
     #[prost(string, optional, tag = "5")]
     pub first_scid: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bytes = "vec", optional, tag = "6")]
+    pub first_path_key: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct DecodeOfferRecurrencePaywindow {
@@ -4120,14 +4091,16 @@ pub struct DecodeOfferRecurrencePaywindow {
 pub struct DecodeInvreqPaths {
     #[prost(uint32, optional, tag = "1")]
     pub first_scid_dir: ::core::option::Option<u32>,
-    #[prost(bytes = "vec", tag = "2")]
-    pub blinding: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", optional, tag = "2")]
+    pub blinding: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
     #[prost(bytes = "vec", optional, tag = "3")]
     pub first_node_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
     #[prost(string, optional, tag = "4")]
     pub first_scid: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, repeated, tag = "5")]
     pub path: ::prost::alloc::vec::Vec<DecodeInvreqPathsPath>,
+    #[prost(bytes = "vec", optional, tag = "6")]
+    pub first_path_key: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DecodeInvreqPathsPath {
@@ -4135,6 +4108,13 @@ pub struct DecodeInvreqPathsPath {
     pub blinded_node_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub encrypted_recipient_data: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DecodeInvreqBip353Name {
+    #[prost(string, optional, tag = "1")]
+    pub name: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "2")]
+    pub domain: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DecodeInvoicePathsPath {
@@ -4439,6 +4419,26 @@ pub struct DisableofferResponse {
     pub label: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EnableofferRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub offer_id: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EnableofferResponse {
+    #[prost(bytes = "vec", tag = "1")]
+    pub offer_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bool, tag = "2")]
+    pub active: bool,
+    #[prost(bool, tag = "3")]
+    pub single_use: bool,
+    #[prost(string, tag = "4")]
+    pub bolt12: ::prost::alloc::string::String,
+    #[prost(bool, tag = "5")]
+    pub used: bool,
+    #[prost(string, optional, tag = "6")]
+    pub label: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DisconnectRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub id: ::prost::alloc::vec::Vec<u8>,
@@ -4604,6 +4604,10 @@ pub struct FetchinvoiceRequest {
     pub timeout: ::core::option::Option<f64>,
     #[prost(string, optional, tag = "8")]
     pub payer_note: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "9")]
+    pub payer_metadata: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "10")]
+    pub bip353: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FetchinvoiceResponse {
@@ -5142,6 +5146,29 @@ pub mod getroute_route {
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListaddressesRequest {
+    #[prost(string, optional, tag = "1")]
+    pub address: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, optional, tag = "2")]
+    pub start: ::core::option::Option<u64>,
+    #[prost(uint32, optional, tag = "3")]
+    pub limit: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListaddressesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub addresses: ::prost::alloc::vec::Vec<ListaddressesAddresses>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListaddressesAddresses {
+    #[prost(uint64, tag = "1")]
+    pub keyidx: u64,
+    #[prost(string, optional, tag = "2")]
+    pub bech32: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "3")]
+    pub p2tr: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListforwardsRequest {
     #[prost(
         enumeration = "listforwards_request::ListforwardsStatus",
@@ -5410,6 +5437,12 @@ pub struct ListpaysRequest {
     pub payment_hash: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
     #[prost(enumeration = "listpays_request::ListpaysStatus", optional, tag = "3")]
     pub status: ::core::option::Option<i32>,
+    #[prost(enumeration = "listpays_request::ListpaysIndex", optional, tag = "4")]
+    pub index: ::core::option::Option<i32>,
+    #[prost(uint64, optional, tag = "5")]
+    pub start: ::core::option::Option<u64>,
+    #[prost(uint32, optional, tag = "6")]
+    pub limit: ::core::option::Option<u32>,
 }
 /// Nested message and enum types in `ListpaysRequest`.
 pub mod listpays_request {
@@ -5453,6 +5486,43 @@ pub mod listpays_request {
             }
         }
     }
+    /// ListPays.index
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum ListpaysIndex {
+        Created = 0,
+        Updated = 1,
+    }
+    impl ListpaysIndex {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::Created => "CREATED",
+                Self::Updated => "UPDATED",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "CREATED" => Some(Self::Created),
+                "UPDATED" => Some(Self::Updated),
+                _ => None,
+            }
+        }
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListpaysResponse {
@@ -5489,6 +5559,10 @@ pub struct ListpaysPays {
     pub preimage: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint64, optional, tag = "14")]
     pub number_of_parts: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "15")]
+    pub created_index: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "16")]
+    pub updated_index: ::core::option::Option<u64>,
 }
 /// Nested message and enum types in `ListpaysPays`.
 pub mod listpays_pays {
@@ -6075,6 +6149,8 @@ pub struct RenepayRequest {
     pub label: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(bool, optional, tag = "8")]
     pub dev_use_shadow: ::core::option::Option<bool>,
+    #[prost(string, repeated, tag = "9")]
+    pub exclude: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RenepayResponse {
@@ -6094,6 +6170,12 @@ pub struct RenepayResponse {
     pub status: i32,
     #[prost(bytes = "vec", optional, tag = "8")]
     pub destination: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(string, optional, tag = "9")]
+    pub bolt11: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "10")]
+    pub bolt12: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, optional, tag = "11")]
+    pub groupid: ::core::option::Option<u64>,
 }
 /// Nested message and enum types in `RenepayResponse`.
 pub mod renepay_response {
@@ -6313,6 +6395,8 @@ pub struct SetconfigRequest {
     pub config: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "2")]
     pub val: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, optional, tag = "3")]
+    pub transient: ::core::option::Option<bool>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SetconfigResponse {
@@ -6411,6 +6495,8 @@ pub struct SpliceSignedResponse {
     pub txid: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint32, optional, tag = "3")]
     pub outnum: ::core::option::Option<u32>,
+    #[prost(string, tag = "4")]
+    pub psbt: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpliceUpdateRequest {
@@ -6425,6 +6511,34 @@ pub struct SpliceUpdateResponse {
     pub psbt: ::prost::alloc::string::String,
     #[prost(bool, tag = "2")]
     pub commitments_secured: bool,
+    #[prost(bool, optional, tag = "3")]
+    pub signatures_secured: ::core::option::Option<bool>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DevspliceRequest {
+    #[prost(string, tag = "1")]
+    pub script_or_json: ::prost::alloc::string::String,
+    #[prost(bool, optional, tag = "2")]
+    pub dryrun: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "3")]
+    pub force_feerate: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "4")]
+    pub debug_log: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "5")]
+    pub dev_wetrun: ::core::option::Option<bool>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DevspliceResponse {
+    #[prost(string, repeated, tag = "1")]
+    pub dryrun: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "2")]
+    pub psbt: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "3")]
+    pub tx: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub txid: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "5")]
+    pub log: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UnreserveinputsRequest {
@@ -6864,6 +6978,8 @@ pub struct ListconfigsResponse {
     pub min_emergency_msat: ::core::option::Option<Amount>,
     #[prost(uint32, optional, tag = "71")]
     pub commit_feerate_offset: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "72")]
+    pub autoconnect_seeker_peers: ::core::option::Option<u32>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListconfigsConfigs {
@@ -7040,6 +7156,10 @@ pub struct ListconfigsConfigs {
     #[prost(message, optional, tag = "70")]
     pub commit_feerate_offset: ::core::option::Option<
         ListconfigsConfigsCommitfeerateoffset,
+    >,
+    #[prost(message, optional, tag = "71")]
+    pub autoconnect_seeker_peers: ::core::option::Option<
+        ListconfigsConfigsAutoconnectseekerpeers,
     >,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -7625,6 +7745,13 @@ pub struct ListconfigsConfigsCommitfeerateoffset {
     pub source: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListconfigsConfigsAutoconnectseekerpeers {
+    #[prost(uint32, tag = "1")]
+    pub value_int: u32,
+    #[prost(string, tag = "2")]
+    pub source: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListconfigsPlugins {
     #[prost(string, tag = "1")]
     pub path: ::prost::alloc::string::String,
@@ -7947,6 +8074,8 @@ pub struct BkprinspectTxsOutputs {
 pub struct BkprlistaccounteventsRequest {
     #[prost(string, optional, tag = "1")]
     pub account: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "2")]
+    pub payment_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BkprlistaccounteventsResponse {
@@ -8102,12 +8231,194 @@ pub struct BkprlistincomeIncomeEvents {
     #[prost(bytes = "vec", optional, tag = "10")]
     pub payment_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BkpreditdescriptionbypaymentidRequest {
+    #[prost(string, tag = "1")]
+    pub payment_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub description: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BkpreditdescriptionbypaymentidResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub updated: ::prost::alloc::vec::Vec<BkpreditdescriptionbypaymentidUpdated>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BkpreditdescriptionbypaymentidUpdated {
+    #[prost(string, tag = "1")]
+    pub account: ::prost::alloc::string::String,
+    #[prost(
+        enumeration = "bkpreditdescriptionbypaymentid_updated::BkpreditdescriptionbypaymentidUpdatedType",
+        tag = "2"
+    )]
+    pub item_type: i32,
+    #[prost(string, tag = "3")]
+    pub tag: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub credit_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "5")]
+    pub debit_msat: ::core::option::Option<Amount>,
+    #[prost(string, tag = "6")]
+    pub currency: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "7")]
+    pub timestamp: u32,
+    #[prost(string, tag = "8")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "9")]
+    pub outpoint: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, optional, tag = "10")]
+    pub blockheight: ::core::option::Option<u32>,
+    #[prost(string, optional, tag = "11")]
+    pub origin: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bytes = "vec", optional, tag = "12")]
+    pub payment_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", optional, tag = "13")]
+    pub txid: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(message, optional, tag = "14")]
+    pub fees_msat: ::core::option::Option<Amount>,
+    #[prost(bool, optional, tag = "15")]
+    pub is_rebalance: ::core::option::Option<bool>,
+    #[prost(uint32, optional, tag = "16")]
+    pub part_id: ::core::option::Option<u32>,
+}
+/// Nested message and enum types in `BkpreditdescriptionbypaymentidUpdated`.
+pub mod bkpreditdescriptionbypaymentid_updated {
+    /// Bkpr-EditDescriptionByPaymentId.updated\[\].type
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum BkpreditdescriptionbypaymentidUpdatedType {
+        Chain = 0,
+        Channel = 1,
+    }
+    impl BkpreditdescriptionbypaymentidUpdatedType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::Chain => "CHAIN",
+                Self::Channel => "CHANNEL",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "CHAIN" => Some(Self::Chain),
+                "CHANNEL" => Some(Self::Channel),
+                _ => None,
+            }
+        }
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BkpreditdescriptionbyoutpointRequest {
+    #[prost(string, tag = "1")]
+    pub outpoint: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub description: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BkpreditdescriptionbyoutpointResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub updated: ::prost::alloc::vec::Vec<BkpreditdescriptionbyoutpointUpdated>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BkpreditdescriptionbyoutpointUpdated {
+    #[prost(string, tag = "1")]
+    pub account: ::prost::alloc::string::String,
+    #[prost(
+        enumeration = "bkpreditdescriptionbyoutpoint_updated::BkpreditdescriptionbyoutpointUpdatedType",
+        tag = "2"
+    )]
+    pub item_type: i32,
+    #[prost(string, tag = "3")]
+    pub tag: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub credit_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "5")]
+    pub debit_msat: ::core::option::Option<Amount>,
+    #[prost(string, tag = "6")]
+    pub currency: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "7")]
+    pub timestamp: u32,
+    #[prost(string, tag = "8")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "9")]
+    pub outpoint: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, optional, tag = "10")]
+    pub blockheight: ::core::option::Option<u32>,
+    #[prost(string, optional, tag = "11")]
+    pub origin: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bytes = "vec", optional, tag = "12")]
+    pub payment_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", optional, tag = "13")]
+    pub txid: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(message, optional, tag = "14")]
+    pub fees_msat: ::core::option::Option<Amount>,
+    #[prost(bool, optional, tag = "15")]
+    pub is_rebalance: ::core::option::Option<bool>,
+    #[prost(uint32, optional, tag = "16")]
+    pub part_id: ::core::option::Option<u32>,
+}
+/// Nested message and enum types in `BkpreditdescriptionbyoutpointUpdated`.
+pub mod bkpreditdescriptionbyoutpoint_updated {
+    /// Bkpr-EditDescriptionByOutpoint.updated\[\].type
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum BkpreditdescriptionbyoutpointUpdatedType {
+        Chain = 0,
+        Channel = 1,
+    }
+    impl BkpreditdescriptionbyoutpointUpdatedType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::Chain => "CHAIN",
+                Self::Channel => "CHANNEL",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "CHAIN" => Some(Self::Chain),
+                "CHANNEL" => Some(Self::Channel),
+                _ => None,
+            }
+        }
+    }
+}
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct BlacklistruneRequest {
     #[prost(uint64, optional, tag = "1")]
     pub start: ::core::option::Option<u64>,
     #[prost(uint64, optional, tag = "2")]
     pub end: ::core::option::Option<u64>,
+    #[prost(bool, optional, tag = "3")]
+    pub relist: ::core::option::Option<bool>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BlacklistruneResponse {
@@ -8201,6 +8512,498 @@ pub struct ShowrunesRunesRestrictionsAlternatives {
     pub condition: ::prost::alloc::string::String,
     #[prost(string, tag = "4")]
     pub english: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneunreserveRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub path: ::prost::alloc::vec::Vec<AskreneunreservePath>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskreneunreserveResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneunreservePath {
+    #[prost(message, optional, tag = "3")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(string, optional, tag = "4")]
+    pub short_channel_id_dir: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistlayersRequest {
+    #[prost(string, optional, tag = "1")]
+    pub layer: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistlayersResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub layers: ::prost::alloc::vec::Vec<AskrenelistlayersLayers>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistlayersLayers {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub disabled_nodes: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(message, repeated, tag = "3")]
+    pub created_channels: ::prost::alloc::vec::Vec<
+        AskrenelistlayersLayersCreatedChannels,
+    >,
+    #[prost(message, repeated, tag = "4")]
+    pub constraints: ::prost::alloc::vec::Vec<AskrenelistlayersLayersConstraints>,
+    #[prost(bool, optional, tag = "5")]
+    pub persistent: ::core::option::Option<bool>,
+    #[prost(string, repeated, tag = "6")]
+    pub disabled_channels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "7")]
+    pub channel_updates: ::prost::alloc::vec::Vec<AskrenelistlayersLayersChannelUpdates>,
+    #[prost(message, repeated, tag = "8")]
+    pub biases: ::prost::alloc::vec::Vec<AskrenelistlayersLayersBiases>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistlayersLayersCreatedChannels {
+    #[prost(bytes = "vec", tag = "1")]
+    pub source: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub destination: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "3")]
+    pub short_channel_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub capacity_msat: ::core::option::Option<Amount>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistlayersLayersChannelUpdates {
+    #[prost(string, tag = "1")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(bool, optional, tag = "2")]
+    pub enabled: ::core::option::Option<bool>,
+    #[prost(message, optional, tag = "3")]
+    pub htlc_minimum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "4")]
+    pub htlc_maximum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "5")]
+    pub fee_base_msat: ::core::option::Option<Amount>,
+    #[prost(uint32, optional, tag = "6")]
+    pub fee_proportional_millionths: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "7")]
+    pub cltv_expiry_delta: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistlayersLayersConstraints {
+    #[prost(message, optional, tag = "3")]
+    pub maximum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "4")]
+    pub minimum_msat: ::core::option::Option<Amount>,
+    #[prost(string, optional, tag = "5")]
+    pub short_channel_id_dir: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, optional, tag = "6")]
+    pub timestamp: ::core::option::Option<u64>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistlayersLayersBiases {
+    #[prost(string, tag = "1")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(sint64, tag = "2")]
+    pub bias: i64,
+    #[prost(string, optional, tag = "3")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenecreatelayerRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(bool, optional, tag = "2")]
+    pub persistent: ::core::option::Option<bool>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenecreatelayerResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub layers: ::prost::alloc::vec::Vec<AskrenecreatelayerLayers>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenecreatelayerLayers {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub persistent: bool,
+    #[prost(bytes = "vec", repeated, tag = "3")]
+    pub disabled_nodes: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(string, repeated, tag = "4")]
+    pub disabled_channels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "5")]
+    pub created_channels: ::prost::alloc::vec::Vec<
+        AskrenecreatelayerLayersCreatedChannels,
+    >,
+    #[prost(message, repeated, tag = "6")]
+    pub channel_updates: ::prost::alloc::vec::Vec<
+        AskrenecreatelayerLayersChannelUpdates,
+    >,
+    #[prost(message, repeated, tag = "7")]
+    pub constraints: ::prost::alloc::vec::Vec<AskrenecreatelayerLayersConstraints>,
+    #[prost(message, repeated, tag = "8")]
+    pub biases: ::prost::alloc::vec::Vec<AskrenecreatelayerLayersBiases>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenecreatelayerLayersCreatedChannels {
+    #[prost(bytes = "vec", tag = "1")]
+    pub source: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub destination: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "3")]
+    pub short_channel_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub capacity_msat: ::core::option::Option<Amount>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskrenecreatelayerLayersChannelUpdates {
+    #[prost(message, optional, tag = "1")]
+    pub htlc_minimum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "2")]
+    pub htlc_maximum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "3")]
+    pub fee_base_msat: ::core::option::Option<Amount>,
+    #[prost(uint32, optional, tag = "4")]
+    pub fee_proportional_millionths: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "5")]
+    pub delay: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenecreatelayerLayersConstraints {
+    #[prost(string, tag = "1")]
+    pub short_channel_id: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub direction: u32,
+    #[prost(message, optional, tag = "3")]
+    pub maximum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "4")]
+    pub minimum_msat: ::core::option::Option<Amount>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenecreatelayerLayersBiases {
+    #[prost(string, tag = "1")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(sint64, tag = "2")]
+    pub bias: i64,
+    #[prost(string, optional, tag = "3")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneremovelayerRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskreneremovelayerResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenereserveRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub path: ::prost::alloc::vec::Vec<AskrenereservePath>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskrenereserveResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenereservePath {
+    #[prost(message, optional, tag = "3")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(string, optional, tag = "4")]
+    pub short_channel_id_dir: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneageRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub cutoff: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneageResponse {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub num_removed: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetroutesRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub source: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub destination: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "3")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(string, repeated, tag = "4")]
+    pub layers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, optional, tag = "5")]
+    pub maxfee_msat: ::core::option::Option<Amount>,
+    #[prost(uint32, optional, tag = "7")]
+    pub final_cltv: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "8")]
+    pub maxdelay: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetroutesResponse {
+    #[prost(uint64, tag = "1")]
+    pub probability_ppm: u64,
+    #[prost(message, repeated, tag = "2")]
+    pub routes: ::prost::alloc::vec::Vec<GetroutesRoutes>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetroutesRoutes {
+    #[prost(uint64, tag = "1")]
+    pub probability_ppm: u64,
+    #[prost(message, optional, tag = "2")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(message, repeated, tag = "3")]
+    pub path: ::prost::alloc::vec::Vec<GetroutesRoutesPath>,
+    #[prost(uint32, optional, tag = "4")]
+    pub final_cltv: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetroutesRoutesPath {
+    #[prost(message, optional, tag = "3")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(bytes = "vec", tag = "4")]
+    pub next_node_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint32, tag = "5")]
+    pub delay: u32,
+    #[prost(string, optional, tag = "6")]
+    pub short_channel_id_dir: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenedisablenodeRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub node: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskrenedisablenodeResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneinformchannelRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "6")]
+    pub short_channel_id_dir: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag = "7")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(
+        enumeration = "askreneinformchannel_request::AskreneinformchannelInform",
+        optional,
+        tag = "8"
+    )]
+    pub inform: ::core::option::Option<i32>,
+}
+/// Nested message and enum types in `AskreneinformchannelRequest`.
+pub mod askreneinformchannel_request {
+    /// AskRene-Inform-Channel.inform
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum AskreneinformchannelInform {
+        Constrained = 0,
+        Unconstrained = 1,
+        Succeeded = 2,
+    }
+    impl AskreneinformchannelInform {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::Constrained => "CONSTRAINED",
+                Self::Unconstrained => "UNCONSTRAINED",
+                Self::Succeeded => "SUCCEEDED",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "CONSTRAINED" => Some(Self::Constrained),
+                "UNCONSTRAINED" => Some(Self::Unconstrained),
+                "SUCCEEDED" => Some(Self::Succeeded),
+                _ => None,
+            }
+        }
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneinformchannelResponse {
+    #[prost(message, repeated, tag = "2")]
+    pub constraints: ::prost::alloc::vec::Vec<AskreneinformchannelConstraints>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneinformchannelConstraints {
+    #[prost(string, tag = "1")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "3")]
+    pub timestamp: u64,
+    #[prost(message, optional, tag = "4")]
+    pub maximum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "5")]
+    pub minimum_msat: ::core::option::Option<Amount>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenecreatechannelRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub source: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "3")]
+    pub destination: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "4")]
+    pub short_channel_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "5")]
+    pub capacity_msat: ::core::option::Option<Amount>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskrenecreatechannelResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskreneupdatechannelRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(bool, optional, tag = "3")]
+    pub enabled: ::core::option::Option<bool>,
+    #[prost(message, optional, tag = "4")]
+    pub htlc_minimum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "5")]
+    pub htlc_maximum_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "6")]
+    pub fee_base_msat: ::core::option::Option<Amount>,
+    #[prost(uint32, optional, tag = "7")]
+    pub fee_proportional_millionths: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "8")]
+    pub cltv_expiry_delta: ::core::option::Option<u32>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskreneupdatechannelResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenebiaschannelRequest {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(sint64, tag = "3")]
+    pub bias: i64,
+    #[prost(string, optional, tag = "4")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenebiaschannelResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub biases: ::prost::alloc::vec::Vec<AskrenebiaschannelBiases>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenebiaschannelBiases {
+    #[prost(string, tag = "1")]
+    pub layer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(sint64, tag = "3")]
+    pub bias: i64,
+    #[prost(string, optional, tag = "4")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct AskrenelistreservationsRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistreservationsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub reservations: ::prost::alloc::vec::Vec<AskrenelistreservationsReservations>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskrenelistreservationsReservations {
+    #[prost(string, tag = "1")]
+    pub short_channel_id_dir: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(uint64, tag = "3")]
+    pub age_in_seconds: u64,
+    #[prost(string, tag = "4")]
+    pub command_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InjectpaymentonionRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub onion: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub payment_hash: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "3")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(uint32, tag = "4")]
+    pub cltv_expiry: u32,
+    #[prost(uint64, tag = "5")]
+    pub partid: u64,
+    #[prost(uint64, tag = "6")]
+    pub groupid: u64,
+    #[prost(string, optional, tag = "7")]
+    pub label: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "8")]
+    pub invstring: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bytes = "vec", optional, tag = "9")]
+    pub localinvreqid: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(message, optional, tag = "10")]
+    pub destination_msat: ::core::option::Option<Amount>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InjectpaymentonionResponse {
+    #[prost(uint64, tag = "1")]
+    pub created_at: u64,
+    #[prost(uint64, tag = "2")]
+    pub completed_at: u64,
+    #[prost(uint64, tag = "3")]
+    pub created_index: u64,
+    #[prost(bytes = "vec", tag = "4")]
+    pub payment_preimage: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InjectonionmessageRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub path_key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub message: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct InjectonionmessageResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct XpayRequest {
+    #[prost(string, tag = "1")]
+    pub invstring: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "3")]
+    pub maxfee: ::core::option::Option<Amount>,
+    #[prost(string, repeated, tag = "4")]
+    pub layers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint32, optional, tag = "5")]
+    pub retry_for: ::core::option::Option<u32>,
+    #[prost(message, optional, tag = "6")]
+    pub partial_msat: ::core::option::Option<Amount>,
+    #[prost(uint32, optional, tag = "7")]
+    pub maxdelay: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct XpayResponse {
+    #[prost(bytes = "vec", tag = "1")]
+    pub payment_preimage: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub failed_parts: u64,
+    #[prost(uint64, tag = "3")]
+    pub successful_parts: u64,
+    #[prost(message, optional, tag = "4")]
+    pub amount_msat: ::core::option::Option<Amount>,
+    #[prost(message, optional, tag = "5")]
+    pub amount_sent_msat: ::core::option::Option<Amount>,
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct StreamBlockAddedRequest {}
@@ -8350,6 +9153,82 @@ pub struct CustomMsgNotification {
     pub peer_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct StreamChannelStateChangedRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ChannelStateChangedNotification {
+    #[prost(bytes = "vec", tag = "1")]
+    pub peer_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub channel_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "3")]
+    pub short_channel_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub timestamp: ::prost::alloc::string::String,
+    #[prost(enumeration = "ChannelState", tag = "5")]
+    pub old_state: i32,
+    #[prost(enumeration = "ChannelState", tag = "6")]
+    pub new_state: i32,
+    #[prost(
+        enumeration = "channel_state_changed_notification::ChannelStateChangedCause",
+        tag = "7"
+    )]
+    pub cause: i32,
+    #[prost(string, tag = "8")]
+    pub message: ::prost::alloc::string::String,
+}
+/// Nested message and enum types in `ChannelStateChangedNotification`.
+pub mod channel_state_changed_notification {
+    /// channel_state_changed.cause
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum ChannelStateChangedCause {
+        Unknown = 0,
+        Local = 1,
+        User = 2,
+        Remote = 3,
+        Protocol = 4,
+        Onchain = 5,
+    }
+    impl ChannelStateChangedCause {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::Unknown => "UNKNOWN",
+                Self::Local => "LOCAL",
+                Self::User => "USER",
+                Self::Remote => "REMOTE",
+                Self::Protocol => "PROTOCOL",
+                Self::Onchain => "ONCHAIN",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "UNKNOWN" => Some(Self::Unknown),
+                "LOCAL" => Some(Self::Local),
+                "USER" => Some(Self::User),
+                "REMOTE" => Some(Self::Remote),
+                "PROTOCOL" => Some(Self::Protocol),
+                "ONCHAIN" => Some(Self::Onchain),
+                _ => None,
+            }
+        }
+    }
 }
 /// Generated client implementations.
 pub mod node_client {
@@ -8861,6 +9740,51 @@ pub mod node_client {
             );
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("cln.Node", "EmergencyRecover"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_emergency_recover_data(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetemergencyrecoverdataRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetemergencyrecoverdataResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/GetEmergencyRecoverData",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "GetEmergencyRecoverData"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn expose_secret(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ExposesecretRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExposesecretResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/ExposeSecret");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "ExposeSecret"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn recover(
@@ -9581,6 +10505,27 @@ pub mod node_client {
             req.extensions_mut().insert(GrpcMethod::new("cln.Node", "DisableOffer"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn enable_offer(
+            &mut self,
+            request: impl tonic::IntoRequest<super::EnableofferRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::EnableofferResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/EnableOffer");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "EnableOffer"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn disconnect(
             &mut self,
             request: impl tonic::IntoRequest<super::DisconnectRequest>,
@@ -9661,11 +10606,11 @@ pub mod node_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/FundChannel_Cancel",
+                "/cln.Node/FundChannelCancel",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("cln.Node", "FundChannel_Cancel"));
+                .insert(GrpcMethod::new("cln.Node", "FundChannelCancel"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn fund_channel_complete(
@@ -9685,11 +10630,11 @@ pub mod node_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/FundChannel_Complete",
+                "/cln.Node/FundChannelComplete",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("cln.Node", "FundChannel_Complete"));
+                .insert(GrpcMethod::new("cln.Node", "FundChannelComplete"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn fund_channel(
@@ -9730,11 +10675,10 @@ pub mod node_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/FundChannel_Start",
+                "/cln.Node/FundChannelStart",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("cln.Node", "FundChannel_Start"));
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "FundChannelStart"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_log(
@@ -9795,6 +10739,27 @@ pub mod node_client {
             let path = http::uri::PathAndQuery::from_static("/cln.Node/GetRoute");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("cln.Node", "GetRoute"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_addresses(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListaddressesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListaddressesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/ListAddresses");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "ListAddresses"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn list_forwards(
@@ -9960,11 +10925,10 @@ pub mod node_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/OpenChannel_Abort",
+                "/cln.Node/OpenChannelAbort",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("cln.Node", "OpenChannel_Abort"));
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "OpenChannelAbort"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn open_channel_bump(
@@ -9983,11 +10947,9 @@ pub mod node_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/OpenChannel_Bump",
-            );
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/OpenChannelBump");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "OpenChannel_Bump"));
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "OpenChannelBump"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn open_channel_init(
@@ -10006,11 +10968,9 @@ pub mod node_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/OpenChannel_Init",
-            );
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/OpenChannelInit");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "OpenChannel_Init"));
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "OpenChannelInit"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn open_channel_signed(
@@ -10030,11 +10990,11 @@ pub mod node_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/OpenChannel_Signed",
+                "/cln.Node/OpenChannelSigned",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("cln.Node", "OpenChannel_Signed"));
+                .insert(GrpcMethod::new("cln.Node", "OpenChannelSigned"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn open_channel_update(
@@ -10054,11 +11014,11 @@ pub mod node_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/cln.Node/OpenChannel_Update",
+                "/cln.Node/OpenChannelUpdate",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("cln.Node", "OpenChannel_Update"));
+                .insert(GrpcMethod::new("cln.Node", "OpenChannelUpdate"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn ping(
@@ -10323,9 +11283,9 @@ pub mod node_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/cln.Node/Splice_Init");
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/SpliceInit");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "Splice_Init"));
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "SpliceInit"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn splice_signed(
@@ -10344,9 +11304,9 @@ pub mod node_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/cln.Node/Splice_Signed");
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/SpliceSigned");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "Splice_Signed"));
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "SpliceSigned"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn splice_update(
@@ -10365,9 +11325,30 @@ pub mod node_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/cln.Node/Splice_Update");
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/SpliceUpdate");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "Splice_Update"));
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "SpliceUpdate"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn dev_splice(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DevspliceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DevspliceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/DevSplice");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "DevSplice"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn unreserve_inputs(
@@ -10711,6 +11692,56 @@ pub mod node_client {
             req.extensions_mut().insert(GrpcMethod::new("cln.Node", "BkprListIncome"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn bkpr_edit_description_by_payment_id(
+            &mut self,
+            request: impl tonic::IntoRequest<
+                super::BkpreditdescriptionbypaymentidRequest,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<super::BkpreditdescriptionbypaymentidResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/BkprEditDescriptionByPaymentId",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "BkprEditDescriptionByPaymentId"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn bkpr_edit_description_by_outpoint(
+            &mut self,
+            request: impl tonic::IntoRequest<super::BkpreditdescriptionbyoutpointRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BkpreditdescriptionbyoutpointResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/BkprEditDescriptionByOutpoint",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "BkprEditDescriptionByOutpoint"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn blacklist_rune(
             &mut self,
             request: impl tonic::IntoRequest<super::BlacklistruneRequest>,
@@ -10793,6 +11824,374 @@ pub mod node_client {
             let path = http::uri::PathAndQuery::from_static("/cln.Node/ShowRunes");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("cln.Node", "ShowRunes"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_unreserve(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskreneunreserveRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneunreserveResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneUnreserve",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "AskReneUnreserve"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_list_layers(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskrenelistlayersRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenelistlayersResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneListLayers",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneListLayers"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_create_layer(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskrenecreatelayerRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenecreatelayerResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneCreateLayer",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneCreateLayer"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_remove_layer(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskreneremovelayerRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneremovelayerResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneRemoveLayer",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneRemoveLayer"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_reserve(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskrenereserveRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenereserveResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/AskReneReserve");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "AskReneReserve"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_age(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskreneageRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneageResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/AskReneAge");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "AskReneAge"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_routes(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetroutesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetroutesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/GetRoutes");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "GetRoutes"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_disable_node(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskrenedisablenodeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenedisablenodeResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneDisableNode",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneDisableNode"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_inform_channel(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskreneinformchannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneinformchannelResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneInformChannel",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneInformChannel"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_create_channel(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskrenecreatechannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenecreatechannelResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneCreateChannel",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneCreateChannel"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_update_channel(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskreneupdatechannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneupdatechannelResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneUpdateChannel",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneUpdateChannel"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_bias_channel(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskrenebiaschannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenebiaschannelResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneBiasChannel",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneBiasChannel"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn ask_rene_list_reservations(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AskrenelistreservationsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenelistreservationsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/AskReneListReservations",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "AskReneListReservations"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn inject_payment_onion(
+            &mut self,
+            request: impl tonic::IntoRequest<super::InjectpaymentonionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InjectpaymentonionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/InjectPaymentOnion",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "InjectPaymentOnion"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn inject_onion_message(
+            &mut self,
+            request: impl tonic::IntoRequest<super::InjectonionmessageRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InjectonionmessageResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/InjectOnionMessage",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "InjectOnionMessage"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn xpay(
+            &mut self,
+            request: impl tonic::IntoRequest<super::XpayRequest>,
+        ) -> std::result::Result<tonic::Response<super::XpayResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/cln.Node/Xpay");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("cln.Node", "Xpay"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn subscribe_block_added(
@@ -10914,6 +12313,32 @@ pub mod node_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("cln.Node", "SubscribeCustomMsg"));
+            self.inner.server_streaming(req, path, codec).await
+        }
+        pub async fn subscribe_channel_state_changed(
+            &mut self,
+            request: impl tonic::IntoRequest<super::StreamChannelStateChangedRequest>,
+        ) -> std::result::Result<
+            tonic::Response<
+                tonic::codec::Streaming<super::ChannelStateChangedNotification>,
+            >,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/cln.Node/SubscribeChannelStateChanged",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("cln.Node", "SubscribeChannelStateChanged"));
             self.inner.server_streaming(req, path, codec).await
         }
     }
@@ -11057,6 +12482,20 @@ pub mod node_server {
             request: tonic::Request<super::EmergencyrecoverRequest>,
         ) -> std::result::Result<
             tonic::Response<super::EmergencyrecoverResponse>,
+            tonic::Status,
+        >;
+        async fn get_emergency_recover_data(
+            &self,
+            request: tonic::Request<super::GetemergencyrecoverdataRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetemergencyrecoverdataResponse>,
+            tonic::Status,
+        >;
+        async fn expose_secret(
+            &self,
+            request: tonic::Request<super::ExposesecretRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExposesecretResponse>,
             tonic::Status,
         >;
         async fn recover(
@@ -11273,6 +12712,13 @@ pub mod node_server {
             tonic::Response<super::DisableofferResponse>,
             tonic::Status,
         >;
+        async fn enable_offer(
+            &self,
+            request: tonic::Request<super::EnableofferRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::EnableofferResponse>,
+            tonic::Status,
+        >;
         async fn disconnect(
             &self,
             request: tonic::Request<super::DisconnectRequest>,
@@ -11338,6 +12784,13 @@ pub mod node_server {
             request: tonic::Request<super::GetrouteRequest>,
         ) -> std::result::Result<
             tonic::Response<super::GetrouteResponse>,
+            tonic::Status,
+        >;
+        async fn list_addresses(
+            &self,
+            request: tonic::Request<super::ListaddressesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListaddressesResponse>,
             tonic::Status,
         >;
         async fn list_forwards(
@@ -11517,6 +12970,13 @@ pub mod node_server {
             tonic::Response<super::SpliceUpdateResponse>,
             tonic::Status,
         >;
+        async fn dev_splice(
+            &self,
+            request: tonic::Request<super::DevspliceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DevspliceResponse>,
+            tonic::Status,
+        >;
         async fn unreserve_inputs(
             &self,
             request: tonic::Request<super::UnreserveinputsRequest>,
@@ -11620,6 +13080,20 @@ pub mod node_server {
             tonic::Response<super::BkprlistincomeResponse>,
             tonic::Status,
         >;
+        async fn bkpr_edit_description_by_payment_id(
+            &self,
+            request: tonic::Request<super::BkpreditdescriptionbypaymentidRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BkpreditdescriptionbypaymentidResponse>,
+            tonic::Status,
+        >;
+        async fn bkpr_edit_description_by_outpoint(
+            &self,
+            request: tonic::Request<super::BkpreditdescriptionbyoutpointRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BkpreditdescriptionbyoutpointResponse>,
+            tonic::Status,
+        >;
         async fn blacklist_rune(
             &self,
             request: tonic::Request<super::BlacklistruneRequest>,
@@ -11648,6 +13122,115 @@ pub mod node_server {
             tonic::Response<super::ShowrunesResponse>,
             tonic::Status,
         >;
+        async fn ask_rene_unreserve(
+            &self,
+            request: tonic::Request<super::AskreneunreserveRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneunreserveResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_list_layers(
+            &self,
+            request: tonic::Request<super::AskrenelistlayersRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenelistlayersResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_create_layer(
+            &self,
+            request: tonic::Request<super::AskrenecreatelayerRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenecreatelayerResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_remove_layer(
+            &self,
+            request: tonic::Request<super::AskreneremovelayerRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneremovelayerResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_reserve(
+            &self,
+            request: tonic::Request<super::AskrenereserveRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenereserveResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_age(
+            &self,
+            request: tonic::Request<super::AskreneageRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneageResponse>,
+            tonic::Status,
+        >;
+        async fn get_routes(
+            &self,
+            request: tonic::Request<super::GetroutesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetroutesResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_disable_node(
+            &self,
+            request: tonic::Request<super::AskrenedisablenodeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenedisablenodeResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_inform_channel(
+            &self,
+            request: tonic::Request<super::AskreneinformchannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneinformchannelResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_create_channel(
+            &self,
+            request: tonic::Request<super::AskrenecreatechannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenecreatechannelResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_update_channel(
+            &self,
+            request: tonic::Request<super::AskreneupdatechannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskreneupdatechannelResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_bias_channel(
+            &self,
+            request: tonic::Request<super::AskrenebiaschannelRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenebiaschannelResponse>,
+            tonic::Status,
+        >;
+        async fn ask_rene_list_reservations(
+            &self,
+            request: tonic::Request<super::AskrenelistreservationsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AskrenelistreservationsResponse>,
+            tonic::Status,
+        >;
+        async fn inject_payment_onion(
+            &self,
+            request: tonic::Request<super::InjectpaymentonionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InjectpaymentonionResponse>,
+            tonic::Status,
+        >;
+        async fn inject_onion_message(
+            &self,
+            request: tonic::Request<super::InjectonionmessageRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InjectonionmessageResponse>,
+            tonic::Status,
+        >;
+        async fn xpay(
+            &self,
+            request: tonic::Request<super::XpayRequest>,
+        ) -> std::result::Result<tonic::Response<super::XpayResponse>, tonic::Status>;
         /// Server streaming response type for the SubscribeBlockAdded method.
         type SubscribeBlockAddedStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::BlockAddedNotification, tonic::Status>,
@@ -11717,6 +13300,22 @@ pub mod node_server {
             request: tonic::Request<super::StreamCustomMsgRequest>,
         ) -> std::result::Result<
             tonic::Response<Self::SubscribeCustomMsgStream>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the SubscribeChannelStateChanged method.
+        type SubscribeChannelStateChangedStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<
+                    super::ChannelStateChangedNotification,
+                    tonic::Status,
+                >,
+            >
+            + std::marker::Send
+            + 'static;
+        async fn subscribe_channel_state_changed(
+            &self,
+            request: tonic::Request<super::StreamChannelStateChangedRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::SubscribeChannelStateChangedStream>,
             tonic::Status,
         >;
     }
@@ -12655,6 +14254,97 @@ pub mod node_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = EmergencyRecoverSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/GetEmergencyRecoverData" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetEmergencyRecoverDataSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::GetemergencyrecoverdataRequest>
+                    for GetEmergencyRecoverDataSvc<T> {
+                        type Response = super::GetemergencyrecoverdataResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::GetemergencyrecoverdataRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::get_emergency_recover_data(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetEmergencyRecoverDataSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/ExposeSecret" => {
+                    #[allow(non_camel_case_types)]
+                    struct ExposeSecretSvc<T: Node>(pub Arc<T>);
+                    impl<T: Node> tonic::server::UnaryService<super::ExposesecretRequest>
+                    for ExposeSecretSvc<T> {
+                        type Response = super::ExposesecretResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ExposesecretRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::expose_secret(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ExposeSecretSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -14150,6 +15840,49 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
+                "/cln.Node/EnableOffer" => {
+                    #[allow(non_camel_case_types)]
+                    struct EnableOfferSvc<T: Node>(pub Arc<T>);
+                    impl<T: Node> tonic::server::UnaryService<super::EnableofferRequest>
+                    for EnableOfferSvc<T> {
+                        type Response = super::EnableofferResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::EnableofferRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::enable_offer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = EnableOfferSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/cln.Node/Disconnect" => {
                     #[allow(non_camel_case_types)]
                     struct DisconnectSvc<T: Node>(pub Arc<T>);
@@ -14279,13 +16012,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/FundChannel_Cancel" => {
+                "/cln.Node/FundChannelCancel" => {
                     #[allow(non_camel_case_types)]
-                    struct FundChannel_CancelSvc<T: Node>(pub Arc<T>);
+                    struct FundChannelCancelSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::FundchannelCancelRequest>
-                    for FundChannel_CancelSvc<T> {
+                    for FundChannelCancelSvc<T> {
                         type Response = super::FundchannelCancelResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -14308,7 +16041,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = FundChannel_CancelSvc(inner);
+                        let method = FundChannelCancelSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -14324,13 +16057,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/FundChannel_Complete" => {
+                "/cln.Node/FundChannelComplete" => {
                     #[allow(non_camel_case_types)]
-                    struct FundChannel_CompleteSvc<T: Node>(pub Arc<T>);
+                    struct FundChannelCompleteSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::FundchannelCompleteRequest>
-                    for FundChannel_CompleteSvc<T> {
+                    for FundChannelCompleteSvc<T> {
                         type Response = super::FundchannelCompleteResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -14353,7 +16086,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = FundChannel_CompleteSvc(inner);
+                        let method = FundChannelCompleteSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -14412,13 +16145,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/FundChannel_Start" => {
+                "/cln.Node/FundChannelStart" => {
                     #[allow(non_camel_case_types)]
-                    struct FundChannel_StartSvc<T: Node>(pub Arc<T>);
+                    struct FundChannelStartSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::FundchannelStartRequest>
-                    for FundChannel_StartSvc<T> {
+                    for FundChannelStartSvc<T> {
                         type Response = super::FundchannelStartResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -14441,7 +16174,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = FundChannel_StartSvc(inner);
+                        let method = FundChannelStartSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -14571,6 +16304,51 @@ pub mod node_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetRouteSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/ListAddresses" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListAddressesSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::ListaddressesRequest>
+                    for ListAddressesSvc<T> {
+                        type Response = super::ListaddressesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListaddressesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::list_addresses(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListAddressesSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -14891,13 +16669,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/OpenChannel_Abort" => {
+                "/cln.Node/OpenChannelAbort" => {
                     #[allow(non_camel_case_types)]
-                    struct OpenChannel_AbortSvc<T: Node>(pub Arc<T>);
+                    struct OpenChannelAbortSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::OpenchannelAbortRequest>
-                    for OpenChannel_AbortSvc<T> {
+                    for OpenChannelAbortSvc<T> {
                         type Response = super::OpenchannelAbortResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -14920,7 +16698,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = OpenChannel_AbortSvc(inner);
+                        let method = OpenChannelAbortSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -14936,13 +16714,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/OpenChannel_Bump" => {
+                "/cln.Node/OpenChannelBump" => {
                     #[allow(non_camel_case_types)]
-                    struct OpenChannel_BumpSvc<T: Node>(pub Arc<T>);
+                    struct OpenChannelBumpSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::OpenchannelBumpRequest>
-                    for OpenChannel_BumpSvc<T> {
+                    for OpenChannelBumpSvc<T> {
                         type Response = super::OpenchannelBumpResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -14965,7 +16743,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = OpenChannel_BumpSvc(inner);
+                        let method = OpenChannelBumpSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -14981,13 +16759,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/OpenChannel_Init" => {
+                "/cln.Node/OpenChannelInit" => {
                     #[allow(non_camel_case_types)]
-                    struct OpenChannel_InitSvc<T: Node>(pub Arc<T>);
+                    struct OpenChannelInitSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::OpenchannelInitRequest>
-                    for OpenChannel_InitSvc<T> {
+                    for OpenChannelInitSvc<T> {
                         type Response = super::OpenchannelInitResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -15010,7 +16788,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = OpenChannel_InitSvc(inner);
+                        let method = OpenChannelInitSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -15026,13 +16804,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/OpenChannel_Signed" => {
+                "/cln.Node/OpenChannelSigned" => {
                     #[allow(non_camel_case_types)]
-                    struct OpenChannel_SignedSvc<T: Node>(pub Arc<T>);
+                    struct OpenChannelSignedSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::OpenchannelSignedRequest>
-                    for OpenChannel_SignedSvc<T> {
+                    for OpenChannelSignedSvc<T> {
                         type Response = super::OpenchannelSignedResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -15055,7 +16833,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = OpenChannel_SignedSvc(inner);
+                        let method = OpenChannelSignedSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -15071,13 +16849,13 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/OpenChannel_Update" => {
+                "/cln.Node/OpenChannelUpdate" => {
                     #[allow(non_camel_case_types)]
-                    struct OpenChannel_UpdateSvc<T: Node>(pub Arc<T>);
+                    struct OpenChannelUpdateSvc<T: Node>(pub Arc<T>);
                     impl<
                         T: Node,
                     > tonic::server::UnaryService<super::OpenchannelUpdateRequest>
-                    for OpenChannel_UpdateSvc<T> {
+                    for OpenChannelUpdateSvc<T> {
                         type Response = super::OpenchannelUpdateResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -15100,7 +16878,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = OpenChannel_UpdateSvc(inner);
+                        let method = OpenChannelUpdateSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -15640,11 +17418,11 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/Splice_Init" => {
+                "/cln.Node/SpliceInit" => {
                     #[allow(non_camel_case_types)]
-                    struct Splice_InitSvc<T: Node>(pub Arc<T>);
+                    struct SpliceInitSvc<T: Node>(pub Arc<T>);
                     impl<T: Node> tonic::server::UnaryService<super::SpliceInitRequest>
-                    for Splice_InitSvc<T> {
+                    for SpliceInitSvc<T> {
                         type Response = super::SpliceInitResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -15667,7 +17445,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = Splice_InitSvc(inner);
+                        let method = SpliceInitSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -15683,11 +17461,11 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/Splice_Signed" => {
+                "/cln.Node/SpliceSigned" => {
                     #[allow(non_camel_case_types)]
-                    struct Splice_SignedSvc<T: Node>(pub Arc<T>);
+                    struct SpliceSignedSvc<T: Node>(pub Arc<T>);
                     impl<T: Node> tonic::server::UnaryService<super::SpliceSignedRequest>
-                    for Splice_SignedSvc<T> {
+                    for SpliceSignedSvc<T> {
                         type Response = super::SpliceSignedResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -15710,7 +17488,7 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = Splice_SignedSvc(inner);
+                        let method = SpliceSignedSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -15726,11 +17504,11 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
-                "/cln.Node/Splice_Update" => {
+                "/cln.Node/SpliceUpdate" => {
                     #[allow(non_camel_case_types)]
-                    struct Splice_UpdateSvc<T: Node>(pub Arc<T>);
+                    struct SpliceUpdateSvc<T: Node>(pub Arc<T>);
                     impl<T: Node> tonic::server::UnaryService<super::SpliceUpdateRequest>
-                    for Splice_UpdateSvc<T> {
+                    for SpliceUpdateSvc<T> {
                         type Response = super::SpliceUpdateResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -15753,7 +17531,50 @@ pub mod node_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = Splice_UpdateSvc(inner);
+                        let method = SpliceUpdateSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/DevSplice" => {
+                    #[allow(non_camel_case_types)]
+                    struct DevSpliceSvc<T: Node>(pub Arc<T>);
+                    impl<T: Node> tonic::server::UnaryService<super::DevspliceRequest>
+                    for DevSpliceSvc<T> {
+                        type Response = super::DevspliceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DevspliceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::dev_splice(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DevSpliceSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -16477,6 +18298,110 @@ pub mod node_server {
                     };
                     Box::pin(fut)
                 }
+                "/cln.Node/BkprEditDescriptionByPaymentId" => {
+                    #[allow(non_camel_case_types)]
+                    struct BkprEditDescriptionByPaymentIdSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<
+                        super::BkpreditdescriptionbypaymentidRequest,
+                    > for BkprEditDescriptionByPaymentIdSvc<T> {
+                        type Response = super::BkpreditdescriptionbypaymentidResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::BkpreditdescriptionbypaymentidRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::bkpr_edit_description_by_payment_id(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = BkprEditDescriptionByPaymentIdSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/BkprEditDescriptionByOutpoint" => {
+                    #[allow(non_camel_case_types)]
+                    struct BkprEditDescriptionByOutpointSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<
+                        super::BkpreditdescriptionbyoutpointRequest,
+                    > for BkprEditDescriptionByOutpointSvc<T> {
+                        type Response = super::BkpreditdescriptionbyoutpointResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::BkpreditdescriptionbyoutpointRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::bkpr_edit_description_by_outpoint(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = BkprEditDescriptionByOutpointSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/cln.Node/BlacklistRune" => {
                     #[allow(non_camel_case_types)]
                     struct BlacklistRuneSvc<T: Node>(pub Arc<T>);
@@ -16636,6 +18561,723 @@ pub mod node_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ShowRunesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneUnreserve" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneUnreserveSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskreneunreserveRequest>
+                    for AskReneUnreserveSvc<T> {
+                        type Response = super::AskreneunreserveResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskreneunreserveRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_unreserve(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneUnreserveSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneListLayers" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneListLayersSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskrenelistlayersRequest>
+                    for AskReneListLayersSvc<T> {
+                        type Response = super::AskrenelistlayersResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskrenelistlayersRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_list_layers(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneListLayersSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneCreateLayer" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneCreateLayerSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskrenecreatelayerRequest>
+                    for AskReneCreateLayerSvc<T> {
+                        type Response = super::AskrenecreatelayerResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskrenecreatelayerRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_create_layer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneCreateLayerSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneRemoveLayer" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneRemoveLayerSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskreneremovelayerRequest>
+                    for AskReneRemoveLayerSvc<T> {
+                        type Response = super::AskreneremovelayerResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskreneremovelayerRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_remove_layer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneRemoveLayerSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneReserve" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneReserveSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskrenereserveRequest>
+                    for AskReneReserveSvc<T> {
+                        type Response = super::AskrenereserveResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskrenereserveRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_reserve(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneReserveSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneAge" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneAgeSvc<T: Node>(pub Arc<T>);
+                    impl<T: Node> tonic::server::UnaryService<super::AskreneageRequest>
+                    for AskReneAgeSvc<T> {
+                        type Response = super::AskreneageResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskreneageRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_age(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneAgeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/GetRoutes" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetRoutesSvc<T: Node>(pub Arc<T>);
+                    impl<T: Node> tonic::server::UnaryService<super::GetroutesRequest>
+                    for GetRoutesSvc<T> {
+                        type Response = super::GetroutesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetroutesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::get_routes(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetRoutesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneDisableNode" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneDisableNodeSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskrenedisablenodeRequest>
+                    for AskReneDisableNodeSvc<T> {
+                        type Response = super::AskrenedisablenodeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskrenedisablenodeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_disable_node(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneDisableNodeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneInformChannel" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneInformChannelSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskreneinformchannelRequest>
+                    for AskReneInformChannelSvc<T> {
+                        type Response = super::AskreneinformchannelResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskreneinformchannelRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_inform_channel(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneInformChannelSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneCreateChannel" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneCreateChannelSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskrenecreatechannelRequest>
+                    for AskReneCreateChannelSvc<T> {
+                        type Response = super::AskrenecreatechannelResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskrenecreatechannelRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_create_channel(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneCreateChannelSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneUpdateChannel" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneUpdateChannelSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskreneupdatechannelRequest>
+                    for AskReneUpdateChannelSvc<T> {
+                        type Response = super::AskreneupdatechannelResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskreneupdatechannelRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_update_channel(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneUpdateChannelSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneBiasChannel" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneBiasChannelSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskrenebiaschannelRequest>
+                    for AskReneBiasChannelSvc<T> {
+                        type Response = super::AskrenebiaschannelResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AskrenebiaschannelRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_bias_channel(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneBiasChannelSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/AskReneListReservations" => {
+                    #[allow(non_camel_case_types)]
+                    struct AskReneListReservationsSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::AskrenelistreservationsRequest>
+                    for AskReneListReservationsSvc<T> {
+                        type Response = super::AskrenelistreservationsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::AskrenelistreservationsRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::ask_rene_list_reservations(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AskReneListReservationsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/InjectPaymentOnion" => {
+                    #[allow(non_camel_case_types)]
+                    struct InjectPaymentOnionSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::InjectpaymentonionRequest>
+                    for InjectPaymentOnionSvc<T> {
+                        type Response = super::InjectpaymentonionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::InjectpaymentonionRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::inject_payment_onion(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = InjectPaymentOnionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/InjectOnionMessage" => {
+                    #[allow(non_camel_case_types)]
+                    struct InjectOnionMessageSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::UnaryService<super::InjectonionmessageRequest>
+                    for InjectOnionMessageSvc<T> {
+                        type Response = super::InjectonionmessageResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::InjectonionmessageRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::inject_onion_message(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = InjectOnionMessageSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/Xpay" => {
+                    #[allow(non_camel_case_types)]
+                    struct XpaySvc<T: Node>(pub Arc<T>);
+                    impl<T: Node> tonic::server::UnaryService<super::XpayRequest>
+                    for XpaySvc<T> {
+                        type Response = super::XpayResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::XpayRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::xpay(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = XpaySvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -16873,6 +19515,59 @@ pub mod node_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = SubscribeCustomMsgSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/cln.Node/SubscribeChannelStateChanged" => {
+                    #[allow(non_camel_case_types)]
+                    struct SubscribeChannelStateChangedSvc<T: Node>(pub Arc<T>);
+                    impl<
+                        T: Node,
+                    > tonic::server::ServerStreamingService<
+                        super::StreamChannelStateChangedRequest,
+                    > for SubscribeChannelStateChangedSvc<T> {
+                        type Response = super::ChannelStateChangedNotification;
+                        type ResponseStream = T::SubscribeChannelStateChangedStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::StreamChannelStateChangedRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Node>::subscribe_channel_state_changed(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SubscribeChannelStateChangedSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
