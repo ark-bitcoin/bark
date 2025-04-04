@@ -10,7 +10,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
-use ark::lightning::Bolt11HtlcVtxo;
+use ark::oor::unsigned_oor_tx;
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
@@ -49,7 +49,7 @@ use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
-	oor, ArkInfo, ArkoorVtxo, BlockHeight, Bolt11ChangeVtxo, OffboardRequest,
+	oor, ArkInfo, ArkoorVtxo, BlockHeight, OffboardRequest,
 	PaymentRequest, RoundVtxo, Vtxo, VtxoId, VtxoRequest, VtxoSpec,
 };
 use ark::connectors::ConnectorChain;
@@ -645,8 +645,6 @@ impl <P>Wallet<P> where
 
 		match vtxo {
 			Vtxo::Arkoor(ArkoorVtxo { inputs, .. }) => iterate_over_inputs(inputs),
-			Vtxo::Bolt11Change(Bolt11ChangeVtxo { inputs, .. }) => iterate_over_inputs(inputs),
-			Vtxo::Bolt11Htlc(Bolt11HtlcVtxo { inputs, .. }) => iterate_over_inputs(inputs),
 			Vtxo::Board(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 			Vtxo::Round(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 		}
@@ -1035,8 +1033,8 @@ impl <P>Wallet<P> where
 		}
 
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
-			info!("Adding change VTXO of {}", change_vtxo.pseudo_spec.amount);
-			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&change_vtxo.htlc_tx));
+			info!("Adding change VTXO of {}", change_vtxo.spec().amount);
+			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_oor_tx(&change_vtxo.inputs, &change_vtxo.output_specs)));
 			Some(change_vtxo.into())
 		} else {
 			None

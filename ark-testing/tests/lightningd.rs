@@ -212,7 +212,7 @@ async fn bark_pay_ln_fails() {
 	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
 	let expected_change_amount = sat(100000000) - dust_anchor().value;
 	assert!(
-		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Bolt11Change && v.amount == expected_change_amount),
+		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == expected_change_amount),
 		"user should get a change VTXO of 1btc - dust");
 	// NB: fees here are subject to change when we implement a fee schedule
 	let expected_revoked_amount = sat(100000000) - dust_anchor().value;

@@ -309,4 +309,8 @@ impl ArkoorVtxo {
 	pub fn id(&self) -> VtxoId {
 		self.point.into()
 	}
+
+	pub fn spec(&self) -> &VtxoSpec {
+		&self.output_specs[self.point.vout as usize]
+	}
 }

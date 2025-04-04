@@ -924,7 +924,7 @@ impl App {
 		signed.validate_signatures(&crate::SECP)
 			.badarg("bad signatures on payment")?;
 
-		if signed.htlc_vtxo().pseudo_spec.asp_pubkey != self.asp_key.public_key() {
+		if signed.htlc_vtxo().spec().asp_pubkey != self.asp_key.public_key() {
 			bail!("Payment wasn't signed with ASP's pubkey")
 		}
 
