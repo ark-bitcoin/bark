@@ -48,8 +48,7 @@ pub struct TestContext {
 
 impl TestContext {
 
-
-	pub async fn new(name: impl AsRef<str>) -> Self {
+	pub async fn new_minimal(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
 
 		let name = name.as_ref();
@@ -60,14 +59,18 @@ impl TestContext {
 		}
 		fs::create_dir_all(&datadir).await.unwrap();
 
-		let mut ctx = TestContext {
+		TestContext {
 			name: name.to_string(),
 			datadir,
 			bitcoind: None,
 			electrs: None,
 			_postgresd: None,
 			postgres_config: None
-		};
+		}
+	}
+
+	pub async fn new(name: impl AsRef<str>) -> Self {
+		let mut ctx = Self::new_minimal(name).await;
 
 		ctx.init_central_bitcoind().await;
 		ctx.init_central_electrs().await;
