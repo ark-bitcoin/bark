@@ -42,8 +42,8 @@ pub struct TestContext {
 	pub electrs: Option<Electrs>,
 
 	// ensures postgres daemon, if any, stays alive the TestContext's lifetime
+	pub postgres_config: Option<config::Postgres>,
 	_postgresd: Option<Postgres>,
-	postgres_config: Option<config::Postgres>,
 }
 
 impl TestContext {
