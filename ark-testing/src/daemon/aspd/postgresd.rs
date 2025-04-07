@@ -121,7 +121,7 @@ impl PostgresHelper {
 		config::Postgres {
 			host: String::from("localhost"),
 			port: self.port(),
-			name: String::new(),
+			name: self.name.clone(),
 			user: None,
 			password: None,
 		}

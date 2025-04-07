@@ -140,7 +140,7 @@ impl TestContext {
 			let cfg = postgresd::host_base_config();
 			(cfg, None)
 		} else {
-			let postgresd = Self::new_postgres("postgres", self.datadir.join("postgres")).await;
+			let postgresd = self.new_postgres("postgres").await;
 			(postgresd.helper().as_base_config(), Some(postgresd))
 		};
 
@@ -169,7 +169,8 @@ impl TestContext {
 		bitcoind
 	}
 
-	async fn new_postgres(name: &str, datadir: PathBuf) -> Postgres {
+	pub async fn new_postgres(&self, name: &str) -> Postgres {
+		let datadir = self.datadir.join(name);
 		let mut ret = Postgres::new(name, datadir);
 		ret.start().await.unwrap();
 		ret
