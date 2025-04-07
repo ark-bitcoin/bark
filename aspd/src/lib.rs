@@ -11,8 +11,8 @@ mod error;
 
 mod cln;
 mod bitcoind;
-mod database;
 pub(crate) mod flux;
+pub mod database;
 mod psbtext;
 mod serde_util;
 mod vtxo_sweeper;
