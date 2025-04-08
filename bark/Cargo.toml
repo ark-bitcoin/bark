@@ -9,6 +9,9 @@ repository = "https://github.com/ark-bitcoin/bark"
 [features]
 default = ["cli"]
 cli = ["home"]
+tls-native-roots = ["tonic/tls-native-roots"]
+tls-webpki-roots = ["tonic/tls-webpki-roots"]
+
 
 [lib]
 name = "bark"
