@@ -22,7 +22,8 @@ pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};
 
 #[cfg(test)]
 mod napkin;
-
+#[cfg(any(test, feature="test-util"))]
+pub mod test;
 
 use std::fmt;
 use std::time::Duration;

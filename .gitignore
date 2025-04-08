@@ -6,4 +6,4 @@ debug/
 target/
 .direnv/
 rustdocs/
-test/
+/test/
