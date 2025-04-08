@@ -1,6 +1,7 @@
 
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -25,6 +26,7 @@ use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 
 use crate::{AllowUntrusted, App, SECP};
 use crate::error::ContextExt;
+use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::telemetry::{self, SpanExt};
 use crate::wallet::BdkWalletExt;
 
@@ -83,7 +85,8 @@ pub struct CollectingPayments {
 	vtxo_ownership_challenge: VtxoOwnershipChallenge,
 
 	/// All inputs that have participated in the previous attetmpt.
-	locked_inputs: HashSet<VtxoId>,
+	locked_inputs: OwnedVtxoFluxLock,
+
 	cosign_key: Keypair,
 	allowed_inputs: Option<HashSet<VtxoId>>,
 	all_inputs: HashMap<VtxoId, Vtxo>,
@@ -101,7 +104,7 @@ impl CollectingPayments {
 		round_seq: usize,
 		attempt_seq: usize,
 		round_data: RoundData,
-		locked_inputs: HashSet<VtxoId>,
+		locked_inputs: OwnedVtxoFluxLock,
 		allowed_inputs: Option<HashSet<VtxoId>>,
 	) -> CollectingPayments {
 		CollectingPayments {
@@ -276,10 +279,13 @@ impl CollectingPayments {
 		self.validate_payment_data(&inputs, &vtxo_requests, &cosign_pub_nonces)?;
 
 		let input_ids: Vec<VtxoId> = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		if let Err(id) = app.atomic_check_put_vtxo_in_flux(&input_ids).await {
-			slog!(RoundUserVtxoInFlux, round_seq: self.round_seq, attempt_seq: self.attempt_seq, vtxo: id);
-			bail!("vtxo {id} already in flux");
-		}
+		let lock = match app.vtxos_in_flux.lock(input_ids.clone()) {
+			Ok(l) => l,
+			Err(id) => {
+				slog!(RoundUserVtxoInFlux, round_seq: self.round_seq, attempt_seq: self.attempt_seq, vtxo: id);
+				bail!("vtxo {id} already in flux");
+			},
+		};
 
 		// Check if the input vtxos exist and are unspent.
 		let input_vtxos = match self.check_fetch_round_input_vtxos(app, &inputs).await {
@@ -291,7 +297,6 @@ impl CollectingPayments {
 				} else {
 					Err(e)
 				};
-				app.release_vtxos_in_flux(&input_ids).await;
 				return ret;
 			}
 		};
@@ -300,7 +305,6 @@ impl CollectingPayments {
 			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt_seq: self.attempt_seq, error: e.to_string(),
 			);
-			app.release_vtxos_in_flux(&input_ids).await;
 			return Err(e).context("registration failed");
 		}
 
@@ -308,18 +312,18 @@ impl CollectingPayments {
 			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt_seq: self.attempt_seq, error: e.to_string(),
 			);
-			app.release_vtxos_in_flux(&input_ids).await;
 			return Err(e).context("registration failed");
 		}
 
 		// Finally we are done
-		self.register_payment(input_vtxos, vtxo_requests, cosign_pub_nonces, offboards);
+		self.register_payment(lock, input_vtxos, vtxo_requests, cosign_pub_nonces, offboards);
 
 		Ok(())
 	}
 
 	fn register_payment(
 		&mut self,
+		lock: VtxoFluxLock,
 		inputs: Vec<Vtxo>,
 		vtxo_requests: Vec<VtxoRequest>,
 		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
@@ -331,7 +335,7 @@ impl CollectingPayments {
 
 		// If we're adding inputs for the first time, also add them to locked_inputs.
 		if self.first_attempt() {
-			self.locked_inputs.extend(inputs.iter().map(|v| v.id()));
+			self.locked_inputs.absorb(lock);
 		}
 
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
@@ -544,7 +548,7 @@ pub struct SigningVtxoTree {
 	user_cosign_nonces: HashMap<PublicKey, Vec<musig::MusigPubNonce>>,
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	/// All inputs that have participated, but might have dropped out.
-	locked_inputs: HashSet<VtxoId>,
+	locked_inputs: OwnedVtxoFluxLock,
 
 	attempt_start: Instant,
 
@@ -724,7 +728,7 @@ pub struct SigningForfeits {
 	signed_vtxos: CachedSignedVtxoTree,
 	all_inputs: HashMap<VtxoId, Vtxo>,
 	/// All inputs that have participated, but might have dropped out.
-	locked_inputs: HashSet<VtxoId>,
+	locked_inputs: OwnedVtxoFluxLock,
 
 	// other public data
 	connectors: ConnectorChain,
@@ -911,18 +915,12 @@ impl SigningForfeits {
 			);
 			return Err(RoundError::Fatal(e));
 		}
-		app.release_vtxos_in_flux(self.locked_inputs).await;
 
 		slog!(RoundFinished, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			txid: signed_round_tx.txid, vtxo_expiry_block_height: self.expiry_height,
 			duration: Instant::now().duration_since(self.attempt_start),
 			nb_input_vtxos: self.all_inputs.len(),
 		);
-
-		// Sync our wallet so that it sees the broadcasted tx.
-		if let Err(e) = app.sync_onchain_wallet().await {
-			slog!(RoundSyncError, error: format!("{:?}", e));
-		};
 
 		Ok(())
 	}
@@ -1017,6 +1015,7 @@ enum RoundResult {
 	Abandoned,
 	/// Round finished with success.
 	Success,
+	/// Error.
 	Err(RoundError),
 }
 
@@ -1027,7 +1026,7 @@ impl From<RoundError> for RoundResult {
 }
 
 async fn perform_round(
-	app: &App,
+	app: &Arc<App>,
 	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_seq: usize,
 ) -> RoundResult {
@@ -1068,9 +1067,9 @@ async fn perform_round(
 		max_vtxo_amount: app.config.max_vtxo_amount,
 		offboard_feerate,
 	};
-	let mut round_state = RoundState::CollectingPayments(
-		CollectingPayments::new(round_seq, 0, round_data, HashSet::new(), None)
-	);
+	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
+		round_seq, 0, round_data, app.vtxos_in_flux.empty_lock().into_owned(), None,
+	));
 
 	// In this loop we will try to finish the round and make new attempts.
 	'attempt: loop {
@@ -1090,9 +1089,7 @@ async fn perform_round(
 
 		// Release all vtxos in flux from previous attempt
 		let state = round_state.collecting_payments();
-		if !state.locked_inputs.is_empty() {
-			app.release_vtxos_in_flux(state.locked_inputs.drain()).await;
-		}
+		state.locked_inputs.release_all();
 
 		app.rounds().round_event_tx.send(RoundEvent::Attempt(RoundAttempt {
 			round_seq,
@@ -1120,15 +1117,12 @@ async fn perform_round(
 						RoundInput::RegisterPayment {
 							inputs, vtxo_requests, cosign_pub_nonces, offboards,
 						} => {
-							round_state
-								.collecting_payments()
-								.process_payment(
-									app, inputs, vtxo_requests, cosign_pub_nonces, offboards,
-								).await
-								.map_err(|e| {
-									debug!("error processing payment: {e}");
-									e
-								})
+							round_state.collecting_payments().process_payment(
+								app, inputs, vtxo_requests, cosign_pub_nonces, offboards,
+							).await.map_err(|e| {
+								debug!("error processing payment: {e}");
+								e
+							})
 						},
 						_ => badarg!("unexpected message. current step is payment registration"),
 					};
@@ -1214,7 +1208,6 @@ async fn perform_round(
 					warn!("Timed out receiving vtxo partial signatures.");
 					let new = round_state.into_signing_vtxo_tree().restart();
 					if new.need_new_round() {
-						app.release_vtxos_in_flux(new.locked_inputs).await;
 						return RoundResult::Abandoned;
 					} else {
 						round_state = new.into();
@@ -1293,7 +1286,6 @@ async fn perform_round(
 					warn!("Timed out receiving forfeit signatures.");
 					let new = round_state.into_signing_forfeits().restart_missing_forfeits(None);
 					if new.need_new_round() {
-						app.release_vtxos_in_flux(new.locked_inputs).await;
 						return RoundResult::Abandoned;
 					} else {
 						round_state = new.into();
@@ -1366,7 +1358,7 @@ async fn perform_round(
 
 /// This method is called from a tokio thread so it can be long-lasting.
 pub async fn run_round_coordinator(
-	app: &App,
+	app: &Arc<App>,
 	mut round_input_rx: mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	mut round_trigger_rx: mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
@@ -1391,6 +1383,11 @@ pub async fn run_round_coordinator(
 				return Err(e);
 			},
 		}
+
+		// Sync our wallet so that it sees the broadcasted tx.
+		if let Err(e) = app.sync_onchain_wallet().await {
+			slog!(RoundSyncError, error: format!("{:?}", e));
+		};
 
 		// Sleep for the round interval, but discard all incoming messages.
 		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_interval); }
@@ -1425,6 +1422,9 @@ mod tests {
 
 	use ark::{RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 	use bitcoin_ext::fee;
+
+	use crate::flux::VtxosInFlux;
+
 
 	lazy_static::lazy_static! {
 		static ref TEST_SIG: Signature = Signature::from_str(
@@ -1503,7 +1503,7 @@ mod tests {
 			offboard_feerate: FeeRate::ZERO,
 			max_vtxo_amount: None,
 		};
-		CollectingPayments::new(0, 0, round_data, HashSet::new(), None)
+		CollectingPayments::new(0, 0, round_data, OwnedVtxoFluxLock::dummy(), None)
 	}
 
 	#[test]
@@ -1525,7 +1525,8 @@ mod tests {
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap();
 		state.validate_payment_amounts(&inputs, &outputs, &[]).unwrap();
 
-		state.register_payment(inputs, outputs.clone(), nonces, vec![]);
+		let flux = VtxosInFlux::new();
+		state.register_payment(flux.empty_lock(), inputs, outputs.clone(), nonces, vec![]);
 		assert_eq!(state.all_inputs.len(), 1);
 		assert_eq!(state.all_outputs.len(), 1);
 		assert_eq!(state.all_offboards.len(), 0);
@@ -1642,8 +1643,9 @@ mod tests {
 		outputs2[0].cosign_pk = outputs1[0].cosign_pk;
 		let nonces2 = create_nonces(1, &state.round_data);
 
+		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1, &nonces1).unwrap();
-		state.register_payment(inputs1, outputs1, nonces1, vec![]);
+		state.register_payment(flux.empty_lock(), inputs1, outputs1, nonces1, vec![]);
 		state.validate_payment_data(&input_ids2, &outputs2, &nonces2).unwrap_err();
 	}
 
@@ -1689,10 +1691,11 @@ mod tests {
 		let outputs2 = vec![create_vtxo_request(OUTPUT_AMOUNT), create_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces2 = create_nonces(2, &state.round_data);
 
+		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1, &nonces1).unwrap();
-		state.register_payment(inputs1, outputs1.clone(), nonces1, vec![]);
+		state.register_payment(flux.empty_lock(), inputs1, outputs1.clone(), nonces1, vec![]);
 		state.validate_payment_data(&input_ids2, &outputs2, &nonces2).unwrap();
-		state.register_payment(inputs2, outputs2.clone(), nonces2, vec![]);
+		state.register_payment(flux.empty_lock(), inputs2, outputs2.clone(), nonces2, vec![]);
 
 		assert_eq!(state.all_inputs.len(), 2);
 		assert_eq!(state.all_outputs.len(), 4);
