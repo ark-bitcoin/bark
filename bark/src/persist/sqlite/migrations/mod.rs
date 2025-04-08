@@ -1,6 +1,7 @@
 mod m0001_initial_version;
 mod m0002_config;
 mod m0003_payment_history;
+mod m0004_unregistered_board;
 
 use anyhow::Context;
 use rusqlite::{Connection, Transaction};
@@ -8,6 +9,7 @@ use rusqlite::{Connection, Transaction};
 use m0001_initial_version::Migration0001;
 use m0002_config::Migration0002;
 use m0003_payment_history::Migration0003;
+use m0004_unregistered_board::Migration0004;
 
 pub struct MigrationContext {}
 
@@ -28,6 +30,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0001{})?;
 		self.try_migration(conn, &Migration0002{})?;
 		self.try_migration(conn, &Migration0003{})?;
+		self.try_migration(conn, &Migration0004{})?;
 		Ok(())
 	}
 
@@ -183,7 +186,7 @@ mod test {
 
 		// Perform the mgiration and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 3).unwrap();
+		assert_current_version(&conn, 4).unwrap();
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_config").unwrap());

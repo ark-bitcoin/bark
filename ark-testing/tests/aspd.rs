@@ -845,7 +845,7 @@ async fn register_onboard_is_idempotent() {
 
 	let bark_client = bark_wallet.client().await;
 	let vtxo = bark_client.get_vtxo_by_id(onboard.vtxos[0].id).unwrap();
-	let funding_tx = bark_client.onchain.get_tx(onboard.funding_txid).unwrap();
+	let funding_tx = bark_client.onchain.get_wallet_tx(onboard.funding_txid).unwrap();
 
 
 	// We will now call the register_onboard a few times

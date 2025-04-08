@@ -24,6 +24,9 @@ mod psbtext;
 mod vtxo_state;
 pub mod movement;
 
+#[cfg(test)]
+pub mod test;
+
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
@@ -468,6 +471,34 @@ impl <P>Wallet<P> where
 		Ok(self.vtxos_with(filter)?)
 	}
 
+	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()>
+	{
+		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoState::UnregisteredBoard])?;
+		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
+		for board in unregistered_boards {
+			if let Err(e) = self.register_board(board.id()).await {
+				warn!("Failed to register board {}: {}", board.id(), e);
+			}
+		};
+
+		Ok(())
+	}
+
+	/// Performs maintenance tasks on the wallet
+	///
+	/// This tasks include onchain-sync, off-chain sync,
+	/// registering onboard with the server.
+	///
+	/// This tasks will only include anything that has to wait
+	/// for a round. The maintenance call cannot be used to
+	/// refresh VTXOs.
+	pub async fn maintenance(&mut self) -> anyhow::Result<()> {
+		info!("Starting wallet maintenance");
+		self.sync().await?;
+		self.register_all_unregistered_boards().await?;
+		Ok(())
+	}
+
 	/// Sync status of unilateral exits.
 	pub async fn sync_exits(&mut self) -> anyhow::Result<()> {
 		self.exit.sync_exit(&mut self.onchain).await?;
@@ -593,25 +624,50 @@ impl <P>Wallet<P> where
 
 		self.db.register_movement(MovementArgs {
 			spends: None,
-			receives: vec![&vtxo],
+			receives: vec![(&vtxo, VtxoState::UnregisteredBoard)],
 			recipients: None,
 			fees: None
 		}).context("db error storing vtxo")?;
 
 		let tx = self.onchain.finish_tx(board_tx)?;
+
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
 
+		let res = self.register_board(vtxo.id()).await;
+		info!("Board successful");
+		res
+	}
+
+	/// Registers a board to the Ark server
+	async fn register_board(&self, vtxo_id: VtxoId) -> anyhow::Result<Board> {
+		trace!("Attempting to register board {} to server", vtxo_id);
+		let mut asp = self.require_asp()?;
+
+		// Get the vtxo and funding transaction from the database
+		let vtxo = self.db.get_vtxo(vtxo_id)?
+			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
+		let board_vtxo = vtxo.as_board()
+			.with_context(|| format!("Expected type 'board'. Received '{}'", vtxo.vtxo_type()))?;
+
+		let funding_tx = self.onchain.get_wallet_tx(board_vtxo.onchain_output.txid)
+			.context("Failed to find funding_tx for {}")?;
+
+		// Register the vtxo with the server
 		asp.client.register_board_vtxo(rpc::BoardVtxoRequest {
 			board_vtxo: vtxo.encode(),
-			board_tx: bitcoin::consensus::serialize(&tx),
+			board_tx: bitcoin::consensus::serialize(&funding_tx),
 		}).await.context("error registering board with the asp")?;
 
-		info!("Board successful");
+		// Remember that we have stored the vtxo
+		// No need to complain if the vtxo is already registered
+		let allowed_states = &[VtxoState::UnregisteredBoard, VtxoState::Spendable];
+		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
+
 
 		Ok(
 			Board {
-				funding_txid: tx.compute_txid(),
+				funding_txid: funding_tx.compute_txid(),
 				vtxos: vec![vtxo.into()],
 			}
 		)
@@ -688,7 +744,7 @@ impl <P>Wallet<P> where
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 						self.db.register_movement(MovementArgs {
 							spends: None,
-							receives: vec![&vtxo],
+							receives: vec![(&vtxo, VtxoState::Spendable)],
 							recipients: None,
 							fees: None
 						})?;
@@ -728,7 +784,7 @@ impl <P>Wallet<P> where
 				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
 				self.db.register_movement(MovementArgs {
 					spends: None,
-					receives: vec![&vtxo],
+					receives: vec![(&vtxo, VtxoState::Spendable)],
 					recipients: None,
 					fees: None
 				}).context("failed to store OOR vtxo")?;
@@ -952,7 +1008,7 @@ impl <P>Wallet<P> where
 
 		self.db.register_movement(MovementArgs {
 			spends: &oor.input,
-			receives: oor.change.as_ref(),
+			receives: oor.change.as_ref().map(|v| (v, VtxoState::Spendable)),
 			recipients: vec![
 				(destination.to_string(), amount)
 			],
@@ -1062,6 +1118,7 @@ impl <P>Wallet<P> where
 			}
 		}
 
+		// The client will receive the change VTXO if it exists
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
 			info!("Adding change VTXO of {}", change_vtxo.spec().amount);
 			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_oor_tx(&change_vtxo.inputs, &change_vtxo.output_specs)));
@@ -1069,11 +1126,15 @@ impl <P>Wallet<P> where
 		} else {
 			None
 		};
+		let receive_vtxos = change_vtxo
+			.iter()
+			.map(|v| (v, VtxoState::Spendable))
+			.collect::<Vec<_>>();
 
 		if let Some(payment_preimage) = payment_preimage {
 			self.db.register_movement(MovementArgs {
 				spends: &input_vtxos,
-				receives: change_vtxo.as_ref(),
+				receives: receive_vtxos,
 				recipients: vec![
 					(invoice.to_string(), amount)
 				],
@@ -1082,7 +1143,6 @@ impl <P>Wallet<P> where
 			Ok(payment_preimage)
 		} else {
 			let htlc_vtxo = signed.htlc_vtxo().into();
-
 			let keypair_idx = self.db.get_vtxo_key_index(&htlc_vtxo)?;
 			let keypair = self.vtxo_seed.derive_keypair(keypair_idx);
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
@@ -1121,7 +1181,7 @@ impl <P>Wallet<P> where
 				.clone()
 			);
 
-			let receives = iter::once(&vtxo).chain(change_vtxo.as_ref());
+			let receives = iter::once((&vtxo, VtxoState::Spendable)).chain(change_vtxo.as_ref().map(|v| (v, VtxoState::Spendable)));
 			self.db.register_movement(MovementArgs {
 				spends: &input_vtxos,
 				receives: receives,
@@ -1589,12 +1649,13 @@ impl <P>Wallet<P> where
 					Ok((address.to_string(), o.amount))
 				}).collect::<anyhow::Result<Vec<_>>>()?;
 
-				let received = new_vtxos.iter().filter(|v| {
-					matches!(
+				let received = new_vtxos.iter()
+					.filter(|v| { matches!(
 						v.as_round().expect("comming from round").spec.spk,
 						VtxoSpkSpec::Exit { .. }
-					)
-				}).collect::<Vec<_>>();
+					)})
+					.map(|v| (v, VtxoState::Spendable))
+					.collect::<Vec<_>>();
 
 				// NB: if there is no received VTXO nor sent in the round, for now we assume
 				// the movement will be registered later (e.g: lightning receive use case)
@@ -1606,7 +1667,7 @@ impl <P>Wallet<P> where
 						spends: input_vtxos.values(),
 						receives: received,
 						recipients: sent,
-						fees: None
+					fees: None
 					}).context("failed to store OOR vtxo")?;
 				}
 

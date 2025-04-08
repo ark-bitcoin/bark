@@ -46,23 +46,13 @@ impl SqliteClient {
 		Ok(())
 	}
 
-	/// Stores a vtxo in the database
-	fn store_vtxo(&self, tx: &Transaction, vtxo: &Vtxo, movement_id: i32) -> anyhow::Result<()> {
-		// TODO: Use a better name.In most cases we don't want new vtxo's to get the state
-		// ready
-		query::store_vtxo_with_initial_state(&tx, vtxo, movement_id, VtxoState::Ready)?;
-
-		Ok(())
-	}
-
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
-		query::update_vtxo_state(&tx, id, VtxoState::Spent)?;
+		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &[VtxoState::Spendable])?;
 		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
 		Ok(())
 	}
 }
-
 
 impl BarkPersister for SqliteClient {
 	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()> {
@@ -106,7 +96,7 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<()>
 		where
 			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = &'a Vtxo>,
+			R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
 			Re: IntoIterator<Item = (String, Amount)>,
 	{
 		let mut conn = self.connect()?;
@@ -114,9 +104,8 @@ impl BarkPersister for SqliteClient {
 
 		let movement_id = self.create_movement(&tx, movement.fees)?;
 
-		for v in movement.receives {
-			self.store_vtxo(&tx, v, movement_id)
-				.context("Failed to store change VTXOs")?
+		for (v, s) in movement.receives {
+			query::store_vtxo_with_initial_state(&tx, v, movement_id, s)?;
 		}
 
 		for v in movement.spends {
@@ -126,20 +115,22 @@ impl BarkPersister for SqliteClient {
 		for (recipient, amount) in movement.recipients {
 			self.create_recipient(&tx, movement_id, recipient, amount)
 				.context("Failed to store change VTXOs")?
-		}
-
+				}
 		tx.commit()?;
 		Ok(())
 	}
+
+
 
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxo_by_id(&conn, id)
 	}
 
-	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+	/// Get all VTXOs that are in one of the provided states
+	fn get_vtxos_by_state(&self, state: &[VtxoState]) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
-		query::get_vtxos_by_state(&conn, VtxoState::Ready)
+		query::get_vtxos_by_state(&conn, state)
 	}
 
 	/// Get the soonest-expiring vtxos with total value at least `min_value`.
@@ -214,6 +205,16 @@ impl BarkPersister for SqliteClient {
 		let conn = self.connect()?;
 		query::store_last_ark_sync_height(&conn, height)
 	}
+
+	fn update_vtxo_state_checked(
+		&self,
+		vtxo_id: VtxoId,
+		new_state: VtxoState,
+		allowed_old_states: &[VtxoState]
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
+	}
 }
 
 
@@ -232,7 +233,7 @@ impl WalletPersister for SqliteClient {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
 	use std::str::FromStr;
 
 	use bdk_wallet::chain::DescriptorExt;
@@ -240,7 +241,7 @@ mod test {
 	use rand::{distr, Rng};
 
 	use ark::{vtxo::VtxoSpkSpec, BoardVtxo, VtxoSpec};
-
+	use crate::test::dummy_board;
 	use super::*;
 
 
@@ -250,7 +251,7 @@ mod test {
 	/// The user should ensure the [Connection] isn't dropped
 	/// until the test completes. If all connections are dropped during
 	/// the test the entire database might be cleared.
-	fn in_memory() -> (PathBuf, Connection) {
+	pub fn in_memory() -> (PathBuf, Connection) {
 
 		// All tests run in the same process and share the same
 		// cache. To ensure that each call to `in_memory` results
@@ -270,60 +271,22 @@ mod test {
 
 	#[test]
 	fn test_add_and_retreive_vtxos() {
-		// We can use stupid data here.
-		// If the vtxo/signatures are invalid the database does't care
-		// It is the job of the application to worry about this
-		let pk = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
-		let point_1 = "0000000000000000000000000000000000000000000000000000000000000000:1".parse().unwrap();
-		let point_2 = "0000000000000000000000000000000000000000000000000000000000000000:2".parse().unwrap();
-		let point_3 = "0000000000000000000000000000000000000000000000000000000000000000:3".parse().unwrap();
-		let sig = "cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd59320b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea".parse().unwrap();
 
-		let vtxo_1 = Vtxo::Board(BoardVtxo {
-			exit_tx_signature: sig,
-			onchain_output: point_1,
-			spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 1001,
-				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
-				amount: Amount::from_sat(500)
-			},
-		});
+	let pk: PublicKey = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
 
-		let vtxo_2 = Vtxo::Board(BoardVtxo {
-			exit_tx_signature: sig,
-			onchain_output: point_2,
-			spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 1002,
-				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
-				amount: Amount::from_sat(500)
-			},
-		});
-
-		let vtxo_3 = Vtxo::Board(BoardVtxo {
-			exit_tx_signature: sig,
-			onchain_output: point_3,
-			spec: VtxoSpec {
-				user_pubkey: pk,
-				asp_pubkey: pk,
-				expiry_height: 1003,
-				spk: VtxoSpkSpec::Exit { exit_delta: 40 },
-				amount: Amount::from_sat(500)
-			},
-		});
+		let vtxo_1 = dummy_board(1);
+		let vtxo_2 = dummy_board(2);
+		let vtxo_3 = dummy_board(3);
 
 		let (cs, conn) = in_memory();
 		let db = SqliteClient::open(cs).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_1], recipients: None, fees: None
+			spends: None, receives: vec![(&vtxo_1, VtxoState::Spendable)], recipients: None, fees: None
 		}).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_2], recipients: None, fees: None
+			spends: None, receives: vec![(&vtxo_2, VtxoState::Spendable)], recipients: None, fees: None
 		}).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
@@ -342,7 +305,7 @@ mod test {
 
 		// Add the third entry to the database
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![&vtxo_3], recipients: None, fees: None
+			spends: None, receives: vec![(&vtxo_3, VtxoState::Spendable)], recipients: None, fees: None
 		}).unwrap();
 
 		// Get expiring vtxo's

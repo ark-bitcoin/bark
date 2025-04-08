@@ -808,3 +808,43 @@ async fn onchain_drain() {
 	let recipient_balance = recipient.onchain_balance().await;
 	assert_eq!(recipient_balance, sat(999443));
 }
+
+#[tokio::test]
+async fn bark_recover_unregistered_board() {
+	let ctx = TestContext::new("bark/recover_unregistered_board").await;
+
+	// Set up an aspd.
+	// The aspd misbehaves and drops the first request to register_board_vtxo
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+
+	/// This proxy will drop the very first request to register_board
+	#[derive(Clone)]
+	struct Proxy(rpc::ArkServiceClient<tonic::transport::Channel>, Arc<AtomicBool>);
+
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+
+		async fn register_board_vtxo(
+			&mut self,
+			req: rpc::BoardVtxoRequest,
+		) -> Result<rpc::Empty, tonic::Status> {
+			if self.1.swap(false, atomic::Ordering::Relaxed) {
+				Err(tonic::Status::from_error("Nope! I do not register on the first attempt!".into()))
+			} else {
+				Ok(self.0.register_board_vtxo(req).await?.into_inner())
+			}
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await, Arc::new(AtomicBool::new(true)));
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;
+	bark.try_board_all().await.expect_err("The Ark server should have refused the registration");
+
+	assert_eq!(bark.vtxos().await.len(), 1);
+
+	ctx.bitcoind.generate(12).await;
+	bark.refresh_all().await;
+}

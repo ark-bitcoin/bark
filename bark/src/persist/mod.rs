@@ -4,7 +4,7 @@ use ark::{Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::{secp256k1::PublicKey, Amount};
 
-use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, Config, Pagination, WalletProperties};
+use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
 
 pub trait BarkPersister: Clone + WalletPersister {
 	/// Initialise wallet in the database
@@ -27,14 +27,14 @@ pub trait BarkPersister: Clone + WalletPersister {
 	) -> anyhow::Result<()>
 		where
 			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = &'a Vtxo>,
+			R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
 			Re: IntoIterator<Item = (String, Amount)>;
 
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
-	/// Fetch all currently spendable VTXOs in the database
-	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>>;
-	/// Get the soonest-expiring vtxos with total value at least `min_value`.
+	/// Fetch all VTXO's that are in a given state
+	fn get_vtxos_by_state(&self, state: &[VtxoState]) -> anyhow::Result<Vec<Vtxo>>;
+/// Get the soonest-expiring vtxos with total value at least `min_value`.
 	fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>>;
 	/// Remove a VTXO from the database
 	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
@@ -58,4 +58,11 @@ pub trait BarkPersister: Clone + WalletPersister {
 
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<u32>;
 	fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()>;
+
+	fn update_vtxo_state_checked(&self, vtxo_id: VtxoId, new_state: VtxoState, allowed_old_states: &[VtxoState]) -> anyhow::Result<()>;
+
+	/// Fetch all currently spendable VTXOs in the database
+	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+		self.get_vtxos_by_state(&[VtxoState::Spendable])
+	}
 }

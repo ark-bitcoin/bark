@@ -1,6 +1,8 @@
 use ark::{Vtxo, VtxoId};
 use bitcoin::Amount;
 
+use crate::vtxo_state::VtxoState;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VtxoSubset {
 	pub id: VtxoId,
@@ -38,7 +40,7 @@ pub struct Movement {
 pub struct MovementArgs<'a, S, R, Re>
 	where
 		S: IntoIterator<Item = &'a Vtxo>,
-		R: IntoIterator<Item = &'a Vtxo>,
+		R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
 		Re: IntoIterator<Item = (String, Amount)>,
 {
 	/// VTXOs that are spent in the movement.

@@ -245,7 +245,7 @@ impl <P>Wallet<P> where
 	///
 	/// This method will only check the database and will not
 	/// use a chain-source to find the transaction
-	pub fn get_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
+	pub fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
 		let tx = self.wallet
 			.get_tx(txid)?
 			.tx_node.tx;

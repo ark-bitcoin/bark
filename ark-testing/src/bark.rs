@@ -282,8 +282,12 @@ impl Bark {
 	}
 
 	pub async fn board_all(&self) -> json::Board {
+		self.try_board_all().await.expect("board command failed")
+	}
+
+	pub async fn try_board_all(&self) -> anyhow::Result<json::Board> {
 		info!("{}: Boarding all on-chain funds", self.name);
-		self.run_json(["board", "--all"]).await
+		self.try_run_json(["board", "--all"]).await
 	}
 
 	pub async fn try_refresh_all(&self) -> anyhow::Result<()> {
