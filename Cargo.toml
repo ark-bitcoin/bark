@@ -28,7 +28,7 @@ anyhow = { version = "1.0", features = [ "backtrace" ] }
 log = { version = "0.4.23", features = [ "kv", "kv_serde" ] }
 serde = { version = "1" }
 # grpc clients
-tonic = { version = "0.12.2", features = [ "tls", "tls-roots", "gzip" ] }
+tonic = { version = "0.12.2", features = [ "tls", "gzip" ] }
 tower = "0.5.2"
 http = "1.2.0"
 http-body = "1.0.1"
