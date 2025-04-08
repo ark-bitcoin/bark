@@ -1,4 +1,6 @@
 
+//TODO(stevenroose) remove after Jiri's txindex refactor
+#![allow(unused)]
 
 
 use std::{cmp, fmt};

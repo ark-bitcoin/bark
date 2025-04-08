@@ -41,6 +41,7 @@ macro_rules! badarg {
 	($($arg:tt)*) => { return $crate::badarg!($($arg)*).to_status(); };
 }
 
+#[allow(unused)]
 macro_rules! not_found {
 	($($arg:tt)*) => { return $crate::not_found!($($arg)*).to_status(); };
 }
