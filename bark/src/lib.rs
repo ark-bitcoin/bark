@@ -650,7 +650,7 @@ impl <P>Wallet<P> where
 		let board_vtxo = vtxo.as_board()
 			.with_context(|| format!("Expected type 'board'. Received '{}'", vtxo.vtxo_type()))?;
 
-		let funding_tx = self.onchain.get_tx(board_vtxo.onchain_output.txid)
+		let funding_tx = self.onchain.get_wallet_tx(board_vtxo.onchain_output.txid)
 			.context("Failed to find funding_tx for {}")?;
 
 		// Register the vtxo with the server
