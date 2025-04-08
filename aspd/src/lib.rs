@@ -329,9 +329,11 @@ impl Server {
 			async { self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await },
 			async { self.forfeits.wallet_sync().await },
 		)?;
+		self.telemetry_metrics.set_round_wallet_balance(rounds_balance.total());
 
 		// Then try rebalance.
 		let forfeit_wallet = self.forfeits.wallet_status().await?;
+		self.telemetry_metrics.set_forfeit_wallet_balance(forfeit_wallet.total_balance);
 		if forfeit_wallet.total_balance < self.config.forfeit_watcher_min_balance {
 			let amount = self.config.forfeit_watcher_min_balance * 2;
 			if rounds_balance.total() < amount {
