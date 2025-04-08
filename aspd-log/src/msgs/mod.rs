@@ -14,8 +14,7 @@ pub use self::system::*;
 
 
 use bitcoin::BlockHash;
-
-use ark::BlockHeight;
+use bitcoin_ext::BlockHeight;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

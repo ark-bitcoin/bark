@@ -8,6 +8,7 @@ use tokio::fs;
 use tonic::transport::Uri;
 
 use aspd::config::{self, Config};
+use aspd_rpc as rpc;
 
 use crate::daemon::aspd::postgresd::{self, Postgres};
 use crate::util::{should_use_electrs, test_data_directory};
@@ -151,7 +152,7 @@ impl TestContext {
 		}
 	}
 
-	pub async fn aspd_default_cfg(
+	async fn aspd_default_cfg(
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
@@ -190,6 +191,7 @@ impl TestContext {
 			round_sweep_interval: Duration::from_secs(60),
 			sweep_threshold: Amount::from_sat(1_000_000),
 			round_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
+			round_tx_untrusted_input_confirmations: 1,
 			max_vtxo_amount: None,
 			rpc_rich_errors: true,
 			txindex_check_interval: Duration::from_millis(500),
@@ -209,11 +211,19 @@ impl TestContext {
 			},
 			postgres: self.postgres_default_cfg(name),
 			lightningd,
+			legacy_wallet: false,
 		}
 	}
 
-	pub async fn new_aspd_with_cfg(&self, name: impl AsRef<str>, mut cfg: Config) -> Aspd {
+	pub async fn new_aspd_with_cfg(
+		&self,
+		name: impl AsRef<str>,
+		lightningd: Option<&Lightningd>,
+		mod_cfg: impl FnOnce(&mut aspd::Config),
+	) -> Aspd {
 		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+		let mut cfg = self.aspd_default_cfg(name.as_ref(), lightningd).await;
+		mod_cfg(&mut cfg);
 
 		assert_eq!("", cfg.bitcoind.url, "bitcoind url already set");
 		cfg.bitcoind.url = bitcoind.rpc_url();
@@ -235,8 +245,7 @@ impl TestContext {
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
 	) -> Aspd {
-		let cfg = self.aspd_default_cfg(name.as_ref(), lightningd).await;
-		self.new_aspd_with_cfg(name, cfg).await
+		self.new_aspd_with_cfg(name, lightningd, |_| {}).await
 	}
 
 	/// Creates new aspd and immediately funds it. Waits until the aspd's bitcoind
@@ -316,14 +325,13 @@ impl TestContext {
 		ret
 	}
 
-	pub async fn fund_asp(&self, asp: &Aspd, amount: Amount) -> Txid {
+	pub async fn fund_asp(&self, asp: &Aspd, amount: Amount) {
 		info!("Fund {} {}", asp.name, amount);
-		let address = asp.get_funding_address().await;
-		let txid = self.bitcoind.fund_addr(address, amount).await;
+		let rounds_address = asp.get_rounds_funding_address().await;
+		self.bitcoind.fund_addr(rounds_address, amount).await;
 		self.bitcoind.generate(1).await;
-		asp.get_admin_client().await.wallet_status(aspd_rpc::Empty {}).await
+		asp.get_admin_client().await.wallet_status(rpc::protos::Empty {}).await
 			.expect("error calling wallet status after funding apsd");
-		txid
 	}
 
 	/// Send `amount` to an onchain address of this Bark client.

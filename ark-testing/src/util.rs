@@ -160,7 +160,11 @@ impl<T: Future> FutureExt for T {}
 
 /// Extension trait for channel receivers.
 pub trait ReceiverExt<T> {
+	/// Collect all pending items in a Vec.
 	fn collect(&mut self) -> Vec<T>;
+
+	/// Empty all pending items.
+	fn clear(&mut self);
 }
 
 impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
@@ -172,4 +176,7 @@ impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
 		ret
 	}
 
+	fn clear(&mut self) {
+		while let Ok(_) = self.try_recv() {}
+	}
 }

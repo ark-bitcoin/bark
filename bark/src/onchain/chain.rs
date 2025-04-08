@@ -5,13 +5,13 @@ use std::{borrow::Borrow, time::SystemTime};
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use ark::BlockHeight;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_bitcoind_rpc::BitcoindRpcErrorExt;
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use bitcoin_ext::BlockHeight;
 use serde::ser::StdError;
 
 use crate::persist::BarkPersister;

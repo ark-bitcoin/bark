@@ -23,7 +23,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use ark::lightning::SignedBolt11Payment;
 use ark::{musig, VtxoIdInput, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
-use aspd_rpc as rpc;
+use aspd_rpc::{self as rpc, protos};
 use tonic::async_trait;
 
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
@@ -176,12 +176,14 @@ const RPC_SERVICE_ARK_METHODS: [&str; 15] = [
 
 const RPC_SERVICE_ADMIN: &'static str = "AdminService";
 
+const RPC_SERVICE_ADMIN_WALLET_SYNC: &'static str = "wallet_sync";
 const RPC_SERVICE_ADMIN_WALLET_STATUS: &'static str = "wallet_status";
 const RPC_SERVICE_ADMIN_TRIGGER_ROUND: &'static str = "trigger_round";
 const RPC_SERVICE_ADMIN_TRIGGER_SWEEP: &'static str = "trigger_sweep";
 const RPC_SERVICE_ADMIN_STOP: &'static str = "stop";
 
-const RPC_SERVICE_ADMIN_METHODS: [&str; 4] = [
+const RPC_SERVICE_ADMIN_METHODS: [&str; 5] = [
+	RPC_SERVICE_ADMIN_WALLET_SYNC,
 	RPC_SERVICE_ADMIN_WALLET_STATUS,
 	RPC_SERVICE_ADMIN_TRIGGER_ROUND,
 	RPC_SERVICE_ADMIN_TRIGGER_SWEEP,
@@ -248,8 +250,8 @@ fn add_tracing_attributes(attributes: Vec<KeyValue>) -> () {
 impl rpc::server::ArkService for App {
 	async fn handshake(
 		&self,
-		req: tonic::Request<rpc::HandshakeRequest>,
-	) -> Result<tonic::Response<rpc::HandshakeResponse>, tonic::Status> {
+		req: tonic::Request<protos::HandshakeRequest>,
+	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
 		let method_details = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_HANDSHAKE);
 
 		let version = req.into_inner().version;
@@ -267,7 +269,7 @@ impl rpc::server::ArkService for App {
 
 		// NB future note to always accept version "testing" which our tests use
 
-		let ret = rpc::HandshakeResponse {
+		let ret = protos::HandshakeResponse {
 			psa: self.config.handshake_psa.clone(),
 			error: None,
 			ark_info: Some(ark::ArkInfo {
@@ -285,8 +287,8 @@ impl rpc::server::ArkService for App {
 
 	async fn get_fresh_rounds(
 		&self,
-		req: tonic::Request<rpc::FreshRoundsRequest>,
-	) -> Result<tonic::Response<rpc::FreshRounds>, tonic::Status> {
+		req: tonic::Request<protos::FreshRoundsRequest>,
+	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_GET_FRESH_ROUNDS);
 
 		add_tracing_attributes(vec![
@@ -296,7 +298,7 @@ impl rpc::server::ArkService for App {
 		let ids = self.db.get_fresh_round_ids(req.get_ref().start_height).await
 			.context("db error")?;
 
-		let response = rpc::FreshRounds {
+		let response = protos::FreshRounds {
 			txids: ids.into_iter().map(|t| t.to_byte_array().to_vec()).collect(),
 		};
 
@@ -305,8 +307,8 @@ impl rpc::server::ArkService for App {
 
 	async fn get_round(
 		&self,
-		req: tonic::Request<rpc::RoundId>,
-	) -> Result<tonic::Response<rpc::RoundInfo>, tonic::Status> {
+		req: tonic::Request<protos::RoundId>,
+	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_GET_ROUND);
 
 		add_tracing_attributes(vec![KeyValue::new("txid", format!("{:?}", req.get_ref().txid))]);
@@ -319,7 +321,7 @@ impl rpc::server::ArkService for App {
 			.context("db error")?
 			.not_found([id], "round with txid {} not found")?;
 
-		let response = rpc::RoundInfo {
+		let response = protos::RoundInfo {
 			round_tx: bitcoin::consensus::serialize(&ret.tx),
 			signed_vtxos: ret.signed_tree.encode(),
 		};
@@ -331,8 +333,8 @@ impl rpc::server::ArkService for App {
 
 	async fn request_board_cosign(
 		&self,
-		req: tonic::Request<rpc::BoardCosignRequest>,
-	) -> Result<tonic::Response<rpc::BoardCosignResponse>, tonic::Status> {
+		req: tonic::Request<protos::BoardCosignRequest>,
+	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN);
 
 		add_tracing_attributes(vec![KeyValue::new("user_part", format!("{:?}", req.get_ref().user_part))]);
@@ -342,7 +344,7 @@ impl rpc::server::ArkService for App {
 		).badarg("invalid user part")?;
 
 		let asp_part = self.cosign_board(user_part).await.to_status()?;
-		let response = rpc::BoardCosignResponse {
+		let response = protos::BoardCosignResponse {
 			asp_part: {
 				let mut buf = Vec::new();
 				ciborium::into_writer(&asp_part, &mut buf).unwrap();
@@ -359,8 +361,8 @@ impl rpc::server::ArkService for App {
 	/// This method is idempotent
 	async fn register_board_vtxo(
 		&self,
-		req: tonic::Request<rpc::BoardVtxoRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		req: tonic::Request<protos::BoardVtxoRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS);
 
 		add_tracing_attributes(vec![
@@ -377,14 +379,14 @@ impl rpc::server::ArkService for App {
 			.badarg("invalid board tx")?;
 		self.register_board(vtxo, board_tx).await.to_status()?;
 
-		Ok(tonic::Response::new(rpc::Empty {}))
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
 	// oor
 	async fn request_oor_cosign(
 		&self,
-		req: tonic::Request<rpc::OorCosignRequest>,
-	) -> Result<tonic::Response<rpc::OorCosignResponse>, tonic::Status> {
+		req: tonic::Request<protos::OorCosignRequest>,
+	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_OOR_COSIGN);
 
 		add_tracing_attributes(vec![
@@ -405,7 +407,7 @@ impl rpc::server::ArkService for App {
 		}
 
 		let (nonces, sigs) = self.cosign_oor(&payment, &user_nonces).await.to_status()?;
-		let response = rpc::OorCosignResponse {
+		let response = protos::OorCosignResponse {
 			pub_nonces: nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
 			partial_sigs: sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
 		};
@@ -415,8 +417,8 @@ impl rpc::server::ArkService for App {
 
 	async fn post_oor_mailbox(
 		&self,
-		req: tonic::Request<rpc::OorVtxo>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		req: tonic::Request<protos::OorVtxo>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_POST_OOR_MAILBOX);
 
 		add_tracing_attributes(vec![
@@ -432,13 +434,13 @@ impl rpc::server::ArkService for App {
 
 		self.db.store_oor(pubkey, vtxo).await.to_status()?;
 
-		Ok(tonic::Response::new(rpc::Empty{}))
+		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
 	async fn empty_oor_mailbox(
 		&self,
-		req: tonic::Request<rpc::OorVtxosRequest>,
-	) -> Result<tonic::Response<rpc::OorVtxosResponse>, tonic::Status> {
+		req: tonic::Request<protos::OorVtxosRequest>,
+	) -> Result<tonic::Response<protos::OorVtxosResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX);
 
 		add_tracing_attributes(vec![
@@ -450,7 +452,7 @@ impl rpc::server::ArkService for App {
 
 		let vtxos = self.db.pull_oors(pubkey).await.to_status()?;
 
-		let response = rpc::OorVtxosResponse {
+		let response = protos::OorVtxosResponse {
 			vtxos: vtxos.into_iter().map(|v| v.encode()).collect(),
 		};
 
@@ -461,8 +463,8 @@ impl rpc::server::ArkService for App {
 
 	async fn start_bolt11_payment(
 		&self,
-		req: tonic::Request<rpc::Bolt11PaymentRequest>,
-	) -> Result<tonic::Response<rpc::Bolt11PaymentDetails>, tonic::Status> {
+		req: tonic::Request<protos::Bolt11PaymentRequest>,
+	) -> Result<tonic::Response<protos::Bolt11PaymentDetails>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_PAYMENT);
 
 		add_tracing_attributes(
@@ -499,7 +501,7 @@ impl rpc::server::ArkService for App {
 			invoice, amount, input_vtxos, user_pubkey, &user_nonces,
 		).await.context("error making payment")?;
 
-		let response = rpc::Bolt11PaymentDetails {
+		let response = protos::Bolt11PaymentDetails {
 			details: details.encode(),
 			pub_nonces: asp_nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
 			partial_sigs: part_sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
@@ -509,12 +511,12 @@ impl rpc::server::ArkService for App {
 	}
 
 	type FinishBolt11PaymentStream = Box<
-		dyn Stream<Item = Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
+		dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
 	>;
 
 	async fn finish_bolt11_payment(
 		&self,
-		req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
+		req: tonic::Request<protos::SignedBolt11PaymentDetails>,
 	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT);
 
@@ -536,8 +538,8 @@ impl rpc::server::ArkService for App {
 
 	async fn revoke_bolt11_payment(
 		&self,
-		req: tonic::Request<rpc::RevokeBolt11PaymentRequest>
-	) -> Result<tonic::Response<rpc::OorCosignResponse>, tonic::Status> {
+		req: tonic::Request<protos::RevokeBolt11PaymentRequest>
+	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_OOR_COSIGN);
 
 		add_tracing_attributes(vec![
@@ -558,7 +560,7 @@ impl rpc::server::ArkService for App {
 		}
 
 		let (nonces, sigs) = self.revoke_bolt11_payment(&signed, &user_nonces).await.to_status()?;
-		let response = rpc::OorCosignResponse {
+		let response = protos::OorCosignResponse {
 			pub_nonces: nonces.into_iter().map(|n| n.serialize().to_vec()).collect(),
 			partial_sigs: sigs.into_iter().map(|s| s.serialize().to_vec()).collect(),
 		};
@@ -569,12 +571,12 @@ impl rpc::server::ArkService for App {
 	// round
 
 	type SubscribeRoundsStream = Box<
-		dyn Stream<Item = Result<rpc::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>;
 
 	async fn subscribe_rounds(
 		&self,
-		_req: tonic::Request<rpc::Empty>,
+		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS);
 
@@ -588,8 +590,8 @@ impl rpc::server::ArkService for App {
 
 	async fn submit_payment(
 		&self,
-		req: tonic::Request<rpc::SubmitPaymentRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		req: tonic::Request<protos::SubmitPaymentRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBMIT_PAYMENT);
 
 		add_tracing_attributes(vec![
@@ -645,13 +647,13 @@ impl rpc::server::ArkService for App {
 			.expect("input channel closed");
 		rx.wait_for_status().await?;
 
-		Ok(tonic::Response::new(rpc::Empty {}))
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
 	async fn provide_vtxo_signatures(
 		&self,
-		req: tonic::Request<rpc::VtxoSignaturesRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		req: tonic::Request<protos::VtxoSignaturesRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES);
 
 		add_tracing_attributes(vec![
@@ -672,13 +674,13 @@ impl rpc::server::ArkService for App {
 		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
 		rx.wait_for_status().await?;
 
-		Ok(tonic::Response::new(rpc::Empty {}))
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
 	async fn provide_forfeit_signatures(
 		&self,
-		req: tonic::Request<rpc::ForfeitSignaturesRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		req: tonic::Request<protos::ForfeitSignaturesRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES);
 
 		add_tracing_attributes(vec![
@@ -705,34 +707,38 @@ impl rpc::server::ArkService for App {
 		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
 		rx.wait_for_status().await?;
 
-		Ok(tonic::Response::new(rpc::Empty {}))
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 }
+
 #[tonic::async_trait]
 impl rpc::server::AdminService for App {
+	async fn wallet_sync(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_SYNC);
+		self.wallet.lock().await.sync(&self.bitcoind).await.to_status()?;
+		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
 	async fn wallet_status(
 		&self,
-		_req: tonic::Request<rpc::Empty>,
-	) -> Result<tonic::Response<rpc::WalletStatusResponse>, tonic::Status> {
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_STATUS);
 
-		let balance = self.sync_onchain_wallet().await.to_status()?;
-		let (confirmed, unconfirmed) = self.wallet.lock().await.list_unspent()
-			.partition::<Vec<_>, _>(|u| u.chain_position.is_confirmed());
-		let response = rpc::WalletStatusResponse {
-			balance: balance.to_sat(),
-			address: self.new_onchain_address().await.to_status()?.to_string(),
-			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
-			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint.to_string()).collect(),
-		};
+		let rounds = self.wallet.lock().await.status().await;
 
-		Ok(tonic::Response::new(response))
+		Ok(tonic::Response::new(protos::WalletStatusResponse {
+			rounds: Some(rounds.into()),
+		}))
 	}
 
 	async fn trigger_round(
 		&self,
-		_req: tonic::Request<rpc::Empty>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_ROUND);
 
 		match self.try_rounds().to_status()?.round_trigger_tx.try_send(()) {
@@ -743,13 +749,13 @@ impl rpc::server::AdminService for App {
 			Ok(_) => trace!("round scheduler not closed"),
 		}
 
-		Ok(tonic::Response::new(rpc::Empty{}))
+		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
 	async fn trigger_sweep(
 		&self,
-		_req: tonic::Request<rpc::Empty>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_SWEEP);
 
 		match self.trigger_round_sweep_tx.as_ref().unwrap().try_send(()) {
@@ -760,17 +766,17 @@ impl rpc::server::AdminService for App {
 			Ok(_) => trace!("round sweep not closed"),
 		}
 
-		Ok(tonic::Response::new(rpc::Empty{}))
+		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
 	async fn stop(
 		&self,
-		_req: tonic::Request<rpc::Empty>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_STOP);
 		info!("Shutting down because of RPC stop command...");
 		self.shutdown.cancel();
-		Ok(tonic::Response::new(rpc::Empty {}))
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 }
 

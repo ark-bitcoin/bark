@@ -40,24 +40,24 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context;
-use ark::rounds::RoundId;
 use bitcoin::absolute::LockTime;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
 };
-
-use ark::{BlockHeight, BoardVtxo, VtxoSpec};
-use ark::connectors::ConnectorChain;
-use bitcoin_ext::TaprootSpendInfoExt;
+use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
+
+use ark::{BoardVtxo, VtxoSpec};
+use ark::connectors::ConnectorChain;
+use ark::rounds::RoundId;
 
 use crate::bitcoind::RpcApi;
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::wallet::BdkWalletExt;
-use crate::{txindex, AllowUntrusted, App, DEEPLY_CONFIRMED, SECP};
+use crate::{txindex, App, SECP};
 
 
 struct BoardSweepInput {
@@ -465,13 +465,9 @@ impl<'a> SweepBuilder<'a> {
 	async fn create_tx(&self, tip: BlockHeight) -> anyhow::Result<Transaction> {
 		let mut wallet = self.sweeper.app.wallet.lock().await;
 		let drain_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal).address;
-		let untrusted = self.sweeper.app.untrusted_utxos(
-			&*wallet, AllowUntrusted::VtxoSweeper,
-		).await?;
 		let mut txb = wallet.build_tx();
 		txb.ordering(bdk_wallet::TxOrdering::Untouched);
 		txb.nlocktime(LockTime::from_height(tip as u32).expect("actual height"));
-		txb.unspendable(untrusted);
 
 		for sweep in &self.sweeps {
 			txb.add_foreign_utxo_with_sequence(

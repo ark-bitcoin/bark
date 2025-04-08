@@ -3,8 +3,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::Context;
-use ark::BlockHeight;
 use bitcoin::Network;
+use bitcoin_ext::BlockHeight;
 use clap::Args;
 use tokio::fs;
 

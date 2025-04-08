@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio_stream::Stream;
 
-use aspd_rpc as rpc;
+use aspd_rpc::{self as rpc, protos};
 
 use crate::util::FutureExt;
 
@@ -14,67 +14,67 @@ use crate::util::FutureExt;
 pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 	fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel>;
 
-	async fn handshake(&mut self, req: rpc::HandshakeRequest) -> Result<rpc::HandshakeResponse, tonic::Status> {
+	async fn handshake(&mut self, req: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status> {
 		Ok(self.upstream().handshake(req).await?.into_inner())
 	}
 
-	async fn get_fresh_rounds(&mut self, req: rpc::FreshRoundsRequest) -> Result<rpc::FreshRounds, tonic::Status> {
+	async fn get_fresh_rounds(&mut self, req: protos::FreshRoundsRequest) -> Result<protos::FreshRounds, tonic::Status> {
 		Ok(self.upstream().get_fresh_rounds(req).await?.into_inner())
 	}
 
-	async fn get_round(&mut self, req: rpc::RoundId) -> Result<rpc::RoundInfo, tonic::Status> {
+	async fn get_round(&mut self, req: protos::RoundId) -> Result<protos::RoundInfo, tonic::Status> {
 		Ok(self.upstream().get_round(req).await?.into_inner())
 	}
 
-	async fn request_board_cosign(&mut self, req: rpc::BoardCosignRequest) -> Result<rpc::BoardCosignResponse, tonic::Status> {
+	async fn request_board_cosign(&mut self, req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
 		Ok(self.upstream().request_board_cosign(req).await?.into_inner())
 	}
 
-	async fn register_board_vtxo(&mut self, req: rpc::BoardVtxoRequest) -> Result<rpc::Empty, tonic::Status> {
+	async fn register_board_vtxo(&mut self, req: protos::BoardVtxoRequest) -> Result<protos::Empty, tonic::Status> {
 		Ok(self.upstream().register_board_vtxo(req).await?.into_inner())
 	}
 
-	async fn request_oor_cosign(&mut self, req: rpc::OorCosignRequest) -> Result<rpc::OorCosignResponse, tonic::Status> {
+	async fn request_oor_cosign(&mut self, req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
 		Ok(self.upstream().request_oor_cosign(req).await?.into_inner())
 	}
 
-	async fn post_oor_mailbox(&mut self, req: rpc::OorVtxo) -> Result<rpc::Empty, tonic::Status> {
+	async fn post_oor_mailbox(&mut self, req: protos::OorVtxo) -> Result<protos::Empty, tonic::Status> {
 		Ok(self.upstream().post_oor_mailbox(req).await?.into_inner())
 	}
 
-	async fn empty_oor_mailbox(&mut self, req: rpc::OorVtxosRequest) -> Result<rpc::OorVtxosResponse, tonic::Status> {
+	async fn empty_oor_mailbox(&mut self, req: protos::OorVtxosRequest) -> Result<protos::OorVtxosResponse, tonic::Status> {
 		Ok(self.upstream().empty_oor_mailbox(req).await?.into_inner())
 	}
 
-	async fn start_bolt11_payment(&mut self, req: rpc::Bolt11PaymentRequest) -> Result<rpc::Bolt11PaymentDetails, tonic::Status> {
+	async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::Bolt11PaymentDetails, tonic::Status> {
 		Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
 	}
 
-	async fn finish_bolt11_payment(&mut self, req: rpc::SignedBolt11PaymentDetails) -> Result<Box<
-		dyn Stream<Item = Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
+	async fn finish_bolt11_payment(&mut self, req: protos::SignedBolt11PaymentDetails) -> Result<Box<
+		dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
 	>, tonic::Status> {
 		Ok(Box::new(self.upstream().finish_bolt11_payment(req).await?.into_inner()))
 	}
 
-	async fn revoke_bolt11_payment(&mut self, req: rpc::RevokeBolt11PaymentRequest) -> Result<rpc::OorCosignResponse, tonic::Status> {
+	async fn revoke_bolt11_payment(&mut self, req: protos::RevokeBolt11PaymentRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
 		Ok(self.upstream().revoke_bolt11_payment(req).await?.into_inner())
 	}
 
-	async fn subscribe_rounds(&mut self, req: rpc::Empty) -> Result<Box<
-		dyn Stream<Item = Result<rpc::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+	async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>, tonic::Status> {
 		Ok(Box::new(self.upstream().subscribe_rounds(req).await?.into_inner()))
 	}
 
-	async fn submit_payment(&mut self, req: rpc::SubmitPaymentRequest) -> Result<rpc::Empty, tonic::Status> {
+	async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 		Ok(self.upstream().submit_payment(req).await?.into_inner())
 	}
 
-	async fn provide_vtxo_signatures(&mut self, req: rpc::VtxoSignaturesRequest) -> Result<rpc::Empty, tonic::Status> {
+	async fn provide_vtxo_signatures(&mut self, req: protos::VtxoSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
 		Ok(self.upstream().provide_vtxo_signatures(req).await?.into_inner())
 	}
 
-	async fn provide_forfeit_signatures(&mut self, req: rpc::ForfeitSignaturesRequest) -> Result<rpc::Empty, tonic::Status> {
+	async fn provide_forfeit_signatures(&mut self, req: protos::ForfeitSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
 		Ok(self.upstream().provide_forfeit_signatures(req).await?.into_inner())
 	}
 }
@@ -142,102 +142,102 @@ impl AspdRpcProxyServer {
 struct AspdRpcProxyWrapper<T: AspdRpcProxy>(T);
 
 #[tonic::async_trait]
-impl<T: AspdRpcProxy> rpc::ark_service_server::ArkService for AspdRpcProxyWrapper<T> {
+impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 	async fn handshake(
-		&self, req: tonic::Request<rpc::HandshakeRequest>,
-	) -> Result<tonic::Response<rpc::HandshakeResponse>, tonic::Status> {
+		&self, req: tonic::Request<protos::HandshakeRequest>,
+	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::handshake(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_fresh_rounds(
-		&self, req: tonic::Request<rpc::FreshRoundsRequest>,
-	) -> Result<tonic::Response<rpc::FreshRounds>, tonic::Status> {
+		&self, req: tonic::Request<protos::FreshRoundsRequest>,
+	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::get_fresh_rounds(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_round(
-		&self, req: tonic::Request<rpc::RoundId>,
-	) -> Result<tonic::Response<rpc::RoundInfo>, tonic::Status> {
+		&self, req: tonic::Request<protos::RoundId>,
+	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::get_round(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_board_cosign(
-		&self, req: tonic::Request<rpc::BoardCosignRequest>,
-	) -> Result<tonic::Response<rpc::BoardCosignResponse>, tonic::Status> {
+		&self, req: tonic::Request<protos::BoardCosignRequest>,
+	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::request_board_cosign(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn register_board_vtxo(
-		&self, req: tonic::Request<rpc::BoardVtxoRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		&self, req: tonic::Request<protos::BoardVtxoRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::register_board_vtxo(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_oor_cosign(
-		&self, req: tonic::Request<rpc::OorCosignRequest>,
-	) -> Result<tonic::Response<rpc::OorCosignResponse>, tonic::Status> {
+		&self, req: tonic::Request<protos::OorCosignRequest>,
+	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::request_oor_cosign(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn post_oor_mailbox(
-		&self, req: tonic::Request<rpc::OorVtxo>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		&self, req: tonic::Request<protos::OorVtxo>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::post_oor_mailbox(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn empty_oor_mailbox(
-		&self, req: tonic::Request<rpc::OorVtxosRequest>,
-	) -> Result<tonic::Response<rpc::OorVtxosResponse>, tonic::Status> {
+		&self, req: tonic::Request<protos::OorVtxosRequest>,
+	) -> Result<tonic::Response<protos::OorVtxosResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::empty_oor_mailbox(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn start_bolt11_payment(
-		&self, req: tonic::Request<rpc::Bolt11PaymentRequest>,
-	) -> Result<tonic::Response<rpc::Bolt11PaymentDetails>, tonic::Status> {
+		&self, req: tonic::Request<protos::Bolt11PaymentRequest>,
+	) -> Result<tonic::Response<protos::Bolt11PaymentDetails>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	type FinishBolt11PaymentStream = Box<
-		dyn Stream<Item = Result<rpc::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
+		dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
 	>;
 
 	async fn finish_bolt11_payment(
-		&self, req: tonic::Request<rpc::SignedBolt11PaymentDetails>,
+		&self, req: tonic::Request<protos::SignedBolt11PaymentDetails>,
 	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::finish_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn revoke_bolt11_payment(
-		&self, req: tonic::Request<rpc::RevokeBolt11PaymentRequest>,
-	) -> Result<tonic::Response<rpc::OorCosignResponse>, tonic::Status> {
+		&self, req: tonic::Request<protos::RevokeBolt11PaymentRequest>,
+	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::revoke_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	type SubscribeRoundsStream = Box<
-		dyn Stream<Item = Result<rpc::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>;
 
 	async fn subscribe_rounds(
-		&self, req: tonic::Request<rpc::Empty>,
+		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::subscribe_rounds(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn submit_payment(
-		&self, req: tonic::Request<rpc::SubmitPaymentRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		&self, req: tonic::Request<protos::SubmitPaymentRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::submit_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn provide_vtxo_signatures(
-		&self, req: tonic::Request<rpc::VtxoSignaturesRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		&self, req: tonic::Request<protos::VtxoSignaturesRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::provide_vtxo_signatures(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn provide_forfeit_signatures(
-		&self, req: tonic::Request<rpc::ForfeitSignaturesRequest>,
-	) -> Result<tonic::Response<rpc::Empty>, tonic::Status> {
+		&self, req: tonic::Request<protos::ForfeitSignaturesRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::provide_forfeit_signatures(&mut self.0.clone(), req.into_inner()).await?))
 	}
 }

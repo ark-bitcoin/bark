@@ -7,18 +7,15 @@ use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
+use bitcoin_ext::DEEPLY_CONFIRMED;
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
 use serde::ser::StdError;
 
-use ark::{BlockHeight, Vtxo, VtxoId};
+use ark::{Vtxo, VtxoId};
 
 use crate::movement::MovementArgs;
 use crate::onchain::{self, ChainSource, ChainSourceClient};
 use crate::persist::BarkPersister;
-
-/// The confirmations needed to consider transaction
-/// immutable in the chain
-const DEEPLY_CONFIRMED: BlockHeight = 6;
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -16,7 +16,7 @@ use tokio::fs;
 
 use ark::{ArkoorVtxo, Vtxo};
 use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
-use aspd_rpc as rpc;
+use aspd_rpc::{self as rpc, protos};
 
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -179,12 +179,11 @@ async fn large_round() {
 
 	info!("Running multiple_round_test with N set to {}", N);
 
-	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
-		round_interval: Duration::from_millis(2_000),
-		round_submit_time: Duration::from_millis(100 * N as u64),
-		round_sign_time: Duration::from_millis(1000 * N as u64),
-		nb_round_nonces: 200,
-		..ctx.aspd_default_cfg("aspd", None).await
+	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+		cfg.round_interval = Duration::from_millis(2_000);
+		cfg.round_submit_time = Duration::from_millis(100 * N as u64);
+		cfg.round_sign_time = Duration::from_millis(1000 * N as u64);
+		cfg.nb_round_nonces = 200;
 	}).await;
 	ctx.fund_asp(&aspd, btc(10)).await;
 
@@ -576,7 +575,7 @@ async fn reject_oor_with_bad_signature() {
 	impl aspd::proxy::AspdRpcProxy for InvalidSigProxy {
 		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
-		async fn empty_oor_mailbox(&mut self, req: rpc::OorVtxosRequest) -> Result<rpc::OorVtxosResponse, tonic::Status>  {
+		async fn empty_oor_mailbox(&mut self, req: protos::OorVtxosRequest) -> Result<protos::OorVtxosResponse, tonic::Status>  {
 			info!("proxy handling oor request");
 			let response = self.upstream().empty_oor_mailbox(req).await?;
 			info!("proxy received real response");
@@ -600,7 +599,7 @@ async fn reject_oor_with_bad_signature() {
 
 			let vtxo = Vtxo::Arkoor(ArkoorVtxo { inputs, signatures: fake_sigs, output_specs, point });
 
-			Ok(rpc::OorVtxosResponse {
+			Ok(protos::OorVtxosResponse {
 				vtxos: vec![vtxo.encode()]
 			})
 		}
@@ -646,10 +645,10 @@ async fn second_round_attempt() {
 
 		async fn provide_forfeit_signatures(
 			&mut self,
-			req: rpc::ForfeitSignaturesRequest,
-		) -> Result<rpc::Empty, tonic::Status> {
+			req: protos::ForfeitSignaturesRequest,
+		) -> Result<protos::Empty, tonic::Status> {
 			if self.1.swap(false, atomic::Ordering::Relaxed) {
-				Ok(rpc::Empty {})
+				Ok(protos::Empty {})
 			} else {
 				Ok(self.0.provide_forfeit_signatures(req).await?.into_inner())
 			}
@@ -657,9 +656,8 @@ async fn second_round_attempt() {
 	}
 
 	let ctx = TestContext::new("bark/second_round_attempt").await;
-	let aspd = ctx.new_aspd_with_cfg("aspd", aspd::Config {
-		round_interval: Duration::from_secs(3600),
-		..ctx.aspd_default_cfg("aspd", None).await
+	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 	ctx.fund_asp(&aspd, btc(10)).await;
 
@@ -681,7 +679,7 @@ async fn second_round_attempt() {
 	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
-	let _ = aspd.get_admin_client().await.wallet_status(rpc::Empty {}).await.unwrap();
+	let _ = aspd.get_admin_client().await.wallet_sync(protos::Empty {}).await.unwrap();
 	aspd.trigger_round().await;
 	aspd.wait_for_log::<RestartMissingForfeits>().await;
 	res1.await.unwrap();
@@ -691,7 +689,7 @@ async fn second_round_attempt() {
 
 	// bark2 is kicked out of the first round, so we need to start another one
 	ctx.bitcoind.generate(1).await;
-	let _ = aspd.get_admin_client().await.wallet_status(rpc::Empty {}).await.unwrap();
+	let _ = aspd.get_admin_client().await.wallet_sync(protos::Empty {}).await.unwrap();
 	aspd.trigger_round().await;
 	res2.await.unwrap();
 }
@@ -827,8 +825,8 @@ async fn bark_recover_unregistered_board() {
 
 		async fn register_board_vtxo(
 			&mut self,
-			req: rpc::BoardVtxoRequest,
-		) -> Result<rpc::Empty, tonic::Status> {
+			req: protos::BoardVtxoRequest,
+		) -> Result<protos::Empty, tonic::Status> {
 			if self.1.swap(false, atomic::Ordering::Relaxed) {
 				Err(tonic::Status::from_error("Nope! I do not register on the first attempt!".into()))
 			} else {

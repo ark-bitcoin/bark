@@ -4,8 +4,9 @@ use std::error::Error as StdError;
 
 use anyhow::Context;
 use bdk_wallet::WalletPersister;
+use bitcoin_ext::BlockHeight;
 
-use ark::{BlockHeight, Vtxo, VtxoId};
+use ark::{Vtxo, VtxoId};
 
 use crate::Wallet;
 use crate::persist::BarkPersister;

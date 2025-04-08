@@ -7,8 +7,9 @@ use std::borrow::Borrow;
 
 use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Auth, Client, Error};
 use bitcoin::Transaction;
+use bitcoin_ext::BlockRef;
 
-use ark::BlockRef;
+use crate::DEEPLY_CONFIRMED;
 
 
 /// Error code for RPC_VERIFY_ALREADY_IN_UTXO_SET.
@@ -95,6 +96,13 @@ pub trait BitcoinRpcExt: RpcApi {
 
 	fn tip(&self) -> Result<BlockRef, Error> {
 		let height = self.get_block_count()?;
+		let hash = self.get_block_hash(height)?;
+		Ok(BlockRef { height, hash })
+	}
+
+	fn deep_tip(&self) -> Result<BlockRef, Error> {
+		let tip = self.get_block_count()?;
+		let height = tip.saturating_sub(DEEPLY_CONFIRMED);
 		let hash = self.get_block_hash(height)?;
 		Ok(BlockRef { height, hash })
 	}

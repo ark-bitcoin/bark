@@ -28,19 +28,10 @@ use std::fmt;
 use std::time::Duration;
 
 use bitcoin::secp256k1::schnorr::Signature;
-use bitcoin::{Amount, BlockHash, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
+use bitcoin::{Amount, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
 
-
-/// Type representing a block height in the bitcoin blockchain.
-pub type BlockHeight = u64;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BlockRef {
-	pub height: BlockHeight,
-	pub hash: BlockHash,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArkInfo {

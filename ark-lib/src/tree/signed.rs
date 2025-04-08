@@ -11,11 +11,11 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use bitcoin_ext::{fee, P2WSH_DUST, TransactionExt};
+use bitcoin_ext::{fee, P2WSH_DUST, BlockHeight, TransactionExt};
 
-use crate::vtxo::VtxoSpkSpec;
-use crate::{musig, util, BlockHeight, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
+use crate::{musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
+use crate::vtxo::VtxoSpkSpec;
 
 
 /// The witness weight to spend a node transaction.

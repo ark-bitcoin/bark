@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 # OWN
 ark-lib = { path = "../ark-lib" }
+bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false }
 
 log.workspace = true
 serde.workspace = true
