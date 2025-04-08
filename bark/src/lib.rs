@@ -74,6 +74,13 @@ lazy_static::lazy_static! {
 const OOR_PUB_KEY_INDEX: u32 = 0;
 const MIN_DERIVED_INDEX: u32 = OOR_PUB_KEY_INDEX + 1;
 
+struct OorCreateResult {
+	input: Vec<Vtxo>,
+	created: Vtxo,
+	change: Option<Vtxo>,
+	fee: Amount
+}
+
 
 pub struct Pagination {
 	pub page_index: u16,
@@ -151,6 +158,11 @@ impl Default for Config {
 			vtxo_refresh_threshold: 288,
 		}
 	}
+}
+
+struct RoundResult {
+	round_id: RoundId,
+	created_vtxos: Vec<Vtxo>
 }
 
 /// Read-only properties of the Bark wallet.
@@ -738,7 +750,7 @@ impl <P>Wallet<P> where
 			None => self.onchain.address()?,
 		};
 
-		let round = self.participate_round(move |round| {
+		let RoundResult { round_id, .. } = self.participate_round(move |round| {
 			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), round.offboard_feerate)
 				.expect("bdk created invalid scriptPubkey");
 
@@ -754,7 +766,7 @@ impl <P>Wallet<P> where
 			Ok((vtxos.clone(), Vec::new(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(Offboard { round })
+		Ok(Offboard { round: round_id })
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
@@ -802,13 +814,15 @@ impl <P>Wallet<P> where
 			amount: total_amount
 		};
 
-		let round = self.participate_round(move |_| {
+		let RoundResult { round_id, .. } = self.participate_round(move |_| {
 			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
-		Ok(Some(round))
+		Ok(Some(round_id))
 	}
 
-	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<VtxoId> {
+	async fn create_oor_vtxo(&mut self, destination: PublicKey, amount: Amount)
+		-> anyhow::Result<OorCreateResult>
+	{
 		let mut asp = self.require_asp()?;
 
 		let fr = self.onchain.chain_source.regular_feerate();
@@ -907,29 +921,45 @@ impl <P>Wallet<P> where
 		let vtxos = signed.output_vtxos().into_iter().map(|v| Vtxo::from(v)).collect::<Vec<_>>();
 
 		// The first one is of the recipient, we will post it to their mailbox.
-		let user_vtxo = &vtxos[0];
+		let user_vtxo = vtxos.get(0).context("no vtxo created")?.clone();
+		let change_vtxo = vtxos.last().map(|c| c.clone());
+
+		Ok(OorCreateResult {
+			input: input_vtxos,
+			created: user_vtxo,
+			change: change_vtxo,
+			fee: account_for_fee
+		})
+	}
+
+
+	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
+		let mut asp = self.require_asp()?;
+
+		let oor = self.create_oor_vtxo(destination, amount).await?;
+
 		let req = rpc::OorVtxo {
 			pubkey: destination.serialize().to_vec(),
-			vtxo: user_vtxo.encode(),
+			vtxo: oor.created.clone().encode(),
 		};
+
 		if let Err(e) = asp.client.post_oor_mailbox(req).await {
 			error!("Failed to post the OOR vtxo to the recipients mailbox: '{}'; vtxo: {}",
-				e, user_vtxo.encode().as_hex(),
+				e, oor.created.encode().as_hex(),
 			);
 			//NB we will continue to at least not lose our own change
 		}
 
-		let change = vtxos.get(1);
 		self.db.register_movement(MovementArgs {
-			spends: &input_vtxos,
-			receives: change,
+			spends: &oor.input,
+			receives: oor.change.as_ref(),
 			recipients: vec![
-				(output.pubkey.to_string(), output.amount)
+				(destination.to_string(), amount)
 			],
-			fees: Some(account_for_fee)
+			fees: Some(oor.fee)
 		}).context("failed to store OOR vtxo")?;
 
-		Ok(user_vtxo.id())
+		Ok(oor.created)
 	}
 
 	pub async fn send_bolt11_payment(
@@ -1138,7 +1168,7 @@ impl <P>Wallet<P> where
 			bail!("Balance too low");
 		}
 
-		let round = self.participate_round(move |round| {
+		let RoundResult { round_id, .. } = self.participate_round(move |round| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
@@ -1164,7 +1194,7 @@ impl <P>Wallet<P> where
 			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
 		}).await.context("round failed")?;
 
-		Ok(SendOnchain { round })
+		Ok(SendOnchain { round: round_id })
 	}
 
 	/// Participate in a round.
@@ -1179,7 +1209,7 @@ impl <P>Wallet<P> where
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
-	) -> anyhow::Result<RoundId> {
+	) -> anyhow::Result<RoundResult> {
 		let mut asp = self.require_asp()?;
 
 		info!("Waiting for a round start...");
@@ -1551,28 +1581,40 @@ impl <P>Wallet<P> where
 
 				// if there is one offboard req, we register as a spend, else as a refresh
 				// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
-				if let Some(offboard) = offb_reqs.get(0) {
-					let params = Params::new(self.properties().unwrap().network);
-					let address = Address::from_script(&offboard.script_pubkey, params)?;
+
+
+				let params = Params::new(self.properties().unwrap().network);
+				let sent = offb_reqs.iter().map(|o| {
+					let address = Address::from_script(&o.script_pubkey, &params)?;
+					Ok((address.to_string(), o.amount))
+				}).collect::<anyhow::Result<Vec<_>>>()?;
+
+				let received = new_vtxos.iter().filter(|v| {
+					matches!(
+						v.as_round().expect("comming from round").spec.spk,
+						VtxoSpkSpec::Exit { .. }
+					)
+				}).collect::<Vec<_>>();
+
+				// NB: if there is no received VTXO nor sent in the round, for now we assume
+				// the movement will be registered later (e.g: lightning receive use case)
+				//
+				// Later, we will split the round participation and registration might be more
+				// manual
+				if !sent.is_empty() || !received.is_empty() {
 					self.db.register_movement(MovementArgs {
 						spends: input_vtxos.values(),
-						receives: new_vtxos.get(0),
-						recipients: vec![
-							(address.to_string(), offboard.amount)
-						],
-						fees: None
-					}).context("failed to store OOR vtxo")?;
-				} else {
-					self.db.register_movement(MovementArgs {
-						spends: input_vtxos.values(),
-						receives: &new_vtxos,
-						recipients: None,
+						receives: received,
+						recipients: sent,
 						fees: None
 					}).context("failed to store OOR vtxo")?;
 				}
 
 				info!("Round finished");
-				return Ok(signed_round_tx.compute_txid().into())
+				return Ok(RoundResult {
+					round_id: signed_round_tx.compute_txid().into(),
+					created_vtxos: new_vtxos
+				})
 			}
 		}
 	}

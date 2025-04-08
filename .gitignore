@@ -1,5 +1,6 @@
 # generated rpc server/client
 aspd-rpc/src/aspd.rs
+cln-rpc/src/cln.rs
 
 debug/
 target/
