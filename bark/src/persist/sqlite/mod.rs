@@ -240,7 +240,6 @@ pub mod test {
 	use bitcoin::bip32;
 	use rand::{distr, Rng};
 
-	use ark::{vtxo::VtxoSpkSpec, BoardVtxo, VtxoSpec};
 	use crate::test::dummy_board;
 	use super::*;
 

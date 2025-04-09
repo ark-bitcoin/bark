@@ -165,7 +165,6 @@ impl Default for Config {
 
 struct RoundResult {
 	round_id: RoundId,
-	created_vtxos: Vec<Vtxo>
 }
 
 /// Read-only properties of the Bark wallet.
@@ -1675,7 +1674,6 @@ impl <P>Wallet<P> where
 				info!("Round finished");
 				return Ok(RoundResult {
 					round_id: signed_round_tx.compute_txid().into(),
-					created_vtxos: new_vtxos
 				})
 			}
 		}
