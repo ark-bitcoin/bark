@@ -13,8 +13,8 @@ use aspd_rpc as rpc;
 use crate::daemon::aspd::postgresd::{self, Postgres};
 use crate::util::{should_use_electrs, test_data_directory};
 use crate::{
-	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
-	Lightningd, LightningdConfig,
+	constants, Aspd, Bark, BarkConfig, Bitcoind, BitcoindConfig, Electrs, ElectrsConfig,
+	Lightningd, LightningdConfig
 };
 use crate::bark::ChainSource;
 
@@ -135,14 +135,7 @@ impl TestContext {
 	}
 
 	pub async fn init_central_postgres(&mut self) -> () {
-		let (postgres_config, postgresd) = if postgresd::use_host_database() {
-			postgresd::cleanup_dbs(&postgresd::global_client().await, &self.name).await;
-			let cfg = postgresd::host_base_config();
-			(cfg, None)
-		} else {
-			let postgresd = self.new_postgres("postgres").await;
-			(postgresd.helper().as_base_config(), Some(postgresd))
-		};
+		let (postgres_config, postgresd) = self.new_postgres("postgres").await;
 
 		self.postgres_config = Some(postgres_config);
 		self._postgresd = postgresd
@@ -169,11 +162,18 @@ impl TestContext {
 		bitcoind
 	}
 
-	pub async fn new_postgres(&self, name: &str) -> Postgres {
-		let datadir = self.datadir.join(name);
-		let mut ret = Postgres::new(name, datadir);
-		ret.start().await.unwrap();
-		ret
+	pub async fn new_postgres(&self, name: &str) -> (config::Postgres, Option<Postgres>) {
+		let name = format!("{}/{}", self.name, name);
+		if postgresd::use_host_database() {
+			postgresd::cleanup_dbs(&postgresd::global_client().await, &name).await;
+			let cfg = postgresd::host_base_config();
+			(cfg, None)
+		} else {
+			let datadir = self.datadir.join(&name);
+			let mut postgresd = Postgres::new(&name, datadir);
+			postgresd.start().await.unwrap();
+			(postgresd.helper().as_base_config(), Some(postgresd))
+		}
 	}
 
 	fn postgres_default_cfg(&self, name: impl AsRef<str>) -> config::Postgres {
