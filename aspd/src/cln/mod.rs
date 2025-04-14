@@ -579,7 +579,7 @@ impl ClnManagerProcess {
 	/// Caller is responsible for checking if there is an existing opened
 	/// subscription in the db and act accordingly.
 	async fn generate_invoice(&self, payment_hash: sha256::Hash, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
-		let node = self.get_hodl_active_node().context("no active cln node")?;
+		let node = self.get_hodl_active_node().context("no active hodl-compatible cln node")?;
 		let mut hold_client = node.hodl_rpc.clone().expect("active node not hodl enabled");
 
 		if let Ok(existing) = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await {
