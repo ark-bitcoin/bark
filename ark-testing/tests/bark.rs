@@ -10,6 +10,7 @@ use std::time::Duration;
 use bark::movement::MovementRecipient;
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
+use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
 use tokio::fs;
@@ -845,4 +846,54 @@ async fn bark_recover_unregistered_board() {
 
 	ctx.bitcoind.generate(12).await;
 	bark.refresh_all().await;
+}
+
+#[tokio::test]
+async fn subdust_sent_vtxos() {
+	let ctx = TestContext::new("bark/subdust_sent_vtxos").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	let subdust_amount = P2TR_DUST_SAT - 1;
+	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(P2TR_DUST_SAT - 1)).await;
+
+	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, Amount::from_sat(subdust_amount));
+
+	bark2.board(sat(100_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	bark2.refresh_all().await;
+	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, sat(100_000) + Amount::from_sat(subdust_amount));
+}
+
+#[tokio::test]
+async fn subdust_change_vtxos() {
+	let ctx = TestContext::new("bark/subdust_change_vtxos").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(1_700)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(1_000)).await;
+
+	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, sat(1_000));
+
+	let [change] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(change.amount, sat(40));
+
+	bark1.board(sat(100_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	bark1.refresh_all().await;
+	let [vtxo] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, sat(100_040));
 }
