@@ -220,7 +220,7 @@ async fn just_oor() {
 	let pk2 = bark2.vtxo_pubkey().await;
 	bark1.send_oor(pk2, sat(20_000)).await;
 
-	assert_eq!(59_017, bark1.offchain_balance().await.to_sat());
+	assert_eq!(59_340, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
 }
 
@@ -340,16 +340,16 @@ async fn list_movements() {
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 2);
 	assert_eq!(payments[0].spends[0].amount, sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, sat(149_017));
-	assert_eq!(payments[0].fees.to_sat(), 983);
+	assert_eq!(payments[0].receives[0].amount, sat(149_340));
+	assert_eq!(payments[0].fees, sat(330));
 	assert!(payments[0].recipients.first().is_some());
 
 	// refresh vtxos
 	bark1.refresh_all().await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, sat(149_017));
-	assert_eq!(payments[0].receives[0].amount, sat(149_017));
+	assert_eq!(payments[0].spends[0].amount, sat(149_340));
+	assert_eq!(payments[0].receives[0].amount, sat(149_340));
 	assert_eq!(payments[0].fees.to_sat(), 0);
 	assert!(payments[0].recipients.first().is_none());
 

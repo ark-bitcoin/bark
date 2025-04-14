@@ -880,49 +880,39 @@ impl <P>Wallet<P> where
 		-> anyhow::Result<OorCreateResult>
 	{
 		let mut asp = self.require_asp()?;
-
-		let fr = self.onchain.chain_source.regular_feerate();
 		let change_pubkey = self.oor_pubkey();
 
 		let output = PaymentRequest { pubkey: destination, amount };
 
-		// We do some kind of naive fee estimation: we try create a tx,
-		// if we don't have enough fee, we add the fee we were short to
-		// the desired input amount and try again.
-		let mut account_for_fee = ark::oor::OOR_MIN_FEE;
-		let payment = loop {
-			let input_vtxos = self.db.get_expiring_vtxos(amount + account_for_fee)?;
+		// We need to spend sent amount + fee anchor + offchain fees
+		let offchain_fees = ark::oor::OOR_MIN_FEE;
+		let spent_amount = amount + P2TR_DUST + offchain_fees;
 
-			let change = {
-				let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-				let avail = Amount::from_sat(sum.to_sat().saturating_sub(account_for_fee.to_sat()));
-				if avail < output.amount {
-					bail!("Balance too low: {}", sum);
-				} else if avail < output.amount + P2TR_DUST {
-					None
-				} else {
-					let change_amount = avail - output.amount;
-					Some(PaymentRequest {
-						pubkey: change_pubkey,
-						amount: change_amount,
-					})
-				}
-			};
-			let outputs = Some(output.clone()).into_iter().chain(change).collect::<Vec<_>>();
+		let input_vtxos = self.db.get_expiring_vtxos(spent_amount)?;
 
-			let payment = ark::oor::OorPayment::new(
-				asp.info.asp_pubkey,
-				asp.info.vtxo_exit_delta,
-				input_vtxos,
-				outputs,
-			);
+		let change = {
+			let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
-			if let Err(ark::oor::InsufficientFunds { missing, .. }) = payment.check_fee(fr) {
-				account_for_fee += missing;
+			// At this point, `sum` is >= to `spent_amount`
+			if sum > spent_amount {
+				let change_amount = sum - spent_amount;
+				Some(PaymentRequest {
+					pubkey: change_pubkey,
+					amount: change_amount,
+				})
 			} else {
-				break payment;
+				None
 			}
 		};
+		let outputs = Some(output.clone()).into_iter().chain(change).collect::<Vec<_>>();
+
+		let payment = ark::oor::OorPayment::new(
+			asp.info.asp_pubkey,
+			asp.info.vtxo_exit_delta,
+			input_vtxos,
+			outputs,
+		);
+
 		// it's a bit fragile, but if there is a second output, it's our change
 		if let Some(o) = payment.outputs.get(1) {
 			info!("Added change VTXO of {}", o.amount);
@@ -984,7 +974,7 @@ impl <P>Wallet<P> where
 			input: input_vtxos,
 			created: user_vtxo,
 			change: change_vtxo,
-			fee: account_for_fee
+			fee: offchain_fees
 		})
 	}
 

@@ -145,24 +145,6 @@ impl OorPayment {
 		tx.weight() + nb_inputs * spend_weight
 	}
 
-	/// Check if there is sufficient fee provided for the given feerate.
-	pub fn check_fee(&self, fee_rate: FeeRate) -> Result<(), InsufficientFunds> {
-		let total_input = self.inputs.iter().map(|i| i.amount()).sum::<Amount>();
-		let total_output = self.outputs.iter().map(|o| o.amount).sum::<Amount>();
-
-		let weight = self.total_weight();
-		let fee = fee_rate * weight;
-
-		let required = total_output + fee;
-		if required > total_input {
-			Err(InsufficientFunds {
-				required, fee, missing: required - total_input,
-			})
-		} else {
-			Ok(())
-		}
-	}
-
 	pub fn sign_asp(
 		&self,
 		keypair: &Keypair,
