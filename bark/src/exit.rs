@@ -7,7 +7,7 @@ use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
-use bitcoin_ext::DEEPLY_CONFIRMED;
+use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST};
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
 use serde::ser::StdError;
 
@@ -139,6 +139,7 @@ impl <P>Exit<P> where
 		&mut self,
 		onchain: &mut onchain::Wallet<P>,
 	) -> anyhow::Result<()> {
+
 		let vtxos = self.db.get_all_spendable_vtxos()?;
 
 		// The idea is to convert all our vtxos into an exit process structure,
@@ -154,6 +155,14 @@ impl <P>Exit<P> where
 		vtxos: &[Vtxo],
 		onchain: &mut onchain::Wallet<P>,
 	) -> anyhow::Result<()> {
+		if vtxos.is_empty() {
+			warn!("There is no VTXO to exit!");
+			return Ok(());
+		}
+
+		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		info!("Starting exit for vtxos: {:?}", vtxo_ids);
+
 		// To avoid starting an exit we can't afford, let's do some napkin math.
 		let fee_rate = self.chain_source.urgent_feerate();
 		let total_fee = estimate_exit_weight(vtxos, fee_rate);
@@ -162,9 +171,15 @@ impl <P>Exit<P> where
 			bail!("total exit fee estimate is {total_fee}, wallet only has {balance}")
 		}
 
+		let mut started_vtxos = vec![];
 		for vtxo in vtxos {
 			let added = self.index.add_vtxo(vtxo.clone());
 			if let Some(added) = added {
+				if added.amount() < P2TR_DUST {
+					warn!("Subdust VTXO. won't be exited: id: {}, amount: {}", vtxo.id(), vtxo.amount());
+				}
+
+				started_vtxos.push(added.id());
 				let params = Params::new(onchain.wallet.network());
 				let address = Address::from_script(&added.spec().vtxo_spk(), params)?;
 				self.db.register_movement(MovementArgs {
@@ -175,8 +190,12 @@ impl <P>Exit<P> where
 					],
 					fees: None
 				}).context("Failed to register send")?;
+			} else {
+				warn!("Tried to start exit for unknown vtxo: {}", vtxo.id());
 			}
 		}
+
+		info!("Started exit for vtxos: {:?}", started_vtxos);
 
 		self.persist_exit()?;
 		Ok(())
