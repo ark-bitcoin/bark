@@ -20,7 +20,7 @@ pub mod tree;
 pub mod vtxo;
 
 pub use crate::address::Address;
-pub use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
+pub use crate::encode::{ProtocolEncoding, WriteExt, ReadExt, ProtocolDecodingError};
 pub use crate::vtxo::{Vtxo, VtxoId, VtxoPolicy};
 
 #[cfg(test)]

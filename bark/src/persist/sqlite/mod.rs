@@ -2,10 +2,10 @@ mod convert;
 mod migrations;
 mod query;
 
-use std::path::PathBuf;
-
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
+
+use std::path::PathBuf;
 
 use anyhow::Context;
 use bitcoin::{Amount, Txid};
@@ -15,18 +15,19 @@ use log::debug;
 use rusqlite::{Connection, Transaction};
 
 use ark::lightning::{PaymentHash, Preimage};
+use ark::musig::SecretNonce;
+use ark::rounds::{RoundId, RoundSeq};
 use bitcoin_ext::{BlockHeight};
 use json::exit::states::ExitTxOrigin;
 
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
-	Config, Pagination, Vtxo, VtxoId, VtxoState,
-	WalletProperties,
+	Config, Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties
 };
 use crate::exit::vtxo::ExitEntry;
+use crate::round::{AttemptStartedState, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::persist::{BarkPersister, LightningReceive};
-
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -77,6 +78,7 @@ impl SqliteClient {
 		Ok(())
 	}
 }
+
 
 impl BarkPersister for SqliteClient {
 	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()> {
@@ -150,6 +152,51 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	fn store_new_round_attempt(&self, round_seq: RoundSeq, attempt_seq: usize, round_participation: RoundParticipation)
+		-> anyhow::Result<AttemptStartedState>
+	{
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let round = query::store_new_round_attempt(
+			&tx, round_seq, attempt_seq, round_participation)?;
+		tx.commit()?;
+		Ok(round)
+	}
+
+	fn store_round_state(&self, round_state: RoundState, prev_state: RoundState) -> anyhow::Result<RoundState> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let state = query::store_round_state_update(&tx, round_state, prev_state)?;
+		tx.commit()?;
+		Ok(state)
+	}
+
+	fn store_secret_nonces(&self, round_attempt_id: i64, secret_nonces: Vec<Vec<SecretNonce>>) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::store_secret_nonces(&tx, round_attempt_id, secret_nonces)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn take_secret_nonces(&self, round_attempt_id: i64) -> anyhow::Result<Option<Vec<Vec<SecretNonce>>>> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let secret_nonces = query::take_secret_nonces(&tx, round_attempt_id)?;
+		tx.commit()?;
+		Ok(secret_nonces)
+	}
+
+	fn get_round_attempt_by_id(&self, round_attempt_id: i64) -> anyhow::Result<Option<RoundState>> {
+		let conn = self.connect()?;
+		query::get_round_attempt_by_id(&conn, round_attempt_id)
+	}
+
+	fn get_round_attempt_by_round_txid(&self, round_id: RoundId) -> anyhow::Result<Option<RoundState>> {
+		let conn = self.connect()?;
+		query::get_round_attempt_by_round_txid(&conn, round_id)
+	}
+
 	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_wallet_vtxo_by_id(&conn, id)
@@ -159,6 +206,12 @@ impl BarkPersister for SqliteClient {
 	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxos_by_state(&conn, state)
+	}
+
+	/// Fetch all VTXO's that are currently used in a round
+	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+		let conn = self.connect()?;
+		query::get_in_round_vtxos(&conn)
 	}
 
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {

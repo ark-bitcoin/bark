@@ -67,7 +67,7 @@ use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
-use crate::persist::{BarkPersister, LightningReceive};
+use crate::persist::{BarkPersister, LightningReceive, StoredVtxoRequest};
 use crate::server::ServerConnection;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -121,9 +121,9 @@ impl From<Utxo> for UtxoInfo {
 
 #[derive(Debug, Clone)]
 /// Struct to communicate your specific participation requests for an Ark round.
-struct RoundParticipation {
+pub struct RoundParticipation {
 	inputs: Vec<Vtxo>,
-	outputs: Vec<(VtxoRequest, VtxoState)>,
+	outputs: Vec<StoredVtxoRequest>,
 	offboards: Vec<OffboardRequest>,
 }
 
@@ -950,7 +950,7 @@ impl Wallet {
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
 			Ok(RoundParticipation {
 				inputs: vtxos.to_vec(),
-				outputs: vec![(req.clone(), VtxoState::Spendable)],
+				outputs: vec![StoredVtxoRequest::from_parts(req.clone(), VtxoState::Spendable)],
 				offboards: Vec::new(),
 			})
 		}).await.context("round failed")?;
@@ -1606,8 +1606,8 @@ impl Wallet {
 			Ok(RoundParticipation {
 				inputs: vec![antidos_input_cloned.clone()],
 				outputs: vec![
-					(htlc_pay_req, state.clone()),
-					(antidos_output_cloned.clone(), VtxoState::Spendable),
+					StoredVtxoRequest::from_parts(htlc_pay_req, state.clone()),
+					StoredVtxoRequest::from_parts(antidos_output_cloned.clone(), VtxoState::Spendable),
 				],
 				offboards: vec![],
 			})
@@ -1717,7 +1717,8 @@ impl Wallet {
 
 			Ok(RoundParticipation {
 				inputs: input_vtxos.clone(),
-				outputs: change.into_iter().map(|c| (c, VtxoState::Spendable)).collect(),
+				outputs: change.into_iter()
+					.map(|c| StoredVtxoRequest::from_parts(c, VtxoState::Spendable)).collect(),
 				offboards: vec![offb],
 			})
 		}).await.context("round failed")?;
@@ -1741,7 +1742,7 @@ impl Wallet {
 			.collect::<Vec<_>>();
 		let vtxo_reqs = participation.outputs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
 			SignedVtxoRequest {
-				vtxo: req.0.clone(),
+				vtxo: req.to_vtxo_request(),
 				cosign_pubkey: ck.public_key(),
 			}
 		}).collect::<Vec<_>>();
@@ -2036,8 +2037,8 @@ impl Wallet {
 		// Finally we save state after refresh
 		let mut new_vtxos = vec![];
 		for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
-			let req = participation.outputs.iter().find(|(r, _)| r == &req.vtxo);
-			if let Some((_, s)) = req {
+			let req = participation.outputs.iter().find(|r| r.to_vtxo_request() == req.vtxo);
+			if let Some(r) = req {
 				let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
 
 				info!("New VTXO from round: {} ({}, {})", vtxo.id(), vtxo.amount(), vtxo.policy_type());
@@ -2046,7 +2047,7 @@ impl Wallet {
 				// This is more like a sanity check since we crafted them ourselves.
 				vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
 
-				new_vtxos.push(WalletVtxo { vtxo, state: s.clone() });
+				new_vtxos.push(WalletVtxo { vtxo, state: r.state.clone() });
 			}
 		}
 
@@ -2126,8 +2127,8 @@ impl Wallet {
 			let participation = round_input(&round_state.info)
 				.context("error providing round input")?;
 
-			if let Some(payreq) = participation.outputs.iter().find(|p| p.0.amount < P2TR_DUST) {
-				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.0.amount);
+			if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
+				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
 			}
 
 			if let Some(offb) = participation.offboards.iter().find(|o| o.amount < P2TR_DUST) {

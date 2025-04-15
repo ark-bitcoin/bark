@@ -51,13 +51,13 @@ impl Migration for Migration0001 {
 			AS
 			WITH most_recent AS (SELECT MAX(id) as id FROM bark_vtxo_state GROUP BY vtxo_id)
 			SELECT
-					most_recent.id,
-					vs.created_at,
-					vs.vtxo_id,
-					vs.state_kind,
-					vs.state
-					FROM most_recent JOIN bark_vtxo_state as vs
-						ON vs.id = most_recent.id;
+				most_recent.id,
+				vs.created_at,
+				vs.vtxo_id,
+				vs.state_kind,
+				vs.state
+			FROM most_recent JOIN bark_vtxo_state as vs
+				ON vs.id = most_recent.id;
 			",
 			"CREATE VIEW IF NOT EXISTS vtxo_view
 			AS SELECT
