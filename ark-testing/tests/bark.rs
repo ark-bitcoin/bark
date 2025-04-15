@@ -10,6 +10,7 @@ use std::time::Duration;
 use bark::movement::MovementRecipient;
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
+use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
 use tokio::fs;
@@ -220,7 +221,7 @@ async fn just_oor() {
 	let pk2 = bark2.vtxo_pubkey().await;
 	bark1.send_oor(pk2, sat(20_000)).await;
 
-	assert_eq!(59_017, bark1.offchain_balance().await.to_sat());
+	assert_eq!(59_340, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
 }
 
@@ -340,16 +341,16 @@ async fn list_movements() {
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 2);
 	assert_eq!(payments[0].spends[0].amount, sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, sat(149_017));
-	assert_eq!(payments[0].fees.to_sat(), 983);
+	assert_eq!(payments[0].receives[0].amount, sat(149_340));
+	assert_eq!(payments[0].fees, sat(330));
 	assert!(payments[0].recipients.first().is_some());
 
 	// refresh vtxos
 	bark1.refresh_all().await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, sat(149_017));
-	assert_eq!(payments[0].receives[0].amount, sat(149_017));
+	assert_eq!(payments[0].spends[0].amount, sat(149_340));
+	assert_eq!(payments[0].receives[0].amount, sat(149_340));
 	assert_eq!(payments[0].fees.to_sat(), 0);
 	assert!(payments[0].recipients.first().is_none());
 
@@ -845,4 +846,54 @@ async fn bark_recover_unregistered_board() {
 
 	ctx.bitcoind.generate(12).await;
 	bark.refresh_all().await;
+}
+
+#[tokio::test]
+async fn subdust_sent_vtxos() {
+	let ctx = TestContext::new("bark/subdust_sent_vtxos").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	let subdust_amount = P2TR_DUST_SAT - 1;
+	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(P2TR_DUST_SAT - 1)).await;
+
+	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, Amount::from_sat(subdust_amount));
+
+	bark2.board(sat(100_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	bark2.refresh_all().await;
+	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, sat(100_000) + Amount::from_sat(subdust_amount));
+}
+
+#[tokio::test]
+async fn subdust_change_vtxos() {
+	let ctx = TestContext::new("bark/subdust_change_vtxos").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(1_700)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(1_000)).await;
+
+	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, sat(1_000));
+
+	let [change] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(change.amount, sat(40));
+
+	bark1.board(sat(100_000)).await;
+	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+
+	bark1.refresh_all().await;
+	let [vtxo] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
+	assert_eq!(vtxo.amount, sat(100_040));
 }

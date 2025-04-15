@@ -69,12 +69,10 @@ pub async fn start_exit(
 	info!("Starting exit");
 
 	if args.all {
-		info!("Start exit for all vtxo's");
-		return wallet.exit.start_exit_for_entire_wallet(
+		wallet.exit.start_exit_for_entire_wallet(
 			&mut wallet.onchain
-		).await;
+		).await
 	} else {
-		info!("Start exit for specific vtxo's");
 		let vtxo_ids = args.vtxos;
 		let filter = VtxoFilter::new(wallet).include_many(vtxo_ids);
 		let vtxos = wallet.vtxos_with(filter)
