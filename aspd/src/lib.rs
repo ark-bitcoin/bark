@@ -11,8 +11,8 @@ mod error;
 
 mod cln;
 mod bitcoind;
-mod database;
 pub(crate) mod flux;
+pub mod database;
 mod psbtext;
 mod serde_util;
 mod vtxo_sweeper;
@@ -122,7 +122,7 @@ impl App {
 		let deep_tip = bitcoind.deep_tip()
 			.context("failed to fetch deep tip from bitcoind")?;
 
-		let db = database::Db::create(&cfg).await?;
+		let db = database::Db::create(&cfg.postgres).await?;
 
 		// Initiate key material.
 		let seed = {
@@ -151,7 +151,7 @@ impl App {
 		info!("Starting aspd at {}", cfg.data_dir.display());
 
 		info!("Connecting to db at {}:{}", cfg.postgres.host, cfg.postgres.port);
-		let db = database::Db::connect(&cfg)
+		let db = database::Db::connect(&cfg.postgres)
 			.await
 			.context("failed to connect to db")?;
 

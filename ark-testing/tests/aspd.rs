@@ -98,7 +98,7 @@ async fn fund_asp() {
 
 	// Fund the aspd
 	ctx.fund_asp(&aspd, btc(10)).await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 
 	// Confirm that the balance is updated
 	assert!(aspd.wallet_status().await.total_balance.to_sat() > 0);
@@ -117,13 +117,13 @@ async fn cant_spend_untrusted() {
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await);
 
 	bark.board(sat(200_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
 
 	// fund aspd without confirming
 	let addr = aspd.get_rounds_funding_address().await;
-	ctx.bitcoind.fund_addr(addr, btc(10)).await;
+	ctx.bitcoind().fund_addr(addr, btc(10)).await;
 	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
 
 	let mut log_round_err = aspd.subscribe_log::<RoundError>().await;
@@ -142,7 +142,7 @@ async fn cant_spend_untrusted() {
 	attempt_handle.await.unwrap();
 
 	// then confirm the money and it should work
-	ctx.bitcoind.generate(NEED_CONFS as u64).await;
+	ctx.bitcoind().generate(NEED_CONFS as u64).await;
 
 	log_round_err.clear();
 	if let Err(_err) = bark.try_refresh_all().await {
@@ -174,8 +174,8 @@ async fn restart_key_stability() {
 	let addr1 = aspd.wallet_status().await.address.require_network(Network::Regtest).unwrap();
 
 	// Fund the aspd's addr
-	ctx.bitcoind.fund_addr(&addr1, btc(1)).await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().fund_addr(&addr1, btc(1)).await;
+	ctx.bitcoind().generate(1).await;
 
 	// Restart aspd.
 	let _ = aspd.get_admin_client().await.stop(protos::Empty {}).await;
@@ -210,7 +210,7 @@ async fn max_vtxo_amount() {
 	assert!(bark1.try_board(Amount::from_sat(600_000)).await.is_err());
 	bark1.board(Amount::from_sat(500_000)).await;
 	bark1.board(Amount::from_sat(500_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	// try send OOR exceeding limit
 	let err = bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.unwrap_err();
@@ -222,10 +222,10 @@ async fn max_vtxo_amount() {
 	assert!(err.to_string().contains("output exceeds maximum vtxo amount of"));
 
 	// but we can offboard the entire amount!
-	let address = ctx.bitcoind.get_new_address();
+	let address = ctx.bitcoind().get_new_address();
 	bark1.offboard_all(address.clone()).await;
-	ctx.bitcoind.generate(1).await;
-	let balance = ctx.bitcoind.get_received_by_address(&address);
+	ctx.bitcoind().generate(1).await;
+	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, Amount::from_sat(598_440));
 }
 
@@ -256,9 +256,9 @@ async fn sweep_vtxos() {
 
 	// we board one vtxo and then a few blocks later another
 	bark.board(sat(75_000)).await;
-	ctx.bitcoind.generate(5).await;
+	ctx.bitcoind().generate(5).await;
 	bark.board(sat(75_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	// before either expires not sweeping yet because nothing available
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
@@ -266,14 +266,15 @@ async fn sweep_vtxos() {
 	assert_eq!(sat(0), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
-	ctx.bitcoind.generate(18).await;
+	ctx.bitcoind().generate(18).await;
 	let b = bark.clone();
 	tokio::spawn(async move {
 		b.refresh_all().await;
 	});
 	aspd.trigger_round().await;
+
 	let _ = aspd.wait_for_log::<RoundFinished>().try_wait(5_000).await;
-	ctx.bitcoind.generate(30).await;
+	ctx.bitcoind().generate(30).await;
 
 	// now we expire the first one, still not sweeping because not enough surplus
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
@@ -281,7 +282,7 @@ async fn sweep_vtxos() {
 	assert_eq!(sat(73790), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
-	ctx.bitcoind.generate(5).await;
+	ctx.bitcoind().generate(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(147580), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
@@ -291,7 +292,7 @@ async fn sweep_vtxos() {
 	assert_eq!(sweeps[1].sweep_type, "board");
 
 	// now we swept both board vtxos, let's sweep the round we created above
-	ctx.bitcoind.generate(30).await;
+	ctx.bitcoind().generate(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(149980), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
@@ -302,7 +303,8 @@ async fn sweep_vtxos() {
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another board
 	bark.board(sat(102_000)).await;
-	ctx.bitcoind.generate(DEEPLY_CONFIRMED).await;
+	ctx.bitcoind().generate(DEEPLY_CONFIRMED).await;
+
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
 	assert_eq!(sat(101615), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
@@ -311,7 +313,7 @@ async fn sweep_vtxos() {
 	assert_eq!(sweeps[0].sweep_type, "connector");
 	assert_eq!(sweeps[1].sweep_type, "board");
 
-	ctx.bitcoind.generate(DEEPLY_CONFIRMED).await;
+	ctx.bitcoind().generate(DEEPLY_CONFIRMED).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
@@ -353,7 +355,7 @@ async fn restart_aspd_with_payments() {
 
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(200_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -385,14 +387,14 @@ async fn full_round() {
 		let name = format!("bark{}", i);
 		ctx.new_bark_with_funds(name, &aspd, sat(40_000))
 	})).await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 
 	// have each board 4 times
 	for _ in 0..VTXOS_PER_BARK {
 		futures::future::join_all(barks.iter().map(|bark| async {
 			bark.board(sat(1_000)).await;
 		})).await;
-		ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+		ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 	}
 
 	let (tx, mut rx) = mpsc::unbounded_channel();
@@ -479,7 +481,7 @@ async fn double_spend_oor() {
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	bark.send_oor(&*RANDOM_PK, sat(100_000)).await;
 
@@ -518,7 +520,7 @@ async fn double_spend_round() {
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
 	bark.refresh_all().await;
@@ -548,7 +550,7 @@ async fn test_participate_round_wrong_step() {
 	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark.board(Amount::from_sat(800_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let res = bark.try_refresh_all().await;
 	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is payment registration"));
@@ -568,7 +570,7 @@ async fn test_participate_round_wrong_step() {
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark2.board(Amount::from_sat(800_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let res = bark2.try_refresh_all().await;
 	let error_string = res.unwrap_err().to_string();
@@ -594,7 +596,7 @@ async fn test_participate_round_wrong_step() {
 	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
 	let bark3 = ctx.new_bark_with_funds("bark3".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
 	bark3.board(Amount::from_sat(800_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let res = bark3.try_refresh_all().await;
 	let err_string = res.unwrap_err().to_string();
@@ -625,7 +627,7 @@ async fn spend_unregistered_board() {
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;
 	tokio::spawn(async move {
@@ -702,7 +704,7 @@ async fn reject_revocation_on_successful_ln_payment() {
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind().generate(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creating channel between lightning nodes");
@@ -713,7 +715,7 @@ async fn reject_revocation_on_successful_ln_payment() {
 	// maybe: let ctx.bitcoind wait for channel funding transaction
 	// without the sleep we get infinite 'Waiting for gossip...'
 	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind().generate(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
 
@@ -728,7 +730,7 @@ async fn reject_revocation_on_successful_ln_payment() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);

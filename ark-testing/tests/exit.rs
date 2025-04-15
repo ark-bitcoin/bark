@@ -25,11 +25,11 @@ async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 			return;
 		}
 		if let Some(height) = res.height {
-			let current = ctx.bitcoind.sync_client().get_block_count().unwrap();
-			ctx.bitcoind.generate(height as u64 - current).await;
+			let current = ctx.bitcoind().sync_client().get_block_count().unwrap();
+			ctx.bitcoind().generate(height as u64 - current).await;
 		} else {
 			flip = if flip {
-				ctx.bitcoind.generate(1).await;
+				ctx.bitcoind().generate(1).await;
 				false
 			} else {
 				true
@@ -49,10 +49,10 @@ async fn simple_exit() {
 	let ctx = TestContext::new("exit/simple_exit").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 
 	bark.board(sat(500_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	bark.refresh_all().await;
 	let vtxo = &bark.vtxos().await[0];
@@ -60,7 +60,7 @@ async fn simple_exit() {
 	aspd.stop().await.unwrap();
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 
 	// Wallet has 1_000_000 sats of funds minus fees
 	assert_eq!(bark.onchain_balance().await, sat(996_779));
@@ -103,9 +103,9 @@ async fn fail_handshake() {
 	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(100_000)).await;
 
 	bark.board(sat(90_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 	bark.refresh_all().await;
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 
 	// now create bad proxy
@@ -150,7 +150,7 @@ async fn exit_round() {
 		ctx.fund_bark(&bark7, sat(1_000_000)),
 		ctx.fund_bark(&bark8, sat(1_000_000)),
 	);
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 
 	tokio::join!(
 		bark1.board(sat(500_000)),
@@ -162,7 +162,7 @@ async fn exit_round() {
 		bark7.board(sat(500_000)),
 		bark8.board(sat(500_000)),
 	);
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	tokio::join!(
 		bark1.refresh_all(),
@@ -250,10 +250,10 @@ async fn exit_vtxo() {
 
 	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
 
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 
 	bark.board(sat(900_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 	bark.refresh_all().await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -323,11 +323,11 @@ async fn exit_oor() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	ctx.bitcoind.generate(1).await;
+	ctx.bitcoind().generate(1).await;
 
 	// Bark1 board funds and sends some part to bark2
 	bark1.board(sat(900_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let bark2_pubkey = bark2.vtxo_pubkey().await;
 	bark1.send_oor(bark2_pubkey, sat(100_000)).await;
@@ -368,12 +368,12 @@ async fn double_exit_call() {
 
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	// board vtxo
 	bark1.board(sat(300_000)).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
@@ -442,7 +442,7 @@ async fn exit_bolt11_change() {
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind().generate(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creating channel between lightning nodes");
@@ -453,7 +453,7 @@ async fn exit_bolt11_change() {
 	// maybe: let ctx.bitcoind wait for channel funding transaction
 	// without the sleep we get infinite 'Waiting for gossip...'
 	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.bitcoind.generate(6).await;
+	ctx.bitcoind().generate(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
 
@@ -465,7 +465,7 @@ async fn exit_bolt11_change() {
 
 	let board_amount = btc(5);
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let invoice_amount = btc(2);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
@@ -508,7 +508,7 @@ async fn exit_revoked_lightning_payment() {
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
-	ctx.bitcoind.generate(BOARD_CONFIRMATIONS).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);

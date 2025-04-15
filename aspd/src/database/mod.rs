@@ -26,7 +26,7 @@ use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
 
 use crate::wallet::WalletKind;
-use crate::Config;
+use crate::config::Postgres as PostgresConfig;
 use self::model::{PendingSweep, StoredRound, VtxoState};
 
 const DEFAULT_DATABASE: &str = "postgres";
@@ -44,23 +44,23 @@ impl Db {
 		Ok(())
 	}
 
-	fn config(database: &str, app_config: &Config) -> tokio_postgres::Config {
-		let mut config = tokio_postgres::Config::new();
-		config.host(&app_config.postgres.host);
-		config.port(app_config.postgres.port);
-		config.dbname(database);
-		if let Some(user) = &app_config.postgres.user {
-			config.user(user);
+	fn config(database: &str, config: &PostgresConfig) -> tokio_postgres::Config {
+		let mut pg_config = tokio_postgres::Config::new();
+		pg_config.host(&config.host);
+		pg_config.port(config.port);
+		pg_config.dbname(database);
+		if let Some(user) = &config.user {
+			pg_config.user(user);
 		}
-		if let Some(password) = &app_config.postgres.password {
-			config.password(password);
+		if let Some(password) = &config.password {
+			pg_config.password(password);
 		}
 
-		config
+		pg_config
 	}
 
-	async fn raw_connect(app_config: &Config) -> anyhow::Result<Client> {
-		let config = Self::config(&app_config.postgres.name, app_config);
+	async fn raw_connect(postgres_config: &PostgresConfig) -> anyhow::Result<Client> {
+		let config = Self::config(&postgres_config.name, postgres_config);
 		let (client, connection) = config.connect(NoTls).await?;
 
 		tokio::spawn(async move {
@@ -72,8 +72,8 @@ impl Db {
 		Ok(client)
 	}
 
-	async fn pool_connect(database: &str, app_config: &Config) -> anyhow::Result<Pool<PostgresConnectionManager<NoTls>>> {
-		let config = Self::config(database, app_config);
+	async fn pool_connect(database: &str, postgres_config: &PostgresConfig) -> anyhow::Result<Pool<PostgresConnectionManager<NoTls>>> {
+		let config = Self::config(database, postgres_config);
 
 		let manager = PostgresConnectionManager::new(config, NoTls);
 		Ok(Pool::builder().build(manager).await?)
@@ -93,8 +93,8 @@ impl Db {
 		Ok(())
 	}
 
-	pub async fn connect(app_config: &Config)  -> anyhow::Result<Self> {
-		let pool = Self::pool_connect(&app_config.postgres.name, app_config).await?;
+	pub async fn connect(config: &PostgresConfig)  -> anyhow::Result<Self> {
+		let pool = Self::pool_connect(&config.name, config).await?;
 
 		let db = Db { pool };
 		db.run_migrations().await?;
@@ -102,25 +102,25 @@ impl Db {
 		Ok(db)
 	}
 
-	pub async fn create(app_config: &Config) -> anyhow::Result<Self> {
+	pub async fn create(config: &PostgresConfig) -> anyhow::Result<Self> {
 		info!("Checking if a database exists...");
-		let connect = Self::raw_connect(app_config).await;
+		let connect = Self::raw_connect(config).await;
 
 		if let Ok(conn) = connect {
 			info!("A database already exists for the server, checking if it is empty.");
 			Self::check_database_emptiness(&conn).await?;
 		} else {
 			info!("No database set up yet, creating a new one.");
-			let pool = Self::pool_connect(DEFAULT_DATABASE, app_config).await?;
+			let pool = Self::pool_connect(DEFAULT_DATABASE, config).await?;
 			let conn= pool.get().await?;
 
 			let statement = conn.prepare(
-				&format!("CREATE DATABASE \"{}\"", app_config.postgres.name)
+				&format!("CREATE DATABASE \"{}\"", config.name)
 			).await?;
 			conn.execute(&statement, &[]).await?;
 		}
 
-		Self::connect(app_config).await
+		Self::connect(config).await
 	}
 
 	/**

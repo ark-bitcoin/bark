@@ -9,6 +9,9 @@ repository = "https://github.com/ark-bitcoin/bark"
 [lib]
 name = "ark"
 
+[features]
+test-util = []
+
 [dependencies]
 
 # * EXPORTED DEPS
