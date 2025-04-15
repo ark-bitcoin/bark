@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, VtxoId};
 use ark::rounds::VtxoOwnershipChallenge;
-use ark::util::SECP;
+use ark::util::{Encodable, SECP};
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,

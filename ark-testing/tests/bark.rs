@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
-use bark::movement::MovementRecipient;
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::P2TR_DUST_SAT;
@@ -16,8 +15,10 @@ use futures::future::join_all;
 use tokio::fs;
 
 use ark::{ArkoorVtxo, Vtxo};
+use ark::util::{Decodable, Encodable};
 use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use aspd_rpc::{self as rpc, protos};
+use bark::movement::MovementRecipient;
 
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;

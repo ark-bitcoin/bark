@@ -1,5 +1,5 @@
 
-use std::{fmt, io};
+use std::fmt;
 use std::str::FromStr;
 
 use bitcoin::{
@@ -15,6 +15,7 @@ use crate::lightning::htlc_taproot;
 use crate::board::BoardVtxo;
 use crate::oor::ArkoorVtxo;
 use crate::rounds::RoundVtxo;
+use crate::util::{Decodable, Encodable};
 use crate::{musig, oor, util};
 
 
@@ -395,20 +396,6 @@ impl Vtxo {
 		}
 	}
 
-	pub fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	pub fn encode_into(&self, buf: &mut impl io::Write) {
-		ciborium::into_writer(self, buf).unwrap();
-	}
-
-	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
-
 	pub fn vtxo_type(&self) -> &'static str {
 		match self {
 			Vtxo::Board { .. } => "board",
@@ -463,6 +450,9 @@ impl Vtxo {
 		}
 	}
 }
+
+impl Encodable for Vtxo {}
+impl Decodable for Vtxo {}
 
 impl PartialEq for Vtxo {
 	fn eq(&self, other: &Self) -> bool {

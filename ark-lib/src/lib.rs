@@ -32,6 +32,7 @@ use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::{Amount, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
+use util::{Decodable, Encodable};
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +70,9 @@ pub struct PaymentRequest {
 	pub amount: Amount,
 }
 
+impl Encodable for PaymentRequest {}
+impl Decodable for PaymentRequest {}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct VtxoRequest {
 	pub pubkey: PublicKey,
@@ -98,6 +102,9 @@ pub struct OffboardRequest {
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
+
+impl Encodable for OffboardRequest {}
+impl Decodable for OffboardRequest {}
 
 impl OffboardRequest {
 	/// Calculate the fee we have to charge for adding an output

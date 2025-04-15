@@ -23,6 +23,7 @@ use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
+use ark::util::Encodable;
 
 use crate::{App, SECP};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};

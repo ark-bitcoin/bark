@@ -9,6 +9,7 @@ use ark::{Vtxo, VtxoId};
 use ark::musig::secpm::schnorr;
 use ark::rounds::RoundId;
 use ark::tree::signed::SignedVtxoTreeSpec;
+use ark::util::Decodable;
 
 #[derive(Debug, Clone)]
 pub struct StoredRound {

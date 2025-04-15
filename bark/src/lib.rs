@@ -11,6 +11,7 @@ pub extern crate lnurl as lnurllib;
 
 pub mod persist;
 use ark::oor::unsigned_oor_tx;
+use ark::util::{Decodable, Encodable};
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;

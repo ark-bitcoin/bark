@@ -1,9 +1,13 @@
 
+use std::io;
+
 use bitcoin::{opcodes, ScriptBuf, Transaction};
 use bitcoin::hashes::{sha256, ripemd160, Hash};
 use bitcoin::secp256k1::{self, schnorr, XOnlyPublicKey};
 
 use bitcoin_ext::TAPROOT_KEYSPEND_WEIGHT;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 lazy_static! {
 	/// Global secp context.
@@ -73,5 +77,19 @@ pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
 		assert!(input.witness.is_empty());
 		input.witness.push(&sig[..]);
 		debug_assert_eq!(TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
+	}
+}
+
+pub trait Encodable: Serialize {
+	fn encode(&self) -> Vec<u8> {
+		let mut buf = Vec::new();
+		ciborium::into_writer(self, &mut buf).unwrap();
+		buf
+	}
+}
+
+pub trait Decodable: DeserializeOwned {
+	fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
+		ciborium::from_reader(bytes)
 	}
 }

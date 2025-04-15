@@ -3,12 +3,13 @@ use std::fmt;
 use std::convert::TryFrom;
 use std::time::Duration;
 
-use ark::rounds::VtxoOwnershipChallenge;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate};
 
 use ark::{musig, VtxoId};
+use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::VtxoTreeSpec;
+use ark::util::{Decodable, Encodable};
 
 use crate::protos;
 

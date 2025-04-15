@@ -1,5 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 use anyhow::Context;
+use ark::util::{Decodable, Encodable};
 use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
 use rusqlite::{Connection, named_params, Transaction};
 use crate::{exit::ExitIndex, movement::Movement, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
