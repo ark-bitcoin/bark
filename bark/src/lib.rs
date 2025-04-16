@@ -37,7 +37,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, FeeRate, Network, OutPoint, Txid};
+use bitcoin::{Amount, FeeRate, Network, OutPoint, Transaction};
 use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
@@ -56,10 +56,10 @@ use ark::arkoor::ArkoorPackageBuilder;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage, PaymentHash};
 use ark::musig;
-use ark::rounds::{RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge};
+use ark::rounds::{RoundEvent, RoundId, RoundInfo, RoundSeq, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
-use server_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos, TryFromBytes};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use round::{
@@ -67,7 +67,8 @@ use round::{
 	AttemptStartedState,
 	RoundAbandonedState,
 	ProgressResult,
-	RoundState
+	RoundState,
+	ToAbandoned,
 };
 
 use crate::exit::Exit;
@@ -807,6 +808,51 @@ impl Wallet {
 	/// Fetch new rounds from the Ark Server and check if one of their VTXOs
 	/// is in the provided set of public keys
 	pub async fn sync_rounds(&self) -> anyhow::Result<()> {
+		let tip = self.chain.tip().await?;
+		self.sync_pending_rounds(tip).await?;
+
+		self.sync_past_rounds().await?;
+		Ok(())
+	}
+
+	async fn sync_pending_rounds(&self, tip: u32) -> anyhow::Result<()> {
+		info!("Syncing pending rounds at tip: {}", tip);
+		let rounds = self.db.list_pending_rounds()?;
+
+		for round in rounds {
+			match round {
+				RoundState::AttemptStarted(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::PaymentSubmitted(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::VtxoTreeSigned(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::ForfeitSigned(state) => {
+					// TODO: later we can try to catch up last event
+					state.progress(None, self).await?;
+				},
+				RoundState::PendingConfirmation(state) => {
+					// TODO: later we can try to catch up last event
+					state.progress(self).await?;
+				},
+				RoundState::RoundConfirmed(_) |
+				RoundState::RoundAbandoned(_) |
+				RoundState::RoundCancelled(_) => {
+					continue;
+				},
+			}
+		}
+
+		Ok(())
+	}
+
+	async fn sync_past_rounds(&self) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
@@ -814,11 +860,10 @@ impl Wallet {
 			self.vtxo_seed.derive_keypair(idx).public_key()
 		}).collect::<HashSet<_>>();
 
-		//TODO(stevenroose) we won't do reorg handling here
 		let current_height = self.chain.tip().await?;
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
 		debug!("Querying ark for rounds since height {}", last_sync_height);
-		let req = protos::FreshRoundsRequest { start_height: last_sync_height };
+		let req = protos::FreshRoundsRequest { start_height: last_sync_height as u32 };
 		let fresh_rounds = srv.client.get_fresh_rounds(req).await?.into_inner();
 		debug!("Received {} new rounds from ark", fresh_rounds.txids.len());
 
@@ -828,34 +873,42 @@ impl Wallet {
 				let mut srv = srv.clone();
 
 				async move {
-					let txid = Txid::from_slice(&txid).context("invalid txid from srv")?;
-					let req = protos::RoundId { txid: txid.to_byte_array().to_vec() };
+					let round_id = RoundId::from_slice(&txid).context("invalid txid from srv")?;
+					if self.db.get_round_attempt_by_round_txid(round_id)?.is_some() {
+						debug!("Skipping round {} because it already exists", round_id);
+						return Ok::<_, anyhow::Error>(());
+					}
+
+					let req = protos::RoundId { txid: round_id.as_round_txid().to_byte_array().to_vec() };
 					let round = srv.client.get_round(req).await?.into_inner();
 
 					let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
 						.context("invalid signed vtxo tree from srv")?
 						.into_cached_tree();
 
-
-				for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-					if let VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) =
-						dest.vtxo.policy
-					{
-						if pubkeys.contains(&user_pubkey) {
+					let mut reqs = Vec::new();
+					let mut vtxos = vec![];
+					for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
+						if pubkeys.contains(&dest.vtxo.policy.user_pubkey()) {
 							if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-								self.db.register_movement(MovementArgs {
-									kind: MovementKind::Round,
-									spends: &[],
-									receives: &[(&vtxo, VtxoState::Spendable)],
-									recipients: &[],
-									fees: None,
-								})?;
+								reqs.push(StoredVtxoRequest {
+									request_policy: dest.vtxo.policy.clone(),
+									amount: dest.vtxo.amount,
+									state: VtxoState::Spendable,
+								});
+
+								vtxos.push(vtxo);
 							}
 						}
 					}
+
+					let round_tx = Transaction::from_bytes(&round.round_tx)?;
+
+
+					self.db.store_pending_confirmation_round(RoundSeq::new(0), round_id, round_tx, reqs, vtxos)?;
+
+					Ok(())
 				}
-				Ok::<_, anyhow::Error>(())
-			}
 		})
 		.buffer_unordered(10)
 		.collect::<Vec<_>>()
@@ -866,10 +919,6 @@ impl Wallet {
 				return Err(e).context("failed to sync round");
 			}
 		}
-
-		//TODO(stevenroose) we currently actually could accidentally be syncing
-		// a round multiple times because new blocks could have come in since we
-		// took current height
 
 		self.db.store_last_ark_sync_height(current_height)?;
 

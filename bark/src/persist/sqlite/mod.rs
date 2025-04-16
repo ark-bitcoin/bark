@@ -25,9 +25,9 @@ use crate::{
 	Config, Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties
 };
 use crate::exit::vtxo::ExitEntry;
-use crate::round::{AttemptStartedState, RoundState};
+use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::persist::{BarkPersister, LightningReceive};
+use crate::persist::{BarkPersister, LightningReceive, StoredVtxoRequest};
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -161,6 +161,22 @@ impl BarkPersister for SqliteClient {
 			&tx, round_seq, attempt_seq, round_participation)?;
 		tx.commit()?;
 		Ok(round)
+	}
+
+	fn store_pending_confirmation_round(&self, round_seq: RoundSeq, round_txid: RoundId, round_tx: bitcoin::Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
+		-> anyhow::Result<PendingConfirmationState>
+	{
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let round = query::store_pending_confirmation_round(
+			&tx, round_seq, round_txid, round_tx, reqs, vtxos)?;
+		tx.commit()?;
+		Ok(round)
+	}
+
+	fn list_pending_rounds(&self) -> anyhow::Result<Vec<RoundState>> {
+		let conn = self.connect()?;
+		query::list_pending_rounds(&conn)
 	}
 
 	fn store_round_state(&self, round_state: RoundState, prev_state: RoundState) -> anyhow::Result<RoundState> {

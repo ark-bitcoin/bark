@@ -21,11 +21,11 @@ use json::exit::states::ExitTxOrigin;
 
 use crate::persist::sqlite::convert::{row_to_secret_nonces, row_to_round_state};
 use crate::{Config, Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties};
-use crate::persist::LightningReceive;
+use crate::persist::{LightningReceive, StoredVtxoRequest};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementKind};
-use crate::round::{AttemptStartedState, RoundState, RoundStateKind};
+use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState, RoundStateKind};
 
 use super::convert::{row_to_lightning_receive, row_to_movement};
 
@@ -281,6 +281,34 @@ pub fn get_round_attempt_by_round_txid(
 	}
 }
 
+pub fn list_pending_rounds(conn: &Connection)
+	-> anyhow::Result<Vec<RoundState>>
+{
+	let pending_rounds = [
+		RoundStateKind::AttemptStarted,
+		RoundStateKind::PaymentSubmitted,
+		RoundStateKind::VtxoTreeSigned,
+		RoundStateKind::ForfeitSigned,
+		RoundStateKind::PendingConfirmation,
+	];
+
+	let query = "
+		SELECT  id, round_seq, attempt_seq, status, inputs, payment_requests,
+			offboard_requests, round_txid, round_tx, vtxos, cosign_keys,
+			vtxo_forfeited_in_round, vtxo_tree
+		FROM round_view
+		WHERE status IN (SELECT atom FROM json_each(?))";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(&[&serde_json::to_string(&pending_rounds)?])?;
+
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		result.push(row_to_round_state(row)?);
+	}
+
+	Ok(result)
+}
+
 pub fn store_new_round_attempt(
 	tx: &Transaction,
 	round_seq: RoundSeq,
@@ -509,6 +537,35 @@ pub fn take_secret_nonces(tx: &Transaction, round_attempt_id: i64) -> anyhow::Re
 	Ok(secret_nonces)
 }
 
+pub fn store_pending_confirmation_round(
+	tx: &Transaction,
+	round_seq: RoundSeq,
+	round_txid: RoundId,
+	round_tx: bitcoin::Transaction,
+	reqs: Vec<StoredVtxoRequest>,
+	vtxos: Vec<Vtxo>,
+) -> anyhow::Result<PendingConfirmationState> {
+	// Store the round
+	let mut statement = tx.prepare("
+		INSERT INTO bark_round_attempt (round_seq, round_txid, payment_requests, offboard_requests, vtxos, status)
+		VALUES (:round_seq, :round_txid, :payment_requests, :offboard_requests, :vtxos, :status)
+		RETURNING id;"
+	)?;
+
+	let round_attempt_id = statement.query_row(named_params! {
+		":round_seq": round_seq.inner(),
+		":round_txid": round_txid.to_string(),
+		":status": RoundStateKind::PendingConfirmation.to_string(),
+		":round_tx": serialize_hex(&round_tx),
+		":payment_requests": serde_json::to_vec(&reqs)?,
+		":offboard_requests": serde_json::to_vec::<Vec<()>>(&vec![])?,
+		":vtxos": serde_json::to_vec(&vtxos.iter().map(|v| v.serialize()).collect::<Vec<_>>())?,
+	}, |row| row.get::<_, i64>("id"))?;
+
+	Ok(get_round_attempt_by_id(tx, round_attempt_id)?.expect("we just inserted round")
+		.into_pending_confirmation().unwrap())
+}
+
 fn unlink_vtxo_from_round(
 	tx: &Transaction,
 	round: &RoundState,
@@ -586,7 +643,7 @@ pub fn get_vtxos_by_state(
 }
 
 pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<Vtxo>> {
-	let query = "SELECT raw_vtxo FROM vtxo_view WHERE locked_in_round IS NOT NULL";
+	let query = "SELECT raw_vtxo FROM vtxo_view WHERE locked_in_round_attempt_id IS NOT NULL";
 	let mut statement = conn.prepare(query)?;
 
 	let mut rows = statement.query([])?;

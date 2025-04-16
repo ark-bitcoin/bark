@@ -17,7 +17,7 @@ use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use bitcoin_ext::BlockHeight;
 
 use crate::{Config, Movement, MovementArgs, Pagination, RoundParticipation, WalletProperties};
-use crate::round::{AttemptStartedState, RoundState};
+use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
 use crate::exit::vtxo::ExitEntry;
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -94,6 +94,9 @@ pub trait BarkPersister: Send + Sync + 'static {
 		round_participation: RoundParticipation,
 	) -> anyhow::Result<AttemptStartedState>;
 
+	fn store_pending_confirmation_round(&self, round_seq: RoundSeq, round_txid: RoundId, round_tx: Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
+		-> anyhow::Result<PendingConfirmationState>;
+
 	fn store_round_state(&self, round_state: RoundState, prev_state: RoundState) -> anyhow::Result<RoundState>;
 
 	fn store_secret_nonces(&self, round_attempt_id: i64, secret_nonces: Vec<Vec<SecretNonce>>) -> anyhow::Result<()>;
@@ -103,6 +106,9 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn get_round_attempt_by_id(&self, round_attempt_id: i64) -> anyhow::Result<Option<RoundState>>;
 	/// Get round by its id
 	fn get_round_attempt_by_round_txid(&self, round_id: RoundId) -> anyhow::Result<Option<RoundState>>;
+
+	/// List all pending rounds
+	fn list_pending_rounds(&self) -> anyhow::Result<Vec<RoundState>>;
 
 	/// Fetch a VTXO by id in the database
 	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
