@@ -10,7 +10,8 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
 use bitcoin::secp256k1::{self, schnorr, Message};
 
-use crate::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, Vtxo, VtxoId};
+use crate::{musig, OffboardRequest, SECP, SignedVtxoRequest, Vtxo, VtxoId};
+use crate::encode::ProtocolEncoding;
 use crate::tree::signed::VtxoTreeSpec;
 
 /// A round tx must have at least vtxo tree and connector chain outputs.

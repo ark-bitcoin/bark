@@ -25,6 +25,7 @@ pub use bark_json::cli::{Offboard, Board, SendOnchain};
 mod config;
 mod lnurl;
 mod psbtext;
+mod round;
 
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
@@ -118,6 +119,7 @@ impl From<Utxo> for UtxoInfo {
 	}
 }
 
+#[derive(Debug, Clone)]
 /// Struct to communicate your specific participation requests for an Ark round.
 struct RoundParticipation {
 	inputs: Vec<Vtxo>,
