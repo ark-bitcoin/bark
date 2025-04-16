@@ -227,8 +227,8 @@ async fn just_oor() {
 }
 
 #[tokio::test]
-async fn refresh() {
-	let ctx = TestContext::new("bark/refresh").await;
+async fn refresh_all() {
+	let ctx = TestContext::new("bark/refresh_all").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
