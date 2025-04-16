@@ -93,6 +93,8 @@ pub struct Balance {
 	pub spendable: Amount,
 	/// Coins that are in the process of being sent over Lightning.
 	pub pending_lightning_send: Amount,
+	/// Coins locked in a round.
+	pub pending_in_round: Amount,
 	/// Coins that are in the process of unilaterally exiting the Ark.
 	pub pending_exit: Amount,
 }
@@ -214,6 +216,12 @@ enum AttemptResult {
 #[derive(Debug)]
 struct RoundResult {
 	round_id: RoundId,
+}
+
+pub struct OffchainBalance {
+	pub available: Amount,
+	pub pending_in_round: Amount,
+	pub pending_exit: Amount,
 }
 
 /// Read-only properties of the Bark wallet.
@@ -506,10 +514,14 @@ impl Wallet {
 		let pending_lightning_send = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?
 			.iter().map(|v| v.vtxo.amount()).sum();
 
+		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
+			.map(|v| v.amount()).sum();
+
 		let pending_exit = self.exit.pending_total()?;
 
 		Ok(Balance {
 			spendable,
+			pending_in_round,
 			pending_lightning_send,
 			pending_exit,
 		})
@@ -526,14 +538,20 @@ impl Wallet {
 		Ok(self.db.get_paginated_movements(pagination)?)
 	}
 
-	/// Returns all unspent vtxos
+	/// Returns all spendable vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
 		Ok(self.db.get_all_spendable_vtxos()?)
 	}
 
 	/// Returns all unspent vtxos matching the provided predicate
-	pub fn vtxos_with(&self, filter: impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
 		let vtxos = self.vtxos()?;
+		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
+	}
+
+	/// Returns all in-round vtxos matching the provided predicate
+	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+		let vtxos = self.db.get_in_round_vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
@@ -542,7 +560,7 @@ impl Wallet {
 	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
-		Ok(self.vtxos_with(filter)?)
+		Ok(self.vtxos_with(&filter)?)
 	}
 
 	async fn register_all_unregistered_boards(
@@ -1053,13 +1071,13 @@ impl Wallet {
 		let fee_rate = self.chain.fee_rates().await.fast;
 
 		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip, fee_rate))?;
+		let must_refresh_vtxos = self.vtxos_with(&RefreshStrategy::must_refresh(self, tip, fee_rate))?;
 		if must_refresh_vtxos.is_empty() {
 			return Ok(vec![]);
 		} else {
 			// If we need to do a refresh, we take all the should_refresh vtxo's as well
 			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip, fee_rate))?;
+			let should_refresh_vtxos = self.vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
 			Ok(should_refresh_vtxos)
 		}
 	}

@@ -681,6 +681,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let balance = wallet.balance()?;
 			output_json(&json::Balance {
 				spendable: balance.spendable,
+				pending_in_round: balance.pending_in_round,
 				pending_lightning_send: balance.pending_lightning_send,
 				pending_exit: balance.pending_exit,
 			});
@@ -730,7 +731,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
 					let filter = VtxoFilter::new(&wallet).counterparty();
-					wallet.vtxos_with(filter)?
+					wallet.vtxos_with(&filter)?
 				},
 				(None, None, false, true, None) => wallet.vtxos()?,
 				(None, None, false, false, Some(vs)) => {

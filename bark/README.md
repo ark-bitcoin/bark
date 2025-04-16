@@ -256,7 +256,7 @@ async fn main() -> anyhow::Result<()> {
   let fee_rate = wallet.chain.fee_rates().await.fast;
   let strategy = RefreshStrategy::must_refresh(&wallet, tip, fee_rate);
 
-  let vtxos = wallet.vtxos_with(strategy)?;
+  let vtxos = wallet.vtxos_with(&strategy)?;
   wallet.refresh_vtxos(vtxos).await?;
   Ok(())
 }
