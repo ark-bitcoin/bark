@@ -11,10 +11,10 @@ use bdk_wallet::{LocalOutput, PersistedWallet, SignOptions, TxBuilder, TxOrderin
 use bitcoin::{
 	bip32, psbt, sighash, Address, Amount, Network, Psbt, Sequence, Transaction, TxOut, Txid,
 };
-use serde::ser::StdError;
 
 use ark::util::SECP;
 
+use crate::persist::WalletPersisterError;
 use crate::psbtext::PsbtInputExt;
 use crate::VtxoSeed;
 use crate::{
@@ -69,7 +69,7 @@ pub struct Wallet<P: BarkPersister> {
 
 impl <P>Wallet<P> where
 	P: BarkPersister,
-	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+	<P as WalletPersister>::Error: WalletPersisterError,
 {
 	pub fn create(
 		network: Network,

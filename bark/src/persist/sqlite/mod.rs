@@ -11,6 +11,8 @@ use bitcoin::{secp256k1::PublicKey, Amount};
 
 use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
+use super::WalletPersisterError;
+
 #[derive(Clone)]
 pub struct SqliteClient {
 	connection_string: PathBuf,
@@ -217,6 +219,7 @@ impl BarkPersister for SqliteClient {
 	}
 }
 
+impl WalletPersisterError for <SqliteClient as WalletPersister>::Error {}
 
 impl WalletPersister for SqliteClient {
 	type Error = rusqlite::Error;

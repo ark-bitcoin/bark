@@ -9,13 +9,12 @@ use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
 use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST};
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
-use serde::ser::StdError;
 
 use ark::{Vtxo, VtxoId};
 
 use crate::movement::MovementArgs;
 use crate::onchain::{self, ChainSource, ChainSourceClient};
-use crate::persist::BarkPersister;
+use crate::persist::{BarkPersister, WalletPersisterError};
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -115,7 +114,7 @@ pub struct Exit<P: BarkPersister> {
 
 impl <P>Exit<P> where
 	P: BarkPersister,
-	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+	<P as WalletPersister>::Error: WalletPersisterError,
 {
 	pub (crate) fn new(db: P, chain_source: ChainSource) -> anyhow::Result<Exit<P>> {
 		let chain_source = ChainSourceClient::new(chain_source)?;
