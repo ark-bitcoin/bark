@@ -5,8 +5,8 @@ use ark::test::dummy;
 
 #[tokio::test]
 async fn upsert_vtxo() {
-	let ctx = TestContext::new_minimal("postgresd/upsert_vtxo").await;
-	let (postgres_cfg, _postgresd) = ctx.new_postgres("upsert_vtxo").await;
+	let mut ctx = TestContext::new_minimal("postgresd/upsert_vtxo").await;
+	let postgres_cfg = ctx.init_central_postgres().await;
 
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
