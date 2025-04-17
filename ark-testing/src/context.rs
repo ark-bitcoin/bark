@@ -47,7 +47,6 @@ pub struct TestContext {
 }
 
 impl TestContext {
-
 	pub async fn new_minimal(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
 
@@ -65,7 +64,7 @@ impl TestContext {
 			bitcoind: None,
 			electrs: None,
 			_postgresd: None,
-			postgres_config: None
+			postgres_config: None,
 		}
 	}
 
@@ -137,15 +136,17 @@ impl TestContext {
 	pub async fn init_central_postgres(&mut self) -> config::Postgres {
 		let (postgres_config, postgresd) = if postgresd::use_host_database() {
 			postgresd::cleanup_dbs(&postgresd::global_client().await, &self.name).await;
-			let cfg = postgresd::host_base_config();
+			let mut cfg = postgresd::host_base_config();
+			cfg.name = self.name.clone();
 			(cfg, None)
 		} else {
-			let postgresd = self.new_postgres("postgres").await;
-			(postgresd.helper().as_base_config(), Some(postgresd))
+			let postgresd = self.new_postgres("central_postgres").await;
+			(postgresd.helper().into_config(&self.name), Some(postgresd))
 		};
 
-		self.postgres_config = Some(postgres_config.clone());
+
 		self._postgresd = postgresd;
+		self.postgres_config = Some(postgres_config.clone());
 		postgres_config
 	}
 
@@ -175,13 +176,6 @@ impl TestContext {
 		let mut ret = Postgres::new(name, datadir);
 		ret.start().await.unwrap();
 		ret
-	}
-
-	fn postgres_default_cfg(&self, name: impl AsRef<str>) -> config::Postgres {
-		config::Postgres {
-			name: format!("{}/{}", &self.name, name.as_ref()),
-			..self.postgres_config.as_ref().expect("postgresd not initialized yet").clone()
-		}
 	}
 
 	async fn aspd_default_cfg(
@@ -241,7 +235,7 @@ impl TestContext {
 				rpc_user: None,
 				rpc_pass: None,
 			},
-			postgres: self.postgres_default_cfg(name),
+			postgres: self.postgres_config.clone().expect("postgres config not set"),
 			lightningd,
 			legacy_wallet: false,
 		}

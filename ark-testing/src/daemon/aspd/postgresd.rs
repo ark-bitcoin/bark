@@ -95,12 +95,6 @@ impl Postgres {
 	pub fn helper(&self) -> &PostgresHelper {
 		&self.inner
 	}
-
-	pub async fn aspd_client(&self) -> aspd::database::Db {
-		let cfg = self.helper().as_base_config();
-		let db = aspd::database::Db::connect(&cfg).await;
-		db.expect("Failed to connect to database")
-	}
 }
 
 #[derive(Clone)]
@@ -123,11 +117,11 @@ impl PostgresHelper {
 		self.port.expect("port should be set")
 	}
 
-	pub fn as_base_config(&self) -> config::Postgres {
+	pub fn into_config(&self, dbname: &str) -> config::Postgres {
 		config::Postgres {
+			name: dbname.to_owned(),
 			host: String::from("localhost"),
 			port: self.port(),
-			name: self.name.clone(),
 			user: None,
 			password: None,
 		}
