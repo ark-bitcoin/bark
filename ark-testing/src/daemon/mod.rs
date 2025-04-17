@@ -142,8 +142,8 @@ impl<T> Daemon<T>
 		// Create files to where the outputs is logged
 		let stdout_path = self.inner.datadir().join(STDOUT_LOGFILE);
 		let stderr_path = self.inner.datadir().join(STDERR_LOGFILE);
-		cmd.stdout(std::fs::File::create(&stdout_path)?);
-		cmd.stderr(std::fs::File::create(&stderr_path)?);
+		cmd.stdout(std::fs::File::options().create(true).append(true).open(&stdout_path)?);
+		cmd.stderr(std::fs::File::options().create(true).append(true).open(&stderr_path)?);
 
 		let mut child = cmd.spawn()?;
 
