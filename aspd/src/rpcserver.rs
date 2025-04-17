@@ -769,7 +769,7 @@ impl rpc::server::AdminService for App {
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_STOP);
 		info!("Shutting down because of RPC stop command...");
-		self.shutdown.cancel();
+		self.rtmgr.shutdown();
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 }
@@ -978,19 +978,17 @@ fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'stati
 pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 
+	let _worker = app.rtmgr.spawn_critical("PublicRpcServer");
+
 	let addr = app.config.rpc.public_address;
 	info!("Starting public gRPC service on address {}", addr);
 	let ark_server = rpc::server::ArkServiceServer::from_arc(app.clone());
 
-	let shutdown = app.shutdown.clone();
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
 			.add_service(ark_server)
-			.serve_with_shutdown(addr, async move {
-				shutdown.cancelled().await;
-				info!("Shutdown command received. Stopping gRPC server...");
-			}).await
+			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start gRPC server on {}: {}", addr, e);
 				e
@@ -998,10 +996,7 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	} else {
 		tonic::transport::Server::builder()
 			.add_service(ark_server)
-			.serve_with_shutdown(addr, async move {
-				shutdown.cancelled().await;
-				info!("Shutdown command received. Stopping gRPC server...");
-			}).await
+			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start gRPC server on {}: {}", addr, e);
 				e
@@ -1017,20 +1012,17 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 
+	let _worker = app.rtmgr.spawn_critical("AdminRpcServer");
+
 	let addr = app.config.rpc.admin_address.expect("shouldn't call this method otherwise");
 	info!("Starting admin gRPC service on address {}", addr);
 	let admin_server = rpc::server::AdminServiceServer::from_arc(app.clone());
 
-	let shutdown = app.shutdown.clone();
 	if app.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
 			.add_service(admin_server)
-			.serve_with_shutdown(addr, async move {
-				shutdown.cancelled().await;
-				info!("Shutdown command received. Stopping gRPC server...");
-			})
-			.await
+			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start admin gRPC server on {}: {}", addr, e);
 
@@ -1039,11 +1031,7 @@ pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	} else {
 		tonic::transport::Server::builder()
 			.add_service(admin_server)
-			.serve_with_shutdown(addr, async move {
-				shutdown.cancelled().await;
-				info!("Shutdown command received. Stopping gRPC server...");
-			})
-			.await
+			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start admin gRPC server on {}: {}", addr, e);
 

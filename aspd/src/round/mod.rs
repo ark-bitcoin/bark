@@ -1365,6 +1365,8 @@ pub async fn run_round_coordinator(
 	mut round_input_rx: mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	mut round_trigger_rx: mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
+	let _worker = app.rtmgr.spawn_critical("RoundCoordinator");
+
 	loop {
 		let round_seq = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
 			app.config.round_interval.as_millis()) as usize;
@@ -1383,7 +1385,6 @@ pub async fn run_round_coordinator(
 			// Fatal error, halt operations.
 			RoundResult::Err(RoundError::Fatal(e)) => {
 				error!("Fatal round error: {:?}", e);
-				app.shutdown.cancel();
 				return Err(e);
 			},
 		}
@@ -1403,7 +1404,7 @@ pub async fn run_round_coordinator(
 					break 'sleep;
 				},
 				_ = round_input_rx.recv() => {},
-				_ = app.shutdown.cancelled() => {
+				_ = app.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting round coordinator loop...");
 					return Ok(());
 				}

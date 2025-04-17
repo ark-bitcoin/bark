@@ -9,7 +9,6 @@ use bitcoin::hashes::{ripemd160, sha256, Hash};
 use lightning_invoice::Bolt11Invoice;
 use tokio::time::MissedTickBehavior;
 use tokio::sync::broadcast;
-use tokio_util::sync::CancellationToken;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{IntervalStream, BroadcastStream};
 use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
@@ -20,6 +19,7 @@ use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use cln_rpc::node_client::NodeClient;
 
 use crate::config::Lightningd;
+use crate::system::RuntimeManager;
 
 type GrpcClient = NodeClient<Channel>;
 
@@ -52,7 +52,7 @@ impl Lightningd {
 }
 
 pub async fn run_process_sendpay_updates(
-	shutdown: CancellationToken,
+	rtmgr: RuntimeManager,
 	cln_config: &Lightningd,
 	tx: broadcast::Sender<SendpaySubscriptionItem>,
 ) -> anyhow::Result<()> {
@@ -79,7 +79,7 @@ pub async fn run_process_sendpay_updates(
 	);
 
 	let subscribe_send_pay = SubscribeSendpay {
-		shutdown,
+		rtmgr,
 		client: client.clone(),
 		created_index,
 		update_index: updated_index,
@@ -281,7 +281,7 @@ async fn invoice_pay_status(
 }
 
 pub struct SubscribeSendpay {
-	pub shutdown: CancellationToken,
+	rtmgr: RuntimeManager,
 	pub client: NodeClient<Channel>,
 	pub update_index: u64,
 	pub created_index: u64,
@@ -290,20 +290,22 @@ pub struct SubscribeSendpay {
 impl SubscribeSendpay {
 	pub async fn run(self, tx: broadcast::Sender<SendpaySubscriptionItem>) -> anyhow::Result<()> {
 		let (u_idx, u_grpc, u_rx) = (self.update_index, self.client.clone(), tx.clone());
-		let shutdown = self.shutdown.clone();
+		let rtmgr = self.rtmgr.clone();
 		let jh1 = tokio::spawn(async move {
+			let _worker = rtmgr.spawn_critical("SubscribeSendpayUpdated");
 			tokio::select! {
 				res = updated_loop(u_idx, u_grpc, u_rx) => res,
-				_ = shutdown.cancelled() => Ok(()),
+				_ = rtmgr.shutdown_signal() => Ok(()),
 			}
 		});
 
 		let (c_idx, c_grpc, c_rx) = (self.created_index, self.client.clone(), tx.clone());
-		let shutdown = self.shutdown.clone();
+		let rtmgr = self.rtmgr.clone();
 		let jh2 = tokio::spawn(async move {
+			let _worker = rtmgr.spawn_critical("SubscribeSendpayCreated");
 			tokio::select! {
 				res = created_loop(c_idx, c_grpc, c_rx) => res,
-				_ = shutdown.cancelled() => Ok(()),
+				_ = rtmgr.shutdown_signal() => Ok(()),
 			}
 		});
 

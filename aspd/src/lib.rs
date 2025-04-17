@@ -18,6 +18,7 @@ mod serde_util;
 pub mod sweeps;
 mod rpcserver;
 mod round;
+pub(crate) mod system;
 mod txindex;
 mod telemetry;
 mod wallet;
@@ -45,7 +46,6 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
-use tokio_util::sync::CancellationToken;
 
 use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
@@ -57,6 +57,7 @@ use crate::cln::SendpaySubscriptionItem;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::round::RoundInput;
+use crate::system::RuntimeManager;
 use crate::telemetry::TelemetryMetrics;
 use crate::txindex::TxIndex;
 use crate::sweeps::VtxoSweeper;
@@ -84,7 +85,7 @@ pub struct SendpayHandle {
 pub struct App {
 	config: Config,
 	db: database::Db,
-	shutdown: CancellationToken,
+	rtmgr: RuntimeManager,
 	master_xpriv: bip32::Xpriv,
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
@@ -187,10 +188,10 @@ impl App {
 			sendpay_updates: None,
 			config: cfg,
 			db,
-			shutdown: CancellationToken::new(),
 			asp_key,
 			master_xpriv,
 			bitcoind,
+			rtmgr: RuntimeManager::new_with_telemetry(telemetry::spawn_gauge()),
 			telemetry_metrics: TelemetryMetrics::disabled(),
 		}))
 	}
@@ -217,15 +218,17 @@ impl App {
 		let telemetry_metrics = telemetry::init_telemetry(&self.config, self.asp_key.public_key());
 
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
+		let rtmgr = mut_self.rtmgr.clone();
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
 		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
-		let jh_txindex = mut_self.txindex.start(
+		mut_self.txindex.start(
+			rtmgr.clone(),
 			mut_self.bitcoind.clone(),
 			mut_self.config.txindex_check_interval,
-			mut_self.shutdown.clone(),
 		);
 		//TODO(stevenroose) this will be cleaned up if we unify App::open and App::start
 		mut_self.vtxo_sweeper = Some(VtxoSweeper::start(
+			rtmgr.clone(),
 			mut_self.config.vtxo_sweeper.clone(),
 			mut_self.config.network,
 			mut_self.bitcoind.clone(),
@@ -244,7 +247,7 @@ impl App {
 		info!("Startup tasks done");
 
 		// Spawn a task to handle Ctrl+C
-		let shutdown = self.shutdown.clone();
+		let rt = rtmgr.clone();
 		tokio::spawn(async move {
 			let ctrl_c = async {
 				tokio::signal::ctrl_c()
@@ -265,8 +268,11 @@ impl App {
 				_ = sigterm => {}
 			}
 
-			let _ = shutdown.cancel();
+			let _ = rt.shutdown();
 			for i in (1..=60).rev() {
+				if rt.shutdown_done() {
+					return;
+				}
 				info!("Forced exit in {} seconds...", i);
 				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 			}
@@ -275,39 +281,28 @@ impl App {
 
 		// Then start all our subprocesses
 		let app = self.clone();
-		let jh_rpc_public = tokio::spawn(async move {
-			let ret = rpcserver::run_public_rpc_server(app)
+		tokio::spawn(async move {
+			let res = rpcserver::run_public_rpc_server(app)
 				.await.context("error running public gRPC server");
-			info!("RPC server exited with {:?}", ret);
-			ret
+			info!("RPC server exited with {:?}", res);
 		});
-		self.telemetry_metrics.count_spawn("rpcserver::run_public_rpc_server");
 
 		let app = self.clone();
-		let jh_round_coord = tokio::spawn(async move {
-			let ret = round::run_round_coordinator(&app, round_input_rx, round_trigger_rx)
+		tokio::spawn(async move {
+			let res = round::run_round_coordinator(&app, round_input_rx, round_trigger_rx)
 				.await.context("error from round scheduler");
-			info!("Round coordinator exited with {:?}", ret);
-			ret
+			info!("Round coordinator exited with {:?}", res);
 		});
-		self.telemetry_metrics.count_spawn("round::run_round_coordinator");
 
 		let app = self.clone();
-		let jh_round_sweeper = tokio::spawn(async move {
-			app.shutdown.cancelled().await;
-			app.vtxo_sweeper.as_ref().unwrap().stop().await;
-			Ok(())
-		});
-		self.telemetry_metrics.count_spawn("VtxoSweeper");
+		tokio::spawn(async move {
+			let _worker = app.rtmgr.spawn_critical("TipFetcher");
 
-		let app = self.clone();
-		let shutdown = app.shutdown.clone();
-		let jh_tip_fetcher = tokio::spawn(async move {
 			loop {
 				tokio::select! {
 					// Periodic interval for chain tip fetch
 					() = tokio::time::sleep(Duration::from_secs(1)) => {},
-					_ = shutdown.cancelled() => {
+					_ = app.rtmgr.shutdown_signal() => {
 						info!("Shutdown signal received. Exiting fetch_tip loop...");
 						break;
 					}
@@ -329,52 +324,29 @@ impl App {
 			}
 
 			info!("Chain tip loop terminated gracefully.");
-
-			Ok(())
 		});
-		self.telemetry_metrics.count_spawn("tip_fetcher");
-
-		// The tasks that always run
-		let mut jhs = vec![
-			jh_txindex,
-			jh_rpc_public,
-			jh_round_coord,
-			jh_round_sweeper,
-			jh_tip_fetcher,
-		];
 
 		// These tasks do only run if the config is provided
 		if self.config.rpc.admin_address.is_some() {
 			let app = self.clone();
-			let jh_rpc_admin = tokio::spawn(async move {
-				let ret = rpcserver::run_admin_rpc_server(app)
+			tokio::spawn(async move {
+				let res = rpcserver::run_admin_rpc_server(app)
 					.await.context("error running admin gRPC server");
-				info!("Admin RPC server exited with {:?}", ret);
-				ret
+				info!("Admin RPC server exited with {:?}", res);
 			});
-			self.telemetry_metrics.count_spawn("rpcserver::run_admin_rpc_server");
-
-			jhs.push(jh_rpc_admin)
 		}
 
-		let app = self.clone();
+		let rt = rtmgr.clone();
 		if self.config.lightningd.is_some() {
 			let cln_config = self.config.lightningd.clone().unwrap();
-			let jh_sendpay = tokio::spawn(async move {
-				let shutdown = app.shutdown.clone();
-				let ret = crate::cln::run_process_sendpay_updates(shutdown, &cln_config, sendpay_tx)
+			tokio::spawn(async move {
+				let res = crate::cln::run_process_sendpay_updates(rt, &cln_config, sendpay_tx)
 					.await.context("error processing sendpays");
-				info!("Sendpay updater process exited with {:?}", ret);
-				ret
+				info!("Sendpay updater process exited with {:?}", res);
 			});
-			self.telemetry_metrics.count_spawn("lightning::run_process_sendpay_updates");
-
-			jhs.push(jh_sendpay)
 		}
 
-		// Wait until the first task finishes
-		futures::future::try_join_all(jhs).await
-			.context("one of our background processes errored")?;
+		rtmgr.wait().await;
 
 		slog!(AspdTerminated);
 

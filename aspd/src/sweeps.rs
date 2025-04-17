@@ -48,8 +48,6 @@ use bitcoin::{
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 use ark::{BoardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
@@ -58,6 +56,7 @@ use ark::rounds::RoundId;
 use crate::bitcoind::{RpcApi, BitcoinRpcClient};
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
+use crate::system::RuntimeManager;
 use crate::txindex::{self, TxIndex};
 use crate::wallet::BdkWalletExt;
 use crate::{database, serde_util, SECP};
@@ -724,9 +723,10 @@ impl Process {
 	async fn run(
 		mut self,
 		mut ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
-		shutdown: CancellationToken,
+		rtmgr: RuntimeManager,
 	) {
 		info!("Starting VtxoSweeper...");
+		let _worker = rtmgr.spawn_critical("VtxoSweeper");
 
 		let mut timer = tokio::time::interval(self.config.round_sweep_interval);
 		timer.reset();
@@ -737,7 +737,7 @@ impl Process {
 				Some(ctrl) = ctrl_rx.recv() => match ctrl {
 					Ctrl::TriggerSweep => slog!(ReceivedSweepTrigger),
 				},
-				_ = shutdown.cancelled() => {
+				_ = rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting sweep loop...");
 					break;
 				},
@@ -766,12 +766,11 @@ enum Ctrl {
 
 pub struct VtxoSweeper {
 	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
-	shutdown: CancellationToken,
-	jh: JoinHandle<()>,
 }
 
 impl VtxoSweeper {
 	pub async fn start(
+		rtmgr: RuntimeManager,
 		config: Config,
 		network: Network,
 		bitcoind: BitcoinRpcClient,
@@ -809,23 +808,9 @@ impl VtxoSweeper {
 		}
 
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
-		let shutdown = CancellationToken::new();
-		let jh = tokio::spawn(proc.run(ctrl_rx, shutdown.clone()));
+		tokio::spawn(proc.run(ctrl_rx, rtmgr));
 
-		Ok(VtxoSweeper { ctrl_tx, shutdown, jh })
-	}
-
-	pub async fn stop(&self) {
-		self.shutdown.cancel();
-		// NB we do a fake `self.jh.await` here because we can't have
-		// `&mut self` or owned `self`.
-		//TODO(stevenroose) turn this into a real stop later
-		loop {
-			if self.jh.is_finished() {
-				return;
-			}
-			tokio::time::sleep(Duration::from_millis(500)).await;
-		}
+		Ok(VtxoSweeper { ctrl_tx })
 	}
 
 	pub fn trigger_sweep(&self) -> anyhow::Result<()> {
