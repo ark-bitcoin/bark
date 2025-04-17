@@ -9,13 +9,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use nix::sys::signal;
+use nix::unistd::Pid;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Command, Child};
 use tokio::sync::Mutex;
 
 use crate::constants::env::DAEMON_INIT_TIMEOUT_MILLIS;
-use crate::util::wait_for_completion;
+use crate::util::{FutureExt, wait_for_completion};
 
 /// The file inside the datadir where stderr output is logged.
 pub const STDERR_LOGFILE: &str = "stderr.log";
@@ -200,8 +202,18 @@ impl<T> Daemon<T>
 		*state_lock = DaemonState::Stopping;
 
 		match self.child.lock().await.take() {
-			Some(mut child) => child.kill().await.context("Failed to kill child")?,
-			None => anyhow::bail!("Failed to stop daemon because there is no child. Was it running?")
+			Some(mut child) => if let Some(pid) = child.id() {
+				// Send SIGTERM
+				let pid = Pid::from_raw(pid as i32);
+				signal::kill(pid, signal::Signal::SIGTERM).expect("sending SIGTERM failed");
+				let _ = child.wait().try_wait(30_000).await?
+					.context("error waiting for child after SIGTERM")?;
+			} else {
+				warn!("Can't send SIGTERM because daemon has no pid.");
+				child.kill().try_wait(30_000).await?
+					.context("error killing child")?;
+			},
+			None => bail!("Failed to stop daemon because there is no child. Was it running?")
 		};
 
 
