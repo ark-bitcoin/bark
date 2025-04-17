@@ -4,7 +4,7 @@ use std::borrow::Borrow;
 use std::io;
 
 use bitcoin::{
-	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, Txid, Weight, Witness
+	Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, Txid, Weight, Witness
 };
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
