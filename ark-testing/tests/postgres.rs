@@ -23,4 +23,3 @@ async fn upsert_vtxo() {
 	// It shouldn't complain if board_2 is already present
 	db.upsert_vtxos(&[board_2, board_3]).await.expect("Query succeeded");
 }
-
