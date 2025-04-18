@@ -9,7 +9,7 @@
 mod error;
 
 mod cln;
-mod bitcoind;
+pub mod bitcoind;
 pub(crate) mod flux;
 pub mod database;
 mod psbtext;
@@ -20,7 +20,7 @@ mod round;
 pub(crate) mod system;
 mod txindex;
 mod telemetry;
-mod wallet;
+pub mod wallet;
 pub mod config;
 pub use crate::config::Config;
 
@@ -39,7 +39,7 @@ use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use lightning_invoice::Bolt11Invoice;
-use log::{trace, info, warn, error};
+use log::{trace, info, warn};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
@@ -59,7 +59,7 @@ use crate::system::RuntimeManager;
 use crate::telemetry::TelemetryMetrics;
 use crate::txindex::TxIndex;
 use crate::sweeps::VtxoSweeper;
-use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind, MNEMONIC_FILE};
+use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -150,6 +150,23 @@ impl App {
 		Ok(())
 	}
 
+	pub async fn open_round_wallet(
+		cfg: &Config,
+		db: database::Db,
+		master_xpriv: &bip32::Xpriv,
+		deep_tip: BlockRef,
+	) -> anyhow::Result<PersistedWallet> {
+		let wallet_xpriv = if cfg.legacy_wallet {
+			master_xpriv.clone()
+		} else {
+			master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
+				.expect("can't error")
+		};
+		Ok(PersistedWallet::load_from_xpriv(
+			db, cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip, cfg.legacy_wallet,
+		).await?)
+	}
+
 	/// Start the server.
 	pub async fn start(cfg: Config) -> anyhow::Result<Arc<Self>> {
 		info!("Starting aspd at {}", cfg.data_dir.display());
@@ -172,16 +189,9 @@ impl App {
 		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
 		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
-		let wallet_xpriv = if cfg.legacy_wallet {
-			master_xpriv.clone()
-		} else {
-			master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
-				.expect("can't error")
-		};
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-		let mut rounds_wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip, cfg.legacy_wallet,
-		).await.context("error loading wallet")?;
+		let mut rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
+			.await.context("error loading wallet")?;
 
 		let asp_path = bip32::DerivationPath::from_str(ASP_KEY_PATH).unwrap();
 		let asp_xpriv = master_xpriv.derive_priv(&SECP, &asp_path).unwrap();
@@ -361,33 +371,6 @@ impl App {
 		let ret = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		wallet.persist().await?;
 		Ok(ret)
-	}
-
-	pub async fn drain(
-		&self,
-		address: Address<bitcoin::address::NetworkUnchecked>,
-	) -> anyhow::Result<Transaction> {
-		//TODO(stevenroose) also claim all expired round vtxos here!
-
-		let addr = address.require_network(self.config.network)?;
-
-		let mut wallet = self.rounds_wallet.lock().await;
-		let mut b = wallet.build_tx();
-		b.drain_to(addr.script_pubkey());
-		b.drain_wallet();
-		let psbt = b.finish().context("error building tx")?;
-
-		let tx = wallet.finish_tx(psbt)?;
-		wallet.commit_tx(&tx);
-		wallet.persist().await?;
-		drop(wallet);
-
-		if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
-			error!("Error broadcasting tx: {}", e);
-			error!("Try yourself: {}", bitcoin::consensus::encode::serialize_hex(&tx));
-		}
-
-		Ok(tx)
 	}
 
 	/// Fetch all the utxos in our wallet that are being spent or created by txs

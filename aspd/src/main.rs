@@ -4,12 +4,14 @@ use std::process;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::Address;
+use bitcoin::{bip32, Address};
+use bitcoin_ext::rpc::BitcoinRpcExt;
 use clap::Parser;
 use log::{error, info};
 use tonic::transport::Uri;
 
 use aspd::{App, Config};
+use aspd::bitcoind::BitcoinRpcClient;
 use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use aspd_rpc::{self as rpc, protos};
 
@@ -174,8 +176,18 @@ async fn inner_main() -> anyhow::Result<()> {
 				process::exit(1);
 			};
 		}
-		Command::Drain { address: _ } => {
-			unimplemented!();
+		Command::Drain { address } => {
+			let db = aspd::database::Db::connect(&cfg.postgres).await?;
+			let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())?;
+
+			let seed = aspd::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
+			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+
+			let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
+			let mut w = App::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip).await?;
+
+			let tx = w.drain(address, &bitcoind).await?;
+			println!("{}", tx.compute_txid());
 		}
 		Command::GetMnemonic => {
 			unimplemented!();

@@ -8,11 +8,12 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bdk_wallet::{SignOptions, Wallet, Balance, KeychainKind};
 use bip39::Mnemonic;
-use bitcoin::{bip32, Network};
+use bitcoin::{bip32, Address, Network};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
+use log::error;
 
 use crate::database;
 
@@ -220,6 +221,33 @@ impl PersistedWallet {
 			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint).collect(),
 			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint).collect(),
 		}
+	}
+
+	/// This function is primarily intended for dev, not prod usage.
+	pub async fn drain(
+		&mut self,
+		address: Address<bitcoin::address::NetworkUnchecked>,
+		bitcoind: &impl RpcApi,
+	) -> anyhow::Result<Transaction> {
+		//TODO(stevenroose) also claim all expired round vtxos here!
+
+		let addr = address.require_network(self.wallet.network())?;
+
+		let mut b = self.build_tx();
+		b.drain_to(addr.script_pubkey());
+		b.drain_wallet();
+		let psbt = b.finish().context("error building tx")?;
+
+		let tx = self.finish_tx(psbt)?;
+		self.commit_tx(&tx);
+		self.persist().await?;
+
+		if let Err(e) = bitcoind.broadcast_tx(&tx) {
+			error!("Error broadcasting tx: {}", e);
+			error!("Try yourself: {}", bitcoin::consensus::encode::serialize_hex(&tx));
+		}
+
+		Ok(tx)
 	}
 }
 
