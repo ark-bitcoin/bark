@@ -168,22 +168,17 @@ async fn inner_main() -> anyhow::Result<()> {
 			App::create(cfg).await?;
 		}
 		Command::Start => {
-			let mut app = App::open(cfg).await.context("server init")?;
-
-			if let Err(e) = app.start().await {
-				error!("Shutdown error from aspd: {:?}", e);
+			if let Err(e) = App::run(cfg).await {
+				error!("Shutdown error from aspd {:?}", e);
 
 				process::exit(1);
 			};
 		}
-		Command::Drain { address } => {
-			let app = App::open(cfg).await.context("server init")?;
-
-			println!("{}", app.drain(address).await?.compute_txid());
+		Command::Drain { address: _ } => {
+			unimplemented!();
 		}
 		Command::GetMnemonic => {
-			let app = App::open(cfg).await.context("server init")?;
-			println!("{}", app.get_master_mnemonic().await?);
+			unimplemented!();
 		}
 	}
 

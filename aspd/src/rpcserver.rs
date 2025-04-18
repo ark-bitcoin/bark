@@ -627,7 +627,7 @@ impl rpc::server::ArkService for App {
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS);
 
-		let chan = self.try_rounds().to_status()?.round_event_tx.subscribe();
+		let chan = self.rounds.round_event_tx.subscribe();
 		let stream = BroadcastStream::new(chan);
 
 		Ok(tonic::Response::new(Box::new(stream.map(|e| {
@@ -690,7 +690,7 @@ impl rpc::server::ArkService for App {
 			inputs, vtxo_requests, cosign_pub_nonces, offboards,
 		};
 
-		self.try_rounds().to_status()?.round_input_tx.send((inp, tx))
+		self.rounds.round_input_tx.send((inp, tx))
 			.expect("input channel closed");
 		rx.wait_for_status().await?;
 
@@ -718,7 +718,7 @@ impl rpc::server::ArkService for App {
 			}).collect::<Result<_, _>>()?,
 		};
 
-		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
+		self.rounds.round_input_tx.send((inp, tx)).expect("input channel closed");
 		rx.wait_for_status().await?;
 
 		Ok(tonic::Response::new(protos::Empty {}))
@@ -751,7 +751,7 @@ impl rpc::server::ArkService for App {
 			}).collect::<Result<_, tonic::Status>>()?
 		};
 
-		self.try_rounds().to_status()?.round_input_tx.send((inp, tx)).expect("input channel closed");
+		self.rounds.round_input_tx.send((inp, tx)).expect("input channel closed");
 		rx.wait_for_status().await?;
 
 		Ok(tonic::Response::new(protos::Empty {}))
@@ -788,7 +788,7 @@ impl rpc::server::AdminService for App {
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_ROUND);
 
-		match self.try_rounds().to_status()?.round_trigger_tx.try_send(()) {
+		match self.rounds.round_trigger_tx.try_send(()) {
 			Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
 				panic!("round scheduler closed");
 			},
@@ -804,7 +804,7 @@ impl rpc::server::AdminService for App {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_SWEEP);
-		self.vtxo_sweeper.as_ref().unwrap().trigger_sweep()
+		self.vtxo_sweeper.trigger_sweep()
 			.context("VtxoSweeper down")?;
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
