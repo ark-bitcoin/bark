@@ -3,6 +3,7 @@
 
 	inputs = {
 		nixpkgs.url = "nixpkgs/nixos-24.11";
+		nixpkgs-master.url = "github:NixOS/nixpkgs/master";
 		flake-utils = {
 			url = "github:numtide/flake-utils";
 		};
@@ -12,11 +13,11 @@
 		};
 	};
 
-	outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, rust-overlay }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
 				rustVersion = "1.75.0";
-				bitcoinVersion = "28.0";
+				bitcoinVersion = "29.0";
 				lightningVersion = "25.02";
 				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 
@@ -28,15 +29,19 @@
 					inherit system overlays;
 				};
 
+				masterPkgs = import nixpkgs-master {
+					inherit system;
+				};
+
 				rust = pkgs.rust-bin.stable.${rustVersion}.default.override {
 					extensions = [ "rust-src" "rust-analyzer" ];
 				};
 
-				bitcoin = pkgs.bitcoind.overrideAttrs (old: {
+				bitcoin = masterPkgs.bitcoind.overrideAttrs (old: {
 					version = bitcoinVersion;
 					src = pkgs.fetchurl {
 						urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
-						sha256 = "sha256-cAri0eIEYC6wfyd5puZmmJO8lsDcopBZP4D/jhAv838=";
+						sha256 = "sha256-iCx4LDSjvy6s0frlzcWLNbhpiDUS8Zf31tyPGV3s/ao=";
 					};
 					doCheck = false;
 				});

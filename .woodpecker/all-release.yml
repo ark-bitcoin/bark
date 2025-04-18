@@ -14,7 +14,7 @@ steps:
     when:
       - event: tag
         ref: refs/tags/all-*
-    image: registry.2nd.dev/build:13
+    image: registry.2nd.dev/build:16
     commands:
       - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
       - cat VERSION
@@ -24,7 +24,7 @@ steps:
       - event: tag
         ref: refs/tags/all-*
     depends_on: parse-versions
-    image: registry.2nd.dev/build:13
+    image: registry.2nd.dev/build:16
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
     commands:
@@ -82,7 +82,7 @@ steps:
       - event: tag
         ref: refs/tags/all-*
     depends_on: build-all
-    image: registry.2nd.dev/build:13
+    image: registry.2nd.dev/build:16
     commands:
       - cat VERSION
       - cd ./target
