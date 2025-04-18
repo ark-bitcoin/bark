@@ -1,11 +1,12 @@
 
 use std::{fmt, fs};
 use std::time::{Duration, UNIX_EPOCH, SystemTime};
+use std::convert::TryInto;
 
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hashes::hex::DisplayHex;
-use bitcoin::hashes::{ripemd160, sha256, Hash};
+use bitcoin::hashes::{sha256, Hash};
 use lightning_invoice::Bolt11Invoice;
 use tokio::time::MissedTickBehavior;
 use tokio::sync::broadcast;
@@ -326,7 +327,7 @@ pub struct  SendpaySubscriptionItem {
 	pub part_id: u64,
 	pub group_id: u64,
 	pub payment_hash: sha256::Hash,
-	pub payment_preimage: Option<ripemd160::Hash>,
+	pub payment_preimage: Option<[u8; 32]>,
 }
 
 impl fmt::Display for SendpaySubscriptionItem {
@@ -425,9 +426,7 @@ async fn process_sendpay(
 			part_id: update.partid(),
 			group_id: update.groupid,
 			payment_hash: sha256::Hash::from_slice(&update.payment_hash)?,
-			payment_preimage: update.payment_preimage
-				.map(|x| ripemd160::Hash::from_slice(&x))
-				.transpose()?
+			payment_preimage: update.payment_preimage.map(|p| p[..].try_into()).transpose()?,
 		};
 
 		if max_index < updated_index {

@@ -698,7 +698,7 @@ impl App {
 						v.kind.as_str_name(), v.payment_hash, v.group_id, v.part_id, v.status,
 					),
 					payment_hash: payment_hash.as_byte_array().to_vec(),
-					payment_preimage: v.payment_preimage.map(|h| h.as_byte_array().to_vec())
+					payment_preimage: v.payment_preimage.map(|p| p.to_vec()),
 				})
 			},
 			Err(_) => None,
