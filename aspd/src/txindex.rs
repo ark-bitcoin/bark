@@ -18,6 +18,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, RpcApi};
+use crate::system::RuntimeManager;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,15 +343,15 @@ impl TxIndex {
 	/// Start the tx index.
 	pub fn start(
 		&mut self,
+		rtmgr: RuntimeManager,
 		bitcoind: BitcoinRpcClient,
 		interval: Duration,
-		shutdown: CancellationToken,
 	) -> JoinHandle<anyhow::Result<()>> {
 		let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel();
 		self.broadcast_pkg = Some(broadcast_tx);
 
 		let proc = TxIndexProcess {
-			bitcoind, interval, broadcast_rx, shutdown,
+			rtmgr, bitcoind, interval, broadcast_rx,
 			txs: self.tx_map.clone(),
 			broadcast: Vec::new(),
 		};
@@ -370,7 +371,7 @@ struct TxIndexProcess {
 	broadcast: Vec<Vec<Txid>>,
 
 	broadcast_rx: mpsc::UnboundedReceiver<Vec<Txid>>,
-	shutdown: CancellationToken,
+	rtmgr: RuntimeManager,
 }
 
 impl TxIndexProcess {
@@ -531,6 +532,8 @@ impl TxIndexProcess {
 	/// This method will only return once the txindex stops, so it should be called
 	/// in a context that allows it to keep running.
 	async fn run(mut self) -> anyhow::Result<()> {
+		let _worker = self.rtmgr.spawn_critical("TxIndex");
+
 		// Sleep just a little for our txindex to be filled by processes.
 		// TODO(stevenroose) this can be removed when we persist the txindex
 		tokio::time::sleep(Duration::from_secs(1)).await;
@@ -553,7 +556,7 @@ impl TxIndexProcess {
 					self.rebroadcast().await;
 					slog!(TxIndexUpdateFinished);
 				},
-				_ = self.shutdown.cancelled() => {
+				_ = self.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting tx index loop...");
 					return Ok(());
 				}

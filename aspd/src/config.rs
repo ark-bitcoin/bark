@@ -8,7 +8,7 @@ use bitcoin::{Amount, FeeRate};
 use config::{Environment, File};
 use serde::Deserialize;
 
-use crate::serde_util;
+use crate::{serde_util, sweeps};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Bitcoind {
@@ -83,12 +83,6 @@ pub struct Config {
 	#[serde(with = "serde_util::fee_rate")]
 	pub round_tx_feerate: FeeRate,
 
-	#[serde(with = "serde_util::fee_rate")]
-	pub sweep_tx_fallback_feerate: FeeRate,
-	#[serde(with = "serde_util::duration")]
-	pub round_sweep_interval: Duration,
-	/// Don't make sweep txs for amounts lower than this amount.
-	pub sweep_threshold: Amount,
 	/// Whether or not to add full error information to RPC internal errors.
 	pub rpc_rich_errors: bool,
 
@@ -102,6 +96,8 @@ pub struct Config {
 
 	pub otel_collector_endpoint: Option<String>,
 
+	/// Config for the VtxoSweeper process.
+	pub vtxo_sweeper: sweeps::Config,
 	pub rpc: Rpc,
 	pub postgres: Postgres,
 
@@ -136,10 +132,6 @@ impl Default for Config {
 			nb_round_nonces: 64,
 			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
 
-			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
-			round_sweep_interval: Duration::from_secs(60 * 60),
-			sweep_threshold: Amount::from_sat(1_000_000),
-
 			rpc_rich_errors: true,
 
 			handshake_psa: None,
@@ -147,6 +139,7 @@ impl Default for Config {
 			txindex_check_interval: Duration::from_secs(30),
 
 			otel_collector_endpoint: None,
+			vtxo_sweeper: Default::default(),
 			rpc: Rpc {
 				public_address: "127.0.0.1:3535".parse().unwrap(),
 				admin_address: Some("127.0.0.1:3536".parse().unwrap()),

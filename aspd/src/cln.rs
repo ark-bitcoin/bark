@@ -1,15 +1,15 @@
 
 use std::{fmt, fs};
 use std::time::{Duration, UNIX_EPOCH, SystemTime};
+use std::convert::TryInto;
 
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hashes::hex::DisplayHex;
-use bitcoin::hashes::{ripemd160, sha256, Hash};
+use bitcoin::hashes::{sha256, Hash};
 use lightning_invoice::Bolt11Invoice;
 use tokio::time::MissedTickBehavior;
 use tokio::sync::broadcast;
-use tokio_util::sync::CancellationToken;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{IntervalStream, BroadcastStream};
 use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
@@ -20,6 +20,7 @@ use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use cln_rpc::node_client::NodeClient;
 
 use crate::config::Lightningd;
+use crate::system::RuntimeManager;
 
 type GrpcClient = NodeClient<Channel>;
 
@@ -52,7 +53,7 @@ impl Lightningd {
 }
 
 pub async fn run_process_sendpay_updates(
-	shutdown: CancellationToken,
+	rtmgr: RuntimeManager,
 	cln_config: &Lightningd,
 	tx: broadcast::Sender<SendpaySubscriptionItem>,
 ) -> anyhow::Result<()> {
@@ -79,7 +80,7 @@ pub async fn run_process_sendpay_updates(
 	);
 
 	let subscribe_send_pay = SubscribeSendpay {
-		shutdown,
+		rtmgr,
 		client: client.clone(),
 		created_index,
 		update_index: updated_index,
@@ -281,7 +282,7 @@ async fn invoice_pay_status(
 }
 
 pub struct SubscribeSendpay {
-	pub shutdown: CancellationToken,
+	rtmgr: RuntimeManager,
 	pub client: NodeClient<Channel>,
 	pub update_index: u64,
 	pub created_index: u64,
@@ -290,20 +291,22 @@ pub struct SubscribeSendpay {
 impl SubscribeSendpay {
 	pub async fn run(self, tx: broadcast::Sender<SendpaySubscriptionItem>) -> anyhow::Result<()> {
 		let (u_idx, u_grpc, u_rx) = (self.update_index, self.client.clone(), tx.clone());
-		let shutdown = self.shutdown.clone();
+		let rtmgr = self.rtmgr.clone();
 		let jh1 = tokio::spawn(async move {
+			let _worker = rtmgr.spawn_critical("SubscribeSendpayUpdated");
 			tokio::select! {
 				res = updated_loop(u_idx, u_grpc, u_rx) => res,
-				_ = shutdown.cancelled() => Ok(()),
+				_ = rtmgr.shutdown_signal() => Ok(()),
 			}
 		});
 
 		let (c_idx, c_grpc, c_rx) = (self.created_index, self.client.clone(), tx.clone());
-		let shutdown = self.shutdown.clone();
+		let rtmgr = self.rtmgr.clone();
 		let jh2 = tokio::spawn(async move {
+			let _worker = rtmgr.spawn_critical("SubscribeSendpayCreated");
 			tokio::select! {
 				res = created_loop(c_idx, c_grpc, c_rx) => res,
-				_ = shutdown.cancelled() => Ok(()),
+				_ = rtmgr.shutdown_signal() => Ok(()),
 			}
 		});
 
@@ -324,7 +327,7 @@ pub struct  SendpaySubscriptionItem {
 	pub part_id: u64,
 	pub group_id: u64,
 	pub payment_hash: sha256::Hash,
-	pub payment_preimage: Option<ripemd160::Hash>,
+	pub payment_preimage: Option<[u8; 32]>,
 }
 
 impl fmt::Display for SendpaySubscriptionItem {
@@ -423,9 +426,7 @@ async fn process_sendpay(
 			part_id: update.partid(),
 			group_id: update.groupid,
 			payment_hash: sha256::Hash::from_slice(&update.payment_hash)?,
-			payment_preimage: update.payment_preimage
-				.map(|x| ripemd160::Hash::from_slice(&x))
-				.transpose()?
+			payment_preimage: update.payment_preimage.map(|p| p[..].try_into()).transpose()?,
 		};
 
 		if max_index < updated_index {

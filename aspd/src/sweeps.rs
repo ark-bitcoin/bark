@@ -37,28 +37,51 @@
 
 use std::cmp;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::absolute::LockTime;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::secp256k1::XOnlyPublicKey;
+use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
-	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight,
+	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight, Network, Address,
 };
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
+use tokio::sync::mpsc;
 
 use ark::{BoardVtxo, VtxoSpec};
 use ark::connectors::ConnectorChain;
 use ark::rounds::RoundId;
 
-use crate::bitcoind::RpcApi;
+use crate::bitcoind::{RpcApi, BitcoinRpcClient};
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
+use crate::system::RuntimeManager;
+use crate::txindex::{self, TxIndex};
 use crate::wallet::BdkWalletExt;
-use crate::{txindex, App, SECP};
+use crate::{database, serde_util, SECP};
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+	#[serde(with = "serde_util::fee_rate")]
+	pub sweep_tx_fallback_feerate: FeeRate,
+	#[serde(with = "serde_util::duration")]
+	pub round_sweep_interval: Duration,
+	/// Don't make sweep txs for amounts lower than this amount.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub sweep_threshold: Amount,
+}
+
+impl Default for Config {
+	fn default() -> Self {
+	    Self {
+			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
+			round_sweep_interval: Duration::from_secs(60 * 60),
+			sweep_threshold: Amount::from_sat(1_000_000),
+		}
+	}
+}
 
 struct BoardSweepInput {
 	point: OutPoint,
@@ -170,14 +193,14 @@ impl ExpiredRound {
 
 /// Build a sweep.
 struct SweepBuilder<'a> {
-	sweeper: &'a mut VtxoSweeper,
+	sweeper: &'a mut Process,
 	sweeps: Vec<RoundSweepInput<'a>>,
 	board_sweeps: Vec<BoardSweepInput>,
 	feerate: FeeRate,
 }
 
 impl<'a> SweepBuilder<'a> {
-	fn new(sweeper: &'a mut VtxoSweeper, feerate: FeeRate) -> Self {
+	fn new(sweeper: &'a mut Process, feerate: FeeRate) -> Self {
 		Self {
 			sweeps: Vec::new(),
 			board_sweeps: Vec::new(),
@@ -278,7 +301,7 @@ impl<'a> SweepBuilder<'a> {
 		let id = board.id();
 		let exit_tx = board.exit_tx();
 		let exit_txid = exit_tx.compute_txid();
-		let exit_tx = self.sweeper.app.txindex.get_or_insert(&exit_txid, move || exit_tx).await;
+		let exit_tx = self.sweeper.txindex.get_or_insert(&exit_txid, move || exit_tx).await;
 
 		if !exit_tx.confirmed().await {
 			if let Some((h, txid)) = self.sweeper.is_swept(board.onchain_output).await {
@@ -305,7 +328,7 @@ impl<'a> SweepBuilder<'a> {
 		// First check if the round tx is still available for sweeping, that'd be ideal.
 		let tree_root = round.vtxo_txs.last().unwrap();
 		let tree_root_txid = tree_root.compute_txid();
-		let tree_root = self.sweeper.app.txindex.get_or_insert(&tree_root_txid, || {
+		let tree_root = self.sweeper.txindex.get_or_insert(&tree_root_txid, || {
 			tree_root.clone()
 		}).await;
 
@@ -340,7 +363,7 @@ impl<'a> SweepBuilder<'a> {
 		let agg_pkgs = round.round.signed_tree.spec.cosign_agg_pks();
 		for (signed_tx, agg_pk) in signed_txs.into_iter().zip(agg_pkgs).rev() {
 			let txid = signed_tx.compute_txid();
-			let tx = self.sweeper.app.txindex.get_or_insert(&txid, || signed_tx.clone()).await;
+			let tx = self.sweeper.txindex.get_or_insert(&txid, || signed_tx.clone()).await;
 			if !tx.confirmed().await {
 				trace!("tx {} did not confirm yet, not sweeping", tx.txid);
 				continue;
@@ -389,7 +412,7 @@ impl<'a> SweepBuilder<'a> {
 			};
 
 			let txid = tx.compute_txid();
-			let tx = self.sweeper.app.txindex.get_or_insert(&txid, move || {
+			let tx = self.sweeper.txindex.get_or_insert(&txid, move || {
 				error!("Txindex should have all connector txs. Missing {} for round {}",
 					txid, round.id,
 				);
@@ -399,7 +422,7 @@ impl<'a> SweepBuilder<'a> {
 			if tx.confirmed().await {
 				// Check if the connector output is still unspent.
 				let conn = OutPoint::new(tx.txid, 1);
-				match self.sweeper.app.bitcoind.get_tx_out(&conn.txid, conn.vout, Some(true)) {
+				match self.sweeper.bitcoind.get_tx_out(&conn.txid, conn.vout, Some(true)) {
 					Ok(Some(out)) => {
 						if let Some((h, _txid)) = self.sweeper.is_swept(conn).await {
 							ret = ret.and_then(|old| Some(cmp::max(old, h)));
@@ -462,12 +485,11 @@ impl<'a> SweepBuilder<'a> {
 		self.sweeper.round_finished(round).await;
 	}
 
-	async fn create_tx(&self, tip: BlockHeight) -> anyhow::Result<Transaction> {
-		let mut wallet = self.sweeper.app.wallet.lock().await;
-		let drain_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal).address;
-		let mut txb = wallet.build_tx();
+	async fn create_tx(&mut self, tip: BlockHeight) -> anyhow::Result<Transaction> {
+		let mut txb = self.sweeper.wallet.build_tx();
 		txb.ordering(bdk_wallet::TxOrdering::Untouched);
-		txb.nlocktime(LockTime::from_height(tip as u32).expect("actual height"));
+		txb.current_height(tip as u32);
+		txb.manually_selected_only();
 
 		for sweep in &self.sweeps {
 			txb.add_foreign_utxo_with_sequence(
@@ -486,28 +508,36 @@ impl<'a> SweepBuilder<'a> {
 			).expect("bdk rejected foreign utxo");
 		}
 
-		txb.drain_to(drain_addr.script_pubkey());
+		txb.drain_to(self.sweeper.drain_address.script_pubkey());
 		txb.fee_rate(self.feerate);
 		let mut psbt = txb.finish().expect("bdk failed to create round sweep tx");
 		assert_eq!(psbt.inputs.len(), self.total_nb_sweeps(), "unexpected nb of inputs");
 
-
 		// SIGNING
 
-		psbt.try_sign_sweeps(&self.sweeper.app.asp_key)?;
-		Ok(wallet.finish_tx(psbt)?)
+		psbt.try_sign_sweeps(&self.sweeper.asp_key)?;
+		Ok(self.sweeper.wallet.finish_tx(psbt)?)
 	}
 }
 
 
-struct VtxoSweeper {
-	app: Arc<App>,
+struct Process {
+	config: Config,
+	bitcoind: BitcoinRpcClient,
+	db: database::Db,
+	txindex: TxIndex,
+	wallet: bdk_wallet::Wallet,
+	asp_key: Keypair,
+	drain_address: Address,
+
+	// runtime fields
+
 	pending_txs: HashMap<Txid, txindex::Tx>,
 	/// Pending txs indexed by the inputs they spend.
 	pending_tx_by_utxo: HashMap<OutPoint, Vec<Txid>>,
 }
 
-impl VtxoSweeper {
+impl Process {
 	/// Store the tx in our local caches.
 	fn store_pending(&mut self, tx: txindex::Tx) {
 		for inp in &tx.tx.input {
@@ -516,30 +546,12 @@ impl VtxoSweeper {
 		self.pending_txs.insert(tx.txid, tx);
 	}
 
-	/// Load the [VtxoSweeper] by loading all pending txs from the database.
-	async fn load(app: Arc<App>) -> anyhow::Result<VtxoSweeper> {
-		let raw_pending = app.db.fetch_pending_sweeps().await.context("error fetching pending sweeps")?;
-		// Register all pending in the txindex.
-		let mut ret = VtxoSweeper {
-			app,
-			pending_txs: HashMap::with_capacity(raw_pending.len()),
-			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
-		};
-
-		for (_txid, raw_tx) in raw_pending {
-			let tx = ret.app.txindex.broadcast_tx(raw_tx).await;
-			ret.store_pending(tx);
-		}
-
-		Ok(ret)
-	}
-
 	/// Store the pending tx both in the db and mem cache.
 	async fn add_new_pending(&mut self, txid: Txid, tx: Transaction) -> anyhow::Result<()> {
-		self.app.db.store_pending_sweep(&txid, &tx).await
+		self.db.store_pending_sweep(&txid, &tx).await
 			.with_context(|| format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
 
-		let tx = self.app.txindex.broadcast_tx(tx).await;
+		let tx = self.txindex.broadcast_tx(tx).await;
 		self.store_pending(tx);
 		Ok(())
 	}
@@ -559,12 +571,12 @@ impl VtxoSweeper {
 	/// Clear the board data from our database because we either swept it, or the user
 	/// has broadcast the exit tx, doing a unilateral exit.
 	async fn clear_board(&mut self, board: &BoardVtxo) {
-		if let Err(e) = self.app.db.mark_board_swept(board).await {
+		if let Err(e) = self.db.mark_board_swept(board).await {
 			error!("Failed to mark board vtxo {} as swept: {}", board.id(), e);
 		}
 
 		let reveal = board.exit_tx().compute_txid();
-		self.app.txindex.unregister_batch(&[&board.onchain_output.txid, &reveal]).await;
+		self.txindex.unregister_batch(&[&board.onchain_output.txid, &reveal]).await;
 
 		self.pending_tx_by_utxo.remove(&board.onchain_output);
 	}
@@ -574,7 +586,7 @@ impl VtxoSweeper {
 		// round tx root
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), 0));
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), 1));
-		self.app.txindex.unregister(round.id.as_round_txid()).await;
+		self.txindex.unregister(round.id.as_round_txid()).await;
 
 		// vtxo tree txs
 		let vtxo_txs = round.round.signed_tree.all_signed_txs();
@@ -586,7 +598,7 @@ impl VtxoSweeper {
 		}
 
 		trace!("Removing vtxo txs from txindex...");
-		self.app.txindex.unregister_batch(vtxo_txs.iter()).await;
+		self.txindex.unregister_batch(vtxo_txs.iter()).await;
 
 		// connector txs
 		trace!("Connector txs from internal pending...");
@@ -596,31 +608,31 @@ impl VtxoSweeper {
 			}
 		}
 		trace!("Removing connector txs from txindex...");
-		self.app.txindex.unregister_batch(round.connectors.iter_unsigned_txs()).await;
+		self.txindex.unregister_batch(round.connectors.iter_unsigned_txs()).await;
 
-		if let Err(e) = self.app.db.remove_round(round.id).await {
+		if let Err(e) = self.db.remove_round(round.id).await {
 			error!("Failed to remove round from db after successful sweeping: {}", e);
 		}
 	}
 
 	async fn perform_sweep(&mut self) -> anyhow::Result<()> {
-		let sweep_threshold = self.app.config.sweep_threshold;
-		let tip = self.app.bitcoind.get_block_count()? as BlockHeight;
+		let sweep_threshold = self.config.sweep_threshold;
+		let tip = self.bitcoind.get_block_count()? as BlockHeight;
 
 		let mut expired_rounds = Vec::new();
-		for id in self.app.db.get_expired_rounds(tip).await? {
-			let round = self.app.db.get_round(id).await?.expect("db has round");
+		for id in self.db.get_expired_rounds(tip).await? {
+			let round = self.db.get_round(id).await?.expect("db has round");
 			expired_rounds.push(ExpiredRound::new(id, round));
 		}
 		trace!("{} expired rounds fetched", expired_rounds.len());
 
-		let expired_boards = self.app.db
+		let expired_boards = self.db
 			.get_expired_boards(tip).await?
 			.filter_map(|o| async { o.ok() })
 			.collect::<Vec<_>>().await;
 		trace!("{} expired boards fetched", expired_boards.len());
 
-		let feerate = self.app.config.sweep_tx_fallback_feerate;
+		let feerate = self.config.sweep_tx_fallback_feerate;
 		let mut builder = SweepBuilder::new(self, feerate);
 
 		let done_height = tip - DEEPLY_CONFIRMED + 1;
@@ -673,7 +685,7 @@ impl VtxoSweeper {
 	}
 
 	async fn clear_confirmed_sweeps(&mut self) -> anyhow::Result<()> {
-		let tip = self.app.bitcoind.get_block_count()?;
+		let tip = self.bitcoind.get_block_count()?;
 		let mut to_remove = HashSet::new();
 		for (txid, tx) in &self.pending_txs {
 			if tx.tx.input.iter().any(|i| self.pending_tx_by_utxo.contains_key(&i.previous_output)) {
@@ -695,8 +707,8 @@ impl VtxoSweeper {
 				);
 			}
 
-			self.app.db.drop_pending_sweep(txid).await?;
-			self.app.txindex.unregister(txid).await;
+			self.db.drop_pending_sweep(txid).await?;
+			self.txindex.unregister(txid).await;
 			to_remove.insert(*txid);
 		}
 		for txid in to_remove {
@@ -707,40 +719,102 @@ impl VtxoSweeper {
 		);
 		Ok(())
 	}
+
+	async fn run(
+		mut self,
+		mut ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
+		rtmgr: RuntimeManager,
+	) {
+		info!("Starting VtxoSweeper...");
+		let _worker = rtmgr.spawn_critical("VtxoSweeper");
+
+		let mut timer = tokio::time::interval(self.config.round_sweep_interval);
+		timer.reset();
+		loop {
+			tokio::select! {
+				// Periodic interval for sweeping
+				_ = timer.tick() => {},
+				Some(ctrl) = ctrl_rx.recv() => match ctrl {
+					Ctrl::TriggerSweep => slog!(ReceivedSweepTrigger),
+				},
+				_ = rtmgr.shutdown_signal() => {
+					info!("Shutdown signal received. Exiting sweep loop...");
+					break;
+				},
+			}
+
+			//TODO(stevenroose) do this better
+			// state.prune_confirmed().await;
+			if let Err(e) = self.perform_sweep().await {
+				warn!("Error during round processing: {}", e);
+			}
+			if let Err(e) = self.clear_confirmed_sweeps().await {
+				warn!("Error occured in vtxo sweeper clear_confirmed_sweeps: {}", e);
+			}
+
+			timer.reset();
+		}
+
+		info!("VtxoSweeper terminated gracefully.");
+	}
 }
 
-/// Run a process that will periodically check for expired rounds and
-/// sweep them into our internal wallet.
-pub async fn run_vtxo_sweeper(
-	app: Arc<App>,
-	mut sweep_trigger_rx: tokio::sync::mpsc::Receiver<()>,
-) -> anyhow::Result<()> {
-	let mut state = VtxoSweeper::load(app).await.context("failed to load VtxoSweeper state")?;
+#[derive(Debug)]
+enum Ctrl {
+	TriggerSweep,
+}
 
-	info!("Starting expired vtxo sweep loop");
-	loop {
-		tokio::select! {
-			// Periodic interval for sweeping
-			() = tokio::time::sleep(state.app.config.round_sweep_interval) => {},
-			// Trigger received via channel
-			Some(()) = sweep_trigger_rx.recv() => slog!(ReceivedSweepTrigger),
-			_ = state.app.shutdown.cancelled() => {
-				info!("Shutdown signal received. Exiting sweep loop...");
-				break;
-			}
+pub struct VtxoSweeper {
+	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
+}
+
+impl VtxoSweeper {
+	pub async fn start(
+		rtmgr: RuntimeManager,
+		config: Config,
+		network: Network,
+		bitcoind: BitcoinRpcClient,
+		db: database::Db,
+		txindex: TxIndex,
+		asp_key: Keypair,
+		drain_address: Address,
+	) -> anyhow::Result<Self> {
+		let wallet = {
+			// NB we don't need a wallet in the sweeper, but currently in BDK
+			// the TxBuilder utility is only available on the Wallet type.
+			// They are working on separating those, so we can get rid of this later.
+			//TODO(stevenroose) drop wallet after BDK separates TxBuilder
+
+			// randomly public key (skey: fb6c89300e9d5ed9fbc60e416ce5f58de971e689ab0d5d4d870f44c2bc48870f)
+			let desc = "tr(035b5c42535be44af7c429b0e75f5bb6a999474ad10a4083d250676eff53832d9f)";
+			bdk_wallet::Wallet::create_single(desc)
+				.network(network)
+				.create_wallet_no_persist()
+				.expect("error creating bdk wallet")
+		};
+
+		let raw_pending = db.fetch_pending_sweeps().await
+			.context("error fetching pending sweeps")?;
+
+		let mut proc = Process {
+			config, bitcoind, db, txindex, wallet, asp_key, drain_address,
+			pending_txs: HashMap::with_capacity(raw_pending.len()),
+			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
+		};
+
+		for (_txid, raw_tx) in raw_pending {
+			let tx = proc.txindex.broadcast_tx(raw_tx).await;
+			proc.store_pending(tx);
 		}
 
-		//TODO(stevenroose) do this better
-		// state.prune_confirmed().await;
-		if let Err(e) = state.perform_sweep().await {
-			warn!("Error during round processing: {}", e);
-		}
-		if let Err(e) = state.clear_confirmed_sweeps().await {
-			warn!("Error occured in vtxo sweeper clear_confirmed_sweeps: {}", e);
-		}
+		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
+		tokio::spawn(proc.run(ctrl_rx, rtmgr));
+
+		Ok(VtxoSweeper { ctrl_tx })
 	}
 
-	info!("Expired vtxo sweep loop terminated gracefully.");
-
-	Ok(())
+	pub fn trigger_sweep(&self) -> anyhow::Result<()> {
+		self.ctrl_tx.send(Ctrl::TriggerSweep).context("process down")?;
+		Ok(())
+	}
 }

@@ -55,7 +55,6 @@ pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 
 
 struct InnerMetrics {
-	spawn_counter: Counter<u64>,
 	handshake_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
@@ -68,12 +67,6 @@ pub struct TelemetryMetrics {
 impl TelemetryMetrics {
 	pub const fn disabled() -> Self {
 		Self { inner: None }
-	}
-
-	pub fn count_spawn(&self, spawn_id: &'static str) {
-		if let Some(ref m) = self.inner {
-			m.spawn_counter.add(1, &[KeyValue::new("spawn", spawn_id)]);
-		}
 	}
 
 	pub fn count_version(&self, version: &str) {
@@ -156,7 +149,6 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 
 	let meter = global::meter_provider().meter(METER_ASPD);
 	let version_counter = meter.u64_counter(METER_COUNTER_VERSION).build();
-	let spawn_counter = meter.u64_counter(METER_COUNTER_MAIN_SPAWN).build();
 	let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
 	let wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_WALLET_BALANCE).build();
 	let block_height_gauge = meter.u64_gauge(METER_GAUGE_BLOCK_HEIGHT).build();
@@ -166,11 +158,15 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 	TelemetryMetrics {
 		inner: Some(InnerMetrics {
 			handshake_version_counter,
-			spawn_counter,
 			wallet_balance_gauge,
 			block_height_gauge,
 		})
 	}
+}
+
+pub fn spawn_gauge() -> Gauge<u64> {
+	let meter = global::meter_provider().meter(METER_ASPD);
+	meter.u64_gauge(METER_COUNTER_MAIN_SPAWN).build()
 }
 
 /// An extention trait for span tracing.
