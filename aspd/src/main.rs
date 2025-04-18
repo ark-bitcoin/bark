@@ -10,7 +10,7 @@ use clap::Parser;
 use log::{error, info};
 use tonic::transport::Uri;
 
-use aspd::{App, Config};
+use aspd::{Server, Config};
 use aspd::bitcoind::BitcoinRpcClient;
 use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use aspd_rpc::{self as rpc, protos};
@@ -167,10 +167,10 @@ async fn inner_main() -> anyhow::Result<()> {
 	match cli.command {
 		Command::Rpc { .. } => unreachable!(),
 		Command::Create => {
-			App::create(cfg).await?;
+			Server::create(cfg).await?;
 		}
 		Command::Start => {
-			if let Err(e) = App::run(cfg).await {
+			if let Err(e) = Server::run(cfg).await {
 				error!("Shutdown error from aspd {:?}", e);
 
 				process::exit(1);
@@ -184,7 +184,7 @@ async fn inner_main() -> anyhow::Result<()> {
 			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
 			let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-			let mut w = App::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip).await?;
+			let mut w = Server::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip).await?;
 
 			let tx = w.drain(address, &bitcoind).await?;
 			println!("{}", tx.compute_txid());

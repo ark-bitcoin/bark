@@ -75,7 +75,7 @@ pub struct RoundHandle {
 	round_trigger_tx: mpsc::Sender<()>,
 }
 
-pub struct App {
+pub struct Server {
 	config: Config,
 	db: database::Db,
 	master_xpriv: bip32::Xpriv,
@@ -96,7 +96,7 @@ pub struct App {
 	telemetry_metrics: TelemetryMetrics,
 }
 
-impl App {
+impl Server {
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
 		if cfg.legacy_wallet {
 			bail!("We don't support creating new legacy wallets.");
@@ -233,7 +233,7 @@ impl App {
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 
-		let app = App {
+		let srv = Server {
 			rounds_wallet: Arc::new(Mutex::new(rounds_wallet)),
 			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: RoundHandle { round_event_tx, round_input_tx, round_trigger_tx },
@@ -250,10 +250,10 @@ impl App {
 			telemetry_metrics,
 		};
 
-		let app = Arc::new(app);
+		let srv = Arc::new(srv);
 
 		// Spawn a task to handle Ctrl+C
-		let rt = app.rtmgr.clone();
+		let rt = srv.rtmgr.clone();
 		tokio::spawn(async move {
 			let ctrl_c = async {
 				tokio::signal::ctrl_c()
@@ -285,34 +285,34 @@ impl App {
 			std::process::exit(0);
 		});
 
-		let app_cloned = app.clone();
+		let srv2 = srv.clone();
 		tokio::spawn(async move {
-			let res = round::run_round_coordinator(&app_cloned, round_input_rx, round_trigger_rx)
+			let res = round::run_round_coordinator(&srv2, round_input_rx, round_trigger_rx)
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", res);
 		});
 
-		let app_cloned = app.clone();
+		let srv2 = srv.clone();
 		tokio::spawn(async move {
-			let app = app_cloned;
-			let _worker = app.rtmgr.spawn_critical("TipFetcher");
+			let srv = srv2;
+			let _worker = srv.rtmgr.spawn_critical("TipFetcher");
 
 			loop {
 				tokio::select! {
 					// Periodic interval for chain tip fetch
 					() = tokio::time::sleep(Duration::from_secs(1)) => {},
-					_ = app.rtmgr.shutdown_signal() => {
+					_ = srv.rtmgr.shutdown_signal() => {
 						info!("Shutdown signal received. Exiting fetch_tip loop...");
 						break;
 					}
 				}
 
-				match app.bitcoind.tip() {
+				match srv.bitcoind.tip() {
 					Ok(t) => {
-						let mut lock = app.chain_tip.lock().await;
+						let mut lock = srv.chain_tip.lock().await;
 						if t != *lock {
 							*lock = t;
-							app.telemetry_metrics.set_block_height(t.height);
+							srv.telemetry_metrics.set_block_height(t.height);
 							slog!(TipUpdated, height: t.height, hash: t.hash);
 						}
 					}
@@ -327,23 +327,23 @@ impl App {
 
 		// RPC
 
-		let app_cloned = app.clone();
+		let srv2 = srv.clone();
 		tokio::spawn(async move {
-			let res = rpcserver::run_public_rpc_server(app_cloned)
+			let res = rpcserver::run_public_rpc_server(srv2)
 				.await.context("error running public gRPC server");
 			info!("RPC server exited with {:?}", res);
 		});
 
 		if cfg.rpc.admin_address.is_some() {
-			let app_cloned = app.clone();
+			let srv2 = srv.clone();
 			tokio::spawn(async move {
-				let res = rpcserver::run_admin_rpc_server(app_cloned)
+				let res = rpcserver::run_admin_rpc_server(srv2)
 					.await.context("error running admin gRPC server");
 				info!("Admin RPC server exited with {:?}", res);
 			});
 		}
 
-		Ok(app)
+		Ok(srv)
 	}
 
 	/// Waits for aspd to terminate.
@@ -356,8 +356,8 @@ impl App {
 	///
 	/// This is equivalent to calling [App::start] and [App::wait] in one go.
 	pub async fn run(cfg: Config) -> anyhow::Result<()> {
-		let app = App::start(cfg).await?;
-		app.wait().await;
+		let srv = Server::start(cfg).await?;
+		srv.wait().await;
 		Ok(())
 	}
 

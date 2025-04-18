@@ -26,7 +26,7 @@ use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge, R
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use ark::util::Encodable;
 
-use crate::{App, SECP};
+use crate::{Server, SECP};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::error::{ContextExt, AnyhowErrorExt};
 use crate::telemetry::{self, SpanExt};
@@ -255,11 +255,11 @@ impl CollectingPayments {
 	/// There is no guarantee that the vtxos is still all unspent by
 	/// the time this call returns. The caller should ensure no changes
 	/// are made to them meanwhile.
-	async fn check_fetch_round_input_vtxos(&self, app: &App, inputs: &[VtxoIdInput]) -> anyhow::Result<Vec<Vtxo>> {
+	async fn check_fetch_round_input_vtxos(&self, server: &Server, inputs: &[VtxoIdInput]) -> anyhow::Result<Vec<Vtxo>> {
 		let mut ret  = Vec::with_capacity(inputs.len());
 
 		let ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		let vtxos = app.db.get_vtxos_by_id(&ids).await?;
+		let vtxos = server.db.get_vtxos_by_id(&ids).await?;
 
 		// Check if the input vtxos exist, unspent and owned by user.
 		for vtxo_state in vtxos {
@@ -276,7 +276,7 @@ impl CollectingPayments {
 
 	async fn process_payment(
 		&mut self,
-		app: &App,
+		server: &Server,
 		inputs: Vec<VtxoIdInput>,
 		vtxo_requests: Vec<VtxoRequest>,
 		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
@@ -285,7 +285,7 @@ impl CollectingPayments {
 		self.validate_payment_data(&inputs, &vtxo_requests, &cosign_pub_nonces)?;
 
 		let input_ids: Vec<VtxoId> = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		let lock = match app.vtxos_in_flux.lock(input_ids.clone()) {
+		let lock = match server.vtxos_in_flux.lock(input_ids.clone()) {
 			Ok(l) => l,
 			Err(id) => {
 				slog!(RoundUserVtxoInFlux, round_seq: self.round_seq, attempt_seq: self.attempt_seq, vtxo: id);
@@ -294,7 +294,7 @@ impl CollectingPayments {
 		};
 
 		// Check if the input vtxos exist and are unspent.
-		let input_vtxos = match self.check_fetch_round_input_vtxos(app, &inputs).await {
+		let input_vtxos = match self.check_fetch_round_input_vtxos(server, &inputs).await {
 			Ok(i) => i,
 			Err(e) => {
 				let ret = if let Some(id) = e.downcast_ref::<VtxoId>().cloned() {
@@ -314,7 +314,7 @@ impl CollectingPayments {
 			return Err(e).context("registration failed");
 		}
 
-		if let Err(e) = app.validate_board_inputs(&input_vtxos) {
+		if let Err(e) = server.validate_board_inputs(&input_vtxos) {
 			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt_seq: self.attempt_seq, error: e.to_string(),
 			);
@@ -366,9 +366,9 @@ impl CollectingPayments {
 		}
 	}
 
-	async fn progress(mut self, app: &App) -> Result<SigningVtxoTree, RoundError> {
-		let tip = app.chain_tip().await.height;
-		let expiry_height = tip + app.config.vtxo_expiry_delta as BlockHeight;
+	async fn progress(mut self, server: &Server) -> Result<SigningVtxoTree, RoundError> {
+		let tip = server.chain_tip().await.height;
+		let expiry_height = tip + server.config.vtxo_expiry_delta as BlockHeight;
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
@@ -397,9 +397,9 @@ impl CollectingPayments {
 			}
 			let cosign_key = Keypair::new(&SECP, &mut rand::thread_rng());
 			let (cosign_sec_nonces, cosign_pub_nonces) = {
-				let mut secs = Vec::with_capacity(app.config.nb_round_nonces);
-				let mut pubs = Vec::with_capacity(app.config.nb_round_nonces);
-				for _ in 0..app.config.nb_round_nonces {
+				let mut secs = Vec::with_capacity(server.config.nb_round_nonces);
+				let mut pubs = Vec::with_capacity(server.config.nb_round_nonces);
+				for _ in 0..server.config.nb_round_nonces {
 					let (s, p) = musig::nonce_pair(&cosign_key);
 					secs.push(s);
 					pubs.push(p);
@@ -422,14 +422,14 @@ impl CollectingPayments {
 
 		let vtxos_spec = VtxoTreeSpec::new(
 			self.all_outputs.iter().map(|p| p.req.clone()).collect(),
-			app.asp_key.public_key(),
+			server.asp_key.public_key(),
 			self.cosign_key.public_key(),
 			expiry_height,
-			app.config.vtxo_exit_delta,
+			server.config.vtxo_exit_delta,
 		);
 		//TODO(stevenroose) this is inefficient, improve this with direct getter
 		let nb_nodes = vtxos_spec.nb_nodes();
-		assert!(nb_nodes <= app.config.nb_round_nonces);
+		assert!(nb_nodes <= server.config.nb_round_nonces);
 		let connector_key = Keypair::new(&*SECP, &mut rand::thread_rng());
 		let connector_output = ConnectorChain::output(
 			self.all_inputs.len(), connector_key.public_key(),
@@ -437,11 +437,11 @@ impl CollectingPayments {
 
 		// Build round tx.
 		//TODO(stevenroose) think about if we can release lock sooner
-		let trusted_height = match app.config.round_tx_untrusted_input_confirmations {
+		let trusted_height = match server.config.round_tx_untrusted_input_confirmations {
 			0 => None,
 			n => Some(tip.saturating_sub(n as BlockHeight - 1)),
 		};
-		let mut wallet_lock = app.rounds_wallet.clone().lock_owned().await;
+		let mut wallet_lock = server.rounds_wallet.clone().lock_owned().await;
 		let unspendable = wallet_lock.untrusted_utxos(trusted_height);
 		let round_tx_psbt = {
 			let mut b = wallet_lock.build_tx();
@@ -454,7 +454,7 @@ impl CollectingPayments {
 			for offb in &self.all_offboards {
 				b.add_recipient(offb.script_pubkey.clone(), offb.amount);
 			}
-			b.fee_rate(app.config.round_tx_feerate);
+			b.fee_rate(server.config.round_tx_feerate);
 			match b.finish().context("bdk failed to create round tx") {
 				Ok(psbt) => psbt,
 				Err(e) => return Err(RoundError::Recoverable(e)),
@@ -487,7 +487,7 @@ impl CollectingPayments {
 		);
 
 		// Send out vtxo proposal to signers.
-		app.rounds.round_event_tx.send(RoundEvent::VtxoProposal {
+		server.rounds.round_event_tx.send(RoundEvent::VtxoProposal {
 			round_seq: self.round_seq,
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
@@ -630,7 +630,7 @@ impl SigningVtxoTree {
 		)
 	}
 
-	fn progress(self, app: &App) -> SigningForfeits {
+	fn progress(self, server: &Server) -> SigningForfeits {
 		// Combine the vtxo signatures.
 		let combine_signatures_start = Instant::now();
 
@@ -681,7 +681,7 @@ impl SigningVtxoTree {
 			let mut secs = Vec::with_capacity(self.all_inputs.len());
 			let mut pubs = Vec::with_capacity(self.all_inputs.len());
 			for _ in 0..self.all_inputs.len() {
-				let (s, p) = musig::nonce_pair(&app.asp_key);
+				let (s, p) = musig::nonce_pair(&server.asp_key);
 				secs.push(s);
 				pubs.push(p);
 			}
@@ -690,7 +690,7 @@ impl SigningVtxoTree {
 		}
 
 		// Send out round proposal to signers.
-		app.rounds.round_event_tx.send(RoundEvent::RoundProposal {
+		server.rounds.round_event_tx.send(RoundEvent::RoundProposal {
 			round_seq: self.round_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
@@ -817,7 +817,7 @@ impl SigningForfeits {
 		)
 	}
 
-	fn check_forfeits(mut self, app: &App) -> RoundState {
+	fn check_forfeits(mut self, server: &Server) -> RoundState {
 		// Finish the forfeit signatures.
 		let mut forfeit_sec_nonces = self.forfeit_sec_nonces.take().unwrap();
 		let mut forfeit_sigs = HashMap::with_capacity(self.all_inputs.len());
@@ -834,9 +834,9 @@ impl SigningForfeits {
 					);
 					let agg_nonce = musig::nonce_agg(&[&user_nonces[i], &pub_nonces[i]]);
 					let (_, sig) = musig::partial_sign(
-						[app.asp_key.public_key(), vtxo.spec().user_pubkey],
+						[server.asp_key.public_key(), vtxo.spec().user_pubkey],
 						agg_nonce,
-						&app.asp_key,
+						&server.asp_key,
 						sec,
 						sighash.to_byte_array(),
 						Some(vtxo.spec().vtxo_taptweak().to_byte_array()),
@@ -860,7 +860,7 @@ impl SigningForfeits {
 
 	async fn finish(
 		mut self,
-		app: &App,
+		server: &Server,
 	) -> Result<(), RoundError> {
 		// Sign the on-chain tx.
 		let sign_start = Instant::now();
@@ -877,7 +877,7 @@ impl SigningForfeits {
 		}
 
 		drop(self.wallet_lock); // we no longer need the lock
-		let signed_round_tx = app.txindex.broadcast_tx(signed_round_tx).await;
+		let signed_round_tx = server.txindex.broadcast_tx(signed_round_tx).await;
 		let round_txid = signed_round_tx.txid;
 		slog!(BroadcastedFinalizedRoundTransaction, round_seq: self.round_seq,
 			attempt_seq: self.attempt_seq, txid: round_txid,
@@ -886,7 +886,7 @@ impl SigningForfeits {
 
 		// Send out the finished round to users.
 		trace!("Sending out finish event.");
-		app.rounds.round_event_tx.send(RoundEvent::Finished {
+		server.rounds.round_event_tx.send(RoundEvent::Finished {
 			round_seq: self.round_seq,
 			signed_round_tx: signed_round_tx.tx.clone(),
 		}).expect("round event channel broken");
@@ -910,7 +910,7 @@ impl SigningForfeits {
 			);
 			(*id, forfeit_sigs)
 		}).collect();
-		let result = app.db.finish_round(
+		let result = server.db.finish_round(
 			&signed_round_tx.tx,
 			&self.signed_vtxos,
 			&self.connector_key.secret_key(),
@@ -982,10 +982,10 @@ impl RoundState {
 		}
 	}
 
-	async fn progress(self, app: &App) -> Result<Self, RoundError> {
+	async fn progress(self, server: &Server) -> Result<Self, RoundError> {
 		match self {
-			Self::CollectingPayments(s) => Ok(s.progress(app).await?.into()),
-			Self::SigningVtxoTree(s) => Ok(s.progress(app).into()),
+			Self::CollectingPayments(s) => Ok(s.progress(server).await?.into()),
+			Self::SigningVtxoTree(s) => Ok(s.progress(server).into()),
 			Self::SigningForfeits(_) => unreachable!("can't progress from signingforfeits"),
 		}
 	}
@@ -1036,7 +1036,7 @@ impl From<RoundError> for RoundResult {
 }
 
 async fn perform_round(
-	app: &Arc<App>,
+	server: &Arc<Server>,
 	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_seq: usize,
 ) -> RoundResult {
@@ -1059,8 +1059,8 @@ async fn perform_round(
 	slog!(RoundStarted, round_seq);
 
 	// Start new round, announce.
-	let offboard_feerate = app.config.round_tx_feerate;
-	app.rounds.round_event_tx.send(RoundEvent::Start(RoundInfo {
+	let offboard_feerate = server.config.round_tx_feerate;
+	server.rounds.round_event_tx.send(RoundEvent::Start(RoundInfo {
 		round_seq,
 		offboard_feerate,
 	})).expect("round event channel broken");
@@ -1072,13 +1072,13 @@ async fn perform_round(
 	let round_data = RoundData {
 		// The maximum number of output vtxos per round based on the max number
 		// of vtxo tree nonces we require users to provide.
-		max_output_vtxos: (app.config.nb_round_nonces * 3 ) / 4,
-		nb_vtxo_nonces: app.config.nb_round_nonces,
-		max_vtxo_amount: app.config.max_vtxo_amount,
+		max_output_vtxos: (server.config.nb_round_nonces * 3 ) / 4,
+		nb_vtxo_nonces: server.config.nb_round_nonces,
+		max_vtxo_amount: server.config.max_vtxo_amount,
 		offboard_feerate,
 	};
 	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
-		round_seq, 0, round_data, app.vtxos_in_flux.empty_lock().into_owned(), None,
+		round_seq, 0, round_data, server.vtxos_in_flux.empty_lock().into_owned(), None,
 	));
 
 	// In this loop we will try to finish the round and make new attempts.
@@ -1086,7 +1086,7 @@ async fn perform_round(
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
 
-		if let Err(e) = app.rounds_wallet.lock().await.sync(&app.bitcoind).await {
+		if let Err(e) = server.rounds_wallet.lock().await.sync(&server.bitcoind).await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}
 
@@ -1101,7 +1101,7 @@ async fn perform_round(
 		let state = round_state.collecting_payments();
 		state.locked_inputs.release_all();
 
-		app.rounds.round_event_tx.send(RoundEvent::Attempt(RoundAttempt {
+		server.rounds.round_event_tx.send(RoundEvent::Attempt(RoundAttempt {
 			round_seq,
 			attempt_seq,
 			challenge: state.vtxo_ownership_challenge
@@ -1116,7 +1116,7 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_submit_time); }
+		tokio::pin! { let timeout = tokio::time::sleep(server.config.round_submit_time); }
 		'receive: loop {
 			tokio::select! {
 				() = &mut timeout => break 'receive,
@@ -1128,7 +1128,7 @@ async fn perform_round(
 							inputs, vtxo_requests, cosign_pub_nonces, offboards,
 						} => {
 							round_state.collecting_payments().process_payment(
-								app, inputs, vtxo_requests, cosign_pub_nonces, offboards,
+								server, inputs, vtxo_requests, cosign_pub_nonces, offboards,
 							).await.map_err(|e| {
 								debug!("error processing payment: {e}");
 								e
@@ -1155,7 +1155,7 @@ async fn perform_round(
 				.start_with_context(&tracer_provider, &parent_context);
 
 			slog!(NoRoundPayments, round_seq, attempt_seq,
-				max_round_submit_time: app.config.round_submit_time,
+				max_round_submit_time: server.config.round_submit_time,
 			);
 
 			return RoundResult::Empty;
@@ -1164,7 +1164,7 @@ async fn perform_round(
 		slog!(ReceivedRoundPayments, round_seq, attempt_seq,
 			nb_inputs: round_state.collecting_payments().all_inputs.len(),
 			nb_outputs: round_state.collecting_payments().all_outputs.len(),
-			duration: receive_payment_duration, max_round_submit_time: app.config.round_submit_time,
+			duration: receive_payment_duration, max_round_submit_time: server.config.round_submit_time,
 		);
 
 		let mut span = tracer_provider
@@ -1191,13 +1191,13 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		round_state = match round_state.progress(app).await {
+		round_state = match round_state.progress(server).await {
 			Ok(s) => s,
 			Err(e) => return RoundResult::Err(e),
 		};
 		// Wait for signatures from users.
 		slog!(AwaitingRoundSignatures, round_seq, attempt_seq,
-			max_round_sign_time: app.config.round_sign_time,
+			max_round_sign_time: server.config.round_sign_time,
 			duration_since_sending: Instant::now().duration_since(send_vtxo_proposal_start),
 		);
 
@@ -1208,7 +1208,7 @@ async fn perform_round(
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
 
-		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
+		tokio::pin! { let timeout = tokio::time::sleep(server.config.round_sign_time); }
 		'receive: loop {
 			if round_state.proceed() {
 				break 'receive;
@@ -1256,7 +1256,7 @@ async fn perform_round(
 		}
 		slog!(ReceivedRoundVtxoSignatures, round_seq, attempt_seq,
 			duration: Instant::now().duration_since(vtxo_signatures_receive_start),
-			max_round_sign_time: app.config.round_sign_time,
+			max_round_sign_time: server.config.round_sign_time,
 		);
 
 		let send_round_proposal_start = Instant::now();
@@ -1268,14 +1268,14 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		round_state = match round_state.progress(&app).await {
+		round_state = match round_state.progress(&server).await {
 			Ok(s) => s,
 			Err(e) => return RoundResult::Err(e),
 		};
 
 		// Wait for signatures from users.
 		slog!(AwaitingRoundForfeits, round_seq, attempt_seq,
-			max_round_sign_time: app.config.round_sign_time,
+			max_round_sign_time: server.config.round_sign_time,
 			duration_since_sending: Instant::now().duration_since(send_round_proposal_start),
 		);
 
@@ -1288,7 +1288,7 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_sign_time); }
+		tokio::pin! { let timeout = tokio::time::sleep(server.config.round_sign_time); }
 
 		'receive: loop {
 			tokio::select! {
@@ -1333,12 +1333,12 @@ async fn perform_round(
 			}
 		}
 		slog!(ReceivedRoundForfeits, round_seq, attempt_seq,
-			max_round_sign_time: app.config.round_sign_time,
+			max_round_sign_time: server.config.round_sign_time,
 			nb_forfeits: round_state.signing_forfeits().forfeit_part_sigs.len(),
 			duration: Instant::now().duration_since(receive_forfeit_signatures_start),
 		);
 
-		match round_state.into_signing_forfeits().check_forfeits(&app) {
+		match round_state.into_signing_forfeits().check_forfeits(&server) {
 			s @ RoundState::CollectingPayments(_) => {
 				round_state = s;
 				continue 'attempt;
@@ -1359,7 +1359,7 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		return match round_state.into_signing_forfeits().finish(&app).await {
+		return match round_state.into_signing_forfeits().finish(&server).await {
 			Ok(()) => RoundResult::Success,
 			Err(e) => RoundResult::Err(e),
 		};
@@ -1368,16 +1368,16 @@ async fn perform_round(
 
 /// This method is called from a tokio thread so it can be long-lasting.
 pub async fn run_round_coordinator(
-	app: &Arc<App>,
+	server: &Arc<Server>,
 	mut round_input_rx: mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	mut round_trigger_rx: mpsc::Receiver<()>,
 ) -> anyhow::Result<()> {
-	let _worker = app.rtmgr.spawn_critical("RoundCoordinator");
+	let _worker = server.rtmgr.spawn_critical("RoundCoordinator");
 
 	loop {
 		let round_seq = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as usize;
 
-		match perform_round(app, &mut round_input_rx, round_seq).await {
+		match perform_round(server, &mut round_input_rx, round_seq).await {
 			RoundResult::Success => {},
 			RoundResult::Empty => {},
 			// Round got abandoned, immediatelly start a new one.
@@ -1396,12 +1396,12 @@ pub async fn run_round_coordinator(
 		}
 
 		// Sync our wallet so that it sees the broadcasted tx.
-		if let Err(e) = app.rounds_wallet.lock().await.sync(&app.bitcoind).await {
+		if let Err(e) = server.rounds_wallet.lock().await.sync(&server.bitcoind).await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};
 
 		// Sleep for the round interval, but discard all incoming messages.
-		tokio::pin! { let timeout = tokio::time::sleep(app.config.round_interval); }
+		tokio::pin! { let timeout = tokio::time::sleep(server.config.round_interval); }
 		'sleep: loop {
 			tokio::select! {
 				() = &mut timeout => break 'sleep,
@@ -1410,7 +1410,7 @@ pub async fn run_round_coordinator(
 					break 'sleep;
 				},
 				_ = round_input_rx.recv() => {},
-				_ = app.rtmgr.shutdown_signal() => {
+				_ = server.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting round coordinator loop...");
 					return Ok(());
 				}

@@ -28,7 +28,7 @@ use ark::util::{Decodable, Encodable};
 use aspd_rpc::{self as rpc, protos};
 use tonic::async_trait;
 
-use crate::App;
+use crate::Server;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
 use crate::round::RoundInput;
 use crate::telemetry::{self, RPC_GRPC_STATUS_CODE};
@@ -255,7 +255,7 @@ fn add_tracing_attributes(attributes: Vec<KeyValue>) -> () {
 }
 
 #[tonic::async_trait]
-impl rpc::server::ArkService for App {
+impl rpc::server::ArkService for Server {
 	async fn handshake(
 		&self,
 		req: tonic::Request<protos::HandshakeRequest>,
@@ -759,7 +759,7 @@ impl rpc::server::ArkService for App {
 }
 
 #[tonic::async_trait]
-impl rpc::server::AdminService for App {
+impl rpc::server::AdminService for Server {
 	async fn wallet_sync(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -1021,20 +1021,20 @@ fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'stati
 }
 
 /// Run the public gRPC endpoint.
-pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
-	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+pub async fn run_public_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(server.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 
-	let _worker = app.rtmgr.spawn_critical("PublicRpcServer");
+	let _worker = server.rtmgr.spawn_critical("PublicRpcServer");
 
-	let addr = app.config.rpc.public_address;
+	let addr = server.config.rpc.public_address;
 	info!("Starting public gRPC service on address {}", addr);
-	let ark_server = rpc::server::ArkServiceServer::from_arc(app.clone());
+	let ark_server = rpc::server::ArkServiceServer::from_arc(server.clone());
 
-	if app.config.otel_collector_endpoint.is_some() {
+	if server.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
 			.add_service(ark_server)
-			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
+			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start gRPC server on {}: {}", addr, e);
 				e
@@ -1042,7 +1042,7 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	} else {
 		tonic::transport::Server::builder()
 			.add_service(ark_server)
-			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
+			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start gRPC server on {}: {}", addr, e);
 				e
@@ -1055,20 +1055,20 @@ pub async fn run_public_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 }
 
 /// Run the public gRPC endpoint.
-pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
-	RPC_RICH_ERRORS.store(app.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+pub async fn run_admin_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(server.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 
-	let _worker = app.rtmgr.spawn_critical("AdminRpcServer");
+	let _worker = server.rtmgr.spawn_critical("AdminRpcServer");
 
-	let addr = app.config.rpc.admin_address.expect("shouldn't call this method otherwise");
+	let addr = server.config.rpc.admin_address.expect("shouldn't call this method otherwise");
 	info!("Starting admin gRPC service on address {}", addr);
-	let admin_server = rpc::server::AdminServiceServer::from_arc(app.clone());
+	let admin_server = rpc::server::AdminServiceServer::from_arc(server.clone());
 
-	if app.config.otel_collector_endpoint.is_some() {
+	if server.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
 			.add_service(admin_server)
-			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
+			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start admin gRPC server on {}: {}", addr, e);
 
@@ -1077,7 +1077,7 @@ pub async fn run_admin_rpc_server(app: Arc<App>) -> anyhow::Result<()> {
 	} else {
 		tonic::transport::Server::builder()
 			.add_service(admin_server)
-			.serve_with_shutdown(addr, app.rtmgr.shutdown_signal()).await
+			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
 				error!("Failed to start admin gRPC server on {}: {}", addr, e);
 
