@@ -417,6 +417,10 @@ impl App {
 			return badarg!("ASP public key is incorrect!");
 		}
 
+		if user_part.spec.amount < P2TR_DUST {
+			return badarg!("board amount must be at least {}", P2TR_DUST);
+		}
+
 		if let Some(max) = self.config.max_vtxo_amount {
 			if user_part.spec.amount > max {
 				return badarg!("board amount exceeds limit of {max}");
