@@ -37,7 +37,7 @@ use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
-use bitcoin_ext::{BlockRef, TransactionExt};
+use bitcoin_ext::{BlockRef, TransactionExt, P2TR_DUST};
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
@@ -546,6 +546,10 @@ impl App {
 		user_nonces: &[musig::MusigPubNonce],
 	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
 		let ids = payment.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+
+		if let Some(out) = payment.outputs.iter().find(|o| o.amount < P2TR_DUST) {
+			return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, out.amount);
+		}
 
 		if let Some(max) = self.config.max_vtxo_amount {
 			for r in &payment.outputs {
