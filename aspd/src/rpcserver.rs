@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
+use ark::board::UserPart;
 use ark::lightning::SignedBolt11Payment;
 use ark::{musig, VtxoIdInput, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::rounds::RoundId;
@@ -342,9 +343,8 @@ impl rpc::server::ArkService for App {
 
 		add_tracing_attributes(vec![KeyValue::new("user_part", format!("{:?}", req.get_ref().user_part))]);
 
-		let user_part = ciborium::from_reader::<ark::board::UserPart, _>(
-			&req.get_ref().user_part[..],
-		).badarg("invalid user part")?;
+		let user_part = UserPart::decode(&req.get_ref().user_part)
+			.badarg("invalid user part")?;
 
 		let asp_part = self.cosign_board(user_part).await.to_status()?;
 		let response = protos::BoardCosignResponse {

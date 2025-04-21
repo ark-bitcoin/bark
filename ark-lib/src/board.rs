@@ -12,6 +12,7 @@ use bitcoin::{taproot, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair};
 
+use crate::util::{Decodable, Encodable};
 use crate::{musig, util, vtxo, VtxoId, VtxoSpec};
 
 
@@ -74,6 +75,9 @@ impl UserPart {
 		vtxo::create_exit_tx(&self.spec, self.utxo, None)
 	}
 }
+
+impl Encodable for UserPart {}
+impl Decodable for UserPart {}
 
 #[derive(Debug)]
 pub struct PrivateUserPart {

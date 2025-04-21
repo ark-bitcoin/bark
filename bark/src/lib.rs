@@ -603,11 +603,7 @@ impl <P>Wallet<P> where
 		let (user_part, priv_user_part) = ark::board::new_user(spec, utxo);
 		let asp_part = {
 			let res = asp.client.request_board_cosign(protos::BoardCosignRequest {
-				user_part: {
-					let mut buf = Vec::new();
-					ciborium::into_writer(&user_part, &mut buf).unwrap();
-					buf
-				},
+				user_part: user_part.encode(),
 			}).await.context("error requesting board cosign")?;
 			ciborium::from_reader::<ark::board::AspPart, _>(&res.into_inner().asp_part[..])
 				.context("invalid ASP part in response")?
