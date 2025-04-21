@@ -10,7 +10,7 @@ use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
-use bitcoin_ext::{BlockHeight, P2WSH_DUST};
+use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use log::{trace, debug, info, warn, error};
 use opentelemetry::global;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
@@ -165,12 +165,20 @@ impl CollectingPayments {
 
 		let mut out_sum = Amount::ZERO;
 		for output in outputs {
+			if output.amount < P2TR_DUST {
+				return badarg!("vtxo amount must be at least {}", P2TR_DUST);
+			}
+
 			out_sum += output.amount;
 			if out_sum > in_sum {
 				return badarg!("total output amount exceeds total input amount");
 			}
 		}
 		for offboard in offboards {
+			if offboard.amount < P2TR_DUST {
+				return badarg!("offboard amount must be at least {}", P2TR_DUST);
+			}
+
 			let fee = offboard.fee(self.round_data.offboard_feerate)
 				.badarg("invalid offboard request")?;
 			out_sum += offboard.amount + fee;
