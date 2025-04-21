@@ -433,7 +433,7 @@ impl <P>Wallet<P> where
 	/// Retrieve the off-chain balance of the wallet.
 	///
 	/// Make sure you sync before calling this method.
-	pub async fn offchain_balance(&self) -> anyhow::Result<Amount> {
+	pub fn offchain_balance(&self) -> anyhow::Result<Amount> {
 		let mut sum = Amount::ZERO;
 		for vtxo in self.db.get_all_spendable_vtxos()? {
 			sum += vtxo.spec().amount;
@@ -1202,35 +1202,38 @@ impl <P>Wallet<P> where
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
-		let change_keypair = self.derive_store_next_keypair()?;
+		let balance = self.offchain_balance()?;
 
-		// Prepare the payment.
-		let input_vtxos = self.db.get_all_spendable_vtxos()?;
-
-		// do a quick check to fail early if we don't have enough money
-		let maybe_fee = OffboardRequest::calculate_fee(
-			&addr.script_pubkey(), FeeRate::from_sat_per_vb(1).unwrap(),
+		// do a quick check to fail early and not wait for round if we don't have enough money
+		let early_fees = OffboardRequest::calculate_fee(
+			&addr.script_pubkey(), FeeRate::BROADCAST_MIN,
 		).expect("script from address");
-		let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		if in_sum < amount + maybe_fee {
-			bail!("Balance too low");
+
+		if balance < amount + early_fees {
+			bail!("Your balance is too low. Needed: {}, available: {}", amount + early_fees, balance);
 		}
 
-		let RoundResult { round_id, .. } = self.participate_round(move |round| {
+		let RoundResult { round_id, .. } = self.participate_round(|round| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
 			};
 
-			let out_value = amount + offb.fee(round.offboard_feerate).expect("script from address");
+			let spent_amount = offb.amount + offb.fee(round.offboard_feerate)?;
+			let input_vtxos = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
+
+			let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
 			let change = {
-				if in_sum < out_value {
+				if in_sum < offb.amount {
+					// unreachable, because we checked for enough balance above
 					bail!("Balance too low");
-				} else if in_sum <= out_value + P2TR_DUST {
+				} else if in_sum <= spent_amount + P2TR_DUST {
 					info!("No change, emptying wallet.");
 					None
 				} else {
-					let amount = in_sum - out_value;
+					let amount = in_sum - spent_amount;
+					let change_keypair = self.derive_store_next_keypair()?;
 					info!("Adding change vtxo for {}", amount);
 					Some(PaymentRequest {
 						pubkey: change_keypair.public_key(),
