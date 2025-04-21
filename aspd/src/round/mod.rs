@@ -171,7 +171,7 @@ impl CollectingPayments {
 
 			out_sum += output.amount;
 			if out_sum > in_sum {
-				return badarg!("total output amount exceeds total input amount");
+				return badarg!("total output amount {} exceeds total input amount {}", out_sum, in_sum);
 			}
 		}
 		for offboard in offboards {
@@ -183,7 +183,7 @@ impl CollectingPayments {
 				.badarg("invalid offboard request")?;
 			out_sum += offboard.amount + fee;
 			if out_sum > in_sum {
-				return badarg!("total output amount (with offboards) exceeds total input amount");
+				return badarg!("total output amount with offboards {} exceeds total input amount {}", out_sum, in_sum);
 			}
 		}
 
