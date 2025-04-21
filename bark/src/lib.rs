@@ -984,6 +984,10 @@ impl <P>Wallet<P> where
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
 		let mut asp = self.require_asp()?;
 
+		if amount < P2TR_DUST {
+			bail!("Sent amount must be at least {}", P2TR_DUST);
+		}
+
 		let oor = self.create_oor_vtxo(destination, amount).await?;
 
 		let req = protos::OorVtxo {
@@ -1014,6 +1018,7 @@ impl <P>Wallet<P> where
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Vec<u8>> {
 		let properties = self.db.read_properties()?.context("Missing config")?;
+
 		if invoice.network() != properties.network {
 			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
 		}
@@ -1029,7 +1034,11 @@ impl <P>Wallet<P> where
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
 			bail!("Invoice has amount of {} encoded. Please omit amount argument", inv);
 		}
+
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
+		if amount < P2TR_DUST {
+			bail!("Sent amount must be at least {}", P2TR_DUST);
+		}
 
 		let change_keypair = self.derive_store_next_keypair()?;
 
@@ -1313,6 +1322,15 @@ impl <P>Wallet<P> where
 
 			let (input_vtxos, pay_reqs, offb_reqs) = round_input(&round_state.info)
 				.context("error providing round input")?;
+
+			if let Some(payreq) = pay_reqs.iter().find(|p| p.amount < P2TR_DUST) {
+				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
+			}
+
+			if let Some(offb) = offb_reqs.iter().find(|o| o.amount < P2TR_DUST) {
+				bail!("Offboard amount must be at least {}, requested {}", P2TR_DUST, offb.amount);
+			}
+
 			// Convert the input vtxos to a map to cache their ids.
 			let input_vtxos = input_vtxos.into_iter()
 				.map(|v| (v.id(), v))
