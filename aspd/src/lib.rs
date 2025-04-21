@@ -616,48 +616,44 @@ impl App {
 			tip + 7 * 18
 		};
 
-		let ret = 'htlc_cosign: {
-			let details = Bolt11Payment {
-				invoice,
-				inputs: input_vtxos,
-				asp_pubkey: self.asp_key.public_key(),
-				user_pubkey: user_pk,
-				payment_amount: amount,
-				forwarding_fee: Amount::ZERO, //TODO(stevenroose) set fee schedule
-				htlc_delta: self.config.htlc_delta,
-				htlc_expiry_delta: self.config.htlc_expiry_delta,
-				htlc_expiry: expiry,
-				exit_delta: self.config.vtxo_exit_delta,
-			};
-
-			if !details.check_amounts() {
-				break 'htlc_cosign badarg!("invalid amounts");
-			}
-
-			let txid = details.unsigned_transaction().compute_txid();
-			let new_vtxos = details
-				.unsigned_change_vtxo()
-				.map(|vtxo| vec![vtxo.into()])
-				.unwrap_or_default();
-
-			match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
-				Ok(Some(dup)) => {
-					badarg!("attempted to sign OOR for already spent vtxo {}", dup)
-				},
-				Ok(None) => {
-					info!("Cosigning HTLC tx {} with inputs: {:?}", txid, ids);
-					// let's sign the tx
-					let (nonces, part_sigs) = details.sign_asp(
-						&self.asp_key,
-						user_nonces,
-					);
-					Ok((details, nonces, part_sigs))
-				},
-				Err(e) => Err(e),
-			}
+		let details = Bolt11Payment {
+			invoice,
+			inputs: input_vtxos,
+			asp_pubkey: self.asp_key.public_key(),
+			user_pubkey: user_pk,
+			payment_amount: amount,
+			forwarding_fee: Amount::ZERO, //TODO(stevenroose) set fee schedule
+			htlc_delta: self.config.htlc_delta,
+			htlc_expiry_delta: self.config.htlc_expiry_delta,
+			htlc_expiry: expiry,
+			exit_delta: self.config.vtxo_exit_delta,
 		};
 
-		ret
+		if let Err(e) = details.check_amounts() {
+			return Err(e).badarg("invalid amounts");
+		}
+
+		let txid = details.unsigned_transaction().compute_txid();
+		let new_vtxos = details
+			.unsigned_change_vtxo()
+			.map(|vtxo| vec![vtxo.into()])
+			.unwrap_or_default();
+
+		match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
+			Ok(Some(dup)) => {
+				badarg!("attempted to sign OOR for already spent vtxo {}", dup)
+			},
+			Ok(None) => {
+				info!("Cosigning HTLC tx {} with inputs: {:?}", txid, ids);
+				// let's sign the tx
+				let (nonces, part_sigs) = details.sign_asp(
+					&self.asp_key,
+					user_nonces,
+				);
+				Ok((details, nonces, part_sigs))
+			},
+			Err(e) => Err(e),
+		}
 	}
 
 
