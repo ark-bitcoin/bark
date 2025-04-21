@@ -2,12 +2,14 @@ use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ark::board::UserPart;
+use ark::oor::OorPayment;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::{ScriptBuf, WPubkeyHash};
-use bitcoin_ext::DEEPLY_CONFIRMED;
+use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST, P2TR_DUST_SAT};
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{error, info, trace};
@@ -15,13 +17,13 @@ use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, VtxoId};
 use ark::rounds::VtxoOwnershipChallenge;
-use ark::util::{Encodable, SECP};
+use ark::util::{Decodable, Encodable, SECP};
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 	UnconfirmedBoardSpendAttempt, RoundError
 };
-use aspd_rpc::protos;
+use aspd_rpc::protos::{self, BoardCosignRequest, Bolt11PaymentRequest, OorCosignRequest, SubmitPaymentRequest};
 
 use ark_testing::{Aspd, TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -896,4 +898,179 @@ async fn register_onboard_is_idempotent() {
 	for _ in 0..5 {
 		rpc.register_board_vtxo(request.clone()).await.unwrap();
 	}
+}
+
+#[tokio::test]
+async fn reject_subdust_board_cosign() {
+	let ctx = TestContext::new("aspd/reject_subdust_board_cosign").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn request_board_cosign(&mut self, req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
+			let mut user_part = UserPart::decode(&req.user_part).unwrap();
+			user_part.spec.amount = P2TR_DUST - Amount::ONE_SAT;
+
+			Ok(self.upstream().request_board_cosign(BoardCosignRequest {
+				user_part: user_part.encode(),
+			}).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
+
+	let res = bark.try_board_all().await;
+	assert!(res.unwrap_err().to_string().contains("bad user input: board amount must be at least 0.00000330 BTC"));
+}
+
+
+#[tokio::test]
+async fn reject_subdust_vtxo_request() {
+	let ctx = TestContext::new("aspd/reject_subdust_vtxo_request").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			Ok(self.upstream().submit_payment(SubmitPaymentRequest {
+				input_vtxos: req.input_vtxos,
+				vtxo_requests: vec![protos::VtxoRequest {
+					amount: P2TR_DUST_SAT - 1,
+					vtxo_public_key: req.vtxo_requests[0].vtxo_public_key.clone(),
+					cosign_pubkey: req.vtxo_requests[0].cosign_pubkey.clone(),
+					public_nonces: req.vtxo_requests[0].public_nonces.clone(),
+				}],
+				offboard_requests: req.offboard_requests,
+			}).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
+	bark.timeout = Duration::from_millis(2_500);
+
+	bark.board_all().await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	let res = bark.try_refresh_all().await;
+	assert!(res.unwrap_err().to_string().contains("bad user input: vtxo amount must be at least 0.00000330 BTC"));
+}
+
+#[tokio::test]
+async fn reject_subdust_offboard_request() {
+	let ctx = TestContext::new("aspd/reject_subdust_offboard_request").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			Ok(self.upstream().submit_payment(SubmitPaymentRequest {
+				input_vtxos: req.input_vtxos,
+				vtxo_requests: vec![],
+				offboard_requests: vec![protos::OffboardRequest {
+					amount: P2TR_DUST_SAT - 1,
+					offboard_spk: req.offboard_requests[0].offboard_spk.clone(),
+				}],
+			}).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
+	bark.timeout = Duration::from_millis(2_500);
+
+	bark.board_all().await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	let addr = bark.get_onchain_address().await;
+	let res = bark.try_offboard_all(&addr).await;
+
+	assert!(res.unwrap_err().to_string().contains("bad user input: offboard amount must be at least 0.00000330 BTC"));
+}
+
+#[tokio::test]
+async fn reject_subdust_oor_cosign() {
+	let ctx = TestContext::new("aspd/reject_subdust_oor_cosign").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn request_oor_cosign(&mut self, req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+			let mut oor_payment = OorPayment::decode(&req.payment).unwrap();
+			oor_payment.outputs[0].amount = P2TR_DUST - Amount::ONE_SAT;
+
+			Ok(self.upstream().request_oor_cosign(OorCosignRequest {
+				payment: oor_payment.encode(),
+				pub_nonces: req.pub_nonces,
+			}).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
+
+	bark.board_all().await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	let bark2 = ctx.new_bark("bark2", &aspd).await;
+
+	let res = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000)).await;
+	assert!(res.unwrap_err().to_string().contains("bad user input: VTXO amount must be at least 0.00000330 BTC, requested 0.00000329 BTC"));
+}
+
+#[tokio::test]
+async fn reject_subdust_bolt11_payment() {
+	let ctx = TestContext::new("aspd/reject_subdust_bolt11_payment").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::Bolt11PaymentDetails, tonic::Status> {
+			Ok(self.upstream().start_bolt11_payment(Bolt11PaymentRequest {
+				invoice: req.invoice,
+				amount_sats: Some(P2TR_DUST_SAT - 1),
+				input_vtxos: req.input_vtxos,
+				user_pubkey: req.user_pubkey,
+				user_nonces: req.user_nonces,
+			}).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
+
+	bark.board_all().await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
+	let res = bark.try_send_bolt11(invoice, Some(sat(100_000))).await;
+	assert!(res.unwrap_err().to_string().contains("bad user input: invalid amounts: payment amount must be at least 0.00000330 BTC"));
 }

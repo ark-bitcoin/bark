@@ -304,8 +304,12 @@ impl Bark {
 		self.run(["refresh", "--counterparty"]).await;
 	}
 
+	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::Offboard> {
+		self.try_run_json(["offboard", "--all", "--address", &address.to_string()]).await
+	}
+
 	pub async fn offboard_all(&self, address: impl fmt::Display) -> json::Offboard {
-		self.run_json(["offboard", "--all", "--address", &address.to_string()]).await
+		self.try_offboard_all(address).await.expect("offboard --all command failed")
 	}
 
 	pub async fn offboard_vtxo(
