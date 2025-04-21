@@ -1253,7 +1253,7 @@ impl <P>Wallet<P> where
 	/// attempts. Lateron this will also be useful so we can randomize destinations between failed
 	/// round attempts for better privacy.
 	async fn participate_round(
-		&mut self,
+		&self,
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
