@@ -136,10 +136,9 @@ impl BarkPersister for SqliteClient {
 		query::get_vtxos_by_state(&conn, state)
 	}
 
-	/// Get the soonest-expiring vtxos with total value at least `min_value`.
-	fn get_expiring_vtxos(&self, min_value: Amount) -> anyhow::Result<Vec<Vtxo>> {
+	fn select_vtxos_to_cover(&self, amount: Amount) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
-		query::get_expiring_vtxos(&conn, min_value)
+		query::select_vtxos_to_cover(&conn, amount)
 	}
 
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
@@ -274,8 +273,7 @@ pub mod test {
 
 	#[test]
 	fn test_add_and_retreive_vtxos() {
-
-	let pk: PublicKey = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
+		let pk: PublicKey = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
 
 		let vtxo_1 = dummy_board(1);
 		let vtxo_2 = dummy_board(2);
@@ -313,11 +311,11 @@ pub mod test {
 
 		// Get expiring vtxo's
 		// Matches exactly the first vtxo
-		let vs = db.get_expiring_vtxos(Amount::from_sat(500)).unwrap();
+		let vs = db.select_vtxos_to_cover(Amount::from_sat(500)).unwrap();
 		assert_eq!(vs, [vtxo_1.clone()]);
 
 		// Overshoots the first vtxo by one sat
-		let vs = db.get_expiring_vtxos(Amount::from_sat(501)).unwrap();
+		let vs = db.select_vtxos_to_cover(Amount::from_sat(501)).unwrap();
 		assert_eq!(vs, [vtxo_1.clone(), vtxo_2.clone()]);
 
 		// Verify that we can mark a vtxo as spent
@@ -336,7 +334,7 @@ pub mod test {
 
 		// The first vtxo has been spent
 		// It shouldn't be used for coin selection
-		let vs = db.get_expiring_vtxos(Amount::from_sat(501)).unwrap();
+		let vs = db.select_vtxos_to_cover(Amount::from_sat(501)).unwrap();
 		assert_eq!(vs, [vtxo_2.clone(), vtxo_3.clone()]);
 
 		conn.close().unwrap();

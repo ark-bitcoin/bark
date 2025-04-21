@@ -890,7 +890,7 @@ impl <P>Wallet<P> where
 		let offchain_fees = Amount::ZERO;
 		let spent_amount = amount + offchain_fees;
 
-		let input_vtxos = self.db.get_expiring_vtxos(spent_amount)?;
+		let input_vtxos = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
 
 		let change = {
 			let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
@@ -1034,7 +1034,7 @@ impl <P>Wallet<P> where
 		let change_keypair = self.derive_store_next_keypair()?;
 
 		let forwarding_fee = Amount::from_sat(350);
-		let inputs = self.db.get_expiring_vtxos(amount + forwarding_fee)?;
+		let inputs = self.db.select_vtxos_to_cover(amount + forwarding_fee)?;
 
 
 		let (sec_nonces, pub_nonces, keypairs) = {
