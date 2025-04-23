@@ -242,9 +242,9 @@ impl <P>Exit<P> where
 
 			let txs = vtxo.exit_txs();
 			'tx: for tx in txs {
-				trace!("broadcasting transaction: {} / {}", tx.compute_txid(), serialize_hex(&tx));
-
 				let txid = tx.compute_txid();
+				trace!("broadcasting transaction: {} / {}", txid, serialize_hex(&tx));
+
 				match self.index.exit_tx_status.entry(txid).or_default() {
 					TxStatus::ConfirmedIn(_) => {
 						if let Ok(None) = self.chain_source.tx_confirmed(txid).await {

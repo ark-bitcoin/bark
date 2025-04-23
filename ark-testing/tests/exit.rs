@@ -63,7 +63,7 @@ async fn simple_exit() {
 	ctx.bitcoind().generate(1).await;
 
 	// Wallet has 1_000_000 sats of funds minus fees
-	assert_eq!(bark.onchain_balance().await, sat(996_779));
+	assert_eq!(bark.onchain_balance().await, sat(996_993));
 
 	// Verify exit output is considered as part of the wallets
 	let utxos = bark.utxos().await;
@@ -114,7 +114,7 @@ async fn fail_handshake() {
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
-	assert_eq!(bark.onchain_balance().await, sat(96_779));
+	assert_eq!(bark.onchain_balance().await, sat(96_993));
 }
 
 #[tokio::test]
@@ -346,7 +346,7 @@ async fn exit_oor() {
 	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
 	bark2.start_exit_all().await;
 	complete_exit(&ctx, &bark2).await;
-	assert_eq!(bark2.onchain_balance().await, sat(1_095_461));
+	assert_eq!(bark2.onchain_balance().await, sat(1_095_229));
 
 	// Verify exit output is considered as part of the wallet
 	let utxos = bark2.utxos().await;
@@ -383,7 +383,7 @@ async fn double_exit_call() {
 
 	bark1.start_exit_all().await;
 	complete_exit(&ctx, &bark1).await;
-	assert_eq!(bark1.onchain_balance().await, sat(1_319_019));
+	assert_eq!(bark1.onchain_balance().await, sat(1_319_215));
 
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 7);
@@ -472,7 +472,7 @@ async fn exit_bolt11_change() {
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.send_bolt11(invoice, None).await;
-	assert_eq!(bark_1.offchain_balance().await, sat(299999670));
+	assert_eq!(bark_1.offchain_balance().await, btc(3));
 
 	// We try to perform an exit for ln payment change
 	let vtxo = &bark_1.vtxos().await[0];

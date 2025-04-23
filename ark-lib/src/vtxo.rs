@@ -20,7 +20,7 @@ use crate::{musig, oor, util};
 
 
 /// The total signed tx weight of a exit tx.
-pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(154);
+pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(124);
 
 /// The input weight required to claim a VTXO.
 const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
@@ -189,7 +189,7 @@ pub fn create_exit_tx(
 		}],
 		output: vec![
 			spec.txout(),
-			fee::dust_anchor(),
+			fee::fee_anchor(),
 		],
 	}
 }

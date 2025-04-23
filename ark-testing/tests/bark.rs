@@ -99,7 +99,7 @@ async fn board_all_bark() {
 	let board_tx = ctx.await_transaction(&board_txid).await;
 	assert_eq!(
 		bark1.offchain_balance().await,
-		board_tx.output.last().unwrap().value - ark::board::board_surplus(),
+		board_tx.output.last().unwrap().value,
 	);
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 }
@@ -122,11 +122,9 @@ async fn list_utxos() {
 
 	let utxos = bark.utxos().await;
 
-	println!("utxos: {:?}", utxos);
 	assert_eq!(2, utxos.len());
-	println!("utxos: {:?}", utxos);
 	// onboard change utxo
-	assert!(utxos.iter().any(|u| u.amount.to_sat() == 798_898));
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 799_228));
 	// offboard utxo
 	assert!(utxos.iter().any(|u| u.amount.to_sat() == 198_900));
 }
@@ -220,7 +218,7 @@ async fn just_oor() {
 	let pk2 = bark2.vtxo_pubkey().await;
 	bark1.send_oor(pk2, sat(20_000)).await;
 
-	assert_eq!(59_340, bark1.offchain_balance().await.to_sat());
+	assert_eq!(60_000, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
 }
 
@@ -332,7 +330,7 @@ async fn list_movements() {
 	assert_eq!(payments.len(), 1);
 	assert_eq!(payments[0].spends.len(), 0);
 	assert_eq!(payments[0].receives[0].amount, sat(300_000));
-	assert_eq!(payments[0].fees.to_sat(), 0);
+	assert_eq!(payments[0].fees, Amount::ZERO);
 	assert!(payments[0].recipients.first().is_none());
 
 	// oor change
@@ -340,17 +338,17 @@ async fn list_movements() {
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 2);
 	assert_eq!(payments[0].spends[0].amount, sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, sat(149_340));
-	assert_eq!(payments[0].fees, sat(330));
+	assert_eq!(payments[0].receives[0].amount, sat(150_000));
+	assert_eq!(payments[0].fees, Amount::ZERO);
 	assert!(payments[0].recipients.first().is_some());
 
 	// refresh vtxos
 	bark1.refresh_all().await;
 	let payments = bark1.list_movements().await;
 	assert_eq!(payments.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, sat(149_340));
-	assert_eq!(payments[0].receives[0].amount, sat(149_340));
-	assert_eq!(payments[0].fees.to_sat(), 0);
+	assert_eq!(payments[0].spends[0].amount, sat(150_000));
+	assert_eq!(payments[0].receives[0].amount, sat(150_000));
+	assert_eq!(payments[0].fees, Amount::ZERO);
 	assert!(payments[0].recipients.first().is_none());
 
 	// oor vtxo
@@ -359,7 +357,7 @@ async fn list_movements() {
 	assert_eq!(payments.len(), 4);
 	assert_eq!(payments[0].spends.len(), 0);
 	assert_eq!(payments[0].receives[0].amount, sat(330_000));
-	assert_eq!(payments[0].fees.to_sat(), 0);
+	assert_eq!(payments[0].fees, Amount::ZERO);
 	assert!(payments[0].recipients.first().is_none());
 }
 
@@ -384,7 +382,7 @@ async fn multiple_spends_in_payment() {
 	assert_eq!(payments[0].spends[1].amount, sat(200_000));
 	assert_eq!(payments[0].spends[2].amount, sat(300_000));
 	assert_eq!(payments[0].receives[0].amount, sat(600_000));
-	assert_eq!(payments[0].fees.to_sat(), 0);
+	assert_eq!(payments[0].fees, Amount::ZERO);
 }
 
 #[tokio::test]
@@ -878,7 +876,7 @@ async fn subdust_change_vtxos() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	bark1.board(sat(1_700)).await;
+	bark1.board(sat(1_200)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(1_000)).await;
@@ -887,12 +885,12 @@ async fn subdust_change_vtxos() {
 	assert_eq!(vtxo.amount, sat(1_000));
 
 	let [change] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
-	assert_eq!(change.amount, sat(40));
+	assert_eq!(change.amount, sat(200));
 
 	bark1.board(sat(100_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	bark1.refresh_all().await;
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
-	assert_eq!(vtxo.amount, sat(100_040));
+	assert_eq!(vtxo.amount, sat(100_200));
 }

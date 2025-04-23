@@ -8,11 +8,9 @@
 use std::fmt;
 
 use bitcoin::sighash::{self, SighashCache};
-use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
+use bitcoin::{taproot, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair};
-
-use bitcoin_ext::P2WSH_DUST;
 
 use crate::{musig, util, vtxo, VtxoId, VtxoSpec};
 
@@ -40,21 +38,11 @@ pub fn board_spk(spec: &VtxoSpec) -> ScriptBuf {
 	ScriptBuf::new_p2tr_tweaked(board_taproot(spec).output_key())
 }
 
-/// The additional amount that needs to be sent into the board tx.
-pub fn board_surplus() -> Amount {
-	P2WSH_DUST
-}
-
-/// The amount that should be sent into the board output.
-pub fn board_amount(spec: &VtxoSpec) -> Amount {
-	spec.amount + board_surplus()
-}
-
-fn board_txout(spec: &VtxoSpec) -> TxOut {
+pub fn board_txout(spec: &VtxoSpec) -> TxOut {
 	TxOut {
 		script_pubkey: board_spk(&spec),
 		//TODO(stevenroose) consider storing both leaf and input values in vtxo struct
-		value: spec.amount + board_surplus(),
+		value: spec.amount,
 	}
 }
 
@@ -257,7 +245,7 @@ impl BoardVtxo {
 			)));
 		}
 		let amount = board_tx.output[output_idx].value;
-		if amount != board_amount(&self.spec) {
+		if amount != self.spec.amount {
 			return Err(BoardTxValidationError(format!(
 				"vtxo {} has incorrect board amount: {}", id, amount,
 			)));
@@ -269,6 +257,8 @@ impl BoardVtxo {
 
 #[cfg(test)]
 mod test {
+	use bitcoin::Amount;
+
 	use crate::vtxo::VtxoSpkSpec;
 
 	use super::*;

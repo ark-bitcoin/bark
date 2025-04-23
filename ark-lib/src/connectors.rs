@@ -15,7 +15,7 @@ use crate::util::{self, SECP};
 
 
 /// The weight of each connector tx.
-const TX_WEIGHT: Weight = Weight::from_vb_unchecked(197);
+const TX_WEIGHT: Weight = Weight::from_vb_unchecked(167);
 
 /// The witness weight of a connector input.
 pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
@@ -47,26 +47,14 @@ impl ConnectorChain {
 	}
 
 	/// The budget needed for a chain of length [len] to pay for
-	/// - one dust for the connector output per tx
-	/// - a fee anchor per tx
-	/// - one extra dust on the last tx
+	/// one dust for the connector output per tx
 	pub fn required_budget(len: usize) -> Amount {
 		assert_ne!(len, 0);
 
-		if len == 1 {
-			// in this case we don't have a connector chain and the
-			// single connector is on the round tx
-			P2WSH_DUST
-		} else {
-			// We need n times dust for connectors.
-			let connector_dust = P2WSH_DUST * len as u64;
-
-			// And one fee anchor dust for each tx in the chain.
-			let nb_txs = len - 1;
-			let fee_anchor_dust = P2WSH_DUST * nb_txs as u64;
-
-			connector_dust + fee_anchor_dust
-		}
+		// Each tx of the chain will hold one output to continue the
+		// chain + one output for the connector + one fee anchor output
+		// So the required budget is 1 dust per connector
+		P2WSH_DUST * len as u64
 	}
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
@@ -128,7 +116,7 @@ impl ConnectorChain {
 					value: P2WSH_DUST,
 				},
 				// this is the fee anchor output
-				fee::dust_anchor(),
+				fee::fee_anchor(),
 			],
 		}
 	}

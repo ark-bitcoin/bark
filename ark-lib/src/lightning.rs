@@ -5,10 +5,9 @@ use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, W
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
-use bitcoin_ext::fee::dust_anchor;
 use lightning_invoice::Bolt11Invoice;
 
-use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
+use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::oor::OorPayment;
 use crate::util::{Decodable, Encodable};
@@ -59,8 +58,7 @@ pub fn htlc_taproot(
 impl Bolt11Payment {
 	pub fn check_amounts(&self) -> bool {
 		let inputs = self.inputs.iter().map(|v| v.amount()).sum::<Amount>();
-		//TODO(stevenroose) account for relay fee
-		inputs >= (self.payment_amount + self.forwarding_fee + P2WSH_DUST)
+		inputs >= (self.payment_amount + self.forwarding_fee)
 	}
 
 	fn htlc_spk(&self) -> ScriptBuf {
@@ -104,11 +102,10 @@ impl Bolt11Payment {
 	}
 
 	pub fn change_amount(&self) -> Amount {
-		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).fold(Amount::ZERO, |a,b| a+b);
+		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
 		let payment_amount = self.payment_amount;
 		let forwarding_fee = self.forwarding_fee;
-		let dust_amount = Amount::from_sat(P2TR_DUST_SAT);
-		input_amount - payment_amount - forwarding_fee - dust_amount
+		input_amount - payment_amount - forwarding_fee
 	}
 
 	pub fn unsigned_transaction(&self) -> Transaction {
@@ -118,18 +115,14 @@ impl Bolt11Payment {
 		let htlc_output = self.htlc_txout();
 		let htlc_amount = htlc_output.value;
 
-		let dust_amount = Amount::from_sat(P2TR_DUST_SAT);
-
 		// Just checking the computed fees work
 		// Our input's should equal our outputs + onchain fees
 		let change_output = self.change_txout();
 		let change_amount = change_output.as_ref().map(|o| o.value).unwrap_or_default();
 
-		assert_eq!(input_amount, htlc_amount + dust_amount + change_amount,
-			"htlc={htlc_amount}, dust={dust_amount}, change={change_amount}",
+		assert_eq!(input_amount, htlc_amount + change_amount,
+			"htlc={htlc_amount}, change={change_amount}",
 		);
-
-		let dust_anchor_output = fee::dust_anchor();
 
 		Transaction {
 			version: bitcoin::blockdata::transaction::Version(3),
@@ -144,7 +137,7 @@ impl Bolt11Payment {
 			}).collect(),
 			output: iter::once(htlc_output)
 				.chain(change_output)
-				.chain(Some(dust_anchor_output))
+				.chain(Some(fee::fee_anchor()))
 				.collect(),
 		}
 	}
@@ -330,11 +323,9 @@ impl SignedBolt11Payment {
 	pub fn revocation_payment(&self) -> OorPayment {
 		let htlc_vtxo = Vtxo::from(self.htlc_vtxo());
 
-		// We need to keep budget for the dust anchor
-		let revoke_amount = htlc_vtxo.amount() - dust_anchor().value;
 		let pay_req = PaymentRequest {
 			pubkey: htlc_vtxo.spec().user_pubkey,
-			amount: revoke_amount
+			amount: htlc_vtxo.amount()
 		};
 
 		OorPayment {

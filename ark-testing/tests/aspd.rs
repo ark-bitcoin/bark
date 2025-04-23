@@ -224,7 +224,7 @@ async fn max_vtxo_amount() {
 	bark1.offboard_all(address.clone()).await;
 	ctx.bitcoind().generate(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
-	assert_eq!(balance, Amount::from_sat(598_440));
+	assert_eq!(balance, Amount::from_sat(599_100));
 }
 
 #[tokio::test]
@@ -277,13 +277,13 @@ async fn sweep_vtxos() {
 	// now we expire the first one, still not sweeping because not enough surplus
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(73790), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
+	assert_eq!(sat(73_760), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
 	ctx.bitcoind().generate(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(147580), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	assert_eq!(sat(147_520), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "board");
@@ -293,7 +293,7 @@ async fn sweep_vtxos() {
 	ctx.bitcoind().generate(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(149980), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	assert_eq!(sat(149_650), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "vtxo");
@@ -305,7 +305,7 @@ async fn sweep_vtxos() {
 
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(101615), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	assert_eq!(sat(101_255), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len());
 	assert_eq!(sweeps[0].sweep_type, "connector");
@@ -323,7 +323,7 @@ async fn sweep_vtxos() {
 	info!("Round done signal received");
 	let stats = log_stats.recv().fast().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);
-	assert_eq!(1_242_212, aspd.wallet_status().await.total_balance.to_sat());
+	assert_eq!(1_242_122, aspd.wallet_status().await.total_balance.to_sat());
 }
 
 #[tokio::test]

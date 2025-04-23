@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use bitcoin_ext::{fee, P2WSH_DUST, BlockHeight, TransactionExt};
+use bitcoin_ext::{fee, BlockHeight, TransactionExt};
 
 use crate::util::{Decodable, Encodable};
 use crate::{musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
@@ -68,10 +68,8 @@ impl VtxoTreeSpec {
 	///
 	/// This accounts for
 	/// - all vtxos getting their value
-	/// - a dust fee anchor at each node, both internal and leaves
 	pub fn total_required_value(&self) -> Amount {
 		self.vtxos.iter().map(|d| d.amount).sum::<Amount>()
-			+ P2WSH_DUST * Tree::nb_nodes_for_leaves(self.nb_leaves()) as u64
 	}
 
 	/// The expiry clause hidden in the node taproot as only script.
@@ -130,7 +128,7 @@ impl VtxoTreeSpec {
 					script_pubkey: self.cosign_spk(*agg_pk),
 					value: tx.output_value(),
 				}
-			}).chain(Some(fee::dust_anchor())).collect(),
+			}).chain(Some(fee::fee_anchor())).collect(),
 		}
 	}
 
@@ -786,7 +784,7 @@ mod test {
 			2016,
 		);
 		assert_eq!(spec.nb_leaves(), nb_leaves);
-		assert_eq!(spec.total_required_value().to_sat(), 2711880);
+		assert_eq!(spec.total_required_value().to_sat(), 2700000);
 
 		let unsigned = spec.into_unsigned_tree(point);
 
@@ -797,7 +795,7 @@ mod test {
 			unsigned.sighashes.iter().for_each(|h| eng.input(&h[..]));
 			siphash24::Hash::from_engine(eng)
 		};
-		assert_eq!(sighashes_hash.to_string(), "2179a0be7c366ef5");
+		assert_eq!(sighashes_hash.to_string(), "f763b4c77cddfd8f");
 
 		let signed = unsigned.into_signed_tree(vec![random_sig; nb_leaves]);
 
