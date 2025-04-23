@@ -1,5 +1,8 @@
 
 pub mod model;
+mod cln;
+
+pub use self::cln::ClnNodeId;
 
 mod embedded {
 	use refinery::embed_migrations;
@@ -29,7 +32,7 @@ use ark::util::{Decodable, Encodable};
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
-use self::model::{PendingSweep, StoredRound, VtxoState};
+use crate::database::model::{PendingSweep, StoredRound, VtxoState};
 
 const DEFAULT_DATABASE: &str = "postgres";
 
@@ -524,3 +527,4 @@ fn wallet_table(kind: WalletKind) -> &'static str {
 		WalletKind::Rounds => "wallet_changeset",
 	}
 }
+
