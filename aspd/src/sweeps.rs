@@ -51,8 +51,8 @@ use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
 
 use ark::{BoardVtxo, VtxoSpec};
-use ark::connectors::ConnectorChain;
-use ark::rounds::RoundId;
+use ark::connectors::{ConnectorChain, CONNECTOR_TX_CHAIN_VOUT, CONNECTOR_TX_CONNECTOR_VOUT};
+use ark::rounds::{RoundId, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 
 use crate::bitcoind::{RpcApi, BitcoinRpcClient};
 use crate::database::model::StoredRound;
@@ -332,7 +332,7 @@ impl<'a> SweepBuilder<'a> {
 
 		if !tree_root.confirmed().await {
 			trace!("Tree root tx {} not yet confirmed, sweeping round tx...", tree_root.txid);
-			let point = OutPoint::new(round.id.as_round_txid(), 0);
+			let point = OutPoint::new(round.id.as_round_txid(), ROUND_TX_VTXO_TREE_VOUT);
 			if let Some((h, txid)) = self.sweeper.is_swept(point).await {
 				trace!("Round tx vtxo tree output {point} is already swept \
 					by us at height {h} with tx {txid}");
@@ -398,10 +398,10 @@ impl<'a> SweepBuilder<'a> {
 		// NB we don't really know the number of connectors, because we don't know the number
 		// of inputs to the round. it doesn't matter, though, they are pre-signed, so
 		// we can generate any chain of connector txs and check if the txs are on the chain or not
-		let round_point = OutPoint::new(round.id.as_round_txid(), 1);
+		let round_point = OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT);
 		let mut conn_txs = round.connectors.iter_unsigned_txs();
 
-		let mut last = (round_point, round.round.tx.output[1].clone());
+		let mut last = (round_point, round.round.tx.output[ROUND_TX_CONNECTOR_VOUT as usize].clone());
 		let mut ret = Some(0);
 		loop {
 			let tx = match conn_txs.next() {
@@ -419,7 +419,7 @@ impl<'a> SweepBuilder<'a> {
 
 			if tx.confirmed().await {
 				// Check if the connector output is still unspent.
-				let conn = OutPoint::new(tx.txid, 1);
+				let conn = OutPoint::new(tx.txid, CONNECTOR_TX_CONNECTOR_VOUT);
 				match self.sweeper.bitcoind.get_tx_out(&conn.txid, conn.vout, Some(true)) {
 					Ok(Some(out)) => {
 						if let Some((h, _txid)) = self.sweeper.is_swept(conn).await {
@@ -442,7 +442,7 @@ impl<'a> SweepBuilder<'a> {
 				}
 
 				// Then continue the chain.
-				last = (OutPoint::new(tx.txid, 0), tx.tx.output[0].clone());
+				last = (OutPoint::new(tx.txid, CONNECTOR_TX_CHAIN_VOUT), tx.tx.output[CONNECTOR_TX_CHAIN_VOUT as usize].clone());
 			} else {
 				// add the last point
 				let (point, output) = last;
@@ -582,8 +582,8 @@ impl Process {
 	/// Clean up all artifacts after a round has been swept.
 	async fn round_finished(&mut self, round: &ExpiredRound) {
 		// round tx root
-		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), 0));
-		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), 1));
+		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_VTXO_TREE_VOUT));
+		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT));
 		self.txindex.unregister(round.id.as_round_txid()).await;
 
 		// vtxo tree txs

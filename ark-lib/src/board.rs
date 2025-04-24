@@ -15,6 +15,8 @@ use bitcoin::secp256k1::{schnorr, Keypair};
 use crate::util::{Decodable, Encodable};
 use crate::{musig, util, vtxo, VtxoId, VtxoSpec};
 
+/// The output index of the board vtxo in the board tx.
+pub const BOARD_TX_VTXO_VOUT: u32 = 0;
 
 pub fn board_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
 	let expiry = util::timelock_sign(spec.expiry_height, spec.asp_pubkey.x_only_public_key().0);

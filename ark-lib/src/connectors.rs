@@ -13,6 +13,13 @@ use bitcoin_ext::{fee, KeypairExt, P2WSH_DUST};
 
 use crate::util::{self, SECP};
 
+/// The output index of the connector chain continuation in the connector tx.
+///
+/// In the last item of the chain, it is a connector output along with
+/// output at index 1.
+pub const CONNECTOR_TX_CHAIN_VOUT: u32 = 0;
+/// The output index of the connector output in the connector tx.
+pub const CONNECTOR_TX_CONNECTOR_VOUT: u32 = 1;
 
 /// The weight of each connector tx.
 const TX_WEIGHT: Weight = Weight::from_vb_unchecked(167);
@@ -229,7 +236,7 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 		}
 
 		self.idx += 1;
-		self.prev = OutPoint::new(ret.compute_txid(), 0);
+		self.prev = OutPoint::new(ret.compute_txid(), CONNECTOR_TX_CHAIN_VOUT);
 		Some(ret)
 	}
 
@@ -279,8 +286,8 @@ impl<'a> iter::Iterator for ConnectorIter<'a> {
 
 		if let Some(tx) = self.txs.next() {
 			let txid = tx.compute_txid();
-			self.maybe_last = Some((OutPoint::new(txid, 0), Some(tx.clone())));
-			Some((OutPoint::new(txid, 1), Some(tx)))
+			self.maybe_last = Some((OutPoint::new(txid, CONNECTOR_TX_CHAIN_VOUT), Some(tx.clone())));
+			Some((OutPoint::new(txid, CONNECTOR_TX_CONNECTOR_VOUT), Some(tx)))
 		} else {
 			Some(self.maybe_last.take().expect("broken"))
 		}
