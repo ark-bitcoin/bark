@@ -12,9 +12,8 @@ use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
 use bitcoin_ext::BlockHeight;
-use serde::ser::StdError;
 
-use crate::persist::BarkPersister;
+use crate::persist::{BarkPersister, WalletPersisterError};
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 
@@ -106,7 +105,7 @@ impl ChainSourceClient {
 	pub async fn sync_wallet<P>(&self, wallet: &mut PersistedWallet<P>, db: &mut P) -> anyhow::Result<Amount>
 		where
 			P: BarkPersister,
-			<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+			<P as WalletPersister>::Error: WalletPersisterError,
 	{
 		debug!("Starting wallet sync...");
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();

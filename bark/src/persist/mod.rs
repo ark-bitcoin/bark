@@ -3,10 +3,13 @@ pub mod sqlite;
 use ark::{Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::{secp256k1::PublicKey, Amount};
+use serde::ser::StdError;
 
 use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
 
-pub trait BarkPersister: Clone + WalletPersister {
+pub trait WalletPersisterError: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError {}
+
+pub trait BarkPersister: Clone + WalletPersister + Send + Sync {
 	/// Initialise wallet in the database
 	///
 	/// Will fail after first call

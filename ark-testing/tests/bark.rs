@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
-use bark::movement::MovementRecipient;
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::P2TR_DUST_SAT;
@@ -16,8 +15,10 @@ use futures::future::join_all;
 use tokio::fs;
 
 use ark::{ArkoorVtxo, Vtxo};
+use ark::util::{Decodable, Encodable};
 use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use aspd_rpc::{self as rpc, protos};
+use bark::movement::MovementRecipient;
 
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -226,8 +227,8 @@ async fn just_oor() {
 }
 
 #[tokio::test]
-async fn refresh() {
-	let ctx = TestContext::new("bark/refresh").await;
+async fn refresh_all() {
+	let ctx = TestContext::new("bark/refresh_all").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;

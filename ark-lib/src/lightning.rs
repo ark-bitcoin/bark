@@ -1,5 +1,5 @@
 
-use std::{fmt, io, iter};
+use std::{fmt, iter};
 
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
 use bitcoin::hashes::{sha256, Hash};
@@ -11,6 +11,7 @@ use lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::{fee, P2TR_DUST, P2TR_DUST_SAT, P2WSH_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::oor::OorPayment;
+use crate::util::{Decodable, Encodable};
 use crate::vtxo::{exit_spk, VtxoSpkSpec};
 use crate::{musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
 
@@ -286,17 +287,10 @@ impl Bolt11Payment {
 			signatures: sigs,
 		}
 	}
-
-	pub fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
 }
+
+impl Encodable for Bolt11Payment {}
+impl Decodable for Bolt11Payment {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedBolt11Payment {
@@ -350,17 +344,10 @@ impl SignedBolt11Payment {
 			outputs: vec![pay_req],
 		}
 	}
-
-	pub fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
 }
+
+impl Encodable for SignedBolt11Payment {}
+impl Decodable for SignedBolt11Payment {}
 
 #[derive(Debug)]
 pub enum InvalidSignature {

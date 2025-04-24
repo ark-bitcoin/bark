@@ -1,7 +1,6 @@
 
 
 use std::borrow::Borrow;
-use std::io;
 
 use bitcoin::{
 	Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, Txid, Weight, Witness
@@ -12,7 +11,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
-use crate::util::SECP;
+use crate::util::{Decodable, Encodable, SECP};
 use crate::vtxo::VtxoSpkSpec;
 use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 
@@ -232,18 +231,10 @@ impl OorPayment {
 			}
 		}).collect()
 	}
-
-	pub fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
 }
 
+impl Encodable for OorPayment {}
+impl Decodable for OorPayment {}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SignedOorPayment {

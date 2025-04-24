@@ -11,6 +11,7 @@ pub extern crate lnurl as lnurllib;
 
 pub mod persist;
 use ark::oor::unsigned_oor_tx;
+use ark::util::{Decodable, Encodable};
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
@@ -29,6 +30,7 @@ pub mod test;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
+use persist::WalletPersisterError;
 
 
 use std::iter;
@@ -49,7 +51,6 @@ use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
-use serde::ser::StdError;
 use tokio_stream::StreamExt;
 
 use ark::{
@@ -282,7 +283,7 @@ pub struct Wallet<P: BarkPersister> {
 
 impl <P>Wallet<P> where
 	P: BarkPersister,
-	<P as WalletPersister>::Error: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError
+	<P as WalletPersister>::Error: WalletPersisterError,
 {
 	/// Return a _static_ public key that can be used to send OOR payments to
 	///

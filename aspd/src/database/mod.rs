@@ -24,6 +24,7 @@ use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 use ark::{BoardVtxo, Vtxo, VtxoId};
 use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
+use ark::util::{Decodable, Encodable};
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;

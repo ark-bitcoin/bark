@@ -1,7 +1,7 @@
 
 
 use std::collections::{HashMap, VecDeque};
-use std::{cmp, fmt, io, iter};
+use std::{cmp, fmt, iter};
 
 use bitcoin::hashes::Hash;
 use bitcoin::{
@@ -13,6 +13,7 @@ use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce
 
 use bitcoin_ext::{fee, P2WSH_DUST, BlockHeight, TransactionExt};
 
+use crate::util::{Decodable, Encodable};
 use crate::{musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
 use crate::vtxo::VtxoSpkSpec;
@@ -44,16 +45,6 @@ impl VtxoTreeSpec {
 	) -> VtxoTreeSpec {
 		assert_ne!(vtxos.len(), 0);
 		VtxoTreeSpec { vtxos, asp_pk, asp_cosign_pk, expiry_height: expiry_height as u32, exit_delta }
-	}
-
-	pub fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		Ok(ciborium::from_reader(bytes)?)
 	}
 
 	pub fn nb_leaves(&self) -> usize {
@@ -250,6 +241,9 @@ impl VtxoTreeSpec {
 		UnsignedVtxoTree::new(self, utxo)
 	}
 }
+
+impl Encodable for VtxoTreeSpec {}
+impl Decodable for VtxoTreeSpec {}
 
 /// A VTXO tree ready to be signed.
 ///
@@ -626,16 +620,6 @@ impl SignedVtxoTreeSpec {
 		self.spec.nb_leaves()
 	}
 
-	pub fn encode(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-
-	pub fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		Ok(ciborium::from_reader(bytes)?)
-	}
-
 	/// Construct the exit branch starting from the root ending in the leaf.
 	pub fn exit_branch(&self, leaf_idx: usize) -> Option<Vec<Transaction>> {
 		let txs = self.all_signed_txs();
@@ -664,6 +648,9 @@ impl SignedVtxoTreeSpec {
 		}
 	}
 }
+
+impl Encodable for SignedVtxoTreeSpec {}
+impl Decodable for SignedVtxoTreeSpec {}
 
 /// A fully signed VTXO tree, with all the transaction cached.
 ///

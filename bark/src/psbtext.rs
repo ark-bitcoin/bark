@@ -2,6 +2,7 @@
 
 use std::borrow::{Borrow, BorrowMut};
 
+use ark::util::{Decodable, Encodable};
 use bitcoin::{psbt, sighash, taproot, Transaction, TxOut, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 
