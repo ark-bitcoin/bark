@@ -35,7 +35,10 @@ steps:
   - name: build
     depends_on: check-commits
     image: registry.2nd.dev/build:16
+    volumes:
+      - /data:/host/data
     commands:
+      - rm -rf "/host/data/test/$CI_COMMIT_SHA/" || true
       - git log --oneline | head -n 1
       - cargo version
       - just build
@@ -59,6 +62,8 @@ steps:
   - name: test-integration-btc29.0
     depends_on: build
     image: registry.2nd.dev/build:16
+    volumes:
+      - /data:/host/data
     environment:
       BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
       LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
@@ -72,10 +77,14 @@ steps:
       - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
       - cargo test --package ark-testing
+      - mkdir -p "/host/data/test/$CI_COMMIT_SHA/"
+      - cp -r test/* "/host/data/test/$CI_COMMIT_SHA/"
 
   - name: test-integration-esplora
     depends_on: build
     image: registry.2nd.dev/build:16
+    volumes:
+      - /data:/host/data
     environment:
       BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
       LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
@@ -90,6 +99,8 @@ steps:
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
       - cargo test --package ark-testing
+      - mkdir -p "/host/data/test/$CI_COMMIT_SHA/"
+      - cp -r test/* "/host/data/test/$CI_COMMIT_SHA/"
 
 depends_on:
   - main
