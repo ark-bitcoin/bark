@@ -30,7 +30,7 @@ steps:
     image: registry.2nd.dev/build:17
     commands:
       - git log --oneline | head -n 1
-      - just test-unit-all
+      - just test-unit-all-codecov
 
   - name: build
     depends_on: check-commits
@@ -101,7 +101,7 @@ steps:
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
-      - just test-integration-all
+      - just test-integration-all-codecov
       - mkdir -p "/host/data/test/$CI_COMMIT_SHA/"
       - cp -r test/* "/host/data/test/$CI_COMMIT_SHA/"
 
