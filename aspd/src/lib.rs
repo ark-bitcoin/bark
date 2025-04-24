@@ -2,7 +2,6 @@
 
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate async_trait;
-#[macro_use] extern crate log;
 #[macro_use] extern crate serde;
 #[macro_use] extern crate aspd_log;
 
@@ -40,6 +39,7 @@ use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::{BlockRef, TransactionExt, DEEPLY_CONFIRMED};
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
+use log::{trace, info, warn, error};
 use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
 use tokio::time::MissedTickBehavior;
 use tokio::signal::unix::{signal, SignalKind};

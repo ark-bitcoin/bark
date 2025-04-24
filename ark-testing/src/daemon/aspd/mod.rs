@@ -12,6 +12,7 @@ use std::str::FromStr;
 use anyhow::Context;
 use bitcoin::Network;
 use bitcoin::address::{Address, NetworkUnchecked};
+use log::{info, trace};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{self, mpsc, Mutex};
 use tokio::process::Command;

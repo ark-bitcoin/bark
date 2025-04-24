@@ -5,7 +5,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::Amount;
 use clap;
 use lightning_invoice::Bolt11Invoice;
-
+use log::{info, warn};
 use bark::{SqliteClient, Wallet};
 
 #[derive(clap::Subcommand)]

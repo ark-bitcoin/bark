@@ -47,6 +47,7 @@ use bitcoin::{
 };
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
+use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
 
 use ark::{BoardVtxo, VtxoSpec};

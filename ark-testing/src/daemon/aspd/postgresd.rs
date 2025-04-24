@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
-
+use log::{error, trace};
 use tokio::fs;
 use tokio::process::{Child, Command};
 use tokio_postgres::{Client, Config, NoTls};

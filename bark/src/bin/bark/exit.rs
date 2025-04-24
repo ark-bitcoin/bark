@@ -6,6 +6,8 @@ use clap;
 use ark::VtxoId;
 use bark::{SqliteClient, Wallet};
 use bark::vtxo_selection::VtxoFilter;
+use log::{warn, info};
+
 use crate::util::output_json;
 
 

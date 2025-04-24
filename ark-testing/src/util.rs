@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
+use log::error;
 use tokio::fs;
 use tokio::process::Child;
 

@@ -4,6 +4,7 @@ mod m0003_payment_history;
 mod m0004_unregistered_board;
 
 use anyhow::Context;
+use log::{trace, debug};
 use rusqlite::{Connection, Transaction};
 
 use m0001_initial_version::Migration0001;

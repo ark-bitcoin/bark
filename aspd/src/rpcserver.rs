@@ -12,6 +12,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr::Signature, PublicKey};
 use lightning_invoice::Bolt11Invoice;
+use log::{trace, info, warn, error};
 use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
 use opentelemetry_semantic_conventions as semconv;

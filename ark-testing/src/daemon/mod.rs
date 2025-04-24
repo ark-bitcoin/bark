@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use log::{error, info, trace, warn};
 use nix::sys::signal;
 use nix::unistd::Pid;
 

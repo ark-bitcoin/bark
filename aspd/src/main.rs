@@ -1,6 +1,4 @@
 
-#[macro_use] extern crate log;
-
 use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
@@ -8,6 +6,7 @@ use std::str::FromStr;
 use anyhow::Context;
 use bitcoin::Address;
 use clap::Parser;
+use log::{error, info};
 use tonic::transport::Uri;
 
 use aspd::{App, Config};

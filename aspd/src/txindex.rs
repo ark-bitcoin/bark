@@ -13,6 +13,7 @@ use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid, Wtxid};
 use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
+use log::{trace, debug, info, warn};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;

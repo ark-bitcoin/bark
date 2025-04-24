@@ -8,6 +8,7 @@ use anyhow::Context;
 use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::{secp256k1::PublicKey, Amount};
+use log::debug;
 
 use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 

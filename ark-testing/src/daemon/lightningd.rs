@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::hashes::Hash;
+use log::{error, trace};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::Mutex;

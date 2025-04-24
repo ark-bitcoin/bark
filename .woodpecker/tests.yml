@@ -15,44 +15,45 @@ clone:
 
 steps:
   - name: prechecks
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     commands:
       - just prechecks
 
   - name: check-commits
     depends_on: prechecks
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     commands:
       - just check-commits
 
   - name: test-unit
     depends_on: check-commits
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     commands:
       - git log --oneline | head -n 1
-      - cargo test --workspace --exclude ark-testing --target-dir ./target-unit
+      - just test-unit-all
 
   - name: build
     depends_on: check-commits
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     volumes:
       - /data:/host/data
     commands:
       - rm -rf "/host/data/test/$CI_COMMIT_SHA/" || true
+      - rm -rf "/host/data/codecov/$CI_COMMIT_SHA/" || true
       - git log --oneline | head -n 1
       - cargo version
       - just build
 
   - name: aspd-default-config-file
     depends_on: build
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     commands:
       - just default-aspd-config
       - bash contrib/check-clean-default-config.sh
 
   - name: use-bark-as-dependency
     depends_on: build
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     commands:
       - cargo init barktest && cd barktest
       - cargo add bark-client
@@ -61,7 +62,7 @@ steps:
 
   - name: test-integration-btc29.0
     depends_on: build
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     volumes:
       - /data:/host/data
     environment:
@@ -76,13 +77,15 @@ steps:
       - ls -al $${BITCOIND_EXEC}
       - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
-      - cargo test --package ark-testing
+      - just test-integration-all-codecov
       - mkdir -p "/host/data/test/$CI_COMMIT_SHA/"
       - cp -r test/* "/host/data/test/$CI_COMMIT_SHA/"
+      - mkdir -p "/host/data/codecov/$CI_COMMIT_SHA/"
+      - cp -r target/debug/codecov/* "/host/data/codecov/$CI_COMMIT_SHA/"
 
   - name: test-integration-esplora
     depends_on: build
-    image: registry.2nd.dev/build:16
+    image: registry.2nd.dev/build:17
     volumes:
       - /data:/host/data
     environment:
@@ -98,7 +101,7 @@ steps:
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
-      - cargo test --package ark-testing
+      - just test-integration-all
       - mkdir -p "/host/data/test/$CI_COMMIT_SHA/"
       - cp -r test/* "/host/data/test/$CI_COMMIT_SHA/"
 

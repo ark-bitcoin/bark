@@ -1,11 +1,10 @@
-#[macro_use]
-extern crate log;
 
 use cln_rpc as rpc;
 
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use bark_json::VtxoType;
 use bitcoin_ext::fee::dust_anchor;
+use log::{trace, debug, info, warn, error};
 
 #[tokio::test]
 async fn start_lightningd() {
