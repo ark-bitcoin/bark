@@ -13,6 +13,7 @@ use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{IntervalStream, BroadcastStream};
 use tonic::transport::{Channel, ClientTlsConfig, Certificate, Identity};
+use log::{trace, debug, info, warn};
 
 use ark::lightning::{SignedBolt11Payment, PaymentStatus};
 use cln_rpc::ClnGrpcClient;

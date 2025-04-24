@@ -6,6 +6,7 @@ use anyhow::Context;
 use bitcoin::Network;
 use bitcoin_ext::BlockHeight;
 use clap::Args;
+use log::{debug, info, warn};
 use tokio::fs;
 
 use bark::{Config, Wallet, SqliteClient};

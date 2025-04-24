@@ -20,6 +20,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
 use bitcoin_ext::BlockHeight;
 use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
+use log::info;
 
 use ark::{BoardVtxo, Vtxo, VtxoId};
 use ark::rounds::RoundId;

@@ -19,22 +19,31 @@ check-commits:
 	bash contrib/check-commits.sh
 
 build:
-	cargo build --workspace
+	RUSTFLAGS="-C instrument-coverage" LLVM_PROFILE_FILE="your-binary-%p-%m.profraw" cargo build --workspace
 
 docker-pull:
 	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker pull "$LIGHTNINGD_DOCKER_IMAGE"; fi
 
 alias unit := test-unit
 test-unit TEST="":
-	cargo test --workspace --exclude ark-testing {{TEST}}
+	cargo llvm-cov --workspace --exclude ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
+
+test-unit-all:
+	cargo llvm-cov --workspace --exclude ark-testing --html --output-dir "./target/debug/codecov/"
 
 alias int := test-integration
 test-integration TEST="": build docker-pull
-	cargo test --package ark-testing {{TEST}}
+	cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
 
 alias int-esplora := test-integration-esplora
 test-integration-esplora TEST="": build docker-pull
-	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}}
+	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
+
+test-integration-all:
+	cargo test --package ark-testing
+
+test-integration-all-codecov:
+	cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/"
 
 test: test-unit test-integration test-integration-esplora
 

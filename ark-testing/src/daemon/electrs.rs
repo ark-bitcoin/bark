@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use bdk_esplora::esplora_client::{AsyncClient, Builder};
 use bitcoin::Network;
+use log::trace;
 use tokio::fs;
 use tokio::process::Command;
 

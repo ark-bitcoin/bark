@@ -11,6 +11,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2WSH_DUST};
+use log::{trace, debug, info, warn, error};
 use opentelemetry::global;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};

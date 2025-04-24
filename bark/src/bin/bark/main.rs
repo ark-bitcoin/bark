@@ -1,5 +1,4 @@
 #[macro_use] extern crate anyhow;
-#[macro_use] extern crate log;
 
 mod exit;
 mod wallet;
@@ -19,6 +18,7 @@ use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
+use log::{debug, info, warn};
 
 use ark::{Vtxo, VtxoId};
 use bark::{Config, Pagination, UtxoInfo};

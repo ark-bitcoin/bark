@@ -6,6 +6,7 @@ use anyhow::Context;
 use bitcoin::secp256k1::{Keypair, SecretKey};
 use bitcoin::{psbt, sighash, taproot, Psbt, Witness};
 use bitcoin_ext::KeypairExt;
+use log::trace;
 
 use crate::SECP;
 

@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 use bitcoin::{Amount, FeeRate, Network, Transaction, Txid};
 use bitcoincore_rpc::RpcApi;
+use log::info;
 use tokio::fs;
 use tonic::transport::Uri;
 

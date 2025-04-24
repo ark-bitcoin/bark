@@ -6,7 +6,6 @@ pub extern crate lightning_invoice;
 pub extern crate lnurl as lnurllib;
 
 #[macro_use] extern crate anyhow;
-#[macro_use] extern crate log;
 #[macro_use] extern crate serde;
 
 pub mod persist;
@@ -51,6 +50,7 @@ use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
+use log::{trace, debug, info, warn, error};
 use tokio_stream::StreamExt;
 
 use ark::{

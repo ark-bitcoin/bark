@@ -79,6 +79,8 @@ RUN echo "Installing sccache"
 RUN cargo install --locked sccache
 RUN echo "Installing just"
 RUN cargo install --locked just
+RUN echo "Installing cargo-llvm-cov"
+RUN cargo install --locked cargo-llvm-cov
 RUN mkdir -p /root/.cargo && \
 	echo '[build]\nrustc-wrapper = "sccache"\n[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n[target.i686-pc-windows-gnu]\nlinker = "i686-w64-mingw32-gcc"\n[target.x86_64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/x86_64-apple-darwin24.1-clang"\nar = "/usr/local/osxcross/bin/x86_64-apple-darwin24.1-ar"\n[target.aarch64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/aarch64-apple-darwin24.1-clang"\nar = "/usr/local/osxcross/bin/aarch64-apple-darwin24.1-ar"\n' > /root/.cargo/config.toml
 RUN cat /root/.cargo/config.toml
@@ -98,7 +100,7 @@ RUN echo "pre-build bark" && \
 	git clone https://codeberg.org/ark-bitcoin/bark.git && \
 	cd bark && \
 	cargo build --workspace && \
-	cargo test --workspace --exclude ark-testing --target-dir ./target-unit && \
+	cargo llvm-cov --workspace --exclude ark-testing --html && \
 	cargo install --locked --path bark && \
 	cargo install --locked --path aspd && \
 	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \

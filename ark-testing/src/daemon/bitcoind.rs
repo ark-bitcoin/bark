@@ -8,6 +8,7 @@ use anyhow::Context;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
+use log::{debug, info};
 use tokio::process::Command;
 
 use bitcoin_ext::FeeRateExt;

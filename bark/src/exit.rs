@@ -9,6 +9,7 @@ use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
 use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST};
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
+use log::{trace, debug, info, error, warn};
 
 use ark::{Vtxo, VtxoId};
 

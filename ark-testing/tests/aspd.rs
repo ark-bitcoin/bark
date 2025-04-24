@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-
 use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +10,7 @@ use bitcoin::{ScriptBuf, WPubkeyHash};
 use bitcoin_ext::DEEPLY_CONFIRMED;
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
+use log::{trace, debug, info, warn, error};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, VtxoId};
