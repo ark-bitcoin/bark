@@ -55,10 +55,10 @@ test-integration-esplora TEST="": build docker-pull
 test-integration-esplora-codecov TEST="": build-codecov docker-pull
 	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
 
-test-integration-all:
+test-integration-all: build docker-pull
 	cargo test --package ark-testing
 
-test-integration-all-codecov:
+test-integration-all-codecov: build-codecov docker-pull
 	cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/"
 
 test: test-unit test-integration test-integration-esplora
