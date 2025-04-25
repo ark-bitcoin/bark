@@ -42,7 +42,7 @@ steps:
       - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
       - git log --oneline | head -n 1
       - cargo version
-      - just build
+      - just build-codecov
 
   - name: aspd-default-config-file
     depends_on: build
@@ -101,7 +101,7 @@ steps:
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
-      - just test-integration-all-codecov
+      - just test-integration-all
       - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
       - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
 
