@@ -12,9 +12,12 @@ bdk = [ "bdk_wallet" ]
 
 [dependencies]
 lazy_static.workspace = true
+serde.workspace = true
 
 # bitcoin
 bitcoin.workspace = true
+bdk_bitcoind_rpc.workspace = true
+serde_json.workspace = true
 
 # bdk
 bdk_wallet = { workspace = true, features = ["rusqlite"], optional = true }

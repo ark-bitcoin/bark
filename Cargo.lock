@@ -380,9 +380,12 @@ dependencies = [
 name = "bark-bitcoin-ext"
 version = "0.0.0"
 dependencies = [
+ "bdk_bitcoind_rpc",
  "bdk_wallet",
  "bitcoin",
  "lazy_static",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

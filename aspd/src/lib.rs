@@ -36,7 +36,8 @@ use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
-use bitcoin_ext::{BlockRef, TransactionExt, DEEPLY_CONFIRMED};
+use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
+use bitcoin_ext::{BlockRef, TransactionExt};
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
@@ -52,7 +53,7 @@ use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos;
 
-use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
+use crate::bitcoind::{BitcoinRpcClient, RpcApi};
 use crate::cln::SendpaySubscriptionItem;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
@@ -468,7 +469,7 @@ impl App {
 		// Since the user might have just created and broadcast this tx very recently,
 		// it's very likely that we won't have it in our mempool yet.
 		// We will first check if we have it, if not, try to broadcast it.
-		match self.bitcoind.get_raw_transaction_info(&vtxo.onchain_output.txid, None) {
+		match self.bitcoind.custom_get_raw_transaction_info(&vtxo.onchain_output.txid, None) {
 			Ok(txinfo) => {
 				let conf = txinfo.confirmations.unwrap_or(0);
 				trace!("Board tx {} has {} confirmations", vtxo.onchain_output.txid, conf);
@@ -514,7 +515,7 @@ impl App {
 		for board in inputs.iter().filter_map(|v| v.as_board()) {
 			let txid = board.onchain_output.txid;
 			let id = board.id();
-			match self.bitcoind.get_raw_transaction_info(&txid, None) {
+			match self.bitcoind.custom_get_raw_transaction_info(&txid, None) {
 				Ok(tx) => {
 					let confs = tx.confirmations.unwrap_or(0) as usize;
 					if confs < self.config.round_board_confirmations {

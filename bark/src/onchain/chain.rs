@@ -11,6 +11,7 @@ use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::BlockHeight;
 use log::{debug, info, warn};
 
@@ -306,7 +307,7 @@ impl ChainSourceClient {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
 				//TODO(stevenroose) would be nice if we cna distinguish network Error
 				//or tx unknown error here (my refactor branch does that, liquid also)
-				let tx = bitcoind.get_raw_transaction_info(&txid, None)?;
+				let tx = bitcoind.custom_get_raw_transaction_info(&txid, None)?;
 				if let Some(hash) = tx.blockhash {
 					let block = bitcoind.get_block_header_info(&hash)?;
 					if block.confirmations > 0 {

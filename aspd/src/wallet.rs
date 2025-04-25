@@ -12,8 +12,8 @@ use bitcoin::{bip32, Network};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::WalletExt;
+use bitcoin_ext::rpc::BitcoinRpcExt;
 
-use crate::bitcoind::BitcoinRpcExt;
 use crate::database;
 
 
