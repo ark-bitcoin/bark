@@ -38,8 +38,8 @@ steps:
     volumes:
       - /data:/host/data
     commands:
-      - rm -rf "/host/data/test/$CI_COMMIT_SHA/" || true
-      - rm -rf "/host/data/codecov/$CI_COMMIT_SHA/" || true
+      - rm -rf "/host/data/test/${CI_COMMIT_SHA}/" || true
+      - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
       - git log --oneline | head -n 1
       - cargo version
       - just build
@@ -78,10 +78,10 @@ steps:
       - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
       - just test-integration-all-codecov
-      - mkdir -p "/host/data/test/$CI_COMMIT_SHA/"
-      - cp -r test/* "/host/data/test/$CI_COMMIT_SHA/"
-      - mkdir -p "/host/data/codecov/$CI_COMMIT_SHA/"
-      - cp -r target/debug/codecov/* "/host/data/codecov/$CI_COMMIT_SHA/"
+      - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
+      - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
+      - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
+      - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
 
   - name: test-integration-esplora
     depends_on: build
@@ -102,8 +102,23 @@ steps:
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
       - just test-integration-all-codecov
-      - mkdir -p "/host/data/test/$CI_COMMIT_SHA/"
-      - cp -r test/* "/host/data/test/$CI_COMMIT_SHA/"
+      - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
+      - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
+
+  - name: tar-and-print
+    depends_on: [ test-integration-esplora, test-integration-btc29.0 ]
+    image: registry.2nd.dev/build:17
+    volumes:
+      - /data:/host/data
+    commands:
+      - tar -czf "/host/data/codecov/${CI_COMMIT_SHA}.tar.gz" "/host/data/codecov/${CI_COMMIT_SHA}/"
+      - mv "/host/data/codecov/${CI_COMMIT_SHA}.tar.gz" "/host/data/codecov/${CI_COMMIT_SHA}/"
+      - tar -czf "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
+      - mv "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
+      - echo "Code Coverage tar.gz -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
+      - echo "Code Coverage URL    -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
+      - echo "Test data tar.gz     -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
+      - echo "Test data URL        -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
 
 depends_on:
   - main
