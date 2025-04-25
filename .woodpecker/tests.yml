@@ -42,7 +42,7 @@ steps:
       - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
       - git log --oneline | head -n 1
       - cargo version
-      - just build
+      - just build-codecov
 
   - name: aspd-default-config-file
     depends_on: build

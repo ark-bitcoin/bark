@@ -19,6 +19,9 @@ check-commits:
 	bash contrib/check-commits.sh
 
 build:
+	cargo build --workspace
+
+build-codecov:
 	RUSTFLAGS="-C instrument-coverage" LLVM_PROFILE_FILE="your-binary-%p-%m.profraw" cargo build --workspace
 
 docker-pull:
@@ -41,7 +44,7 @@ alias int := test-integration
 test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
 
-test-integration-codecov TEST="": build docker-pull
+test-integration-codecov TEST="": build-codecov docker-pull
 	cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
 
 
@@ -49,7 +52,7 @@ alias int-esplora := test-integration-esplora
 test-integration-esplora TEST="": build docker-pull
 	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}}
 
-test-integration-esplora-codecov TEST="": build docker-pull
+test-integration-esplora-codecov TEST="": build-codecov docker-pull
 	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
 
 test-integration-all:
