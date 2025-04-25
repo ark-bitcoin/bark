@@ -550,11 +550,10 @@ impl <P>Wallet<P> where
 			amount: amount,
 		};
 
-		let board_amount = amount + ark::board::board_surplus();
 		let addr = Address::from_script(&ark::board::board_spk(&spec), properties.network).unwrap();
 
 		// We create the onboard tx template, but don't sign it yet.
-		let board_tx = self.onchain.prepare_tx([(addr, board_amount)])?;
+		let board_tx = self.onchain.prepare_tx([(addr, amount)])?;
 
 		self.board(spec, user_keypair, board_tx).await
 	}
@@ -580,10 +579,10 @@ impl <P>Wallet<P> where
 
 		// Deduct fee from vtxo spec
 		let fee = board_all_tx.fee().context("Unable to calculate fee")?;
-		spec.amount = spec.amount.checked_sub(fee + ark::board::board_surplus()).unwrap();
+		spec.amount = spec.amount.checked_sub(fee).unwrap();
 
 		assert_eq!(board_all_tx.outputs.len(), 1);
-		assert_eq!(board_all_tx.unsigned_tx.tx_out(0).unwrap().value, spec.amount + ark::board::board_surplus());
+		assert_eq!(board_all_tx.unsigned_tx.tx_out(0).unwrap().value, spec.amount);
 
 		self.board(spec, user_keypair, board_all_tx).await
 	}
@@ -885,9 +884,11 @@ impl <P>Wallet<P> where
 
 		let output = PaymentRequest { pubkey: destination, amount };
 
-		// We need to spend sent amount + fee anchor + offchain fees
-		let offchain_fees = ark::oor::OOR_MIN_FEE;
-		let spent_amount = amount + P2TR_DUST + offchain_fees;
+		// TODO: implement oor fees. Once implemented, we should add an additional
+		// output to each impacted oor payment else the tx would be valid
+		// (bitcoin rpc error: "tx with dust output must be 0-fee")
+		let offchain_fees = Amount::ZERO;
+		let spent_amount = amount + offchain_fees;
 
 		let input_vtxos = self.db.get_expiring_vtxos(spent_amount)?;
 
@@ -1000,9 +1001,7 @@ impl <P>Wallet<P> where
 		self.db.register_movement(MovementArgs {
 			spends: &oor.input,
 			receives: oor.change.as_ref().map(|v| (v, VtxoState::Spendable)),
-			recipients: vec![
-				(destination.to_string(), amount)
-			],
+			recipients: vec![(destination.to_string(), amount)],
 			fees: Some(oor.fee)
 		}).context("failed to store OOR vtxo")?;
 
@@ -1034,10 +1033,8 @@ impl <P>Wallet<P> where
 
 		let change_keypair = self.derive_store_next_keypair()?;
 
-		// The anchor output has an amount
-		let anchor_amount = bitcoin_ext::P2WSH_DUST;
 		let forwarding_fee = Amount::from_sat(350);
-		let inputs = self.db.get_expiring_vtxos(amount + anchor_amount + forwarding_fee)?;
+		let inputs = self.db.get_expiring_vtxos(amount + forwarding_fee)?;
 
 
 		let (sec_nonces, pub_nonces, keypairs) = {
@@ -1129,7 +1126,7 @@ impl <P>Wallet<P> where
 				recipients: vec![
 					(invoice.to_string(), amount)
 				],
-				fees: Some(anchor_amount + forwarding_fee)
+				fees: Some(forwarding_fee)
 			}).context("failed to store OOR vtxo")?;
 			Ok(payment_preimage)
 		} else {

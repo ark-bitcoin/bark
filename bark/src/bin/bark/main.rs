@@ -668,6 +668,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(Some(a), false) => {
 					info!("Boarding {}...", a);
 					w.board_amount(a).await?
+
 				},
 				(None, true) => {
 					info!("Boarding total balance...");

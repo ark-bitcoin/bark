@@ -6,6 +6,7 @@ mod bitcoin;
 pub use bitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt};
 
 pub mod fee;
+pub mod rpc;
 
 #[cfg(feature = "bdk")]
 pub mod bdk;

@@ -91,7 +91,7 @@ struct BoardSweepInput {
 
 impl BoardSweepInput {
 	fn amount(&self) -> Amount {
-		ark::board::board_amount(&self.vtxo_spec)
+		self.vtxo_spec.amount
 	}
 
 	fn weight(&self) -> Weight {
@@ -110,10 +110,7 @@ impl BoardSweepInput {
 
 	fn psbt(&self) -> psbt::Input {
 		let taproot = ark::board::board_taproot(&self.vtxo_spec);
-		let utxo = TxOut {
-			script_pubkey: ark::board::board_spk(&self.vtxo_spec),
-			value: ark::board::board_amount(&self.vtxo_spec),
-		};
+		let utxo = ark::board::board_txout(&self.vtxo_spec);
 		let mut ret = psbt::Input{
 			witness_utxo: Some(utxo),
 			sighash_type: Some(sighash::TapSighashType::Default.into()),

@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid, Wtxid};
+use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
 use log::{trace, debug, info, warn};
@@ -18,7 +19,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::bitcoind::{BitcoinRpcClient, BitcoinRpcErrorExt, RpcApi};
+use crate::bitcoind::{BitcoinRpcClient, RpcApi};
 use crate::system::RuntimeManager;
 
 
@@ -381,7 +382,7 @@ impl TxIndexProcess {
 		for (txid, tx) in self.txs.read().await.iter() {
 			//TODO(stevenroose) entirely rewrite this based on zmq
 			// because right now it's super inefficient and sets the same status over and over
-			match self.bitcoind.get_raw_transaction_info(txid, None) {
+			match self.bitcoind.custom_get_raw_transaction_info(txid, None) {
 				Ok(info) => {
 					if let Some(block) = info.blockhash {
 						// Confirmed!

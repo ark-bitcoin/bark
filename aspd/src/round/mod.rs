@@ -1478,7 +1478,7 @@ mod tests {
 					script_pubkey: spec.vtxo_spk(),
 					value: spec.amount,
 				},
-				fee::dust_anchor(),
+				fee::fee_anchor(),
 			],
 		};
 

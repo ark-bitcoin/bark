@@ -304,7 +304,7 @@ pub mod test {
 		assert_eq!(vtxos.len(), 2);
 		assert!(vtxos.contains(&vtxo_1));
 		assert!(vtxos.contains(&vtxo_2));
-		assert!(! vtxos.contains(&vtxo_3));
+		assert!(!vtxos.contains(&vtxo_3));
 
 		// Add the third entry to the database
 		db.register_movement(MovementArgs {

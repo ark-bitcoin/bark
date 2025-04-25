@@ -43,7 +43,7 @@ pub fn create_forfeit_tx(
 				value: vtxo.amount(),
 				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.spec().asp_pubkey.into(), None),
 			},
-			fee::dust_anchor(),
+			fee::fee_anchor(),
 		],
 	}
 }

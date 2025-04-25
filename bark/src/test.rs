@@ -8,7 +8,7 @@ fn dummy_point(vout: u32) -> OutPoint {
 }
 
 pub fn dummy_board(index: u32) -> Vtxo {
-	// We are using dummy data here because most of the tests 
+	// We are using dummy data here because most of the tests
 	// don't care.
 	let point = dummy_point(index);
 	let pk = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
@@ -20,7 +20,8 @@ pub fn dummy_board(index: u32) -> Vtxo {
 		spec: VtxoSpec {
 			user_pubkey: pk,
 			asp_pubkey: pk,
-			expiry_height: 1001,
+			// ensure deterministic sorting
+			expiry_height: 1001 + index,
 			spk: VtxoSpkSpec::Exit { exit_delta: 40},
 			amount: Amount::from_sat(500)
 		},

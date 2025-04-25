@@ -7,7 +7,7 @@ use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::{psbt, FeeRate, OutPoint, Transaction, Txid, Weight};
-use cbitcoin::{BlockHash, Psbt};
+use cbitcoin::{BlockHash, Psbt, Witness};
 
 use crate::{fee, BlockHeight, P2TR_DUST};
 use crate::bitcoin::TransactionExt;
@@ -15,17 +15,17 @@ use crate::bitcoin::TransactionExt;
 
 /// An extension trait for [TxBuilder].
 pub trait TxBuilderExt<'a, A>: BorrowMut<TxBuilder<'a, A>> {
-	/// Add an input to the tx that spends a dust fee anchor.
-	fn add_dust_fee_anchor_spend(&mut self, anchor: OutPoint)
+	/// Add an input to the tx that spends a fee anchor.
+	fn add_fee_anchor_spend(&mut self, anchor: OutPoint)
 	where
 		A: bdk_wallet::coin_selection::CoinSelectionAlgorithm,
 	{
 		let psbt_in = psbt::Input {
-			witness_utxo: Some(fee::dust_anchor()),
-			final_script_witness: Some(fee::dust_anchor_witness()),
+			witness_utxo: Some(fee::fee_anchor()),
+			final_script_witness: Some(Witness::new()),
 			..Default::default()
 		};
-		self.borrow_mut().add_foreign_utxo(anchor, psbt_in, fee::DUST_FEE_ANCHOR_SPEND_WEIGHT)
+		self.borrow_mut().add_foreign_utxo(anchor, psbt_in, fee::FEE_ANCHOR_SPEND_WEIGHT)
 			.expect("adding foreign utxo");
 	}
 }
@@ -124,7 +124,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			b.only_witness_utxo();
 			b.only_spend_confirmed();
 			for anchor in &anchors {
-				b.add_dust_fee_anchor_spend(*anchor);
+				b.add_fee_anchor_spend(*anchor);
 			}
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + P2TR_DUST);
 			b.fee_rate(fee_rate);
@@ -146,7 +146,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 				.expect("anchor spend template not fully signed");
 			assert_eq!(
 				tx.input[0].witness.size() as u64,
-				fee::DUST_FEE_ANCHOR_SPEND_WEIGHT.to_wu(),
+				fee::FEE_ANCHOR_SPEND_WEIGHT.to_wu(),
 			);
 			tx.weight()
 		};
@@ -160,7 +160,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		b.only_witness_utxo();
 		b.version(3); // for 1p1c package relay
 		for anchor in &anchors {
-			b.add_dust_fee_anchor_spend(*anchor);
+			b.add_fee_anchor_spend(*anchor);
 		}
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);
