@@ -26,17 +26,30 @@ docker-pull:
 
 alias unit := test-unit
 test-unit TEST="":
+	cargo test --workspace --exclude ark-testing {{TEST}}
+
+test-unit-codecov TEST="":
 	cargo llvm-cov --workspace --exclude ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
 
 test-unit-all:
+	cargo test --workspace --exclude ark-testing
+
+test-unit-all-codecov:
 	cargo llvm-cov --workspace --exclude ark-testing --html --output-dir "./target/debug/codecov/"
 
 alias int := test-integration
 test-integration TEST="": build docker-pull
+	cargo test --package ark-testing {{TEST}}
+
+test-integration-codecov TEST="": build docker-pull
 	cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
+
 
 alias int-esplora := test-integration-esplora
 test-integration-esplora TEST="": build docker-pull
+	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}}
+
+test-integration-esplora-codecov TEST="": build docker-pull
 	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
 
 test-integration-all:

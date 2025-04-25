@@ -7,3 +7,5 @@ target/
 .direnv/
 rustdocs/
 /test/
+
+*.profraw
