@@ -6,7 +6,7 @@ use cbitcoin::{Address, Amount, Transaction};
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
-use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Auth, Client, Error, RpcApi, Result as RpcResult};
+use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Error, RpcApi, Result as RpcResult};
 
 use crate::{BlockRef, DEEPLY_CONFIRMED};
 
@@ -70,7 +70,7 @@ where
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GetRawTransactionResultVinScriptSig {
+pub struct GetRawTransactionResultVinScriptSig {
 	pub asm: String,
 	#[serde(with = "serde_hex")]
 	pub hex: Vec<u8>,
@@ -78,7 +78,7 @@ struct GetRawTransactionResultVinScriptSig {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GetRawTransactionResultVin {
+pub struct GetRawTransactionResultVin {
 	pub sequence: u32,
 	/// The raw scriptSig in case of a coinbase tx.
 	#[serde(default, with = "serde_hex::opt")]
@@ -96,7 +96,7 @@ struct GetRawTransactionResultVin {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GetRawTransactionResultVout {
+pub struct GetRawTransactionResultVout {
 	#[serde(with = "bitcoin::amount::serde::as_btc")]
 	pub value: Amount,
 	pub n: u32,
@@ -106,7 +106,7 @@ struct GetRawTransactionResultVout {
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum ScriptPubkeyType {
+pub enum ScriptPubkeyType {
 	Nonstandard,
 	Anchor,
 	Pubkey,
@@ -122,7 +122,7 @@ enum ScriptPubkeyType {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GetRawTransactionResultVoutScriptPubKey {
+pub struct GetRawTransactionResultVoutScriptPubKey {
 	pub asm: String,
 	#[serde(with = "serde_hex")]
 	pub hex: Vec<u8>,

@@ -9,7 +9,7 @@ use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
-use log::{trace, debug, info, warn, error};
+use log::info;
 use tokio::fs;
 
 use ark::{ArkoorVtxo, Vtxo};
