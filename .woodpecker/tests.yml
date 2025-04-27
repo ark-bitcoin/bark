@@ -82,7 +82,7 @@ steps:
       - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
 
   - name: test-integration-esplora
-    depends_on: build
+    depends_on: use-bark-as-dependency
     image: registry.2nd.dev/build:17
     volumes:
       - /data:/host/data
