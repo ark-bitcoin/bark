@@ -42,6 +42,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			nb_round_nonces: v.nb_round_nonces as u32,
 			vtxo_exit_delta: v.vtxo_exit_delta as u32,
 			vtxo_expiry_delta: v.vtxo_expiry_delta as u32,
+			max_vtxo_amount: v.max_vtxo_amount.map(|v| v.to_sat()),
 		}
 	}
 }
@@ -58,6 +59,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid vtxo exit delta")?,
 			vtxo_expiry_delta: v.vtxo_expiry_delta.try_into()
 				.map_err(|_| "invalid vtxo expiry delta")?,
+			max_vtxo_amount: v.max_vtxo_amount.map(|v| Amount::from_sat(v)),
 		})
 	}
 }

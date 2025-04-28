@@ -282,6 +282,7 @@ impl rpc::server::ArkService for App {
 				nb_round_nonces: self.config.nb_round_nonces,
 				vtxo_exit_delta: self.config.vtxo_exit_delta,
 				vtxo_expiry_delta: self.config.vtxo_expiry_delta,
+				max_vtxo_amount: self.config.max_vtxo_amount,
 			}.into()),
 		};
 
