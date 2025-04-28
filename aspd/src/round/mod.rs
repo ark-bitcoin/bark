@@ -1370,8 +1370,7 @@ pub async fn run_round_coordinator(
 	let _worker = app.rtmgr.spawn_critical("RoundCoordinator");
 
 	loop {
-		let round_seq = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() /
-			app.config.round_interval.as_millis()) as usize;
+		let round_seq = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as usize;
 
 		match perform_round(app, &mut round_input_rx, round_seq).await {
 			RoundResult::Success => {},
