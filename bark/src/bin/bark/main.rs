@@ -143,7 +143,11 @@ enum Command {
 
 	/// The public key used to receive VTXOs
 	#[command()]
-	VtxoPubkey,
+	VtxoPubkey {
+		/// Pubkey index to peak
+		#[arg(long)]
+		index: Option<u32>,
+	},
 
 	/// Get the wallet balance
 	#[command()]
@@ -577,7 +581,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				output_json(&utxos);
 			},
 		},
-		Command::VtxoPubkey => println!("{}", w.derive_store_next_keypair(KeychainKind::External)?.public_key()),
+		Command::VtxoPubkey { index } => {
+			if let Some(index) = index {
+				println!("{}", w.peak_keypair(KeychainKind::External, index)?.public_key())
+			} else {
+				println!("{}", w.derive_store_next_keypair(KeychainKind::External)?.public_key())
+			}
+		},
 		Command::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
