@@ -204,8 +204,9 @@ async fn max_vtxo_amount() {
 	bark1.timeout = Duration::from_millis(2_500);
 
 	// exceeds limit, should fail
-	// TODO(stevenroose) once we have better error reporting, assert error content
-	assert!(bark1.try_board(Amount::from_sat(600_000)).await.is_err());
+	let err = bark1.try_board(Amount::from_sat(600_000)).await.unwrap_err();
+	assert!(err.to_string().contains("bad user input: board amount exceeds limit of"));
+
 	bark1.board(Amount::from_sat(500_000)).await;
 	bark1.board(Amount::from_sat(500_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
