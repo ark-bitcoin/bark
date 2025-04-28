@@ -28,3 +28,11 @@ steps:
       ssh_key:
         from_secret: github-mirror-push-key
 
+  - name: prechecks
+    image: registry.2nd.dev/build:17
+    volumes:
+      - /data:/host/data
+    commands:
+      - rm -rf "/host/data/test/${CI_COMMIT_SHA}/" || true
+      - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
+      - just prechecks
