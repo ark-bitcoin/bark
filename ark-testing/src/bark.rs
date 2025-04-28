@@ -161,6 +161,10 @@ impl Bark {
 		self.run(["config", "--dangerous", "--asp", &url]).await;
 	}
 
+	pub async fn ark_info(&self) -> json::ArkInfo {
+		self.try_run_json(["ark-info"]).await.expect("ark-info command failed")
+	}
+
 	pub async fn onchain_balance(&self) -> Amount {
 		let balance_output = self.run(["onchain", "balance"]).await;
 		let balance = serde_json::from_str::<json::onchain::Balance>(&balance_output).unwrap();
