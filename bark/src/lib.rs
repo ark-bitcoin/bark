@@ -714,6 +714,14 @@ impl Wallet {
 
 	/// Sync with the Ark and look for received vtxos.
 	pub async fn sync_ark(&self) -> anyhow::Result<()> {
+		self.sync_rounds().await?;
+		self.sync_oor().await?;
+
+		Ok(())
+	}
+
+	/// Sync with the Ark and look for VTXOs in rounds
+	pub async fn sync_rounds(&self) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
 		//TODO(stevenroose) we won't do reorg handling here
@@ -752,6 +760,13 @@ impl Wallet {
 		// took current height
 
 		self.db.store_last_ark_sync_height(current_height)?;
+
+		Ok(())
+	}
+
+	/// Sync with the Ark and look out-of-round received VTXOs.
+	pub async fn sync_oor(&self) -> anyhow::Result<()> {
+		let mut asp = self.require_asp()?;
 
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
