@@ -24,35 +24,17 @@ steps:
     image: registry.2nd.dev/build:17
     commands:
       - git log --oneline | head -n 1
-      - just test-unit-all
+      - just test-unit-all-codecov
 
   - name: build
     depends_on: check-commits
     image: registry.2nd.dev/build:17
-    volumes:
-      - /data:/host/data
     commands:
       - git log --oneline | head -n 1
       - cargo version
-      - just build
+      - just build-codecov
 
-  - name: aspd-default-config-file
-    depends_on: build
-    image: registry.2nd.dev/build:17
-    commands:
-      - just default-aspd-config
-      - bash contrib/check-clean-default-config.sh
-
-  - name: use-bark-as-dependency
-    depends_on: build
-    image: registry.2nd.dev/build:17
-    commands:
-      - cargo init barktest && cd barktest
-      - cargo add bark-client
-      - cargo update
-      - cargo build
-
-  - name: test-integration-esplora
+  - name: test-integration-btc29.0
     depends_on: build
     image: registry.2nd.dev/build:17
     volumes:
@@ -60,19 +42,28 @@ steps:
     environment:
       BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
       LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
-      ELECTRS_EXEC: /root/.cargo/bin/electrs
-      CHAIN_SOURCE: esplora
-      TEST_DIRECTORY: ./test/esplora
+      TEST_DIRECTORY: ./test/btc29
       TEST_POSTGRES_HOST: localhost
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
-      - ls -al $${ELECTRS_EXEC}
+      - ls -al $${BITCOIND_EXEC}
+      - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
-      - just test-integration-all
+      - just test-integration-all-codecov
       - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
       - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
+
+  - name: code-coverage
+    depends_on: test-integration-btc29.0
+    image: registry.2nd.dev/build:17
+    volumes:
+      - /data:/host/data
+    commands:
+      - just codecov-report
+      - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
+      - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
 
 depends_on:
   - main
