@@ -186,8 +186,8 @@ impl Wallet {
 			let vtxo = input.get_exit_claim_input();
 
 			if let Some(vtxo) = vtxo {
-				let keypair_idx = self.db.get_vtxo_key_index(&vtxo)?;
-				let keypair = vtxo_seed.derive_keypair(keypair_idx);
+				let (keychain, keypair_idx) = self.db.get_vtxo_key(&vtxo)?;
+				let keypair = vtxo_seed.derive_keychain(keychain, keypair_idx);
 
 				input.maybe_sign_exit_claim_input(
 					&SECP,

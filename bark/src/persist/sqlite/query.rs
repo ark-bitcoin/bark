@@ -3,8 +3,8 @@ use anyhow::Context;
 use ark::util::{Decodable, Encodable};
 use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
 use bitcoin_ext::BlockHeight;
-use rusqlite::{Connection, named_params, Transaction};
-use crate::{exit::ExitIndex, movement::Movement, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use rusqlite::{named_params, Connection, ToSql, Transaction};
+use crate::{exit::ExitIndex, movement::Movement, Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
 use super::convert::row_to_movement;
 
@@ -374,27 +374,29 @@ pub fn update_vtxo_state_checked(
 	}
 }
 
-pub fn store_vtxo_key_index(
+pub fn store_vtxo_key(
 	conn: &Connection,
+	keychain: KeychainKind,
 	index: u32,
 	public_key: PublicKey
 ) -> anyhow::Result<()> {
-	let query = "INSERT INTO bark_vtxo_key (idx, public_key) VALUES (?1, ?2);";
+	let query = "INSERT INTO bark_vtxo_key (keychain, idx, public_key) VALUES (?1, ?2, ?3);";
 	let mut statement = conn.prepare(query)?;
-	statement.execute([index.to_string(), public_key.to_string()])?;
+	statement.execute([keychain.to_sql()?, index.to_sql()?, public_key.to_string().to_sql()?])?;
 	Ok(())
 }
 
-pub fn get_vtxo_key_index(conn: &Connection, vtxo: &Vtxo) -> anyhow::Result<Option<u32>> {
-	let query = "SELECT idx FROM bark_vtxo_key WHERE public_key = (?1)";
+pub fn get_vtxo_key(conn: &Connection, vtxo: &Vtxo) -> anyhow::Result<Option<(KeychainKind, u32)>> {
+	let query = "SELECT keychain, idx FROM bark_vtxo_key WHERE public_key = (?1)";
 	let pk = vtxo.spec().user_pubkey.to_string();
 
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query((pk, ))?;
 
 	if let Some(row) = rows.next()? {
-		let index = u32::try_from(row.get::<usize, i64>(0)?)?;
-		Ok(Some(index))
+		let index = u32::try_from(row.get::<_, i64>("idx")?)?;
+		let keychain = KeychainKind::try_from(row.get::<_, i64>("keychain")?)?;
+		Ok(Some((keychain, index)))
 	} else {
 		Ok(None)
 	}
@@ -409,10 +411,10 @@ pub fn check_vtxo_key_exists(conn: &Connection, public_key: &PublicKey) -> anyho
 	Ok(rows.next()?.is_some())
 }
 
-pub fn get_last_vtxo_key_index(conn: &Connection) -> anyhow::Result<Option<u32>> {
-	let query = "SELECT idx FROM bark_vtxo_key ORDER BY idx DESC LIMIT 1";
+pub fn get_last_vtxo_key_index(conn: &Connection, keychain: KeychainKind) -> anyhow::Result<Option<u32>> {
+	let query = "SELECT idx FROM bark_vtxo_key WHERE keychain = ?1 ORDER BY idx DESC LIMIT 1";
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query(())?;
+	let mut rows = statement.query((keychain.to_sql()?, ))?;
 
 	if let Some(row) = rows.next()? {
 		let index = u32::try_from(row.get::<usize, i64>(0)?)?;

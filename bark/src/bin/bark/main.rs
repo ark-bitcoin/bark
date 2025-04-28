@@ -21,7 +21,7 @@ use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 
 use ark::{Vtxo, VtxoId};
-use bark::{Config, Pagination, UtxoInfo};
+use bark::{Config, KeychainKind, Pagination, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::cli as json;
 
@@ -577,7 +577,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				output_json(&utxos);
 			},
 		},
-		Command::VtxoPubkey => println!("{}", w.oor_pubkey()),
+		Command::VtxoPubkey => println!("{}", w.derive_store_next_keypair(KeychainKind::External)?.public_key()),
 		Command::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");

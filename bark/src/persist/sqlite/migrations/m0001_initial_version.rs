@@ -24,8 +24,11 @@ impl Migration for Migration0001 {
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);",
 			"CREATE TABLE IF NOT EXISTS bark_vtxo_key (
-				idx INTEGER PRIMARY KEY,
-				public_key TEXT NOT NULL
+				public_key TEXT NOT NULL PRIMARY KEY,
+				keychain INTEGER NOT NULL,
+				idx INTEGER NOT NULL,
+				-- each index must be unique in a keychain
+				UNIQUE (keychain, idx)
 			);",
 			"CREATE TABLE IF NOT EXISTS bark_vtxo_state (
 				id INTEGER PRIMARY KEY,
