@@ -80,11 +80,9 @@ steps:
       - just test-integration-all-codecov
       - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
       - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
-      - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
-      - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
 
   - name: test-integration-esplora
-    depends_on: build
+    depends_on: use-bark-as-dependency
     image: registry.2nd.dev/build:17
     volumes:
       - /data:/host/data
@@ -105,8 +103,18 @@ steps:
       - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
       - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
 
+  - name: code-coverage
+    depends_on: [ test-integration-btc29.0, test-integration-esplora ]
+    image: registry.2nd.dev/build:17
+    volumes:
+      - /data:/host/data
+    commands:
+      - just codecov-report
+      - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
+      - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
+
   - name: tar-and-print
-    depends_on: [ test-integration-esplora, test-integration-btc29.0 ]
+    depends_on: code-coverage
     image: registry.2nd.dev/build:17
     volumes:
       - /data:/host/data

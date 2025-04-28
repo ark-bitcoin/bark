@@ -32,20 +32,20 @@ test-unit TEST="":
 	cargo test --workspace --exclude ark-testing {{TEST}}
 
 test-unit-codecov TEST="":
-	cargo llvm-cov --workspace --exclude ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
+	cargo llvm-cov --workspace --exclude ark-testing {{TEST}}
 
 test-unit-all:
 	cargo test --workspace --exclude ark-testing
 
 test-unit-all-codecov:
-	cargo llvm-cov --workspace --exclude ark-testing --html --output-dir "./target/debug/codecov/"
+	cargo llvm-cov --workspace --exclude ark-testing
 
 alias int := test-integration
 test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
 
 test-integration-codecov TEST="": build-codecov docker-pull
-	cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
+	cargo llvm-cov --package ark-testing {{TEST}}
 
 
 alias int-esplora := test-integration-esplora
@@ -53,15 +53,18 @@ test-integration-esplora TEST="": build docker-pull
 	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}}
 
 test-integration-esplora-codecov TEST="": build-codecov docker-pull
-	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/" {{TEST}}
+	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing {{TEST}}
 
 test-integration-all: build docker-pull
 	cargo test --package ark-testing
 
 test-integration-all-codecov: build-codecov docker-pull
-	cargo llvm-cov --package ark-testing --html --output-dir "./target/debug/codecov/"
+	cargo llvm-cov --package ark-testing
 
 test: test-unit test-integration test-integration-esplora
+
+codecov-report:
+	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
 
 release-aspd:
 	cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
