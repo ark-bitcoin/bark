@@ -1,11 +1,15 @@
 {
 	description = "ark";
 
+	# To update a single input, use
+	# $ nix flake update --update-input rust-overlay
+	#
 	inputs = {
 		nixpkgs.url = "nixpkgs/nixos-24.11";
 		nixpkgs-master.url = "github:NixOS/nixpkgs/master";
 		flake-utils = {
 			url = "github:numtide/flake-utils";
+			inputs.nixpkgs.follows = "nixpkgs";
 		};
 		rust-overlay = {
 			url = "github:oxalica/rust-overlay";
