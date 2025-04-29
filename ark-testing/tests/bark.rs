@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
-use bitcoin_ext::P2TR_DUST_SAT;
+use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
 use log::info;
@@ -102,6 +102,19 @@ async fn board_all_bark() {
 		board_tx.output.last().unwrap().value,
 	);
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
+}
+
+#[tokio::test]
+async fn bark_rejects_boarding_subdust_amount() {
+	let ctx = TestContext::new("bark/bark_rejects_boarding_subdust_amount").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+
+	let board_amount = sat(P2TR_DUST_SAT - 1);
+	let res =bark1.try_board(board_amount).await;
+
+	// This is taken care by BDK
+	assert!(res.unwrap_err().to_string().contains(&format!("Output below the dust limit: 0")));
 }
 
 #[tokio::test]
@@ -207,7 +220,7 @@ async fn large_round() {
 }
 
 #[tokio::test]
-async fn just_oor() {
+async fn send_oor() {
 	let ctx = TestContext::new("bark/just_oor").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
@@ -225,6 +238,75 @@ async fn just_oor() {
 #[tokio::test]
 async fn refresh_all() {
 	let ctx = TestContext::new("bark/refresh_all").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	bark2.board(sat(800_000)).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	// We want bark2 to have a refresh, board, round and oor vtxo
+	let pk1 = bark1.vtxo_pubkey().await;
+	let pk2 = bark2.vtxo_pubkey().await;
+	bark2.send_oor(&pk1, sat(20_000)).await; // generates change
+	bark1.refresh_all().await;
+	bark1.send_oor(&pk2, sat(20_000)).await;
+	bark2.board(sat(20_000)).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	assert_eq!(3, bark2.vtxos().await.len());
+	bark2.refresh_all().await;
+	assert_eq!(1, bark2.vtxos().await.len());
+}
+
+#[tokio::test]
+async fn bark_rejects_sending_subdust_oor() {
+	let ctx = TestContext::new("bark/bark_rejects_sending_subdust_oor").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	let board_amount = sat(800_000);
+	bark1.board(board_amount).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	let subdust_amount = sat(P2TR_DUST_SAT - 1);
+	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, subdust_amount).await;
+
+	assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
+	assert_eq!(bark1.offchain_balance().await, board_amount);
+}
+
+#[tokio::test]
+async fn bark_rejects_creating_oor_subdust_change() {
+	let ctx = TestContext::new("bark/bark_rejects_creating_oor_subdust_change").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	let board_amount = sat(800_000);
+	bark1.board(board_amount).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	let sent_amount = board_amount - sat(P2TR_DUST_SAT - 1);
+	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, sent_amount).await;
+
+	assert!(res.unwrap_err()
+		.to_string()
+		.contains(&format!(
+			"Insufficient money available. Needed {} but {} is available",
+			// sent amount (799_671) + change (330)
+			sat(800_001),
+			board_amount)
+		)
+	);
+	assert_eq!(bark1.offchain_balance().await, board_amount);
+}
+
+#[tokio::test]
+async fn refresh() {
+	let ctx = TestContext::new("bark/refresh").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
@@ -531,7 +613,8 @@ async fn bark_send_onchain_too_much() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
 
-	bark1.board(sat(800_000)).await;
+	let board_amount = sat(800_000);
+	bark1.board(board_amount).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	let addr = bark2.get_onchain_address().await;
@@ -539,9 +622,30 @@ async fn bark_send_onchain_too_much() {
 	// board vtxo
 	let ret = bark1.try_send_onchain(&addr, sat(1_000_000)).await;
 
-	assert!(ret.unwrap_err().to_string().contains("An error occurred: Balance too low"));
-	assert_eq!(bark1.offchain_balance().await, sat(800_000), "offchain balance shouldn't have changed");
+	assert!(ret.unwrap_err().to_string().contains(
+		&format!("Your balance is too low. Needed: {}, available: {}",
+		sat(1_000_110), board_amount)
+	));
+	assert_eq!(bark1.offchain_balance().await, board_amount, "offchain balance shouldn't have changed");
 	assert_eq!(bark1.list_movements().await.len(), 1, "Should only have board movement");
+}
+
+#[tokio::test]
+async fn bark_rejects_offboarding_subdust_amount() {
+	let ctx = TestContext::new("bark/bark_rejects_offboarding_subdust_amount").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2", &aspd).await;
+
+	let board_amount = sat(800_000);
+	bark1.board(board_amount).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	let addr = bark2.get_onchain_address().await;
+
+	let res = bark1.try_send_onchain(&addr, sat(P2TR_DUST_SAT - 1)).await;
+
+	assert!(res.unwrap_err().to_string().contains(&format!("Offboard amount must be at least {}", P2TR_DUST)));
 }
 
 #[tokio::test]
@@ -843,54 +947,4 @@ async fn bark_recover_unregistered_board() {
 
 	ctx.bitcoind().generate(12).await;
 	bark.refresh_all().await;
-}
-
-#[tokio::test]
-async fn subdust_sent_vtxos() {
-	let ctx = TestContext::new("bark/subdust_sent_vtxos").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
-
-	bark1.board(sat(800_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	let subdust_amount = P2TR_DUST_SAT - 1;
-	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(P2TR_DUST_SAT - 1)).await;
-
-	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
-	assert_eq!(vtxo.amount, Amount::from_sat(subdust_amount));
-
-	bark2.board(sat(100_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	bark2.refresh_all().await;
-	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
-	assert_eq!(vtxo.amount, sat(100_000) + Amount::from_sat(subdust_amount));
-}
-
-#[tokio::test]
-async fn subdust_change_vtxos() {
-	let ctx = TestContext::new("bark/subdust_change_vtxos").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
-
-	bark1.board(sat(1_200)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(1_000)).await;
-
-	let [vtxo] = bark2.vtxos().await.try_into().expect("should have strictly one vtxo");
-	assert_eq!(vtxo.amount, sat(1_000));
-
-	let [change] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
-	assert_eq!(change.amount, sat(200));
-
-	bark1.board(sat(100_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	bark1.refresh_all().await;
-	let [vtxo] = bark1.vtxos().await.try_into().expect("should have strictly one vtxo");
-	assert_eq!(vtxo.amount, sat(100_200));
 }

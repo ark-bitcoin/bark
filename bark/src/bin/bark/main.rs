@@ -586,7 +586,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let onchain = w.onchain.balance();
-			let offchain =  w.offchain_balance().await?;
+			let offchain =  w.offchain_balance()?;
 			let pending_exit = w.exit.pending_total().await?;
 			let balance = json::Balance {onchain, offchain, pending_exit };
 			output_json(&balance);

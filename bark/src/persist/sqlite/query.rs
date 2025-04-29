@@ -243,9 +243,9 @@ pub fn get_vtxos_by_state(
 	Ok(result)
 }
 
-pub fn get_expiring_vtxos(
+pub fn select_vtxos_to_cover(
 	conn: &Connection,
-	value: Amount
+	amount: Amount
 ) -> anyhow::Result<Vec<Vtxo>> {
 	let query =
 		"SELECT raw_vtxo, amount_sat
@@ -268,14 +268,12 @@ pub fn get_expiring_vtxos(
 		total_amount += vtxo_amount;
 		result.push(vtxo);
 
-		if total_amount >= value {
+		if total_amount >= amount {
 			return Ok(result)
 		}
 	}
-	bail!(
-		"Insufficient money available. Needed {} but {} is available",
-		value,
-		total_amount);
+	bail!("Insufficient money available. Needed {} but {} is available",
+		amount, total_amount);
 }
 
 pub fn delete_vtxo(

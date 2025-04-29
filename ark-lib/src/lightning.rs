@@ -38,6 +38,17 @@ pub struct Bolt11Payment {
 	pub exit_delta: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CheckAmountsError(String);
+
+impl fmt::Display for CheckAmountsError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		f.write_str(&self.0)
+	}
+}
+
+impl std::error::Error for CheckAmountsError {}
+
 pub fn htlc_taproot(
 	payment_hash: sha256::Hash,
 	asp_pubkey: PublicKey,
@@ -56,9 +67,27 @@ pub fn htlc_taproot(
 }
 
 impl Bolt11Payment {
-	pub fn check_amounts(&self) -> bool {
+	pub fn check_amounts(&self) -> Result<(), CheckAmountsError> {
 		let inputs = self.inputs.iter().map(|v| v.amount()).sum::<Amount>();
-		inputs >= (self.payment_amount + self.forwarding_fee)
+		let total_amount = self.payment_amount + self.forwarding_fee;
+		if inputs < total_amount {
+			return Err(CheckAmountsError(format!(
+				"inputs sum is too low. provided: {}, required: {}",
+				inputs, total_amount)
+			));
+		}
+
+		if self.change_amount() < P2TR_DUST {
+			return Err(CheckAmountsError(
+				format!("change amount must be at least {}", P2TR_DUST)));
+		}
+
+		if self.payment_amount < P2TR_DUST {
+			return Err(CheckAmountsError(
+				format!("payment amount must be at least {}", P2TR_DUST)));
+		}
+
+		Ok(())
 	}
 
 	fn htlc_spk(&self) -> ScriptBuf {

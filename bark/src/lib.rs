@@ -433,7 +433,7 @@ impl <P>Wallet<P> where
 	/// Retrieve the off-chain balance of the wallet.
 	///
 	/// Make sure you sync before calling this method.
-	pub async fn offchain_balance(&self) -> anyhow::Result<Amount> {
+	pub fn offchain_balance(&self) -> anyhow::Result<Amount> {
 		let mut sum = Amount::ZERO;
 		for vtxo in self.db.get_all_spendable_vtxos()? {
 			sum += vtxo.spec().amount;
@@ -603,11 +603,7 @@ impl <P>Wallet<P> where
 		let (user_part, priv_user_part) = ark::board::new_user(spec, utxo);
 		let asp_part = {
 			let res = asp.client.request_board_cosign(protos::BoardCosignRequest {
-				user_part: {
-					let mut buf = Vec::new();
-					ciborium::into_writer(&user_part, &mut buf).unwrap();
-					buf
-				},
+				user_part: user_part.encode(),
 			}).await.context("error requesting board cosign")?;
 			ciborium::from_reader::<ark::board::AspPart, _>(&res.into_inner().asp_part[..])
 				.context("invalid ASP part in response")?
@@ -890,7 +886,7 @@ impl <P>Wallet<P> where
 		let offchain_fees = Amount::ZERO;
 		let spent_amount = amount + offchain_fees;
 
-		let input_vtxos = self.db.get_expiring_vtxos(spent_amount)?;
+		let input_vtxos = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
 
 		let change = {
 			let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
@@ -984,6 +980,10 @@ impl <P>Wallet<P> where
 	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
 		let mut asp = self.require_asp()?;
 
+		if amount < P2TR_DUST {
+			bail!("Sent amount must be at least {}", P2TR_DUST);
+		}
+
 		let oor = self.create_oor_vtxo(destination, amount).await?;
 
 		let req = protos::OorVtxo {
@@ -1014,6 +1014,7 @@ impl <P>Wallet<P> where
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Vec<u8>> {
 		let properties = self.db.read_properties()?.context("Missing config")?;
+
 		if invoice.network() != properties.network {
 			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
 		}
@@ -1029,12 +1030,16 @@ impl <P>Wallet<P> where
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
 			bail!("Invoice has amount of {} encoded. Please omit amount argument", inv);
 		}
+
 		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
+		if amount < P2TR_DUST {
+			bail!("Sent amount must be at least {}", P2TR_DUST);
+		}
 
 		let change_keypair = self.derive_store_next_keypair()?;
 
 		let forwarding_fee = Amount::from_sat(350);
-		let inputs = self.db.get_expiring_vtxos(amount + forwarding_fee)?;
+		let inputs = self.db.select_vtxos_to_cover(amount + forwarding_fee)?;
 
 
 		let (sec_nonces, pub_nonces, keypairs) = {
@@ -1202,35 +1207,38 @@ impl <P>Wallet<P> where
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
-		let change_keypair = self.derive_store_next_keypair()?;
+		let balance = self.offchain_balance()?;
 
-		// Prepare the payment.
-		let input_vtxos = self.db.get_all_spendable_vtxos()?;
-
-		// do a quick check to fail early if we don't have enough money
-		let maybe_fee = OffboardRequest::calculate_fee(
-			&addr.script_pubkey(), FeeRate::from_sat_per_vb(1).unwrap(),
+		// do a quick check to fail early and not wait for round if we don't have enough money
+		let early_fees = OffboardRequest::calculate_fee(
+			&addr.script_pubkey(), FeeRate::BROADCAST_MIN,
 		).expect("script from address");
-		let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		if in_sum < amount + maybe_fee {
-			bail!("Balance too low");
+
+		if balance < amount + early_fees {
+			bail!("Your balance is too low. Needed: {}, available: {}", amount + early_fees, balance);
 		}
 
-		let RoundResult { round_id, .. } = self.participate_round(move |round| {
+		let RoundResult { round_id, .. } = self.participate_round(|round| {
 			let offb = OffboardRequest {
 				script_pubkey: addr.script_pubkey(),
 				amount: amount,
 			};
 
-			let out_value = amount + offb.fee(round.offboard_feerate).expect("script from address");
+			let spent_amount = offb.amount + offb.fee(round.offboard_feerate)?;
+			let input_vtxos = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
+
+			let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
 			let change = {
-				if in_sum < out_value {
+				if in_sum < offb.amount {
+					// unreachable, because we checked for enough balance above
 					bail!("Balance too low");
-				} else if in_sum <= out_value + P2TR_DUST {
+				} else if in_sum <= spent_amount + P2TR_DUST {
 					info!("No change, emptying wallet.");
 					None
 				} else {
-					let amount = in_sum - out_value;
+					let amount = in_sum - spent_amount;
+					let change_keypair = self.derive_store_next_keypair()?;
 					info!("Adding change vtxo for {}", amount);
 					Some(PaymentRequest {
 						pubkey: change_keypair.public_key(),
@@ -1253,7 +1261,7 @@ impl <P>Wallet<P> where
 	/// attempts. Lateron this will also be useful so we can randomize destinations between failed
 	/// round attempts for better privacy.
 	async fn participate_round(
-		&mut self,
+		&self,
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
 			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
 		>,
@@ -1310,6 +1318,15 @@ impl <P>Wallet<P> where
 
 			let (input_vtxos, pay_reqs, offb_reqs) = round_input(&round_state.info)
 				.context("error providing round input")?;
+
+			if let Some(payreq) = pay_reqs.iter().find(|p| p.amount < P2TR_DUST) {
+				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
+			}
+
+			if let Some(offb) = offb_reqs.iter().find(|o| o.amount < P2TR_DUST) {
+				bail!("Offboard amount must be at least {}, requested {}", P2TR_DUST, offb.amount);
+			}
+
 			// Convert the input vtxos to a map to cache their ids.
 			let input_vtxos = input_vtxos.into_iter()
 				.map(|v| (v.id(), v))

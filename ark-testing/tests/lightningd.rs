@@ -3,6 +3,7 @@ use cln_rpc as rpc;
 
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use bark_json::VtxoType;
+use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use log::{trace, info};
 
 #[tokio::test]
@@ -308,4 +309,57 @@ async fn bark_refresh_payment_revocation() {
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
 	assert_eq!(vtxos[0].vtxo_type, VtxoType::Round);
 	assert_eq!(vtxos[0].amount, btc(2));
+}
+
+#[tokio::test]
+async fn bark_rejects_sending_subdust_bolt11_payment() {
+	let ctx = TestContext::new("lightningd/bark_rejects_sending_subdust_bolt11_payment").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.bitcoind().generate(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.bitcoind().generate(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(7);
+	let board_amount = btc(5);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+
+	bark_1.board(board_amount).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	{
+		// Invoice with amount
+		let invoice = lightningd_2.invoice(Some(sat(P2TR_DUST_SAT - 1)), "test_payment", "A test payment").await;
+		let res = bark_1.try_send_bolt11(invoice, None).await;
+		assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
+	}
+
+	{
+		// Invoice with no amount
+		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
+		let res = bark_1.try_send_bolt11(invoice, Some(sat(P2TR_DUST_SAT - 1))).await;
+		assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
+	}
 }
