@@ -32,20 +32,20 @@ test-unit TEST="":
 	cargo test --workspace --exclude ark-testing {{TEST}}
 
 test-unit-codecov TEST="":
-	cargo llvm-cov --workspace --exclude ark-testing {{TEST}}
+	RUST_TEST_THREADS=1 cargo llvm-cov --workspace --exclude ark-testing --no-report {{TEST}}
 
 test-unit-all:
 	cargo test --workspace --exclude ark-testing
 
 test-unit-all-codecov:
-	cargo llvm-cov --workspace --exclude ark-testing
+	RUST_TEST_THREADS=1 cargo llvm-cov --workspace --exclude ark-testing --no-report
 
 alias int := test-integration
 test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
 
 test-integration-codecov TEST="": build-codecov docker-pull
-	cargo llvm-cov --package ark-testing {{TEST}}
+	RUST_TEST_THREADS=1 cargo llvm-cov --package ark-testing --no-report {{TEST}}
 
 
 alias int-esplora := test-integration-esplora
@@ -53,13 +53,13 @@ test-integration-esplora TEST="": build docker-pull
 	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}}
 
 test-integration-esplora-codecov TEST="": build-codecov docker-pull
-	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing {{TEST}}
+	RUST_TEST_THREADS=1 CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --no-report {{TEST}}
 
 test-integration-all: build docker-pull
 	cargo test --package ark-testing
 
 test-integration-all-codecov: build-codecov docker-pull
-	cargo llvm-cov --package ark-testing
+	RUST_TEST_THREADS=1 cargo llvm-cov --package ark-testing --no-report
 
 test: test-unit test-integration test-integration-esplora
 
