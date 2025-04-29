@@ -43,7 +43,7 @@ And install the Rust toolchain:
 
 ```shell
 $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
-$ rustup toolchain install 1.84
+$ rustup toolchain install 1.77
 ```
 
 
