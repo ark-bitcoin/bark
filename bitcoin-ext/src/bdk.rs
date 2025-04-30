@@ -118,11 +118,12 @@ pub trait WalletExt: BorrowMut<Wallet> {
 
 		let balance = wallet.balance().total();
 
+		let untrusted_utxos = wallet.untrusted_utxos(None);
 		let template_weight = {
 			let mut b = wallet.build_tx();
 			b.ordering(TxOrdering::Untouched);
 			b.only_witness_utxo();
-			b.only_spend_confirmed();
+			b.unspendable(untrusted_utxos.clone());
 			for anchor in &anchors {
 				b.add_fee_anchor_spend(*anchor);
 			}
@@ -158,6 +159,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		// Then build actual tx.
 		let mut b = wallet.build_tx();
 		b.only_witness_utxo();
+		b.unspendable(untrusted_utxos);
 		b.version(3); // for 1p1c package relay
 		for anchor in &anchors {
 			b.add_fee_anchor_spend(*anchor);
