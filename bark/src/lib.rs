@@ -107,7 +107,7 @@ impl From<Utxo> for UtxoInfo {
 					amount: e.vtxo.amount(),
 					confirmation_height: {
 						let exit_delta = e.vtxo.spec().exit_delta();
-						Some(e.spendable_at_height + exit_delta.unwrap_or_default() as u32)
+						Some(e.spendable_at_height + exit_delta.unwrap_or_default() as BlockHeight)
 					},
 				}
 		}
@@ -148,7 +148,7 @@ pub struct Config {
 	/// The number of blocks before expiration to refresh vtxos.
 	///
 	/// Default value: 288 (48 hrs)
-	pub vtxo_refresh_threshold: u32
+	pub vtxo_refresh_threshold: BlockHeight
 }
 
 impl Default for Config {
@@ -340,10 +340,9 @@ impl <P>Wallet<P> where
 		} else {
 			wallet.onchain.tip().await
 				.context("failed to fetch tip from chain source")?
-				.saturating_sub(DEEPLY_CONFIRMED as u32)
-				as BlockHeight
+				.saturating_sub(DEEPLY_CONFIRMED)
 		};
-		let id = wallet.onchain.chain_source.block_id(bday as u32).await
+		let id = wallet.onchain.chain_source.block_id(bday).await
 			.with_context(|| format!("failed to get block height {} from chain source", bday))?;
 		wallet.onchain.wallet.set_checkpoint(id.height, id.hash);
 		wallet.onchain.wallet.persist(&mut wallet.db)?;
@@ -467,9 +466,9 @@ impl <P>Wallet<P> where
 
 	/// Returns all vtxos that will expire within
 	/// `threshold_blocks` blocks
-	pub async fn get_expiring_vtxos(&mut self, threshold: u32) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
 		let expiry = self.onchain.tip().await? - threshold;
-		let filter = VtxoFilter::new(&self).expires_before(expiry as BlockHeight);
+		let filter = VtxoFilter::new(&self).expires_before(expiry);
 		Ok(self.vtxos_with(filter)?)
 	}
 
@@ -546,7 +545,7 @@ impl <P>Wallet<P> where
 		let spec = ark::VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
-			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
+			expiry_height: current_height + asp.info.vtxo_expiry_delta as BlockHeight,
 			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
 			amount: amount,
 		};
@@ -568,7 +567,7 @@ impl <P>Wallet<P> where
 		let mut spec = ark::VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
-			expiry_height: current_height + asp.info.vtxo_expiry_delta as u32,
+			expiry_height: current_height + asp.info.vtxo_expiry_delta as BlockHeight,
 			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
 			// amount is temporarily set to total balance but will
 			// have fees deducted after psbt construction

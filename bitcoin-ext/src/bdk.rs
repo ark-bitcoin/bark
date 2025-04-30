@@ -65,7 +65,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			// We trust confirmed utxos if they are confirmed enough.
 			if let Some(h) = utxo.chain_position.confirmation_height_upper_bound() {
 				if let Some(min) = confirmed_height {
-					if h as BlockHeight <= min {
+					if h <= min {
 						continue;
 					}
 				} else {

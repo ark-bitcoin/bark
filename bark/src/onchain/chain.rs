@@ -65,10 +65,10 @@ impl ChainSourceClient {
 		})
 	}
 
-	pub async fn tip(&self) -> anyhow::Result<u32> {
+	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				Ok(bitcoind.get_block_count()? as u32)
+				Ok(bitcoind.get_block_count()? as BlockHeight)
 			},
 			ChainSourceClient::Esplora(ref client) => {
 				Ok(client.get_height().await?)
@@ -76,7 +76,7 @@ impl ChainSourceClient {
 		}
 	}
 
-	pub async fn block_id(&self, height: u32) -> anyhow::Result<BlockId> {
+	pub async fn block_id(&self, height: BlockHeight) -> anyhow::Result<BlockId> {
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
 				let hash = bitcoind.get_block_hash(height as u64)?;
@@ -186,7 +186,7 @@ impl ChainSourceClient {
 
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				let block = self.block_id(start as u32).await?;
+				let block = self.block_id(start).await?;
 				let cp = CheckPoint::new(block);
 
 				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
@@ -200,7 +200,7 @@ impl ChainSourceClient {
 						for txin in tx.input.iter() {
 							if outpoint_set.contains(&txin.previous_output) {
 								txs_by_outpoint.insert(txin.previous_output.clone(), (
-									em.block.bip34_block_height().unwrap(), tx.compute_txid()
+									em.block.bip34_block_height().unwrap() as BlockHeight, tx.compute_txid()
 								));
 							}
 						}
@@ -301,8 +301,19 @@ impl ChainSourceClient {
 		}
 	}
 
+	pub async fn get_tx(&self, txid: Txid) -> anyhow::Result<Option<Transaction>> {
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				Ok(bitcoind.get_raw_transaction(&txid, None).ok())
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				Ok(client.get_tx(&txid).await?)
+			},
+		}
+	}
+
 	/// Returns the block height the tx is confirmed in, if any.
-	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<u32>> {
+	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<BlockHeight>> {
 		let ret = match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
 				//TODO(stevenroose) would be nice if we cna distinguish network Error
@@ -311,7 +322,7 @@ impl ChainSourceClient {
 				if let Some(hash) = tx.blockhash {
 					let block = bitcoind.get_block_header_info(&hash)?;
 					if block.confirmations > 0 {
-						Some(block.height as u32)
+						Some(block.height as BlockHeight)
 					} else {
 						None
 					}

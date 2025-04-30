@@ -13,6 +13,7 @@ use bitcoin::{
 };
 
 use ark::util::SECP;
+use bitcoin_ext::BlockHeight;
 
 use crate::persist::WalletPersisterError;
 use crate::psbtext::PsbtInputExt;
@@ -111,7 +112,7 @@ impl <P>Wallet<P> where
 		self.chain_source.require_version()
 	}
 
-	pub async fn tip(&self) -> anyhow::Result<u32> {
+	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
 		self.chain_source.tip().await
 	}
 

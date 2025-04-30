@@ -8,7 +8,7 @@ use serde::de::Error as SerdeError;
 
 use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Error, RpcApi, Result as RpcResult};
 
-use crate::{BlockRef, DEEPLY_CONFIRMED};
+use crate::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
 
 /// Error code for RPC_VERIFY_ALREADY_IN_UTXO_SET.
 const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
@@ -280,14 +280,14 @@ pub trait BitcoinRpcExt: RpcApi {
 	fn tip(&self) -> Result<BlockRef, Error> {
 		let height = self.get_block_count()?;
 		let hash = self.get_block_hash(height)?;
-		Ok(BlockRef { height, hash })
+		Ok(BlockRef { height: height as BlockHeight, hash })
 	}
 
 	fn deep_tip(&self) -> Result<BlockRef, Error> {
 		let tip = self.get_block_count()?;
-		let height = tip.saturating_sub(DEEPLY_CONFIRMED);
+		let height = tip.saturating_sub(DEEPLY_CONFIRMED as u64);
 		let hash = self.get_block_hash(height)?;
-		Ok(BlockRef { height, hash })
+		Ok(BlockRef { height: height as BlockHeight, hash })
 	}
 }
 

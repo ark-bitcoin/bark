@@ -2,6 +2,7 @@ use std::{path::PathBuf, str::FromStr};
 use anyhow::Context;
 use ark::util::{Decodable, Encodable};
 use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
+use bitcoin_ext::BlockHeight;
 use rusqlite::{Connection, named_params, Transaction};
 use crate::{exit::ExitIndex, movement::Movement, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
@@ -418,7 +419,7 @@ pub fn get_last_vtxo_key_index(conn: &Connection) -> anyhow::Result<Option<u32>>
 
 pub fn store_last_ark_sync_height(
 	conn: &Connection,
-	height: u32
+	height: BlockHeight
 ) -> anyhow::Result<()> {
 	let query = "INSERT INTO bark_ark_sync (sync_height) VALUES (?1);";
 	let mut statement = conn.prepare(query)?;
@@ -426,7 +427,7 @@ pub fn store_last_ark_sync_height(
 	Ok(())
 }
 
-pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<u32> {
+pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight> {
 	// This query orders on id and not on the created_at field
 	// Using creatd_at would be more readable, however, this might break
 	// if two subsequent rows are added in the same millisecond.

@@ -11,6 +11,7 @@
 ///
 use bitcoin::{Amount, OutPoint, Txid};
 use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
+use bitcoin_ext::BlockHeight;
 
 use crate::{BoardVtxo, VtxoSpec, Vtxo, vtxo::VtxoSpkSpec};
 
@@ -83,7 +84,7 @@ impl DummyVtxoBuilder {
 		self
 	}
 
-	pub fn expiry_height(mut self, expiry_height: u32) -> Self {
+	pub fn expiry_height(mut self, expiry_height: BlockHeight) -> Self {
 		self.vtxo.spec.expiry_height = expiry_height;
 		self
 	}

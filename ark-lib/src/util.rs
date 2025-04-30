@@ -5,7 +5,7 @@ use bitcoin::{opcodes, ScriptBuf, Transaction};
 use bitcoin::hashes::{sha256, ripemd160, Hash};
 use bitcoin::secp256k1::{self, schnorr, XOnlyPublicKey};
 
-use bitcoin_ext::TAPROOT_KEYSPEND_WEIGHT;
+use bitcoin_ext::{BlockHeight, TAPROOT_KEYSPEND_WEIGHT};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -27,7 +27,7 @@ pub fn delayed_sign(delay_blocks: u16, pubkey: XOnlyPublicKey) -> ScriptBuf {
 }
 
 /// Create a tapscript that is a checksig and an absolute timelock.
-pub fn timelock_sign(timelock_height: u32, pubkey: XOnlyPublicKey) -> ScriptBuf {
+pub fn timelock_sign(timelock_height: BlockHeight, pubkey: XOnlyPublicKey) -> ScriptBuf {
 	let lt = bitcoin::absolute::LockTime::from_height(timelock_height).unwrap();
 	bitcoin::Script::builder()
 		.push_int(lt.to_consensus_u32() as i64)

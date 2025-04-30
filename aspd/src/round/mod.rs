@@ -446,7 +446,7 @@ impl CollectingPayments {
 		let round_tx_psbt = {
 			let mut b = wallet_lock.build_tx();
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
-			b.current_height(tip as u32);
+			b.current_height(tip);
 			b.unspendable(unspendable);
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
 			b.add_recipient(vtxos_spec.round_tx_spk(), vtxos_spec.total_required_value());

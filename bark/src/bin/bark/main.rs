@@ -15,6 +15,7 @@ use anyhow::Context;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
 use bitcoin::secp256k1::PublicKey;
+use bitcoin_ext::BlockHeight;
 use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;

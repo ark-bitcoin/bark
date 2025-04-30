@@ -16,7 +16,7 @@ use cbitcoin::{Amount, BlockHash};
 
 
 /// Type representing a block height in the bitcoin blockchain.
-pub type BlockHeight = u64;
+pub type BlockHeight = u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockRef {

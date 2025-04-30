@@ -9,7 +9,7 @@ use bitcoin::absolute::LockTime;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
-use bitcoin_ext::fee;
+use bitcoin_ext::{fee, BlockHeight};
 
 use crate::lightning::htlc_taproot;
 use crate::board::BoardVtxo;
@@ -226,7 +226,7 @@ impl fmt::Display for VtxoSpkSpec {
 pub struct VtxoSpec {
 	pub user_pubkey: PublicKey,
 	pub asp_pubkey: PublicKey,
-	pub expiry_height: u32,
+	pub expiry_height: BlockHeight,
 	pub spk: VtxoSpkSpec,
 	/// The amount of the vtxo itself, this is either the exit tx our the
 	/// vtxo tree output. It does not include budget for fees, so f.e. to

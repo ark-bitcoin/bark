@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Amount;
+use bitcoin_ext::BlockHeight;
 use opentelemetry::metrics::{Counter, Gauge};
 use opentelemetry::{Key, Value};
 use opentelemetry::{global, propagation::Extractor, KeyValue};
@@ -81,9 +82,9 @@ impl TelemetryMetrics {
 		}
 	}
 
-	pub fn set_block_height(&self, block_height: u64) {
+	pub fn set_block_height(&self, block_height: BlockHeight) {
 		if let Some(ref m) = self.inner {
-			m.block_height_gauge.record(block_height, &[]);
+			m.block_height_gauge.record(block_height as u64, &[]);
 		}
 	}
 }
