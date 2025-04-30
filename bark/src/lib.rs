@@ -9,6 +9,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
+use ark::board::BOARD_TX_VTXO_VOUT;
 use ark::oor::unsigned_oor_tx;
 use ark::util::{Decodable, Encodable};
 use ark::vtxo::VtxoSpkSpec;
@@ -59,7 +60,7 @@ use ark::{
 };
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::{RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge};
+use ark::rounds::{RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, MIN_ROUND_TX_OUTPUTS, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc::{self as rpc, protos};
 
@@ -595,10 +596,7 @@ impl <P>Wallet<P> where
 	) -> anyhow::Result<Board> {
 		let mut asp = self.require_asp()?;
 
-		// This is manually enforced in prepare_tx
-		const VTXO_VOUT: u32 = 0;
-
-		let utxo = OutPoint::new(board_tx.unsigned_tx.compute_txid(), VTXO_VOUT);
+		let utxo = OutPoint::new(board_tx.unsigned_tx.compute_txid(), BOARD_TX_VTXO_VOUT);
 		// We ask the ASP to cosign our board vtxo exit tx.
 		let (user_part, priv_user_part) = ark::board::new_user(spec, utxo);
 		let asp_part = {
@@ -1439,14 +1437,13 @@ impl <P>Wallet<P> where
 					}
 				};
 
-				//TODO(stevenroose) remove these magic numbers
-				if unsigned_round_tx.output.len() < 2 {
+				if unsigned_round_tx.output.len() < MIN_ROUND_TX_OUTPUTS {
 					bail!("asp sent round tx with less than 2 outputs: {}",
 						bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx),
 					);
 				}
-				let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 0);
-				let conns_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), 1);
+				let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
+				let conns_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_CONNECTOR_VOUT);
 
 				// Check that the proposal contains our inputs.
 				{
@@ -1462,7 +1459,7 @@ impl <P>Wallet<P> where
 					}
 
 					let mut my_offbs = offb_reqs.clone();
-					for offb in unsigned_round_tx.output.iter().skip(2) {
+					for offb in unsigned_round_tx.output.iter().skip(MIN_ROUND_TX_OUTPUTS) {
 						if let Some(i) = my_offbs.iter().position(|o| o.to_txout() == *offb) {
 							my_offbs.swap_remove(i);
 						}

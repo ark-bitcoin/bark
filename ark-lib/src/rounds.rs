@@ -14,6 +14,15 @@ use bitcoin::secp256k1::{schnorr::{self, Signature}, Message};
 use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
 use crate::tree::signed::VtxoTreeSpec;
 
+/// A round tx must have at least vtxo tree and connector chain outputs.
+/// Can also have several offboard outputs on next indices.
+pub const MIN_ROUND_TX_OUTPUTS: usize = 2;
+
+/// The output index of the vtxo tree root in the round tx.
+pub const ROUND_TX_VTXO_TREE_VOUT: u32 = 0;
+/// The output index of the connector chain  start in the round tx.
+pub const ROUND_TX_CONNECTOR_VOUT: u32 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VtxoOwnershipChallenge([u8; 32]);
 

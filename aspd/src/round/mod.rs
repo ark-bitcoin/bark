@@ -22,7 +22,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use ark::{OffboardRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge};
+use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use ark::util::Encodable;
 
@@ -31,10 +31,6 @@ use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::error::{ContextExt, AnyhowErrorExt};
 use crate::telemetry::{self, SpanExt};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
-
-
-/// The output index of the connector output in the round tx.
-pub const ROUND_TX_CONNECTOR_VOUT: u32 = 1;
 
 #[derive(Debug)]
 pub enum RoundInput {
@@ -452,6 +448,7 @@ impl CollectingPayments {
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
 			b.current_height(tip as u32);
 			b.unspendable(unspendable);
+			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
 			b.add_recipient(vtxos_spec.round_tx_spk(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
 			for offb in &self.all_offboards {
@@ -469,7 +466,7 @@ impl CollectingPayments {
 			Err(e) => return Err(RoundError::Recoverable(e)),
 		};
 		let round_txid = unsigned_round_tx.compute_txid();
-		let vtxos_utxo = OutPoint::new(round_txid, 0);
+		let vtxos_utxo = OutPoint::new(round_txid, ROUND_TX_VTXO_TREE_VOUT);
 
 		// Generate vtxo nonces and combine with user's nonces.
 		let (cosign_sec_nonces, cosign_pub_nonces) = {
