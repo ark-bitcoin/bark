@@ -37,6 +37,7 @@ fern.workspace = true
 chrono.workspace = true
 rand.workspace = true
 tokio.workspace = true
+tokio.features = [ "process" ]
 tokio-stream.workspace = true
 tonic.workspace = true
 futures.workspace = true
