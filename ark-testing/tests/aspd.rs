@@ -114,7 +114,9 @@ async fn cant_spend_untrusted() {
 		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS;
 	}).await;
 
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await);
+	let mut bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+	bark.timeout = Duration::from_millis(2_500);
+	let bark = Arc::new(bark);
 
 	bark.board(sat(200_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
@@ -548,7 +550,9 @@ async fn test_participate_round_wrong_step() {
 	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 
 	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	bark.timeout = Duration::from_millis(2_500);
+
 	bark.board(Amount::from_sat(800_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
@@ -568,7 +572,9 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	let mut bark2 = ctx.new_bark_with_funds("bark2".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	bark2.timeout = Duration::from_millis(2_500);
+
 	bark2.board(Amount::from_sat(800_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
@@ -594,7 +600,9 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
-	let bark3 = ctx.new_bark_with_funds("bark3".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	let mut bark3 = ctx.new_bark_with_funds("bark3".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
+	bark3.timeout = Duration::from_millis(2_500);
+
 	bark3.board(Amount::from_sat(800_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
