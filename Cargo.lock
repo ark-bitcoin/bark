@@ -500,7 +500,8 @@ dependencies = [
 [[package]]
 name = "bdk_bitcoind_rpc"
 version = "0.17.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ac1a1da33a22949c3e2b3a715431eaed50c2c9278c8cdac06f0254b7659291f"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -510,7 +511,8 @@ dependencies = [
 [[package]]
 name = "bdk_chain"
 version = "0.21.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4955734f97b2baed3f36d16ae7c203fdde31ae85391ac44ee3cbcaf0886db5ce"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -522,7 +524,8 @@ dependencies = [
 [[package]]
 name = "bdk_core"
 version = "0.4.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b545aea1efc090e4f71f1dd5468090d9f54c3de48002064c04895ef811fbe0b2"
 dependencies = [
  "bitcoin",
  "hashbrown 0.14.5",
@@ -532,7 +535,8 @@ dependencies = [
 [[package]]
 name = "bdk_esplora"
 version = "0.20.1"
-source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7fdf5efbebabc0c0bb46c0348ef0d4db505856c7d6c5d50cebba1e5eda5fe4"
 dependencies = [
  "async-trait",
  "bdk_core",
@@ -543,8 +547,9 @@ dependencies = [
 
 [[package]]
 name = "bdk_wallet"
-version = "1.0.0"
-source = "git+https://github.com/stevenroose/bdk.git?rev=c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2#c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a13c947be940d32a91b876fc5223a6d839a40bc219496c5c78af74714b1b3f7"
 dependencies = [
  "bdk_chain",
  "bitcoin",
@@ -1074,14 +1079,14 @@ dependencies = [
 [[package]]
 name = "esplora-client"
 version = "0.11.0"
-source = "git+https://github.com/acidbunny21/rust-esplora-client.git?rev=c0ed77e8fdb84b294bb2d444d9268dae9fd92cfc#c0ed77e8fdb84b294bb2d444d9268dae9fd92cfc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0da3c186d286e046253ccdc4bb71aa87ef872e4eff2045947c0c4fe3d2b2efc"
 dependencies = [
  "bitcoin",
  "hex-conservative 0.2.1",
  "log",
  "reqwest 0.11.27",
  "serde",
- "serde_json",
  "tokio",
 ]
 
