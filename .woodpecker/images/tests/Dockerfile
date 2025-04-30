@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	sudo
 
 ENV RUST_BACKTRACE=1 \
-	RUSTUP_TOOLCHAIN_VERSION=1.84 \
+	RUSTUP_TOOLCHAIN_VERSION=1.77 \
 	BITCOIN_VERSION=29.0 \
 	CLN_VERSION=25.02 \
 	MACOS_SDK_VERSION=15.1 \
