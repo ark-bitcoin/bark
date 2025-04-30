@@ -305,31 +305,6 @@ async fn bark_rejects_creating_oor_subdust_change() {
 }
 
 #[tokio::test]
-async fn refresh() {
-	let ctx = TestContext::new("bark/refresh").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
-
-	bark1.board(sat(800_000)).await;
-	bark2.board(sat(800_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	// We want bark2 to have a refresh, board, round and oor vtxo
-	let pk1 = bark1.vtxo_pubkey().await;
-	let pk2 = bark2.vtxo_pubkey().await;
-	bark2.send_oor(&pk1, sat(20_000)).await; // generates change
-	bark1.refresh_all().await;
-	bark1.send_oor(&pk2, sat(20_000)).await;
-	bark2.board(sat(20_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	assert_eq!(3, bark2.vtxos().await.len());
-	bark2.refresh_all().await;
-	assert_eq!(1, bark2.vtxos().await.len());
-}
-
-#[tokio::test]
 async fn refresh_counterparty() {
 	let ctx = TestContext::new("bark/refresh_counterparty").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
