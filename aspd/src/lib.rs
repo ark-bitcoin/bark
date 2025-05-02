@@ -435,8 +435,8 @@ impl App {
 		Ok(ret)
 	}
 
-	pub fn validate_board_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
-		let tip = self.bitcoind.tip()?;
+	pub async fn validate_board_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
+		let tip = self.chain_tip().await;
 
 		if spec.asp_pubkey != self.asp_key.public_key() {
 			bail!("invalid asp pubkey: {} != {}", spec.asp_pubkey, self.asp_key.public_key());
@@ -467,7 +467,7 @@ impl App {
 		vtxo: BoardVtxo,
 		tx: Transaction,
 	) -> anyhow::Result<()> {
-		self.validate_board_spec(&vtxo.spec).badarg("invalid board vtxo spec")?;
+		self.validate_board_spec(&vtxo.spec).await.badarg("invalid board vtxo spec")?;
 		vtxo.validate_tx(&tx).badarg("board tx doesn't match vtxo spec")?;
 
 		// Since the user might have just created and broadcast this tx very recently,
