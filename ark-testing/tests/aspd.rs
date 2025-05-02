@@ -535,6 +535,11 @@ async fn double_spend_round() {
 #[tokio::test]
 async fn test_participate_round_wrong_step() {
 	let ctx = TestContext::new("aspd/test_participate_round_wrong_step").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
+	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
+	bark.timeout = Duration::from_millis(2_500);
+	bark.board(Amount::from_sat(800_000)).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
 	/// This proxy will send a `provide_vtxo_signatures` req instead of `submit_payment` one
 	#[derive(Clone)]
@@ -550,17 +555,10 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
-
 	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
-	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
-
-	bark.board(Amount::from_sat(800_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	let res = bark.try_refresh_all().await;
-	assert!(res.unwrap_err().to_string().contains("unexpected message. current step is payment registration"));
+	bark.set_asp(&proxy.address).await;
+	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
+	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
 
 	/// This proxy will send a `provide_forfeit_signatures` req instead of `provide_vtxo_signatures` one
 	#[derive(Clone)]
@@ -575,18 +573,9 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
-	let mut bark2 = ctx.new_bark_with_funds("bark2".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark2.timeout = Duration::from_millis(2_500);
-
-	bark2.board(Amount::from_sat(800_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	let res = bark2.try_refresh_all().await;
-	let error_string = res.unwrap_err().to_string();
-	assert!(error_string.contains("current step is vtxo signatures submission"),
-			"Error: {}",
-			error_string
-	);
+	bark.set_asp(&proxy.address).await;
+	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
+	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
 
 	/// This proxy will send a `submit_payment` req instead of `provide_forfeit_signatures` one
 	#[derive(Clone)]
@@ -603,18 +592,9 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
-	let mut bark3 = ctx.new_bark_with_funds("bark3".to_string(), &proxy.address, Amount::from_sat(1_000_000)).await;
-	bark3.timeout = Duration::from_millis(2_500);
-
-	bark3.board(Amount::from_sat(800_000)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
-
-	let res = bark3.try_refresh_all().await;
-	let err_string = res.unwrap_err().to_string();
-	assert!(err_string.contains("Message arrived late or round was full."),
-			"Error: {}",
-			err_string
-	);
+	bark.set_asp(&proxy.address).await;
+	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
+	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
 }
 
 #[tokio::test]

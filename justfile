@@ -50,7 +50,7 @@ test-integration-codecov TEST="": build-codecov docker-pull
 
 alias int-esplora := test-integration-esplora
 test-integration-esplora TEST="": build docker-pull
-	CHAIN_SOURCE=esplora cargo test --package ark-testing {{TEST}}
+	CHAIN_SOURCE=esplora just int "{{TEST}}"
 
 test-integration-esplora-codecov TEST="": build-codecov docker-pull
 	RUST_TEST_THREADS=1 CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --no-report {{TEST}}
