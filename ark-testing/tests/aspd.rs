@@ -108,10 +108,10 @@ async fn fund_asp() {
 async fn cant_spend_untrusted() {
 	let ctx = TestContext::new("aspd/cant_spend_untrusted").await;
 
-	const NEED_CONFS: usize = 2;
+	const NEED_CONFS: u32 = 2;
 
 	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
-		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS;
+		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS as usize;
 	}).await;
 
 	let mut bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
@@ -144,7 +144,7 @@ async fn cant_spend_untrusted() {
 	attempt_handle.await.unwrap();
 
 	// then confirm the money and it should work
-	ctx.bitcoind().generate(NEED_CONFS as u64).await;
+	ctx.bitcoind().generate(NEED_CONFS).await;
 
 	log_round_err.clear();
 	if let Err(_err) = bark.try_refresh_all().await {
@@ -305,7 +305,7 @@ async fn sweep_vtxos() {
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another board
 	bark.board(sat(102_000)).await;
-	ctx.bitcoind().generate(DEEPLY_CONFIRMED as u64).await;
+	ctx.bitcoind().generate(DEEPLY_CONFIRMED).await;
 
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
@@ -315,7 +315,7 @@ async fn sweep_vtxos() {
 	assert_eq!(sweeps[0].sweep_type, "connector");
 	assert_eq!(sweeps[1].sweep_type, "board");
 
-	ctx.bitcoind().generate(DEEPLY_CONFIRMED as u64).await;
+	ctx.bitcoind().generate(DEEPLY_CONFIRMED).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
