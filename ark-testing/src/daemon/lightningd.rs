@@ -356,6 +356,30 @@ impl Lightningd {
 		Txid::from_slice(&response.txid).unwrap()
 	}
 
+	pub async fn invoice_msat(
+		&self,
+		amount_msat: u64,
+		label: impl AsRef<str>,
+		description: impl AsRef<str>,
+	) -> String {
+		let mut client = self.grpc_client().await;
+		client.invoice(cln_rpc::InvoiceRequest {
+			description: description.as_ref().to_owned(),
+			label: label.as_ref().to_owned(),
+			amount_msat: Some(cln_rpc::AmountOrAny {
+				value: Some(cln_rpc::amount_or_any::Value::Amount(cln_rpc::Amount {
+					msat : amount_msat,
+				})),
+			}),
+			cltv: None,
+			fallbacks: vec![],
+			preimage: None,
+			expiry: None,
+			exposeprivatechannels: vec![],
+			deschashonly: None,
+		}).await.unwrap().into_inner().bolt11
+	}
+
 	pub async fn invoice(
 		&self,
 		amount: Option<Amount>,
@@ -375,7 +399,6 @@ impl Lightningd {
 			deschashonly: None,
 		}).await.unwrap().into_inner().bolt11
 	}
-
 
 	pub async fn try_pay_bolt11(&self, bolt11: impl AsRef<str>) -> anyhow::Result<()> {
 		let mut client = self.grpc_client().await;

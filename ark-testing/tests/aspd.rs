@@ -684,8 +684,8 @@ async fn spend_unconfirmed_board_oor() {
 }
 
 #[tokio::test]
-async fn reject_revocation_on_successful_ln_payment() {
-	let ctx = TestContext::new("aspd/reject_revocation_on_successful_ln_payment").await;
+async fn reject_revocation_on_successful_lightning_payment() {
+	let ctx = TestContext::new("aspd/reject_revocation_on_successful_lightning_payment").await;
 
 	#[derive(Clone)]
 	struct Proxy(aspd::ArkClient);
@@ -762,8 +762,8 @@ async fn reject_revocation_on_successful_ln_payment() {
 }
 
 #[tokio::test]
-async fn spend_unconfirmed_board_ln() {
-	let ctx = TestContext::new("aspd/spend_unconfirmed_board_ln").await;
+async fn spend_unconfirmed_board_lightning() {
+	let ctx = TestContext::new("aspd/spend_unconfirmed_board_lightning").await;
 
 	// Start a lightning node to generate an invoice, we won't perform any payment so no need for others
 	trace!("Start lightningd-1");

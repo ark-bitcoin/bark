@@ -4,7 +4,7 @@ use cln_rpc as rpc;
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use bark_json::VtxoType;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
-use log::{trace, info};
+use log::{info, trace};
 
 #[tokio::test]
 async fn start_lightningd() {
@@ -124,6 +124,13 @@ async fn bark_pay_ln_succeeds() {
 		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
 		bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
 		assert_eq!(bark_1.offchain_balance().await, btc(2));
+	}
+
+	{
+		// Test invoice with msat amount
+		let invoice = lightningd_2.invoice_msat(330300, "test_payment3", "msat").await;
+		bark_1.send_bolt11(invoice, None).await;
+		assert_eq!(bark_1.offchain_balance().await, btc(2) - sat(331));
 	}
 }
 
