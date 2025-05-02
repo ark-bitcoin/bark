@@ -18,6 +18,8 @@ pub struct ArkInfo {
 	pub vtxo_expiry_delta: u16,
 	/// Delta between exit confirmation and coins becoming spendable
 	pub vtxo_exit_delta: u16,
+	/// Maximum amount of a VTXO
+	pub max_vtxo_amount: Option<Amount>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

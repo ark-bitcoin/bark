@@ -43,6 +43,7 @@ pub struct ArkInfo {
 	pub nb_round_nonces: usize,
 	pub vtxo_exit_delta: u16,
 	pub vtxo_expiry_delta: u16,
+	pub max_vtxo_amount: Option<Amount>,
 }
 
 /// Input of a round
