@@ -18,6 +18,7 @@ use log::{debug, info, warn};
 use crate::persist::{BarkPersister, WalletPersisterError};
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
+const MIN_BITCOIND_VERSION: usize = 290000;
 
 #[derive(Clone, Debug)]
 pub enum ChainSource {
@@ -38,12 +39,12 @@ pub enum ChainSourceClient {
 impl ChainSourceClient {
 	/// Checks that the version of the chain source is compatible with Bark.
 	///
-	/// For bitcoind, it checks if the version is at least 28.0, because unilateral exits rely on `package relay`, which was added in this version.
-	/// For esplora, it always returns `Ok(())` because there is no version to check.
+	/// For bitcoind, it checks if the version is at least 29.0
+	/// This is the first version for which 0 fee-anchors are considered standard
 	pub fn require_version(&self) -> anyhow::Result<()> {
 		if let ChainSourceClient::Bitcoind(ref bitcoind) = self {
-			if bitcoind.version()? < 280000 {
-				bail!("Bitcoin Core version is too old, you can participate in rounds but won't be able to unilaterally exit. Please upgrade to 28.0 or higher.");
+			if bitcoind.version()? < MIN_BITCOIND_VERSION {
+				bail!("Bitcoin Core version is too old, you can participate in rounds but won't be able to unilaterally exit. Please upgrade to 29.0 or higher.");
 			}
 		}
 
