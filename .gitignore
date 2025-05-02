@@ -9,3 +9,5 @@ rustdocs/
 /test/
 
 *.profraw
+
+flake_finder/
