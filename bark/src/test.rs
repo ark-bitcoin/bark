@@ -1,7 +1,6 @@
 use bitcoin::{Amount, OutPoint, Txid};
 
 use ark::{Vtxo, BoardVtxo, VtxoSpec, vtxo::VtxoSpkSpec};
-use bitcoin_ext::BlockHeight;
 
 fn dummy_point(vout: u32) -> OutPoint {
 	let txid: Txid = "0000000000000000000000000000000000000000000000000000000000000000".parse().unwrap();
