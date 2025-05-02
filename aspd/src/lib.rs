@@ -37,7 +37,7 @@ use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
-use bitcoin_ext::{BlockRef, TransactionExt, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
@@ -436,15 +436,15 @@ impl App {
 	}
 
 	pub fn validate_board_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
-		let tip = self.bitcoind.get_block_count()? as u32;
+		let tip = self.bitcoind.tip()?;
 
 		if spec.asp_pubkey != self.asp_key.public_key() {
 			bail!("invalid asp pubkey: {} != {}", spec.asp_pubkey, self.asp_key.public_key());
 		}
 
 		//TODO(stevenroose) make this more robust
-		if spec.expiry_height < tip {
-			bail!("vtxo already expired: {} (tip = {})", spec.expiry_height, tip);
+		if spec.expiry_height < tip.height {
+			bail!("vtxo already expired: {} (tip = {})", spec.expiry_height, tip.height);
 		}
 
 		let exit_delta = spec.spk
@@ -620,7 +620,7 @@ impl App {
 
 		let expiry = {
 			//TODO(stevenroose) bikeshed this
-			let tip = self.bitcoind.get_block_count()? as u32;
+			let tip = self.bitcoind.get_block_count()? as BlockHeight;
 			tip + 7 * 18
 		};
 

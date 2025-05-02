@@ -9,7 +9,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use bitcoin_ext::{fee, TAPROOT_KEYSPEND_WEIGHT};
+use bitcoin_ext::{fee, BlockHeight, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::util::{Decodable, Encodable, SECP};
 use crate::vtxo::VtxoSpkSpec;
@@ -107,7 +107,7 @@ impl OorPayment {
 		OorPayment { asp_pubkey, exit_delta, inputs, outputs }
 	}
 
-	fn expiry_height(&self) -> u32 {
+	fn expiry_height(&self) -> BlockHeight {
 		self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap()
 	}
 

@@ -305,7 +305,7 @@ async fn sweep_vtxos() {
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another board
 	bark.board(sat(102_000)).await;
-	ctx.bitcoind().generate(DEEPLY_CONFIRMED).await;
+	ctx.bitcoind().generate(DEEPLY_CONFIRMED as u64).await;
 
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
@@ -315,7 +315,7 @@ async fn sweep_vtxos() {
 	assert_eq!(sweeps[0].sweep_type, "connector");
 	assert_eq!(sweeps[1].sweep_type, "board");
 
-	ctx.bitcoind().generate(DEEPLY_CONFIRMED).await;
+	ctx.bitcoind().generate(DEEPLY_CONFIRMED as u64).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();

@@ -5,6 +5,7 @@ mod query;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use bitcoin_ext::BlockHeight;
 use rusqlite::{Connection, Transaction};
 use bdk_wallet::{ChangeSet, WalletPersister};
 use bitcoin::{secp256k1::PublicKey, Amount};
@@ -198,12 +199,12 @@ impl BarkPersister for SqliteClient {
 		query::fetch_exit(&conn)
 	}
 
-	fn get_last_ark_sync_height(&self) -> anyhow::Result<u32> {
+	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight> {
 		let conn = self.connect()?;
 		query::get_last_ark_sync_height(&conn)
 	}
 
-	fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()> {
+	fn store_last_ark_sync_height(&self, height: BlockHeight) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_last_ark_sync_height(&conn, height)
 	}

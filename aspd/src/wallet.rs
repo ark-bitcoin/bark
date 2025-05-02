@@ -129,7 +129,7 @@ impl PersistedWallet {
 		};
 
 		if fresh {
-			wallet.set_checkpoint(deep_tip.height as u32, deep_tip.hash);
+			wallet.set_checkpoint(deep_tip.height, deep_tip.hash);
 			let cs = wallet.take_staged().expect("should have stored tip");
 			db.store_changeset(kind, &cs).await.context("error storing initial wallet state")?;
 		}

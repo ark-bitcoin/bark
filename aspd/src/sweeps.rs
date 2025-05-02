@@ -45,6 +45,7 @@ use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight, Network, Address,
 };
+use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
 use log::{trace, info, warn, error};
@@ -486,7 +487,7 @@ impl<'a> SweepBuilder<'a> {
 	async fn create_tx(&mut self, tip: BlockHeight) -> anyhow::Result<Transaction> {
 		let mut txb = self.sweeper.wallet.build_tx();
 		txb.ordering(bdk_wallet::TxOrdering::Untouched);
-		txb.current_height(tip as u32);
+		txb.current_height(tip);
 		txb.manually_selected_only();
 
 		for sweep in &self.sweeps {
@@ -683,7 +684,7 @@ impl Process {
 	}
 
 	async fn clear_confirmed_sweeps(&mut self) -> anyhow::Result<()> {
-		let tip = self.bitcoind.get_block_count()?;
+		let tip = self.bitcoind.tip()?;
 		let mut to_remove = HashSet::new();
 		for (txid, tx) in &self.pending_txs {
 			if tx.tx.input.iter().any(|i| self.pending_tx_by_utxo.contains_key(&i.previous_output)) {
@@ -692,7 +693,7 @@ impl Process {
 			}
 
 			if let Some(h) = tx.status().await.confirmed_in() {
-				if tip - h >= 2 * DEEPLY_CONFIRMED {
+				if tip.height - h >= 2 * DEEPLY_CONFIRMED {
 					slog!(SweepTxFullyConfirmed, txid: *txid);
 				} else {
 					slog!(SweepTxAbandoned, txid: *txid,

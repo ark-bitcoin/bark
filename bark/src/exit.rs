@@ -7,7 +7,7 @@ use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
-use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, DEEPLY_CONFIRMED, P2TR_DUST};
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
 use log::{trace, debug, info, error, warn};
 
@@ -21,7 +21,7 @@ use crate::persist::{BarkPersister, WalletPersisterError};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SpendableVtxo {
 	pub vtxo: Vtxo,
-	pub spendable_at_height: u32
+	pub spendable_at_height: BlockHeight
 }
 
 struct VtxoPartition {
@@ -38,7 +38,7 @@ enum OutputStatus {
 	/// Output has been spent in tx, but not confirmed yet
 	SpentIn(Txid),
 	/// Transaction spending the output has been confirmed in block
-	ConfirmedIn(u32),
+	ConfirmedIn(BlockHeight),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -49,7 +49,7 @@ enum TxStatus {
 	/// Has been been broadcast with
 	BroadcastWithCpfp(Transaction),
 	/// Has been confirmed.
-	ConfirmedIn(u32),
+	ConfirmedIn(BlockHeight),
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -91,12 +91,12 @@ impl ExitIndex {
 	/// Returns the height at which VTXO output will be spendable
 	///
 	/// If the exit txs have not been fully confirmed yet, it will return `None`
-	pub (crate) fn spendable_at_height(&self, vtxo: &Vtxo) -> Option<u32> {
+	pub (crate) fn spendable_at_height(&self, vtxo: &Vtxo) -> Option<BlockHeight> {
 		let txid = vtxo.point().txid;
 		match self.exit_tx_status.get(&txid) {
 			Some(TxStatus::ConfirmedIn(height)) => {
 				let exit_delta = vtxo.spec().exit_delta();
-				Some(height + exit_delta.unwrap_or_default() as u32)
+				Some(height + exit_delta.unwrap_or_default() as BlockHeight)
 			},
 			_ => None
 		}
@@ -367,7 +367,7 @@ impl <P>Exit<P> where
 	/// The height at which all exits will be spendable.
 	///
 	/// If None, this means some exit txs are not confirmed yet
-	pub async fn all_spendable_at_height(&self) -> Option<u32> {
+	pub async fn all_spendable_at_height(&self) -> Option<BlockHeight> {
 		let mut highest_spendable_height = None;
 		for vtxo in self.index.vtxos.iter() {
 			match self.index.spendable_at_height(vtxo) {
@@ -407,7 +407,7 @@ impl <P>Exit<P> where
 		if let Some(lowest_confirm_height) = lowest_confirm_height {
 			let (tx_by_outpoint, unconfirmed_tx_by_outpoint) = self.chain_source.txs_spending_inputs(
 				vtxos.iter().map(|v| v.point()).collect::<Vec<_>>(),
-				lowest_confirm_height as u64
+				lowest_confirm_height
 			).await?;
 
 			for vtxo in vtxos {
@@ -415,7 +415,7 @@ impl <P>Exit<P> where
 
 				// Tracking output on chain
 				if let Some((height, _txid)) = tx_by_outpoint.get(&point) {
-					self.index.exit_output_status.insert(point, OutputStatus::ConfirmedIn(*height as u32));
+					self.index.exit_output_status.insert(point, OutputStatus::ConfirmedIn(*height));
 					continue
 				}
 
@@ -430,7 +430,7 @@ impl <P>Exit<P> where
 				if let Some(exit_output_status) = self.index.exit_output_status.get(&point) {
 					match exit_output_status {
 						OutputStatus::ConfirmedIn(height)
-							if current_height > (height + DEEPLY_CONFIRMED as u32) =>
+							if current_height > (height + DEEPLY_CONFIRMED) =>
 						{
 							self.index.remove_vtxo(vtxo.id());
 							continue;

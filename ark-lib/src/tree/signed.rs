@@ -31,7 +31,7 @@ pub struct VtxoTreeSpec {
 	pub vtxos: Vec<VtxoRequest>,
 	pub asp_pk: PublicKey,
 	pub asp_cosign_pk: PublicKey,
-	pub expiry_height: u32,
+	pub expiry_height: BlockHeight,
 	pub exit_delta: u16,
 }
 
@@ -44,7 +44,7 @@ impl VtxoTreeSpec {
 		exit_delta: u16,
 	) -> VtxoTreeSpec {
 		assert_ne!(vtxos.len(), 0);
-		VtxoTreeSpec { vtxos, asp_pk, asp_cosign_pk, expiry_height: expiry_height as u32, exit_delta }
+		VtxoTreeSpec { vtxos, asp_pk, asp_cosign_pk, expiry_height, exit_delta }
 	}
 
 	pub fn nb_leaves(&self) -> usize {

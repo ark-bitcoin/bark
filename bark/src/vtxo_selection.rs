@@ -89,7 +89,7 @@ where
 		}
 
 		if let Some(height) = self.expires_before {
-			if (vtxo.spec().expiry_height as BlockHeight) < height {
+			if (vtxo.spec().expiry_height) < height {
 				return Ok(true);
 			}
 		}

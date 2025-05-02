@@ -3,6 +3,7 @@ pub mod sqlite;
 use ark::{Vtxo, VtxoId};
 use bdk_wallet::WalletPersister;
 use bitcoin::{secp256k1::PublicKey, Amount};
+use bitcoin_ext::BlockHeight;
 use serde::ser::StdError;
 
 use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
@@ -62,8 +63,8 @@ pub trait BarkPersister: Clone + WalletPersister + Send + Sync {
 	/// Fetch an ongoing exit process.
 	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>>;
 
-	fn get_last_ark_sync_height(&self) -> anyhow::Result<u32>;
-	fn store_last_ark_sync_height(&self, height: u32) -> anyhow::Result<()>;
+	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight>;
+	fn store_last_ark_sync_height(&self, height: BlockHeight) -> anyhow::Result<()>;
 
 	fn update_vtxo_state_checked(&self, vtxo_id: VtxoId, new_state: VtxoState, allowed_old_states: &[VtxoState]) -> anyhow::Result<()>;
 
