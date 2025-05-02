@@ -24,8 +24,8 @@ mod wallet;
 pub mod config;
 pub use crate::config::Config;
 
-use std::fs;
 use std::collections::HashSet;
+use std::fs;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,27 +34,24 @@ use anyhow::Context;
 use bip39::Mnemonic;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
-use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
-use stream_until::{StreamExt as StreamUntilExt, StreamUntilItem};
-use tokio::time::MissedTickBehavior;
+use tokio::sync::{oneshot, Mutex};
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::{broadcast, oneshot, Mutex};
-use tokio_stream::{Stream, StreamExt};
-use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
 use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
+use ark::musig::{MusigPartialSignature, MusigPubNonce};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos;
 
 use crate::bitcoind::{BitcoinRpcClient, RpcApi};
-use crate::cln::SendpaySubscriptionItem;
+use crate::cln::ClnManager;
+use crate::database::model::LightningPaymentStatus;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::round::RoundInput;
@@ -79,10 +76,6 @@ pub struct RoundHandle {
 	round_trigger_tx: tokio::sync::mpsc::Sender<()>,
 }
 
-pub struct SendpayHandle {
-	sendpay_rx: tokio::sync::broadcast::Receiver<SendpaySubscriptionItem>
-}
-
 pub struct App {
 	config: Config,
 	db: database::Db,
@@ -100,8 +93,9 @@ pub struct App {
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
-	sendpay_updates: Option<SendpayHandle>,
+	lightning_payment_updated_tx:  Option<tokio::sync::broadcast::Sender<sha256::Hash>>,
 	telemetry_metrics: TelemetryMetrics,
+	cln: Option<ClnManager>,
 }
 
 impl App {
@@ -186,14 +180,15 @@ impl App {
 			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: None,
 			vtxos_in_flux: VtxosInFlux::new(),
-			sendpay_updates: None,
-			config: cfg,
-			db,
+			lightning_payment_updated_tx: None,
+			config: cfg.clone(),
+			db: db.clone(),
 			asp_key,
 			master_xpriv,
 			bitcoind,
 			rtmgr: RuntimeManager::new_with_telemetry(telemetry::spawn_gauge()),
 			telemetry_metrics: TelemetryMetrics::disabled(),
+			cln: None,
 		}))
 	}
 
@@ -214,19 +209,19 @@ impl App {
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
-		let (sendpay_tx, sendpay_rx) = broadcast::channel(1024);
+		let (lightning_payment_updated_tx, _rx) = tokio::sync::broadcast::channel(1024);
 
 		let telemetry_metrics = telemetry::init_telemetry(&self.config, self.asp_key.public_key());
 
 		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
 		let rtmgr = mut_self.rtmgr.clone();
 		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
-		mut_self.sendpay_updates = Some(SendpayHandle { sendpay_rx });
 		mut_self.txindex.start(
 			rtmgr.clone(),
 			mut_self.bitcoind.clone(),
 			mut_self.config.txindex_check_interval,
 		);
+		mut_self.lightning_payment_updated_tx = Some(lightning_payment_updated_tx);
 		//TODO(stevenroose) this will be cleaned up if we unify App::open and App::start
 		mut_self.vtxo_sweeper = Some(VtxoSweeper::start(
 			rtmgr.clone(),
@@ -240,6 +235,11 @@ impl App {
 				bdk_wallet::KeychainKind::External,
 			).address,
 		).await.context("failed to start VtxoSweeper")?);
+		mut_self.cln = Some(ClnManager::start(
+			rtmgr.clone(),
+			&mut_self.config,
+			mut_self.db.clone(),
+		).await.context("failed to start ClnManager")?);
 		mut_self.telemetry_metrics = telemetry_metrics;
 
 		// First perform all startup tasks...
@@ -334,16 +334,6 @@ impl App {
 				let res = rpcserver::run_admin_rpc_server(app)
 					.await.context("error running admin gRPC server");
 				info!("Admin RPC server exited with {:?}", res);
-			});
-		}
-
-		let rt = rtmgr.clone();
-		if self.config.lightningd.is_some() {
-			let cln_config = self.config.lightningd.clone().unwrap();
-			tokio::spawn(async move {
-				let res = crate::cln::run_process_sendpay_updates(rt, &cln_config, sendpay_tx)
-					.await.context("error processing sendpays");
-				info!("Sendpay updater process exited with {:?}", res);
 			});
 		}
 
@@ -664,124 +654,94 @@ impl App {
 		}
 	}
 
+	/// Try to finish the bolt11 payment that was previously started.
+	async fn finish_bolt11_payment(
+		&self,
+		signed: SignedBolt11Payment,
+	) -> anyhow::Result<protos::Bolt11PaymentResult> {
+		//TODO(stevenroose) need to check that the input vtxos are actually marked
+		// as spent for this specific payment
+		if signed.payment.asp_pubkey != self.asp_key.public_key() {
+			return badarg!("invalid asp pubkey used");
+		}
 
-	/// Returns a stream of updates related to the payment with hash
-	async fn finish_bolt11_payment(&self, signed: SignedBolt11Payment) -> anyhow::Result<impl Stream<Item = anyhow::Result<protos::Bolt11PaymentUpdate>>> {
+		if let Err(e) = signed.payment.check_amounts() {
+			return badarg!("invalid amounts on bolt11 payment: {}", e);
+		}
+		if let Err(e) = signed.validate_signatures(&crate::SECP) {
+			return badarg!("bad signatures on payment: {}", e);
+		}
+
 		let payment_hash = signed.payment.invoice.payment_hash().clone();
 
-		// Connecting to the grpc-client
-		let cln_config = self.config.lightningd.as_ref()
-			.context("This asp does not support lightning")?;
-		let cln_client = cln_config.grpc_client().await
-			.context("failed to connect to lightning")?;
-
 		// Spawn a task that performs the payment
-		let sendpay_rx = self.sendpay_updates.as_ref().unwrap().sendpay_rx.resubscribe();
-		let pay_jh = tokio::task::spawn(crate::cln::pay_bolt11(
-			cln_client, signed, sendpay_rx.resubscribe(),
-		));
+		let res = self.cln.as_ref().expect("started").pay_bolt11(&signed).await;
 
-		// A progress update is sent every five seconds to give the user an nidication of progress
-		let mut interval = tokio::time::interval(Duration::from_secs(5));
-		interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-		let heartbeat_stream = IntervalStream::new(interval).map(move |_| {
-			protos::Bolt11PaymentUpdate {
-				progress_message: String::from("Your payment is being routed through the lightning network..."),
-				payment_hash: payment_hash.as_byte_array().to_vec(),
-				status: protos::PaymentStatus::Pending as i32,
-				payment_preimage: None
-			}
-		});
-
-		// Let event-stream
-		let event_stream = BroadcastStream::new(sendpay_rx.resubscribe()).filter_map(move |v| match v {
-			Ok(v) => {
-				Some(protos::Bolt11PaymentUpdate {
-					status: protos::PaymentStatus::from(v.status.clone()).into(),
-					progress_message: format!(
-						"{} payment-part for hash {:?} - Attempt {} part {} to status {}",
-						v.kind.as_str_name(), v.payment_hash, v.group_id, v.part_id, v.status,
-					),
+		match res {
+			Ok(preimage) => {
+				Ok(protos::Bolt11PaymentResult {
+					progress_message: "Payment completed".to_string(),
+					status: protos::PaymentStatus::Complete.into(),
 					payment_hash: payment_hash.as_byte_array().to_vec(),
-					payment_preimage: v.payment_preimage.map(|p| p.to_vec()),
+					payment_preimage: Some(preimage.to_vec())
 				})
 			},
-			Err(_) => None,
-		});
-
-		let update_stream = heartbeat_stream.merge(event_stream);
-
-		// We create an update stream until payment handle is resolved
-		let result = update_stream.until(pay_jh).map(move |item| {
-			let item = match item {
-				StreamUntilItem::Stream(v) => v,
-				StreamUntilItem::Future(payment) => {
-					match payment {
-						Ok(Ok(preimage)) => {
-							protos::Bolt11PaymentUpdate {
-								progress_message: "Payment completed".to_string(),
-								status: protos::PaymentStatus::Complete.into(),
-								payment_hash: payment_hash.as_byte_array().to_vec(),
-								payment_preimage: Some(preimage)
-							}
-						},
-						Ok(Err(err)) => {
-							protos::Bolt11PaymentUpdate {
-								progress_message: format!("Payment failed: {}", err),
-								status: protos::PaymentStatus::Failed.into(),
-								payment_hash: payment_hash.as_byte_array().to_vec(),
-								payment_preimage: None
-							}
-						},
-						Err(err) => {
-							protos::Bolt11PaymentUpdate {
-								progress_message: format!("Error during payment. Payment state unknown {:?}", err),
-								status: protos::PaymentStatus::Failed.into(),
-								payment_hash: payment_hash.as_byte_array().to_vec(),
-								payment_preimage: None
-							}
-						}
-					}
+			Err(e) => {
+				let status = e.downcast_ref::<LightningPaymentStatus>();
+				if let Some(LightningPaymentStatus::Failed) = status {
+					Ok(protos::Bolt11PaymentResult {
+						progress_message: format!("Payment failed: {}", e),
+						status: protos::PaymentStatus::Failed.into(),
+						payment_hash: payment_hash.as_byte_array().to_vec(),
+						payment_preimage: None
+					})
+				} else {
+					Ok(protos::Bolt11PaymentResult {
+						progress_message: format!("Error during payment: {:?}", e),
+						status: protos::PaymentStatus::Failed.into(),
+						payment_hash: payment_hash.as_byte_array().to_vec(),
+						payment_preimage: None
+					})
 				}
-			};
-			Ok(item)
-		});
-
-		Ok(result)
+			},
+		}
 	}
 
-	async fn revoke_bolt11_payment(&self, signed: &SignedBolt11Payment, user_nonces: &[musig::MusigPubNonce])
-		-> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>
-	{
-		// Connecting to the grpc-client
-		let cln_config = self.config.lightningd.as_ref()
-			.context("This asp does not support lightning")?;
-		let mut cln_client = cln_config.grpc_client().await
-			.context("failed to connect to lightning")?;
+	async fn revoke_bolt11_payment(
+		&self,
+		signed: &SignedBolt11Payment,
+		user_nonces: &[musig::MusigPubNonce],
+	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
+		let db = self.db.clone();
+		let payment_hash = signed.payment.invoice.payment_hash().clone();
 
-		let req = cln_rpc::ListpaysRequest {
-			bolt11: Some(signed.payment.invoice.to_string()),
-			payment_hash: None,
-			status: None,
-			index: None,
-			limit: None,
-			start: None,
-		};
-		let listpays_response = cln_client
-			.list_pays(req).await
-			.context("Could not fetch cln payments")?
-			.into_inner();
+		let invoice = db.get_lightning_invoice_by_payment_hash(&payment_hash).await
+			.context("error fetching invoice by payment hash")?;
 
-		for pay in listpays_response.pays {
-			if pay.status() == ListpaysPaysStatus::Pending {
-				return badarg!("This lightning payment is not eligible for revocation yet")
-			}
-			if pay.status() == ListpaysPaysStatus::Complete {
+		match invoice.payment_status {
+			LightningPaymentStatus::Succeeded => {
 				return badarg!("This lightning payment has completed. preimage: {}",
-					serialize_hex(&pay.preimage.unwrap()))
+						serialize_hex(&invoice.clone().preimage.unwrap()))
+			}
+			LightningPaymentStatus::Failed => {}
+			LightningPaymentStatus::Submitted => {
+				return badarg!("This lightning payment is not eligible for revocation yet");
+			}
+			LightningPaymentStatus::Requested => {
+				return badarg!("This lightning payment is not eligible for revocation yet");
 			}
 		}
 
+		let parts = self.process_revocation(signed, user_nonces).await?;
+
+		Ok(parts)
+	}
+
+	async fn process_revocation(
+		&self,
+		signed: &SignedBolt11Payment,
+		user_nonces: &[MusigPubNonce],
+	) -> anyhow::Result<(Vec<MusigPubNonce>, Vec<MusigPartialSignature>)> {
 		signed.validate_signatures(&crate::SECP)
 			.badarg("bad signatures on payment")?;
 
@@ -800,7 +760,6 @@ impl App {
 	}
 
 	// ** SOME ADMIN COMMANDS **
-
 	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Mnemonic> {
 		Ok(wallet::read_mnemonic_from_datadir(&self.config.data_dir)?)
 	}

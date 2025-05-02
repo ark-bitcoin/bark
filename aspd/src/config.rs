@@ -1,12 +1,14 @@
-
+use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Amount, FeeRate};
-use config::{Environment, File};
+use config::{Environment, File, Value};
 use serde::Deserialize;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
+use cln_rpc::node_client::NodeClient;
 
 use crate::{serde_util, sweeps};
 
@@ -40,9 +42,35 @@ pub struct Rpc {
 pub struct Lightningd {
 	#[serde(with = "serde_util::uri")]
 	pub uri: tonic::transport::Uri,
+	/// Lowest number has the highest priority.
+	pub priority: u8,
 	pub server_cert_path: PathBuf,
 	pub client_cert_path: PathBuf,
 	pub client_key_path: PathBuf,
+}
+
+impl Lightningd {
+	/// Create a gRPC client to the cln node's main gRPC endpoint.
+	pub async fn build_grpc_client(&self) -> anyhow::Result<NodeClient<Channel>> {
+		// Client doesn't support grpc over http
+		// We need to use https using m-TLS authentication
+		let ca_pem = fs::read_to_string(&self.server_cert_path)
+			.context("failed to read server cert file")?;
+		let id_pem = fs::read_to_string(&self.client_cert_path)
+			.context("failed to read client cert file")?;
+		let id_key = fs::read_to_string(&self.client_key_path)
+			.context("failed to read client key file")?;
+
+		let channel = Channel::builder(self.uri.clone())
+			.tls_config(ClientTlsConfig::new()
+				.ca_certificate(Certificate::from_pem(ca_pem))
+				.identity(Identity::from_pem(&id_pem, &id_key))
+			)?
+			.connect()
+			.await?;
+
+		Ok(NodeClient::new(channel))
+	}
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -103,8 +131,21 @@ pub struct Config {
 
 	pub bitcoind: Bitcoind,
 
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub lightningd: Option<Lightningd>,
+	#[serde(default)]
+	pub cln_array: Vec<Lightningd>,
+	#[serde(with = "serde_util::duration")]
+	pub cln_reconnect_interval: Duration,
+	#[serde(with = "serde_util::duration")]
+	pub invoice_check_interval: Duration,
+	/// The time for which not to manually recheck invoice state.
+	#[serde(with = "serde_util::duration")]
+	pub invoice_recheck_delay: Duration,
+	#[serde(with = "serde_util::duration")]
+	pub invoice_check_base_delay: Duration,
+	#[serde(with = "serde_util::duration")]
+	pub invoice_check_max_delay: Duration,
+	#[serde(with = "serde_util::duration")]
+	pub invoice_poll_interval: Duration,
 
 	// compatibility flags
 
@@ -157,7 +198,13 @@ impl Default for Config {
 				user: None,
 				password: None
 			},
-			lightningd : None,
+			cln_array: Vec::new(),
+			cln_reconnect_interval: Duration::from_secs(10),
+			invoice_check_interval: Duration::from_secs(3),
+			invoice_recheck_delay: Duration::from_secs(2),
+			invoice_check_base_delay: Duration::from_secs(10),
+			invoice_check_max_delay: Duration::from_secs(10*60),
+			invoice_poll_interval: Duration::from_secs(30),
 
 			legacy_wallet: false,
 		}
@@ -183,14 +230,32 @@ impl Config {
 		if let Some(file) = config_file {
 			builder = builder.add_source(File::from(file));
 		}
+
 		let env = Environment::with_prefix("ASPD")
 			.separator("__");
 		#[cfg(test)]
 		let env = env.source(custom_env);
 		builder = builder.add_source(env);
 
+		let cln_array = {
+			let env_cfg = builder.clone().build().context("error building config")?;
+			if let Ok(raw) = env_cfg.get_string("cln_array") {
+				// if the environment variable is set, we have to clean up the
+				// actual builder so that it doesn't fail on parsing the value regularly
+				builder = builder.set_override("cln_array", Vec::<Value>::new()).unwrap();
+				serde_json::from_str::<Vec<Lightningd>>(&raw)
+					.context("invalid cln_array env var")?
+			} else {
+				Vec::new()
+			}
+		};
+
 		let cfg = builder.build().context("error building config")?;
-		Ok(cfg.try_deserialize().context("error parsing config")?)
+		let mut cfg: Config = cfg.try_deserialize().context("error parsing config")?;
+		// merge the json parsed cln_array
+		cfg.cln_array.extend(cln_array);
+
+		Ok(cfg)
 	}
 
 	pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
@@ -300,17 +365,20 @@ mod test {
 
 		let cln = Lightningd {
 			uri: Uri::from_str(uri.clone().as_str()).unwrap(),
+			priority: 1,
 			server_cert_path: PathBuf::from(server_cert_path.clone()),
 			client_cert_path: PathBuf::from(client_cert_path.clone()),
 			client_key_path: PathBuf::from(client_key_path.clone()),
 		};
+		let mut cln_array = Vec::new();
+		cln_array.push(cln);
 
 		cfg.bitcoind.cookie = bitcoind_cookie.clone();
-		cfg.lightningd = Some(cln);
+		cfg.cln_array = cln_array;
 
 		cfg.validate().expect("invalid configuration");
 
-		let lncfg = cfg.lightningd.as_ref().unwrap();
+		let lncfg = cfg.cln_array.get(0).unwrap();
 		assert_eq!(lncfg.uri, Uri::from_str(uri.clone().as_str()).unwrap());
 		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
 		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
@@ -328,10 +396,13 @@ mod test {
 		let env = [
 			("ASPD__VTXO_EXPIRY_DELTA", "42"),
 			("ASPD__BITCOIND__COOKIE", "/not/hot/dog/but/cookie"),
-			("ASPD__LIGHTNINGD__URI", uri),
-			("ASPD__LIGHTNINGD__SERVER_CERT_PATH", server_cert_path),
-			("ASPD__LIGHTNINGD__CLIENT_CERT_PATH", client_cert_path),
-			("ASPD__LIGHTNINGD__CLIENT_KEY_PATH", client_key_path),
+			("ASPD__CLN_ARRAY", r#"[{
+				"uri": "http://belson.labs:12345",
+				"priority": 1,
+				"server_cert_path": "/hooli/http_public/certs/server.crt",
+				"client_cert_path": "/hooli/http_public/certs/client.crt",
+				"client_key_path": "/hooli/http_public/certs/client.key"
+			}]"#),
 		].into_iter().map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
 
 		let cfg = Config::load_with_custom_env(None, Some(env)).unwrap();
@@ -339,7 +410,7 @@ mod test {
 
 		assert_eq!(cfg.vtxo_expiry_delta, 42);
 		assert_eq!(cfg.bitcoind.cookie, Some("/not/hot/dog/but/cookie".into()));
-		let lncfg = cfg.lightningd.as_ref().unwrap();
+		let lncfg = cfg.cln_array.get(0).unwrap();
 		assert_eq!(lncfg.uri, Uri::from_str(uri).unwrap());
 		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
 		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));

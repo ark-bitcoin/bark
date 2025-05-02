@@ -194,6 +194,7 @@ impl TestContext {
 				server_cert_path: grpc_details.server_cert_path,
 				client_cert_path: grpc_details.client_cert_path,
 				client_key_path: grpc_details.client_key_path,
+				priority: 1,
 			})
 		} else {
 			None
@@ -239,7 +240,13 @@ impl TestContext {
 				rpc_pass: None,
 			},
 			postgres: self.postgres_config.clone().expect("postgres config not set"),
-			lightningd,
+			cln_array: vec![],
+			cln_reconnect_interval: Duration::from_secs(10),
+			invoice_check_interval: Duration::from_secs(3),
+			invoice_recheck_delay: Duration::from_secs(2),
+			invoice_check_base_delay: Duration::from_secs(2),
+			invoice_check_max_delay: Duration::from_secs(10),
+			invoice_poll_interval: Duration::from_secs(10),
 			legacy_wallet: false,
 		}
 	}

@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::{ScriptBuf, WPubkeyHash};
 use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST, P2TR_DUST_SAT};
 use futures::future::join_all;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use log::{error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
@@ -693,17 +693,24 @@ async fn reject_revocation_on_successful_ln_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn finish_bolt11_payment(&mut self, req: protos::SignedBolt11PaymentDetails) -> Result<Box<
-			dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
-		>, tonic::Status> {
+		async fn finish_bolt11_payment(
+			&mut self, req: protos::SignedBolt11PaymentDetails,
+		) -> Result<protos::Bolt11PaymentResult, tonic::Status> {
+			trace!("AspdRpcProxy: Calling finish_bolt11_payment.");
 			// Wait until payment is successful then we drop update so client asks for revocation
-			let mut stream = self.upstream().finish_bolt11_payment(req).await?.into_inner();
-			while let Some(msg) = stream.next().await {
-				if msg.unwrap().payment_preimage().len() > 0 {
-					break;
-				}
+			let res = self.upstream().finish_bolt11_payment(req).await?.into_inner();
+			if res.payment_preimage().len() > 0 {
+				trace!("AspdRpcProxy: Received preimage which we are 'dropping' for this test.");
+			} else {
+				trace!("AspdRpcProxy: Received message but no preimage yet.");
 			}
-			Ok(Box::new(futures::stream::empty()))
+
+			Ok(protos::Bolt11PaymentResult {
+				progress_message: "intercepted by proxy".into(),
+				status: protos::PaymentStatus::Failed.into(),
+				payment_hash: vec![],
+				payment_preimage: None
+			})
 		}
 	}
 
@@ -748,8 +755,10 @@ async fn reject_revocation_on_successful_ln_payment() {
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	let res = bark_1.try_send_bolt11(invoice, None).await;
-	assert!(res.unwrap_err().to_string().contains("This lightning payment has completed. preimage: "));
+	let err = bark_1.try_send_bolt11(invoice, None).await.unwrap_err();
+	assert!(err.to_string().contains("This lightning payment has completed. preimage: "),
+		"error: {}", err,
+	);
 }
 
 #[tokio::test]
