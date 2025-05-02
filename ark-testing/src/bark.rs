@@ -240,6 +240,10 @@ impl Bark {
 		self.run(["vtxo-pubkey"]).await
 	}
 
+	pub async fn vtxo_pubkey_at_idx(&self, idx: u32) -> String {
+		self.run(["vtxo-pubkey", "--index", &idx.to_string()]).await
+	}
+
 	/// Use bark wallet to send bitcoin onchain
 	pub async fn try_send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> anyhow::Result<()> {
 		let destination = destination.to_string();
