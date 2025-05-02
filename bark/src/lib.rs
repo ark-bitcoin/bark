@@ -1096,7 +1096,8 @@ impl <P>Wallet<P> where
 		);
 
 		let req = protos::SignedBolt11PaymentDetails {
-			signed_payment: signed.clone().encode()
+			signed_payment: signed.clone().encode(),
+			wait: true,
 		};
 
 		let res = asp.client.finish_bolt11_payment(req).await?.into_inner();

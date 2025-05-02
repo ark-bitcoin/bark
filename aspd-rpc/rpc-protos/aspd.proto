@@ -22,6 +22,7 @@ service ArkService {
 	// * LN payments
 	rpc StartBolt11Payment(Bolt11PaymentRequest) returns (Bolt11PaymentDetails) {}
 	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (Bolt11PaymentResult) {}
+	rpc CheckBolt11Payment(CheckBolt11PaymentRequest) returns (Bolt11PaymentResult) {}
 	rpc RevokeBolt11Payment(RevokeBolt11PaymentRequest) returns (OorCosignResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
@@ -131,6 +132,12 @@ message Bolt11PaymentDetails {
 
 message SignedBolt11PaymentDetails {
 	bytes signed_payment = 1;
+	bool wait = 2;
+}
+
+message CheckBolt11PaymentRequest {
+	bytes hash = 1;
+	bool wait = 2;
 }
 
 message Bolt11PaymentResult {
