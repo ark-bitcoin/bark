@@ -11,6 +11,7 @@ use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use bitcoin_ext::bdk::EsploraClientExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::BlockHeight;
 use log::{debug, info, warn};

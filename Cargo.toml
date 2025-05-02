@@ -61,7 +61,7 @@ async-trait = "0.1.83"
 bip39 = { version = "2.0.0", features = [ "rand", "serde" ] }
 miniscript = "12.2"
 rand = { version = "0.9.0", features = [ "std", "std_rng" ] }
-bdk_wallet = { package = "bdk_wallet", version = "1.0.0" }
+bdk_wallet = { package = "bdk_wallet", version = "1.1.0" }
 bdk_esplora = { package = "bdk_esplora", version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false }
 bdk_bitcoind_rpc = { package = "bdk_bitcoind_rpc", version = "0.17.1" }
 # tracing and monitoring
@@ -73,21 +73,3 @@ tracing = { version = "0.1.41", features = ["std", "attributes"] }
 tracing-opentelemetry = "0.28.0"
 tracing-subscriber = { version = "0.3.19", features = ["std", "registry", "ansi", "fmt", "env-filter"] }
 
-# bdk dep overrides (should be replaced under # bitcoin category later)
-[patch.crates-io.bdk_wallet]
-package = "bdk_wallet"
-version = "1.0.0"
-git = "https://github.com/stevenroose/bdk.git"
-rev = "c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
-[patch.crates-io.bdk_esplora]
-package = "bdk_esplora"
-version = "0.20.1"
-features = [ "std", "async-https-rustls", "tokio" ]
-default-features = false
-git = "https://github.com/stevenroose/bdk.git"
-rev = "c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
-[patch.crates-io.bdk_bitcoind_rpc]
-package = "bdk_bitcoind_rpc"
-version = "0.17.1"
-git = "https://github.com/stevenroose/bdk.git"
-rev = "c52dd1b8b06d0669aa7a387fa4138ca6c2fb1da2"
