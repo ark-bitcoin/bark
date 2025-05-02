@@ -514,14 +514,10 @@ impl rpc::server::ArkService for App {
 		Ok(tonic::Response::new(response))
 	}
 
-	type FinishBolt11PaymentStream = Box<
-		dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
-	>;
-
 	async fn finish_bolt11_payment(
 		&self,
 		req: tonic::Request<protos::SignedBolt11PaymentDetails>,
-	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
+	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT);
 
 		add_tracing_attributes(vec![
@@ -530,14 +526,9 @@ impl rpc::server::ArkService for App {
 
 		let signed = SignedBolt11Payment::decode(&req.get_ref().signed_payment)
 			.badarg("invalid payment encoding")?;
-		if let Err(e) = signed.validate_signatures(&crate::SECP) {
-			badarg!("bad signatures on payment: {}", e);
-		}
 
-		let update_stream = self.finish_bolt11_payment(signed).await
-			.context("Could not finalise")?;
-
-		Ok(tonic::Response::new(Box::new(update_stream.map(|r| r.to_status()))))
+		let res = self.finish_bolt11_payment(signed).await.to_status()?;
+		Ok(tonic::Response::new(res))
 	}
 
 	async fn revoke_bolt11_payment(

@@ -50,10 +50,8 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
 	}
 
-	async fn finish_bolt11_payment(&mut self, req: protos::SignedBolt11PaymentDetails) -> Result<Box<
-		dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
-	>, tonic::Status> {
-		Ok(Box::new(self.upstream().finish_bolt11_payment(req).await?.into_inner()))
+	async fn finish_bolt11_payment(&mut self, req: protos::SignedBolt11PaymentDetails) -> Result<protos::Bolt11PaymentResult, tonic::Status> {
+		Ok(self.upstream().finish_bolt11_payment(req).await?.into_inner())
 	}
 
 	async fn revoke_bolt11_payment(&mut self, req: protos::RevokeBolt11PaymentRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
@@ -197,13 +195,9 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	type FinishBolt11PaymentStream = Box<
-		dyn Stream<Item = Result<protos::Bolt11PaymentUpdate, tonic::Status>> + Unpin + Send + 'static
-	>;
-
 	async fn finish_bolt11_payment(
 		&self, req: tonic::Request<protos::SignedBolt11PaymentDetails>,
-	) -> Result<tonic::Response<Self::FinishBolt11PaymentStream>, tonic::Status> {
+	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::finish_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 

@@ -1009,7 +1009,7 @@ impl <P>Wallet<P> where
 		&mut self,
 		invoice: &Bolt11Invoice,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<Vec<u8>> {
+	) -> anyhow::Result<[u8; 32]> {
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		if invoice.network() != properties.network {
@@ -1095,18 +1095,9 @@ impl <P>Wallet<P> where
 			signed_payment: signed.clone().encode()
 		};
 
-		let mut payment_preimage = None;
-		let mut last_msg = String::from("");
-		let mut stream = asp.client.finish_bolt11_payment(req).await?.into_inner();
-		while let Some(msg) = stream.next().await {
-			let msg = msg.context("Error reported during pay")?;
-			debug!("Progress update: {}", msg.progress_message);
-			last_msg = msg.progress_message.clone();
-			if msg.payment_preimage().len() > 0 {
-				payment_preimage = msg.payment_preimage;
-				break;
-			}
-		}
+		let res = asp.client.finish_bolt11_payment(req).await?.into_inner();
+		debug!("Progress update: {}", res.progress_message);
+		let payment_preimage = <[u8; 32]>::try_from(res.payment_preimage()).ok();
 
 		// The client will receive the change VTXO if it exists
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
@@ -1121,7 +1112,7 @@ impl <P>Wallet<P> where
 			.map(|v| (v, VtxoState::Spendable))
 			.collect::<Vec<_>>();
 
-		if let Some(payment_preimage) = payment_preimage {
+		if let Some(preimage) = payment_preimage {
 			self.db.register_movement(MovementArgs {
 				spends: &input_vtxos,
 				receives: receive_vtxos,
@@ -1130,7 +1121,7 @@ impl <P>Wallet<P> where
 				],
 				fees: Some(forwarding_fee)
 			}).context("failed to store OOR vtxo")?;
-			Ok(payment_preimage)
+			Ok(preimage)
 		} else {
 			let htlc_vtxo = signed.htlc_vtxo().into();
 			let keypair_idx = self.db.get_vtxo_key_index(&htlc_vtxo)?;
@@ -1179,7 +1170,7 @@ impl <P>Wallet<P> where
 				fees: None
 			})?;
 
-			bail!("Payment failed: {}", last_msg);
+			bail!("Payment failed: {}", res.progress_message);
 		}
 	}
 
@@ -1191,7 +1182,7 @@ impl <P>Wallet<P> where
 		addr: &LightningAddress,
 		amount: Amount,
 		comment: Option<&str>,
-	) -> anyhow::Result<(Bolt11Invoice, Vec<u8>)> {
+	) -> anyhow::Result<(Bolt11Invoice, [u8; 32])> {
 		let invoice = lnurl::lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);

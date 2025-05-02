@@ -10,13 +10,25 @@ use tokio_util::sync::CancellationToken;
 /// A struct to be held in scope while a process is working.
 pub struct RuntimeWorker {
 	mgr: RuntimeManager,
-	name: &'static str,
+	name: String,
 	critical: bool,
+
+	extra_notify: Option<Arc<Notify>>,
+}
+
+impl RuntimeWorker {
+	pub fn with_notify(mut self, notify: Arc<Notify>) -> Self {
+		self.extra_notify = Some(notify);
+		self
+	}
 }
 
 impl std::ops::Drop for RuntimeWorker {
 	fn drop(&mut self) {
-		self.mgr.drop_worker(self.name, self.critical);
+		if let Some(ref notify) = self.extra_notify {
+			notify.notify_waiters();
+		}
+		self.mgr.drop_worker(&self.name, self.critical);
 	}
 }
 
@@ -57,55 +69,52 @@ impl RuntimeManager {
 		}
 	}
 
-	fn add_worker(&self) {
-		let old = self.inner.workers.fetch_add(1, atomic::Ordering::SeqCst);
-		self.inner.notify.notify_waiters();
-		if let Some(ref gauge) = self.inner.spawn_gauge {
-			gauge.record(old as u64 + 1, &[]);
-		}
-	}
-
-	fn sub_worker(&self) {
+	fn drop_worker(&self, name: &str, critical: bool) {
 		let old = self.inner.workers.fetch_sub(1, atomic::Ordering::SeqCst);
 		assert_ne!(old, 0);
 		self.inner.notify.notify_waiters();
+
 		if let Some(ref gauge) = self.inner.spawn_gauge {
 			gauge.record(old as u64 - 1, &[]);
 		}
-	}
 
-	/// Create a worker that will inform the [RuntimeManager] when it goes out of scope.
-	pub fn spawn(&self, name: &'static str) -> RuntimeWorker {
-		self.add_worker();
-		slog!(WorkerStarted, name: name.into());
-		RuntimeWorker {
-			mgr: self.clone(),
-			name: name,
-			critical: false,
-		}
-	}
-
-	/// Create a worker that will inform the [RuntimeManager] when it goes out of scope.
-	///
-	/// When a critical worker ends, shutdown will be triggered.
-	pub fn spawn_critical(&self, name: &'static str) -> RuntimeWorker {
-		self.add_worker();
-		slog!(WorkerStarted, name: name.into());
-		RuntimeWorker {
-			mgr: self.clone(),
-			name: name,
-			critical: true,
-		}
-	}
-
-	fn drop_worker(&self, name: &'static str, critical: bool) {
-		self.sub_worker();
 		if critical && !self.inner.shutdown.is_cancelled() {
 			slog!(CriticalWorkerStopped, name: name.into());
 			self.shutdown();
 		} else {
 			slog!(WorkerStopped, name: name.into());
 		}
+	}
+
+	fn inner_spawn(&self, name: impl AsRef<str>, critical: bool) -> RuntimeWorker {
+		let old = self.inner.workers.fetch_add(1, atomic::Ordering::SeqCst);
+		self.inner.notify.notify_waiters();
+
+		let name = name.as_ref();
+		slog!(WorkerStarted, name: name.into(), critical);
+
+		if let Some(ref gauge) = self.inner.spawn_gauge {
+			gauge.record(old as u64 + 1, &[]);
+		}
+
+		RuntimeWorker {
+			mgr: self.clone(),
+			name: name.into(),
+			critical,
+			extra_notify: None,
+		}
+	}
+
+	/// Create a worker that will inform the [RuntimeManager] when it goes out of scope.
+	pub fn spawn(&self, name: impl AsRef<str>) -> RuntimeWorker {
+		self.inner_spawn(name, false)
+	}
+
+	/// Create a worker that will inform the [RuntimeManager] when it goes out of scope.
+	///
+	/// When a critical worker ends, shutdown will be triggered.
+	pub fn spawn_critical(&self, name: impl AsRef<str>) -> RuntimeWorker {
+		self.inner_spawn(name, true)
 	}
 
 	/// Start system shutdown.

@@ -226,7 +226,7 @@ impl<T> Daemon<T>
 	pub async fn join(&self) -> anyhow::Result<()> {
 		match &mut *self.child.lock().await {
 			Some(ref mut child) => child.wait().await?,
-			None => anyhow::bail!("Failed to wait for daemon to complete. Was it running?")
+			None => bail!("Failed to wait for daemon to complete. Was it running?")
 		};
 
 		Ok(())

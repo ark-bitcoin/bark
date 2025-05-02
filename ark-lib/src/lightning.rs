@@ -7,7 +7,7 @@ use bitcoin::secp256k1::{self, schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
 use lightning_invoice::Bolt11Invoice;
 
-use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
+use bitcoin_ext::{fee, AmountExt, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::oor::OorPayment;
 use crate::util::{Decodable, Encodable};
@@ -68,6 +68,16 @@ pub fn htlc_taproot(
 
 impl Bolt11Payment {
 	pub fn check_amounts(&self) -> Result<(), CheckAmountsError> {
+		if let Some(invoice_msat) = self.invoice.amount_milli_satoshis() {
+			let invoice_amount = Amount::from_msat_ceil(invoice_msat);
+			if invoice_amount != self.payment_amount {
+				return Err(CheckAmountsError(format!(
+					"payment amount ({}) is not equal to invoice amount ({})",
+					self.payment_amount, invoice_amount,
+				)));
+			}
+		}
+
 		let inputs = self.inputs.iter().map(|v| v.amount()).sum::<Amount>();
 		let total_amount = self.payment_amount + self.forwarding_fee;
 		if inputs < total_amount {

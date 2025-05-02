@@ -72,8 +72,14 @@ pub trait AmountExt: Borrow<Amount> {
 		self.borrow().to_sat() * 1_000
 	}
 
-	fn from_msat(value: u64) -> Amount {
-		Amount::from_sat(value.div_euclid(1_000))
+	/// Convert an amount from msat, rounding up.
+	fn from_msat_ceil(value: u64) -> Amount {
+		Amount::from_sat((value + 999) / 1_000)
+	}
+
+	/// Convert an amount from msat, rounding down.
+	fn from_msat_floor(value: u64) -> Amount {
+		Amount::from_sat(value / 1_000)
 	}
 }
 impl AmountExt for Amount {}
@@ -117,5 +123,21 @@ impl ScriptBufExt for ScriptBuf {
 	/// Generates pay to anchor output.
 	fn new_p2a() -> Self {
 		new_witness_program_unchecked(WitnessVersion::V1, P2A_PROGRAM)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn amount_from_msat() {
+		assert_eq!(Amount::from_msat_ceil(3000), Amount::from_sat(3));
+		assert_eq!(Amount::from_msat_ceil(3001), Amount::from_sat(4));
+		assert_eq!(Amount::from_msat_ceil(3999), Amount::from_sat(4));
+
+		assert_eq!(Amount::from_msat_floor(3000), Amount::from_sat(3));
+		assert_eq!(Amount::from_msat_floor(3001), Amount::from_sat(3));
+		assert_eq!(Amount::from_msat_floor(3999), Amount::from_sat(3));
 	}
 }
