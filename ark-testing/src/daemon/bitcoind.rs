@@ -123,7 +123,7 @@ impl Bitcoind {
 		client.generate_to_address(block_num, &address).unwrap();
 	}
 
-	pub async fn generate(&self, block_num: u64) {
+	pub async fn generate(&self, block_num: u32) {
 		lazy_static! {
 			static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
 				"mzU8XRVhUdXtdxmSA3Vw8XeU2FDV4iBDRW"
@@ -133,7 +133,7 @@ impl Bitcoind {
 		// give txs time to propagate
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 
-		self.sync_client().generate_to_address(block_num, &*RANDOM_ADDR).unwrap();
+		self.sync_client().generate_to_address(block_num as u64, &*RANDOM_ADDR).unwrap();
 
 		// give blocks some time to propagate
 		tokio::time::sleep(Duration::from_millis(500)).await;

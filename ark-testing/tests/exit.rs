@@ -25,8 +25,8 @@ async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 			return;
 		}
 		if let Some(height) = res.height {
-			let current = ctx.bitcoind().sync_client().get_block_count().unwrap();
-			ctx.bitcoind().generate(height as u64 - current).await;
+			let current = ctx.bitcoind().sync_client().get_block_count().unwrap() as u32;
+			ctx.bitcoind().generate(height - current).await;
 		} else {
 			flip = if flip {
 				ctx.bitcoind().generate(1).await;
