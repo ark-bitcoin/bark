@@ -483,7 +483,7 @@ async fn handle_pay_bolt11(
 					None,
 					None,
 				).await {
-					Ok(_) => {}, //TODO(stevenroose) should I use the bool?
+					Ok(_) => {},
 					Err(e) => error!("Error updating invoice after pay error: {e}"),
 				}
 				Ok(None) => error!("Failed to find attempt for invoice just started \
