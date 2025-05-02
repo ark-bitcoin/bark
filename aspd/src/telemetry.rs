@@ -16,8 +16,9 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 
+use crate::cln::ClnNodeStateKind;
 use crate::Config;
-
+use crate::database::model::LightningPaymentStatus;
 
 pub const TRACER_ASPD: &str = "aspd";
 
@@ -46,6 +47,12 @@ pub const METER_HISTOGRAM_GRPC_LATENCY: &str = "grpc_request_duration_ms";
 pub const METER_COUNTER_HANDSHAKE_VERSION: &str = "handshake_version_counter";
 pub const METER_GAUGE_WALLET_BALANCE: &str = "wallet_balance_gauge";
 pub const METER_GAUGE_BLOCK_HEIGHT: &str = "block_gauge";
+pub const METER_GAUGE_LIGHTNING_NODE: &str = "lightning_node_gauge";
+pub const METER_COUNTER_LIGHTNING_NODE_BOOT: &str = "lightning_node_boot_counter";
+pub const METER_COUNTER_LIGHTNING_PAYMENT: &str = "lightning_payment_counter";
+pub const METER_COUNTER_LIGHTNING_PAYMENT_VOLUME: &str = "lightning_payment_volume";
+pub const METER_COUNTER_LIGHTNING_INVOICE_VERIFICATION: &str = "lightning_invoice_verification_counter";
+pub const METER_GAUGE_LIGHTNING_INVOICE_VERIFICATION_QUEUE: &str = "lightning_invoice_verification_queue_gauge";
 
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
 pub const ATTRIBUTE_BLOCKHEIGHT: &str = "blockheight";
@@ -54,17 +61,25 @@ pub const ATTRIBUTE_SERVICE: &str = "service";
 pub const ATTRIBUTE_METHOD: &str = "method";
 pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 
-
 /// The [numeric status code](https://github.com/grpc/grpc/blob/v1.33.2/doc/statuscodes.md)
 /// of the gRPC request.
 pub const RPC_GRPC_STATUS_CODE: &str = "rpc.grpc.status_code";
 
+#[derive(Debug, Clone)]
 struct InnerMetrics {
 	handshake_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
+	lightning_node_gauge: Gauge<u64>,
+	lightning_node_boot_counter: Counter<u64>,
+	lightning_payment_counter: Counter<u64>,
+	lightning_payment_volume: Counter<u64>,
+	lightning_invoice_verification_counter: Counter<u64>,
+	lightning_invoice_verification_queue_gauge: Gauge<u64>,
 }
 
+
+#[derive(Debug, Clone)]
 pub struct TelemetryMetrics {
 	inner: Option<InnerMetrics>,
 }
@@ -138,7 +153,13 @@ impl TelemetryMetrics {
 		let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
 		let wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_WALLET_BALANCE).build();
 		let block_height_gauge = meter.u64_gauge(METER_GAUGE_BLOCK_HEIGHT).build();
-
+		let lightning_node_gauge = meter.u64_gauge(METER_GAUGE_LIGHTNING_NODE).build();
+		let lightning_node_boot_counter = meter.u64_counter(METER_COUNTER_LIGHTNING_NODE_BOOT).build();
+		let lightning_payment_counter = meter.u64_counter(METER_COUNTER_LIGHTNING_PAYMENT).build();
+		let lightning_payment_volume = meter.u64_counter(METER_COUNTER_LIGHTNING_PAYMENT_VOLUME).build();
+		let lightning_invoice_verification_counter = meter.u64_counter(METER_COUNTER_LIGHTNING_INVOICE_VERIFICATION).build();
+		let lightning_invoice_verification_queue_gauge = meter.u64_gauge(METER_GAUGE_LIGHTNING_INVOICE_VERIFICATION_QUEUE).build();
+		
 		version_counter.add(1u64, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
 
 		TelemetryMetrics {
@@ -146,6 +167,12 @@ impl TelemetryMetrics {
 				handshake_version_counter,
 				wallet_balance_gauge,
 				block_height_gauge,
+				lightning_node_gauge,
+				lightning_node_boot_counter,
+				lightning_payment_counter,
+				lightning_payment_volume,
+				lightning_invoice_verification_counter,
+				lightning_invoice_verification_queue_gauge,
 			})
 		}
 	}
@@ -165,6 +192,88 @@ impl TelemetryMetrics {
 	pub fn set_block_height(&self, block_height: BlockHeight) {
 		if let Some(ref m) = self.inner {
 			m.block_height_gauge.record(block_height as u64, &[]);
+		}
+	}
+
+	pub fn set_lightning_node_state(
+		&self,
+		lightning_node_uri: tonic::transport::Uri,
+		lightning_node_id: Option<i64>,
+		public_key: Option<PublicKey>,
+		state: ClnNodeStateKind,
+	) {
+		let public_key_string = match public_key {
+			Some(public_key) => public_key.to_string(),
+			None => "".to_string(),
+		};
+
+		if let Some(ref m) = self.inner {
+			for s in ClnNodeStateKind::get_all() {
+				let value = if s == state {
+					1
+				} else {
+					0
+				};
+
+				m.lightning_node_gauge.record(value, &[
+					KeyValue::new("uri", lightning_node_uri.to_string()),
+					KeyValue::new("lightning_node_id", lightning_node_id.unwrap_or(0).to_string()),
+					KeyValue::new("public_key", public_key_string.clone()),
+					KeyValue::new("state", s.as_str()),
+				]);
+			}
+
+			if state == ClnNodeStateKind::Online {
+				m.lightning_node_boot_counter.add(1, &[
+					KeyValue::new("uri", lightning_node_uri.to_string()),
+					KeyValue::new("lightning_node_id", lightning_node_id.unwrap_or(0).to_string()),
+					KeyValue::new("public_key", public_key_string),
+				]);
+			}
+		}
+	}
+
+	pub fn add_lightning_payment(
+		&self,
+		lightning_node_id: i64,
+		amount_msat: u64,
+		status: LightningPaymentStatus,
+	) {
+		if let Some(ref m) = self.inner {
+			m.lightning_payment_counter.add(1, &[
+				KeyValue::new("lightning_node_id", lightning_node_id.to_string()),
+				KeyValue::new("status", status.to_string()),
+			]);
+
+			m.lightning_payment_volume.add(amount_msat/1000, &[
+				KeyValue::new("lightning_node_id", lightning_node_id.to_string()),
+				KeyValue::new("status", status.to_string()),
+			]);
+		}
+	}
+
+	pub fn add_invoice_verification(
+		&self,
+		lightning_node_id: i64,
+		status: LightningPaymentStatus,
+	) {
+		if let Some(ref m) = self.inner {
+			m.lightning_invoice_verification_counter.add(1, &[
+				KeyValue::new("lightning_node_id", lightning_node_id.to_string()),
+				KeyValue::new("status", status.to_string()),
+			]);
+		}
+	}
+
+	pub fn set_pending_invoice_verifications(
+		&self,
+		lightning_node_id: i64,
+		count: usize,
+	) {
+		if let Some(ref m) = self.inner {
+			m.lightning_invoice_verification_queue_gauge.record(count as u64, &[
+				KeyValue::new("lightning_node_id", lightning_node_id.to_string()),
+			])
 		}
 	}
 

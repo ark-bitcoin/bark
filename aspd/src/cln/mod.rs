@@ -57,13 +57,13 @@ use tonic::transport::{Channel, Uri};
 use ark::lightning::SignedBolt11Payment;
 use cln_rpc::node_client::NodeClient;
 
-use crate::database::model::{LightningPaymentStatus, LightningPaymentAttempt};
 use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
 use crate::cln::node::ClnNodeMonitor;
 use crate::config::{self, Config};
 use crate::database::{self, ClnNodeId};
-
+use crate::database::model::{LightningPaymentAttempt, LightningPaymentStatus};
+use crate::telemetry::TelemetryMetrics;
 use self::node::ClnNodeMonitorConfig;
 
 
@@ -81,6 +81,7 @@ pub struct ClnManager {
 	/// payment request that fail before the hit the sendpay stream.
 	//TODO(stevenroose) consider changing this to hold some update info
 	payment_update_tx: broadcast::Sender<sha256::Hash>,
+	telemetry_metrics: TelemetryMetrics,
 }
 
 impl ClnManager {
@@ -89,6 +90,7 @@ impl ClnManager {
 		rtmgr: RuntimeManager,
 		config: &Config,
 		db: database::Db,
+		telemetry_metrics: TelemetryMetrics,
 	) -> anyhow::Result<ClnManager> {
 		let (payment_tx, payment_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, _rx) = broadcast::channel(256);
@@ -111,8 +113,10 @@ impl ClnManager {
 				uri: conf.uri.clone(),
 				config: conf.clone(),
 				state: ClnNodeState::Offline,
+				telemetry_metrics: telemetry_metrics.clone(),
 			})).collect(),
 			node_by_id: HashMap::with_capacity(config.cln_array.len()),
+			telemetry_metrics: telemetry_metrics.clone(),
 		};
 		info!("Starting ClnManager thread... nb_nodes={}", proc.nodes.len());
 		tokio::spawn(proc.run(config.cln_reconnect_interval));
@@ -122,6 +126,7 @@ impl ClnManager {
 			payment_tx,
 			payment_update_tx,
 			invoice_poll_interval: config.invoice_poll_interval,
+			telemetry_metrics,
 		})
 	}
 
@@ -230,6 +235,7 @@ impl ClnManager {
 #[derive(Debug)]
 pub struct ClnNodeOnlineState {
 	id: ClnNodeId,
+	public_key: PublicKey,
 	rpc: ClnGrpcClient,
 	// option so we can take() when marking as down
 	monitor: Option<ClnNodeMonitor>,
@@ -247,7 +253,51 @@ pub enum ClnNodeState {
 	},
 }
 
+const OFFLINE: &'static str = "offline";
+const ONLINE: &'static str = "online";
+const ERROR: &'static str = "error";
+const INVALID: &'static str = "invalid";
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ClnNodeStateKind {
+	/// see [`Offline`]
+	Offline,
+	/// see [`Online`]
+	Online,
+	/// see [`Error`]
+	Error,
+	/// see [`Invalid`]
+	Invalid,
+}
+
+impl ClnNodeStateKind {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			ClnNodeStateKind::Offline => OFFLINE,
+			ClnNodeStateKind::Online => ONLINE,
+			ClnNodeStateKind::Error => ERROR,
+			ClnNodeStateKind::Invalid => INVALID,
+		}
+	}
+	pub fn get_all() -> Vec<ClnNodeStateKind> {
+		vec![
+			ClnNodeStateKind::Offline,
+			ClnNodeStateKind::Online,
+			ClnNodeStateKind::Error,
+			ClnNodeStateKind::Invalid,
+		]
+	}
+}
+
 impl ClnNodeState {
+	pub fn kind(&self) -> ClnNodeStateKind {
+		match &self {
+			Self::Offline => ClnNodeStateKind::Offline,
+			Self::Online(_) => ClnNodeStateKind::Online,
+			Self::Error { .. } => ClnNodeStateKind::Error,
+			Self::Invalid { .. } => ClnNodeStateKind::Invalid,
+		}
+	}
 	fn error(msg: impl fmt::Display) -> Self {
 		ClnNodeState::Error { msg: msg.to_string() }
 	}
@@ -272,6 +322,7 @@ pub struct ClnNodeInfo {
 	uri: Uri,
 	config: config::Lightningd,
 	state: ClnNodeState,
+	telemetry_metrics: TelemetryMetrics,
 }
 
 impl ClnNodeInfo {
@@ -332,10 +383,15 @@ impl ClnNodeInfo {
 			id,
 			rpc.clone(),
 			monitor_config.clone(),
+			self.telemetry_metrics.clone(),
 		).await.context("failed to start ClnNodeMonitor")?;
 
-		let online = ClnNodeOnlineState { id, rpc, monitor: Some(monitor) };
-		self.set_state(ClnNodeState::Online(online));
+		let online = ClnNodeOnlineState { id, public_key, rpc, monitor: Some(monitor) };
+		let new_state = ClnNodeState::Online(online);
+		self.telemetry_metrics.set_lightning_node_state(
+			self.uri.clone(), Some(id), Some(public_key), new_state.kind(),
+		);
+		self.set_state(new_state);
 
 		Ok(id)
 	}
@@ -352,6 +408,8 @@ struct ClnManagerProcess {
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
+
+	telemetry_metrics: TelemetryMetrics,
 }
 
 impl ClnManagerProcess {
@@ -377,17 +435,31 @@ impl ClnManagerProcess {
 					// we check if the monitor is still running
 					if !rt.monitor.as_ref().expect("online").is_running() {
 						match rt.monitor.take().unwrap().wait().await {
-							Ok(Err(e)) => node.set_state(ClnNodeState::error(format!("{:?}", e))),
+							Ok(Err(e)) => {
+								let new_state = ClnNodeState::error(format!("{:?}", e));
+								self.telemetry_metrics.set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
+								);
+								node.set_state(new_state)
+							},
 							Ok(Ok(())) => {
 								error!("ClnNodeMonitor for {uri} unexpectedly exited without error");
-								node.set_state(ClnNodeState::Offline);
+								let new_state = ClnNodeState::Offline;
+								self.telemetry_metrics.set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
+								);
+								node.set_state(new_state);
 							},
 							Err(e) => {
 								if e.is_panic() {
 									// unfortunately we don't have much more info we can show here
 									error!("ClnNodeMonitor for {uri} thread paniced!");
 								}
-								node.set_state(ClnNodeState::error(e));
+								let new_state = ClnNodeState::error(e);
+								self.telemetry_metrics.set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
+								);
+								node.set_state(new_state);
 							},
 						}
 					}
@@ -403,12 +475,15 @@ impl ClnManagerProcess {
 						&self.waker,
 					).await {
 						Ok(id) => {
-							info!("Succesfully connected to CLN node at {}", uri);
+							info!("Successfully connected to CLN node at {}", uri);
 							self.node_by_id.insert(id, node.uri.clone());
 						},
 						Err(e) => {
 							trace!("Failed to connect to CLN node at {}: {}", uri, e.full_msg());
 							if let Ok(state) = e.downcast::<ClnNodeState>() {
+								self.telemetry_metrics.set_lightning_node_state(
+									uri.clone(), None, None, state.kind(),
+								);
 								node.set_state(state);
 							}
 						}
@@ -450,6 +525,7 @@ impl ClnManagerProcess {
 			node.rpc.clone(),
 			invoice,
 			user_amount,
+			self.telemetry_metrics.clone(),
 		));
 
 		Ok(())
@@ -497,6 +573,7 @@ async fn handle_pay_bolt11(
 	mut rpc: ClnGrpcClient,
 	invoice: Bolt11Invoice,
 	amount: Option<Amount>,
+	telemetry_metrics: TelemetryMetrics,
 ) {
 	let payment_hash = *invoice.payment_hash();
 	match call_pay_bolt11(&mut rpc, &invoice, amount).await {
@@ -517,6 +594,7 @@ async fn handle_pay_bolt11(
 					LightningPaymentStatus::Submitted,
 					None,
 					None,
+					telemetry_metrics,
 				).await {
 					Ok(_) => {},
 					Err(e) => error!("Error updating invoice after pay error: {e}"),
@@ -591,23 +669,31 @@ impl database::Db {
 		status: LightningPaymentStatus,
 		final_amount_msat: Option<u64>,
 		preimage: Option<&[u8; 32]>,
+		telemetry_metrics: TelemetryMetrics,
 	) -> anyhow::Result<bool> {
 		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?;
 
+		if li.payment_status == status && attempt.status == status {
+			error!("Lightning invoice update for {payment_hash}: Skipped update because everything \
+				is already in the correct state.");
+			return Ok(false);
+		}
+
 		if li.preimage.is_some() || li.payment_status.is_final() {
-			debug!("Skipped update for {payment_hash} because lightning invoice \
-				payment already in final state.");
+			debug!("Lightning invoice update for {payment_hash}: Skipped update because the \
+				payment is already in a final state.");
 			return Ok(false);
 		}
 
 		if li.lightning_invoice_id != attempt.lightning_invoice_id {
-			error!("Skipped update for {payment_hash} because lightning invoice \
-				payment hash mismatch.");
+			error!("Lightning invoice update for {payment_hash}: Skipped update because of \
+				incorrect payment hash matching.");
 			return Ok(false);
 		}
 
 		if li.payment_status != attempt.status {
-			error!("Lightning invoice payment {} not in the same state as the invoice itself {}.",
+			error!("Lightning invoice update for {payment_hash}: Payment attempt has state {} \
+				which mismatches the invoice's state {}.",
 				attempt.status, li.payment_status,
 			);
 		}
@@ -619,6 +705,14 @@ impl database::Db {
 		self.store_lightning_invoice_status(
 			li.lightning_invoice_id, status, final_amount_msat, preimage, li.updated_at,
 		).await?;
+		
+		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
+		
+		telemetry_metrics.add_lightning_payment(
+			attempt.lightning_node_id,
+			amount_msat,
+			status,
+		);
 
 		Ok(true)
 	}
