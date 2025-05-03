@@ -34,7 +34,7 @@ use anyhow::Context;
 use bip39::Mnemonic;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
-use bitcoin::hashes::{sha256, Hash};
+use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
@@ -93,9 +93,8 @@ pub struct App {
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
-	lightning_payment_updated_tx:  Option<tokio::sync::broadcast::Sender<sha256::Hash>>,
-	telemetry_metrics: TelemetryMetrics,
 	cln: Option<ClnManager>,
+	telemetry_metrics: TelemetryMetrics,
 }
 
 impl App {
@@ -180,15 +179,14 @@ impl App {
 			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: None,
 			vtxos_in_flux: VtxosInFlux::new(),
-			lightning_payment_updated_tx: None,
 			config: cfg.clone(),
 			db: db.clone(),
 			asp_key,
 			master_xpriv,
 			bitcoind,
 			rtmgr: RuntimeManager::new_with_telemetry(telemetry::spawn_gauge()),
-			telemetry_metrics: TelemetryMetrics::disabled(),
 			cln: None,
+			telemetry_metrics: TelemetryMetrics::disabled(),
 		}))
 	}
 
@@ -209,7 +207,6 @@ impl App {
 		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
-		let (lightning_payment_updated_tx, _rx) = tokio::sync::broadcast::channel(1024);
 
 		let telemetry_metrics = telemetry::init_telemetry(&self.config, self.asp_key.public_key());
 
@@ -221,7 +218,6 @@ impl App {
 			mut_self.bitcoind.clone(),
 			mut_self.config.txindex_check_interval,
 		);
-		mut_self.lightning_payment_updated_tx = Some(lightning_payment_updated_tx);
 		//TODO(stevenroose) this will be cleaned up if we unify App::open and App::start
 		mut_self.vtxo_sweeper = Some(VtxoSweeper::start(
 			rtmgr.clone(),
