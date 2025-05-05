@@ -264,6 +264,10 @@ impl AspConnection {
 			if network != info.network {
 				bail!("ASP is for net {} while we are on net {}", info.network, network);
 			}
+			// we print the error message as a warning, because we still succeeded
+			if let Some(msg) = res.error {
+				warn!("Warning from Ark server: \"{}\"", msg);
+			}
 			Ok(AspConnection { info, client })
 		} else {
 			let msg = res.error.as_ref().map(|s| s.as_str()).unwrap_or("NO MESSAGE");

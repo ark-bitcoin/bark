@@ -40,6 +40,9 @@ use crate::round::RoundInput;
 /// into all error conversions.
 static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
 
+/// The minimum 0.0.0-alpha.XXX version we serve.
+pub const MIN_ALPHA_VERSION: usize = 10;
+
 macro_rules! badarg {
 	($($arg:tt)*) => { return $crate::badarg!($($arg)*).to_status(); };
 }
@@ -260,6 +263,13 @@ impl rpc::server::ArkService for App {
 
 		let version = req.into_inner().version;
 
+		let alpha_version = version.strip_prefix("0.0.0-alpha").and_then(|alpha| {
+			match alpha.strip_prefix(".") {
+				Some(ver) => usize::from_str(ver).ok(),
+				None => Some(0), // special value for master build
+			}
+		});
+
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
 		let parent_context = Context::current();
@@ -273,21 +283,45 @@ impl rpc::server::ArkService for App {
 
 		// NB future note to always accept version "testing" which our tests use
 
-		let ret = protos::HandshakeResponse {
-			psa: self.config.handshake_psa.clone(),
-			error: None,
-			ark_info: Some(ark::ArkInfo {
-				network: self.config.network,
-				asp_pubkey: self.asp_key.public_key(),
-				round_interval: self.config.round_interval,
-				nb_round_nonces: self.config.nb_round_nonces,
-				vtxo_exit_delta: self.config.vtxo_exit_delta,
-				vtxo_expiry_delta: self.config.vtxo_expiry_delta,
-				max_vtxo_amount: self.config.max_vtxo_amount,
-			}.into()),
+		let ark_info = ark::ArkInfo {
+			network: self.config.network,
+			asp_pubkey: self.asp_key.public_key(),
+			round_interval: self.config.round_interval,
+			nb_round_nonces: self.config.nb_round_nonces,
+			vtxo_exit_delta: self.config.vtxo_exit_delta,
+			vtxo_expiry_delta: self.config.vtxo_expiry_delta,
+			max_vtxo_amount: self.config.max_vtxo_amount,
 		};
 
-		Ok(tonic::Response::new(ret))
+		let res = match alpha_version {
+			// NB 0 represents master
+			Some(0) => protos::HandshakeResponse {
+				psa: self.config.handshake_psa.clone(),
+				error: Some("You are running a manual build of bark; \
+				it may be incompatible with the server.".into()),
+				ark_info: Some(ark_info.into()),
+			},
+			None => protos::HandshakeResponse {
+				psa: self.config.handshake_psa.clone(),
+				error: Some("You're running an unknown version of bark.".into()),
+				ark_info: Some(ark_info.into()),
+			},
+			Some(v) if v >= MIN_ALPHA_VERSION => protos::HandshakeResponse {
+				psa: self.config.handshake_psa.clone(),
+				error: None,
+				ark_info: Some(ark_info.into()),
+			},
+			// this means < MIN_ALPHA_VERSION
+			Some(_) => protos::HandshakeResponse {
+				psa: None,
+				error: Some("Your version of bark is incompatible with this server. \
+					Please upgrade to a compatible version. \
+					You can still do a unilateral exit.".into()),
+				ark_info: None,
+			},
+		};
+
+		Ok(tonic::Response::new(res))
 	}
 
 	async fn get_fresh_rounds(
