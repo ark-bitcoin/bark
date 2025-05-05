@@ -2,6 +2,7 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
+use bitcoin::TxOut;
 use cbitcoin::script::{Builder, PushBytes};
 use cbitcoin::taproot::ControlBlock;
 use cbitcoin::{taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, Weight, WitnessVersion};
@@ -26,10 +27,11 @@ impl KeypairExt for Keypair {}
 /// Extension trait for [Transaction].
 pub trait TransactionExt: Borrow<Transaction> {
 	/// Check if this tx has a fee anchor output and return the outpoint of it.
-	fn fee_anchor(&self) -> Option<OutPoint> {
+	fn fee_anchor(&self) -> Option<(OutPoint, &TxOut)> {
 		for (i, out) in self.borrow().output.iter().enumerate() {
-			if *out == fee::fee_anchor() {
-				return Some(OutPoint::new(self.borrow().compute_txid(), i as u32));
+			if out.script_pubkey == *fee::P2A_SCRIPT {
+				let point = OutPoint::new(self.borrow().compute_txid(), i as u32);
+				return Some((point, out));
 			}
 		}
 		None

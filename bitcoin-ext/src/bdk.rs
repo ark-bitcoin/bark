@@ -8,7 +8,7 @@ use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, Txid, Weight, Wtxid};
+use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, TxOut, Txid, Weight, Wtxid};
 use cbitcoin::{BlockHash, Psbt, Witness};
 use reqwest::{Body, Response};
 use serde::Deserialize;
@@ -20,12 +20,12 @@ use crate::bitcoin::TransactionExt;
 /// An extension trait for [TxBuilder].
 pub trait TxBuilderExt<'a, A>: BorrowMut<TxBuilder<'a, A>> {
 	/// Add an input to the tx that spends a fee anchor.
-	fn add_fee_anchor_spend(&mut self, anchor: OutPoint)
+	fn add_fee_anchor_spend(&mut self, anchor: OutPoint, output: &TxOut)
 	where
 		A: bdk_wallet::coin_selection::CoinSelectionAlgorithm,
 	{
 		let psbt_in = psbt::Input {
-			witness_utxo: Some(fee::fee_anchor()),
+			witness_utxo: Some(output.clone()),
 			final_script_witness: Some(Witness::new()),
 			..Default::default()
 		};
@@ -128,8 +128,8 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			b.ordering(TxOrdering::Untouched);
 			b.only_witness_utxo();
 			b.unspendable(untrusted_utxos.clone());
-			for anchor in &anchors {
-				b.add_fee_anchor_spend(*anchor);
+			for (point, txout) in &anchors {
+				b.add_fee_anchor_spend(*point, txout);
 			}
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + P2TR_DUST);
 			b.fee_rate(fee_rate);
@@ -165,8 +165,8 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		b.only_witness_utxo();
 		b.unspendable(untrusted_utxos);
 		b.version(3); // for 1p1c package relay
-		for anchor in &anchors {
-			b.add_fee_anchor_spend(*anchor);
+		for (point, txout) in &anchors {
+			b.add_fee_anchor_spend(*point, txout);
 		}
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);
