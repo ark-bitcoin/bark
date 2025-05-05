@@ -5,7 +5,7 @@ use bitcoin::{OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, W
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use bitcoin_ext::{fee, P2WSH_DUST};
+use bitcoin_ext::{fee, P2TR_DUST};
 
 use crate::Vtxo;
 use crate::connectors::ConnectorChain;
@@ -43,7 +43,9 @@ pub fn create_forfeit_tx(
 				value: vtxo.amount(),
 				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.spec().asp_pubkey.into(), None),
 			},
-			fee::fee_anchor(),
+			// We throw the connector dust value into the fee anchor
+			// because we can't have zero-value anchors and a non-zero fee.
+			fee::fee_anchor_with_amount(P2TR_DUST),
 		],
 	}
 }
@@ -61,7 +63,7 @@ fn forfeit_input_sighash(
 	};
 	let connector_prevout = TxOut {
 		script_pubkey: ConnectorChain::output_script(connector_pk),
-		value: P2WSH_DUST,
+		value: P2TR_DUST,
 	};
 	let tx = create_forfeit_tx(vtxo, connector, None, None);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
