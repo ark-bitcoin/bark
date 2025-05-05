@@ -318,18 +318,19 @@ impl ChainSourceClient {
 	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<BlockHeight>> {
 		let ret = match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				//TODO(stevenroose) would be nice if we cna distinguish network Error
-				//or tx unknown error here (my refactor branch does that, liquid also)
-				let tx = bitcoind.custom_get_raw_transaction_info(&txid, None)?;
-				if let Some(hash) = tx.blockhash {
-					let block = bitcoind.get_block_header_info(&hash)?;
-					if block.confirmations > 0 {
-						Some(block.height as BlockHeight)
-					} else {
-						None
-					}
-				} else {
-					None
+				match bitcoind.custom_get_raw_transaction_info(&txid, None)? {
+					Some(tx) => match tx.blockhash {
+						Some(hash) => {
+							let block = bitcoind.get_block_header_info(&hash)?;
+							if block.confirmations > 0 {
+								Some(block.height as BlockHeight)
+							} else {
+								None
+							}
+						},
+						None => None,
+					},
+					None => None,
 				}
 			},
 			ChainSourceClient::Esplora(ref client) => {

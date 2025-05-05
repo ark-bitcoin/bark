@@ -264,9 +264,13 @@ pub trait BitcoinRpcExt: RpcApi {
 		&self,
 		txid: &bitcoin::Txid,
 		block_hash: Option<&bitcoin::BlockHash>,
-	) -> RpcResult<GetRawTransactionResult> {
+	) -> RpcResult<Option<GetRawTransactionResult>> {
 		let mut args = [into_json(txid)?, into_json(true)?, opt_into_json(block_hash)?];
-		self.call("getrawtransaction", handle_defaults(&mut args, &[null()]))
+		match self.call("getrawtransaction", handle_defaults(&mut args, &[null()])) {
+			Ok(ret) => Ok(Some(ret)),
+			Err(e) if e.is_not_found() => Ok(None),
+			Err(e) => Err(e),
+		}
 	}
 
 	fn broadcast_tx(&self, tx: &Transaction) -> Result<(), Error> {
