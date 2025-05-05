@@ -10,7 +10,6 @@ members = [
   "bitcoin-ext",
   "cln-rpc",
   "bark-json",
-  "stream-until",
 ]
 
 resolver = "2"
