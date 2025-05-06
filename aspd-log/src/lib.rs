@@ -25,13 +25,14 @@ pub const DATA_FIELD: &str = "slog_data";
 pub const SLOG_FILENAME: &str = "structured.log";
 
 /// Retrieves the current trace ID from OpenTelemetry
-fn get_trace_id() -> Option<TraceId> {
+pub fn get_trace_id() -> Option<TraceId> {
 	let context = tracing::Span::current().context();
 	let span = context.span();
 	let span_context = span.span_context();
 	span_context.is_valid().then(|| span_context.trace_id())
 }
 
+/// Trait implemented by all our slog structured log messages.
 pub trait LogMsg: Sized + Send + fmt::Debug + Serialize + DeserializeOwned + 'static {
 	const LOGID: &'static str;
 	const LEVEL: log::Level;
@@ -44,6 +45,7 @@ pub fn log<T: LogMsg>(
 	module: &str,
 	file: &str,
 	line: u32,
+	trace_id: Option<TraceId>,
 ) {
 	log::logger().log(&log::Record::builder()
 		.args(format_args!("{}", T::MSG))
@@ -52,9 +54,9 @@ pub fn log<T: LogMsg>(
 		.module_path(Some(module))
 		.file(Some(file))
 		.line(Some(line))
-		.key_values(&LogMsgSourceWrapper{
+		.key_values(&LogMsgSourceWrapper {
 			log_msg: obj,
-			trace_id: get_trace_id(),
+			trace_id: trace_id,
 		})
 		.build());
 }

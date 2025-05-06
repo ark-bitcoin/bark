@@ -16,7 +16,6 @@ use log::{trace, info, warn, error};
 use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
 use opentelemetry_semantic_conventions as semconv;
-use opentelemetry_semantic_conventions::trace::RPC_GRPC_STATUS_CODE;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
@@ -29,9 +28,10 @@ use ark::util::{Decodable, Encodable};
 use aspd_rpc::{self as rpc, protos};
 use tonic::async_trait;
 
+use crate::App;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
-use crate::{telemetry, App};
 use crate::round::RoundInput;
+use crate::telemetry::{self, RPC_GRPC_STATUS_CODE};
 
 
 /// Whether to provide rich internal errors to RPC users.

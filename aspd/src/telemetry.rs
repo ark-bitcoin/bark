@@ -55,6 +55,10 @@ pub const ATTRIBUTE_METHOD: &str = "method";
 pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 
 
+/// The [numeric status code](https://github.com/grpc/grpc/blob/v1.33.2/doc/statuscodes.md)
+/// of the gRPC request.
+pub const RPC_GRPC_STATUS_CODE: &str = "rpc.grpc.status_code";
+
 struct InnerMetrics {
 	handshake_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
@@ -95,16 +99,16 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 		None => return TelemetryMetrics::disabled(),
 	};
 
-	let resource = Resource::new(vec![
-		KeyValue::new("service.name", "aspd"),
-		KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-		KeyValue::new("aspd.public_key", public_key.to_string()),
-		KeyValue::new("aspd.network", config.network.to_string()),
-		KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()),
-		KeyValue::new("aspd.maximum_vtxo_amount",
-			config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
-		)
-	]);
+	let resource = Resource::builder()
+		.with_attribute(KeyValue::new("service.name", "aspd"))
+		.with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
+		.with_attribute(KeyValue::new("aspd.public_key", public_key.to_string()))
+		.with_attribute(KeyValue::new("aspd.network", config.network.to_string()))
+		.with_attribute(KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()))
+		.with_attribute(KeyValue::new("aspd.maximum_vtxo_amount",
+			config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string()
+		))
+		.build();
 
 	global::set_text_map_propagator(TraceContextPropagator::new());
 
@@ -114,8 +118,8 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 		.with_timeout(Duration::from_secs(3))
 		.build().unwrap();
 
-	let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
-		.with_batch_exporter(trace_exporter, opentelemetry_sdk::runtime::Tokio)
+	let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+		.with_batch_exporter(trace_exporter)
 		.with_sampler(Sampler::AlwaysOn)
 		.with_id_generator(RandomIdGenerator::default())
 		.with_max_events_per_span(64)
@@ -141,7 +145,7 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetric
 		.with_timeout(Duration::from_secs(3))
 		.build().unwrap();
 
-	let metrics_reader = PeriodicReader::builder(metrics_exporter, opentelemetry_sdk::runtime::Tokio).build();
+	let metrics_reader = PeriodicReader::builder(metrics_exporter).build();
 	let provider = SdkMeterProvider::builder()
 		.with_reader(metrics_reader)
 		.with_resource(resource)

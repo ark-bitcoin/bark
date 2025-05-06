@@ -65,11 +65,11 @@ bdk_wallet = { package = "bdk_wallet", version = "1.1.0" }
 bdk_esplora = { package = "bdk_esplora", version = "0.20.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false }
 bdk_bitcoind_rpc = { package = "bdk_bitcoind_rpc", version = "0.17.1" }
 # tracing and monitoring
-opentelemetry = "0.27.1"
-opentelemetry_sdk = { version = "0.27.0", features = ["tracing", "rt-tokio"] }
-opentelemetry-otlp = "0.27.0"
-opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
-tracing = { version = "0.1.41", features = ["std", "attributes"] }
-tracing-opentelemetry = "0.28.0"
-tracing-subscriber = { version = "0.3.19", features = ["std", "registry", "ansi", "fmt", "env-filter"] }
+opentelemetry = "0.29.0"
+opentelemetry_sdk = { version = "0.29.0", features = [ "trace", "rt-tokio" ] }
+opentelemetry-otlp = { version = "0.29.0", features = [ "trace", "grpc-tonic" ] }
+opentelemetry-semantic-conventions = { version = "0.29.0", features = [ "semconv_experimental" ] }
+tracing = { version = "0.1.41", features = [ "std", "attributes" ] }
+tracing-opentelemetry = "0.30.0"
+tracing-subscriber = { version = "0.3.19", features = [ "std", "registry", "ansi", "fmt", "env-filter" ] }
 
