@@ -11,15 +11,23 @@ pub const FEE_ANCHOR_WEIGHT: Weight = Weight::from_vb_unchecked(13);
 /// The witness size of a witness spending a dust anchor.
 pub const FEE_ANCHOR_SPEND_WEIGHT: Weight = Weight::from_wu(1);
 
-pub fn fee_anchor() -> TxOut {
-	lazy_static! {
-		static ref FEE_ANCHOR: TxOut = TxOut {
-			script_pubkey: { ScriptBuf::new_p2a() },
-			value: Amount::ZERO,
-		};
-	}
 
-	FEE_ANCHOR.clone()
+lazy_static! {
+	/// A pay-to-anchor (p2a) output script.
+	pub static ref P2A_SCRIPT: ScriptBuf = ScriptBuf::new_p2a();
+}
+
+/// Create a p2a fee anchor output with the given amount.
+pub fn fee_anchor_with_amount(amount: Amount) -> TxOut {
+	TxOut {
+		script_pubkey: P2A_SCRIPT.clone(),
+		value: amount,
+	}
+}
+
+/// Create a p2a fee anchor output with 0 value.
+pub fn fee_anchor() -> TxOut {
+	fee_anchor_with_amount(Amount::ZERO)
 }
 
 #[cfg(test)]

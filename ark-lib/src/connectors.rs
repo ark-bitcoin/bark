@@ -9,7 +9,7 @@ use bitcoin::{
 };
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighashType};
-use bitcoin_ext::{fee, KeypairExt, P2WSH_DUST};
+use bitcoin_ext::{fee, KeypairExt, P2TR_DUST};
 
 use crate::util::{self, SECP};
 
@@ -61,7 +61,7 @@ impl ConnectorChain {
 		// Each tx of the chain will hold one output to continue the
 		// chain + one output for the connector + one fee anchor output
 		// So the required budget is 1 dust per connector
-		P2WSH_DUST * len as u64
+		P2TR_DUST * len as u64
 	}
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
@@ -120,7 +120,7 @@ impl ConnectorChain {
 				// (or the second one if the last tx)
 				TxOut {
 					script_pubkey: self.spk.to_owned(),
-					value: P2WSH_DUST,
+					value: P2TR_DUST,
 				},
 				// this is the fee anchor output
 				fee::fee_anchor(),
@@ -367,8 +367,8 @@ mod test {
 		}
 		let weight = chain.iter_signed_txs(&key).unwrap().map(|t| t.weight()).sum::<Weight>();
 		assert_eq!(weight, ConnectorChain::total_weight(100));
-		chain.iter_unsigned_txs().for_each(|t| assert_eq!(t.output[1].value, P2WSH_DUST));
-		assert_eq!(P2WSH_DUST, chain.iter_unsigned_txs().last().unwrap().output[0].value);
+		chain.iter_unsigned_txs().for_each(|t| assert_eq!(t.output[1].value, P2TR_DUST));
+		assert_eq!(P2TR_DUST, chain.iter_unsigned_txs().last().unwrap().output[0].value);
 	}
 
 	#[test]

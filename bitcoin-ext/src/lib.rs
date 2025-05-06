@@ -46,12 +46,12 @@ pub const P2PKH_DUST: Amount = Amount::from_sat(P2PKH_DUST_SAT);
 
 pub const P2SH_DUST_VB: u64 = 180;
 /// 540 satoshis
-pub const P2SH_DUST_SAT: u64 = P2PKH_DUST_VB * 3;
+pub const P2SH_DUST_SAT: u64 = P2SH_DUST_VB * 3;
 pub const P2SH_DUST: Amount = Amount::from_sat(P2SH_DUST_SAT);
 
 pub const P2WSH_DUST_VB: u64 = 110;
 /// 330 satoshis
-pub const P2WSH_DUST_SAT: u64 = P2TR_DUST_VB * 3;
+pub const P2WSH_DUST_SAT: u64 = P2WSH_DUST_VB * 3;
 pub const P2WSH_DUST: Amount = Amount::from_sat(P2WSH_DUST_SAT);
 
 /// Witness weight of a taproot keyspend.
