@@ -31,7 +31,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bip39::Mnemonic;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
@@ -756,11 +755,6 @@ impl App {
 		let parts = self.cosign_oor(&revocation_oor, user_nonces).await?;
 
 		Ok(parts)
-	}
-
-	// ** SOME ADMIN COMMANDS **
-	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Mnemonic> {
-		Ok(wallet::read_mnemonic_from_datadir(&self.config.data_dir)?)
 	}
 }
 

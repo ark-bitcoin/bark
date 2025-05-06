@@ -190,7 +190,7 @@ async fn inner_main() -> anyhow::Result<()> {
 			println!("{}", tx.compute_txid());
 		}
 		Command::GetMnemonic => {
-			unimplemented!();
+			println!("{}", aspd::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?);
 		}
 	}
 
