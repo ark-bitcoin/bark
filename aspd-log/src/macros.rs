@@ -26,6 +26,7 @@ macro_rules! slog {
 				module_path!(),
 				$crate::filename!(),
 				line!(),
+				$crate::get_trace_id(),
 			);
 		}
 	}};
@@ -36,6 +37,7 @@ macro_rules! slog {
 				module_path!(),
 				$crate::filename!(),
 				line!(),
+				$crate::get_trace_id(),
 			);
 		}
 	}};
