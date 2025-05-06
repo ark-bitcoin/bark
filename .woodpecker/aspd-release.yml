@@ -32,27 +32,28 @@ steps:
       - just release-aspd
       - cp ./target/x86_64-unknown-linux-gnu/release/aspd      aspd-linux-x86_64
 
-  - name: build-and-push-aspd-dockerhub
+  - name: build-and-push-aspd-to-registry
     when:
       - event: tag
         ref: refs/tags/aspd-*
+    failure: ignore
     depends_on: build-aspd
-    image: quay.io/buildah/stable@sha256:64eb66966df97e361407aaa2d555cd10e50a38d5241c8b12b91779baa4741ca6
+    # When this task fails make sure the sha256 is still available.
+    #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
+    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df`
+    image: quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df
     environment:
       REGISTRY_LOGIN_TOKEN:
         from_secret: REGISTRY_LOGIN_TOKEN
-    #      DOCKERHUB_LOGIN_TOKEN:
-    #        from_secret: DOCKERHUB_LOGIN_TOKEN
     pull: true
     privileged: true
     commands:
       - cat VERSION
-      #      - echo $DOCKERHUB_LOGIN_TOKEN | buildah login -u steven@second.tech --password-stdin docker.io
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
-      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile --tag registry.2nd.dev/aspd:latest .
+      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile             --tag registry.2nd.dev/aspd:latest      .
       - buildah push registry.2nd.dev/aspd:latest
-      - buildah tag registry.2nd.dev/aspd:latest "registry.2nd.dev/aspd:$(cat ../VERSION)"
-      - buildah push "registry.2nd.dev/aspd:$(cat ../VERSION)"
+      - buildah tag registry.2nd.dev/aspd:latest      "registry.2nd.dev/aspd:$(cat VERSION)"
+      - buildah push "registry.2nd.dev/aspd:$(cat VERSION)"
 
   - name: release-aspd
     when:

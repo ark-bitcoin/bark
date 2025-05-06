@@ -39,43 +39,50 @@ steps:
       - cp ./target/x86_64-apple-darwin/release/bark           bark-apple-x86_64
       - cp ./target/aarch64-apple-darwin/release/bark          bark-apple-aarch64
 
-  - name: build-and-push-all-dockerhub
+  - name: build-and-push-all-to-registry
     when:
       - event: tag
         ref: refs/tags/all-*
+    failure: ignore
     depends_on: build-all
-    image: quay.io/buildah/stable@sha256:64eb66966df97e361407aaa2d555cd10e50a38d5241c8b12b91779baa4741ca6
+    # When this task fails make sure the sha256 is still available.
+    #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
+    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df`
+    image: quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df
     environment:
       REGISTRY_LOGIN_TOKEN:
         from_secret: REGISTRY_LOGIN_TOKEN
-    #      DOCKERHUB_LOGIN_TOKEN:
-    #        from_secret: DOCKERHUB_LOGIN_TOKEN
     pull: true
     privileged: true
     commands:
       - cat VERSION
-      #      - echo $DOCKERHUB_LOGIN_TOKEN | buildah login -u steven@second.tech --password-stdin docker.io
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
-      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile --tag registry.2nd.dev/aspd:latest .
-      - buildah push registry.2nd.dev/aspd:latest
-      - buildah tag registry.2nd.dev/aspd:latest "registry.2nd.dev/aspd:$(cat ../VERSION)"
-      - buildah push "registry.2nd.dev/aspd:$(cat ../VERSION)"
+      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile             --tag registry.2nd.dev/aspd:latest      .
       - buildah build -f ./.woodpecker/images/releases/bark/linux_amd64.Dockerfile --tag registry.2nd.dev/bark:linux-amd64 .
       - buildah build -f ./.woodpecker/images/releases/bark/linux_arm64.Dockerfile --tag registry.2nd.dev/bark:linux-arm64 .
       - buildah build -f ./.woodpecker/images/releases/bark/linux_armv7.Dockerfile --tag registry.2nd.dev/bark:linux-armv7 .
+      - buildah push registry.2nd.dev/aspd:latest
+      - buildah push registry.2nd.dev/bark:linux-amd64
+      - buildah push registry.2nd.dev/bark:linux-arm64
+      - buildah push registry.2nd.dev/bark:linux-armv7
+      - buildah tag registry.2nd.dev/aspd:latest      "registry.2nd.dev/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-amd64 "registry.2nd.dev/bark:linux-amd64-$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-arm64 "registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-armv7 "registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
+      - buildah push "registry.2nd.dev/aspd:$(cat VERSION)"
+      - buildah push "registry.2nd.dev/bark:linux-amd64-$(cat VERSION)"
+      - buildah push "registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
+      - buildah push "registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
       - buildah manifest create bark-multiarch
-      - buildah manifest add bark-multiarch registry.2nd.dev/bark:linux-amd64
-      - buildah manifest add bark-multiarch registry.2nd.dev/bark:linux-arm64
-      - buildah manifest add bark-multiarch registry.2nd.dev/bark:linux-armv7
+      - buildah manifest add bark-multiarch docker://registry.2nd.dev/bark:linux-amd64
+      - buildah manifest add bark-multiarch docker://registry.2nd.dev/bark:linux-arm64
+      - buildah manifest add bark-multiarch docker://registry.2nd.dev/bark:linux-armv7
       - buildah manifest push --all bark-multiarch docker://registry.2nd.dev/bark:latest
-      - buildah tag registry.2nd.dev/bark:linux-amd64 "registry.2nd.dev/bark:linux-amd64-$(cat ../VERSION)"
-      - buildah tag registry.2nd.dev/bark:linux-arm64 "registry.2nd.dev/bark:linux-arm64-$(cat ../VERSION)"
-      - buildah tag registry.2nd.dev/bark:linux-armv7 "registry.2nd.dev/bark:linux-armv7-$(cat ../VERSION)"
-      - buildah manifest create "bark-multiarch-$(cat ../VERSION)"
-      - buildah manifest add "bark-multiarch-$(cat ../VERSION)" "registry.2nd.dev/bark:linux-amd64-$(cat ../VERSION)"
-      - buildah manifest add "bark-multiarch-$(cat ../VERSION)" "registry.2nd.dev/bark:linux-arm64-$(cat ../VERSION)"
-      - buildah manifest add "bark-multiarch-$(cat ../VERSION)" "registry.2nd.dev/bark:linux-armv7-$(cat ../VERSION)"
-      - buildah manifest push --all "bark-multiarch-$(cat ../VERSION)" "docker://registry.2nd.dev/bark:$(cat ../VERSION)"
+      - buildah manifest create "bark-multiarch-$(cat VERSION)"
+      - buildah manifest add "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-amd64-$(cat VERSION)"
+      - buildah manifest add "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
+      - buildah manifest add "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
+      - buildah manifest push --all "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:$(cat VERSION)"
 
   - name: release-all
     when:
