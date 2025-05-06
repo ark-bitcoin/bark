@@ -95,7 +95,8 @@ rustdocs:
 	# Repetitive because I'm currently unable to create a named variable
 	# sed is converting C:\path\to\justfile_folder into /c/path/to/justfile_folder
 	mkdir -p $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
-	cargo doc --target-dir $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs --locked --all --lib --examples --document-private-items
+	cargo doc --locked --all --lib --examples --document-private-items --keep-going \
+		--target-dir $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
 	echo "Open Rust docs at file://$(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs/doc/{{DEFAULT_DOCS_PATH}}"
 
 
