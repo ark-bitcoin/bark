@@ -25,7 +25,6 @@ aspd-rpc = { path = "../aspd-rpc", features = ["server"] }
 bark-cln-rpc = { path = "../cln-rpc" }
 aspd-log = { path = "../aspd-log" }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
-stream-until = { path = "../stream-until" }
 
 # EXPORTED
 bitcoin.workspace = true
