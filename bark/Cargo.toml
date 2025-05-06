@@ -7,7 +7,7 @@ edition = "2021"
 repository = "https://github.com/ark-bitcoin/bark"
 
 [features]
-default = ["cli"]
+default = ["cli", "tls-native-roots"]
 cli = ["home"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
