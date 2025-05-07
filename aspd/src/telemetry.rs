@@ -45,7 +45,7 @@ pub const METER_COUNTER_UD_GRPC_IN_PROCESS: &str = "grpc_requests_in_progress";
 pub const METER_HISTOGRAM_GRPC_LATENCY: &str = "grpc_request_duration_ms";
 pub const METER_COUNTER_HANDSHAKE_VERSION: &str = "handshake_version_counter";
 pub const METER_GAUGE_WALLET_BALANCE: &str = "wallet_balance_gauge";
-pub const METER_GAUGE_BLOCK_HEIGHT: &str = "block_gauge_gauge";
+pub const METER_GAUGE_BLOCK_HEIGHT: &str = "block_gauge";
 
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
 pub const ATTRIBUTE_BLOCKHEIGHT: &str = "blockheight";
