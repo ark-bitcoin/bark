@@ -383,7 +383,7 @@ impl TxIndexProcess {
 			//TODO(stevenroose) entirely rewrite this based on zmq
 			// because right now it's super inefficient and sets the same status over and over
 			match self.bitcoind.custom_get_raw_transaction_info(txid, None) {
-				Ok(info) => {
+				Ok(Some(info)) => {
 					if let Some(block) = info.blockhash {
 						// Confirmed!
 						match self.bitcoind.get_block_header_info(&block) {
@@ -401,9 +401,7 @@ impl TxIndexProcess {
 						}
 					}
 				},
-				Err(e) if e.is_not_found() => {
-					*tx.status.lock().await = Some(TxStatus::Unseen);
-				},
+				Ok(None) => *tx.status.lock().await = Some(TxStatus::Unseen),
 				Err(e) => warn!("bitcoin error: {}", e),
 			}
 		}

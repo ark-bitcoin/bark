@@ -460,11 +460,11 @@ impl App {
 		// it's very likely that we won't have it in our mempool yet.
 		// We will first check if we have it, if not, try to broadcast it.
 		match self.bitcoind.custom_get_raw_transaction_info(&vtxo.onchain_output.txid, None) {
-			Ok(txinfo) => {
+			Ok(Some(txinfo)) => {
 				let conf = txinfo.confirmations.unwrap_or(0);
 				trace!("Board tx {} has {} confirmations", vtxo.onchain_output.txid, conf);
 			},
-			Err(e) if e.is_not_found() => {
+			Ok(None) => {
 				// First check if the tx is actually standard and inputs are unspent.
 				let ret = self.bitcoind.test_mempool_accept(&[&tx])?
 					.into_iter().next().expect("we submitted one");
@@ -506,7 +506,7 @@ impl App {
 			let txid = board.onchain_output.txid;
 			let id = board.id();
 			match self.bitcoind.custom_get_raw_transaction_info(&txid, None) {
-				Ok(tx) => {
+				Ok(Some(tx)) => {
 					let confs = tx.confirmations.unwrap_or(0) as usize;
 					if confs < self.config.round_board_confirmations {
 						slog!(UnconfirmedBoardSpendAttempt, vtxo: id, confirmations: confs);
@@ -515,15 +515,13 @@ impl App {
 						);
 					}
 				},
-				Err(e) if e.is_not_found() => {
+				Ok(None) => {
 					slog!(UnconfirmedBoardSpendAttempt, vtxo: id, confirmations: 0);
 					return badarg!("input board vtxo tx was not found, \
 						requires {} confs)", self.config.round_board_confirmations,
 					);
 				},
-				Err(e) => {
-					bail!("error getting raw tx for board vtxo: {e}");
-				},
+				Err(e) => bail!("error getting raw tx for board vtxo: {e}"),
 			}
 		}
 
