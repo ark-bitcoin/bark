@@ -199,9 +199,9 @@ impl Server {
 		// * START PROCESSES *
 		// *******************
 
-		let telemetry_metrics = telemetry::init_telemetry(&cfg, asp_key.public_key());
+		let telemetry_metrics = TelemetryMetrics::init(&cfg, asp_key.public_key());
 
-		let rtmgr = RuntimeManager::new_with_telemetry(telemetry::spawn_gauge());
+		let rtmgr = RuntimeManager::new_with_telemetry(telemetry_metrics.spawn_gauge());
 		let _startup_worker = rtmgr.spawn("Bootstrapping");
 		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
