@@ -34,21 +34,21 @@ use anyhow::Context;
 use bip39::Mnemonic;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
-use tokio::sync::{oneshot, Mutex};
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::{oneshot, Mutex};
 
 use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::musig::{MusigPartialSignature, MusigPubNonce};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos;
-
+use aspd_rpc::protos::Bolt11PaymentResult;
 use crate::bitcoind::{BitcoinRpcClient, RpcApi};
 use crate::cln::ClnManager;
 use crate::database::model::LightningPaymentStatus;
@@ -652,6 +652,7 @@ impl App {
 	async fn finish_bolt11_payment(
 		&self,
 		signed: SignedBolt11Payment,
+		wait: bool,
 	) -> anyhow::Result<protos::Bolt11PaymentResult> {
 		//TODO(stevenroose) need to check that the input vtxos are actually marked
 		// as spent for this specific payment
@@ -669,8 +670,25 @@ impl App {
 		let payment_hash = signed.payment.invoice.payment_hash().clone();
 
 		// Spawn a task that performs the payment
-		let res = self.cln.as_ref().expect("started").pay_bolt11(&signed).await;
+		let res = self.cln.as_ref().expect("started").pay_bolt11(&signed, wait).await;
 
+		Self::process_bolt11_response(payment_hash, res)
+	}
+
+	async fn check_bolt11_payment(
+		&self,
+		payment_hash: sha256::Hash,
+		wait: bool,
+	) -> anyhow::Result<protos::Bolt11PaymentResult> {
+		let res = self.cln.as_ref().expect("started").check_bolt11(&payment_hash, wait).await;
+
+		Self::process_bolt11_response(payment_hash, res)
+	}
+
+	fn process_bolt11_response(
+		payment_hash: sha256::Hash,
+		res: anyhow::Result<[u8; 32]>,
+	) -> anyhow::Result<Bolt11PaymentResult> {
 		match res {
 			Ok(preimage) => {
 				Ok(protos::Bolt11PaymentResult {

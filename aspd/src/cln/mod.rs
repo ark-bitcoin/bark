@@ -51,6 +51,7 @@ use bitcoin_ext::AmountExt;
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
 use tokio::sync::{broadcast, Notify, mpsc};
+use tokio::sync::broadcast::Receiver;
 use tonic::transport::{Channel, Uri};
 
 use ark::lightning::SignedBolt11Payment;
@@ -99,7 +100,9 @@ impl ClnManager {
 			check_max_delay: config.invoice_check_max_delay,
 		};
 		let proc = ClnManagerProcess {
-			rtmgr, payment_rx, node_monitor_config,
+			rtmgr,
+			payment_rx,
+			node_monitor_config,
 			db: db.clone(),
 			payment_update_tx: payment_update_tx.clone(),
 			waker: Arc::new(Notify::new()),
@@ -115,7 +118,9 @@ impl ClnManager {
 		tokio::spawn(proc.run(config.cln_reconnect_interval));
 
 		Ok(ClnManager {
-			db, payment_tx, payment_update_tx,
+			db,
+			payment_tx,
+			payment_update_tx,
 			invoice_poll_interval: config.invoice_poll_interval,
 		})
 	}
@@ -128,6 +133,7 @@ impl ClnManager {
 	pub async fn pay_bolt11(
 		&self,
 		payment: &SignedBolt11Payment,
+		wait: bool,
 	) -> anyhow::Result<[u8; 32]> {
 		let invoice = &payment.payment.invoice;
 		if invoice.check_signature().is_err() {
@@ -140,22 +146,46 @@ impl ClnManager {
 			None
 		};
 
+		let update_rx = self.payment_update_tx.subscribe();
 		self.payment_tx.send((invoice.clone(), user_amount)).context("payment channel broken")?;
 
 		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
 		let payment_hash = *invoice.payment_hash();
 
-		let mut update_rx = self.payment_update_tx.subscribe();
+		self.check_bolt11_internal(update_rx, &payment_hash, wait, false).await
+	}
+
+	/// Checks a bolt-11 invoice and returns the pre-image
+	pub async fn check_bolt11(
+		&self,
+		payment_hash: &sha256::Hash,
+		wait: bool,
+	) -> anyhow::Result<[u8; 32]> {
+		let update_rx = self.payment_update_tx.subscribe();
+		
+		self.check_bolt11_internal(update_rx, payment_hash, wait, true).await
+	}
+
+	pub async fn check_bolt11_internal(
+		&self,
+		mut update_rx: Receiver<sha256::Hash>,
+		payment_hash: &sha256::Hash,
+		wait: bool,
+		instant_check: bool,
+	) -> anyhow::Result<[u8; 32]> {
 		let mut poll_interval = tokio::time::interval(self.invoice_poll_interval);
 		poll_interval.reset();
 		loop {
 			tokio::select! {
-				// Regular polling every 60 seconds
-				_ = poll_interval.tick() => trace!("pay bolt11 timeout reached, polling"),
+				_ = async {}, if instant_check => {
+					trace!("instant_check triggered, polling");
+					continue;
+				},
+				_ = poll_interval.tick() => trace!("check bolt11 timeout reached, polling"),
 				// Trigger received on channel
 				rcv = update_rx.recv() => match rcv {
 					Ok(hash) => {
-						if hash != payment_hash {
+						if hash != *payment_hash {
 							continue;
 						}
 					},
@@ -184,9 +214,14 @@ impl ClnManager {
 					return Err(anyhow::Error::msg("payment failed")
 						.context(LightningPaymentStatus::Failed));
 				},
-				// Continue loop, wait for next trigger or timeout
 				LightningPaymentStatus::Requested
-					| LightningPaymentStatus::Submitted => {},
+				| LightningPaymentStatus::Submitted => {
+					if !wait {
+						return Err(anyhow::Error::msg("payment pending")
+							.context(invoice.payment_status))
+					}
+					// Continue loop, wait for next trigger or timeout
+				},
 			}
 		}
 	}

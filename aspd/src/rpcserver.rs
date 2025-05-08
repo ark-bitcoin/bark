@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::future::Future;
 
 use bitcoin::{Amount, ScriptBuf};
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr::Signature, PublicKey};
 use lightning_invoice::Bolt11Invoice;
@@ -157,6 +157,7 @@ const RPC_SERVICE_ARK_POST_OOR_MAILBOX: &'static str = "post_oor_mailbox";
 const RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX: &'static str = "empty_oor_mailbox";
 const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment";
 const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payment";
+const RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT: &'static str = "check_bolt11_payment";
 const RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT: &'static str = "revoke_bolt11_payment";
 const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
 const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
@@ -561,7 +562,24 @@ impl rpc::server::ArkService for App {
 		let signed = SignedBolt11Payment::decode(&req.get_ref().signed_payment)
 			.badarg("invalid payment encoding")?;
 
-		let res = self.finish_bolt11_payment(signed).await.to_status()?;
+		let res = self.finish_bolt11_payment(signed, req.get_ref().wait).await.to_status()?;
+		Ok(tonic::Response::new(res))
+	}
+
+	async fn check_bolt11_payment(
+		&self,
+		req: tonic::Request<protos::CheckBolt11PaymentRequest>,
+	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT);
+		let req = req.into_inner();
+		let payment_hash: [u8; 32] = req.clone().hash.try_into().expect("Expected 32 bytes");
+		let payment_hash = sha256::Hash::from_slice(&payment_hash).unwrap();
+
+		add_tracing_attributes(vec![
+			KeyValue::new("payment_hash", format!("{:?}", payment_hash)),
+		]);
+
+		let res = self.check_bolt11_payment(payment_hash, req.clone().wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
 
