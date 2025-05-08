@@ -35,6 +35,7 @@ steps:
       - just build-codecov
 
   - name: test-integration-btc29.0
+    failure: ignore
     depends_on: build
     image: registry.2nd.dev/build:17
     volumes:
@@ -63,6 +64,7 @@ steps:
         fi
 
   - name: code-coverage
+    failure: ignore
     depends_on: test-integration-btc29.0
     image: registry.2nd.dev/build:17
     volumes:

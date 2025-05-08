@@ -16,6 +16,7 @@ clone:
 steps:
   - name: tar-and-print
     image: registry.2nd.dev/build:17
+    failure: ignore
     volumes:
       - /data:/host/data
     commands:
