@@ -39,7 +39,6 @@ use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
-use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
@@ -200,8 +199,11 @@ impl Server {
 		// * START PROCESSES *
 		// *******************
 
-		let rtmgr = RuntimeManager::new_with_telemetry(telemetry::spawn_gauge());
 		let telemetry_metrics = telemetry::init_telemetry(&cfg, asp_key.public_key());
+
+		let rtmgr = RuntimeManager::new_with_telemetry(telemetry::spawn_gauge());
+		let _startup_worker = rtmgr.spawn("Bootstrapping");
+		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
 		let mut txindex = TxIndex::new();
 		txindex.start(
@@ -252,77 +254,13 @@ impl Server {
 
 		let srv = Arc::new(srv);
 
-		// Spawn a task to handle Ctrl+C
-		let rt = srv.rtmgr.clone();
-		tokio::spawn(async move {
-			let ctrl_c = async {
-				tokio::signal::ctrl_c()
-					.await
-					.expect("Failed to listen for Ctrl+C");
-				info!("Ctrl+C received! Sending shutdown signal...");
-			};
-
-			let sigterm = async {
-				let mut sigterm_stream =
-					signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
-				sigterm_stream.recv().await;
-				info!("SIGTERM received! Sending shutdown signal...");
-			};
-
-			tokio::select! {
-				_ = ctrl_c => {}
-				_ = sigterm => {}
-			}
-
-			let _ = rt.shutdown();
-			for i in (1..=60).rev() {
-				if rt.shutdown_done() {
-					return;
-				}
-				info!("Forced exit in {} seconds...", i);
-				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-			}
-			std::process::exit(0);
-		});
+		tokio::spawn(run_tip_fetcher(srv.clone()));
 
 		let srv2 = srv.clone();
 		tokio::spawn(async move {
 			let res = round::run_round_coordinator(&srv2, round_input_rx, round_trigger_rx)
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", res);
-		});
-
-		let srv2 = srv.clone();
-		tokio::spawn(async move {
-			let srv = srv2;
-			let _worker = srv.rtmgr.spawn_critical("TipFetcher");
-
-			loop {
-				tokio::select! {
-					// Periodic interval for chain tip fetch
-					() = tokio::time::sleep(Duration::from_secs(1)) => {},
-					_ = srv.rtmgr.shutdown_signal() => {
-						info!("Shutdown signal received. Exiting fetch_tip loop...");
-						break;
-					}
-				}
-
-				match srv.bitcoind.tip() {
-					Ok(t) => {
-						let mut lock = srv.chain_tip.lock().await;
-						if t != *lock {
-							*lock = t;
-							srv.telemetry_metrics.set_block_height(t.height);
-							slog!(TipUpdated, height: t.height, hash: t.hash);
-						}
-					}
-					Err(e) => {
-						warn!("Error getting chain tip from bitcoind: {}", e);
-					},
-				}
-			}
-
-			info!("Chain tip loop terminated gracefully.");
 		});
 
 		// RPC
@@ -758,3 +696,34 @@ impl Server {
 	}
 }
 
+
+async fn run_tip_fetcher(srv: Arc<Server>) {
+	let _worker = srv.rtmgr.spawn_critical("TipFetcher");
+
+	loop {
+		tokio::select! {
+			// Periodic interval for chain tip fetch
+			() = tokio::time::sleep(Duration::from_secs(1)) => {},
+			_ = srv.rtmgr.shutdown_signal() => {
+				info!("Shutdown signal received. Exiting fetch_tip loop...");
+				break;
+			}
+		}
+
+		match srv.bitcoind.tip() {
+			Ok(t) => {
+				let mut lock = srv.chain_tip.lock().await;
+				if t != *lock {
+					*lock = t;
+					srv.telemetry_metrics.set_block_height(t.height);
+					slog!(TipUpdated, height: t.height, hash: t.hash);
+				}
+			}
+			Err(e) => {
+				warn!("Error getting chain tip from bitcoind: {}", e);
+			},
+		}
+	}
+
+	info!("Chain tip loop terminated gracefully.");
+}

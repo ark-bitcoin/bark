@@ -1,8 +1,11 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicUsize};
+use std::time::{Duration, Instant};
 
+use log::{error, info};
 use opentelemetry::metrics::Gauge;
+use tokio::signal;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -67,6 +70,41 @@ impl RuntimeManager {
 				spawn_gauge: Some(spawn_gauge),
 			}),
 		}
+	}
+
+	/// Runs a thread that will watch for SIGTERM and ctrl-c signals.
+	///
+	/// Upon receipt, it will
+	/// - call the [RuntimeManager::shutdown] method.
+	/// - If [RuntimeManager::shutdown_done] does not return true within
+	///   the `timeout` duration, it will exit the process forcibly.
+	pub fn run_shutdown_signal_listener(&self, timeout: Duration) {
+		let rt = self.clone();
+		tokio::spawn(async move {
+			let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+				.expect("Failed to listen for SIGTERM");
+
+			tokio::select! {
+				_ = sigterm.recv() => info!("SIGTERM received! Sending shutdown signal..."),
+				r = signal::ctrl_c() => match r {
+					Ok(()) => info!("Ctrl+C received! Sending shutdown signal..."),
+					Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
+				},
+			}
+
+			let _ = rt.shutdown();
+			let deadline = Instant::now() + timeout;
+			while !rt.shutdown_done() {
+				let now = Instant::now();
+				if let Some(time_left) = deadline.checked_duration_since(now) {
+					info!("Forced exit in {} seconds...", time_left.as_secs());
+					tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+				} else {
+					error!("Graceful shutdown took too long, exiting...");
+					std::process::exit(0);
+				}
+			}
+		});
 	}
 
 	fn drop_worker(&self, name: &str, critical: bool) {
