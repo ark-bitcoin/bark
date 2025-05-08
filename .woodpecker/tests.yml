@@ -70,9 +70,16 @@ steps:
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
-      - just test-integration-all
+      - just test-integration-all || echo $? > /tmp/test_exit_code
       - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
       - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
+      - echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
+      - |
+        if [ -f /tmp/test_exit_code ]; then
+          code=$(cat /tmp/test_exit_code)
+          echo "Tests failed with exit code $code."
+          exit $code
+        fi
 
 depends_on:
   - main

@@ -51,9 +51,16 @@ steps:
       - ls -al $${BITCOIND_EXEC}
       - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
-      - just test-integration-all-codecov
+      - just test-integration-all-codecov || echo $? > /tmp/test_exit_code
       - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
       - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
+      - echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
+      - |
+        if [ -f /tmp/test_exit_code ]; then
+          code=$(cat /tmp/test_exit_code)
+          echo "Tests failed with exit code $code."
+          exit $code
+        fi
 
   - name: code-coverage
     depends_on: test-integration-btc29.0
@@ -64,6 +71,7 @@ steps:
       - just codecov-report
       - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
       - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
+      - echo "Coverage -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
 
 depends_on:
   - main
