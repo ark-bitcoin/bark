@@ -102,7 +102,7 @@ fn init_logging(slog_dir: Option<&Path>) {
 		.level(log::LevelFilter::Trace)
 		.level_for("rustls", log::LevelFilter::Warn)
 		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
-		.level_for("tokio_postgres", log::LevelFilter::Debug)
+		.level_for("tokio_postgres", log::LevelFilter::Info)
 		// regular logging dispatch
 		.chain(fern::Dispatch::new()
 			.format(|out, msg, rec| {
