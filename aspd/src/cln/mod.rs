@@ -594,9 +594,9 @@ async fn handle_pay_bolt11(
 			match db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await {
 				Ok(Some(attempt)) => match db.verify_and_update_invoice(
 					&payment_hash,
-					Some(&format!("pay rpc call error: {}", pay_err)),
 					&attempt,
 					LightningPaymentStatus::Submitted,
+					Some(&format!("pay rpc call error: {}", pay_err)),
 					None,
 					None,
 					telemetry_metrics,
@@ -669,9 +669,9 @@ impl database::Db {
 	async fn verify_and_update_invoice(
 		&self,
 		payment_hash: &sha256::Hash,
-		payment_error: Option<&str>,
 		attempt: &LightningPaymentAttempt,
 		status: LightningPaymentStatus,
+		payment_error: Option<&str>,
 		final_amount_msat: Option<u64>,
 		preimage: Option<&[u8; 32]>,
 		telemetry_metrics: TelemetryMetrics,

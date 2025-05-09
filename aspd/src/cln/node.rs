@@ -171,7 +171,7 @@ impl ClnNodeMonitorProcess {
 
 						let status = LightningPaymentStatus::Submitted;
 						let ok = self.db.verify_and_update_invoice(
-							&payment_hash, None, &attempt, status, None, None,
+							&payment_hash, &attempt, status, None, None, None,
 							self.telemetry_metrics.clone(),
 						).await?;
 						if ok {
@@ -191,7 +191,7 @@ impl ClnNodeMonitorProcess {
 
 					let status = LightningPaymentStatus::Failed;
 					let ok = self.db.verify_and_update_invoice(
-						&payment_hash, error_string, &attempt, status, None, None,
+						&payment_hash, &attempt, status, error_string,  None, None,
 						self.telemetry_metrics.clone(),
 					).await?;
 					if ok {
@@ -209,7 +209,7 @@ impl ClnNodeMonitorProcess {
 
 					let status = LightningPaymentStatus::Succeeded;
 					let ok = self.db.verify_and_update_invoice(
-						&payment_hash, None, &attempt, status, Some(final_msat), Some(&preimage),
+						&payment_hash, &attempt, status, None, Some(final_msat), Some(&preimage),
 						self.telemetry_metrics.clone(),
 					).await?;
 					if ok {
@@ -366,9 +366,9 @@ impl ClnNodeMonitorProcess {
 						let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
 						self.db.verify_and_update_invoice(
 							&invoice.payment_hash,
-							error_string,
 							&attempt,
 							desired_status,
+							error_string,
 							None,
 							preimage.as_ref(),
 							self.telemetry_metrics.clone(),
