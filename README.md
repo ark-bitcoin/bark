@@ -10,7 +10,7 @@ that contain all primitives used for this implementation.
 > is reckless and can result in loss of funds.
 >
 > Please be aware that
-> - Updating bark/aspd may corrupt your wallet. At this stage we priorize development velocity over backward compatility.
+> - Updating bark/aspd may corrupt your wallet. At this stage we prioritize development velocity over backward compatibility.
 > - This code contains known bugs and vulnerabilities that can result in loss of funds.
 
 ## What is Ark??
@@ -24,8 +24,8 @@ For more info check out
 
 ## Getting started
 
-Our [guide](https://docs.second.tech/getting-started/introduction/) that explains how to [compile from source](https://docs.second.tech/getting-started/compile-from-source/) 
-and run an ASP using [regtest](https://docs.second.tech/getting-started/regtest-demo/).
+Our [guide](https://docs.second.tech/getting-started/) that explains how to [compile from source](https://docs.second.tech/getting-started/optional/compile-from-source/) 
+and run an ASP using [regtest](https://docs.second.tech/run-ark-server/).
 
 ## Questions or issues
 
