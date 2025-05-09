@@ -392,6 +392,9 @@ impl TestContext {
 		info!("Fund {} {}", bark.name(), amount);
 		let address = bark.get_onchain_address().await;
 		let txid = self.bitcoind().fund_addr(address, amount).await;
+		if let Some(ref electrs) = self.electrs {
+			electrs.await_transaction(&txid).wait(10_000).await;
+		}
 		self.bitcoind().generate(1).await;
 		txid
 	}
