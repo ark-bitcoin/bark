@@ -427,7 +427,9 @@ async fn multiple_spends_in_payment() {
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
 
 	bark1.board(sat(100_000)).await;
+	ctx.bitcoind().generate(1).await;
 	bark1.board(sat(200_000)).await;
+	ctx.bitcoind().generate(1).await;
 	bark1.board(sat(300_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
