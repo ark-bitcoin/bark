@@ -487,13 +487,13 @@ impl CollectingPayments {
 		);
 
 		// Send out vtxo proposal to signers.
-		server.rounds.round_event_tx.send(RoundEvent::VtxoProposal {
+		let _ = server.rounds.round_event_tx.send(RoundEvent::VtxoProposal {
 			round_seq: self.round_seq,
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
 			connector_pubkey: connector_key.public_key(),
-		}).expect("round event channel broken");
+		});
 
 		let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(vtxos_utxo);
 		let mut cosign_part_sigs = HashMap::with_capacity(unsigned_vtxo_tree.nb_leaves());
@@ -690,11 +690,11 @@ impl SigningVtxoTree {
 		}
 
 		// Send out round proposal to signers.
-		server.rounds.round_event_tx.send(RoundEvent::RoundProposal {
+		let _ = server.rounds.round_event_tx.send(RoundEvent::RoundProposal {
 			round_seq: self.round_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
-		}).expect("round event channel broken");
+		});
 
 		let conns_utxo = OutPoint::new(self.round_txid, ROUND_TX_CONNECTOR_VOUT);
 		let connectors = ConnectorChain::new(
@@ -886,10 +886,10 @@ impl SigningForfeits {
 
 		// Send out the finished round to users.
 		trace!("Sending out finish event.");
-		server.rounds.round_event_tx.send(RoundEvent::Finished {
+		let _ = server.rounds.round_event_tx.send(RoundEvent::Finished {
 			round_seq: self.round_seq,
 			signed_round_tx: signed_round_tx.tx.clone(),
-		}).expect("round event channel broken");
+		});
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
 
@@ -1060,10 +1060,10 @@ async fn perform_round(
 
 	// Start new round, announce.
 	let offboard_feerate = server.config.round_tx_feerate;
-	server.rounds.round_event_tx.send(RoundEvent::Start(RoundInfo {
+	let _ = server.rounds.round_event_tx.send(RoundEvent::Start(RoundInfo {
 		round_seq,
 		offboard_feerate,
-	})).expect("round event channel broken");
+	}));
 
 	// Allocate this data once per round so that we can keep them
 	// Perhaps we could even keep allocations between all rounds, but time
@@ -1101,11 +1101,11 @@ async fn perform_round(
 		let state = round_state.collecting_payments();
 		state.locked_inputs.release_all();
 
-		server.rounds.round_event_tx.send(RoundEvent::Attempt(RoundAttempt {
+		let _ = server.rounds.round_event_tx.send(RoundEvent::Attempt(RoundAttempt {
 			round_seq,
 			attempt_seq,
 			challenge: state.vtxo_ownership_challenge
-		})).expect("round event channel broken");
+		}));
 		// Start receiving payments.
 		let receive_payments_start = Instant::now();
 
