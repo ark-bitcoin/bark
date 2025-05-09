@@ -1,4 +1,5 @@
 use std::iter;
+use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -148,21 +149,25 @@ async fn cant_spend_untrusted() {
 	tokio::time::sleep(Duration::from_millis(3000)).await;
 
 	log_round_err.clear();
-	if let Err(_err) = bark.try_refresh_all().await {
+	if let Err(err) = bark.try_refresh_all().await {
+		let mut round_errs = String::new();
 		while let Ok(e) = log_round_err.try_recv() {
+			write!(&mut round_errs, "{:?}\n\n", e).unwrap();
 			error!("round error: {:?}", e.error);
 		}
-		panic!("first refresh failed");
+		panic!("first refresh failed, err: {err:?}, round errs: {round_errs:?}");
 	}
 
 	// and the unconfirmed change should be able to be used for a second round
 	tokio::time::sleep(Duration::from_millis(2000)).await;
 	assert!(log_round_err.try_recv().is_err());
-	if let Err(_err) = bark.try_refresh_all().await {
+	if let Err(err) = bark.try_refresh_all().await {
+		let mut round_errs = String::new();
 		while let Ok(e) = log_round_err.try_recv() {
+			write!(&mut round_errs, "{:?}\n\n", e).unwrap();
 			error!("round error: {:?}", e.error);
 		}
-		panic!("second refresh failed");
+		panic!("second refresh failed, err: {err:?}, round errs: {round_errs:?}");
 	}
 	// should not have produced errors
 	assert!(log_round_err.try_recv().is_err());
