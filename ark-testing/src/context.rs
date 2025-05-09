@@ -12,7 +12,7 @@ use aspd::config::{self, Config};
 use aspd_rpc as rpc;
 
 use crate::daemon::aspd::postgresd::{self, Postgres};
-use crate::util::{should_use_electrs, test_data_directory};
+use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
@@ -365,6 +365,16 @@ impl TestContext {
 
 		let mut ret = Lightningd::new(name, bitcoind, cfg);
 		ret.start().await.unwrap();
+		// wait for grpc to be available
+		async {
+			loop {
+				if ret.try_grpc_client().await.is_ok() {
+					break;
+				} else {
+					tokio::time::sleep(Duration::from_millis(200)).await;
+				}
+			}
+		}.wait(5000).await;
 		ret
 	}
 
