@@ -221,7 +221,9 @@ async fn max_vtxo_amount() {
 
 	// exceeds limit, should fail
 	let err = bark1.try_board(Amount::from_sat(600_000)).await.unwrap_err();
-	assert!(err.to_string().contains(&format!("bad user input: board amount exceeds limit of {}", cfg_max_amount)));
+	assert!(err.to_string().contains(
+		&format!("bad user input: board amount exceeds limit of {}", cfg_max_amount)
+	), "err: {err}");
 
 	bark1.board(Amount::from_sat(500_000)).await;
 	bark1.board(Amount::from_sat(500_000)).await;
@@ -229,12 +231,16 @@ async fn max_vtxo_amount() {
 
 	// try send OOR exceeding limit
 	let err = bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.unwrap_err();
-	assert!(err.to_string().contains(&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount)));
+	assert!(err.to_string().contains(
+		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
+	), "err: {err}");
 	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
 
 	// then try send in a round
 	let err = bark1.try_refresh_all().await.unwrap_err();
-	assert!(err.to_string().contains(&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount)));
+	assert!(err.to_string().contains(
+		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
+	), "err: {err}");
 
 	// but we can offboard the entire amount!
 	bark1.timeout = None;
@@ -974,8 +980,10 @@ async fn reject_subdust_vtxo_request() {
 	bark.board_all().await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
-	let res = bark.try_refresh_all().await;
-	assert!(res.unwrap_err().to_string().contains("bad user input: vtxo amount must be at least 0.00000330 BTC"));
+	let err = bark.try_refresh_all().await.unwrap_err();
+	assert!(err.to_string().contains(
+		"bad user input: vtxo amount must be at least 0.00000330 BTC",
+	), "err: {err}");
 }
 
 #[tokio::test]

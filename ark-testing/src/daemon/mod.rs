@@ -170,7 +170,7 @@ impl<T> Daemon<T>
 			val = is_initialized => {
 				val
 					.with_context(|| format!("Daemon {} failed to initialize within reasonable time", self.inner.name()))?
-					.with_context(|| format!("Daemon {} errorded during wait_for_init", self.inner.name()))
+					.with_context(|| format!("Daemon {} errored during wait_for_init", self.inner.name()))
 			}
 			_ = child_died => {
 				bail!("Daemon {} stopped running before initialization", self.inner.name())
