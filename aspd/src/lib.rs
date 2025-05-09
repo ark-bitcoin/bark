@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -721,23 +721,16 @@ impl Server {
 		let invoice = db.get_lightning_invoice_by_payment_hash(&payment_hash).await
 			.context("error fetching invoice by payment hash")?;
 
-		match invoice.payment_status {
-			LightningPaymentStatus::Succeeded => {
+		match &invoice.last_attempt_status {
+			Some(status) if status == &LightningPaymentStatus::Failed => {},
+			Some(status) if status == &LightningPaymentStatus::Succeeded => {
 				return badarg!("This lightning payment has completed. preimage: {}",
-						serialize_hex(&invoice.clone().preimage.unwrap()))
-			}
-			LightningPaymentStatus::Failed => {}
-			LightningPaymentStatus::Submitted => {
-				return badarg!("This lightning payment is not eligible for revocation yet");
-			}
-			LightningPaymentStatus::Requested => {
-				return badarg!("This lightning payment is not eligible for revocation yet");
-			}
+					invoice.clone().preimage.unwrap().as_hex());
+			},
+			_ => return badarg!("This lightning payment is not eligible for revocation yet")
 		}
 
-		let parts = self.process_revocation(signed, user_nonces).await?;
-
-		Ok(parts)
+		Ok(self.process_revocation(signed, user_nonces).await?)
 	}
 
 	async fn process_revocation(

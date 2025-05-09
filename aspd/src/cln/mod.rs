@@ -200,31 +200,38 @@ impl ClnManager {
 
 			let invoice = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await?;
 
-			// In both cases, check payment status
-			trace!("Bolt11 invoice status for payment {}: {}",
-				invoice.invoice.payment_hash(), invoice.payment_status,
-			);
+			if let Some(status) = invoice.last_attempt_status {
+				// In both cases, check payment status
+				trace!("Bolt11 invoice status for payment {}: {}",
+					invoice.invoice.payment_hash(), status,
+				);
 
-			match invoice.payment_status {
-				LightningPaymentStatus::Succeeded => {
+				if status == LightningPaymentStatus::Succeeded {
 					let preimage = invoice.preimage
 						.context("missing preimage on bolt11 success")?;
 					debug!("Done, preimage: {} for invoice {}", preimage.as_hex(), invoice.invoice);
 					return Ok(preimage);
-				},
-				LightningPaymentStatus::Failed => {
+				}
+
+				if status == LightningPaymentStatus::Failed {
 					return Err(anyhow::Error::msg("payment failed")
 						.context(LightningPaymentStatus::Failed));
-				},
-				LightningPaymentStatus::Requested
-				| LightningPaymentStatus::Submitted => {
-					if !wait {
-						return Err(anyhow::Error::msg("payment pending")
-							.context(invoice.payment_status))
-					}
-					// Continue loop, wait for next trigger or timeout
-				},
+				}
+			} else {
+				warn!("Bolt11 invoice status for payment {}: no attempt on invoice",
+					invoice.invoice.payment_hash(),
+				);
 			}
+
+			if !wait {
+				let err = anyhow!("payment pending");
+				return Err(if let Some(status) = invoice.last_attempt_status {
+					err.context(status)
+				} else {
+					err
+				})
+			}
+			// Continue loop, wait for next trigger or timeout
 		}
 	}
 }
@@ -508,7 +515,7 @@ impl ClnManagerProcess {
 			Some(msat) => msat,
 			None => user_amount.context("user amount required for invoice without amount")?.to_msat(),
 		};
-		self.db.store_lightning_invoice_requested(node.id, &invoice, amount_msat).await?;
+		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
 
 		// Call pay over GRPC
 		// If it returns a pre-image we know the call succeeded,
@@ -670,14 +677,10 @@ impl database::Db {
 		telemetry_metrics: TelemetryMetrics,
 	) -> anyhow::Result<bool> {
 		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?;
+		let is_last_attempt_finalized = li.last_attempt_status
+			.map(|a| a.is_final()).unwrap_or(false);
 
-		if li.payment_status == status && attempt.status == status {
-			error!("Lightning invoice update for {payment_hash}: Skipped update because everything \
-				is already in the correct state.");
-			return Ok(false);
-		}
-
-		if li.preimage.is_some() || li.payment_status.is_final() {
+		if li.preimage.is_some() || is_last_attempt_finalized {
 			debug!("Lightning invoice update for {payment_hash}: Skipped update because the \
 				payment is already in a final state.");
 			return Ok(false);
@@ -689,19 +692,12 @@ impl database::Db {
 			return Ok(false);
 		}
 
-		if li.payment_status != attempt.status {
-			error!("Lightning invoice update for {payment_hash}: Payment attempt has state {} \
-				which mismatches the invoice's state {}.",
-				attempt.status, li.payment_status,
-			);
-		}
-
 		self.store_lightning_payment_attempt_status(
 			attempt.lightning_payment_attempt_id, status, payment_error, attempt.updated_at,
 		).await?;
 
 		self.store_lightning_invoice_status(
-			li.lightning_invoice_id, status, final_amount_msat, preimage, li.updated_at,
+			li.lightning_invoice_id, final_amount_msat, preimage, li.updated_at,
 		).await?;
 
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
