@@ -25,6 +25,7 @@ use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
 const COMMAND_LOG_FILE: &str = "commands.log";
+const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub enum ChainSource {
@@ -46,7 +47,7 @@ pub struct Bark {
 	name: String,
 	config: BarkConfig,
 	counter: AtomicUsize,
-	pub timeout: Duration,
+	pub timeout: Option<Duration>,
 	_bitcoind: Option<Bitcoind>,
 	command_log: Mutex<fs::File>,
 }
@@ -119,7 +120,7 @@ impl Bark {
 			_bitcoind: bitcoind,
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
-			timeout: Duration::from_millis(60_000),
+			timeout: None,
 			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
 			config: cfg,
 		})
@@ -376,7 +377,7 @@ impl Bark {
 		let mut child = command.spawn()?;
 
 		let exit_result = tokio::time::timeout(
-			self.timeout,
+			self.timeout.unwrap_or(DEFAULT_CMD_TIMEOUT),
 			child.wait(),
 		).await;
 		// on timeout, kill the child

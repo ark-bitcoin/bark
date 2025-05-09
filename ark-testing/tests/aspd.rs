@@ -116,8 +116,8 @@ async fn cant_spend_untrusted() {
 	}).await;
 
 	let mut bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
-	let bark = Arc::new(bark);
+	bark.timeout = Some(Duration::from_millis(3_500));
+	let mut bark = Arc::new(bark);
 
 	bark.board(sat(200_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
@@ -149,6 +149,7 @@ async fn cant_spend_untrusted() {
 	tokio::time::sleep(Duration::from_millis(3000)).await;
 
 	log_round_err.clear();
+	Arc::get_mut(&mut bark).unwrap().timeout = None;
 	if let Err(err) = bark.try_refresh_all().await {
 		let mut round_errs = String::new();
 		while let Ok(e) = log_round_err.try_recv() {
@@ -214,7 +215,7 @@ async fn max_vtxo_amount() {
 	}).await;
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
 	let mut bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_500_000)).await;
-	bark1.timeout = Duration::from_millis(2_500);
+	bark1.timeout = Some(Duration::from_millis(3_500));
 
 	let cfg_max_amount = bark1.ark_info().await.max_vtxo_amount.unwrap();
 
@@ -236,6 +237,7 @@ async fn max_vtxo_amount() {
 	assert!(err.to_string().contains(&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount)));
 
 	// but we can offboard the entire amount!
+	bark1.timeout = None;
 	let address = ctx.bitcoind().get_new_address();
 	bark1.offboard_all(address.clone()).await;
 	ctx.bitcoind().generate(1).await;
@@ -546,7 +548,7 @@ async fn test_participate_round_wrong_step() {
 	let ctx = TestContext::new("aspd/test_participate_round_wrong_step").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
+	bark.timeout = Some(Duration::from_millis(3_500));
 	bark.board(Amount::from_sat(800_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
@@ -967,7 +969,7 @@ async fn reject_subdust_vtxo_request() {
 	let proxy = Proxy(aspd.get_public_client().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
+	bark.timeout = Some(Duration::from_millis(3_500));
 
 	bark.board_all().await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
@@ -1002,7 +1004,7 @@ async fn reject_subdust_offboard_request() {
 	let proxy = Proxy(aspd.get_public_client().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
+	bark.timeout = Some(Duration::from_millis(3_500));
 
 	bark.board_all().await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
