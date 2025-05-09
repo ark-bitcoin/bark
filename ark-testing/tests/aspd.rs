@@ -145,6 +145,7 @@ async fn cant_spend_untrusted() {
 
 	// then confirm the money and it should work
 	ctx.bitcoind().generate(NEED_CONFS).await;
+	tokio::time::sleep(Duration::from_millis(3000)).await;
 
 	log_round_err.clear();
 	if let Err(_err) = bark.try_refresh_all().await {
@@ -153,7 +154,9 @@ async fn cant_spend_untrusted() {
 		}
 		panic!("first refresh failed");
 	}
+
 	// and the unconfirmed change should be able to be used for a second round
+	tokio::time::sleep(Duration::from_millis(2000)).await;
 	assert!(log_round_err.try_recv().is_err());
 	if let Err(_err) = bark.try_refresh_all().await {
 		while let Ok(e) = log_round_err.try_recv() {
@@ -161,6 +164,7 @@ async fn cant_spend_untrusted() {
 		}
 		panic!("second refresh failed");
 	}
+	// should not have produced errors
 	assert!(log_round_err.try_recv().is_err());
 }
 
