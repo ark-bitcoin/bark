@@ -43,7 +43,7 @@ steps:
     environment:
       BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
       LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
-      TEST_DIRECTORY: ./test/btc29
+      TEST_DIRECTORY: ./test/btc29-codecov
       TEST_POSTGRES_HOST: localhost
     commands:
       - git log --oneline | head -n 1
