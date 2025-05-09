@@ -70,13 +70,7 @@ impl Aspd {
 
 	/// Gracefully shutdown bitcoind associated with this ASP.
 	pub async fn shutdown_bitcoind(&self) {
-		use bitcoincore_rpc::RpcApi;
-		self.inner.bitcoind.sync_client().stop().unwrap();
-
-		// Need to wait a bit until all files are written, otherwise the
-		// daemon may be sigkilled, leaving incomplete files. Subsequent
-		// restart would fail.
-		tokio::time::sleep(Duration::from_secs(1)).await;
+		self.inner.bitcoind.stop().await.expect("error stopping bitcoind");
 	}
 
 	pub fn base_cmd() -> Command {
