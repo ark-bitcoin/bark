@@ -74,6 +74,82 @@ impl TelemetryMetrics {
 		Self { inner: None }
 	}
 
+	pub fn init(config: &Config, public_key: PublicKey) -> TelemetryMetrics {
+		let endpoint = match config.otel_collector_endpoint {
+			Some(ref e) => e,
+			None => return TelemetryMetrics::disabled(),
+		};
+
+		global::set_text_map_propagator(TraceContextPropagator::new());
+
+		let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
+			.with_tonic()
+			.with_endpoint(endpoint)
+			.with_timeout(Duration::from_secs(3))
+			.build().unwrap();
+
+		let resource = Resource::builder()
+			.with_attribute(KeyValue::new("service.name", "aspd"))
+			.with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
+			.with_attribute(KeyValue::new("aspd.public_key", public_key.to_string()))
+			.with_attribute(KeyValue::new("aspd.network", config.network.to_string()))
+			.with_attribute(KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()))
+			.with_attribute(KeyValue::new("aspd.maximum_vtxo_amount",
+				config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string()
+			))
+			.build();
+
+		let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+			.with_batch_exporter(trace_exporter)
+			.with_sampler(Sampler::AlwaysOn)
+			.with_id_generator(RandomIdGenerator::default())
+			.with_max_events_per_span(64)
+			.with_max_attributes_per_span(16)
+			.with_resource(resource.clone())
+			.build();
+
+		let aspd_tracer = tracer_provider.tracer(TRACER_ASPD);
+
+		global::set_tracer_provider(tracer_provider);
+
+		// Set up the tracing subscriber
+		let aspd_telemetry = OpenTelemetryLayer::new(aspd_tracer);
+		let subscriber = Registry::default().with(aspd_telemetry);
+		tracing::subscriber::set_global_default(subscriber)
+			.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err)).unwrap();
+
+		let metrics_exporter = opentelemetry_otlp::MetricExporter::builder()
+			// Build exporter using Delta Temporality (Defaults to Temporality::Cumulative)
+			// .with_temporality(opentelemetry_sdk::metrics::Temporality::Delta)
+			.with_tonic()
+			.with_endpoint(endpoint)
+			.with_timeout(Duration::from_secs(3))
+			.build().unwrap();
+
+		let metrics_reader = PeriodicReader::builder(metrics_exporter).build();
+		let provider = SdkMeterProvider::builder()
+			.with_reader(metrics_reader)
+			.with_resource(resource)
+			.build();
+		global::set_meter_provider(provider);
+
+		let meter = global::meter_provider().meter(METER_ASPD);
+		let version_counter = meter.u64_counter(METER_COUNTER_VERSION).build();
+		let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
+		let wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_WALLET_BALANCE).build();
+		let block_height_gauge = meter.u64_gauge(METER_GAUGE_BLOCK_HEIGHT).build();
+
+		version_counter.add(1u64, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
+
+		TelemetryMetrics {
+			inner: Some(InnerMetrics {
+				handshake_version_counter,
+				wallet_balance_gauge,
+				block_height_gauge,
+			})
+		}
+	}
+
 	pub fn count_version(&self, version: &str) {
 		if let Some(ref m) = self.inner {
 			m.handshake_version_counter.add(1, &[KeyValue::new("version", version.to_owned())]);
@@ -91,87 +167,12 @@ impl TelemetryMetrics {
 			m.block_height_gauge.record(block_height as u64, &[]);
 		}
 	}
-}
 
-pub fn init_telemetry(config: &Config, public_key: PublicKey) -> TelemetryMetrics {
-	let endpoint = match config.otel_collector_endpoint {
-		Some(ref e) => e,
-		None => return TelemetryMetrics::disabled(),
-	};
-
-	let resource = Resource::builder()
-		.with_attribute(KeyValue::new("service.name", "aspd"))
-		.with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
-		.with_attribute(KeyValue::new("aspd.public_key", public_key.to_string()))
-		.with_attribute(KeyValue::new("aspd.network", config.network.to_string()))
-		.with_attribute(KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()))
-		.with_attribute(KeyValue::new("aspd.maximum_vtxo_amount",
-			config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string()
-		))
-		.build();
-
-	global::set_text_map_propagator(TraceContextPropagator::new());
-
-	let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
-		.with_tonic()
-		.with_endpoint(endpoint)
-		.with_timeout(Duration::from_secs(3))
-		.build().unwrap();
-
-	let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-		.with_batch_exporter(trace_exporter)
-		.with_sampler(Sampler::AlwaysOn)
-		.with_id_generator(RandomIdGenerator::default())
-		.with_max_events_per_span(64)
-		.with_max_attributes_per_span(16)
-		.with_resource(resource.clone())
-		.build();
-
-	let aspd_tracer = tracer_provider.tracer(TRACER_ASPD);
-
-	global::set_tracer_provider(tracer_provider);
-
-	// Set up the tracing subscriber
-	let aspd_telemetry = OpenTelemetryLayer::new(aspd_tracer);
-	let subscriber = Registry::default().with(aspd_telemetry);
-	tracing::subscriber::set_global_default(subscriber)
-		.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err)).unwrap();
-
-	let metrics_exporter = opentelemetry_otlp::MetricExporter::builder()
-		// Build exporter using Delta Temporality (Defaults to Temporality::Cumulative)
-		// .with_temporality(opentelemetry_sdk::metrics::Temporality::Delta)
-		.with_tonic()
-		.with_endpoint(endpoint)
-		.with_timeout(Duration::from_secs(3))
-		.build().unwrap();
-
-	let metrics_reader = PeriodicReader::builder(metrics_exporter).build();
-	let provider = SdkMeterProvider::builder()
-		.with_reader(metrics_reader)
-		.with_resource(resource)
-		.build();
-	global::set_meter_provider(provider);
-
-	let meter = global::meter_provider().meter(METER_ASPD);
-	let version_counter = meter.u64_counter(METER_COUNTER_VERSION).build();
-	let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
-	let wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_WALLET_BALANCE).build();
-	let block_height_gauge = meter.u64_gauge(METER_GAUGE_BLOCK_HEIGHT).build();
-
-	version_counter.add(1u64, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
-
-	TelemetryMetrics {
-		inner: Some(InnerMetrics {
-			handshake_version_counter,
-			wallet_balance_gauge,
-			block_height_gauge,
-		})
+	pub fn spawn_gauge(&self) -> Gauge<u64> {
+		// nb this is only a function here to enforce that the telemetry was initialized
+		let meter = global::meter_provider().meter(METER_ASPD);
+		meter.u64_gauge(METER_COUNTER_MAIN_SPAWN).build()
 	}
-}
-
-pub fn spawn_gauge() -> Gauge<u64> {
-	let meter = global::meter_provider().meter(METER_ASPD);
-	meter.u64_gauge(METER_COUNTER_MAIN_SPAWN).build()
 }
 
 /// An extention trait for span tracing.

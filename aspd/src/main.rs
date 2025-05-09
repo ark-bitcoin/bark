@@ -4,12 +4,14 @@ use std::process;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::Address;
+use bitcoin::{bip32, Address};
+use bitcoin_ext::rpc::BitcoinRpcExt;
 use clap::Parser;
 use log::{error, info};
 use tonic::transport::Uri;
 
-use aspd::{App, Config};
+use aspd::{Server, Config};
+use aspd::bitcoind::BitcoinRpcClient;
 use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use aspd_rpc::{self as rpc, protos};
 
@@ -165,25 +167,30 @@ async fn inner_main() -> anyhow::Result<()> {
 	match cli.command {
 		Command::Rpc { .. } => unreachable!(),
 		Command::Create => {
-			App::create(cfg).await?;
+			Server::create(cfg).await?;
 		}
 		Command::Start => {
-			let mut app = App::open(cfg).await.context("server init")?;
-
-			if let Err(e) = app.start().await {
-				error!("Shutdown error from aspd: {:?}", e);
+			if let Err(e) = Server::run(cfg).await {
+				error!("Shutdown error from aspd {:?}", e);
 
 				process::exit(1);
 			};
 		}
 		Command::Drain { address } => {
-			let app = App::open(cfg).await.context("server init")?;
+			let db = aspd::database::Db::connect(&cfg.postgres).await?;
+			let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())?;
 
-			println!("{}", app.drain(address).await?.compute_txid());
+			let seed = aspd::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
+			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+
+			let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
+			let mut w = Server::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip).await?;
+
+			let tx = w.drain(address, &bitcoind).await?;
+			println!("{}", tx.compute_txid());
 		}
 		Command::GetMnemonic => {
-			let app = App::open(cfg).await.context("server init")?;
-			println!("{}", app.get_master_mnemonic().await?);
+			println!("{}", aspd::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?);
 		}
 	}
 

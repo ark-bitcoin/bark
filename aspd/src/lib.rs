@@ -9,7 +9,7 @@
 mod error;
 
 mod cln;
-mod bitcoind;
+pub mod bitcoind;
 pub(crate) mod flux;
 pub mod database;
 mod psbtext;
@@ -20,7 +20,7 @@ mod round;
 pub(crate) mod system;
 mod txindex;
 mod telemetry;
-mod wallet;
+pub mod wallet;
 pub mod config;
 pub use crate::config::Config;
 
@@ -31,7 +31,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bip39::Mnemonic;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
@@ -39,9 +38,8 @@ use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use lightning_invoice::Bolt11Invoice;
-use log::{trace, info, warn, error};
-use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::{oneshot, Mutex};
+use log::{trace, info, warn};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
@@ -59,7 +57,7 @@ use crate::system::RuntimeManager;
 use crate::telemetry::TelemetryMetrics;
 use crate::txindex::TxIndex;
 use crate::sweeps::VtxoSweeper;
-use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind, MNEMONIC_FILE};
+use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -71,33 +69,33 @@ const ASP_KEY_PATH: &str = "m/2'/0'";
 
 
 pub struct RoundHandle {
-	round_event_tx: tokio::sync::broadcast::Sender<RoundEvent>,
-	round_input_tx: tokio::sync::mpsc::UnboundedSender<(RoundInput, oneshot::Sender<anyhow::Error>)>,
-	round_trigger_tx: tokio::sync::mpsc::Sender<()>,
+	round_event_tx: broadcast::Sender<RoundEvent>,
+	round_input_tx: mpsc::UnboundedSender<(RoundInput, oneshot::Sender<anyhow::Error>)>,
+	round_trigger_tx: mpsc::Sender<()>,
 }
 
-pub struct App {
+pub struct Server {
 	config: Config,
 	db: database::Db,
-	rtmgr: RuntimeManager,
 	master_xpriv: bip32::Xpriv,
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
 	chain_tip: Mutex<BlockRef>,
-	txindex: TxIndex,
-	vtxo_sweeper: Option<VtxoSweeper>,
 
-	rounds: Option<RoundHandle>,
+	rtmgr: RuntimeManager,
+	txindex: TxIndex,
+	vtxo_sweeper: VtxoSweeper,
+	rounds: RoundHandle,
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
-	cln: Option<ClnManager>,
+	cln: ClnManager,
 	telemetry_metrics: TelemetryMetrics,
 }
 
-impl App {
+impl Server {
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
 		if cfg.legacy_wallet {
 			bail!("We don't support creating new legacy wallets.");
@@ -115,6 +113,13 @@ impl App {
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
+		// Check if our bitcoind is on the expected network.
+		let chain_info = bitcoind.get_blockchain_info()?;
+		if chain_info.chain != cfg.network {
+			bail!("Our bitcoind is running on network {} while we are configured for network {}",
+				chain_info.chain, cfg.network,
+			);
+		}
 		let deep_tip = bitcoind.deep_tip()
 			.context("failed to fetch deep tip from bitcoind")?;
 
@@ -143,7 +148,25 @@ impl App {
 		Ok(())
 	}
 
-	pub async fn open(cfg: Config) -> anyhow::Result<Arc<Self>> {
+	pub async fn open_round_wallet(
+		cfg: &Config,
+		db: database::Db,
+		master_xpriv: &bip32::Xpriv,
+		deep_tip: BlockRef,
+	) -> anyhow::Result<PersistedWallet> {
+		let wallet_xpriv = if cfg.legacy_wallet {
+			master_xpriv.clone()
+		} else {
+			master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
+				.expect("can't error")
+		};
+		Ok(PersistedWallet::load_from_xpriv(
+			db, cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip, cfg.legacy_wallet,
+		).await?)
+	}
+
+	/// Start the server.
+	pub async fn start(cfg: Config) -> anyhow::Result<Arc<Self>> {
 		info!("Starting aspd at {}", cfg.data_dir.display());
 
 		info!("Connecting to db at {}:{}", cfg.postgres.host, cfg.postgres.port);
@@ -153,190 +176,126 @@ impl App {
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
 			.context("failed to create bitcoind rpc client")?;
+		// Check if our bitcoind is on the expected network.
+		let chain_info = bitcoind.get_blockchain_info()?;
+		if chain_info.chain != cfg.network {
+			bail!("Our bitcoind is running on network {} while we are configured for network {}",
+				chain_info.chain, cfg.network,
+			);
+		}
 
 		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
 		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
-		let wallet_xpriv = if cfg.legacy_wallet {
-			master_xpriv.clone()
-		} else {
-			master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
-				.expect("can't error")
-		};
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-		let rounds_wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip, cfg.legacy_wallet,
-		).await.context("error loading wallet")?;
+		let mut rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
+			.await.context("error loading wallet")?;
 
 		let asp_path = bip32::DerivationPath::from_str(ASP_KEY_PATH).unwrap();
 		let asp_xpriv = master_xpriv.derive_priv(&SECP, &asp_path).unwrap();
 		let asp_key = Keypair::from_secret_key(&SECP, &asp_xpriv.private_key);
 
-		Ok(Arc::new(App {
-			rounds_wallet: Arc::new(Mutex::new(rounds_wallet)),
-			txindex: TxIndex::new(),
-			vtxo_sweeper: None,
-			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
-			rounds: None,
-			vtxos_in_flux: VtxosInFlux::new(),
-			config: cfg.clone(),
-			db: db.clone(),
-			asp_key,
-			master_xpriv,
-			bitcoind,
-			rtmgr: RuntimeManager::new_with_telemetry(telemetry::spawn_gauge()),
-			cln: None,
-			telemetry_metrics: TelemetryMetrics::disabled(),
-		}))
-	}
+		// *******************
+		// * START PROCESSES *
+		// *******************
 
-	/// Perform all startup processes.
-	async fn startup(self: &Arc<Self>) -> anyhow::Result<()> {
-		// Check if our bitcoind is on the expected network.
-		let chain_info = self.bitcoind.get_blockchain_info()?;
-		if chain_info.chain != self.config.network {
-			bail!("Our bitcoind is running on network {} while we are configured for network {}",
-				chain_info.chain, self.config.network,
-			);
-		}
+		let telemetry_metrics = TelemetryMetrics::init(&cfg, asp_key.public_key());
 
-		Ok(())
-	}
+		let rtmgr = RuntimeManager::new_with_telemetry(telemetry_metrics.spawn_gauge());
+		let _startup_worker = rtmgr.spawn("Bootstrapping");
+		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
-	pub async fn start(self: &mut Arc<Self>) -> anyhow::Result<()> {
-		let (round_event_tx, _rx) = tokio::sync::broadcast::channel(8);
+		let mut txindex = TxIndex::new();
+		txindex.start(
+			rtmgr.clone(),
+			bitcoind.clone(),
+			cfg.txindex_check_interval,
+		);
+
+		let vtxo_sweeper = VtxoSweeper::start(
+			rtmgr.clone(),
+			cfg.vtxo_sweeper.clone(),
+			cfg.network,
+			bitcoind.clone(),
+			db.clone(),
+			txindex.clone(),
+			asp_key.clone(),
+			rounds_wallet.reveal_next_address(
+				bdk_wallet::KeychainKind::External,
+			).address,
+		).await.context("failed to start VtxoSweeper")?;
+
+		let cln = ClnManager::start(
+			rtmgr.clone(),
+			&cfg,
+			db.clone(),
+		).await.context("failed to start ClnManager")?;
+
+		let (round_event_tx, _rx) = broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 
-		let telemetry_metrics = telemetry::init_telemetry(&self.config, self.asp_key.public_key());
+		let srv = Server {
+			rounds_wallet: Arc::new(Mutex::new(rounds_wallet)),
+			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
+			rounds: RoundHandle { round_event_tx, round_input_tx, round_trigger_tx },
+			vtxos_in_flux: VtxosInFlux::new(),
+			config: cfg.clone(),
+			db,
+			asp_key,
+			master_xpriv,
+			bitcoind,
+			rtmgr,
+			txindex,
+			vtxo_sweeper,
+			cln,
+			telemetry_metrics,
+		};
 
-		let mut_self = Arc::get_mut(self).context("can only start if we are unique Arc")?;
-		let rtmgr = mut_self.rtmgr.clone();
-		mut_self.rounds = Some(RoundHandle { round_event_tx, round_input_tx, round_trigger_tx });
-		mut_self.txindex.start(
-			rtmgr.clone(),
-			mut_self.bitcoind.clone(),
-			mut_self.config.txindex_check_interval,
-		);
-		//TODO(stevenroose) this will be cleaned up if we unify App::open and App::start
-		mut_self.vtxo_sweeper = Some(VtxoSweeper::start(
-			rtmgr.clone(),
-			mut_self.config.vtxo_sweeper.clone(),
-			mut_self.config.network,
-			mut_self.bitcoind.clone(),
-			mut_self.db.clone(),
-			mut_self.txindex.clone(),
-			mut_self.asp_key.clone(),
-			mut_self.rounds_wallet.lock().await.reveal_next_address(
-				bdk_wallet::KeychainKind::External,
-			).address,
-		).await.context("failed to start VtxoSweeper")?);
-		mut_self.cln = Some(ClnManager::start(
-			rtmgr.clone(),
-			&mut_self.config,
-			mut_self.db.clone(),
-		).await.context("failed to start ClnManager")?);
-		mut_self.telemetry_metrics = telemetry_metrics;
+		let srv = Arc::new(srv);
 
-		// First perform all startup tasks...
-		info!("Starting startup tasks...");
-		self.startup().await.context("startup error")?;
-		info!("Startup tasks done");
+		tokio::spawn(run_tip_fetcher(srv.clone()));
 
-		// Spawn a task to handle Ctrl+C
-		let rt = rtmgr.clone();
+		let srv2 = srv.clone();
 		tokio::spawn(async move {
-			let ctrl_c = async {
-				tokio::signal::ctrl_c()
-					.await
-					.expect("Failed to listen for Ctrl+C");
-				info!("Ctrl+C received! Sending shutdown signal...");
-			};
-
-			let sigterm = async {
-				let mut sigterm_stream =
-					signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
-				sigterm_stream.recv().await;
-				info!("SIGTERM received! Sending shutdown signal...");
-			};
-
-			tokio::select! {
-				_ = ctrl_c => {}
-				_ = sigterm => {}
-			}
-
-			let _ = rt.shutdown();
-			for i in (1..=60).rev() {
-				if rt.shutdown_done() {
-					return;
-				}
-				info!("Forced exit in {} seconds...", i);
-				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-			}
-			std::process::exit(0);
-		});
-
-		// Then start all our subprocesses
-		let app = self.clone();
-		tokio::spawn(async move {
-			let res = rpcserver::run_public_rpc_server(app)
-				.await.context("error running public gRPC server");
-			info!("RPC server exited with {:?}", res);
-		});
-
-		let app = self.clone();
-		tokio::spawn(async move {
-			let res = round::run_round_coordinator(&app, round_input_rx, round_trigger_rx)
+			let res = round::run_round_coordinator(&srv2, round_input_rx, round_trigger_rx)
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", res);
 		});
 
-		let app = self.clone();
+		// RPC
+
+		let srv2 = srv.clone();
 		tokio::spawn(async move {
-			let _worker = app.rtmgr.spawn_critical("TipFetcher");
-
-			loop {
-				tokio::select! {
-					// Periodic interval for chain tip fetch
-					() = tokio::time::sleep(Duration::from_secs(1)) => {},
-					_ = app.rtmgr.shutdown_signal() => {
-						info!("Shutdown signal received. Exiting fetch_tip loop...");
-						break;
-					}
-				}
-
-				match app.bitcoind.tip() {
-					Ok(t) => {
-						let mut lock = app.chain_tip.lock().await;
-						if t != *lock {
-							*lock = t;
-							app.telemetry_metrics.set_block_height(t.height);
-							slog!(TipUpdated, height: t.height, hash: t.hash);
-						}
-					}
-					Err(e) => {
-						warn!("Error getting chain tip from bitcoind: {}", e);
-					},
-				}
-			}
-
-			info!("Chain tip loop terminated gracefully.");
+			let res = rpcserver::run_public_rpc_server(srv2)
+				.await.context("error running public gRPC server");
+			info!("RPC server exited with {:?}", res);
 		});
 
-		// These tasks do only run if the config is provided
-		if self.config.rpc.admin_address.is_some() {
-			let app = self.clone();
+		if cfg.rpc.admin_address.is_some() {
+			let srv2 = srv.clone();
 			tokio::spawn(async move {
-				let res = rpcserver::run_admin_rpc_server(app)
+				let res = rpcserver::run_admin_rpc_server(srv2)
 					.await.context("error running admin gRPC server");
 				info!("Admin RPC server exited with {:?}", res);
 			});
 		}
 
-		rtmgr.wait().await;
+		Ok(srv)
+	}
 
+	/// Waits for aspd to terminate.
+	pub async fn wait(&self) {
+		self.rtmgr.wait().await;
 		slog!(AspdTerminated);
+	}
 
+	/// Starts the server and waits until it terminates.
+	///
+	/// This is equivalent to calling [App::start] and [App::wait] in one go.
+	pub async fn run(cfg: Config) -> anyhow::Result<()> {
+		let srv = Server::start(cfg).await?;
+		srv.wait().await;
 		Ok(())
 	}
 
@@ -344,46 +303,11 @@ impl App {
 		self.chain_tip.lock().await.clone()
 	}
 
-	pub fn try_rounds(&self) -> anyhow::Result<&RoundHandle> {
-		self.rounds.as_ref().context("no round scheduler started yet")
-	}
-
-	pub fn rounds(&self) -> &RoundHandle {
-		self.try_rounds().expect("should only call this in round scheduler code")
-	}
-
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {
 		let mut wallet = self.rounds_wallet.lock().await;
 		let ret = wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		wallet.persist().await?;
 		Ok(ret)
-	}
-
-	pub async fn drain(
-		&self,
-		address: Address<bitcoin::address::NetworkUnchecked>,
-	) -> anyhow::Result<Transaction> {
-		//TODO(stevenroose) also claim all expired round vtxos here!
-
-		let addr = address.require_network(self.config.network)?;
-
-		let mut wallet = self.rounds_wallet.lock().await;
-		let mut b = wallet.build_tx();
-		b.drain_to(addr.script_pubkey());
-		b.drain_wallet();
-		let psbt = b.finish().context("error building tx")?;
-
-		let tx = wallet.finish_tx(psbt)?;
-		wallet.commit_tx(&tx);
-		wallet.persist().await?;
-		drop(wallet);
-
-		if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
-			error!("Error broadcasting tx: {}", e);
-			error!("Try yourself: {}", bitcoin::consensus::encode::serialize_hex(&tx));
-		}
-
-		Ok(tx)
 	}
 
 	/// Fetch all the utxos in our wallet that are being spent or created by txs
@@ -670,7 +594,7 @@ impl App {
 		let payment_hash = signed.payment.invoice.payment_hash().clone();
 
 		// Spawn a task that performs the payment
-		let res = self.cln.as_ref().expect("started").pay_bolt11(&signed, wait).await;
+		let res = self.cln.pay_bolt11(&signed, wait).await;
 
 		Self::process_bolt11_response(payment_hash, res)
 	}
@@ -680,7 +604,7 @@ impl App {
 		payment_hash: sha256::Hash,
 		wait: bool,
 	) -> anyhow::Result<protos::Bolt11PaymentResult> {
-		let res = self.cln.as_ref().expect("started").check_bolt11(&payment_hash, wait).await;
+		let res = self.cln.check_bolt11(&payment_hash, wait).await;
 
 		Self::process_bolt11_response(payment_hash, res)
 	}
@@ -770,10 +694,36 @@ impl App {
 
 		Ok(parts)
 	}
-
-	// ** SOME ADMIN COMMANDS **
-	pub async fn get_master_mnemonic(&self) -> anyhow::Result<Mnemonic> {
-		Ok(wallet::read_mnemonic_from_datadir(&self.config.data_dir)?)
-	}
 }
 
+
+async fn run_tip_fetcher(srv: Arc<Server>) {
+	let _worker = srv.rtmgr.spawn_critical("TipFetcher");
+
+	loop {
+		tokio::select! {
+			// Periodic interval for chain tip fetch
+			() = tokio::time::sleep(Duration::from_secs(1)) => {},
+			_ = srv.rtmgr.shutdown_signal() => {
+				info!("Shutdown signal received. Exiting fetch_tip loop...");
+				break;
+			}
+		}
+
+		match srv.bitcoind.tip() {
+			Ok(t) => {
+				let mut lock = srv.chain_tip.lock().await;
+				if t != *lock {
+					*lock = t;
+					srv.telemetry_metrics.set_block_height(t.height);
+					slog!(TipUpdated, height: t.height, hash: t.hash);
+				}
+			}
+			Err(e) => {
+				warn!("Error getting chain tip from bitcoind: {}", e);
+			},
+		}
+	}
+
+	info!("Chain tip loop terminated gracefully.");
+}
