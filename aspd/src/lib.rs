@@ -581,6 +581,10 @@ impl Server {
 		Vec<musig::MusigPubNonce>,
 		Vec<musig::MusigPartialSignature>,
 	)> {
+		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice.payment_hash()).await?.is_some() {
+			return badarg!("payment already in progress for this invoice");
+		}
+
 		let ids = input_vtxos.iter().map(|i| i.id()).collect::<Vec<_>>();
 		let _lock = match self.vtxos_in_flux.lock(&ids) {
 			Ok(l) => l,
