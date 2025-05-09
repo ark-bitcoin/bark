@@ -96,7 +96,7 @@ async fn board_all_bark() {
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the boarding tx's output value is the same as our off-chain balance
-	let board_tx = ctx.await_transaction(&board_txid).await;
+	let board_tx = ctx.bitcoind().await_transaction(&board_txid).await;
 	assert_eq!(
 		bark1.offchain_balance().await,
 		board_tx.output.last().unwrap().value,

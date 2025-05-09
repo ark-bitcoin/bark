@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
-use bitcoin::{Amount, FeeRate, Network, Transaction, Txid};
+use std::time::Duration;
+use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use log::info;
 use tokio::fs;
@@ -404,19 +404,6 @@ impl TestContext {
 		client.send_to_address(
 			&address, amount, None, None, None, None, None, None,
 		).unwrap()
-	}
-
-	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {
-		let client = self.bitcoind().sync_client();
-		let start = Instant::now();
-		while Instant::now().duration_since(start).as_millis() < 30_000 {
-			if let Ok(result) = client.get_raw_transaction(&txid, None) {
-				return result;
-			} else {
-				tokio::time::sleep(Duration::from_millis(200)).await;
-			}
-		}
-		panic!("Failed to get raw transaction: {}", txid);
 	}
 }
 
