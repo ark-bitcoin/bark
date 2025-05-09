@@ -40,12 +40,13 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
+use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight, Network, Address,
 };
-use bitcoin_ext::rpc::BitcoinRpcExt;
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
 use log::{trace, info, warn, error};
@@ -55,7 +56,6 @@ use ark::{BoardVtxo, VtxoSpec};
 use ark::connectors::{ConnectorChain, CONNECTOR_TX_CHAIN_VOUT, CONNECTOR_TX_CONNECTOR_VOUT};
 use ark::rounds::{RoundId, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 
-use crate::bitcoind::{RpcApi, BitcoinRpcClient};
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
