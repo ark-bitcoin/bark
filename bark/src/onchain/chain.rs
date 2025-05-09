@@ -16,7 +16,6 @@ use bitcoin_ext::BlockHeight;
 use log::{debug, info, warn};
 
 use crate::onchain;
-use crate::persist::BarkPersister;
 
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
@@ -107,9 +106,9 @@ impl ChainSourceClient {
 		}
 	}
 
-	pub async fn sync_wallet<P: BarkPersister>(
+	pub async fn sync_wallet(
 		&self,
-		onchain: &mut onchain::Wallet<P>,
+		onchain: &mut onchain::Wallet,
 	) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();

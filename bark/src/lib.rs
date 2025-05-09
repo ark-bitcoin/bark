@@ -37,6 +37,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
@@ -274,17 +275,17 @@ impl AspConnection {
 	}
 }
 
-pub struct Wallet<P: BarkPersister> {
-	pub onchain: onchain::Wallet<P>,
-	pub exit: Exit<P>,
+pub struct Wallet {
+	pub onchain: onchain::Wallet,
+	pub exit: Exit,
 
 	config: Config,
-	db: P,
+	db: Arc<dyn BarkPersister>,
 	vtxo_seed: VtxoSeed,
 	asp: Option<AspConnection>,
 }
 
-impl<P: BarkPersister> Wallet<P> {
+impl Wallet {
 	/// Return a _static_ public key that can be used to send OOR payments to
 	///
 	/// TODO: implement key derivation for OORs also
@@ -304,13 +305,13 @@ impl<P: BarkPersister> Wallet<P> {
 	}
 
 	/// Create new wallet.
-	pub async fn create(
+	pub async fn create<P: BarkPersister>(
 		mnemonic: &Mnemonic,
 		network: Network,
 		config: Config,
 		db: P,
 		mnemonic_birthday: Option<BlockHeight>,
-	) -> anyhow::Result<Wallet<P>> {
+	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
 			trace!("Existing config: {:?}", existing);
@@ -350,7 +351,7 @@ impl<P: BarkPersister> Wallet<P> {
 	}
 
 	/// Open existing wallet.
-	pub async fn open(mnemonic: &Mnemonic, db: P) -> anyhow::Result<Wallet<P>> {
+	pub async fn open<P: BarkPersister>(mnemonic: &Mnemonic, db: P) -> anyhow::Result<Wallet> {
 		let config = db.read_config()?.context("Wallet is not initialised")?;
 		let properties = db.read_properties()?.context("Wallet is not initialised")?;
 		trace!("Config: {:?}", config);
@@ -384,6 +385,7 @@ impl<P: BarkPersister> Wallet<P> {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
+		let db = Arc::new(db);
 		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source.clone())
 			.context("failed to create onchain wallet")?;
 

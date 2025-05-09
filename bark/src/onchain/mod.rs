@@ -15,11 +15,10 @@ use bitcoin::{
 use ark::util::SECP;
 use bitcoin_ext::BlockHeight;
 
-use crate::psbtext::PsbtInputExt;
 use crate::VtxoSeed;
-use crate::{
-	exit::SpendableVtxo, persist::BarkPersister
-};
+use crate::exit::SpendableVtxo;
+use crate::persist::BarkPersister;
+use crate::psbtext::PsbtInputExt;
 pub use crate::onchain::chain::ChainSourceClient;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -54,27 +53,27 @@ impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
 	}
 }
 
-pub struct Wallet<P: BarkPersister> {
+pub struct Wallet {
 	/// NB: onchain wallet needs to be able to reconstruct
 	/// vtxo keypair in order to sign vtxo exit output if any
 	seed: [u8; 64],
 	network: Network,
 
 	pub(crate) wallet: BdkWallet,
-	pub(crate) db: P,
+	pub(crate) db: Arc<dyn BarkPersister>,
 
 	pub(crate) exit_outputs: Vec<SpendableVtxo>,
 	pub(crate) chain: ChainSourceClient,
 	chain_source: ChainSource,
 }
 
-impl<P: BarkPersister> Wallet<P> {
+impl Wallet {
 	pub fn create(
 		network: Network,
 		seed: [u8; 64],
-		db: P,
+		db: Arc<dyn BarkPersister>,
 		chain_source: ChainSource,
-	) -> anyhow::Result<Wallet<P>> {
+	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 

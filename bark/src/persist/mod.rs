@@ -8,7 +8,7 @@ use bitcoin_ext::BlockHeight;
 use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
 
 
-pub trait BarkPersister: Clone + Send + Sync + 'static {
+pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialise wallet in the database
 	///
 	/// Will fail after first call

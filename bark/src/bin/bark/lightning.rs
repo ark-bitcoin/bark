@@ -6,7 +6,9 @@ use bitcoin::Amount;
 use clap;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, warn};
-use bark::{SqliteClient, Wallet};
+
+use bark::Wallet;
+
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
@@ -29,7 +31,7 @@ pub enum LightningCommand {
 
 pub async fn execute_lightning_command(
 	lightning_command: LightningCommand,
-	wallet: &mut Wallet<SqliteClient>,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	match lightning_command {
 		LightningCommand::Pay { invoice, amount, comment, no_sync } => {
@@ -46,7 +48,7 @@ pub async fn pay(
 	amount: Option<Amount>,
 	comment: Option<String>,
 	no_sync: bool,
-	wallet: &mut Wallet<SqliteClient>,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	let inv_amount = invoice.amount_milli_satoshis()
 		.map(|v| Amount::from_sat(v.div_ceil(1000)));

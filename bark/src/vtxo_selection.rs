@@ -7,7 +7,7 @@ use bitcoin_ext::BlockHeight;
 use ark::{Vtxo, VtxoId};
 
 use crate::Wallet;
-use crate::persist::BarkPersister;
+
 
 /// Trait needed to be implemented to filter wallet VTXOs.
 ///
@@ -48,7 +48,7 @@ where
 /// Filter vtxos based on criteria.
 ///
 /// Builder pattern is used.
-pub struct VtxoFilter<'a, P: BarkPersister> {
+pub struct VtxoFilter<'a> {
 	/// Include vtxos that expire before the given height.
 	pub expires_before: Option<BlockHeight>,
 	/// If true, include vtxos that have counterparty risk.
@@ -58,11 +58,11 @@ pub struct VtxoFilter<'a, P: BarkPersister> {
 	/// Force include certain vtxos.
 	pub include: HashSet<VtxoId>,
 
-	wallet: &'a Wallet<P>,
+	wallet: &'a Wallet,
 }
 
-impl<'a, P: BarkPersister> VtxoFilter<'a, P> {
-	pub fn new(wallet: &'a Wallet<P>) -> VtxoFilter<'a, P> {
+impl<'a> VtxoFilter<'a> {
+	pub fn new(wallet: &'a Wallet) -> VtxoFilter<'a> {
 		VtxoFilter {
 			expires_before: None,
 			counterparty: false,
@@ -135,7 +135,7 @@ impl<'a, P: BarkPersister> VtxoFilter<'a, P> {
 	}
 }
 
-impl<P: BarkPersister> FilterVtxos for VtxoFilter<'_, P> {
+impl FilterVtxos for VtxoFilter<'_> {
 	fn filter(&self, mut vtxos: Vec<Vtxo>) -> anyhow::Result<Vec<Vtxo>> {
 		for i in (0..vtxos.len()).rev() {
 			let vtxo = &vtxos[i];
