@@ -8,15 +8,16 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_bitcoind_rpc::BitcoindRpcErrorExt;
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
-use bdk_wallet::chain::{ChainPosition, CheckPoint};
-use bdk_wallet::{chain::BlockId, PersistedWallet, WalletPersister};
+use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
 use bitcoin_ext::bdk::EsploraClientExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::BlockHeight;
 use log::{debug, info, warn};
 
-use crate::persist::{BarkPersister, WalletPersisterError};
+use crate::onchain;
+use crate::persist::BarkPersister;
+
 
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 const MIN_BITCOIND_VERSION: usize = 290000;
@@ -106,15 +107,14 @@ impl ChainSourceClient {
 		}
 	}
 
-	pub async fn sync_wallet<P>(&self, wallet: &mut PersistedWallet<P>, db: &mut P) -> anyhow::Result<Amount>
-		where
-			P: BarkPersister,
-			<P as WalletPersister>::Error: WalletPersisterError,
-	{
+	pub async fn sync_wallet<P: BarkPersister>(
+		&self,
+		onchain: &mut onchain::Wallet<P>,
+	) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
-		let prev_tip = wallet.latest_checkpoint();
+		let prev_tip = onchain.wallet.latest_checkpoint();
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
 				debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
@@ -123,51 +123,49 @@ impl ChainSourceClient {
 				);
 				let mut count = 0;
 				while let Some(em) = emitter.next_block()? {
-					wallet.apply_block_connected_to(
+					onchain.wallet.apply_block_connected_to(
 						&em.block, em.block_height(), em.connected_to(),
 					)?;
 					count += 1;
 
 					if count % 10_000 == 0 {
-						wallet.persist(db)?;
+						onchain.persist()?;
 						info!("Synced until block height {}", em.block_height());
 					}
 				}
 
 				let mempool = emitter.mempool()?;
-				wallet.apply_unconfirmed_txs(mempool);
-				wallet.persist(db)?;
-				debug!("Finished syncing with bitcoind, {}", wallet.balance());
+				onchain.wallet.apply_unconfirmed_txs(mempool);
+				onchain.persist()?;
+				debug!("Finished syncing with bitcoind, {}", onchain.wallet.balance());
 			},
 			ChainSourceClient::Esplora(ref client) => {
 				debug!("Syncing with esplora...");
 				const STOP_GAP: usize = 50;
 				const PARALLEL_REQS: usize = 4;
 
-				let request = wallet.start_full_scan();
+				let request = onchain.wallet.start_full_scan();
 				let now = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
-				wallet.apply_update_at(update, now)?;
-				wallet.persist(db)?;
-				debug!("Finished syncing with esplora, {}", wallet.balance());
+				onchain.wallet.apply_update_at(update, now)?;
+				onchain.persist()?;
+				debug!("Finished syncing with esplora, {}", onchain.wallet.balance());
 			},
 		}
 
-		let balance = wallet.balance();
+		let balance = onchain.wallet.balance();
 
 		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
-		let transactions = wallet
-			.transactions()
-			.filter(|tx| {
-				if let ChainPosition::Unconfirmed { last_seen } = tx.chain_position {
-					match last_seen {
-						Some(last_seen) => last_seen < now,
-						None => true,
-					}
-				} else {
-					false
+		let transactions = onchain.wallet.transactions().filter(|tx| {
+			if let ChainPosition::Unconfirmed { last_seen } = tx.chain_position {
+				match last_seen {
+					Some(last_seen) => last_seen < now,
+					None => true,
 				}
-			}).collect::<Vec<_>>();
+			} else {
+				false
+			}
+		}).collect::<Vec<_>>();
 		for tx in transactions {
 			if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
 				warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);

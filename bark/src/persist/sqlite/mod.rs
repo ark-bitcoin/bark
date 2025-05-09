@@ -5,15 +5,15 @@ mod query;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use bdk_wallet::ChangeSet;
+use bitcoin::Amount;
+use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::BlockHeight;
-use rusqlite::{Connection, Transaction};
-use bdk_wallet::{ChangeSet, WalletPersister};
-use bitcoin::{secp256k1::PublicKey, Amount};
 use log::debug;
+use rusqlite::{Connection, Transaction};
 
 use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
-use super::WalletPersisterError;
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -67,6 +67,17 @@ impl BarkPersister for SqliteClient {
 		query::set_config(&tx, config)?;
 
 		tx.commit()?;
+		Ok(())
+	}
+
+	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
+	    let mut conn = self.connect()?;
+		Ok(bdk_wallet::WalletPersister::initialize(&mut conn)?)
+	}
+
+	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()> {
+	    let mut conn = self.connect()?;
+		bdk_wallet::WalletPersister::persist(&mut conn, changeset)?;
 		Ok(())
 	}
 
@@ -220,22 +231,6 @@ impl BarkPersister for SqliteClient {
 	}
 }
 
-impl WalletPersisterError for <SqliteClient as WalletPersister>::Error {}
-
-impl WalletPersister for SqliteClient {
-	type Error = rusqlite::Error;
-
-	fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
-		let mut conn = rusqlite::Connection::open(&persister.connection_string)?;
-		rusqlite::Connection::initialize(&mut conn)
-	}
-
-	fn persist(persister: &mut Self, changeset: &ChangeSet) -> Result<(), Self::Error> {
-		let mut conn = rusqlite::Connection::open(&persister.connection_string)?;
-		rusqlite::Connection::persist(&mut conn, changeset)
-	}
-}
-
 #[cfg(test)]
 pub mod test {
 	use std::str::FromStr;
@@ -345,7 +340,7 @@ pub mod test {
 	fn test_create_wallet_then_load() {
 		let (connection_string, conn) = in_memory();
 
-		let mut db = SqliteClient::open(connection_string).unwrap();
+		let db = SqliteClient::open(connection_string).unwrap();
 		let network = bitcoin::Network::Testnet;
 
 		let seed = bip39::Mnemonic::generate(12).unwrap().to_seed("");
@@ -354,18 +349,24 @@ pub mod test {
 		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
 
-		let created = bdk_wallet::Wallet::create(edesc.clone(), idesc.clone())
+		// need to call init before we call store
+		let _ = db.initialize_bdk_wallet().unwrap();
+		let mut created = bdk_wallet::Wallet::create(edesc.clone(), idesc.clone())
 			.network(network)
-			.create_wallet(&mut db)
+			.create_wallet_no_persist()
 			.unwrap();
+		db.store_bdk_wallet_changeset(&created.take_staged().unwrap()).unwrap();
 
-		let loaded = bdk_wallet::Wallet::load()
-			.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
-			.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
-			.extract_keys()
-			.check_network(network)
-			.load_wallet(&mut db)
-			.unwrap();
+		let loaded = {
+			let changeset = db.initialize_bdk_wallet().unwrap();
+			bdk_wallet::Wallet::load()
+				.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
+				.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
+				.extract_keys()
+				.check_network(network)
+				.load_wallet_no_persist(changeset)
+				.unwrap()
+		};
 
 		assert!(loaded.is_some());
 		assert_eq!(

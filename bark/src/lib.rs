@@ -30,7 +30,6 @@ pub mod test;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
-use persist::WalletPersisterError;
 
 
 use std::iter;
@@ -41,7 +40,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use bdk_wallet::WalletPersister;
 use bip39::Mnemonic;
 use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
 use bitcoin::bip32::{self, Fingerprint};
@@ -286,10 +284,7 @@ pub struct Wallet<P: BarkPersister> {
 	asp: Option<AspConnection>,
 }
 
-impl <P>Wallet<P> where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: WalletPersisterError,
-{
+impl<P: BarkPersister> Wallet<P> {
 	/// Return a _static_ public key that can be used to send OOR payments to
 	///
 	/// TODO: implement key derivation for OORs also
@@ -346,10 +341,10 @@ impl <P>Wallet<P> where
 				.context("failed to fetch tip from chain source")?
 				.saturating_sub(DEEPLY_CONFIRMED)
 		};
-		let id = wallet.onchain.chain_source.block_id(bday).await
+		let id = wallet.onchain.chain.block_id(bday).await
 			.with_context(|| format!("failed to get block height {} from chain source", bday))?;
 		wallet.onchain.wallet.set_checkpoint(id.height, id.hash);
-		wallet.onchain.wallet.persist(&mut wallet.db)?;
+		wallet.onchain.persist()?;
 
 		Ok(wallet)
 	}

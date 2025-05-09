@@ -2,13 +2,12 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
-use bdk_wallet::WalletPersister;
 use bitcoin_ext::BlockHeight;
 
 use ark::{Vtxo, VtxoId};
 
 use crate::Wallet;
-use crate::persist::{BarkPersister, WalletPersisterError};
+use crate::persist::BarkPersister;
 
 /// Trait needed to be implemented to filter wallet VTXOs.
 ///
@@ -62,11 +61,7 @@ pub struct VtxoFilter<'a, P: BarkPersister> {
 	wallet: &'a Wallet<P>,
 }
 
-impl<'a, P> VtxoFilter<'a, P>
-where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: WalletPersisterError,
-{
+impl<'a, P: BarkPersister> VtxoFilter<'a, P> {
 	pub fn new(wallet: &'a Wallet<P>) -> VtxoFilter<'a, P> {
 		VtxoFilter {
 			expires_before: None,
@@ -140,11 +135,7 @@ where
 	}
 }
 
-impl<P> FilterVtxos for VtxoFilter<'_, P>
-where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: WalletPersisterError,
-{
+impl<P: BarkPersister> FilterVtxos for VtxoFilter<'_, P> {
 	fn filter(&self, mut vtxos: Vec<Vtxo>) -> anyhow::Result<Vec<Vtxo>> {
 		for i in (0..vtxos.len()).rev() {
 			let vtxo = &vtxos[i];

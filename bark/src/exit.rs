@@ -3,7 +3,6 @@ use std::cmp;
 use std::collections::HashMap;
 
 use anyhow::Context;
-use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
@@ -15,7 +14,7 @@ use ark::{Vtxo, VtxoId};
 
 use crate::movement::MovementArgs;
 use crate::onchain::{self, ChainSource, ChainSourceClient};
-use crate::persist::{BarkPersister, WalletPersisterError};
+use crate::persist::BarkPersister;
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -113,10 +112,7 @@ pub struct Exit<P: BarkPersister> {
 }
 
 
-impl <P>Exit<P> where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: WalletPersisterError,
-{
+impl<P: BarkPersister> Exit<P> {
 	pub (crate) fn new(db: P, chain_source: ChainSource) -> anyhow::Result<Exit<P>> {
 		let chain_source = ChainSourceClient::new(chain_source)?;
 		let index = db.fetch_exit()?.unwrap_or_default();

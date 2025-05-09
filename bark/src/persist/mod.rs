@@ -1,20 +1,25 @@
 pub mod sqlite;
 
 use ark::{Vtxo, VtxoId};
-use bdk_wallet::WalletPersister;
+use bdk_wallet::ChangeSet;
 use bitcoin::{secp256k1::PublicKey, Amount};
 use bitcoin_ext::BlockHeight;
-use serde::ser::StdError;
 
 use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
 
-pub trait WalletPersisterError: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError {}
 
-pub trait BarkPersister: Clone + WalletPersister + Send + Sync {
+pub trait BarkPersister: Clone + Send + Sync + 'static {
 	/// Initialise wallet in the database
 	///
 	/// Will fail after first call
 	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()>;
+
+	/// Initialize the BDK wallet and load the full existing ChangeSet.
+	///
+	/// This function must be called before any new changeset is stored.
+	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet>;
+	/// Store the incremental changeset of the BDK wallet.
+	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
 
 	fn write_config(&self, config: &Config) -> anyhow::Result<()>;
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
