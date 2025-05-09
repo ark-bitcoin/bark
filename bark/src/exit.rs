@@ -1,9 +1,9 @@
 
 use std::cmp;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Context;
-use bdk_wallet::WalletPersister;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, Transaction, Txid, Weight};
@@ -15,7 +15,7 @@ use ark::{Vtxo, VtxoId};
 
 use crate::movement::MovementArgs;
 use crate::onchain::{self, ChainSource, ChainSourceClient};
-use crate::persist::{BarkPersister, WalletPersisterError};
+use crate::persist::BarkPersister;
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -104,20 +104,17 @@ impl ExitIndex {
 }
 
 /// Handle to process and keep track of ongoing VTXO exits
-pub struct Exit<P: BarkPersister> {
+pub struct Exit {
 	/// The vtxos in process of exit
 	index: ExitIndex,
 
-	db: P,
+	db: Arc<dyn BarkPersister>,
 	chain_source: ChainSourceClient,
 }
 
 
-impl <P>Exit<P> where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: WalletPersisterError,
-{
-	pub (crate) fn new(db: P, chain_source: ChainSource) -> anyhow::Result<Exit<P>> {
+impl Exit {
+	pub (crate) fn new(db: Arc<dyn BarkPersister>, chain_source: ChainSource) -> anyhow::Result<Exit> {
 		let chain_source = ChainSourceClient::new(chain_source)?;
 		let index = db.fetch_exit()?.unwrap_or_default();
 
@@ -137,7 +134,7 @@ impl <P>Exit<P> where
 	/// It is recommended to sync with ASP before calling this
 	pub async fn start_exit_for_entire_wallet(
 		&mut self,
-		onchain: &mut onchain::Wallet<P>,
+		onchain: &mut onchain::Wallet,
 	) -> anyhow::Result<()> {
 
 		let vtxos = self.db.get_all_spendable_vtxos()?;
@@ -153,7 +150,7 @@ impl <P>Exit<P> where
 	pub async fn start_exit_for_vtxos(
 		&mut self,
 		vtxos: &[Vtxo],
-		onchain: &mut onchain::Wallet<P>,
+		onchain: &mut onchain::Wallet,
 	) -> anyhow::Result<()> {
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to exit!");
@@ -183,11 +180,9 @@ impl <P>Exit<P> where
 				let params = Params::new(onchain.wallet.network());
 				let address = Address::from_script(&added.spec().vtxo_spk(), params)?;
 				self.db.register_movement(MovementArgs {
-					spends: vec![&added],
-					receives: vec![],
-					recipients: vec![
-						(address.to_string(), added.amount())
-					],
+					spends: &[&added],
+					receives: &[],
+					recipients: &[(&address.to_string(), added.amount())],
 					fees: None
 				}).context("Failed to register send")?;
 			} else {
@@ -229,7 +224,7 @@ impl <P>Exit<P> where
 	/// ### Return
 	///
 	/// Return exit status if there are vtxos to exit, else `None`
-	pub async fn progress_exit(&mut self, onchain: &mut onchain::Wallet<P>) -> anyhow::Result<()> {
+	pub async fn progress_exit(&mut self, onchain: &mut onchain::Wallet) -> anyhow::Result<()> {
 		if self.index.is_empty() {
 			return Ok(());
 		}
@@ -392,7 +387,7 @@ impl <P>Exit<P> where
 	///
 	/// Note: this does not sync exit txs, only exit outputs.
 	/// To sync exit txs, see [`Exit::progress_exit`]
-	pub (crate) async fn sync_exit(&mut self, onchain: &mut onchain::Wallet<P>) -> anyhow::Result<()> {
+	pub (crate) async fn sync_exit(&mut self, onchain: &mut onchain::Wallet) -> anyhow::Result<()> {
 		let VtxoPartition { spendable, spent, .. } = self.partition_vtxos().await?;
 		let vtxos = spendable.into_iter().map(|v| v.vtxo).chain(spent.into_iter()).collect::<Vec<_>>();
 

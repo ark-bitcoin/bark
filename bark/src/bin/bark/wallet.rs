@@ -127,7 +127,7 @@ async fn try_create_wallet(
 	Ok(())
 }
 
-pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Wallet<SqliteClient>> {
+pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Wallet> {
 	debug!("Opening bark wallet in {}", datadir.display());
 
 	// read mnemonic file

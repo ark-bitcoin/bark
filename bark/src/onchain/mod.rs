@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
-use bdk_wallet::{LocalOutput, PersistedWallet, SignOptions, TxBuilder, TxOrdering, WalletPersister};
+use bdk_wallet::{LocalOutput, SignOptions, TxBuilder, TxOrdering, Wallet as BdkWallet};
 use bitcoin::{
 	bip32, psbt, sighash, Address, Amount, Network, Psbt, Sequence, Transaction, TxOut, Txid,
 };
@@ -15,12 +15,10 @@ use bitcoin::{
 use ark::util::SECP;
 use bitcoin_ext::BlockHeight;
 
-use crate::persist::WalletPersisterError;
-use crate::psbtext::PsbtInputExt;
 use crate::VtxoSeed;
-use crate::{
-	exit::SpendableVtxo, persist::BarkPersister
-};
+use crate::exit::SpendableVtxo;
+use crate::persist::BarkPersister;
+use crate::psbtext::PsbtInputExt;
 pub use crate::onchain::chain::ChainSourceClient;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -55,46 +53,45 @@ impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
 	}
 }
 
-pub struct Wallet<P: BarkPersister> {
+pub struct Wallet {
 	/// NB: onchain wallet needs to be able to reconstruct
 	/// vtxo keypair in order to sign vtxo exit output if any
 	seed: [u8; 64],
 	network: Network,
 
-	pub(crate) wallet: PersistedWallet<P>,
-	db: P,
+	pub(crate) wallet: BdkWallet,
+	pub(crate) db: Arc<dyn BarkPersister>,
 
-	pub (crate) exit_outputs: Vec<SpendableVtxo>,
-	pub (crate)	chain_source: ChainSourceClient,
+	pub(crate) exit_outputs: Vec<SpendableVtxo>,
+	pub(crate) chain: ChainSourceClient,
+	chain_source: ChainSource,
 }
 
-impl <P>Wallet<P> where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: WalletPersisterError,
-{
+impl Wallet {
 	pub fn create(
 		network: Network,
 		seed: [u8; 64],
-		mut db: P,
+		db: Arc<dyn BarkPersister>,
 		chain_source: ChainSource,
-	) -> anyhow::Result<Wallet<P>> {
+	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 
+		let changeset = db.initialize_bdk_wallet().context("error reading bdk wallet state")?;
 		let wallet_opt = bdk_wallet::Wallet::load()
 			.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
 			.extract_keys()
 			.check_network(network)
-			.load_wallet(&mut db)?;
+			.load_wallet_no_persist(changeset)?;
 
 		let wallet = match wallet_opt {
 			Some(wallet) => wallet,
 			None => bdk_wallet::Wallet::create_single(desc)
 				.network(network)
-				.create_wallet(&mut db)?,
+				.create_wallet_no_persist()?,
 		};
 
-		let chain_source = ChainSourceClient::new(chain_source)?;
+		let chain = ChainSourceClient::new(chain_source.clone())?;
 
 		Ok(Wallet {
 			seed,
@@ -103,26 +100,37 @@ impl <P>Wallet<P> where
 			wallet,
 			db,
 
+			chain,
 			chain_source,
 			exit_outputs: vec![]
 		})
 	}
 
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
-		self.chain_source.require_version()
+		self.chain.require_version()
 	}
 
 	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
-		self.chain_source.tip().await
+		self.chain.tip().await
 	}
 
 	pub (crate) async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
-		self.chain_source.broadcast_tx(tx).await
+		self.chain.broadcast_tx(tx).await
+	}
+
+	pub fn persist(&mut self) -> anyhow::Result<()> {
+		if let Some(stage) = self.wallet.staged() {
+			self.db.store_bdk_wallet_changeset(&*stage)?;
+			let _ = self.wallet.take_staged();
+		}
+		Ok(())
 	}
 
 	/// Sync the onchain wallet and returns the balance.
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
-		Ok(self.chain_source.sync_wallet(&mut self.wallet, &mut self.db).await?)
+		//TODO improve this..
+		let chain = ChainSourceClient::new(self.chain_source.clone())?;
+		Ok(chain.sync_wallet(self).await?)
 	}
 
 	/// Return the balance of the onchain wallet.
@@ -143,7 +151,7 @@ impl <P>Wallet<P> where
 	pub (crate) fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
 		&mut self, outputs: T
 	) -> anyhow::Result<Psbt> {
-		let fee_rate = self.chain_source.regular_feerate();
+		let fee_rate = self.chain.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.ordering(TxOrdering::Untouched);
@@ -155,7 +163,7 @@ impl <P>Wallet<P> where
 	}
 
 	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
-		let fee_rate = self.chain_source.regular_feerate();
+		let fee_rate = self.chain.regular_feerate();
 		let mut b = self.wallet.build_tx();
 		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.drain_to(dest.script_pubkey());
@@ -206,7 +214,7 @@ impl <P>Wallet<P> where
 		let tx = psbt.extract_tx()?;
 		let unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 		self.wallet.apply_unconfirmed_txs([(tx.clone(), unix)]);
-		self.wallet.persist(&mut self.db)?;
+		self.persist()?;
 		Ok(tx)
 	}
 
@@ -238,7 +246,7 @@ impl <P>Wallet<P> where
 	/// The revealed address is directly persisted, so calling this method twice in a row will result in 2 different addresses
 	pub fn address(&mut self) -> anyhow::Result<Address> {
 		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		self.wallet.persist(&mut self.db)?;
+		self.persist()?;
 		Ok(ret)
 	}
 

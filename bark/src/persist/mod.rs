@@ -1,20 +1,25 @@
 pub mod sqlite;
 
 use ark::{Vtxo, VtxoId};
-use bdk_wallet::WalletPersister;
+use bdk_wallet::ChangeSet;
 use bitcoin::{secp256k1::PublicKey, Amount};
 use bitcoin_ext::BlockHeight;
-use serde::ser::StdError;
 
 use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
 
-pub trait WalletPersisterError: 'static + std::fmt::Debug + std::fmt::Display + Send + Sync + StdError {}
 
-pub trait BarkPersister: Clone + WalletPersister + Send + Sync {
+pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialise wallet in the database
 	///
 	/// Will fail after first call
 	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()>;
+
+	/// Initialize the BDK wallet and load the full existing ChangeSet.
+	///
+	/// This function must be called before any new changeset is stored.
+	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet>;
+	/// Store the incremental changeset of the BDK wallet.
+	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
 
 	fn write_config(&self, config: &Config) -> anyhow::Result<()>;
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
@@ -25,14 +30,7 @@ pub trait BarkPersister: Clone + WalletPersister + Send + Sync {
 	/// Returns a paginated list of movements
 	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
 	/// Register a movement
-	fn register_movement<'a, S, R, Re>(
-		&self,
-		movement: MovementArgs<'a, S, R, Re>
-	) -> anyhow::Result<()>
-		where
-			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
-			Re: IntoIterator<Item = (String, Amount)>;
+	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
 
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;

@@ -133,7 +133,7 @@ impl Bark {
 		&self.config
 	}
 
-	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet<bark::SqliteClient>> {
+	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
 		const MNEMONIC_FILE: &str = "mnemonic";
 		const DB_FILE: &str = "db.sqlite";
 
@@ -147,7 +147,7 @@ impl Bark {
 		Ok(bark::Wallet::open(&mnemonic, db).await?)
 	}
 
-	pub async fn client(&self) -> bark::Wallet<bark::SqliteClient> {
+	pub async fn client(&self) -> bark::Wallet {
 		self.try_client().await.expect("failed to create bark::Wallet client")
 	}
 

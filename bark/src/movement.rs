@@ -36,21 +36,15 @@ pub struct Movement {
 }
 
 /// Arguments used to create a movement
-#[derive(Debug, Deserialize, Serialize)]
-pub struct MovementArgs<'a, S, R, Re>
-	where
-		S: IntoIterator<Item = &'a Vtxo>,
-		R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
-		Re: IntoIterator<Item = (String, Amount)>,
-{
+pub struct MovementArgs<'a> {
 	/// VTXOs that are spent in the movement.
 	///
 	/// They will be marked as spent and linked to the created movement
-	pub spends: S,
+	pub spends: &'a [&'a Vtxo],
 	/// New VTXOs to store and link to the created movement
-	pub receives: R,
+	pub receives: &'a [(&'a Vtxo, VtxoState)],
 	/// External destinations of the movement
-	pub recipients: Re,
+	pub recipients: &'a [(&'a str, Amount)],
 	/// Optional offchain fees paid for the movement
 	pub fees: Option<Amount>
 }

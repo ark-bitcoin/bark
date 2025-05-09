@@ -30,7 +30,6 @@ pub mod test;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
-use persist::WalletPersisterError;
 
 
 use std::iter;
@@ -38,10 +37,10 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use bdk_wallet::WalletPersister;
 use bip39::Mnemonic;
 use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
 use bitcoin::bip32::{self, Fingerprint};
@@ -276,20 +275,17 @@ impl AspConnection {
 	}
 }
 
-pub struct Wallet<P: BarkPersister> {
-	pub onchain: onchain::Wallet<P>,
-	pub exit: Exit<P>,
+pub struct Wallet {
+	pub onchain: onchain::Wallet,
+	pub exit: Exit,
 
 	config: Config,
-	db: P,
+	db: Arc<dyn BarkPersister>,
 	vtxo_seed: VtxoSeed,
 	asp: Option<AspConnection>,
 }
 
-impl <P>Wallet<P> where
-	P: BarkPersister,
-	<P as WalletPersister>::Error: WalletPersisterError,
-{
+impl Wallet {
 	/// Return a _static_ public key that can be used to send OOR payments to
 	///
 	/// TODO: implement key derivation for OORs also
@@ -309,13 +305,13 @@ impl <P>Wallet<P> where
 	}
 
 	/// Create new wallet.
-	pub async fn create(
+	pub async fn create<P: BarkPersister>(
 		mnemonic: &Mnemonic,
 		network: Network,
 		config: Config,
 		db: P,
 		mnemonic_birthday: Option<BlockHeight>,
-	) -> anyhow::Result<Wallet<P>> {
+	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
 			trace!("Existing config: {:?}", existing);
@@ -346,16 +342,16 @@ impl <P>Wallet<P> where
 				.context("failed to fetch tip from chain source")?
 				.saturating_sub(DEEPLY_CONFIRMED)
 		};
-		let id = wallet.onchain.chain_source.block_id(bday).await
+		let id = wallet.onchain.chain.block_id(bday).await
 			.with_context(|| format!("failed to get block height {} from chain source", bday))?;
 		wallet.onchain.wallet.set_checkpoint(id.height, id.hash);
-		wallet.onchain.wallet.persist(&mut wallet.db)?;
+		wallet.onchain.persist()?;
 
 		Ok(wallet)
 	}
 
 	/// Open existing wallet.
-	pub async fn open(mnemonic: &Mnemonic, db: P) -> anyhow::Result<Wallet<P>> {
+	pub async fn open<P: BarkPersister>(mnemonic: &Mnemonic, db: P) -> anyhow::Result<Wallet> {
 		let config = db.read_config()?.context("Wallet is not initialised")?;
 		let properties = db.read_properties()?.context("Wallet is not initialised")?;
 		trace!("Config: {:?}", config);
@@ -389,6 +385,7 @@ impl <P>Wallet<P> where
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
+		let db = Arc::new(db);
 		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source.clone())
 			.context("failed to create onchain wallet")?;
 
@@ -620,9 +617,9 @@ impl <P>Wallet<P> where
 		let vtxo = ark::board::finish(user_part, asp_part, priv_user_part, &user_keypair).into();
 
 		self.db.register_movement(MovementArgs {
-			spends: None,
-			receives: vec![(&vtxo, VtxoState::UnregisteredBoard)],
-			recipients: None,
+			spends: &[],
+			receives: &[(&vtxo, VtxoState::UnregisteredBoard)],
+			recipients: &[],
 			fees: None
 		}).context("db error storing vtxo")?;
 
@@ -740,9 +737,9 @@ impl <P>Wallet<P> where
 				if self.db.check_vtxo_key_exists(&dest.pubkey)? {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 						self.db.register_movement(MovementArgs {
-							spends: None,
-							receives: vec![(&vtxo, VtxoState::Spendable)],
-							recipients: None,
+							spends: &[],
+							receives: &[(&vtxo, VtxoState::Spendable)],
+							recipients: &[],
 							fees: None
 						})?;
 					}
@@ -780,9 +777,9 @@ impl <P>Wallet<P> where
 			if self.db.get_vtxo(vtxo.id())?.is_none() {
 				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
 				self.db.register_movement(MovementArgs {
-					spends: None,
-					receives: vec![(&vtxo, VtxoState::Spendable)],
-					recipients: None,
+					spends: &[],
+					receives: &[(&vtxo, VtxoState::Spendable)],
+					recipients: &[],
 					fees: None
 				}).context("failed to store OOR vtxo")?;
 			}
@@ -1000,9 +997,9 @@ impl <P>Wallet<P> where
 		}
 
 		self.db.register_movement(MovementArgs {
-			spends: &oor.input,
-			receives: oor.change.as_ref().map(|v| (v, VtxoState::Spendable)),
-			recipients: vec![(destination.to_string(), amount)],
+			spends: &oor.input.iter().collect::<Vec<_>>(),
+			receives: &oor.change.as_ref().map(|v| vec![(v, VtxoState::Spendable)]).unwrap_or(vec![]),
+			recipients: &[(&destination.to_string(), amount)],
 			fees: Some(oor.fee)
 		}).context("failed to store OOR vtxo")?;
 
@@ -1119,11 +1116,9 @@ impl <P>Wallet<P> where
 
 		if let Some(preimage) = payment_preimage {
 			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos,
-				receives: receive_vtxos,
-				recipients: vec![
-					(invoice.to_string(), amount)
-				],
+				spends: &input_vtxos.iter().collect::<Vec<_>>(),
+				receives: &receive_vtxos,
+				recipients: &[(&invoice.to_string(), amount)],
 				fees: Some(forwarding_fee)
 			}).context("failed to store OOR vtxo")?;
 			Ok(preimage)
@@ -1167,11 +1162,14 @@ impl <P>Wallet<P> where
 				.clone()
 			);
 
-			let receives = iter::once((&vtxo, VtxoState::Spendable)).chain(change_vtxo.as_ref().map(|v| (v, VtxoState::Spendable)));
 			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos,
-				receives: receives,
-				recipients: None,
+				spends: &input_vtxos.iter().collect::<Vec<_>>(),
+				receives: &if let Some(ref change) = change_vtxo {
+					vec![(&vtxo, VtxoState::Spendable), (change, VtxoState::Spendable)]
+				} else {
+					vec![(&vtxo, VtxoState::Spendable)]
+				},
+				recipients: &[],
 				fees: None
 			})?;
 
@@ -1661,9 +1659,11 @@ impl <P>Wallet<P> where
 				// manual
 				if !sent.is_empty() || !received.is_empty() {
 					self.db.register_movement(MovementArgs {
-						spends: input_vtxos.values(),
-						receives: received,
-						recipients: sent,
+						spends: &input_vtxos.values().collect::<Vec<_>>(),
+						receives: &received,
+						recipients: &sent.iter()
+							.map(|(s, a)| (s.as_str(), *a))
+							.collect::<Vec<_>>()[..],
 					fees: None
 					}).context("failed to store OOR vtxo")?;
 				}

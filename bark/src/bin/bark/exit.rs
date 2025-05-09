@@ -4,7 +4,7 @@ use anyhow::Context;
 use clap;
 
 use ark::VtxoId;
-use bark::{SqliteClient, Wallet};
+use bark::Wallet;
 use bark::vtxo_selection::VtxoFilter;
 use log::{warn, info};
 
@@ -41,7 +41,7 @@ pub struct ProgressExitOpts {
 
 pub async fn execute_exit_command(
 	exit_command: ExitCommand,
-	wallet: &mut Wallet<SqliteClient>,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	match exit_command {
 		ExitCommand::Start(opts) => {
@@ -55,7 +55,7 @@ pub async fn execute_exit_command(
 
 pub async fn start_exit(
 	args: StartExitOpts,
-	wallet: &mut Wallet<SqliteClient>,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	if !args.all && args.vtxos.len() == 0 {
 		bail!("No exit to start. Use either the --vtxos or --all flag.")
@@ -89,7 +89,7 @@ pub async fn start_exit(
 
 pub async fn progress_exit(
 	args: ProgressExitOpts,
-	wallet: &mut Wallet<SqliteClient>,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	if args.wait {
 		loop {
@@ -112,7 +112,7 @@ pub async fn progress_exit(
 }
 
 async fn progress_once(
-	wallet: &mut Wallet<SqliteClient>,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<bark_json::cli::ExitStatus> {
 	info!("Starting onchain sync");
 	if let Err(error) = wallet.onchain.sync().await {

@@ -5,15 +5,18 @@ mod query;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use bdk_wallet::ChangeSet;
+use bitcoin::Amount;
+use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::BlockHeight;
-use rusqlite::{Connection, Transaction};
-use bdk_wallet::{ChangeSet, WalletPersister};
-use bitcoin::{secp256k1::PublicKey, Amount};
 use log::debug;
+use rusqlite::{Connection, Transaction};
 
-use crate::{exit::ExitIndex, movement::{Movement, MovementArgs}, persist::BarkPersister, Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::exit::ExitIndex;
+use crate::movement::{Movement, MovementArgs};
+use crate::persist::BarkPersister;
 
-use super::WalletPersisterError;
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -45,7 +48,13 @@ impl SqliteClient {
 	}
 
 	/// Stores a movement recipient
-	fn create_recipient(&self, tx: &Transaction, movement: i32, recipient: String, amount: Amount) -> anyhow::Result<()> {
+	fn create_recipient(
+		&self,
+		tx: &Transaction,
+		movement: i32,
+		recipient: &str,
+		amount: Amount,
+	) -> anyhow::Result<()> {
 		query::create_recipient(&tx, movement, recipient, amount)?;
 		Ok(())
 	}
@@ -67,6 +76,17 @@ impl BarkPersister for SqliteClient {
 		query::set_config(&tx, config)?;
 
 		tx.commit()?;
+		Ok(())
+	}
+
+	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
+	    let mut conn = self.connect()?;
+		Ok(bdk_wallet::WalletPersister::initialize(&mut conn)?)
+	}
+
+	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()> {
+	    let mut conn = self.connect()?;
+		bdk_wallet::WalletPersister::persist(&mut conn, changeset)?;
 		Ok(())
 	}
 
@@ -94,22 +114,14 @@ impl BarkPersister for SqliteClient {
 		query::get_paginated_movements(&conn, pagination)
 	}
 
-	fn register_movement<'a, S, R, Re>(
-		&self,
-		movement: MovementArgs<'a, S, R, Re>
-	) -> anyhow::Result<()>
-		where
-			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
-			Re: IntoIterator<Item = (String, Amount)>,
-	{
+	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
 		let movement_id = self.create_movement(&tx, movement.fees)?;
 
 		for (v, s) in movement.receives {
-			query::store_vtxo_with_initial_state(&tx, v, movement_id, s)?;
+			query::store_vtxo_with_initial_state(&tx, v, movement_id, *s)?;
 		}
 
 		for v in movement.spends {
@@ -117,14 +129,12 @@ impl BarkPersister for SqliteClient {
 		}
 
 		for (recipient, amount) in movement.recipients {
-			self.create_recipient(&tx, movement_id, recipient, amount)
+			self.create_recipient(&tx, movement_id, recipient, *amount)
 				.context("Failed to store change VTXOs")?
 				}
 		tx.commit()?;
 		Ok(())
 	}
-
-
 
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let conn = self.connect()?;
@@ -220,22 +230,6 @@ impl BarkPersister for SqliteClient {
 	}
 }
 
-impl WalletPersisterError for <SqliteClient as WalletPersister>::Error {}
-
-impl WalletPersister for SqliteClient {
-	type Error = rusqlite::Error;
-
-	fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
-		let mut conn = rusqlite::Connection::open(&persister.connection_string)?;
-		rusqlite::Connection::initialize(&mut conn)
-	}
-
-	fn persist(persister: &mut Self, changeset: &ChangeSet) -> Result<(), Self::Error> {
-		let mut conn = rusqlite::Connection::open(&persister.connection_string)?;
-		rusqlite::Connection::persist(&mut conn, changeset)
-	}
-}
-
 #[cfg(test)]
 pub mod test {
 	use std::str::FromStr;
@@ -284,11 +278,17 @@ pub mod test {
 		let db = SqliteClient::open(cs).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![(&vtxo_1, VtxoState::Spendable)], recipients: None, fees: None
+			spends: &[],
+			receives: &[(&vtxo_1, VtxoState::Spendable)],
+			recipients: &[],
+			fees: None,
 		}).unwrap();
 
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![(&vtxo_2, VtxoState::Spendable)], recipients: None, fees: None
+			spends: &[],
+			receives: &[(&vtxo_2, VtxoState::Spendable)],
+			recipients: &[],
+			fees: None,
 		}).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
@@ -307,7 +307,10 @@ pub mod test {
 
 		// Add the third entry to the database
 		db.register_movement(MovementArgs {
-			spends: None, receives: vec![(&vtxo_3, VtxoState::Spendable)], recipients: None, fees: None
+			spends: &[],
+			receives: &[(&vtxo_3, VtxoState::Spendable)],
+			recipients: &[],
+			fees: None,
 		}).unwrap();
 
 		// Get expiring vtxo's
@@ -321,10 +324,10 @@ pub mod test {
 
 		// Verify that we can mark a vtxo as spent
 		db.register_movement(MovementArgs {
-			spends: vec![&vtxo_1],
-			receives: None,
-			recipients: vec![
-				(pk.to_string(), Amount::from_sat(501))
+			spends: &[&vtxo_1],
+			receives: &[],
+			recipients: &[
+				(&pk.to_string(), Amount::from_sat(501))
 			],
 			fees: None
 		}).unwrap();
@@ -345,7 +348,7 @@ pub mod test {
 	fn test_create_wallet_then_load() {
 		let (connection_string, conn) = in_memory();
 
-		let mut db = SqliteClient::open(connection_string).unwrap();
+		let db = SqliteClient::open(connection_string).unwrap();
 		let network = bitcoin::Network::Testnet;
 
 		let seed = bip39::Mnemonic::generate(12).unwrap().to_seed("");
@@ -354,18 +357,24 @@ pub mod test {
 		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
 		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
 
-		let created = bdk_wallet::Wallet::create(edesc.clone(), idesc.clone())
+		// need to call init before we call store
+		let _ = db.initialize_bdk_wallet().unwrap();
+		let mut created = bdk_wallet::Wallet::create(edesc.clone(), idesc.clone())
 			.network(network)
-			.create_wallet(&mut db)
+			.create_wallet_no_persist()
 			.unwrap();
+		db.store_bdk_wallet_changeset(&created.take_staged().unwrap()).unwrap();
 
-		let loaded = bdk_wallet::Wallet::load()
-			.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
-			.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
-			.extract_keys()
-			.check_network(network)
-			.load_wallet(&mut db)
-			.unwrap();
+		let loaded = {
+			let changeset = db.initialize_bdk_wallet().unwrap();
+			bdk_wallet::Wallet::load()
+				.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
+				.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
+				.extract_keys()
+				.check_network(network)
+				.load_wallet_no_persist(changeset)
+				.unwrap()
+		};
 
 		assert!(loaded.is_some());
 		assert_eq!(
