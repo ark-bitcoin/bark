@@ -311,11 +311,10 @@ impl ClnNodeMonitorProcess {
 					LightningPaymentStatus::Requested
 						| LightningPaymentStatus::Submitted =>
 					{
-						self.db.store_lightning_payment_attempt_status(
-							attempt.lightning_payment_attempt_id,
+						self.db.update_lightning_payment_attempt_status(
+							&attempt,
 							LightningPaymentStatus::Failed,
 							None,
-							attempt.updated_at,
 						).await?;
 
 						self.telemetry_metrics.add_lightning_payment(

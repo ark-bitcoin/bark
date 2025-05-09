@@ -1,5 +1,3 @@
-
-
 use anyhow::Context;
 use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::PublicKey;
@@ -274,17 +272,16 @@ impl Db {
 		Ok((payment_attempt_id, updated_at))
 	}
 
-	pub async fn store_lightning_payment_attempt_status(
+	pub async fn update_lightning_payment_attempt_status(
 		&self,
-		payment_attempt_id: i64,
-		status: LightningPaymentStatus,
-		payment_error: Option<&str>,
-		updated_at: DateTime<Utc>,
+		old_payment_attempt: &LightningPaymentAttempt,
+		new_status: LightningPaymentStatus,
+		new_payment_error: Option<&str>,
 	) -> anyhow::Result<()> {
 		let conn = self.pool.get().await.unwrap();
 
 		// We want to preserve any previous error message in case we don't have a new one.
-		if let Some(error) = payment_error {
+		if let Some(error) = new_payment_error {
 			let stmt = conn.prepare("
 				UPDATE lightning_payment_attempt
 				SET status = $3,
@@ -293,7 +290,15 @@ impl Db {
 				WHERE lightning_payment_attempt_id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			conn.query_one(&stmt, &[&payment_attempt_id, &updated_at, &status, &error]).await?;
+			conn.query_one(
+				&stmt,
+				&[
+					&old_payment_attempt.lightning_payment_attempt_id,
+					&old_payment_attempt.updated_at,
+					&new_status,
+					&error
+				]
+			).await?;
 		} else {
 			let stmt = conn.prepare("
 				UPDATE lightning_payment_attempt
@@ -302,19 +307,25 @@ impl Db {
 				WHERE lightning_payment_attempt_id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			conn.query_one(&stmt, &[&payment_attempt_id, &updated_at, &status]).await?;
+			conn.query_one(
+				&stmt,
+				&[
+					&old_payment_attempt.lightning_payment_attempt_id,
+					&old_payment_attempt.updated_at,
+					&new_status
+				]
+			).await?;
 		};
 
 		Ok(())
 	}
 
 
-	pub async fn store_lightning_invoice_status(
+	pub async fn update_lightning_invoice(
 		&self,
-		lightning_invoice_id: i64,
-		final_amount_msat: Option<u64>,
-		preimage: Option<&[u8; 32]>,
-		updated_at: DateTime<Utc>,
+		old_lightning_invoice: LightningInvoice,
+		new_final_amount_msat: Option<u64>,
+		new_preimage: Option<&[u8; 32]>,
 	) -> anyhow::Result<DateTime<Utc>> {
 		let conn = self.pool.get().await.unwrap();
 
@@ -327,11 +338,11 @@ impl Db {
 			RETURNING updated_at;
 		").await?;
 
-		let final_amount_msat = final_amount_msat.map(|u| u as i64);
+		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
 		let row = conn.query_one(&stmt, &[
-			&lightning_invoice_id,
-			&updated_at,
-			&preimage.map(|p| &p[..]),
+			&old_lightning_invoice.lightning_invoice_id,
+			&old_lightning_invoice.updated_at,
+			&new_preimage.map(|p| &p[..]),
 			&final_amount_msat,
 		]).await?;
 

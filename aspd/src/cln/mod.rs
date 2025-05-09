@@ -692,13 +692,9 @@ impl database::Db {
 			return Ok(false);
 		}
 
-		self.store_lightning_payment_attempt_status(
-			attempt.lightning_payment_attempt_id, status, payment_error, attempt.updated_at,
-		).await?;
+		self.update_lightning_payment_attempt_status(attempt, status, payment_error).await?;
 
-		self.store_lightning_invoice_status(
-			li.lightning_invoice_id, final_amount_msat, preimage, li.updated_at,
-		).await?;
+		self.update_lightning_invoice(li, final_amount_msat, preimage).await?;
 
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
 
