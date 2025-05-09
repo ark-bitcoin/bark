@@ -179,11 +179,9 @@ impl<P: BarkPersister> Exit<P> {
 				let params = Params::new(onchain.wallet.network());
 				let address = Address::from_script(&added.spec().vtxo_spk(), params)?;
 				self.db.register_movement(MovementArgs {
-					spends: vec![&added],
-					receives: vec![],
-					recipients: vec![
-						(address.to_string(), added.amount())
-					],
+					spends: &[&added],
+					receives: &[],
+					recipients: &[(&address.to_string(), added.amount())],
 					fees: None
 				}).context("Failed to register send")?;
 			} else {

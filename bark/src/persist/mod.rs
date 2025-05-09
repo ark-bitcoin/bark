@@ -30,14 +30,7 @@ pub trait BarkPersister: Clone + Send + Sync + 'static {
 	/// Returns a paginated list of movements
 	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
 	/// Register a movement
-	fn register_movement<'a, S, R, Re>(
-		&self,
-		movement: MovementArgs<'a, S, R, Re>
-	) -> anyhow::Result<()>
-		where
-			S: IntoIterator<Item = &'a Vtxo>,
-			R: IntoIterator<Item = (&'a Vtxo, VtxoState)>,
-			Re: IntoIterator<Item = (String, Amount)>;
+	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
 
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;

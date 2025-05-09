@@ -124,7 +124,12 @@ pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>) -> anyhow::R
 	Ok(movement_id)
 }
 
-pub fn create_recipient(conn: &Connection, movement: i32, recipient: String, amount: Amount) -> anyhow::Result<i32> {
+pub fn create_recipient(
+	conn: &Connection,
+	movement: i32,
+	recipient: &str,
+	amount: Amount,
+) -> anyhow::Result<i32> {
 	// Store the vtxo
 	let query = "
 		INSERT INTO bark_recipient (movement, recipient, amount_sat)

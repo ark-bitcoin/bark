@@ -615,9 +615,9 @@ impl<P: BarkPersister> Wallet<P> {
 		let vtxo = ark::board::finish(user_part, asp_part, priv_user_part, &user_keypair).into();
 
 		self.db.register_movement(MovementArgs {
-			spends: None,
-			receives: vec![(&vtxo, VtxoState::UnregisteredBoard)],
-			recipients: None,
+			spends: &[],
+			receives: &[(&vtxo, VtxoState::UnregisteredBoard)],
+			recipients: &[],
 			fees: None
 		}).context("db error storing vtxo")?;
 
@@ -735,9 +735,9 @@ impl<P: BarkPersister> Wallet<P> {
 				if self.db.check_vtxo_key_exists(&dest.pubkey)? {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 						self.db.register_movement(MovementArgs {
-							spends: None,
-							receives: vec![(&vtxo, VtxoState::Spendable)],
-							recipients: None,
+							spends: &[],
+							receives: &[(&vtxo, VtxoState::Spendable)],
+							recipients: &[],
 							fees: None
 						})?;
 					}
@@ -775,9 +775,9 @@ impl<P: BarkPersister> Wallet<P> {
 			if self.db.get_vtxo(vtxo.id())?.is_none() {
 				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
 				self.db.register_movement(MovementArgs {
-					spends: None,
-					receives: vec![(&vtxo, VtxoState::Spendable)],
-					recipients: None,
+					spends: &[],
+					receives: &[(&vtxo, VtxoState::Spendable)],
+					recipients: &[],
 					fees: None
 				}).context("failed to store OOR vtxo")?;
 			}
@@ -995,9 +995,9 @@ impl<P: BarkPersister> Wallet<P> {
 		}
 
 		self.db.register_movement(MovementArgs {
-			spends: &oor.input,
-			receives: oor.change.as_ref().map(|v| (v, VtxoState::Spendable)),
-			recipients: vec![(destination.to_string(), amount)],
+			spends: &oor.input.iter().collect::<Vec<_>>(),
+			receives: &oor.change.as_ref().map(|v| vec![(v, VtxoState::Spendable)]).unwrap_or(vec![]),
+			recipients: &[(&destination.to_string(), amount)],
 			fees: Some(oor.fee)
 		}).context("failed to store OOR vtxo")?;
 
@@ -1114,11 +1114,9 @@ impl<P: BarkPersister> Wallet<P> {
 
 		if let Some(preimage) = payment_preimage {
 			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos,
-				receives: receive_vtxos,
-				recipients: vec![
-					(invoice.to_string(), amount)
-				],
+				spends: &input_vtxos.iter().collect::<Vec<_>>(),
+				receives: &receive_vtxos,
+				recipients: &[(&invoice.to_string(), amount)],
 				fees: Some(forwarding_fee)
 			}).context("failed to store OOR vtxo")?;
 			Ok(preimage)
@@ -1162,11 +1160,14 @@ impl<P: BarkPersister> Wallet<P> {
 				.clone()
 			);
 
-			let receives = iter::once((&vtxo, VtxoState::Spendable)).chain(change_vtxo.as_ref().map(|v| (v, VtxoState::Spendable)));
 			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos,
-				receives: receives,
-				recipients: None,
+				spends: &input_vtxos.iter().collect::<Vec<_>>(),
+				receives: &if let Some(ref change) = change_vtxo {
+					vec![(&vtxo, VtxoState::Spendable), (change, VtxoState::Spendable)]
+				} else {
+					vec![(&vtxo, VtxoState::Spendable)]
+				},
+				recipients: &[],
 				fees: None
 			})?;
 
@@ -1656,9 +1657,11 @@ impl<P: BarkPersister> Wallet<P> {
 				// manual
 				if !sent.is_empty() || !received.is_empty() {
 					self.db.register_movement(MovementArgs {
-						spends: input_vtxos.values(),
-						receives: received,
-						recipients: sent,
+						spends: &input_vtxos.values().collect::<Vec<_>>(),
+						receives: &received,
+						recipients: &sent.iter()
+							.map(|(s, a)| (s.as_str(), *a))
+							.collect::<Vec<_>>()[..],
 					fees: None
 					}).context("failed to store OOR vtxo")?;
 				}
