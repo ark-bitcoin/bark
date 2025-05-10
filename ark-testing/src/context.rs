@@ -415,6 +415,39 @@ impl TestContext {
 			&address, amount, None, None, None, None, None, None,
 		).unwrap()
 	}
+
+	/// If both bitcoind and electrs are available, this will wait until their tips are equal
+	pub async fn await_block_count_sync(&self) {
+		match (self.bitcoind.as_ref(), self.electrs.as_ref()) {
+			(Some(bitcoind), Some(electrs)) => {
+				while bitcoind.get_block_count().await != (electrs.get_block_count().await as u64) {
+					tokio::time::sleep(Duration::from_millis(100)).await;
+				}
+			},
+			_ => {}
+		}
+	}
+
+	/// Waits for the given transaction ID to be available in both the central bitcoind and electrs
+	pub async fn await_transaction(&self, txid: &Txid) {
+		if let Some(bitcoind) = &self.bitcoind {
+			bitcoind.await_transaction(txid).await;
+		}
+		if let Some(electrs) = &self.electrs {
+			electrs.await_transaction(txid).await;
+		}
+	}
+
+	/// Generated a block using the central bitcoind and ensures that electrs is synced with it
+	pub async fn generate_block(&self, block_num: u32) {
+		self.bitcoind().generate(block_num).await;
+		self.await_block_count_sync().await;
+	}
+
+	/// Generated a block using the central bitcoind without waiting for propagation
+	pub async fn generate_block_unsynced(&self, block_num: u32) {
+		self.bitcoind().generate(block_num).await;
+	}
 }
 
 impl Drop for TestContext {

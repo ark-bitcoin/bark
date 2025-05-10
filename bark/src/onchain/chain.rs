@@ -345,7 +345,7 @@ impl ChainSourceClient {
 	}
 
 	#[allow(unused)]
-	pub async fn txout_value(&self, outpoint: OutPoint) -> anyhow::Result<Amount> {
+	pub async fn txout_value(&self, outpoint: &OutPoint) -> anyhow::Result<Amount> {
 		let tx = match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
 				bitcoind.get_raw_transaction(&outpoint.txid, None)
