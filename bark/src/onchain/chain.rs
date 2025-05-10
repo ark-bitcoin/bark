@@ -11,8 +11,8 @@ use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
 use bitcoin_ext::bdk::EsploraClientExt;
-use bitcoin_ext::rpc::BitcoinRpcExt;
-use bitcoin_ext::BlockHeight;
+pub(crate) use bitcoin_ext::rpc::{BitcoinRpcExt, TxStatus};
+use bitcoin_ext::{BlockHeight, BlockRef};
 use log::{debug, info, warn};
 
 use crate::onchain;
@@ -177,9 +177,11 @@ impl ChainSourceClient {
 	/// For each provided outpoint, fetches any confirmed or unconfirmed
 	/// transaction in which it is spent, then returns a tupple containing
 	/// _outpoint>confirmed tx_ map and _outpoint>unconfirmed tx_ map
-	pub async fn txs_spending_inputs(&self, outpoints: Vec<OutPoint>, start: BlockHeight)
-		-> anyhow::Result<(HashMap<OutPoint, (BlockHeight, Txid)>, HashMap<OutPoint, Txid>)>
-	{
+	pub async fn txs_spending_inputs<T: IntoIterator<Item = OutPoint>>(
+		&self, 
+		outpoints: T, 
+		start: BlockHeight
+	) -> anyhow::Result<(HashMap<OutPoint, (BlockHeight, Txid)>, HashMap<OutPoint, Txid>)> {
 		let mut txs_by_outpoint = HashMap::<OutPoint, (BlockHeight, Txid)>::new();
 		let mut unconfirmed_txs_by_outpoint = HashMap::<OutPoint, Txid>::new();
 
@@ -192,7 +194,7 @@ impl ChainSourceClient {
 					bitcoind, cp.clone(), cp.height(),
 				);
 
-				let outpoint_set: HashSet<bitcoin::OutPoint> = HashSet::from_iter(outpoints.clone().into_iter());
+				let outpoint_set: HashSet<OutPoint> = HashSet::from_iter(outpoints.into_iter());
 
 				while let Some(em) = emitter.next_block()? {
 					for tx in &em.block.txdata {
@@ -303,7 +305,11 @@ impl ChainSourceClient {
 	pub async fn get_tx(&self, txid: Txid) -> anyhow::Result<Option<Transaction>> {
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				Ok(bitcoind.get_raw_transaction(&txid, None).ok())
+				match bitcoind.get_raw_transaction(&txid, None) {
+					Ok(tx) => Ok(Some(tx)),
+					Err(e) if e.is_not_found_error() => Ok(None),
+					Err(e) => Err(e.into()),
+				}
 			},
 			ChainSourceClient::Esplora(ref client) => {
 				Ok(client.get_tx(&txid).await?)
@@ -312,29 +318,30 @@ impl ChainSourceClient {
 	}
 
 	/// Returns the block height the tx is confirmed in, if any.
-	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<BlockHeight>> {
-		let ret = match self {
+	pub async fn tx_confirmed(&self, txid: &Txid) -> anyhow::Result<Option<BlockHeight>> {
+		Ok(self.tx_status(txid).await?.confirmed_height())
+	}
+
+	/// Returns the status of the given transaction, including the block height if it is confirmed
+	pub async fn tx_status(&self, txid: &Txid) -> anyhow::Result<TxStatus> {
+		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				match bitcoind.custom_get_raw_transaction_info(&txid, None)? {
-					Some(tx) => match tx.blockhash {
-						Some(hash) => {
-							let block = bitcoind.get_block_header_info(&hash)?;
-							if block.confirmations > 0 {
-								Some(block.height as BlockHeight)
-							} else {
-								None
-							}
-						},
-						None => None,
+				bitcoind.tx_status(&txid)
+					.map_err(|e| format_err!(e))
+			},
+			ChainSourceClient::Esplora(ref esplora) => {
+				match esplora.get_tx_info(&txid).await? {
+					Some(info) => match (info.status.block_height, info.status.block_hash) {
+						(Some(block_height), Some(block_hash)) => Ok(TxStatus::Confirmed(BlockRef {
+							height: block_height,
+							hash: block_hash,
+						} )),
+						_ => Ok(TxStatus::Mempool),
 					},
-					None => None,
+					None => Ok(TxStatus::NotFound),
 				}
 			},
-			ChainSourceClient::Esplora(ref client) => {
-				client.get_tx_status(&txid).await?.block_height
-			},
-		};
-		Ok(ret)
+		}
 	}
 
 	#[allow(unused)]
