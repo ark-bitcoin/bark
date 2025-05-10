@@ -8,6 +8,8 @@ use log::trace;
 use tokio::fs;
 use tokio::process::Command;
 
+use bark::onchain::ChainSource;
+
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use crate::constants::env::ELECTRS_EXEC;
 use crate::daemon::{Daemon, DaemonHelper};
@@ -69,6 +71,9 @@ impl Electrs {
 		self.inner.rest_url()
 	}
 
+	pub fn chain_source(&self) -> ChainSource {
+		ChainSource::Esplora { url: self.rest_url() }
+	}
 
 	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {
 		let client = self.async_client();

@@ -11,6 +11,7 @@ use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 use log::{debug, info};
 use tokio::process::Command;
 
+use bark::onchain::ChainSource;
 use bitcoin_ext::FeeRateExt;
 
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
@@ -84,10 +85,13 @@ impl Bitcoind {
 	pub fn auth(&self) -> Auth {
 		self.inner.auth()
 	}
+	
+	pub fn chain_source(&self) -> ChainSource {
+		ChainSource::Bitcoind { url: self.rpc_url(), auth: self.auth() }
+	}
 
 	pub fn rpc_port(&self) -> u16 {
 		self.inner.rpc_port()
-
 	}
 
 	pub fn zmq_url(&self) -> String {

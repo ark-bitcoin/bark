@@ -7,8 +7,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bark::movement::Movement;
 use bitcoin::{Address, Amount, Network, OutPoint};
+use bitcoincore_rpc::Auth;
 use log::{trace, info, error};
 use serde_json;
 use tokio::fs;
@@ -16,6 +16,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
+use bark::movement::Movement;
+use bark::onchain::ChainSource;
 use bark::UtxoInfo;
 pub use bark_json::cli as json;
 
@@ -26,12 +28,6 @@ use crate::util::resolve_path;
 
 const COMMAND_LOG_FILE: &str = "commands.log";
 const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(60);
-
-#[derive(Debug)]
-pub enum ChainSource {
-	Bitcoind,
-	Esplora { url: String },
-}
 
 #[derive(Debug)]
 pub struct BarkConfig {
@@ -86,21 +82,23 @@ impl Bark {
 
 		// Configure barks' chain source
 		match &cfg.chain_source {
-			ChainSource::Bitcoind => {
-				if let Some(ref bitcoind) = &bitcoind {
-					cmd.args([
-						"--bitcoind", &bitcoind.rpc_url(),
-						"--bitcoind-cookie", &bitcoind.rpc_cookie().display().to_string(),
-					]);
-				}
-				else {
-					panic!("Bark requires a bitcoind instance if you wish to use it as a chain source");
+			ChainSource::Bitcoind { url, auth } => {
+				cmd.args(["--bitcoind", &url]);
+				match auth {
+					Auth::None => panic!("Missing credentials for bitcoind"),
+					Auth::UserPass(user, password) => {
+						cmd.args([
+							"--bitcoind-user", user,
+							"--bitcoind-password", password,
+						]);
+					}
+					Auth::CookieFile(cookie) => {
+						cmd.args(["--bitcoind-cookie", &cookie.display().to_string()]);
+					}
 				}
 			}
 			ChainSource::Esplora { url } => {
-				cmd.args([
-					"--esplora", &url
-				]);
+				cmd.args(["--esplora", &url]);
 			}
 		}
 

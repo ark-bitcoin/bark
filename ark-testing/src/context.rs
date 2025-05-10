@@ -17,7 +17,6 @@ use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
 };
-use crate::bark::ChainSource;
 
 pub trait ToAspUrl {
 	fn asp_url(&self) -> String;
@@ -318,10 +317,11 @@ impl TestContext {
 		let datadir = self.datadir.join(name.as_ref());
 
 		let (bitcoind, chain_source) = if let Some(ref electrs) = self.electrs {
-			(None, ChainSource::Esplora { url: electrs.rest_url() })
+			(None, electrs.chain_source())
 		} else {
 			let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-			(Some(bitcoind), ChainSource::Bitcoind)
+			let chain_source = bitcoind.chain_source();
+			(Some(bitcoind), chain_source)
 		};
 		let cfg = BarkConfig {
 			datadir,
