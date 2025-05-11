@@ -468,7 +468,7 @@ impl Wallet {
 	/// Returns all vtxos that will expire within
 	/// `threshold_blocks` blocks
 	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
-		let expiry = self.onchain.tip().await? - threshold;
+		let expiry = self.onchain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
 		Ok(self.vtxos_with(filter)?)
 	}
