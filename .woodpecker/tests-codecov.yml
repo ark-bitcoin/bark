@@ -22,6 +22,8 @@ steps:
   - name: test-unit
     depends_on: check-commits
     image: registry.2nd.dev/build:17
+    environment:
+      RUST_TEST_THREADS: 1
     commands:
       - git log --oneline | head -n 1
       - just test-unit-all-codecov
@@ -29,6 +31,8 @@ steps:
   - name: build
     depends_on: check-commits
     image: registry.2nd.dev/build:17
+    environment:
+      RUST_TEST_THREADS: 1
     commands:
       - git log --oneline | head -n 1
       - cargo version
@@ -45,6 +49,7 @@ steps:
       LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
       TEST_DIRECTORY: ./test/btc29-codecov
       TEST_POSTGRES_HOST: localhost
+      RUST_TEST_THREADS: 1
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd

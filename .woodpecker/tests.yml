@@ -64,6 +64,7 @@ steps:
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
       TEST_POSTGRES_HOST: localhost
+      RUST_TEST_THREADS: 4
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
@@ -91,6 +92,7 @@ steps:
       LIGHTNINGD_EXEC: /lightning/25.02/bin/lightningd
       TEST_DIRECTORY: ./test/btc29
       TEST_POSTGRES_HOST: localhost
+      RUST_TEST_THREADS: 4
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
