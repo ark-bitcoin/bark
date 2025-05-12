@@ -58,10 +58,9 @@ steps:
       - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
       - just test-integration-all-codecov || echo $? > /tmp/test_exit_code
-      - sleep 1s
-      - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/"
-      - cp -r test/* "/host/data/test/${CI_COMMIT_SHA}/"
-      - echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
+      - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/btc29-codecov/"
+      - cp -r test/btc29-codecov/* "/host/data/test/${CI_COMMIT_SHA}/btc29-codecov/"
+      - echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/btc29-codecov/"
       - |
         if [ -f /tmp/test_exit_code ]; then
           code=$(cat /tmp/test_exit_code)
