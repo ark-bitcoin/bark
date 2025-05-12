@@ -96,8 +96,7 @@ pub fn is_running(child: &mut Child) -> bool {
 		Ok(None) => true,
 		Ok(Some(_status)) => false,
 		Err(err) => {
-			error!("Failed to get status of Child={:?}", child);
-			error!("{:?}", err);
+			error!("Failed to get status of Child={:?}: {:?}", child, err);
 			false
 		},
 	}

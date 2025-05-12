@@ -2,11 +2,11 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bitcoin::address::NetworkUnchecked;
-use bitcoin::{Address, Amount, FeeRate, Network, Txid};
+use bitcoin::{Address, Amount, FeeRate, Network, Transaction, Txid};
 use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 use log::{debug, info};
 use tokio::process::Command;
@@ -137,6 +137,19 @@ impl Bitcoind {
 
 		// give blocks some time to propagate
 		tokio::time::sleep(Duration::from_millis(500)).await;
+	}
+
+	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {
+		let client = self.sync_client();
+		let start = Instant::now();
+		while Instant::now().duration_since(start).as_millis() < 30_000 {
+			if let Ok(result) = client.get_raw_transaction(&txid, None) {
+				return result;
+			} else {
+				tokio::time::sleep(Duration::from_millis(200)).await;
+			}
+		}
+		panic!("Failed to get raw transaction: {}", txid);
 	}
 
 	pub async fn prepare_funds(&self) {

@@ -1,8 +1,9 @@
 use std::fmt;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use bdk_esplora::esplora_client::{AsyncClient, Builder};
-use bitcoin::Network;
+use bitcoin::{Network, Transaction, Txid};
 use log::trace;
 use tokio::fs;
 use tokio::process::Command;
@@ -66,6 +67,20 @@ impl Electrs {
 
 	pub fn rest_url(&self) -> String {
 		self.inner.rest_url()
+	}
+
+
+	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {
+		let client = self.async_client();
+		let start = Instant::now();
+		while Instant::now().duration_since(start).as_millis() < 30_000 {
+			if let Ok(Some(result)) = client.get_tx(txid).await {
+				return result;
+			} else {
+				tokio::time::sleep(Duration::from_millis(200)).await;
+			}
+		}
+		panic!("Failed to get raw transaction: {}", txid);
 	}
 }
 

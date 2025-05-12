@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
-use bitcoin::{Amount, FeeRate, Network, Transaction, Txid};
+use std::time::Duration;
+use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use log::info;
 use tokio::fs;
@@ -12,7 +12,7 @@ use aspd::config::{self, Config};
 use aspd_rpc as rpc;
 
 use crate::daemon::aspd::postgresd::{self, Postgres};
-use crate::util::{should_use_electrs, test_data_directory};
+use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
@@ -365,6 +365,16 @@ impl TestContext {
 
 		let mut ret = Lightningd::new(name, bitcoind, cfg);
 		ret.start().await.unwrap();
+		// wait for grpc to be available
+		async {
+			loop {
+				if ret.try_grpc_client().await.is_ok() {
+					break;
+				} else {
+					tokio::time::sleep(Duration::from_millis(200)).await;
+				}
+			}
+		}.wait(5000).await;
 		ret
 	}
 
@@ -382,6 +392,9 @@ impl TestContext {
 		info!("Fund {} {}", bark.name(), amount);
 		let address = bark.get_onchain_address().await;
 		let txid = self.bitcoind().fund_addr(address, amount).await;
+		if let Some(ref electrs) = self.electrs {
+			electrs.await_transaction(&txid).wait(10_000).await;
+		}
 		self.bitcoind().generate(1).await;
 		txid
 	}
@@ -394,19 +407,6 @@ impl TestContext {
 		client.send_to_address(
 			&address, amount, None, None, None, None, None, None,
 		).unwrap()
-	}
-
-	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {
-		let client = self.bitcoind().sync_client();
-		let start = Instant::now();
-		while Instant::now().duration_since(start).as_millis() < 30_000 {
-			if let Ok(result) = client.get_raw_transaction(&txid, None) {
-				return result;
-			} else {
-				tokio::time::sleep(Duration::from_millis(200)).await;
-			}
-		}
-		panic!("Failed to get raw transaction: {}", txid);
 	}
 }
 

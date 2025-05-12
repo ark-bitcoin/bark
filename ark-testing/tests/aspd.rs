@@ -1,4 +1,5 @@
 use std::iter;
+use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -115,8 +116,8 @@ async fn cant_spend_untrusted() {
 	}).await;
 
 	let mut bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
-	let bark = Arc::new(bark);
+	bark.timeout = Some(Duration::from_millis(3_500));
+	let mut bark = Arc::new(bark);
 
 	bark.board(sat(200_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
@@ -145,22 +146,31 @@ async fn cant_spend_untrusted() {
 
 	// then confirm the money and it should work
 	ctx.bitcoind().generate(NEED_CONFS).await;
+	tokio::time::sleep(Duration::from_millis(3000)).await;
 
 	log_round_err.clear();
-	if let Err(_err) = bark.try_refresh_all().await {
+	Arc::get_mut(&mut bark).unwrap().timeout = None;
+	if let Err(err) = bark.try_refresh_all().await {
+		let mut round_errs = String::new();
 		while let Ok(e) = log_round_err.try_recv() {
+			write!(&mut round_errs, "{:?}\n\n", e).unwrap();
 			error!("round error: {:?}", e.error);
 		}
-		panic!("first refresh failed");
+		panic!("first refresh failed, err: {err:?}, round errs: {round_errs:?}");
 	}
+
 	// and the unconfirmed change should be able to be used for a second round
+	tokio::time::sleep(Duration::from_millis(2000)).await;
 	assert!(log_round_err.try_recv().is_err());
-	if let Err(_err) = bark.try_refresh_all().await {
+	if let Err(err) = bark.try_refresh_all().await {
+		let mut round_errs = String::new();
 		while let Ok(e) = log_round_err.try_recv() {
+			write!(&mut round_errs, "{:?}\n\n", e).unwrap();
 			error!("round error: {:?}", e.error);
 		}
-		panic!("second refresh failed");
+		panic!("second refresh failed, err: {err:?}, round errs: {round_errs:?}");
 	}
+	// should not have produced errors
 	assert!(log_round_err.try_recv().is_err());
 }
 
@@ -205,13 +215,15 @@ async fn max_vtxo_amount() {
 	}).await;
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
 	let mut bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_500_000)).await;
-	bark1.timeout = Duration::from_millis(2_500);
+	bark1.timeout = Some(Duration::from_millis(3_500));
 
 	let cfg_max_amount = bark1.ark_info().await.max_vtxo_amount.unwrap();
 
 	// exceeds limit, should fail
 	let err = bark1.try_board(Amount::from_sat(600_000)).await.unwrap_err();
-	assert!(err.to_string().contains(&format!("bad user input: board amount exceeds limit of {}", cfg_max_amount)));
+	assert!(err.to_string().contains(
+		&format!("bad user input: board amount exceeds limit of {}", cfg_max_amount)
+	), "err: {err}");
 
 	bark1.board(Amount::from_sat(500_000)).await;
 	bark1.board(Amount::from_sat(500_000)).await;
@@ -219,14 +231,19 @@ async fn max_vtxo_amount() {
 
 	// try send OOR exceeding limit
 	let err = bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.unwrap_err();
-	assert!(err.to_string().contains(&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount)));
+	assert!(err.to_string().contains(
+		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
+	), "err: {err}");
 	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
 
 	// then try send in a round
 	let err = bark1.try_refresh_all().await.unwrap_err();
-	assert!(err.to_string().contains(&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount)));
+	assert!(err.to_string().contains(
+		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
+	), "err: {err}");
 
 	// but we can offboard the entire amount!
+	bark1.timeout = None;
 	let address = ctx.bitcoind().get_new_address();
 	bark1.offboard_all(address.clone()).await;
 	ctx.bitcoind().generate(1).await;
@@ -537,7 +554,7 @@ async fn test_participate_round_wrong_step() {
 	let ctx = TestContext::new("aspd/test_participate_round_wrong_step").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
+	bark.timeout = Some(Duration::from_millis(3_500));
 	bark.board(Amount::from_sat(800_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
@@ -958,13 +975,15 @@ async fn reject_subdust_vtxo_request() {
 	let proxy = Proxy(aspd.get_public_client().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
+	bark.timeout = Some(Duration::from_millis(3_500));
 
 	bark.board_all().await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
-	let res = bark.try_refresh_all().await;
-	assert!(res.unwrap_err().to_string().contains("bad user input: vtxo amount must be at least 0.00000330 BTC"));
+	let err = bark.try_refresh_all().await.unwrap_err();
+	assert!(err.to_string().contains(
+		"bad user input: vtxo amount must be at least 0.00000330 BTC",
+	), "err: {err}");
 }
 
 #[tokio::test]
@@ -993,7 +1012,7 @@ async fn reject_subdust_offboard_request() {
 	let proxy = Proxy(aspd.get_public_client().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-	bark.timeout = Duration::from_millis(2_500);
+	bark.timeout = Some(Duration::from_millis(3_500));
 
 	bark.board_all().await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;

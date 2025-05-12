@@ -269,6 +269,10 @@ impl Lightningd {
 		Daemon::wrap(inner)
 	}
 
+	pub async fn try_grpc_client(&self) -> anyhow::Result<NodeClient<Channel>> {
+		self.inner.try_grpc_client().await
+	}
+
 	pub async fn grpc_client(&self) -> NodeClient<Channel> {
 		self.inner.grpc_client().await
 	}
