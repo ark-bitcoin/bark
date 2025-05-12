@@ -6,7 +6,7 @@ use cbitcoin::{Address, Amount, Transaction};
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
-use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Error, RpcApi, Result as RpcResult};
+use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Auth, Client, Error, Result as RpcResult, RpcApi};
 
 use crate::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
 
@@ -15,6 +15,38 @@ const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
 
 /// Error code for RPC_INVALID_ADDRESS_OR_KEY, used when a tx is not found.
 const RPC_INVALID_ADDRESS_OR_KEY: i32 = -5;
+
+/// Clonable bitcoind rpc client.
+#[derive(Debug)]
+pub struct BitcoinRpcClient {
+	client: Client,
+	url: String,
+	auth: Auth,
+}
+
+impl BitcoinRpcClient {
+	pub fn new(url: &str, auth: Auth) -> Result<Self, Error> {
+		Ok(BitcoinRpcClient {
+			client: Client::new(url, auth.clone())?,
+			url: url.to_owned(),
+			auth: auth,
+		})
+	}
+}
+
+impl RpcApi for BitcoinRpcClient {
+	fn call<T: for<'a> serde::de::Deserialize<'a>>(
+		&self, cmd: &str, args: &[serde_json::Value],
+	) -> Result<T, Error> {
+		self.client.call(cmd, args)
+	}
+}
+
+impl Clone for BitcoinRpcClient {
+	fn clone(&self) -> Self {
+		Self::new(&self.url, self.auth.clone()).unwrap()
+	}
+}
 
 /// A module used for serde serialization of bytes in hexadecimal format.
 ///

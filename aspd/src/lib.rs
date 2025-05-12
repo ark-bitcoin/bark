@@ -9,7 +9,6 @@
 mod error;
 
 mod cln;
-pub mod bitcoind;
 pub(crate) mod flux;
 pub mod database;
 mod psbtext;
@@ -31,11 +30,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
-use bitcoin_ext::rpc::{BitcoinRpcErrorExt, BitcoinRpcExt};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
@@ -47,7 +47,7 @@ use ark::musig::{MusigPartialSignature, MusigPubNonce};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos;
 use aspd_rpc::protos::Bolt11PaymentResult;
-use crate::bitcoind::{BitcoinRpcClient, RpcApi};
+
 use crate::cln::ClnManager;
 use crate::database::model::LightningPaymentStatus;
 use crate::error::ContextExt;

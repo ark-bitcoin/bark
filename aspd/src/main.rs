@@ -5,13 +5,12 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use bitcoin::{bip32, Address};
-use bitcoin_ext::rpc::BitcoinRpcExt;
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use clap::Parser;
 use log::{error, info};
 use tonic::transport::Uri;
 
 use aspd::{Server, Config};
-use aspd::bitcoind::BitcoinRpcClient;
 use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use aspd_rpc::{self as rpc, protos};
 
