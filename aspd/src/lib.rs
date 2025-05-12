@@ -229,6 +229,7 @@ impl Server {
 			rtmgr.clone(),
 			&cfg,
 			db.clone(),
+			telemetry_metrics.clone(),
 		).await.context("failed to start ClnManager")?;
 
 		let (round_event_tx, _rx) = broadcast::channel(8);
