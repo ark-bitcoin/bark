@@ -207,8 +207,8 @@ impl Server {
 		let _startup_worker = rtmgr.spawn("Bootstrapping");
 		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
-		let mut txindex = TxIndex::new(deep_tip);
-		txindex.start(
+		let txindex = TxIndex::start(
+			deep_tip,
 			rtmgr.clone(),
 			bitcoind.clone(),
 			cfg.txindex_check_interval,

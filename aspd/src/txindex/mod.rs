@@ -16,6 +16,7 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use chrono::{DateTime, Local};
 use log::{trace, debug, info, warn};
+use opentelemetry::trace::FutureExt;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -197,6 +198,7 @@ pub struct TxIndex {
 	tx_map: Arc<RwLock<HashMap<Txid, Tx>>>,
 	block_index: Arc<RwLock<BlockIndex>>,
 }
+
 //TODO(stevenroose) consider persisting all this state
 // - this would make it easier to entirely rely on new blocks and incoming mempool txs
 // - it would simplify the startup mechanism in that case
@@ -350,8 +352,7 @@ impl TxIndex {
 
 		for (txid, tx) in self.tx_map.read().await.iter() {
 			let mut status = tx.status.lock().await;
-
-			// If the transaction is in a block we mark it
+			// If the transaction is added to the latest block we update the status
 			if block_txids.contains(txid) {
 				*status = TxStatus::ConfirmedIn(block.block_ref);
 			}
@@ -386,70 +387,122 @@ impl TxIndex {
 		}
 	}
 
-	/// Start the tx index.
 	pub fn start(
-		&mut self,
+		deep_tip: BlockRef,
 		rtmgr: RuntimeManager,
 		bitcoind: BitcoinRpcClient,
 		interval: Duration,
-	) -> JoinHandle<anyhow::Result<()>> {
-
+	) -> TxIndex {
+		let txindex = TxIndex::new(deep_tip);
 		let proc = TxIndexProcess {
-			rtmgr, bitcoind, interval,
-			txs: self.tx_map.clone(),
+			rtmgr,
+			bitcoind,
+			interval,
+			txindex: txindex.clone(),
 		};
-		tokio::spawn(async move {
+
+		tokio::spawn( async move {
 			proc.run().await.context("txindex exited with error")?;
-			info!("TxIndex shut down.");
-			Ok(())
-		})
+			info!("TxIndex shut down");
+			Ok::<(), anyhow::Error>(())
+		});
+
+		txindex
 	}
 }
 
 struct TxIndexProcess {
 	bitcoind: BitcoinRpcClient,
 	interval: Duration,
-
-	txs: Arc<RwLock<HashMap<Txid, Tx>>>,
+	txindex: TxIndex,
 	rtmgr: RuntimeManager,
 }
 
 impl TxIndexProcess {
-	async fn update_txs(&mut self) {
-		trace!("Starting TxIndexProcess::update_txs...");
-		for (txid, tx) in self.txs.read().await.iter() {
-			//TODO(stevenroose) entirely rewrite this based on zmq
-			// because right now it's super inefficient and sets the same status over and over
-			match self.bitcoind.custom_get_raw_transaction_info(txid, None) {
-				Ok(Some(info)) => {
-					if let Some(block) = info.blockhash {
-						// Confirmed!
-						match self.bitcoind.get_block_header_info(&block) {
-							Ok(h) => {
-								let block_ref = BlockRef {
-									height: h.height as BlockHeight,
-									hash: h.hash,
-								};
-								let new = TxStatus::ConfirmedIn(block_ref);
-								*tx.status.lock().await = new;
-							}
-							Err(e) => warn!("Failed to fetch block header of txinfo hash: {}", e),
-						}
-					} else {
-						tx.status.lock().await.update_mempool(Local::now())
-					}
-				},
-				Ok(None) => *tx.status.lock().await = TxStatus::Unseen,
-				Err(e) => warn!("bitcoin error: {}", e),
-			}
+	pub fn new(
+		rtmgr: RuntimeManager,
+		initial_block: BlockRef,
+		bitcoind: BitcoinRpcClient,
+		interval: Duration,
+	) -> Self {
+		let txindex = TxIndex::new(initial_block);
+		Self {
+			rtmgr, bitcoind, interval, txindex,
 		}
-		trace!("Finished TxIndexProcess::update_txs");
 	}
 
+	pub fn get_index(&self) -> TxIndex {
+		self.txindex.clone()
+	}
+
+
+	pub async fn update_mempool(&self) -> () {
+		match self.bitcoind.get_raw_mempool() {
+			Ok(mempool_txids) => {
+				let mempool = RawMempool {
+					observed_at: chrono::Local::now(),
+					txids: mempool_txids,
+				};
+
+				self.txindex.process_mempool(mempool).await;
+			}
+			Err(err) => {
+				warn!("Failed to download mempool from bitcoind");
+			}
+		}
+	}
+
+	pub async fn update_blocks(&self) -> anyhow::Result<()> {
+		let bitcoind_tip = self.bitcoind.tip().context("Failed to get tip from bitcoind")?;
+
+		let index_start = self.txindex.block_index.read().await.first().height;
+		let index_tip = self.txindex.block_index.read().await.tip();
+
+		// Nothing to do
+		// The index is up-to-date
+		if bitcoind_tip == index_tip {
+			return Ok(())
+		}
+
+		let mut new_blocks = vec![];
+
+		// The chain has a new tip
+		// This is potentially a re-org or multiple blocks
+		// have been found at the same time.
+		let block_hash = index_tip.hash;
+		for iii in (index_start..=bitcoind_tip.height).rev() {
+			let block_hash = self.bitcoind.get_block_hash(iii as u64)?;
+			let block_info = self.bitcoind.get_block_info(&block_hash)?;
+			let block_ref  = BlockRef { height: iii, hash: block_hash};
+			let prev_hash = block_info.previousblockhash.unwrap();
+
+			new_blocks.push(block_info);
+
+			if self.txindex.block_index.read().await.would_accept(block_ref, prev_hash) {
+				break
+			}
+		}
+
+		// Add all the blocks to the index one-by-one
+		for block in new_blocks.into_iter().rev() {
+			let data = block::BlockData {
+				block_ref: BlockRef { height: block.height as BlockHeight, hash: block.hash},
+				prev_hash: block.previousblockhash.unwrap(),
+				txids: block.tx,
+				observed_at: chrono::Local::now(),
+			};
+
+			self.txindex.process_block(data).await?;
+		};
+
+		Ok(())
+	}
+
+	/// Run the txindex.
 	///
 	/// This method will only return once the txindex stops, so it should be called
 	/// in a context that allows it to keep running.
-	async fn run(mut self) -> anyhow::Result<()> {
+	pub async fn run(mut self) -> anyhow::Result<()> {
 		let _worker = self.rtmgr.spawn_critical("TxIndex");
 
 		// Sleep just a little for our txindex to be filled by processes.
@@ -462,7 +515,8 @@ impl TxIndexProcess {
 			tokio::select! {
 				_ = interval.tick() => {
 					trace!("Starting update of all txs...");
-					self.update_txs().await;
+					self.update_blocks().await;
+					self.update_mempool().await;
 					slog!(TxIndexUpdateFinished);
 				},
 				_ = self.rtmgr.shutdown_signal() => {
