@@ -116,7 +116,7 @@ pub struct CollectingPayments {
 
 	vtxo_ownership_challenge: VtxoOwnershipChallenge,
 
-	/// All inputs that have participated in the previous attetmpt.
+	/// All inputs that have participated in the previous attempt.
 	locked_inputs: OwnedVtxoFluxLock,
 
 	cosign_key: Keypair,
@@ -568,6 +568,12 @@ impl CollectingPayments {
 			proceed,
 		})
 	}
+
+	fn total_input_amount(&self) -> Amount {
+		self.all_inputs.values()
+			.map(|vtxo| vtxo.amount())
+			.sum()
+	}
 }
 
 pub struct SigningVtxoTree {
@@ -955,18 +961,75 @@ impl SigningForfeits {
 	}
 }
 
-pub enum RoundState {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum RoundStateKind {
+	/// see [`CollectingPayments`]
+	CollectingPayments,
+	/// see [`SigningVtxoTree`]
+	SigningVtxoTree,
+	/// see [`SigningForfeits`]
+	SigningForfeits,
+	FinishedEmpty,
+	FinishedAbandoned,
+	FinishedSuccess,
+	FinishedError,
+}
+
+impl RoundStateKind {
+	fn as_str(&self) -> &'static str {
+		match self {
+			RoundStateKind::CollectingPayments => "CollectingPayments",
+			RoundStateKind::SigningVtxoTree => "SigningVtxoTree",
+			RoundStateKind::SigningForfeits => "SigningForfeits",
+			RoundStateKind::FinishedEmpty => "FinishedEmpty",
+			RoundStateKind::FinishedAbandoned => "FinishedAbandoned",
+			RoundStateKind::FinishedSuccess => "FinishedSuccess",
+			RoundStateKind::FinishedError => "FinishedError",
+		}
+	}
+	fn get_all() -> Vec<RoundStateKind> {
+		vec![
+			RoundStateKind::CollectingPayments,
+			RoundStateKind::SigningVtxoTree,
+			RoundStateKind::SigningForfeits,
+			RoundStateKind::FinishedEmpty,
+			RoundStateKind::FinishedAbandoned,
+			RoundStateKind::FinishedSuccess,
+			RoundStateKind::FinishedError,
+		]
+	}
+}
+
+enum RoundState {
 	CollectingPayments(CollectingPayments),
 	SigningVtxoTree(SigningVtxoTree),
 	SigningForfeits(SigningForfeits),
+	Finished(RoundResult),
 }
 
 impl RoundState {
+	fn kind(&self, ) -> RoundStateKind {
+		match &self {
+			Self::CollectingPayments(_) => RoundStateKind::CollectingPayments,
+			Self::SigningVtxoTree(_) => RoundStateKind::SigningVtxoTree,
+			Self::SigningForfeits(_) => RoundStateKind::SigningForfeits,
+			Self::Finished(result) => {
+				match result {
+					RoundResult::Empty => RoundStateKind::FinishedEmpty,
+					RoundResult::Abandoned => RoundStateKind::FinishedAbandoned,
+					RoundResult::Success => RoundStateKind::FinishedSuccess,
+					RoundResult::Err(_) => RoundStateKind::FinishedError,
+				}
+			}
+		}
+	}
+
 	fn proceed(&self) -> bool {
 		match self {
 			Self::CollectingPayments(s) => s.proceed,
 			Self::SigningVtxoTree(s) => s.proceed,
 			Self::SigningForfeits(s) => s.proceed,
+			Self::Finished(_) => false,
 		}
 	}
 
@@ -1000,14 +1063,33 @@ impl RoundState {
 			_ => panic!("wrong state"),
 		}
 	}
+	fn into_finished(self, result: RoundResult) -> Self {
+		match self {
+			RoundState::CollectingPayments(_)
+			| RoundState::SigningVtxoTree(_)
+			| RoundState::SigningForfeits(_) => RoundState::Finished(result),
+			_ => panic!("wrong state"),
+		}
+	}
+	
+	fn result(self) -> Option<RoundResult> {
+		match self {
+			RoundState::CollectingPayments(_)
+			| RoundState::SigningVtxoTree(_)
+			| RoundState::SigningForfeits(_) => None,
+			RoundState::Finished(result) => Some(result),
+		}
+	}
 
 	async fn progress(self, server: &Server) -> Result<Self, RoundError> {
 		match self {
 			Self::CollectingPayments(s) => Ok(s.progress(server).await?.into()),
 			Self::SigningVtxoTree(s) => Ok(s.progress(server).into()),
-			Self::SigningForfeits(_) => unreachable!("can't progress from signingforfeits"),
+			Self::SigningForfeits(_) => unreachable!("can't progress from signing forfeits"),
+			Self::Finished(_) => unreachable!("can't progress from a final state"),
 		}
 	}
+	
 }
 
 impl From<CollectingPayments> for RoundState {
@@ -1178,7 +1260,9 @@ async fn perform_round(
 				max_round_submit_time: server.config.round_submit_time,
 			);
 
-			return RoundResult::Empty;
+			round_state = round_state.into_finished(RoundResult::Empty);
+
+			return round_state.result().unwrap();
 		}
 		let receive_payment_duration = Instant::now().duration_since(receive_payments_start);
 		slog!(ReceivedRoundPayments, round_seq, attempt_seq,
@@ -1213,7 +1297,11 @@ async fn perform_round(
 
 		round_state = match round_state.progress(server).await {
 			Ok(s) => s,
-			Err(e) => return RoundResult::Err(e),
+			Err(e) => return {
+				round_state = RoundState::Finished(RoundResult::Err(e));
+
+				round_state.result().unwrap()
+			},
 		};
 		// Wait for signatures from users.
 		slog!(AwaitingRoundSignatures, round_seq, attempt_seq,
@@ -1237,12 +1325,15 @@ async fn perform_round(
 				_ = &mut timeout => {
 					warn!("Timed out receiving vtxo partial signatures.");
 					let new = round_state.into_signing_vtxo_tree().restart();
-					if new.need_new_round() {
-						return RoundResult::Abandoned;
-					} else {
-						round_state = new.into();
-						continue 'attempt;
+					let need_new_round = new.need_new_round();
+					round_state = new.into();
+
+					if need_new_round {
+						round_state = round_state.into_finished(RoundResult::Abandoned);
+						return round_state.result().unwrap();
 					}
+
+					continue 'attempt;
 				},
 				input = round_input_rx.recv() => {
 					let state = round_state.signing_vtxo_tree();
@@ -1290,7 +1381,10 @@ async fn perform_round(
 
 		round_state = match round_state.progress(&server).await {
 			Ok(s) => s,
-			Err(e) => return RoundResult::Err(e),
+			Err(e) => return {
+				round_state = RoundState::Finished(RoundResult::Err(e));
+				round_state.result().unwrap()
+			},
 		};
 
 		// Wait for signatures from users.
@@ -1315,12 +1409,15 @@ async fn perform_round(
 				_ = &mut timeout => {
 					warn!("Timed out receiving forfeit signatures.");
 					let new = round_state.into_signing_forfeits().restart_missing_forfeits(None);
-					if new.need_new_round() {
-						return RoundResult::Abandoned;
-					} else {
-						round_state = new.into();
-						continue 'attempt;
+					let need_new_round = new.need_new_round();
+					round_state = new.into();
+
+					if need_new_round {
+						round_state = round_state.into_finished(RoundResult::Abandoned);
+						return round_state.result().unwrap();
 					}
+
+					continue 'attempt;
 				}
 				input = round_input_rx.recv() => {
 					let (input, tx) = input.expect("broken channel");
@@ -1374,10 +1471,16 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
-		return match state.finish(&server).await {
-			Ok(()) => RoundResult::Success,
-			Err(e) => RoundResult::Err(e),
+		round_state = match state.finish(&server).await {
+			Ok(()) => {
+				RoundState::Finished(RoundResult::Success)
+			},
+			Err(e) => {
+				RoundState::Finished(RoundResult::Err(e))
+			},
 		};
+		
+		return round_state.result().unwrap();
 	}
 }
 
@@ -1406,7 +1509,7 @@ pub async fn run_round_coordinator(
 			// Fatal error, halt operations.
 			RoundResult::Err(RoundError::Fatal(e)) => {
 				error!("Fatal round error: {:?}", e);
-				return Err(e);
+				return Err(anyhow::anyhow!(e.to_string()))
 			},
 		}
 
