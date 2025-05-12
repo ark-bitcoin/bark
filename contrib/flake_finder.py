@@ -11,7 +11,6 @@ import subprocess
 import sys
 from threading import Thread
 from typing import List, Iterator
-import time
 import os
 
 import logging
@@ -21,8 +20,8 @@ import shutil
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-NB_WORKERS = os.environ.get("NB_WORKERS", 5)
-NB_JOBS = os.environ.get("NB_JOBS", 10)
+NB_WORKERS = int(os.environ.get("NB_WORKERS", 5))
+NB_JOBS = int(os.environ.get("NB_JOBS", 10))
 
 
 @dataclass
@@ -59,6 +58,7 @@ class Job:
                 # To save some disk space
                 logger.debug("Successfully executed %s", self.job_id)
                 shutil.rmtree(self.test_directory, ignore_errors=True)
+
 
 @dataclass
 class App:
@@ -123,7 +123,7 @@ if __name__ == "__main__":
 
     if other_args == []:
         print("Please specify a test. Eg:")
-        print("python flake_finder.py just test-int")
+        print("python flake_finder.py just int")
         print("Will run all integration tests")
         exit(1)
 
