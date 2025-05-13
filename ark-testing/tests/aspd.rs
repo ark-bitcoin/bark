@@ -1,3 +1,4 @@
+
 use std::iter;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -10,9 +11,10 @@ use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::{ScriptBuf, WPubkeyHash};
+use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST, P2TR_DUST_SAT};
 use futures::future::join_all;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use log::{error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
@@ -22,11 +24,12 @@ use ark::util::{Decodable, Encodable, SECP};
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
-	UnconfirmedBoardSpendAttempt, RoundError
+	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
+	ForfeitBroadcasted, RoundError
 };
 use aspd_rpc::protos::{self, BoardCosignRequest, Bolt11PaymentRequest, OorCosignRequest, SubmitPaymentRequest};
 
-use ark_testing::{Aspd, TestContext, btc, sat};
+use ark_testing::{Aspd, TestContext, btc, sat, bark};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::aspd;
@@ -61,14 +64,14 @@ async fn bitcoind_auth_connection() {
 	}).await;
 	ctx.fund_asp(&aspd, sat(1_000_000)).await;
 
-	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 1_000_000);
+	assert_eq!(aspd.wallet_status().await.total().to_sat(), 1_000_000);
 }
 
 #[tokio::test]
 async fn bitcoind_cookie_connection() {
 	let ctx = TestContext::new("aspd/bitcoind_cookie_connection").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(0.01)).await;
-	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 1_000_000);
+	assert_eq!(aspd.wallet_status().await.total().to_sat(), 1_000_000);
 }
 
 #[tokio::test]
@@ -95,14 +98,14 @@ async fn fund_asp() {
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	// Query the wallet balance of the asp
-	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
+	assert_eq!(aspd.wallet_status().await.total().to_sat(), 0);
 
 	// Fund the aspd
 	ctx.fund_asp(&aspd, btc(10)).await;
 	ctx.bitcoind().generate(1).await;
 
 	// Confirm that the balance is updated
-	assert!(aspd.wallet_status().await.total_balance.to_sat() > 0);
+	assert!(aspd.wallet_status().await.total().to_sat() > 0);
 }
 
 #[tokio::test]
@@ -122,12 +125,12 @@ async fn cant_spend_untrusted() {
 	bark.board(sat(200_000)).await;
 	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
 
-	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
+	assert_eq!(aspd.wallet_status().await.total().to_sat(), 0);
 
 	// fund aspd without confirming
 	let addr = aspd.get_rounds_funding_address().await;
 	ctx.bitcoind().fund_addr(addr, btc(10)).await;
-	assert_eq!(aspd.wallet_status().await.total_balance.to_sat(), 0);
+	assert_eq!(aspd.wallet_status().await.total().to_sat(), 0);
 
 	let mut log_round_err = aspd.subscribe_log::<RoundError>().await;
 
@@ -183,7 +186,7 @@ async fn restart_key_stability() {
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	let asp_key1 = aspd.ark_info().await.asp_pubkey;
-	let addr1 = aspd.wallet_status().await.address.require_network(Network::Regtest).unwrap();
+	let addr1 = aspd.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
 
 	// Fund the aspd's addr
 	ctx.bitcoind().fund_addr(&addr1, btc(1)).await;
@@ -201,7 +204,7 @@ async fn restart_key_stability() {
 		*cfg = new_cfg;
 	}).await;
 	let asp_key2 = aspd.ark_info().await.asp_pubkey;
-	let addr2 = aspd.wallet_status().await.address.require_network(Network::Regtest).unwrap();
+	let addr2 = aspd.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
 
 	assert_eq!(asp_key1, asp_key2);
 	assert_ne!(addr1, addr2);
@@ -347,7 +350,7 @@ async fn sweep_vtxos() {
 	info!("Round done signal received");
 	let stats = log_stats.recv().fast().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);
-	assert_eq!(1_242_122, aspd.wallet_status().await.total_balance.to_sat());
+	assert_eq!(1_242_122, aspd.wallet_status().await.total().to_sat());
 }
 
 #[tokio::test]
@@ -891,21 +894,157 @@ async fn bad_round_input() {
 	assert!(err.message().contains("OP_RETURN"), "{}", err.message());
 }
 
+#[derive(Clone)]
+struct NoFinishRoundProxy(aspd::ArkClient);
+#[tonic::async_trait]
+impl aspd::proxy::AspdRpcProxy for NoFinishRoundProxy {
+	fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+	async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+	>, tonic::Status> {
+		let s = self.upstream().subscribe_rounds(req).await?.into_inner();
+		Ok(Box::new(s.map(|r| match r {
+			Ok(protos::RoundEvent { event: Some(protos::round_event::Event::Finished(_))}) => {
+				Err(tonic::Status::internal("can't have it!"))
+			}
+			r => r,
+		})))
+	}
+}
+
 #[tokio::test]
-async fn register_onboard_is_idempotent() {
-	let ctx = TestContext::new("aspd/register_onboard_is_idempotent").await;
+async fn claim_forfeit_connector_chain() {
+	let ctx = TestContext::new("aspd/claim_forfeit_connector_chain").await;
+
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_client().await)).await;
+
+	// To make sure we have a chain of connector, we make a bunch of inputs
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(5_000_000)).await;
+	for _ in 0..10 {
+		bark.board(sat(400_000)).await;
+	}
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	// we do a refresh, but make it seem to the client that it failed
+	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
+	let mut log_round = aspd.subscribe_log::<RoundFinished>().await;
+	assert!(bark.try_refresh_all().await.is_err());
+	assert!(bark.vtxos().await.contains(&vtxo));
+	assert_eq!(log_round.recv().fast().await.unwrap().nb_input_vtxos, 10);
+
+	// start the exit process
+	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
+	bark.start_exit_vtxo(vtxo.id).await;
+	assert_eq!(
+		bark.progress_exit().await,
+		bark::json::ExitStatus { done: false, height: None },
+	);
+	assert_eq!(log_detected.recv().await.unwrap().vtxo, vtxo.id);
+
+	// confirm the exit
+	let mut log_confirmed = aspd.subscribe_log::<ForfeitedExitConfirmed>().await;
+	ctx.bitcoind().generate(1).await;
+	let msg = log_confirmed.recv().await.unwrap();
+	assert_eq!(msg.vtxo, vtxo.id);
+	info!("Exit txid: {}", msg.exit_tx);
+	ctx.bitcoind().generate(1).await;
+
+	// wait for connector txs to confirm and watcher to broadcast ff tx
+	let mut log_broadcast = aspd.subscribe_log::<ForfeitBroadcasted>().await;
+	let txid = async {
+		loop {
+			ctx.bitcoind().generate(1).await;
+			aspd.wait_for_log::<TxIndexUpdateFinished>().await;
+			if let Ok(m) = log_broadcast.try_recv() {
+				break m.forfeit_txid;
+			}
+		}
+	}.wait(15_000).await;
+
+	// and then wait for the forfeit to confirm
+	info!("Waiting for tx {} to confirm", txid);
+	async {
+		loop {
+			ctx.bitcoind().generate(1).await;
+			if let Some(tx) = ctx.bitcoind().sync_client().custom_get_raw_transaction_info(&txid, None).unwrap() {
+				trace!("Tx {} has confirmations: {:?}", txid, tx.confirmations);
+				if tx.confirmations.unwrap_or(0) > 0 {
+					break;
+				}
+			}
+			tokio::time::sleep(Duration::from_millis(500)).await;
+		}
+	}.wait(20_000).await;
+}
+
+#[tokio::test]
+async fn claim_forfeit_round_connector() {
+	//! Special case of the forfeit caim test where the connector output is on the round tx
+	let ctx = TestContext::new("aspd/claim_forfeit_round_connector").await;
+
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_client().await)).await;
+
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
+	bark.board(sat(800_000)).await;
+	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+
+	// we do a refresh, but make it seem to the client that it failed
+	let [vtxo] = bark.vtxos().await.try_into().expect("1 vtxo");
+	let mut log_round = aspd.subscribe_log::<RoundFinished>().await;
+	assert!(bark.try_refresh_all().await.is_err());
+	assert!(bark.vtxos().await.contains(&vtxo));
+	assert_eq!(log_round.recv().fast().await.unwrap().nb_input_vtxos, 1);
+
+	// start the exit process
+	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
+	bark.start_exit_vtxo(vtxo.id).await;
+	assert_eq!(
+		bark.progress_exit().await,
+		bark::json::ExitStatus { done: false, height: None },
+	);
+	assert_eq!(log_detected.recv().await.unwrap().vtxo, vtxo.id);
+
+	// confirm the exit
+	let mut log_confirmed = aspd.subscribe_log::<ForfeitedExitConfirmed>().await;
+	ctx.bitcoind().generate(1).await;
+	assert_eq!(log_confirmed.recv().await.unwrap().vtxo, vtxo.id);
+
+	// wait until forfeit watcher broadcasts forfeit tx
+	let txid = aspd.wait_for_log::<ForfeitBroadcasted>().await.forfeit_txid;
+
+	// and then wait for it to confirm
+	info!("Waiting for tx {} to confirm", txid);
+	async {
+		loop {
+			ctx.bitcoind().generate(1).await;
+			if let Some(tx) = ctx.bitcoind().sync_client().custom_get_raw_transaction_info(&txid, None).unwrap() {
+				trace!("Tx {} has confirmations: {:?}", txid, tx.confirmations);
+				if tx.confirmations.unwrap_or(0) > 0 {
+					break;
+				}
+			}
+		}
+	}.wait(10_000).await;
+}
+
+#[tokio::test]
+async fn register_board_is_idempotent() {
+	let ctx = TestContext::new("aspd/register_board_is_idempotent").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 	let bark_wallet = ctx.new_bark("bark", &aspd).await;
 
 	ctx.fund_bark(&bark_wallet, bitcoin::Amount::from_sat(50_000)).await;
-	let onboard = bark_wallet.board_all().await;
+	let board = bark_wallet.board_all().await;
 
 	let bark_client = bark_wallet.client().await;
-	let vtxo = bark_client.get_vtxo_by_id(onboard.vtxos[0].id).unwrap();
-	let funding_tx = bark_client.onchain.get_wallet_tx(onboard.funding_txid).unwrap();
+	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
+	let funding_tx = bark_client.onchain.get_wallet_tx(board.funding_txid).unwrap();
 
 
-	// We will now call the register_onboard a few times
+	// We will now call the register_board a few times
 	let mut rpc = aspd.get_public_client().await;
 	let request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.encode(),

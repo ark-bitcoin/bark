@@ -234,6 +234,11 @@ impl TestContext {
 				round_sweep_interval: Duration::from_secs(60),
 				sweep_threshold: Amount::from_sat(1_000_000),
 			},
+			forfeit_watcher: aspd::forfeits::Config {
+				claim_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(25),
+				wake_interval: Duration::from_millis(1_000),
+			},
+			forfeit_watcher_min_balance: Amount::from_sat(1_000_000),
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty
 				public_address: SocketAddr::from_str("127.0.0.1:3535").unwrap(),
@@ -382,8 +387,10 @@ impl TestContext {
 		info!("Fund {} {}", asp.name, amount);
 		let rounds_address = asp.get_rounds_funding_address().await;
 		self.bitcoind().fund_addr(rounds_address, amount).await;
+		tokio::time::sleep(Duration::from_millis(1000)).await;
 		self.bitcoind().generate(1).await;
-		asp.get_admin_client().await.wallet_status(rpc::protos::Empty {}).await
+		tokio::time::sleep(Duration::from_millis(1000)).await;
+		asp.get_admin_client().await.wallet_sync(rpc::protos::Empty {}).await
 			.expect("error calling wallet status after funding apsd");
 	}
 

@@ -45,7 +45,8 @@ pub const METER_COUNTER_GRPC_ERROR: &str = "grpc_errors_total";
 pub const METER_COUNTER_UD_GRPC_IN_PROCESS: &str = "grpc_requests_in_progress";
 pub const METER_HISTOGRAM_GRPC_LATENCY: &str = "grpc_request_duration_ms";
 pub const METER_COUNTER_HANDSHAKE_VERSION: &str = "handshake_version_counter";
-pub const METER_GAUGE_WALLET_BALANCE: &str = "wallet_balance_gauge";
+pub const METER_GAUGE_ROUND_WALLET_BALANCE: &str = "round_wallet_balance_gauge";
+pub const METER_GAUGE_FORFEIT_WALLET_BALANCE: &str = "forfeit_wallet_balance_gauge";
 pub const METER_GAUGE_BLOCK_HEIGHT: &str = "block_gauge";
 pub const METER_GAUGE_LIGHTNING_NODE: &str = "lightning_node_gauge";
 pub const METER_COUNTER_LIGHTNING_NODE_BOOT: &str = "lightning_node_boot_counter";
@@ -68,7 +69,8 @@ pub const RPC_GRPC_STATUS_CODE: &str = "rpc.grpc.status_code";
 #[derive(Debug, Clone)]
 struct InnerMetrics {
 	handshake_version_counter: Counter<u64>,
-	wallet_balance_gauge: Gauge<u64>,
+	round_wallet_balance_gauge: Gauge<u64>,
+	forfeit_wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
 	lightning_node_gauge: Gauge<u64>,
 	lightning_node_boot_counter: Counter<u64>,
@@ -151,7 +153,8 @@ impl TelemetryMetrics {
 		let meter = global::meter_provider().meter(METER_ASPD);
 		let version_counter = meter.u64_counter(METER_COUNTER_VERSION).build();
 		let handshake_version_counter = meter.u64_counter(METER_COUNTER_HANDSHAKE_VERSION).build();
-		let wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_WALLET_BALANCE).build();
+		let round_wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_ROUND_WALLET_BALANCE).build();
+		let forfeit_wallet_balance_gauge = meter.u64_gauge(METER_GAUGE_FORFEIT_WALLET_BALANCE).build();
 		let block_height_gauge = meter.u64_gauge(METER_GAUGE_BLOCK_HEIGHT).build();
 		let lightning_node_gauge = meter.u64_gauge(METER_GAUGE_LIGHTNING_NODE).build();
 		let lightning_node_boot_counter = meter.u64_counter(METER_COUNTER_LIGHTNING_NODE_BOOT).build();
@@ -165,7 +168,8 @@ impl TelemetryMetrics {
 		TelemetryMetrics {
 			inner: Some(InnerMetrics {
 				handshake_version_counter,
-				wallet_balance_gauge,
+				round_wallet_balance_gauge,
+				forfeit_wallet_balance_gauge,
 				block_height_gauge,
 				lightning_node_gauge,
 				lightning_node_boot_counter,
@@ -183,9 +187,15 @@ impl TelemetryMetrics {
 		}
 	}
 
-	pub fn set_wallet_balance(&self, wallet_balance: Amount) {
+	pub fn set_round_wallet_balance(&self, wallet_balance: Amount) {
 		if let Some(ref m) = self.inner {
-			m.wallet_balance_gauge.record(wallet_balance.to_sat(), &[]);
+			m.round_wallet_balance_gauge.record(wallet_balance.to_sat(), &[]);
+		}
+	}
+
+	pub fn set_forfeit_wallet_balance(&self, wallet_balance: Amount) {
+		if let Some(ref m) = self.inner {
+			m.forfeit_wallet_balance_gauge.record(wallet_balance.to_sat(), &[]);
 		}
 	}
 

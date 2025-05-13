@@ -1,6 +1,8 @@
 
 mod board;
 pub use self::board::*;
+mod forfeits;
+pub use self::forfeits::*;
 mod rounds;
 pub use self::rounds::*;
 mod sweeps;

@@ -1,7 +1,42 @@
 
 use std::fmt;
+use std::borrow::Cow;
 use std::str::FromStr;
-use serde::{de, Deserialize, Deserializer, Serializer};
+
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+
+/// Wrapping a byte array to be serialized as bytes.
+pub struct Bytes<'a>(pub Cow<'a, [u8]>);
+
+impl<'a> Serialize for Bytes<'a> {
+	fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+		s.serialize_bytes(self.0.as_ref())
+	}
+}
+
+impl<'de> Deserialize<'de> for Bytes<'de> {
+	fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+		struct Visitor;
+
+		impl<'de> de::Visitor<'de> for Visitor {
+			type Value = Bytes<'de>;
+
+			fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+				f.write_str("just some bytes")
+			}
+
+			fn visit_borrowed_bytes<E: de::Error>(self, v: &'de [u8]) -> Result<Self::Value, E> {
+				Ok(Bytes(Cow::Borrowed(v)))
+			}
+
+			fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+				Ok(Bytes(Cow::Owned(v.to_vec())))
+			}
+		}
+		d.deserialize_bytes(Visitor)
+	}
+}
 
 pub mod uri {
 	use super::*;

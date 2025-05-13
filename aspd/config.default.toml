@@ -13,6 +13,7 @@ nb_round_nonces = 64
 round_tx_feerate = "2500sat/kwu"
 rpc_rich_errors = true
 txindex_check_interval = "30s"
+forfeit_watcher_min_balance = 10000000
 cln_array = []
 cln_reconnect_interval = "10s"
 invoice_check_interval = "3s"
@@ -26,6 +27,10 @@ legacy_wallet = false
 sweep_tx_fallback_feerate = "2500sat/kwu"
 round_sweep_interval = "1h"
 sweep_threshold = 1000000
+
+[forfeit_watcher]
+claim_fallback_feerate = "6250sat/kwu"
+wake_interval = "1m"
 
 [rpc]
 public_address = "127.0.0.1:3535"

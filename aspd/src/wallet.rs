@@ -1,6 +1,6 @@
 
 use std::{fmt, ops};
-use std::path::PathBuf;
+use std::path::Path;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
@@ -8,12 +8,12 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bdk_wallet::{SignOptions, Wallet, Balance, KeychainKind};
 use bip39::Mnemonic;
-use bitcoin::{bip32, Address, Network};
+use bitcoin::{bip32, Network, Address, FeeRate, Amount};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
-use log::error;
+use log::{error, trace};
 
 use crate::database;
 
@@ -26,23 +26,33 @@ pub const MNEMONIC_FILE: &str = "mnemonic";
 /// Number picked as hash of "rounds" string, see unit test.
 pub const BIP32_IDX_ROUNDS: bip32::ChildNumber = bip32::ChildNumber::Hardened { index: 1856555996 };
 
+/// The BIP32 child index of the ForfeitWatcher wallet.
+///
+/// Number picked as hash of "forfeit_watcher" string, see unit test.
+pub const BIP32_IDX_FORFEITS: bip32::ChildNumber = bip32::ChildNumber::Hardened { index: 1445852836 };
+
 
 /// Type to indicate which internal wallet to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalletKind {
+	/// For the round scheduler.
 	Rounds,
+	/// For the forfeit watcher.
+	Forfeits,
 }
 
 impl WalletKind {
 	pub fn name(&self) -> &'static str {
 		match self {
 			Self::Rounds => "rounds",
+			Self::Forfeits => "forfeits",
 		}
 	}
 
 	pub fn child_number(&self) -> bip32::ChildNumber {
 		match self {
 			Self::Rounds => BIP32_IDX_ROUNDS,
+			Self::Forfeits => BIP32_IDX_FORFEITS,
 		}
 	}
 }
@@ -150,7 +160,7 @@ impl PersistedWallet {
 		Ok(())
 	}
 
-	pub async fn sync(&mut self, bitcoind: &impl RpcApi) -> anyhow::Result<Balance> {
+	pub async fn sync(&mut self, bitcoind: &impl RpcApi, mempool: bool) -> anyhow::Result<Balance> {
 		let start_time = Instant::now();
 
 		let prev_tip = self.latest_checkpoint();
@@ -172,6 +182,13 @@ impl PersistedWallet {
 				self.persist().await?;
 			}
 		}
+
+		if mempool {
+			let mempool = emitter.mempool()?;
+			trace!("Syncing {} mempool txs...", mempool.len());
+			self.apply_unconfirmed_txs(mempool);
+		}
+
 		self.persist().await?;
 
 		// rebroadcast unconfirmed txs
@@ -223,6 +240,24 @@ impl PersistedWallet {
 		}
 	}
 
+	/// Send money to an address.
+	pub async fn send(
+		&mut self,
+		addr: &Address,
+		amount: Amount,
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Transaction> {
+		let untrusted = self.untrusted_utxos(None);
+		let mut b = self.build_tx();
+		b.unspendable(untrusted);
+		b.add_recipient(addr.script_pubkey(), amount);
+		b.fee_rate(fee_rate);
+		let psbt = b.finish()?;
+		let tx = self.finish_tx(psbt)?;
+		self.persist().await?;
+		Ok(tx)
+	}
+
 	/// This function is primarily intended for dev, not prod usage.
 	pub async fn drain(
 		&mut self,
@@ -265,7 +300,7 @@ impl ops::DerefMut for PersistedWallet {
 }
 
 
-pub fn read_mnemonic_from_datadir(data_dir: &PathBuf) -> anyhow::Result<Mnemonic> {
+pub fn read_mnemonic_from_datadir(data_dir: &Path) -> anyhow::Result<Mnemonic> {
 	let mnemonic = std::fs::read_to_string(data_dir.join(MNEMONIC_FILE))
 		.context("failed to read mnemonic")?;
 	Ok(Mnemonic::from_str(&mnemonic)?)
@@ -288,5 +323,15 @@ mod test {
 			bip32::ChildNumber::from_hardened_idx(idx).expect("31 bit mask")
 		};
 		assert_eq!(rounds, BIP32_IDX_ROUNDS);
+		assert_eq!(rounds, WalletKind::Rounds.child_number());
+
+		let forfeits = {
+			let sha = sha256::Hash::hash("forfeit_watcher".as_bytes());
+			let sip = siphash24::Hash::hash(&sha[..]);
+			let idx = (sip.as_u64() & MASK_U31) as u32;
+			bip32::ChildNumber::from_hardened_idx(idx).expect("31 bit mask")
+		};
+		assert_eq!(forfeits, BIP32_IDX_FORFEITS);
+		assert_eq!(forfeits, WalletKind::Forfeits.child_number());
 	}
 }
