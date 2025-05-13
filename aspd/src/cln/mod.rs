@@ -154,7 +154,7 @@ impl ClnManager {
 		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
 		let payment_hash = *invoice.payment_hash();
 
-		self.check_bolt11_internal(update_rx, &payment_hash, wait, false).await
+		self.inner_check_bolt11(update_rx, &payment_hash, wait, false).await
 	}
 
 	/// Checks a bolt-11 invoice and returns the pre-image
@@ -165,10 +165,10 @@ impl ClnManager {
 	) -> anyhow::Result<[u8; 32]> {
 		let update_rx = self.payment_update_tx.subscribe();
 
-		self.check_bolt11_internal(update_rx, payment_hash, wait, true).await
+		self.inner_check_bolt11(update_rx, payment_hash, wait, true).await
 	}
 
-	pub async fn check_bolt11_internal(
+	pub async fn inner_check_bolt11(
 		&self,
 		mut update_rx: Receiver<sha256::Hash>,
 		payment_hash: &sha256::Hash,
