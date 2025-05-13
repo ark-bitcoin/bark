@@ -33,6 +33,7 @@ steps:
     volumes:
       - /data:/host/data
     commands:
+      - git log --oneline | head -n 1
       - rm -rf "/host/data/test/${CI_COMMIT_SHA}/" || true
       - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
       - just prechecks
