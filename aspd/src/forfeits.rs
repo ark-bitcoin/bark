@@ -383,8 +383,8 @@ impl Process {
 		let mut new_confirmed = HashSet::new();
 		for (tx, vtxo) in &self.exit_txs {
 			let status = tx.status().await;
-			if let Some(block_height) = status.confirmed_in() {
-				slog!(ForfeitedExitConfirmed, vtxo: *vtxo, exit_tx: tx.txid, block_height);
+			if let Some(block_ref) = status.confirmed_in() {
+				slog!(ForfeitedExitConfirmed, vtxo: *vtxo, exit_tx: tx.txid, block_height: block_ref.height);
 				new_confirmed.insert(*vtxo);
 			} else if status.seen() {
 				slog!(ForfeitedExitInMempool, vtxo: *vtxo, exit_tx: tx.txid);
@@ -424,15 +424,14 @@ impl Process {
 
 		if claim.forfeit_cpfp.is_none() {
 			trace!("Preparing to broadcast forfeit tx and cpfp...");
-			let block_height = match claim.connector_tx {
+			let block_ref = match claim.connector_tx {
 				Some(ref tx) => tx.status().await.confirmed_in().expect("just confirmed"),
 				// If there is no connector tx, it's the round tx. Quickly fetch status.
-				None => self.txindex.status_of(&claim.connector.txid).await
-					.expect("connector tx missing")
+				None => self.txindex.get(&claim.connector.txid).await.expect("In index").status().await
 					.confirmed_in()
 					.expect("connector tx should be confirmed"),
 			};
-			slog!(ConnectorConfirmed, connector_txid: claim.connector.txid, vtxo: claim.vtxo, block_height);
+			slog!(ConnectorConfirmed, connector_txid: claim.connector.txid, vtxo: claim.vtxo, block_height: block_ref.height);
 
 			// Let's broadcast the forfeit then finally.
 			//TODO(stevenroose) use fee estimationi here

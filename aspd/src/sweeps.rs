@@ -559,8 +559,8 @@ impl Process {
 		if let Some(txs) = self.pending_tx_by_utxo.get(&point) {
 			for txid in txs {
 				let tx = self.pending_txs.get(txid).expect("broken: utxo but no tx");
-				if let Some(h) = tx.status().await.confirmed_in() {
-					return Some((h, tx.txid));
+				if let Some(block) = tx.status().await.confirmed_in() {
+					return Some((block.height, tx.txid));
 				}
 			}
 		}
@@ -692,8 +692,8 @@ impl Process {
 				continue;
 			}
 
-			if let Some(h) = tx.status().await.confirmed_in() {
-				if tip.height - h >= 2 * DEEPLY_CONFIRMED {
+			if let Some(block) = tx.status().await.confirmed_in() {
+				if tip.height - block.height >= 2 * DEEPLY_CONFIRMED {
 					slog!(SweepTxFullyConfirmed, txid: *txid);
 				} else {
 					slog!(SweepTxAbandoned, txid: *txid,
