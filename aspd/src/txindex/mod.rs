@@ -1,7 +1,7 @@
 
 //TODO(stevenroose) remove after Jiri's txindex refactor
 #![allow(unused)]
-
+pub mod block;
 
 use std::{cmp, fmt};
 use std::collections::HashMap;
