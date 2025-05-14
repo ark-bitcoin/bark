@@ -1,7 +1,7 @@
-
 //TODO(stevenroose) remove after Jiri's txindex refactor
 #![allow(unused)]
 pub mod block;
+pub mod broadcast;
 
 use std::{cmp, fmt};
 use std::collections::HashMap;
@@ -182,7 +182,7 @@ impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
 }
 
 /// The handle to the transaction index.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TxIndex {
 	tx_map: Arc<RwLock<HashMap<Txid, Tx>>>,
 	broadcast_pkg: Option<mpsc::UnboundedSender<Vec<Txid>>>,
@@ -306,34 +306,6 @@ impl TxIndex {
 		}
 	}
 
-	/// Tell the tx index to broadcast the given tx and return a tx handle.
-	pub async fn broadcast_tx(&self, tx: Transaction) -> Tx {
-		let ret = self.register_as(tx, TxStatus::Unseen).await;
-		self.broadcast(vec![ret.txid]);
-		ret
-	}
-
-	/// Tell the tx index to broadcast the given tx package and return handles.
-	pub async fn broadcast_pkg(&self, pkg: impl Into<Vec<Transaction>>) -> Vec<Tx> {
-		let pkg = pkg.into();
-		let mut ret = Vec::with_capacity(pkg.len());
-		for tx in pkg {
-			ret.push(self.register_as(tx, TxStatus::Unseen).await);
-		}
-		let txids = ret.iter().map(|t| t.txid).collect::<Vec<_>>();
-		debug!("Registering tx package for broadcast: {:?}", txids);
-		self.broadcast(txids);
-		ret
-	}
-
-	/// Tell the tx index to broadcast the given tx package.
-	///
-	/// You'll probably prefer to use [TxIndex::broadcast_tx] or [TxIndex::broadcast_pkg] instead.
-	pub fn broadcast(&self, pkg: impl Into<Vec<Txid>>) {
-		self.broadcast_pkg.as_ref().expect("txindex not started yet")
-			.send(pkg.into()).expect("txindex shut down");
-	}
-
 	pub fn new() -> TxIndex {
 		TxIndex {
 			tx_map: Arc::new(RwLock::new(HashMap::new())),
@@ -411,126 +383,6 @@ impl TxIndexProcess {
 		trace!("Finished TxIndexProcess::update_txs");
 	}
 
-	async fn broadcast_tx(&self, tx: &Tx) {
-		// Skip if tx already in mempol.
-		if tx.seen().await {
-			return;
-		}
-
-		let bytes = serialize(&tx.tx);
-		if let Err(e) = self.bitcoind.send_raw_transaction(&bytes) {
-			warn!("Error when re-broadcasting one of our txs: {}", e);
-			slog!(TxBroadcastError, txid: tx.txid, raw_tx: bytes, error: e.to_string());
-		} else {
-			match &mut *tx.status.lock().await {
-				v @ None => { *v = Some(TxStatus::MempoolSince(Local::now())) },
-				Some(s) => s.update_mempool(Local::now()),
-			}
-			trace!("Broadcasted tx {}", tx.txid);
-		}
-	}
-
-	async fn broadcast_pkg(&self, pkg: &[Tx]) {
-		// Skip if all txs in mempool.
-		let mut skip = true;
-		for tx in pkg {
-			if !tx.seen().await {
-				skip = false;
-			}
-		}
-		if skip {
-			return;
-		}
-
-		#[derive(Debug, Deserialize)]
-		struct PackageTxInfo {
-			txid: Txid,
-			error: Option<String>,
-		}
-		#[derive(Debug, Deserialize)]
-		struct SubmitPackageResponse {
-			#[serde(rename = "tx-results")]
-			tx_results: HashMap<Wtxid, PackageTxInfo>,
-			package_msg: String,
-		}
-
-		let hexes = pkg.iter()
-			.map(|t| bitcoin::consensus::encode::serialize_hex(&t.tx))
-			.collect::<Vec<_>>();
-		match self.bitcoind.call::<SubmitPackageResponse>("submitpackage", &[hexes.into()]) {
-			Ok(r) if r.package_msg != "success" => {
-				let errors = r.tx_results.values().map(|tx| {
-					let raw_tx = pkg.iter().find(|t| t.txid == tx.txid)
-						.map(|t| serialize(&t.tx))
-						.expect("tx is part of our package");
-					let error = tx.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)");
-					slog!(TxBroadcastError, txid: tx.txid, raw_tx, error: error.to_owned());
-					format!("tx {}: {}", tx.txid, error)
-				}).collect::<Vec<_>>();
-				warn!("Error broadcasting tx package: msg: '{}', errors: {:?}",
-					r.package_msg, errors,
-				);
-			}
-			Err(e) => {
-				warn!("Error broadcasting tx package: {}", e);
-			},
-			Ok(_) => {},
-		}
-	}
-
-	async fn broadcast(&self, pkg: &[Txid]) {
-		if pkg.len() == 1 {
-			let txid = pkg[0];
-			let lock = self.txs.read().await;
-			let tx = lock.get(&txid).cloned();
-			drop(lock);
-			if let Some(tx) = tx {
-				if !tx.status().await.confirmed() {
-					slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
-					self.broadcast_tx(&tx).await;
-				}
-			} else {
-				debug!("Instructed to broadcast a tx we don't know: {}", txid);
-				return;
-			}
-		} else {
-			let mut txs = Vec::with_capacity(pkg.len());
-			let lock = self.txs.read().await;
-			for txid in pkg {
-				if let Some(tx) = lock.get(&*txid) {
-					if !tx.status().await.confirmed() {
-						slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
-						txs.push(tx.clone());
-					}
-				} else {
-					debug!("Instructed to broadcast a tx we don't know: {}", txid);
-					return;
-				}
-			}
-			drop(lock);
-			self.broadcast_pkg(&txs).await;
-		}
-	}
-
-	async fn rebroadcast(&mut self) {
-		let mut i = 0;
-		'outer: while i < self.broadcast.len() {
-			let pkg = &self.broadcast[i];
-			let txs = self.txs.read().await;
-			for txid in pkg.iter() {
-				let res = txs.get(txid);
-				if res.is_none() || res.unwrap().status().await == TxStatus::Unregistered {
-					debug!("Broadcast pkg has unknown or unregistered tx {}. Dropping", txid);
-					self.broadcast.swap_remove(i);
-					continue 'outer;
-				}
-			}
-			self.broadcast(pkg).await;
-			i += 1;
-		}
-	}
-
-	/// Run the txindex.
 	///
 	/// This method will only return once the txindex stops, so it should be called
 	/// in a context that allows it to keep running.
@@ -545,18 +397,9 @@ impl TxIndexProcess {
 		interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 		loop {
 			tokio::select! {
-				bc = self.broadcast_rx.recv() => {
-					if let Some(bc) = bc {
-						self.broadcast(&bc).await;
-						self.broadcast.push(bc);
-					} else {
-						return Ok(());
-					}
-				},
 				_ = interval.tick() => {
 					trace!("Starting update of all txs...");
 					self.update_txs().await;
-					self.rebroadcast().await;
 					slog!(TxIndexUpdateFinished);
 				},
 				_ = self.rtmgr.shutdown_signal() => {
