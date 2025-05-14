@@ -216,7 +216,7 @@ impl Server {
 			rtmgr.clone(),
 			txindex.clone(),
 			bitcoind.clone(),
-			std::time::Duration::from_secs(60),
+			cfg.transaction_rebroadcast_interval,
 		);
 
 		let vtxo_sweeper = VtxoSweeper::start(
