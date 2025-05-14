@@ -2,8 +2,17 @@ use std::collections::HashSet;
 
 use bitcoin::{BlockHash, Txid};
 use bitcoin_ext::{BlockHeight, BlockRef};
+use chrono::{DateTime, Local};
 
-/// Keeps a partial index of every [BlockRef] that is
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct BlockData {
+	pub block_ref: BlockRef,
+	pub prev_hash: BlockHash,
+	pub txids: Vec<Txid>,
+	pub observed_at: DateTime<Local>,
+}
+
+/// Keeps an index of every [BlockRef] that is
 /// part of the best chain. The best chain
 /// has the most proof of work.
 ///
@@ -20,7 +29,6 @@ pub struct BlockIndex {
 	/// `blocks[i]` corresponds to the block at height `start_height + i`
 	blocks: Vec<BlockRef>,
 }
-
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BlockInsertionError {

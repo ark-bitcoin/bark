@@ -4,7 +4,7 @@ pub mod block;
 pub mod broadcast;
 
 use std::{cmp, fmt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,7 +20,13 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use block::BlockIndex;
 use crate::system::RuntimeManager;
+
+pub struct RawMempool {
+	observed_at: DateTime<Local>,
+	txids: Vec<Txid>
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxStatus {
@@ -68,6 +74,15 @@ impl TxStatus {
 			}
 			TxStatus::Unseen => *self = TxStatus::MempoolSince(time),
 			TxStatus::ConfirmedIn(_) => *self = TxStatus::MempoolSince(time),
+		}
+	}
+
+	fn update_not_in_mempool(&mut self, time: DateTime<Local>) {
+		match self {
+			TxStatus::Unregistered => {},
+			TxStatus::MempoolSince(ref prev) => { *self = TxStatus::Unseen},
+			TxStatus::Unseen => {},
+			TxStatus::ConfirmedIn(_) => {},
 		}
 	}
 }
@@ -180,6 +195,7 @@ impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
 #[derive(Clone, Debug)]
 pub struct TxIndex {
 	tx_map: Arc<RwLock<HashMap<Txid, Tx>>>,
+	block_index: Arc<RwLock<BlockIndex>>,
 }
 //TODO(stevenroose) consider persisting all this state
 // - this would make it easier to entirely rely on new blocks and incoming mempool txs
@@ -310,9 +326,63 @@ impl TxIndex {
 		}
 	}
 
-	pub fn new() -> TxIndex {
+	pub fn new(base: BlockRef) -> TxIndex {
 		TxIndex {
 			tx_map: Arc::new(RwLock::new(HashMap::new())),
+			block_index: Arc::new(RwLock::new(BlockIndex::from_base(base))),
+		}
+	}
+
+	/// Adds a new block to the [TxIndex].
+	///
+	/// It will assume that all blocks with a higher index are evicted
+	pub async fn process_block(
+		&self,
+		block: block::BlockData,
+	) -> Result<(), block::BlockInsertionError> {
+		let mut block_index_lock = self.block_index.write().await;
+		block_index_lock.try_insert(
+			block.block_ref,
+			block.prev_hash,
+		)?;
+
+		let block_txids = block.txids.iter().collect::<HashSet<_>>();
+
+		for (txid, tx) in self.tx_map.read().await.iter() {
+			let mut status = tx.status.lock().await;
+
+			// If the transaction is in a block we mark it
+			if block_txids.contains(txid) {
+				*status = TxStatus::ConfirmedIn(block.block_ref);
+			}
+			// If the transaction was in a higher block it has been
+			// evicted and we kick it.
+			else if let TxStatus::ConfirmedIn(b) = *status {
+				if b.height >= block.block_ref.height {
+					*status = TxStatus::MempoolSince(block.observed_at)
+				}
+			}
+		}
+
+		// Ensure other processes can only read from
+		// the block index once the entire [TxIndex]
+		// has been updated
+		drop(block_index_lock);
+		Ok(())
+	}
+
+	pub async fn process_mempool(&self, mempool_data: RawMempool) {
+		// Put the current mempool into a HashSet
+		let txids = mempool_data.txids.into_iter().collect::<HashSet<_>>();
+
+		// Go over all transactions of the index and update them
+		for (txid, index) in self.tx_map.read().await.iter() {
+			let mut current_status = index.status.lock().await;
+			if txids.contains(txid) {
+				current_status.update_mempool(mempool_data.observed_at);
+			} else {
+				current_status.update_not_in_mempool(mempool_data.observed_at);
+			}
 		}
 	}
 
@@ -356,11 +426,11 @@ impl TxIndexProcess {
 						// Confirmed!
 						match self.bitcoind.get_block_header_info(&block) {
 							Ok(h) => {
-								let block_index = BlockRef {
+								let block_ref = BlockRef {
 									height: h.height as BlockHeight,
 									hash: h.hash,
 								};
-								let new = TxStatus::ConfirmedIn(block_index);
+								let new = TxStatus::ConfirmedIn(block_ref);
 								*tx.status.lock().await = new;
 							}
 							Err(e) => warn!("Failed to fetch block header of txinfo hash: {}", e),
@@ -401,5 +471,133 @@ impl TxIndexProcess {
 				}
 			}
 		}
+	}
+}
+
+
+#[cfg(test)]
+mod test {
+
+	use super::*;
+	use block::BlockData;
+	use block::test::dummy_block;
+	use chrono::TimeZone;
+
+
+	/// The transaction index just caches data. It doesn't care
+	/// if the transactions don't make any sense and we can safely
+	/// use dummy transactions.
+	fn dummy_tx(num: u32) -> Transaction {
+		Transaction {
+			version: bitcoin::transaction::Version::non_standard(3),
+			lock_time: bitcoin::absolute::LockTime::from_height(num).unwrap(),
+			input: vec![],
+			output: vec![],
+		}
+	}
+
+
+	#[tokio::test]
+	async fn insert_tx_index() {
+		// This test should actually work now
+		let first_block = dummy_block(0, 0);
+		let tx = dummy_tx(1);
+		let txid = tx.compute_txid();
+
+		// Create the index
+		let index = TxIndex::new(first_block);
+
+		// Register the transaction and verify
+		// it has been registered
+		index.register_as(tx.clone(), TxStatus::Unseen).await;
+		let tx_handle = index.get(&txid).await.expect("Transaction in index");
+		assert_eq!(tx_handle.status().await, TxStatus::Unseen);
+
+		// Register the transaction again
+		index.register_as(tx.clone(), TxStatus::Unseen).await;
+		assert_eq!(tx_handle.status().await, TxStatus::Unseen);
+	}
+
+	#[tokio::test]
+	async fn tx_index_handles_reorg() {
+		// We define 4 blocks on fork a
+		let old_block = dummy_block(0x0a, 1);
+		let block_ref_a0 = dummy_block(0xa0, 1000);
+		let block_ref_a1 = dummy_block(0xa1, 1001);
+		let block_ref_a2 = dummy_block(0xa2, 1002);
+		let block_ref_a3 = dummy_block(0xa3, 1003);
+
+		// This will re-ort out a_2 and _a3
+		let block_ref_b2 = dummy_block(0xb2, 1002);
+
+		// Each block has 2 transactions
+		// The first will go into the mempool and the other will not
+		// tx_ai_j goes into block i and is transaction number j in that block
+		let tx_a1_1=dummy_tx(0xa1_1); let tx_a1_2=dummy_tx(0xa1_2);
+		let tx_a2_1=dummy_tx(0xa2_1); let tx_a2_2=dummy_tx(0xa2_2);
+		let tx_a3_1=dummy_tx(0xa3_1); let tx_a3_2=dummy_tx(0xa3_2);
+		let tx_b2_1=dummy_tx(0xb2_1);
+
+		// We also have an old tx which was confirmed before the TxIndex
+		let old_tx = dummy_tx(0xa1_9999);
+
+		// Register all transactions to the index
+		let index = TxIndex::new(block_ref_a0);
+		let tx_a1_1 = index.register_as(tx_a1_1, TxStatus::Unseen).await;
+		let tx_a1_2 = index.register_as(tx_a1_2, TxStatus::Unseen).await;
+		let tx_a2_1 = index.register_as(tx_a2_1, TxStatus::Unseen).await;
+		let tx_a2_2 = index.register_as(tx_a2_2, TxStatus::Unseen).await;
+		let tx_a3_1 = index.register_as(tx_a3_1, TxStatus::Unseen).await;
+		let tx_a3_2 = index.register_as(tx_a3_2, TxStatus::Unseen).await;
+		let tx_b2_1 = index.register_as(tx_b2_1, TxStatus::Unseen).await;
+		let old_tx = index.register_as(old_tx, TxStatus::ConfirmedIn(old_block)).await;
+
+		// Push the block to the index
+		let t2 = chrono::Local::now();
+		index.process_block(BlockData {
+			block_ref: block_ref_a1,
+			prev_hash: block_ref_a0.hash,
+			txids: vec![tx_a1_1.txid, tx_a1_2.txid],
+			observed_at: t2,
+		}).await;
+
+		let t3 = chrono::Local::now();
+		index.process_block(BlockData {
+			block_ref: block_ref_a2,
+			prev_hash: block_ref_a1.hash,
+			txids: vec![tx_a2_1.txid, tx_a2_2.txid],
+			observed_at: t3,
+		}).await;
+
+		let t4 = chrono::Local::now();
+		index.process_block(BlockData {
+			block_ref: block_ref_a3,
+			prev_hash: block_ref_a2.hash,
+			txids: vec![tx_a3_1.txid, tx_a3_2.txid],
+			observed_at: t4,
+		}).await;
+
+		assert_eq!(tx_a1_1.status().await, TxStatus::ConfirmedIn(block_ref_a1));
+		assert_eq!(tx_a2_1.status().await, TxStatus::ConfirmedIn(block_ref_a2));
+		assert_eq!(tx_a3_1.status().await, TxStatus::ConfirmedIn(block_ref_a3));
+
+		// Now we do a reorg by introducing block_ref_b2
+		// ai_1 transactions will be in the new block
+		// ai_2 transactions will be evicted
+		let t5 = chrono::Local::now();
+		index.process_block(BlockData {
+			block_ref: block_ref_b2,
+			prev_hash: block_ref_a1.hash,
+			txids: vec![tx_b2_1.txid, tx_a2_1.txid, tx_a3_1.txid],
+			observed_at: t5,
+		}).await;
+
+		assert_eq!(tx_a1_1.status().await, TxStatus::ConfirmedIn(block_ref_a1));
+		assert_eq!(tx_a1_2.status().await, TxStatus::ConfirmedIn(block_ref_a1));
+		assert_eq!(tx_a2_1.status().await, TxStatus::ConfirmedIn(block_ref_b2));
+		assert_eq!(tx_a2_2.status().await, TxStatus::MempoolSince(t5));
+		assert_eq!(tx_a3_1.status().await, TxStatus::ConfirmedIn(block_ref_b2));
+		assert_eq!(tx_a3_2.status().await, TxStatus::MempoolSince(t5));
+		assert_eq!(old_tx.status().await,TxStatus::ConfirmedIn(old_block));
 	}
 }
