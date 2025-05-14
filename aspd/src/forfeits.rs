@@ -476,7 +476,7 @@ impl Process {
 
 		// We keep these locally so that we can retry registering them
 		// if we encounter a db error.
-		let mut new_forfeits = Vec::new();
+		let mut new_forfeits = Vec::<VtxoId>::new();
 
 		info!("Starting forfeit watcher");
 		let mut interval = tokio::time::interval(self.config.wake_interval);
@@ -488,7 +488,7 @@ impl Process {
 				Some(ctrl) = ctrl_rx.recv() => {
 					match ctrl {
 						Ctrl::RegisterForfeits(forfeits) => {
-							new_forfeits.push(forfeits);
+							new_forfeits.extend(forfeits);
 						},
 						Ctrl::WalletSync(resp) => {
 							let _ = self.wallet.sync(&self.bitcoind, true).await;
@@ -507,21 +507,19 @@ impl Process {
 			}
 			trace!("Forfeit watcher waking up...");
 
+
 			// If we have received new forfeited vtxos from a round, register them.
 			let mut idx = 0;
 			while idx < new_forfeits.len() {
-				match self.db.get_vtxos_by_id(&new_forfeits[idx]).await {
+				match self.db.get_vtxos_by_id(&[new_forfeits[idx]]).await {
 					Ok(vtxos) => {
-						for vtxo in vtxos {
-							self.register_vtxo(&vtxo.vtxo).await;
-						}
+						self.register_vtxo(&vtxos[0].vtxo).await;
 						new_forfeits.swap_remove(idx);
-						// keep idx same
 					},
-					Err(e) => {
-						warn!("Error fetching newly forfeited vtxos from the db: {}", e);
-						idx += 1;
-					},
+					Err(e)  => {
+						warn!("Error fetching newly forfeited vtxo from the db: {}", e);
+						idx+=1;
+					}
 				}
 			}
 
