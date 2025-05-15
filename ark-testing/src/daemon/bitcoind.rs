@@ -134,13 +134,7 @@ impl Bitcoind {
 			).unwrap().assume_checked();
 		}
 
-		// give txs time to propagate
-		tokio::time::sleep(Duration::from_millis(1000)).await;
-
 		self.sync_client().generate_to_address(block_num as u64, &*RANDOM_ADDR).unwrap();
-
-		// give blocks some time to propagate
-		tokio::time::sleep(Duration::from_millis(500)).await;
 	}
 
 	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {

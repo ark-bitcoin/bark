@@ -11,7 +11,7 @@ async fn start_lightningd() {
 	let ctx = TestContext::new("lightningd/start_lightningd").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
-	ctx.bitcoind().generate(100).await;
+	ctx.generate_blocks(100).await;
 
 	// Start an instance of lightningd
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
@@ -30,7 +30,7 @@ async fn cln_can_pay_lightning() {
 	let ctx = TestContext::new("lightningd/cln_can_pay_lightning").await;
 	// See https://github.com/ElementsProject/lightning/pull/7379
 	// Why we need to generate 100 blocks before starting cln
-	ctx.bitcoind().generate(100).await;
+	ctx.generate_blocks(100).await;
 
 	// Start an instance of lightningd
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
@@ -51,7 +51,7 @@ async fn cln_can_pay_lightning() {
 	// Fund lightningd_1
 	info!("Funding lightningd_1");
 	ctx.fund_lightning(&lightningd_1, btc(5)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 
@@ -82,7 +82,7 @@ async fn bark_pay_ln_succeeds() {
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creating channel between lightning nodes");
@@ -93,7 +93,7 @@ async fn bark_pay_ln_succeeds() {
 	// maybe: let ctx.bitcoind wait for channel funding transaction
 	// without the sleep we get infinite 'Waiting for gossip...'
 	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
 
@@ -106,7 +106,7 @@ async fn bark_pay_ln_succeeds() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	{
 		// Create a payable invoice
@@ -146,7 +146,7 @@ async fn bark_pay_invoice_twice() {
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creating channel between lightning nodes");
@@ -157,7 +157,7 @@ async fn bark_pay_invoice_twice() {
 	// maybe: let ctx.bitcoind wait for channel funding transaction
 	// without the sleep we get infinite 'Waiting for gossip...'
 	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
 
@@ -168,7 +168,7 @@ async fn bark_pay_invoice_twice() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, btc(7)).await;
 
 	bark_1.board(btc(5)).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
@@ -204,7 +204,7 @@ async fn bark_pay_ln_fails() {
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
@@ -237,7 +237,7 @@ async fn bark_refresh_ln_change_vtxo() {
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creating channel between lightning nodes");
@@ -248,7 +248,7 @@ async fn bark_refresh_ln_change_vtxo() {
 	// maybe: let ctx.bitcoind wait for channel funding transaction
 	// without the sleep we get infinite 'Waiting for gossip...'
 	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
 
@@ -261,7 +261,7 @@ async fn bark_refresh_ln_change_vtxo() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
@@ -301,7 +301,7 @@ async fn bark_refresh_payment_revocation() {
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
@@ -330,7 +330,7 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 	lightningd_1.wait_for_block_sync().await;
 
 	trace!("Creating channel between lightning nodes");
@@ -341,7 +341,7 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 	// maybe: let ctx.bitcoind wait for channel funding transaction
 	// without the sleep we get infinite 'Waiting for gossip...'
 	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.bitcoind().generate(6).await;
+	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
 
@@ -354,7 +354,7 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
-	ctx.bitcoind().generate(BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	{
 		// Invoice with amount

@@ -41,7 +41,7 @@ async fn chain_source_tip() {
 	assert_eq!(chain_source.tip().await.unwrap(), start_height);
 
 	// The tip should be updated when blocks are generated.
-	ctx.generate_block(10).await;
+	ctx.generate_blocks(10).await;
 	assert_eq!(chain_source.tip().await.unwrap(), start_height + 10);
 
 	// The tip should stay the same when blocks are not generated.
@@ -51,10 +51,10 @@ async fn chain_source_tip() {
 	}
 
 	// The tip should continue to be updated when new blocks are generated.
-	ctx.generate_block(37).await;
+	ctx.generate_blocks(37).await;
 	assert_eq!(chain_source.tip().await.unwrap(), start_height + 47);
 
-	ctx.generate_block(1234).await;
+	ctx.generate_blocks(1234).await;
 	assert_eq!(chain_source.tip().await.unwrap(), start_height + 1281);
 
 	// Ensure network problems result in errors
@@ -73,7 +73,7 @@ async fn chain_source_block_id() {
 
 	// Generating blocks shouldn't change results
 	let start_block_id = chain_source.block_id(start_height).await.unwrap();
-	ctx.generate_block(10).await;
+	ctx.generate_blocks(10).await;
 	assert_eq!(chain_source.block_id(start_height).await.unwrap(), start_block_id);
 
 	// Ensure each block hash is unique
@@ -87,7 +87,7 @@ async fn chain_source_block_id() {
 	chain_source.block_id(start_height + 11).await
 		.expect_err("Block ID should not be valid");
 	for i in 0..10 {
-		ctx.generate_block(1).await;
+		ctx.generate_blocks(1).await;
 		chain_source.block_id(start_height + 10 + i).await
 			.expect("Block ID should be valid");
 	}
@@ -116,7 +116,7 @@ async fn chain_source_block() {
 	// Generating blocks shouldn't change results
 	let mut headers = HashSet::with_capacity(start_height as usize);
 	for i in 0..10 {
-		ctx.generate_block(1).await;
+		ctx.generate_blocks(1).await;
 		let id = chain_source.block_id(i).await.expect("Block ID should be valid");
 		match chain_source.block(&id.hash).await.expect("Hash should be valid") {
 			None => panic!("Hash should not return an empty result"),
@@ -146,7 +146,7 @@ async fn chain_source_txs_spending_inputs() {
 		let script = ScriptBuf::from(address.clone());
 
 		let txid = ctx.bitcoind().fund_addr(address, sat(1_000_000)).await;
-		ctx.generate_block(1).await;
+		ctx.generate_blocks(1).await;
 
 		let tx = chain_source.get_tx(txid).await.unwrap()
 			.expect("Transaction should exist");
@@ -178,7 +178,7 @@ async fn chain_source_txs_spending_inputs() {
 	assert!(unconfirmed.is_empty());
 
 	// Results should be unchanged after generating blocks
-	ctx.generate_block(10).await;
+	ctx.generate_blocks(10).await;
 	let (confirmed, unconfirmed) = chain_source.txs_spending_inputs(out_points.clone(), h).await
 		.expect("Should not error");
 	assert!(confirmed.is_empty());
@@ -190,7 +190,7 @@ async fn chain_source_txs_spending_inputs() {
 		bitcoinds[0].fund_addr(&ctx_address, sat(900_000)).await,
 		bitcoinds[1].fund_addr(&ctx_address, sat(900_000)).await,
 	]);
-	ctx.generate_block(1).await;
+	ctx.generate_blocks(1).await;
 	let mut unconfirmed_txids = HashSet::from([
 		bitcoinds[2].fund_addr(&ctx_address, sat(900_000)).await,
 		bitcoinds[3].fund_addr(&ctx_address, sat(900_000)).await,
@@ -245,7 +245,7 @@ async fn chain_source_get_tx() {
 	assert!(matches!(pending_result, Some(_)));
 
 	// Ensure confirmed transactions are returned
-	ctx.generate_block(1).await;
+	ctx.generate_blocks(1).await;
 	let confirmed_result = chain_source.get_tx(pending).await
 		.expect("Confirmed transactions are valid");
 
@@ -281,7 +281,7 @@ async fn chain_source_tx_confirmed() {
 	assert!(matches!(pending_result, None));
 
 	// Ensure confirmed transactions are returned
-	ctx.generate_block(1).await;
+	ctx.generate_blocks(1).await;
 	let confirmed_result = chain_source.tx_confirmed(&pending).await
 		.expect("Confirmed transactions are valid");
 	match confirmed_result {
@@ -314,7 +314,7 @@ async fn chain_source_tx_status() {
 	assert!(matches!(pending_result, TxStatus::Mempool));
 
 	// Ensure confirmed transactions are returned
-	ctx.generate_block(1).await;
+	ctx.generate_blocks(1).await;
 	let confirmed_result = chain_source.tx_status(&pending).await
 		.expect("Confirmed transactions are valid");
 	match confirmed_result {
@@ -366,7 +366,7 @@ async fn chain_source_txout_value() {
 	}
 	
 	// Ensure confirmed transactions are returned
-	ctx.generate_block(1).await;
+	ctx.generate_blocks(1).await;
 	for (i, out_point) in out_points.iter().enumerate() {
 		let amount = chain_source.txout_value(&out_point).await
 			.expect("Unconfirmed transactions are valid");
