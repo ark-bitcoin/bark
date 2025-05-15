@@ -368,24 +368,26 @@ fn init_logging(verbose: bool, quiet: bool, datadir: &Path) -> anyhow::Result<()
 		.level_for("reqwest", log::LevelFilter::Warn)
 		.format(move |out, msg, rec| {
 			let now = chrono::Local::now();
-			// only time, not date
-			let stamp = now.format("%H:%M:%S.%3f");
+			let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
+			let lvl = colors.color(rec.level());
 			if verbose {
 				let module = rec.module_path().expect("no module");
-				if module.starts_with("bark::") {
+				if module.starts_with("bark") {
 					let file = rec.file().expect("our macro provides file");
-					let file = file.strip_prefix("bark/").unwrap_or(file);
+					let file = file.split("bark/src/").last().unwrap();
 					let line = rec.line().expect("our macro provides line");
-					out.finish(format_args!("[{stamp} {: >5} {module} {file}:{line}] {}",
-						colors.color(rec.level()), msg,
+					out.finish(format_args!(
+						"[{stamp} {lvl: >5} {module} {file}:{line}] {msg}",
 					))
 				} else {
-					out.finish(format_args!("[{stamp} {: >5} {module}] {}",
-						colors.color(rec.level()), msg,
+					out.finish(format_args!(
+						"[{stamp} {lvl: >5} {module}] {msg}",
 					))
 				}
 			} else {
-				out.finish(format_args!("[{stamp} {: >5}] {}", colors.color(rec.level()), msg))
+				out.finish(format_args!(
+					"[{stamp} {lvl: >5}] {msg}",
+				))
 			}
 		});
 
