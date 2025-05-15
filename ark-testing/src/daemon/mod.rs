@@ -207,41 +207,21 @@ impl<T> Daemon<T>
 		let mut state_lock = self.daemon_state.lock().await;
 		*state_lock = DaemonState::Stopping;
 
-		match self.child.lock().await.take() {
-			Some(mut child) => if let Some(pid) = child.id() {
-				// Send SIGTERM
-				let pid = Pid::from_raw(pid as i32);
-				signal::kill(pid, signal::Signal::SIGTERM).expect("sending SIGTERM failed");
-				match child.wait().try_wait(30_000).await {
-					Ok(res) => {
-						let _ = res.context("error after sending SIGTERM")?;
-					},
-					Err(_elapsed) => {
-						error!("daemon {} not shutting down on SIGTERM, killing...", self.name);
-						child.kill().try_wait(30_000).await?
-							.context("error killing child")?;
-					},
-				}
-			} else {
-				warn!("Can't send SIGTERM because daemon {} has no pid.", self.name);
-				child.kill().try_wait(30_000).await?
-					.context("error killing child")?;
-			},
-			None => bail!("Failed to stop daemon because there is no child. Was it running?")
-		};
+		let mut child_lock = self.child.lock().await;
+		let child = child_lock.as_mut().expect("daemon not started yet");
 
+		if let Some(pid) = child.id() {
+			// Send SIGTERM
+			let pid = Pid::from_raw(pid as i32);
+			signal::kill(pid, signal::Signal::SIGTERM).expect("sending SIGTERM failed");
+		}
+
+		child.wait().try_wait(30_000).await
+			.expect("waiting for daemon to shutdown timed out")
+			.expect("error waiting for daemon to shutdown");
 
 		info!("Stopped {}", self.name);
 		*state_lock = DaemonState::Stopped;
-		Ok(())
-	}
-
-	pub async fn join(&self) -> anyhow::Result<()> {
-		match &mut *self.child.lock().await {
-			Some(ref mut child) => child.wait().await?,
-			None => bail!("Failed to wait for daemon to complete. Was it running?")
-		};
-
 		Ok(())
 	}
 
