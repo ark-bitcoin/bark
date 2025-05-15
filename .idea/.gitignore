@@ -9,4 +9,3 @@
 
 *.xml
 *.iml
-!/runConfigurations/*.xml
