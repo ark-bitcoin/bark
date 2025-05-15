@@ -44,6 +44,21 @@ async fn bark_ark_info() {
 }
 
 #[tokio::test]
+async fn bark_vtxo_pubkey_changes() {
+	let ctx = TestContext::new("bark/bark_vtxo_pubkey_changes").await;
+	let aspd = ctx.new_aspd("aspd", None).await;
+	let bark1 = ctx.new_bark("bark1", &aspd).await;
+
+	let pk1 = bark1.vtxo_pubkey().await;
+	let pk2 = bark1.vtxo_pubkey().await;
+
+	assert_ne!(pk1, pk2);
+	assert_eq!(pk1, bark1.vtxo_pubkey_at_idx(0).await);
+	assert_eq!(pk2, bark1.vtxo_pubkey_at_idx(1).await);
+}
+
+
+#[tokio::test]
 async fn bark_create_is_atomic() {
 	let ctx = TestContext::new("bark/bark_create_is_atomic").await;
 	let aspd = ctx.new_aspd("aspd", None).await;

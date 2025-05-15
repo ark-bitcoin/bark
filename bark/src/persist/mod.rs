@@ -5,7 +5,7 @@ use bdk_wallet::ChangeSet;
 use bitcoin::{secp256k1::PublicKey, Amount};
 use bitcoin_ext::BlockHeight;
 
-use crate::{exit::ExitIndex, Config, Pagination, WalletProperties, vtxo_state::VtxoState, MovementArgs, Movement};
+use crate::{exit::ExitIndex, vtxo_state::VtxoState, Config, KeychainKind, Movement, MovementArgs, Pagination, WalletProperties};
 
 
 pub trait BarkPersister: Send + Sync + 'static {
@@ -47,11 +47,11 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool>;
 
 	/// Store a newly revealed index
-	fn store_vtxo_key_index(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
+	fn store_vtxo_key(&self, keychain: KeychainKind, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
 	/// Get last revealed index
-	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>>;
+	fn get_last_vtxo_key_index(&self, keychain: KeychainKind) -> anyhow::Result<Option<u32>>;
 	/// Get index of vtxo key
-	fn get_vtxo_key_index(&self, vtxo: &Vtxo) -> anyhow::Result<u32>;
+	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<(KeychainKind, u32)>;
 	/// Checks if provided public key exists in the database,
 	/// meaning that it is owned by the wallet
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;

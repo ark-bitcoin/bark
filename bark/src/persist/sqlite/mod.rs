@@ -12,7 +12,7 @@ use bitcoin_ext::BlockHeight;
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
-use crate::{Config, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::ExitIndex;
 use crate::movement::{Movement, MovementArgs};
 use crate::persist::BarkPersister;
@@ -167,14 +167,14 @@ impl BarkPersister for SqliteClient {
 		result
 	}
 
-	fn store_vtxo_key_index(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
+	fn store_vtxo_key(&self, keychain: KeychainKind, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_vtxo_key_index(&conn, index, public_key)
+		query::store_vtxo_key(&conn, keychain, index, public_key)
 	}
 
-	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
+	fn get_last_vtxo_key_index(&self, keychain: KeychainKind) -> anyhow::Result<Option<u32>> {
 		let conn = self.connect()?;
-		query::get_last_vtxo_key_index(&conn)
+		query::get_last_vtxo_key_index(&conn, keychain)
 	}
 
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool> {
@@ -182,17 +182,9 @@ impl BarkPersister for SqliteClient {
 		query::check_vtxo_key_exists(&conn, public_key)
 	}
 
-	fn get_vtxo_key_index(&self, vtxo: &Vtxo) -> anyhow::Result<u32> {
+	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<(KeychainKind, u32)> {
 		let conn = self.connect()?;
-		let key_index = query::get_vtxo_key_index(&conn, vtxo)?;
-
-		// NB: change arkoor already implement VTXO but not receive ones
-		// TODO: implement key derivation for arkoors
-		if let Vtxo::Arkoor(_) = vtxo {
-			Ok(key_index.unwrap_or(0))
-		} else {
-			key_index.context("vtxo not found in the db")
-		}
+		query::get_vtxo_key(&conn, vtxo)?.context("vtxo not found in the db")
 	}
 
 	/// Store the ongoing exit process.
