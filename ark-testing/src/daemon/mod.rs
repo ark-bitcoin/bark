@@ -198,6 +198,11 @@ impl<T> Daemon<T>
 	}
 
 	pub async fn stop(&self) -> anyhow::Result<()> {
+		// Remove this sleep once
+		// https://codeberg.org/ark-bitcoin/bark/issues/641
+		// is resolved
+		tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
 		trace!("Stopping {}", self.name);
 		let mut state_lock = self.daemon_state.lock().await;
 		*state_lock = DaemonState::Stopping;
