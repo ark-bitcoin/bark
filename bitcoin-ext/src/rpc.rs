@@ -325,6 +325,40 @@ pub trait BitcoinRpcExt: RpcApi {
 		let hash = self.get_block_hash(height)?;
 		Ok(BlockRef { height: height as BlockHeight, hash })
 	}
+
+	fn tx_status(&self, txid: &bitcoin::Txid) -> Result<TxStatus, Error> {
+		match self.custom_get_raw_transaction_info(txid, None)? {
+			Some(tx) => match tx.blockhash {
+				Some(hash) => {
+					let block = self.get_block_header_info(&hash)?;
+					if block.confirmations > 0 {
+						Ok(TxStatus::Confirmed(BlockRef { height: block.height as BlockHeight, hash: block.hash}))
+					} else {
+						Ok(TxStatus::Mempool)
+					}
+				},
+				None => Ok(TxStatus::Mempool),
+			},
+			None => Ok(TxStatus::NotFound)
+		}
+	}
 }
 
 impl <T: RpcApi> BitcoinRpcExt for T {}
+
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TxStatus {
+	Confirmed(BlockRef),
+	Mempool,
+	NotFound,
+}
+
+impl TxStatus {
+	pub fn confirmed_height(&self) -> Option<BlockHeight> {
+		match self {
+			TxStatus::Confirmed(block_ref) => Some(block_ref.height),
+			_ => None,
+		}
+	}
+}
