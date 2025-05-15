@@ -38,6 +38,7 @@ pub enum TxStatus {
 }
 
 impl TxStatus {
+
 	/// Whether we have seen this tx in either the mempool or the chain.
 	pub fn seen(&self) -> bool {
 		match self {
@@ -71,6 +72,16 @@ impl TxStatus {
 	}
 }
 
+impl From<bitcoin_ext::rpc::TxStatus> for TxStatus {
+	fn from(value: bitcoin_ext::rpc::TxStatus) -> Self {
+		match value {
+			bitcoin_ext::rpc::TxStatus::Confirmed(block_ref) => TxStatus::ConfirmedIn(block_ref),
+			bitcoin_ext::rpc::TxStatus::Mempool => TxStatus::MempoolSince(chrono::Local::now()),
+			bitcoin_ext::rpc::TxStatus::NotFound => TxStatus::Unseen,
+		}
+	}
+}
+
 /// Shorthand for an [Arc] to an [IndexedTx].
 pub type Tx = Arc<IndexedTx>;
 
@@ -86,7 +97,7 @@ pub struct IndexedTx {
 	pub incomplete: bool,
 	//TODO(stevenroose) if we persist the txindex, we can do away with this Option
 	// and the complications it brings for updating the status
-	status: Mutex<Option<TxStatus>>,
+	status: Mutex<TxStatus>,
 }
 //TODO(stevenroose) consider adding some stats about confirmation times
 // like the time it got first broadcast and then we can log how long it took to be confirmed
@@ -97,7 +108,7 @@ impl IndexedTx {
 			IndexedTx {
 				txid, tx,
 				incomplete: false,
-				status: Mutex::new(Some(status)),
+				status: Mutex::new(status),
 			}
 		)
 	}
@@ -107,17 +118,7 @@ impl IndexedTx {
 			IndexedTx {
 				txid, tx,
 				incomplete: true,
-				status: Mutex::new(Some(TxStatus::Unseen)),
-			}
-		)
-	}
-
-	fn new(txid: Txid, tx: Transaction) -> Tx {
-		Arc::new(
-			IndexedTx {
-				txid, tx,
-				incomplete: false,
-				status: Mutex::new(None),
+				status: Mutex::new(TxStatus::Unseen),
 			}
 		)
 	}
@@ -125,13 +126,7 @@ impl IndexedTx {
 	/// Check the transaction's status.
 	pub async fn status(&self) -> TxStatus {
 		//TODO(stevenroose) we can do await with this wait once we persist the txindex
-		loop {
-			if let Some(s) = *self.status.lock().await {
-				return s;
-			}
-			trace!("waiting for tx status of {}...", self.txid);
-			tokio::time::sleep(Duration::from_millis(100)).await;
-		}
+		self.status.lock().await.clone()
 	}
 
 	/// Whether we have seen this tx in either the mempool or the chain.
@@ -212,30 +207,36 @@ impl TxIndex {
 	}
 
 	/// Get a tx from the index or insert when not present.
-	pub async fn get_or_insert(&self, txid: &Txid, register: impl FnOnce() -> Transaction) -> Tx {
+	pub async fn get_or_insert(&self, txid: &Txid, register: impl FnOnce() -> (Transaction, TxStatus))-> Tx {
 		let tx_map_read_lock = self.tx_map.read().await;
 		if let Some(tx) = tx_map_read_lock.get(txid) {
 			tx.clone()
 		} else {
 			drop(tx_map_read_lock);
-			let tx = register();
-			let ret = IndexedTx::new(*txid, tx);
+			let (tx, status) = register();
+			let ret = IndexedTx::new_as(*txid, tx, status);
 			self.tx_map.write().await.insert(*txid, ret.clone());
 			ret
 		}
 	}
 
-	/// Register a new tx in the index and return the tx handle.
-	pub async fn register(&self, tx: Transaction) -> Tx {
-		let txid = tx.compute_txid();
-		let mut tx_map = self.tx_map.write().await;
-		if let Some(tx) = tx_map.get(&txid) {
-			tx.clone()
+	pub async fn get_or_insert_with_bitcoind(
+		&self,
+		txid: &Txid,
+		register: impl FnOnce() -> Transaction,
+		bitcoind: &BitcoinRpcClient
+	) -> anyhow::Result<Tx> {
+		let tx_map_read_lock = self.tx_map.read().await;
+		if let Some(tx) = tx_map_read_lock.get(txid) {
+			Ok(tx.clone())
 		} else {
-			let ret = IndexedTx::new(txid, tx);
-			tx_map.insert(txid, ret.clone());
-			ret
+			drop(tx_map_read_lock);
+			let status = bitcoind.tx_status(txid)?;
+			let ret = IndexedTx::new_as(*txid, register(), status.into());
+			self.tx_map.write().await.insert(*txid, ret.clone());
+			Ok(ret)
 		}
+
 	}
 
 	/// Register a new tx in the index and return the tx handle.
@@ -258,6 +259,19 @@ impl TxIndex {
 	}
 
 	/// Register a new tx in the index and return the tx handle.
+	/// The status will be requested from bitcoind before adding it to the index
+	pub async fn register_with_bitcoind(&self, tx: Transaction, bitcoind: &BitcoinRpcClient) -> anyhow::Result<Tx> {
+		let txid = tx.compute_txid();
+		let status = match bitcoind.tx_status(&txid)? {
+			bitcoin_ext::rpc::TxStatus::Confirmed(block_ref)  => TxStatus::ConfirmedIn(block_ref),
+			bitcoin_ext::rpc::TxStatus::Mempool => TxStatus::MempoolSince(chrono::Local::now()),
+			bitcoin_ext::rpc::TxStatus::NotFound => TxStatus::Unseen,
+		};
+
+		Ok(self.register_as(tx, status).await)
+	}
+
+	/// Register a new tx in the index and return the tx handle.
 	pub async fn register_incomplete(&self, tx: Transaction) -> Tx {
 		let txid = tx.compute_txid();
 		let mut tx_map = self.tx_map.write().await;
@@ -270,22 +284,13 @@ impl TxIndex {
 		}
 	}
 
-	/// Register a batch of transactions at once.
-	pub async fn register_batch(&self, txs: impl IntoIterator<Item = Transaction>) {
-		let mut tx_map = self.tx_map.write().await;
-		for tx in txs {
-			let txid = tx.compute_txid();
-			tx_map.entry(txid).or_insert_with(|| IndexedTx::new(txid, tx));
-		}
-	}
-
 	/// Unregister a transaction
 	pub async fn unregister(&self, tx: impl TxOrTxid) {
 		let mut tx_map = self.tx_map.write().await;
 		let tx = tx_map.remove(&tx.txid());
 		drop(tx_map);
 		if let Some(tx) = tx {
-			*tx.status.lock().await = Some(TxStatus::Unregistered);
+			*tx.status.lock().await = TxStatus::Unregistered;
 		}
 	}
 
@@ -301,7 +306,7 @@ impl TxIndex {
 		}
 		drop(tx_map);
 		for tx in unregister {
-			*tx.status.lock().await = Some(TxStatus::Unregistered);
+			*tx.status.lock().await = TxStatus::Unregistered;
 		}
 	}
 
@@ -356,19 +361,15 @@ impl TxIndexProcess {
 									hash: h.hash,
 								};
 								let new = TxStatus::ConfirmedIn(block_index);
-								*tx.status.lock().await = Some(new);
+								*tx.status.lock().await = new;
 							}
 							Err(e) => warn!("Failed to fetch block header of txinfo hash: {}", e),
 						}
 					} else {
-						// Still in mempool.
-						match &mut *tx.status.lock().await {
-							v @ None => { *v = Some(TxStatus::MempoolSince(Local::now())) },
-							Some(s) => s.update_mempool(Local::now()),
-						}
+						tx.status.lock().await.update_mempool(Local::now())
 					}
 				},
-				Ok(None) => *tx.status.lock().await = Some(TxStatus::Unseen),
+				Ok(None) => *tx.status.lock().await = TxStatus::Unseen,
 				Err(e) => warn!("bitcoin error: {}", e),
 			}
 		}
