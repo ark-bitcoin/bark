@@ -242,7 +242,7 @@ impl Exit {
 
 				match self.index.exit_tx_status.entry(txid).or_default() {
 					TxStatus::ConfirmedIn(_) => {
-						if let Ok(None) = self.chain_source.tx_confirmed(txid).await {
+						if let Ok(None) = self.chain_source.tx_confirmed(&txid).await {
 							debug!("Chain has been reorged, tx {} is back unconfirmed", txid);
 							self.index.exit_tx_status.insert(txid, TxStatus::Pending);
 						}
@@ -250,7 +250,7 @@ impl Exit {
 					TxStatus::BroadcastWithCpfp(cpfp) => {
 						// NB we don't care if our cpfp tx confirmed or
 						// if it confirmed through other means
-						if let Ok(Some(h)) = self.chain_source.tx_confirmed(txid).await {
+						if let Ok(Some(h)) = self.chain_source.tx_confirmed(&txid).await {
 							debug!("Exit tx {} is confirmed after cpfp", txid);
 							self.index.exit_tx_status.insert(txid, TxStatus::ConfirmedIn(h));
 							continue 'tx;
@@ -266,7 +266,7 @@ impl Exit {
 					},
 					TxStatus::Pending => {
 						// First check if it's already confirmed.
-						if let Ok(Some(h)) = self.chain_source.tx_confirmed(txid).await {
+						if let Ok(Some(h)) = self.chain_source.tx_confirmed(&txid).await {
 							debug!("Exit tx {} is confirmed before cpfp", txid);
 							self.index.exit_tx_status.insert(txid, TxStatus::ConfirmedIn(h));
 							continue 'tx;
@@ -274,7 +274,7 @@ impl Exit {
 
 						// Check if all the inputs are confirmed
 						for inp in &tx.input {
-							let res = self.chain_source.tx_confirmed(inp.previous_output.txid).await;
+							let res = self.chain_source.tx_confirmed(&inp.previous_output.txid).await;
 							if res.is_err() || res.unwrap().is_none() {
 								trace!("Can't include tx {} yet because input {} is not yet confirmed",
 									txid, inp.previous_output,
