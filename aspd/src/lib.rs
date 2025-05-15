@@ -79,7 +79,6 @@ pub struct RoundHandle {
 pub struct Server {
 	config: Config,
 	db: database::Db,
-	master_xpriv: bip32::Xpriv,
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<Mutex<PersistedWallet>>,
@@ -259,7 +258,6 @@ impl Server {
 			config: cfg.clone(),
 			db,
 			asp_key,
-			master_xpriv,
 			bitcoind,
 			rtmgr,
 			txindex,

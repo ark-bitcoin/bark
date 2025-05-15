@@ -81,7 +81,6 @@ pub struct ClnManager {
 	/// payment request that fail before the hit the sendpay stream.
 	//TODO(stevenroose) consider changing this to hold some update info
 	payment_update_tx: broadcast::Sender<sha256::Hash>,
-	telemetry_metrics: TelemetryMetrics,
 }
 
 impl ClnManager {
@@ -113,7 +112,6 @@ impl ClnManager {
 				uri: conf.uri.clone(),
 				config: conf.clone(),
 				state: ClnNodeState::Offline,
-				telemetry_metrics: telemetry_metrics.clone(),
 			})).collect(),
 			node_by_id: HashMap::with_capacity(config.cln_array.len()),
 			telemetry_metrics: telemetry_metrics.clone(),
@@ -126,7 +124,6 @@ impl ClnManager {
 			payment_tx,
 			payment_update_tx,
 			invoice_poll_interval: config.invoice_poll_interval,
-			telemetry_metrics,
 		})
 	}
 
@@ -167,7 +164,7 @@ impl ClnManager {
 		wait: bool,
 	) -> anyhow::Result<[u8; 32]> {
 		let update_rx = self.payment_update_tx.subscribe();
-		
+
 		self.check_bolt11_internal(update_rx, payment_hash, wait, true).await
 	}
 
@@ -322,7 +319,6 @@ pub struct ClnNodeInfo {
 	uri: Uri,
 	config: config::Lightningd,
 	state: ClnNodeState,
-	telemetry_metrics: TelemetryMetrics,
 }
 
 impl ClnNodeInfo {
@@ -354,6 +350,7 @@ impl ClnNodeInfo {
 		payment_update_tx: &broadcast::Sender<sha256::Hash>,
 		rtmgr: &RuntimeManager,
 		waker: &Arc<Notify>,
+		telemetry_metrics: &TelemetryMetrics,
 	) -> anyhow::Result<ClnNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
 
@@ -383,12 +380,12 @@ impl ClnNodeInfo {
 			id,
 			rpc.clone(),
 			monitor_config.clone(),
-			self.telemetry_metrics.clone(),
+			telemetry_metrics.clone(),
 		).await.context("failed to start ClnNodeMonitor")?;
 
 		let online = ClnNodeOnlineState { id, public_key, rpc, monitor: Some(monitor) };
 		let new_state = ClnNodeState::Online(online);
-		self.telemetry_metrics.set_lightning_node_state(
+		telemetry_metrics.set_lightning_node_state(
 			self.uri.clone(), Some(id), Some(public_key), new_state.kind(),
 		);
 		self.set_state(new_state);
@@ -473,6 +470,7 @@ impl ClnManagerProcess {
 						&self.payment_update_tx,
 						&self.rtmgr,
 						&self.waker,
+						&self.telemetry_metrics,
 					).await {
 						Ok(id) => {
 							info!("Successfully connected to CLN node at {}", uri);
@@ -705,9 +703,9 @@ impl database::Db {
 		self.store_lightning_invoice_status(
 			li.lightning_invoice_id, status, final_amount_msat, preimage, li.updated_at,
 		).await?;
-		
+
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
-		
+
 		telemetry_metrics.add_lightning_payment(
 			attempt.lightning_node_id,
 			amount_msat,
