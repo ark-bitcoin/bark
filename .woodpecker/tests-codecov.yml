@@ -17,7 +17,9 @@ steps:
   - name: check-commits
     image: registry.2nd.dev/build:17
     commands:
+      - git log --oneline | head -n 1
       - just check-commits
+      - git log --oneline | head -n 1
 
   - name: test-unit
     depends_on: check-commits
