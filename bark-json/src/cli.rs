@@ -40,14 +40,6 @@ pub struct Balance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct ExitStatus {
-	/// Whether or not all txs have been confirmed
-	pub done: bool,
-	/// Height at which all exit outputs will be spendable
-	pub height: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ExitProgressResponse {
 	/// Status of each pending exit transaction
 	pub exits: Vec<ExitProgressStatus>,

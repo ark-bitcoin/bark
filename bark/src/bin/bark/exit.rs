@@ -2,14 +2,13 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap;
+use log::{warn, info};
 
 use ark::VtxoId;
 use bark::Wallet;
 use bark::vtxo_selection::VtxoFilter;
-use log::{warn, info};
 
 use crate::util::output_json;
-
 
 #[derive(clap::Subcommand)]
 pub enum ExitCommand {
@@ -24,7 +23,7 @@ pub enum ExitCommand {
 #[derive(clap::Args)]
 pub struct StartExitOpts{
 	/// A list of VtxoId's
-	#[arg(long)]
+	#[arg(long = "vtxo", value_name = "VTXO_ID")]
 	vtxos: Vec<VtxoId>,
 	/// To exit all vtxo's
 	#[arg(long)]
@@ -57,8 +56,8 @@ pub async fn start_exit(
 	args: StartExitOpts,
 	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
-	if !args.all && args.vtxos.len() == 0 {
-		bail!("No exit to start. Use either the --vtxos or --all flag.")
+	if !args.all && args.vtxos.is_empty() {
+		bail!("No exit to start. Use either the --vtxo or --all flag.")
 	}
 	info!("Starting onchain sync");
 	if let Err(err) = wallet.onchain.sync().await {
@@ -71,19 +70,14 @@ pub async fn start_exit(
 	info!("Starting exit");
 
 	if args.all {
-		wallet.exit.start_exit_for_entire_wallet(
-			&mut wallet.onchain
-		).await
+		wallet.exit.start_exit_for_entire_wallet(&wallet.onchain).await
 	} else {
 		let vtxo_ids = args.vtxos;
 		let filter = VtxoFilter::new(wallet).include_many(vtxo_ids);
 		let vtxos = wallet.vtxos_with(filter)
 			.context("Error parsing vtxos")?;
 
-		wallet.exit.start_exit_for_vtxos(
-			&vtxos,
-			&mut wallet.onchain,
-		).await
+		wallet.exit.start_exit_for_vtxos(&vtxos, &wallet.onchain).await
 	}
 }
 
@@ -91,48 +85,38 @@ pub async fn progress_exit(
 	args: ProgressExitOpts,
 	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
-	if args.wait {
+	let exit_status = if args.wait {
 		loop {
 			let exit_status = progress_once(wallet).await?;
-			output_json(&exit_status);
-
 			if exit_status.done {
-				return Ok(())
+				break exit_status
 			} else {
 				info!("Sleeping for a minute, then will continue...");
 				tokio::time::sleep(Duration::from_secs(60)).await;
 			}
 		}
 	} else {
-		let exit_status = progress_once(wallet).await?;
-		output_json(&exit_status)
+		progress_once(wallet).await?
 	};
-
+	output_json(&exit_status);
 	Ok(())
 }
 
 async fn progress_once(
 	wallet: &mut Wallet,
-) -> anyhow::Result<bark_json::cli::ExitStatus> {
+) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
 	info!("Starting onchain sync");
 	if let Err(error) = wallet.onchain.sync().await {
 		warn!("Failed to perform onchain sync: {}", error)
 	}
-	info!("Starting sync exit");
-	if let Err(error) = wallet.sync_exits().await {
-		warn!("Failed to sync exits: {}", error);
-	}
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-
-	wallet.exit.progress_exit(&mut wallet.onchain).await
+	let result = wallet.exit.progress_exit(&mut wallet.onchain).await
 		.context("error making progress on exit process")?;
 
-	let done = wallet.exit.list_pending_exits().await?.is_empty();
-	let height = wallet.exit.all_spendable_at_height().await;
-
-	Ok(
-		bark_json::cli::ExitStatus { done, height }
-	)
+	let done = !wallet.exit.has_pending_exits();
+	let spendable_height = wallet.exit.all_spendable_at_height().await;
+	let exits = result.unwrap_or_default();
+	Ok(bark_json::cli::ExitProgressResponse { done, spendable_height, exits, })
 }

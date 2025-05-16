@@ -11,7 +11,7 @@ use crate::{
 	Config, KeychainKind, Movement, MovementArgs, OffchainOnboard, OffchainPayment, Pagination,
 	WalletProperties,
 };
-use crate::exit::ExitIndex;
+use crate::exit::vtxo::ExitEntry;
 use crate::vtxo_state::VtxoState;
 
 pub trait BarkPersister: Send + Sync + 'static {
@@ -62,10 +62,12 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Fetch an offchain onboard by payment hash
 	fn fetch_offchain_onboard_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>>;
 
-	/// Store the ongoing exit process.
-	fn store_exit(&self, exit: &ExitIndex) -> anyhow::Result<()>;
-	/// Fetch an ongoing exit process.
-	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>>;
+	/// Store the VTXOs currently being exited
+	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()>;
+	/// Removes the given VTXO from the database
+	fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()>;
+	/// Gets the VTXOs currently being exited
+	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<ExitEntry>>;
 	/// Stores the given child transaction for future retrieval
 	fn store_exit_child_tx(
 		&self,

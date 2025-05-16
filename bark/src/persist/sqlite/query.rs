@@ -11,12 +11,13 @@ use rusqlite::{self, named_params, Connection, ToSql};
 
 use ark::util::{Decodable, Encodable};
 use bitcoin_ext::{BlockHeight, BlockRef};
+use json::exit::ExitState;
 
 use crate::{
-	Config, KeychainKind, OffchainOnboard, OffchainPayment,  Pagination, Vtxo, VtxoId, VtxoState,
+	Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
 };
-use crate::exit::ExitIndex;
+use crate::exit::vtxo::ExitEntry;
 use crate::movement::Movement;
 
 use super::convert::{row_to_movement, row_to_offchain_onboard};
@@ -465,29 +466,47 @@ pub fn fetch_offchain_onboard_by_payment_hash(conn: &Connection, payment_hash: &
 	Ok(rows.next()?.map(|row| row_to_offchain_onboard(&row)).transpose()?)
 }
 
-pub fn store_exit(tx: &rusqlite::Transaction, exit: &ExitIndex) -> anyhow::Result<()> {
-	let mut buf = Vec::new();
-	ciborium::into_writer(exit, &mut buf)?;
+pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &ExitEntry) -> anyhow::Result<()> {
+	let query = r"
+		INSERT INTO bark_exit_states (vtxo_id, state, history)
+		VALUES (?1, ?2, ?3)
+		ON CONFLICT (vtxo_id) DO UPDATE
+		SET
+			state = EXCLUDED.state,
+			history = EXCLUDED.history;
+	";
 
-	// Exits are somehwat large, we only want one in the database
-	// That's why we delete the old one and add the new one later
-	tx.execute("DELETE FROM bark_exit", [])?;
-	tx.execute("INSERT INTO bark_exit (exit) VALUES (?1)", [buf])?;
+	// We can't use JSONB with rusqlite, so we make do with strings
+	let id = exit.vtxo_id.to_string();
+	let state = serde_json::to_string(&exit.state)
+		.map_err(|e| anyhow::format_err!("Exit VTXO {} state can't be serialized: {}", id, e))?;
+	let history = serde_json::to_string(&exit.history)
+		.map_err(|e| anyhow::format_err!("Exit VTXO {} history can't be serialized: {}", id, e))?;
+
+	tx.execute(query, (id, state, history))?;
 	Ok(())
 }
 
-pub fn fetch_exit(conn: &Connection) -> anyhow::Result<Option<ExitIndex>> {
-	let mut statement = conn.prepare("SELECT exit FROM bark_exit;")?;
-	let mut rows = statement.query([])?;
+pub fn remove_exit_vtxo_entry(tx: &rusqlite::Transaction, id: &VtxoId) -> anyhow::Result<()> {
+	let query = "DELETE FROM bark_exit_states WHERE vtxo_id = ?1;";
+	tx.execute(query, [id.to_string()])?;
 
-	if let Some(row) = rows.next()? {
-		let raw_exit : Vec<u8> = row.get("exit")?;
-		let exit: ExitIndex = ciborium::from_reader(&raw_exit[..])?;
-		Ok(Some(exit))
+	Ok(())
+}
+
+pub fn get_exit_vtxo_entries(conn: &Connection) -> anyhow::Result<Vec<ExitEntry>> {
+	let mut statement = conn.prepare("SELECT vtxo_id, state, history FROM bark_exit_states;")?;
+	let mut rows = statement.query([])?;
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		let vtxo_id = VtxoId::from_str(&row.get::<usize, String>(0)?)?;
+		let state = serde_json::from_str::<ExitState>(&row.get::<usize, String>(1)?)?;
+		let history = serde_json::from_str::<Vec<ExitState>>(&row.get::<usize, String>(2)?)?;
+
+		result.push(ExitEntry { vtxo_id, state, history });
 	}
-	else {
-		Ok(None)
-	}
+
+	Ok(result)
 }
 
 pub fn store_exit_child_tx(
