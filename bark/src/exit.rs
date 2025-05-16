@@ -400,7 +400,7 @@ impl Exit {
 			.min();
 
 		if let Some(lowest_confirm_height) = lowest_confirm_height {
-			let (tx_by_outpoint, unconfirmed_tx_by_outpoint) = self.chain_source.txs_spending_inputs(
+			let txs_by_outpoint = self.chain_source.txs_spending_inputs(
 				vtxos.iter().map(|v| v.point()).collect::<Vec<_>>(),
 				lowest_confirm_height
 			).await?;
@@ -408,15 +408,13 @@ impl Exit {
 			for vtxo in vtxos {
 				let point = vtxo.point();
 
-				// Tracking output on chain
-				if let Some((height, _txid)) = tx_by_outpoint.get(&point) {
-					self.index.exit_output_status.insert(point, OutputStatus::ConfirmedIn(*height));
-					continue
-				}
-
-				// Tracking output in mempool
-				if let Some(txid) = unconfirmed_tx_by_outpoint.get(&point) {
-					self.index.exit_output_status.insert(point, OutputStatus::SpentIn(*txid));
+				// Tracking output spends
+				if let Some((txid, status)) = txs_by_outpoint.get(&point) {
+					if let Some(b) = status.confirmed_in() {
+						self.index.exit_output_status.insert(point, OutputStatus::ConfirmedIn(b.height));
+					} else {
+						self.index.exit_output_status.insert(point, OutputStatus::SpentIn(*txid));
+					}
 					continue
 				}
 
