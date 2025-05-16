@@ -14,20 +14,27 @@ clone:
       lfs: false
 
 steps:
-  - name: tar-and-print
+  - name: tar-and-print-test-data
     image: registry.2nd.dev/build:17
-    failure: ignore
+    volumes:
+      - /data:/host/data
+    commands:
+      - tar -czf "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
+      - mv "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
+      - echo "Test data tar.gz     -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
+      - echo "Test data URL        -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
+
+  - name: tar-and-print-codecov-data
+    when:
+      - evaluate: CI_CODECOV_PIPELINE == "true"
+    image: registry.2nd.dev/build:17
     volumes:
       - /data:/host/data
     commands:
       - tar -czf "/host/data/codecov/${CI_COMMIT_SHA}.tar.gz" "/host/data/codecov/${CI_COMMIT_SHA}/"
       - mv "/host/data/codecov/${CI_COMMIT_SHA}.tar.gz" "/host/data/codecov/${CI_COMMIT_SHA}/"
-      - tar -czf "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
-      - mv "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
       - echo "Code Coverage tar.gz -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
       - echo "Code Coverage URL    -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
-      - echo "Test data tar.gz     -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
-      - echo "Test data URL        -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
 
   - name: generate-rustdocs
     when:
