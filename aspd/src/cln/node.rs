@@ -171,7 +171,7 @@ impl ClnNodeMonitorProcess {
 
 						let status = LightningPaymentStatus::Submitted;
 						let ok = self.db.verify_and_update_invoice(
-							&payment_hash, None, &attempt, status, None, None,
+							&payment_hash, &attempt, status, None, None, None,
 							self.telemetry_metrics.clone(),
 						).await?;
 						if ok {
@@ -191,7 +191,7 @@ impl ClnNodeMonitorProcess {
 
 					let status = LightningPaymentStatus::Failed;
 					let ok = self.db.verify_and_update_invoice(
-						&payment_hash, error_string, &attempt, status, None, None,
+						&payment_hash, &attempt, status, error_string,  None, None,
 						self.telemetry_metrics.clone(),
 					).await?;
 					if ok {
@@ -209,7 +209,7 @@ impl ClnNodeMonitorProcess {
 
 					let status = LightningPaymentStatus::Succeeded;
 					let ok = self.db.verify_and_update_invoice(
-						&payment_hash, None, &attempt, status, Some(final_msat), Some(&preimage),
+						&payment_hash, &attempt, status, None, Some(final_msat), Some(&preimage),
 						self.telemetry_metrics.clone(),
 					).await?;
 					if ok {
@@ -255,11 +255,8 @@ impl ClnNodeMonitorProcess {
 		let open_attempts = self.db.get_open_lightning_payment_attempts(
 			self.node_id,
 		).await?;
-		let mismatching_attempts = self.db.get_mismatching_lightning_payment_attempts(
-			self.node_id,
-		).await?;
 
-		for attempt in open_attempts.into_iter().chain(mismatching_attempts) {
+		for attempt in open_attempts.into_iter() {
 			if attempt.created_at > Utc::now() - self.config.invoice_recheck_delay {
 				trace!("Lightning invoice ({}): Skipping since it was just created.",
 					attempt.lightning_invoice_id,
@@ -314,13 +311,10 @@ impl ClnNodeMonitorProcess {
 					LightningPaymentStatus::Requested
 						| LightningPaymentStatus::Submitted =>
 					{
-						self.db.store_lightning_payment_attempt_status(
-							attempt.lightning_payment_attempt_id,
+						self.db.update_lightning_payment_attempt_status(
+							&attempt,
 							LightningPaymentStatus::Failed,
-							// we don't know anything, setting None preserves the
-							// error message we might have gotten at submission
 							None,
-							attempt.updated_at,
 						).await?;
 
 						self.telemetry_metrics.add_lightning_payment(
@@ -328,29 +322,6 @@ impl ClnNodeMonitorProcess {
 							attempt.amount_msat,
 							LightningPaymentStatus::Failed,
 						);
-
-						updated = true;
-					},
-				}
-
-				match invoice.payment_status {
-					LightningPaymentStatus::Failed => {},
-					LightningPaymentStatus::Succeeded => {
-						error!("Lightning invoice ({}): Payment succeeded but nothing found \
-							in CLN for payment hash {}",
-							invoice.lightning_invoice_id, invoice.payment_hash,
-						);
-					},
-					LightningPaymentStatus::Requested
-						| LightningPaymentStatus::Submitted =>
-					{
-						self.db.store_lightning_invoice_status(
-							invoice.lightning_invoice_id,
-							LightningPaymentStatus::Failed,
-							None,
-							None,
-							invoice.updated_at,
-						).await?;
 
 						updated = true;
 					},
@@ -391,39 +362,15 @@ impl ClnNodeMonitorProcess {
 							invoice.payment_hash,
 						);
 					} else {
-						self.db.store_lightning_payment_attempt_status(
-							attempt.lightning_payment_attempt_id,
+						let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
+						self.db.verify_and_update_invoice(
+							&invoice.payment_hash,
+							&attempt,
 							desired_status,
 							error_string,
-							attempt.updated_at,
-						).await?;
-
-						self.telemetry_metrics.add_lightning_payment(
-							attempt.lightning_node_id,
-							attempt.amount_msat,
-							desired_status,
-						);
-
-						updated = true;
-					}
-				}
-
-				if invoice.payment_status != desired_status {
-					if invoice.payment_status.is_final() {
-						error!("Lightning invoice ({}): flagged {} when it actually {} for \
-							payment hash {}.",
-							invoice.lightning_invoice_id, invoice.payment_status, desired_status,
-							invoice.payment_hash,
-						);
-					} else {
-						let preimage = latest.preimage
-							.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
-						self.db.store_lightning_invoice_status(
-							invoice.lightning_invoice_id,
-							desired_status,
-							latest.amount_sent_msat.map(|a| a.msat),
+							None,
 							preimage.as_ref(),
-							invoice.updated_at,
+							self.telemetry_metrics.clone(),
 						).await?;
 
 						updated = true;

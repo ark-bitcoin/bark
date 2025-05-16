@@ -185,7 +185,7 @@ pub struct LightningInvoice {
 	pub payment_hash: sha256::Hash,
 	pub final_amount_msat: Option<u64>,
 	pub preimage: Option<[u8; 32]>,
-	pub payment_status: LightningPaymentStatus,
+	pub last_attempt_status: Option<LightningPaymentStatus>,
 	pub created_at: DateTime<Utc>,
 	pub updated_at: DateTime<Utc>,
 }
@@ -204,7 +204,7 @@ impl TryFrom<Row> for LightningInvoice {
 			preimage: row.get::<_, Option<&[u8]>>("preimage").map(|b| {
 				b.try_into().context("invalid preimage, not 32 bytes")
 			}).transpose()?,
-			payment_status: row.get("payment_status"),
+			last_attempt_status: row.get::<_, Option<LightningPaymentStatus>>("status"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})

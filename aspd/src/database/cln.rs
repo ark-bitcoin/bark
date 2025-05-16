@@ -1,12 +1,10 @@
-
-
 use anyhow::Context;
 use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Utc};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use lightning_invoice::Bolt11Invoice;
-use log::trace;
+use log::{trace, warn};
 
 use crate::database::Db;
 use crate::database::model::{
@@ -144,35 +142,7 @@ impl Db {
 			&stmt, &[&status_failed, &status_succeeded, &node_id]
 		).await?;
 
-		Ok(rows.iter().map(Into::into).collect())
-	}
-
-	/// Retrieves all LN payment attempts where the attempt status is different from the
-	/// invoice's status.
-	pub async fn get_mismatching_lightning_payment_attempts(
-		&self,
-		node_id: ClnNodeId,
-	) -> anyhow::Result<Vec<LightningPaymentAttempt>> {
-		let conn = self.pool.get().await?;
-
-		let stmt = conn.prepare("
-			SELECT attempt.lightning_payment_attempt_id,
-				attempt.lightning_invoice_id, attempt.lightning_node_id, attempt.amount_msat,
-				attempt.status, attempt.error, attempt.created_at, attempt.updated_at
-			FROM lightning_invoice invoice
-			JOIN LATERAL (
-				SELECT *
-				FROM lightning_payment_attempt attempt
-				WHERE attempt.lightning_invoice_id = invoice.lightning_invoice_id
-				ORDER BY attempt.created_at DESC
-				LIMIT 1
-			) attempt ON true
-			WHERE attempt.status != invoice.payment_status AND attempt.lightning_node_id = $1
-			ORDER BY attempt.created_at DESC;
-		").await?;
-
-		let rows = conn.query(&stmt, &[&node_id]).await?;
-		Ok(rows.iter().map(Into::into).collect())
+		Ok(rows.iter().map(Into::into).collect::<Vec<_>>())
 	}
 
 	pub async fn get_open_lightning_payment_attempt_by_payment_hash(
@@ -204,7 +174,7 @@ impl Db {
 		}
 
 		if rows.len() > 1 {
-			bail!("Multiple open invoices for payment hash.")
+			warn!("Multiple open attempts for payment hash: {}", payment_hash);
 		}
 
 		if let Some(row) = rows.get(0) {
@@ -214,7 +184,11 @@ impl Db {
 		}
 	}
 
-	pub async fn store_lightning_invoice_requested(
+	/// Stores data after lightning payment start.
+	///
+	/// If the invoice does not exist yet, it will be created
+	/// and the payment attempt will be stored.
+	pub async fn store_lightning_payment_start(
 		&self,
 		node_id: ClnNodeId,
 		invoice: &Bolt11Invoice,
@@ -224,53 +198,27 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		let select_stmt = tx.prepare("
-			SELECT lightning_invoice_id, payment_status, updated_at
-			FROM lightning_invoice
-			WHERE payment_hash = $1
+			SELECT lightning_invoice_id FROM lightning_invoice WHERE payment_hash = $1
 		").await?;
 
 		let payment_hash = invoice.payment_hash();
 		let existing = tx.query_opt(&select_stmt, &[&&payment_hash[..]]).await?;
 
-		let requested_status = LightningPaymentStatus::Requested;
 		let lightning_invoice_id = if let Some(row) = existing {
-			let lightning_invoice_id = row.get("lightning_invoice_id");
-			let current_status = row.get::<_, LightningPaymentStatus>("payment_status");
-			let current_updated_at = row.get::<_, DateTime<Utc>>("updated_at");
-
-			if current_status == LightningPaymentStatus::Succeeded {
-				bail!("Payment already succeeded")
-			}
-
-			if current_status != LightningPaymentStatus::Failed {
-				bail!("Payment still ongoing")
-			}
-
-			let update_stmt = tx.prepare("
-				UPDATE lightning_invoice
-				SET payment_status = $1, updated_at = NOW()
-				WHERE payment_hash = $2 AND updated_at = $3
-			").await?;
-
-			let _ = tx.query_one(
-				&update_stmt, &[&requested_status, &&payment_hash[..], &current_updated_at],
-			).await?;
-
-			lightning_invoice_id
+			row.get("lightning_invoice_id")
 		} else {
 			let stmt = tx.prepare("
 				INSERT INTO lightning_invoice (
 					invoice,
 					payment_hash,
-					payment_status,
 					created_at,
 					updated_at
-				) VALUES ($1, $2, $3, NOW(), NOW())
+				) VALUES ($1, $2, NOW(), NOW())
 				RETURNING lightning_invoice_id;
 			").await?;
 
 			let row = tx.query_one(
-				&stmt, &[&invoice.to_string(), &&payment_hash[..], &requested_status],
+				&stmt, &[&invoice.to_string(), &&payment_hash[..]],
 			).await?;
 
 			row.get("lightning_invoice_id")
@@ -324,17 +272,16 @@ impl Db {
 		Ok((payment_attempt_id, updated_at))
 	}
 
-	pub async fn store_lightning_payment_attempt_status(
+	pub async fn update_lightning_payment_attempt_status(
 		&self,
-		payment_attempt_id: i64,
-		status: LightningPaymentStatus,
-		payment_error: Option<&str>,
-		updated_at: DateTime<Utc>,
+		old_payment_attempt: &LightningPaymentAttempt,
+		new_status: LightningPaymentStatus,
+		new_payment_error: Option<&str>,
 	) -> anyhow::Result<()> {
 		let conn = self.pool.get().await.unwrap();
 
 		// We want to preserve any previous error message in case we don't have a new one.
-		if let Some(error) = payment_error {
+		if let Some(error) = new_payment_error {
 			let stmt = conn.prepare("
 				UPDATE lightning_payment_attempt
 				SET status = $3,
@@ -343,7 +290,15 @@ impl Db {
 				WHERE lightning_payment_attempt_id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			conn.query_one(&stmt, &[&payment_attempt_id, &updated_at, &status, &error]).await?;
+			conn.query_one(
+				&stmt,
+				&[
+					&old_payment_attempt.lightning_payment_attempt_id,
+					&old_payment_attempt.updated_at,
+					&new_status,
+					&error
+				]
+			).await?;
 		} else {
 			let stmt = conn.prepare("
 				UPDATE lightning_payment_attempt
@@ -352,39 +307,42 @@ impl Db {
 				WHERE lightning_payment_attempt_id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			conn.query_one(&stmt, &[&payment_attempt_id, &updated_at, &status]).await?;
+			conn.query_one(
+				&stmt,
+				&[
+					&old_payment_attempt.lightning_payment_attempt_id,
+					&old_payment_attempt.updated_at,
+					&new_status
+				]
+			).await?;
 		};
 
 		Ok(())
 	}
 
 
-	pub async fn store_lightning_invoice_status(
+	pub async fn update_lightning_invoice(
 		&self,
-		lightning_invoice_id: i64,
-		status: LightningPaymentStatus,
-		final_amount_msat: Option<u64>,
-		preimage: Option<&[u8; 32]>,
-		updated_at: DateTime<Utc>,
+		old_lightning_invoice: LightningInvoice,
+		new_final_amount_msat: Option<u64>,
+		new_preimage: Option<&[u8; 32]>,
 	) -> anyhow::Result<DateTime<Utc>> {
 		let conn = self.pool.get().await.unwrap();
 
 		let stmt = conn.prepare("
 			UPDATE lightning_invoice
-			SET payment_status = $3,
-				preimage = $4,
-				final_amount_msat = $5,
+			SET preimage = $3,
+				final_amount_msat = $4,
 				updated_at = NOW()
 			WHERE lightning_invoice_id = $1 AND updated_at = $2
 			RETURNING updated_at;
 		").await?;
 
-		let final_amount_msat = final_amount_msat.map(|u| u as i64);
+		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
 		let row = conn.query_one(&stmt, &[
-			&lightning_invoice_id,
-			&updated_at,
-			&status,
-			&preimage.map(|p| &p[..]),
+			&old_lightning_invoice.lightning_invoice_id,
+			&old_lightning_invoice.updated_at,
+			&new_preimage.map(|p| &p[..]),
 			&final_amount_msat,
 		]).await?;
 
@@ -394,11 +352,17 @@ impl Db {
 	pub async fn get_lightning_invoice_by_id(&self, id: i64) -> anyhow::Result<LightningInvoice> {
 		let conn = self.pool.get().await?;
 
-		let row = conn.query_one(
-			"SELECT lightning_invoice_id, invoice, payment_hash, final_amount_msat, payment_status,
-				preimage, created_at, updated_at
-			FROM lightning_invoice
-			WHERE lightning_invoice_id = $1;",
+		let row = conn.query_one("
+			SELECT DISTINCT ON (invoice.lightning_invoice_id)
+				invoice.*, attempt.status
+			FROM (
+				SELECT *
+				FROM lightning_invoice
+				WHERE lightning_invoice_id = $1
+			) invoice
+			LEFT JOIN lightning_payment_attempt attempt
+			ON invoice.lightning_invoice_id = attempt.lightning_invoice_id
+			ORDER BY invoice.lightning_invoice_id, attempt.created_at DESC;",
 			&[&id],
 		).await.context("Failed to fetch lightning invoice by id")?;
 
@@ -411,11 +375,17 @@ impl Db {
 	) -> anyhow::Result<LightningInvoice> {
 		let conn = self.pool.get().await?;
 
-		let res = conn.query_opt(
-			"SELECT lightning_invoice_id, invoice, payment_hash, final_amount_msat, payment_status,
-				preimage, created_at, updated_at
-			FROM lightning_invoice
-			WHERE payment_hash = $1",
+		let res = conn.query_opt("
+			SELECT DISTINCT ON (invoice.lightning_invoice_id)
+				invoice.*, attempt.status
+			FROM (
+				SELECT *
+				FROM lightning_invoice
+				WHERE payment_hash = $1
+			) invoice
+			LEFT JOIN lightning_payment_attempt attempt
+			ON invoice.lightning_invoice_id = attempt.lightning_invoice_id
+			ORDER BY invoice.lightning_invoice_id, attempt.created_at DESC;",
 			&[&&payment_hash[..]],
 		).await.context("error fetching lightning invoice by payment_hash")?;
 		Ok(res.not_found([payment_hash], "payment not found")?.try_into()?)
