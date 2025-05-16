@@ -3,26 +3,17 @@
 extern crate bitcoin as cbitcoin;
 
 mod bitcoin;
-pub use bitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt};
-
 pub mod fee;
 pub mod rpc;
-
 #[cfg(feature = "bdk")]
 pub mod bdk;
 
+use std::fmt;
 
+#[cfg(feature = "bdk")]
+use bdk_wallet::chain::BlockId;
+pub use bitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt};
 use cbitcoin::{Amount, BlockHash};
-
-
-/// Type representing a block height in the bitcoin blockchain.
-pub type BlockHeight = u32;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
-pub struct BlockRef {
-	pub height: BlockHeight,
-	pub hash: BlockHash,
-}
 
 /// The number of confirmations after which we don't expect a
 /// re-org to ever happen.
@@ -56,3 +47,27 @@ pub const P2WSH_DUST: Amount = Amount::from_sat(P2WSH_DUST_SAT);
 /// Witness weight of a taproot keyspend.
 pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 
+/// Type representing a block height in the bitcoin blockchain.
+pub type BlockHeight = u32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+pub struct BlockRef {
+	pub height: BlockHeight,
+	pub hash: BlockHash,
+}
+
+impl fmt::Display for BlockRef {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Debug::fmt(self, f)
+	}
+}
+
+#[cfg(feature = "bdk")]
+impl From<BlockId> for BlockRef {
+	fn from(id: BlockId) -> Self {
+		Self {
+			height: id.height,
+			hash: id.hash,
+		}
+	}
+}

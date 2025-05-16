@@ -332,7 +332,7 @@ pub trait BitcoinRpcExt: RpcApi {
 				Some(hash) => {
 					let block = self.get_block_header_info(&hash)?;
 					if block.confirmations > 0 {
-						Ok(TxStatus::Confirmed(BlockRef { height: block.height as BlockHeight, hash: block.hash}))
+						Ok(TxStatus::Confirmed(BlockRef { height: block.height as BlockHeight, hash: block.hash }))
 					} else {
 						Ok(TxStatus::Mempool)
 					}
@@ -358,6 +358,13 @@ impl TxStatus {
 	pub fn confirmed_height(&self) -> Option<BlockHeight> {
 		match self {
 			TxStatus::Confirmed(block_ref) => Some(block_ref.height),
+			_ => None,
+		}
+	}
+
+	pub fn confirmed_in(&self) -> Option<BlockRef> {
+		match self {
+			TxStatus::Confirmed(block_ref) => Some(*block_ref),
 			_ => None,
 		}
 	}
