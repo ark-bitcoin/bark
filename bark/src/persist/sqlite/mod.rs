@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use bdk_wallet::ChangeSet;
-use bitcoin::Amount;
+use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, BlockRef};
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
@@ -208,6 +208,27 @@ impl BarkPersister for SqliteClient {
 	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>> {
 		let conn = self.connect()?;
 		query::fetch_exit(&conn)
+	}
+
+	fn store_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+		child_tx: &bitcoin::Transaction,
+		block: Option<BlockRef>,
+	) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::store_exit_child_tx(&tx, exit_txid, child_tx, block)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn get_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+	) -> anyhow::Result<Option<(bitcoin::Transaction, Option<BlockRef>)>> {
+		let conn = self.connect()?;
+		query::get_exit_child_tx(&conn, exit_txid)
 	}
 
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight> {

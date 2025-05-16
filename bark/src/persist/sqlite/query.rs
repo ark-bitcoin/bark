@@ -1,10 +1,23 @@
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
+use std::str::FromStr;
+
 use anyhow::Context;
+use bitcoin::{Amount, Network, Txid, BlockHash};
+use bitcoin::consensus;
+use bitcoin::bip32::Fingerprint;
+use bitcoin::hashes::Hash;
+use bitcoin::secp256k1::PublicKey;
+use rusqlite::{self, named_params, Connection, ToSql};
+
 use ark::util::{Decodable, Encodable};
-use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
-use bitcoin_ext::BlockHeight;
-use rusqlite::{named_params, Connection, ToSql, Transaction};
-use crate::{exit::ExitIndex, movement::Movement, Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use bitcoin_ext::{BlockHeight, BlockRef};
+
+use crate::{
+	Config, KeychainKind, OffchainOnboard, OffchainPayment,  Pagination, Vtxo, VtxoId, VtxoState,
+	WalletProperties,
+};
+use crate::exit::ExitIndex;
+use crate::movement::Movement;
 
 use super::convert::{row_to_movement, row_to_offchain_onboard};
 
@@ -182,7 +195,7 @@ pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> any
 }
 
 pub fn store_vtxo_with_initial_state(
-	tx: &Transaction,
+	tx: &rusqlite::Transaction,
 	vtxo: &Vtxo,
 	movement_id: i32,
 	state: VtxoState
@@ -255,7 +268,7 @@ pub fn get_vtxos_by_state(
 }
 
 pub fn delete_vtxo(
-	tx: &Transaction,
+	tx: &rusqlite::Transaction,
 	id: VtxoId
 ) -> anyhow::Result<Option<Vtxo>> {
 	// Delete all vtxo-states
@@ -452,7 +465,7 @@ pub fn fetch_offchain_onboard_by_payment_hash(conn: &Connection, payment_hash: &
 	Ok(rows.next()?.map(|row| row_to_offchain_onboard(&row)).transpose()?)
 }
 
-pub fn store_exit(tx: &Transaction, exit: &ExitIndex) -> anyhow::Result<()> {
+pub fn store_exit(tx: &rusqlite::Transaction, exit: &ExitIndex) -> anyhow::Result<()> {
 	let mut buf = Vec::new();
 	ciborium::into_writer(exit, &mut buf)?;
 
@@ -476,6 +489,72 @@ pub fn fetch_exit(conn: &Connection) -> anyhow::Result<Option<ExitIndex>> {
 		Ok(None)
 	}
 }
+
+pub fn store_exit_child_tx(
+	tx: &rusqlite::Transaction,
+	exit_txid: Txid,
+	child_tx: &bitcoin::Transaction,
+	block: Option<BlockRef>,
+) -> anyhow::Result<()> {
+	let query = r"
+		INSERT INTO bark_exit_child_transactions (exit_id, child_tx, block_hash, height)
+		VALUES (?1, ?2, ?3, ?4)
+		ON CONFLICT (exit_id) DO UPDATE
+		SET
+			child_tx = EXCLUDED.child_tx,
+			block_hash = EXCLUDED.block_hash,
+			height = EXCLUDED.height
+	";
+
+	let exit_id = exit_txid.to_string();
+	let child_transaction = consensus::serialize(child_tx);
+	let (height, hash) = if let Some(block) = block {
+		(Some(block.height), Some(consensus::serialize(&block.hash)))
+	} else {
+		(None, None)
+	};
+	tx.execute(query, (exit_id, child_transaction, hash, height))?;
+	Ok(())
+}
+
+pub fn get_exit_child_tx(
+	conn: &Connection,
+	exit_txid: Txid,
+) -> anyhow::Result<Option<(bitcoin::Transaction, Option<BlockRef>)>> {
+	let query = r"
+			SELECT child_tx, block_hash, height FROM bark_exit_child_transactions where exit_id = ?1;
+		";
+	let mut statement = conn.prepare(query)?;
+	let result = statement.query_row([exit_txid.to_string()], |row| {
+		let tx_bytes : Vec<u8> = row.get(0)?;
+		let tx = consensus::deserialize(&tx_bytes)
+			.map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+				tx_bytes.len(), rusqlite::types::Type::Blob, Box::new(e)
+			))?;
+		let block = {
+			let hash_bytes : Option<Vec<u8>> = row.get(1)?;
+			let height : Option<u32> = row.get(2)?;
+			match (hash_bytes, height) {
+				(Some(bytes), Some(height)) => {
+					let hash = BlockHash::from_slice(&bytes)
+						.map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+							tx_bytes.len(), rusqlite::types::Type::Blob, Box::new(e)
+						))?;
+					Some(BlockRef { hash, height })
+				},
+				(None, None) => None,
+				_ => panic!("Invalid data in database")
+			}
+		};
+		Ok((tx, block))
+	});
+	match result {
+		Ok(result) => Ok(Some(result)),
+		Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+		Err(e) => Err(format_err!("Unable to deserialize child tx for exit {}: {}", exit_txid, e)),
+	}
+}
+
 
 
 #[cfg(test)]

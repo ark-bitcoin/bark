@@ -3,6 +3,7 @@ mod m0002_config;
 mod m0003_payment_history;
 mod m0004_unregistered_board;
 mod m0005_offchain_onboards;
+mod m0006_exit_rework;
 
 use anyhow::Context;
 use log::{trace, debug};
@@ -13,6 +14,8 @@ use m0002_config::Migration0002;
 use m0003_payment_history::Migration0003;
 use m0004_unregistered_board::Migration0004;
 use m0005_offchain_onboards::Migration0005;
+use m0006_exit_rework::Migration0006;
+
 pub struct MigrationContext {}
 
 impl MigrationContext {
@@ -34,6 +37,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0003{})?;
 		self.try_migration(conn, &Migration0004{})?;
 		self.try_migration(conn, &Migration0005{})?;
+		self.try_migration(conn, &Migration0006{})?;
 		Ok(())
 	}
 
@@ -187,14 +191,16 @@ mod test {
 		migs.init_migrations(&conn).unwrap();
 		assert_current_version(&conn, 0).unwrap();
 
-		// Perform the mgiration and confirm it took effect
+		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 5).unwrap();
+		assert_current_version(&conn, 6).unwrap();
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_config").unwrap());
 		assert!(table_exists(&conn, "bark_movement").unwrap());
 		assert!(table_exists(&conn, "bark_offchain_onboard").unwrap());
+		assert!(table_exists(&conn, "bark_exit_states").unwrap());
+		assert!(table_exists(&conn, "bark_exit_child_transactions").unwrap());
 
 		// The migration can be run multiple times
 		migs.do_all_migrations(&mut conn).unwrap();

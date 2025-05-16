@@ -29,10 +29,6 @@ CREATE TABLE bark_ark_sync (
 				sync_height INTEGER,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);
-CREATE TABLE bark_exit (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				exit BLOB
-			);
 CREATE VIEW most_recent_vtxo_state
 				(id, last_updated_at, vtxo_id, state)
 			AS
@@ -117,3 +113,14 @@ CREATE TABLE bark_offchain_onboard (
 			serialised_payment BLOB,
 			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 		);
+CREATE TABLE bark_exit_states (
+				vtxo_id TEXT PRIMARY KEY,
+				state TEXT NOT NULL,
+				history TEXT NOT NULL
+			);
+CREATE TABLE bark_exit_child_transactions (
+				exit_id TEXT PRIMARY KEY,
+				child_tx BLOB NOT NULL,
+				block_hash BLOB,
+				height INTEGER
+			);
