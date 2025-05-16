@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use log::info;
@@ -131,6 +132,7 @@ impl TestContext {
 		};
 
 		self.electrs = electrs;
+		self.await_block_count_sync().await
 	}
 
 	pub async fn init_central_postgres(&mut self) -> config::Postgres {
@@ -399,10 +401,8 @@ impl TestContext {
 		info!("Fund {} {}", bark.name(), amount);
 		let address = bark.get_onchain_address().await;
 		let txid = self.bitcoind().fund_addr(address, amount).await;
-		if let Some(ref electrs) = self.electrs {
-			electrs.await_transaction(&txid).wait(10_000).await;
-		}
 		self.bitcoind().generate(1).await;
+		self.await_block_count_sync().await;
 		txid
 	}
 
@@ -439,13 +439,23 @@ impl TestContext {
 	}
 
 	/// Generated a block using the central bitcoind and ensures that electrs is synced with it
-	pub async fn generate_block(&self, block_num: u32) {
+	pub async fn generate_blocks(&self, block_num: u32) {
+		// Give transactions time to propagate
+		tokio::time::sleep(Duration::from_millis(1000)).await;
+
 		self.bitcoind().generate(block_num).await;
+
+		// Give blocks time to propagate
+		let now = Instant::now();
+		const MIN_WAIT: Duration = Duration::from_millis(500);
 		self.await_block_count_sync().await;
+		if now.elapsed() < MIN_WAIT {
+			tokio::time::sleep(MIN_WAIT - now.elapsed()).await;
+		}
 	}
 
 	/// Generated a block using the central bitcoind without waiting for propagation
-	pub async fn generate_block_unsynced(&self, block_num: u32) {
+	pub async fn generate_blocks_unsynced(&self, block_num: u32) {
 		self.bitcoind().generate(block_num).await;
 	}
 }
