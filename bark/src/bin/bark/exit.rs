@@ -12,12 +12,43 @@ use crate::util::output_json;
 
 #[derive(clap::Subcommand)]
 pub enum ExitCommand {
+	/// Gets the current status for the given VTXO
+	#[command()]
+	Status(StatusExitOpts),
+	/// Lists every in-progress, completed and failed exit
+	#[command()]
+	List(ListExitsOpts),
 	/// To start an exit of a specific set of VTXO's or all offchain funds
 	#[command()]
 	Start(StartExitOpts),
 	/// Progress the exit until it completes
 	#[command()]
 	Progress(ProgressExitOpts),
+}
+
+#[derive(clap::Args)]
+pub struct StatusExitOpts {
+	/// The VTXO to check the exit status of
+	vtxo: VtxoId,
+
+	/// Whether to include the detailed history of the exit process
+	#[arg(long)]
+	history: bool,
+
+	/// Whether to include the exit transactions and their CPFP children
+	#[arg(long)]
+	transactions: bool,
+}
+
+#[derive(clap::Args)]
+pub struct ListExitsOpts {
+	/// Whether to include the detailed history of the exit process
+	#[arg(long)]
+	history: bool,
+
+	/// Whether to include the exit transactions and their CPFP children
+	#[arg(long)]
+	transactions: bool,
 }
 
 #[derive(clap::Args)]
@@ -43,6 +74,12 @@ pub async fn execute_exit_command(
 	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	match exit_command {
+		ExitCommand::Status(opts) => {
+			get_exit_status(opts, wallet).await
+		},
+		ExitCommand::List(opts) => {
+			list_exits(opts, wallet).await
+		},
 		ExitCommand::Start(opts) => {
 			start_exit(opts, wallet).await
 		},
@@ -50,6 +87,33 @@ pub async fn execute_exit_command(
 			progress_exit(opts, wallet).await
 		},
 	}
+}
+
+pub async fn get_exit_status(
+	args: StatusExitOpts,
+	wallet: &Wallet,
+) -> anyhow::Result<()> {
+	match wallet.exit.get_exit_status(args.vtxo, args.history, args.transactions).await? {
+		None => bail!("VTXO not found: {}", args.vtxo),
+		Some(status) => output_json(&status),
+	}
+	Ok(())
+}
+
+pub async fn list_exits(
+	args: ListExitsOpts,
+	wallet: &Wallet,
+) -> anyhow::Result<()> {
+	let mut statuses = Vec::with_capacity(wallet.exit.get_exit_vtxos().len());
+	for exit in wallet.exit.get_exit_vtxos() {
+		statuses.push(wallet.exit.get_exit_status(
+			exit.id(),
+			args.history,
+			args.transactions,
+		).await?.unwrap());
+	}
+	output_json(&statuses);
+	Ok(())
 }
 
 pub async fn start_exit(
