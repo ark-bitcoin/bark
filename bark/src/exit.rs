@@ -287,7 +287,7 @@ impl Exit {
 						let fee_rate = self.chain_source.urgent_feerate();
 						let cpfp_psbt = match onchain.wallet.make_cpfp(&[&tx], fee_rate) {
 							Ok(psbt) => psbt,
-							Err(CpfpError::NeedConfirmations(e)) => {
+							Err(CpfpError::InsufficientConfirmedFunds(e)) => {
 								info!("On-chain funds need more confirmations \
 									to make progress on exit: {}", e);
 								return Ok(());
