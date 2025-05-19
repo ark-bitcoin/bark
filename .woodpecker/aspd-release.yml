@@ -40,8 +40,8 @@ steps:
     depends_on: build-aspd
     # When this task fails make sure the sha256 is still available.
     #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
-    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df`
-    image: quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df
+    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
+    image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
     environment:
       REGISTRY_LOGIN_TOKEN:
         from_secret: REGISTRY_LOGIN_TOKEN
@@ -50,10 +50,42 @@ steps:
     commands:
       - cat VERSION
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+      # Build the containers
       - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile             --tag registry.2nd.dev/aspd:latest      .
+      # Push containers to registry.2nd.dev
       - buildah push registry.2nd.dev/aspd:latest
+      # Tag containers with specific version number for registry.2nd.dev
       - buildah tag registry.2nd.dev/aspd:latest      "registry.2nd.dev/aspd:$(cat VERSION)"
+      # Push containers with specific version number to registry.2nd.dev
       - buildah push "registry.2nd.dev/aspd:$(cat VERSION)"
+
+  - name: push-aspd-to-docker
+    when:
+      - event: tag
+        ref: refs/tags/aspd-*
+      - evaluate: CI_FORGE_TYPE == "forgejo"
+    failure: ignore
+    depends_on: build-and-push-aspd-to-registry
+    # When this task fails make sure the sha256 is still available.
+    #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
+    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
+    image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
+    environment:
+      DOCKER_LOGIN_TOKEN:
+        from_secret: DOCKER_LOGIN_TOKEN
+    pull: true
+    privileged: true
+    commands:
+      - cat VERSION
+      - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+      # Tag containers for docker.io
+      - buildah tag registry.2nd.dev/aspd:latest      docker.io/aspd:latest
+      # Push containers to docker.io
+      - buildah push docker.io/aspd:latest
+      # Tag containers with specific version number for docker.io
+      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/aspd:$(cat VERSION)"
+      # Push containers with specific version number to docker.io
+      - buildah push "docker.io/aspd:$(cat VERSION)"
 
   - name: release-aspd
     when:
