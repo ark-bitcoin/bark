@@ -1191,7 +1191,7 @@ async fn reject_subdust_oor_cosign() {
 
 			Ok(self.upstream().request_oor_cosign(OorCosignRequest {
 				payment: oor_payment.encode(),
-				pub_nonces: req.pub_nonces,
+				pub_nonce: req.pub_nonce,
 			}).await?.into_inner())
 		}
 	}
@@ -1226,9 +1226,9 @@ async fn reject_subdust_bolt11_payment() {
 			Ok(self.upstream().start_bolt11_payment(Bolt11PaymentRequest {
 				invoice: req.invoice,
 				amount_sats: Some(P2TR_DUST_SAT - 1),
-				input_vtxos: req.input_vtxos,
+				input_vtxo: req.input_vtxo,
 				user_pubkey: req.user_pubkey,
-				user_nonces: req.user_nonces,
+				user_nonce: req.user_nonce,
 			}).await?.into_inner())
 		}
 	}
@@ -1287,7 +1287,7 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 			let preimage = rand::rng().random::<[u8; 32]>();
 			Ok(self.upstream().claim_bolt11_onboard(ClaimBolt11OnboardRequest {
 				payment: req.payment,
-				pub_nonces: req.pub_nonces,
+				pub_nonce: req.pub_nonce,
 				payment_preimage: preimage.to_vec(),
 			}).await?.into_inner())
 		}

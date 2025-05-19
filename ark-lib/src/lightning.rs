@@ -24,7 +24,7 @@ pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bolt11Payment {
 	pub invoice: Bolt11Invoice,
-	pub inputs: Vec<Vtxo>,
+	pub input: Vtxo,
 	pub asp_pubkey: PublicKey,
 	pub user_pubkey: PublicKey,
 	pub payment_amount: Amount,
@@ -124,12 +124,11 @@ impl Bolt11Payment {
 			}
 		}
 
-		let inputs = self.inputs.iter().map(|v| v.amount()).sum::<Amount>();
 		let total_amount = self.payment_amount + self.forwarding_fee;
-		if inputs < total_amount {
+		if self.input.amount() < total_amount {
 			return Err(CheckAmountsError(format!(
 				"inputs sum is too low. provided: {}, required: {}",
-				inputs, total_amount)
+				self.input.amount(), total_amount)
 			));
 		}
 
@@ -188,15 +187,12 @@ impl Bolt11Payment {
 	}
 
 	pub fn change_amount(&self) -> Amount {
-		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
 		let payment_amount = self.payment_amount;
 		let forwarding_fee = self.forwarding_fee;
-		input_amount - payment_amount - forwarding_fee
+		self.input.amount() - payment_amount - forwarding_fee
 	}
 
 	pub fn unsigned_transaction(&self) -> Transaction {
-		let input_amount = self.inputs.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
-
 		// Let's draft the output transactions
 		let htlc_output = self.htlc_txout();
 		let htlc_amount = htlc_output.value;
@@ -206,21 +202,19 @@ impl Bolt11Payment {
 		let change_output = self.change_txout();
 		let change_amount = change_output.as_ref().map(|o| o.value).unwrap_or_default();
 
-		assert_eq!(input_amount, htlc_amount + change_amount,
+		assert_eq!(self.input.amount(), htlc_amount + change_amount,
 			"htlc={htlc_amount}, change={change_amount}",
 		);
 
 		Transaction {
 			version: bitcoin::blockdata::transaction::Version(3),
 			lock_time: bitcoin::absolute::LockTime::ZERO,
-			input: self.inputs.iter().map(|vtxo| {
-				TxIn {
-					previous_output: vtxo.point(),
-					script_sig: ScriptBuf::new(),
-					sequence: Sequence::ZERO,
-					witness: Witness::new()
-				}
-			}).collect(),
+			input: vec![TxIn {
+				previous_output: self.input.point(),
+				script_sig: ScriptBuf::new(),
+				sequence: Sequence::ZERO,
+				witness: Witness::new()
+			}],
 			output: iter::once(htlc_output)
 				.chain(change_output)
 				.chain(Some(fee::fee_anchor()))
@@ -231,24 +225,21 @@ impl Bolt11Payment {
 	pub fn total_weight(&self) -> Weight {
 		let tx = self.unsigned_transaction();
 		let spend_weight = Weight::from_wu(TAPROOT_KEYSPEND_WEIGHT as u64);
-		let nb_inputs = self.inputs.len() as u64;
-		tx.weight() + nb_inputs * spend_weight
+		tx.weight() + spend_weight
 	}
 
-	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
-		let prevouts = self.inputs.iter().map(|v| v.txout()).collect::<Vec<_>>();
+	pub fn htlc_sighash(&self) -> bitcoin::TapSighash {
+		let prevout = self.input.txout();
 
 		let tx = self.unsigned_transaction();
 		let mut shc = bitcoin::sighash::SighashCache::new(tx);
-		(0..self.inputs.len()).map(|idx| {
-			shc.taproot_key_spend_signature_hash(
-				idx, &bitcoin::sighash::Prevouts::All(&prevouts), bitcoin::TapSighashType::Default,
-			).expect("sighash error")
-		}).collect()
+		shc.taproot_key_spend_signature_hash(
+			0, &bitcoin::sighash::Prevouts::All(&[prevout]), bitcoin::TapSighashType::Default,
+		).expect("sighash error")
 	}
 
 	fn outputs(&self) -> Vec<VtxoSpec> {
-		let expiry_height = self.inputs.iter().map(|i| i.expiry_height()).min().unwrap();
+		let expiry_height = self.input.expiry_height();
 
 		let htlc_output = VtxoSpec {
 			amount: self.htlc_amount(),
@@ -283,10 +274,10 @@ impl Bolt11Payment {
 		let outputs = self.outputs();
 
 		outputs.get(CHANGE_VOUT as usize).map(|_txout| ArkoorVtxo {
-			inputs: self.inputs.clone(),
+			input: self.input.clone().into(),
 			output_specs: self.outputs(),
 			point: OutPoint::new(tx.compute_txid(), CHANGE_VOUT),
-			signatures: vec![],
+			signature: None,
 		})
 	}
 
@@ -294,77 +285,61 @@ impl Bolt11Payment {
 		let tx = self.unsigned_transaction();
 
 		ArkoorVtxo {
-			inputs: self.inputs.clone(),
+			input: self.input.clone().into(),
 			output_specs: self.outputs(),
 			point: OutPoint::new(tx.compute_txid(), HTLC_VOUT),
-			signatures: vec![],
+			signature: None,
 		}
 	}
 
 	pub fn sign_asp(
 		&self,
 		keypair: &Keypair,
-		user_nonces: &[musig::MusigPubNonce],
-	) -> (Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>) {
-		let sighashes = self.htlc_sighashes();
-		let mut pub_nonces = Vec::with_capacity(self.inputs.len());
-		let mut part_sigs = Vec::with_capacity(self.inputs.len());
-		for (idx, input) in self.inputs.iter().enumerate() {
-			assert_eq!(keypair.public_key(), input.asp_pubkey());
-			let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
-				keypair,
-				[input.spec().user_pubkey],
-				&[&user_nonces[idx]],
-				sighashes[idx].to_byte_array(),
-				Some(input.spec().vtxo_taptweak().to_byte_array()),
-			);
-			pub_nonces.push(pub_nonce);
-			part_sigs.push(part_sig);
-		}
-		(pub_nonces, part_sigs)
+		user_nonce: musig::MusigPubNonce,
+	) -> (musig::MusigPubNonce, musig::MusigPartialSignature) {
+		let sighash = self.htlc_sighash();
+		assert_eq!(keypair.public_key(), self.input.asp_pubkey());
+		let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
+			keypair,
+			[self.input.spec().user_pubkey],
+			&[&user_nonce],
+			sighash.to_byte_array(),
+			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
+		);
+		(pub_nonce, part_sig)
 	}
 
 	pub fn sign_finalize_user(
 		self,
-		our_sec_nonces: Vec<musig::MusigSecNonce>,
-		our_pub_nonces: &[musig::MusigPubNonce],
-		our_keypairs: &[Keypair],
-		asp_nonces: &[musig::MusigPubNonce],
-		asp_part_sigs: &[musig::MusigPartialSignature],
+		user_sec_nonce: musig::MusigSecNonce,
+		user_pub_nonce: musig::MusigPubNonce,
+		user_keypair: &Keypair,
+		asp_nonce: musig::MusigPubNonce,
+		asp_part_sig: musig::MusigPartialSignature,
 	) -> SignedBolt11Payment {
-		assert_eq!(self.inputs.len(), our_sec_nonces.len());
-		assert_eq!(self.inputs.len(), our_pub_nonces.len());
-		assert_eq!(self.inputs.len(), our_keypairs.len());
-		assert_eq!(self.inputs.len(), asp_nonces.len());
-		assert_eq!(self.inputs.len(), asp_part_sigs.len());
-		let sighashes = self.htlc_sighashes();
+		let sighash = self.htlc_sighash();
 
-		let mut sigs = Vec::with_capacity(self.inputs.len());
-		for (idx, (input, sec_nonce)) in self.inputs.iter().zip(our_sec_nonces.into_iter()).enumerate() {
-			let keypair = &our_keypairs[idx];
-			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
-			let agg_nonce = musig::nonce_agg(&[&our_pub_nonces[idx], &asp_nonces[idx]]);
-			let (_part_sig, final_sig) = musig::partial_sign(
-				[input.spec().user_pubkey, input.asp_pubkey()],
-				agg_nonce,
-				keypair,
-				sec_nonce,
-				sighashes[idx].to_byte_array(),
-				Some(input.spec().vtxo_taptweak().to_byte_array()),
-				Some(&[&asp_part_sigs[idx]]),
-			);
-			let final_sig = final_sig.expect("we provided the other sig");
-			debug_assert!(SECP.verify_schnorr(
-				&final_sig,
-				&sighashes[idx].into(),
-				&input.spec().taproot_pubkey(),
-			).is_ok(), "invalid htlc tx signature produced");
-			sigs.push(final_sig);
-		}
+		assert_eq!(user_keypair.public_key(), self.input.spec().user_pubkey);
+		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &asp_nonce]);
+		let (_part_sig, final_sig) = musig::partial_sign(
+			[self.input.spec().user_pubkey, self.input.asp_pubkey()],
+			agg_nonce,
+			user_keypair,
+			user_sec_nonce,
+			sighash.to_byte_array(),
+			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
+			Some(&[&asp_part_sig]),
+		);
+		let final_sig = final_sig.expect("we provided the other sig");
+		debug_assert!(SECP.verify_schnorr(
+			&final_sig,
+			&sighash.into(),
+			&self.input.spec().taproot_pubkey(),
+		).is_ok(), "invalid htlc tx signature produced");
 
 		SignedBolt11Payment {
 			payment: self,
-			signatures: sigs,
+			signature: final_sig,
 		}
 	}
 }
@@ -375,35 +350,33 @@ impl Decodable for Bolt11Payment {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedBolt11Payment {
 	pub payment: Bolt11Payment,
-	pub signatures: Vec<schnorr::Signature>,
+	pub signature: schnorr::Signature,
 }
 
 impl SignedBolt11Payment {
-	pub fn validate_signatures(
+	pub fn validate_signature(
 		&self,
 		secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
 	) -> Result<(), InvalidSignatureError> {
-		for (idx, sighash) in self.payment.htlc_sighashes().into_iter().enumerate() {
-			let sig = self.signatures.get(idx).ok_or(InvalidSignatureError::Missing { idx })?;
-			let pubkey = self.payment.inputs[idx].spec().taproot_pubkey();
-			let msg = secp256k1::Message::from_digest(*sighash.as_byte_array());
-			if secp.verify_schnorr(sig, &msg, &pubkey).is_err() {
-				return Err(InvalidSignatureError::Invalid { idx, pubkey });
-			}
+		let sighash = self.payment.htlc_sighash();
+		let pubkey = self.payment.input.spec().taproot_pubkey();
+		let msg = secp256k1::Message::from_digest(*sighash.as_byte_array());
+		if secp.verify_schnorr(&self.signature, &msg, &pubkey).is_err() {
+			return Err(InvalidSignatureError { pubkey });
 		}
 		Ok(())
 	}
 
 	pub fn change_vtxo(&self) -> Option<ArkoorVtxo> {
 		self.payment.unsigned_change_vtxo().map(|mut vtxo| {
-			vtxo.signatures = self.signatures.clone();
+			vtxo.signature = Some(self.signature);
 			vtxo
 		})
 	}
 
 	pub fn htlc_vtxo(&self) -> ArkoorVtxo {
 		let mut vtxo = self.payment.unsigned_htlc_vtxo();
-		vtxo.signatures = self.signatures.clone();
+		vtxo.signature = Some(self.signature);
 		vtxo
 	}
 
@@ -419,7 +392,7 @@ impl SignedBolt11Payment {
 		OorPayment {
 			asp_pubkey: htlc_vtxo.asp_pubkey(),
 			exit_delta: self.payment.exit_delta,
-			inputs: vec![htlc_vtxo],
+			input: htlc_vtxo,
 			outputs: vec![pay_req],
 		}
 	}
@@ -428,17 +401,10 @@ impl SignedBolt11Payment {
 impl Encodable for SignedBolt11Payment {}
 impl Decodable for SignedBolt11Payment {}
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum InvalidSignatureError {
-	#[error("signature missing at idx {idx}")]
-	Missing {
-		idx: usize,
-	},
-	#[error("invalid signature at idx {idx} for public key {pubkey}")]
-	Invalid {
-		idx: usize,
-		pubkey: XOnlyPublicKey,
-	},
+#[derive(Debug, thiserror::Error)]
+#[error("invalid signature for pubkey {pubkey}")]
+pub struct InvalidSignatureError {
+	pub pubkey: XOnlyPublicKey,
 }
 
 #[derive(Debug)]

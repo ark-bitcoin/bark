@@ -144,7 +144,7 @@ lazy_static::lazy_static! {
 }
 
 struct OorCreateResult {
-	input: Vec<Vtxo>,
+	input: Vtxo,
 	created: Vtxo,
 	change: Option<Vtxo>,
 	fee: Amount
@@ -777,17 +777,8 @@ impl Wallet {
 	/// A [Vtxo::Arkoor] is considered to have some counterparty risk
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
 	fn has_counterparty_risk(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
-		let iterate_over_inputs = |inputs: &[Vtxo]| -> anyhow::Result<bool> {
-			for input in inputs.iter() {
-				if self.has_counterparty_risk(input)? {
-					return Ok(true)
-				}
-			}
-			Ok(false)
-		};
-
 		match vtxo {
-			Vtxo::Arkoor(ArkoorVtxo { inputs, .. }) => iterate_over_inputs(inputs),
+			Vtxo::Arkoor(ArkoorVtxo { input, .. }) => self.has_counterparty_risk(input),
 			Vtxo::Board(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 			Vtxo::Round(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
 		}
@@ -1011,14 +1002,14 @@ impl Wallet {
 		let offchain_fees = Amount::ZERO;
 		let spent_amount = amount + offchain_fees;
 
-		let input_vtxos = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
+		let inputs = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
+		//TODO(stevenroose) fix single-input db
+		let [input] = inputs.try_into().ok().context("not enough balance or multi input broken")?;
 
 		let change = {
-			let sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
 			// At this point, `sum` is >= to `spent_amount`
-			if sum > spent_amount {
-				let change_amount = sum - spent_amount;
+			if input.amount() > spent_amount {
+				let change_amount = input.amount() - spent_amount;
 				Some(PaymentRequest {
 					pubkey: change_pubkey,
 					amount: change_amount,
@@ -1033,7 +1024,7 @@ impl Wallet {
 		let payment = ark::oor::OorPayment::new(
 			asp.info.asp_pubkey,
 			asp.info.vtxo_exit_delta,
-			input_vtxos,
+			input.clone(),
 			outputs,
 		);
 
@@ -1042,43 +1033,30 @@ impl Wallet {
 			info!("Added change VTXO of {}", o.amount);
 		}
 
-		let (sec_nonces, pub_nonces, keypairs) = {
-			let mut secs = Vec::with_capacity(payment.inputs.len());
-			let mut pubs = Vec::with_capacity(payment.inputs.len());
-			let mut keypairs = Vec::with_capacity(payment.inputs.len());
+		let (sec_nonce, pub_nonce, keypair) = {
+			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
+			let keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
 
-			for input in payment.inputs.iter() {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-				let keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
-
-				let (s, p) = musig::nonce_pair(&keypair);
-				secs.push(s);
-				pubs.push(p);
-				keypairs.push(keypair);
-			}
-			(secs, pubs, keypairs)
+			let (s, p) = musig::nonce_pair(&keypair);
+			(s, p, keypair)
 		};
 
 		let req = protos::OorCosignRequest {
 			payment: payment.encode(),
-			pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+			pub_nonce: pub_nonce.serialize().to_vec(),
 		};
 		let resp = asp.client.request_oor_cosign(req).await.context("cosign request failed")?.into_inner();
 
-		let asp_pub_nonces = resp.asp_pub_nonces()?;
-		let asp_part_sigs = resp.asp_part_sigs()?;
-		if asp_pub_nonces.len() != payment.inputs.len() || asp_part_sigs.len() != payment.inputs.len() {
-			bail!("invalid length of asp response");
-		}
+		let asp_pub_nonce = resp.asp_pub_nonce()?;
+		let asp_part_sig = resp.asp_part_sig()?;
 
-		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
-		let input_vtxos = payment.inputs.clone();
+		trace!("OOR prevout: {:?}", payment.input.txout());
 		let signed = payment.sign_finalize_user(
-			sec_nonces,
-			&pub_nonces,
-			&keypairs,
-			&asp_pub_nonces,
-			&asp_part_sigs,
+			sec_nonce,
+			pub_nonce,
+			&keypair,
+			asp_pub_nonce,
+			asp_part_sig,
 		);
 		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
 		let vtxos = signed.output_vtxos().into_iter().map(|v| Vtxo::from(v)).collect::<Vec<_>>();
@@ -1088,7 +1066,7 @@ impl Wallet {
 		let change_vtxo = vtxos.last().map(|c| c.clone());
 
 		Ok(OorCreateResult {
-			input: input_vtxos,
+			input: input,
 			created: user_vtxo,
 			change: change_vtxo,
 			fee: offchain_fees
@@ -1118,7 +1096,7 @@ impl Wallet {
 		}
 
 		self.db.register_movement(MovementArgs {
-			spends: &oor.input.iter().collect::<Vec<_>>(),
+			spends: &[&oor.input],
 			receives: &oor.change.as_ref().map(|v| vec![(v, VtxoState::Spendable)]).unwrap_or(vec![]),
 			recipients: &[(&destination.to_string(), amount)],
 			fees: Some(oor.fee)
@@ -1159,54 +1137,42 @@ impl Wallet {
 
 		let forwarding_fee = Amount::from_sat(350);
 		let inputs = self.db.select_vtxos_to_cover(amount + forwarding_fee)?;
+		//TODO(stevenroose) fix single-input db
+		let [input] = inputs.try_into().ok().context("not enough balance or multi input broken")?;
 
 
-		let (sec_nonces, pub_nonces, keypairs) = {
-			let mut secs = Vec::with_capacity(inputs.len());
-			let mut pubs = Vec::with_capacity(inputs.len());
-			let mut keypairs = Vec::with_capacity(inputs.len());
+		let (sec_nonce, pub_nonce, keypair) = {
+			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
+			let keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
 
-			for input in inputs.iter() {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-				let keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
-
-				let (s, p) = musig::nonce_pair(&keypair);
-				secs.push(s);
-				pubs.push(p);
-				keypairs.push(keypair);
-			}
-			(secs, pubs, keypairs)
+			let (s, p) = musig::nonce_pair(&keypair);
+			(s, p, keypair)
 		};
 
 		let req = protos::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
 			amount_sats: user_amount.map(|a| a.to_sat()),
-			input_vtxos: inputs.iter().map(|v| v.encode()).collect(),
+			input_vtxo: input.encode(),
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
-			user_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+			user_nonce: pub_nonce.serialize().to_vec(),
 		};
 		let resp = asp.client.start_bolt11_payment(req).await
 			.context("htlc request failed")?.into_inner();
 
-		let asp_pub_nonces = resp.asp_pub_nonces()?;
-		let asp_part_sigs = resp.asp_part_sigs()?;
-		if asp_pub_nonces.len() != inputs.len() || asp_part_sigs.len() != inputs.len() {
-			bail!("invalid length of asp response");
-		}
-
 		let payment = ark::lightning::Bolt11Payment::decode(&resp.details)
 			.context("invalid bolt11 payment details from asp")?;
 
+		let asp_pub_nonce = resp.asp_pub_nonce()?;
+		let asp_part_sig = resp.asp_part_sig()?;
 
-
-		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
-		let input_vtxos = payment.inputs.clone();
+		trace!("htlc prevout: {:?}", input.txout());
+		let input_vtxo = payment.input.clone();
 		let signed = payment.sign_finalize_user(
-			sec_nonces,
-			&pub_nonces,
-			&keypairs,
-			&asp_pub_nonces,
-			&asp_part_sigs,
+			sec_nonce,
+			pub_nonce,
+			&keypair,
+			asp_pub_nonce,
+			asp_part_sig,
 		);
 
 		let req = protos::SignedBolt11PaymentDetails {
@@ -1221,7 +1187,9 @@ impl Wallet {
 		// The client will receive the change VTXO if it exists
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
 			info!("Adding change VTXO of {}", change_vtxo.amount());
-			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_oor_tx(&change_vtxo.inputs, &change_vtxo.output_specs)));
+			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(
+				&unsigned_oor_tx(&change_vtxo.input, &change_vtxo.output_specs),
+			));
 			Some(change_vtxo.into())
 		} else {
 			None
@@ -1233,7 +1201,7 @@ impl Wallet {
 
 		if let Some(preimage) = payment_preimage {
 			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos.iter().collect::<Vec<_>>(),
+				spends: &[&input_vtxo],
 				receives: &receive_vtxos,
 				recipients: &[(&invoice.to_string(), amount)],
 				fees: Some(forwarding_fee)
@@ -1247,23 +1215,20 @@ impl Wallet {
 
 			let req = protos::RevokeBolt11PaymentRequest {
 				signed_payment: signed.encode(),
-				pub_nonces: vec![pub_nonce.serialize().to_vec()],
+				pub_nonce: pub_nonce.serialize().to_vec(),
 			};
 
 			let resp = asp.client.revoke_bolt11_payment(req).await?.into_inner();
-			let asp_pub_nonces = resp.asp_pub_nonces()?;
-			let asp_part_sigs = resp.asp_part_sigs()?;
-			if asp_pub_nonces.len() != inputs.len() || asp_part_sigs.len() != inputs.len() {
-				bail!("invalid length of asp response");
-			}
+			let asp_pub_nonce = resp.asp_pub_nonce()?;
+			let asp_part_sig = resp.asp_part_sig()?;
 
 			let revocation_payment = signed.revocation_payment();
 			let signed_revocation = revocation_payment.sign_finalize_user(
-				vec![sec_nonce],
-				&[pub_nonce],
-				&[keypair],
-				&asp_pub_nonces,
-				&asp_part_sigs,
+				sec_nonce,
+				pub_nonce,
+				&keypair,
+				asp_pub_nonce,
+				asp_part_sig,
 			);
 
 			trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_revocation.signed_transaction()));
@@ -1276,7 +1241,7 @@ impl Wallet {
 			);
 
 			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos.iter().collect::<Vec<_>>(),
+				spends: &[&input_vtxo],
 				receives: &if let Some(ref change) = change_vtxo {
 					vec![(&vtxo, VtxoState::Spendable), (change, VtxoState::Spendable)]
 				} else {
@@ -1329,7 +1294,7 @@ impl Wallet {
 
 		// TODO: we should ensure no fee is applied in this send
 		self.db.register_movement(MovementArgs {
-			spends: &oor.input.iter().collect::<Vec<_>>(),
+			spends: &[&oor.input],
 			receives: &receives,
 			recipients: &[],
 			fees: None
@@ -1378,7 +1343,8 @@ impl Wallet {
 			Ok((inputs, vec![htlc_pay_req], vec![]))
 		}).await.context("round failed")?;
 
-		info!("Got HTLC vtxo in round: {}", vtxos.first().expect("should have one").id());
+		let vtxo = vtxos.first().expect("should have one");
+		info!("Got HTLC vtxo in round: {}", vtxo.id());
 
 		// Claiming arkoor against preimage
 		let pay_req = PaymentRequest {
@@ -1390,7 +1356,7 @@ impl Wallet {
 		let payment = ark::oor::OorPayment::new(
 			asp.info.asp_pubkey,
 			asp.info.vtxo_exit_delta,
-			vtxos,
+			vtxo.clone(),
 			vec![pay_req],
 		);
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
@@ -1398,23 +1364,20 @@ impl Wallet {
 		let req = protos::ClaimBolt11OnboardRequest {
 			payment: payment.encode(),
 			payment_preimage: offchain_onboard.payment_preimage.to_vec(),
-			pub_nonces: vec![pub_nonce.serialize().to_vec()],
+			pub_nonce: pub_nonce.serialize().to_vec(),
 		};
 
 		info!("Claiming arkoor against payment preimage");
 		let resp = asp.client.claim_bolt11_onboard(req).await?.into_inner();
-		let asp_pub_nonces = resp.asp_pub_nonces()?;
-		let asp_part_sigs = resp.asp_part_sigs()?;
-		if asp_pub_nonces.len() != payment.inputs.len() || asp_part_sigs.len() != payment.inputs.len() {
-			bail!("invalid length of asp response");
-		}
+		let asp_pub_nonce = resp.asp_pub_nonce()?;
+		let asp_part_sig = resp.asp_part_sig()?;
 
 		let signed_payment = payment.sign_finalize_user(
-			vec![sec_nonce],
-			&vec![pub_nonce],
-			&vec![keypair],
-			&asp_pub_nonces,
-			&asp_part_sigs,
+			sec_nonce,
+			pub_nonce,
+			&keypair,
+			asp_pub_nonce,
+			asp_part_sig,
 		);
 
 		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_payment.signed_transaction()));

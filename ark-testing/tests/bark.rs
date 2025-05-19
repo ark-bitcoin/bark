@@ -675,23 +675,23 @@ async fn reject_oor_with_bad_signature() {
 			info!("proxy received real response");
 
 			let keypair = Keypair::new(&ark::util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
-			let (inputs, output_specs, point) = match
+			let (input, output_specs, point) = match
 				Vtxo::decode(&response.into_inner().vtxos[0]).unwrap() {
-					Vtxo::Arkoor(v) => (v.inputs, v.output_specs, v.point),
+					Vtxo::Arkoor(v) => (v.input, v.output_specs, v.point),
 					_ => panic!("expect oor vtxo")
 				};
 
-			let mut fake_sigs = Vec::with_capacity(inputs.len());
-
-			let sighashes = ark::oor::oor_sighashes(
-				&inputs, &ark::oor::unsigned_oor_tx(&inputs, &output_specs),
+			let sighash = ark::oor::oor_sighash(
+				&input, &ark::oor::unsigned_oor_tx(&input, &output_specs),
 			);
-			for sighash in sighashes.into_iter() {
-				let sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
-				fake_sigs.push(sig);
-			}
+			let fake_sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
 
-			let vtxo = Vtxo::Arkoor(ArkoorVtxo { inputs, signatures: fake_sigs, output_specs, point });
+			let vtxo = Vtxo::Arkoor(ArkoorVtxo {
+				input,
+				signature: Some(fake_sig),
+				output_specs,
+				point,
+			});
 
 			Ok(protos::OorVtxosResponse {
 				vtxos: vec![vtxo.encode()]

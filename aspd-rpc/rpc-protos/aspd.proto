@@ -97,12 +97,12 @@ message BoardVtxoRequest {
 
 message OorCosignRequest {
 	bytes payment = 1;
-	repeated bytes pub_nonces = 2;
+	bytes pub_nonce = 2;
 }
 
 message OorCosignResponse {
-	repeated bytes pub_nonces = 1;
-	repeated bytes partial_sigs = 2;
+	bytes pub_nonce = 1;
+	bytes partial_sig = 2;
 }
 
 message OorVtxo {
@@ -123,15 +123,15 @@ message OorVtxosResponse {
 message Bolt11PaymentRequest {
 	string invoice = 1;
 	optional uint64 amount_sats = 2;
-	repeated bytes input_vtxos = 3;
+	bytes input_vtxo = 3;
 	bytes user_pubkey = 4;
-	repeated bytes user_nonces = 5;
+	bytes user_nonce = 5;
 }
 
 message Bolt11PaymentDetails {
 	bytes details = 1;
-	repeated bytes pub_nonces = 2;
-	repeated bytes partial_sigs = 3;
+	bytes pub_nonce = 2;
+	bytes partial_sig = 3;
 }
 
 message SignedBolt11PaymentDetails {
@@ -153,7 +153,7 @@ message Bolt11PaymentResult {
 
 message RevokeBolt11PaymentRequest {
 	bytes signed_payment = 1;
-	repeated bytes pub_nonces = 2;
+	bytes pub_nonce = 2;
 }
 
 message StartBolt11OnboardRequest {
@@ -171,7 +171,7 @@ message SubscribeBolt11OnboardRequest {
 
 message ClaimBolt11OnboardRequest {
 	bytes payment = 1;
-	repeated bytes pub_nonces = 2;
+	bytes pub_nonce = 2;
 	bytes payment_preimage = 3;
 }
 
