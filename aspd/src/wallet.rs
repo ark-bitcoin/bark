@@ -16,7 +16,7 @@ use bitcoin_ext::rpc::BitcoinRpcExt;
 use log::{error, trace};
 
 use crate::database;
-
+use crate::telemetry::TelemetryMetrics;
 
 /// The location of the mnemonic file in aspd's datadir.
 pub const MNEMONIC_FILE: &str = "mnemonic";
@@ -160,7 +160,12 @@ impl PersistedWallet {
 		Ok(())
 	}
 
-	pub async fn sync(&mut self, bitcoind: &impl RpcApi, mempool: bool) -> anyhow::Result<Balance> {
+	pub async fn sync(
+		&mut self,
+		bitcoind: &impl RpcApi,
+		mempool: bool,
+		telemetry_metrics: &TelemetryMetrics,
+	) -> anyhow::Result<Balance> {
 		let start_time = Instant::now();
 
 		let prev_tip = self.latest_checkpoint();
@@ -219,6 +224,9 @@ impl PersistedWallet {
 				block_height: checkpoint.height(),
 			);
 		}
+		
+		telemetry_metrics.set_wallet_balance(self.kind, balance.clone());
+		
 		Ok(balance)
 	}
 
