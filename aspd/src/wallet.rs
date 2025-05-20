@@ -254,6 +254,7 @@ impl PersistedWallet {
 		b.fee_rate(fee_rate);
 		let psbt = b.finish()?;
 		let tx = self.finish_tx(psbt)?;
+		self.commit_tx(&tx);
 		self.persist().await?;
 		Ok(tx)
 	}
