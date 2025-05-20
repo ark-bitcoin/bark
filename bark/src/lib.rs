@@ -42,6 +42,7 @@ use bitcoin::params::Params;
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
+use lightning::util::ser::Writeable;
 use log::{trace, debug, info, warn, error};
 use tokio_stream::{Stream, StreamExt};
 
@@ -49,7 +50,7 @@ use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::connectors::ConnectorChain;
-use ark::lightning::{Invoice, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
@@ -1168,12 +1169,14 @@ impl Wallet {
 		let current_height = self.chain.tip().await?;
 
 		if invoice.network() != properties.network {
-			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
+			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
 
 		if self.db.check_recipient_exists(&invoice.to_string())? {
 			bail!("Invoice has already been paid");
 		}
+
+		invoice.check_signature()?;
 
 		let mut asp = self.require_asp()?;
 
@@ -1543,6 +1546,36 @@ impl Wallet {
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);
 		let preimage = self.send_lightning_payment(Invoice::Bolt11(invoice.clone()), None).await
+			.context("bolt11 payment error")?;
+		Ok((invoice, preimage))
+	}
+
+	pub async fn pay_offer(
+		&mut self,
+		offer: Offer,
+		amount: Option<Amount>,
+	) -> anyhow::Result<(Bolt12Invoice, Preimage)> {
+		let mut asp = self.require_asp()?;
+
+		let offer_bytes = {
+			let mut bytes = Vec::new();
+			offer.write(&mut bytes).unwrap();
+			bytes
+		};
+
+		let req = protos::FetchBolt12InvoiceRequest {
+			offer: offer_bytes,
+			amount_sat: amount.map(|a| a.to_sat()),
+		};
+
+		let resp = asp.client.fetch_bolt12_invoice(req).await?.into_inner();
+
+		let invoice = Bolt12Invoice::try_from(resp.invoice)
+			.map_err(|_| anyhow::anyhow!("invalid invoice"))?;
+
+		invoice.validate_issuance(offer)?;
+
+		let preimage = self.send_lightning_payment(Invoice::Bolt12(invoice.clone()), None).await
 			.context("bolt11 payment error")?;
 		Ok((invoice, preimage))
 	}

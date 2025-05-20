@@ -393,6 +393,7 @@ dependencies = [
  "home",
  "humantime",
  "lazy_static",
+ "lightning",
  "lightning-invoice 0.32.0",
  "lnurl-rs",
  "log",
