@@ -1105,7 +1105,9 @@ async fn perform_round(
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
 
-		if let Err(e) = server.rounds_wallet.lock().await.sync(&server.bitcoind, false).await {
+		if let Err(e) = server.rounds_wallet.lock().await
+			.sync(&server.bitcoind, false, &server.telemetry_metrics).await
+		{
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}
 
