@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
+use ark::lightning::{Bolt12Invoice, Offer};
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hex::DisplayHex;
@@ -810,6 +811,11 @@ impl Server {
 				}
 			},
 		}
+	}
+
+	async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount) -> anyhow::Result<Bolt12Invoice> {
+		let invoice = self.cln.fetch_bolt12_invoice(offer, amount).await?;
+		Ok(invoice)
 	}
 
 	async fn revoke_bolt11_payment(

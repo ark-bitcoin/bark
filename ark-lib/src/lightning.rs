@@ -1,14 +1,29 @@
+use bitcoin::constants::ChainHash;
+use bitcoin::Network;
+pub use lightning::offers::offer::{Offer, Amount as OfferAmount};
+pub use lightning::offers::invoice::Bolt12Invoice;
 
-use std::fmt;
-use bitcoin::Amount ;
+use std::str::FromStr;
+use std::{fmt, io};
+
+use bitcoin::Amount;
+use bitcoin::bech32::{encode_to_fmt, EncodeError, Hrp, NoChecksum, primitives::decode::CheckedHrpstring};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{Message, PublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
+use lightning::offers::parse::Bolt12ParseError;
+use lightning::util::ser::Writeable;
+use lightning_invoice::Bolt11Invoice;
+
+use serde::{Deserialize, Serialize};
+
 use bitcoin_ext::P2TR_DUST;
 
-use crate::{musig, util};
+use crate::ProtocolDecodingError;
+use crate::{musig, util, ProtocolEncoding, encode::{WriteExt, ReadExt}};
 use crate::util::SECP;
 
+const BECH32_BOLT12_INVOICE_HRP: &str = "lni";
 
 /// The minimum fee we consider for an HTLC transaction.
 pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
@@ -40,6 +55,12 @@ impl From<sha256::Hash> for PaymentHash {
 impl From<Preimage> for PaymentHash {
 	fn from(preimage: Preimage) -> Self {
 		PaymentHash::from_preimage(preimage)
+	}
+}
+
+impl From<lightning::types::payment::PaymentHash> for PaymentHash {
+	fn from(hash: lightning::types::payment::PaymentHash) -> Self {
+		PaymentHash(hash.0)
 	}
 }
 
@@ -144,5 +165,170 @@ pub enum PaymentStatus {
 impl fmt::Display for PaymentStatus {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		fmt::Debug::fmt(self, f)
+	}
+}
+
+/// Enum to represent either a bolt11 or bolt12 invoice
+///
+/// Used in [`LightningPaymentDetails`] to represent the invoice to pay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Invoice {
+	Bolt11(Bolt11Invoice),
+	#[serde(with = "crate::encode::serde")]
+	Bolt12(Bolt12Invoice),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("cannot parse invoice")]
+pub struct InvoiceParseError;
+
+impl FromStr for Invoice {
+	type Err = InvoiceParseError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		if let Ok(bolt11) = Bolt11Invoice::from_str(s) {
+			Ok(Invoice::Bolt11(bolt11))
+		} else if let Ok(bolt12) = Bolt12Invoice::from_str(s) {
+			Ok(Invoice::Bolt12(bolt12))
+		} else {
+			Err(InvoiceParseError)
+		}
+	}
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid invoice signature: {0}")]
+pub struct CheckSignatureError(pub String);
+
+impl Invoice {
+	pub fn into_bolt11(self) -> Option<Bolt11Invoice> {
+		match self {
+			Invoice::Bolt11(invoice) => Some(invoice),
+			Invoice::Bolt12(_) => None
+		}
+	}
+
+	pub fn payment_hash(&self) -> PaymentHash {
+		match self {
+			Invoice::Bolt11(invoice) => PaymentHash::from(*invoice.payment_hash().as_byte_array()),
+			Invoice::Bolt12(invoice) => PaymentHash::from(invoice.payment_hash()),
+		}
+	}
+
+	pub fn network(&self) -> Network {
+		match self {
+			Invoice::Bolt11(invoice) => invoice.network(),
+			Invoice::Bolt12(invoice) => match invoice.chain() {
+				ChainHash::BITCOIN => Network::Bitcoin,
+				ChainHash::TESTNET3 => Network::Testnet,
+				ChainHash::TESTNET4 => Network::Testnet4,
+				ChainHash::SIGNET => Network::Signet,
+				ChainHash::REGTEST => Network::Regtest,
+				_ => panic!("unsupported network"),
+			},
+		}
+	}
+
+	pub fn amount_milli_satoshis(&self) -> Option<u64> {
+		match self {
+			Invoice::Bolt11(invoice) => invoice.amount_milli_satoshis(),
+			Invoice::Bolt12(invoice) => invoice.amount_milli_satoshis(),
+		}
+	}
+
+	pub fn check_signature(&self) -> Result<(), CheckSignatureError> {
+		match self {
+			Invoice::Bolt11(invoice) => invoice
+				.check_signature()
+				.map_err(|e| CheckSignatureError(e.to_string())),
+			Invoice::Bolt12(invoice) => invoice.check_signature(),
+		}
+	}
+}
+
+impl fmt::Display for Invoice {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Invoice::Bolt11(invoice) => write!(f, "{}", invoice.to_string()),
+			Invoice::Bolt12(invoice) => encode_to_fmt::<NoChecksum, _>(
+				f,
+				Hrp::parse("lni").unwrap(),
+				&invoice.bytes(),
+			)
+			.map_err(|e| match e {
+				EncodeError::Fmt(e) => e,
+				_ => fmt::Error {},
+			}),
+		}
+	}
+}
+
+pub trait Bolt12InvoiceExt: Sized {
+	fn payment_hash(&self) -> PaymentHash;
+	fn amount_milli_satoshis(&self) -> Option<u64>;
+	fn check_signature(&self) -> Result<(), CheckSignatureError>;
+	fn bytes(&self) -> Vec<u8>;
+	fn from_bytes(bytes: &[u8]) -> Result<Self, Bolt12ParseError>;
+	fn validate_issuance(&self, offer: Offer) -> Result<(), CheckSignatureError>;
+	fn from_str(s: &str) -> Result<Bolt12Invoice, Bolt12ParseError>;
+}
+
+impl Bolt12InvoiceExt for Bolt12Invoice {
+	fn payment_hash(&self) -> PaymentHash { PaymentHash::from(self.payment_hash()) }
+
+	fn amount_milli_satoshis(&self) -> Option<u64> {
+		Some(self.amount_msats())
+	}
+
+	fn check_signature(&self) -> Result<(), CheckSignatureError> {
+		let message = Message::from_digest(self.signable_hash());
+		let signature = self.signature();
+
+		if let Some(pubkey) = self.issuer_signing_pubkey() {
+			Ok(SECP.verify_schnorr(&signature, &message, &pubkey.into())
+				.map_err(|_| CheckSignatureError("invalid signature".to_string()))?)
+		} else {
+			Err(CheckSignatureError("no pubkey on offer, cannot verify signature".to_string()))
+		}
+	}
+
+	fn bytes(&self) -> Vec<u8> {
+		let mut bytes = Vec::new();
+		self.write(&mut bytes).expect("Writing into a Vec is infallible");
+		bytes
+	}
+
+	fn from_bytes(bytes: &[u8]) -> Result<Self, Bolt12ParseError> {
+		Bolt12Invoice::try_from(bytes.to_vec())
+	}
+
+	fn validate_issuance(&self, offer: Offer) -> Result<(), CheckSignatureError> {
+		if self.issuer_signing_pubkey() != offer.issuer_signing_pubkey() {
+			Err(CheckSignatureError("public keys mismatch".to_string()))
+		} else {
+			Ok(())
+		}
+	}
+
+	fn from_str(s: &str) -> Result<Self, Bolt12ParseError> {
+		let dec = CheckedHrpstring::new::<NoChecksum>(&s)?;
+		if dec.hrp().to_lowercase() != BECH32_BOLT12_INVOICE_HRP {
+			return Err(Bolt12ParseError::InvalidBech32Hrp);
+		}
+
+		let data = dec.byte_iter().collect::<Vec<_>>();
+		Bolt12Invoice::try_from(data)
+	}
+}
+
+impl<T: Bolt12InvoiceExt> ProtocolEncoding for T {
+	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
+		writer.emit_slice(&self.bytes())
+	}
+
+	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let mut bytes = Vec::new();
+		reader.read_slice(&mut bytes)?;
+		Self::from_bytes(&bytes).map_err(|e| ProtocolDecodingError::invalid(format!("{:?}", e)))
 	}
 }

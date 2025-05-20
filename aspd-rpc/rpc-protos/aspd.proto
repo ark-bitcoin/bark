@@ -33,6 +33,8 @@ service ArkService {
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
 
+	rpc FetchBolt12Invoice(FetchBolt12InvoiceRequest) returns (FetchBolt12InvoiceResponse) {}
+
 	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
 	rpc SubscribeLightningReceive(SubscribeLightningReceiveRequest) returns (SubscribeLightningReceiveResponse) {}
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorCosignResponse) {}
@@ -194,6 +196,15 @@ message LightningPaymentResult {
 message RevokeLightningPaymentRequest {
 	repeated bytes htlc_vtxo_ids = 1;
 	repeated bytes user_nonces = 2;
+}
+
+message FetchBolt12InvoiceRequest {
+	bytes offer = 1;
+	optional uint64 amount_sat = 2;
+}
+
+message FetchBolt12InvoiceResponse {
+	bytes invoice = 1;
 }
 
 message StartLightningReceiveRequest {

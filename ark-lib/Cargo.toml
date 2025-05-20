@@ -23,6 +23,8 @@ serde = { version = "1.0.219" }
 lazy_static.workspace = true
 thiserror.workspace = true
 rand.workspace = true
+lightning-invoice.workspace = true
+lightning.workspace = true
 # can use bitcoin::hex once they upgrade to v0.3.0
 hex-conservative = "0.3.0"
 

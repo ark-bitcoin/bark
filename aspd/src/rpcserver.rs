@@ -12,6 +12,7 @@ use bitcoin::{Amount, OutPoint, ScriptBuf, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
+use bitcoin_ext::AmountExt;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
 use opentelemetry::{global, Context, KeyValue};
@@ -20,6 +21,7 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
+use ark::lightning::{Bolt12InvoiceExt, Offer, OfferAmount};
 use ark::rounds::RoundId;
 use aspd_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
 use tonic::async_trait;
@@ -170,6 +172,7 @@ const RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT: &'static str = "start_lightning_p
 const RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT: &'static str = "finish_lightning_payment";
 const RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT: &'static str = "check_lightning_payment";
 const RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT: &'static str = "revoke_lightning_payment";
+const RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE: &'static str = "fetch_bolt12_invoice";
 const RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE: &'static str = "start_lightning_receive";
 const RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE: &'static str = "subscribe_lightning_receive";
 const RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE: &'static str = "claim_lightning_receive";
@@ -178,7 +181,7 @@ const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
 const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
 
-const RPC_SERVICE_ARK_METHODS: [&str; 20] = [
+const RPC_SERVICE_ARK_METHODS: [&str; 21] = [
 	RPC_SERVICE_ARK_HANDSHAKE,
 	RPC_SERVICE_ARK_GET_ARK_INFO,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
@@ -192,6 +195,7 @@ const RPC_SERVICE_ARK_METHODS: [&str; 20] = [
 	RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE,
 	RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE,
 	RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE,
 	RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE,
@@ -618,6 +622,40 @@ impl rpc::server::ArkService for Server {
 
 		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, user_nonces).await.to_status()?;
 		Ok(tonic::Response::new(cosign_resp.into()))
+	}
+
+	async fn fetch_bolt12_invoice(
+		&self,
+		req: tonic::Request<protos::FetchBolt12InvoiceRequest>,
+	) -> Result<tonic::Response<protos::FetchBolt12InvoiceResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE);
+		let req = req.into_inner();
+
+		let offer = match Offer::try_from(req.offer.to_vec()) {
+			Ok(offer) => offer,
+			Err(_) => {
+				badarg!("invalid offer");
+			},
+		};
+
+		let amount = match req.amount_sat {
+			Some(a) => { Amount::from_sat(a) },
+			None if offer.amount().is_some() => {
+				match offer.amount().unwrap() {
+					OfferAmount::Bitcoin { amount_msats } => { Amount::from_msat_ceil(amount_msats) },
+					_ => { badarg!("unsupported offer currency"); }
+				}
+			},
+			None => {
+				badarg!("amount_sat is required for bolt12 offers with no amount specified");
+			},
+		};
+
+		let invoice = self.fetch_bolt12_invoice(offer, amount).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::FetchBolt12InvoiceResponse {
+			invoice: invoice.bytes(),
+		}))
 	}
 
 	async fn start_lightning_receive(

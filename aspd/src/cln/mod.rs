@@ -53,7 +53,8 @@ use log::{debug, error, info, trace, warn};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
-use ark::lightning::{PaymentHash, Preimage};
+
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Offer, PaymentHash, Preimage};
 use cln_rpc::node_client::NodeClient;
 
 use crate::error::{AnyhowErrorExt, ContextExt};
@@ -64,7 +65,6 @@ use crate::database::{self, ClnNodeId};
 use crate::database::model::{LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentAttempt, LightningPaymentStatus};
 use self::node::ClnNodeMonitorConfig;
 use crate::telemetry;
-
 
 type ClnGrpcClient = NodeClient<Channel>;
 
@@ -89,6 +89,9 @@ pub struct ClnManager {
 	/// payment request that fail before the hit the sendpay stream.
 	//TODO(stevenroose) consider changing this to hold some update info
 	payment_update_tx: broadcast::Sender<PaymentHash>,
+
+	/// This channel sends bolt12 offer to the process and wait for a bolt 12 invoice in return.
+	bolt12_tx: mpsc::UnboundedSender<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
 }
 
 impl ClnManager {
@@ -103,6 +106,7 @@ impl ClnManager {
 		let (invoice_gen_tx, invoice_gen_rx) = mpsc::unbounded_channel();
 		let (invoice_settle_tx, invoice_settle_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, _rx) = broadcast::channel(256);
+		let (bolt12_tx, bolt12_rx) = mpsc::unbounded_channel();
 
 		let node_monitor_config = ClnNodeMonitorConfig {
 			invoice_check_interval: config.invoice_check_interval,
@@ -115,6 +119,7 @@ impl ClnManager {
 			rtmgr,
 			ctrl_rx,
 			payment_rx,
+			bolt12_rx,
 			node_monitor_config,
 			invoice_gen_rx,
 			invoice_settle_rx,
@@ -139,6 +144,7 @@ impl ClnManager {
 			payment_update_tx,
 			invoice_gen_tx,
 			invoice_settle_tx,
+			bolt12_tx,
 			invoice_poll_interval: config.invoice_poll_interval,
 		})
 	}
@@ -277,6 +283,17 @@ impl ClnManager {
 			.send(((subscription_id, preimage.to_owned()), tx))
 			.context("invoice settle channel broken")?;
 		rx.await.context("invoice settle return channel broken")
+	}
+
+	/// Fetches and parse an invoice from a bolt-12 offer
+	pub async fn fetch_bolt12_invoice(
+		&self,
+		offer: Offer,
+		amount: Amount,
+	) -> anyhow::Result<Bolt12Invoice> {
+		let (invoice_tx, invoice_rx) = oneshot::channel();
+		self.bolt12_tx.send((offer, amount, invoice_tx)).context("bolt12 channel broken")?;
+		invoice_rx.await.context("bolt12 return channel broken")
 	}
 
 	pub async fn activate(&self, uri: Uri) -> anyhow::Result<()> {
@@ -471,6 +488,7 @@ struct ClnManagerProcess {
 	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
 	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
+	bolt12_rx: mpsc::UnboundedReceiver<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
 	waker: Arc<Notify>,
 
 	network: bitcoin::Network,
@@ -780,7 +798,29 @@ impl ClnManagerProcess {
 		}).await?;
 
 		self.db.store_lightning_htlc_subscription_status(subscription.lightning_htlc_subscription_id, status).await?;
+		Ok(())
+	}
 
+	async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount, channel: oneshot::Sender<Bolt12Invoice>) -> anyhow::Result<()> {
+		let node = self.get_active_node().context("no active cln node")?;
+
+		let resp = node.rpc.clone().fetch_invoice(cln_rpc::FetchinvoiceRequest {
+			offer: offer.to_string(),
+			amount_msat: Some(cln_rpc::Amount { msat: amount.to_msat() }),
+			quantity: None,
+			recurrence_counter: None,
+			recurrence_start: None,
+			recurrence_label: None,
+			timeout: None,
+			payer_note: None,
+			payer_metadata: None,
+			bip353: None,
+		}).await?.into_inner();
+
+		let invoice = Bolt12Invoice::from_str(&resp.invoice)
+			.map_err(|e| anyhow!("Invalid bolt12 invoice: {:?}", e))?;
+
+		channel.send(invoice).map_err(|_| anyhow!("broken channel"))?;
 		Ok(())
 	}
 
@@ -860,7 +900,17 @@ impl ClnManagerProcess {
 				} else {
 					warn!("invoice settle channel closed, shutting down ClnManager");
 					break;
-				}
+				},
+
+				msg = self.bolt12_rx.recv() => if let Some((offer, amount, channel)) = msg {
+					trace!("Fetch bolt12 invoice received: offer={:?}", offer);
+					if let Err(e) = self.fetch_bolt12_invoice(offer, amount, channel).await {
+						error!("Error fetching bolt12 invoice: {}", e);
+					}
+				} else {
+					warn!("bolt12 channel closed, shutting down ClnManager");
+					break;
+				},
 			};
 		}
 	}
