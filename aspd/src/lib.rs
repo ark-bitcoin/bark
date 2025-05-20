@@ -44,7 +44,7 @@ use ark::board::BoardBuilder;
 use ark::lightning::{PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
-use aspd_rpc::protos::{self, Bolt11PaymentResult};
+use aspd_rpc::protos;
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
 
@@ -603,7 +603,7 @@ impl Server {
 
 	// lightning
 
-	pub async fn start_bolt11_payment(
+	pub async fn start_lightning_payment(
 		&self,
 		invoice: Bolt11Invoice,
 		amount: Amount,
@@ -655,13 +655,13 @@ impl Server {
 		}
 	}
 
-	/// Try to finish the bolt11 payment that was previously started.
-	async fn finish_bolt11_payment(
+	/// Try to finish the lightning payment that was previously started.
+	async fn finish_lightning_payment(
 		&self,
 		invoice: Bolt11Invoice,
 		htlc_vtxo_ids: Vec<VtxoId>,
 		wait: bool,
-	) -> anyhow::Result<protos::Bolt11PaymentResult> {
+	) -> anyhow::Result<protos::LightningPaymentResult> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash());
 
@@ -706,26 +706,26 @@ impl Server {
 		// Spawn a task that performs the payment
 		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, wait).await;
 
-		Self::process_bolt11_response(invoice_payment_hash, res)
+		Self::process_lightning_pay_response(invoice_payment_hash, res)
 	}
 
-	async fn check_bolt11_payment(
+	async fn check_lightning_payment(
 		&self,
 		payment_hash: PaymentHash,
 		wait: bool,
-	) -> anyhow::Result<protos::Bolt11PaymentResult> {
+	) -> anyhow::Result<protos::LightningPaymentResult> {
 		let res = self.cln.check_bolt11(&payment_hash, wait).await;
 
-		Self::process_bolt11_response(payment_hash, res)
+		Self::process_lightning_pay_response(payment_hash, res)
 	}
 
-	fn process_bolt11_response(
+	fn process_lightning_pay_response(
 		payment_hash: PaymentHash,
 		res: anyhow::Result<Preimage>,
-	) -> anyhow::Result<Bolt11PaymentResult> {
+	) -> anyhow::Result<protos::LightningPaymentResult> {
 		match res {
 			Ok(preimage) => {
-				Ok(protos::Bolt11PaymentResult {
+				Ok(protos::LightningPaymentResult {
 					progress_message: "Payment completed".to_string(),
 					status: protos::PaymentStatus::Complete.into(),
 					payment_hash: payment_hash.to_vec(),
@@ -735,14 +735,14 @@ impl Server {
 			Err(e) => {
 				let status = e.downcast_ref::<LightningPaymentStatus>();
 				if let Some(LightningPaymentStatus::Failed) = status {
-					Ok(protos::Bolt11PaymentResult {
+					Ok(protos::LightningPaymentResult {
 						progress_message: format!("Payment failed: {}", e),
 						status: protos::PaymentStatus::Failed.into(),
 						payment_hash: payment_hash.to_vec(),
 						payment_preimage: None
 					})
 				} else {
-					Ok(protos::Bolt11PaymentResult {
+					Ok(protos::LightningPaymentResult {
 						progress_message: format!("Error during payment: {:?}", e),
 						status: protos::PaymentStatus::Failed.into(),
 						payment_hash: payment_hash.to_vec(),

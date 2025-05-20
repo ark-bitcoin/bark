@@ -285,7 +285,7 @@ impl Bark {
 		self.try_send_oor(dest, amount, false).await.expect("send-oor command failed");
 	}
 
-	pub async fn try_send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>)-> anyhow::Result<()> {
+	pub async fn try_send_lightning(&self, destination :impl fmt::Display, amount: Option<Amount>)-> anyhow::Result<()> {
 		let destination = destination.to_string();
 
 		if let Some(amount) = amount {
@@ -296,8 +296,8 @@ impl Bark {
 		Ok(())
 	}
 
-	pub async fn send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>) -> () {
-		self.try_send_bolt11(destination, amount).await.unwrap();
+	pub async fn send_lightning(&self, destination :impl fmt::Display, amount: Option<Amount>) -> () {
+		self.try_send_lightning(destination, amount).await.unwrap();
 	}
 
 	pub async fn bolt11_invoice(&self, amount: Amount) -> InvoiceInfo {

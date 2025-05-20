@@ -116,7 +116,7 @@ async fn bark_pay_ln_succeeds() {
 		let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 		assert_eq!(bark_1.offchain_balance().await, board_amount);
-		bark_1.send_bolt11(invoice, None).await;
+		bark_1.send_lightning(invoice, None).await;
 		assert_eq!(bark_1.offchain_balance().await, btc(3));
 	}
 
@@ -124,14 +124,14 @@ async fn bark_pay_ln_succeeds() {
 		// Test invoice without amount, reusing previous change output
 		let invoice_amount = btc(1);
 		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
-		bark_1.send_bolt11(invoice, Some(invoice_amount)).await;
+		bark_1.send_lightning(invoice, Some(invoice_amount)).await;
 		assert_eq!(bark_1.offchain_balance().await, btc(2));
 	}
 
 	{
 		// Test invoice with msat amount
 		let invoice = lightningd_2.invoice_msat(330300, "test_payment3", "msat").await;
-		bark_1.send_bolt11(invoice, None).await;
+		bark_1.send_lightning(invoice, None).await;
 		assert_eq!(bark_1.offchain_balance().await, btc(2) - sat(331));
 	}
 }
@@ -173,9 +173,9 @@ async fn bark_pay_invoice_twice() {
 	let invoice_amount = btc(2);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
-	bark_1.send_bolt11(invoice.clone(), None).await;
+	bark_1.send_lightning(invoice.clone(), None).await;
 
-	let res = bark_1.try_send_bolt11(invoice, None).await;
+	let res = bark_1.try_send_lightning(invoice, None).await;
 	assert!(res.unwrap_err().to_string().contains("Invoice has already been paid"))
 }
 
@@ -212,7 +212,7 @@ async fn bark_pay_ln_fails() {
 
 	// Try send coins through lightning
 	assert_eq!(bark.offchain_balance().await, board_amount);
-	bark.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+	bark.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	let vtxos = bark.vtxos().await;
 	assert!(!vtxos.iter().any(|v| v.id == board_vtxo), "board vtxo not spent");
@@ -270,7 +270,7 @@ async fn bark_refresh_ln_change_vtxo() {
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.send_bolt11(invoice, None).await;
+	bark_1.send_lightning(invoice, None).await;
 	assert_eq!(bark_1.offchain_balance().await, btc(3));
 
 	bark_1.refresh_all().await;
@@ -310,7 +310,7 @@ async fn bark_refresh_payment_revocation() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	bark_1.refresh_all().await;
 	let vtxos = bark_1.vtxos().await;
@@ -356,14 +356,14 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 	{
 		// Invoice with amount
 		let invoice = lightningd_2.invoice(Some(sat(P2TR_DUST_SAT - 1)), "test_payment", "A test payment").await;
-		let res = bark_1.try_send_bolt11(invoice, None).await;
+		let res = bark_1.try_send_lightning(invoice, None).await;
 		assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
 	}
 
 	{
 		// Invoice with no amount
 		let invoice = lightningd_2.invoice(None, "test_payment2", "A test payment").await;
-		let res = bark_1.try_send_bolt11(invoice, Some(sat(P2TR_DUST_SAT - 1))).await;
+		let res = bark_1.try_send_lightning(invoice, Some(sat(P2TR_DUST_SAT - 1))).await;
 		assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
 	}
 }
@@ -489,7 +489,7 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 		cloned.bolt11_board(cloned_invoice_info.invoice).await
 	});
 
-	bark_2.send_bolt11(invoice_info.invoice, None).await;
+	bark_2.send_lightning(invoice_info.invoice, None).await;
 	res1.await.unwrap();
 
 	let vtxos = bark_1.vtxos().await;
@@ -519,21 +519,21 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
-		async fn finish_bolt11_payment(
+		async fn finish_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::SignedBolt11PaymentDetails,
-		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
+			_req: aspd_rpc::protos::SignedLightningPaymentDetails,
+		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
 			// Never return - wait indefinitely
 			loop {
 				tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 			}
 		}
 
-		async fn check_bolt11_payment(
+		async fn check_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::CheckBolt11PaymentRequest,
-		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
-			Ok(aspd_rpc::protos::Bolt11PaymentResult {
+			_req: aspd_rpc::protos::CheckLightningPaymentRequest,
+		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
+			Ok(aspd_rpc::protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),
 				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
 				payment_hash: vec![],
@@ -560,7 +560,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.try_send_bolt11(invoice, None).try_fast().await.expect_err("the payment is held");
+	bark_1.try_send_lightning(invoice, None).try_fast().await.expect_err("the payment is held");
 
 	// htlc expiry is 6 ahead of current block
 	ctx.generate_blocks(8).await;
