@@ -393,7 +393,7 @@ impl TestContext {
 		self.bitcoind().generate(1).await;
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 		asp.get_admin_client().await.wallet_sync(rpc::protos::Empty {}).await
-			.expect("error calling wallet status after funding apsd");
+			.expect("error calling wallet status after funding aspd");
 	}
 
 	/// Send `amount` to an onchain address of this Bark client.
