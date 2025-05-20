@@ -463,5 +463,17 @@ impl TestContext {
 impl Drop for TestContext {
 	fn drop(&mut self) {
 		log::info!("TestContext: Datadir is located at {:?}", self.datadir);
+
+		if std::thread::panicking() {
+			log::info!("Leave test directory intact");
+			// do nothing
+		} else {
+			if let Some(_) = std::env::var_os(crate::constants::env::CLEAN_SUCCESSFUL_TESTS) {
+				log::info!("Cleaning up {:?} because test passed and {} is set", self.datadir, crate::constants::env::CLEAN_SUCCESSFUL_TESTS);
+				std::fs::remove_dir_all(&self.datadir).unwrap();
+			} else {
+				log::info!("Leave test-directory intact because {} is not set", crate::constants::env::CLEAN_SUCCESSFUL_TESTS);
+			}
+		}
 	}
 }
