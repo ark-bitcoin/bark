@@ -147,11 +147,6 @@ impl BarkPersister for SqliteClient {
 		query::get_vtxos_by_state(&conn, state)
 	}
 
-	fn select_vtxos_to_cover(&self, amount: Amount) -> anyhow::Result<Vec<Vtxo>> {
-		let conn = self.connect()?;
-		query::select_vtxos_to_cover(&conn, amount)
-	}
-
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
 		let state : Option<VtxoState> = query::get_vtxo_state(&conn, id)?;
@@ -311,23 +306,6 @@ pub mod test {
 		assert!(vtxos.contains(&vtxo_2));
 		assert!(!vtxos.contains(&vtxo_3));
 
-		// Add the third entry to the database
-		db.register_movement(MovementArgs {
-			spends: &[],
-			receives: &[(&vtxo_3, VtxoState::Spendable)],
-			recipients: &[],
-			fees: None,
-		}).unwrap();
-
-		// Get expiring vtxo's
-		// Matches exactly the first vtxo
-		let vs = db.select_vtxos_to_cover(Amount::from_sat(500)).unwrap();
-		assert_eq!(vs, [vtxo_1.clone()]);
-
-		// Overshoots the first vtxo by one sat
-		let vs = db.select_vtxos_to_cover(Amount::from_sat(501)).unwrap();
-		assert_eq!(vs, [vtxo_1.clone(), vtxo_2.clone()]);
-
 		// Verify that we can mark a vtxo as spent
 		db.register_movement(MovementArgs {
 			spends: &[&vtxo_1],
@@ -338,14 +316,21 @@ pub mod test {
 			fees: None
 		}).unwrap();
 
-		assert!(db.has_spent_vtxo(vtxo_1.id()).unwrap());
-		assert!(! db.has_spent_vtxo(vtxo_2.id()).unwrap());
-		assert!(! db.has_spent_vtxo(vtxo_3.id()).unwrap());
+		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		assert_eq!(vtxos.len(), 1);
 
-		// The first vtxo has been spent
-		// It shouldn't be used for coin selection
-		let vs = db.select_vtxos_to_cover(Amount::from_sat(501)).unwrap();
-		assert_eq!(vs, [vtxo_2.clone(), vtxo_3.clone()]);
+		// Add the third entry to the database
+		db.register_movement(MovementArgs {
+			spends: &[],
+			receives: &[(&vtxo_3, VtxoState::Spendable)],
+			recipients: &[],
+			fees: None,
+		}).unwrap();
+
+		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		assert_eq!(vtxos.len(), 2);
+		assert!(vtxos.contains(&vtxo_2));
+		assert!(vtxos.contains(&vtxo_3));
 
 		conn.close().unwrap();
 	}

@@ -984,6 +984,31 @@ impl Wallet {
 		Ok(Some(round_id))
 	}
 
+
+
+	/// Select several vtxos to cover the provided amount
+	///
+	/// Returns an error if amount cannot be reached
+	fn select_vtxos_to_cover(&self, amount: Amount) -> anyhow::Result<Vec<Vtxo>> {
+		let inputs = self.db.get_all_spendable_vtxos()?;
+
+		// Iterate over all rows until the required amount is reached
+		let mut result = Vec::new();
+		let mut total_amount = bitcoin::Amount::ZERO;
+		for input in inputs {
+			total_amount += input.amount();
+			result.push(input);
+
+			if total_amount >= amount {
+				return Ok(result)
+			}
+		}
+
+		bail!("Insufficient money available. Needed {} but {} is available",
+			amount, total_amount);
+	}
+
+
 	async fn create_oor_vtxo(&mut self, destination: PublicKey, amount: Amount)
 		-> anyhow::Result<OorCreateResult>
 	{
@@ -1002,7 +1027,7 @@ impl Wallet {
 		let offchain_fees = Amount::ZERO;
 		let spent_amount = amount + offchain_fees;
 
-		let inputs = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
+		let inputs = self.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
 		//TODO(stevenroose) fix single-input db
 		let [input] = inputs.try_into().ok().context("not enough balance or multi input broken")?;
 
@@ -1136,7 +1161,7 @@ impl Wallet {
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
 		let forwarding_fee = Amount::from_sat(350);
-		let inputs = self.db.select_vtxos_to_cover(amount + forwarding_fee)?;
+		let inputs = self.select_vtxos_to_cover(amount + forwarding_fee)?;
 		//TODO(stevenroose) fix single-input db
 		let [input] = inputs.try_into().ok().context("not enough balance or multi input broken")?;
 
@@ -1438,7 +1463,7 @@ impl Wallet {
 			};
 
 			let spent_amount = offb.amount + offb.fee(round.offboard_feerate)?;
-			let input_vtxos = self.db.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
+			let input_vtxos = self.select_vtxos_to_cover(spent_amount)?;
 
 			let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 

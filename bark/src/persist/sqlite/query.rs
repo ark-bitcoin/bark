@@ -234,7 +234,12 @@ pub fn get_vtxos_by_state(
 	conn: &Connection,
 	state: &[VtxoState]
 ) -> anyhow::Result<Vec<Vtxo>> {
-	let query = "SELECT raw_vtxo FROM vtxo_view WHERE state IN (SELECT atom FROM json_each(?))";
+	let query = "
+		SELECT raw_vtxo
+		FROM vtxo_view
+		WHERE state IN (SELECT atom FROM json_each(?))
+		ORDER BY expiry_height ASC";
+
 	let mut statement = conn.prepare(query)?;
 
 	let json_state = serde_json::to_string(state)?;
@@ -247,39 +252,6 @@ pub fn get_vtxos_by_state(
 		result.push(vtxo);
 	}
 	Ok(result)
-}
-
-pub fn select_vtxos_to_cover(
-	conn: &Connection,
-	amount: Amount
-) -> anyhow::Result<Vec<Vtxo>> {
-	let query =
-		"SELECT raw_vtxo, amount_sat
-		FROM vtxo_view
-		WHERE state = ?1
-		ORDER BY expiry_height ASC";
-	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([VtxoState::Spendable])?;
-
-	// Iterate over all rows until the required amount is reached
-	let mut result = Vec::new();
-	let mut total_amount = bitcoin::Amount::ZERO;
-	while let Some(row) = rows.next()? {
-		let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
-		let vtxo_amount_sat : i64 = row.get("amount_sat")?;
-
-		let vtxo = Vtxo::decode(&raw_vtxo)?;
-		let vtxo_amount = Amount::from_sat(u64::try_from(vtxo_amount_sat)?);
-
-		total_amount += vtxo_amount;
-		result.push(vtxo);
-
-		if total_amount >= amount {
-			return Ok(result)
-		}
-	}
-	bail!("Insufficient money available. Needed {} but {} is available",
-		amount, total_amount);
 }
 
 pub fn delete_vtxo(
