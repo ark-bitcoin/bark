@@ -171,7 +171,7 @@ impl fmt::Display for PaymentStatus {
 /// Enum to represent either a bolt11 or bolt12 invoice
 ///
 /// Used in [`LightningPaymentDetails`] to represent the invoice to pay.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Invoice {
 	Bolt11(Bolt11Invoice),
 	#[serde(with = "crate::encode::serde")]

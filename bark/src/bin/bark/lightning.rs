@@ -7,6 +7,7 @@ use clap;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, warn};
 
+use ark::lightning::Invoice;
 use bark::{Pagination, Wallet};
 use bark_json::InvoiceInfo;
 
@@ -111,7 +112,7 @@ pub async fn pay(
 	}
 
 	info!("Sending bolt11 payment of {} to invoice {}", final_amount, invoice);
-	let preimage = wallet.send_lightning_payment(&invoice, amount).await?;
+	let preimage = wallet.send_lightning_payment(Invoice::Bolt11(invoice.clone()), amount).await?;
 	info!("Payment preimage received: {}", preimage.as_hex());
 
 	Ok(())

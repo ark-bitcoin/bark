@@ -1,6 +1,5 @@
-use ark::{lightning::PaymentHash, Vtxo};
+use ark::{lightning::{Invoice, PaymentHash}, Vtxo};
 use bitcoin::Amount;
-use lightning_invoice::Bolt11Invoice;
 
 const SPENDABLE: &'static str = "Spendable";
 const UNREGISTERED_BOARD : &'static str = "UnregisteredBoard";
@@ -40,7 +39,7 @@ pub enum VtxoState {
 	/// used to either revoke the payment if the lightning part fails,
 	/// or exit the Ark if the ASP don't accept to revoke the payment
 	PendingLightningSend {
-		invoice: Bolt11Invoice,
+		invoice: Invoice,
 		amount: Amount,
 	},
 	/// The current vtxo is pending claim from recipient
@@ -63,7 +62,7 @@ impl VtxoState {
 		}
 	}
 
-	pub fn as_pending_lightning_send(&self) -> Option<(&Bolt11Invoice, &Amount)> {
+	pub fn as_pending_lightning_send(&self) -> Option<(&Invoice, &Amount)> {
 		match self {
 			VtxoState::PendingLightningSend { invoice, amount } => Some((invoice, amount)),
 			_ => None,

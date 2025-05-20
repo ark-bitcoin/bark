@@ -21,7 +21,7 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
-use ark::lightning::{Bolt12InvoiceExt, Offer, OfferAmount};
+use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount};
 use ark::rounds::RoundId;
 use aspd_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
 use tonic::async_trait;
@@ -527,8 +527,7 @@ impl rpc::server::ArkService for Server {
 				KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
 			]);
 
-		let invoice = Bolt11Invoice::from_str(&req.invoice)
-			.badarg("invalid invoice")?;
+		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 		invoice.check_signature().badarg("invalid invoice signature")?;
 
 		let inv_amount = invoice.amount_milli_satoshis()
@@ -577,7 +576,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("htlc_vtxo_ids", format!("{:?}", htlc_vtxo_ids)),
 		]);
 
-		let invoice = Bolt11Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
+		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 
 		let res = self.finish_lightning_payment(invoice, htlc_vtxo_ids, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))

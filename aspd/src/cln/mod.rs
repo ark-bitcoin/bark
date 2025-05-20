@@ -54,7 +54,7 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
 
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Offer, PaymentHash, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use cln_rpc::node_client::NodeClient;
 
 use crate::error::{AnyhowErrorExt, ContextExt};
@@ -77,7 +77,7 @@ pub struct ClnManager {
 	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
 
 	/// This channel sends payment requests to the process.
-	payment_tx: mpsc::UnboundedSender<(Bolt11Invoice, Option<Amount>)>,
+	payment_tx: mpsc::UnboundedSender<(Invoice, Option<Amount>)>,
 
 	/// This channel sends invoice generation requests to the process.
 	invoice_gen_tx: mpsc::UnboundedSender<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
@@ -156,13 +156,11 @@ impl ClnManager {
 	/// from Core Lightning.
 	pub async fn pay_bolt11(
 		&self,
-		invoice: &Bolt11Invoice,
+		invoice: &Invoice,
 		htlc_amount: Amount,
 		wait: bool,
 	) -> anyhow::Result<Preimage> {
-		if invoice.check_signature().is_err() {
-			bail!("Invalid signature in Bolt-11 invoice");
-		}
+		invoice.check_signature().context("invalid invoice signature")?;
 
 		let user_amount = if invoice.amount_milli_satoshis().is_none() {
 			Some(htlc_amount)
@@ -175,7 +173,7 @@ impl ClnManager {
 
 		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
 
-		let payment_hash = PaymentHash::from(*invoice.payment_hash());
+		let payment_hash = PaymentHash::from(invoice.payment_hash());
 		self.inner_check_bolt11(update_rx, &payment_hash, wait, false).await
 	}
 
@@ -484,7 +482,7 @@ struct ClnManagerProcess {
 	db: database::Db,
 	rtmgr: RuntimeManager,
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
-	payment_rx: mpsc::UnboundedReceiver<(Bolt11Invoice, Option<Amount>)>,
+	payment_rx: mpsc::UnboundedReceiver<(Invoice, Option<Amount>)>,
 	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
 	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
@@ -671,7 +669,7 @@ impl ClnManagerProcess {
 
 	async fn start_payment(
 		&self,
-		invoice: Bolt11Invoice,
+		invoice: Invoice,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<()> {
 		let node = self.get_active_node().context("no active cln node")?;
@@ -689,7 +687,7 @@ impl ClnManagerProcess {
 		// If there is an existing subscription, it's an ASP self-payment
 		// so we can directly mark it as accepted, then skip cln payment
 		let subscription = self.db.get_htlc_subscription_by_payment_hash(
-			PaymentHash::from(*invoice.payment_hash()),
+			invoice.payment_hash(),
 			LightningHtlcSubscriptionStatus::Created,
 		).await?;
 		if let Some(subscription) = subscription {
@@ -737,7 +735,7 @@ impl ClnManagerProcess {
 			}).await?;
 
 			self.db.store_lightning_htlc_subscription(node.id, existing.lightning_invoice_id).await?;
-			return Ok(existing.invoice)
+			return Ok(existing.invoice.into_bolt11().expect("invoice is not bolt11"))
 		}
 
 		let res = hold_client.invoice(hold::InvoiceRequest {
@@ -921,10 +919,10 @@ async fn handle_pay_bolt11(
 	db: database::Db,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 	mut rpc: ClnGrpcClient,
-	invoice: Bolt11Invoice,
+	invoice: Invoice,
 	amount: Option<Amount>,
 ) {
-	let payment_hash = PaymentHash::from(*invoice.payment_hash());
+	let payment_hash = invoice.payment_hash();
 	match call_pay_bolt11(&mut rpc, &invoice, amount).await {
 		Ok(preimage) => {
 			// NB we don't do db stuff when it's succesful, because
@@ -962,7 +960,7 @@ async fn handle_pay_bolt11(
 /// Otherwise, an error will be returned
 async fn call_pay_bolt11(
 	rpc: &mut ClnGrpcClient,
-	invoice: &Bolt11Invoice,
+	invoice: &Invoice,
 	user_amount: Option<Amount>,
 ) -> anyhow::Result<Preimage> {
 	match (user_amount, invoice.amount_milli_satoshis()) {

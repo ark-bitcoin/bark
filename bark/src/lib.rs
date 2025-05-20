@@ -49,7 +49,7 @@ use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::connectors::ConnectorChain;
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, Preimage};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
@@ -961,7 +961,7 @@ impl Wallet {
 		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
 		for vtxo in vtxos {
 			let invoice = vtxo.state.as_pending_lightning_send().unwrap();
-			htlc_vtxos_by_payment_hash.entry(*invoice.0.payment_hash()).or_default().push(vtxo);
+			htlc_vtxos_by_payment_hash.entry(invoice.0.payment_hash()).or_default().push(vtxo);
 		}
 
 		for (_, vtxos) in htlc_vtxos_by_payment_hash {
@@ -1161,7 +1161,7 @@ impl Wallet {
 
 	pub async fn send_lightning_payment(
 		&mut self,
-		invoice: &Bolt11Invoice,
+		invoice: Invoice,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Preimage> {
 		let properties = self.db.read_properties()?.context("Missing config")?;
@@ -1191,12 +1191,11 @@ impl Wallet {
 		let change_keypair = self.derive_store_next_keypair()?;
 
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
-		let payment_hash = PaymentHash::from(*invoice.payment_hash());
 		let pay_req = VtxoRequest {
 			amount,
 			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 				user_pubkey: change_keypair.public_key(),
-				payment_hash,
+				payment_hash: invoice.payment_hash(),
 				htlc_expiry,
 			}),
 		};
@@ -1318,7 +1317,7 @@ impl Wallet {
 		}
 
 		let (invoice, amount, spk_spec) = parts.context("no htlc vtxo provided")?;
-		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
+		let payment_hash = ark::lightning::PaymentHash::from(invoice.payment_hash());
 		let req = protos::CheckLightningPaymentRequest {
 			hash: payment_hash.to_vec(),
 			wait: false,
@@ -1543,7 +1542,7 @@ impl Wallet {
 		let invoice = lnurl::lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);
-		let preimage = self.send_lightning_payment(&invoice, None).await
+		let preimage = self.send_lightning_payment(Invoice::Bolt11(invoice.clone()), None).await
 			.context("bolt11 payment error")?;
 		Ok((invoice, preimage))
 	}
