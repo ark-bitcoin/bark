@@ -119,8 +119,6 @@ async fn cant_spend_untrusted() {
 	}).await;
 
 	let mut bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
-	bark.timeout = Some(Duration::from_millis(3_500));
-	let mut bark = Arc::new(bark);
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -133,6 +131,11 @@ async fn cant_spend_untrusted() {
 	assert_eq!(aspd.wallet_status().await.total().to_sat(), 0);
 
 	let mut log_round_err = aspd.subscribe_log::<RoundError>().await;
+
+	// Set a time-out on the bark command for the refresh --all
+	// The command is expected to time-out
+	bark.timeout = Some(Duration::from_millis(10_000));
+	let mut bark = Arc::new(bark);
 
 	// we will launch bark to try refresh, it will produce an error log at first,
 	// then we'll confirm the aspd's money and then bark should succeed by retrying
@@ -218,7 +221,6 @@ async fn max_vtxo_amount() {
 	}).await;
 	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
 	let mut bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_500_000)).await;
-	bark1.timeout = Some(Duration::from_millis(3_500));
 
 	let cfg_max_amount = bark1.ark_info().await.max_vtxo_amount.unwrap();
 
@@ -240,6 +242,7 @@ async fn max_vtxo_amount() {
 	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
 
 	// then try send in a round
+	bark1.timeout = Some(Duration::from_millis(3_000));
 	let err = bark1.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(
 		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
@@ -557,7 +560,6 @@ async fn test_participate_round_wrong_step() {
 	let ctx = TestContext::new("aspd/test_participate_round_wrong_step").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
 	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
-	bark.timeout = Some(Duration::from_millis(3_500));
 	bark.board(Amount::from_sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -593,6 +595,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
+	bark.timeout = Some(Duration::from_millis(3_500));
 	bark.set_asp(&proxy.address).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
@@ -613,6 +616,7 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
 	bark.set_asp(&proxy.address).await;
+	bark.timeout = None;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
 }
@@ -1114,11 +1118,11 @@ async fn reject_subdust_vtxo_request() {
 	let proxy = Proxy(aspd.get_public_client().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-	bark.timeout = Some(Duration::from_millis(3_500));
 
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
+	bark.timeout = Some(Duration::from_millis(3_500));
 	let err = bark.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(
 		"bad user input: vtxo amount must be at least 0.00000330 BTC",
@@ -1151,7 +1155,7 @@ async fn reject_subdust_offboard_request() {
 	let proxy = Proxy(aspd.get_public_client().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-	bark.timeout = Some(Duration::from_millis(3_500));
+	bark.timeout = Some(Duration::from_millis(10_000));
 
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
