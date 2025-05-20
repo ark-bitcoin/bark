@@ -9,6 +9,7 @@ use std::sync::Arc;
 use bitcoin::consensus::Decodable;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, Network, Transaction};
+use bitcoin_ext::AmountExt;
 use log::{error, debug, trace};
 use tokio::fs;
 use tokio::process::Command;
@@ -439,6 +440,28 @@ impl Lightningd {
 			exposeprivatechannels: vec![],
 			deschashonly: None,
 		}).await.unwrap().into_inner().bolt11
+	}
+
+	pub async fn offer(
+		&self,
+		amount: Option<Amount>,
+		description: Option<impl AsRef<str>>
+	) -> String {
+		let mut client = self.grpc_client().await;
+		client.offer(cln_rpc::OfferRequest {
+			amount: amount.map(|a| a.to_msat().to_string()).unwrap_or("any".to_string()),
+			description: description.as_ref().map(|d| d.as_ref().to_string()),
+			issuer: None,
+			label: None,
+			quantity_max: None,
+			absolute_expiry: None,
+			recurrence: None,
+			recurrence_base: None,
+			recurrence_paywindow: None,
+			recurrence_limit: None,
+			single_use: None,
+			recurrence_start_any_period: None,
+		}).await.unwrap().into_inner().bolt12
 	}
 
 	pub async fn try_pay_bolt11(&self, bolt11: impl AsRef<str>) -> anyhow::Result<()> {
