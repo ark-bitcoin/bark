@@ -84,6 +84,7 @@ struct Metrics {
 	round_vtxo_count_gauge: Gauge<u64>,
 	pending_expired_operation_gauge: Gauge<u64>,
 	pending_sweeper_gauge: Gauge<u64>,
+	pending_forfeit_gauge: Gauge<u64>,
 	lightning_node_gauge: Gauge<u64>,
 	lightning_node_boot_counter: Counter<u64>,
 	lightning_payment_counter: Counter<u64>,
@@ -166,6 +167,7 @@ impl Metrics {
 		let round_vtxo_count_gauge = meter.u64_gauge("round_vtxo_count_gauge").build();
 		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
 		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
+		let pending_forfeit_gauge = meter.u64_gauge("pending_forfeit_gauge").build();
 		let lightning_node_gauge = meter.u64_gauge("lightning_node_gauge").build();
 		let lightning_node_boot_counter = meter.u64_counter("lightning_node_boot_counter").build();
 		let lightning_payment_counter = meter.u64_counter("lightning_payment_counter").build();
@@ -191,6 +193,7 @@ impl Metrics {
 			round_vtxo_count_gauge,
 			pending_expired_operation_gauge,
 			pending_sweeper_gauge,
+			pending_forfeit_gauge,
 			lightning_node_gauge,
 			lightning_node_boot_counter,
 			lightning_payment_counter,
@@ -219,7 +222,7 @@ pub fn worker_dropped(worker: &str) {
 
 pub fn count_version(version: &str) {
 	if let Some(m) = TELEMETRY.get() {
-		m.handshake_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_VERSION, version.to_owned())]);
+		m.handshake_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_VERSION, version.to_owned())]); 
 	}
 }
 
@@ -327,6 +330,28 @@ pub fn set_pending_sweeper_stats(
 		m.pending_sweeper_gauge.record(pending_utxo_count as u64, &[
 			KeyValue::new(ATTRIBUTE_TYPE, "utxo_count"),
 		]);
+	}
+}
+
+pub fn set_forfeit_metrics(
+	pending_exit_tx_count: usize,
+	pending_exit_volume: u64,
+	pending_claim_count: usize,
+	pending_claim_volume: u64,
+) {
+	if let Some(ref m) = TELEMETRY.get() {
+		m.pending_forfeit_gauge.record(pending_exit_tx_count as u64, &[
+			KeyValue::new("type", "pending_exit_transaction_count"),
+		]);
+		m.pending_forfeit_gauge.record(pending_exit_volume as u64, &[
+			KeyValue::new("type", "pending_exit_transaction_volume"),
+		]);
+		m.pending_forfeit_gauge.record(pending_claim_count as u64, &[
+			KeyValue::new("type", "pending_claim_count"),
+		]);
+		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &[
+			KeyValue::new("type", "pending_claim_volume"),
+		])
 	}
 }
 

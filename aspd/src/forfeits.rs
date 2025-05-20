@@ -3,11 +3,11 @@ use std::collections::{hash_map, HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network};
+use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
 use bitcoin::hashes::Hash;
 use bitcoin::key::Keypair;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
-use bitcoin_ext::KeypairExt;
+use bitcoin_ext::{KeypairExt, TransactionExt};
 use bitcoin_ext::bdk::WalletExt;
 use log::{error, debug, info, trace, warn};
 use tokio::sync::{mpsc, oneshot};
@@ -23,7 +23,7 @@ use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
 use crate::txindex::{Tx, TxIndex};
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
-use crate::{serde_util, SECP, database};
+use crate::{serde_util, SECP, database, telemetry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -208,6 +208,8 @@ impl Connector {
 	}
 }
 
+
+#[derive(Clone)]
 pub struct ClaimState {
 	vtxo: VtxoId,
 
@@ -534,6 +536,17 @@ impl Process {
 			if let Err(e) = self.progress_pending_claims().await {
 				error!("Error trying to progress forfeit claims: {}", e.full_msg());
 			}
+			
+			let pending_claim_volume = self.claims.iter().map(|s|
+				s.clone().forfeit_cpfp.map(|t| t.tx.output_value()).unwrap_or_else(|| s.forfeit_tx.tx.output_value())
+			).sum::<Amount>().to_sat();
+			
+			telemetry::set_forfeit_metrics(
+				self.exit_txs.len(),
+				self.exit_txs.iter().map(|(t, _)| t.tx.output_value()).sum::<Amount>().to_sat(),
+				self.claims.len(),
+				pending_claim_volume,
+			);
 
 			interval.reset();
 		}
