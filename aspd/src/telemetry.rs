@@ -77,6 +77,8 @@ struct Metrics {
 	handshake_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
+	pending_expired_operation_gauge: Gauge<u64>,
+	pending_sweeper_gauge: Gauge<u64>,
 	lightning_node_gauge: Gauge<u64>,
 	lightning_node_boot_counter: Counter<u64>,
 	lightning_payment_counter: Counter<u64>,
@@ -153,6 +155,8 @@ impl Metrics {
 		let handshake_version_counter = meter.u64_counter("handshake_version_counter").build();
 		let wallet_balance_gauge = meter.u64_gauge("wallet_balance_gauge").build();
 		let block_height_gauge = meter.u64_gauge("block_gauge").build();
+		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
+		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
 		let lightning_node_gauge = meter.u64_gauge("lightning_node_gauge").build();
 		let lightning_node_boot_counter = meter.u64_counter("lightning_node_boot_counter").build();
 		let lightning_payment_counter = meter.u64_counter("lightning_payment_counter").build();
@@ -172,6 +176,8 @@ impl Metrics {
 			handshake_version_counter,
 			wallet_balance_gauge,
 			block_height_gauge,
+			pending_expired_operation_gauge,
+			pending_sweeper_gauge,
 			lightning_node_gauge,
 			lightning_node_boot_counter,
 			lightning_payment_counter,
@@ -228,6 +234,40 @@ pub fn set_wallet_balance(wallet_kind: WalletKind, wallet_balance: Balance) {
 pub fn set_block_height(block_height: BlockHeight) {
 	if let Some(m) = TELEMETRY.get() {
 		m.block_height_gauge.record(block_height as u64, &[]);
+	}
+}
+
+pub fn set_pending_expired_rounds_count(pending_expired_rounds_count: usize) {
+	if let Some(m) = TELEMETRY.get() {
+		m.pending_expired_operation_gauge.record(pending_expired_rounds_count as u64, &[
+			KeyValue::new("type", "rounds"),
+		]);
+	}
+}
+
+pub fn set_pending_expired_boards_count(pending_expired_boards_count: usize) {
+	if let Some(m) = TELEMETRY.get() {
+		m.pending_expired_operation_gauge.record(pending_expired_boards_count as u64, &[
+			KeyValue::new("type", "boards"),
+		]);
+	}
+}
+
+pub fn set_pending_sweeper_stats(
+	pending_tx_count: usize,
+	pending_tx_volume: u64,
+	pending_utxo_count: usize,
+) {
+	if let Some(ref m) = TELEMETRY.get() {
+		m.pending_sweeper_gauge.record(pending_tx_count as u64, &[
+			KeyValue::new("type", "transaction_count"),
+		]);
+		m.pending_sweeper_gauge.record(pending_tx_volume, &[
+			KeyValue::new("type", "transaction_volume"),
+		]);
+		m.pending_sweeper_gauge.record(pending_utxo_count as u64, &[
+			KeyValue::new("type", "utxo_count"),
+		]);
 	}
 }
 

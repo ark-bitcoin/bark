@@ -47,7 +47,7 @@ use bitcoin::{
 	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight, Network, Address,
 };
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
-use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, DEEPLY_CONFIRMED};
+use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
 use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
@@ -61,8 +61,7 @@ use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
 use crate::txindex::{self, TxIndex};
 use crate::wallet::BdkWalletExt;
-use crate::{database, serde_util, SECP};
-
+use crate::{database, serde_util, telemetry, SECP};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -624,12 +623,14 @@ impl Process {
 			expired_rounds.push(ExpiredRound::new(id, round));
 		}
 		trace!("{} expired rounds fetched", expired_rounds.len());
+		telemetry::set_pending_expired_rounds_count(expired_rounds.len());
 
 		let expired_boards = self.db
 			.get_expired_boards(tip).await?
 			.filter_map(|o| async { o.ok() })
 			.collect::<Vec<_>>().await;
 		trace!("{} expired boards fetched", expired_boards.len());
+		telemetry::set_pending_expired_boards_count(expired_boards.len());
 
 		let feerate = self.config.sweep_tx_fallback_feerate;
 		let mut builder = SweepBuilder::new(self, feerate);
@@ -713,9 +714,22 @@ impl Process {
 		for txid in to_remove {
 			self.pending_txs.remove(&txid);
 		}
+		
 		slog!(SweeperStats, nb_pending_txs: self.pending_txs.len(),
 			nb_pending_utxos: self.pending_tx_by_utxo.len(),
 		);
+		
+		let mut transaction_amount = 0;
+		for tx in self.pending_txs.values() {
+			transaction_amount += tx.tx.output_value().to_sat();
+		}
+		
+		telemetry::set_pending_sweeper_stats(
+			self.pending_txs.len(),
+			transaction_amount,
+			self.pending_tx_by_utxo.len(),
+		);
+		
 		Ok(())
 	}
 
