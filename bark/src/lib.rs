@@ -984,7 +984,17 @@ impl Wallet {
 		Ok(Some(round_id))
 	}
 
+	/// Find a single vtxo to fit the provided amount
+	fn find_vtxo_to_fit(&self, amount: Amount) -> anyhow::Result<Vtxo> {
+		let mut inputs = self.db.get_all_spendable_vtxos()?;
+		inputs.sort_by_key(|v| v.amount());
 
+		if let Some(input) = inputs.iter().find(|v| v.amount() >= amount + P2TR_DUST) {
+			Ok(input.clone())
+		} else {
+			bail!("no input found to fit amount: required: {}, best: {}", amount, inputs.last().map(|v| v.amount()).unwrap_or(Amount::ZERO))
+		}
+	}
 
 	/// Select several vtxos to cover the provided amount
 	///
@@ -1027,9 +1037,7 @@ impl Wallet {
 		let offchain_fees = Amount::ZERO;
 		let spent_amount = amount + offchain_fees;
 
-		let inputs = self.select_vtxos_to_cover(spent_amount + P2TR_DUST)?;
-		//TODO(stevenroose) fix single-input db
-		let [input] = inputs.try_into().ok().context("not enough balance or multi input broken")?;
+		let input = self.find_vtxo_to_fit(spent_amount + P2TR_DUST)?;
 
 		let change = {
 			// At this point, `sum` is >= to `spent_amount`
@@ -1161,10 +1169,7 @@ impl Wallet {
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
 		let forwarding_fee = Amount::from_sat(350);
-		let inputs = self.select_vtxos_to_cover(amount + forwarding_fee)?;
-		//TODO(stevenroose) fix single-input db
-		let [input] = inputs.try_into().ok().context("not enough balance or multi input broken")?;
-
+		let input = self.find_vtxo_to_fit(amount + forwarding_fee)?;
 
 		let (sec_nonce, pub_nonce, keypair) = {
 			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
