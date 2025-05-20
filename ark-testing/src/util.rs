@@ -156,6 +156,7 @@ pub trait FutureExt: Future {
 		}
 	}
 }
+
 impl<T: Future> FutureExt for T {}
 
 /// Extension trait for channel receivers.

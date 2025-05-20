@@ -996,7 +996,7 @@ async fn claim_forfeit_round_connector() {
 	let mut log_round = aspd.subscribe_log::<RoundFinished>().await;
 	assert!(bark.try_refresh_all().await.is_err());
 	assert!(bark.vtxos().await.contains(&vtxo));
-	assert_eq!(log_round.recv().fast().await.unwrap().nb_input_vtxos, 1);
+	assert_eq!(log_round.recv().try_fast().await.expect("time-out").unwrap().nb_input_vtxos, 1);
 
 	// start the exit process
 	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
@@ -1005,15 +1005,15 @@ async fn claim_forfeit_round_connector() {
 		bark.progress_exit().await,
 		bark::json::ExitStatus { done: false, height: None },
 	);
-	assert_eq!(log_detected.recv().await.unwrap().vtxo, vtxo.id);
+	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
 	let mut log_confirmed = aspd.subscribe_log::<ForfeitedExitConfirmed>().await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(log_confirmed.recv().await.unwrap().vtxo, vtxo.id);
+	assert_eq!(log_confirmed.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// wait until forfeit watcher broadcasts forfeit tx
-	let txid = aspd.wait_for_log::<ForfeitBroadcasted>().await.forfeit_txid;
+	let txid = aspd.wait_for_log::<ForfeitBroadcasted>().try_wait(10_000).await.expect("time-out").forfeit_txid;
 
 	// and then wait for it to confirm
 	info!("Waiting for tx {} to confirm", txid);
