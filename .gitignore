@@ -11,3 +11,6 @@ rustdocs/
 *.profraw
 
 flake_finder/
+
+# RustRover/IntelliJ
+.idea/
