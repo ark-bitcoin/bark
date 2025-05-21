@@ -51,8 +51,9 @@ impl TestContext {
 	pub async fn new_minimal(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
 
-		let name = name.as_ref();
-		let datadir = test_data_directory().await.join(name);
+		let postfix = if should_use_electrs() { "esplora" } else { "bitcoind" };
+		let name = format!("{}-{}", name.as_ref(), postfix);
+		let datadir = test_data_directory().await.join(&name);
 
 		if datadir.exists() {
 			fs::remove_dir_all(&datadir).await.unwrap();
@@ -60,7 +61,7 @@ impl TestContext {
 		fs::create_dir_all(&datadir).await.unwrap();
 
 		TestContext {
-			name: name.to_string(),
+			name,
 			datadir,
 			bitcoind: None,
 			electrs: None,
