@@ -1075,7 +1075,13 @@ impl Wallet {
 		};
 
 		let req = protos::OorCosignRequest {
-			payment: payment.encode(),
+			input_id: payment.input.id().to_bytes().to_vec(),
+			outputs: payment.outputs.iter().map(|o| {
+				protos::ArkoorOutput {
+					amount: o.amount.to_sat(),
+					pubkey: o.pubkey.serialize().to_vec(),
+				}
+			}).collect(),
 			pub_nonce: pub_nonce.serialize().to_vec(),
 		};
 		let resp = asp.client.request_oor_cosign(req).await.context("cosign request failed")?.into_inner();

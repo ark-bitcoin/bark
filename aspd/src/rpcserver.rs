@@ -21,7 +21,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use ark::board::UserPart;
 use ark::lightning::SignedBolt11Payment;
-use ark::{musig, VtxoIdInput, OffboardRequest, Vtxo, VtxoId, VtxoRequest};
+use ark::{musig, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
 use ark::rounds::RoundId;
 use ark::vtxo::VtxoSpkSpec;
 use ark::util::{Decodable, Encodable};
@@ -436,17 +436,22 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("payment", format!("{:?}", req.payment)),
-			KeyValue::new("pub_nonces", format!("{:?}", req.pub_nonce)),
+			KeyValue::new("input_vtxo_id", req.input_id.as_hex().to_string()),
 		]);
 
-		let payment = ark::oor::OorPayment::decode(&req.payment)
-			.badarg("invalid oor payment request")?;
+		let input_id = VtxoId::from_slice(&req.input_id).badarg("invalid input id")?;
+		let outputs = req.outputs.iter().map(|o| {
+			Ok(PaymentRequest {
+				amount: Amount::from_sat(o.amount),
+				pubkey: PublicKey::from_slice(&o.pubkey).badarg("invalid output pubkey")?,
+				spk: VtxoSpkSpec::Exit,
+			})
+		}).collect::<Result<Vec<_>, tonic::Status>>()?;
 
 		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
 			.badarg("invalid public nonce")?;
 
-		let (nonce, sig) = self.cosign_oor(&payment, user_nonce).await.to_status()?;
+		let (nonce, sig) = self.cosign_oor(input_id, outputs, user_nonce).await.to_status()?;
 		let response = protos::OorCosignResponse {
 			pub_nonce: nonce.serialize().to_vec(),
 			partial_sig: sig.serialize().to_vec(),
@@ -676,7 +681,7 @@ impl rpc::server::ArkService for Server {
 			.try_into().badarg("invalid preimage, not 32 bytes")?;
 
 		let (nonce, sig) = self.claim_bolt11_htlc(
-			&payment,
+			payment,
 			user_nonce,
 			&payment_preimage,
 		).await.to_status()?;

@@ -31,6 +31,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::vtxo::VtxoSpkSpec;
+use ark::oor::OorPayment;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
@@ -40,7 +41,7 @@ use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BoardVtxo, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::musig::{MusigPartialSignature, MusigPubNonce};
 use ark::rounds::RoundEvent;
@@ -512,29 +513,37 @@ impl Server {
 
 	pub async fn cosign_oor(
 		&self,
-		payment: &ark::oor::OorPayment,
+		input_id: VtxoId,
+		outputs: Vec<PaymentRequest>,
 		user_nonce: musig::MusigPubNonce,
 	) -> anyhow::Result<(musig::MusigPubNonce, musig::MusigPartialSignature)> {
-		if let Some(out) = payment.outputs.iter().find(|o| o.amount < P2TR_DUST) {
+		if let Some(out) = outputs.iter().find(|o| o.amount < P2TR_DUST) {
 			return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, out.amount);
 		}
 
 		if let Some(max) = self.config.max_vtxo_amount {
-			for r in &payment.outputs {
+			for r in &outputs {
 				if r.amount > max {
 					return badarg!("output exceeds maximum vtxo amount of {max}");
 				}
 			}
 		}
 
-		let input_id = payment.input.id();
 		let _lock = match self.vtxos_in_flux.lock([input_id]) {
 			Ok(l) => l,
 			Err(id) => return badarg!("attempted to sign OOR for vtxo already in flux: {}", id),
 		};
+		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_id]).await?.try_into().unwrap();
 
-		self.validate_board_inputs(&[&payment.input])
+		self.validate_board_inputs(&[&input_vtxo.vtxo])
 			.map_err(|e| e.context("arkoor cosign failed"))?;
+
+		let payment = OorPayment::new(
+			self.asp_key.public_key(),
+			self.config.vtxo_exit_delta,
+			input_vtxo.vtxo.clone(),
+			outputs,
+		);
 
 		let txid = payment.txid();
 		let new_vtxos = payment
@@ -738,7 +747,11 @@ impl Server {
 
 		self.db.upsert_vtxos(&vec![htlc_vtxo.into()]).await?;
 
-		let parts = self.cosign_oor(&revocation_oor, user_nonce).await?;
+		let parts = self.cosign_oor(
+			revocation_oor.input.id(),
+			revocation_oor.outputs,
+			user_nonce,
+		).await?;
 
 		Ok(parts)
 	}
@@ -817,7 +830,7 @@ impl Server {
 
 	async fn claim_bolt11_htlc(
 		&self,
-		payment: &ark::oor::OorPayment,
+		payment: ark::oor::OorPayment,
 		user_nonce: musig::MusigPubNonce,
 		payment_preimage: &[u8; 32],
 	) -> anyhow::Result<(musig::MusigPubNonce, musig::MusigPartialSignature)> {
@@ -840,10 +853,10 @@ impl Server {
 				payment_preimage,
 			).await?.context("could not settle invoice")?;
 
-			return self.cosign_oor(&payment, user_nonce).await
+			self.cosign_oor(payment.input.id(), payment.outputs, user_nonce).await
+		} else {
+			bail!("invalid claim input: {:?}", input);
 		}
-
-		bail!("invalid claim input: {:?}", input);
 	}
 }
 

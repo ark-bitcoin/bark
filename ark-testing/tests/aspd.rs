@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ark::board::UserPart;
-use ark::oor::OorPayment;
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
@@ -29,7 +28,10 @@ use aspd_log::{
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
-use aspd_rpc::protos::{self, BoardCosignRequest, Bolt11PaymentRequest, ClaimBolt11OnboardRequest, OorCosignRequest, SubmitPaymentRequest};
+use aspd_rpc::protos::{
+	self, BoardCosignRequest, Bolt11PaymentRequest, ClaimBolt11OnboardRequest,
+	SubmitPaymentRequest,
+};
 
 use ark_testing::{Aspd, TestContext, btc, sat, bark};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -1179,14 +1181,9 @@ async fn reject_subdust_oor_cosign() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_oor_cosign(&mut self, req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
-			let mut oor_payment = OorPayment::decode(&req.payment).unwrap();
-			oor_payment.outputs[0].amount = P2TR_DUST - Amount::ONE_SAT;
-
-			Ok(self.upstream().request_oor_cosign(OorCosignRequest {
-				payment: oor_payment.encode(),
-				pub_nonce: req.pub_nonce,
-			}).await?.into_inner())
+		async fn request_oor_cosign(&mut self, mut req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+			req.outputs[0].amount = P2TR_DUST.to_sat() - 1;
+			Ok(self.upstream().request_oor_cosign(req).await?.into_inner())
 		}
 	}
 

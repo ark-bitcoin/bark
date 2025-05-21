@@ -95,9 +95,15 @@ message BoardVtxoRequest {
 
 // oor
 
+message ArkoorOutput {
+	bytes pubkey = 1;
+	uint64 amount = 2;
+}
+
 message OorCosignRequest {
-	bytes payment = 1;
-	bytes pub_nonce = 2;
+	bytes input_id = 1;
+	repeated ArkoorOutput outputs = 2;
+	bytes pub_nonce = 3;
 }
 
 message OorCosignResponse {

@@ -240,8 +240,7 @@ impl Db {
 
 			for id in ids {
 				if !found_ids.contains(id) {
-					return Err(anyhow::anyhow!("vtxo {} does not exist", id))
-						.context(*id);
+					return not_found!([id], "vtxo does not exit");
 				}
 			}
 		}
