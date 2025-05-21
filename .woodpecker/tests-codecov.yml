@@ -66,7 +66,7 @@ steps:
       - ls -al $${BITCOIND_EXEC}
       - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
-      - just test-integration-all-codecov || echo $? > /tmp/test_exit_code
+      - just test-integration-codecov || echo $? > /tmp/test_exit_code
       - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/btc29-codecov/"
       - cp -r test/btc29-codecov/* "/host/data/test/${CI_COMMIT_SHA}/btc29-codecov/"
       - echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/btc29-codecov/"
