@@ -310,7 +310,7 @@ async fn bark_rejects_creating_oor_subdust_change() {
 	assert!(res.unwrap_err()
 		.to_string()
 		.contains(&format!(
-			"Insufficient money available. Needed {} but {} is available",
+			"no input found to fit amount: required: {}, best: {}",
 			// sent amount (799_671) + change (330)
 			sat(800_001),
 			board_amount)
