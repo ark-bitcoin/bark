@@ -4,11 +4,10 @@ use std::sync::atomic::{self, AtomicUsize};
 use std::time::{Duration, Instant};
 
 use log::{error, info};
-use opentelemetry::metrics::Gauge;
 use tokio::signal;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
-
+use crate::telemetry;
 
 /// A struct to be held in scope while a process is working.
 pub struct RuntimeWorker {
@@ -39,8 +38,6 @@ struct Inner {
 	shutdown: CancellationToken,
 	workers: AtomicUsize,
 	notify: Notify,
-	// For telemetry only.
-	spawn_gauge: Option<Gauge<u64>>,
 }
 
 /// Manager of thread coordination during runtime.
@@ -56,18 +53,6 @@ impl RuntimeManager {
 				shutdown: CancellationToken::new(),
 				workers: AtomicUsize::new(0),
 				notify: Notify::new(),
-				spawn_gauge: None,
-			}),
-		}
-	}
-
-	pub fn new_with_telemetry(spawn_gauge: Gauge<u64>) -> RuntimeManager {
-		RuntimeManager {
-			inner: Arc::new(Inner {
-				shutdown: CancellationToken::new(),
-				workers: AtomicUsize::new(0),
-				notify: Notify::new(),
-				spawn_gauge: Some(spawn_gauge),
 			}),
 		}
 	}
@@ -112,9 +97,7 @@ impl RuntimeManager {
 		assert_ne!(old, 0);
 		self.inner.notify.notify_waiters();
 
-		if let Some(ref gauge) = self.inner.spawn_gauge {
-			gauge.record(old as u64 - 1, &[]);
-		}
+		telemetry::worker_dropped(name);
 
 		if critical && !self.inner.shutdown.is_cancelled() {
 			slog!(CriticalWorkerStopped, name: name.into());
@@ -125,15 +108,13 @@ impl RuntimeManager {
 	}
 
 	fn inner_spawn(&self, name: impl AsRef<str>, critical: bool) -> RuntimeWorker {
-		let old = self.inner.workers.fetch_add(1, atomic::Ordering::SeqCst);
+		let _old = self.inner.workers.fetch_add(1, atomic::Ordering::SeqCst);
 		self.inner.notify.notify_waiters();
 
 		let name = name.as_ref();
 		slog!(WorkerStarted, name: name.into(), critical);
 
-		if let Some(ref gauge) = self.inner.spawn_gauge {
-			gauge.record(old as u64 + 1, &[]);
-		}
+		telemetry::worker_spawned(name);
 
 		RuntimeWorker {
 			mgr: self.clone(),
