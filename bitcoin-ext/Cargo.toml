@@ -20,7 +20,7 @@ bdk_bitcoind_rpc.workspace = true
 serde_json.workspace = true
 
 # bdk
-bdk_wallet = { workspace = true, features = ["rusqlite"], optional = true }
+bdk_wallet = { workspace = true, optional = true }
 bdk_esplora.workspace = true
 reqwest = {version = "0.11.27", features = ["rustls-tls"], default-features = false}
 async-trait = "0.1.88"

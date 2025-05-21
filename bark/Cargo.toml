@@ -51,7 +51,7 @@ humantime.workspace = true
 
 bip39.workspace = true
 miniscript.workspace = true
-bdk_wallet = { workspace = true, features = ["rusqlite"] }
+bdk_wallet = { workspace = true, features = [ "rusqlite" ] }
 bdk_bitcoind_rpc.workspace = true
 bdk_esplora.workspace = true
 
