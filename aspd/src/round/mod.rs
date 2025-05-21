@@ -1,6 +1,7 @@
 
 
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -30,9 +31,8 @@ use ark::vtxo::VtxoSpkSpec;
 use crate::database::model::LightningHtlcSubscriptionStatus;
 use crate::{Server, SECP};
 use crate::database::model::{ForfeitState, DangerousMusigSecNonce};
-use crate::error::ContextExt;
+use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
-use crate::error::AnyhowErrorExt;
 use crate::telemetry::{self, SpanExt};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
@@ -337,19 +337,30 @@ impl CollectingPayments {
 		let mut ret  = Vec::with_capacity(inputs.len());
 
 		let ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		let vtxos = server.db.get_vtxos_by_id(&ids).await?;
 
-		// Check if the input vtxos exist, unspent and owned by user.
-		for vtxo_state in vtxos {
-			let vtxo_id = vtxo_state.id;
-			if !vtxo_state.is_spendable() {
-				bail!("vtxo {} is not spendable: {:?}", vtxo_id, vtxo_state)
+		match server.db.get_vtxos_by_id(&ids).await {
+			Err(e) => {
+				if let Some(nf) = e.downcast_ref::<NotFound>() {
+					for id in nf.identifiers() {
+						slog!(RoundUserVtxoUnknown, round_seq: self.round_seq,
+							vtxo: Some(VtxoId::from_str(id).expect("should be a valid vtxoid")));
+					}
+				}
+				Err(e)
+			},
+			Ok(v) => {
+				// Check if the input vtxos exist, unspent and owned by user.
+				for vtxo_state in v {
+					let vtxo_id = vtxo_state.id;
+					if !vtxo_state.is_spendable() {
+						bail!("vtxo {} is not spendable: {:?}", vtxo_id, vtxo_state)
+					}
+
+					ret.push(vtxo_state.vtxo);
+				}
+				Ok(ret)
 			}
-
-			ret.push(vtxo_state.vtxo);
 		}
-
-		Ok(ret)
 	}
 
 	async fn process_payment(
