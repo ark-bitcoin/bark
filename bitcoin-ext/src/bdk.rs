@@ -1,6 +1,5 @@
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::borrow::BorrowMut;
 
 use bdk_wallet::coin_selection::InsufficientFunds;
@@ -37,26 +36,13 @@ impl<'a, A> TxBuilderExt<'a, A> for TxBuilder<'a, A> {}
 
 
 /// Error resulting from the [WalletExt::make_cpfp] function.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CpfpError {
-	/// The given tx doesn't have a fee anchor.
+	#[error("tx has no fee anchor: {0}")]
 	NoFeeAnchor(Txid),
-	/// Onchain funds don't have enough confirmations.
+	#[error("you need more confirmations on your on-chain funds: {0}")]
 	NeedConfirmations(InsufficientFunds),
 }
-
-impl fmt::Display for CpfpError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match self {
-			Self::NoFeeAnchor(t) => write!(f, "tx has no fee anchor: {}", t),
-			Self::NeedConfirmations(e) => {
-				write!(f, "you need more confirmations on your on-chain funds: {}", e)
-			},
-		}
-	}
-}
-
-impl std::error::Error for CpfpError {}
 
 
 /// An extension trait for [Wallet].
