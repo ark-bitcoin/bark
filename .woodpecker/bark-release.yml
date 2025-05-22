@@ -45,8 +45,8 @@ steps:
     depends_on: build-bark
     # When this task fails make sure the sha256 is still available.
     #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
-    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df`
-    image: quay.io/buildah/stable@sha256:27884fea43e27591352be8b08a9e8bfe08390e5166592e9e334d5f0d6ca800df
+    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
+    image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
     environment:
       REGISTRY_LOGIN_TOKEN:
         from_secret: REGISTRY_LOGIN_TOKEN
@@ -55,28 +55,82 @@ steps:
     commands:
       - cat VERSION
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+      # Build the containers
       - buildah build -f ./.woodpecker/images/releases/bark/linux_amd64.Dockerfile --tag registry.2nd.dev/bark:linux-amd64 .
       - buildah build -f ./.woodpecker/images/releases/bark/linux_arm64.Dockerfile --tag registry.2nd.dev/bark:linux-arm64 .
       - buildah build -f ./.woodpecker/images/releases/bark/linux_armv7.Dockerfile --tag registry.2nd.dev/bark:linux-armv7 .
+      # Push containers to registry.2nd.dev
       - buildah push registry.2nd.dev/bark:linux-amd64
       - buildah push registry.2nd.dev/bark:linux-arm64
       - buildah push registry.2nd.dev/bark:linux-armv7
+      # Tag containers with specific version number for registry.2nd.dev
       - buildah tag registry.2nd.dev/bark:linux-amd64 "registry.2nd.dev/bark:linux-amd64-$(cat VERSION)"
       - buildah tag registry.2nd.dev/bark:linux-arm64 "registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
       - buildah tag registry.2nd.dev/bark:linux-armv7 "registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
+      # Push containers with specific version number to registry.2nd.dev
       - buildah push "registry.2nd.dev/bark:linux-amd64-$(cat VERSION)"
       - buildah push "registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
       - buildah push "registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
-      - buildah manifest create bark-multiarch
-      - buildah manifest add bark-multiarch docker://registry.2nd.dev/bark:linux-amd64
-      - buildah manifest add bark-multiarch docker://registry.2nd.dev/bark:linux-arm64
-      - buildah manifest add bark-multiarch docker://registry.2nd.dev/bark:linux-armv7
+      # Create and push multi-arch docker manifest with tag latest to registry.2nd.dev
+      - buildah manifest create     bark-multiarch
+      - buildah manifest add        bark-multiarch docker://registry.2nd.dev/bark:linux-amd64
+      - buildah manifest add        bark-multiarch docker://registry.2nd.dev/bark:linux-arm64
+      - buildah manifest add        bark-multiarch docker://registry.2nd.dev/bark:linux-armv7
       - buildah manifest push --all bark-multiarch docker://registry.2nd.dev/bark:latest
-      - buildah manifest create "bark-multiarch-$(cat VERSION)"
-      - buildah manifest add "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-amd64-$(cat VERSION)"
-      - buildah manifest add "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
-      - buildah manifest add "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
+      # Create and push multi-arch docker manifest with versioned tag to registry.2nd.dev
+      - buildah manifest create     "bark-multiarch-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-amd64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
       - buildah manifest push --all "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:$(cat VERSION)"
+
+  - name: push-bark-to-docker
+    when:
+      - event: tag
+        ref: refs/tags/bark-*
+      - evaluate: CI_FORGE_TYPE == "forgejo"
+    failure: ignore
+    depends_on: build-and-push-bark-to-registry
+    # When this task fails make sure the sha256 is still available.
+    #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
+    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
+    image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
+    environment:
+      DOCKER_LOGIN_TOKEN:
+        from_secret: DOCKER_LOGIN_TOKEN
+    pull: true
+    privileged: true
+    commands:
+      - cat VERSION
+      - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+      # Tag containers for docker.io
+      - buildah tag registry.2nd.dev/bark:linux-amd64 docker.io/bark:linux-amd64
+      - buildah tag registry.2nd.dev/bark:linux-arm64 docker.io/bark:linux-arm64
+      - buildah tag registry.2nd.dev/bark:linux-armv7 docker.io/bark:linux-armv7
+      # Push containers to docker.io
+      - buildah push docker.io/bark:linux-amd64
+      - buildah push docker.io/bark:linux-arm64
+      - buildah push docker.io/bark:linux-armv7
+      # Tag containers with specific version number for docker.io
+      - buildah tag registry.2nd.dev/bark:linux-amd64 "docker.io/bark:linux-amd64-$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-arm64 "docker.io/bark:linux-arm64-$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-armv7 "docker.io/bark:linux-armv7-$(cat VERSION)"
+      # Push containers with specific version number to docker.io
+      - buildah push "docker.io/bark:linux-amd64-$(cat VERSION)"
+      - buildah push "docker.io/bark:linux-arm64-$(cat VERSION)"
+      - buildah push "docker.io/bark:linux-armv7-$(cat VERSION)"
+      # Create and push multi-arch docker manifest with tag latest to docker.io
+      - buildah manifest create     bark-multiarch-docker
+      - buildah manifest add        bark-multiarch-docker docker://docker.io/bark:linux-amd64
+      - buildah manifest add        bark-multiarch-docker docker://docker.io/bark:linux-arm64
+      - buildah manifest add        bark-multiarch-docker docker://docker.io/bark:linux-armv7
+      - buildah manifest push --all bark-multiarch-docker docker://docker.io/bark:latest
+      # Create and push multi-arch docker manifest with versioned tag to docker.io
+      - buildah manifest create     "bark-multiarch-docker-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:linux-amd64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:linux-arm64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:linux-armv7-$(cat VERSION)"
+      - buildah manifest push --all "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:$(cat VERSION)"
 
   - name: release-bark
     when:
