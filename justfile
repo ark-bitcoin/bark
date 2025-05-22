@@ -4,6 +4,8 @@ JUSTFILE_DIR := justfile_directory()
 export ASPD_EXEC := CARGO_TARGET / "debug" / "aspd"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
+DEFAULT_ASPD_CONFIG_PATH := "aspd/config.default.toml"
+
 precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
 prechecks:
@@ -121,4 +123,6 @@ clippy LINT:
 	cargo clippy -- -A clippy::all -W clippy::{{LINT}}
 
 default-aspd-config:
-	cargo run -p bark-aspd --example dump-default-config
+	cargo run -p bark-aspd --example dump-default-config > {{DEFAULT_ASPD_CONFIG_PATH}}
+	echo "Default config file written to {{DEFAULT_ASPD_CONFIG_PATH}}"
+

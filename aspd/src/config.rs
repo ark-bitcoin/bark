@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, io};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -350,11 +350,10 @@ impl Config {
 		}
 	}
 
-	pub fn write_to_file(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-		let path = path.as_ref();
+	/// Write the config into the writer.
+	pub fn write_into(&self, writer: &mut dyn io::Write) -> anyhow::Result<()> {
 		let s = toml::to_string_pretty(self).expect("config serialization error");
-		std::fs::write(path, &s)
-			.with_context(|| format!("error writing config to {}", path.display()))?;
+		writer.write_all(&s.as_bytes()).context("error writing config to writer")?;
 		Ok(())
 	}
 }
