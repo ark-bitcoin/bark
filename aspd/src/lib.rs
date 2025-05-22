@@ -56,7 +56,7 @@ use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
 use crate::round::RoundInput;
 use crate::system::RuntimeManager;
-use crate::telemetry::TelemetryMetrics;
+use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
 use crate::sweeps::VtxoSweeper;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
@@ -94,7 +94,6 @@ pub struct Server {
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
 	cln: ClnManager,
-	telemetry_metrics: TelemetryMetrics,
 }
 
 impl Server {
@@ -197,13 +196,12 @@ impl Server {
 		let asp_xpriv = master_xpriv.derive_priv(&SECP, &asp_path).unwrap();
 		let asp_key = Keypair::from_secret_key(&SECP, &asp_xpriv.private_key);
 
+		init_telemetry(&cfg, asp_key.public_key());
 		// *******************
 		// * START PROCESSES *
 		// *******************
 
-		let telemetry_metrics = TelemetryMetrics::init(&cfg, asp_key.public_key());
-
-		let rtmgr = RuntimeManager::new_with_telemetry(telemetry_metrics.spawn_gauge());
+		let rtmgr = RuntimeManager::new();
 		let _startup_worker = rtmgr.spawn("Bootstrapping");
 		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
@@ -237,14 +235,12 @@ impl Server {
 			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 				.expect("can't error"),
 			asp_key.clone(),
-			telemetry_metrics.clone(),
 		).await.context("failed to start VtxoSweeper")?;
 
 		let cln = ClnManager::start(
 			rtmgr.clone(),
 			&cfg,
 			db.clone(),
-			telemetry_metrics.clone(),
 		).await.context("failed to start ClnManager")?;
 
 		let (round_event_tx, _rx) = broadcast::channel(8);
@@ -265,7 +261,6 @@ impl Server {
 			vtxo_sweeper,
 			forfeits,
 			cln,
-			telemetry_metrics,
 		};
 
 		let srv = Arc::new(srv);
@@ -327,8 +322,7 @@ impl Server {
 		// First sync both wallets.
 		let (rounds_balance, _) = tokio::try_join!(
 			async { 
-				self.rounds_wallet.lock().await
-					.sync(&self.bitcoind, false, &self.telemetry_metrics).await
+				self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await
 			},
 			async { self.forfeits.wallet_sync().await },
 		)?;
@@ -781,7 +775,7 @@ async fn run_tip_fetcher(srv: Arc<Server>) {
 				let mut lock = srv.chain_tip.lock().await;
 				if t != *lock {
 					*lock = t;
-					srv.telemetry_metrics.set_block_height(t.height);
+					telemetry::set_block_height(t.height);
 					slog!(TipUpdated, height: t.height, hash: t.hash);
 				}
 			}

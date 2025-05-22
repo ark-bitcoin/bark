@@ -24,7 +24,6 @@ use crate::system::RuntimeManager;
 use crate::txindex::{Tx, TxIndex};
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
 use crate::{serde_util, SECP, database};
-use crate::telemetry::TelemetryMetrics;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -308,7 +307,6 @@ struct Process {
 
 	/// Ongoing claims.
 	claims: Vec<ClaimState>,
-	telemetry_metrics: TelemetryMetrics,
 }
 
 impl Process {
@@ -489,7 +487,7 @@ impl Process {
 							new_forfeits.push(forfeits);
 						},
 						Ctrl::WalletSync(resp) => {
-							let _ = self.wallet.sync(&self.bitcoind, true, &self.telemetry_metrics).await;
+							let _ = self.wallet.sync(&self.bitcoind, true).await;
 							let _ = resp.send(());
 						},
 						Ctrl::WalletStatus(resp) => {
@@ -524,7 +522,7 @@ impl Process {
 			}
 
 			// Sync our wallet
-			if let Err(e) = self.wallet.sync(&self.bitcoind, true, &self.telemetry_metrics).await {
+			if let Err(e) = self.wallet.sync(&self.bitcoind, true).await {
 				error!("Error syncing ForfeitWatcher wallet: {:?}", e);
 			}
 
@@ -565,7 +563,6 @@ impl ForfeitWatcher {
 		txindex: TxIndex,
 		wallet_xpriv: bip32::Xpriv,
 		asp_key: Keypair,
-		telemetry_metrics: TelemetryMetrics,
 	) -> anyhow::Result<Self> {
 		let deep_tip = bitcoind.deep_tip().context("failed to fetch deep tip from bitcoind")?;
 		let wallet = PersistedWallet::load_from_xpriv(
@@ -582,7 +579,6 @@ impl ForfeitWatcher {
 			exit_txs: Vec::new(),
 			rounds: HashMap::new(),
 			claims: Vec::new(),
-			telemetry_metrics,
 		};
 
 		// Fetch state from db.

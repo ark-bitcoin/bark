@@ -21,7 +21,7 @@ use cln_rpc::node_client::NodeClient;
 use crate::database::{self, ClnNodeId};
 use crate::database::model::LightningPaymentStatus;
 use crate::system::RuntimeManager;
-use crate::telemetry::TelemetryMetrics;
+use crate::telemetry;
 
 #[derive(Debug, Clone)]
 pub struct ClnNodeMonitorConfig {
@@ -45,7 +45,6 @@ impl ClnNodeMonitor {
 		node_id: ClnNodeId,
 		node_rpc: ClnGrpcClient,
 		config: ClnNodeMonitorConfig,
-		telemetry_metrics: TelemetryMetrics,
 	) -> anyhow::Result<ClnNodeMonitor> {
 		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
 			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
@@ -68,7 +67,6 @@ impl ClnNodeMonitor {
 				i => Some(i),
 			},
 			invoice_next_check_at: HashMap::new(),
-			telemetry_metrics,
 		};
 
 		let jh = tokio::spawn(async {
@@ -127,7 +125,6 @@ struct ClnNodeMonitorProcess {
 
 	/// Map from invoice id to number of attempts and time of last update.
 	invoice_next_check_at: HashMap<i64, (usize, DateTime<Utc>)>,
-	telemetry_metrics: TelemetryMetrics,
 }
 
 impl ClnNodeMonitorProcess {
@@ -172,7 +169,6 @@ impl ClnNodeMonitorProcess {
 						let status = LightningPaymentStatus::Submitted;
 						let ok = self.db.verify_and_update_invoice(
 							&payment_hash, &attempt, status, None, None, None,
-							self.telemetry_metrics.clone(),
 						).await?;
 						if ok {
 							self.payment_update_tx.send(payment_hash)?;
@@ -192,7 +188,6 @@ impl ClnNodeMonitorProcess {
 					let status = LightningPaymentStatus::Failed;
 					let ok = self.db.verify_and_update_invoice(
 						&payment_hash, &attempt, status, error_string,  None, None,
-						self.telemetry_metrics.clone(),
 					).await?;
 					if ok {
 						self.payment_update_tx.send(payment_hash)?;
@@ -210,7 +205,6 @@ impl ClnNodeMonitorProcess {
 					let status = LightningPaymentStatus::Succeeded;
 					let ok = self.db.verify_and_update_invoice(
 						&payment_hash, &attempt, status, None, Some(final_msat), Some(&preimage),
-						self.telemetry_metrics.clone(),
 					).await?;
 					if ok {
 						self.payment_update_tx.send(payment_hash)?;
@@ -281,7 +275,7 @@ impl ClnNodeMonitorProcess {
 
 			let mut updated = false;
 
-			self.telemetry_metrics.add_invoice_verification(attempt.lightning_node_id, attempt.status);
+			telemetry::add_invoice_verification(attempt.lightning_node_id, attempt.status);
 
 			let req = cln_rpc::ListpaysRequest {
 				bolt11: None,
@@ -317,7 +311,7 @@ impl ClnNodeMonitorProcess {
 							None,
 						).await?;
 
-						self.telemetry_metrics.add_lightning_payment(
+						telemetry::add_lightning_payment(
 							attempt.lightning_node_id,
 							attempt.amount_msat,
 							LightningPaymentStatus::Failed,
@@ -370,7 +364,6 @@ impl ClnNodeMonitorProcess {
 							error_string,
 							None,
 							preimage.as_ref(),
-							self.telemetry_metrics.clone(),
 						).await?;
 
 						updated = true;
@@ -391,7 +384,7 @@ impl ClnNodeMonitorProcess {
 
 		self.invoice_next_check_at.retain(|_, &mut (_, datetime)| datetime > Utc::now());
 
-		self.telemetry_metrics.set_pending_invoice_verifications(
+		telemetry::set_pending_invoice_verifications(
 			self.node_id,
 			self.invoice_next_check_at.len(),
 		);

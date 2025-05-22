@@ -63,7 +63,7 @@ use crate::cln::node::ClnNodeMonitor;
 use crate::config::{self, Config};
 use crate::database::{self, ClnNodeId};
 use crate::database::model::{LightningPaymentAttempt, LightningPaymentStatus};
-use crate::telemetry::TelemetryMetrics;
+use crate::telemetry;
 use self::node::ClnNodeMonitorConfig;
 
 
@@ -89,7 +89,6 @@ impl ClnManager {
 		rtmgr: RuntimeManager,
 		config: &Config,
 		db: database::Db,
-		telemetry_metrics: TelemetryMetrics,
 	) -> anyhow::Result<ClnManager> {
 		let (payment_tx, payment_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, _rx) = broadcast::channel(256);
@@ -114,7 +113,6 @@ impl ClnManager {
 				state: ClnNodeState::Offline,
 			})).collect(),
 			node_by_id: HashMap::with_capacity(config.cln_array.len()),
-			telemetry_metrics: telemetry_metrics.clone(),
 		};
 		info!("Starting ClnManager thread... nb_nodes={}", proc.nodes.len());
 		tokio::spawn(proc.run(config.cln_reconnect_interval));
@@ -357,7 +355,6 @@ impl ClnNodeInfo {
 		payment_update_tx: &broadcast::Sender<sha256::Hash>,
 		rtmgr: &RuntimeManager,
 		waker: &Arc<Notify>,
-		telemetry_metrics: &TelemetryMetrics,
 	) -> anyhow::Result<ClnNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
 
@@ -387,12 +384,11 @@ impl ClnNodeInfo {
 			id,
 			rpc.clone(),
 			monitor_config.clone(),
-			telemetry_metrics.clone(),
 		).await.context("failed to start ClnNodeMonitor")?;
 
 		let online = ClnNodeOnlineState { id, public_key, rpc, monitor: Some(monitor) };
 		let new_state = ClnNodeState::Online(online);
-		telemetry_metrics.set_lightning_node_state(
+		telemetry::set_lightning_node_state(
 			self.uri.clone(), Some(id), Some(public_key), new_state.kind(),
 		);
 		self.set_state(new_state);
@@ -412,8 +408,6 @@ struct ClnManagerProcess {
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
-
-	telemetry_metrics: TelemetryMetrics,
 }
 
 impl ClnManagerProcess {
@@ -441,7 +435,7 @@ impl ClnManagerProcess {
 						match rt.monitor.take().unwrap().wait().await {
 							Ok(Err(e)) => {
 								let new_state = ClnNodeState::error(format!("{:?}", e));
-								self.telemetry_metrics.set_lightning_node_state(
+								telemetry::set_lightning_node_state(
 									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
 								);
 								node.set_state(new_state)
@@ -449,7 +443,7 @@ impl ClnManagerProcess {
 							Ok(Ok(())) => {
 								error!("ClnNodeMonitor for {uri} unexpectedly exited without error");
 								let new_state = ClnNodeState::Offline;
-								self.telemetry_metrics.set_lightning_node_state(
+								telemetry::set_lightning_node_state(
 									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
 								);
 								node.set_state(new_state);
@@ -460,7 +454,7 @@ impl ClnManagerProcess {
 									error!("ClnNodeMonitor for {uri} thread paniced!");
 								}
 								let new_state = ClnNodeState::error(e);
-								self.telemetry_metrics.set_lightning_node_state(
+								telemetry::set_lightning_node_state(
 									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
 								);
 								node.set_state(new_state);
@@ -477,7 +471,6 @@ impl ClnManagerProcess {
 						&self.payment_update_tx,
 						&self.rtmgr,
 						&self.waker,
-						&self.telemetry_metrics,
 					).await {
 						Ok(id) => {
 							info!("Successfully connected to CLN node at {}", uri);
@@ -486,7 +479,7 @@ impl ClnManagerProcess {
 						Err(e) => {
 							trace!("Failed to connect to CLN node at {}: {}", uri, e.full_msg());
 							if let Ok(state) = e.downcast::<ClnNodeState>() {
-								self.telemetry_metrics.set_lightning_node_state(
+								telemetry::set_lightning_node_state(
 									uri.clone(), None, None, state.kind(),
 								);
 								node.set_state(state);
@@ -530,7 +523,6 @@ impl ClnManagerProcess {
 			node.rpc.clone(),
 			invoice,
 			user_amount,
-			self.telemetry_metrics.clone(),
 		));
 
 		Ok(())
@@ -578,7 +570,6 @@ async fn handle_pay_bolt11(
 	mut rpc: ClnGrpcClient,
 	invoice: Bolt11Invoice,
 	amount: Option<Amount>,
-	telemetry_metrics: TelemetryMetrics,
 ) {
 	let payment_hash = *invoice.payment_hash();
 	match call_pay_bolt11(&mut rpc, &invoice, amount).await {
@@ -599,7 +590,6 @@ async fn handle_pay_bolt11(
 					Some(&format!("pay rpc call error: {}", pay_err)),
 					None,
 					None,
-					telemetry_metrics,
 				).await {
 					Ok(_) => {},
 					Err(e) => error!("Error updating invoice after pay error: {e}"),
@@ -674,7 +664,6 @@ impl database::Db {
 		payment_error: Option<&str>,
 		final_amount_msat: Option<u64>,
 		preimage: Option<&[u8; 32]>,
-		telemetry_metrics: TelemetryMetrics,
 	) -> anyhow::Result<bool> {
 		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?;
 		let is_last_attempt_finalized = li.last_attempt_status
@@ -698,7 +687,7 @@ impl database::Db {
 
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
 
-		telemetry_metrics.add_lightning_payment(
+		telemetry::add_lightning_payment(
 			attempt.lightning_node_id,
 			amount_msat,
 			status,

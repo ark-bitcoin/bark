@@ -31,7 +31,7 @@ use tonic::async_trait;
 use crate::Server;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
 use crate::round::RoundInput;
-use crate::telemetry::{self, RPC_GRPC_STATUS_CODE};
+use crate::telemetry::{self, ATTRIBUTE_VERSION, RPC_GRPC_STATUS_CODE};
 
 
 /// Whether to provide rich internal errors to RPC users.
@@ -278,9 +278,9 @@ impl rpc::server::ArkService for Server {
 		let mut span = tracer_provider
 			.span_builder(method_details.method)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new("version", version.clone()));
+		span.set_attribute(KeyValue::new(ATTRIBUTE_VERSION, version.clone()));
 
-		self.telemetry_metrics.count_version(&version);
+		telemetry::count_version(&version);
 
 		// NB future note to always accept version "testing" which our tests use
 
@@ -832,42 +832,13 @@ impl rpc::server::AdminService for Server {
 
 
 #[derive(Clone)]
-struct TelemetryMetrics {
-	tracer: Arc<opentelemetry::global::BoxedTracer>,
-	in_progress_counter: opentelemetry::metrics::UpDownCounter<i64>,
-	latency_histogram: opentelemetry::metrics::Histogram<u64>,
-	request_counter: opentelemetry::metrics::Counter<u64>,
-	error_counter: opentelemetry::metrics::Counter<u64>,
-}
-
-impl TelemetryMetrics {
-	fn new() -> TelemetryMetrics {
-		let meter = global::meter_provider().meter(telemetry::METER_ASPD);
-		TelemetryMetrics {
-			tracer: Arc::new(global::tracer_provider().tracer(telemetry::TRACER_ASPD)),
-			in_progress_counter: meter.i64_up_down_counter(
-				telemetry::METER_COUNTER_UD_GRPC_IN_PROCESS,
-			).build(),
-			latency_histogram: meter.u64_histogram(
-				telemetry::METER_HISTOGRAM_GRPC_LATENCY,
-			).build(),
-			request_counter: meter.u64_counter(telemetry::METER_COUNTER_GRPC_REQUEST).build(),
-			error_counter: meter.u64_counter(telemetry::METER_COUNTER_GRPC_ERROR).build(),
-		}
-	}
-}
-
-#[derive(Clone)]
 struct TelemetryMetricsService<S> {
 	inner: S,
-	// NB this needs to be an Arc so we can pass it into our response future
-	metrics: Arc<TelemetryMetrics>,
 }
 
 impl<S> TelemetryMetricsService<S> {
 	fn new(inner: S) -> TelemetryMetricsService<S> {
-		let metrics = Arc::new(TelemetryMetrics::new());
-		TelemetryMetricsService { inner, metrics }
+		TelemetryMetricsService { inner }
 	}
 }
 
@@ -917,12 +888,14 @@ where
 			KeyValue::new(telemetry::ATTRIBUTE_METHOD, rpc_method_details.method),
 		];
 
-		self.metrics.in_progress_counter.add(1, &attributes);
+		telemetry::add_grpc_in_progress(&attributes);
 
-		let mut span = self.metrics.tracer
+		let tracer = global::tracer(telemetry::TRACER_ASPD);
+
+		let mut span = tracer
 			.span_builder(rpc_method_details.format_path())
 			.with_kind(SpanKind::Server)
-			.start(&*self.metrics.tracer);
+			.start(&tracer);
 		span.set_attribute(KeyValue::new(semconv::trace::RPC_SYSTEM, rpc_method_details.system));
 		span.set_attribute(KeyValue::new(semconv::trace::RPC_SERVICE, rpc_method_details.service));
 		span.set_attribute(KeyValue::new(semconv::trace::RPC_METHOD, rpc_method_details.method));
@@ -931,7 +904,6 @@ where
 
 		let span_context = Context::current_with_span(span);
 
-		let metrics = self.metrics.clone();
 		let start_time = Instant::now();
 		let future = self.inner.call(req);
 		Box::pin(async move {
@@ -939,14 +911,13 @@ where
 
 			let duration = start_time.elapsed();
 
-			metrics.latency_histogram.record(duration.as_millis() as u64, &attributes);
-			metrics.request_counter.add(1, &attributes);
-			metrics.in_progress_counter.add(-1, &attributes);
+			telemetry::record_grpc_latency(duration, &attributes);
+			telemetry::drop_grpc_in_progress(&attributes);
 
 			if let Err(ref status) = res {
 				let error_string = format!("{:?}", status);
 
-				metrics.error_counter.add(1, &[
+				telemetry::add_grpc_error(&[
 					KeyValue::new(telemetry::ATTRIBUTE_SYSTEM, rpc_method_details.system),
 					KeyValue::new(telemetry::ATTRIBUTE_SERVICE, rpc_method_details.service),
 					KeyValue::new(telemetry::ATTRIBUTE_METHOD, rpc_method_details.method),

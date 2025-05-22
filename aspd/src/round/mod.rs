@@ -412,7 +412,7 @@ impl CollectingPayments {
 			.span_builder(telemetry::TRACE_RUN_ROUND_CONSTRUCT_VTXO_TREE)
 			.start_with_context(&tracer_provider, &parent_context.clone());
 		span.set_int_attr("expiry_height", expiry_height);
-		span.set_int_attr(telemetry::ATTRIBUTE_BLOCKHEIGHT, tip);
+		span.set_int_attr("block_height", tip);
 
 		slog!(ConstructingRoundVtxoTree, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			tip_block_height: tip, vtxo_expiry_block_height: expiry_height,
@@ -1105,8 +1105,7 @@ async fn perform_round(
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
 
-		if let Err(e) = server.rounds_wallet.lock().await
-			.sync(&server.bitcoind, false, &server.telemetry_metrics).await
+		if let Err(e) = server.rounds_wallet.lock().await.sync(&server.bitcoind, false).await
 		{
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}
