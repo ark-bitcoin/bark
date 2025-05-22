@@ -5,6 +5,7 @@ export ASPD_EXEC := CARGO_TARGET / "debug" / "aspd"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
 DEFAULT_ASPD_CONFIG_PATH := "aspd/config.default.toml"
+BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 
 precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
@@ -122,7 +123,13 @@ clean:
 clippy LINT:
 	cargo clippy -- -A clippy::all -W clippy::{{LINT}}
 
+
 default-aspd-config:
 	cargo run -p bark-aspd --example dump-default-config > {{DEFAULT_ASPD_CONFIG_PATH}}
-	echo "Default config file written to {{DEFAULT_ASPD_CONFIG_PATH}}"
+	echo "Default aspd config file written to {{DEFAULT_ASPD_CONFIG_PATH}}"
+
+
+dump-bark-sql-schema:
+	cargo run -p bark-client --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
+	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
 
