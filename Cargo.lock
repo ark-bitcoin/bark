@@ -215,6 +215,7 @@ dependencies = [
  "ark-lib",
  "bitcoin",
  "prost",
+ "thiserror 2.0.12",
  "tokio",
  "tonic",
  "tonic-build",

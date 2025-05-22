@@ -20,6 +20,7 @@ tonic.workspace = true
 # INTERNAL
 prost.workspace = true
 tokio.workspace = true
+thiserror.workspace = true
 
 [build-dependencies]
 tonic-build.workspace= true
