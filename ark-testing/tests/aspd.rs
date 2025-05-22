@@ -513,7 +513,9 @@ async fn double_spend_oor() {
 	// then after it's done, fire the request again, which should fail.
 	let req = last_req.lock().await.take().unwrap();
 	let err = aspd.get_public_client().await.request_oor_cosign(req).await.unwrap_err();
-	assert!(err.to_string().contains("attempted to sign OOR for already spent vtxo"));
+	assert!(err.to_string().contains(
+		"attempted to sign OOR for already spent vtxo",
+	), "err: {err}");
 }
 
 #[tokio::test]
@@ -535,7 +537,10 @@ async fn double_spend_round() {
 			let res2 = c2.submit_payment(req).await;
 
 			assert!(res1.is_ok());
-			assert!(res2.unwrap_err().message().contains(&format!("vtxo {} already registered", vtxoid)));
+			let err = res2.unwrap_err();
+			assert!(err.message().contains(
+				&format!("vtxo {} already registered", vtxoid),
+			), "err: {err}");
 			Ok(protos::Empty{})
 		}
 	}
@@ -756,9 +761,9 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	let err = bark_1.try_send_bolt11(invoice, None).await.unwrap_err();
-	assert!(err.to_string().contains("This lightning payment has completed. preimage: "),
-		"error: {}", err,
-	);
+	assert!(err.to_string().contains(
+		"This lightning payment has completed. preimage: ",
+	), "err: {err}");
 }
 
 #[tokio::test]
@@ -1081,8 +1086,10 @@ async fn reject_subdust_board_cosign() {
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
-	let res = bark.try_board_all().await;
-	assert!(res.unwrap_err().to_string().contains("bad user input: board amount must be at least 0.00000330 BTC"));
+	let err = bark.try_board_all().await.unwrap_err();
+	assert!(err.to_string().contains(
+		"bad user input: board amount must be at least 0.00000330 BTC",
+	), "err: {err}");
 }
 
 
@@ -1229,6 +1236,8 @@ async fn reject_subdust_bolt11_payment() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
-	let res = bark.try_send_bolt11(invoice, Some(sat(100_000))).await;
-	assert!(res.unwrap_err().to_string().contains("bad user input: invalid amounts: payment amount must be at least 0.00000330 BTC"));
+	let err = bark.try_send_bolt11(invoice, Some(sat(100_000))).await.unwrap_err();
+	assert!(err.to_string().contains(
+		"bad user input: invalid amounts: payment amount must be at least 0.00000330 BTC",
+	), "err: {err}");
 }
