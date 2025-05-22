@@ -1,6 +1,6 @@
 
 
-use std::{fmt, iter};
+use std::iter;
 use std::borrow::Cow;
 
 use bitcoin::{
@@ -305,16 +305,9 @@ impl<'a> iter::FusedIterator for ConnectorTxIter<'a> {}
 
 /// The signing key passed into [ConnectorChain::iter_signed_txs] or
 /// [ConnectorChain::connectors_signed] is incorrect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("signing key doesn't match connector chain")]
 pub struct InvalidSigningKeyError;
-
-impl fmt::Display for InvalidSigningKeyError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "signing key doesn't match connector chain")
-	}
-}
-
-impl std::error::Error for InvalidSigningKeyError {}
 
 
 #[cfg(test)]

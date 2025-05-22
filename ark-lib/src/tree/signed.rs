@@ -1,7 +1,7 @@
 
 
 use std::collections::{HashMap, VecDeque};
-use std::{cmp, fmt, iter};
+use std::{cmp, iter};
 
 use bitcoin::hashes::Hash;
 use bitcoin::{
@@ -563,10 +563,13 @@ impl UnsignedVtxoTree {
 }
 
 /// Error returned from cosigning a VTXO tree.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CosignSignatureError {
+	#[error("missing cosign signature from pubkey {pk}")]
 	MissingSignature { pk: PublicKey },
+	#[error("invalid cosign signature from pubkey {pk}")]
 	InvalidSignature { pk: PublicKey },
+	#[error("not enough nonces")]
 	NotEnoughNonces,
 }
 
@@ -578,22 +581,6 @@ impl CosignSignatureError {
 		CosignSignatureError::InvalidSignature { pk: cosign_pk }
 	}
 }
-
-impl fmt::Display for CosignSignatureError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match self {
-			Self::MissingSignature { pk } => {
-				write!(f, "missing cosing signature for pubkey {}", pk)
-			},
-			Self::InvalidSignature { pk } => {
-				write!(f, "invalid cosing signature for pubkey {}", pk)
-			},
-			Self::NotEnoughNonces => write!(f, "not enough nonces"),
-		}
-	}
-}
-
-impl std::error::Error for CosignSignatureError {}
 
 /// All the information needed to uniquely specify a fully signed VTXO tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]

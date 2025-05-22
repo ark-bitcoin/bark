@@ -38,16 +38,9 @@ pub struct Bolt11Payment {
 	pub exit_delta: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("{0}")]
 pub struct CheckAmountsError(String);
-
-impl fmt::Display for CheckAmountsError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		f.write_str(&self.0)
-	}
-}
-
-impl std::error::Error for CheckAmountsError {}
 
 pub fn htlc_taproot(
 	payment_hash: sha256::Hash,
@@ -334,13 +327,13 @@ impl SignedBolt11Payment {
 	pub fn validate_signatures(
 		&self,
 		secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
-	) -> Result<(), InvalidSignature> {
+	) -> Result<(), InvalidSignatureError> {
 		for (idx, sighash) in self.payment.htlc_sighashes().into_iter().enumerate() {
-			let sig = self.signatures.get(idx).ok_or(InvalidSignature::Missing { idx })?;
+			let sig = self.signatures.get(idx).ok_or(InvalidSignatureError::Missing { idx })?;
 			let pubkey = self.payment.inputs[idx].spec().taproot_pubkey();
 			let msg = secp256k1::Message::from_digest(*sighash.as_byte_array());
 			if secp.verify_schnorr(sig, &msg, &pubkey).is_err() {
-				return Err(InvalidSignature::Invalid { idx, pubkey });
+				return Err(InvalidSignatureError::Invalid { idx, pubkey });
 			}
 		}
 		Ok(())
@@ -379,23 +372,18 @@ impl SignedBolt11Payment {
 impl Encodable for SignedBolt11Payment {}
 impl Decodable for SignedBolt11Payment {}
 
-#[derive(Debug)]
-pub enum InvalidSignature {
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidSignatureError {
+	#[error("signature missing at idx {idx}")]
 	Missing {
 		idx: usize,
 	},
+	#[error("invalid signature at idx {idx} for public key {pubkey}")]
 	Invalid {
 		idx: usize,
 		pubkey: XOnlyPublicKey,
 	},
 }
-
-impl fmt::Display for InvalidSignature {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		fmt::Debug::fmt(self, f)
-	}
-}
-impl std::error::Error for InvalidSignature {}
 
 #[derive(Debug)]
 pub struct InsufficientFunds {

@@ -26,17 +26,9 @@ pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(124);
 const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("failed to parse vtxo id, must be 36 bytes")]
 pub struct VtxoIdParseError;
-
-impl fmt::Display for VtxoIdParseError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "failed to parse vtxo id, must be 36 bytes")
-	}
-}
-
-impl std::error::Error for VtxoIdParseError {}
-
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VtxoId([u8; 36]);
