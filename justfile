@@ -40,26 +40,30 @@ test-unit-all:
 test-unit-all-codecov:
 	cargo llvm-cov --workspace --exclude ark-testing --no-report
 
-alias int := test-integration
 test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
+alias int := test-integration
+
+# run all integration tests without logging and without early failure.
+test-integration-all: build docker-pull
+	RUST_LOG=0 cargo test --package ark-testing --no-fail-fast
+alias int-all := test-integration-all
 
 test-integration-codecov TEST="": build-codecov docker-pull
 	cargo llvm-cov --package ark-testing --no-report {{TEST}}
 
 
-alias int-esplora := test-integration-esplora
 test-integration-esplora TEST="": build docker-pull
 	CHAIN_SOURCE=esplora just int "{{TEST}}"
+alias int-esplora := test-integration-esplora
+
+# run all integration tests without logging and without early failure.
+test-integration-esplora-all: build docker-pull
+	RUST_LOG=0 CHAIN_SOURCE=esplora cargo test --package ark-testing --no-fail-fast
+alias int-esplora-all := test-integration-esplora-all
 
 test-integration-esplora-codecov TEST="": build-codecov docker-pull
 	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --no-report {{TEST}}
-
-test-integration-all: build docker-pull
-	cargo test --package ark-testing
-
-test-integration-all-codecov: build-codecov docker-pull
-	cargo llvm-cov --package ark-testing --no-report
 
 test: test-unit test-integration test-integration-esplora
 
