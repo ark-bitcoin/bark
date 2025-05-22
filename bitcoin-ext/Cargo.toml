@@ -8,7 +8,7 @@ name = "bitcoin_ext"
 
 [features]
 default = [ "bdk" ]
-bdk = [ "bdk_wallet" ]
+bdk = [ "bdk_wallet", "bdk_esplora", "reqwest", "async-trait" ]
 
 [dependencies]
 lazy_static.workspace = true
@@ -21,6 +21,6 @@ serde_json.workspace = true
 
 # bdk
 bdk_wallet = { workspace = true, optional = true }
-bdk_esplora.workspace = true
-reqwest = {version = "0.11.27", features = ["rustls-tls"], default-features = false}
-async-trait = "0.1.88"
+bdk_esplora = { workspace = true, optional = true }
+reqwest = { version = "0.11.27", features = [ "rustls-tls" ], default-features = false, optional = true }
+async-trait = { version = "0.1.88", optional = true }

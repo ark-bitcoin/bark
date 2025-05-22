@@ -236,7 +236,7 @@ pub struct MempoolFeesSubmitPackage {
 	pub effective_includes: Option<Vec<Wtxid>>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 pub trait EsploraClientExt {
 	fn _client(&self) -> &reqwest::Client;
 	fn _base_url(&self) -> &str;
