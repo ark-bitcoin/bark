@@ -54,6 +54,14 @@ steps:
       - cargo update
       - cargo build
 
+  - name: bark-as-libs
+    depends_on: build
+    image: registry.2nd.dev/build:17
+    commands:
+      - cargo build -p bark-client --no-default-features --features=""
+      - cargo build -p bark-bitcoin-ext --no-default-features --features=""
+      - cargo build -p ark-lib --no-default-features --features=""
+
   - name: test-integration-esplora
     depends_on: build
     image: registry.2nd.dev/build:17
