@@ -38,12 +38,14 @@ steps:
       - cargo version
       - just build
 
-  - name: aspd-default-config-file
+  - name: generated-static-files
     depends_on: build
     image: registry.2nd.dev/build:17
     commands:
       - just default-aspd-config
-      - bash contrib/check-clean-default-config.sh
+      - bash contrib/check-clean-diff.sh aspd/config.default.toml
+      - just dump-bark-sql-schema
+      - bash contrib/check-clean-diff.sh bark/schema.sql
 
   - name: use-bark-as-dependency
     depends_on: build
