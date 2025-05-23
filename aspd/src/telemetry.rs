@@ -43,21 +43,23 @@ pub const METER_ASPD: &str = "aspd";
 
 pub const ATTRIBUTE_WORKER: &str = "worker";
 pub const ATTRIBUTE_STATUS: &str = "status";
+pub const ATTRIBUTE_ERROR: &str = "error";
 pub const ATTRIBUTE_TYPE: &str = "type";
 pub const ATTRIBUTE_KIND: &str = "kind";
 pub const ATTRIBUTE_URI: &str = "uri";
 pub const ATTRIBUTE_PUBLIC_KEY: &str = "public_key";
 pub const ATTRIBUTE_VERSION: &str = "version";
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
-pub const ATTRIBUTE_SYSTEM: &str = "system";
-pub const ATTRIBUTE_SERVICE: &str = "service";
-pub const ATTRIBUTE_METHOD: &str = "method";
-pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 
+pub const SERVICE_NAME: &str = opentelemetry_semantic_conventions::attribute::SERVICE_NAME;
+pub const SERVICE_VERSION: &str = opentelemetry_semantic_conventions::attribute::SERVICE_VERSION;
+pub const RPC_SYSTEM: &str = opentelemetry_semantic_conventions::attribute::RPC_SYSTEM;
+pub const RPC_SERVICE: &str = opentelemetry_semantic_conventions::attribute::RPC_SERVICE;
+pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_METHOD;
 /// The [numeric status code](https://github.com/grpc/grpc/blob/v1.33.2/doc/statuscodes.md)
 /// of the gRPC request.
-pub const RPC_GRPC_STATUS_CODE: &str = "rpc.grpc.status_code";
+pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;
 
 
 /// The global open-telemetry context to register metrics.
@@ -111,8 +113,8 @@ impl Metrics {
 			.build().unwrap();
 
 		let resource = Resource::builder()
-			.with_attribute(KeyValue::new("service.name", "aspd"))
-			.with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
+			.with_attribute(KeyValue::new(SERVICE_NAME, "aspd"))
+			.with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
 			.with_attribute(KeyValue::new("aspd.public_key", public_key.to_string()))
 			.with_attribute(KeyValue::new("aspd.network", config.network.to_string()))
 			.with_attribute(KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()))
@@ -222,7 +224,7 @@ pub fn worker_dropped(worker: &str) {
 
 pub fn count_version(version: &str) {
 	if let Some(m) = TELEMETRY.get() {
-		m.handshake_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_VERSION, version.to_owned())]); 
+		m.handshake_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_VERSION, version.to_owned())]);
 	}
 }
 
@@ -341,16 +343,16 @@ pub fn set_forfeit_metrics(
 ) {
 	if let Some(ref m) = TELEMETRY.get() {
 		m.pending_forfeit_gauge.record(pending_exit_tx_count as u64, &[
-			KeyValue::new("type", "pending_exit_transaction_count"),
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_count"),
 		]);
 		m.pending_forfeit_gauge.record(pending_exit_volume as u64, &[
-			KeyValue::new("type", "pending_exit_transaction_volume"),
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_volume"),
 		]);
 		m.pending_forfeit_gauge.record(pending_claim_count as u64, &[
-			KeyValue::new("type", "pending_claim_count"),
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_count"),
 		]);
 		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &[
-			KeyValue::new("type", "pending_claim_volume"),
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_volume"),
 		])
 	}
 }
