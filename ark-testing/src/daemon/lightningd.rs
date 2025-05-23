@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use bitcoin::{Amount, Network, Txid};
-use bitcoin::hashes::Hash;
+use bitcoin::consensus::Decodable;
+use bitcoin::{Amount, Network, Transaction};
 use log::{error, trace};
 use tokio::fs;
 use tokio::process::Command;
@@ -357,7 +357,12 @@ impl Lightningd {
 			reserve: None,
 			channel_type: vec![],
 		}).await.unwrap().into_inner();
-		Txid::from_slice(&response.txid).unwrap()
+
+		let tx = Transaction::consensus_decode::<&[u8]>(&mut response.tx.as_ref()).unwrap();
+
+		// NB: there seems to be a bug in CLN where txid bytes are in
+		// little-endian, so we prefer computing it for now
+		tx.compute_txid()
 	}
 
 	pub async fn invoice_msat(
