@@ -962,7 +962,7 @@ impl SigningForfeits {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum RoundStateKind {
+pub enum RoundStateKind {
 	/// see [`CollectingPayments`]
 	CollectingPayments,
 	/// see [`SigningVtxoTree`]
@@ -976,7 +976,7 @@ enum RoundStateKind {
 }
 
 impl RoundStateKind {
-	fn as_str(&self) -> &'static str {
+	pub fn as_str(&self) -> &'static str {
 		match self {
 			RoundStateKind::CollectingPayments => "CollectingPayments",
 			RoundStateKind::SigningVtxoTree => "SigningVtxoTree",
@@ -987,7 +987,7 @@ impl RoundStateKind {
 			RoundStateKind::FinishedError => "FinishedError",
 		}
 	}
-	fn get_all() -> &'static [RoundStateKind] {
+	pub fn get_all() -> &'static [RoundStateKind] {
 		&[
 			RoundStateKind::CollectingPayments,
 			RoundStateKind::SigningVtxoTree,
@@ -1071,7 +1071,7 @@ impl RoundState {
 			_ => panic!("wrong state"),
 		}
 	}
-	
+
 	fn result(self) -> Option<RoundResult> {
 		match self {
 			RoundState::CollectingPayments(_)
@@ -1089,7 +1089,7 @@ impl RoundState {
 			Self::Finished(_) => unreachable!("can't progress from a final state"),
 		}
 	}
-	
+
 }
 
 impl From<CollectingPayments> for RoundState {
@@ -1233,6 +1233,7 @@ async fn perform_round(
 								server, inputs, vtxo_requests, cosign_pub_nonces, offboards,
 							).await.map_err(|e| {
 								debug!("error processing payment: {e}");
+								telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
 								e
 							})
 						},
@@ -1261,6 +1262,10 @@ async fn perform_round(
 			);
 
 			round_state = round_state.into_finished(RoundResult::Empty);
+
+			telemetry::set_full_round_metrics(
+				round_seq, attempt_seq, round_state.kind(), Amount::from_sat(0), 0,
+			);
 
 			return round_state.result().unwrap();
 		}
@@ -1295,10 +1300,17 @@ async fn perform_round(
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
+		let input_count = round_state.collecting_payments().all_inputs.len();
+		let input_volume = round_state.collecting_payments().total_input_amount();
+		
 		round_state = match round_state.progress(server).await {
 			Ok(s) => s,
 			Err(e) => return {
 				round_state = RoundState::Finished(RoundResult::Err(e));
+
+				telemetry::set_full_round_metrics(
+					round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+				);
 
 				round_state.result().unwrap()
 			},
@@ -1330,6 +1342,7 @@ async fn perform_round(
 
 					if need_new_round {
 						round_state = round_state.into_finished(RoundResult::Abandoned);
+						telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
 						return round_state.result().unwrap();
 					}
 
@@ -1383,6 +1396,7 @@ async fn perform_round(
 			Ok(s) => s,
 			Err(e) => return {
 				round_state = RoundState::Finished(RoundResult::Err(e));
+				telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
 				round_state.result().unwrap()
 			},
 		};
@@ -1414,6 +1428,7 @@ async fn perform_round(
 
 					if need_new_round {
 						round_state = round_state.into_finished(RoundResult::Abandoned);
+						telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
 						return round_state.result().unwrap();
 					}
 
@@ -1479,7 +1494,9 @@ async fn perform_round(
 				RoundState::Finished(RoundResult::Err(e))
 			},
 		};
-		
+
+		telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
+
 		return round_state.result().unwrap();
 	}
 }
