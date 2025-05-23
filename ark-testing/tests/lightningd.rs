@@ -87,12 +87,9 @@ async fn bark_pay_ln_succeeds() {
 
 	trace!("Creating channel between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.await_transaction(&txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -151,12 +148,9 @@ async fn bark_pay_invoice_twice() {
 
 	trace!("Creating channel between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.await_transaction(&txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -242,12 +236,9 @@ async fn bark_refresh_ln_change_vtxo() {
 
 	trace!("Creating channel between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.await_transaction(&txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -335,12 +326,9 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 
 	trace!("Creating channel between lightning nodes");
 	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.await_transaction(&txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
