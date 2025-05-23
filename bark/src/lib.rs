@@ -295,9 +295,14 @@ pub struct Wallet {
 	db: Arc<dyn BarkPersister>,
 	vtxo_seed: VtxoSeed,
 	asp: Option<AspConnection>,
+
 }
 
 impl Wallet {
+	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
+		self.chain.require_version()
+	}
+
 	/// Derive and store the keypair directly after currently last revealed one
 	pub fn derive_store_next_keypair(&self, keychain: KeychainKind) -> anyhow::Result<Keypair> {
 		let last_revealed = self.db.get_last_vtxo_key_index(keychain)?;
@@ -343,7 +348,7 @@ impl Wallet {
 
 		// from then on we can open the wallet
 		let mut wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
-		wallet.onchain.require_chainsource_version()?;
+		wallet.require_chainsource_version()?;
 
 		if wallet.asp.is_none() {
 			bail!("Cannot create bark if asp is not available");
@@ -352,11 +357,12 @@ impl Wallet {
 		let bday = if let Some(bday) = mnemonic_birthday {
 			bday
 		} else {
-			wallet.onchain.tip().await
+			wallet.chain.tip().await
 				.context("failed to fetch tip from chain source")?
 				.saturating_sub(DEEPLY_CONFIRMED)
 		};
-		let id = wallet.onchain.chain.block_id(bday).await
+
+		let id = wallet.chain.block_id(bday).await
 			.with_context(|| format!("failed to get block height {} from chain source", bday))?;
 		wallet.onchain.wallet.set_checkpoint(id.height, id.hash);
 		wallet.onchain.persist()?;
@@ -401,7 +407,7 @@ impl Wallet {
 		let chain = Arc::new(chain_source_client);
 
 		let db = Arc::new(db);
-		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain.clone())
+		let onchain = onchain::Wallet::create(properties.network, seed, db.clone())
 			.context("failed to create onchain wallet")?;
 
 		let asp = match AspConnection::handshake(&config.asp_address, properties.network).await {
@@ -492,7 +498,7 @@ impl Wallet {
 	/// Returns all vtxos that will expire within
 	/// `threshold_blocks` blocks
 	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
-		let expiry = self.onchain.tip().await? + threshold;
+		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
 		Ok(self.vtxos_with(filter)?)
 	}
@@ -607,7 +613,7 @@ impl Wallet {
 	) -> anyhow::Result<Board> {
 		let mut asp = self.require_asp()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
-		let current_height = self.onchain.tip().await?;
+		let current_height = self.chain.tip().await?;
 
 		let expiry_height = current_height + asp.info.vtxo_expiry_delta as BlockHeight;
 		let builder = BoardBuilder::new(
@@ -656,7 +662,7 @@ impl Wallet {
 		let tx = self.onchain.finish_tx(board_psbt)?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
-		self.onchain.broadcast_tx(&tx).await?;
+		self.chain.broadcast_tx(&tx).await?;
 
 		let res = self.register_board(vtxo.id()).await;
 		info!("Board successful");
@@ -737,7 +743,7 @@ impl Wallet {
 		}).collect::<HashSet<_>>();
 
 		//TODO(stevenroose) we won't do reorg handling here
-		let current_height = self.onchain.tip().await?;
+		let current_height = self.chain.tip().await?;
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
 		debug!("Querying ark for rounds since height {}", last_sync_height);
 		let req = protos::FreshRoundsRequest { start_height: last_sync_height };
@@ -822,7 +828,7 @@ impl Wallet {
 
 
 					let txid = vtxo.chain_anchor().txid;
-					let chain_anchor = self.onchain.chain.get_tx(&txid).await?.with_context(|| {
+					let chain_anchor = self.chain.get_tx(&txid).await?.with_context(|| {
 						format!("received arkoor vtxo with unknown chain anchor: {}", txid)
 					})?;
 					if let Err(e) = vtxo.validate(&chain_anchor) {
@@ -1199,7 +1205,7 @@ impl Wallet {
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Preimage> {
 		let properties = self.db.read_properties()?.context("Missing config")?;
-		let current_height = self.onchain.tip().await?;
+		let current_height = self.chain.tip().await?;
 
 		if invoice.network() != properties.network {
 			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
@@ -1274,7 +1280,7 @@ impl Wallet {
 
 		// Validate the new vtxos. They have the same chain anchor.
 		for (vtxo, input) in htlc_vtxos.iter().zip(inputs.iter()) {
-			if let Ok(tx) = self.onchain.chain.get_tx(&input.chain_anchor().txid).await {
+			if let Ok(tx) = self.chain.get_tx(&input.chain_anchor().txid).await {
 				let tx = tx.with_context(|| {
 					format!("input vtxo chain anchor not found: {}", input.chain_anchor().txid)
 				})?;
@@ -1331,7 +1337,7 @@ impl Wallet {
 
 	pub async fn check_lightning_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
 		let mut asp = self.require_asp()?;
-		let tip = self.onchain.tip().await?;
+		let tip = self.chain.tip().await?;
 
 		// we check that all htlc have the same invoice, amount, and HTLC out spec
 		let mut parts = None;
@@ -1495,7 +1501,7 @@ impl Wallet {
 
 
 	pub async fn finish_bolt11_board(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
-		let tip = self.onchain.tip().await?;
+		let tip = self.chain.tip().await?;
 		let mut asp = self.require_asp()?;
 
 		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
@@ -1930,7 +1936,7 @@ impl Wallet {
 
 		// We also broadcast the tx, just to have it go around faster.
 		info!("Broadcasting round tx {}", signed_round_tx.compute_txid());
-		if let Err(e) = self.onchain.broadcast_tx(&signed_round_tx).await {
+		if let Err(e) = self.chain.broadcast_tx(&signed_round_tx).await {
 			warn!("Couldn't broadcast round tx: {}", e);
 		}
 

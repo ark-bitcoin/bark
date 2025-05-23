@@ -54,7 +54,6 @@ pub async fn execute_lightning_command(
 			pay(invoice, amount, comment, no_sync, wallet).await?;
 		},
 		LightningCommand::Invoice { amount } => {
-			wallet.sync_onchain_wallet().await.context("sync error")?;
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 		},

@@ -478,7 +478,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	}
 
 	let mut w = open_wallet(&datadir).await.context("error opening wallet")?;
-	if let Err(e) = w.onchain.require_chainsource_version() {
+	if let Err(e) = w.require_chainsource_version() {
 		warn!("{}", e);
 	}
 
@@ -550,7 +550,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				let fee_rate = w.chain.fee_rates().await.regular;
-				let txid = w.onchain.send(addr, amount, fee_rate).await?;
+				let txid = w.onchain.send(&w.chain, addr, amount, fee_rate).await?;
 
 				let output = json::onchain::Send { txid };
 				output_json(&output);
@@ -568,7 +568,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				let fee_rate = w.chain.fee_rates().await.regular;
-				let txid = w.onchain.drain(addr, fee_rate).await?;
+				let txid = w.onchain.drain(&w.chain, addr, fee_rate).await?;
 
 				let output = json::onchain::Send { txid };
 				output_json(&output);
@@ -605,7 +605,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				let fee_rate = w.chain.fee_rates().await.regular;
-				let txid = w.onchain.send_many(outputs, fee_rate).await?;
+				let txid = w.onchain.send_many(&w.chain, outputs, fee_rate).await?;
 				let output = json::onchain::Send { txid };
 				output_json(&output);
 			},

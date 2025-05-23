@@ -73,7 +73,7 @@ impl ExitStateProgress for ExitStartState {
 			.map_err(|e| ExitError::MovementRegistrationFailure { error: e.to_string() })?;
 
 		Ok(ExitState::new_processing(
-			ctx.onchain.tip().await.unwrap_or(self.tip_height),
+			ctx.chain_source.tip().await.unwrap_or(self.tip_height),
 			ctx.exit_txids.iter().cloned(),
 		))
 	}

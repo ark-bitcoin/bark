@@ -69,7 +69,6 @@ pub struct Wallet {
 	pub(crate) db: Arc<dyn BarkPersister>,
 
 	pub(crate) exit_outputs: Vec<SpendableExit>,
-	pub(crate) chain: Arc<ChainSourceClient>,
 }
 
 impl Wallet {
@@ -77,7 +76,6 @@ impl Wallet {
 		network: Network,
 		seed: [u8; 64],
 		db: Arc<dyn BarkPersister>,
-		chain: Arc<ChainSourceClient>,
 	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 
@@ -104,21 +102,8 @@ impl Wallet {
 			wallet,
 			db,
 
-			chain,
 			exit_outputs: vec![]
 		})
-	}
-
-	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
-		self.chain.require_version()
-	}
-
-	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
-		self.chain.tip().await
-	}
-
-	pub (crate) async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
-		self.chain.broadcast_tx(tx).await
 	}
 
 	pub fn persist(&mut self) -> anyhow::Result<()> {
@@ -214,28 +199,28 @@ impl Wallet {
 		Ok(tx)
 	}
 
-	pub async fn send(&mut self, dest: Address, amount: Amount, fee_rate: FeeRate)
+	pub async fn send(&mut self, chain: &ChainSourceClient, dest: Address, amount: Amount, fee_rate: FeeRate)
 		-> anyhow::Result<Txid>
 	{
 		let psbt = self.prepare_tx( [(dest, amount)], fee_rate)?;
 		let tx = self.finish_tx(psbt)?;
-		self.broadcast_tx(&tx).await?;
+		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
 	pub async fn send_many<T: IntoIterator<Item = (Address, Amount)>>(
-		&mut self, dests: T, fee_rate: FeeRate
+		&mut self, chain: &ChainSourceClient, dests: T, fee_rate: FeeRate
 	) -> anyhow::Result<Txid> {
 		let pbst = self.prepare_tx( dests, fee_rate)?;
 		let tx = self.finish_tx(pbst)?;
-		self.broadcast_tx(&tx).await?;
+		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
-	pub async fn drain(&mut self, dest: Address, fee_rate: FeeRate) -> anyhow::Result<Txid> {
+	pub async fn drain(&mut self, chain: &ChainSourceClient, dest: Address, fee_rate: FeeRate) -> anyhow::Result<Txid> {
 		let psbt = self.prepare_send_all_tx(dest, fee_rate)?;
 		let tx = self.finish_tx(psbt)?;
-		self.broadcast_tx(&tx).await?;
+		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
