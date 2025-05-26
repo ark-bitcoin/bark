@@ -38,6 +38,7 @@ class Job:
     def execute(self):
         new_env = dict(os.environ)
         new_env["TEST_DIRECTORY"] = self.test_directory
+        new_env["CLEAN_SUCCESSFUL_TESTS"] = "1"
 
         os.makedirs(self.test_directory, exist_ok=True)
 

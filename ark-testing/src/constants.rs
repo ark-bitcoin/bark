@@ -20,6 +20,8 @@ pub mod env {
 	pub const DAEMON_INIT_TIMEOUT_MILLIS: &str = "DAEMON_INIT_TIMEOUT";
 	/// The env var to reach postgres binaries folder
 	pub const POSTGRES_BINS: &str = "POSTGRES_BINS";
+	/// Remove the directory once a test is successful
+	pub const CLEAN_SUCCESSFUL_TESTS: &str = "CLEAN_SUCCESSFUL_TESTS";
 }
 
 pub mod bitcoind {
