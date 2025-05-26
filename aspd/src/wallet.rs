@@ -222,9 +222,9 @@ impl PersistedWallet {
 				block_height: checkpoint.height(),
 			);
 		}
-		
+
 		telemetry::set_wallet_balance(self.kind, balance.clone());
-		
+
 		Ok(balance)
 	}
 

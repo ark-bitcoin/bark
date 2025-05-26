@@ -364,7 +364,7 @@ async fn chain_source_txout_value() {
 			.expect("Unconfirmed transactions are valid");
 		assert_eq!(amount, amounts[i]);
 	}
-	
+
 	// Ensure confirmed transactions are returned
 	ctx.generate_blocks(1).await;
 	for (i, out_point) in out_points.iter().enumerate() {

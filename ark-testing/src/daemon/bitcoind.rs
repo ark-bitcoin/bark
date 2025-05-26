@@ -85,7 +85,7 @@ impl Bitcoind {
 	pub fn auth(&self) -> Auth {
 		self.inner.auth()
 	}
-	
+
 	pub fn chain_source(&self) -> ChainSource {
 		ChainSource::Bitcoind { url: self.rpc_url(), auth: self.auth() }
 	}

@@ -100,7 +100,7 @@ struct Metrics {
 impl Metrics {
 	fn init(config: &Config, public_key: PublicKey) -> Self {
 		let endpoint = config.otel_collector_endpoint.as_ref().unwrap();
-		
+
 		global::set_text_map_propagator(TraceContextPropagator::new());
 
 		let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
