@@ -281,8 +281,8 @@ impl ClnNodeStateKind {
 			ClnNodeStateKind::Invalid => INVALID,
 		}
 	}
-	pub fn get_all() -> Vec<ClnNodeStateKind> {
-		vec![
+	pub fn get_all() -> &'static [ClnNodeStateKind] {
+		&[
 			ClnNodeStateKind::Offline,
 			ClnNodeStateKind::Online,
 			ClnNodeStateKind::Error,

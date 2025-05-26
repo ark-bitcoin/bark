@@ -284,7 +284,7 @@ pub fn set_lightning_node_state(
 
 	if let Some(m) = TELEMETRY.get() {
 		for s in ClnNodeStateKind::get_all() {
-			let value = if s == state {
+			let value = if *s == state {
 				1
 			} else {
 				0

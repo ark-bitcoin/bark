@@ -987,8 +987,8 @@ impl RoundStateKind {
 			RoundStateKind::FinishedError => "FinishedError",
 		}
 	}
-	fn get_all() -> Vec<RoundStateKind> {
-		vec![
+	fn get_all() -> &'static [RoundStateKind] {
+		&[
 			RoundStateKind::CollectingPayments,
 			RoundStateKind::SigningVtxoTree,
 			RoundStateKind::SigningForfeits,
