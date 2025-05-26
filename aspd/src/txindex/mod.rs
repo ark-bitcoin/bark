@@ -1,7 +1,7 @@
 
 //TODO(stevenroose) remove after Jiri's txindex refactor
 #![allow(unused)]
-
+pub mod block;
 
 use std::{cmp, fmt};
 use std::collections::HashMap;
@@ -11,9 +11,9 @@ use std::time::Duration;
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize;
-use bitcoin::{Transaction, Txid, Wtxid};
+use bitcoin::{BlockHash, Transaction, Txid, Wtxid};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, BlockRef};
 use chrono::{DateTime, Local};
 use log::{trace, debug, info, warn};
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -21,7 +21,6 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::system::RuntimeManager;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxStatus {
@@ -32,7 +31,7 @@ pub enum TxStatus {
 	/// Accompanied by the first time we saw the transaction.
 	MempoolSince(DateTime<Local>),
 	/// This transcation was confirmed in the given block height.
-	ConfirmedIn(BlockHeight),
+	ConfirmedIn(BlockRef),
 
 	/// This tx is no longer being tracked by the txindex.
 	Unregistered,
@@ -49,7 +48,7 @@ impl TxStatus {
 		}
 	}
 
-	pub fn confirmed_in(&self) -> Option<BlockHeight> {
+	pub fn confirmed_in(&self) -> Option<BlockRef> {
 		match self {
 			Self::ConfirmedIn(h) => Some(*h),
 			Self::Unseen | Self::MempoolSince(_) | Self::Unregistered => None,
@@ -388,7 +387,11 @@ impl TxIndexProcess {
 						// Confirmed!
 						match self.bitcoind.get_block_header_info(&block) {
 							Ok(h) => {
-								let new = TxStatus::ConfirmedIn(h.height as BlockHeight);
+								let block_index = BlockRef {
+									height: h.height as BlockHeight,
+									hash: h.hash,
+								};
+								let new = TxStatus::ConfirmedIn(block_index);
 								*tx.status.lock().await = Some(new);
 							}
 							Err(e) => warn!("Failed to fetch block header of txinfo hash: {}", e),
