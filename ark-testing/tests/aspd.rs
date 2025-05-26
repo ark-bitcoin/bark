@@ -1013,12 +1013,13 @@ async fn claim_forfeit_round_connector() {
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
+	let mut log_forfeit_broadcasted = aspd.subscribe_log::<ForfeitBroadcasted>().await;
 	let mut log_confirmed = aspd.subscribe_log::<ForfeitedExitConfirmed>().await;
 	ctx.generate_blocks(1).await;
 	assert_eq!(log_confirmed.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// wait until forfeit watcher broadcasts forfeit tx
-	let txid = aspd.wait_for_log::<ForfeitBroadcasted>().try_wait(10_000).await.expect("time-out").forfeit_txid;
+	let txid = log_forfeit_broadcasted.recv().try_wait(10_000).await.expect("time-out").unwrap().forfeit_txid;
 
 	// and then wait for it to confirm
 	info!("Waiting for tx {} to confirm", txid);
