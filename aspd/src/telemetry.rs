@@ -43,21 +43,23 @@ pub const METER_ASPD: &str = "aspd";
 
 pub const ATTRIBUTE_WORKER: &str = "worker";
 pub const ATTRIBUTE_STATUS: &str = "status";
+pub const ATTRIBUTE_ERROR: &str = "error";
 pub const ATTRIBUTE_TYPE: &str = "type";
 pub const ATTRIBUTE_KIND: &str = "kind";
 pub const ATTRIBUTE_URI: &str = "uri";
 pub const ATTRIBUTE_PUBLIC_KEY: &str = "public_key";
 pub const ATTRIBUTE_VERSION: &str = "version";
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
-pub const ATTRIBUTE_SYSTEM: &str = "system";
-pub const ATTRIBUTE_SERVICE: &str = "service";
-pub const ATTRIBUTE_METHOD: &str = "method";
-pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 
+pub const SERVICE_NAME: &str = opentelemetry_semantic_conventions::attribute::SERVICE_NAME;
+pub const SERVICE_VERSION: &str = opentelemetry_semantic_conventions::attribute::SERVICE_VERSION;
+pub const RPC_SYSTEM: &str = opentelemetry_semantic_conventions::attribute::RPC_SYSTEM;
+pub const RPC_SERVICE: &str = opentelemetry_semantic_conventions::attribute::RPC_SERVICE;
+pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_METHOD;
 /// The [numeric status code](https://github.com/grpc/grpc/blob/v1.33.2/doc/statuscodes.md)
 /// of the gRPC request.
-pub const RPC_GRPC_STATUS_CODE: &str = "rpc.grpc.status_code";
+pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;
 
 
 /// The global open-telemetry context to register metrics.
@@ -84,6 +86,7 @@ struct Metrics {
 	round_vtxo_count_gauge: Gauge<u64>,
 	pending_expired_operation_gauge: Gauge<u64>,
 	pending_sweeper_gauge: Gauge<u64>,
+	pending_forfeit_gauge: Gauge<u64>,
 	lightning_node_gauge: Gauge<u64>,
 	lightning_node_boot_counter: Counter<u64>,
 	lightning_payment_counter: Counter<u64>,
@@ -110,8 +113,8 @@ impl Metrics {
 			.build().unwrap();
 
 		let resource = Resource::builder()
-			.with_attribute(KeyValue::new("service.name", "aspd"))
-			.with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
+			.with_attribute(KeyValue::new(SERVICE_NAME, "aspd"))
+			.with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
 			.with_attribute(KeyValue::new("aspd.public_key", public_key.to_string()))
 			.with_attribute(KeyValue::new("aspd.network", config.network.to_string()))
 			.with_attribute(KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()))
@@ -166,6 +169,7 @@ impl Metrics {
 		let round_vtxo_count_gauge = meter.u64_gauge("round_vtxo_count_gauge").build();
 		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
 		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
+		let pending_forfeit_gauge = meter.u64_gauge("pending_forfeit_gauge").build();
 		let lightning_node_gauge = meter.u64_gauge("lightning_node_gauge").build();
 		let lightning_node_boot_counter = meter.u64_counter("lightning_node_boot_counter").build();
 		let lightning_payment_counter = meter.u64_counter("lightning_payment_counter").build();
@@ -191,6 +195,7 @@ impl Metrics {
 			round_vtxo_count_gauge,
 			pending_expired_operation_gauge,
 			pending_sweeper_gauge,
+			pending_forfeit_gauge,
 			lightning_node_gauge,
 			lightning_node_boot_counter,
 			lightning_payment_counter,
@@ -327,6 +332,28 @@ pub fn set_pending_sweeper_stats(
 		m.pending_sweeper_gauge.record(pending_utxo_count as u64, &[
 			KeyValue::new(ATTRIBUTE_TYPE, "utxo_count"),
 		]);
+	}
+}
+
+pub fn set_forfeit_metrics(
+	pending_exit_tx_count: usize,
+	pending_exit_volume: u64,
+	pending_claim_count: usize,
+	pending_claim_volume: u64,
+) {
+	if let Some(ref m) = TELEMETRY.get() {
+		m.pending_forfeit_gauge.record(pending_exit_tx_count as u64, &[
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_count"),
+		]);
+		m.pending_forfeit_gauge.record(pending_exit_volume as u64, &[
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_volume"),
+		]);
+		m.pending_forfeit_gauge.record(pending_claim_count as u64, &[
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_count"),
+		]);
+		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &[
+			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_volume"),
+		])
 	}
 }
 

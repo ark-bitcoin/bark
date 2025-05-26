@@ -15,7 +15,6 @@ use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
 use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
-use opentelemetry_semantic_conventions as semconv;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
@@ -883,9 +882,9 @@ where
 		}
 
 		let attributes = [
-			KeyValue::new(telemetry::ATTRIBUTE_SYSTEM, rpc_method_details.system),
-			KeyValue::new(telemetry::ATTRIBUTE_SERVICE, rpc_method_details.service),
-			KeyValue::new(telemetry::ATTRIBUTE_METHOD, rpc_method_details.method),
+			KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
+			KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
+			KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
 		];
 
 		telemetry::add_grpc_in_progress(&attributes);
@@ -896,9 +895,9 @@ where
 			.span_builder(rpc_method_details.format_path())
 			.with_kind(SpanKind::Server)
 			.start(&tracer);
-		span.set_attribute(KeyValue::new(semconv::trace::RPC_SYSTEM, rpc_method_details.system));
-		span.set_attribute(KeyValue::new(semconv::trace::RPC_SERVICE, rpc_method_details.service));
-		span.set_attribute(KeyValue::new(semconv::trace::RPC_METHOD, rpc_method_details.method));
+		span.set_attribute(KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system));
+		span.set_attribute(KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service));
+		span.set_attribute(KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method));
 
 		span.add_event(format!("Processing {} request", rpc_method_details.format_path()), vec![]);
 
@@ -918,10 +917,10 @@ where
 				let error_string = format!("{:?}", status);
 
 				telemetry::add_grpc_error(&[
-					KeyValue::new(telemetry::ATTRIBUTE_SYSTEM, rpc_method_details.system),
-					KeyValue::new(telemetry::ATTRIBUTE_SERVICE, rpc_method_details.service),
-					KeyValue::new(telemetry::ATTRIBUTE_METHOD, rpc_method_details.method),
-					KeyValue::new(telemetry::ATTRIBUTE_STATUS_CODE, error_string.clone()),
+					KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
+					KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
+					KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+					KeyValue::new(telemetry::ATTRIBUTE_ERROR, error_string.clone()),
 				]);
 
 				trace!("Completed gRPC call: {} in {:?}, status: {}",
