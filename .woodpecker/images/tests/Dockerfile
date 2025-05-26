@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libsodium-dev \
 	libssl-dev \
 	libclang-dev \
+	sqlite3 \
 	libsqlite3-dev \
 	libpq5 \
 	postgresql \
