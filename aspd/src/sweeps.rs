@@ -714,22 +714,22 @@ impl Process {
 		for txid in to_remove {
 			self.pending_txs.remove(&txid);
 		}
-		
+
 		slog!(SweeperStats, nb_pending_txs: self.pending_txs.len(),
 			nb_pending_utxos: self.pending_tx_by_utxo.len(),
 		);
-		
+
 		let mut transaction_amount = 0;
 		for tx in self.pending_txs.values() {
 			transaction_amount += tx.tx.output_value().to_sat();
 		}
-		
+
 		telemetry::set_pending_sweeper_stats(
 			self.pending_txs.len(),
 			transaction_amount,
 			self.pending_tx_by_utxo.len(),
 		);
-		
+
 		Ok(())
 	}
 

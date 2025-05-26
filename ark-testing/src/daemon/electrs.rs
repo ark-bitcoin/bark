@@ -87,7 +87,7 @@ impl Electrs {
 		}
 		panic!("Failed to get raw transaction: {}", txid);
 	}
-	
+
 	pub async fn get_block_count(&self) -> u32 {
 		let client = self.async_client();
 		client.get_height().await.unwrap()

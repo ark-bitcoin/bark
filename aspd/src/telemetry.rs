@@ -20,6 +20,7 @@ use tracing_subscriber::Registry;
 use crate::cln::ClnNodeStateKind;
 use crate::Config;
 use crate::database::model::LightningPaymentStatus;
+use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
 pub const TRACER_ASPD: &str = "aspd";
@@ -42,6 +43,8 @@ pub const METER_ASPD: &str = "aspd";
 
 pub const ATTRIBUTE_WORKER: &str = "worker";
 pub const ATTRIBUTE_STATUS: &str = "status";
+pub const ATTRIBUTE_TYPE: &str = "type";
+pub const ATTRIBUTE_KIND: &str = "kind";
 pub const ATTRIBUTE_URI: &str = "uri";
 pub const ATTRIBUTE_PUBLIC_KEY: &str = "public_key";
 pub const ATTRIBUTE_VERSION: &str = "version";
@@ -50,8 +53,6 @@ pub const ATTRIBUTE_SYSTEM: &str = "system";
 pub const ATTRIBUTE_SERVICE: &str = "service";
 pub const ATTRIBUTE_METHOD: &str = "method";
 pub const ATTRIBUTE_STATUS_CODE: &str = "status_code";
-pub const ATTRIBUTE_WALLET_KIND: &str = "wallet_kind";
-pub const ATTRIBUTE_WALLET_BALANCE_TYPE: &str = "wallet_balance_type";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 
 /// The [numeric status code](https://github.com/grpc/grpc/blob/v1.33.2/doc/statuscodes.md)
@@ -77,6 +78,10 @@ struct Metrics {
 	handshake_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
+	round_gauge: Gauge<u64>,
+	round_attempt_gauge: Gauge<u64>,
+	round_volume_gauge: Gauge<u64>,
+	round_vtxo_count_gauge: Gauge<u64>,
 	pending_expired_operation_gauge: Gauge<u64>,
 	pending_sweeper_gauge: Gauge<u64>,
 	lightning_node_gauge: Gauge<u64>,
@@ -95,7 +100,7 @@ struct Metrics {
 impl Metrics {
 	fn init(config: &Config, public_key: PublicKey) -> Self {
 		let endpoint = config.otel_collector_endpoint.as_ref().unwrap();
-		
+
 		global::set_text_map_propagator(TraceContextPropagator::new());
 
 		let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
@@ -155,6 +160,10 @@ impl Metrics {
 		let handshake_version_counter = meter.u64_counter("handshake_version_counter").build();
 		let wallet_balance_gauge = meter.u64_gauge("wallet_balance_gauge").build();
 		let block_height_gauge = meter.u64_gauge("block_gauge").build();
+		let round_gauge = meter.u64_gauge("round_gauge").build();
+		let round_attempt_gauge = meter.u64_gauge("round_attempt_gauge").build();
+		let round_volume_gauge = meter.u64_gauge("round_volume_gauge").build();
+		let round_vtxo_count_gauge = meter.u64_gauge("round_vtxo_count_gauge").build();
 		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
 		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
 		let lightning_node_gauge = meter.u64_gauge("lightning_node_gauge").build();
@@ -176,6 +185,10 @@ impl Metrics {
 			handshake_version_counter,
 			wallet_balance_gauge,
 			block_height_gauge,
+			round_gauge,
+			round_attempt_gauge,
+			round_volume_gauge,
+			round_vtxo_count_gauge,
 			pending_expired_operation_gauge,
 			pending_sweeper_gauge,
 			lightning_node_gauge,
@@ -213,20 +226,20 @@ pub fn count_version(version: &str) {
 pub fn set_wallet_balance(wallet_kind: WalletKind, wallet_balance: Balance) {
 	if let Some(m) = TELEMETRY.get() {
 		m.wallet_balance_gauge.record(wallet_balance.confirmed.to_sat(), &[
-			KeyValue::new(ATTRIBUTE_WALLET_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_WALLET_BALANCE_TYPE, "confirmed"),
+			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
+			KeyValue::new(ATTRIBUTE_TYPE, "confirmed"),
 		]);
 		m.wallet_balance_gauge.record(wallet_balance.immature.to_sat(), &[
-			KeyValue::new(ATTRIBUTE_WALLET_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_WALLET_BALANCE_TYPE, "immature"),
+			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
+			KeyValue::new(ATTRIBUTE_TYPE, "immature"),
 		]);
 		m.wallet_balance_gauge.record(wallet_balance.trusted_pending.to_sat(), &[
-			KeyValue::new(ATTRIBUTE_WALLET_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_WALLET_BALANCE_TYPE, "trusted_pending"),
+			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
+			KeyValue::new(ATTRIBUTE_TYPE, "trusted_pending"),
 		]);
 		m.wallet_balance_gauge.record(wallet_balance.untrusted_pending.to_sat(), &[
-			KeyValue::new(ATTRIBUTE_WALLET_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_WALLET_BALANCE_TYPE, "untrusted_pending"),
+			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
+			KeyValue::new(ATTRIBUTE_TYPE, "untrusted_pending"),
 		]);
 	}
 }
@@ -237,10 +250,56 @@ pub fn set_block_height(block_height: BlockHeight) {
 	}
 }
 
+pub fn set_round_state(round_id: usize, state: RoundStateKind) {
+	if let Some(m) = TELEMETRY.get() {
+		for s in RoundStateKind::get_all() {
+			let value = if *s == state {
+				1
+			} else {
+				0
+			};
+
+			m.round_gauge.record(value, &[
+				KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
+			]);
+		}
+	}
+}
+
+pub fn set_round_metrics(round_id: usize, attempt: usize, state: RoundStateKind) {
+	if let Some(m) = TELEMETRY.get() {
+		set_round_state(round_id, state.clone());
+
+		m.round_attempt_gauge.record(attempt as u64, &[
+			KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+		]);
+	}
+}
+
+pub fn set_full_round_metrics(
+	round_id: usize,
+	attempt: usize,
+	state: RoundStateKind,
+	volume: Amount,
+	vtxo_count: usize,
+) {
+	if let Some(m) = TELEMETRY.get() {
+		set_round_metrics(round_id, attempt, state.clone());
+
+		m.round_volume_gauge.record(volume.to_sat(), &[
+			KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+		]);
+		m.round_vtxo_count_gauge.record(vtxo_count as u64, &[
+			KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+		]);
+	}
+}
+
 pub fn set_pending_expired_rounds_count(pending_expired_rounds_count: usize) {
 	if let Some(m) = TELEMETRY.get() {
 		m.pending_expired_operation_gauge.record(pending_expired_rounds_count as u64, &[
-			KeyValue::new("type", "rounds"),
+			KeyValue::new(ATTRIBUTE_TYPE, "rounds"),
 		]);
 	}
 }
@@ -248,7 +307,7 @@ pub fn set_pending_expired_rounds_count(pending_expired_rounds_count: usize) {
 pub fn set_pending_expired_boards_count(pending_expired_boards_count: usize) {
 	if let Some(m) = TELEMETRY.get() {
 		m.pending_expired_operation_gauge.record(pending_expired_boards_count as u64, &[
-			KeyValue::new("type", "boards"),
+			KeyValue::new(ATTRIBUTE_TYPE, "boards"),
 		]);
 	}
 }
@@ -258,15 +317,15 @@ pub fn set_pending_sweeper_stats(
 	pending_tx_volume: u64,
 	pending_utxo_count: usize,
 ) {
-	if let Some(ref m) = TELEMETRY.get() {
+	if let Some(m) = TELEMETRY.get() {
 		m.pending_sweeper_gauge.record(pending_tx_count as u64, &[
-			KeyValue::new("type", "transaction_count"),
+			KeyValue::new(ATTRIBUTE_TYPE, "transaction_count"),
 		]);
 		m.pending_sweeper_gauge.record(pending_tx_volume, &[
-			KeyValue::new("type", "transaction_volume"),
+			KeyValue::new(ATTRIBUTE_TYPE, "transaction_volume"),
 		]);
 		m.pending_sweeper_gauge.record(pending_utxo_count as u64, &[
-			KeyValue::new("type", "utxo_count"),
+			KeyValue::new(ATTRIBUTE_TYPE, "utxo_count"),
 		]);
 	}
 }
@@ -284,7 +343,7 @@ pub fn set_lightning_node_state(
 
 	if let Some(m) = TELEMETRY.get() {
 		for s in ClnNodeStateKind::get_all() {
-			let value = if s == state {
+			let value = if *s == state {
 				1
 			} else {
 				0

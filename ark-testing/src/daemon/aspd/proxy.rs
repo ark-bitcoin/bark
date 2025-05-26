@@ -53,11 +53,11 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 	async fn finish_bolt11_payment(&mut self, req: protos::SignedBolt11PaymentDetails) -> Result<protos::Bolt11PaymentResult, tonic::Status> {
 		Ok(self.upstream().finish_bolt11_payment(req).await?.into_inner())
 	}
-	
+
 	async fn check_bolt11_payment(&mut self, req: protos::CheckBolt11PaymentRequest) -> Result<protos::Bolt11PaymentResult, tonic::Status> {
 		Ok(self.upstream().check_bolt11_payment(req).await?.into_inner())
 	}
-	
+
 	async fn revoke_bolt11_payment(&mut self, req: protos::RevokeBolt11PaymentRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
 		Ok(self.upstream().revoke_bolt11_payment(req).await?.into_inner())
 	}
@@ -210,7 +210,7 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::check_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
-	
+
 	async fn revoke_bolt11_payment(
 		&self, req: tonic::Request<protos::RevokeBolt11PaymentRequest>,
 	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
