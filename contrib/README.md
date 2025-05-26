@@ -69,10 +69,13 @@ This script will return `0.0.1` for all 3 cases.
 
 ## prechecks.sh
 #### Parameters:
-1. "rust_no_spaces_for_indent" or "unused_aspd_logs"
+1. "rust_no_spaces_for_indent", "rust_no_whitespace_on_empty_lines" or "unused_aspd_logs"
 
 #### rust_no_spaces_for_indent:
 We don't allow any line that starts with a whitespace.
 Exit code 2 if whitespace is found.
+#### rust_no_whitespace_on_empty_lines:
+We don't allow empty lines to contain whitespace.
+Exit code 2 if an empty line with whitespace is found.
 #### unused_aspd_logs:
 Check if there are structure log messages in aspd-logs that are not used.
