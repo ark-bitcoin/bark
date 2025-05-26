@@ -25,7 +25,6 @@ mod napkin;
 #[cfg(any(test, feature="test-util"))]
 pub mod test;
 
-use std::fmt;
 use std::time::Duration;
 
 use bitcoin::secp256k1::schnorr::Signature;
@@ -85,16 +84,9 @@ pub struct VtxoRequest {
 }
 
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("invalid offboard request: {0}")]
 pub struct InvalidOffboardRequestError(&'static str);
-
-impl fmt::Display for InvalidOffboardRequestError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "invalid offboard request: {}", self.0)
-	}
-}
-
-impl std::error::Error for InvalidOffboardRequestError {}
 
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]

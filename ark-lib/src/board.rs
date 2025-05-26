@@ -5,8 +5,6 @@
 //! * ASP does a deterministic sign and sends ASP part using [new_asp].
 //! * User also signs and combines sigs using [finish] and stores vtxo.
 
-use std::fmt;
-
 use bitcoin::sighash::{self, SighashCache};
 use bitcoin::{taproot, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
 use bitcoin::hashes::Hash;
@@ -190,16 +188,9 @@ pub fn finish(
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("board tx validation error: {0}")]
 pub struct BoardTxValidationError(String);
-
-impl fmt::Display for BoardTxValidationError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "board tx validation error: {}", self.0)
-	}
-}
-
-impl std::error::Error for BoardTxValidationError {}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BoardVtxo {

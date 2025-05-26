@@ -1,5 +1,4 @@
 
-use std::fmt;
 use std::convert::TryFrom;
 use std::time::Duration;
 
@@ -13,7 +12,8 @@ use ark::util::{Decodable, Encodable};
 
 use crate::protos;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("rpc conversion error: {msg}")]
 pub struct ConvertError {
 	msg: &'static str,
 }
@@ -23,14 +23,6 @@ impl From<&'static str> for ConvertError {
 		ConvertError { msg }
 	}
 }
-
-impl fmt::Display for ConvertError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "rpc conversion error: {}", self.msg)
-	}
-}
-
-impl std::error::Error for ConvertError {}
 
 
 impl From<ark::ArkInfo> for protos::ArkInfo {
