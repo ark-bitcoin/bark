@@ -536,11 +536,11 @@ impl Process {
 			if let Err(e) = self.progress_pending_claims().await {
 				error!("Error trying to progress forfeit claims: {}", e.full_msg());
 			}
-			
+
 			let pending_claim_volume = self.claims.iter().map(|s|
 				s.clone().forfeit_cpfp.map(|t| t.tx.output_value()).unwrap_or_else(|| s.forfeit_tx.tx.output_value())
 			).sum::<Amount>().to_sat();
-			
+
 			telemetry::set_forfeit_metrics(
 				self.exit_txs.len(),
 				self.exit_txs.iter().map(|(t, _)| t.tx.output_value()).sum::<Amount>().to_sat(),

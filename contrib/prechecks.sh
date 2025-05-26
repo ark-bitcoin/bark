@@ -31,6 +31,37 @@ rust_no_spaces_for_indent() {
 	exit $ok
 }
 
+# We don't allow lines that only have whitespace
+rust_no_whitespace_on_empty_lines() {
+	ok=0
+
+	for filename in $(git ls-files *.rs); do
+		gen=$(echo "$filename" | git check-attr --stdin linguist-generated)
+		case "$gen" in
+			*"linguist-generated: true"*)
+				echo "skipping file: $filename"
+				continue ;;
+		esac
+
+		output=$(grep -nE '^[[:space:]]+$' "$filename")
+		status_code=$?
+
+		if [ $status_code -eq 0 ]; then
+			echo "Format error in '$filename'"
+			echo "$output"
+
+			ok=2
+		elif [ $status_code -eq 2 ]; then
+			echo "An error occurred"
+			echo "$output"
+
+			ok=2
+		fi
+	done
+
+	exit $ok
+}
+
 # Check if there are structure log messages in aspd-logs that are not used.
 unused_aspd_logs() {
 	ok=0

@@ -1302,7 +1302,7 @@ async fn perform_round(
 
 		let input_count = round_state.collecting_payments().all_inputs.len();
 		let input_volume = round_state.collecting_payments().total_input_amount();
-		
+
 		round_state = match round_state.progress(server).await {
 			Ok(s) => s,
 			Err(e) => return {

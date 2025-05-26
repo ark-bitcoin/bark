@@ -31,11 +31,10 @@ impl Migration for Migration0002 {
 			"CREATE TABLE IF NOT EXISTS bark_properties (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-				
+
 				network TEXT NOT NULL,
 				fingerprint TEXT NOT NULL
 			);"
-			
 			];
 
 		for query in queries {
