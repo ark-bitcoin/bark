@@ -61,9 +61,7 @@ steps:
 
   - name: push-aspd-to-docker
     when:
-      - event: tag
-        ref: refs/tags/aspd-*
-      - evaluate: CI_FORGE_TYPE == "forgejo"
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/aspd-" && CI_FORGE_TYPE == "forgejo"'
     failure: ignore
     depends_on: build-and-push-aspd-to-registry
     # When this task fails make sure the sha256 is still available.

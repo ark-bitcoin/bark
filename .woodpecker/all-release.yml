@@ -92,9 +92,7 @@ steps:
 
   - name: push-all-to-docker
     when:
-      - event: tag
-        ref: refs/tags/all-*
-      - evaluate: CI_FORGE_TYPE == "forgejo"
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/all-" && CI_FORGE_TYPE == "forgejo"'
     failure: ignore
     depends_on: build-and-push-all-to-registry
     # When this task fails make sure the sha256 is still available.

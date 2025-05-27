@@ -86,9 +86,7 @@ steps:
 
   - name: push-bark-to-docker
     when:
-      - event: tag
-        ref: refs/tags/bark-*
-      - evaluate: CI_FORGE_TYPE == "forgejo"
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/bark-" && CI_FORGE_TYPE == "forgejo"'
     failure: ignore
     depends_on: build-and-push-bark-to-registry
     # When this task fails make sure the sha256 is still available.
