@@ -53,7 +53,7 @@ impl ConnectorChain {
 		(len - 1) as u64 * TX_WEIGHT
 	}
 
-	/// The budget needed for a chain of length [len] to pay for
+	/// The budget needed for a chain of length `len` to pay for
 	/// one dust for the connector output per tx
 	pub fn required_budget(len: usize) -> Amount {
 		assert_ne!(len, 0);

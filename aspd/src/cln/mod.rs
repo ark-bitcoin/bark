@@ -292,13 +292,13 @@ const INVALID: &'static str = "invalid";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ClnNodeStateKind {
-	/// see [`Offline`]
+	/// see [ClnNodeState::Offline]
 	Offline,
-	/// see [`Online`]
+	/// see [ClnNodeState::Online]
 	Online,
-	/// see [`Error`]
+	/// see [ClnNodeState::Error]
 	Error,
-	/// see [`Invalid`]
+	/// see [ClnNodeState::Invalid]
 	Invalid,
 }
 
@@ -357,13 +357,6 @@ pub struct ClnNodeInfo {
 }
 
 impl ClnNodeInfo {
-	fn online(&self) -> Option<&ClnNodeOnlineState> {
-		match self.state {
-			ClnNodeState::Online(ref s) => Some(s),
-			_ => None,
-		}
-	}
-
 	/// Set new status and print a log for the record.
 	fn set_state(&mut self, new_state: ClnNodeState) {
 		let uri = &self.uri;

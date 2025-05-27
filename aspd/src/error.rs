@@ -88,21 +88,22 @@ impl fmt::Display for NotFound {
 impl StdError for NotFound {}
 
 
-/// Return an [anyhow] error tagged with [BadArgument].
-#[macro_export]
+/// Return an [mod@anyhow] error tagged with [BadArgument].
 macro_rules! badarg {
 	($($arg:tt)*) => {
 		Err($crate::anyhow::Error::from($crate::error::BadArgument::new(format!($($arg)*))))
 	};
 }
+pub(crate) use badarg;
 
-/// Return an [anyhow] error tagged with [NotFound].
-#[macro_export]
+/// Return an [mod@anyhow] error tagged with [NotFound].
 macro_rules! not_found {
 	($ids:expr, $($arg:tt)*) => {
 		Err($crate::anyhow::Error::from($crate::error::NotFound::new($ids, format!($($arg)*))))
 	};
 }
+#[allow(unused)]
+pub(crate) use not_found;
 
 
 /// Extension trait for adding aspd-specific error info.

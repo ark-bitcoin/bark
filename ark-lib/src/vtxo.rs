@@ -309,7 +309,7 @@ pub enum Vtxo {
 }
 
 impl Vtxo {
-	/// This is the same as [utxo] but encoded as a byte array.
+	/// This is the same as [Vtxo::point] but encoded as a byte array.
 	pub fn id(&self) -> VtxoId {
 		self.point().into()
 	}
@@ -360,7 +360,7 @@ impl Vtxo {
 
 	/// Collect all off-chain txs required for the exit of this entire vtxo.
 	///
-	/// The [vtxo_tx] is always included.
+	/// The [Vtxo::vtxo_tx] is always included.
 	pub fn collect_exit_txs(&self, txs: &mut Vec<Transaction>) {
 		match self {
 			Vtxo::Board(_) => {
@@ -381,7 +381,7 @@ impl Vtxo {
 
 	/// Get a vec with all off-chain txs required for the exit of this entire vtxo.
 	///
-	/// The [vtxo_tx] is always included.
+	/// The [Vtxo::vtxo_tx] is always included.
 	pub fn exit_txs(&self) -> Vec<Transaction> {
 		let mut ret = Vec::new();
 		self.collect_exit_txs(&mut ret);

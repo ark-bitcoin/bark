@@ -41,7 +41,7 @@ impl VtxoOwnershipChallenge {
 		self.0
 	}
 
-	/// Combines [`Challenge`] and [`VtxoId`] in a signable message
+	/// Combines [VtxoOwnershipChallenge] and [VtxoId] in a signable message
 	///
 	/// Note: because we use [`VtxoId`] in the message, there is no
 	fn as_signable_message(&self, vtxo_id: VtxoId) -> Message {

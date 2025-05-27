@@ -547,7 +547,7 @@ impl UnsignedVtxoTree {
 		Ok(())
 	}
 
-	/// Convert into a [SignedVtxoTree] by providing the signatures.
+	/// Convert into a [SignedVtxoTreeSpec] by providing the signatures.
 	///
 	/// Signatures expected ordered from leaves to root.
 	pub fn into_signed_tree(

@@ -771,7 +771,7 @@ impl Wallet {
 
 	/// Checks if the provided VTXO has some counterparty risk in the current wallet
 	///
-	/// A [`Vtxo::Oor`] is considered to have some counterparty risk
+	/// A [Vtxo::Arkoor] is considered to have some counterparty risk
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
 	fn has_counterparty_risk(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
 		let iterate_over_inputs = |inputs: &[Vtxo]| -> anyhow::Result<bool> {

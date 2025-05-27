@@ -216,7 +216,7 @@ pub struct MempoolFeesSubmitPackage {
 	/// feerate and/or feerate with modified fees from the `prioritisetransaction` JSON-RPC method.
 	#[serde(rename = "effective-feerate", default, deserialize_with = "deserialize_feerate")]
 	pub effective_feerate: Option<FeeRate>,
-	/// If [`Self::effective_fee_rate`] is provided, this holds the [`Wtxid`]s of the transactions
+	/// If [Self::effective_feerate] is provided, this holds the [`Wtxid`]s of the transactions
 	/// whose fees and vsizes are included in effective-feerate.
 	#[serde(rename = "effective-includes")]
 	pub effective_includes: Option<Vec<Wtxid>>,

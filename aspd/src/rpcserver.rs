@@ -44,15 +44,15 @@ static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
 pub const MIN_ALPHA_VERSION: usize = 10;
 
 macro_rules! badarg {
-	($($arg:tt)*) => { return $crate::badarg!($($arg)*).to_status(); };
+	($($arg:tt)*) => { return $crate::error::badarg!($($arg)*).to_status(); };
 }
 
 #[allow(unused)]
 macro_rules! not_found {
-	($($arg:tt)*) => { return $crate::not_found!($($arg)*).to_status(); };
+	($($arg:tt)*) => { return $crate::error::not_found!($($arg)*).to_status(); };
 }
 
-/// A trait to easily convert [anyhow] errors to [tonic::Status].
+/// A trait to easily convert [mod@anyhow] errors to [tonic::Status].
 trait ToStatus<T> {
 	/// Convert the error into a tonic error.
 	fn to_status(self) -> Result<T, tonic::Status>;
@@ -89,7 +89,7 @@ impl<T> ToStatus<T> for anyhow::Result<T> {
 	}
 }
 
-/// A trait to add context to errors that return tonic [Status] errors.
+/// A trait to add context to errors that return tonic [tonic::Status] errors.
 trait StatusContext<T, E> {
 	/// Shortcut for `.context(..).to_status()`.
 	fn context<C>(self, context: C) -> Result<T, tonic::Status>

@@ -90,7 +90,8 @@ impl ClnNodeMonitor {
 
 	/// Wait for the process to end.
 	///
-	/// Note that if [stop] is not called, it won't stop until an error occurs.
+	/// Note that if [ClnNodeMonitor::stop] is not called,
+	/// it won't stop until an error occurs.
 	pub async fn wait(self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
 		Ok(self.jh.await?)
 	}
