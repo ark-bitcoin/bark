@@ -38,8 +38,8 @@ impl VtxosInFlux {
 	}
 
 	/// Lock the given vtxos and return a lock. The vtxos remain
-	/// in flux until either [release_all] is called on the lock, or
-	/// the lock is dropped.
+	/// in flux until either [VtxosInFlux::release] is called on the lock,
+	/// or the lock is dropped.
 	pub fn lock<V>(
 		&self,
 		ids: impl IntoIterator<Item = V> + Clone,

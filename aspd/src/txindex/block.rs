@@ -7,17 +7,17 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 /// part of the best chain. The best chain
 /// has the most proof of work.
 ///
-/// The index will contain all block hashes from 
-/// [first_ref] until the current tip. Note, that
+/// The index will contain all block hashes from
+/// [BlockIndex::first()] until the current tip. Note, that
 /// the block index can only support reorgs that happen
-/// above [first_ref].
+/// above [BlockIndex::first()].
 ///
 /// When initializing the [BlockIndex] it is strongly recommended
 /// to use a [BlockRef] that is sufficiently deep.
 #[derive(Debug, Clone)]
 pub struct BlockIndex {
 	/// A vector of all blocks known by the header index.
-	/// blocks[i] corresponds to the block at height `start_height + i`
+	/// `blocks[i]` corresponds to the block at height `start_height + i`
 	blocks: Vec<BlockRef>,
 }
 
@@ -79,13 +79,17 @@ impl BlockIndex {
 	///
 	/// The block will only be inserted if the `prev_hash` is part
 	/// of the current index. This will ensure that the index
-	/// as a whole will always contain a valid history from [start_index]
+	/// as a whole will always contain a valid history from `start_index`
 	/// to tip().
 	///
 	/// If a re-org occurs, all blocks that have been reorged out will be returned.
 	///
 	/// In the other case the reason for refusal is returned.
-	pub fn try_insert(&mut self, block: BlockRef, prev_hash: BlockHash) -> Result<Vec<BlockRef>, BlockInsertionError> {
+	pub fn try_insert(
+		&mut self,
+		block: BlockRef,
+		prev_hash: BlockHash,
+	) -> Result<Vec<BlockRef>, BlockInsertionError> {
 		// If the new block is too early it will be refused
 		let first_height = self.first().height;
 		if block.height <= first_height  {

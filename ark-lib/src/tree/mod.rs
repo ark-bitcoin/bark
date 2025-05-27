@@ -163,7 +163,7 @@ impl Tree {
 	}
 
 	/// Iterate nodes over a branch starting at the leaf
-	/// with index [leaf_idx] ending in the root.
+	/// with index `leaf_idx` ending in the root.
 	pub fn iter_branch(&self, leaf_idx: usize) -> BranchIter {
 		assert!(leaf_idx < self.nodes.len());
 		BranchIter {

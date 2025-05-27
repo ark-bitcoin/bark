@@ -328,7 +328,7 @@ impl TxIndex {
 
 	/// Tell the tx index to broadcast the given tx package.
 	///
-	/// You'll probably prefer to use [broadcast_tx] or [broadcast_pkg] instead.
+	/// You'll probably prefer to use [TxIndex::broadcast_tx] or [TxIndex::broadcast_pkg] instead.
 	pub fn broadcast(&self, pkg: impl Into<Vec<Txid>>) {
 		self.broadcast_pkg.as_ref().expect("txindex not started yet")
 			.send(pkg.into()).expect("txindex shut down");

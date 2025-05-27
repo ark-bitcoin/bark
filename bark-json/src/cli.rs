@@ -46,7 +46,7 @@ pub struct Board {
 	/// This is the transaction that has to be confirmed
 	/// onchain for the board to succeed.
 	pub funding_txid: Txid,
-	/// The info for each <Vtxo> that was created
+	/// The info for each [ark::Vtxo] that was created
 	/// in this board.
 	///
 	/// Currently, this is always a vector of length 1
@@ -85,7 +85,7 @@ pub struct Offboard {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refresh {
 	/// A boolean indicated if the command participated
-	/// in a round. If no [Vtxo] was refreshed this variable
+	/// in a round. If no [ark::Vtxo] was refreshed this variable
 	/// will be set to [false] and otherwise [true]
 	pub participate_round: bool,
 	/// The [RoundId] of the round if the client participated in a round

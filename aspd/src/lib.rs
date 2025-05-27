@@ -301,7 +301,7 @@ impl Server {
 
 	/// Starts the server and waits until it terminates.
 	///
-	/// This is equivalent to calling [App::start] and [App::wait] in one go.
+	/// This is equivalent to calling [Server::start] and [Server::wait] in one go.
 	pub async fn run(cfg: Config) -> anyhow::Result<()> {
 		let srv = Server::start(cfg).await?;
 		srv.wait().await;

@@ -292,13 +292,13 @@ const INVALID: &'static str = "invalid";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ClnNodeStateKind {
-	/// see [`Offline`]
+	/// see [ClnNodeState::Offline]
 	Offline,
-	/// see [`Online`]
+	/// see [ClnNodeState::Online]
 	Online,
-	/// see [`Error`]
+	/// see [ClnNodeState::Error]
 	Error,
-	/// see [`Invalid`]
+	/// see [ClnNodeState::Invalid]
 	Invalid,
 }
 
