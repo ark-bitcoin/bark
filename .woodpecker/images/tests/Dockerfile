@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libclang-dev \
 	libsqlite3-dev \
 	libpq5 \
-	librocksdb-dev \
 	postgresql \
 	postgresql-contrib \
 	lzma-dev \
@@ -38,7 +37,6 @@ ENV RUST_BACKTRACE=1 \
 	MACOS_SDK_VERSION=15.1 \
 	ELECTRS_HASH=a9a39b1616591fb08514fba4df1c1ca11b24a500 \
 	PATH=/root/.cargo/bin:/usr/lib/postgresql/16/bin:${PATH} \
-	ROCKSDB_LIB_DIR=/usr/lib/x86_64-linux-gnu \
 	ZIG_VERSION=0.13.0
 
 ENV POSTGRES_USER=postgres
