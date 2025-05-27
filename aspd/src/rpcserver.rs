@@ -44,12 +44,12 @@ static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
 pub const MIN_ALPHA_VERSION: usize = 10;
 
 macro_rules! badarg {
-	($($arg:tt)*) => { return $crate::badarg!($($arg)*).to_status(); };
+	($($arg:tt)*) => { return $crate::error::badarg!($($arg)*).to_status(); };
 }
 
 #[allow(unused)]
 macro_rules! not_found {
-	($($arg:tt)*) => { return $crate::not_found!($($arg)*).to_status(); };
+	($($arg:tt)*) => { return $crate::error::not_found!($($arg)*).to_status(); };
 }
 
 /// A trait to easily convert [anyhow] errors to [tonic::Status].
