@@ -69,6 +69,8 @@ steps:
     #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
     image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
     environment:
+      REGISTRY_LOGIN_TOKEN:
+        from_secret: REGISTRY_LOGIN_TOKEN
       DOCKER_LOGIN_TOKEN:
         from_secret: DOCKER_LOGIN_TOKEN
     pull: true
@@ -76,14 +78,17 @@ steps:
     commands:
       - cat VERSION
       - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+      - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+      # Pull containers from registry.2nd.dev
+      - buildah pull registry.2nd.dev/aspd:latest
       # Tag containers for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      docker.io/aspd:latest
+      - buildah tag registry.2nd.dev/aspd:latest      docker.io/secondark/aspd:latest
       # Push containers to docker.io
-      - buildah push docker.io/aspd:latest
+      - buildah push docker.io/secondark/aspd:latest
       # Tag containers with specific version number for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/secondark/aspd:$(cat VERSION)"
       # Push containers with specific version number to docker.io
-      - buildah push "docker.io/aspd:$(cat VERSION)"
+      - buildah push "docker.io/secondark/aspd:$(cat VERSION)"
 
   - name: release-aspd
     when:
