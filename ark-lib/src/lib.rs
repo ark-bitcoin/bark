@@ -43,6 +43,7 @@ pub struct ArkInfo {
 	pub nb_round_nonces: usize,
 	pub vtxo_exit_delta: u16,
 	pub vtxo_expiry_delta: u16,
+	pub htlc_expiry_delta: u16,
 	pub max_vtxo_amount: Option<Amount>,
 }
 
@@ -65,6 +66,7 @@ pub struct VtxoIdInput {
 /// With covenants we can remove this type distinction.
 /// Or we might be able to use it for OOR payments.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+//TODO(stevenroose) rename to vtxooutputrequest when suitable
 pub struct PaymentRequest {
 	pub pubkey: PublicKey,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]

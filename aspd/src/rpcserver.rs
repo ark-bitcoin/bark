@@ -20,7 +20,6 @@ use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
 use ark::board::UserPart;
-use ark::lightning::SignedBolt11Payment;
 use ark::{musig, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
 use ark::rounds::RoundId;
 use ark::vtxo::VtxoSpkSpec;
@@ -294,6 +293,7 @@ impl rpc::server::ArkService for Server {
 			nb_round_nonces: self.config.nb_round_nonces,
 			vtxo_exit_delta: self.config.vtxo_exit_delta,
 			vtxo_expiry_delta: self.config.vtxo_expiry_delta,
+			htlc_expiry_delta: self.config.htlc_expiry_delta,
 			max_vtxo_amount: self.config.max_vtxo_amount,
 		};
 
@@ -440,6 +440,8 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let input_id = VtxoId::from_slice(&req.input_id).badarg("invalid input id")?;
+		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_id]).await
+			.to_status()?.try_into().unwrap();
 		let outputs = req.outputs.iter().map(|o| {
 			Ok(PaymentRequest {
 				amount: Amount::from_sat(o.amount),
@@ -451,13 +453,8 @@ impl rpc::server::ArkService for Server {
 		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
 			.badarg("invalid public nonce")?;
 
-		let (nonce, sig) = self.cosign_oor(input_id, outputs, user_nonce).await.to_status()?;
-		let response = protos::OorCosignResponse {
-			pub_nonce: nonce.serialize().to_vec(),
-			partial_sig: sig.serialize().to_vec(),
-		};
-
-		Ok(tonic::Response::new(response))
+		let cosign_resp = self.cosign_oor(&input_vtxo.vtxo, &outputs, user_nonce).await.to_status()?;
+		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
 	async fn post_oor_mailbox(
@@ -511,14 +508,14 @@ impl rpc::server::ArkService for Server {
 	async fn start_bolt11_payment(
 		&self,
 		req: tonic::Request<protos::Bolt11PaymentRequest>,
-	) -> Result<tonic::Response<protos::Bolt11PaymentDetails>, tonic::Status> {
+	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
 		add_tracing_attributes(
 			vec![
 				KeyValue::new("invoice", format!("{:?}", req.invoice)),
-				KeyValue::new("amount_sats", format!("{:?}", req.amount_sats)),
+				KeyValue::new("amount_sats", format!("{:?}", req.user_amount_sat)),
 			]);
 
 		let invoice = Bolt11Invoice::from_str(&req.invoice)
@@ -528,11 +525,11 @@ impl rpc::server::ArkService for Server {
 		let inv_amount = invoice.amount_milli_satoshis()
 			.map(|v| Amount::from_sat(v.div_ceil(1000)));
 
-		if let (Some(_), Some(inv)) = (req.amount_sats, inv_amount) {
+		if let (Some(_), Some(inv)) = (req.user_amount_sat, inv_amount) {
 			badarg!("Invoice has amount of {} encoded. Please omit amount field", inv);
 		}
 
-		let amount = req.amount_sats.map(|v| Amount::from_sat(v)).or(inv_amount)
+		let amount = req.user_amount_sat.map(|v| Amount::from_sat(v)).or(inv_amount)
 			.badarg("amount field required for invoice without amount")?;
 
 		let input_vtxo = Vtxo::decode(&req.input_vtxo)
@@ -542,17 +539,11 @@ impl rpc::server::ArkService for Server {
 		let user_nonce = musig::MusigPubNonce::from_slice(&req.user_nonce)
 			.badarg("invalid public nonce")?;
 
-		let (details, asp_nonce, part_sig) = self.start_bolt11_payment(
+		let cosign_resp = self.start_bolt11_payment(
 			invoice, amount, input_vtxo, user_pubkey, user_nonce,
 		).await.context("error making payment")?;
 
-		let response = protos::Bolt11PaymentDetails {
-			details: details.encode(),
-			pub_nonce: asp_nonce.serialize().to_vec(),
-			partial_sig: part_sig.serialize().to_vec(),
-		};
-
-		Ok(tonic::Response::new(response))
+		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
 	async fn finish_bolt11_payment(
@@ -563,13 +554,14 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("signed_payment", format!("{:?}", req.signed_payment)),
+			KeyValue::new("invoice", format!("{:?}", req.invoice)),
+			KeyValue::new("htlc_vtxo", req.htlc_vtxo_id.as_hex().to_string()),
 		]);
 
-		let signed = SignedBolt11Payment::decode(&req.signed_payment)
-			.badarg("invalid payment encoding")?;
+		let invoice = Bolt11Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
+		let htlc_vtxo_id = VtxoId::from_slice(&req.htlc_vtxo_id).badarg("invalid vtxo id")?;
 
-		let res = self.finish_bolt11_payment(signed, req.wait).await.to_status()?;
+		let res = self.finish_bolt11_payment(invoice, htlc_vtxo_id, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
 
@@ -580,14 +572,14 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
-		let payment_hash: [u8; 32] = req.clone().hash.try_into().expect("Expected 32 bytes");
-		let payment_hash = sha256::Hash::from_slice(&payment_hash).unwrap();
+		let payment_hash = sha256::Hash::from_slice(&req.hash)
+			.badarg("payment hash should be 32 bytes")?;
 
 		add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", format!("{:?}", payment_hash)),
+			KeyValue::new("payment_hash", payment_hash.to_string()),
 		]);
 
-		let res = self.check_bolt11_payment(payment_hash, req.clone().wait).await.to_status()?;
+		let res = self.check_bolt11_payment(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
 
@@ -599,23 +591,17 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("signed_payment", format!("{:?}", req.signed_payment)),
-			KeyValue::new("pub_nonces", format!("{:?}", req.pub_nonce)),
+			KeyValue::new("htlc_vtxo", req.htlc_vtxo.as_hex().to_string()),
+			KeyValue::new("pub_nonce", req.pub_nonce.as_hex().to_string()),
 		]);
 
-		let signed = SignedBolt11Payment::decode(&req.signed_payment)
-			.badarg("invalid payment encoding")?;
+		let htlc_vtxo = Vtxo::decode(&req.htlc_vtxo).badarg("invalid vtxo")?;
 
 		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
 			.badarg("invalid public nonce")?;
 
-		let (nonce, sig) = self.revoke_bolt11_payment(&signed, user_nonce).await.to_status()?;
-		let response = protos::OorCosignResponse {
-			pub_nonce: nonce.serialize().to_vec(),
-			partial_sig: sig.serialize().to_vec(),
-		};
-
-		Ok(tonic::Response::new(response))
+		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo, user_nonce).await.to_status()?;
+		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
 	async fn start_bolt11_onboard(
@@ -627,12 +613,12 @@ impl rpc::server::ArkService for Server {
 
 		add_tracing_attributes(vec![
 			KeyValue::new("payment_hash", format!("{:?}", req.payment_hash)),
-			KeyValue::new("amount_sats", format!("{:?}", req.amount_sats)),
+			KeyValue::new("amount_sats", format!("{:?}", req.amount_sat)),
 		]);
 
 		let payment_hash = Hash::from_slice(&req.payment_hash)
 			.badarg("invalid payment hash")?;
-		let amount = Amount::from_sat(req.amount_sats);
+		let amount = Amount::from_sat(req.amount_sat);
 
 		let resp = self.start_bolt11_onboard(payment_hash, amount).await.to_status()?;
 
@@ -666,32 +652,29 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("payment", format!("{:?}", req.payment)),
-			KeyValue::new("pub_nonce", format!("{:?}", req.pub_nonce)),
-			KeyValue::new("payment_preimage", format!("{:?}", req.payment_preimage)),
+			KeyValue::new("payment", req.input_id.as_hex().to_string()),
+			KeyValue::new("pub_nonce", req.pub_nonce.as_hex().to_string()),
+			KeyValue::new("payment_preimage", req.payment_preimage.as_hex().to_string()),
 		]);
 
-		let payment = ark::oor::OorPayment::decode(&req.payment)
-			.badarg("invalid oor payment request")?;
-
+		let input_id = VtxoId::from_slice(&req.input_id).badarg("invalid vtxo id")?;
+		let outputs = req.outputs.into_iter().map(|o| o.try_into())
+			.collect::<Result<Vec<_>, _>>()
+			.badarg("invalid arkoor output request")?;
 		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
 			.badarg("invalid public nonce")?;
 
 		let payment_preimage: [u8; 32] = req.payment_preimage.as_slice()
 			.try_into().badarg("invalid preimage, not 32 bytes")?;
 
-		let (nonce, sig) = self.claim_bolt11_htlc(
-			payment,
+		let cosign_resp = self.claim_bolt11_htlc(
+			input_id,
+			outputs,
 			user_nonce,
 			&payment_preimage,
 		).await.to_status()?;
 
-		let response = protos::OorCosignResponse {
-			pub_nonce: nonce.serialize().to_vec(),
-			partial_sig: sig.serialize().to_vec(),
-		};
-
-		Ok(tonic::Response::new(response))
+		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
 	// round
@@ -728,7 +711,7 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
-			let vtxo_id = VtxoId::from_slice(&input.vtxo_id).badarg("invalid vtxo")?;
+			let vtxo_id = VtxoId::from_slice(&input.vtxo_id).badarg("invalid vtxo id")?;
 			let ownership_proof = Signature::from_slice(&input.ownership_proof)
 				.badarg("invalid round input signature")?;
 			Ok(VtxoIdInput { vtxo_id, ownership_proof })

@@ -1213,10 +1213,10 @@ async fn reject_subdust_bolt11_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::Bolt11PaymentDetails, tonic::Status> {
+		async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
 			Ok(self.upstream().start_bolt11_payment(Bolt11PaymentRequest {
 				invoice: req.invoice,
-				amount_sats: Some(P2TR_DUST_SAT - 1),
+				user_amount_sat: Some(P2TR_DUST_SAT - 1),
 				input_vtxo: req.input_vtxo,
 				user_pubkey: req.user_pubkey,
 				user_nonce: req.user_nonce,
@@ -1234,7 +1234,7 @@ async fn reject_subdust_bolt11_payment() {
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
 	let err = bark.try_send_bolt11(invoice, Some(sat(100_000))).await.unwrap_err();
 	assert!(err.to_string().contains(
-		"bad user input: invalid amounts: payment amount must be at least 0.00000330 BTC",
+		"bad user input: invalid arkoor request: arkoor output amounts cannot be below the p2tr dust threshold",
 	), "err: {err}");
 }
 
@@ -1277,7 +1277,8 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 		async fn claim_bolt11_onboard(&mut self, req: protos::ClaimBolt11OnboardRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
 			let preimage = rand::rng().random::<[u8; 32]>();
 			Ok(self.upstream().claim_bolt11_onboard(ClaimBolt11OnboardRequest {
-				payment: req.payment,
+				input_id: req.input_id,
+				outputs: req.outputs,
 				pub_nonce: req.pub_nonce,
 				payment_preimage: preimage.to_vec(),
 			}).await?.into_inner())

@@ -2,16 +2,18 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
+use ark::oor::ArkoorCosignResponse;
+use ark::vtxo::VtxoSpkSpec;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate};
 
-use ark::{musig, VtxoId};
+use ark::{musig, PaymentRequest, VtxoId};
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::VtxoTreeSpec;
 use ark::util::{Decodable, Encodable};
 
-use crate::aspd::{Bolt11PaymentDetails, OorCosignResponse};
 use crate::protos;
+
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("rpc conversion error: {msg}")]
@@ -35,6 +37,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			nb_round_nonces: v.nb_round_nonces as u32,
 			vtxo_exit_delta: v.vtxo_exit_delta as u32,
 			vtxo_expiry_delta: v.vtxo_expiry_delta as u32,
+			htlc_expiry_delta: v.htlc_expiry_delta as u32,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| v.to_sat()),
 		}
 	}
@@ -52,6 +55,8 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid vtxo exit delta")?,
 			vtxo_expiry_delta: v.vtxo_expiry_delta.try_into()
 				.map_err(|_| "invalid vtxo expiry delta")?,
+			htlc_expiry_delta: v.htlc_expiry_delta.try_into()
+				.map_err(|_| "invalid htlc expiry delta")?,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| Amount::from_sat(v)),
 		})
 	}
@@ -225,34 +230,57 @@ impl TryFrom<protos::WalletStatus> for crate::WalletStatus {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
-#[error("{0}")]
-pub struct PubNonceParseError(String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
-#[error("{0}")]
-pub struct PartialSigParseError(String);
-
-impl OorCosignResponse {
-	pub fn asp_pub_nonce(&self) -> Result<musig::MusigPubNonce, PubNonceParseError> {
-		musig::MusigPubNonce::from_slice(&self.pub_nonce)
-			.map_err(|e| PubNonceParseError(e.to_string()))
-	}
-
-	pub fn asp_part_sig(&self) -> Result<musig::MusigPartialSignature, PartialSigParseError> {
-		musig::MusigPartialSignature::from_slice(&self.partial_sig)
-			.map_err(|e| PartialSigParseError(e.to_string()))
+impl<'a> From<&'a PaymentRequest> for protos::ArkoorOutput {
+	fn from(v: &'a PaymentRequest) -> Self {
+		protos::ArkoorOutput {
+			amount: v.amount.to_sat(),
+			pubkey: v.pubkey.serialize().to_vec(),
+		}
 	}
 }
 
-impl Bolt11PaymentDetails {
-	pub fn asp_pub_nonce(&self) -> Result<musig::MusigPubNonce, PubNonceParseError> {
-		musig::MusigPubNonce::from_slice(&self.pub_nonce)
-			.map_err(|e| PubNonceParseError(e.to_string()))
+impl TryFrom<protos::ArkoorOutput> for PaymentRequest {
+	type Error = ConvertError;
+	fn try_from(v: protos::ArkoorOutput) -> Result<Self, Self::Error> {
+		Ok(Self {
+			pubkey: PublicKey::from_slice(&v.pubkey).map_err(|_| "invalid pubkey")?,
+			amount: Amount::from_sat(v.amount),
+			//TODO(stevenroose) should we make arkooroutput generic?
+			spk: VtxoSpkSpec::Exit,
+		})
 	}
+}
 
-	pub fn asp_part_sig(&self) -> Result<musig::MusigPartialSignature, PartialSigParseError> {
-		musig::MusigPartialSignature::from_slice(&self.partial_sig)
-			.map_err(|e| PartialSigParseError(e.to_string()))
+impl From<ArkoorCosignResponse> for protos::OorCosignResponse {
+	fn from(v: ArkoorCosignResponse) -> Self {
+		Self {
+			pub_nonce: v.pub_nonce.serialize().to_vec(),
+			partial_sig: v.partial_signature.serialize().to_vec(),
+		}
+	}
+}
+
+impl TryFrom<protos::OorCosignResponse> for ArkoorCosignResponse {
+	type Error = ConvertError;
+	fn try_from(v: protos::OorCosignResponse) -> Result<Self, Self::Error> {
+		Ok(Self {
+			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
+				.map_err(|_| "invalid server public nonce")?,
+			partial_signature: musig::MusigPartialSignature::from_slice(&v.partial_sig)
+				.map_err(|_| "invalid server partial cosignature")?,
+		})
+	}
+}
+
+impl TryFrom<protos::Bolt11PaymentDetails> for ArkoorCosignResponse {
+	type Error = ConvertError;
+	fn try_from(v: protos::Bolt11PaymentDetails) -> Result<Self, Self::Error> {
+		Ok(Self {
+			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
+				.map_err(|_| "invalid server public nonce")?,
+			partial_signature: musig::MusigPartialSignature::from_slice(&v.partial_sig)
+				.map_err(|_| "invalid server partial cosignature")?,
+		})
 	}
 }

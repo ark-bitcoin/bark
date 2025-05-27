@@ -338,6 +338,21 @@ impl Vtxo {
 		self.spec().txout()
 	}
 
+	pub fn input_vtxo_id(&self) -> Option<VtxoId> {
+		self.as_arkoor().map(|v| v.input_vtxo_id())
+	}
+
+	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
+	//TODO(stevenroose) this api will be better after refactor
+	pub fn server_htlc_out_payment_hash(&self) -> Option<sha256::Hash> {
+		self.as_arkoor().and_then(|v| {
+			match v.output_specs[0].spk {
+				VtxoSpkSpec::HtlcOut { payment_hash, .. } => Some(payment_hash),
+				_ => None,
+			}
+		})
+	}
+
 	/// The exit tx of the vtxo.
 	pub fn vtxo_tx(&self) -> Transaction {
 		let ret = match self {

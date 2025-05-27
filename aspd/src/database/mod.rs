@@ -170,7 +170,10 @@ impl Db {
 	///
 	/// If one or more vtxo's is already present in the database
 	/// the query will succeed.
-	pub async fn upsert_vtxos(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	pub async fn upsert_vtxos<V: Borrow<Vtxo>>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+	) -> anyhow::Result<()> {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 

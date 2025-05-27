@@ -1,17 +1,32 @@
 
 
-use bitcoin::{
-	Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, Txid, Weight, Witness
-};
+use std::borrow::{Borrow, Cow};
+
+use bitcoin::hex::DisplayHex;
+use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, Txid, Weight, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use bitcoin_ext::{fee, TAPROOT_KEYSPEND_WEIGHT};
+use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
+use lightning_invoice::Bolt11Invoice;
 
-use crate::util::{Decodable, Encodable};
+use crate::lightning::revocation_payment_request;
 use crate::vtxo::VtxoSpkSpec;
-use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
+use crate::{musig, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
+use crate::util::{self, Encodable, SECP};
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum ArkoorError {
+	#[error("output amount of {input} exceeds input amount of {output}")]
+	Unbalanced {
+		input: Amount,
+		output: Amount,
+	},
+	#[error("arkoor output amounts cannot be below the p2tr dust threshold")]
+	Dust,
+}
 
 pub fn oor_sighash(input_vtxo: &Vtxo, oor_tx: &Transaction) -> TapSighash {
 	let prev = input_vtxo.txout();
@@ -40,6 +55,22 @@ pub fn unsigned_oor_tx(input: &Vtxo, outputs: &[VtxoSpec]) -> Transaction {
 	}
 }
 
+/// Inner utility method to construct the arkoor vtxos.
+fn build_arkoor_vtxos(
+	input: &Vtxo,
+	outputs: &[VtxoSpec],
+	arkoor_txid: Txid,
+) -> Vec<ArkoorVtxo> {
+	outputs.iter().enumerate().map(|(idx, _output)| {
+		ArkoorVtxo {
+			input: input.clone().into(),
+			signature: None,
+			output_specs: outputs.to_owned(),
+			point: OutPoint::new(arkoor_txid, idx as u32)
+		}
+	}).collect()
+}
+
 /// Build oor tx and signs it
 ///
 /// ## Panic
@@ -66,7 +97,7 @@ pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), St
 	let sig = vtxo.signature.ok_or(format!("unsigned vtxo"))?;
 	let tx = signed_oor_tx(&vtxo.input, sig, &vtxo.output_specs);
 	let sighash = oor_sighash(&vtxo.input, &tx);
-	util::SECP.verify_schnorr(
+	SECP.verify_schnorr(
 		&sig,
 		&sighash.into(),
 		&vtxo.input.spec().taproot_pubkey(),
@@ -80,103 +111,92 @@ pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), St
 	Ok(())
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct OorPayment {
-	pub asp_pubkey: PublicKey,
-	pub exit_delta: u16,
-	pub input: Vtxo,
-	pub outputs: Vec<PaymentRequest>,
+
+/// The cosignature details received from the Ark server.
+#[derive(Debug)]
+pub struct ArkoorCosignResponse {
+	pub pub_nonce: musig::MusigPubNonce,
+	pub partial_signature: musig::MusigPartialSignature,
 }
 
-impl OorPayment {
+/// This types helps both the client and server with building arkoor txs in
+/// a synchronized way. It's purely a functional type, initialized with
+/// the parameters that will make up the arkoor: the input vtxo to be spent
+/// and the desired outputs.
+///
+/// The flow works as follows:
+/// - user uses the constructor to check the request for validity
+/// - server uses the contructor to check the request for validity
+/// - server uses [ArkoorBuilder::server_cosign] to construct a
+///   [ArkoorCosignResponse] to send back to the user
+/// - user passes the response into [ArkoorBuilder::build_vtxos] to construct
+///   the signed resulting VTXOs
+pub struct ArkoorBuilder<'a, T: Clone> {
+	pub input: &'a Vtxo,
+	pub outputs: Cow<'a, [T]>,
+}
+
+impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
+	/// Construct a generic arkoor builder for the given input and outputs.
 	pub fn new(
-		asp_pubkey: PublicKey,
-		exit_delta: u16,
-		input: Vtxo,
-		outputs: Vec<PaymentRequest>,
-	) -> OorPayment {
-		OorPayment { asp_pubkey, exit_delta, input, outputs }
+		input: &'a Vtxo,
+		outputs: impl Into<Cow<'a, [T]>>,
+	) -> Result<Self, ArkoorError> {
+		let outputs = outputs.into();
+		if outputs.iter().any(|o| o.borrow().amount < P2TR_DUST) {
+			return Err(ArkoorError::Dust);
+		}
+		let output_amount = outputs.as_ref().iter().map(|o| o.borrow().amount).sum::<Amount>();
+		if output_amount > input.amount() {
+			return Err(ArkoorError::Unbalanced {
+				input: input.amount(),
+				output: output_amount,
+			});
+		}
+		Ok(Self {
+			input,
+			outputs,
+		})
 	}
 
-	fn output_specs(&self) -> Vec<VtxoSpec> {
-		let expiry_height = self.input.spec().expiry_height;
+	pub fn output_specs(&self) -> Vec<VtxoSpec> {
 		self.outputs.iter().map(|o| VtxoSpec {
-				user_pubkey: o.pubkey,
-				amount: o.amount,
-				expiry_height: expiry_height,
-				exit_delta: self.exit_delta,
-				asp_pubkey: self.asp_pubkey,
-				spk: VtxoSpkSpec::Exit,
+			user_pubkey: o.borrow().pubkey,
+			amount: o.borrow().amount,
+			expiry_height: self.input.expiry_height(),
+			asp_pubkey: self.input.asp_pubkey(),
+			exit_delta: self.input.exit_delta(),
+			spk: o.borrow().spk,
 		}).collect::<Vec<_>>()
 	}
 
-	pub fn txid(&self) -> Txid {
-		unsigned_oor_tx(&self.input, &self.output_specs()).compute_txid()
+	pub fn unsigned_transaction(&self) -> Transaction {
+		unsigned_oor_tx(&self.input, &self.output_specs())
 	}
 
 	pub fn sighash(&self) -> TapSighash {
-		oor_sighash(
-			&self.input,
-			&unsigned_oor_tx(&self.input, &self.output_specs())
-		)
+		oor_sighash(&self.input, &self.unsigned_transaction())
 	}
 
 	pub fn total_weight(&self) -> Weight {
-		let tx = unsigned_oor_tx(&self.input, &self.output_specs());
 		let spend_weight = Weight::from_wu(TAPROOT_KEYSPEND_WEIGHT as u64);
-		tx.weight() + spend_weight
+		self.unsigned_transaction().weight() + spend_weight
 	}
 
-	pub fn sign_asp(
+	/// Used by the Ark server to cosign the arkoor request.
+	pub fn server_cosign(
 		&self,
 		keypair: &Keypair,
 		user_nonce: musig::MusigPubNonce,
-	) -> (musig::MusigPubNonce, musig::MusigPartialSignature) {
-		let sighash = self.sighash();
-
-		let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
+	) -> ArkoorCosignResponse {
+		let (pub_nonce, partial_signature) = musig::deterministic_partial_sign(
 			keypair,
 			[self.input.spec().user_pubkey],
 			&[&user_nonce],
-			sighash.to_byte_array(),
+			self.sighash().to_byte_array(),
 			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
 		);
-
-		(pub_nonce, part_sig)
-	}
-
-	pub fn sign_finalize_user(
-		self,
-		user_sec_nonce: musig::MusigSecNonce,
-		user_pub_nonce: musig::MusigPubNonce,
-		user_keypair: &Keypair,
-		asp_nonce: musig::MusigPubNonce,
-		asp_part_sig: musig::MusigPartialSignature,
-	) -> SignedOorPayment {
-		let sighash = self.sighash();
-
-		assert_eq!(user_keypair.public_key(), self.input.spec().user_pubkey);
-		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &asp_nonce]);
-		let (_part_sig, final_sig) = musig::partial_sign(
-			[self.input.spec().user_pubkey, self.input.asp_pubkey()],
-			agg_nonce,
-			user_keypair,
-			user_sec_nonce,
-			sighash.to_byte_array(),
-			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
-			Some(&[&asp_part_sig]),
-		);
-		let final_sig = final_sig.expect("we provided the other sig");
-		debug_assert!(util::SECP.verify_schnorr(
-			&final_sig,
-			&sighash.into(),
-			&self.input.spec().taproot_pubkey(),
-		).is_ok(), "invalid oor tx signature produced");
-
-		SignedOorPayment {
-			payment: self,
-			signature: final_sig,
-		}
+		ArkoorCosignResponse { pub_nonce, partial_signature }
 	}
 
 	/// Construct the vtxos of the outputs of this OOR tx.
@@ -185,45 +205,105 @@ impl OorPayment {
 	pub fn unsigned_output_vtxos(&self) -> Vec<ArkoorVtxo> {
 		let outputs = self.output_specs();
 		let tx = unsigned_oor_tx(&self.input, &outputs);
+		build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid())
+	}
 
-		self.outputs.iter().enumerate().map(|(idx, _output)| {
-			ArkoorVtxo {
-				input: self.input.clone().into(),
-				signature: None,
-				output_specs: outputs.clone(),
-				point: OutPoint::new(tx.compute_txid(), idx as u32)
+	/// Finish the arkoor process.
+	///
+	/// Returns the resulting vtxos and the signed arkoor tx.
+	pub fn build_vtxos(
+		&self,
+		user_sec_nonce: musig::MusigSecNonce,
+		user_pub_nonce: musig::MusigPubNonce,
+		user_keypair: &Keypair,
+		cosign_resp: &ArkoorCosignResponse,
+	) -> Vec<Vtxo> {
+		let outputs = self.output_specs();
+		let tx = unsigned_oor_tx(&self.input, &outputs);
+		let sighash = oor_sighash(&self.input, &tx);
+
+		assert_eq!(user_keypair.public_key(), self.input.spec().user_pubkey);
+		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &cosign_resp.pub_nonce]);
+		let (_part_sig, final_sig) = musig::partial_sign(
+			[self.input.spec().user_pubkey, self.input.asp_pubkey()],
+			agg_nonce,
+			user_keypair,
+			user_sec_nonce,
+			sighash.to_byte_array(),
+			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
+			Some(&[&cosign_resp.partial_signature]),
+		);
+		let final_sig = final_sig.expect("we provided the other sig");
+		debug_assert!(
+			SECP.verify_schnorr(
+				&final_sig,
+				&sighash.into(),
+				&self.input.spec().taproot_pubkey(),
+			).is_ok(),
+			"invalid arkoor tx signature produced: input={}, outputs={:?}",
+			self.input.encode().as_hex(), &outputs,
+		);
+
+		build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid()).into_iter()
+			.map(|mut v| {
+				v.signature = Some(final_sig.clone());
+				v.into()
+			}).collect()
+	}
+}
+
+impl<'a> ArkoorBuilder<'a, PaymentRequest> {
+	/// Construct a new builder for a lightning payment.
+	pub fn new_lightning(
+		invoice: &Bolt11Invoice,
+		input: &'a Vtxo,
+		user_pubkey: PublicKey,
+		payment_amount: Amount,
+		htlc_expiry: u32,
+	) -> Result<ArkoorBuilder<'a, PaymentRequest>, ArkoorError> {
+		let (htlc_amount, change_amount) = {
+			let required = payment_amount;
+			let change = input.amount().checked_sub(required).ok_or_else(|| {
+				ArkoorError::Unbalanced {
+					input: input.amount(),
+					output: required,
+				}
+			})?;
+			if change > P2TR_DUST {
+				(required, Some(change))
+			} else {
+				(required + change, None)
 			}
-		}).collect()
+		};
+
+		let htlc_output = PaymentRequest {
+			amount: htlc_amount,
+			pubkey: user_pubkey,
+			spk: VtxoSpkSpec::HtlcOut {
+				payment_hash: *invoice.payment_hash(),
+				htlc_expiry: htlc_expiry,
+			},
+		};
+
+		let change_output = change_amount.map(|change| {
+			PaymentRequest {
+				amount: change,
+				pubkey: user_pubkey,
+				spk: VtxoSpkSpec::Exit,
+			}
+		});
+
+		Ok(ArkoorBuilder::new(
+			&input,
+			[htlc_output].into_iter().chain(change_output).collect::<Vec<_>>(),
+		)?)
 	}
-}
 
-impl Encodable for OorPayment {}
-impl Decodable for OorPayment {}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct SignedOorPayment {
-	pub payment: OorPayment,
-	pub signature: schnorr::Signature,
-}
-
-impl SignedOorPayment {
-	pub fn signed_transaction(&self) -> Transaction {
-		let tx = signed_oor_tx(&self.payment.input, self.signature, &self.payment.output_specs());
-
-		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
-		// this +2 might be fixed later
-		debug_assert_eq!(tx.weight(), self.payment.total_weight() + Weight::from_wu(2));
-
-		tx
-	}
-
-	/// Construct the vtxos of the outputs of this OOR tx.
-	pub fn output_vtxos(&self) -> Vec<ArkoorVtxo> {
-		let mut ret = self.payment.unsigned_output_vtxos();
-		for vtxo in ret.iter_mut() {
-			vtxo.signature = Some(self.signature.clone());
-		}
-		ret
+	/// Construct a builder to start a lightning payment recovation.
+	pub fn new_lightning_revocation(
+		htlc_vtxo: &Vtxo,
+	) -> Result<ArkoorBuilder<'_, PaymentRequest>, ArkoorError> {
+		ArkoorBuilder::new(&htlc_vtxo, vec![revocation_payment_request(&htlc_vtxo)])
 	}
 }
 
@@ -257,5 +337,9 @@ impl ArkoorVtxo {
 
 	pub fn asp_pubkey(&self) -> PublicKey {
 		self.spec().asp_pubkey
+	}
+
+	pub fn input_vtxo_id(&self) -> VtxoId {
+		self.input.id()
 	}
 }

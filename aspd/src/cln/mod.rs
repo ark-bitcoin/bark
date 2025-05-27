@@ -56,7 +56,6 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
 
-use ark::lightning::SignedBolt11Payment;
 use cln_rpc::node_client::NodeClient;
 
 use crate::error::AnyhowErrorExt;
@@ -147,16 +146,16 @@ impl ClnManager {
 	/// from Core Lightning.
 	pub async fn pay_bolt11(
 		&self,
-		payment: &SignedBolt11Payment,
+		invoice: &Bolt11Invoice,
+		htlc_amount: Amount,
 		wait: bool,
 	) -> anyhow::Result<[u8; 32]> {
-		let invoice = &payment.payment.invoice;
 		if invoice.check_signature().is_err() {
 			bail!("Invalid signature in Bolt-11 invoice");
 		}
 
 		let user_amount = if invoice.amount_milli_satoshis().is_none() {
-			Some(payment.payment.payment_amount)
+			Some(htlc_amount)
 		} else {
 			None
 		};
