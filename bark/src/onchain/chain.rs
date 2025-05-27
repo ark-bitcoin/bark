@@ -1,25 +1,22 @@
 
 
-use std::time::UNIX_EPOCH;
-use std::{borrow::Borrow, time::SystemTime};
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::{BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
-use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_bitcoind_rpc::bitcoincore_rpc::json::EstimateMode;
-use bdk_esplora::{esplora_client, EsploraAsyncExt};
-use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
+use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bdk_bitcoind_rpc::{bitcoincore_rpc, BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
+use bdk_esplora::esplora_client;
+use bdk_wallet::chain::{BlockId, CheckPoint};
 use bitcoin::constants::genesis_block;
 use bitcoin::{Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Wtxid};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use tokio::sync::RwLock;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt};
-use bitcoin_ext::bdk::{EsploraClientExt, WalletExt};
+use bitcoin_ext::bdk::EsploraClientExt;
 pub(crate) use bitcoin_ext::rpc::{BitcoinRpcExt, TxStatus};
-
-use crate::onchain;
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
@@ -84,6 +81,10 @@ impl ChainSourceClient {
 		}
 
 		Ok(())
+	}
+
+	pub (crate) fn inner(&self) -> &InnerChainSourceClient {
+		&self.inner
 	}
 
 	pub async fn fee_rates(&self) -> FeeRates {
@@ -190,75 +191,6 @@ impl ChainSourceClient {
 				Ok(client.get_block_by_hash(hash).await?)
 			},
 		}
-	}
-
-	pub async fn sync_wallet(
-		&self,
-		onchain: &mut onchain::Wallet,
-	) -> anyhow::Result<Amount> {
-		debug!("Starting wallet sync...");
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
-
-		let prev_tip = onchain.wallet.latest_checkpoint();
-		match self.inner {
-			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
-				debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
-				let unconfirmed = onchain.wallet.unconfirmed_txids();
-				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, prev_tip.clone(), prev_tip.height(), unconfirmed,
-				);
-				let mut count = 0;
-				while let Some(em) = emitter.next_block()? {
-					onchain.wallet.apply_block_connected_to(
-						&em.block, em.block_height(), em.connected_to(),
-					)?;
-					count += 1;
-
-					if count % 10_000 == 0 {
-						onchain.persist()?;
-						info!("Synced until block height {}", em.block_height());
-					}
-				}
-
-				let mempool = emitter.mempool()?;
-				onchain.wallet.apply_evicted_txs(mempool.evicted_ats());
-				onchain.wallet.apply_unconfirmed_txs(mempool.new_txs);
-				onchain.persist()?;
-				debug!("Finished syncing with bitcoind, {}", onchain.wallet.balance());
-			},
-			InnerChainSourceClient::Esplora(ref client) => {
-				debug!("Syncing with esplora...");
-				const STOP_GAP: usize = 50;
-				const PARALLEL_REQS: usize = 4;
-
-				let request = onchain.wallet.start_full_scan();
-				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
-				onchain.wallet.apply_update(update)?;
-				onchain.persist()?;
-				debug!("Finished syncing with esplora, {}", onchain.wallet.balance());
-			},
-		}
-
-		let balance = onchain.wallet.balance();
-
-		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
-		let transactions = onchain.wallet.transactions().filter(|tx| {
-			if let ChainPosition::Unconfirmed { last_seen, .. } = tx.chain_position {
-				match last_seen {
-					Some(last_seen) => last_seen < now,
-					None => true,
-				}
-			} else {
-				false
-			}
-		}).collect::<Vec<_>>();
-		for tx in transactions {
-			if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
-				warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
-			}
-		}
-
-		Ok(balance.total())
 	}
 
 	/// For each provided outpoint, fetches the ID of any confirmed or unconfirmed in which the

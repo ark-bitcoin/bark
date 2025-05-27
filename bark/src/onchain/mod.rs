@@ -1,30 +1,31 @@
 
 mod chain;
+mod bdk;
 
-use std::time::{SystemTime, UNIX_EPOCH};
+pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
+pub use crate::onchain::bdk::OnchainWallet;
+
 use std::sync::Arc;
 
-use anyhow::Context;
-use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
-use bdk_wallet::{KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering, Wallet as BdkWallet};
 use bitcoin::{
-	bip32, psbt, sighash, Address, Amount, FeeRate, Network, Psbt, Sequence, Transaction, TxOut,
-	Txid,
+	Address, Amount, FeeRate, OutPoint, Psbt, Transaction, Txid
 };
 
-use ark::util::SECP;
 use ark::Vtxo;
+use bitcoin_ext::bdk::CpfpError;
 use bitcoin_ext::BlockHeight;
-
-use crate::VtxoSeed;
-use crate::persist::BarkPersister;
-use crate::psbtext::PsbtInputExt;
-pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
 
 #[derive(Debug, Clone)]
 pub enum Utxo {
-	Local(LocalOutput),
+	Local(LocalUtxo),
 	Exit(SpendableExit),
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalUtxo {
+	pub outpoint: OutPoint,
+	pub amount: Amount,
+	pub confirmation_height: Option<BlockHeight>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,247 +34,51 @@ pub struct SpendableExit {
 	pub height: BlockHeight,
 }
 
-pub trait TxBuilderExt {
-	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableExit]);
+/// A trait to support signing transactions with a wallet.
+pub trait SignPsbt {
+	fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction>;
 }
 
-impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
-	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableExit]) {
-		self.version(2);
-
-		for input in exit_outputs {
-			let mut psbt_in = psbt::Input::default();
-			psbt_in.set_exit_claim_input(&input.vtxo);
-			psbt_in.witness_utxo = Some(TxOut {
-				script_pubkey: input.vtxo.output_script_pubkey(),
-				value: input.vtxo.amount(),
-			});
-
-			self.add_foreign_utxo_with_sequence(
-				input.vtxo.point(),
-				psbt_in,
-				input.vtxo.claim_satisfaction_weight(),
-				Sequence::from_height(input.vtxo.exit_delta()),
-			).expect("error adding foreign utxo for claim input");
-		}
-	}
+/// A trait to support getting the balance of a wallet.
+pub trait GetBalance {
+	/// Get the total balance of the wallet.
+	fn get_balance(&self) -> Amount;
 }
 
-pub struct Wallet {
-	/// NB: onchain wallet needs to be able to reconstruct
-	/// vtxo keypair in order to sign vtxo exit output if any
-	seed: [u8; 64],
-	network: Network,
-
-	pub(crate) wallet: BdkWallet,
-	pub(crate) db: Arc<dyn BarkPersister>,
-
-	pub(crate) exit_outputs: Vec<SpendableExit>,
+/// A trait to support getting a transaction from a wallet.
+pub trait GetWalletTx {
+	fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>>;
 }
 
-impl Wallet {
-	pub fn create(
-		network: Network,
-		seed: [u8; 64],
-		db: Arc<dyn BarkPersister>,
-	) -> anyhow::Result<Wallet> {
-		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
+/// Trait for wallets that can be used to board vtxos.
+pub trait PrepareBoardTx: GetBalance + SignPsbt + GetWalletTx {
+	fn prepare_board_funding_tx<T: IntoIterator<Item = (Address, Amount)>>(
+		&mut self, outputs: T, fee_rate: FeeRate
+	) -> anyhow::Result<Psbt>;
 
-		let desc = bdk_wallet::template::Bip86(xpriv, KeychainKind::External);
-
-		let changeset = db.initialize_bdk_wallet().context("error reading bdk wallet state")?;
-		let wallet_opt = bdk_wallet::Wallet::load()
-			.descriptor(KeychainKind::External, Some(desc.clone()))
-			.extract_keys()
-			.check_network(network)
-			.load_wallet_no_persist(changeset)?;
-
-		let wallet = match wallet_opt {
-			Some(wallet) => wallet,
-			None => bdk_wallet::Wallet::create_single(desc)
-				.network(network)
-				.create_wallet_no_persist()?,
-		};
-
-		Ok(Wallet {
-			seed,
-			network,
-
-			wallet,
-			db,
-
-			exit_outputs: vec![]
-		})
-	}
-
-	pub fn persist(&mut self) -> anyhow::Result<()> {
-		if let Some(stage) = self.wallet.staged() {
-			self.db.store_bdk_wallet_changeset(&*stage)?;
-			let _ = self.wallet.take_staged();
-		}
-		Ok(())
-	}
-
-	/// Return the balance of the onchain wallet.
-	///
-	/// Make sure you sync before calling this method.
-	pub fn balance(&self) -> Amount {
-		let exit_total = self.exit_outputs.iter().fold(Amount::ZERO, |acc, v| acc + v.vtxo.amount());
-		self.wallet.balance().total() + exit_total
-	}
-
-	pub fn utxos(&self) -> Vec<Utxo> {
-		let mut utxos = self.wallet.list_unspent().map(|o| Utxo::Local(o)).collect::<Vec<_>>();
-		utxos.extend(self.exit_outputs.clone().into_iter().map(|e| Utxo::Exit(e)));
-
-		utxos
-	}
-
-	pub (crate) fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
-		&mut self,
-		outputs: T,
-		fee_rate: FeeRate,
-	) -> anyhow::Result<Psbt> {
-		let mut b = self.wallet.build_tx();
-		b.add_exit_outputs(&self.exit_outputs.clone());
-		b.ordering(TxOrdering::Untouched);
-		for (dest, amount) in outputs {
-			b.add_recipient(dest.script_pubkey(), amount);
-		}
-		b.fee_rate(fee_rate);
-		Ok(b.finish()?)
-	}
-
-	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address, fee_rate: FeeRate) -> anyhow::Result<Psbt> {
-		let mut b = self.wallet.build_tx();
-		b.add_exit_outputs(&self.exit_outputs.clone());
-		b.drain_to(dest.script_pubkey());
-		b.drain_wallet();
-		b.fee_rate(fee_rate);
-		b.finish().context("error building tx")
-	}
-
-	fn sign_exit_inputs(&self, psbt: &mut Psbt) -> anyhow::Result<()> {
-		let vtxo_seed = VtxoSeed::new(self.network, &self.seed);
-
-		let prevouts = psbt.inputs.iter()
-			.map(|i| i.witness_utxo.clone().unwrap())
-			.collect::<Vec<_>>();
-
-		let prevouts = sighash::Prevouts::All(&prevouts);
-		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
-
-		for (i, input) in psbt.inputs.iter_mut().enumerate() {
-			let vtxo = input.get_exit_claim_input();
-
-			if let Some(vtxo) = vtxo {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&vtxo)?;
-				let keypair = vtxo_seed.derive_keychain(keychain, keypair_idx);
-
-				input.maybe_sign_exit_claim_input(
-					&SECP,
-					&mut shc,
-					&prevouts,
-					i,
-					&keypair
-				)?;
-			}
-		}
-
-		Ok(())
-	}
-
-	pub (crate) fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
-		self.sign_exit_inputs(&mut psbt)?;
-
-		let opts = SignOptions {
-			trust_witness_utxo: true,
-			..Default::default()
-		};
-		let finalized = self.wallet.sign(&mut psbt, opts).context("signing error")?;
-		assert!(finalized);
-		let tx = psbt.extract_tx()?;
-		let unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-		self.wallet.apply_unconfirmed_txs([(tx.clone(), unix)]);
-		self.persist()?;
-		Ok(tx)
-	}
-
-	pub async fn send(&mut self, chain: &ChainSourceClient, dest: Address, amount: Amount, fee_rate: FeeRate)
-		-> anyhow::Result<Txid>
-	{
-		let psbt = self.prepare_tx( [(dest, amount)], fee_rate)?;
-		let tx = self.finish_tx(psbt)?;
-		chain.broadcast_tx(&tx).await?;
-		Ok(tx.compute_txid())
-	}
-
-	pub async fn send_many<T: IntoIterator<Item = (Address, Amount)>>(
-		&mut self, chain: &ChainSourceClient, dests: T, fee_rate: FeeRate
-	) -> anyhow::Result<Txid> {
-		let pbst = self.prepare_tx( dests, fee_rate)?;
-		let tx = self.finish_tx(pbst)?;
-		chain.broadcast_tx(&tx).await?;
-		Ok(tx.compute_txid())
-	}
-
-	pub async fn drain(&mut self, chain: &ChainSourceClient, dest: Address, fee_rate: FeeRate) -> anyhow::Result<Txid> {
-		let psbt = self.prepare_send_all_tx(dest, fee_rate)?;
-		let tx = self.finish_tx(psbt)?;
-		chain.broadcast_tx(&tx).await?;
-		Ok(tx.compute_txid())
-	}
-
-	/// Reveals a new onchain address
-	///
-	/// The revealed address is directly persisted, so calling this method twice in a row will result in 2 different addresses
-	pub fn address(&mut self) -> anyhow::Result<Address> {
-		let ret = self.wallet.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		self.persist()?;
-		Ok(ret)
-	}
-
-	/// Retrieves a transaction from the wallet
-	///
-	/// This method will only check the database and will not
-	/// use a chain-source to find the transaction
-	pub fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
-		let tx = self.wallet
-			.get_tx(txid)?
-			.tx_node.tx;
-
-		Some(tx.clone())
-	}
-
-	/// Searches for a spending transaction from the given txid
-	///
-	/// This method will only check the database and will not
-	/// use a chain-source to find the transaction
-	pub fn get_spending_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
-		for transaction in self.wallet.transactions() {
-			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output.txid == txid) {
-				return Some(transaction.tx_node.tx);
-			}
-		}
-		None
-	}
-
-	pub(crate) fn track_spendable_exit(&mut self, vtxo: &Vtxo, spendable_since: BlockHeight) {
-		let p = vtxo.point();
-		if self.exit_outputs.iter().any(|e| e.vtxo.point() == p) {
-			return;
-		}
-		self.exit_outputs.push(SpendableExit {
-			vtxo: vtxo.clone(),
-			height: spendable_since,
-		})
-	}
-
-	pub(crate) fn remove_spendable_exit(&mut self, vtxo: &Vtxo) {
-		let p = vtxo.point();
-		let index = self.exit_outputs.iter().position(|e| e.vtxo.point() == p);
-		if let Some(index) = index {
-			self.exit_outputs.swap_remove(index);
-		}
-	}
+	fn prepare_board_all_funding_tx(&mut self, fee_rate: FeeRate) -> anyhow::Result<Psbt>;
 }
+
+pub trait GetSpendingTx {
+	fn get_spending_tx(&self, txid: Txid) -> Option<Arc<Transaction>>;
+}
+
+pub trait MakeCpfp {
+	fn make_p2a_cpfp(&mut self, tx: &Transaction, fee_rate: FeeRate) -> Result<Psbt, CpfpError>;
+}
+
+/// Trait for wallets that can be used to unilaterally exit vtxos
+pub trait ExitUnilaterally:
+	GetBalance +
+	GetWalletTx +
+	MakeCpfp +
+	SignPsbt +
+	GetSpendingTx +
+	Send + Sync + {}
+
+impl <W: GetBalance +
+	GetWalletTx +
+	MakeCpfp +
+	SignPsbt +
+	GetSpendingTx +
+	Send + Sync> ExitUnilaterally for W {}

@@ -7,7 +7,7 @@ use json::exit::error::ExitError;
 
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::{self, ChainSourceClient};
+use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
 
 pub struct ExitVtxo {
@@ -61,12 +61,12 @@ impl ExitVtxo {
 		&self.txids
 	}
 
-	pub async fn progress(
+	pub async fn progress<W: ExitUnilaterally>(
 		&mut self,
 		chain_source: &ChainSourceClient,
 		tx_manager: &mut ExitTransactionManager,
 		persister: &dyn BarkPersister,
-		onchain: &mut onchain::Wallet,
+		onchain: &mut W,
 	) -> anyhow::Result<(), ExitError> {
 		const MAX_ITERATIONS: usize = 100;
 		for _ in 0..MAX_ITERATIONS {
@@ -76,12 +76,11 @@ impl ExitVtxo {
 				fee_rate: chain_source.fee_rates().await.fast,
 				chain_source: &chain_source,
 				persister,
-				onchain,
 				tx_manager,
 			};
 			// Attempt to move to the next state, which may or may not generate a new state
 			trace!("Progressing VTXO {} at height {}", self.id(), chain_source.tip().await.unwrap());
-			match self.state.clone().progress(&mut context).await {
+			match self.state.clone().progress(&mut context, onchain).await {
 				Ok(new_state) => {
 					self.update_state_if_newer(new_state, persister)?;
 					match ProgressStep::from_exit_state(&self.state) {

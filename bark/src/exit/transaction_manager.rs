@@ -1,19 +1,18 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-use bdk_wallet::chain::ChainPosition;
 use bitcoin::{Network, Transaction, Txid};
 use log::{debug, error, info, trace};
 use tokio::sync::RwLock;
 
 use ark::Vtxo;
-use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, DEEPLY_CONFIRMED};
+use bitcoin_ext::{BlockHeight, TransactionExt, DEEPLY_CONFIRMED};
 use bitcoin_ext::rpc::TxStatus;
 use json::exit::error::ExitError;
 use json::exit::package::{ChildTransactionInfo, ExitTransactionPackage, TransactionInfo};
 use json::exit::states::ExitTxOrigin;
 
-use crate::onchain::{self, ChainSourceClient};
+use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
 
 #[derive(Clone, Copy, Debug,  Eq, PartialEq, Deserialize, Serialize)]
@@ -49,10 +48,10 @@ impl ExitTransactionManager {
 		self.chain_source.network()
 	}
 
-	pub async fn track_vtxo_exits(
+	pub async fn track_vtxo_exits<W: ExitUnilaterally>(
 		&mut self,
 		vtxo: &Vtxo,
-		onchain: &onchain::Wallet,
+		onchain: &W,
 	) -> anyhow::Result<Vec<Txid>, ExitError> {
 		let exit_txs = vtxo.transactions();
 		let mut txids = Vec::with_capacity(exit_txs.len());
@@ -62,10 +61,10 @@ impl ExitTransactionManager {
 		Ok(txids)
 	}
 
-	pub async fn track_exit_tx(
+	pub async fn track_exit_tx<W: ExitUnilaterally>(
 		&mut self,
 		tx: Transaction,
-		onchain: &onchain::Wallet,
+		onchain: &W,
 	) -> anyhow::Result<Txid, ExitError> {
 		let txid = tx.compute_txid();
 		if self.index.contains_key(&txid) {
@@ -75,7 +74,7 @@ impl ExitTransactionManager {
 		// We should check the wallet/database to see if we have a child transaction stored locally
 		let package = ExitTransactionPackage {
 			exit: TransactionInfo { txid, tx },
-			child: self.find_child_locally(txid, onchain)?,
+			child: self.find_child_locally(txid, onchain).await?,
 		};
 		let (status, child_txid) = match package.child.as_ref() {
 			None => (TxStatus::NotFound, None),
@@ -265,12 +264,12 @@ impl ExitTransactionManager {
 			.map_err(|e| ExitError::TransactionRetrievalFailure { txid, error: e.to_string() })
 	}
 
-	fn find_child_locally(
+	async fn find_child_locally<W: ExitUnilaterally>(
 		&self,
 		exit_txid: Txid,
-		onchain: &onchain::Wallet,
+		onchain: &W,
 	) -> anyhow::Result<Option<ChildTransactionInfo>, ExitError> {
-		let wallet = Self::find_child_in_wallet(exit_txid, onchain)?;
+		let wallet = self.find_child_in_wallet(exit_txid, onchain).await?;
 		if wallet.is_some() {
 			Ok(wallet)
 		} else {
@@ -278,23 +277,30 @@ impl ExitTransactionManager {
 		}
 	}
 
-	fn find_child_in_wallet(
+	async fn find_child_in_wallet<W: ExitUnilaterally>(
+		&self,
 		exit_txid: Txid,
-		onchain: &onchain::Wallet,
+		onchain: &W,
 	) -> anyhow::Result<Option<ChildTransactionInfo>, ExitError> {
 		// Check if we have a CPFP tx in our wallet
 		if let Some(child_tx) = onchain.get_spending_tx(exit_txid) {
 			let child_txid = child_tx.compute_txid();
-			let child_wallet_tx = onchain.wallet.get_tx(child_txid)
-				.ok_or(ExitError::InvalidWalletState {
-					error: format!("no corresponding WalletTx for CPFP: {}", child_txid),
-				})?;
+			// Check if we have a corresponding transaction for the CPFP tx
+			onchain.get_wallet_tx(child_txid).ok_or(ExitError::InvalidWalletState {
+				error: format!("no corresponding WalletTx for CPFP: {}", child_txid),
+			})?;
+
+			let tx_status = self.chain_source.tx_status(&child_txid).await.map_err(|e| ExitError::TransactionRetrievalFailure {
+				txid: child_txid,
+				error: e.to_string(),
+			})?;
 
 			// Check whether it is confirmed or not
-			let block = match child_wallet_tx.chain_position {
-				ChainPosition::Confirmed { anchor, .. } => Some(BlockRef::from(anchor.block_id)),
+			let block = match tx_status {
+				TxStatus::Confirmed(block) => Some(block),
 				_ => None,
 			};
+
 			Ok(Some(ChildTransactionInfo {
 				info: TransactionInfo {
 					txid: child_txid,

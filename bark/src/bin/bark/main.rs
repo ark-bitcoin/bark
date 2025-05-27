@@ -477,18 +477,18 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		return Ok(())
 	}
 
-	let mut w = open_wallet(&datadir).await.context("error opening wallet")?;
-	if let Err(e) = w.require_chainsource_version() {
+	let (mut wallet, mut onchain) = open_wallet(&datadir).await.context("error opening wallet")?;
+	if let Err(e) = wallet.require_chainsource_version() {
 		warn!("{}", e);
 	}
 
-	let net = w.properties()?.network;
+	let net = wallet.properties()?.network;
 
 	match cli.command {
 		Command::Create { .. } => unreachable!(),
 		Command::Config { config, dangerous } => {
 			if let Some(new_cfg) = config {
-				let mut cfg = w.config().clone();
+				let mut cfg = wallet.config().clone();
 				if !dangerous {
 					if new_cfg.asp.is_some() {
 						bail!("Changing the ASP address can lead to loss of funds. \
@@ -496,13 +496,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 				new_cfg.merge_into(&mut cfg).context("invalid configuration")?;
-				w.set_config(cfg);
-				w.persist_config().context("failed to persist config")?;
+				wallet.set_config(cfg);
+				wallet.persist_config().context("failed to persist config")?;
 			}
-			println!("{:#?}", w.config());
+			println!("{:#?}", wallet.config());
 		},
 		Command::ArkInfo => {
-			if let Some(info) = w.ark_info() {
+			if let Some(info) = wallet.ark_info() {
 				output_json(&bark_json::cli::ArkInfo {
 					asp_pubkey: info.asp_pubkey.to_string(),
 					round_interval: info.round_interval,
@@ -520,20 +520,17 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			OnchainCommand::Balance { no_sync } => {
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync_onchain_wallet().await {
+					if let Err(e) = onchain.sync(&wallet.chain).await {
 						warn!("Onchain sync error: {}", e)
-					}
-					if let Err(e) = w.sync_exits().await {
-						warn!("Exit sync error: {}", e)
 					}
 				}
 
-				let total = w.onchain.balance();
+				let total = onchain.balance().trusted_spendable();
 				let onchain_balance  = json::onchain::Balance { total };
 				output_json(&onchain_balance);
 			},
 			OnchainCommand::Address => {
-				let address = w.onchain.address().expect("Wallet failed to generate address");
+				let address = onchain.address().expect("Wallet failed to generate address");
 				let output = json::onchain::Address { address: address.into_unchecked() };
 				output_json(&output);
 			},
@@ -544,13 +541,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync().await {
+					if let Err(e) = onchain.sync(&wallet.chain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
 
-				let fee_rate = w.chain.fee_rates().await.regular;
-				let txid = w.onchain.send(&w.chain, addr, amount, fee_rate).await?;
+				let fee_rate = wallet.chain.fee_rates().await.regular;
+				let txid = onchain.send(&wallet.chain, addr, amount, fee_rate).await?;
 
 				let output = json::onchain::Send { txid };
 				output_json(&output);
@@ -562,13 +559,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync().await {
+					if let Err(e) = onchain.sync(&wallet.chain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
 
-				let fee_rate = w.chain.fee_rates().await.regular;
-				let txid = w.onchain.drain(&w.chain, addr, fee_rate).await?;
+				let fee_rate = wallet.chain.fee_rates().await.regular;
+				let txid = onchain.drain(&wallet.chain, addr, fee_rate).await?;
 
 				let output = json::onchain::Send { txid };
 				output_json(&output);
@@ -599,47 +596,51 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync().await {
+					if let Err(e) = onchain.sync(&wallet.chain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
 
-				let fee_rate = w.chain.fee_rates().await.regular;
-				let txid = w.onchain.send_many(&w.chain, outputs, fee_rate).await?;
+				let fee_rate = wallet.chain.fee_rates().await.regular;
+				let txid = onchain.send_many(&wallet.chain, outputs, fee_rate).await?;
+
 				let output = json::onchain::Send { txid };
 				output_json(&output);
 			},
 			OnchainCommand::Utxos { no_sync } => {
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync().await {
+					if let Err(e) = onchain.sync(&wallet.chain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
 
-				let utxos = w.onchain.utxos().into_iter().map(UtxoInfo::from).collect::<json::onchain::Utxos>();
+				let utxos = onchain.utxos()
+					.into_iter()
+					.map(UtxoInfo::from)
+					.collect::<json::onchain::Utxos>();
+
 				output_json(&utxos);
 			},
 		},
 		Command::VtxoPubkey { index } => {
 			if let Some(index) = index {
-				println!("{}", w.peak_keypair(KeychainKind::External, index)?.public_key())
+				println!("{}", wallet.peak_keypair(KeychainKind::External, index)?.public_key())
 			} else {
-				println!("{}", w.derive_store_next_keypair(KeychainKind::External)?.public_key())
+				println!("{}", wallet.derive_store_next_keypair(KeychainKind::External)?.public_key())
 			}
 		},
 		Command::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.maintenance().await {
+				if let Err(e) = wallet.maintenance(&mut onchain).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
-			let balance = w.balance()?;
+			let balance = wallet.balance()?;
 			output_json(&json::Balance {
-				onchain: balance.onchain,
-				offchain: balance.offchain,
+				spendable: balance.spendable,
 				pending_lightning_send: balance.pending_lightning_send,
 				pending_exit: balance.pending_exit,
 			});
@@ -647,19 +648,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Vtxos { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.maintenance().await {
+				if let Err(e) = wallet.maintenance(&mut onchain).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
-			let res = w.vtxos()?;
+			let res = wallet.vtxos()?;
 			let vtxos : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
 			output_json(&vtxos);
 		},
 		Command::Movements { page_index, page_size, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.sync_ark().await {
+				if let Err(e) = wallet.sync().await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -669,31 +670,31 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
 			};
 
-			let movements = w.movements(pagination)?;
+			let movements = wallet.movements(pagination)?;
 			output_json(&movements);
 		},
 		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.maintenance().await {
+				if let Err(e) = wallet.maintenance(&mut onchain).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
 			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxos) {
-				(None, None, false, false, None) => w.get_expiring_vtxos(w.config().vtxo_refresh_expiry_threshold).await?,
-				(Some(b), None, false, false, None) => w.get_expiring_vtxos(b).await?,
-				(None, Some(h), false, false, None) => w.get_expiring_vtxos(h*6).await?,
+				(None, None, false, false, None) => wallet.get_expiring_vtxos(wallet.config().vtxo_refresh_expiry_threshold).await?,
+				(Some(b), None, false, false, None) => wallet.get_expiring_vtxos(b).await?,
+				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
-					let filter = VtxoFilter::new(&w).counterparty();
-					w.vtxos_with(filter)?
+					let filter = VtxoFilter::new(&wallet).counterparty();
+					wallet.vtxos_with(filter)?
 				},
-				(None, None, false, true, None) => w.vtxos()?,
+				(None, None, false, true, None) => wallet.vtxos()?,
 				(None, None, false, false, Some(vs)) => {
 					let vtxos = vs.iter()
 						.map(|s| {
 							let id = VtxoId::from_str(s)?;
-							Ok(w.get_vtxo_by_id(id)?.vtxo)
+							Ok(wallet.get_vtxo_by_id(id)?.vtxo)
 						})
 						.collect::<anyhow::Result<Vec<Vtxo>>>()
 						.with_context(|| "Invalid vtxo_id")?;
@@ -704,7 +705,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 
 			info!("Refreshing {} vtxos...", vtxos.len());
-			let round_id = w.refresh_vtxos(vtxos).await?;
+			let round_id = wallet.refresh_vtxos(vtxos).await?;
 			let refresh_output = json::Refresh {
 				participate_round: round_id.is_some(),
 				round: round_id,
@@ -714,19 +715,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.sync_onchain_wallet().await {
+				if let Err(e) = onchain.sync(&wallet.chain).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 			let board = match (amount, all) {
 				(Some(a), false) => {
 					info!("Boarding {}...", a);
-					w.board_amount(a).await?
+					wallet.board_amount(&mut onchain, a).await?
 
 				},
 				(None, true) => {
 					info!("Boarding total balance...");
-					w.board_all().await?
+					wallet.board_all(&mut onchain).await?
 				},
 				_ => bail!("please provide either an amount or --all"),
 			};
@@ -741,26 +742,26 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.maintenance().await {
+					if let Err(e) = wallet.maintenance(&mut onchain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
 				info!("Sending arkoor payment of {} to pubkey {}", amount, pk);
-				w.send_arkoor_payment(pk, amount).await?;
+				wallet.send_arkoor_payment(pk, amount).await?;
 			} else if let Ok(invoice) = Bolt11Invoice::from_str(&destination) {
-				lightning::pay(invoice, amount, comment, no_sync,&mut w).await?;
+				lightning::pay(invoice, amount, comment, no_sync,&mut wallet).await?;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync_ark().await {
+					if let Err(e) = wallet.sync().await {
 						warn!("Sync error: {}", e)
 					}
 				}
 				info!("Sending {} to lightning address {}", amount, addr);
 				let comment = comment.as_ref().map(|c| c.as_str());
-				let (inv, preimage) = w.send_lnaddr(&addr, amount, comment).await?;
+				let (inv, preimage) = wallet.send_lnaddr(&addr, amount, comment).await?;
 				info!("Paid invoice {}", inv);
 				info!("Payment preimage received: {}", preimage.as_hex());
 			} else {
@@ -778,20 +779,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.maintenance().await {
+					if let Err(e) = wallet.maintenance(&mut onchain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
 
 				info!("Sending on-chain payment of {} to {} through round...", amount, addr);
-				w.send_round_onchain_payment(addr, amount).await?;
+				wallet.send_round_onchain_payment(addr, amount).await?;
 			} else {
 				bail!("Invalid destination");
 			}
 		},
 		Command::Offboard { address, vtxos , all, no_sync } => {
-			let address = address
-			.map(|address| {
+			let address = if let Some(address) = address {
 				let address = Address::from_str(&address)?
 					.require_network(net)
 					.with_context(|| {
@@ -800,9 +800,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				debug!("Sending to on-chain address {}", address);
 
-				Ok::<Address, anyhow::Error>(address)
-			})
-			.transpose()?;
+				address
+			} else {
+				onchain.address()?
+			};
 
 			let ret = if let Some(vtxos) = vtxos {
 				let vtxos = vtxos
@@ -814,36 +815,36 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.maintenance().await {
+					if let Err(e) = wallet.maintenance(&mut onchain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
 
 				info!("Offboarding {} vtxos...", vtxos.len());
-				w.offboard_vtxos(vtxos, address).await?
+				wallet.offboard_vtxos(vtxos, address).await?
 			} else if all {
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.sync_ark().await {
+					if let Err(e) = wallet.sync().await {
 						warn!("Sync error: {}", e)
 					}
 				}
 				info!("Offboarding all off-chain funds...");
-				w.offboard_all(address).await?
+				wallet.offboard_all(address).await?
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
 			output_json(&ret);
 		},
 		Command::Exit(cmd) => {
-			exit::execute_exit_command(cmd, &mut w).await?;
+			exit::execute_exit_command(cmd, &mut wallet, &mut onchain).await?;
 		},
 		Command::Lightning(cmd) => {
-			lightning::execute_lightning_command(cmd, &mut w).await?;
+			lightning::execute_lightning_command(cmd, &mut wallet).await?;
 		}
 		// dev commands
 		Command::DropVtxos => {
-			w.drop_vtxos().await?;
+			wallet.drop_vtxos().await?;
 			info!("Dropped all vtxos");
 		},
 	}

@@ -58,12 +58,11 @@ use ark::rounds::{
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
 use aspd_rpc::{self as rpc, protos};
-use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
-use bitcoin_ext::bdk::WalletExt;
+use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::onchain::{ChainSourceClient, Utxo};
+use crate::onchain::{ChainSourceClient, PrepareBoardTx, ExitUnilaterally, Utxo};
 use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -117,11 +116,8 @@ lazy_static::lazy_static! {
 /// The different balances of a Bark wallet.
 #[derive(Debug, Clone)]
 pub struct Balance {
-	// TODO: remove this balance once onchain wallet is removed
-	/// Coins that are spendable onchain.
-	pub onchain: Amount,
 	/// Coins that are spendable in the Ark, either in-round or out-of-round.
-	pub offchain: Amount,
+	pub spendable: Amount,
 	/// Coins that are in the process of being sent over Lightning.
 	pub pending_lightning_send: Amount,
 	/// Coins that are in the process of unilaterally exiting the Ark.
@@ -144,8 +140,8 @@ impl From<Utxo> for UtxoInfo {
 		match value {
 			Utxo::Local(o) => UtxoInfo {
 				outpoint: o.outpoint,
-				amount: o.txout.value,
-				confirmation_height: o.chain_position.confirmation_height_upper_bound()
+				amount: o.amount,
+				confirmation_height: o.confirmation_height,
 			},
 			Utxo::Exit(e) => UtxoInfo {
 				outpoint: e.vtxo.point(),
@@ -288,7 +284,6 @@ impl AspConnection {
 pub struct Wallet {
 	/// The chain source the wallet is connected to
 	pub chain: Arc<ChainSourceClient>,
-	pub onchain: onchain::Wallet,
 	pub exit: Exit,
 
 	config: Config,
@@ -299,6 +294,32 @@ pub struct Wallet {
 }
 
 impl Wallet {
+	pub fn chain_source<P: BarkPersister>(db: Arc<P>) -> anyhow::Result<onchain::ChainSource> {
+		let config = db.read_config()?.context("Wallet is not initialised")?;
+
+		// create on-chain wallet
+		if let Some(ref url) = config.esplora_address {
+			Ok(onchain::ChainSource::Esplora {
+				url: url.clone(),
+			})
+		} else if let Some(ref url) = config.bitcoind_address {
+			let auth = if let Some(ref c) = config.bitcoind_cookiefile {
+				bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(c.clone())
+			} else {
+				bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(
+					config.bitcoind_user.clone().context("need bitcoind auth config")?,
+					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
+				)
+			};
+			Ok(onchain::ChainSource::Bitcoind {
+				url: url.clone(),
+				auth: auth,
+			})
+		} else {
+			bail!("Need to either provide esplora or bitcoind info");
+		}
+	}
+
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
 		self.chain.require_version()
 	}
@@ -328,8 +349,7 @@ impl Wallet {
 		mnemonic: &Mnemonic,
 		network: Network,
 		config: Config,
-		db: P,
-		mnemonic_birthday: Option<BlockHeight>,
+		db: Arc<P>,
 	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
@@ -347,31 +367,30 @@ impl Wallet {
 		db.init_wallet(&config, &properties).context("cannot init wallet in the database")?;
 
 		// from then on we can open the wallet
-		let mut wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
+		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
 		wallet.require_chainsource_version()?;
 
 		if wallet.asp.is_none() {
 			bail!("Cannot create bark if asp is not available");
 		}
 
-		let bday = if let Some(bday) = mnemonic_birthday {
-			bday
-		} else {
-			wallet.chain.tip().await
-				.context("failed to fetch tip from chain source")?
-				.saturating_sub(DEEPLY_CONFIRMED)
-		};
+		Ok(wallet)
+	}
 
-		let id = wallet.chain.block_id(bday).await
-			.with_context(|| format!("failed to get block height {} from chain source", bday))?;
-		wallet.onchain.wallet.set_checkpoint(id.height, id.hash);
-		wallet.onchain.persist()?;
-
+	pub async fn create_with_onchain<P: BarkPersister, W: ExitUnilaterally>(
+		mnemonic: &Mnemonic,
+		network: Network,
+		config: Config,
+		db: Arc<P>,
+		onchain: &W,
+	) -> anyhow::Result<Wallet> {
+		let mut wallet = Wallet::create(mnemonic, network, config, db).await?;
+		wallet.exit.load(onchain).await?;
 		Ok(wallet)
 	}
 
 	/// Open existing wallet.
-	pub async fn open<P: BarkPersister>(mnemonic: &Mnemonic, db: P) -> anyhow::Result<Wallet> {
+	pub async fn open<P: BarkPersister>(mnemonic: &Mnemonic, db: Arc<P>) -> anyhow::Result<Wallet> {
 		let config = db.read_config()?.context("Wallet is not initialised")?;
 		let properties = db.read_properties()?.context("Wallet is not initialised")?;
 		trace!("Config: {:?}", config);
@@ -406,10 +425,6 @@ impl Wallet {
 			chain_source, properties.network, config.fallback_fee_rate).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let db = Arc::new(db);
-		let onchain = onchain::Wallet::create(properties.network, seed, db.clone())
-			.context("failed to create onchain wallet")?;
-
 		let asp = match AspConnection::handshake(&config.asp_address, properties.network).await {
 			Ok(asp) => Some(asp),
 			Err(e) => {
@@ -418,9 +433,19 @@ impl Wallet {
 			}
 		};
 
-		let exit = Exit::new(db.clone(), chain.clone(), &onchain).await?;
+		let exit = Exit::new(db.clone(), chain.clone()).await?;
 
-		Ok(Wallet { config, db, onchain, vtxo_seed, exit, asp, chain })
+		Ok(Wallet { config, db, vtxo_seed, exit, asp, chain })
+	}
+
+	pub async fn open_with_onchain<P: BarkPersister, W: ExitUnilaterally>(
+		mnemonic: &Mnemonic,
+		db: Arc<P>,
+		onchain: &W,
+	) -> anyhow::Result<Wallet> {
+		let mut wallet = Wallet::open(mnemonic, db).await?;
+		wallet.exit.load(onchain).await?;
+		Ok(wallet)
 	}
 
 	pub fn config(&self) -> &Config {
@@ -456,8 +481,7 @@ impl Wallet {
 	///
 	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> anyhow::Result<Balance> {
-		let onchain = self.onchain.balance();
-		let offchain = self.db.get_all_spendable_vtxos()?.iter()
+		let spendable = self.db.get_all_spendable_vtxos()?.iter()
 			.map(|v| v.amount()).sum();
 
 		let pending_lightning_send = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?
@@ -466,8 +490,7 @@ impl Wallet {
 		let pending_exit = self.exit.pending_total()?;
 
 		Ok(Balance {
-			onchain,
-			offchain,
+			spendable,
 			pending_lightning_send,
 			pending_exit,
 		})
@@ -503,7 +526,7 @@ impl Wallet {
 		Ok(self.vtxos_with(filter)?)
 	}
 
-	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()> {
+	async fn register_all_unregistered_boards(&self, wallet: &mut impl PrepareBoardTx) -> anyhow::Result<()> {
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
 
 		if unregistered_boards.is_empty() {
@@ -512,8 +535,10 @@ impl Wallet {
 
 		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
 		for board in unregistered_boards {
-			if let Err(e) = self.register_board(board.vtxo.id()).await {
+			if let Err(e) = self.register_board(wallet, board.vtxo.id()).await {
 				warn!("Failed to register board {}: {}", board.vtxo.id(), e);
+			} else {
+				info!("Registered board {}", board.vtxo.id());
 			}
 		};
 
@@ -528,25 +553,28 @@ impl Wallet {
 	/// This tasks will only include anything that has to wait
 	/// for a round. The maintenance call cannot be used to
 	/// refresh VTXOs.
-	pub async fn maintenance(&mut self) -> anyhow::Result<()> {
+	pub async fn maintenance<W: PrepareBoardTx + ExitUnilaterally>(
+		&mut self,
+		wallet: &mut W,
+	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
-		self.register_all_unregistered_boards().await?;
+		self.register_all_unregistered_boards(wallet).await?;
+		info!("Performing maintenance refresh");
 		self.maintenance_refresh().await?;
 		self.sync_pending_lightning_vtxos().await?;
+
+		// NB: order matters here, after syncing lightning, we might have new exits to start
+		self.sync_exits(wallet).await?;
 		Ok(())
 	}
 
 	/// Sync status of unilateral exits.
-	pub async fn sync_exits(&mut self) -> anyhow::Result<()> {
-		self.exit.sync_exit(&mut self.onchain).await?;
-		Ok(())
-	}
-
-	// TODO: tmp utility to make borrow checker happy, will be removed as soon as we remove onchain wallet from bark
-	pub async fn sync_onchain_wallet(&mut self) -> anyhow::Result<()> {
-		self.chain.update_fee_rates(self.config.fallback_fee_rate).await?;
-		self.chain.sync_wallet(&mut self.onchain).await?;
+	pub async fn sync_exits<W: ExitUnilaterally>(
+		&mut self,
+		onchain: &mut W,
+	) -> anyhow::Result<()> {
+		self.exit.sync_exit(onchain).await?;
 		Ok(())
 	}
 
@@ -555,9 +583,8 @@ impl Wallet {
 		// NB: order matters here, if syncing call fails, we still want to update the fee rates
 		self.chain.update_fee_rates(self.config.fallback_fee_rate).await?;
 
-		self.sync_onchain_wallet().await?;
-		self.exit.sync_exit(&mut self.onchain).await?;
-		self.sync_ark().await?;
+		self.sync_rounds().await?;
+		self.sync_oors().await?;
 
 		Ok(())
 	}
@@ -583,31 +610,31 @@ impl Wallet {
 	// Board a vtxo with the given vtxo amount.
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
-	pub async fn board_amount(&mut self, amount: Amount) -> anyhow::Result<Board> {
+	pub async fn board_amount(&mut self, wallet: &mut impl PrepareBoardTx, amount: Amount) -> anyhow::Result<Board> {
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
-		self.board(amount, user_keypair).await
+		self.board(wallet, amount, user_keypair).await
 	}
 
-	pub async fn board_all(&mut self) -> anyhow::Result<Board> {
+	pub async fn board_all(&mut self, wallet: &mut impl PrepareBoardTx) -> anyhow::Result<Board> {
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
-		let throwaway_addr = self.onchain.address()?;
 		let fee_rate = self.chain.fee_rates().await.regular;
-		let board_all_tx = self.onchain.prepare_send_all_tx(throwaway_addr, fee_rate)?;
+		let board_all_tx = wallet.prepare_board_all_funding_tx(fee_rate)?;
 
 		// Deduct fee from vtxo spec
 		let fee = board_all_tx.fee().context("Unable to calculate fee")?;
-		let amount = self.onchain.balance().checked_sub(fee)
+		let amount = wallet.get_balance().checked_sub(fee)
 			.context("not enough money for a board")?;
 
 		assert_eq!(board_all_tx.outputs.len(), 1);
 		assert_eq!(board_all_tx.unsigned_tx.tx_out(0).unwrap().value, amount);
 
-		self.board(amount, user_keypair).await
+		self.board(wallet, amount, user_keypair).await
 	}
 
 	async fn board(
 		&mut self,
+		wallet: &mut impl PrepareBoardTx,
 		amount: Amount,
 		user_keypair: Keypair,
 	) -> anyhow::Result<Board> {
@@ -628,7 +655,7 @@ impl Wallet {
 
 		// We create the board tx template, but don't sign it yet.
 		let fee_rate = self.chain.fee_rates().await.regular;
-		let board_psbt = self.onchain.prepare_tx([(addr, amount)], fee_rate)?;
+		let board_psbt = wallet.prepare_board_funding_tx([(addr, amount)], fee_rate)?;
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 		let builder = builder
@@ -659,18 +686,18 @@ impl Wallet {
 			fees: None,
 		}).context("db error storing vtxo")?;
 
-		let tx = self.onchain.finish_tx(board_psbt)?;
+		let tx = wallet.finish_tx(board_psbt)?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.chain.broadcast_tx(&tx).await?;
 
-		let res = self.register_board(vtxo.id()).await;
+		let res = self.register_board(wallet, vtxo.id()).await;
 		info!("Board successful");
 		res
 	}
 
 	/// Registers a board to the Ark server
-	async fn register_board(&self, vtxo_id: VtxoId) -> anyhow::Result<Board> {
+	async fn register_board(&self, wallet: &mut impl PrepareBoardTx, vtxo_id: VtxoId) -> anyhow::Result<Board> {
 		trace!("Attempting to register board {} to server", vtxo_id);
 		let mut asp = self.require_asp()?;
 
@@ -678,8 +705,9 @@ impl Wallet {
 		let vtxo = self.db.get_wallet_vtxo(vtxo_id)?
 			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
 
-		let funding_tx = self.onchain.get_wallet_tx(vtxo.vtxo.chain_anchor().txid)
-			.context("Failed to find funding_tx for {}")?;
+		let txid = vtxo.vtxo.chain_anchor().txid;
+		let funding_tx = wallet.get_wallet_tx(txid)
+			.context(anyhow!("Failed to find funding_tx for {}", txid))?;
 
 		// Register the vtxo with the server
 		asp.client.register_board_vtxo(protos::BoardVtxoRequest {
@@ -721,14 +749,6 @@ impl Wallet {
 			}
 		}
 		Ok(!self.db.check_vtxo_key_exists(&vtxo.user_pubkey())?)
-	}
-
-	/// Sync with the Ark and look for received vtxos.
-	pub async fn sync_ark(&self) -> anyhow::Result<()> {
-		self.sync_rounds().await?;
-		self.sync_oors().await?;
-
-		Ok(())
 	}
 
 	/// Fetch new rounds from the Ark Server and check if one of their VTXOs
@@ -865,20 +885,15 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Option<Address>) -> anyhow::Result<Offboard> {
+	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Address) -> anyhow::Result<Offboard> {
 		if vtxos.is_empty() {
 			bail!("no VTXO to offboard");
 		}
 
 		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
-		let addr = match address {
-			Some(addr) => addr,
-			None => self.onchain.address()?,
-		};
-
 		let RoundResult { round_id, .. } = self.participate_round(move |round| {
-			let fee = OffboardRequest::calculate_fee(&addr.script_pubkey(), round.offboard_feerate)
+			let fee = OffboardRequest::calculate_fee(&address.script_pubkey(), round.offboard_feerate)
 				.expect("bdk created invalid scriptPubkey");
 
 			if fee > vtxo_sum {
@@ -887,7 +902,7 @@ impl Wallet {
 
 			let offb = OffboardRequest {
 				amount: vtxo_sum - fee,
-				script_pubkey: addr.script_pubkey(),
+				script_pubkey: address.script_pubkey(),
 			};
 
 			Ok(RoundParticipation {
@@ -901,7 +916,7 @@ impl Wallet {
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
-	pub async fn offboard_all(&mut self, address: Option<Address>) -> anyhow::Result<Offboard> {
+	pub async fn offboard_all(&mut self, address: Address) -> anyhow::Result<Offboard> {
 		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
 		Ok(self.offboard(input_vtxos, address).await?)
@@ -911,7 +926,7 @@ impl Wallet {
 	pub async fn offboard_vtxos(
 		&mut self,
 		vtxos: Vec<VtxoId>,
-		address: Option<Address>,
+		address: Address,
 	) -> anyhow::Result<Offboard> {
 		let input_vtxos =  vtxos
 				.into_iter()
@@ -1404,8 +1419,8 @@ impl Wallet {
 				let min_expiry = htlc_vtxos.iter()
 					.map(|v| v.vtxo.spec().expiry_height).min().unwrap();
 				if tip > min_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
-					warn!("Some VTXO is about to expire soon, must be exited");
-					self.exit.start_exit_for_vtxos(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(), &self.onchain).await?;
+					warn!("Some VTXO is about to expire soon, marking to exit");
+					self.exit.mark_vtxos_for_exit(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>())?;
 				}
 			}
 		}
@@ -1587,7 +1602,7 @@ impl Wallet {
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
-		let balance = self.balance()?.offchain;
+		let balance = self.balance()?.spendable;
 
 		// do a quick check to fail early and not wait for round if we don't have enough money
 		let early_fees = OffboardRequest::calculate_fee(

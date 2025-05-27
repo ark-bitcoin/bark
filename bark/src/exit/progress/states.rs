@@ -13,20 +13,22 @@ use json::exit::states::{
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
 use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_cost};
 use crate::movement::{MovementArgs, MovementKind};
+use crate::onchain::ExitUnilaterally;
 
 #[async_trait]
 impl ExitStateProgress for ExitState {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		match self {
-			ExitState::Start(s) => s.progress(ctx).await,
-			ExitState::Processing(s) => s.progress(ctx).await,
-			ExitState::AwaitingDelta(s) => s.progress(ctx).await,
-			ExitState::Spendable(s) => s.progress(ctx).await,
-			ExitState::SpendInProgress(s) => s.progress(ctx).await,
-			ExitState::Spent(s) => s.progress(ctx).await,
+			ExitState::Start(s) => s.progress(ctx, onchain).await,
+			ExitState::Processing(s) => s.progress(ctx, onchain).await,
+			ExitState::AwaitingDelta(s) => s.progress(ctx, onchain).await,
+			ExitState::Spendable(s) => s.progress(ctx, onchain).await,
+			ExitState::SpendInProgress(s) => s.progress(ctx, onchain).await,
+			ExitState::Spent(s) => s.progress(ctx, onchain).await,
 		}
 	}
 }
@@ -35,7 +37,8 @@ impl ExitStateProgress for ExitState {
 impl ExitStateProgress for ExitStartState {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		let id = ctx.vtxo.id();
 		info!("Checking if VTXO can be exited: {}", id);
@@ -47,7 +50,7 @@ impl ExitStateProgress for ExitStartState {
 
 		// Ensure we can afford to exit this VTXO
 		let total_fee = estimate_exit_cost([ctx.vtxo], ctx.fee_rate);
-		let balance = ctx.onchain.balance();
+		let balance = onchain.get_balance();
 		if balance < total_fee {
 			return Err(ExitError::InsufficientFeeToStart {
 				balance,
@@ -83,7 +86,8 @@ impl ExitStateProgress for ExitStartState {
 impl ExitStateProgress for ExitProcessingState {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		assert_eq!(self.transactions.len(), ctx.exit_txids.len());
 
@@ -91,7 +95,7 @@ impl ExitStateProgress for ExitProcessingState {
 		let mut transactions = self.transactions.clone();
 
 		for i in 0..transactions.len() {
-			match progress_exit_tx(&transactions[i], ctx).await {
+			match progress_exit_tx(&transactions[i], ctx, onchain).await {
 				Ok(status) => transactions[i].status = status,
 				Err(e) => {
 					// We may need to commit any changes we have
@@ -151,9 +155,10 @@ impl ExitStateProgress for ExitProcessingState {
 	}
 }
 
-async fn progress_exit_tx(
+async fn progress_exit_tx<W: ExitUnilaterally>(
 	exit: &ExitTx,
 	ctx: &mut ProgressContext<'_>,
+	onchain: &mut W,
 ) -> anyhow::Result<ExitTxStatus, ExitError> {
 	match &exit.status {
 		ExitTxStatus::VerifyInputs => {
@@ -176,7 +181,7 @@ async fn progress_exit_tx(
 					let guard = package.read().await;
 					assert_eq!(guard.child, None);
 
-					ctx.create_exit_cpfp_tx(&guard.exit.tx)?
+					ctx.create_exit_cpfp_tx(&guard.exit.tx, onchain)?
 				};
 
 				let child_txid = ctx.tx_manager.update_child_tx(exit.txid, child_tx).await?;
@@ -246,7 +251,8 @@ async fn progress_exit_tx(
 impl ExitStateProgress for ExitAwaitingDeltaState {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		_onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		let tip = ctx.tip_height().await?;
 
@@ -263,7 +269,6 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 		// Inform the user of any progress
 		if tip >= self.spendable_height {
 			info!("Exit for VTXO ({}) is spendable!", ctx.vtxo.id());
-			ctx.onchain.track_spendable_exit(ctx.vtxo, self.spendable_height);
 			let spendable_block = ctx.get_block_ref(self.spendable_height).await?;
 			Ok(ExitState::new_spendable(tip, spendable_block, None))
 		} else {
@@ -279,7 +284,8 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 impl ExitStateProgress for ExitSpendableState {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		_onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		let tip = ctx.tip_height().await?;
 
@@ -317,12 +323,10 @@ impl ExitStateProgress for ExitSpendableState {
 			match status {
 				TxStatus::Confirmed(block) => {
 					info!("Tx {} has successfully spent VTXO {}", txid, ctx.vtxo.id());
-					ctx.onchain.remove_spendable_exit(ctx.vtxo);
 					Ok(ExitState::new_spent(tip, txid.clone(), *block))
 				},
 				TxStatus::Mempool => {
 					info!("Tx {} is attempting to spend VTXO {}", txid, ctx.vtxo.id());
-					ctx.onchain.remove_spendable_exit(ctx.vtxo);
 					Ok(ExitState::new_spend_in_progress(tip, self.spendable_since, txid.clone()))
 				},
 				TxStatus::NotFound => unreachable!(),
@@ -330,7 +334,6 @@ impl ExitStateProgress for ExitSpendableState {
 		} else {
 			// Make sure the wallet is aware of the exit
 			debug!("VTXO is still spendable: {}", ctx.vtxo.id());
-			ctx.onchain.track_spendable_exit(ctx.vtxo, self.spendable_since.height);
 			let tip_block = Some(ctx.get_block_ref(tip).await?);
 			Ok(ExitState::new_spendable(tip, self.spendable_since, tip_block))
 		}
@@ -341,7 +344,8 @@ impl ExitStateProgress for ExitSpendableState {
 impl ExitStateProgress for ExitSpendInProgressState {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		_onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		// Wait for confirmation of the spending transaction
 		let tip = ctx.tip_height().await?;
@@ -368,7 +372,8 @@ impl ExitStateProgress for ExitSpendInProgressState {
 impl ExitStateProgress for ExitSpentState {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		_onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		trace!("Exit for VTXO {} is spent!", ctx.vtxo.id());
 		Ok(self.into())
