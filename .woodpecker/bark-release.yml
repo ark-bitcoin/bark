@@ -30,7 +30,7 @@ steps:
     commands:
       - cat VERSION
       - just release-bark
-      - cp ./target/x86_64-unknown-linux-gnu/release/bark      bark-linux-x86_64
+      - cp ./target/x86_64-unknown-linux-musl/release/bark     bark-linux-x86_64
       - cp ./target/aarch64-unknown-linux-gnu/release/bark     bark-linux-aarch64
       - cp ./target/armv7-unknown-linux-gnueabihf/release/bark bark-linux-armv7
       - cp ./target/x86_64-pc-windows-gnu/release/bark.exe     bark-windows-x86_64.exe
@@ -146,7 +146,7 @@ steps:
     commands:
       - cat VERSION
       - cd ./target
-      - cp x86_64-unknown-linux-gnu/release/bark       "bark-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-unknown-linux-musl/release/bark       "bark-$(cat ../VERSION)-linux-x86_64"
       - cp aarch64-unknown-linux-gnu/release/bark      "bark-$(cat ../VERSION)-linux-arm64"
       - cp armv7-unknown-linux-gnueabihf/release/bark  "bark-$(cat ../VERSION)-linux-armv7"
       - cp x86_64-pc-windows-gnu/release/bark.exe      "bark-$(cat ../VERSION)-windows-x86_64.exe"
