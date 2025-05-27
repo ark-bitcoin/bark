@@ -70,8 +70,6 @@
 						hash = "sha256-3/0dl+HhUQdCX66ALj+gMndhQAx3AoPJMCqQyq/PK+g=";
 					};
 
-					ROCKSDB_LIB_DIR = "${pkgs.rocksdb}/lib/";
-					"ROCKSDB_${target}_LIB_DIR" = "${pkgs.rocksdb}/lib/";
 					nativeBuildInputs = [ pkgs.rustPlatform.bindgenHook ];
 					buildInputs = [
 						pkgs.llvmPackages.clang
