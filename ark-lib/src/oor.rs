@@ -117,8 +117,9 @@ impl OorPayment {
 				user_pubkey: o.pubkey,
 				amount: o.amount,
 				expiry_height: expiry_height,
+				exit_delta: self.exit_delta,
 				asp_pubkey: self.asp_pubkey,
-				spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
+				spk: VtxoSpkSpec::Exit,
 		}).collect::<Vec<_>>()
 	}
 

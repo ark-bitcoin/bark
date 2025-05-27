@@ -22,7 +22,8 @@ pub fn dummy_board(index: u32) -> Vtxo {
 			asp_pubkey: pk,
 			// ensure deterministic sorting
 			expiry_height: 1001 + index,
-			spk: VtxoSpkSpec::Exit { exit_delta: 40},
+			exit_delta: 40,
+			spk: VtxoSpkSpec::Exit,
 			amount: Amount::from_sat(500)
 		},
 	})

@@ -137,6 +137,7 @@ impl VtxoTreeSpec {
 			user_pubkey: vtxo.pubkey,
 			asp_pubkey: self.asp_pk,
 			expiry_height: self.expiry_height,
+			exit_delta: self.exit_delta,
 			spk: vtxo.spk,
 			amount: vtxo.amount
 		};
@@ -680,7 +681,8 @@ impl CachedSignedVtxoTree {
 					asp_pubkey: self.spec.spec.asp_pk,
 					expiry_height: self.spec.spec.expiry_height,
 					amount: req.amount,
-					spk: VtxoSpkSpec::Exit { exit_delta: self.spec.spec.exit_delta },
+					exit_delta: self.spec.spec.exit_delta,
+					spk: VtxoSpkSpec::Exit,
 				},
 				leaf_idx: idx,
 				exit_branch: self.exit_branch(idx).unwrap().into_iter().cloned().collect(),
@@ -751,7 +753,7 @@ mod test {
 					pubkey: self.key.public_key(),
 					amount: self.amount,
 					cosign_pk: self.cosign_key.public_key(),
-					spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
+					spk: VtxoSpkSpec::Exit,
 				}
 			}
 		}

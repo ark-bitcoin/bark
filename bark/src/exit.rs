@@ -95,8 +95,8 @@ impl ExitIndex {
 		let txid = vtxo.point().txid;
 		match self.exit_tx_status.get(&txid) {
 			Some(TxStatus::ConfirmedIn(height)) => {
-				let exit_delta = vtxo.spec().exit_delta();
-				Some(height + exit_delta.unwrap_or_default() as BlockHeight)
+				let exit_delta = vtxo.spec().exit_delta() as BlockHeight;
+				Some(height + exit_delta)
 			},
 			_ => None
 		}

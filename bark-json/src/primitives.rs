@@ -36,6 +36,7 @@ pub struct VtxoInfo {
 	pub user_pubkey: PublicKey,
 	pub asp_pubkey: PublicKey,
 	pub expiry_height: u32,
+	pub exit_delta: u16,
 	pub spk: VtxoSpkSpec,
 }
 
@@ -53,6 +54,7 @@ impl From<Vtxo> for VtxoInfo {
 			user_pubkey: v.spec().user_pubkey,
 			asp_pubkey: v.spec().asp_pubkey,
 			expiry_height: v.spec().expiry_height,
+			exit_delta: v.spec().exit_delta,
 			spk: v.spec().spk.clone(),
 		}
 	}

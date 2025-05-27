@@ -170,8 +170,8 @@ impl From<Utxo> for UtxoInfo {
 					outpoint: e.vtxo.point(),
 					amount: e.vtxo.amount(),
 					confirmation_height: {
-						let exit_delta = e.vtxo.spec().exit_delta();
-						Some(e.spendable_at_height + exit_delta.unwrap_or_default() as BlockHeight)
+						let exit_delta = e.vtxo.spec().exit_delta() as BlockHeight;
+						Some(e.spendable_at_height + exit_delta)
 					},
 				}
 		}
@@ -621,11 +621,12 @@ impl Wallet {
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let current_height = self.onchain.tip().await?;
-		let spec = ark::VtxoSpec {
+		let spec = VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
 			expiry_height: current_height + asp.info.vtxo_expiry_delta as BlockHeight,
-			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
+			exit_delta: asp.info.vtxo_exit_delta,
+			spk: VtxoSpkSpec::Exit,
 			amount: amount,
 		};
 
@@ -643,11 +644,12 @@ impl Wallet {
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let current_height = self.onchain.tip().await?;
-		let mut spec = ark::VtxoSpec {
+		let mut spec = VtxoSpec {
 			user_pubkey: user_keypair.public_key(),
 			asp_pubkey: asp.info.asp_pubkey,
 			expiry_height: current_height + asp.info.vtxo_expiry_delta as BlockHeight,
-			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
+			exit_delta: asp.info.vtxo_exit_delta,
+			spk: VtxoSpkSpec::Exit,
 			// amount is temporarily set to total balance but will
 			// have fees deducted after psbt construction
 			amount: self.onchain.balance()
@@ -753,6 +755,7 @@ impl Wallet {
 				user_pubkey: dest.pubkey,
 				asp_pubkey: vtxos.spec.spec.asp_pk,
 				expiry_height: vtxos.spec.spec.expiry_height,
+				exit_delta: vtxos.spec.spec.exit_delta,
 				amount: dest.amount,
 				spk: dest.spk,
 			},
@@ -970,7 +973,6 @@ impl Wallet {
 		&mut self,
 		vtxos: Vec<Vtxo>
 	) -> anyhow::Result<Option<RoundId>> {
-		let asp = self.require_asp()?;
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to refresh!");
 			return Ok(None)
@@ -982,7 +984,7 @@ impl Wallet {
 		let payment_request = PaymentRequest {
 			pubkey: user_keypair.public_key(),
 			amount: total_amount,
-			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
+			spk: VtxoSpkSpec::Exit,
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
@@ -1000,7 +1002,7 @@ impl Wallet {
 		let output = PaymentRequest {
 			pubkey: destination,
 			amount: amount,
-			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
+			spk: VtxoSpkSpec::Exit,
 		};
 
 		// TODO: implement oor fees. Once implemented, we should add an additional
@@ -1020,7 +1022,7 @@ impl Wallet {
 				Some(PaymentRequest {
 					pubkey: change_pubkey,
 					amount: change_amount,
-					spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
+					spk: VtxoSpkSpec::Exit,
 				})
 			} else {
 				None
@@ -1370,7 +1372,6 @@ impl Wallet {
 				spk: VtxoSpkSpec::HtlcIn {
 					payment_hash: *invoice.payment_hash(),
 					htlc_expiry: current_height + asp.info.vtxo_expiry_delta as u32,
-					exit_delta: asp.info.vtxo_exit_delta,
 				}
 			};
 
@@ -1383,7 +1384,7 @@ impl Wallet {
 		let pay_req = PaymentRequest {
 			pubkey: keypair.public_key(),
 			amount: amount,
-			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
+			spk: VtxoSpkSpec::Exit,
 		};
 
 		let payment = ark::oor::OorPayment::new(
@@ -1456,8 +1457,6 @@ impl Wallet {
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
-		let asp = self.require_asp()?;
-
 		let balance = self.offchain_balance()?;
 
 		// do a quick check to fail early and not wait for round if we don't have enough money
@@ -1494,7 +1493,7 @@ impl Wallet {
 					Some(PaymentRequest {
 						pubkey: change_keypair.public_key(),
 						amount: amount,
-						spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
+						spk: VtxoSpkSpec::Exit,
 					})
 				}
 			};
