@@ -194,7 +194,7 @@ pub fn store_vtxo_with_initial_state(
 	let mut statement = tx.prepare(q1)?;
 	statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
-		":expiry_height": vtxo.spec().expiry_height,
+		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
 		":received_in": movement_id,
 		":raw_vtxo": vtxo.encode(),

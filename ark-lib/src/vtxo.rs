@@ -280,10 +280,6 @@ impl VtxoSpec {
 			value: self.amount,
 		}
 	}
-
-	pub fn exit_delta(&self) -> u16 {
-		self.exit_delta
-	}
 }
 
 /// Represents a VTXO in the Ark.
@@ -324,6 +320,22 @@ impl Vtxo {
 
 	pub fn amount(&self) -> Amount {
 		self.spec().amount
+	}
+
+	pub fn expiry_height(&self) -> BlockHeight {
+		self.spec().expiry_height
+	}
+
+	pub fn asp_pubkey(&self) -> PublicKey {
+		self.spec().asp_pubkey
+	}
+
+	pub fn exit_delta(&self) -> u16 {
+		self.spec().exit_delta
+	}
+
+	pub fn txout(&self) -> TxOut {
+		self.spec().txout()
 	}
 
 	/// The exit tx of the vtxo.

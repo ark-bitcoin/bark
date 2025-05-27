@@ -236,7 +236,7 @@ impl Bolt11Payment {
 	}
 
 	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
-		let prevouts = self.inputs.iter().map(|v| v.spec().txout()).collect::<Vec<_>>();
+		let prevouts = self.inputs.iter().map(|v| v.txout()).collect::<Vec<_>>();
 
 		let tx = self.unsigned_transaction();
 		let mut shc = bitcoin::sighash::SighashCache::new(tx);
@@ -248,7 +248,7 @@ impl Bolt11Payment {
 	}
 
 	fn outputs(&self) -> Vec<VtxoSpec> {
-		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
+		let expiry_height = self.inputs.iter().map(|i| i.expiry_height()).min().unwrap();
 
 		let htlc_output = VtxoSpec {
 			amount: self.htlc_amount(),
@@ -310,7 +310,7 @@ impl Bolt11Payment {
 		let mut pub_nonces = Vec::with_capacity(self.inputs.len());
 		let mut part_sigs = Vec::with_capacity(self.inputs.len());
 		for (idx, input) in self.inputs.iter().enumerate() {
-			assert_eq!(keypair.public_key(), input.spec().asp_pubkey);
+			assert_eq!(keypair.public_key(), input.asp_pubkey());
 			let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
 				keypair,
 				[input.spec().user_pubkey],
@@ -345,7 +345,7 @@ impl Bolt11Payment {
 			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
 			let agg_nonce = musig::nonce_agg(&[&our_pub_nonces[idx], &asp_nonces[idx]]);
 			let (_part_sig, final_sig) = musig::partial_sign(
-				[input.spec().user_pubkey, input.spec().asp_pubkey],
+				[input.spec().user_pubkey, input.asp_pubkey()],
 				agg_nonce,
 				keypair,
 				sec_nonce,
@@ -417,7 +417,7 @@ impl SignedBolt11Payment {
 		};
 
 		OorPayment {
-			asp_pubkey: htlc_vtxo.spec().asp_pubkey,
+			asp_pubkey: htlc_vtxo.asp_pubkey(),
 			exit_delta: self.payment.exit_delta,
 			inputs: vec![htlc_vtxo],
 			outputs: vec![pay_req],

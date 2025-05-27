@@ -41,7 +41,7 @@ pub fn create_forfeit_tx(
 		output: vec![
 			TxOut {
 				value: vtxo.amount(),
-				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.spec().asp_pubkey.into(), None),
+				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.asp_pubkey().into(), None),
 			},
 			// We throw the connector dust value into the fee anchor
 			// because we can't have zero-value anchors and a non-zero fee.
@@ -56,9 +56,8 @@ fn forfeit_input_sighash(
 	connector_pk: PublicKey,
 	input_idx: usize,
 ) -> (TapSighash, Transaction) {
-	let spec = vtxo.spec();
 	let exit_prevout = TxOut {
-		script_pubkey: spec.vtxo_spk(),
+		script_pubkey: vtxo.spec().vtxo_spk(),
 		value: vtxo.amount(),
 	};
 	let connector_prevout = TxOut {

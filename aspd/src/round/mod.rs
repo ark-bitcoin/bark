@@ -67,7 +67,7 @@ fn validate_forfeit_sigs(
 	}
 
 	let (key_agg, _) = musig::tweaked_key_agg(
-		[vtxo.spec().user_pubkey, vtxo.spec().asp_pubkey],
+		[vtxo.spec().user_pubkey, vtxo.asp_pubkey()],
 		vtxo.spec().vtxo_taptweak().to_byte_array(),
 	);
 	for (idx, (conn, _tx)) in connectors.connectors().enumerate() {

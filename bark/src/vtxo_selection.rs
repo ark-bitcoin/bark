@@ -84,7 +84,7 @@ impl<'a> VtxoFilter<'a> {
 		}
 
 		if let Some(height) = self.expires_before {
-			if (vtxo.spec().expiry_height) < height {
+			if (vtxo.expiry_height()) < height {
 				return Ok(true);
 			}
 		}

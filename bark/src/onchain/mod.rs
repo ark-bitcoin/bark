@@ -40,14 +40,14 @@ impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
 			psbt_in.set_exit_claim_input(&input.vtxo);
 			psbt_in.witness_utxo = Some(TxOut {
 				script_pubkey: input.vtxo.spec().vtxo_spk(),
-				value: input.vtxo.spec().amount,
+				value: input.vtxo.amount(),
 			});
 
 			self.add_foreign_utxo_with_sequence(
 				input.vtxo.point(),
 				psbt_in,
 				input.vtxo.claim_satisfaction_weight(),
-				Sequence::from_height(input.vtxo.spec().exit_delta()),
+				Sequence::from_height(input.vtxo.exit_delta()),
 			).expect("error adding foreign utxo for claim input");
 		}
 	}
@@ -137,7 +137,7 @@ impl Wallet {
 	///
 	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> Amount {
-		let exit_total = self.exit_outputs.iter().fold(Amount::ZERO, |acc, v| acc + v.vtxo.spec().amount);
+		let exit_total = self.exit_outputs.iter().fold(Amount::ZERO, |acc, v| acc + v.vtxo.amount());
 		self.wallet.balance().total() + exit_total
 	}
 

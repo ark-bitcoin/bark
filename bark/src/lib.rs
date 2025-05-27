@@ -170,7 +170,7 @@ impl From<Utxo> for UtxoInfo {
 					outpoint: e.vtxo.point(),
 					amount: e.vtxo.amount(),
 					confirmation_height: {
-						let exit_delta = e.vtxo.spec().exit_delta() as BlockHeight;
+						let exit_delta = e.vtxo.exit_delta() as BlockHeight;
 						Some(e.spendable_at_height + exit_delta)
 					},
 				}
@@ -515,8 +515,8 @@ impl Wallet {
 	pub fn offchain_balance(&self) -> anyhow::Result<Amount> {
 		let mut sum = Amount::ZERO;
 		for vtxo in self.db.get_all_spendable_vtxos()? {
-			sum += vtxo.spec().amount;
-			debug!("Vtxo {}: {}", vtxo.id(), vtxo.spec().amount);
+			sum += vtxo.amount();
+			debug!("Vtxo {}: {}", vtxo.id(), vtxo.amount());
 		}
 		Ok(sum)
 	}
@@ -768,7 +768,7 @@ impl Wallet {
 			return Ok(None)
 		}
 
-		debug!("Built new vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
+		debug!("Built new vtxo {} with value {}", vtxo.id(), vtxo.amount());
 		Ok(Some(vtxo))
 	}
 
@@ -897,7 +897,7 @@ impl Wallet {
 			}
 
 			if self.db.get_vtxo(vtxo.id())?.is_none() {
-				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.spec().amount);
+				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.amount());
 				self.db.register_movement(MovementArgs {
 					spends: &[],
 					receives: &[(&vtxo, VtxoState::Spendable)],
@@ -1071,7 +1071,7 @@ impl Wallet {
 			bail!("invalid length of asp response");
 		}
 
-		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
+		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
 			sec_nonces,
@@ -1199,7 +1199,7 @@ impl Wallet {
 
 
 
-		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
+		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
 		let signed = payment.sign_finalize_user(
 			sec_nonces,
@@ -1220,7 +1220,7 @@ impl Wallet {
 
 		// The client will receive the change VTXO if it exists
 		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
-			info!("Adding change VTXO of {}", change_vtxo.spec().amount);
+			info!("Adding change VTXO of {}", change_vtxo.amount());
 			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_oor_tx(&change_vtxo.inputs, &change_vtxo.output_specs)));
 			Some(change_vtxo.into())
 		} else {
