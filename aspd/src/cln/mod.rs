@@ -357,13 +357,6 @@ pub struct ClnNodeInfo {
 }
 
 impl ClnNodeInfo {
-	fn online(&self) -> Option<&ClnNodeOnlineState> {
-		match self.state {
-			ClnNodeState::Online(ref s) => Some(s),
-			_ => None,
-		}
-	}
-
 	/// Set new status and print a log for the record.
 	fn set_state(&mut self, new_state: ClnNodeState) {
 		let uri = &self.uri;
