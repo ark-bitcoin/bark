@@ -12,7 +12,7 @@ use bitcoin_ext::BlockHeight;
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
-use crate::{Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::ExitIndex;
 use crate::movement::{Movement, MovementArgs};
 use crate::persist::BarkPersister;
@@ -195,6 +195,20 @@ impl BarkPersister for SqliteClient {
 		tx.commit()?;
 		Ok(())
 	}
+
+	/// Store an offchain onboard
+	fn store_offchain_onboard(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::store_offchain_onboard(&conn, payment_hash, preimage, payment)?;
+		Ok(())
+	}
+
+	/// Fetch an offchain onboard by payment hash
+	fn fetch_offchain_onboard_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>> {
+		let conn = self.connect()?;
+		query::fetch_offchain_onboard_by_payment_hash(&conn, payment_hash)
+	}
+
 	/// Fetch the ongoing exit process.
 	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>> {
 		let conn = self.connect()?;

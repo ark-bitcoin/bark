@@ -17,6 +17,7 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
 use bark::movement::Movement;
+use bark_json::InvoiceInfo;
 use bark::onchain::ChainSource;
 use bark::UtxoInfo;
 pub use bark_json::cli as json;
@@ -278,6 +279,20 @@ impl Bark {
 
 	pub async fn send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>) -> () {
 		self.try_send_bolt11(destination, amount).await.unwrap();
+	}
+
+	pub async fn bolt11_invoice(&self, amount: Amount) -> InvoiceInfo {
+		let res = self.run(["lightning", "invoice", &amount.to_string(), "--verbose"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
+	pub async fn try_bolt11_onboard(&self, invoice: String) -> anyhow::Result<()> {
+		self.try_run(["lightning", "claim", &invoice, "--verbose"]).await?;
+		Ok(())
+	}
+
+	pub async fn bolt11_onboard(&self, invoice: String) -> () {
+		self.try_bolt11_onboard(invoice).await.unwrap();
 	}
 
 	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::Board> {

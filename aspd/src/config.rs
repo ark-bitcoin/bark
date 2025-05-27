@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Amount, FeeRate};
+use cln_rpc::plugins::hold::hold_client::HoldClient;
 use config::{Environment, File, Value};
 use serde::Deserialize;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
@@ -39,6 +40,15 @@ pub struct Rpc {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HodlInvoiceClnPlugin {
+	#[serde(with = "serde_util::uri")]
+	pub uri: tonic::transport::Uri,
+	pub server_cert_path: PathBuf,
+	pub client_cert_path: PathBuf,
+	pub client_key_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Lightningd {
 	#[serde(with = "serde_util::uri")]
 	pub uri: tonic::transport::Uri,
@@ -47,6 +57,7 @@ pub struct Lightningd {
 	pub server_cert_path: PathBuf,
 	pub client_cert_path: PathBuf,
 	pub client_key_path: PathBuf,
+	pub hodl_invoice: Option<HodlInvoiceClnPlugin>,
 }
 
 impl Lightningd {
@@ -70,6 +81,30 @@ impl Lightningd {
 			.await?;
 
 		Ok(NodeClient::new(channel))
+	}
+
+	pub async fn build_hodl_client(&self) ->  anyhow::Result<Option<HoldClient<tonic::transport::Channel>>> {
+		// Client doesn't support grpc over http
+		// We need to use https using m-TLS authentication
+		if let Some(hodl_config) = &self.hodl_invoice {
+			// Client doesn't support grpc over http
+			// We need to use https using m-TLS authentication
+			let ca_pem = fs::read_to_string(&hodl_config.server_cert_path)?;
+			let id_pem = fs::read_to_string(&hodl_config.client_cert_path)?;
+			let id_key = fs::read_to_string(&hodl_config.client_key_path)?;
+
+			let channel = Channel::builder(hodl_config.uri.clone().into())
+				.tls_config(ClientTlsConfig::new()
+					.ca_certificate(Certificate::from_pem(ca_pem))
+					.identity(Identity::from_pem(&id_pem, &id_key))
+					)?
+				.connect()
+				.await?;
+
+			Ok(Some(HoldClient::new(channel)))
+		} else {
+			Ok(None)
+		}
 	}
 }
 
@@ -151,6 +186,10 @@ pub struct Config {
 	pub invoice_check_max_delay: Duration,
 	#[serde(with = "serde_util::duration")]
 	pub invoice_poll_interval: Duration,
+	/// The delay after which an htlc subscription made for a
+	/// generated invoice will be cancelled if not settled yet.
+	#[serde(with = "serde_util::duration")]
+	pub htlc_subscription_timeout: Duration,
 
 	// compatibility flags
 
@@ -213,6 +252,7 @@ impl Default for Config {
 			invoice_check_base_delay: Duration::from_secs(10),
 			invoice_check_max_delay: Duration::from_secs(10*60),
 			invoice_poll_interval: Duration::from_secs(30),
+			htlc_subscription_timeout: Duration::from_secs(10*60),
 
 			legacy_wallet: false,
 		}
@@ -377,6 +417,7 @@ mod test {
 			server_cert_path: PathBuf::from(server_cert_path.clone()),
 			client_cert_path: PathBuf::from(client_cert_path.clone()),
 			client_key_path: PathBuf::from(client_key_path.clone()),
+			hodl_invoice: None,
 		};
 		let mut cln_array = Vec::new();
 		cln_array.push(cln);

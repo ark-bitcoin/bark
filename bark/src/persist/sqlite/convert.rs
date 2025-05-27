@@ -1,9 +1,10 @@
+use ark::util::Decodable;
 use bitcoin::Amount;
 use rusqlite::{Result, Row};
 use rusqlite::types::{ToSql, ToSqlOutput};
 
 use crate::movement::{Movement, MovementRecipient, VtxoSubset};
-use crate::VtxoState;
+use crate::{OffchainOnboard, OffchainPayment, VtxoState};
 
 impl ToSql for VtxoState {
 	fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
@@ -25,5 +26,13 @@ pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 		receives: receives,
 		recipients: recipients,
 		created_at: row.get("created_at")?,
+	})
+}
+
+pub (crate) fn row_to_offchain_onboard(row: &Row<'_>) -> anyhow::Result<OffchainOnboard> {
+	Ok(OffchainOnboard {
+		payment_hash: row.get("payment_hash")?,
+		payment_preimage: row.get("preimage")?,
+		payment: OffchainPayment::decode(&row.get::<_, Vec<u8>>("serialised_payment")?)?,
 	})
 }

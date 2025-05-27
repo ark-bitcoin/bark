@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	llvm \
 	libxml2-dev \
 	python3 \
+	libpq-dev \
 	sudo
 
 ENV RUST_BACKTRACE=1 \
@@ -67,6 +68,12 @@ RUN echo "Installing c-lightning in /lightning/${CLN_VERSION}/bin/" && \
 	wget https://github.com/ElementsProject/lightning/releases/download/v${CLN_VERSION}/clightning-v${CLN_VERSION}-Ubuntu-24.04-amd64.tar.xz && \
 	mkdir ${CLN_VERSION} && \
 	tar -xvf clightning-v${CLN_VERSION}-Ubuntu-24.04-amd64.tar.xz -C ./${CLN_VERSION} --strip-components=2
+RUN echo "Installing c-lightning hold invoice plugin in /hold/" && \
+    git clone https://github.com/BoltzExchange/hold.git && \
+	cd hold && \
+	git checkout v0.3.0 && \
+	cargo build && \
+	chown root:root /hold/target/debug/hold
 RUN cd /root/ && \
 	git clone https://github.com/tpoechtrager/osxcross.git && \
 	cd /root/osxcross/tarballs/ && \

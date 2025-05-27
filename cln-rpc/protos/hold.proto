@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package hold;
+
+service Hold {
+  rpc GetInfo (GetInfoRequest) returns (GetInfoResponse);
+
+  rpc Invoice (InvoiceRequest) returns (InvoiceResponse) {}
+  rpc Inject (InjectRequest) returns (InjectResponse) {}
+
+  rpc List (ListRequest) returns (ListResponse) {}
+
+  rpc Settle (SettleRequest) returns (SettleResponse) {}
+  rpc Cancel (CancelRequest) returns (CancelResponse) {}
+
+  // Cleans cancelled invoices
+  rpc Clean (CleanRequest) returns (CleanResponse) {}
+
+  rpc Track (TrackRequest) returns (stream TrackResponse) {}
+  rpc TrackAll (TrackAllRequest) returns (stream TrackAllResponse) {}
+
+  rpc OnionMessages (stream OnionMessageResponse) returns (stream OnionMessage) {}
+}
+
+enum HookAction {
+  Continue = 0;
+  Resolve = 1;
+}
+
+message GetInfoRequest {}
+message GetInfoResponse {
+  string version = 1;
+}
+
+message Hop {
+  bytes public_key = 1;
+  uint64 short_channel_id = 2;
+  uint64 base_fee = 3;
+  uint64 ppm_fee = 4;
+  uint64 cltv_expiry_delta = 5;
+}
+
+message RoutingHint {
+  repeated Hop hops = 1;
+}
+
+message InvoiceRequest {
+  bytes payment_hash = 1;
+  uint64 amount_msat = 2;
+
+  oneof description {
+    string memo = 3;
+    bytes hash = 4;
+  }
+
+  optional uint64 expiry = 5;
+  optional uint64 min_final_cltv_expiry = 6;
+  repeated RoutingHint routing_hints = 7;
+}
+message InvoiceResponse {
+  string bolt11 = 1;
+}
+
+message InjectRequest {
+  string invoice = 1;
+  optional uint64 min_cltv_expiry = 2;
+}
+message InjectResponse {}
+
+message ListRequest {
+  message Pagination {
+    // Inclusive
+    int64 index_start = 1;
+    uint64 limit = 2;
+  }
+
+  oneof constraint {
+    bytes payment_hash = 1;
+    Pagination pagination = 2;
+  }
+}
+
+enum InvoiceState {
+  UNPAID = 0;
+  ACCEPTED = 1;
+  PAID = 2;
+  CANCELLED = 3;
+}
+
+message Htlc {
+  int64 id = 1;
+  InvoiceState state = 2;
+  string scid = 3;
+  uint64 channel_id = 4;
+  uint64 msat = 5;
+  uint64 created_at = 6;
+}
+
+message Invoice {
+  int64 id = 1;
+  bytes payment_hash = 2;
+  optional bytes preimage = 3;
+  string invoice = 4;
+  InvoiceState state = 5;
+  uint64 created_at = 6;
+  optional uint64 settled_at = 8;
+
+  repeated Htlc htlcs = 7;
+
+  optional uint64 min_cltv_expiry = 9;
+}
+
+message ListResponse {
+  repeated Invoice invoices = 1;
+}
+
+message SettleRequest {
+  bytes payment_preimage = 1;
+}
+message SettleResponse {}
+
+message CancelRequest {
+  bytes payment_hash = 1;
+}
+message CancelResponse {}
+
+message CleanRequest {
+  // Clean everything older than age seconds
+  optional uint64 age = 1;
+}
+message CleanResponse {
+  uint64 cleaned = 1;
+}
+
+message TrackRequest {
+  bytes payment_hash = 1;
+}
+
+message TrackResponse {
+  InvoiceState state = 1;
+}
+
+message TrackAllRequest {
+  repeated bytes payment_hashes = 1;
+}
+
+message TrackAllResponse {
+  bytes payment_hash = 1;
+  string bolt11 = 2;
+  InvoiceState state = 3;
+}
+
+message OnionMessage {
+  message ReplyBlindedPath {
+    message Hop {
+      optional bytes blinded_node_id = 1;
+      optional bytes encrypted_recipient_data = 2;
+    }
+
+    optional bytes first_node_id = 1;
+    optional string first_scid = 2;
+    optional uint64 first_scid_dir = 3;
+    optional bytes first_path_key = 4;
+    repeated Hop hops = 5;
+  }
+
+  message UnknownField {
+    uint64 number = 1;
+    bytes value = 2;
+  }
+
+  uint64 id = 1;
+  optional bytes pathsecret = 2;
+  optional ReplyBlindedPath reply_blindedpath = 3;
+  optional bytes invoice_request = 4;
+  optional bytes invoice = 5;
+  optional bytes invoice_error = 6;
+  repeated UnknownField unknown_fields = 7;
+}
+
+message OnionMessageResponse {
+  uint64 id = 1;
+  HookAction action = 2;
+}

@@ -10,6 +10,7 @@ use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::VtxoTreeSpec;
 use ark::util::{Decodable, Encodable};
 
+use crate::aspd::{Bolt11PaymentDetails, OorCosignResponse};
 use crate::protos;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -221,5 +222,45 @@ impl TryFrom<protos::WalletStatus> for crate::WalletStatus {
 				u.parse().map_err(|_| "invalid outpoint")
 			}).collect::<Result<_, _>>()?,
 		})
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("{0}")]
+pub struct PubNonceParseError(String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("{0}")]
+pub struct PartialSigParseError(String);
+
+impl OorCosignResponse {
+	pub fn asp_pub_nonces(&self) -> Result<Vec<musig::MusigPubNonce>, PubNonceParseError> {
+		self.pub_nonces.iter()
+			.map(|b| musig::MusigPubNonce::from_slice(&b))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| PubNonceParseError(e.to_string()))
+	}
+
+	pub fn asp_part_sigs(&self) -> Result<Vec<musig::MusigPartialSignature>, PartialSigParseError> {
+		self.partial_sigs.iter()
+			.map(|b| musig::MusigPartialSignature::from_slice(&b))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| PartialSigParseError(e.to_string()))
+	}
+}
+
+impl Bolt11PaymentDetails {
+	pub fn asp_pub_nonces(&self) -> Result<Vec<musig::MusigPubNonce>, PubNonceParseError> {
+		self.pub_nonces.iter()
+			.map(|b| musig::MusigPubNonce::from_slice(&b))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| PubNonceParseError(e.to_string()))
+	}
+
+	pub fn asp_part_sigs(&self) -> Result<Vec<musig::MusigPartialSignature>, PartialSigParseError> {
+		self.partial_sigs.iter()
+			.map(|b| musig::MusigPartialSignature::from_slice(&b))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| PartialSigParseError(e.to_string()))
 	}
 }

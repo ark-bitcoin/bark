@@ -18,7 +18,7 @@ use cln_rpc::node_client::NodeClient;
 
 use crate::Bitcoind;
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
-use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGINS};
+use crate::constants::env::{HODL_INVOICE_PLUGIN, LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_GRPC_PLUGIN};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
@@ -82,6 +82,7 @@ impl Lightningd {
 #[derive(Default)]
 struct LightningDHelperState{
 	grpc_port: Option<u16>,
+	hodl_port: Option<u16>,
 	port: Option<u16>,
 }
 
@@ -144,7 +145,7 @@ impl LightningDHelper {
 		writeln!(file, "bitcoin-rpcport={}", self.config.bitcoin_rpcport).unwrap();
 		writeln!(file, "bitcoin-rpcuser={}", BITCOINRPC_TEST_USER).unwrap();
 		writeln!(file, "bitcoin-rpcpassword={}", BITCOINRPC_TEST_PASSWORD).unwrap();
-		if let Ok(dir) = env::var(LIGHTNINGD_PLUGINS) {
+		if let Ok(dir) = env::var(LIGHTNINGD_GRPC_PLUGIN) {
 			trace!("Adding plugin-dir to lightningd: {}", dir);
 			writeln!(file, "plugin-dir={}", dir).unwrap();
 		}
@@ -163,6 +164,17 @@ impl LightningDHelper {
 		if let Some(port) = self.state.lock().await.port {
 			writeln!(file, "addr=0.0.0.0:{}", port).unwrap();
 		}
+
+		if let Ok(dir) = env::var(HODL_INVOICE_PLUGIN) {
+			writeln!(file, "").unwrap();
+			writeln!(file, "# Hodl plugin").unwrap();
+			writeln!(file, "important-plugin={}", dir).unwrap();
+
+			if let Some(hodl_port) = self.state.lock().await.hodl_port {
+				writeln!(file, "hold-grpc-port={}", hodl_port).unwrap();
+			}
+		}
+
 	}
 
 	pub async fn grpc_port(&self) -> Option<u16> {
@@ -204,6 +216,17 @@ impl LightningDHelper {
 		}
 	}
 
+	pub async fn hodl_details(&self) -> GrpcDetails {
+		let state = self.state.lock().await;
+		let dir = &self.config.lightning_dir;
+		GrpcDetails {
+			uri: format!("https://localhost:{}", state.hodl_port.unwrap()),
+			server_cert_path: dir.join("regtest/hold/ca.pem"),
+			client_cert_path: dir.join("regtest/hold/client.pem"),
+			client_key_path: dir.join("regtest/hold/client-key.pem")
+		}
+	}
+
 	async fn is_ready(&self) -> bool {
 		if let Ok(mut client) = self.try_grpc_client().await {
 			let req = cln_rpc::GetinfoRequest{};
@@ -226,11 +249,13 @@ impl DaemonHelper for LightningDHelper {
 
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
 		let grpc_port = portpicker::pick_unused_port().expect("No ports free");
+		let hold_port = portpicker::pick_unused_port().expect("No ports free");
 		let port = portpicker::pick_unused_port().expect("No ports free");
 
-		trace!("Reserved grpc_port={} and port={}", grpc_port, port);
+		trace!("Reserved grpc_port={}, hold_port={} and port={}", grpc_port, hold_port, port);
 		let mut state = self.state.lock().await;
 		state.grpc_port = Some(grpc_port);
+		state.hodl_port = Some(hold_port);
 		state.port = Some(port);
 
 		Ok(())
@@ -279,6 +304,10 @@ impl Lightningd {
 
 	pub async fn grpc_details(&self) -> GrpcDetails {
 		self.inner.grpc_details().await
+	}
+
+	pub async fn hodl_details(&self) -> GrpcDetails {
+		self.inner.hodl_details().await
 	}
 
 	pub async fn port(&self) -> Option<u16> {
@@ -425,7 +454,7 @@ impl Lightningd {
 			description: None,
 			localinvreqid: None,
 			partial_msat: None,
-		}).await.unwrap().into_inner();
+		}).await?.into_inner();
 
 		if response.status == cln_rpc::pay_response::PayStatus::Complete as i32 {
 			Ok(())

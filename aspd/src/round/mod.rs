@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::consensus::encode::serialize;
+use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
@@ -25,11 +25,14 @@ use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use ark::util::Encodable;
+use ark::vtxo::VtxoSpkSpec;
 
+use crate::database::model::LightningHtlcSubscriptionStatus;
 use crate::{Server, SECP};
 use crate::database::model::{ForfeitState, DangerousMusigSecNonce};
+use crate::error::ContextExt;
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
-use crate::error::{ContextExt, AnyhowErrorExt};
+use crate::error::AnyhowErrorExt;
 use crate::telemetry::{self, SpanExt};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
@@ -199,9 +202,23 @@ impl CollectingPayments {
 				return badarg!("vtxo amount must be at least {}", P2TR_DUST);
 			}
 
-			out_sum += output.amount;
+			match output.spk {
+				// HTLCs are not included in the sum because they don't spend any
+				// round input. Instead, they are funded by provided the payment
+				// hash and handled in the `collect_htlcs` method.
+				VtxoSpkSpec::HtlcIn { .. } => {
+					continue;
+				}
+				VtxoSpkSpec::HtlcOut { .. } => {
+					return badarg!("invalid vtxo spk: {}", output.spk);
+				}
+				VtxoSpkSpec::Exit { .. } => {
+					out_sum += output.amount;
+				}
+			}
+
 			if out_sum > in_sum {
-				return badarg!("total output amount {} exceeds total input amount {}", out_sum, in_sum);
+				return badarg!("total output amount ({out_sum}) exceeds total input amount ({in_sum})");
 			}
 		}
 		for offboard in offboards {
@@ -213,7 +230,7 @@ impl CollectingPayments {
 				.badarg("invalid offboard request")?;
 			out_sum += offboard.amount + fee;
 			if out_sum > in_sum {
-				return badarg!("total output amount with offboards {} exceeds total input amount {}", out_sum, in_sum);
+				return badarg!("total output amount with offboard ({out_sum}) exceeds total input amount ({in_sum})");
 			}
 		}
 
@@ -283,6 +300,33 @@ impl CollectingPayments {
 		Ok(())
 	}
 
+	/// If a [`VtxoRequest`] requests an [`VtxoSpkSpec::HtlcIn`], we check that
+	/// there is an incoming HTLC with the same payment hash that is accepted and
+	/// not already claimed.
+	///
+	/// Supported protocols:
+	/// - Lightning Network
+	async fn check_vtxo_request_htlcs(&self, app: &Server, outputs: &[VtxoRequest]) -> anyhow::Result<()> {
+		for output in outputs {
+			if let VtxoSpkSpec::HtlcIn { payment_hash, .. } = output.spk {
+				let status = LightningHtlcSubscriptionStatus::Accepted;
+				let htlc = app.db
+					.get_htlc_subscription_by_payment_hash(&payment_hash, status)
+					.await?;
+
+				// TODO: check if a non-expired htlc vtxo with same payment_hash exists and bail if so
+
+				if htlc.is_some() {
+						continue;
+				}
+
+				return not_found!([payment_hash], "Cannot find accepted htlc for provided payment hash");
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Fetch and check whether the vtxos are owned by user and
 	/// weren't already spent, then return them.
 	///
@@ -326,6 +370,8 @@ impl CollectingPayments {
 				bail!("vtxo {id} already in flux");
 			},
 		};
+
+		self.check_vtxo_request_htlcs(server, &vtxo_requests).await?;
 
 		// Check if the input vtxos exist and are unspent.
 		let input_vtxos = match self.check_fetch_round_input_vtxos(server, &inputs).await {
@@ -444,6 +490,7 @@ impl CollectingPayments {
 				pubkey: *UNSPENDABLE,
 				amount: P2WSH_DUST,
 				cosign_pk: cosign_key.public_key(),
+				spk: VtxoSpkSpec::Exit { exit_delta: server.config.vtxo_exit_delta },
 			};
 			self.all_outputs.push(VtxoParticipant {
 				req: req.clone(),
@@ -1630,11 +1677,12 @@ mod tests {
 		})
 	}
 
-	fn create_vtxo_request(amount: u64) -> VtxoRequest {
+	fn create_exit_vtxo_request(amount: u64) -> VtxoRequest {
 		VtxoRequest {
 			pubkey: generate_pubkey(),
 			amount: Amount::from_sat(amount),
 			cosign_pk: generate_pubkey(),
+			spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
 		}
 	}
 
@@ -1667,7 +1715,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap();
@@ -1695,7 +1743,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap();
@@ -1716,7 +1764,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap_err();
@@ -1738,8 +1786,8 @@ mod tests {
 			.collect::<Vec<_>>();
 
 		let outputs = vec![
-			create_vtxo_request(OUTPUT_AMOUNT_1),
-			create_vtxo_request(OUTPUT_AMOUNT_2),
+			create_exit_vtxo_request(OUTPUT_AMOUNT_1),
+			create_exit_vtxo_request(OUTPUT_AMOUNT_2),
 		];
 		let nonces = create_nonces(2, &state.round_data);
 
@@ -1760,7 +1808,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap_err();
@@ -1785,9 +1833,9 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_vtxo_request(OUTPUT_AMOUNT_1)];
+		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT_1)];
 		let nonces1 = create_nonces(1, &state.round_data);
-		let mut outputs2 = vec![create_vtxo_request(OUTPUT_AMOUNT_2)];
+		let mut outputs2 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT_2)];
 		outputs2[0].cosign_pk = outputs1[0].cosign_pk;
 		let nonces2 = create_nonces(1, &state.round_data);
 
@@ -1810,7 +1858,7 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_vtxo_request(OUTPUT_AMOUNT), create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces1 = create_nonces(1, &state.round_data);
 
 		state.validate_payment_data(&input_ids1, &outputs1, &nonces1).unwrap_err();
@@ -1834,9 +1882,9 @@ mod tests {
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_vtxo_request(OUTPUT_AMOUNT), create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces1 = create_nonces(2, &state.round_data);
-		let outputs2 = vec![create_vtxo_request(OUTPUT_AMOUNT), create_vtxo_request(OUTPUT_AMOUNT)];
+		let outputs2 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
 		let nonces2 = create_nonces(2, &state.round_data);
 
 		let flux = VtxosInFlux::new();

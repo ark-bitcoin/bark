@@ -59,6 +59,7 @@ steps:
       TEST_DIRECTORY: ./test/btc29-codecov
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 1
+      HODL_INVOICE_PLUGIN: /hold/target/debug/hold
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd

@@ -4,9 +4,9 @@ use ark::util::{Decodable, Encodable};
 use bitcoin::{bip32::Fingerprint, Amount, Network, secp256k1::PublicKey};
 use bitcoin_ext::BlockHeight;
 use rusqlite::{named_params, Connection, ToSql, Transaction};
-use crate::{exit::ExitIndex, movement::Movement, Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{exit::ExitIndex, movement::Movement, Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 
-use super::convert::row_to_movement;
+use super::convert::{row_to_movement, row_to_offchain_onboard};
 
 /// Set read-only properties for the wallet
 ///
@@ -449,6 +449,35 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight
 	} else {
 		Ok(0)
 	}
+}
+
+pub fn store_offchain_onboard(
+	conn: &Connection,
+	payment_hash: &[u8; 32],
+	preimage: &[u8; 32],
+	payment: OffchainPayment,
+) -> anyhow::Result<()> {
+	let query = "
+		INSERT INTO bark_offchain_onboard (payment_hash, preimage, serialised_payment)
+		VALUES (?1, ?2, ?3);
+	";
+	let mut statement = conn.prepare(query)?;
+
+	statement.execute([
+		payment_hash.to_vec(),
+		preimage.to_vec(),
+		payment.encode(),
+	])?;
+
+	Ok(())
+}
+
+pub fn fetch_offchain_onboard_by_payment_hash(conn: &Connection, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>> {
+	let query = "SELECT * FROM bark_offchain_onboard WHERE payment_hash = ?1";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query((payment_hash, ))?;
+
+	Ok(rows.next()?.map(|row| row_to_offchain_onboard(&row)).transpose()?)
 }
 
 pub fn store_exit(tx: &Transaction, exit: &ExitIndex) -> anyhow::Result<()> {

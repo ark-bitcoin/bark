@@ -120,6 +120,27 @@
 					'';
 					doCheck = false; # tests are broken
 				};
+				hold-invoice = pkgs.rustPlatform.buildRustPackage rec {
+					pname = "hold-invoice";
+					version = "99.99.99";
+					src = pkgs.fetchFromGitHub {
+						owner = "BoltzExchange";
+						repo = "hold";
+						rev = "v0.2.2";
+						hash = "sha256-vksvnLV9pcMxJcoylF+r2ezQmauiGGt+/MSNMfS3Gxc=";
+					};
+					nativeBuildInputs = [ pkgs.protobuf ];
+					buildInputs = [
+						pkgs.sqlite
+						pkgs.postgresql
+					] ++ (if isDarwin then [
+						pkgs.darwin.apple_sdk.frameworks.Security
+					] else []);
+					cargoDeps = pkgs.rustPlatform.importCargoLock {
+						lockFile = "${src}/Cargo.lock";
+					};
+					doCheck = false;
+				};
 			in
 			{
 				devShells.default = pkgs.mkShell {
@@ -160,8 +181,9 @@
 
 					# Use Docker for Core Lightning on macOS by default instead of a local daemon
 					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
-					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "elementsproject/lightningd:v${lightningVersion}" else null);
-					LIGHTNINGD_PLUGINS = "${cln-grpc}/bin/";
+					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "acidbunny21/cln-hodl:v24.08.2.0" else null);
+					LIGHTNINGD_GRPC_PLUGIN = "${cln-grpc}/bin/";
+					HODL_INVOICE_PLUGIN = (if isDarwin then "/hold/target/debug/hold" else "${hold-invoice}/bin/");
 
 					POSTGRES_BINS = "${pkgs.postgresql}/bin";
 				};

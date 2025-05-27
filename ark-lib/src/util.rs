@@ -58,9 +58,24 @@ pub fn hash_and_sign(hash: sha256::Hash, pubkey: XOnlyPublicKey) -> ScriptBuf {
 	let hash_160 = ripemd160::Hash::hash(&hash[..]);
 
 	bitcoin::Script::builder()
-		.push_slice(hash_160.as_byte_array())
-		.push_opcode(opcodes::all::OP_SWAP)
 		.push_opcode(opcodes::all::OP_HASH160)
+		.push_slice(hash_160.as_byte_array())
+		.push_opcode(opcodes::all::OP_EQUALVERIFY)
+		.push_x_only_key(&pubkey)
+		.push_opcode(opcodes::all::OP_CHECKSIG)
+		.into_script()
+}
+
+pub fn hash_delay_sign(hash: sha256::Hash, delay_blocks: u16, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	let hash_160 = ripemd160::Hash::hash(&hash[..]);
+	let csv = bitcoin::Sequence::from_height(delay_blocks);
+
+	bitcoin::Script::builder()
+		.push_int(csv.to_consensus_u32().try_into().unwrap())
+		.push_opcode(opcodes::all::OP_CSV)
+		.push_opcode(opcodes::all::OP_DROP)
+		.push_opcode(opcodes::all::OP_HASH160)
+		.push_slice(hash_160.as_byte_array())
 		.push_opcode(opcodes::all::OP_EQUALVERIFY)
 		.push_x_only_key(&pubkey)
 		.push_opcode(opcodes::all::OP_CHECKSIG)

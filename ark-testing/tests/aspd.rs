@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use ark::board::UserPart;
 use ark::oor::OorPayment;
+use ark::vtxo::VtxoSpkSpec;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
@@ -16,6 +17,7 @@ use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST, P2TR_DUST_SAT};
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{error, info, trace};
+use rand::Rng;
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, VtxoId};
@@ -27,7 +29,7 @@ use aspd_log::{
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
-use aspd_rpc::protos::{self, BoardCosignRequest, Bolt11PaymentRequest, OorCosignRequest, SubmitPaymentRequest};
+use aspd_rpc::protos::{self, BoardCosignRequest, Bolt11PaymentRequest, ClaimBolt11OnboardRequest, OorCosignRequest, SubmitPaymentRequest};
 
 use ark_testing::{Aspd, TestContext, btc, sat, bark};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -831,6 +833,9 @@ async fn bad_round_input() {
 			let (_sec, pb) = musig::nonce_pair(&key);
 			pb.serialize().to_vec()
 		}).take(ark_info.nb_round_nonces as usize).collect(),
+		vtxo_spk: VtxoSpkSpec::Exit {
+			exit_delta: aspd.config().vtxo_exit_delta,
+		}.encode().to_vec(),
 	};
 	let offb_req = protos::OffboardRequest {
 		amount: 1000,
@@ -1113,6 +1118,7 @@ async fn reject_subdust_vtxo_request() {
 					vtxo_public_key: req.vtxo_requests[0].vtxo_public_key.clone(),
 					cosign_pubkey: req.vtxo_requests[0].cosign_pubkey.clone(),
 					public_nonces: req.vtxo_requests[0].public_nonces.clone(),
+					vtxo_spk: req.vtxo_requests[0].vtxo_spk.clone(),
 				}],
 				offboard_requests: req.offboard_requests,
 			}).await?.into_inner())
@@ -1241,4 +1247,165 @@ async fn reject_subdust_bolt11_payment() {
 	assert!(err.to_string().contains(
 		"bad user input: invalid amounts: payment amount must be at least 0.00000330 BTC",
 	), "err: {err}");
+}
+
+#[tokio::test]
+async fn aspd_refuse_claim_invoice_not_settled() {
+	let ctx = TestContext::new("aspd/aspd_refuse_claim_invoice_not_settled").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd = ctx.new_aspd_with_funds("aspd", Some(&lightningd_2), btc(10)).await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn claim_bolt11_onboard(&mut self, req: protos::ClaimBolt11OnboardRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+			let preimage = rand::rng().random::<[u8; 32]>();
+			Ok(self.upstream().claim_bolt11_onboard(ClaimBolt11OnboardRequest {
+				payment: req.payment,
+				pub_nonces: req.pub_nonces,
+				payment_preimage: preimage.to_vec(),
+			}).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+
+	// Start a bark and create a VTXO to be able to onboard
+	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await);
+	bark.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+
+	let cloned = invoice_info.clone();
+	tokio::spawn(async move { lightningd_1.pay_bolt11(cloned.invoice).await; });
+	let res = bark.try_bolt11_onboard(invoice_info.invoice).await;
+
+	assert!(res.unwrap_err().to_string().contains("input vtxo payment hash does not match preimage"));
+}
+
+#[tokio::test]
+async fn aspd_should_release_hodl_invoice_when_subscription_is_cancelled() {
+	let ctx = TestContext::new("aspd/aspd_should_release_hodl_invoice_when_subscription_is_cancelled").await;
+	let cfg_htlc_subscription_timeout = Duration::from_secs(5);
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	let aspd = ctx.new_aspd_with_cfg("aspd", Some(&lightningd_2), |cfg| {
+		// Set the subscription timeout very short to cancel the subscription quickly
+		cfg.htlc_subscription_timeout = cfg_htlc_subscription_timeout
+	}).await;
+	ctx.fund_asp(&aspd, btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to onboard
+	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd, btc(3)).await);
+	bark.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+
+	tokio::time::sleep(cfg_htlc_subscription_timeout + aspd.config().invoice_check_interval).await;
+
+	let res = lightningd_1.try_pay_bolt11(invoice_info.invoice).await;
+	// cln rpc error code when cannot pay invoice
+	assert!(res.unwrap_err().to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"));
+}
+
+#[tokio::test]
+async fn aspd_should_refuse_claim_twice() {
+	let ctx = TestContext::new("aspd/aspd_should_refuse_claim_twice").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to onboard
+	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd_1, btc(3)).await);
+	bark_1.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice_info = bark_1.bolt11_invoice(btc(1)).await;
+
+	let cloned = bark_1.clone();
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move { cloned.bolt11_onboard(cloned_invoice_info.invoice).await });
+	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).await;
+	res1.await.unwrap();
+
+	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
+
+	let res = bark_1.try_bolt11_onboard(invoice_info.invoice).await;
+	// bark should not be able to subscribe to already settled invoice
+	assert!(res.unwrap_err().to_string().contains("invoice already settled"));
 }

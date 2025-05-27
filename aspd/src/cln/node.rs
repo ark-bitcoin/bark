@@ -8,6 +8,7 @@ use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use chrono::{DateTime, Utc};
+use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::ClnGrpcClient;
 use log::{debug, error, info, trace, warn};
 use tokio::sync::{broadcast, mpsc, Notify};
@@ -17,9 +18,9 @@ use tonic::transport::Channel;
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use cln_rpc::node_client::NodeClient;
-
+use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database::{self, ClnNodeId};
-use crate::database::model::LightningPaymentStatus;
+use crate::database::model::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use crate::system::RuntimeManager;
 use crate::telemetry;
 
@@ -27,6 +28,7 @@ use crate::telemetry;
 pub struct ClnNodeMonitorConfig {
 	pub invoice_check_interval: Duration,
 	pub invoice_recheck_delay: Duration,
+	pub htlc_subscription_timeout: Duration,
 	pub check_base_delay: Duration,
 	pub check_max_delay: Duration,
 }
@@ -44,6 +46,7 @@ impl ClnNodeMonitor {
 		payment_update_tx: broadcast::Sender<sha256::Hash>,
 		node_id: ClnNodeId,
 		node_rpc: ClnGrpcClient,
+		hold_rpc: Option<HoldClient<Channel>>,
 		config: ClnNodeMonitorConfig,
 	) -> anyhow::Result<ClnNodeMonitor> {
 		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
@@ -58,6 +61,7 @@ impl ClnNodeMonitor {
 		let proc = ClnNodeMonitorProcess {
 			config, db, payment_update_tx, ctrl_rx, node_id,
 			rpc: node_rpc,
+			hold_rpc,
 			created_index: match payment_idxs.created_index {
 				0 => None,
 				i => Some(i),
@@ -116,7 +120,9 @@ struct ClnNodeMonitorProcess {
 	ctrl_rx: mpsc::Receiver<Ctrl>,
 
 	node_id: ClnNodeId,
+
 	rpc: NodeClient<Channel>,
+	hold_rpc: Option<HoldClient<Channel>>,
 
 	/// last seen sendpay created index, or 0 for none seen
 	created_index: Option<u64>,
@@ -245,7 +251,7 @@ impl ClnNodeMonitorProcess {
 		);
 	}
 
-	async fn process_invoices(&mut self) -> anyhow::Result<()> {
+	async fn process_payment_attempts(&mut self) -> anyhow::Result<()> {
 		let open_attempts = self.db.get_open_lightning_payment_attempts(
 			self.node_id,
 		).await?;
@@ -392,6 +398,74 @@ impl ClnNodeMonitorProcess {
 		Ok(())
 	}
 
+	/// For each subscription, verifies if incoming HTLCs have been accepted.
+	/// - If so, it updates the status to accepted.
+	/// - After a delay, it cancels the subscription on the plugin and updates
+	/// the status to cancelled.
+	async fn process_htlc_subscriptions(&mut self) -> anyhow::Result<()> {
+		let mut hodl_client = match &self.hold_rpc {
+			Some(client) => client.clone(),
+			None => {
+				info!("No hold rpc client, skipping incoming htlc subscriptions");
+				return Ok(());
+			},
+		};
+
+		let htlc_subscriptions = self.db.get_created_lightning_htlc_subscriptions(
+			self.node_id,
+		).await?;
+
+		for htlc_subscription in htlc_subscriptions {
+			let payment_hash = htlc_subscription.invoice.payment_hash();
+
+			debug!("Lightning htlc subscription ({}) is being verified.",
+				htlc_subscription.lightning_htlc_subscription_id,
+			);
+
+			let req = hold::ListRequest {
+				constraint: Some(hold::list_request::Constraint::PaymentHash(payment_hash.to_byte_array().to_vec())),
+			};
+
+			let res = hodl_client.list(req).await?.into_inner();
+
+			if res.invoices.is_empty() {
+				warn!("Lightning htlc subscription ({}) is not found on plugin.",
+					htlc_subscription.lightning_htlc_subscription_id,
+				);
+			}
+
+			if res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32) {
+					debug!("Lightning htlc subscription ({}) was accepted.",
+						htlc_subscription.lightning_htlc_subscription_id,
+					);
+
+					self.db.store_lightning_htlc_subscription_status(
+						htlc_subscription.lightning_htlc_subscription_id,
+						LightningHtlcSubscriptionStatus::Accepted,
+					).await?;
+
+					continue;
+			}
+
+			if htlc_subscription.created_at < Utc::now() - self.config.htlc_subscription_timeout {
+				info!("Lightning htlc subscription ({}) timed out.",
+					htlc_subscription.lightning_htlc_subscription_id,
+				);
+
+				hodl_client.cancel(hold::CancelRequest {
+					payment_hash: payment_hash.to_byte_array().to_vec(),
+				}).await?;
+
+				self.db.store_lightning_htlc_subscription_status(
+					htlc_subscription.lightning_htlc_subscription_id,
+					LightningHtlcSubscriptionStatus::Cancelled,
+				).await?;
+			}
+		}
+
+		Ok(())
+	}
+
 	async fn run(mut self, rtmgr: RuntimeManager, mgr_waker: Arc<Notify>) -> anyhow::Result<()> {
 		let _worker = rtmgr.spawn(format!("ClnNodeMonitor({})", self.node_id))
 			.with_notify(mgr_waker);
@@ -431,7 +505,10 @@ impl ClnNodeMonitorProcess {
 							.context("error processing updated events")?;
 						continue 'requests;
 					},
-					_ = invoice_interval.tick() => self.process_invoices().await?,
+					_ = invoice_interval.tick() => {
+						self.process_payment_attempts().await?;
+						self.process_htlc_subscriptions().await?;
+					},
 				};
 			}
 		}

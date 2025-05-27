@@ -13,6 +13,7 @@ use ark::board::BOARD_TX_VTXO_VOUT;
 use ark::oor::unsigned_oor_tx;
 use ark::util::{Decodable, Encodable};
 use ark::vtxo::VtxoSpkSpec;
+use bip39::rand::Rng;
 use bitcoin::params::Params;
 use bitcoin_ext::bdk::WalletExt;
 use movement::{Movement, MovementArgs};
@@ -44,10 +45,9 @@ use anyhow::{bail, Context};
 use bip39::Mnemonic;
 use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
-use bitcoin_ext::{BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn, error};
@@ -71,6 +71,7 @@ use ark::rounds::{
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use aspd_rpc::{self as rpc, protos};
+use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 
 use crate::exit::Exit;
 use crate::onchain::Utxo;
@@ -118,9 +119,28 @@ impl ToSql for KeychainKind {
 	}
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub enum OffchainPayment {
+	Lightning(Bolt11Invoice),
+}
+
+impl Encodable for OffchainPayment {}
+impl Decodable for OffchainPayment {}
+
+pub struct OffchainOnboard {
+	pub payment_hash: [u8; 32],
+	pub payment_preimage: [u8; 32],
+	pub payment: OffchainPayment,
+}
+
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
+}
+
+lazy_static::lazy_static! {
+	/// Arbitrary fee for Lightning onboarding. Subject to change when we have a fee schedule.
+	static ref LN_ONBOARD_FEE_SATS: Amount = Amount::from_sat(350);
 }
 
 struct OorCreateResult {
@@ -220,6 +240,8 @@ enum AttemptResult {
 #[derive(Debug)]
 struct RoundResult {
 	round_id: RoundId,
+	/// VTXOs created in the round
+	vtxos: Vec<Vtxo>,
 }
 
 /// Read-only properties of the Bark wallet.
@@ -731,8 +753,8 @@ impl Wallet {
 				user_pubkey: dest.pubkey,
 				asp_pubkey: vtxos.spec.spec.asp_pk,
 				expiry_height: vtxos.spec.spec.expiry_height,
-				spk: VtxoSpkSpec::Exit { exit_delta: vtxos.spec.spec.exit_delta },
 				amount: dest.amount,
+				spk: dest.spk,
 			},
 			leaf_idx: leaf_idx,
 			exit_branch: exit_branch.into_iter().cloned().collect(),
@@ -807,12 +829,16 @@ impl Wallet {
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
 				if pubkeys.contains(&dest.pubkey) {
 					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-						self.db.register_movement(MovementArgs {
-							spends: &[],
-							receives: &[(&vtxo, VtxoState::Spendable)],
-							recipients: &[],
-							fees: None
-						})?;
+						match vtxo.spec().spk {
+							VtxoSpkSpec::Exit { .. } => self.db.register_movement(MovementArgs {
+								spends: &[],
+								receives: &[(&vtxo, VtxoState::Spendable)],
+								recipients: &[],
+								fees: None,
+							})?,
+							VtxoSpkSpec::HtlcIn { .. } => {},
+							VtxoSpkSpec::HtlcOut { .. } => {}
+						}
 					}
 				}
 			}
@@ -873,7 +899,7 @@ impl Wallet {
 					spends: &[],
 					receives: &[(&vtxo, VtxoState::Spendable)],
 					recipients: &[],
-					fees: None
+					fees: None,
 				}).context("failed to store OOR vtxo")?;
 			}
 		}
@@ -944,6 +970,7 @@ impl Wallet {
 		&mut self,
 		vtxos: Vec<Vtxo>
 	) -> anyhow::Result<Option<RoundId>> {
+		let asp = self.require_asp()?;
 		if vtxos.is_empty() {
 			warn!("There is no VTXO to refresh!");
 			return Ok(None)
@@ -954,7 +981,8 @@ impl Wallet {
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let payment_request = PaymentRequest {
 			pubkey: user_keypair.public_key(),
-			amount: total_amount
+			amount: total_amount,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
@@ -969,7 +997,11 @@ impl Wallet {
 		let mut asp = self.require_asp()?;
 		let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
 
-		let output = PaymentRequest { pubkey: destination, amount };
+		let output = PaymentRequest {
+			pubkey: destination,
+			amount: amount,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
+		};
 
 		// TODO: implement oor fees. Once implemented, we should add an additional
 		// output to each impacted oor payment else the tx would be valid
@@ -988,6 +1020,7 @@ impl Wallet {
 				Some(PaymentRequest {
 					pubkey: change_pubkey,
 					amount: change_amount,
+					spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
 				})
 			} else {
 				None
@@ -1029,19 +1062,12 @@ impl Wallet {
 			pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
 		};
 		let resp = asp.client.request_oor_cosign(req).await.context("cosign request failed")?.into_inner();
-		let len = payment.inputs.len();
-		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
+
+		let asp_pub_nonces = resp.asp_pub_nonces()?;
+		let asp_part_sigs = resp.asp_part_sigs()?;
+		if asp_pub_nonces.len() != payment.inputs.len() || asp_part_sigs.len() != payment.inputs.len() {
 			bail!("invalid length of asp response");
 		}
-
-		let asp_pub_nonces = resp.pub_nonces.into_iter()
-			.map(|b| musig::MusigPubNonce::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp pub nonces")?;
-		let asp_part_sigs = resp.partial_sigs.into_iter()
-			.map(|b| musig::MusigPartialSignature::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp part sigs")?;
 
 		trace!("OOR prevouts: {:?}", payment.inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
@@ -1159,21 +1185,17 @@ impl Wallet {
 		};
 		let resp = asp.client.start_bolt11_payment(req).await
 			.context("htlc request failed")?.into_inner();
-		let len = inputs.len();
-		if resp.pub_nonces.len() != len || resp.partial_sigs.len() != len {
+
+		let asp_pub_nonces = resp.asp_pub_nonces()?;
+		let asp_part_sigs = resp.asp_part_sigs()?;
+		if asp_pub_nonces.len() != inputs.len() || asp_part_sigs.len() != inputs.len() {
 			bail!("invalid length of asp response");
 		}
+
 		let payment = ark::lightning::Bolt11Payment::decode(&resp.details)
 			.context("invalid bolt11 payment details from asp")?;
 
-		let asp_pub_nonces = resp.pub_nonces.into_iter()
-			.map(|b| musig::MusigPubNonce::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp pub nonces")?;
-		let asp_part_sigs = resp.partial_sigs.into_iter()
-			.map(|b| musig::MusigPartialSignature::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid asp part sigs")?;
+
 
 		trace!("htlc prevouts: {:?}", inputs.iter().map(|i| i.spec().txout()).collect::<Vec<_>>());
 		let input_vtxos = payment.inputs.clone();
@@ -1227,15 +1249,11 @@ impl Wallet {
 			};
 
 			let resp = asp.client.revoke_bolt11_payment(req).await?.into_inner();
-
-			let asp_pub_nonces = resp.pub_nonces.into_iter()
-				.map(|b| musig::MusigPubNonce::from_slice(&b))
-				.collect::<Result<Vec<_>, _>>()
-				.context("invalid asp pub nonces")?;
-			let asp_part_sigs = resp.partial_sigs.into_iter()
-				.map(|b| musig::MusigPartialSignature::from_slice(&b))
-				.collect::<Result<Vec<_>, _>>()
-				.context("invalid asp part sigs")?;
+			let asp_pub_nonces = resp.asp_pub_nonces()?;
+			let asp_part_sigs = resp.asp_part_sigs()?;
+			if asp_pub_nonces.len() != inputs.len() || asp_part_sigs.len() != inputs.len() {
+				bail!("invalid length of asp response");
+			}
 
 			let revocation_payment = signed.revocation_payment();
 			let signed_revocation = revocation_payment.sign_finalize_user(
@@ -1270,6 +1288,153 @@ impl Wallet {
 		}
 	}
 
+	/// Create, store and return a bolt11 invoice for offchain onboarding
+	pub async fn bolt11_invoice(&mut self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+		let mut asp = self.require_asp()?;
+
+		let preimage = rand::thread_rng().gen::<[u8; 32]>();
+		let payment_hash = sha256::Hash::hash(&preimage);
+		info!("Start bolt11 onboard with preimage / payment hash: {} / {}",
+			preimage.as_hex(), payment_hash.as_byte_array().as_hex());
+
+		let req = protos::StartBolt11OnboardRequest {
+			payment_hash: payment_hash.as_byte_array().to_vec(),
+			amount_sats: amount.to_sat()
+		};
+
+		let resp = asp.client.start_bolt11_onboard(req).await?.into_inner();
+		info!("Ark Server is ready to receive LN payment to invoice: {}.", resp.bolt11);
+
+		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
+			.context("invalid bolt11 invoice returned by asp")?;
+
+		self.db.store_offchain_onboard(
+			payment_hash.as_byte_array(),
+			&preimage,
+			OffchainPayment::Lightning(invoice.clone())
+		)?;
+
+		Ok(invoice)
+	}
+
+	async fn create_fee_vtxo(&mut self, fees: Amount) -> anyhow::Result<Vtxo> {
+		let pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
+		let oor = self.create_oor_vtxo(pubkey, fees).await?;
+		let receives = [&oor.created].into_iter()
+			.chain(&oor.change)
+			.map(|v| (v, VtxoState::Spendable))
+			.collect::<Vec<_>>();
+
+		// TODO: we should ensure no fee is applied in this send
+		self.db.register_movement(MovementArgs {
+			spends: &oor.input.iter().collect::<Vec<_>>(),
+			receives: &receives,
+			recipients: &[],
+			fees: None
+		})?;
+
+		Ok(oor.created)
+	}
+
+	pub async fn claim_bolt11_payment(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+		let mut asp = self.require_asp()?;
+		let current_height = self.onchain.tip().await?;
+
+		let offchain_onboard = self.db.fetch_offchain_onboard_by_payment_hash(
+			invoice.payment_hash().as_byte_array()
+		)?.context("no offchain onboard found")?;
+
+		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+
+		let amount = Amount::from_msat_floor(
+			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
+		);
+
+		let req = protos::SubscribeBolt11OnboardRequest {
+			bolt11: invoice.to_string(),
+		};
+
+		info!("Waiting payment...");
+		asp.client.subscribe_bolt11_onboard(req).await?.into_inner();
+		info!("Lightning payment arrived!");
+
+		// Create a VTXO to pay receive fees:
+		let fee_vtxo = self.create_fee_vtxo(*LN_ONBOARD_FEE_SATS).await?;
+
+		let cloned = fee_vtxo.clone();
+		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
+			let inputs = vec![cloned.clone()];
+			let htlc_pay_req = PaymentRequest {
+				pubkey: keypair.public_key(),
+				amount: amount,
+				spk: VtxoSpkSpec::HtlcIn {
+					payment_hash: *invoice.payment_hash(),
+					htlc_expiry: current_height + asp.info.vtxo_expiry_delta as u32,
+					exit_delta: asp.info.vtxo_exit_delta,
+				}
+			};
+
+			Ok((inputs, vec![htlc_pay_req], vec![]))
+		}).await.context("round failed")?;
+
+		info!("Got HTLC vtxo in round: {}", vtxos.first().expect("should have one").id());
+
+		// Claiming arkoor against preimage
+		let pay_req = PaymentRequest {
+			pubkey: keypair.public_key(),
+			amount: amount,
+			spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta },
+		};
+
+		let payment = ark::oor::OorPayment::new(
+			asp.info.asp_pubkey,
+			asp.info.vtxo_exit_delta,
+			vtxos,
+			vec![pay_req],
+		);
+		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+
+		let req = protos::ClaimBolt11OnboardRequest {
+			payment: payment.encode(),
+			payment_preimage: offchain_onboard.payment_preimage.to_vec(),
+			pub_nonces: vec![pub_nonce.serialize().to_vec()],
+		};
+
+		info!("Claiming arkoor against payment preimage");
+		let resp = asp.client.claim_bolt11_onboard(req).await?.into_inner();
+		let asp_pub_nonces = resp.asp_pub_nonces()?;
+		let asp_part_sigs = resp.asp_part_sigs()?;
+		if asp_pub_nonces.len() != payment.inputs.len() || asp_part_sigs.len() != payment.inputs.len() {
+			bail!("invalid length of asp response");
+		}
+
+		let signed_payment = payment.sign_finalize_user(
+			vec![sec_nonce],
+			&vec![pub_nonce],
+			&vec![keypair],
+			&asp_pub_nonces,
+			&asp_part_sigs,
+		);
+
+		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_payment.signed_transaction()));
+		let vtxo = Vtxo::from(signed_payment
+			.output_vtxos()
+			.first()
+			.expect("there should be one output")
+			.clone()
+		);
+
+		info!("Got an arkoor from lightning! {}", vtxo.id());
+		self.db.register_movement(MovementArgs {
+			spends: &[&fee_vtxo],
+			receives: &[(&vtxo, VtxoState::Spendable)],
+			recipients: &[],
+			fees: Some(fee_vtxo.amount()),
+		})?;
+
+		Ok(())
+	}
+
 	/// Send to a lightning address.
 	///
 	/// Returns the invoice paid and the preimage.
@@ -1291,6 +1456,8 @@ impl Wallet {
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
+		let asp = self.require_asp()?;
+
 		let balance = self.offchain_balance()?;
 
 		// do a quick check to fail early and not wait for round if we don't have enough money
@@ -1327,6 +1494,7 @@ impl Wallet {
 					Some(PaymentRequest {
 						pubkey: change_keypair.public_key(),
 						amount: amount,
+						spk: VtxoSpkSpec::Exit { exit_delta: asp.info.vtxo_exit_delta }
 					})
 				}
 			};
@@ -1358,6 +1526,7 @@ impl Wallet {
 				pubkey: req.pubkey,
 				amount: req.amount,
 				cosign_pk: ck.public_key(),
+				spk: req.spk,
 			}
 		}).collect::<Vec<_>>();
 
@@ -1402,6 +1571,7 @@ impl Wallet {
 					vtxo_public_key: r.pubkey.serialize().to_vec(),
 					cosign_pubkey: r.cosign_pk.serialize().to_vec(),
 					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
+					vtxo_spk: r.spk.encode().to_vec(),
 				}
 			}).collect(),
 			offboard_requests: offb_reqs.iter().map(|r| {
@@ -1688,6 +1858,7 @@ impl Wallet {
 		info!("Round finished");
 		return Ok(AttemptResult::Success(RoundResult {
 			round_id: signed_round_tx.compute_txid().into(),
+			vtxos: new_vtxos,
 		}))
 	}
 

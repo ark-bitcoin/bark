@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
 use bitcoin_ext::{fee, BlockHeight};
 
-use crate::lightning::htlc_taproot;
+use crate::lightning::{htlc_in_taproot, htlc_out_taproot};
 use crate::board::BoardVtxo;
 use crate::oor::ArkoorVtxo;
 use crate::rounds::RoundVtxo;
@@ -186,10 +186,18 @@ pub fn create_exit_tx(
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub enum VtxoSpkSpec {
+	/// A simple sign-or-exit spk
 	Exit { exit_delta: u16 },
-	Htlc {
+	/// An HTLC from client to server, to atomically receive in the Ark from outside
+	HtlcIn {
+		payment_hash: sha256::Hash,
+		htlc_expiry: u32,
+		exit_delta: u16
+	},
+	/// An HTLC from server to client, to atomically send out of the Ark
+	HtlcOut {
 		payment_hash: sha256::Hash,
 		htlc_expiry: u32,
 		htlc_expiry_delta: u16,
@@ -200,16 +208,21 @@ impl VtxoSpkSpec {
 	pub fn exit_delta(&self) -> Option<u16> {
 		match self {
 			VtxoSpkSpec::Exit { exit_delta } => Some(*exit_delta),
-			VtxoSpkSpec::Htlc { .. } => None,
+			VtxoSpkSpec::HtlcOut { .. } => None,
+			VtxoSpkSpec::HtlcIn { .. } => None,
 		}
 	}
 }
+
+impl Decodable for VtxoSpkSpec {}
+impl Encodable for VtxoSpkSpec {}
 
 impl fmt::Display for VtxoSpkSpec {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match &self {
 			VtxoSpkSpec::Exit { .. } => write!(f, "exit"),
-			VtxoSpkSpec::Htlc { .. } => write!(f, "htlc"),
+			VtxoSpkSpec::HtlcIn { .. } => write!(f, "htlc-in"),
+			VtxoSpkSpec::HtlcOut { .. } => write!(f, "htlc-out"),
 		}
 	}
 }
@@ -238,7 +251,8 @@ impl VtxoSpec {
 	pub fn exit_clause(&self) -> Option<ScriptBuf> {
 		match self.spk {
 			VtxoSpkSpec::Exit { exit_delta } => Some(exit_clause(self.user_pubkey, exit_delta)),
-			VtxoSpkSpec::Htlc { .. } => None,
+			VtxoSpkSpec::HtlcIn { .. } => None,
+			VtxoSpkSpec::HtlcOut { .. } => None,
 		}
 	}
 
@@ -247,9 +261,12 @@ impl VtxoSpec {
 			VtxoSpkSpec::Exit { exit_delta } => {
 				exit_taproot(self.user_pubkey, self.asp_pubkey, exit_delta)
 			},
-			VtxoSpkSpec::Htlc { payment_hash, htlc_expiry, htlc_expiry_delta } => {
-				htlc_taproot(payment_hash, self.asp_pubkey, self.user_pubkey, htlc_expiry_delta, htlc_expiry)
-			}
+			VtxoSpkSpec::HtlcOut { payment_hash, htlc_expiry, htlc_expiry_delta } => {
+				htlc_out_taproot(payment_hash, self.asp_pubkey, self.user_pubkey, htlc_expiry_delta, htlc_expiry)
+			},
+			VtxoSpkSpec::HtlcIn { payment_hash, htlc_expiry, exit_delta } => {
+				htlc_in_taproot(payment_hash, self.asp_pubkey, self.user_pubkey, exit_delta, htlc_expiry)
+			},
 		}
 	}
 

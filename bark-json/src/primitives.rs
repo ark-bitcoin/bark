@@ -5,6 +5,11 @@ use bitcoin::secp256k1::PublicKey;
 use ark::{BoardVtxo, Vtxo, VtxoId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct InvoiceInfo {
+	pub invoice: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UtxoInfo {
 	pub outpoint: OutPoint,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
