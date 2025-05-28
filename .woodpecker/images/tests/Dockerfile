@@ -68,11 +68,13 @@ RUN echo "Installing c-lightning in /lightning/${CLN_VERSION}/bin/" && \
 	mkdir ${CLN_VERSION} && \
 	tar -xvf clightning-v${CLN_VERSION}-Ubuntu-24.04-amd64.tar.xz -C ./${CLN_VERSION} --strip-components=2
 RUN echo "Installing c-lightning hold invoice plugin in /hold/" && \
+	mkdir /plugins && \
     git clone https://github.com/BoltzExchange/hold.git && \
 	cd hold && \
 	git checkout v0.3.0 && \
 	cargo build && \
-	chown root:root /hold/target/debug/hold
+	cp /hold/target/debug/hold /plugins && \
+	chown root:root /plugins/hold
 RUN cd /root/ && \
 	git clone https://github.com/tpoechtrager/osxcross.git && \
 	cd /root/osxcross/tarballs/ && \
