@@ -20,7 +20,7 @@
 	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, rust-overlay }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
-				rustVersion = "1.77.2";
+				rustVersion = "1.78.0";
 				bitcoinVersion = "29.0";
 				lightningVersion = "25.02";
 				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
@@ -106,7 +106,7 @@
 						hash = "sha256-Xkh4ggUSX2xLJQes8cE5jyu2DZut/YRcQq5vsDH7S+k=";
 					};
 					buildAndTestSubdir = "plugins/grpc-plugin";
-					nativeBuildInputs = [ pkgs.protobuf ];
+					nativeBuildInputs = [ rust pkgs.protobuf ];
 					buildInputs = (if isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Security ] else []);
 					cargoDeps = pkgs.rustPlatform.importCargoLock {
 						lockFile = "${src}/Cargo.lock";
@@ -127,7 +127,7 @@
 						rev = "v0.2.2";
 						hash = "sha256-vksvnLV9pcMxJcoylF+r2ezQmauiGGt+/MSNMfS3Gxc=";
 					};
-					nativeBuildInputs = [ pkgs.protobuf ];
+					nativeBuildInputs = [ rust pkgs.protobuf ];
 					buildInputs = [
 						pkgs.sqlite
 						pkgs.postgresql
