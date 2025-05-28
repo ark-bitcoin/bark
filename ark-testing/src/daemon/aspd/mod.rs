@@ -2,7 +2,7 @@
 pub mod proxy;
 pub mod postgresd;
 
-use std::env;
+use std::{env, fs};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -235,7 +235,8 @@ impl DaemonHelper for AspdHelper {
 
 		let config_path = data_dir.join(ASPD_CONFIG_FILE);
 		info!("Preparing to create configuration file at: {}", config_path.display());
-		self.cfg.write_to_file(&config_path)
+		let mut config_file = fs::File::create(&config_path).unwrap();
+		self.cfg.write_into(&mut config_file)
 			.with_context(|| format!("error writing aspd config to '{}'", config_path.display()))?;
 		info!("Configuration file successfully created at: {}", config_path.display());
 
