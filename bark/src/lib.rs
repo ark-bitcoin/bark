@@ -1,4 +1,3 @@
-
 pub extern crate ark;
 pub extern crate bark_json as json;
 
@@ -79,6 +78,7 @@ use crate::onchain::Utxo;
 use crate::persist::BarkPersister;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::VtxoState;
+use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
 
@@ -570,6 +570,8 @@ impl Wallet {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
 		self.register_all_unregistered_boards().await?;
+		info!("Performing maintenance refresh");
+		self.maintenance_refresh().await?;
 		Ok(())
 	}
 
@@ -950,20 +952,45 @@ impl Wallet {
 		Ok(self.offboard(input_vtxos, address).await?)
 	}
 
-	/// Refresh vtxo's.
+	/// Refresh VTXOs.
+	///
+	/// This will refresh all provided VTXOs.
+	///
+	/// If `include_auto_refresh` is set, it will also refresh any VTXO that meets
+	/// must-refresh criterias. Then, if there are some VTXOs to refresh, it will
+	/// also refresh those that meet should-refresh criterias.
 	///
 	/// Returns the [RoundId] of the round if a successful refresh occured.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
-	pub async fn refresh_vtxos(
-		&mut self,
-		vtxos: Vec<Vtxo>
+	pub async fn refresh(
+		&self,
+		vtxos: &[Vtxo],
+		include_auto_refresh: bool,
 	) -> anyhow::Result<Option<RoundId>> {
-		if vtxos.is_empty() {
-			warn!("There is no VTXO to refresh!");
-			return Ok(None)
+		let mut vtxo_by_id = vtxos
+			.iter().map(|v| (v.id(), v.clone())).collect::<HashMap<_, _>>();
+
+		if include_auto_refresh || vtxo_by_id.is_empty() {
+			let tip = self.onchain.tip().await?;
+
+			let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip))?;
+			info!("Refreshing {} must-refresh VTXOs.", must_refresh_vtxos.len());
+			vtxo_by_id.extend(must_refresh_vtxos.into_iter().map(|v| (v.id(), v)));
+
+			// If no vtxos were specified and we don't have must-refresh vtxos, we can stop here.
+			if vtxo_by_id.is_empty() {
+				warn!("There is no VTXO to refresh.");
+				return Ok(None)
+			}
+
+			// If we have vtxos to refresh, we take the opportunity to refresh some should-refresh vtxos.
+			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
+			info!("Refreshing {} should-refresh VTXOs.", should_refresh_vtxos.len());
+			vtxo_by_id.extend(should_refresh_vtxos.into_iter().map(|v| (v.id(), v)));
 		}
 
-		let total_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		let input_vtxos = vtxo_by_id.values().cloned().collect::<Vec<_>>();
+		let total_amount = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let payment_request = PaymentRequest {
@@ -973,9 +1000,14 @@ impl Wallet {
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
+			Ok((input_vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
 		Ok(Some(round_id))
+	}
+
+	/// Performs a refresh of all VTXOs that are due to be refreshed, if any.
+	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
+		self.refresh(&[], true).await
 	}
 
 	/// Find a single vtxo to fit the provided amount
