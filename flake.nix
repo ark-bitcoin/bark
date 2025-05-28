@@ -139,6 +139,10 @@
 					};
 					doCheck = false;
 				};
+				cln-plugins = pkgs.linkFarm "plugins" {
+					"cln-grpc" = "${cln-grpc}/bin/cln-grpc";
+					"hold" = "${hold-invoice}/bin/hold";
+				};
 			in
 			{
 				devShells.default = pkgs.mkShell {
@@ -180,8 +184,7 @@
 					# Use Docker for Core Lightning on macOS by default instead of a local daemon
 					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
 					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "acidbunny21/cln-hodl:v24.08.2.0" else null);
-					LIGHTNINGD_GRPC_PLUGIN = "${cln-grpc}/bin/";
-					HODL_INVOICE_PLUGIN = (if isDarwin then "/hold/target/debug/hold" else "${hold-invoice}/bin/");
+					LIGHTNINGD_PLUGIN_DIR = "${cln-plugins}";
 
 					POSTGRES_BINS = "${pkgs.postgresql}/bin";
 				};

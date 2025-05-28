@@ -13,8 +13,7 @@ pub mod env {
 	pub const ASPD_EXEC: &str = "ASPD_EXEC";
 	pub const LIGHTNINGD_DOCKER_IMAGE: &str = "LIGHTNINGD_DOCKER_IMAGE";
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
-	pub const LIGHTNINGD_GRPC_PLUGIN: &str = "LIGHTNINGD_GRPC_PLUGIN";
-	pub const HODL_INVOICE_PLUGIN: &str = "HODL_INVOICE_PLUGIN";
+	pub const LIGHTNINGD_PLUGIN_DIR: &str = "LIGHTNINGD_PLUGIN_DIR";
 	pub const CHAIN_SOURCE: &str = "CHAIN_SOURCE";
 	// If a daemon isn't initialized in DAEMON_INIT_TIMEOUT_MILLIS
 	// the test will fail

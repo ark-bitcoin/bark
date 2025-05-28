@@ -18,7 +18,7 @@ use cln_rpc::node_client::NodeClient;
 
 use crate::Bitcoind;
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
-use crate::constants::env::{HODL_INVOICE_PLUGIN, LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_GRPC_PLUGIN};
+use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGIN_DIR};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
@@ -145,7 +145,7 @@ impl LightningDHelper {
 		writeln!(file, "bitcoin-rpcport={}", self.config.bitcoin_rpcport).unwrap();
 		writeln!(file, "bitcoin-rpcuser={}", BITCOINRPC_TEST_USER).unwrap();
 		writeln!(file, "bitcoin-rpcpassword={}", BITCOINRPC_TEST_PASSWORD).unwrap();
-		if let Ok(dir) = env::var(LIGHTNINGD_GRPC_PLUGIN) {
+		if let Ok(dir) = env::var(LIGHTNINGD_PLUGIN_DIR) {
 			trace!("Adding plugin-dir to lightningd: {}", dir);
 			writeln!(file, "plugin-dir={}", dir).unwrap();
 		}
@@ -165,14 +165,8 @@ impl LightningDHelper {
 			writeln!(file, "addr=0.0.0.0:{}", port).unwrap();
 		}
 
-		if let Ok(dir) = env::var(HODL_INVOICE_PLUGIN) {
-			writeln!(file, "").unwrap();
-			writeln!(file, "# Hodl plugin").unwrap();
-			writeln!(file, "important-plugin={}", dir).unwrap();
-
-			if let Some(hodl_port) = self.state.lock().await.hodl_port {
-				writeln!(file, "hold-grpc-port={}", hodl_port).unwrap();
-			}
+		if let Some(hodl_port) = self.state.lock().await.hodl_port {
+			writeln!(file, "hold-grpc-port={}", hodl_port).unwrap();
 		}
 
 	}
