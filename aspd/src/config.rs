@@ -165,6 +165,10 @@ pub struct Config {
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub forfeit_watcher_min_balance: Amount,
 
+	// The interval used to rebroadcast transactions
+	#[serde(with = "serde_util::duration")]
+	pub transaction_rebroadcast_interval: Duration,
+
 	pub rpc: Rpc,
 	pub postgres: Postgres,
 
@@ -189,6 +193,8 @@ pub struct Config {
 	/// generated invoice will be cancelled if not settled yet.
 	#[serde(with = "serde_util::duration")]
 	pub htlc_subscription_timeout: Duration,
+
+
 
 	// compatibility flags
 
@@ -225,6 +231,8 @@ impl Default for Config {
 			vtxo_sweeper: Default::default(),
 			forfeit_watcher: Default::default(),
 			forfeit_watcher_min_balance: Amount::from_sat(10_000_000),
+
+			transaction_rebroadcast_interval: std::time::Duration::from_secs(60),
 
 			rpc: Rpc {
 				public_address: "127.0.0.1:3535".parse().unwrap(),

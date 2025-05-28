@@ -247,6 +247,7 @@ impl TestContext {
 				wake_interval: Duration::from_millis(1_000),
 			},
 			forfeit_watcher_min_balance: Amount::from_sat(1_000_000),
+			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty
 				public_address: SocketAddr::from_str("127.0.0.1:3535").unwrap(),

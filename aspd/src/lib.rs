@@ -56,6 +56,7 @@ use crate::round::RoundInput;
 use crate::system::RuntimeManager;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
+use crate::txindex::broadcast::{TxNursery, TxBroadcastHandle};
 use crate::sweeps::VtxoSweeper;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
@@ -85,6 +86,7 @@ pub struct Server {
 
 	rtmgr: RuntimeManager,
 	txindex: TxIndex,
+	tx_broadcast_handle: TxBroadcastHandle,
 	vtxo_sweeper: VtxoSweeper,
 	rounds: RoundHandle,
 	forfeits: ForfeitWatcher,
@@ -210,6 +212,13 @@ impl Server {
 			cfg.txindex_check_interval,
 		);
 
+		let tx_nursery = TxNursery::new(
+			rtmgr.clone(),
+			txindex.clone(),
+			bitcoind.clone(),
+			cfg.transaction_rebroadcast_interval,
+		);
+
 		let vtxo_sweeper = VtxoSweeper::start(
 			rtmgr.clone(),
 			cfg.vtxo_sweeper.clone(),
@@ -217,6 +226,7 @@ impl Server {
 			bitcoind.clone(),
 			db.clone(),
 			txindex.clone(),
+			tx_nursery.broadcast_handle(),
 			asp_key.clone(),
 			rounds_wallet.reveal_next_address(
 				bdk_wallet::KeychainKind::External,
@@ -230,6 +240,7 @@ impl Server {
 			bitcoind.clone(),
 			db.clone(),
 			txindex.clone(),
+			tx_nursery.broadcast_handle(),
 			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 				.expect("can't error"),
 			asp_key.clone(),
@@ -256,6 +267,7 @@ impl Server {
 			bitcoind,
 			rtmgr,
 			txindex,
+			tx_broadcast_handle: tx_nursery.broadcast_handle(),
 			vtxo_sweeper,
 			forfeits,
 			cln,
@@ -289,6 +301,13 @@ impl Server {
 				info!("Admin RPC server exited with {:?}", res);
 			});
 		}
+
+		// Broadcast manager
+		tokio::spawn(async move {
+			let res = tx_nursery.run()
+				.await.context("Error from TransactionBroadcastManager");
+			info!("TransactionBroadcastManager exited with {:?}", res);
+		});
 
 		Ok(srv)
 	}
@@ -345,7 +364,7 @@ impl Server {
 				};
 				drop(wallet);
 
-				let tx = self.txindex.broadcast_tx(tx).await;
+				let tx = self.tx_broadcast_handle.broadcast_tx(tx).await;
 				// wait until it's actually broadcast
 				tokio::time::timeout(Duration::from_millis(5_000), async {
 					loop {

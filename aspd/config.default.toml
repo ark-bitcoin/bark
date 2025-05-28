@@ -13,6 +13,7 @@ round_tx_feerate = "2500sat/kwu"
 rpc_rich_errors = true
 txindex_check_interval = "30s"
 forfeit_watcher_min_balance = 10000000
+transaction_rebroadcast_interval = "1m"
 cln_array = []
 cln_reconnect_interval = "10s"
 invoice_check_interval = "3s"

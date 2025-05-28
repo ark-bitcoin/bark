@@ -6,9 +6,7 @@ use anyhow::Context;
 use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
 use bitcoin::hashes::Hash;
 use bitcoin::key::Keypair;
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
-use bitcoin_ext::{KeypairExt, TransactionExt};
-use bitcoin_ext::bdk::WalletExt;
+
 use log::{error, debug, info, trace, warn};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -17,11 +15,15 @@ use ark::{musig, Vtxo, VtxoId};
 use ark::connectors::{ConnectorChain, ConnectorIter};
 use ark::rounds::RoundId;
 use aspd_rpc as rpc;
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoin_ext::{KeypairExt, TransactionExt};
+use bitcoin_ext::bdk::WalletExt;
 
 use crate::database::model::{ForfeitClaimState, ForfeitRoundState, ForfeitState, StoredRound};
 use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
 use crate::txindex::{Tx, TxIndex};
+use crate::txindex::broadcast::TxBroadcastHandle;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
 use crate::{serde_util, SECP, database, telemetry};
 
@@ -257,7 +259,7 @@ impl ClaimState {
 			.context("error making cpfp tx for connector")?;
 		let cpfp = proc.wallet.finish_tx(psbt)?;
 
-		let txs = proc.txindex.broadcast_pkg([connector_tx, cpfp]).await;
+		let txs = proc.broadcaster.broadcast_pkg([connector_tx, cpfp]).await;
 		let [conn, cpfp] = txs.try_into().unwrap();
 		debug!("Broadcasted cpfp tx {} for connector tx {}", cpfp.txid, conn.txid);
 		Ok((conn, cpfp))
@@ -293,6 +295,7 @@ struct Process {
 	config: Config,
 	db: database::Db,
 	txindex: TxIndex,
+	broadcaster: TxBroadcastHandle,
 	bitcoind: BitcoinRpcClient,
 	wallet: PersistedWallet,
 	asp_key: Keypair,
@@ -441,7 +444,7 @@ impl Process {
 				.context("error making cpfp tx for forfeit")?;
 			let cpfp = self.wallet.finish_tx(psbt)?;
 
-			let txs = self.txindex.broadcast_pkg([claim.forfeit_tx.tx.clone(), cpfp]).await;
+			let txs = self.broadcaster.broadcast_pkg([claim.forfeit_tx.tx.clone(), cpfp]).await;
 			let [forfeit, cpfp] = txs.try_into().unwrap();
 			debug!("Broadcasted cpfp tx {} for forfeit tx {}", cpfp.txid, forfeit.txid);
 			slog!(ForfeitBroadcasted, forfeit_txid: forfeit.txid, vtxo: claim.vtxo, cpfp_txid: cpfp.txid);
@@ -573,6 +576,7 @@ impl ForfeitWatcher {
 		bitcoind: BitcoinRpcClient,
 		db: database::Db,
 		txindex: TxIndex,
+		broadcaster: TxBroadcastHandle,
 		wallet_xpriv: bip32::Xpriv,
 		asp_key: Keypair,
 	) -> anyhow::Result<Self> {
@@ -587,7 +591,7 @@ impl ForfeitWatcher {
 		).await.context("error loading ForfeitWatcher wallet")?;
 
 		let mut proc = Process {
-			config, db: db.clone(), txindex, bitcoind, wallet, asp_key,
+			config, db: db.clone(), txindex, bitcoind, wallet, asp_key, broadcaster,
 			exit_txs: Vec::new(),
 			rounds: HashMap::new(),
 			claims: Vec::new(),

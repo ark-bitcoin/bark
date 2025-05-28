@@ -60,6 +60,7 @@ use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
 use crate::txindex::{self, TxIndex};
+use crate::txindex::broadcast::TxBroadcastHandle;
 use crate::wallet::BdkWalletExt;
 use crate::{database, serde_util, telemetry, SECP};
 
@@ -524,6 +525,7 @@ struct Process {
 	bitcoind: BitcoinRpcClient,
 	db: database::Db,
 	txindex: TxIndex,
+	tx_broadcaster: TxBroadcastHandle,
 	wallet: bdk_wallet::Wallet,
 	asp_key: Keypair,
 	drain_address: Address,
@@ -549,7 +551,7 @@ impl Process {
 		self.db.store_pending_sweep(&txid, &tx).await
 			.with_context(|| format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
 
-		let tx = self.txindex.broadcast_tx(tx).await;
+		let tx = self.tx_broadcaster.broadcast_tx(tx).await;
 		self.store_pending(tx);
 		Ok(())
 	}
@@ -789,6 +791,7 @@ impl VtxoSweeper {
 		bitcoind: BitcoinRpcClient,
 		db: database::Db,
 		txindex: TxIndex,
+		tx_broadcaster: TxBroadcastHandle,
 		asp_key: Keypair,
 		drain_address: Address,
 	) -> anyhow::Result<Self> {
@@ -810,13 +813,13 @@ impl VtxoSweeper {
 			.context("error fetching pending sweeps")?;
 
 		let mut proc = Process {
-			config, bitcoind, db, txindex, wallet, asp_key, drain_address,
+			config, bitcoind, db, txindex, wallet, asp_key, drain_address, tx_broadcaster,
 			pending_txs: HashMap::with_capacity(raw_pending.len()),
 			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
 		};
 
 		for (_txid, raw_tx) in raw_pending {
-			let tx = proc.txindex.broadcast_tx(raw_tx).await;
+			let tx = proc.tx_broadcaster.broadcast_tx(raw_tx).await;
 			proc.store_pending(tx);
 		}
 
