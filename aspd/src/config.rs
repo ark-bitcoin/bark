@@ -130,6 +130,8 @@ pub struct Config {
 	/// Maximum value any vtxo can have.
 	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
 	pub max_vtxo_amount: Option<Amount>,
+	/// Maximum number of OOR transition after VTXO tree leaf
+	pub max_arkoor_depth: u16,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.
 	pub round_board_confirmations: usize,
 	/// Number of confirmations untrusted inputs of the round tx need to have.
@@ -212,6 +214,7 @@ impl Default for Config {
 			htlc_expiry_delta: 6,
 
 			max_vtxo_amount: None,
+			max_arkoor_depth: 5,
 			round_board_confirmations: 12,
 			round_tx_untrusted_input_confirmations: 2,
 

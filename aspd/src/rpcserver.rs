@@ -295,6 +295,7 @@ impl rpc::server::ArkService for Server {
 			vtxo_expiry_delta: self.config.vtxo_expiry_delta,
 			htlc_expiry_delta: self.config.htlc_expiry_delta,
 			max_vtxo_amount: self.config.max_vtxo_amount,
+			max_arkoor_depth: self.config.max_arkoor_depth,
 		};
 
 		let res = match alpha_version {

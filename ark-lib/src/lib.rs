@@ -45,6 +45,7 @@ pub struct ArkInfo {
 	pub vtxo_expiry_delta: u16,
 	pub htlc_expiry_delta: u16,
 	pub max_vtxo_amount: Option<Amount>,
+	pub max_arkoor_depth: u16,
 }
 
 /// Input of a round

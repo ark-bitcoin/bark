@@ -476,6 +476,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					vtxo_expiry_delta: info.vtxo_expiry_delta,
 					vtxo_exit_delta: info.vtxo_exit_delta,
 					max_vtxo_amount: info.max_vtxo_amount,
+					max_arkoor_depth: info.max_arkoor_depth,
 				});
 			} else {
 				warn!("Could not connect with Ark server.")
