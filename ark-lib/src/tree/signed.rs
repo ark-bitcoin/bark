@@ -682,7 +682,7 @@ impl CachedSignedVtxoTree {
 					expiry_height: self.spec.spec.expiry_height,
 					amount: req.amount,
 					exit_delta: self.spec.spec.exit_delta,
-					spk: VtxoSpkSpec::Exit,
+					spk: req.spk,
 				},
 				leaf_idx: idx,
 				exit_branch: self.exit_branch(idx).unwrap().into_iter().cloned().collect(),
