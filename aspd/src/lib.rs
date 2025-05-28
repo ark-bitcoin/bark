@@ -418,12 +418,8 @@ impl Server {
 			bail!("vtxo already expired: {} (tip = {})", spec.expiry_height, tip.height);
 		}
 
-		let exit_delta = spec.spk
-			.exit_delta()
-			.with_context(|| format!("VTXO spk must be exit variant. Found: {}", spec.spk))?;
-
-		if exit_delta != self.config.vtxo_exit_delta {
-			bail!("invalid exit delta: {} != {}", exit_delta, self.config.vtxo_exit_delta);
+		if spec.exit_delta != self.config.vtxo_exit_delta {
+			bail!("invalid exit delta: {} != {}", spec.exit_delta, self.config.vtxo_exit_delta);
 		}
 
 		Ok(())
@@ -604,8 +600,6 @@ impl Server {
 			user_pubkey: user_pk,
 			payment_amount: amount,
 			forwarding_fee: Amount::ZERO, //TODO(stevenroose) set fee schedule
-			htlc_delta: self.config.htlc_delta,
-			htlc_expiry_delta: self.config.htlc_expiry_delta,
 			htlc_expiry: expiry,
 			exit_delta: self.config.vtxo_exit_delta,
 		};
@@ -739,7 +733,7 @@ impl Server {
 		signed.validate_signatures(&crate::SECP)
 			.badarg("bad signatures on payment")?;
 
-		if signed.htlc_vtxo().spec().asp_pubkey != self.asp_key.public_key() {
+		if signed.htlc_vtxo().asp_pubkey() != self.asp_key.public_key() {
 			bail!("Payment wasn't signed with ASP's pubkey")
 		}
 

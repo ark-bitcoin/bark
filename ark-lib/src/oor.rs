@@ -16,7 +16,7 @@ use crate::vtxo::VtxoSpkSpec;
 use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 
 pub fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction) -> Vec<TapSighash> {
-	let prevs = input_vtxos.iter().map(|i| i.borrow().spec().txout()).collect::<Vec<_>>();
+	let prevs = input_vtxos.iter().map(|i| i.borrow().txout()).collect::<Vec<_>>();
 	let mut shc = SighashCache::new(oor_tx);
 
 	(0..input_vtxos.len()).map(|idx| {
@@ -108,7 +108,7 @@ impl OorPayment {
 	}
 
 	fn expiry_height(&self) -> BlockHeight {
-		self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap()
+		self.inputs.iter().map(|i| i.expiry_height()).min().unwrap()
 	}
 
 	fn output_specs(&self) -> Vec<VtxoSpec> {
@@ -117,8 +117,9 @@ impl OorPayment {
 				user_pubkey: o.pubkey,
 				amount: o.amount,
 				expiry_height: expiry_height,
+				exit_delta: self.exit_delta,
 				asp_pubkey: self.asp_pubkey,
-				spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
+				spk: VtxoSpkSpec::Exit,
 		}).collect::<Vec<_>>()
 	}
 
@@ -151,7 +152,7 @@ impl OorPayment {
 		let mut pub_nonces = Vec::with_capacity(self.inputs.len());
 		let mut part_sigs = Vec::with_capacity(self.inputs.len());
 		for (idx, input) in self.inputs.iter().enumerate() {
-			assert_eq!(keypair.public_key(), input.spec().asp_pubkey);
+			assert_eq!(keypair.public_key(), input.asp_pubkey());
 			let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
 				keypair,
 				[input.spec().user_pubkey],
@@ -187,7 +188,7 @@ impl OorPayment {
 			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
 			let agg_nonce = musig::nonce_agg(&[&user_pub_nonces[idx], &asp_nonces[idx]]);
 			let (_part_sig, final_sig) = musig::partial_sign(
-				[input.spec().user_pubkey, input.spec().asp_pubkey],
+				[input.spec().user_pubkey, input.asp_pubkey()],
 				agg_nonce,
 				keypair,
 				sec_nonce,
@@ -281,5 +282,13 @@ impl ArkoorVtxo {
 
 	pub fn spec(&self) -> &VtxoSpec {
 		&self.output_specs[self.point.vout as usize]
+	}
+
+	pub fn amount(&self) -> Amount {
+		self.spec().amount
+	}
+
+	pub fn asp_pubkey(&self) -> PublicKey {
+		self.spec().asp_pubkey
 	}
 }

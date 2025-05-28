@@ -154,7 +154,7 @@ impl Db {
 			let vtxo = vtxo.borrow();
 			ids.push(vtxo.id().to_string());
 			data.push(vtxo.encode());
-			expiry.push(vtxo.spec().expiry_height as i32);
+			expiry.push(vtxo.expiry_height() as i32);
 		}
 
 		client.execute(

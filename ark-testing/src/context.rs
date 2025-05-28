@@ -224,7 +224,6 @@ impl TestContext {
 			network: Network::Regtest,
 			vtxo_expiry_delta: 144,
 			vtxo_exit_delta: 12,
-			htlc_delta: 6,
 			htlc_expiry_delta: 6,
 			round_interval: Duration::from_millis(500),
 			round_submit_time: Duration::from_millis(500),

@@ -125,7 +125,6 @@ pub struct Config {
 	pub network: bitcoin::Network,
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
-	pub htlc_delta: u16,
 	pub htlc_expiry_delta: u16,
 
 	/// Maximum value any vtxo can have.
@@ -204,7 +203,6 @@ impl Default for Config {
 			network: bitcoin::Network::Regtest,
 			vtxo_expiry_delta: 24 * 6,
 			vtxo_exit_delta: 2 * 6,
-			htlc_delta: 6,
 			htlc_expiry_delta: 6,
 
 			max_vtxo_amount: None,

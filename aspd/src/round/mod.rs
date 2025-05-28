@@ -67,7 +67,7 @@ fn validate_forfeit_sigs(
 	}
 
 	let (key_agg, _) = musig::tweaked_key_agg(
-		[vtxo.spec().user_pubkey, vtxo.spec().asp_pubkey],
+		[vtxo.spec().user_pubkey, vtxo.asp_pubkey()],
 		vtxo.spec().vtxo_taptweak().to_byte_array(),
 	);
 	for (idx, (conn, _tx)) in connectors.connectors().enumerate() {
@@ -501,7 +501,7 @@ impl CollectingPayments {
 				pubkey: *UNSPENDABLE,
 				amount: P2WSH_DUST,
 				cosign_pk: cosign_key.public_key(),
-				spk: VtxoSpkSpec::Exit { exit_delta: server.config.vtxo_exit_delta },
+				spk: VtxoSpkSpec::Exit,
 			};
 			self.all_outputs.push(VtxoParticipant {
 				req: req.clone(),
@@ -1653,7 +1653,8 @@ mod tests {
 			user_pubkey: generate_pubkey(),
 			asp_pubkey: *TEST_ASP_PK,
 			expiry_height: 100_000,
-			spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
+			exit_delta: 2016,
+			spk: VtxoSpkSpec::Exit,
 			amount: Amount::from_sat(amount),
 		}
 	}
@@ -1693,7 +1694,7 @@ mod tests {
 			pubkey: generate_pubkey(),
 			amount: Amount::from_sat(amount),
 			cosign_pk: generate_pubkey(),
-			spk: VtxoSpkSpec::Exit { exit_delta: 2016 },
+			spk: VtxoSpkSpec::Exit,
 		}
 	}
 

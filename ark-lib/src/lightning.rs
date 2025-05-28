@@ -10,7 +10,7 @@ use lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::{fee, AmountExt, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::oor::OorPayment;
-use crate::util::{Decodable, Encodable};
+use crate::util::{Decodable, Encodable, SECP};
 use crate::vtxo::{exit_spk, VtxoSpkSpec};
 use crate::{musig, util, ArkoorVtxo, PaymentRequest, Vtxo, VtxoSpec};
 
@@ -29,10 +29,6 @@ pub struct Bolt11Payment {
 	pub user_pubkey: PublicKey,
 	pub payment_amount: Amount,
 	pub forwarding_fee: Amount,
-	/// Set the HTLC
-	pub htlc_delta: u16,
-	/// Relative time-lock enforced on claiming the HTLC expiry
-	pub htlc_expiry_delta: u16,
 	/// The expiration-height of the HTLC granted from client to ASP
 	pub htlc_expiry: u32,
 	pub exit_delta: u16,
@@ -62,17 +58,21 @@ pub fn htlc_out_taproot(
 	payment_hash: sha256::Hash,
 	asp_pubkey: PublicKey,
 	user_pubkey: PublicKey,
-	htlc_expiry_delta: u16,
+	exit_delta: u16,
 	htlc_expiry: u32) -> TaprootSpendInfo
 {
-	let asp_branch = util::hash_and_sign(payment_hash, asp_pubkey.x_only_public_key().0);
-	let user_branch = util::delay_timelock_sign(htlc_expiry_delta, htlc_expiry, user_pubkey.x_only_public_key().0);
+	let asp_branch = util::hash_delay_sign(
+		payment_hash, exit_delta, asp_pubkey.x_only_public_key().0,
+	);
+	let user_branch = util::delay_timelock_sign(
+		2 * exit_delta, htlc_expiry, user_pubkey.x_only_public_key().0,
+	);
 
 	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
 	bitcoin::taproot::TaprootBuilder::new()
 		.add_leaf(1, asp_branch).unwrap()
 		.add_leaf(1, user_branch).unwrap()
-		.finalize(&util::SECP, combined_pk).unwrap()
+		.finalize(&SECP, combined_pk).unwrap()
 }
 
 /// Build taproot spend info to build a VTXO for Alice lightning onboard
@@ -102,17 +102,14 @@ pub fn htlc_in_taproot(
 	let user_branch = util::hash_delay_sign(
 		payment_hash,
 		2 * exit_delta,
-		asp_pubkey.x_only_public_key().0,
+		user_pubkey.x_only_public_key().0,
 	);
 
 	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
 	bitcoin::taproot::TaprootBuilder::new()
-		.add_leaf(1, asp_branch)
-		.unwrap()
-		.add_leaf(1, user_branch)
-		.unwrap()
-		.finalize(&util::SECP, combined_pk)
-		.unwrap()
+		.add_leaf(1, asp_branch).unwrap()
+		.add_leaf(1, user_branch).unwrap()
+		.finalize(&SECP, combined_pk).unwrap()
 }
 
 impl Bolt11Payment {
@@ -154,7 +151,7 @@ impl Bolt11Payment {
 			*self.invoice.payment_hash(),
 			self.asp_pubkey,
 			self.user_pubkey,
-			self.htlc_expiry_delta,
+			self.exit_delta,
 			self.htlc_expiry,
 		);
 
@@ -239,7 +236,7 @@ impl Bolt11Payment {
 	}
 
 	pub fn htlc_sighashes(&self) -> Vec<bitcoin::TapSighash> {
-		let prevouts = self.inputs.iter().map(|v| v.spec().txout()).collect::<Vec<_>>();
+		let prevouts = self.inputs.iter().map(|v| v.txout()).collect::<Vec<_>>();
 
 		let tx = self.unsigned_transaction();
 		let mut shc = bitcoin::sighash::SighashCache::new(tx);
@@ -251,17 +248,17 @@ impl Bolt11Payment {
 	}
 
 	fn outputs(&self) -> Vec<VtxoSpec> {
-		let expiry_height = self.inputs.iter().map(|i| i.spec().expiry_height).min().unwrap();
+		let expiry_height = self.inputs.iter().map(|i| i.expiry_height()).min().unwrap();
 
 		let htlc_output = VtxoSpec {
 			amount: self.htlc_amount(),
 			expiry_height: expiry_height,
 			asp_pubkey: self.asp_pubkey,
+			exit_delta: self.exit_delta,
 			user_pubkey: self.user_pubkey,
 			spk: VtxoSpkSpec::HtlcOut {
 				payment_hash: *self.invoice.payment_hash(),
 				htlc_expiry: self.htlc_expiry,
-				htlc_expiry_delta: self.htlc_expiry_delta,
 			},
 		};
 
@@ -270,8 +267,9 @@ impl Bolt11Payment {
 				amount: txout.value,
 				expiry_height: expiry_height,
 				asp_pubkey: self.asp_pubkey,
+				exit_delta: self.exit_delta,
 				user_pubkey: self.user_pubkey,
-				spk: VtxoSpkSpec::Exit { exit_delta: self.exit_delta },
+				spk: VtxoSpkSpec::Exit,
 			};
 
 			return vec![htlc_output, change_output];
@@ -312,7 +310,7 @@ impl Bolt11Payment {
 		let mut pub_nonces = Vec::with_capacity(self.inputs.len());
 		let mut part_sigs = Vec::with_capacity(self.inputs.len());
 		for (idx, input) in self.inputs.iter().enumerate() {
-			assert_eq!(keypair.public_key(), input.spec().asp_pubkey);
+			assert_eq!(keypair.public_key(), input.asp_pubkey());
 			let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
 				keypair,
 				[input.spec().user_pubkey],
@@ -347,7 +345,7 @@ impl Bolt11Payment {
 			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
 			let agg_nonce = musig::nonce_agg(&[&our_pub_nonces[idx], &asp_nonces[idx]]);
 			let (_part_sig, final_sig) = musig::partial_sign(
-				[input.spec().user_pubkey, input.spec().asp_pubkey],
+				[input.spec().user_pubkey, input.asp_pubkey()],
 				agg_nonce,
 				keypair,
 				sec_nonce,
@@ -356,7 +354,7 @@ impl Bolt11Payment {
 				Some(&[&asp_part_sigs[idx]]),
 			);
 			let final_sig = final_sig.expect("we provided the other sig");
-			debug_assert!(util::SECP.verify_schnorr(
+			debug_assert!(SECP.verify_schnorr(
 				&final_sig,
 				&sighashes[idx].into(),
 				&input.spec().taproot_pubkey(),
@@ -415,11 +413,11 @@ impl SignedBolt11Payment {
 		let pay_req = PaymentRequest {
 			pubkey: htlc_vtxo.spec().user_pubkey,
 			amount: htlc_vtxo.amount(),
-			spk: VtxoSpkSpec::Exit { exit_delta: self.payment.exit_delta },
+			spk: VtxoSpkSpec::Exit,
 		};
 
 		OorPayment {
-			asp_pubkey: htlc_vtxo.spec().asp_pubkey,
+			asp_pubkey: htlc_vtxo.asp_pubkey(),
 			exit_delta: self.payment.exit_delta,
 			inputs: vec![htlc_vtxo],
 			outputs: vec![pay_req],

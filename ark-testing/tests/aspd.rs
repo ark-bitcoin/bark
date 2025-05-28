@@ -833,9 +833,7 @@ async fn bad_round_input() {
 			let (_sec, pb) = musig::nonce_pair(&key);
 			pb.serialize().to_vec()
 		}).take(ark_info.nb_round_nonces as usize).collect(),
-		vtxo_spk: VtxoSpkSpec::Exit {
-			exit_delta: aspd.config().vtxo_exit_delta,
-		}.encode().to_vec(),
+		vtxo_spk: VtxoSpkSpec::Exit.encode().to_vec(),
 	};
 	let offb_req = protos::OffboardRequest {
 		amount: 1000,
