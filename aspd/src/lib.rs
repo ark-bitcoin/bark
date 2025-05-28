@@ -554,6 +554,11 @@ impl Server {
 			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
 		};
 
+		if input.arkoor_depth() >= self.config.max_arkoor_depth {
+			return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
+				self.config.max_arkoor_depth, input.id());
+		}
+
 		self.validate_board_inputs(&[input])
 			.map_err(|e| e.context("arkoor cosign failed"))?;
 
@@ -599,6 +604,11 @@ impl Server {
 			Ok(l) => l,
 			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
 		};
+
+		if input_vtxo.arkoor_depth() >= self.config.max_arkoor_depth {
+			return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
+				self.config.max_arkoor_depth, input_vtxo.id());
+		}
 
 		if let Err(e) = self.validate_board_inputs(&[&input_vtxo]) {
 			return Err(e).context("oor cosign failed");
