@@ -310,11 +310,10 @@ async fn bark_rejects_creating_arkoor_subdust_change() {
 	assert!(res.unwrap_err()
 		.to_string()
 		.contains(&format!(
-			"no input found to fit amount: required: {}, best: {}",
+			"No input found to fit amount: required: {}",
 			// sent amount (799_671) + change (330)
 			sat(800_001),
-			board_amount)
-		)
+		))
 	);
 	assert_eq!(bark1.offchain_balance().await, board_amount);
 }

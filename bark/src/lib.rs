@@ -979,27 +979,37 @@ impl Wallet {
 	}
 
 	/// Find a single vtxo to fit the provided amount
-	fn find_vtxo_to_fit(&self, amount: Amount) -> anyhow::Result<Vtxo> {
+	fn find_vtxo_to_fit(&self, amount: Amount, max_depth: Option<u16>) -> anyhow::Result<Vtxo> {
 		let mut inputs = self.db.get_all_spendable_vtxos()?;
 		inputs.sort_by_key(|v| v.amount());
 
-		if let Some(input) = inputs.iter().find(|v| v.amount() >= amount + P2TR_DUST) {
-			Ok(input.clone())
-		} else {
-			bail!("no input found to fit amount: required: {}, best: {}", amount, inputs.last().map(|v| v.amount()).unwrap_or(Amount::ZERO))
-		}
+		inputs.into_iter().find(|v| {
+			// VTXO must match higher than amount and have lower depth than max_depth, if provided
+			v.amount() >= amount + P2TR_DUST && Some(v.arkoor_depth()) < max_depth
+		}).ok_or({
+			anyhow!("No input found to fit amount: required: {}", amount)
+		})
 	}
 
 	/// Select several vtxos to cover the provided amount
 	///
 	/// Returns an error if amount cannot be reached
-	fn select_vtxos_to_cover(&self, amount: Amount) -> anyhow::Result<Vec<Vtxo>> {
+	///
+	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
+	fn select_vtxos_to_cover(&self, amount: Amount, max_depth: Option<u16>) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.db.get_all_spendable_vtxos()?;
 
 		// Iterate over all rows until the required amount is reached
 		let mut result = Vec::new();
 		let mut total_amount = bitcoin::Amount::ZERO;
 		for input in inputs {
+			if let Some(max_depth) = max_depth {
+				if input.arkoor_depth() >= max_depth {
+					warn!("VTXO {} reached max depth of {}, skipping it. Please refresh your VTXO.", input.id(), max_depth);
+					continue;
+				}
+			}
+
 			total_amount += input.amount();
 			result.push(input);
 
@@ -1033,7 +1043,7 @@ impl Wallet {
 		let offchain_fees = Amount::ZERO;
 		let spent_amount = amount + offchain_fees;
 
-		let input = self.find_vtxo_to_fit(spent_amount + P2TR_DUST)?;
+		let input = self.find_vtxo_to_fit(spent_amount + P2TR_DUST, Some(asp.info.max_arkoor_depth))?;
 
 		let change = {
 			// At this point, `sum` is >= to `spent_amount`
@@ -1156,7 +1166,7 @@ impl Wallet {
 
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
-		let input = self.find_vtxo_to_fit(amount)?;
+		let input = self.find_vtxo_to_fit(amount, Some(asp.info.max_arkoor_depth))?;
 
 		let keypair = {
 			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
@@ -1434,7 +1444,7 @@ impl Wallet {
 			};
 
 			let spent_amount = offb.amount + offb.fee(round.offboard_feerate)?;
-			let input_vtxos = self.select_vtxos_to_cover(spent_amount)?;
+			let input_vtxos = self.select_vtxos_to_cover(spent_amount, None)?;
 
 			let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
