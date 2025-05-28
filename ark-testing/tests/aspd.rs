@@ -1417,3 +1417,47 @@ async fn aspd_should_refuse_claim_twice() {
 	let err = bark_1.try_bolt11_onboard(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
 }
+
+
+#[tokio::test]
+async fn aspd_refuse_too_deep_arkoor_input() {
+	let ctx = TestContext::new("aspd/aspd_refuse_too_deep_arkoor_input").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn handshake(&mut self, req: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status>  {
+			let mut res = self.upstream().handshake(req).await?.into_inner();
+			res.ark_info.as_mut().unwrap().max_arkoor_depth = 10;
+			Ok(protos::HandshakeResponse { ..res })
+		}
+	}
+
+	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1", &proxy.address, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let pk = bark2.vtxo_pubkey().await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+
+	let [vtxo] = bark1.vtxos().await.try_into().unwrap();
+
+	let err = bark1.try_send_oor(&pk, sat(100_000)).await.unwrap_err();
+	assert!(err
+		.to_string()
+		.contains(&format!("bad user input: OOR depth reached maximum of 5, please refresh your VTXO: {}", vtxo.id)),
+		"err: {err}"
+	);
+}
