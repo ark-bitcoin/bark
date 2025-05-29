@@ -682,7 +682,7 @@ impl CachedSignedVtxoTree {
 					expiry_height: self.spec.spec.expiry_height,
 					amount: req.amount,
 					exit_delta: self.spec.spec.exit_delta,
-					spk: VtxoSpkSpec::Exit,
+					spk: req.spk,
 				},
 				leaf_idx: idx,
 				exit_branch: self.exit_branch(idx).unwrap().into_iter().cloned().collect(),
@@ -731,7 +731,7 @@ mod test {
 	#[test]
 	fn vtxo_tree() {
 		let secp = secp256k1::Secp256k1::new();
-		let mut rand = rand::rngs::SmallRng::seed_from_u64(42);
+		let mut rand = rand::rngs::StdRng::seed_from_u64(42);
 		let random_sig = {
 			let key = Keypair::new(&secp, &mut rand); // asp
 			let sha = sha256::Hash::from_str("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a").unwrap();
@@ -785,7 +785,7 @@ mod test {
 			unsigned.sighashes.iter().for_each(|h| eng.input(&h[..]));
 			siphash24::Hash::from_engine(eng)
 		};
-		assert_eq!(sighashes_hash.to_string(), "f763b4c77cddfd8f");
+		assert_eq!(sighashes_hash.to_string(), "c2bea07e614bda59");
 
 		let signed = unsigned.into_signed_tree(vec![random_sig; nb_leaves]);
 

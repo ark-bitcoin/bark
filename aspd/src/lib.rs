@@ -22,6 +22,7 @@ pub mod wallet;
 pub mod config;
 pub use crate::config::Config;
 
+use std::borrow::Borrow;
 use std::collections::{HashSet, HashMap};
 use std::fs;
 use std::str::FromStr;
@@ -30,6 +31,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::vtxo::VtxoSpkSpec;
+use ark::oor::OorPayment;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
@@ -39,7 +41,7 @@ use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use ark::{musig, BoardVtxo, Vtxo, VtxoId, VtxoSpec};
+use ark::{musig, BoardVtxo, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 use ark::lightning::{Bolt11Payment, SignedBolt11Payment};
 use ark::musig::{MusigPartialSignature, MusigPubNonce};
 use ark::rounds::RoundEvent;
@@ -497,12 +499,12 @@ impl Server {
 	}
 
 	/// Validate all board inputs are deeply confirmed
-	fn validate_board_inputs(
+	fn validate_board_inputs<V: Borrow<Vtxo>>(
 		&self,
-		inputs: &[Vtxo],
+		inputs: &[V],
 	) -> anyhow::Result<Option<(VtxoId, usize)>> {
 		// TODO(stevenroose) cache this check
-		for board in inputs.iter().filter_map(|v| v.as_board()) {
+		for board in inputs.iter().filter_map(|v| v.borrow().as_board()) {
 			let txid = board.onchain_output.txid;
 			let id = board.id();
 			match self.bitcoind.custom_get_raw_transaction_info(&txid, None) {
@@ -530,30 +532,37 @@ impl Server {
 
 	pub async fn cosign_oor(
 		&self,
-		payment: &ark::oor::OorPayment,
-		user_nonces: &[musig::MusigPubNonce],
-	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
-		let ids = payment.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-
-		if let Some(out) = payment.outputs.iter().find(|o| o.amount < P2TR_DUST) {
+		input_id: VtxoId,
+		outputs: Vec<PaymentRequest>,
+		user_nonce: musig::MusigPubNonce,
+	) -> anyhow::Result<(musig::MusigPubNonce, musig::MusigPartialSignature)> {
+		if let Some(out) = outputs.iter().find(|o| o.amount < P2TR_DUST) {
 			return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, out.amount);
 		}
 
 		if let Some(max) = self.config.max_vtxo_amount {
-			for r in &payment.outputs {
+			for r in &outputs {
 				if r.amount > max {
 					return badarg!("output exceeds maximum vtxo amount of {max}");
 				}
 			}
 		}
 
-		let _lock = match self.vtxos_in_flux.lock(&ids) {
+		let _lock = match self.vtxos_in_flux.lock([input_id]) {
 			Ok(l) => l,
 			Err(id) => return badarg!("attempted to sign OOR for vtxo already in flux: {}", id),
 		};
+		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_id]).await?.try_into().unwrap();
 
-		self.validate_board_inputs(&payment.inputs)
+		self.validate_board_inputs(&[&input_vtxo.vtxo])
 			.map_err(|e| e.context("arkoor cosign failed"))?;
+
+		let payment = OorPayment::new(
+			self.asp_key.public_key(),
+			self.config.vtxo_exit_delta,
+			input_vtxo.vtxo.clone(),
+			outputs,
+		);
 
 		let txid = payment.txid();
 		let new_vtxos = payment
@@ -561,13 +570,13 @@ impl Server {
 			.into_iter()
 			.map(|a| a.into())
 			.collect::<Vec<_>>();
-		let ret = match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
+		let ret = match self.db.check_set_vtxo_oor_spent(&[input_id], txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
 				return badarg!("attempted to sign OOR for already spent vtxo {}", dup);
 			},
 			Ok(None) => {
-				info!("Cosigning OOR tx {} with inputs: {:?}", txid, ids);
-				let (nonces, sigs) = payment.sign_asp(&self.asp_key, &user_nonces);
+				info!("Cosigning OOR tx {} with input: {:?}", txid, input_id);
+				let (nonces, sigs) = payment.sign_asp(&self.asp_key, user_nonce);
 				Ok((nonces, sigs))
 			},
 			Err(e) => Err(e),
@@ -582,25 +591,21 @@ impl Server {
 		&self,
 		invoice: Bolt11Invoice,
 		amount: Amount,
-		input_vtxos: Vec<Vtxo>,
+		input_vtxo: Vtxo,
 		user_pk: PublicKey,
-		user_nonces: &[musig::MusigPubNonce],
-	) -> anyhow::Result<(
-		Bolt11Payment,
-		Vec<musig::MusigPubNonce>,
-		Vec<musig::MusigPartialSignature>,
-	)> {
+		user_nonce: musig::MusigPubNonce,
+	) -> anyhow::Result<(Bolt11Payment, musig::MusigPubNonce, musig::MusigPartialSignature)> {
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice.payment_hash()).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
 		}
 
-		let ids = input_vtxos.iter().map(|i| i.id()).collect::<Vec<_>>();
-		let _lock = match self.vtxos_in_flux.lock(&ids) {
+		let input_id = input_vtxo.id();
+		let _lock = match self.vtxos_in_flux.lock([input_id]) {
 			Ok(l) => l,
 			Err(id) => return badarg!("attempted to sign OOR for vtxo already in flux: {}", id),
 		};
 
-		if let Err(e) = self.validate_board_inputs(&input_vtxos) {
+		if let Err(e) = self.validate_board_inputs(&[&input_vtxo]) {
 			return Err(e).context("oor cosign failed");
 		}
 
@@ -614,7 +619,7 @@ impl Server {
 
 		let details = Bolt11Payment {
 			invoice,
-			inputs: input_vtxos,
+			input: input_vtxo,
 			asp_pubkey: self.asp_key.public_key(),
 			user_pubkey: user_pk,
 			payment_amount: amount,
@@ -633,18 +638,18 @@ impl Server {
 			.map(|vtxo| vec![vtxo.into()])
 			.unwrap_or_default();
 
-		match self.db.check_set_vtxo_oor_spent(&ids, txid, &new_vtxos).await {
+		match self.db.check_set_vtxo_oor_spent(&[input_id], txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
 				badarg!("attempted to sign OOR for already spent vtxo {}", dup)
 			},
 			Ok(None) => {
-				info!("Cosigning HTLC tx {} with inputs: {:?}", txid, ids);
+				info!("Cosigning HTLC tx {} with input: {:?}", txid, input_id);
 				// let's sign the tx
-				let (nonces, part_sigs) = details.sign_asp(
+				let (nonce, part_sig) = details.sign_asp(
 					&self.asp_key,
-					user_nonces,
+					user_nonce,
 				);
-				Ok((details, nonces, part_sigs))
+				Ok((details, nonce, part_sig))
 			},
 			Err(e) => Err(e),
 		}
@@ -665,7 +670,7 @@ impl Server {
 		if let Err(e) = signed.payment.check_amounts() {
 			return badarg!("invalid amounts on bolt11 payment: {}", e);
 		}
-		if let Err(e) = signed.validate_signatures(&crate::SECP) {
+		if let Err(e) = signed.validate_signature(&crate::SECP) {
 			return badarg!("bad signatures on payment: {}", e);
 		}
 
@@ -724,8 +729,8 @@ impl Server {
 	async fn revoke_bolt11_payment(
 		&self,
 		signed: &SignedBolt11Payment,
-		user_nonces: &[musig::MusigPubNonce],
-	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
+		user_nonce: musig::MusigPubNonce,
+	) -> anyhow::Result<(musig::MusigPubNonce, musig::MusigPartialSignature)> {
 		let db = self.db.clone();
 		let payment_hash = signed.payment.invoice.payment_hash().clone();
 
@@ -741,15 +746,15 @@ impl Server {
 			_ => return badarg!("This lightning payment is not eligible for revocation yet")
 		}
 
-		Ok(self.process_revocation(signed, user_nonces).await?)
+		Ok(self.process_revocation(signed, user_nonce).await?)
 	}
 
 	async fn process_revocation(
 		&self,
 		signed: &SignedBolt11Payment,
-		user_nonces: &[MusigPubNonce],
-	) -> anyhow::Result<(Vec<MusigPubNonce>, Vec<MusigPartialSignature>)> {
-		signed.validate_signatures(&crate::SECP)
+		user_nonce: MusigPubNonce,
+	) -> anyhow::Result<(MusigPubNonce, MusigPartialSignature)> {
+		signed.validate_signature(&crate::SECP)
 			.badarg("bad signatures on payment")?;
 
 		if signed.htlc_vtxo().asp_pubkey() != self.asp_key.public_key() {
@@ -761,7 +766,11 @@ impl Server {
 
 		self.db.upsert_vtxos(&vec![htlc_vtxo.into()]).await?;
 
-		let parts = self.cosign_oor(&revocation_oor, user_nonces).await?;
+		let parts = self.cosign_oor(
+			revocation_oor.input.id(),
+			revocation_oor.outputs,
+			user_nonce,
+		).await?;
 
 		Ok(parts)
 	}
@@ -840,13 +849,11 @@ impl Server {
 
 	async fn claim_bolt11_htlc(
 		&self,
-		payment: &ark::oor::OorPayment,
-		user_nonces: &[musig::MusigPubNonce],
+		payment: ark::oor::OorPayment,
+		user_nonce: musig::MusigPubNonce,
 		payment_preimage: &[u8; 32],
-	) -> anyhow::Result<(Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)> {
-		let input = payment.inputs
-			.first()
-			.context("claim should have one input")?
+	) -> anyhow::Result<(musig::MusigPubNonce, musig::MusigPartialSignature)> {
+		let input = payment.input
 			.as_round()
 			.context("claim input vtxo should be round VTXO")?;
 
@@ -865,10 +872,10 @@ impl Server {
 				payment_preimage,
 			).await?.context("could not settle invoice")?;
 
-			return self.cosign_oor(&payment, user_nonces).await
+			self.cosign_oor(payment.input.id(), payment.outputs, user_nonce).await
+		} else {
+			bail!("invalid claim input: {:?}", input);
 		}
-
-		bail!("invalid claim input: {:?}", input);
 	}
 }
 

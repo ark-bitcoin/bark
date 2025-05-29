@@ -234,33 +234,25 @@ pub struct PubNonceParseError(String);
 pub struct PartialSigParseError(String);
 
 impl OorCosignResponse {
-	pub fn asp_pub_nonces(&self) -> Result<Vec<musig::MusigPubNonce>, PubNonceParseError> {
-		self.pub_nonces.iter()
-			.map(|b| musig::MusigPubNonce::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
+	pub fn asp_pub_nonce(&self) -> Result<musig::MusigPubNonce, PubNonceParseError> {
+		musig::MusigPubNonce::from_slice(&self.pub_nonce)
 			.map_err(|e| PubNonceParseError(e.to_string()))
 	}
 
-	pub fn asp_part_sigs(&self) -> Result<Vec<musig::MusigPartialSignature>, PartialSigParseError> {
-		self.partial_sigs.iter()
-			.map(|b| musig::MusigPartialSignature::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
+	pub fn asp_part_sig(&self) -> Result<musig::MusigPartialSignature, PartialSigParseError> {
+		musig::MusigPartialSignature::from_slice(&self.partial_sig)
 			.map_err(|e| PartialSigParseError(e.to_string()))
 	}
 }
 
 impl Bolt11PaymentDetails {
-	pub fn asp_pub_nonces(&self) -> Result<Vec<musig::MusigPubNonce>, PubNonceParseError> {
-		self.pub_nonces.iter()
-			.map(|b| musig::MusigPubNonce::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
+	pub fn asp_pub_nonce(&self) -> Result<musig::MusigPubNonce, PubNonceParseError> {
+		musig::MusigPubNonce::from_slice(&self.pub_nonce)
 			.map_err(|e| PubNonceParseError(e.to_string()))
 	}
 
-	pub fn asp_part_sigs(&self) -> Result<Vec<musig::MusigPartialSignature>, PartialSigParseError> {
-		self.partial_sigs.iter()
-			.map(|b| musig::MusigPartialSignature::from_slice(&b))
-			.collect::<Result<Vec<_>, _>>()
+	pub fn asp_part_sig(&self) -> Result<musig::MusigPartialSignature, PartialSigParseError> {
+		musig::MusigPartialSignature::from_slice(&self.partial_sig)
 			.map_err(|e| PartialSigParseError(e.to_string()))
 	}
 }

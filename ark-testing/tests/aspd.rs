@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ark::board::UserPart;
-use ark::oor::OorPayment;
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
@@ -29,7 +28,10 @@ use aspd_log::{
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
-use aspd_rpc::protos::{self, BoardCosignRequest, Bolt11PaymentRequest, ClaimBolt11OnboardRequest, OorCosignRequest, SubmitPaymentRequest};
+use aspd_rpc::protos::{
+	self, BoardCosignRequest, Bolt11PaymentRequest, ClaimBolt11OnboardRequest,
+	SubmitPaymentRequest,
+};
 
 use ark_testing::{Aspd, TestContext, btc, sat, bark};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -236,13 +238,6 @@ async fn max_vtxo_amount() {
 	bark1.board(Amount::from_sat(500_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// try send OOR exceeding limit
-	let err = bark1.try_send_oor(*RANDOM_PK, Amount::from_sat(600_000)).await.unwrap_err();
-	assert!(err.to_string().contains(
-		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
-	), "err: {err}");
-	bark1.send_oor(*RANDOM_PK, Amount::from_sat(400_000)).await;
-
 	// then try send in a round
 	bark1.timeout = Some(Duration::from_millis(3_000));
 	let err = bark1.try_refresh_all().await.unwrap_err();
@@ -256,7 +251,7 @@ async fn max_vtxo_amount() {
 	bark1.offboard_all(address.clone()).await;
 	ctx.generate_blocks(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
-	assert_eq!(balance, Amount::from_sat(599_100));
+	assert_eq!(balance, Amount::from_sat(999_100));
 }
 
 #[tokio::test]
@@ -389,6 +384,7 @@ async fn restart_aspd_with_payments() {
 	bark1.refresh_all().await;
 
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark1.refresh_all().await;
 	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(350_000)).await;
 	aspd.stop().await.unwrap();
 	aspd.start().await.unwrap();
@@ -1185,14 +1181,9 @@ async fn reject_subdust_oor_cosign() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_oor_cosign(&mut self, req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
-			let mut oor_payment = OorPayment::decode(&req.payment).unwrap();
-			oor_payment.outputs[0].amount = P2TR_DUST - Amount::ONE_SAT;
-
-			Ok(self.upstream().request_oor_cosign(OorCosignRequest {
-				payment: oor_payment.encode(),
-				pub_nonces: req.pub_nonces,
-			}).await?.into_inner())
+		async fn request_oor_cosign(&mut self, mut req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+			req.outputs[0].amount = P2TR_DUST.to_sat() - 1;
+			Ok(self.upstream().request_oor_cosign(req).await?.into_inner())
 		}
 	}
 
@@ -1226,9 +1217,9 @@ async fn reject_subdust_bolt11_payment() {
 			Ok(self.upstream().start_bolt11_payment(Bolt11PaymentRequest {
 				invoice: req.invoice,
 				amount_sats: Some(P2TR_DUST_SAT - 1),
-				input_vtxos: req.input_vtxos,
+				input_vtxo: req.input_vtxo,
 				user_pubkey: req.user_pubkey,
-				user_nonces: req.user_nonces,
+				user_nonce: req.user_nonce,
 			}).await?.into_inner())
 		}
 	}
@@ -1287,7 +1278,7 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 			let preimage = rand::rng().random::<[u8; 32]>();
 			Ok(self.upstream().claim_bolt11_onboard(ClaimBolt11OnboardRequest {
 				payment: req.payment,
-				pub_nonces: req.pub_nonces,
+				pub_nonce: req.pub_nonce,
 				payment_preimage: preimage.to_vec(),
 			}).await?.into_inner())
 		}

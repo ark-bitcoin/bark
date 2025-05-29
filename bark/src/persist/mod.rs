@@ -2,7 +2,7 @@ pub mod sqlite;
 
 use ark::{Vtxo, VtxoId};
 use bdk_wallet::ChangeSet;
-use bitcoin::{secp256k1::PublicKey, Amount};
+use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::BlockHeight;
 
 use crate::{exit::ExitIndex, vtxo_state::VtxoState, Config, KeychainKind, Movement, MovementArgs, OffchainOnboard, OffchainPayment, Pagination, WalletProperties};
@@ -36,11 +36,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 	/// Fetch all VTXO's that are in a given state
 	fn get_vtxos_by_state(&self, state: &[VtxoState]) -> anyhow::Result<Vec<Vtxo>>;
-	/// Get the soonest-expiring vtxos to cover provided amount.
-	///
-	/// Returns an error if the amount cannot be covered by the available
-	/// vtxos.
-	fn select_vtxos_to_cover(&self, amount: Amount) -> anyhow::Result<Vec<Vtxo>>;
 	/// Remove a VTXO from the database
 	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 	/// Check whether a VTXO has been spent already or not

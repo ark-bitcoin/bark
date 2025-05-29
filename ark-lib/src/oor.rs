@@ -1,7 +1,5 @@
 
 
-use std::borrow::Borrow;
-
 use bitcoin::{
 	Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, Txid, Weight, Witness
 };
@@ -9,33 +7,31 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
-use bitcoin_ext::{fee, BlockHeight, TAPROOT_KEYSPEND_WEIGHT};
+use bitcoin_ext::{fee, TAPROOT_KEYSPEND_WEIGHT};
 
-use crate::util::{Decodable, Encodable, SECP};
+use crate::util::{Decodable, Encodable};
 use crate::vtxo::VtxoSpkSpec;
 use crate::{musig, util, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
 
-pub fn oor_sighashes<T: Borrow<Vtxo>>(input_vtxos: &Vec<T>, oor_tx: &Transaction) -> Vec<TapSighash> {
-	let prevs = input_vtxos.iter().map(|i| i.borrow().txout()).collect::<Vec<_>>();
+pub fn oor_sighash(input_vtxo: &Vtxo, oor_tx: &Transaction) -> TapSighash {
+	let prev = input_vtxo.txout();
 	let mut shc = SighashCache::new(oor_tx);
 
-	(0..input_vtxos.len()).map(|idx| {
-		shc.taproot_key_spend_signature_hash(
-			idx, &sighash::Prevouts::All(&prevs), TapSighashType::Default,
-		).expect("sighash error")
-	}).collect()
+	shc.taproot_key_spend_signature_hash(
+		0, &sighash::Prevouts::All(&[prev]), TapSighashType::Default,
+	).expect("sighash error")
 }
 
-pub fn unsigned_oor_tx<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSpec]) -> Transaction {
+pub fn unsigned_oor_tx(input: &Vtxo, outputs: &[VtxoSpec]) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: inputs.into_iter().map(|input| TxIn {
-			previous_output: input.borrow().point(),
+		input: vec![TxIn {
+			previous_output: input.point(),
 			script_sig: ScriptBuf::new(),
 			sequence: Sequence::ZERO,
 			witness: Witness::new(),
-		}).collect(),
+		}],
 		output: outputs
 			.into_iter()
 			.map(VtxoSpec::txout)
@@ -50,13 +46,13 @@ pub fn unsigned_oor_tx<V: Borrow<Vtxo>>(inputs: &[V], outputs: &[VtxoSpec]) -> T
 ///
 /// Will panic if inputs and signatures don't have the same length,
 /// or if some input witnesses are not empty
-pub fn signed_oor_tx<V: Borrow<Vtxo>>(
-	inputs: &[V],
-	signatures: &[schnorr::Signature],
+pub fn signed_oor_tx(
+	input: &Vtxo,
+	signature: schnorr::Signature,
 	outputs: &[VtxoSpec]
 ) -> Transaction {
-	let mut tx = unsigned_oor_tx(inputs, outputs);
-	util::fill_taproot_sigs(&mut tx, signatures);
+	let mut tx = unsigned_oor_tx(input, outputs);
+	util::fill_taproot_sigs(&mut tx, &[signature]);
 	tx
 }
 
@@ -67,19 +63,14 @@ pub fn signed_oor_tx<V: Borrow<Vtxo>>(
 pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), String> {
 	// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
 
-	if vtxo.inputs.len() != vtxo.signatures.len() {
-		return Err(format!("number of signatures doesn't match number of inputs"));
-	}
-
-	let tx = signed_oor_tx(&vtxo.inputs, &vtxo.signatures, &vtxo.output_specs);
-	let sighashes = oor_sighashes(&vtxo.inputs, &tx);
-	for (idx, input) in vtxo.inputs.iter().enumerate() {
-		SECP.verify_schnorr(
-			&vtxo.signatures[idx],
-			&sighashes[idx].into(),
-			&input.spec().taproot_pubkey(),
-		).map_err(|e| format!("schnorr signature verification error: {}", e))?;
-	}
+	let sig = vtxo.signature.ok_or(format!("unsigned vtxo"))?;
+	let tx = signed_oor_tx(&vtxo.input, sig, &vtxo.output_specs);
+	let sighash = oor_sighash(&vtxo.input, &tx);
+	util::SECP.verify_schnorr(
+		&sig,
+		&sighash.into(),
+		&vtxo.input.spec().taproot_pubkey(),
+	).map_err(|e| format!("schnorr signature verification error: {}", e))?;
 
 	if let Some(pubkey) = pubkey {
 		//TODO: handle derived keys here
@@ -93,7 +84,7 @@ pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), St
 pub struct OorPayment {
 	pub asp_pubkey: PublicKey,
 	pub exit_delta: u16,
-	pub inputs: Vec<Vtxo>,
+	pub input: Vtxo,
 	pub outputs: Vec<PaymentRequest>,
 }
 
@@ -101,18 +92,14 @@ impl OorPayment {
 	pub fn new(
 		asp_pubkey: PublicKey,
 		exit_delta: u16,
-		inputs: Vec<Vtxo>,
+		input: Vtxo,
 		outputs: Vec<PaymentRequest>,
 	) -> OorPayment {
-		OorPayment { asp_pubkey, exit_delta, inputs, outputs }
-	}
-
-	fn expiry_height(&self) -> BlockHeight {
-		self.inputs.iter().map(|i| i.expiry_height()).min().unwrap()
+		OorPayment { asp_pubkey, exit_delta, input, outputs }
 	}
 
 	fn output_specs(&self) -> Vec<VtxoSpec> {
-		let expiry_height = self.expiry_height();
+		let expiry_height = self.input.spec().expiry_height;
 		self.outputs.iter().map(|o| VtxoSpec {
 				user_pubkey: o.pubkey,
 				amount: o.amount,
@@ -124,90 +111,71 @@ impl OorPayment {
 	}
 
 	pub fn txid(&self) -> Txid {
-		unsigned_oor_tx(&self.inputs, &self.output_specs()).compute_txid()
+		unsigned_oor_tx(&self.input, &self.output_specs()).compute_txid()
 	}
 
-	pub fn sighashes(&self) -> Vec<TapSighash> {
-		oor_sighashes(
-			&self.inputs,
-			&unsigned_oor_tx(&self.inputs, &self.output_specs())
+	pub fn sighash(&self) -> TapSighash {
+		oor_sighash(
+			&self.input,
+			&unsigned_oor_tx(&self.input, &self.output_specs())
 		)
 	}
 
 	pub fn total_weight(&self) -> Weight {
-		let tx = unsigned_oor_tx(&self.inputs, &self.output_specs());
+		let tx = unsigned_oor_tx(&self.input, &self.output_specs());
 		let spend_weight = Weight::from_wu(TAPROOT_KEYSPEND_WEIGHT as u64);
-		let nb_inputs = self.inputs.len() as u64;
-		tx.weight() + nb_inputs * spend_weight
+		tx.weight() + spend_weight
 	}
 
 	pub fn sign_asp(
 		&self,
 		keypair: &Keypair,
-		user_nonces: &[musig::MusigPubNonce],
-	) -> (Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>) {
-		assert_eq!(self.inputs.len(), user_nonces.len());
-		let sighashes = self.sighashes();
+		user_nonce: musig::MusigPubNonce,
+	) -> (musig::MusigPubNonce, musig::MusigPartialSignature) {
+		let sighash = self.sighash();
 
-		let mut pub_nonces = Vec::with_capacity(self.inputs.len());
-		let mut part_sigs = Vec::with_capacity(self.inputs.len());
-		for (idx, input) in self.inputs.iter().enumerate() {
-			assert_eq!(keypair.public_key(), input.asp_pubkey());
-			let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
-				keypair,
-				[input.spec().user_pubkey],
-				&[&user_nonces[idx]],
-				sighashes[idx].to_byte_array(),
-				Some(input.spec().vtxo_taptweak().to_byte_array()),
-			);
-			pub_nonces.push(pub_nonce);
-			part_sigs.push(part_sig);
-		}
+		let (pub_nonce, part_sig) = musig::deterministic_partial_sign(
+			keypair,
+			[self.input.spec().user_pubkey],
+			&[&user_nonce],
+			sighash.to_byte_array(),
+			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
+		);
 
-		(pub_nonces, part_sigs)
+		(pub_nonce, part_sig)
 	}
 
 	pub fn sign_finalize_user(
 		self,
-		user_sec_nonces: Vec<musig::MusigSecNonce>,
-		user_pub_nonces: &[musig::MusigPubNonce],
-		user_keypairs: &[Keypair],
-		asp_nonces: &[musig::MusigPubNonce],
-		asp_part_sigs: &[musig::MusigPartialSignature],
+		user_sec_nonce: musig::MusigSecNonce,
+		user_pub_nonce: musig::MusigPubNonce,
+		user_keypair: &Keypair,
+		asp_nonce: musig::MusigPubNonce,
+		asp_part_sig: musig::MusigPartialSignature,
 	) -> SignedOorPayment {
-		assert_eq!(self.inputs.len(), user_sec_nonces.len());
-		assert_eq!(self.inputs.len(), user_pub_nonces.len());
-		assert_eq!(self.inputs.len(), user_keypairs.len());
-		assert_eq!(self.inputs.len(), asp_nonces.len());
-		assert_eq!(self.inputs.len(), asp_part_sigs.len());
-		let sighashes = self.sighashes();
+		let sighash = self.sighash();
 
-		let mut sigs = Vec::with_capacity(self.inputs.len());
-		for (idx, (input, sec_nonce)) in self.inputs.iter().zip(user_sec_nonces.into_iter()).enumerate() {
-			let keypair = &user_keypairs[idx];
-			assert_eq!(keypair.public_key(), input.spec().user_pubkey);
-			let agg_nonce = musig::nonce_agg(&[&user_pub_nonces[idx], &asp_nonces[idx]]);
-			let (_part_sig, final_sig) = musig::partial_sign(
-				[input.spec().user_pubkey, input.asp_pubkey()],
-				agg_nonce,
-				keypair,
-				sec_nonce,
-				sighashes[idx].to_byte_array(),
-				Some(input.spec().vtxo_taptweak().to_byte_array()),
-				Some(&[&asp_part_sigs[idx]]),
-			);
-			let final_sig = final_sig.expect("we provided the other sig");
-			debug_assert!(util::SECP.verify_schnorr(
-				&final_sig,
-				&sighashes[idx].into(),
-				&input.spec().taproot_pubkey(),
-			).is_ok(), "invalid oor tx signature produced");
-			sigs.push(final_sig);
-		}
+		assert_eq!(user_keypair.public_key(), self.input.spec().user_pubkey);
+		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &asp_nonce]);
+		let (_part_sig, final_sig) = musig::partial_sign(
+			[self.input.spec().user_pubkey, self.input.asp_pubkey()],
+			agg_nonce,
+			user_keypair,
+			user_sec_nonce,
+			sighash.to_byte_array(),
+			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
+			Some(&[&asp_part_sig]),
+		);
+		let final_sig = final_sig.expect("we provided the other sig");
+		debug_assert!(util::SECP.verify_schnorr(
+			&final_sig,
+			&sighash.into(),
+			&self.input.spec().taproot_pubkey(),
+		).is_ok(), "invalid oor tx signature produced");
 
 		SignedOorPayment {
 			payment: self,
-			signatures: sigs,
+			signature: final_sig,
 		}
 	}
 
@@ -216,13 +184,12 @@ impl OorPayment {
 	/// These vtxos are not valid vtxos because they lack the signature.
 	pub fn unsigned_output_vtxos(&self) -> Vec<ArkoorVtxo> {
 		let outputs = self.output_specs();
-		let inputs = self.inputs.clone();
-		let tx = unsigned_oor_tx(&inputs, &outputs);
+		let tx = unsigned_oor_tx(&self.input, &outputs);
 
 		self.outputs.iter().enumerate().map(|(idx, _output)| {
 			ArkoorVtxo {
-				inputs: self.inputs.clone(),
-				signatures: vec![],
+				input: self.input.clone().into(),
+				signature: None,
 				output_specs: outputs.clone(),
 				point: OutPoint::new(tx.compute_txid(), idx as u32)
 			}
@@ -236,12 +203,12 @@ impl Decodable for OorPayment {}
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SignedOorPayment {
 	pub payment: OorPayment,
-	pub signatures: Vec<schnorr::Signature>,
+	pub signature: schnorr::Signature,
 }
 
 impl SignedOorPayment {
 	pub fn signed_transaction(&self) -> Transaction {
-		let tx = signed_oor_tx(&self.payment.inputs, &self.signatures, &self.payment.output_specs());
+		let tx = signed_oor_tx(&self.payment.input, self.signature, &self.payment.output_specs());
 
 		//TODO(stevenroose) there seems to be a bug in the tx.weight method,
 		// this +2 might be fixed later
@@ -254,7 +221,7 @@ impl SignedOorPayment {
 	pub fn output_vtxos(&self) -> Vec<ArkoorVtxo> {
 		let mut ret = self.payment.unsigned_output_vtxos();
 		for vtxo in ret.iter_mut() {
-			vtxo.signatures = self.signatures.clone();
+			vtxo.signature = Some(self.signature.clone());
 		}
 		ret
 	}
@@ -269,8 +236,8 @@ pub struct InsufficientFunds {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkoorVtxo {
-	pub inputs: Vec<Vtxo>,
-	pub signatures: Vec<schnorr::Signature>,
+	pub input: Box<Vtxo>,
+	pub signature: Option<schnorr::Signature>,
 	pub output_specs:  Vec<VtxoSpec>,
 	pub point: OutPoint,
 }
