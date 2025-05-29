@@ -681,8 +681,8 @@ async fn reject_arkoor_with_bad_signature() {
 					_ => panic!("expect oor vtxo")
 				};
 
-			let sighash = ark::oor::arkoor_sighash(
-				&input, &ark::oor::unsigned_arkoor_tx(&input, &output_specs),
+			let sighash = ark::arkoor::arkoor_sighash(
+				&input, &ark::arkoor::unsigned_arkoor_tx(&input, &output_specs),
 			);
 			let fake_sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
 

@@ -41,7 +41,7 @@ use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ark::{BoardVtxo, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
-use ark::oor::{ArkoorBuilder, ArkoorCosignResponse};
+use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::lightning::revocation_payment_request;
 use ark::musig::{self, MusigPubNonce};
 use ark::rounds::RoundEvent;

@@ -13,10 +13,10 @@ use bitcoin_ext::{fee, BlockHeight};
 
 use crate::lightning::{htlc_in_taproot, htlc_out_taproot};
 use crate::board::BoardVtxo;
-use crate::oor::ArkoorVtxo;
+use crate::arkoor::ArkoorVtxo;
 use crate::rounds::RoundVtxo;
 use crate::util::{Decodable, Encodable};
-use crate::{musig, oor, util};
+use crate::{musig, arkoor, util};
 
 
 /// The total signed tx weight of a exit tx.
@@ -361,9 +361,9 @@ impl Vtxo {
 			Vtxo::Arkoor(v) => {
 				let tx = if v.signature.is_none() {
 					//TODO(stevenroose) either improve API for or get rid of unsigned vtxos
-					oor::unsigned_arkoor_tx(&v.input, &v.output_specs)
+					arkoor::unsigned_arkoor_tx(&v.input, &v.output_specs)
 				} else {
-					oor::signed_arkoor_tx(&v.input, v.signature.unwrap(), &v.output_specs)
+					arkoor::signed_arkoor_tx(&v.input, v.signature.unwrap(), &v.output_specs)
 				};
 				assert_eq!(tx.compute_txid(), v.point.txid);
 				tx
@@ -522,11 +522,11 @@ impl From<ArkoorVtxo> for Vtxo {
 
 #[cfg(test)]
 mod test {
-	use crate::oor::ArkoorVtxo;
+	use crate::arkoor::ArkoorVtxo;
 
 use super::*;
 	use bitcoin::hashes::hex::FromHex;
-	use oor::unsigned_arkoor_tx;
+	use arkoor::unsigned_arkoor_tx;
 
 	#[test]
 	fn vtxo_roundtrip() {

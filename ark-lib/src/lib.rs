@@ -4,18 +4,18 @@ pub extern crate bitcoin;
 #[macro_use] extern crate serde;
 #[macro_use] extern crate lazy_static;
 
+pub mod arkoor;
 pub mod connectors;
 pub mod forfeit;
 pub mod lightning;
 pub mod musig;
 pub mod board;
-pub mod oor;
 pub mod rounds;
 pub mod tree;
 pub mod util;
 pub mod vtxo;
 
-pub use crate::oor::ArkoorVtxo;
+pub use crate::arkoor::ArkoorVtxo;
 pub use crate::board::BoardVtxo;
 pub use crate::rounds::RoundVtxo;
 pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};

@@ -50,13 +50,13 @@ use log::{trace, debug, info, warn, error};
 use tokio_stream::{Stream, StreamExt};
 
 use ark::{
-	oor, ArkInfo, ArkoorVtxo, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
+	ArkInfo, ArkoorVtxo, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
 	VtxoId, VtxoRequest, VtxoSpec,
 };
+use ark::arkoor::{self, ArkoorBuilder};
 use ark::board::BOARD_TX_VTXO_VOUT;
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::oor::ArkoorBuilder;
 use ark::rounds::{
 	RoundAttempt,
 	RoundEvent,
@@ -879,7 +879,7 @@ impl Wallet {
 		for vtxo in oors {
 			// TODO: we need to test receiving arkoors with invalid signatures
 			let arkoor = vtxo.as_arkoor().context("asp gave non-arkoor vtxo for arkoor sync")?;
-			if let Err(e) = oor::verify_oor(arkoor, Some(*pk)) {
+			if let Err(e) = arkoor::verify_oor(arkoor, Some(*pk)) {
 				warn!("Could not validate OOR signature, dropping vtxo. {}", e);
 				continue;
 			}

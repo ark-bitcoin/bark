@@ -2,7 +2,7 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
-use ark::oor::ArkoorCosignResponse;
+use ark::arkoor::ArkoorCosignResponse;
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate};
