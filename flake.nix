@@ -20,7 +20,7 @@
 	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, rust-overlay }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
-				rustVersion = "1.77.2";
+				rustVersion = "1.78.0";
 				bitcoinVersion = "29.0";
 				lightningVersion = "25.02";
 				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
@@ -106,7 +106,7 @@
 						hash = "sha256-Xkh4ggUSX2xLJQes8cE5jyu2DZut/YRcQq5vsDH7S+k=";
 					};
 					buildAndTestSubdir = "plugins/grpc-plugin";
-					nativeBuildInputs = [ pkgs.protobuf ];
+					nativeBuildInputs = [ rust pkgs.protobuf ];
 					buildInputs = (if isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Security ] else []);
 					cargoDeps = pkgs.rustPlatform.importCargoLock {
 						lockFile = "${src}/Cargo.lock";
@@ -127,7 +127,7 @@
 						rev = "v0.2.2";
 						hash = "sha256-vksvnLV9pcMxJcoylF+r2ezQmauiGGt+/MSNMfS3Gxc=";
 					};
-					nativeBuildInputs = [ pkgs.protobuf ];
+					nativeBuildInputs = [ rust pkgs.protobuf ];
 					buildInputs = [
 						pkgs.sqlite
 						pkgs.postgresql
@@ -138,6 +138,10 @@
 						lockFile = "${src}/Cargo.lock";
 					};
 					doCheck = false;
+				};
+				cln-plugins = pkgs.linkFarm "plugins" {
+					"cln-grpc" = "${cln-grpc}/bin/cln-grpc";
+					"hold" = "${hold-invoice}/bin/hold";
 				};
 			in
 			{
@@ -180,8 +184,7 @@
 					# Use Docker for Core Lightning on macOS by default instead of a local daemon
 					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
 					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "acidbunny21/cln-hodl:v24.08.2.0" else null);
-					LIGHTNINGD_GRPC_PLUGIN = "${cln-grpc}/bin/";
-					HODL_INVOICE_PLUGIN = (if isDarwin then "/hold/target/debug/hold" else "${hold-invoice}/bin/");
+					LIGHTNINGD_PLUGIN_DIR = "${cln-plugins}";
 
 					POSTGRES_BINS = "${pkgs.postgresql}/bin";
 				};

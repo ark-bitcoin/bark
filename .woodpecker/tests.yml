@@ -77,7 +77,7 @@ steps:
       TEST_DIRECTORY: ./test/esplora
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 4
-      HODL_INVOICE_PLUGIN: /hold/target/debug/hold
+      LIGHTNINGD_PLUGIN_DIR: /plugins
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
@@ -106,7 +106,7 @@ steps:
       TEST_DIRECTORY: ./test/btc29
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 4
-      HODL_INVOICE_PLUGIN: /hold/target/debug/hold
+      LIGHTNINGD_PLUGIN_DIR: /plugins
     commands:
       - git log --oneline | head -n 1
       - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
