@@ -151,9 +151,9 @@ const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
 const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
 const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
 const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_vtxos";
-const RPC_SERVICE_ARK_REQUEST_OOR_COSIGN: &'static str = "request_oor_cosign";
-const RPC_SERVICE_ARK_POST_OOR_MAILBOX: &'static str = "post_oor_mailbox";
-const RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX: &'static str = "empty_oor_mailbox";
+const RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN: &'static str = "request_arkoor_cosign";
+const RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX: &'static str = "post_arkoor_mailbox";
+const RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX: &'static str = "empty_arkoor_mailbox";
 const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment";
 const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payment";
 const RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT: &'static str = "check_bolt11_payment";
@@ -172,9 +172,9 @@ const RPC_SERVICE_ARK_METHODS: [&str; 15] = [
 	RPC_SERVICE_ARK_GET_ROUND,
 	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
 	RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS,
-	RPC_SERVICE_ARK_REQUEST_OOR_COSIGN,
-	RPC_SERVICE_ARK_POST_OOR_MAILBOX,
-	RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX,
+	RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN,
+	RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX,
+	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
 	RPC_SERVICE_ARK_START_BOLT11_PAYMENT,
 	RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT,
 	RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT,
@@ -428,11 +428,11 @@ impl rpc::server::ArkService for Server {
 	}
 
 	// oor
-	async fn request_oor_cosign(
+	async fn request_arkoor_cosign(
 		&self,
-		req: tonic::Request<protos::OorCosignRequest>,
-	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_OOR_COSIGN);
+		req: tonic::Request<protos::ArkoorCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
@@ -457,11 +457,11 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
-	async fn post_oor_mailbox(
+	async fn post_arkoor_mailbox(
 		&self,
-		req: tonic::Request<protos::OorVtxo>,
+		req: tonic::Request<protos::ArkoorVtxo>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_POST_OOR_MAILBOX);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
@@ -480,11 +480,11 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
-	async fn empty_oor_mailbox(
+	async fn empty_arkoor_mailbox(
 		&self,
-		req: tonic::Request<protos::OorVtxosRequest>,
-	) -> Result<tonic::Response<protos::OorVtxosResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_EMPTY_OOR_MAILBOX);
+		req: tonic::Request<protos::ArkoorVtxosRequest>,
+	) -> Result<tonic::Response<protos::ArkoorVtxosResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
@@ -496,7 +496,7 @@ impl rpc::server::ArkService for Server {
 
 		let vtxos = self.db.pull_oors(pubkey).await.to_status()?;
 
-		let response = protos::OorVtxosResponse {
+		let response = protos::ArkoorVtxosResponse {
 			vtxos: vtxos.into_iter().map(|v| v.encode()).collect(),
 		};
 
@@ -508,7 +508,7 @@ impl rpc::server::ArkService for Server {
 	async fn start_bolt11_payment(
 		&self,
 		req: tonic::Request<protos::Bolt11PaymentRequest>,
-	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
@@ -586,8 +586,8 @@ impl rpc::server::ArkService for Server {
 	async fn revoke_bolt11_payment(
 		&self,
 		req: tonic::Request<protos::RevokeBolt11PaymentRequest>
-	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_OOR_COSIGN);
+	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
@@ -647,7 +647,7 @@ impl rpc::server::ArkService for Server {
 	async fn claim_bolt11_onboard(
 		&self,
 		req: tonic::Request<protos::ClaimBolt11OnboardRequest>
-	) -> Result<tonic::Response<protos::OorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD);
 		let req = req.into_inner();
 

@@ -252,7 +252,7 @@ impl TryFrom<protos::ArkoorOutput> for PaymentRequest {
 	}
 }
 
-impl From<ArkoorCosignResponse> for protos::OorCosignResponse {
+impl From<ArkoorCosignResponse> for protos::ArkoorCosignResponse {
 	fn from(v: ArkoorCosignResponse) -> Self {
 		Self {
 			pub_nonce: v.pub_nonce.serialize().to_vec(),
@@ -261,9 +261,9 @@ impl From<ArkoorCosignResponse> for protos::OorCosignResponse {
 	}
 }
 
-impl TryFrom<protos::OorCosignResponse> for ArkoorCosignResponse {
+impl TryFrom<protos::ArkoorCosignResponse> for ArkoorCosignResponse {
 	type Error = ConvertError;
-	fn try_from(v: protos::OorCosignResponse) -> Result<Self, Self::Error> {
+	fn try_from(v: protos::ArkoorCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
 			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
 				.map_err(|_| "invalid server public nonce")?,

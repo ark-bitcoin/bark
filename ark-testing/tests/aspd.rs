@@ -477,16 +477,16 @@ async fn double_spend_oor() {
 
 	/// This proxy will always duplicate OOR requests and store the latest request in the mutex.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient, Arc<Mutex<Option<protos::OorCosignRequest>>>);
+	struct Proxy(aspd::ArkClient, Arc<Mutex<Option<protos::ArkoorCosignRequest>>>);
 	#[tonic::async_trait]
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_oor_cosign(&mut self, req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+		async fn request_arkoor_cosign(&mut self, req: protos::ArkoorCosignRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
 			let (res1, res2) = tokio::join!(
-				c1.request_oor_cosign(req.clone()),
-				c2.request_oor_cosign(req.clone()),
+				c1.request_arkoor_cosign(req.clone()),
+				c2.request_arkoor_cosign(req.clone()),
 			);
 			self.1.lock().await.replace(req);
 			match (res1, res2) {
@@ -513,7 +513,7 @@ async fn double_spend_oor() {
 
 	// then after it's done, fire the request again, which should fail.
 	let req = last_req.lock().await.take().unwrap();
-	let err = aspd.get_public_client().await.request_oor_cosign(req).await.unwrap_err();
+	let err = aspd.get_public_client().await.request_arkoor_cosign(req).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"attempted to sign OOR for already spent vtxo",
 	), "err: {err}");
@@ -1171,8 +1171,8 @@ async fn reject_subdust_offboard_request() {
 }
 
 #[tokio::test]
-async fn reject_subdust_oor_cosign() {
-	let ctx = TestContext::new("aspd/reject_subdust_oor_cosign").await;
+async fn reject_subdust_arkoor_cosign() {
+	let ctx = TestContext::new("aspd/reject_subdust_arkoor_cosign").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1181,9 +1181,9 @@ async fn reject_subdust_oor_cosign() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_oor_cosign(&mut self, mut req: protos::OorCosignRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+		async fn request_arkoor_cosign(&mut self, mut req: protos::ArkoorCosignRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
 			req.outputs[0].amount = P2TR_DUST.to_sat() - 1;
-			Ok(self.upstream().request_oor_cosign(req).await?.into_inner())
+			Ok(self.upstream().request_arkoor_cosign(req).await?.into_inner())
 		}
 	}
 
@@ -1213,7 +1213,7 @@ async fn reject_subdust_bolt11_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+		async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
 			Ok(self.upstream().start_bolt11_payment(Bolt11PaymentRequest {
 				invoice: req.invoice,
 				user_amount_sat: Some(P2TR_DUST_SAT - 1),
@@ -1274,7 +1274,7 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn claim_bolt11_onboard(&mut self, req: protos::ClaimBolt11OnboardRequest) -> Result<protos::OorCosignResponse, tonic::Status> {
+		async fn claim_bolt11_onboard(&mut self, req: protos::ClaimBolt11OnboardRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
 			let preimage = rand::rng().random::<[u8; 32]>();
 			Ok(self.upstream().claim_bolt11_onboard(ClaimBolt11OnboardRequest {
 				input_id: req.input_id,

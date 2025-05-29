@@ -361,9 +361,9 @@ impl Vtxo {
 			Vtxo::Arkoor(v) => {
 				let tx = if v.signature.is_none() {
 					//TODO(stevenroose) either improve API for or get rid of unsigned vtxos
-					oor::unsigned_oor_tx(&v.input, &v.output_specs)
+					oor::unsigned_arkoor_tx(&v.input, &v.output_specs)
 				} else {
-					oor::signed_oor_tx(&v.input, v.signature.unwrap(), &v.output_specs)
+					oor::signed_arkoor_tx(&v.input, v.signature.unwrap(), &v.output_specs)
 				};
 				assert_eq!(tx.compute_txid(), v.point.txid);
 				tx
@@ -526,7 +526,7 @@ mod test {
 
 use super::*;
 	use bitcoin::hashes::hex::FromHex;
-	use oor::unsigned_oor_tx;
+	use oor::unsigned_arkoor_tx;
 
 	#[test]
 	fn vtxo_roundtrip() {
@@ -573,7 +573,7 @@ use super::*;
 			spk: VtxoSpkSpec::Exit,
 			amount: Amount::from_sat(5),
 		}];
-		let tx = unsigned_oor_tx(&round, &output_specs);
+		let tx = unsigned_arkoor_tx(&round, &output_specs);
 		let oor = Vtxo::Arkoor(ArkoorVtxo {
 			input: round.clone().into(),
 			output_specs,
@@ -590,7 +590,7 @@ use super::*;
 			spk: VtxoSpkSpec::Exit,
 			amount: Amount::from_sat(5),
 		}];
-		let tx_recursive = unsigned_oor_tx(&oor, &output_specs_recursive);
+		let tx_recursive = unsigned_arkoor_tx(&oor, &output_specs_recursive);
 		let oor_recursive = Vtxo::Arkoor(ArkoorVtxo {
 			input: oor.clone().into(),
 			output_specs: output_specs_recursive,

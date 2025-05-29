@@ -28,16 +28,16 @@ pub enum ArkoorError {
 	Dust,
 }
 
-pub fn oor_sighash(input_vtxo: &Vtxo, oor_tx: &Transaction) -> TapSighash {
+pub fn arkoor_sighash(input_vtxo: &Vtxo, arkoor_tx: &Transaction) -> TapSighash {
 	let prev = input_vtxo.txout();
-	let mut shc = SighashCache::new(oor_tx);
+	let mut shc = SighashCache::new(arkoor_tx);
 
 	shc.taproot_key_spend_signature_hash(
 		0, &sighash::Prevouts::All(&[prev]), TapSighashType::Default,
 	).expect("sighash error")
 }
 
-pub fn unsigned_oor_tx(input: &Vtxo, outputs: &[VtxoSpec]) -> Transaction {
+pub fn unsigned_arkoor_tx(input: &Vtxo, outputs: &[VtxoSpec]) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -77,12 +77,12 @@ fn build_arkoor_vtxos(
 ///
 /// Will panic if inputs and signatures don't have the same length,
 /// or if some input witnesses are not empty
-pub fn signed_oor_tx(
+pub fn signed_arkoor_tx(
 	input: &Vtxo,
 	signature: schnorr::Signature,
 	outputs: &[VtxoSpec]
 ) -> Transaction {
-	let mut tx = unsigned_oor_tx(input, outputs);
+	let mut tx = unsigned_arkoor_tx(input, outputs);
 	util::fill_taproot_sigs(&mut tx, &[signature]);
 	tx
 }
@@ -95,8 +95,8 @@ pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), St
 	// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
 
 	let sig = vtxo.signature.ok_or(format!("unsigned vtxo"))?;
-	let tx = signed_oor_tx(&vtxo.input, sig, &vtxo.output_specs);
-	let sighash = oor_sighash(&vtxo.input, &tx);
+	let tx = signed_arkoor_tx(&vtxo.input, sig, &vtxo.output_specs);
+	let sighash = arkoor_sighash(&vtxo.input, &tx);
 	SECP.verify_schnorr(
 		&sig,
 		&sighash.into(),
@@ -171,11 +171,11 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 	}
 
 	pub fn unsigned_transaction(&self) -> Transaction {
-		unsigned_oor_tx(&self.input, &self.output_specs())
+		unsigned_arkoor_tx(&self.input, &self.output_specs())
 	}
 
 	pub fn sighash(&self) -> TapSighash {
-		oor_sighash(&self.input, &self.unsigned_transaction())
+		arkoor_sighash(&self.input, &self.unsigned_transaction())
 	}
 
 	pub fn total_weight(&self) -> Weight {
@@ -204,7 +204,7 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 	/// These vtxos are not valid vtxos because they lack the signature.
 	pub fn unsigned_output_vtxos(&self) -> Vec<ArkoorVtxo> {
 		let outputs = self.output_specs();
-		let tx = unsigned_oor_tx(&self.input, &outputs);
+		let tx = unsigned_arkoor_tx(&self.input, &outputs);
 		build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid())
 	}
 
@@ -219,8 +219,8 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 		cosign_resp: &ArkoorCosignResponse,
 	) -> Vec<Vtxo> {
 		let outputs = self.output_specs();
-		let tx = unsigned_oor_tx(&self.input, &outputs);
-		let sighash = oor_sighash(&self.input, &tx);
+		let tx = unsigned_arkoor_tx(&self.input, &outputs);
+		let sighash = arkoor_sighash(&self.input, &tx);
 
 		assert_eq!(user_keypair.public_key(), self.input.spec().user_pubkey);
 		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &cosign_resp.pub_nonce]);

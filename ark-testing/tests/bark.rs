@@ -294,8 +294,8 @@ async fn bark_rejects_sending_subdust_oor() {
 }
 
 #[tokio::test]
-async fn bark_rejects_creating_oor_subdust_change() {
-	let ctx = TestContext::new("bark/bark_rejects_creating_oor_subdust_change").await;
+async fn bark_rejects_creating_arkoor_subdust_change() {
+	let ctx = TestContext::new("bark/bark_rejects_creating_arkoor_subdust_change").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
@@ -340,7 +340,7 @@ async fn refresh_counterparty() {
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
 
-	let (oor_vtxo, others): (Vec<_>, Vec<_>) = bark1.vtxos().await
+	let (arkoor_vtxo, others): (Vec<_>, Vec<_>) = bark1.vtxos().await
 		.into_iter()
 		.partition(|v| v.amount == sat(330_000));
 
@@ -350,7 +350,7 @@ async fn refresh_counterparty() {
 	// there should still be 3 vtxos
 	assert_eq!(3, vtxos.len());
 	// received oor vtxo should be refreshed
-	assert!(!vtxos.iter().any(|v| v.id == oor_vtxo.first().unwrap().id));
+	assert!(!vtxos.iter().any(|v| v.id == arkoor_vtxo.first().unwrap().id));
 	// others should remain untouched
 	assert!(others.iter().all(|o| vtxos.iter().any(|v| v.id == o.id)));
 }
@@ -659,8 +659,8 @@ async fn drop_vtxos() {
 }
 
 #[tokio::test]
-async fn reject_oor_with_bad_signature() {
-	let ctx = TestContext::new("bark/reject_oor_with_bad_signature").await;
+async fn reject_arkoor_with_bad_signature() {
+	let ctx = TestContext::new("bark/reject_arkoor_with_bad_signature").await;
 
 	#[derive(Clone)]
 	struct InvalidSigProxy(rpc::ArkServiceClient<tonic::transport::Channel>);
@@ -669,9 +669,9 @@ async fn reject_oor_with_bad_signature() {
 	impl aspd::proxy::AspdRpcProxy for InvalidSigProxy {
 		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
-		async fn empty_oor_mailbox(&mut self, req: protos::OorVtxosRequest) -> Result<protos::OorVtxosResponse, tonic::Status>  {
+		async fn empty_arkoor_mailbox(&mut self, req: protos::ArkoorVtxosRequest) -> Result<protos::ArkoorVtxosResponse, tonic::Status>  {
 			info!("proxy handling oor request");
-			let response = self.upstream().empty_oor_mailbox(req).await?;
+			let response = self.upstream().empty_arkoor_mailbox(req).await?;
 			info!("proxy received real response");
 
 			let keypair = Keypair::new(&ark::util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
@@ -681,8 +681,8 @@ async fn reject_oor_with_bad_signature() {
 					_ => panic!("expect oor vtxo")
 				};
 
-			let sighash = ark::oor::oor_sighash(
-				&input, &ark::oor::unsigned_oor_tx(&input, &output_specs),
+			let sighash = ark::oor::arkoor_sighash(
+				&input, &ark::oor::unsigned_arkoor_tx(&input, &output_specs),
 			);
 			let fake_sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
 
@@ -693,7 +693,7 @@ async fn reject_oor_with_bad_signature() {
 				point,
 			});
 
-			Ok(protos::OorVtxosResponse {
+			Ok(protos::ArkoorVtxosResponse {
 				vtxos: vec![vtxo.encode()]
 			})
 		}

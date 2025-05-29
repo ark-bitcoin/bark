@@ -551,7 +551,7 @@ impl Server {
 
 		let _lock = match self.vtxos_in_flux.lock([input.id()]) {
 			Ok(l) => l,
-			Err(id) => return badarg!("attempted to sign OOR for vtxo already in flux: {}", id),
+			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
 		};
 
 		self.validate_board_inputs(&[input])
@@ -568,7 +568,7 @@ impl Server {
 			.collect::<Vec<_>>();
 		let ret = match self.db.check_set_vtxo_oor_spent(&[input.id()], txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
-				return badarg!("attempted to sign OOR for already spent vtxo {}", dup);
+				return badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup);
 			},
 			Ok(None) => {
 				info!("Cosigning OOR tx {} with input: {:?}", txid, input.id());
@@ -597,7 +597,7 @@ impl Server {
 		let input_id = input_vtxo.id();
 		let _lock = match self.vtxos_in_flux.lock([input_id]) {
 			Ok(l) => l,
-			Err(id) => return badarg!("attempted to sign OOR for vtxo already in flux: {}", id),
+			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
 		};
 
 		if let Err(e) = self.validate_board_inputs(&[&input_vtxo]) {
@@ -630,7 +630,7 @@ impl Server {
 
 		match self.db.check_set_vtxo_oor_spent(&[input_id], txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
-				badarg!("attempted to sign OOR for already spent vtxo {}", dup)
+				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
 			},
 			Ok(None) => {
 				info!("Cosigning HTLC tx {} with input: {:?}", txid, input_id);

@@ -145,7 +145,7 @@ lazy_static::lazy_static! {
 	static ref LN_ONBOARD_FEE_SATS: Amount = Amount::from_sat(350);
 }
 
-struct OorCreateResult {
+struct ArkoorCreateResult {
 	input: Vtxo,
 	created: Vtxo,
 	change: Option<Vtxo>,
@@ -857,7 +857,7 @@ impl Wallet {
 		}).collect::<HashSet<_>>();
 
 		for pk in pubkeys {
-			self.sync_oor_by_pk(&pk).await?;
+			self.sync_arkoor_by_pk(&pk).await?;
 		}
 
 		Ok(())
@@ -865,13 +865,13 @@ impl Wallet {
 
 	/// Sync with the Ark and look for out-of-round received VTXOs
 	/// by public key
-	pub async fn sync_oor_by_pk(&self, pk: &PublicKey) -> anyhow::Result<()> {
+	pub async fn sync_arkoor_by_pk(&self, pk: &PublicKey) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
-		let req = protos::OorVtxosRequest { pubkey: pk.serialize().to_vec() };
-		let resp = asp.client.empty_oor_mailbox(req).await.context("error fetching oors")?;
+		let req = protos::ArkoorVtxosRequest { pubkey: pk.serialize().to_vec() };
+		let resp = asp.client.empty_arkoor_mailbox(req).await.context("error fetching oors")?;
 		let oors = resp.into_inner().vtxos.into_iter()
 			.map(|b| Vtxo::decode(&b).context("invalid vtxo from asp"))
 			.collect::<Result<Vec<_>, _>>()?;
@@ -1021,9 +1021,11 @@ impl Wallet {
 	}
 
 
-	async fn create_oor_vtxo(&mut self, destination: PublicKey, amount: Amount)
-		-> anyhow::Result<OorCreateResult>
-	{
+	async fn create_arkoor_vtxo(
+		&mut self,
+		destination: PublicKey,
+		amount: Amount,
+	) -> anyhow::Result<ArkoorCreateResult> {
 		let mut asp = self.require_asp()?;
 		let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
 
@@ -1070,12 +1072,12 @@ impl Wallet {
 		};
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
-		let req = protos::OorCosignRequest {
+		let req = protos::ArkoorCosignRequest {
 			input_id: builder.input.id().to_bytes().to_vec(),
 			outputs: builder.outputs.iter().map(|o| o.into()).collect(),
 			pub_nonce: pub_nonce.serialize().to_vec(),
 		};
-		let cosign_resp = asp.client.request_oor_cosign(req).await.context("cosign request failed")?
+		let cosign_resp = asp.client.request_arkoor_cosign(req).await.context("cosign request failed")?
 			.into_inner().try_into().context("invalid server cosign response")?;
 
 		trace!("OOR prevout: {:?}", builder.input.txout());
@@ -1091,7 +1093,7 @@ impl Wallet {
 		let user_vtxo = vtxo_iter.next().context("no vtxo created")?;
 		let change_vtxo = vtxo_iter.next();
 
-		Ok(OorCreateResult {
+		Ok(ArkoorCreateResult {
 			input: input,
 			created: user_vtxo.into(),
 			change: change_vtxo.map(|v| v.into()),
@@ -1100,21 +1102,21 @@ impl Wallet {
 	}
 
 
-	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
+	pub async fn send_arkoor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
 		let mut asp = self.require_asp()?;
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let oor = self.create_oor_vtxo(destination, amount).await?;
+		let oor = self.create_arkoor_vtxo(destination, amount).await?;
 
-		let req = protos::OorVtxo {
+		let req = protos::ArkoorVtxo {
 			pubkey: destination.serialize().to_vec(),
 			vtxo: oor.created.clone().encode(),
 		};
 
-		if let Err(e) = asp.client.post_oor_mailbox(req).await {
+		if let Err(e) = asp.client.post_arkoor_mailbox(req).await {
 			error!("Failed to post the OOR vtxo to the recipients mailbox: '{}'; vtxo: {}",
 				e, oor.created.encode().as_hex(),
 			);
@@ -1296,7 +1298,7 @@ impl Wallet {
 
 	async fn create_fee_vtxo(&mut self, fees: Amount) -> anyhow::Result<Vtxo> {
 		let pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
-		let oor = self.create_oor_vtxo(pubkey, fees).await?;
+		let oor = self.create_arkoor_vtxo(pubkey, fees).await?;
 		let receives = [&oor.created].into_iter()
 			.chain(&oor.change)
 			.map(|v| (v, VtxoState::Spendable))
