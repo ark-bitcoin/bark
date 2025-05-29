@@ -307,13 +307,6 @@ impl<'a> ArkoorBuilder<'a, PaymentRequest> {
 	}
 }
 
-#[derive(Debug)]
-pub struct InsufficientFunds {
-	pub required: Amount,
-	pub missing: Amount,
-	pub fee: Amount,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkoorVtxo {
 	pub input: Box<Vtxo>,
