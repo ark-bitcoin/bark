@@ -22,6 +22,6 @@ serde_json.workspace = true
 # bdk
 bdk_wallet = { workspace = true, optional = true }
 bdk_esplora = { workspace = true, optional = true }
-reqwest = { version = "0.11.27", features = [ "rustls-tls" ], default-features = false, optional = true }
+reqwest = { version = "0.12.18", features = [ "rustls-tls" ], default-features = false, optional = true }
 async-trait = { version = "0.1.88", optional = true }
 thiserror = { workspace = true, optional = true }
