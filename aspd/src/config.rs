@@ -123,6 +123,8 @@ pub struct Config {
 	/// Directory to place structured log files.
 	pub log_dir: Option<PathBuf>,
 	pub network: bitcoin::Network,
+	/// The number of blocks after which a VTXO expires, by default 6*24*30 so that
+	/// a VTXO can live for up to 30 days.
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
 	pub htlc_expiry_delta: u16,
@@ -209,7 +211,7 @@ impl Default for Config {
 			data_dir: "./aspd".into(),
 			log_dir: None,
 			network: bitcoin::Network::Regtest,
-			vtxo_expiry_delta: 24 * 6,
+			vtxo_expiry_delta: 6 * 24 * 30,
 			vtxo_exit_delta: 2 * 6,
 			htlc_expiry_delta: 6,
 

@@ -74,6 +74,8 @@ impl Bark {
 			.arg("--verbose")
 			.arg("--asp")
 			.arg(&cfg.asp_url)
+			.arg("--vtxo-refresh-threshold")
+			.arg("24")
 			.arg(format!("--{}", &cfg.network));
 
 		// allow extra args

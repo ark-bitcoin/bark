@@ -66,21 +66,45 @@ struct Cli {
 
 #[derive(clap::Args)]
 struct ConfigOpts {
+	/// The address of your ASP.
 	#[arg(long)]
 	asp: Option<String>,
 
-	/// The esplora HTTP API endpoint
+	/// The address of the Esplora HTTP server to use.
+	///
+	/// Either this or the `bitcoind_address` field has to be provided.
 	#[arg(long)]
 	esplora: Option<String>,
+
+	/// The address of the bitcoind RPC server to use.
+	///
+	/// Either this or the `esplora_address` field has to be provided.
 	#[arg(long)]
-	/// The bitcoind address
 	bitcoind: Option<String>,
+
+	/// The path to the bitcoind rpc cookie file.
+	///
+	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	bitcoind_cookie: Option<String>,
+
+	/// The bitcoind RPC username.
+	///
+	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	bitcoind_user: Option<String>,
+
+	/// The bitcoind RPC password.
+	///
+	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	bitcoind_pass: Option<String>,
+
+	/// The number of blocks before expiration to refresh vtxos.
+	///
+	/// Default value: 288 (48 hrs)
+	#[arg(long)]
+	vtxo_refresh_threshold: Option<u32>
 }
 
 impl ConfigOpts {
@@ -105,6 +129,9 @@ impl ConfigOpts {
 		}
 		if let Some(v) = self.bitcoind_pass {
 			cfg.bitcoind_pass = if v == "" { None } else { Some(v) };
+		}
+		if let Some(v) = self.vtxo_refresh_threshold {
+			cfg.vtxo_refresh_threshold = v;
 		}
 
 		if cfg.esplora_address.is_none() && cfg.bitcoind_address.is_none() {
