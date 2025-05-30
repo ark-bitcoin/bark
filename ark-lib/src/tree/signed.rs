@@ -16,7 +16,6 @@ use bitcoin_ext::{fee, BlockHeight, TransactionExt};
 use crate::util::{Decodable, Encodable};
 use crate::{musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
-use crate::vtxo::VtxoSpkSpec;
 
 
 /// The witness weight to spend a node transaction.
@@ -703,6 +702,8 @@ mod test {
 	use bitcoin::hashes::{siphash24, sha256, Hash, HashEngine};
 	use bitcoin::secp256k1::{self, rand, Keypair};
 	use rand::SeedableRng;
+
+	use crate::vtxo::VtxoSpkSpec;
 
 	fn test_tree_amounts(
 		tree: &UnsignedVtxoTree,
