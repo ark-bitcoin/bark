@@ -232,6 +232,11 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
+	pub async fn vtxos_no_sync(&self) -> json::Vtxos {
+		let res = self.run(["vtxos", "--no-sync"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
 	pub async fn list_movements(&self) -> Vec<Movement> {
 		let res = self.run(["movements"]).await;
 		serde_json::from_str(&res).expect("json error")
@@ -257,15 +262,23 @@ impl Bark {
 		self.try_send_onchain(destination, amount).await.unwrap();
 	}
 
-	pub async fn try_send_oor(&self, dest: impl fmt::Display, amount: Amount) -> anyhow::Result<()> {
+	pub async fn try_send_oor(&self, dest: impl fmt::Display, amount: Amount, sync: bool) -> anyhow::Result<()> {
 		let dest = dest.to_string();
 		let amount = amount.to_string();
-		self.try_run(["send", &dest, &amount, "--verbose"]).await?;
+		let mut args = vec!["send", &dest, &amount, "--verbose"];
+		if !sync {
+			args.push("--no-sync");
+		}
+		self.try_run(args).await?;
 		Ok(())
 	}
 
 	pub async fn send_oor(&self, dest: impl fmt::Display, amount: Amount) {
-		self.try_send_oor(dest, amount).await.expect("send-oor command failed");
+		self.try_send_oor(dest, amount, true).await.expect("send-oor command failed");
+	}
+
+	pub async fn send_oor_nosync(&self, dest: impl fmt::Display, amount: Amount) {
+		self.try_send_oor(dest, amount, false).await.expect("send-oor command failed");
 	}
 
 	pub async fn try_send_bolt11(&self, destination :impl fmt::Display, amount: Option<Amount>)-> anyhow::Result<()> {

@@ -1210,7 +1210,7 @@ async fn reject_subdust_arkoor_cosign() {
 
 	let bark2 = ctx.new_bark("bark2", &aspd).await;
 
-	let err = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000)).await.unwrap_err();
+	let err = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000), true).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"bad user input: VTXO amount must be at least 0.00000330 BTC, requested 0.00000329 BTC",
 	), "err: {err}");
@@ -1452,9 +1452,9 @@ async fn aspd_refuse_too_deep_arkoor_input() {
 	bark1.send_oor(&pk, sat(100_000)).await;
 	bark1.send_oor(&pk, sat(100_000)).await;
 
-	let [vtxo] = bark1.vtxos().await.try_into().unwrap();
+	let [vtxo] = bark1.vtxos_no_sync().await.try_into().unwrap();
 
-	let err = bark1.try_send_oor(&pk, sat(100_000)).await.unwrap_err();
+	let err = bark1.try_send_oor(&pk, sat(100_000), false).await.unwrap_err();
 	assert!(err
 		.to_string()
 		.contains(&format!("bad user input: OOR depth reached maximum of 5, please refresh your VTXO: {}", vtxo.id)),
