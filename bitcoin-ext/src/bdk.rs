@@ -47,6 +47,18 @@ pub enum CpfpError {
 
 /// An extension trait for [Wallet].
 pub trait WalletExt: BorrowMut<Wallet> {
+	/// Returns an iterator for each unconfirmed transaction in the wallet. Useful for syncing the
+	/// wallet with bitcoind.
+	fn unconfirmed_txids(&self) -> impl Iterator<Item = Txid> {
+		self.borrow().transactions().filter_map(|tx| {
+			if tx.chain_position.is_unconfirmed() {
+				Some(tx.tx_node.txid)
+			} else {
+				None
+			}
+		})
+	}
+
 	/// Return all vtxos that are untrusted: unconfirmed and not change.
 	fn untrusted_utxos(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
 		let w = self.borrow();

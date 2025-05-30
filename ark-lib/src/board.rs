@@ -22,7 +22,7 @@ pub fn board_taproot(spec: &VtxoSpec) -> taproot::TaprootSpendInfo {
 		.add_leaf(0, expiry).unwrap()
 		.finalize(&util::SECP, spec.combined_pubkey()).unwrap();
 	debug_assert_eq!(
-		ret.output_key().to_inner(),
+		ret.output_key().to_x_only_public_key(),
 		musig::tweaked_key_agg(
 			[spec.user_pubkey, spec.asp_pubkey], ret.tap_tweak().to_byte_array(),
 		).1.x_only_public_key().0,
@@ -178,7 +178,7 @@ pub fn finish(
 	debug_assert!(util::SECP.verify_schnorr(
 		&final_sig,
 		&reveal_sighash.into(),
-		&board_taproot(&user.spec).output_key().to_inner(),
+		&board_taproot(&user.spec).output_key().to_x_only_public_key(),
 	).is_ok(), "invalid board exit tx signature produced");
 
 	BoardVtxo {

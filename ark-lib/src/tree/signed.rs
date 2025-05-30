@@ -540,7 +540,7 @@ impl UnsignedVtxoTree {
 			let sig = &signatures[node.idx()];
 			let sighash = self.sighashes[node.idx()];
 			let agg_pk = &self.cosign_agg_pks[node.idx()];
-			let pk = self.spec.cosign_taproot(*agg_pk).output_key().to_inner();
+			let pk = self.spec.cosign_taproot(*agg_pk).output_key().to_x_only_public_key();
 			util::SECP.verify_schnorr(sig, &sighash.into(), &pk)
 				.map_err(|e| format!("invalid signature on node #{}: {}", i, e))?;
 		}

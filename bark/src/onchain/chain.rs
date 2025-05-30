@@ -6,11 +6,11 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
-use bdk_bitcoind_rpc::BitcoindRpcErrorExt;
+use bdk_bitcoind_rpc::{BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
-use bitcoin_ext::bdk::EsploraClientExt;
+use bitcoin_ext::bdk::{EsploraClientExt, WalletExt};
 pub(crate) use bitcoin_ext::rpc::{BitcoinRpcExt, TxStatus};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use log::{debug, info, warn};
@@ -117,8 +117,9 @@ impl ChainSourceClient {
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
 				debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
+				let unconfirmed = onchain.wallet.unconfirmed_txids();
 				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, prev_tip.clone(), prev_tip.height(),
+					bitcoind, prev_tip.clone(), prev_tip.height(), unconfirmed,
 				);
 				let mut count = 0;
 				while let Some(em) = emitter.next_block()? {
@@ -134,7 +135,8 @@ impl ChainSourceClient {
 				}
 
 				let mempool = emitter.mempool()?;
-				onchain.wallet.apply_unconfirmed_txs(mempool);
+				onchain.wallet.apply_evicted_txs(mempool.evicted_ats());
+				onchain.wallet.apply_unconfirmed_txs(mempool.new_txs);
 				onchain.persist()?;
 				debug!("Finished syncing with bitcoind, {}", onchain.wallet.balance());
 			},
@@ -144,9 +146,8 @@ impl ChainSourceClient {
 				const PARALLEL_REQS: usize = 4;
 
 				let request = onchain.wallet.start_full_scan();
-				let now = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
-				onchain.wallet.apply_update_at(update, now)?;
+				onchain.wallet.apply_update(update)?;
 				onchain.persist()?;
 				debug!("Finished syncing with esplora, {}", onchain.wallet.balance());
 			},
@@ -156,7 +157,7 @@ impl ChainSourceClient {
 
 		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
 		let transactions = onchain.wallet.transactions().filter(|tx| {
-			if let ChainPosition::Unconfirmed { last_seen } = tx.chain_position {
+			if let ChainPosition::Unconfirmed { last_seen, .. } = tx.chain_position {
 				match last_seen {
 					Some(last_seen) => last_seen < now,
 					None => true,
@@ -191,7 +192,7 @@ impl ChainSourceClient {
 				let cp = CheckPoint::new(block);
 
 				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, cp.clone(), cp.height(),
+					bitcoind, cp.clone(), cp.height(), NO_EXPECTED_MEMPOOL_TXIDS,
 				);
 
 				let outpoint_set: HashSet<OutPoint> = HashSet::from_iter(outpoints.into_iter());
@@ -209,7 +210,7 @@ impl ChainSourceClient {
 				}
 
 				let mempool = emitter.mempool()?;
-				for (tx, _last_seen) in &mempool {
+				for (tx, _last_seen) in &mempool.new_txs {
 					for txin in tx.input.iter() {
 						if outpoint_set.contains(&txin.previous_output) {
 							unconfirmed_txs_by_outpoint.insert(txin.previous_output.clone(), tx.compute_txid());

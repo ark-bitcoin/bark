@@ -260,7 +260,7 @@ impl VtxoSpec {
 	}
 
 	pub fn taproot_pubkey(&self) -> XOnlyPublicKey {
-		self.vtxo_taproot().output_key().to_inner()
+		self.vtxo_taproot().output_key().to_x_only_public_key()
 	}
 
 	pub fn vtxo_taptweak(&self) -> taproot::TapTweakHash {
