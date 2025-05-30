@@ -468,7 +468,7 @@ async fn full_round() {
 
 	// then we wait for the error to happen
 	let err = rx.recv().wait(30_000).await.unwrap();
-	assert!(err.to_string().contains("Message arrived late or round was full"));
+	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
 }
 
 #[tokio::test]
@@ -493,7 +493,11 @@ async fn double_spend_oor() {
 				(Ok(_), Ok(_)) => panic!("one of them should fail"),
 				(Err(_), Err(_)) => panic!("one of them should work"),
 				(Ok(r), Err(e)) | (Err(e), Ok(r)) => {
-					assert!(e.to_string().contains("attempted to sign OOR for vtxo already in flux"));
+					assert!(
+						e.to_string().contains("attempted to sign arkoor tx for vtxo already in flux")
+							|| e.to_string().contains("attempted to sign arkoor tx for already spent vtxo"),
+						"err: {e}",
+					);
 					Ok(r.into_inner())
 				},
 			}
@@ -515,7 +519,7 @@ async fn double_spend_oor() {
 	let req = last_req.lock().await.take().unwrap();
 	let err = aspd.get_public_client().await.request_arkoor_cosign(req).await.unwrap_err();
 	assert!(err.to_string().contains(
-		"attempted to sign OOR for already spent vtxo",
+		"bad user input: attempted to sign arkoor tx for already spent vtxo",
 	), "err: {err}");
 }
 
@@ -884,7 +888,7 @@ async fn bad_round_input() {
 		}],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
-	assert!(err.message().contains("non-standard"), "{}", err.message());
+	assert!(err.message().contains("non-standard"), "err: {}", err.message());
 
 	info!("op_return too large");
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
@@ -896,7 +900,7 @@ async fn bad_round_input() {
 		}],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
-	assert!(err.message().contains("OP_RETURN"), "{}", err.message());
+	assert!(err.message().contains("OP_RETURN"), "err: {}", err.message());
 }
 
 #[derive(Clone)]
@@ -1165,9 +1169,11 @@ async fn reject_subdust_offboard_request() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let addr = bark.get_onchain_address().await;
-	let res = bark.try_offboard_all(&addr).await;
+	let err = bark.try_offboard_all(&addr).await.unwrap_err();
 
-	assert!(res.unwrap_err().to_string().contains("bad user input: offboard amount must be at least 0.00000330 BTC"));
+	assert!(err.to_string().contains(
+		"bad user input: offboard amount must be at least 0.00000330 BTC",
+	), "err: {err}");
 }
 
 #[tokio::test]
@@ -1196,8 +1202,10 @@ async fn reject_subdust_arkoor_cosign() {
 
 	let bark2 = ctx.new_bark("bark2", &aspd).await;
 
-	let res = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000)).await;
-	assert!(res.unwrap_err().to_string().contains("bad user input: VTXO amount must be at least 0.00000330 BTC, requested 0.00000329 BTC"));
+	let err = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000)).await.unwrap_err();
+	assert!(err.to_string().contains(
+		"bad user input: VTXO amount must be at least 0.00000330 BTC, requested 0.00000329 BTC",
+	), "err: {err}");
 }
 
 #[tokio::test]
@@ -1297,9 +1305,11 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 
 	let cloned = invoice_info.clone();
 	tokio::spawn(async move { lightningd_1.pay_bolt11(cloned.invoice).await; });
-	let res = bark.try_bolt11_onboard(invoice_info.invoice).await;
+	let err = bark.try_bolt11_onboard(invoice_info.invoice).await.unwrap_err();
 
-	assert!(res.unwrap_err().to_string().contains("input vtxo payment hash does not match preimage"));
+	assert!(err.to_string().contains(
+		"input vtxo payment hash does not match preimage",
+	), "err: {err}");
 }
 
 #[tokio::test]
@@ -1345,9 +1355,9 @@ async fn aspd_should_release_hodl_invoice_when_subscription_is_cancelled() {
 
 	tokio::time::sleep(cfg_htlc_subscription_timeout + aspd.config().invoice_check_interval).await;
 
-	let res = lightningd_1.try_pay_bolt11(invoice_info.invoice).await;
 	// cln rpc error code when cannot pay invoice
-	assert!(res.unwrap_err().to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"));
+	let err = lightningd_1.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1395,7 +1405,7 @@ async fn aspd_should_refuse_claim_twice() {
 
 	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
 
-	let res = bark_1.try_bolt11_onboard(invoice_info.invoice).await;
 	// bark should not be able to subscribe to already settled invoice
-	assert!(res.unwrap_err().to_string().contains("invoice already settled"));
+	let err = bark_1.try_bolt11_onboard(invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
 }
