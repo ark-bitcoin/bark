@@ -1,4 +1,3 @@
-
 use std::{fmt, iter};
 
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness};
@@ -290,6 +289,12 @@ impl Bolt11Payment {
 			point: OutPoint::new(tx.compute_txid(), HTLC_VOUT),
 			signature: None,
 		}
+	}
+
+	pub fn output_vtxos(&self) -> Vec<ArkoorVtxo> {
+		iter::once(self.unsigned_htlc_vtxo())
+			.chain(self.unsigned_change_vtxo().into_iter())
+			.collect()
 	}
 
 	pub fn sign_asp(
