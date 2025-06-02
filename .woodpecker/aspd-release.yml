@@ -30,7 +30,7 @@ steps:
     commands:
       - cat VERSION
       - just release-aspd
-      - cp ./target/x86_64-unknown-linux-gnu/release/aspd      aspd-linux-x86_64
+      - cp ./target/x86_64-unknown-linux-musl/release/aspd      aspd-linux-x86_64
 
   - name: build-and-push-aspd-to-registry
     when:
@@ -61,9 +61,7 @@ steps:
 
   - name: push-aspd-to-docker
     when:
-      - event: tag
-        ref: refs/tags/aspd-*
-      - evaluate: CI_FORGE_TYPE == "forgejo"
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/aspd-" && CI_FORGE_TYPE == "forgejo"'
     failure: ignore
     depends_on: build-and-push-aspd-to-registry
     # When this task fails make sure the sha256 is still available.
@@ -71,6 +69,8 @@ steps:
     #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
     image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
     environment:
+      REGISTRY_LOGIN_TOKEN:
+        from_secret: REGISTRY_LOGIN_TOKEN
       DOCKER_LOGIN_TOKEN:
         from_secret: DOCKER_LOGIN_TOKEN
     pull: true
@@ -78,14 +78,17 @@ steps:
     commands:
       - cat VERSION
       - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+      - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+      # Pull containers from registry.2nd.dev
+      - buildah pull registry.2nd.dev/aspd:latest
       # Tag containers for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      docker.io/aspd:latest
+      - buildah tag registry.2nd.dev/aspd:latest      docker.io/secondark/aspd:latest
       # Push containers to docker.io
-      - buildah push docker.io/aspd:latest
+      - buildah push docker.io/secondark/aspd:latest
       # Tag containers with specific version number for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/secondark/aspd:$(cat VERSION)"
       # Push containers with specific version number to docker.io
-      - buildah push "docker.io/aspd:$(cat VERSION)"
+      - buildah push "docker.io/secondark/aspd:$(cat VERSION)"
 
   - name: release-aspd
     when:
@@ -96,7 +99,7 @@ steps:
     commands:
       - cat VERSION
       - cd ./target
-      - cp x86_64-unknown-linux-gnu/release/aspd       "aspd-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-unknown-linux-musl/release/aspd       "aspd-$(cat ../VERSION)-linux-x86_64"
       - sha256sum "aspd-$(cat ../VERSION)-linux-x86_64"       >  SHA256SUMS
 
   - name: publish-aspd

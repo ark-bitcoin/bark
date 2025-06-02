@@ -31,8 +31,8 @@ steps:
       - cat VERSION
       - just release-aspd
       - just release-bark
-      - cp ./target/x86_64-unknown-linux-gnu/release/aspd      aspd-linux-x86_64
-      - cp ./target/x86_64-unknown-linux-gnu/release/bark      bark-linux-x86_64
+      - cp ./target/x86_64-unknown-linux-musl/release/aspd     aspd-linux-x86_64
+      - cp ./target/x86_64-unknown-linux-musl/release/bark     bark-linux-x86_64
       - cp ./target/aarch64-unknown-linux-gnu/release/bark     bark-linux-aarch64
       - cp ./target/armv7-unknown-linux-gnueabihf/release/bark bark-linux-armv7
       - cp ./target/x86_64-pc-windows-gnu/release/bark.exe     bark-windows-x86_64.exe
@@ -92,9 +92,7 @@ steps:
 
   - name: push-all-to-docker
     when:
-      - event: tag
-        ref: refs/tags/all-*
-      - evaluate: CI_FORGE_TYPE == "forgejo"
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/all-" && CI_FORGE_TYPE == "forgejo"'
     failure: ignore
     depends_on: build-and-push-all-to-registry
     # When this task fails make sure the sha256 is still available.
@@ -102,6 +100,8 @@ steps:
     #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
     image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
     environment:
+      REGISTRY_LOGIN_TOKEN:
+        from_secret: REGISTRY_LOGIN_TOKEN
       DOCKER_LOGIN_TOKEN:
         from_secret: DOCKER_LOGIN_TOKEN
     pull: true
@@ -109,38 +109,44 @@ steps:
     commands:
       - cat VERSION
       - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+      - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+      # Pull containers from registry.2nd.dev
+      - buildah pull registry.2nd.dev/aspd:latest
+      - buildah pull registry.2nd.dev/bark:linux-amd64
+      - buildah pull registry.2nd.dev/bark:linux-arm64
+      - buildah pull registry.2nd.dev/bark:linux-armv7
       # Tag containers for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      docker.io/aspd:latest
-      - buildah tag registry.2nd.dev/bark:linux-amd64 docker.io/bark:linux-amd64
-      - buildah tag registry.2nd.dev/bark:linux-arm64 docker.io/bark:linux-arm64
-      - buildah tag registry.2nd.dev/bark:linux-armv7 docker.io/bark:linux-armv7
+      - buildah tag registry.2nd.dev/aspd:latest      docker.io/secondark/aspd:latest
+      - buildah tag registry.2nd.dev/bark:linux-amd64 docker.io/secondark/bark:linux-amd64
+      - buildah tag registry.2nd.dev/bark:linux-arm64 docker.io/secondark/bark:linux-arm64
+      - buildah tag registry.2nd.dev/bark:linux-armv7 docker.io/secondark/bark:linux-armv7
       # Push containers to docker.io
-      - buildah push docker.io/aspd:latest
-      - buildah push docker.io/bark:linux-amd64
-      - buildah push docker.io/bark:linux-arm64
-      - buildah push docker.io/bark:linux-armv7
+      - buildah push docker.io/secondark/aspd:latest
+      - buildah push docker.io/secondark/bark:linux-amd64
+      - buildah push docker.io/secondark/bark:linux-arm64
+      - buildah push docker.io/secondark/bark:linux-armv7
       # Tag containers with specific version number for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/aspd:$(cat VERSION)"
-      - buildah tag registry.2nd.dev/bark:linux-amd64 "docker.io/bark:linux-amd64-$(cat VERSION)"
-      - buildah tag registry.2nd.dev/bark:linux-arm64 "docker.io/bark:linux-arm64-$(cat VERSION)"
-      - buildah tag registry.2nd.dev/bark:linux-armv7 "docker.io/bark:linux-armv7-$(cat VERSION)"
+      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/secondark/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-amd64 "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-arm64 "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+      - buildah tag registry.2nd.dev/bark:linux-armv7 "docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
       # Push containers with specific version number to docker.io
-      - buildah push "docker.io/aspd:$(cat VERSION)"
-      - buildah push "docker.io/bark:linux-amd64-$(cat VERSION)"
-      - buildah push "docker.io/bark:linux-arm64-$(cat VERSION)"
-      - buildah push "docker.io/bark:linux-armv7-$(cat VERSION)"
+      - buildah push "docker.io/secondark/aspd:$(cat VERSION)"
+      - buildah push "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+      - buildah push "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+      - buildah push "docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
       # Create and push multi-arch docker manifest with tag latest to docker.io
       - buildah manifest create     bark-multiarch-docker
-      - buildah manifest add        bark-multiarch-docker docker://docker.io/bark:linux-amd64
-      - buildah manifest add        bark-multiarch-docker docker://docker.io/bark:linux-arm64
-      - buildah manifest add        bark-multiarch-docker docker://docker.io/bark:linux-armv7
-      - buildah manifest push --all bark-multiarch-docker docker://docker.io/bark:latest
+      - buildah manifest add        bark-multiarch-docker docker://docker.io/secondark/bark:linux-amd64
+      - buildah manifest add        bark-multiarch-docker docker://docker.io/secondark/bark:linux-arm64
+      - buildah manifest add        bark-multiarch-docker docker://docker.io/secondark/bark:linux-armv7
+      - buildah manifest push --all bark-multiarch-docker docker://docker.io/secondark/bark:latest
       # Create and push multi-arch docker manifest with versioned tag to docker.io
       - buildah manifest create     "bark-multiarch-docker-$(cat VERSION)"
-      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:linux-amd64-$(cat VERSION)"
-      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:linux-arm64-$(cat VERSION)"
-      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:linux-armv7-$(cat VERSION)"
-      - buildah manifest push --all "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/bark:$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
+      - buildah manifest push --all "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/secondark/bark:$(cat VERSION)"
 
   - name: release-all
     when:
@@ -151,8 +157,8 @@ steps:
     commands:
       - cat VERSION
       - cd ./target
-      - cp x86_64-unknown-linux-gnu/release/aspd       "aspd-$(cat ../VERSION)-linux-x86_64"
-      - cp x86_64-unknown-linux-gnu/release/bark       "bark-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-unknown-linux-musl/release/aspd      "aspd-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-unknown-linux-musl/release/bark      "bark-$(cat ../VERSION)-linux-x86_64"
       - cp aarch64-unknown-linux-gnu/release/bark      "bark-$(cat ../VERSION)-linux-arm64"
       - cp armv7-unknown-linux-gnueabihf/release/bark  "bark-$(cat ../VERSION)-linux-armv7"
       - cp x86_64-pc-windows-gnu/release/bark.exe      "bark-$(cat ../VERSION)-windows-x86_64.exe"

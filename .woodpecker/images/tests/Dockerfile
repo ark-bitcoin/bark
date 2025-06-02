@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libpq5 \
 	postgresql \
 	postgresql-contrib \
+    musl-tools \
 	lzma-dev \
 	protobuf-compiler \
 	jq \
@@ -50,6 +51,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
 	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION} && \
 	rustup target add x86_64-pc-windows-gnu && \
+    rustup target add x86_64-unknown-linux-musl && \
 	rustup target add aarch64-unknown-linux-gnu && \
 	rustup target add armv7-unknown-linux-gnueabihf && \
 	rustup target add x86_64-apple-darwin && \
@@ -111,7 +113,7 @@ RUN echo "pre-build bark" && \
 	cargo llvm-cov --workspace --exclude ark-testing --html && \
 	cargo install --locked --path bark && \
 	cargo install --locked --path aspd && \
-	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \
+	cargo build --release --target x86_64-unknown-linux-musl        --locked --manifest-path bark/Cargo.toml && \
 	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark/Cargo.toml && \
