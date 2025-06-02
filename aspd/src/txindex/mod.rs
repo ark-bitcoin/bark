@@ -185,7 +185,6 @@ impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
 #[derive(Clone, Debug)]
 pub struct TxIndex {
 	tx_map: Arc<RwLock<HashMap<Txid, Tx>>>,
-	broadcast_pkg: Option<mpsc::UnboundedSender<Vec<Txid>>>,
 }
 //TODO(stevenroose) consider persisting all this state
 // - this would make it easier to entirely rely on new blocks and incoming mempool txs
@@ -309,7 +308,6 @@ impl TxIndex {
 	pub fn new() -> TxIndex {
 		TxIndex {
 			tx_map: Arc::new(RwLock::new(HashMap::new())),
-			broadcast_pkg: None,
 		}
 	}
 
@@ -320,13 +318,10 @@ impl TxIndex {
 		bitcoind: BitcoinRpcClient,
 		interval: Duration,
 	) -> JoinHandle<anyhow::Result<()>> {
-		let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel();
-		self.broadcast_pkg = Some(broadcast_tx);
 
 		let proc = TxIndexProcess {
-			rtmgr, bitcoind, interval, broadcast_rx,
+			rtmgr, bitcoind, interval,
 			txs: self.tx_map.clone(),
-			broadcast: Vec::new(),
 		};
 		tokio::spawn(async move {
 			proc.run().await.context("txindex exited with error")?;
@@ -341,9 +336,6 @@ struct TxIndexProcess {
 	interval: Duration,
 
 	txs: Arc<RwLock<HashMap<Txid, Tx>>>,
-	broadcast: Vec<Vec<Txid>>,
-
-	broadcast_rx: mpsc::UnboundedReceiver<Vec<Txid>>,
 	rtmgr: RuntimeManager,
 }
 
