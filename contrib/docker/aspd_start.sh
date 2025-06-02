@@ -3,30 +3,28 @@ set -e
 
 export RUST_BACKTRACE=1
 
-echo "${ASPD__DATA_DIR}"
+mkdir -p /run/postgresql/
+chown -R postgres:postgres /run/postgresql/
+echo "host all  all    0.0.0.0/0  md5" >> /var/lib/postgresql/data/pg_hba.conf
+echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
 
-if [ -f "${ASPD__DATA_DIR}/mnemonic" ]; then
-  echo "Config already exists at ${ASPD__DATA_DIR}"
-  su postgres -s /bin/sh -c "pg_ctl start -D /var/lib/postgresql/data -l /var/lib/postgresql/log.log" &
-  sleep 2s
-else
+if [ ! -f "/data/aspd/mnemonic" ]; then
 #  mkdir -p /var/lib/postgresql/data
   chmod 0700 /var/lib/postgresql/data
   chown -R postgres:postgres /var/lib/postgresql/data
-  mkdir -p /run/postgresql/
-  chown -R postgres:postgres /run/postgresql/
   su postgres -s /bin/sh -c "initdb /var/lib/postgresql/data"
-  echo "host all  all    0.0.0.0/0  md5" >> /var/lib/postgresql/data/pg_hba.conf
-  echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
-  su postgres -s /bin/sh -c "pg_ctl start -D /var/lib/postgresql/data -l /var/lib/postgresql/log.log" &
-  sleep 2s
-  psql -U postgres -c "ALTER USER postgres WITH ENCRYPTED PASSWORD 'postgres';"
-  cat /var/lib/postgresql/log.log
+fi
 
-  echo "Creating new config at ${ASPD__DATA_DIR}"
+su postgres -s /bin/sh -c "pg_ctl start -D /var/lib/postgresql/data -l /var/lib/postgresql/log.log" &
+sleep 2s
+
+if [ ! -f "/data/aspd/mnemonic" ]; then
+  psql -U postgres -c "ALTER USER postgres WITH ENCRYPTED PASSWORD 'postgres';"
+  echo "Creating new config at /data/aspd/"
   /usr/local/bin/aspd --config /root/aspd/aspd.toml create
   sleep 2s
 fi
 
+cat /var/lib/postgresql/log.log
 echo "Booting"
 /usr/local/bin/aspd --config /root/aspd/aspd.toml start
