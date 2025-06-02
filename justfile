@@ -29,7 +29,7 @@ build-codecov:
 	RUSTFLAGS="-C instrument-coverage" LLVM_PROFILE_FILE="your-binary-%p-%m.profraw" cargo build --workspace
 
 docker-pull:
-	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker pull "$LIGHTNINGD_DOCKER_IMAGE"; fi
+	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker image inspect "$LIGHTNINGD_DOCKER_IMAGE" > /dev/null 2>&1 && echo "Image already exists locally." || (echo "Image not found locally. Pulling..." && docker pull "$LIGHTNINGD_DOCKER_IMAGE"); fi
 
 alias unit := test-unit
 test-unit TEST="":
