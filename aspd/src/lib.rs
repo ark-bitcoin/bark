@@ -633,10 +633,9 @@ impl Server {
 		}
 
 		let txid = details.unsigned_transaction().compute_txid();
+
 		let new_vtxos = details
-			.unsigned_change_vtxo()
-			.map(|vtxo| vec![vtxo.into()])
-			.unwrap_or_default();
+			.output_vtxos().into_iter().map(|v| v.into()).collect::<Vec<_>>();
 
 		match self.db.check_set_vtxo_oor_spent(&[input_id], txid, &new_vtxos).await {
 			Ok(Some(dup)) => {
@@ -761,10 +760,7 @@ impl Server {
 			bail!("Payment wasn't signed with ASP's pubkey")
 		}
 
-		let htlc_vtxo = signed.htlc_vtxo();
 		let revocation_oor = signed.revocation_payment();
-
-		self.db.upsert_vtxos(&vec![htlc_vtxo.into()]).await?;
 
 		let parts = self.cosign_oor(
 			revocation_oor.input.id(),
