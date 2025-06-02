@@ -13,10 +13,10 @@ use bitcoin_ext::{fee, BlockHeight};
 
 use crate::lightning::{htlc_in_taproot, htlc_out_taproot};
 use crate::board::BoardVtxo;
-use crate::oor::ArkoorVtxo;
+use crate::arkoor::ArkoorVtxo;
 use crate::rounds::RoundVtxo;
 use crate::util::{Decodable, Encodable};
-use crate::{musig, oor, util};
+use crate::{musig, arkoor, util};
 
 
 /// The total signed tx weight of a exit tx.
@@ -338,6 +338,21 @@ impl Vtxo {
 		self.spec().txout()
 	}
 
+	pub fn input_vtxo_id(&self) -> Option<VtxoId> {
+		self.as_arkoor().map(|v| v.input_vtxo_id())
+	}
+
+	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
+	//TODO(stevenroose) this api will be better after refactor
+	pub fn server_htlc_out_payment_hash(&self) -> Option<sha256::Hash> {
+		self.as_arkoor().and_then(|v| {
+			match v.output_specs[0].spk {
+				VtxoSpkSpec::HtlcOut { payment_hash, .. } => Some(payment_hash),
+				_ => None,
+			}
+		})
+	}
+
 	/// The exit tx of the vtxo.
 	pub fn vtxo_tx(&self) -> Transaction {
 		let ret = match self {
@@ -346,9 +361,9 @@ impl Vtxo {
 			Vtxo::Arkoor(v) => {
 				let tx = if v.signature.is_none() {
 					//TODO(stevenroose) either improve API for or get rid of unsigned vtxos
-					oor::unsigned_oor_tx(&v.input, &v.output_specs)
+					arkoor::unsigned_arkoor_tx(&v.input, &v.output_specs)
 				} else {
-					oor::signed_oor_tx(&v.input, v.signature.unwrap(), &v.output_specs)
+					arkoor::signed_arkoor_tx(&v.input, v.signature.unwrap(), &v.output_specs)
 				};
 				assert_eq!(tx.compute_txid(), v.point.txid);
 				tx
@@ -507,11 +522,11 @@ impl From<ArkoorVtxo> for Vtxo {
 
 #[cfg(test)]
 mod test {
-	use crate::oor::ArkoorVtxo;
+	use crate::arkoor::ArkoorVtxo;
 
 use super::*;
 	use bitcoin::hashes::hex::FromHex;
-	use oor::unsigned_oor_tx;
+	use arkoor::unsigned_arkoor_tx;
 
 	#[test]
 	fn vtxo_roundtrip() {
@@ -558,7 +573,7 @@ use super::*;
 			spk: VtxoSpkSpec::Exit,
 			amount: Amount::from_sat(5),
 		}];
-		let tx = unsigned_oor_tx(&round, &output_specs);
+		let tx = unsigned_arkoor_tx(&round, &output_specs);
 		let oor = Vtxo::Arkoor(ArkoorVtxo {
 			input: round.clone().into(),
 			output_specs,
@@ -575,7 +590,7 @@ use super::*;
 			spk: VtxoSpkSpec::Exit,
 			amount: Amount::from_sat(5),
 		}];
-		let tx_recursive = unsigned_oor_tx(&oor, &output_specs_recursive);
+		let tx_recursive = unsigned_arkoor_tx(&oor, &output_specs_recursive);
 		let oor_recursive = Vtxo::Arkoor(ArkoorVtxo {
 			input: oor.clone().into(),
 			output_specs: output_specs_recursive,

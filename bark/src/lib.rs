@@ -9,14 +9,6 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod persist;
-use ark::board::BOARD_TX_VTXO_VOUT;
-use ark::oor::unsigned_oor_tx;
-use ark::util::{Decodable, Encodable};
-use ark::vtxo::VtxoSpkSpec;
-use bip39::rand::Rng;
-use bitcoin::params::Params;
-use bitcoin_ext::bdk::WalletExt;
-use movement::{Movement, MovementArgs};
 pub use persist::sqlite::SqliteClient;
 pub mod vtxo_selection;
 mod exit;
@@ -32,7 +24,9 @@ pub mod test;
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
 use rusqlite::ToSql;
+use serde::Serialize;
 
+use std::borrow::Borrow;
 use std::iter;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
@@ -43,20 +37,24 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{secp256k1, Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
+use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{rand, Keypair, PublicKey};
+use bitcoin::params::Params;
+use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
+use bitcoin::secp256k1::rand::Rng;
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn, error};
 use tokio_stream::{Stream, StreamExt};
 
 use ark::{
-	oor, ArkInfo, ArkoorVtxo, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
+	ArkInfo, ArkoorVtxo, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
 	VtxoId, VtxoRequest, VtxoSpec,
 };
+use ark::arkoor::{self, ArkoorBuilder};
+use ark::board::BOARD_TX_VTXO_VOUT;
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{
@@ -70,10 +68,14 @@ use ark::rounds::{
 	ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
+use ark::util::{Decodable, Encodable};
+use ark::vtxo::VtxoSpkSpec;
 use aspd_rpc::{self as rpc, protos};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
+use bitcoin_ext::bdk::WalletExt;
 
 use crate::exit::Exit;
+use crate::movement::{Movement, MovementArgs};
 use crate::onchain::Utxo;
 use crate::persist::BarkPersister;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
@@ -143,7 +145,7 @@ lazy_static::lazy_static! {
 	static ref LN_ONBOARD_FEE_SATS: Amount = Amount::from_sat(350);
 }
 
-struct OorCreateResult {
+struct ArkoorCreateResult {
 	input: Vtxo,
 	created: Vtxo,
 	change: Option<Vtxo>,
@@ -855,7 +857,7 @@ impl Wallet {
 		}).collect::<HashSet<_>>();
 
 		for pk in pubkeys {
-			self.sync_oor_by_pk(&pk).await?;
+			self.sync_arkoor_by_pk(&pk).await?;
 		}
 
 		Ok(())
@@ -863,13 +865,13 @@ impl Wallet {
 
 	/// Sync with the Ark and look for out-of-round received VTXOs
 	/// by public key
-	pub async fn sync_oor_by_pk(&self, pk: &PublicKey) -> anyhow::Result<()> {
+	pub async fn sync_arkoor_by_pk(&self, pk: &PublicKey) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
-		let req = protos::OorVtxosRequest { pubkey: pk.serialize().to_vec() };
-		let resp = asp.client.empty_oor_mailbox(req).await.context("error fetching oors")?;
+		let req = protos::ArkoorVtxosRequest { pubkey: pk.serialize().to_vec() };
+		let resp = asp.client.empty_arkoor_mailbox(req).await.context("error fetching oors")?;
 		let oors = resp.into_inner().vtxos.into_iter()
 			.map(|b| Vtxo::decode(&b).context("invalid vtxo from asp"))
 			.collect::<Result<Vec<_>, _>>()?;
@@ -877,7 +879,7 @@ impl Wallet {
 		for vtxo in oors {
 			// TODO: we need to test receiving arkoors with invalid signatures
 			let arkoor = vtxo.as_arkoor().context("asp gave non-arkoor vtxo for arkoor sync")?;
-			if let Err(e) = oor::verify_oor(arkoor, Some(*pk)) {
+			if let Err(e) = arkoor::verify_oor(arkoor, Some(*pk)) {
 				warn!("Could not validate OOR signature, dropping vtxo. {}", e);
 				continue;
 			}
@@ -1019,9 +1021,11 @@ impl Wallet {
 	}
 
 
-	async fn create_oor_vtxo(&mut self, destination: PublicKey, amount: Amount)
-		-> anyhow::Result<OorCreateResult>
-	{
+	async fn create_arkoor_vtxo(
+		&mut self,
+		destination: PublicKey,
+		amount: Amount,
+	) -> anyhow::Result<ArkoorCreateResult> {
 		let mut asp = self.require_asp()?;
 		let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
 
@@ -1054,80 +1058,65 @@ impl Wallet {
 		};
 		let outputs = Some(output.clone()).into_iter().chain(change).collect::<Vec<_>>();
 
-		let payment = ark::oor::OorPayment::new(
-			asp.info.asp_pubkey,
-			asp.info.vtxo_exit_delta,
-			input.clone(),
-			outputs,
-		);
+		let builder = ArkoorBuilder::new(&input, &outputs)
+			.context("arkoor builder error")?;
 
 		// it's a bit fragile, but if there is a second output, it's our change
-		if let Some(o) = payment.outputs.get(1) {
+		if let Some(o) = builder.outputs.get(1) {
 			info!("Added change VTXO of {}", o.amount);
 		}
 
-		let (sec_nonce, pub_nonce, keypair) = {
+		let keypair = {
 			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-			let keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
-
-			let (s, p) = musig::nonce_pair(&keypair);
-			(s, p, keypair)
+			self.vtxo_seed.derive_keychain(keychain, keypair_idx)
 		};
+		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
-		let req = protos::OorCosignRequest {
-			input_id: payment.input.id().to_bytes().to_vec(),
-			outputs: payment.outputs.iter().map(|o| {
-				protos::ArkoorOutput {
-					amount: o.amount.to_sat(),
-					pubkey: o.pubkey.serialize().to_vec(),
-				}
-			}).collect(),
+		let req = protos::ArkoorCosignRequest {
+			input_id: builder.input.id().to_bytes().to_vec(),
+			outputs: builder.outputs.iter().map(|o| o.into()).collect(),
 			pub_nonce: pub_nonce.serialize().to_vec(),
 		};
-		let resp = asp.client.request_oor_cosign(req).await.context("cosign request failed")?.into_inner();
+		let cosign_resp = asp.client.request_arkoor_cosign(req).await.context("cosign request failed")?
+			.into_inner().try_into().context("invalid server cosign response")?;
 
-		let asp_pub_nonce = resp.asp_pub_nonce()?;
-		let asp_part_sig = resp.asp_part_sig()?;
-
-		trace!("OOR prevout: {:?}", payment.input.txout());
-		let signed = payment.sign_finalize_user(
+		trace!("OOR prevout: {:?}", builder.input.txout());
+		let vtxos = builder.build_vtxos(
 			sec_nonce,
 			pub_nonce,
 			&keypair,
-			asp_pub_nonce,
-			asp_part_sig,
+			&cosign_resp,
 		);
-		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed.signed_transaction()));
-		let vtxos = signed.output_vtxos().into_iter().map(|v| Vtxo::from(v)).collect::<Vec<_>>();
 
 		// The first one is of the recipient, we will post it to their mailbox.
-		let user_vtxo = vtxos.get(0).context("no vtxo created")?.clone();
-		let change_vtxo = vtxos.last().map(|c| c.clone());
+		let mut vtxo_iter = vtxos.into_iter();
+		let user_vtxo = vtxo_iter.next().context("no vtxo created")?;
+		let change_vtxo = vtxo_iter.next();
 
-		Ok(OorCreateResult {
+		Ok(ArkoorCreateResult {
 			input: input,
-			created: user_vtxo,
-			change: change_vtxo,
+			created: user_vtxo.into(),
+			change: change_vtxo.map(|v| v.into()),
 			fee: offchain_fees
 		})
 	}
 
 
-	pub async fn send_oor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
+	pub async fn send_arkoor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
 		let mut asp = self.require_asp()?;
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let oor = self.create_oor_vtxo(destination, amount).await?;
+		let oor = self.create_arkoor_vtxo(destination, amount).await?;
 
-		let req = protos::OorVtxo {
+		let req = protos::ArkoorVtxo {
 			pubkey: destination.serialize().to_vec(),
 			vtxo: oor.created.clone().encode(),
 		};
 
-		if let Err(e) = asp.client.post_oor_mailbox(req).await {
+		if let Err(e) = asp.client.post_arkoor_mailbox(req).await {
 			error!("Failed to post the OOR vtxo to the recipients mailbox: '{}'; vtxo: {}",
 				e, oor.created.encode().as_hex(),
 			);
@@ -1150,6 +1139,7 @@ impl Wallet {
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<[u8; 32]> {
 		let properties = self.db.read_properties()?.context("Missing config")?;
+		let current_height = self.onchain.tip().await?;
 
 		if invoice.network() != properties.network {
 			bail!("BOLT-11 invoice is for wrong network: {}", invoice.network());
@@ -1161,58 +1151,56 @@ impl Wallet {
 
 		let mut asp = self.require_asp()?;
 
-		let inv_amount = invoice.amount_milli_satoshis()
-			.map(|v| Amount::from_sat(v.div_ceil(1000)));
+		let inv_amount = invoice.amount_milli_satoshis().map(|v| Amount::from_msat_ceil(v));
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
-			bail!("Invoice has amount of {} encoded. Please omit amount argument", inv);
+			bail!("Invoice has amount of {} encoded. Please omit user amount argument", inv);
 		}
 
-		let amount = user_amount.or(inv_amount).context("amount required on invoice without amount")?;
+		let amount = user_amount.or(inv_amount)
+			.context("amount required on invoice without amount")?;
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
-		let forwarding_fee = Amount::from_sat(350);
-		let input = self.find_vtxo_to_fit(amount + forwarding_fee)?;
+		let input = self.find_vtxo_to_fit(amount)?;
 
-		let (sec_nonce, pub_nonce, keypair) = {
+		let keypair = {
 			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-			let keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
-
-			let (s, p) = musig::nonce_pair(&keypair);
-			(s, p, keypair)
+			self.vtxo_seed.derive_keychain(keychain, keypair_idx)
 		};
+		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+
+		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
+		let builder = ArkoorBuilder::new_lightning(
+			&invoice,
+			&input,
+			change_keypair.public_key(),
+			amount,
+			htlc_expiry,
+		)?;
 
 		let req = protos::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
-			amount_sats: user_amount.map(|a| a.to_sat()),
+			user_amount_sat: user_amount.map(|a| a.to_sat()),
 			input_vtxo: input.encode(),
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 			user_nonce: pub_nonce.serialize().to_vec(),
 		};
-		let resp = asp.client.start_bolt11_payment(req).await
-			.context("htlc request failed")?.into_inner();
+		let cosign_resp = asp.client.start_bolt11_payment(req).await
+			.context("htlc request failed")?.into_inner()
+			.try_into().context("invalid arkoor cosign response from server")?;
 
-		let payment = ark::lightning::Bolt11Payment::decode(&resp.details)
-			.context("invalid bolt11 payment details from asp")?;
-
-		let asp_pub_nonce = resp.asp_pub_nonce()?;
-		let asp_part_sig = resp.asp_part_sig()?;
-
-		trace!("htlc prevout: {:?}", input.txout());
-		let input_vtxo = payment.input.clone();
-		let signed = payment.sign_finalize_user(
-			sec_nonce,
-			pub_nonce,
-			&keypair,
-			asp_pub_nonce,
-			asp_part_sig,
-		);
+		let mut vtxos = builder.build_vtxos(
+			sec_nonce, pub_nonce, &keypair, &cosign_resp,
+		).into_iter();
+		let htlc_vtxo = vtxos.next().unwrap();
+		let change_vtxo = vtxos.next();
 
 		let req = protos::SignedBolt11PaymentDetails {
-			signed_payment: signed.clone().encode(),
+			invoice: invoice.to_string(),
+			htlc_vtxo_id: htlc_vtxo.id().to_bytes().to_vec(),
 			wait: true,
 		};
 
@@ -1221,68 +1209,56 @@ impl Wallet {
 		let payment_preimage = <[u8; 32]>::try_from(res.payment_preimage()).ok();
 
 		// The client will receive the change VTXO if it exists
-		let change_vtxo = if let Some(change_vtxo) = signed.change_vtxo() {
+		let change_vtxo = if let Some(ref change_vtxo) = change_vtxo {
 			info!("Adding change VTXO of {}", change_vtxo.amount());
-			trace!("htlc tx: {}", bitcoin::consensus::encode::serialize_hex(
-				&unsigned_oor_tx(&change_vtxo.input, &change_vtxo.output_specs),
-			));
-			Some(change_vtxo.into())
+			Some(change_vtxo)
 		} else {
 			None
 		};
-		let receive_vtxos = change_vtxo
-			.iter()
-			.map(|v| (v, VtxoState::Spendable))
+		let receive_vtxos = change_vtxo.iter()
+			.map(|v| (*v, VtxoState::Spendable))
 			.collect::<Vec<_>>();
 
 		if let Some(preimage) = payment_preimage {
 			self.db.register_movement(MovementArgs {
-				spends: &[&input_vtxo],
+				spends: &[&input],
 				receives: &receive_vtxos,
 				recipients: &[(&invoice.to_string(), amount)],
-				fees: Some(forwarding_fee)
+				fees: None,
 			}).context("failed to store OOR vtxo")?;
 			Ok(preimage)
 		} else {
-			let htlc_vtxo = signed.htlc_vtxo().into();
-			let (keychain, keypair_idx) = self.db.get_vtxo_key(&htlc_vtxo)?;
-			let keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
+			let keypair = {
+				let (keychain, keypair_idx) = self.db.get_vtxo_key(&htlc_vtxo)?;
+				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+			};
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
 			let req = protos::RevokeBolt11PaymentRequest {
-				signed_payment: signed.encode(),
+				htlc_vtxo: htlc_vtxo.encode(),
 				pub_nonce: pub_nonce.serialize().to_vec(),
 			};
 
-			let resp = asp.client.revoke_bolt11_payment(req).await?.into_inner();
-			let asp_pub_nonce = resp.asp_pub_nonce()?;
-			let asp_part_sig = resp.asp_part_sig()?;
+			let cosign_resp = asp.client.revoke_bolt11_payment(req).await?.into_inner()
+				.try_into().context("invalid server arkoor cosign response")?;
 
-			let revocation_payment = signed.revocation_payment();
-			let signed_revocation = revocation_payment.sign_finalize_user(
+			let recovation_builder = ArkoorBuilder::new_lightning_revocation(&htlc_vtxo)
+				.context("arkoor builder error")?;
+			let vtxos = recovation_builder.build_vtxos(
 				sec_nonce,
 				pub_nonce,
 				&keypair,
-				asp_pub_nonce,
-				asp_part_sig,
+				&cosign_resp,
 			);
-
-			trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_revocation.signed_transaction()));
-
-			let vtxo = Vtxo::from(signed_revocation
-				.output_vtxos()
-				.first()
-				.expect("there should be one output")
-				.clone()
-			);
+			let [vtxo] = vtxos.try_into().expect("recovation has single output");
 
 			self.db.register_movement(MovementArgs {
-				spends: &[&input_vtxo],
+				spends: &[&input],
 				receives: &if let Some(ref change) = change_vtxo {
 					vec![(&vtxo, VtxoState::Spendable), (change, VtxoState::Spendable)]
 				} else {
 					vec![(&vtxo, VtxoState::Spendable)]
-				},
+				}[..],
 				recipients: &[],
 				fees: None
 			})?;
@@ -1302,7 +1278,7 @@ impl Wallet {
 
 		let req = protos::StartBolt11OnboardRequest {
 			payment_hash: payment_hash.as_byte_array().to_vec(),
-			amount_sats: amount.to_sat()
+			amount_sat: amount.to_sat()
 		};
 
 		let resp = asp.client.start_bolt11_onboard(req).await?.into_inner();
@@ -1322,7 +1298,7 @@ impl Wallet {
 
 	async fn create_fee_vtxo(&mut self, fees: Amount) -> anyhow::Result<Vtxo> {
 		let pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
-		let oor = self.create_oor_vtxo(pubkey, fees).await?;
+		let oor = self.create_arkoor_vtxo(pubkey, fees).await?;
 		let receives = [&oor.created].into_iter()
 			.chain(&oor.change)
 			.map(|v| (v, VtxoState::Spendable))
@@ -1364,23 +1340,25 @@ impl Wallet {
 		// Create a VTXO to pay receive fees:
 		let fee_vtxo = self.create_fee_vtxo(*LN_ONBOARD_FEE_SATS).await?;
 
-		let cloned = fee_vtxo.clone();
+		let htlc_expiry = current_height + asp.info.vtxo_expiry_delta as u32;
+		let fee_vtxo_cloned = fee_vtxo.clone();
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
-			let inputs = vec![cloned.clone()];
+			let inputs = vec![fee_vtxo_cloned.clone()];
 			let htlc_pay_req = PaymentRequest {
 				pubkey: keypair.public_key(),
 				amount: amount,
 				spk: VtxoSpkSpec::HtlcIn {
 					payment_hash: *invoice.payment_hash(),
-					htlc_expiry: current_height + asp.info.vtxo_expiry_delta as u32,
-				}
+					htlc_expiry: htlc_expiry,
+				},
 			};
 
 			Ok((inputs, vec![htlc_pay_req], vec![]))
 		}).await.context("round failed")?;
 
-		let vtxo = vtxos.first().expect("should have one");
-		info!("Got HTLC vtxo in round: {}", vtxo.id());
+		let htlc_vtxo = vtxos.first().expect("should have one");
+		info!("Got HTLC vtxo in round: {}", htlc_vtxo.id());
+		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.encode().as_hex());
 
 		// Claiming arkoor against preimage
 		let pay_req = PaymentRequest {
@@ -1389,40 +1367,30 @@ impl Wallet {
 			spk: VtxoSpkSpec::Exit,
 		};
 
-		let payment = ark::oor::OorPayment::new(
-			asp.info.asp_pubkey,
-			asp.info.vtxo_exit_delta,
-			vtxo.clone(),
-			vec![pay_req],
-		);
+		let pay_reqs = [&pay_req]; // appease borrowck
+		let builder = ArkoorBuilder::new(&htlc_vtxo, &pay_reqs)
+			.context("arkoor builder error")?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
 		let req = protos::ClaimBolt11OnboardRequest {
-			payment: payment.encode(),
-			payment_preimage: offchain_onboard.payment_preimage.to_vec(),
+			input_id: htlc_vtxo.id().to_bytes().to_vec(),
+			outputs: vec![pay_req.borrow().into()],
 			pub_nonce: pub_nonce.serialize().to_vec(),
+			payment_preimage: offchain_onboard.payment_preimage.to_vec(),
 		};
 
 		info!("Claiming arkoor against payment preimage");
-		let resp = asp.client.claim_bolt11_onboard(req).await?.into_inner();
-		let asp_pub_nonce = resp.asp_pub_nonce()?;
-		let asp_part_sig = resp.asp_part_sig()?;
+		let cosign_resp = asp.client.claim_bolt11_onboard(req).await
+			.context("failed to claim bolt11 onboard")?
+			.into_inner().try_into().context("invalid server cosign response")?;
 
-		let signed_payment = payment.sign_finalize_user(
+		let vtxos = builder.build_vtxos(
 			sec_nonce,
 			pub_nonce,
 			&keypair,
-			asp_pub_nonce,
-			asp_part_sig,
+			&cosign_resp,
 		);
-
-		trace!("OOR tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_payment.signed_transaction()));
-		let vtxo = Vtxo::from(signed_payment
-			.output_vtxos()
-			.first()
-			.expect("there should be one output")
-			.clone()
-		);
+		let [vtxo] = vtxos.try_into().expect("had exactly one request");
 
 		info!("Got an arkoor from lightning! {}", vtxo.id());
 		self.db.register_movement(MovementArgs {
@@ -1551,14 +1519,16 @@ impl Wallet {
 
 		let res = asp.client.submit_payment(protos::SubmitPaymentRequest {
 			input_vtxos: input_vtxos.iter().map(|(id, vtxo)| {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(vtxo)
-					.expect("owned vtxo key should be in database");
-				let key = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
+				let keypair = {
+					let (keychain, keypair_idx) = self.db.get_vtxo_key(vtxo)
+						.expect("owned vtxo key should be in database");
+					self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+				};
 
 				protos::InputVtxo {
 					vtxo_id: id.to_bytes().to_vec(),
 					ownership_proof: {
-						let sig = round_state.challenge().sign_with(*id, key);
+						let sig = round_state.challenge().sign_with(*id, keypair);
 						sig.serialize().to_vec()
 					},
 				}
@@ -1731,8 +1701,10 @@ impl Wallet {
 			connector_pubkey,
 		);
 		let forfeit_sigs = input_vtxos.iter().map(|(id, vtxo)| {
-			let (keychain, keypair_idx) = self.db.get_vtxo_key(&vtxo)?;
-			let vtxo_keypair = self.vtxo_seed.derive_keychain(keychain, keypair_idx);
+			let vtxo_keypair = {
+				let (keychain, keypair_idx) = self.db.get_vtxo_key(&vtxo)?;
+				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+			};
 
 			let sigs = connectors.connectors().enumerate().map(|(i, (conn, _))| {
 				let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(

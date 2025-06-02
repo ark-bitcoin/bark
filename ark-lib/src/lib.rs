@@ -4,18 +4,18 @@ pub extern crate bitcoin;
 #[macro_use] extern crate serde;
 #[macro_use] extern crate lazy_static;
 
+pub mod arkoor;
 pub mod connectors;
 pub mod forfeit;
 pub mod lightning;
 pub mod musig;
 pub mod board;
-pub mod oor;
 pub mod rounds;
 pub mod tree;
 pub mod util;
 pub mod vtxo;
 
-pub use crate::oor::ArkoorVtxo;
+pub use crate::arkoor::ArkoorVtxo;
 pub use crate::board::BoardVtxo;
 pub use crate::rounds::RoundVtxo;
 pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};
@@ -43,6 +43,7 @@ pub struct ArkInfo {
 	pub nb_round_nonces: usize,
 	pub vtxo_exit_delta: u16,
 	pub vtxo_expiry_delta: u16,
+	pub htlc_expiry_delta: u16,
 	pub max_vtxo_amount: Option<Amount>,
 }
 
@@ -65,6 +66,7 @@ pub struct VtxoIdInput {
 /// With covenants we can remove this type distinction.
 /// Or we might be able to use it for OOR payments.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+//TODO(stevenroose) rename to vtxooutputrequest when suitable
 pub struct PaymentRequest {
 	pub pubkey: PublicKey,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]

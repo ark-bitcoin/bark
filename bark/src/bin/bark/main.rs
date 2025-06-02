@@ -705,7 +705,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 				info!("Sending arkoor payment of {} to pubkey {}", amount, pk);
-				w.send_oor_payment(pk, amount).await?;
+				w.send_arkoor_payment(pk, amount).await?;
 			} else if let Ok(invoice) = Bolt11Invoice::from_str(&destination) {
 				lightning::pay(invoice, amount, comment, no_sync,&mut w).await?;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
