@@ -70,16 +70,14 @@ CREATE VIEW movement_view AS
 				SELECT
 					*,
 					(
-						SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-							'id', bark_vtxo.id,
-							'amount_sat', bark_vtxo.amount_sat
-						)) FROM bark_vtxo WHERE bark_vtxo.spent_in = bark_movement.id
+						SELECT JSON_GROUP_ARRAY(hex(bark_vtxo.raw_vtxo))
+						FROM bark_vtxo
+						WHERE bark_vtxo.spent_in = bark_movement.id
 					) AS spends,
 					(
-						SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-							'id', bark_vtxo.id,
-							'amount_sat', bark_vtxo.amount_sat
-						)) FROM bark_vtxo WHERE bark_vtxo.received_in = bark_movement.id
+						SELECT JSON_GROUP_ARRAY(hex(bark_vtxo.raw_vtxo))
+						FROM bark_vtxo
+						WHERE bark_vtxo.received_in = bark_movement.id
 					) AS receives,
 					(
 						SELECT JSON_GROUP_ARRAY(JSON_OBJECT(

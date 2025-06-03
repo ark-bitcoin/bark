@@ -15,7 +15,7 @@ use ark::lightning::{PaymentHash, Preimage};
 use ark::{ProtocolEncoding, Vtxo};
 use ark::rounds::{RoundId, RoundSeq};
 
-use crate::movement::{Movement, MovementKind, MovementRecipient, VtxoSubset};
+use crate::movement::{Movement, MovementKind, MovementRecipient};
 use crate::persist::LightningReceive;
 use crate::round::{
 	AttemptStartedState,
@@ -52,8 +52,23 @@ pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 	let fees: Amount = Amount::from_sat(row.get("fees_sat")?);
 
 	let kind = MovementKind::from_str(&row.get::<_, String>("kind")?)?;
-	let spends = serde_json::from_str::<Vec<VtxoSubset>>(&row.get::<_, String>("spends")?)?;
-	let receives = serde_json::from_str::<Vec<VtxoSubset>>(&row.get::<_, String>("receives")?)?;
+	let spends = serde_json::from_str::<Vec<String>>(&row.get::<_, String>("spends")?)?
+		.iter()
+		.map(|v| {
+			let bytes = Vec::<u8>::from_hex(v).expect("corrupt db");
+			Vtxo::deserialize(&bytes)
+		})
+		.collect::<Result<Vec<Vtxo>, _>>()?;
+
+	let receives = serde_json::from_str::<Vec<String>>(&row.get::<_, String>("receives")?)?
+		.iter()
+		.map(|v| {
+			let bytes = Vec::<u8>::from_hex(v).expect("corrupt db");
+			Vtxo::deserialize(&bytes)
+		})
+		.collect::<Result<Vec<Vtxo>, _>>()?;
+
+
 	let recipients = serde_json::from_str::<Vec<MovementRecipient>>(&row.get::<_, String>("recipients")?)?;
 
 	Ok(Movement {

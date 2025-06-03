@@ -19,7 +19,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use bark::movement::Movement;
 use bark_json::InvoiceInfo;
 use bark::onchain::ChainSource;
 use bark::UtxoInfo;
@@ -251,7 +250,7 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn list_movements(&self) -> Vec<Movement> {
+	pub async fn list_movements(&self) -> Vec<json::Movement> {
 		let res = self.run(["movements"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}

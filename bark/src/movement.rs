@@ -1,7 +1,6 @@
 
+use ark::Vtxo;
 use bitcoin::Amount;
-
-use ark::{Vtxo, VtxoId};
 
 use crate::vtxo_state::VtxoState;
 
@@ -49,24 +48,18 @@ impl MovementKind {
 	}
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct VtxoSubset {
-	pub id: VtxoId,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	pub amount: Amount
-}
-
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MovementRecipient {
 	/// Can either be a publickey, spk or a bolt11 invoice
 	pub recipient: String,
+	/// Amount sent to the recipient
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount
 }
 
 /// A [`Movement`] represents any offchain balance change,
 /// either by receiving, sending or refreshing VTXO
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct Movement {
 	pub id: u32,
 	/// Movement kind
@@ -74,9 +67,9 @@ pub struct Movement {
 	/// Fees paid for the movement
 	pub fees: Amount,
 	/// wallet's VTXOs spent in this movement
-	pub spends: Vec<VtxoSubset>,
+	pub spends: Vec<Vtxo>,
 	/// Received VTXOs from this movement
-	pub receives: Vec<VtxoSubset>,
+	pub receives: Vec<Vtxo>,
 	/// External recipients of the movement
 	pub recipients: Vec<MovementRecipient>,
 	/// Movement date

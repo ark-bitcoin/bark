@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
+use bark_json::RecipientInfo;
 use bitcoin::Amount;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
@@ -14,7 +15,6 @@ use tokio::fs;
 use ark::{ProtocolEncoding, Vtxo};
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use server_rpc::{self as rpc, protos};
-use bark::movement::MovementRecipient;
 
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -536,7 +536,7 @@ async fn offboard_all() {
 	assert_eq!(offb_movement.spends.len(), 3, "all offboard vtxos should be in movement");
 	assert_eq!(
 		offb_movement.recipients.first(),
-		Some(MovementRecipient {
+		Some(RecipientInfo {
 			recipient: address.to_string(),
 			amount: sat(829100),
 		}).as_ref(), "destination should be correct"
@@ -593,7 +593,7 @@ async fn offboard_vtxos() {
 	assert_eq!(offb_movement.spends[0].id, vtxo_to_offboard.id, "only provided vtxo should be offboarded");
 	assert_eq!(
 		offb_movement.recipients.first(),
-		Some(MovementRecipient {
+		Some(RecipientInfo {
 			recipient: address.to_string(),
 			amount: vtxo_to_offboard.amount - sat(900),
 		}).as_ref(), "destination should be correct"
@@ -630,7 +630,7 @@ async fn bark_send_onchain() {
 	assert_eq!(send_movement.spends[0].id, sent_vtxos.id);
 	assert_eq!(
 		send_movement.recipients.first(),
-		Some(MovementRecipient {
+		Some(RecipientInfo {
 			recipient: addr.to_string(),
 			amount: sat(300_000),
 		}).as_ref(), "destination should be correct"

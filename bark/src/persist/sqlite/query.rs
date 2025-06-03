@@ -930,10 +930,12 @@ pub fn get_exit_child_tx(
 #[cfg(test)]
 mod test {
 	use ark::vtxo::test::VTXO_VECTORS;
-	use crate::movement::{MovementRecipient, VtxoSubset};
+
+	use crate::movement::MovementRecipient;
 	use crate::persist::sqlite::test::in_memory;
 	use crate::persist::sqlite::migrations::MigrationContext;
 	use crate::persist::StoredVtxoRequest;
+
 	use super::*;
 
 	#[test]
@@ -996,10 +998,6 @@ mod test {
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 		let serialized = r#"{"type":"block","confirmed_in":{"height":134,"hash":"71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
-
-		// Vtxo subset
-		let serialised = r#"{"id":"1570ed0ccb55520cc343628ad95e325010983c61655580bfea10e067d98f40af:0","amount_sat":300000}"#;
-		serde_json::from_str::<VtxoSubset>(serialised).unwrap();
 
 		// Movement recipient
 		let serialised = r#"{"recipient":"03a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount_sat":150000}"#;
