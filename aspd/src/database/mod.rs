@@ -243,7 +243,7 @@ impl Db {
 
 			for id in ids {
 				if !found_ids.contains(id) {
-					return not_found!([id], "vtxo does not exit");
+					return not_found!([id], "vtxo does not exist");
 				}
 			}
 		}
