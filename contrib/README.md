@@ -79,3 +79,49 @@ We don't allow empty lines to contain whitespace.
 Exit code 2 if an empty line with whitespace is found.
 #### unused_aspd_logs:
 Check if there are structure log messages in aspd-logs that are not used.
+
+## ci-run-test.sh
+#### Parameters:
+1. `<TEST>` — e.g. `test-integration` or `test-integration-codecov`
+
+#### Description:
+Runs a `just` task for the given test with a watchdog and automatic data copy.
+- Executes `just <TEST>`.
+- Triggers `./contrib/ci-run-test-copy.sh` as a data copy step in all exit scenarios:
+   - Normal completion
+   - Manual interruption (e.g. Ctrl+C)
+   - CI-enforced timeout
+
+#### Watchdog Behavior:
+- A background watchdog sleeps for 55 minutes (3300 seconds).
+- If the task is still running after that time, the watchdog:
+   - Prints a warning
+   - Calls the data copy script
+   - Terminates the main process to avoid CI timeout (like Woodpecker's 1-hour limit)
+
+#### Exit Codes:
+- Returns the same exit code as `just <TEST>`.
+- Data copy always runs before exit.
+
+## ci-run-test-copy.sh
+#### Environment Variables:
+1. `TEST_DIRECTORY` — Relative path to the test folder (e.g. `./test/btc29`)
+2. `CI_COMMIT_SHA` — Git commit SHA used to create a unique destination path
+
+#### Description:
+Copies test data from the current repository into a persistent location tied to the current commit SHA.
+
+- Converts the relative `TEST_DIRECTORY` to an absolute path using `pwd`
+- Copies the entire directory to:  
+  `/host/data/test/<CI_COMMIT_SHA>/`
+- Ensures the destination directory exists before copying
+
+#### Output:
+Prints a link to where the test data can be accessed:
+```
+Test data -> https://ci.2nd.dev/testdata/<CI_COMMIT_SHA>/
+```
+
+#### Exit Codes:
+- Exits with `1` if either `TEST_DIRECTORY` or `CI_COMMIT_SHA` is not set
+- Exits with `0` on success
