@@ -53,10 +53,10 @@ pub struct ListExitsOpts {
 
 #[derive(clap::Args)]
 pub struct StartExitOpts{
-	/// A list of VtxoId's
+	/// The ID of a VTXO to unilaterally exit, can be specified multiple times.
 	#[arg(long = "vtxo", value_name = "VTXO_ID")]
 	vtxos: Vec<VtxoId>,
-	/// To exit all vtxo's
+	/// Whether to exit all VTXO's, either this or --vtxo must be specificed
 	#[arg(long)]
 	all: bool,
 }

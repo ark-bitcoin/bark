@@ -340,7 +340,7 @@ impl Bark {
 		address: impl fmt::Display,
 	) -> json::Offboard {
 		self.run_json([
-			"offboard", "--vtxos", &vtxo.to_string(), "--address", &address.to_string(),
+			"offboard", "--vtxo", &vtxo.to_string(), "--address", &address.to_string(),
 		]).await
 	}
 
