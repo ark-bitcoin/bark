@@ -1,12 +1,18 @@
 pub mod sqlite;
 
-use ark::{Vtxo, VtxoId};
 use bdk_wallet::ChangeSet;
+use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::BlockHeight;
 
-use crate::{exit::ExitIndex, vtxo_state::VtxoState, Config, KeychainKind, Movement, MovementArgs, OffchainOnboard, OffchainPayment, Pagination, WalletProperties};
+use ark::{Vtxo, VtxoId};
+use bitcoin_ext::{BlockHeight, BlockRef};
 
+use crate::{
+	Config, KeychainKind, Movement, MovementArgs, OffchainOnboard, OffchainPayment, Pagination,
+	WalletProperties,
+};
+use crate::exit::vtxo::ExitEntry;
+use crate::vtxo_state::VtxoState;
 
 pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialise wallet in the database
@@ -56,10 +62,24 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Fetch an offchain onboard by payment hash
 	fn fetch_offchain_onboard_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>>;
 
-	/// Store the ongoing exit process.
-	fn store_exit(&self, exit: &ExitIndex) -> anyhow::Result<()>;
-	/// Fetch an ongoing exit process.
-	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>>;
+	/// Store the VTXOs currently being exited
+	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()>;
+	/// Removes the given VTXO from the database
+	fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()>;
+	/// Gets the VTXOs currently being exited
+	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<ExitEntry>>;
+	/// Stores the given child transaction for future retrieval
+	fn store_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+		child_tx: &Transaction,
+		block: Option<BlockRef>,
+	) -> anyhow::Result<()>;
+	/// Get any stored child transaction for the given exit transaction
+	fn get_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+	) -> anyhow::Result<Option<(Transaction, Option<BlockRef>)>>;
 
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight>;
 	fn store_last_ark_sync_height(&self, height: BlockHeight) -> anyhow::Result<()>;

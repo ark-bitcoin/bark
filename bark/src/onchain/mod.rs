@@ -1,6 +1,5 @@
 
 mod chain;
-pub use self::chain::ChainSource;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
@@ -13,26 +12,32 @@ use bitcoin::{
 };
 
 use ark::util::SECP;
+use ark::Vtxo;
 use bitcoin_ext::BlockHeight;
 
 use crate::VtxoSeed;
-use crate::exit::SpendableVtxo;
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
-pub use crate::onchain::chain::ChainSourceClient;
+pub use crate::onchain::chain::{ChainSource, ChainSourceClient};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum Utxo {
 	Local(LocalOutput),
-	Exit(SpendableVtxo)
+	Exit(SpendableExit),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SpendableExit {
+	pub vtxo: Vtxo,
+	pub height: BlockHeight,
 }
 
 pub trait TxBuilderExt {
-	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableVtxo]);
+	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableExit]);
 }
 
 impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
-	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableVtxo]) {
+	fn add_exit_outputs(&mut self, exit_outputs: &[SpendableExit]) {
 		self.version(2);
 
 		for input in exit_outputs {
@@ -62,7 +67,7 @@ pub struct Wallet {
 	pub(crate) wallet: BdkWallet,
 	pub(crate) db: Arc<dyn BarkPersister>,
 
-	pub(crate) exit_outputs: Vec<SpendableVtxo>,
+	pub(crate) exit_outputs: Vec<SpendableExit>,
 	pub(crate) chain: ChainSourceClient,
 	chain_source: ChainSource,
 }
@@ -260,5 +265,37 @@ impl Wallet {
 			.tx_node.tx;
 
 		Some(tx.clone())
+	}
+
+	/// Searches for a spending transaction from the given txid
+	///
+	/// This method will only check the database and will not
+	/// use a chain-source to find the transaction
+	pub fn get_spending_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
+		for transaction in self.wallet.transactions() {
+			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output.txid == txid) {
+				return Some(transaction.tx_node.tx);
+			}
+		}
+		None
+	}
+
+	pub(crate) fn track_spendable_exit(&mut self, vtxo: &Vtxo, spendable_since: BlockHeight) {
+		let p = vtxo.point();
+		if self.exit_outputs.iter().any(|e| e.vtxo.point() == p) {
+			return;
+		}
+		self.exit_outputs.push(SpendableExit {
+			vtxo: vtxo.clone(),
+			height: spendable_since,
+		})
+	}
+
+	pub(crate) fn remove_spendable_exit(&mut self, vtxo: &Vtxo) {
+		let p = vtxo.point();
+		let index = self.exit_outputs.iter().position(|e| e.vtxo.point() == p);
+		if let Some(index) = index {
+			self.exit_outputs.swap_remove(index);
+		}
 	}
 }

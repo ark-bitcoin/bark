@@ -10,10 +10,11 @@ use bdk_bitcoind_rpc::{BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use log::{debug, info, warn};
+
+use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{EsploraClientExt, WalletExt};
 pub(crate) use bitcoin_ext::rpc::{BitcoinRpcExt, TxStatus};
-use bitcoin_ext::{BlockHeight, BlockRef};
-use log::{debug, info, warn};
 
 use crate::onchain;
 
@@ -175,19 +176,18 @@ impl ChainSourceClient {
 		Ok(balance.total())
 	}
 
-	/// For each provided outpoint, fetches any confirmed or unconfirmed
-	/// transaction in which it is spent, then returns a tupple containing
-	/// _outpoint>confirmed tx_ map and _outpoint>unconfirmed tx_ map
+	/// For each provided outpoint, fetches the ID of any confirmed or unconfirmed in which the
+	/// outpoint is spent.
 	pub async fn txs_spending_inputs<T: IntoIterator<Item = OutPoint>>(
-		&self, 
-		outpoints: T, 
-		start: BlockHeight
-	) -> anyhow::Result<(HashMap<OutPoint, (BlockHeight, Txid)>, HashMap<OutPoint, Txid>)> {
-		let mut txs_by_outpoint = HashMap::<OutPoint, (BlockHeight, Txid)>::new();
-		let mut unconfirmed_txs_by_outpoint = HashMap::<OutPoint, Txid>::new();
-
+		&self,
+		outpoints: T,
+		block_scan_start: BlockHeight,
+	) -> anyhow::Result<TxsSpendingInputsResult> {
+		let mut r = TxsSpendingInputsResult::new();
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				// We must offset the height to account for the fact we iterate using next_block()
+				let start = if block_scan_start == 0 { 0 } else { block_scan_start - 1 };
 				let block = self.block_id(start).await?;
 				let cp = CheckPoint::new(block);
 
@@ -195,48 +195,65 @@ impl ChainSourceClient {
 					bitcoind, cp.clone(), cp.height(), NO_EXPECTED_MEMPOOL_TXIDS,
 				);
 
-				let outpoint_set: HashSet<OutPoint> = HashSet::from_iter(outpoints.into_iter());
-
+				debug!("Scanning blocks for spent outpoints with bitcoind, starting at block height {}...", block_scan_start);
+				let outpoint_set = outpoints.into_iter().collect::<HashSet<_>>();
 				while let Some(em) = emitter.next_block()? {
+					// Provide updates as the scan can take a long time
+					if em.block_height() % 1000 == 0 {
+						info!("Scanned for spent outpoints until block height {}", em.block_height());
+					}
 					for tx in &em.block.txdata {
 						for txin in tx.input.iter() {
 							if outpoint_set.contains(&txin.previous_output) {
-								txs_by_outpoint.insert(txin.previous_output.clone(), (
-									em.block.bip34_block_height().unwrap() as BlockHeight, tx.compute_txid()
-								));
+								r.add(
+									txin.previous_output.clone(),
+									tx.compute_txid(),
+									TxStatus::Confirmed(BlockRef {
+										height: em.block_height(), hash: em.block.block_hash().clone()
+									})
+								);
 							}
 						}
 					}
 				}
 
+				debug!("Finished scanning blocks for spent outpoints, now checking the mempool...");
 				let mempool = emitter.mempool()?;
 				for (tx, _last_seen) in &mempool.new_txs {
 					for txin in tx.input.iter() {
 						if outpoint_set.contains(&txin.previous_output) {
-							unconfirmed_txs_by_outpoint.insert(txin.previous_output.clone(), tx.compute_txid());
+							r.add(txin.previous_output.clone(), tx.compute_txid(), TxStatus::Mempool);
 						}
 					}
 				}
+				debug!("Finished checking the mempool for spent outpoints");
 			},
 			ChainSourceClient::Esplora(ref client) => {
 				for outpoint in outpoints {
 					let output_status = client.get_output_status(&outpoint.txid, outpoint.vout.into()).await?;
 
 					if let Some(output_status) = output_status {
-						if let Some(block_height) = output_status.status.and_then(|s| s.block_height) {
-							txs_by_outpoint.insert(outpoint, (block_height.into(), output_status.txid.expect("tx is confirmed")));
-							continue;
-						}
-
 						if output_status.spent {
-							unconfirmed_txs_by_outpoint.insert(outpoint, output_status.txid.expect("output is spent"));
+							let tx_status = {
+								let status = output_status.status.expect("Status should be valid if an outpoint is spent");
+								if status.confirmed {
+									TxStatus::Confirmed(BlockRef {
+										height: status.block_height.expect("Confirmed transaction missing block_height"),
+										hash: status.block_hash.expect("Confirmed transaction missing block_hash"),
+									})
+								} else {
+									TxStatus::Mempool
+								}
+							};
+							let txid = output_status.txid.expect("Txid should be valid if an outpoint is spent");
+							r.add(outpoint, txid, tx_status);
 						}
 					}
 				}
 			},
 		}
 
-		Ok((txs_by_outpoint, unconfirmed_txs_by_outpoint))
+		Ok(r)
 	}
 
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
@@ -303,17 +320,17 @@ impl ChainSourceClient {
 		}
 	}
 
-	pub async fn get_tx(&self, txid: Txid) -> anyhow::Result<Option<Transaction>> {
+	pub async fn get_tx(&self, txid: &Txid) -> anyhow::Result<Option<Transaction>> {
 		match self {
 			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				match bitcoind.get_raw_transaction(&txid, None) {
+				match bitcoind.get_raw_transaction(txid, None) {
 					Ok(tx) => Ok(Some(tx)),
 					Err(e) if e.is_not_found_error() => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},
 			ChainSourceClient::Esplora(ref client) => {
-				Ok(client.get_tx(&txid).await?)
+				Ok(client.get_tx(txid).await?)
 			},
 		}
 	}
@@ -368,5 +385,42 @@ impl ChainSourceClient {
 	/// Fee rate to use for urgent txs like exits.
 	pub (crate) fn urgent_feerate(&self) -> FeeRate {
 		FeeRate::from_sat_per_vb(7).unwrap()
+	}
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TxsSpendingInputsResult {
+	pub map: HashMap<OutPoint, (Txid, TxStatus)>,
+}
+
+impl TxsSpendingInputsResult {
+	pub fn new() -> Self {
+		Self { map: HashMap::new() }
+	}
+
+	pub fn add(&mut self, outpoint: OutPoint, txid: Txid, status: TxStatus) {
+		self.map.insert(outpoint, (txid, status));
+	}
+
+	pub fn get(&self, outpoint: &OutPoint) -> Option<&(Txid, TxStatus)> {
+		self.map.get(outpoint)
+	}
+
+	pub fn confirmed_txids(&self) -> impl Iterator<Item = (Txid, BlockRef)> + '_ {
+		self.map
+			.iter()
+			.filter_map(|(_, (txid, status))| {
+				match status {
+					TxStatus::Confirmed(block) => Some((*txid, *block)),
+					_ => None,
+				}
+			})
+	}
+
+	pub fn mempool_txids(&self) -> impl Iterator<Item = Txid> + '_ {
+		self.map
+			.iter()
+			.filter(|(_, (_, status))| matches!(status, TxStatus::Mempool))
+			.map(|(_, (txid, _))| *txid)
 	}
 }

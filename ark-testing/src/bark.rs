@@ -348,7 +348,7 @@ impl Bark {
 		self.run(["drop-vtxos"]).await;
 	}
 
-	pub async fn progress_exit(&self) -> json::ExitStatus {
+	pub async fn progress_exit(&self) -> json::ExitProgressResponse {
 		self.run_json(["exit", "progress"]).await
 	}
 
@@ -357,7 +357,7 @@ impl Bark {
 	}
 
 	pub async fn start_exit_vtxo(&self, vtxo: impl fmt::Display) {
-		self.run(["exit", "start", "--vtxos", &vtxo.to_string(),]).await;
+		self.run(["exit", "start", "--vtxo", &vtxo.to_string(),]).await;
 	}
 
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>

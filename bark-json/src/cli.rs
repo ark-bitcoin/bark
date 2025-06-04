@@ -1,9 +1,16 @@
 
 use std::time::Duration;
 
-use ark::rounds::RoundId;
 use bitcoin::{Amount, Txid};
-use crate::{primitives::{UtxoInfo, VtxoInfo}, serde_utils};
+
+use ark::rounds::RoundId;
+use ark::VtxoId;
+
+use crate::exit::ExitState;
+use crate::exit::error::ExitError;
+use crate::exit::package::ExitTransactionPackage;
+use crate::primitives::{UtxoInfo, VtxoInfo};
+use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkInfo {
@@ -33,11 +40,35 @@ pub struct Balance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct ExitStatus {
-	/// Whether or not all txs have been confirmed
+pub struct ExitProgressResponse {
+	/// Status of each pending exit transaction
+	pub exits: Vec<ExitProgressStatus>,
+	/// Whether all transactions have been confirmed
 	pub done: bool,
-	/// Height at which all exit outputs will be spendable
-	pub height: Option<u32>,
+	/// Block height at which all exit outputs will be spendable
+	pub spendable_height: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ExitProgressStatus {
+	/// The ID of the VTXO that is being unilaterally exited
+	pub vtxo_id: VtxoId,
+	/// The current state of the exit transaction
+	pub state: ExitState,
+	/// Any error that occurred during the exit process
+	pub error: Option<ExitError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ExitTransactionStatus {
+	/// The ID of the VTXO that is being unilaterally exited
+	pub vtxo_id: VtxoId,
+	/// The current state of the exit transaction
+	pub state: ExitState,
+	/// The history of each state the exit transaction has gone through
+	pub history: Option<Vec<ExitState>>,
+	/// Each exit transaction package required for the unilateral exit
+	pub transactions: Option<Vec<ExitTransactionPackage>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

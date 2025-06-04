@@ -6,14 +6,17 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use bdk_wallet::ChangeSet;
-use bitcoin::Amount;
+use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, BlockRef};
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
-use crate::{Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
-use crate::exit::ExitIndex;
+use crate::{
+	Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState,
+	WalletProperties,
+};
+use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementArgs};
 use crate::persist::BarkPersister;
 
@@ -182,15 +185,6 @@ impl BarkPersister for SqliteClient {
 		query::get_vtxo_key(&conn, vtxo)?.context("vtxo not found in the db")
 	}
 
-	/// Store the ongoing exit process.
-	fn store_exit(&self, exit: &ExitIndex) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		query::store_exit(&tx, exit)?;
-		tx.commit()?;
-		Ok(())
-	}
-
 	/// Store an offchain onboard
 	fn store_offchain_onboard(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()> {
 		let conn = self.connect()?;
@@ -204,10 +198,46 @@ impl BarkPersister for SqliteClient {
 		query::fetch_offchain_onboard_by_payment_hash(&conn, payment_hash)
 	}
 
-	/// Fetch the ongoing exit process.
-	fn fetch_exit(&self) -> anyhow::Result<Option<ExitIndex>> {
+	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::store_exit_vtxo_entry(&tx, exit)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::remove_exit_vtxo_entry(&tx, &id)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<ExitEntry>> {
 		let conn = self.connect()?;
-		query::fetch_exit(&conn)
+		query::get_exit_vtxo_entries(&conn)
+	}
+
+	fn store_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+		child_tx: &bitcoin::Transaction,
+		block: Option<BlockRef>,
+	) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::store_exit_child_tx(&tx, exit_txid, child_tx, block)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn get_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+	) -> anyhow::Result<Option<(bitcoin::Transaction, Option<BlockRef>)>> {
+		let conn = self.connect()?;
+		query::get_exit_child_tx(&conn, exit_txid)
 	}
 
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight> {

@@ -2,39 +2,75 @@
 
 use std::str::FromStr;
 
-use ark_testing::daemon::aspd;
-use bitcoin::params::Params;
 use bitcoin::Address;
+use bitcoin::params::Params;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
 use log::trace;
 
-use bark_json::primitives::VtxoType;
 use ark::vtxo::exit_spk;
 use aspd_rpc::{self as rpc, protos};
+use bark_json::cli::ExitProgressResponse;
+use bark_json::exit::error::ExitError;
+use bark_json::primitives::VtxoType;
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::daemon::aspd;
 
 async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	let mut flip = false;
-	for _ in 0..20 {
-		let res = bark.progress_exit().await;
-
-		if res.done {
+	let mut did_generate_block = false;
+	let mut previous : Option<ExitProgressResponse> = None;
+	let mut attempts = 0;
+	while attempts < 20 {
+		attempts += 1;
+		let response = bark.progress_exit().await;
+		if !did_generate_block && previous.is_some() {
+			// Progressing without generating blocks should be a no-op
+			assert_eq!(response, *previous.as_ref().unwrap());
+		}
+		if response.done {
 			return;
 		}
-		if let Some(height) = res.height {
+
+		// Ideally, we would flip-flop between generating and not generating blocks unless we're
+		// explicitly waiting for one
+		let mut generate_block = flip;
+		flip = !flip;
+
+		// Panic early if an unexpected error occurs
+		for exit in &response.exits {
+			if let Some(e) = &exit.error {
+				match e {
+					ExitError::InsufficientConfirmedFunds { .. } => {
+						generate_block = true;
+					}
+					_ => panic!("unexpected exit error: {:?}", e),
+				}
+			}
+		}
+		if response.exits.iter().any(|t| t.state.requires_confirmations()) {
+			generate_block = true;
+		}
+
+		// Fast-forward if we're just waiting for confirmations
+		if let Some(height) = response.spendable_height {
 			let current = ctx.bitcoind().sync_client().get_block_count().unwrap() as u32;
 			ctx.generate_blocks(height - current).await;
-		} else {
-			flip = if flip {
-				ctx.generate_blocks(1).await;
-				false
-			} else {
-				true
-			};
+			did_generate_block = height - current > 0;
+		} else if generate_block {
+			ctx.generate_blocks(1).await;
+			did_generate_block = true;
 		}
+
+		// Used to allow for an extra iteration if the status has changed
+		if let Some(previous) = &previous {
+			if response != *previous {
+				attempts -= 1;
+			}
+		}
+		previous = Some(response);
 	}
 	panic!("failed to finish unilateral exit of bark {}", bark.name());
 }
@@ -277,7 +313,6 @@ async fn exit_vtxo() {
 	// Verify we can send both utxos
 	bark.onchain_send(bark.get_onchain_address().await, vtxo.amount + Amount::ONE_SAT).await;
 }
-
 
 #[tokio::test]
 async fn exit_after_board() {

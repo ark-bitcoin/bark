@@ -41,7 +41,7 @@ pub enum CpfpError {
 	#[error("tx has no fee anchor: {0}")]
 	NoFeeAnchor(Txid),
 	#[error("you need more confirmations on your on-chain funds: {0}")]
-	NeedConfirmations(InsufficientFunds),
+	InsufficientConfirmedFunds(InsufficientFunds),
 }
 
 
@@ -134,7 +134,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			let mut psbt = match b.finish() {
 				Ok(psbt) => psbt,
 				Err(CreateTxError::CoinSelection(e)) if e.needed <= balance => {
-					return Err(CpfpError::NeedConfirmations(e));
+					return Err(CpfpError::InsufficientConfirmedFunds(e));
 				},
 				Err(e) => panic!("error creating tx: {}", e),
 			};

@@ -32,8 +32,9 @@ use aspd_rpc::protos::{
 	self, BoardCosignRequest, Bolt11PaymentRequest, ClaimBolt11OnboardRequest,
 	SubmitPaymentRequest,
 };
+use bark_json::exit::ExitState;
 
-use ark_testing::{Aspd, TestContext, btc, sat, bark};
+use ark_testing::{Aspd, TestContext, btc, sat, Bark};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::aspd;
@@ -42,6 +43,19 @@ use ark_testing::util::{FutureExt, ReceiverExt};
 
 lazy_static::lazy_static! {
 	static ref RANDOM_PK: PublicKey = "02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49".parse().unwrap();
+}
+
+async fn progress_exit_to_broadcast(bark: &Bark) {
+	let progress_result = bark.progress_exit().await;
+	assert_eq!(false, progress_result.done);
+	assert_eq!(None, progress_result.spendable_height);
+	for exit in progress_result.exits {
+		assert_eq!(exit.error, None);
+		if matches!(exit.state, ExitState::Processing(..)) {
+			return;
+		}
+	}
+	panic!("no confirming exit found");
 }
 
 #[tokio::test]
@@ -946,11 +960,8 @@ async fn claim_forfeit_connector_chain() {
 	// start the exit process
 	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
 	bark.start_exit_vtxo(vtxo.id).await;
-	assert_eq!(
-		bark.progress_exit().await,
-		bark::json::ExitStatus { done: false, height: None },
-	);
-	assert_eq!(log_detected.recv().await.unwrap().vtxo, vtxo.id);
+	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
+	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
 	let mut log_confirmed = aspd.subscribe_log::<ForfeitedExitConfirmed>().await;
@@ -1010,10 +1021,7 @@ async fn claim_forfeit_round_connector() {
 	// start the exit process
 	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
 	bark.start_exit_vtxo(vtxo.id).await;
-	assert_eq!(
-		bark.progress_exit().await,
-		bark::json::ExitStatus { done: false, height: None },
-	);
+	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit

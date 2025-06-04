@@ -139,7 +139,7 @@ fn exit_taproot(
 	exit_delta: u16,
 ) -> taproot::TaprootSpendInfo {
 	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
-	bitcoin::taproot::TaprootBuilder::new()
+	taproot::TaprootBuilder::new()
 		.add_leaf(0, exit_clause(user_pubkey, exit_delta)).unwrap()
 		.finalize(&util::SECP, combined_pk).unwrap()
 }
@@ -222,7 +222,7 @@ pub struct VtxoSpec {
 	pub asp_pubkey: PublicKey,
 	pub exit_delta: u16,
 	pub spk: VtxoSpkSpec,
-	/// The amount of the vtxo itself, this is either the exit tx our the
+	/// The amount of the vtxo itself, this is either the exit tx or the
 	/// vtxo tree output. It does not include budget for fees, so f.e. to
 	/// calculate the board amount needed for this vtxo, fee budget should
 	/// be added.

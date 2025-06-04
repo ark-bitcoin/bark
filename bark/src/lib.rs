@@ -8,28 +8,26 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
-pub mod persist;
-pub use persist::sqlite::SqliteClient;
-pub mod vtxo_selection;
 mod exit;
 mod lnurl;
-pub mod onchain;
-mod psbtext;
-mod vtxo_state;
 pub mod movement;
+pub mod onchain;
+pub mod persist;
+pub use persist::sqlite::SqliteClient;
+mod psbtext;
+pub mod vtxo_selection;
+mod vtxo_state;
 
 #[cfg(test)]
 pub mod test;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
-use rusqlite::ToSql;
-use serde::Serialize;
 
 use std::borrow::Borrow;
-use std::iter;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
+use std::iter;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -47,6 +45,7 @@ use bitcoin::secp256k1::rand::Rng;
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn, error};
+use rusqlite::ToSql;
 use tokio_stream::{Stream, StreamExt};
 
 use ark::{
@@ -152,7 +151,6 @@ struct ArkoorCreateResult {
 	fee: Amount
 }
 
-
 pub struct Pagination {
 	pub page_index: u16,
 	pub page_size: u16,
@@ -171,10 +169,7 @@ impl From<Utxo> for UtxoInfo {
 				UtxoInfo {
 					outpoint: e.vtxo.point(),
 					amount: e.vtxo.amount(),
-					confirmation_height: {
-						let exit_delta = e.vtxo.exit_delta() as BlockHeight;
-						Some(e.spendable_at_height + exit_delta)
-					},
+					confirmation_height: Some(e.height),
 				}
 		}
 	}
@@ -457,10 +452,7 @@ impl Wallet {
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
 			};
-			onchain::ChainSource::Bitcoind {
-				url: url.clone(),
-				auth: auth,
-			}
+			onchain::ChainSource::Bitcoind { url: url.clone(), auth }
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
@@ -477,7 +469,7 @@ impl Wallet {
 			}
 		};
 
-		let exit = Exit::new(db.clone(), chain_source.clone())?;
+		let exit = Exit::new(db.clone(), chain_source.clone(), &onchain).await?;
 
 		Ok(Wallet { config, db, onchain, vtxo_seed, exit, asp })
 	}

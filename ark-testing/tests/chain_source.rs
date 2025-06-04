@@ -140,19 +140,19 @@ async fn chain_source_txs_spending_inputs() {
 	for i in 0..bitcoinds.capacity() {
 		bitcoinds.push(test_bitcoind(&ctx, i).await);
 	}
-	let mut out_points = Vec::with_capacity(bitcoinds.capacity());
-	for i in 0..out_points.capacity() {
+	let mut outpoints = Vec::with_capacity(bitcoinds.capacity());
+	for i in 0..outpoints.capacity() {
 		let address = bitcoinds[i].get_new_address();
 		let script = ScriptBuf::from(address.clone());
 
 		let txid = ctx.bitcoind().fund_addr(address, sat(1_000_000)).await;
 		ctx.generate_blocks(1).await;
 
-		let tx = chain_source.get_tx(txid).await.unwrap()
+		let tx = chain_source.get_tx(&txid).await.unwrap()
 			.expect("Transaction should exist");
 		for (i, out) in tx.output.iter().enumerate() {
 			if out.script_pubkey == script {
-				out_points.push(OutPoint {
+				outpoints.push(OutPoint {
 					txid,
 					vout: i as u32,
 				});
@@ -160,29 +160,25 @@ async fn chain_source_txs_spending_inputs() {
 			}
 		}
 	}
-	assert_eq!(out_points.len(), bitcoinds.len());
+	assert_eq!(outpoints.len(), bitcoinds.len());
 
 	// We should get no results when using fake outpoints
-	let (confirmed, unconfirmed) = chain_source.txs_spending_inputs(
-			[OutPoint { txid: Hash::from_engine(HashEngine::default()), vout: 0 }],
-			h
+	let result = chain_source.txs_spending_inputs(
+			[OutPoint { txid: Hash::from_engine(HashEngine::default()), vout: 0 }], h
 		).await
 		.expect("Should not error");
-	assert!(confirmed.is_empty());
-	assert!(unconfirmed.is_empty());
+	assert!(result.map.is_empty());
 
 	// We should get no results when outpoints haven't been spent
-	let (confirmed, unconfirmed) = chain_source.txs_spending_inputs(out_points.clone(), h).await
+	let result = chain_source.txs_spending_inputs(outpoints.clone(), h).await
 		.expect("Should not error");
-	assert!(confirmed.is_empty());
-	assert!(unconfirmed.is_empty());
+	assert!(result.map.is_empty());
 
 	// Results should be unchanged after generating blocks
 	ctx.generate_blocks(10).await;
-	let (confirmed, unconfirmed) = chain_source.txs_spending_inputs(out_points.clone(), h).await
+	let result = chain_source.txs_spending_inputs(outpoints.clone(), h).await
 		.expect("Should not error");
-	assert!(confirmed.is_empty());
-	assert!(unconfirmed.is_empty());
+	assert!(result.map.is_empty());
 
 	// Pending and confirmed transactions should be returned successfully
 	let ctx_address = ctx.bitcoind().get_new_address();
@@ -191,6 +187,7 @@ async fn chain_source_txs_spending_inputs() {
 		bitcoinds[1].fund_addr(&ctx_address, sat(900_000)).await,
 	]);
 	ctx.generate_blocks(1).await;
+	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
 	let mut unconfirmed_txids = HashSet::from([
 		bitcoinds[2].fund_addr(&ctx_address, sat(900_000)).await,
 		bitcoinds[3].fund_addr(&ctx_address, sat(900_000)).await,
@@ -201,20 +198,22 @@ async fn chain_source_txs_spending_inputs() {
 	}
 
 	// We should have a mixture of confirmed and unconfirmed transactions
-	let (confirmed, unconfirmed) = chain_source.txs_spending_inputs(out_points.clone(), 0).await
+	let result = chain_source.txs_spending_inputs(outpoints.clone(), start_height)
+		.await
 		.expect("Should not error");
-	assert_eq!(confirmed.len(), confirmed_txids.len());
-	assert_eq!(unconfirmed.len(), unconfirmed_txids.len());
+	assert_eq!(result.confirmed_txids().count(), confirmed_txids.len());
+	assert_eq!(result.mempool_txids().count(), unconfirmed_txids.len());
 
 	// Verify each out-point has been spent either in a block or in the mempool
-	for out_point in &out_points {
-		if let Some((_, txid)) = confirmed.get(out_point) {
-			assert!(confirmed_txids.remove(txid));
-			continue;
-		}
-		if let Some(txid) = unconfirmed.get(out_point) {
-			assert!(unconfirmed_txids.remove(txid));
-			continue;
+	for outpoint in &outpoints {
+		match result.get(outpoint).unwrap() {
+			(txid, TxStatus::Confirmed(..)) => {
+				assert!(confirmed_txids.remove(txid));
+			}
+			(txid, TxStatus::Mempool) => {
+				assert!(unconfirmed_txids.remove(txid));
+			}
+			_ => panic!("We shouldn't have any other TxStatus"),
 		}
 	}
 	assert!(confirmed_txids.is_empty());
@@ -222,7 +221,7 @@ async fn chain_source_txs_spending_inputs() {
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.txs_spending_inputs(out_points, 0).await
+	chain_source.txs_spending_inputs(outpoints, 0).await
 		.expect_err("We shouldn't be able to retrieve data");
 }
 
@@ -232,7 +231,7 @@ async fn chain_source_get_tx() {
 	let test_bitcoind = test_bitcoind(&ctx, 0).await;
 
 	// Ensure invalid transaction don't error
-	let invalid = chain_source.get_tx(Hash::from_engine(HashEngine::default())).await
+	let invalid = chain_source.get_tx(&Hash::from_engine(HashEngine::default())).await
 		.expect("Invalid transactions shouldn't error");
 	assert!(matches!(invalid, None));
 
@@ -240,13 +239,13 @@ async fn chain_source_get_tx() {
 	let test_address = test_bitcoind.get_new_address();
 	let pending = ctx.bitcoind().fund_addr(&test_address, sat(1_000_000)).await;
 	ctx.await_transaction(&pending).await;
-	let pending_result = chain_source.get_tx(pending.clone()).await
+	let pending_result = chain_source.get_tx(&pending).await
 		.expect("Unconfirmed transactions are valid");
 	assert!(matches!(pending_result, Some(_)));
 
 	// Ensure confirmed transactions are returned
 	ctx.generate_blocks(1).await;
-	let confirmed_result = chain_source.get_tx(pending).await
+	let confirmed_result = chain_source.get_tx(&pending).await
 		.expect("Confirmed transactions are valid");
 
 	match confirmed_result {
@@ -258,7 +257,7 @@ async fn chain_source_get_tx() {
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.get_tx(pending).await
+	chain_source.get_tx(&pending).await
 		.expect_err("We shouldn't be able to retrieve data");
 }
 
@@ -337,18 +336,18 @@ async fn chain_source_txout_value() {
 
 	// Generate out-points to check
 	let amounts = (1..=10).map(|v| sat(v * 100_000)).collect::<Vec<_>>();
-	let mut out_points = Vec::with_capacity(amounts.len());
+	let mut outpoints = Vec::with_capacity(amounts.len());
 	for i in 0..amounts.len() {
 		let address = test_bitcoind.get_new_address();
 		let script = ScriptBuf::from(address.clone());
 		let txid = ctx.bitcoind().fund_addr(address, amounts[i]).await;
 		ctx.await_transaction(&txid).await;
 
-		let tx = chain_source.get_tx(txid).await.unwrap()
+		let tx = chain_source.get_tx(&txid).await.unwrap()
 			.expect("Transaction should exist");
 		for (i, out) in tx.output.iter().enumerate() {
 			if out.script_pubkey == script {
-				out_points.push(OutPoint {
+				outpoints.push(OutPoint {
 					txid,
 					vout: i as u32,
 				});
@@ -356,25 +355,25 @@ async fn chain_source_txout_value() {
 			}
 		}
 	}
-	assert_eq!(out_points.len(), amounts.len());
+	assert_eq!(outpoints.len(), amounts.len());
 
 	// Ensure unconfirmed transactions are returned
-	for (i, out_point) in out_points.iter().enumerate() {
-		let amount = chain_source.txout_value(&out_point).await
+	for (i, outpoint) in outpoints.iter().enumerate() {
+		let amount = chain_source.txout_value(&outpoint).await
 			.expect("Unconfirmed transactions are valid");
 		assert_eq!(amount, amounts[i]);
 	}
 
 	// Ensure confirmed transactions are returned
 	ctx.generate_blocks(1).await;
-	for (i, out_point) in out_points.iter().enumerate() {
-		let amount = chain_source.txout_value(&out_point).await
+	for (i, outpoint) in outpoints.iter().enumerate() {
+		let amount = chain_source.txout_value(&outpoint).await
 			.expect("Unconfirmed transactions are valid");
 		assert_eq!(amount, amounts[i]);
 	}
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.txout_value(&out_points[0]).await
+	chain_source.txout_value(&outpoints[0]).await
 		.expect_err("We shouldn't be able to retrieve data");
 }

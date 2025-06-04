@@ -5,6 +5,7 @@ pub extern crate bitcoin;
 #[macro_use] extern crate serde;
 
 pub mod cli;
+pub mod exit;
 pub mod primitives;
 mod serde_utils;
 
