@@ -84,16 +84,7 @@ steps:
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - ls -al $${ELECTRS_EXEC}
       - service postgresql start
-      - just test-integration || echo $? > /tmp/test_exit_code
-      - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/esplora/"
-      - cp -r test/esplora/* "/host/data/test/${CI_COMMIT_SHA}/esplora/"
-      - echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/esplora/"
-      - |
-        if [ -f /tmp/test_exit_code ]; then
-          code=$(cat /tmp/test_exit_code)
-          echo "Tests failed with exit code $code."
-          exit $code
-        fi
+      - bash ./contrib/ci-run-test.sh test-integration
 
   - name: test-integration-btc29.0
     depends_on: build
@@ -114,16 +105,7 @@ steps:
       - ls -al $${BITCOIND_EXEC}
       - ls -al $${LIGHTNINGD_EXEC}
       - service postgresql start
-      - just test-integration || echo $? > /tmp/test_exit_code
-      - mkdir -p "/host/data/test/${CI_COMMIT_SHA}/btc29/"
-      - cp -r test/btc29/* "/host/data/test/${CI_COMMIT_SHA}/btc29/"
-      - echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/btc29/"
-      - |
-        if [ -f /tmp/test_exit_code ]; then
-          code=$(cat /tmp/test_exit_code)
-          echo "Tests failed with exit code $code."
-          exit $code
-        fi
+      - bash ./contrib/ci-run-test.sh test-integration
 
 depends_on:
   - main
