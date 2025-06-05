@@ -5,8 +5,6 @@ export RUST_BACKTRACE=1
 
 mkdir -p /run/postgresql/
 chown -R postgres:postgres /run/postgresql/
-echo "host all  all    0.0.0.0/0  md5" >> /var/lib/postgresql/data/pg_hba.conf
-echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
 
 if [ ! -f "/data/aspd/mnemonic" ]; then
 #  mkdir -p /var/lib/postgresql/data
@@ -14,6 +12,9 @@ if [ ! -f "/data/aspd/mnemonic" ]; then
   chown -R postgres:postgres /var/lib/postgresql/data
   su postgres -s /bin/sh -c "initdb /var/lib/postgresql/data"
 fi
+
+echo "host all  all    0.0.0.0/0  md5" >> /var/lib/postgresql/data/pg_hba.conf
+echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
 
 su postgres -s /bin/sh -c "pg_ctl start -D /var/lib/postgresql/data -l /var/lib/postgresql/log.log" &
 sleep 2s
