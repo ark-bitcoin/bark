@@ -113,6 +113,7 @@ pub trait ContextExt<T, E>: Context<T, E> {
 		where C: fmt::Display + Send + Sync + 'static;
 
 	/// Tag an error with [BadArgument].
+	#[allow(unused)]
 	fn with_badarg<C, F>(self, f: F) -> anyhow::Result<T>
 	where
 		C: fmt::Display + Send + Sync + 'static,
@@ -126,6 +127,7 @@ pub trait ContextExt<T, E>: Context<T, E> {
 		C: fmt::Display + Send + Sync + 'static;
 
 	/// Tag an error with [NotFound].
+	#[allow(unused)]
 	fn with_not_found<I, V, C, F>(self, ids: V, f: F) -> anyhow::Result<T>
 	where
 		V: IntoIterator<Item = I>,

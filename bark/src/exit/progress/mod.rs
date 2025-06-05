@@ -23,8 +23,8 @@ use crate::persist::BarkPersister;
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
 /// depending on the contents of the users wallet, the mempool or the blockchain. E.g. Calling
-/// [ExitStateProgress::progress] on [ExitStartState] should return an [ExitProcessingState] if
-/// the VTXO can be exited.
+/// [ExitStateProgress::progress] on [json::exit::states::ExitStartState] should return an
+/// [json::exit::states::ExitProcessingState] if the VTXO can be exited.
 #[async_trait]
 pub(crate) trait ExitStateProgress {
 	async fn progress(
