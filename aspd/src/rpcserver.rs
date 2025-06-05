@@ -7,7 +7,8 @@ use std::time::Instant;
 use std::pin::Pin;
 use std::future::Future;
 
-use bitcoin::{Amount, ScriptBuf};
+use ark::musig::MusigPubNonce;
+use bitcoin::{Amount, OutPoint, ScriptBuf};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr::Signature, PublicKey};
@@ -19,7 +20,6 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
-use ark::board::UserPart;
 use ark::{musig, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
 use ark::rounds::RoundId;
 use ark::vtxo::VtxoSpkSpec;
@@ -384,22 +384,23 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN);
 		let req = req.into_inner();
 
-		add_tracing_attributes(vec![KeyValue::new("user_part", format!("{:?}", req.user_part))]);
+		add_tracing_attributes(vec![KeyValue::new("amount", req.amount.to_string())]);
+		add_tracing_attributes(vec![KeyValue::new("user_pubkey", req.user_pubkey.as_hex().to_string())]);
+		add_tracing_attributes(vec![KeyValue::new("expiry_height", req.expiry_height.to_string())]);
+		add_tracing_attributes(vec![KeyValue::new("utxo", req.utxo.as_hex().to_string())]);
 
-		let user_part = UserPart::decode(&req.user_part)
-			.badarg("invalid user part")?;
+		let amount = Amount::from_sat(req.amount);
+		let user_pubkey = PublicKey::from_slice(&req.user_pubkey).badarg("invalid user_pubkey")?;
+		let expiry_height = req.expiry_height;
+		//TODO(stevenroose) use own serialization
+		let utxo = bitcoin::consensus::deserialize::<OutPoint>(&req.utxo).badarg("invalid utxo")?;
+		let pub_nonce = MusigPubNonce::from_slice(&req.pub_nonce).badarg("invalid pub nonce")?;
 
-		let asp_part = self.cosign_board(user_part).await.to_status()?;
-		let response = protos::BoardCosignResponse {
-			asp_part: {
-				let mut buf = Vec::new();
-				ciborium::into_writer(&asp_part, &mut buf).unwrap();
+		let resp = self.cosign_board(
+			amount, user_pubkey, expiry_height, utxo, pub_nonce,
+		).await.to_status()?;
 
-				buf
-			},
-		};
-
-		Ok(tonic::Response::new(response))
+		Ok(tonic::Response::new(resp.into()))
 	}
 
 	/// Registers a board vtxo

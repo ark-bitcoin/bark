@@ -79,15 +79,20 @@ message RoundInfo {
 	bytes signed_vtxos = 2;
 }
 
+
 // boarding
 
 message BoardCosignRequest {
-	/// Serialized `UserPart`
-	bytes user_part = 1;
+	uint64 amount = 1;
+	bytes utxo = 2;
+	uint32 expiry_height = 3;
+	bytes user_pubkey = 4;
+	bytes pub_nonce = 5;
 }
 
 message BoardCosignResponse {
-	bytes asp_part = 1;
+	bytes pub_nonce = 1;
+	bytes partial_sig = 2;
 }
 
 message BoardVtxoRequest {

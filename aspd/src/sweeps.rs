@@ -40,11 +40,13 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::board::BoardVtxo;
+use ark::vtxo::VtxoSpec;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
-	psbt, sighash, Amount, FeeRate, OutPoint, Sequence, Transaction, TxOut, Txid, Weight, Network, Address,
+	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxOut, Txid, Weight
 };
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
@@ -52,7 +54,6 @@ use futures::StreamExt;
 use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
 
-use ark::{BoardVtxo, VtxoSpec};
 use ark::connectors::{ConnectorChain, CONNECTOR_TX_CHAIN_VOUT, CONNECTOR_TX_CONNECTOR_VOUT};
 use ark::rounds::{RoundId, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 
@@ -112,10 +113,16 @@ impl BoardSweepInput {
 	}
 
 	fn psbt(&self) -> psbt::Input {
-		let taproot = ark::board::board_taproot(&self.vtxo_spec);
-		let utxo = ark::board::board_txout(&self.vtxo_spec);
+		let taproot = ark::board::funding_taproot(
+			self.vtxo_spec.user_pubkey, self.vtxo_spec.expiry_height, self.vtxo_spec.asp_pubkey,
+		);
+		let board_txout = TxOut {
+			value: self.vtxo_spec.amount,
+			script_pubkey: ScriptBuf::new_p2tr_tweaked(taproot.output_key()),
+		};
+
 		let mut ret = psbt::Input{
-			witness_utxo: Some(utxo),
+			witness_utxo: Some(board_txout),
 			sighash_type: Some(sighash::TapSighashType::Default.into()),
 			tap_internal_key: Some(self.vtxo_spec.combined_pubkey()),
 			tap_scripts: taproot.psbt_tap_scripts(),

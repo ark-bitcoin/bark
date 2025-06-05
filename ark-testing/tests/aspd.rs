@@ -17,9 +17,8 @@ use log::{error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, VtxoId};
-use ark::board::UserPart;
 use ark::rounds::VtxoOwnershipChallenge;
-use ark::util::{Decodable, Encodable, SECP};
+use ark::util::{Encodable, SECP};
 use ark::vtxo::VtxoSpkSpec;
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
@@ -1081,13 +1080,9 @@ async fn reject_subdust_board_cosign() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_board_cosign(&mut self, req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
-			let mut user_part = UserPart::decode(&req.user_part).unwrap();
-			user_part.spec.amount = P2TR_DUST - Amount::ONE_SAT;
-
-			Ok(self.upstream().request_board_cosign(protos::BoardCosignRequest {
-				user_part: user_part.encode(),
-			}).await?.into_inner())
+		async fn request_board_cosign(&mut self, mut req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
+			req.amount = P2TR_DUST_SAT - 1;
+			Ok(self.upstream().request_board_cosign(req).await?.into_inner())
 		}
 	}
 

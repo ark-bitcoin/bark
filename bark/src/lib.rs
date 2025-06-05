@@ -12,6 +12,7 @@ mod lnurl;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
+use ark::vtxo::{VtxoSpec, VtxoSpkSpec};
 pub use persist::sqlite::SqliteClient;
 mod psbtext;
 pub mod vtxo_selection;
@@ -34,7 +35,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Psbt, Txid};
+use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
@@ -47,27 +48,17 @@ use log::{trace, debug, info, warn, error};
 use rusqlite::ToSql;
 use tokio_stream::{Stream, StreamExt};
 
-use ark::{
-	ArkInfo, ArkoorVtxo, OffboardRequest, PaymentRequest, RoundVtxo, Vtxo,
-	VtxoId, VtxoRequest, VtxoSpec,
-};
-use ark::arkoor::{self, ArkoorBuilder};
-use ark::board::BOARD_TX_VTXO_VOUT;
+use ark::{arkoor, ArkInfo, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoRequest};
+use ark::arkoor::{ArkoorBuilder, ArkoorVtxo};
+use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{
-	RoundAttempt,
-	RoundEvent,
-	RoundId,
-	RoundInfo,
-	VtxoOwnershipChallenge,
-	MIN_ROUND_TX_OUTPUTS,
-	ROUND_TX_CONNECTOR_VOUT,
-	ROUND_TX_VTXO_TREE_VOUT,
+	RoundAttempt, RoundEvent, RoundId, RoundInfo, RoundVtxo, VtxoOwnershipChallenge,
+	MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::util::{Decodable, Encodable};
-use ark::vtxo::VtxoSpkSpec;
 use aspd_rpc::{self as rpc, protos};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::WalletExt;
@@ -609,85 +600,70 @@ impl Wallet {
 	//
 	// NB we will spend a little more on-chain to cover minrelayfee.
 	pub async fn board_amount(&mut self, amount: Amount) -> anyhow::Result<Board> {
-		let asp = self.require_asp()?;
-		let properties = self.db.read_properties()?.context("Missing config")?;
-
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
-		let current_height = self.onchain.tip().await?;
-		let spec = VtxoSpec {
-			user_pubkey: user_keypair.public_key(),
-			asp_pubkey: asp.info.asp_pubkey,
-			expiry_height: current_height + asp.info.vtxo_expiry_delta as BlockHeight,
-			exit_delta: asp.info.vtxo_exit_delta,
-			spk: VtxoSpkSpec::Exit,
-			amount: amount,
-		};
-
-		let addr = Address::from_script(&ark::board::board_spk(&spec), properties.network).unwrap();
-
-		// We create the onboard tx template, but don't sign it yet.
-		let board_tx = self.onchain.prepare_tx([(addr, amount)])?;
-
-		self.board(spec, user_keypair, board_tx).await
+		self.board(amount, user_keypair).await
 	}
 
 	pub async fn board_all(&mut self) -> anyhow::Result<Board> {
-		let asp = self.require_asp()?;
-		let properties = self.db.read_properties()?.context("Missing config")?;
-
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
-		let current_height = self.onchain.tip().await?;
-		let mut spec = VtxoSpec {
-			user_pubkey: user_keypair.public_key(),
-			asp_pubkey: asp.info.asp_pubkey,
-			expiry_height: current_height + asp.info.vtxo_expiry_delta as BlockHeight,
-			exit_delta: asp.info.vtxo_exit_delta,
-			spk: VtxoSpkSpec::Exit,
-			// amount is temporarily set to total balance but will
-			// have fees deducted after psbt construction
-			amount: self.onchain.balance()
-		};
 
-		let addr = Address::from_script(&ark::board::board_spk(&spec), properties.network).unwrap();
-		let board_all_tx = self.onchain.prepare_send_all_tx(addr)?;
+		let throwaway_addr = self.onchain.address()?;
+		let board_all_tx = self.onchain.prepare_send_all_tx(throwaway_addr)?;
 
 		// Deduct fee from vtxo spec
 		let fee = board_all_tx.fee().context("Unable to calculate fee")?;
-		spec.amount = spec.amount.checked_sub(fee).unwrap();
+		let amount = self.onchain.balance().checked_sub(fee)
+			.context("not enough money for a board")?;
 
 		assert_eq!(board_all_tx.outputs.len(), 1);
-		assert_eq!(board_all_tx.unsigned_tx.tx_out(0).unwrap().value, spec.amount);
+		assert_eq!(board_all_tx.unsigned_tx.tx_out(0).unwrap().value, amount);
 
-		self.board(spec, user_keypair, board_all_tx).await
+		self.board(amount, user_keypair).await
 	}
 
 	async fn board(
 		&mut self,
-		spec: VtxoSpec,
+		amount: Amount,
 		user_keypair: Keypair,
-		board_tx: Psbt,
 	) -> anyhow::Result<Board> {
 		let mut asp = self.require_asp()?;
+		let properties = self.db.read_properties()?.context("Missing config")?;
+		let current_height = self.onchain.tip().await?;
 
-		let utxo = OutPoint::new(board_tx.unsigned_tx.compute_txid(), BOARD_TX_VTXO_VOUT);
-		// We ask the ASP to cosign our board vtxo exit tx.
-		let (user_part, priv_user_part) = ark::board::new_user(spec, utxo);
-		let asp_part = {
-			let res = asp.client.request_board_cosign(protos::BoardCosignRequest {
-				user_part: user_part.encode(),
-			}).await.context("error requesting board cosign")?;
-			ciborium::from_reader::<ark::board::AspPart, _>(&res.into_inner().asp_part[..])
-				.context("invalid ASP part in response")?
-		};
+		let expiry_height = current_height + asp.info.vtxo_expiry_delta as BlockHeight;
+		let builder = BoardBuilder::new(
+			amount,
+			user_keypair.public_key(),
+			expiry_height,
+			asp.info.asp_pubkey,
+			asp.info.vtxo_exit_delta,
+		);
 
-		if !asp_part.verify_partial_sig(&user_part) {
-			bail!("invalid ASP board cosignature received. user_part={:?}, asp_part={:?}",
-				user_part, asp_part,
-			);
+		let addr = Address::from_script(&builder.funding_script_pubkey(), properties.network).unwrap();
+
+		// We create the onboard tx template, but don't sign it yet.
+		let board_psbt = self.onchain.prepare_tx([(addr, amount)])?;
+
+		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
+		let builder = builder
+			.set_funding_utxo(utxo)
+			.generate_user_nonces();
+
+		let cosign_resp = asp.client.request_board_cosign(protos::BoardCosignRequest {
+			amount: amount.to_sat(),
+			utxo: bitcoin::consensus::serialize(&utxo), //TODO(stevenroose) change to own
+			expiry_height: expiry_height,
+			user_pubkey: user_keypair.public_key().serialize().to_vec(),
+			pub_nonce: builder.user_pub_nonce().serialize().to_vec(),
+		}).await.context("error requesting board cosign")?
+			.into_inner().try_into().context("invalid cosign response from server")?;
+
+		if !builder.verify_partial_sig(&cosign_resp) {
+			bail!("invalid ASP board cosignature received");
 		}
 
 		// Store vtxo first before we actually make the on-chain tx.
-		let vtxo = ark::board::finish(user_part, asp_part, priv_user_part, &user_keypair).into();
+		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair);
 
 		self.db.register_movement(MovementArgs {
 			spends: &[],
@@ -696,7 +672,7 @@ impl Wallet {
 			fees: None
 		}).context("db error storing vtxo")?;
 
-		let tx = self.onchain.finish_tx(board_tx)?;
+		let tx = self.onchain.finish_tx(board_psbt)?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.onchain.broadcast_tx(&tx).await?;
@@ -714,15 +690,16 @@ impl Wallet {
 		// Get the vtxo and funding transaction from the database
 		let vtxo = self.db.get_vtxo(vtxo_id)?
 			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
-		let board_vtxo = vtxo.as_board()
-			.with_context(|| format!("Expected type 'board'. Received '{}'", vtxo.vtxo_type()))?;
 
-		let funding_tx = self.onchain.get_wallet_tx(board_vtxo.onchain_output.txid)
+		let encoded_vtxo = vtxo.encode();
+		let vtxo = vtxo.into_board().context("vtxo not a board vtxo")?;
+
+		let funding_tx = self.onchain.get_wallet_tx(vtxo.onchain_output.txid)
 			.context("Failed to find funding_tx for {}")?;
 
 		// Register the vtxo with the server
 		asp.client.register_board_vtxo(protos::BoardVtxoRequest {
-			board_vtxo: vtxo.encode(),
+			board_vtxo: encoded_vtxo,
 			board_tx: bitcoin::consensus::serialize(&funding_tx),
 		}).await.context("error registering board with the asp")?;
 

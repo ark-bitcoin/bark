@@ -142,8 +142,8 @@ impl VtxoTreeSpec {
 		};
 
 		crate::vtxo::create_exit_tx(
-			&spec,
 			OutPoint::null(),
+			spec.txout(),
 			None,
 		)
 	}

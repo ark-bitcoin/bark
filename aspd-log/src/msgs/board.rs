@@ -1,13 +1,12 @@
 
 use ark::VtxoId;
-use bitcoin::{Amount, OutPoint, Txid};
+use bitcoin::{Amount, OutPoint};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CosignedBoard {
 	pub utxo: OutPoint,
 	pub amount: Amount,
-	pub exit_txid: Txid,
 }
 impl_slog!(CosignedBoard, Trace, "cosigned board tx for user");
 
