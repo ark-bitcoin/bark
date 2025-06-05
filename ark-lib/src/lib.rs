@@ -75,9 +75,6 @@ pub struct PaymentRequest {
 	pub spk: VtxoSpkSpec,
 }
 
-impl Encodable for PaymentRequest {}
-impl Decodable for PaymentRequest {}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct VtxoRequest {
 	pub pubkey: PublicKey,
@@ -102,9 +99,6 @@ pub struct OffboardRequest {
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
-
-impl Encodable for OffboardRequest {}
-impl Decodable for OffboardRequest {}
 
 impl OffboardRequest {
 	/// Calculate the fee we have to charge for adding an output
