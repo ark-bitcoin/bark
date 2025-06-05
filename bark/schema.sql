@@ -64,7 +64,7 @@ CREATE TABLE bark_config (
 				bitcoind_cookiefile ,
 				bitcoind_user ,
 				bitcoind_pass ,
-				vtxo_refresh_threshold INTEGER NOT NULL
+				vtxo_refresh_expiry_threshold INTEGER NOT NULL
 			);
 CREATE TABLE bark_properties (
 				id TEXT PRIMARY KEY,

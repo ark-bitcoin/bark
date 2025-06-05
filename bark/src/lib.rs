@@ -209,7 +209,7 @@ pub struct Config {
 	/// The number of blocks before expiration to refresh vtxos.
 	///
 	/// Default value: 288 (48 hrs)
-	pub vtxo_refresh_threshold: BlockHeight
+	pub vtxo_refresh_expiry_threshold: BlockHeight
 }
 
 impl Default for Config {
@@ -221,7 +221,7 @@ impl Default for Config {
 			bitcoind_cookiefile: None,
 			bitcoind_user: None,
 			bitcoind_pass: None,
-			vtxo_refresh_threshold: 288,
+			vtxo_refresh_expiry_threshold: 288,
 		}
 	}
 }

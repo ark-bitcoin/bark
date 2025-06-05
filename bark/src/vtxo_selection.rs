@@ -189,7 +189,7 @@ impl FilterVtxos for RefreshStrategy<'_> {
 						}
 					}
 
-					if self.tip > vtxo.spec().expiry_height.saturating_sub(self.wallet.config().vtxo_refresh_threshold) {
+					if self.tip > vtxo.spec().expiry_height.saturating_sub(self.wallet.config().vtxo_refresh_expiry_threshold) {
 						warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
 						return true;
 					}
@@ -207,7 +207,7 @@ impl FilterVtxos for RefreshStrategy<'_> {
 						}
 					}
 
-					let soft_threshold = self.wallet.config().vtxo_refresh_threshold + 28;
+					let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
 					if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
 						warn!("VTXO {} is about to expire, should be refreshed on next opportunity", vtxo.id());
 						return true;
