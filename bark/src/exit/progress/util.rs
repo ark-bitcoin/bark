@@ -24,7 +24,7 @@ pub(crate) fn count_confirmed(status: &[ExitTx]) -> usize {
 
 /// Do a rudimentary check of the total exit cost for a set of vtxos.
 /// We estimate the CPFP part by multiplying the exit tx weight by 2.
-pub(crate) fn estimate_exit_weight<'a, I>(vtxos: I, fee_rate: FeeRate) -> Amount
+pub(crate) fn estimate_exit_cost<'a, I>(vtxos: I, fee_rate: FeeRate) -> Amount
 where
 	I: IntoIterator<Item = &'a Vtxo>
 {

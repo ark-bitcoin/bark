@@ -27,6 +27,8 @@ pub struct ArkInfo {
 	pub vtxo_exit_delta: u16,
 	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
+	/// Maximum number of OOR transition after VTXO tree leaf
+	pub max_arkoor_depth: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

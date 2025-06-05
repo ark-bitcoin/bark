@@ -342,6 +342,15 @@ impl Vtxo {
 		self.as_arkoor().map(|v| v.input_vtxo_id())
 	}
 
+	/// Returns the OOR depth of the vtxo.
+	pub fn arkoor_depth(&self) -> u16 {
+		match self {
+			Vtxo::Board { .. } => 0,
+			Vtxo::Round { .. } => 0,
+			Vtxo::Arkoor(v) => v.input.arkoor_depth() + 1,
+		}
+	}
+
 	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
 	//TODO(stevenroose) this api will be better after refactor
 	pub fn server_htlc_out_payment_hash(&self) -> Option<sha256::Hash> {
@@ -598,5 +607,76 @@ use super::*;
 			point: OutPoint::new(tx_recursive.compute_txid(), 0)
 		});
 		assert_eq!(oor_recursive, Vtxo::decode(&oor_recursive.encode()).unwrap());
+	}
+
+
+	#[test]
+	fn arkoor_depth() {
+		let pk = "034b56997a369b627dae1621c603bbf2466b8369b37724cc902c5f1b434fc6a38a".parse().unwrap();
+		let point = "f338d94399994750d07607e2984b38d967b91fcc0d05e5dd856d674832620ba6:2".parse().unwrap();
+		let sig = "cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd59320b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea".parse().unwrap();
+		let tx = bitcoin::consensus::deserialize::<Transaction>(&Vec::<u8>::from_hex("010000000001040cd1965a17fec47521b619d56225abc6a33f73c6afac353048e5f386e10c6bf10000000000ffffffff0cd1965a17fec47521b619d56225abc6a33f73c6afac353048e5f386e10c6bf10100000000ffffffff91cc47b491ae94ea71cd727959e1758cdc3c0d8b14432497122ba9c566794be20000000000ffffffff91cc47b491ae94ea71cd727959e1758cdc3c0d8b14432497122ba9c566794be20100000000ffffffff03e2833d3600000000225120de391fbef06ac409794f11b0589835cb0850f866e8795b6a9b4ac16c479a4ca04a010000000000002251203ecd5454d152946220d6a4ab0ecd61441aa1982486d792c69bb108229283cd0a64b0953e000000002251203ecd5454d152946220d6a4ab0ecd61441aa1982486d792c69bb108229283cd0a0340122a381f3e05949d772022456524e5fb15cc54411f9543ae6a83442730f01dd12738d9c6696bd37559d29d5b0061022d9fc2ca41e1d6f34d04dc8b3f18e6d75b2702d601b17520d1520b6d6ac840e0c1478e514d5a14daac218a5dbb945789cc3aee628c25dc60ac21c0693471477e72768671054c1edf30412712c5a34ab2a3f14e16088f21bc21317d0140d5c2d47cba2bc70380c6b47ee01a5d8cd461515451562250ffb95dd7333f40f45b87977c8a98b63d6c2b641648e989844dbd2d4dfb51a6e06939caa30c80345203401cb74b31e35b1c3f0b033f1264f4b7167883d157814f99f350c546514d31c49989856986d2c894a6f665b896720fd77a7154cae2cad3097c88e8efaa5bc7b92e2702d701b17520d1520b6d6ac840e0c1478e514d5a14daac218a5dbb945789cc3aee628c25dc60ac21c1c06081bed228f8d624d05e58ff9ca0315d14c328648bb27a950b7cc9cb404e4f0140a09b7d8c0bd24707a077be0e3c9a93601f01954aa563a50eb41cbfdd0db0eb5e5df6971aa11eacd2b9faf9a2d9f3dd4d107c9bc8e5ba273c01052e633fa746760f020000").unwrap()).unwrap();
+
+		let oor_sig1 = schnorr::Signature::from_str("784d3ad041909063648c33d076510e357646e60038835c40ec838f9e98ae8aaea4c583e7303ef86be17032d212df7d0276c369e616e905b4a192d97047bd141a").unwrap();
+		let oor_sig2 = schnorr::Signature::from_str("115e203be50944e96c00b30f88be5d4523397f66a1845addc95851fbe27ecd82b8e4d5bbd96229b8167a9196de77b3cd62a27c368d00774889900cffe2c932da").unwrap();
+
+		let board = Vtxo::Board(BoardVtxo {
+			spec: VtxoSpec {
+				user_pubkey: pk,
+				asp_pubkey: pk,
+				expiry_height: 15,
+				exit_delta: 7,
+				spk: VtxoSpkSpec::Exit,
+				amount: Amount::from_sat(5),
+			},
+			onchain_output: point,
+			exit_tx_signature: sig,
+		});
+		assert_eq!(board.arkoor_depth(), 0);
+
+		let round = Vtxo::Round(RoundVtxo {
+			spec: VtxoSpec {
+				user_pubkey: pk,
+				asp_pubkey: pk,
+				expiry_height: 15,
+				exit_delta: 7,
+				spk: VtxoSpkSpec::Exit,
+				amount: Amount::from_sat(5),
+			},
+			leaf_idx: 3,
+			exit_branch: vec![tx.clone()],
+		});
+		assert_eq!(round.arkoor_depth(), 0);
+
+		let input = round.clone();
+		let output_specs = vec![VtxoSpec {
+			user_pubkey: pk,
+			asp_pubkey: pk,
+			expiry_height: 15,
+			exit_delta: 7,
+			spk: VtxoSpkSpec::Exit,
+			amount: Amount::from_sat(5),
+		}];
+		let tx = unsigned_arkoor_tx(&input, &output_specs);
+		let oor_1 = Vtxo::Arkoor(ArkoorVtxo {
+			input: Box::new(input),
+			output_specs: output_specs.clone(),
+			signature: Some(oor_sig1),
+			point: OutPoint::new(tx.compute_txid(), 0)
+		});
+
+		let input = oor_1.clone();
+		let tx = unsigned_arkoor_tx(&input, &output_specs);
+		let oor_2 = Vtxo::Arkoor(ArkoorVtxo {
+			input: Box::new(oor_1.clone()),
+			output_specs: output_specs.clone(),
+			signature: Some(oor_sig2),
+			point: OutPoint::new(tx.compute_txid(), 0)
+		});
+
+		// oor_1 has one round (depth: 0), should have depth = 1
+		assert_eq!(oor_1.arkoor_depth(), 1);
+		// oor_2 has one board (depth: 0) and one oor_1 (depth: 1), should have depth = max(0, 1) + 1 = 2
+		assert_eq!(oor_2.arkoor_depth(), 2);
 	}
 }

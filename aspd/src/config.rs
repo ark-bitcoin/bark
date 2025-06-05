@@ -123,6 +123,8 @@ pub struct Config {
 	/// Directory to place structured log files.
 	pub log_dir: Option<PathBuf>,
 	pub network: bitcoin::Network,
+	/// The number of blocks after which a VTXO expires, by default 6*24*30 so that
+	/// a VTXO can live for up to 30 days.
 	pub vtxo_expiry_delta: u16,
 	pub vtxo_exit_delta: u16,
 	pub htlc_expiry_delta: u16,
@@ -130,6 +132,8 @@ pub struct Config {
 	/// Maximum value any vtxo can have.
 	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
 	pub max_vtxo_amount: Option<Amount>,
+	/// Maximum number of OOR transition after VTXO tree leaf
+	pub max_arkoor_depth: u16,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.
 	pub round_board_confirmations: usize,
 	/// Number of confirmations untrusted inputs of the round tx need to have.
@@ -207,11 +211,12 @@ impl Default for Config {
 			data_dir: "./aspd".into(),
 			log_dir: None,
 			network: bitcoin::Network::Regtest,
-			vtxo_expiry_delta: 24 * 6,
+			vtxo_expiry_delta: 6 * 24 * 30,
 			vtxo_exit_delta: 2 * 6,
 			htlc_expiry_delta: 6,
 
 			max_vtxo_amount: None,
+			max_arkoor_depth: 5,
 			round_board_confirmations: 12,
 			round_tx_untrusted_input_confirmations: 2,
 

@@ -5,8 +5,9 @@ use anyhow::Context;
 use bitcoin_ext::BlockHeight;
 
 use ark::{Vtxo, VtxoId};
+use log::warn;
 
-use crate::Wallet;
+use crate::{exit::progress::util::estimate_exit_cost, Wallet};
 
 
 /// Trait needed to be implemented to filter wallet VTXOs.
@@ -144,5 +145,83 @@ impl FilterVtxos for VtxoFilter<'_> {
 			}
 		}
 		Ok(vtxos)
+	}
+}
+
+enum InnerRefreshStrategy {
+	MustRefresh,
+	ShouldRefresh,
+}
+
+pub struct RefreshStrategy<'a> {
+	inner: InnerRefreshStrategy,
+	tip: BlockHeight,
+	wallet: &'a Wallet,
+}
+
+impl<'a> RefreshStrategy<'a> {
+	pub fn must_refresh(wallet: &'a Wallet, tip: BlockHeight) -> Self {
+		Self {
+			inner: InnerRefreshStrategy::MustRefresh,
+			tip,
+			wallet,
+		}
+	}
+
+	pub fn should_refresh(wallet: &'a Wallet, tip: BlockHeight) -> Self {
+		Self {
+			inner: InnerRefreshStrategy::ShouldRefresh,
+			tip,
+			wallet,
+		}
+	}
+}
+
+impl FilterVtxos for RefreshStrategy<'_> {
+	fn filter(&self, vtxos: Vec<Vtxo>) -> anyhow::Result<Vec<Vtxo>> {
+		match self.inner {
+			InnerRefreshStrategy::MustRefresh => {
+				Ok(vtxos.into_iter().filter(|vtxo| {
+					if let Some(max_arkoor_depth) = self.wallet.ark_info().map(|i| i.max_arkoor_depth) {
+						if vtxo.arkoor_depth() >= max_arkoor_depth {
+							warn!("VTXO {} reached max OOR depth {}, must be refreshed", vtxo.id(), max_arkoor_depth);
+							return true;
+						}
+					}
+
+					if self.tip > vtxo.spec().expiry_height.saturating_sub(self.wallet.config().vtxo_refresh_expiry_threshold) {
+						warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
+						return true;
+					}
+
+					false
+				}).collect::<Vec<_>>())
+			},
+			InnerRefreshStrategy::ShouldRefresh => {
+				Ok(vtxos.into_iter().filter(|vtxo| {
+					let soft_depth_threshold = self.wallet.ark_info().map(|i| i.max_arkoor_depth - 1);
+					if let Some(max_oor_depth) = soft_depth_threshold {
+						if vtxo.arkoor_depth() >= max_oor_depth {
+							warn!("VTXO {} is about to become too deep, should be refreshed on next opportunity", vtxo.id());
+							return true;
+						}
+					}
+
+					let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
+					if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
+						warn!("VTXO {} is about to expire, should be refreshed on next opportunity", vtxo.id());
+						return true;
+					}
+
+					let fr = self.wallet.onchain.chain.urgent_feerate();
+					if vtxo.amount() < estimate_exit_cost(&[vtxo.clone()], fr) {
+						warn!("VTXO {} is uneconomical to exit, should be refreshed on next opportunity", vtxo.id());
+						return true;
+					}
+
+					false
+				}).collect::<Vec<_>>())
+			},
+		}
 	}
 }

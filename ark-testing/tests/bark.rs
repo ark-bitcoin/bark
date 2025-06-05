@@ -287,7 +287,7 @@ async fn bark_rejects_sending_subdust_oor() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let subdust_amount = sat(P2TR_DUST_SAT - 1);
-	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, subdust_amount).await;
+	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, subdust_amount, true).await;
 
 	assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
 	assert_eq!(bark1.offchain_balance().await, board_amount);
@@ -305,16 +305,15 @@ async fn bark_rejects_creating_arkoor_subdust_change() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let sent_amount = board_amount - sat(P2TR_DUST_SAT - 1);
-	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, sent_amount).await;
+	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, sent_amount, true).await;
 
 	assert!(res.unwrap_err()
 		.to_string()
 		.contains(&format!(
-			"no input found to fit amount: required: {}, best: {}",
+			"No input found to fit amount: required: {}",
 			// sent amount (799_671) + change (330)
 			sat(800_001),
-			board_amount)
-		)
+		))
 	);
 	assert_eq!(bark1.offchain_balance().await, board_amount);
 }
@@ -939,4 +938,29 @@ async fn bark_recover_unregistered_board() {
 
 	ctx.generate_blocks(12).await;
 	bark.refresh_all().await;
+}
+
+#[tokio::test]
+async fn bark_does_not_spend_too_deep_arkoors() {
+	let ctx = TestContext::new("bark/does_not_spend_too_deep_arkoors").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let pk = bark2.vtxo_pubkey().await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+	bark1.send_oor(&pk, sat(100_000)).await;
+
+	let err = bark1.try_send_oor(&pk, sat(100_000), false).await.unwrap_err();
+	assert!(err
+		.to_string()
+		.contains("No input found to fit amount: required: 0.00100330 BTC"),
+		"err: {err}"
+	);
 }

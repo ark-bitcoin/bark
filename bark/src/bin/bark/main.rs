@@ -66,21 +66,45 @@ struct Cli {
 
 #[derive(clap::Args)]
 struct ConfigOpts {
+	/// The address of your ASP.
 	#[arg(long)]
 	asp: Option<String>,
 
-	/// The esplora HTTP API endpoint
+	/// The address of the Esplora HTTP server to use.
+	///
+	/// Either this or the `bitcoind_address` field has to be provided.
 	#[arg(long)]
 	esplora: Option<String>,
+
+	/// The address of the bitcoind RPC server to use.
+	///
+	/// Either this or the `esplora_address` field has to be provided.
 	#[arg(long)]
-	/// The bitcoind address
 	bitcoind: Option<String>,
+
+	/// The path to the bitcoind rpc cookie file.
+	///
+	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	bitcoind_cookie: Option<String>,
+
+	/// The bitcoind RPC username.
+	///
+	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	bitcoind_user: Option<String>,
+
+	/// The bitcoind RPC password.
+	///
+	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	bitcoind_pass: Option<String>,
+
+	/// The number of blocks before expiration to refresh vtxos.
+	///
+	/// Default value: 288 (48 hrs)
+	#[arg(long)]
+	vtxo_refresh_expiry_threshold: Option<u32>
 }
 
 impl ConfigOpts {
@@ -105,6 +129,9 @@ impl ConfigOpts {
 		}
 		if let Some(v) = self.bitcoind_pass {
 			cfg.bitcoind_pass = if v == "" { None } else { Some(v) };
+		}
+		if let Some(v) = self.vtxo_refresh_expiry_threshold {
+			cfg.vtxo_refresh_expiry_threshold = v;
 		}
 
 		if cfg.esplora_address.is_none() && cfg.bitcoind_address.is_none() {
@@ -476,6 +503,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					vtxo_expiry_delta: info.vtxo_expiry_delta,
 					vtxo_exit_delta: info.vtxo_exit_delta,
 					max_vtxo_amount: info.max_vtxo_amount,
+					max_arkoor_depth: info.max_arkoor_depth,
 				});
 			} else {
 				warn!("Could not connect with Ark server.")
@@ -641,7 +669,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxos) {
-				(None, None, false, false, None) => w.get_expiring_vtxos(w.config().vtxo_refresh_threshold).await?,
+				(None, None, false, false, None) => w.get_expiring_vtxos(w.config().vtxo_refresh_expiry_threshold).await?,
 				(Some(b), None, false, false, None) => w.get_expiring_vtxos(b).await?,
 				(None, Some(h), false, false, None) => w.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
@@ -663,7 +691,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 
 			info!("Refreshing {} vtxos...", vtxos.len());
-			let round_id = w.refresh_vtxos(vtxos).await?;
+			let round_id = w.refresh(&vtxos, false).await?;
 			let refresh_output = json::Refresh {
 				participate_round: round_id.is_some(),
 				round: round_id,

@@ -11,7 +11,7 @@ use json::exit::states::{
 };
 
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
-use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_weight};
+use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_cost};
 use crate::movement::MovementArgs;
 
 #[async_trait]
@@ -46,7 +46,7 @@ impl ExitStateProgress for ExitStartState {
 		}
 
 		// Ensure we can afford to exit this VTXO
-		let total_fee = estimate_exit_weight([ctx.vtxo], ctx.fee_rate);
+		let total_fee = estimate_exit_cost([ctx.vtxo], ctx.fee_rate);
 		let balance = ctx.onchain.balance();
 		if balance < total_fee {
 			return Err(ExitError::InsufficientFeeToStart {

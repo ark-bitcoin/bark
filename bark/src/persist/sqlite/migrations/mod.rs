@@ -4,6 +4,7 @@ mod m0003_payment_history;
 mod m0004_unregistered_board;
 mod m0005_offchain_onboards;
 mod m0006_exit_rework;
+mod m0007_vtxo_refresh_expiry_threshold;
 
 use anyhow::Context;
 use log::{trace, debug};
@@ -15,6 +16,7 @@ use m0003_payment_history::Migration0003;
 use m0004_unregistered_board::Migration0004;
 use m0005_offchain_onboards::Migration0005;
 use m0006_exit_rework::Migration0006;
+use m0007_vtxo_refresh_expiry_threshold::Migration0007;
 
 pub struct MigrationContext {}
 
@@ -38,6 +40,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0004{})?;
 		self.try_migration(conn, &Migration0005{})?;
 		self.try_migration(conn, &Migration0006{})?;
+		self.try_migration(conn, &Migration0007{})?;
 		Ok(())
 	}
 
@@ -193,7 +196,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 6).unwrap();
+		assert_current_version(&conn, 7).unwrap();
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_config").unwrap());

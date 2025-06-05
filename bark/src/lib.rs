@@ -1,4 +1,3 @@
-
 pub extern crate ark;
 pub extern crate bark_json as json;
 
@@ -79,6 +78,7 @@ use crate::onchain::Utxo;
 use crate::persist::BarkPersister;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::VtxoState;
+use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
 
@@ -209,7 +209,7 @@ pub struct Config {
 	/// The number of blocks before expiration to refresh vtxos.
 	///
 	/// Default value: 288 (48 hrs)
-	pub vtxo_refresh_threshold: BlockHeight
+	pub vtxo_refresh_expiry_threshold: BlockHeight
 }
 
 impl Default for Config {
@@ -221,7 +221,7 @@ impl Default for Config {
 			bitcoind_cookiefile: None,
 			bitcoind_user: None,
 			bitcoind_pass: None,
-			vtxo_refresh_threshold: 288,
+			vtxo_refresh_expiry_threshold: 288,
 		}
 	}
 }
@@ -570,6 +570,8 @@ impl Wallet {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
 		self.register_all_unregistered_boards().await?;
+		info!("Performing maintenance refresh");
+		self.maintenance_refresh().await?;
 		Ok(())
 	}
 
@@ -950,20 +952,45 @@ impl Wallet {
 		Ok(self.offboard(input_vtxos, address).await?)
 	}
 
-	/// Refresh vtxo's.
+	/// Refresh VTXOs.
+	///
+	/// This will refresh all provided VTXOs.
+	///
+	/// If `include_auto_refresh` is set, it will also refresh any VTXO that meets
+	/// must-refresh criterias. Then, if there are some VTXOs to refresh, it will
+	/// also refresh those that meet should-refresh criterias.
 	///
 	/// Returns the [RoundId] of the round if a successful refresh occured.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
-	pub async fn refresh_vtxos(
-		&mut self,
-		vtxos: Vec<Vtxo>
+	pub async fn refresh(
+		&self,
+		vtxos: &[Vtxo],
+		include_auto_refresh: bool,
 	) -> anyhow::Result<Option<RoundId>> {
-		if vtxos.is_empty() {
-			warn!("There is no VTXO to refresh!");
-			return Ok(None)
+		let mut vtxo_by_id = vtxos
+			.iter().map(|v| (v.id(), v.clone())).collect::<HashMap<_, _>>();
+
+		if include_auto_refresh || vtxo_by_id.is_empty() {
+			let tip = self.onchain.tip().await?;
+
+			let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip))?;
+			info!("Refreshing {} must-refresh VTXOs.", must_refresh_vtxos.len());
+			vtxo_by_id.extend(must_refresh_vtxos.into_iter().map(|v| (v.id(), v)));
+
+			// If no vtxos were specified and we don't have must-refresh vtxos, we can stop here.
+			if vtxo_by_id.is_empty() {
+				warn!("There is no VTXO to refresh.");
+				return Ok(None)
+			}
+
+			// If we have vtxos to refresh, we take the opportunity to refresh some should-refresh vtxos.
+			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
+			info!("Refreshing {} should-refresh VTXOs.", should_refresh_vtxos.len());
+			vtxo_by_id.extend(should_refresh_vtxos.into_iter().map(|v| (v.id(), v)));
 		}
 
-		let total_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		let input_vtxos = vtxo_by_id.values().cloned().collect::<Vec<_>>();
+		let total_amount = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let payment_request = PaymentRequest {
@@ -973,33 +1000,48 @@ impl Wallet {
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok((vtxos.clone(), vec![payment_request.clone()], Vec::new()))
+			Ok((input_vtxos.clone(), vec![payment_request.clone()], Vec::new()))
 		}).await.context("round failed")?;
 		Ok(Some(round_id))
 	}
 
+	/// Performs a refresh of all VTXOs that are due to be refreshed, if any.
+	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
+		self.refresh(&[], true).await
+	}
+
 	/// Find a single vtxo to fit the provided amount
-	fn find_vtxo_to_fit(&self, amount: Amount) -> anyhow::Result<Vtxo> {
+	fn find_vtxo_to_fit(&self, amount: Amount, max_depth: Option<u16>) -> anyhow::Result<Vtxo> {
 		let mut inputs = self.db.get_all_spendable_vtxos()?;
 		inputs.sort_by_key(|v| v.amount());
 
-		if let Some(input) = inputs.iter().find(|v| v.amount() >= amount + P2TR_DUST) {
-			Ok(input.clone())
-		} else {
-			bail!("no input found to fit amount: required: {}, best: {}", amount, inputs.last().map(|v| v.amount()).unwrap_or(Amount::ZERO))
-		}
+		inputs.into_iter().find(|v| {
+			// VTXO must match higher than amount and have lower depth than max_depth, if provided
+			v.amount() >= amount + P2TR_DUST && Some(v.arkoor_depth()) < max_depth
+		}).ok_or({
+			anyhow!("No input found to fit amount: required: {}", amount)
+		})
 	}
 
 	/// Select several vtxos to cover the provided amount
 	///
 	/// Returns an error if amount cannot be reached
-	fn select_vtxos_to_cover(&self, amount: Amount) -> anyhow::Result<Vec<Vtxo>> {
+	///
+	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
+	fn select_vtxos_to_cover(&self, amount: Amount, max_depth: Option<u16>) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.db.get_all_spendable_vtxos()?;
 
 		// Iterate over all rows until the required amount is reached
 		let mut result = Vec::new();
 		let mut total_amount = bitcoin::Amount::ZERO;
 		for input in inputs {
+			if let Some(max_depth) = max_depth {
+				if input.arkoor_depth() >= max_depth {
+					warn!("VTXO {} reached max depth of {}, skipping it. Please refresh your VTXO.", input.id(), max_depth);
+					continue;
+				}
+			}
+
 			total_amount += input.amount();
 			result.push(input);
 
@@ -1033,7 +1075,7 @@ impl Wallet {
 		let offchain_fees = Amount::ZERO;
 		let spent_amount = amount + offchain_fees;
 
-		let input = self.find_vtxo_to_fit(spent_amount + P2TR_DUST)?;
+		let input = self.find_vtxo_to_fit(spent_amount + P2TR_DUST, Some(asp.info.max_arkoor_depth))?;
 
 		let change = {
 			// At this point, `sum` is >= to `spent_amount`
@@ -1156,7 +1198,7 @@ impl Wallet {
 
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
-		let input = self.find_vtxo_to_fit(amount)?;
+		let input = self.find_vtxo_to_fit(amount, Some(asp.info.max_arkoor_depth))?;
 
 		let keypair = {
 			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
@@ -1434,7 +1476,7 @@ impl Wallet {
 			};
 
 			let spent_amount = offb.amount + offb.fee(round.offboard_feerate)?;
-			let input_vtxos = self.select_vtxos_to_cover(spent_amount)?;
+			let input_vtxos = self.select_vtxos_to_cover(spent_amount, None)?;
 
 			let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 

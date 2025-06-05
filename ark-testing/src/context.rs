@@ -233,6 +233,7 @@ impl TestContext {
 			round_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
 			round_tx_untrusted_input_confirmations: 1,
 			max_vtxo_amount: None,
+			max_arkoor_depth: 5,
 			rpc_rich_errors: true,
 			txindex_check_interval: Duration::from_millis(500),
 			handshake_psa: None,
