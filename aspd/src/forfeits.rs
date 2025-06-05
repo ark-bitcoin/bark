@@ -226,24 +226,24 @@ pub struct ClaimState {
 }
 
 impl ClaimState {
-	async fn new_from_db(txindex: &TxIndex, state: ForfeitClaimState<'_>) -> ClaimState {
-		ClaimState {
+	async fn new_from_db(txindex: &TxIndex, state: ForfeitClaimState<'_>, bitcoind: &BitcoinRpcClient) -> anyhow::Result<ClaimState> {
+		Ok(ClaimState {
 			vtxo: state.vtxo,
 			connector_tx: match state.connector_tx {
-				Some(tx) => Some(txindex.register(tx.into_owned()).await),
+				Some(tx) => Some(txindex.register_with_bitcoind(tx.into_owned(), bitcoind).await?),
 				None => None,
 			},
 			_connector_cpfp: match state.connector_cpfp {
-				Some(tx) => Some(txindex.register(tx.into_owned()).await),
+				Some(tx) => Some(txindex.register_with_bitcoind(tx.into_owned(), bitcoind).await?),
 				None => None,
 			},
 			connector: state.connector,
-			forfeit_tx: txindex.register(state.forfeit_tx.into_owned()).await,
+			forfeit_tx: txindex.register_with_bitcoind(state.forfeit_tx.into_owned(), bitcoind).await?,
 			forfeit_cpfp: match state.forfeit_cpfp {
-				Some(tx) => Some(txindex.register(tx.into_owned()).await),
+				Some(tx) => Some(txindex.register_with_bitcoind(tx.into_owned(), bitcoind).await?),
 				None => None,
 			},
-		}
+		})
 	}
 
 	/// Start broadcasting the connector.
@@ -285,7 +285,7 @@ impl ClaimState {
 			vtxo, connector_tx,
 			_connector_cpfp: connector_cpfp,
 			connector: connector_point,
-			forfeit_tx: proc.txindex.register(forfeit_tx).await,
+			forfeit_tx: proc.txindex.register_with_bitcoind(forfeit_tx, &proc.bitcoind).await?,
 			forfeit_cpfp: None,
 		})
 	}
@@ -325,16 +325,17 @@ impl Process {
 		let claims = self.db.get_forfeits_claim_states().await?;
 		self.claims = Vec::with_capacity(claims.len());
 		for claim in claims {
-			self.claims.push(ClaimState::new_from_db(&self.txindex, claim).await);
+			self.claims.push(ClaimState::new_from_db(&self.txindex, claim, &self.bitcoind).await?);
 		}
 
 		Ok(())
 	}
 
-	async fn register_vtxo(&mut self, vtxo: &Vtxo) {
+	async fn register_vtxo(&mut self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let vtxo_id = vtxo.id();
 		let exit_tx = vtxo.vtxo_tx();
-		self.exit_txs.push((self.txindex.register(exit_tx).await, vtxo_id));
+		self.exit_txs.push((self.txindex.register_with_bitcoind(exit_tx, &self.bitcoind).await?, vtxo_id));
+		Ok(())
 	}
 
 	async fn handle_exit_tx(&mut self, vtxo_id: VtxoId) -> anyhow::Result<()> {
@@ -476,7 +477,7 @@ impl Process {
 
 		// We keep these locally so that we can retry registering them
 		// if we encounter a db error.
-		let mut new_forfeits = Vec::new();
+		let mut new_forfeits = Vec::<VtxoId>::new();
 
 		info!("Starting forfeit watcher");
 		let mut interval = tokio::time::interval(self.config.wake_interval);
@@ -488,7 +489,7 @@ impl Process {
 				Some(ctrl) = ctrl_rx.recv() => {
 					match ctrl {
 						Ctrl::RegisterForfeits(forfeits) => {
-							new_forfeits.push(forfeits);
+							new_forfeits.extend(forfeits);
 						},
 						Ctrl::WalletSync(resp) => {
 							let _ = self.wallet.sync(&self.bitcoind, true).await;
@@ -507,21 +508,28 @@ impl Process {
 			}
 			trace!("Forfeit watcher waking up...");
 
+
 			// If we have received new forfeited vtxos from a round, register them.
 			let mut idx = 0;
 			while idx < new_forfeits.len() {
-				match self.db.get_vtxos_by_id(&new_forfeits[idx]).await {
+				match self.db.get_vtxos_by_id(&[new_forfeits[idx]]).await {
 					Ok(vtxos) => {
-						for vtxo in vtxos {
-							self.register_vtxo(&vtxo.vtxo).await;
+						match self.register_vtxo(&vtxos[0].vtxo).await {
+							Ok(()) => {
+								// No need to increment idx
+								// We have removed the current entry and start again
+								new_forfeits.swap_remove(idx);
+							},
+							Err(e) => {
+								warn!("Error fetching newly forfeited vtxo from the db: {}", e);
+								idx+=1;
+							}
 						}
-						new_forfeits.swap_remove(idx);
-						// keep idx same
 					},
-					Err(e) => {
-						warn!("Error fetching newly forfeited vtxos from the db: {}", e);
-						idx += 1;
-					},
+					Err(e)  => {
+						warn!("Error fetching newly forfeited vtxo from the db: {}", e);
+						idx+=1;
+					}
 				}
 			}
 
@@ -605,7 +613,7 @@ impl ForfeitWatcher {
 			.context("db: failed to fetch forfeited vtxos")?);
 		while let Some(res) = forfeited_vtxos.next().await {
 			let (vtxo, _) = res.context("db: error fetching forfeited vtxo")?;
-			proc.register_vtxo(&vtxo).await;
+			proc.register_vtxo(&vtxo).await.context("bitcoind: Failed to get status of vtxo")?;
 		}
 		drop(forfeited_vtxos); // make borrowck happy
 

@@ -2,8 +2,17 @@ use std::collections::HashSet;
 
 use bitcoin::{BlockHash, Txid};
 use bitcoin_ext::{BlockHeight, BlockRef};
+use chrono::{DateTime, Local};
 
-/// Keeps a partial index of every [BlockRef] that is
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct BlockData {
+	pub block_ref: BlockRef,
+	pub prev_hash: BlockHash,
+	pub txids: Vec<Txid>,
+	pub observed_at: DateTime<Local>,
+}
+
+/// Keeps an index of every [BlockRef] that is
 /// part of the best chain. The best chain
 /// has the most proof of work.
 ///
@@ -20,7 +29,6 @@ pub struct BlockIndex {
 	/// `blocks[i]` corresponds to the block at height `start_height + i`
 	blocks: Vec<BlockRef>,
 }
-
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BlockInsertionError {
@@ -89,7 +97,7 @@ impl BlockIndex {
 		&mut self,
 		block: BlockRef,
 		prev_hash: BlockHash,
-	) -> Result<Vec<BlockRef>, BlockInsertionError> {
+	) -> Result<(), BlockInsertionError> {
 		// If the new block is too early it will be refused
 		let first_height = self.first().height;
 		if block.height <= first_height  {
@@ -111,16 +119,16 @@ impl BlockIndex {
 		// like nothing ever happened
 		if let Some(indexed_block) = self.get_by_height(block.height) {
 			if indexed_block == block {
-				return Ok(vec![])
+				return Ok(())
 			}
 		}
 
 		// Add the new block
 		let drain_from = (block.height - first_height) as usize;
-		let org_out = self.blocks.drain(drain_from..).collect::<Vec<_>>();
+		self.blocks.drain(drain_from..);
 		self.blocks.push(block);
 
-		Ok(org_out)
+		Ok(())
 	}
 
 	pub fn contains(&self, block_ref: BlockRef) -> bool {
@@ -221,10 +229,10 @@ pub mod test {
 		// it can find a transaction that isn't in the chain
 		index.try_insert(b5, b4.hash).expect_err("Block refused");
 		index.try_insert(b4, b3.hash).expect_err("Block refused");
-		let org_out = index.try_insert(b3, a2.hash).expect("Accepted");
+		index.try_insert(b3, a2.hash).expect("Accepted");
 
 		// Block a3 and a4 have been forked out of the chain
-		assert_eq!(org_out, [a3, a4]);
+		assert_eq!(index.tip(), b3, "The tip of the chain is b3");
 
 		// We will verify the current status of the chain
 		assert_eq!(index.get_by_height(0), Some(a0));

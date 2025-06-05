@@ -960,6 +960,7 @@ impl SigningForfeits {
 		drop(self.wallet_lock); // we no longer need the lock
 		let signed_round_tx = srv.tx_broadcast_handle.broadcast_tx(signed_round_tx).await;
 		let round_txid = signed_round_tx.txid;
+
 		slog!(BroadcastedFinalizedRoundTransaction, round_seq: self.round_seq,
 			attempt_seq: self.attempt_seq, txid: round_txid,
 			signing_time: Instant::now().duration_since(sign_start),

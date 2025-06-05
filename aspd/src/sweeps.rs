@@ -59,8 +59,10 @@ use ark::rounds::{RoundId, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
-use crate::txindex::{self, TxIndex};
+
+use crate::txindex::{self, TxIndex, TxStatus};
 use crate::txindex::broadcast::TxBroadcastHandle;
+
 use crate::wallet::BdkWalletExt;
 use crate::{database, serde_util, telemetry, SECP};
 
@@ -296,13 +298,13 @@ impl<'a> SweepBuilder<'a> {
 		});
 	}
 
-	async fn process_board(&mut self, board: &BoardVtxo, done_height: BlockHeight) {
+	async fn process_board(&mut self, board: &BoardVtxo, done_height: BlockHeight) -> anyhow::Result<()> {
 		let id = board.id();
 		let exit_tx = board.exit_tx();
 		let exit_txid = exit_tx.compute_txid();
-		let exit_tx = self.sweeper.txindex.get_or_insert(&exit_txid, move || exit_tx).await;
+		let exit_tx = self.sweeper.txindex.get_or_insert_with_bitcoind(&exit_txid, || exit_tx, &self.sweeper.bitcoind).await?;
 
-		if !exit_tx.confirmed().await {
+		Ok(if !exit_tx.confirmed().await {
 			if let Some((h, txid)) = self.sweeper.is_swept(board.onchain_output).await {
 				trace!("Board {id} is already swept by us at height {h}");
 				if h <= done_height {
@@ -316,20 +318,23 @@ impl<'a> SweepBuilder<'a> {
 		} else {
 			trace!("User has broadcast board exit tx {} of board vtxo {id}", exit_txid);
 			self.sweeper.clear_board(board).await;
-		}
+		})
 	}
 
 	/// Sweep the leftovers of the vtxo tree of the given round.
 	///
 	/// Returns the most recent of the confirmation heights for all sweep txs,
 	/// [None] if there are unconfirmed transactions.
-	async fn process_vtxos(&mut self, round: &'a ExpiredRound) -> Option<BlockHeight> {
+	async fn process_vtxos(&mut self, round: &'a ExpiredRound) -> anyhow::Result<Option<BlockHeight>> {
 		// First check if the round tx is still available for sweeping, that'd be ideal.
 		let tree_root = round.vtxo_txs.last().unwrap();
 		let tree_root_txid = tree_root.compute_txid();
-		let tree_root = self.sweeper.txindex.get_or_insert(&tree_root_txid, || {
-			tree_root.clone()
-		}).await;
+
+		let tree_root = self.sweeper.txindex.get_or_insert_with_bitcoind(
+			&tree_root_txid,
+			|| tree_root.clone(),
+			&self.sweeper.bitcoind
+		).await?;
 
 		if !tree_root.confirmed().await {
 			trace!("Tree root tx {} not yet confirmed, sweeping round tx...", tree_root.txid);
@@ -337,13 +342,13 @@ impl<'a> SweepBuilder<'a> {
 			if let Some((h, txid)) = self.sweeper.is_swept(point).await {
 				trace!("Round tx vtxo tree output {point} is already swept \
 					by us at height {h} with tx {txid}");
-				return Some(h);
+				return Ok(Some(h));
 			} else {
 				trace!("Sweeping round tx vtxo output {}", point);
 				let utxo = round.round.tx.output[0].clone();
 				let agg_pk = round.round.signed_tree.spec.round_tx_cosign_pk();
 				self.add_vtxo_output(round, point, utxo, agg_pk);
-				return None;
+				return Ok(None);
 			}
 		}
 
@@ -362,7 +367,7 @@ impl<'a> SweepBuilder<'a> {
 		let agg_pkgs = round.round.signed_tree.spec.cosign_agg_pks();
 		for (signed_tx, agg_pk) in signed_txs.into_iter().zip(agg_pkgs).rev() {
 			let txid = signed_tx.compute_txid();
-			let tx = self.sweeper.txindex.get_or_insert(&txid, || signed_tx.clone()).await;
+			let tx = self.sweeper.txindex.get_or_insert_with_bitcoind(&txid, || signed_tx.clone(), &self.sweeper.bitcoind).await?;
 			if !tx.confirmed().await {
 				trace!("tx {} did not confirm yet, not sweeping", tx.txid);
 				continue;
@@ -385,7 +390,7 @@ impl<'a> SweepBuilder<'a> {
 			}
 		}
 		assert_ne!(ret, Some(0), "ret should have changed to something at least");
-		ret
+		Ok(ret)
 	}
 
 	/// Sweep the leftover connectors of the given round.
@@ -415,7 +420,7 @@ impl<'a> SweepBuilder<'a> {
 				error!("Txindex should have all connector txs. Missing {} for round {}",
 					txid, round.id,
 				);
-				tx
+				(tx, TxStatus::Unseen)
 			}).await;
 
 			if tx.confirmed().await {
@@ -460,14 +465,14 @@ impl<'a> SweepBuilder<'a> {
 		ret
 	}
 
-	async fn process_round(&mut self, round: &'a ExpiredRound, done_height: BlockHeight) {
+	async fn process_round(&mut self, round: &'a ExpiredRound, done_height: BlockHeight) -> anyhow::Result<()> {
 		trace!("Processing vtxo tree for round {}", round.id);
-		let vtxos_done = self.process_vtxos(round).await;
+		let vtxos_done = self.process_vtxos(round).await?;
 		if vtxos_done.is_none() || vtxos_done.unwrap() > done_height {
 			trace!("Pending vtxo sweeps for this round (height {:?}), waiting for {}",
 				vtxos_done, done_height,
 			);
-			return;
+			return Ok(());
 		}
 
 		trace!("Processing connectors for round {}", round.id);
@@ -476,12 +481,13 @@ impl<'a> SweepBuilder<'a> {
 			trace!("Pending connector sweeps for this round (height {:?}), waiting for {}",
 				connectors_done, done_height,
 			);
-			return;
+			return Ok(());
 		}
 
 		//TODO(stevenroose) do this elsewhere
 		slog!(RoundFullySwept, round_id: round.id);
 		self.sweeper.round_finished(round).await;
+		Ok(())
 	}
 
 	async fn create_tx(&mut self, tip: BlockHeight) -> anyhow::Result<Transaction> {
@@ -640,13 +646,17 @@ impl Process {
 		let done_height = tip - DEEPLY_CONFIRMED + 1;
 		for round in &expired_rounds {
 			trace!("Processing round {}", round.id);
-			builder.process_round(round, done_height).await;
+			if let Err(err) = builder.process_round(round, done_height).await {
+				warn!("Failed to add round {} to sweep_builder: {}", round.id, err);
+			}
 			builder.purge_uneconomical();
 			//TODO(stevenroose) check if we exceeded some builder limits
 		}
 		for board in &expired_boards {
 			trace!("Processing board {}", board.id());
-			builder.process_board(&board, done_height).await;
+			if let Err(err) = builder.process_board(&board, done_height).await {
+				warn!("Failed to add board {} to sweep_builder: {}", board.id(), err);
+			}
 			builder.purge_uneconomical();
 		}
 
