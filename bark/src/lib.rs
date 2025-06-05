@@ -148,7 +148,7 @@ struct ArkoorCreateResult {
 	input: Vtxo,
 	created: Vtxo,
 	change: Option<Vtxo>,
-	fee: Amount
+	fee: Amount,
 }
 
 pub struct Pagination {
@@ -159,18 +159,16 @@ pub struct Pagination {
 impl From<Utxo> for UtxoInfo {
 	fn from(value: Utxo) -> Self {
 		match value {
-			Utxo::Local(o) =>
-				UtxoInfo {
-					outpoint: o.outpoint,
-					amount: o.txout.value,
-					confirmation_height: o.chain_position.confirmation_height_upper_bound()
-				},
-			Utxo::Exit(e) =>
-				UtxoInfo {
-					outpoint: e.vtxo.point(),
-					amount: e.vtxo.amount(),
-					confirmation_height: Some(e.height),
-				}
+			Utxo::Local(o) => UtxoInfo {
+				outpoint: o.outpoint,
+				amount: o.txout.value,
+				confirmation_height: o.chain_position.confirmation_height_upper_bound()
+			},
+			Utxo::Exit(e) => UtxoInfo {
+				outpoint: e.vtxo.point(),
+				amount: e.vtxo.amount(),
+				confirmation_height: Some(e.height),
+			},
 		}
 	}
 }
@@ -545,8 +543,7 @@ impl Wallet {
 		Ok(self.vtxos_with(filter)?)
 	}
 
-	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()>
-	{
+	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()> {
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoState::UnregisteredBoard])?;
 		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
 		for board in unregistered_boards {
@@ -735,12 +732,10 @@ impl Wallet {
 		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
 
 
-		Ok(
-			Board {
-				funding_txid: funding_tx.compute_txid(),
-				vtxos: vec![vtxo.into()],
-			}
-		)
+		Ok(Board {
+			funding_txid: funding_tx.compute_txid(),
+			vtxos: vec![vtxo.into()],
+		})
 	}
 
 	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
@@ -1018,9 +1013,7 @@ impl Wallet {
 		inputs.into_iter().find(|v| {
 			// VTXO must match higher than amount and have lower depth than max_depth, if provided
 			v.amount() >= amount + P2TR_DUST && Some(v.arkoor_depth()) < max_depth
-		}).ok_or({
-			anyhow!("No input found to fit amount: required: {}", amount)
-		})
+		}).with_context(|| format!("no input found to fit amount: required: {}", amount))
 	}
 
 	/// Select several vtxos to cover the provided amount
@@ -1051,7 +1044,8 @@ impl Wallet {
 		}
 
 		bail!("Insufficient money available. Needed {} but {} is available",
-			amount, total_amount);
+			amount, total_amount,
+		);
 	}
 
 
@@ -1090,7 +1084,7 @@ impl Wallet {
 				None
 			}
 		};
-		let outputs = Some(output.clone()).into_iter().chain(change).collect::<Vec<_>>();
+		let outputs = [output.clone()].into_iter().chain(change).collect::<Vec<_>>();
 
 		let builder = ArkoorBuilder::new(&input, &outputs)
 			.context("arkoor builder error")?;
@@ -1136,35 +1130,40 @@ impl Wallet {
 	}
 
 
-	pub async fn send_arkoor_payment(&mut self, destination: PublicKey, amount: Amount) -> anyhow::Result<Vtxo> {
+	pub async fn send_arkoor_payment(
+		&mut self,
+		destination: PublicKey,
+		amount: Amount,
+	) -> anyhow::Result<Vtxo> {
 		let mut asp = self.require_asp()?;
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let oor = self.create_arkoor_vtxo(destination, amount).await?;
+		let arkoor = self.create_arkoor_vtxo(destination, amount).await?;
 
+		let serialized_vtxo = arkoor.created.encode();
 		let req = protos::ArkoorVtxo {
 			pubkey: destination.serialize().to_vec(),
-			vtxo: oor.created.clone().encode(),
+			vtxo: serialized_vtxo.clone(),
 		};
 
 		if let Err(e) = asp.client.post_arkoor_mailbox(req).await {
 			error!("Failed to post the OOR vtxo to the recipients mailbox: '{}'; vtxo: {}",
-				e, oor.created.encode().as_hex(),
+				e, serialized_vtxo.as_hex(),
 			);
 			//NB we will continue to at least not lose our own change
 		}
 
 		self.db.register_movement(MovementArgs {
-			spends: &[&oor.input],
-			receives: &oor.change.as_ref().map(|v| vec![(v, VtxoState::Spendable)]).unwrap_or(vec![]),
+			spends: &[&arkoor.input],
+			receives: &arkoor.change.as_ref().map(|v| vec![(v, VtxoState::Spendable)]).unwrap_or(vec![]),
 			recipients: &[(&destination.to_string(), amount)],
-			fees: Some(oor.fee)
+			fees: Some(arkoor.fee),
 		}).context("failed to store OOR vtxo")?;
 
-		Ok(oor.created)
+		Ok(arkoor.created)
 	}
 
 	pub async fn send_bolt11_payment(
@@ -1294,7 +1293,7 @@ impl Wallet {
 					vec![(&vtxo, VtxoState::Spendable)]
 				}[..],
 				recipients: &[],
-				fees: None
+				fees: None,
 			})?;
 
 			bail!("Payment failed: {}", res.progress_message);
@@ -1312,7 +1311,7 @@ impl Wallet {
 
 		let req = protos::StartBolt11OnboardRequest {
 			payment_hash: payment_hash.as_byte_array().to_vec(),
-			amount_sat: amount.to_sat()
+			amount_sat: amount.to_sat(),
 		};
 
 		let resp = asp.client.start_bolt11_onboard(req).await?.into_inner();
@@ -1324,7 +1323,7 @@ impl Wallet {
 		self.db.store_offchain_onboard(
 			payment_hash.as_byte_array(),
 			&preimage,
-			OffchainPayment::Lightning(invoice.clone())
+			OffchainPayment::Lightning(invoice.clone()),
 		)?;
 
 		Ok(invoice)
@@ -1343,7 +1342,7 @@ impl Wallet {
 			spends: &[&oor.input],
 			receives: &receives,
 			recipients: &[],
-			fees: None
+			fees: None,
 		})?;
 
 		Ok(oor.created)
@@ -1644,7 +1643,7 @@ impl Wallet {
 				return Ok(AttemptResult::WaitNewRound)
 			}
 
-			let mut my_offbs = offb_reqs.clone();
+			let mut my_offbs = offb_reqs.iter().collect::<Vec<_>>();
 			for offb in unsigned_round_tx.output.iter().skip(2) {
 				if let Some(i) = my_offbs.iter().position(|o| o.to_txout() == *offb) {
 					my_offbs.swap_remove(i);

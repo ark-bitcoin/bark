@@ -305,16 +305,12 @@ async fn bark_rejects_creating_arkoor_subdust_change() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let sent_amount = board_amount - sat(P2TR_DUST_SAT - 1);
-	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, sent_amount, true).await;
+	let err = bark1.try_send_oor(&bark2.vtxo_pubkey().await, sent_amount, true).await.unwrap_err();
 
-	assert!(res.unwrap_err()
-		.to_string()
-		.contains(&format!(
-			"No input found to fit amount: required: {}",
-			// sent amount (799_671) + change (330)
-			sat(800_001),
-		))
-	);
+	assert!(err.to_string().contains(&format!(
+		// sent amount (799_671) + change (330)
+		"no input found to fit amount: required: {}", sat(800_001),
+	)), "err: {err}");
 	assert_eq!(bark1.offchain_balance().await, board_amount);
 }
 
@@ -958,9 +954,7 @@ async fn bark_does_not_spend_too_deep_arkoors() {
 	bark1.send_oor(&pk, sat(100_000)).await;
 
 	let err = bark1.try_send_oor(&pk, sat(100_000), false).await.unwrap_err();
-	assert!(err
-		.to_string()
-		.contains("No input found to fit amount: required: 0.00100330 BTC"),
-		"err: {err}"
-	);
+	assert!(err.to_string().contains(
+		"no input found to fit amount: required: 0.00100330 BTC",
+	), "err: {err}");
 }
