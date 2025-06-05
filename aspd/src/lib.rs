@@ -88,7 +88,6 @@ pub struct Server {
 	chain_tip: Mutex<BlockRef>,
 
 	rtmgr: RuntimeManager,
-	txindex: TxIndex,
 	tx_broadcast_handle: TxBroadcastHandle,
 	vtxo_sweeper: VtxoSweeper,
 	rounds: RoundHandle,
@@ -269,7 +268,6 @@ impl Server {
 			asp_key,
 			bitcoind,
 			rtmgr,
-			txindex,
 			tx_broadcast_handle: tx_nursery.broadcast_handle(),
 			vtxo_sweeper,
 			forfeits,
