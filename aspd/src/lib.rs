@@ -501,7 +501,7 @@ impl Server {
 	fn validate_board_inputs<V: Borrow<Vtxo>>(
 		&self,
 		inputs: &[V],
-	) -> anyhow::Result<Option<(VtxoId, usize)>> {
+	) -> anyhow::Result<()> {
 		// TODO(stevenroose) cache this check
 		for board in inputs.iter().filter_map(|v| v.borrow().as_board()) {
 			let txid = board.onchain_output.txid;
@@ -526,7 +526,7 @@ impl Server {
 			}
 		}
 
-		Ok(None)
+		Ok(())
 	}
 
 	pub async fn cosign_oor(
@@ -557,8 +557,7 @@ impl Server {
 				self.config.max_arkoor_depth, input.id());
 		}
 
-		self.validate_board_inputs(&[input])
-			.map_err(|e| e.context("arkoor cosign failed"))?;
+		self.validate_board_inputs(&[input]).context("invalid board inputs")?;
 
 		let builder = ArkoorBuilder::new(&input, outputs)
 			.badarg("invalid arkoor request")?;
@@ -608,9 +607,7 @@ impl Server {
 				self.config.max_arkoor_depth, input_vtxo.id());
 		}
 
-		if let Err(e) = self.validate_board_inputs(&[&input_vtxo]) {
-			return Err(e).context("oor cosign failed");
-		}
+		self.validate_board_inputs(&[&input_vtxo]).context("invalid board inputs")?;
 
 		//TODO(stevenroose) check that vtxos are valid
 
