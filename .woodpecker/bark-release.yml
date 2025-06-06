@@ -14,7 +14,7 @@ steps:
     when:
       - event: tag
         ref: refs/tags/bark-*
-    image: registry.2nd.dev/build:17
+    image: registry.2nd.dev/build:18
     commands:
       - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
       - cat VERSION
@@ -24,13 +24,13 @@ steps:
       - event: tag
         ref: refs/tags/bark-*
     depends_on: parse-versions
-    image: registry.2nd.dev/build:17
+    image: registry.2nd.dev/build:18
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
     commands:
       - cat VERSION
       - just release-bark
-      - cp ./target/x86_64-unknown-linux-musl/release/bark     bark-linux-x86_64
+      - cp ./target/x86_64-unknown-linux-gnu/release/bark      bark-linux-x86_64
       - cp ./target/aarch64-unknown-linux-gnu/release/bark     bark-linux-aarch64
       - cp ./target/armv7-unknown-linux-gnueabihf/release/bark bark-linux-armv7
       - cp ./target/x86_64-pc-windows-gnu/release/bark.exe     bark-windows-x86_64.exe
@@ -142,11 +142,11 @@ steps:
       - event: tag
         ref: refs/tags/bark-*
     depends_on: build-bark
-    image: registry.2nd.dev/build:17
+    image: registry.2nd.dev/build:18
     commands:
       - cat VERSION
       - cd ./target
-      - cp x86_64-unknown-linux-musl/release/bark       "bark-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-unknown-linux-gnu/release/bark       "bark-$(cat ../VERSION)-linux-x86_64"
       - cp aarch64-unknown-linux-gnu/release/bark      "bark-$(cat ../VERSION)-linux-arm64"
       - cp armv7-unknown-linux-gnueabihf/release/bark  "bark-$(cat ../VERSION)-linux-armv7"
       - cp x86_64-pc-windows-gnu/release/bark.exe      "bark-$(cat ../VERSION)-windows-x86_64.exe"

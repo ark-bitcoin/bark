@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libpq5 \
 	postgresql \
 	postgresql-contrib \
-    musl-tools \
 	lzma-dev \
 	protobuf-compiler \
 	jq \
@@ -33,10 +32,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	sudo
 
 ENV RUST_BACKTRACE=1 \
-	RUSTUP_TOOLCHAIN_VERSION=1.77 \
+	RUSTUP_TOOLCHAIN_VERSION=1.82 \
 	BITCOIN_VERSION=29.0 \
-	CLN_VERSION=25.02 \
-	MACOS_SDK_VERSION=15.1 \
+	CLN_VERSION=25.02.2 \
+	MACOS_SDK_VERSION=15.4 \
 	ELECTRS_HASH=a9a39b1616591fb08514fba4df1c1ca11b24a500 \
 	PATH=/root/.cargo/bin:/usr/lib/postgresql/16/bin:${PATH} \
 	ZIG_VERSION=0.13.0
@@ -51,7 +50,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
 	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION} && \
 	rustup target add x86_64-pc-windows-gnu && \
-    rustup target add x86_64-unknown-linux-musl && \
+	rustup target add x86_64-unknown-linux-gnu && \
 	rustup target add aarch64-unknown-linux-gnu && \
 	rustup target add armv7-unknown-linux-gnueabihf && \
 	rustup target add x86_64-apple-darwin && \
@@ -71,9 +70,9 @@ RUN echo "Installing c-lightning in /lightning/${CLN_VERSION}/bin/" && \
 	tar -xvf clightning-v${CLN_VERSION}-Ubuntu-24.04-amd64.tar.xz -C ./${CLN_VERSION} --strip-components=2
 RUN echo "Installing c-lightning hold invoice plugin in /hold/" && \
 	mkdir /plugins && \
-    git clone https://github.com/BoltzExchange/hold.git && \
+	git clone https://github.com/BoltzExchange/hold.git && \
 	cd hold && \
-	git checkout v0.3.0 && \
+	git checkout v0.2.2 && \
 	cargo build && \
 	cp /hold/target/debug/hold /plugins && \
 	chown root:root /plugins/hold
@@ -84,7 +83,8 @@ RUN cd /root/ && \
 	wget https://github.com/joseluisq/macosx-sdks/releases/download/${MACOS_SDK_VERSION}/sha256sum.txt && \
 	cd /root/osxcross/ && \
 	TARGET_DIR=/usr/local/osxcross SDK_VERSION=${MACOS_SDK_VERSION} UNATTENDED=1 ./build.sh && \
-	export PATH=$PATH:/usr/local/osxcross/bin
+	export PATH=$PATH:/usr/local/osxcross/bin && \
+	ls -alh /usr/local/osxcross/bin
 RUN echo "Installing sccache"
 RUN cargo install --locked sccache
 RUN echo "Installing just"
@@ -92,7 +92,7 @@ RUN cargo install --locked just
 RUN echo "Installing cargo-llvm-cov"
 RUN cargo install --locked cargo-llvm-cov
 RUN mkdir -p /root/.cargo && \
-	echo '[build]\nrustc-wrapper = "sccache"\n[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n[target.i686-pc-windows-gnu]\nlinker = "i686-w64-mingw32-gcc"\n[target.x86_64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/x86_64-apple-darwin24.1-clang"\nar = "/usr/local/osxcross/bin/x86_64-apple-darwin24.1-ar"\n[target.aarch64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/aarch64-apple-darwin24.1-clang"\nar = "/usr/local/osxcross/bin/aarch64-apple-darwin24.1-ar"\n' > /root/.cargo/config.toml
+	echo '[build]\nrustc-wrapper = "sccache"\n[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n[target.i686-pc-windows-gnu]\nlinker = "i686-w64-mingw32-gcc"\n[target.x86_64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/x86_64-apple-darwin24.4-clang"\nar = "/usr/local/osxcross/bin/x86_64-apple-darwin24.4-ar"\n[target.aarch64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/aarch64-apple-darwin24.4-clang"\nar = "/usr/local/osxcross/bin/aarch64-apple-darwin24.4-ar"\n' > /root/.cargo/config.toml
 RUN cat /root/.cargo/config.toml
 RUN echo "Installing Blockstream's electrs..." && \
 	cd /root && \
@@ -113,7 +113,8 @@ RUN echo "pre-build bark" && \
 	cargo llvm-cov --workspace --exclude ark-testing --html && \
 	cargo install --locked --path bark && \
 	cargo install --locked --path aspd && \
-	cargo build --release --target x86_64-unknown-linux-musl        --locked --manifest-path bark/Cargo.toml && \
+	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path aspd/Cargo.toml && \
+	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \
 	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark/Cargo.toml && \

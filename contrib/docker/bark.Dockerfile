@@ -1,13 +1,16 @@
 FROM docker.io/secondark/bark
 
-RUN apk update
-RUN apk upgrade
-RUN apk add busybox-extras
-RUN apk add dos2unix
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        telnet \
+        dos2unix \
+        && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ADD ./contrib/docker/bark_run.sh /bark_run.sh
-RUN chmod a+x /bark_run.sh
-RUN dos2unix /bark_run.sh
+
+RUN chmod a+x /bark_run.sh && \
+    dos2unix /bark_run.sh
 
 ENTRYPOINT ["/bark_run.sh"]
 
