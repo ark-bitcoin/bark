@@ -1,19 +1,19 @@
 #[macro_use] extern crate anyhow;
 
 mod exit;
-mod wallet;
-mod util;
 mod lightning;
+mod util;
+mod wallet;
 
-use std::time::Duration;
 use std::{env, process};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::hex::DisplayHex;
 use bitcoin::{address, Address, Amount};
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
@@ -214,8 +214,8 @@ enum Command {
 	/// By default the wallet's configured threshold is used
 	#[command()]
 	Refresh {
-		/// List of vtxos that will be refreshed
-		#[arg(long)]
+		/// The ID of a VTXO to be refreshed, can be specified multiple times.
+		#[arg(long = "vtxo", value_name = "VTXO_ID")]
 		vtxos: Option<Vec<String>>,
 		/// Refresh VTXOs that expire within this amount of blocks
 		#[arg(long)]
@@ -287,11 +287,13 @@ enum Command {
 	/// This command sends
 	#[command()]
 	Offboard {
-		/// Optional address to receive offboarded VTXOs. If no address is provided, it will be taken from onchain wallet
+		/// Optional address to receive offboarded VTXOs. If no address is provided, one will be
+		/// generated from the onchain wallet
 		#[arg(long)]
 		address: Option<String>,
-		/// Optional selection of VTXOs to offboard. Either this or --all should be provided
-		#[arg(long)]
+		/// Optional ID of a VTXO to offboard, this can be specified multiple times.
+		/// Either this or --all should be provided
+		#[arg(long = "vtxo", value_name = "VTXO_ID")]
 		vtxos: Option<Vec<String>>,
 		/// Whether or not all VTXOs should be offboarded. Either this or --vtxos should be provided
 		#[arg(long)]
@@ -351,13 +353,13 @@ enum OnchainCommand {
 	SendMany {
 		/// Adds an output to the given address, this can be specified multiple times and requires a
 		/// corresponding --amount parameter
-		#[arg(long, required = true)]
-		address: Vec<Address<address::NetworkUnchecked>>,
+		#[arg(long = "address", required = true)]
+		addresses: Vec<Address<address::NetworkUnchecked>>,
 
 		/// Sets the amount to send an address, this is applied in the order you supplied the
 		/// addresses.
-		#[arg(long, required = true)]
-		amount: Vec<Amount>,
+		#[arg(long = "amount", required = true)]
+		amounts: Vec<Amount>,
 
 		/// Sends the transaction immediately instead of printing the summary before continuing
 		#[arg(long)]
@@ -564,20 +566,20 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				let output = json::onchain::Send { txid };
 				output_json(&output);
 			},
-			OnchainCommand::SendMany { address, amount, immediate, no_sync } => {
-				if address.len() != amount.len() {
+			OnchainCommand::SendMany { addresses, amounts, immediate, no_sync } => {
+				if addresses.len() != amounts.len() {
 					bail!("You must provide an equal number of addresses and amounts. You provided {} addresses and {} amounts",
-						address.len(),
-						amount.len(),
+						addresses.len(),
+						amounts.len(),
 					);
 				}
-				let addresses = address
-					.iter().map(|a| a
-						.clone()
-						.require_network(net)
-						.expect(&format!("address is not valid for the configured network: {}, {:?}", net, a))
-					);
-				let outputs = addresses.zip(amount.into_iter()).collect::<Vec<_>>();
+				let addresses = addresses
+					.into_iter()
+					.map(|a|
+						a.require_network(net)
+							.map_err(|e| anyhow!("--address parameter was invalid: {}", e))
+					).collect::<Result<Vec<_>, _>>()?;
+				let outputs = addresses.into_iter().zip(amounts.into_iter()).collect::<Vec<_>>();
 				info!("Attempting to send the following:");
 				for (address, amount) in &outputs {
 					info!("{} to {}", amount, address);
