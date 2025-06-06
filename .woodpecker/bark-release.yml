@@ -26,7 +26,7 @@ steps:
     depends_on: parse-versions
     image: registry.2nd.dev/build:18
     environment:
-      SDKROOT: /usr/local/osxcross/SDK/MacOSX15.1.sdk
+      SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
     commands:
       - cat VERSION
       - just release-bark

@@ -20,7 +20,7 @@
 	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, rust-overlay }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
-				rustVersion = "1.78.0";
+				rustVersion = "1.82.0";
 				bitcoinVersion = "29.0";
 				lightningVersion = "25.02";
 				postgresVersion = "16.9";

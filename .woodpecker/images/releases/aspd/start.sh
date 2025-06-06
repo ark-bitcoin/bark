@@ -5,6 +5,7 @@ export RUST_BACKTRACE=1
 
 mkdir -p /run/postgresql/
 chown -R postgres:postgres /run/postgresql/
+export PATH=/usr/lib/postgresql/16/bin:${PATH}
 
 if [ ! -f "/data/aspd/mnemonic" ]; then
 #  mkdir -p /var/lib/postgresql/data
