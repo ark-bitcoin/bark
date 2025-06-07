@@ -1,7 +1,8 @@
+pub mod aspd;
 pub mod bitcoind;
 pub mod electrs;
-pub mod aspd;
 pub mod lightningd;
+pub mod postgres;
 
 use std::fs;
 use std::path::{Path, PathBuf};

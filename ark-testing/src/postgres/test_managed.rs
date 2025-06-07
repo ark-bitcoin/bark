@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tokio_postgres::Client;
 
-use crate::daemon::aspd::postgresd::Postgres;
+use crate::daemon::postgres::Postgres;
 use crate::postgres::query::drop_and_create_database;
 
 pub struct TestManagedPostgres {
