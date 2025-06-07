@@ -24,7 +24,7 @@ pub async fn global_client() -> Client {
 	config.user("postgres");
 	config.password("postgres");
 
-	config.host("localhost");
+	config.host(postgres_host().unwrap());
 	config.port(5432);
 
 	let (client, connection) = config.connect(NoTls).await
