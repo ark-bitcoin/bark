@@ -23,19 +23,6 @@ pub fn host_base_config() -> config::Postgres {
 	}
 }
 
-pub async fn cleanup_dbs(client: &Client, name: &str) {
-	let rows = client
-		.query(
-			"SELECT datname FROM pg_database WHERE datname LIKE $1",
-			&[&format!("{}%", name)],
-		).await.expect("failed to execute first cleanup query");
-
-	for row in rows {
-		let db_name = row.get::<_, &str>(0);
-		client.execute(&format!("DROP DATABASE \"{}\"", db_name), &[]).await
-			.expect("failed to drop db during cleanup");
-	}
-}
 
 pub type Postgres = Daemon<PostgresHelper>;
 

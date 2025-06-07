@@ -140,7 +140,7 @@ impl TestContext {
 	pub async fn init_central_postgres(&mut self) -> config::Postgres {
 		let (postgres_config, postgresd) = if postgres::externally_hosted() {
 			let global_client = postgres::external::global_client().await;
-			postgresd::cleanup_dbs(&global_client, &self.name).await;
+			postgres::query::drop_database(&global_client, &self.name).await;
 			let mut cfg = postgresd::host_base_config();
 			cfg.name = self.name.clone();
 			(cfg, None)

@@ -29,6 +29,8 @@
 
 pub mod external;
 pub mod test_managed;
+pub mod query;
+
 
 /// Check if the testing frame work is configured
 /// to use an external host
