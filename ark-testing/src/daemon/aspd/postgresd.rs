@@ -13,28 +13,6 @@ use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
-pub async fn global_client() -> Client {
-	let mut config = Config::new();
-
-	// we use default database and user to connect and create testing ones
-	config.dbname("postgres");
-	config.user("postgres");
-	config.password("postgres");
-
-	config.host("localhost");
-	config.port(5432);
-
-	let (client, connection) = config.connect(NoTls).await
-		.expect("failed to connect to global postgres client");
-	tokio::spawn(async move {
-		if let Err(e) = connection.await {
-			panic!("postgres daemon connection error: {}", e);
-		}
-	});
-
-	client
-}
-
 pub fn host_base_config() -> config::Postgres {
 	config::Postgres {
 		name: String::new(), // left empty to be filled
