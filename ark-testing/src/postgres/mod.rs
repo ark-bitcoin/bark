@@ -27,13 +27,40 @@
 //! variable is set.
 //!
 
-pub mod external;
-pub mod test_managed;
-pub mod query;
+mod external;
+mod test_managed;
+mod query;
 
+use std::path::PathBuf;
+
+
+use self::{external::ExternallyManagedPostgres, test_managed::TestManagedPostgres};
 
 /// Check if the testing frame work is configured
 /// to use an external host
 pub fn externally_hosted() -> bool {
 	external::postgres_host().is_some()
+}
+
+pub enum PostgresDatabaseManager {
+	ExternallyHosted(ExternallyManagedPostgres),
+	TestManaged(TestManagedPostgres),
+}
+
+impl PostgresDatabaseManager {
+	pub async fn init(datadir: PathBuf) -> Self {
+		if externally_hosted() {
+			Self::ExternallyHosted(ExternallyManagedPostgres::init().await)
+		}
+		else {
+			Self::TestManaged(TestManagedPostgres::init(datadir).await)
+		}
+	}
+
+	pub async fn request_database(&self, db_name: &str) -> aspd::config::Postgres {
+		match self{
+			Self::ExternallyHosted(m) => m.request_database(db_name).await,
+			Self::TestManaged(m) => m.request_database(db_name).await,
+		}
+	}
 }

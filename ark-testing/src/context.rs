@@ -12,8 +12,7 @@ use tonic::transport::Uri;
 use aspd::config::{self, Config, HodlInvoiceClnPlugin};
 use aspd_rpc as rpc;
 
-use crate::daemon::aspd::postgresd::{self, Postgres};
-use crate::postgres;
+use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
@@ -44,8 +43,7 @@ pub struct TestContext {
 	pub electrs: Option<Electrs>,
 
 	// ensures postgres daemon, if any, stays alive the TestContext's lifetime
-	pub postgres_config: Option<config::Postgres>,
-	_postgresd: Option<Postgres>,
+	postgres_manager: Option<postgres::PostgresDatabaseManager>,
 }
 
 impl TestContext {
@@ -66,8 +64,7 @@ impl TestContext {
 			datadir,
 			bitcoind: None,
 			electrs: None,
-			_postgresd: None,
-			postgres_config: None,
+			postgres_manager: None,
 		}
 	}
 
@@ -137,22 +134,11 @@ impl TestContext {
 		self.await_block_count_sync().await
 	}
 
-	pub async fn init_central_postgres(&mut self) -> config::Postgres {
-		let (postgres_config, postgresd) = if postgres::externally_hosted() {
-			let global_client = postgres::external::global_client().await;
-			postgres::query::drop_database(&global_client, &self.name).await;
-			let mut cfg = postgresd::host_base_config();
-			cfg.name = self.name.clone();
-			(cfg, None)
-		} else {
-			let postgresd = self.new_postgres("central_postgres").await;
-			(postgresd.helper().into_config(&self.name), Some(postgresd))
-		};
-
-
-		self._postgresd = postgresd;
-		self.postgres_config = Some(postgres_config.clone());
-		postgres_config
+	pub async fn init_central_postgres(&mut self) {
+		if self.postgres_manager.is_none() {
+			let datadir = self.datadir.join("central_postgres");
+			self.postgres_manager = Some(PostgresDatabaseManager::init(datadir).await);
+		}
 	}
 
 	/// Returns the `Bitcoind` which is central to this `TextContext`
@@ -176,11 +162,9 @@ impl TestContext {
 		bitcoind
 	}
 
-	pub async fn new_postgres(&self, name: &str) -> Postgres {
-		let datadir = self.datadir.join(name);
-		let mut ret = Postgres::new(name, datadir);
-		ret.start().await.unwrap();
-		ret
+	pub async fn new_postgres(&self, db_name: &str) -> aspd::config::Postgres {
+		self.postgres_manager.as_ref().unwrap()
+			.request_database(db_name).await
 	}
 
 	async fn aspd_default_cfg(
@@ -217,6 +201,8 @@ impl TestContext {
 			Vec::new()
 		};
 
+		// Create a new postgres database with the name of the test
+		let postgres_cfg = self.new_postgres(&self.name).await;
 
 		// NB we don't auto-complete `..Default::default()` here
 		// to force us to evaluate every value in test context.
@@ -263,7 +249,7 @@ impl TestContext {
 				rpc_user: None,
 				rpc_pass: None,
 			},
-			postgres: self.postgres_config.clone().expect("postgres config not set"),
+			postgres: postgres_cfg,
 			cln_array,
 			cln_reconnect_interval: Duration::from_secs(10),
 			invoice_check_interval: Duration::from_secs(3),

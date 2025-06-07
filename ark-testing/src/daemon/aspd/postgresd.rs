@@ -88,7 +88,7 @@ impl PostgresHelper {
 		}
 	}
 
-	async fn try_connect(&self) -> anyhow::Result<Client> {
+	pub async fn try_connect(&self) -> anyhow::Result<Client> {
 		let mut config = Config::new();
 
 		// we use default database and user to connect and create testing ones
