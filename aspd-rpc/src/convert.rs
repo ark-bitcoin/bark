@@ -3,6 +3,7 @@ use std::convert::TryFrom;
 use std::time::Duration;
 
 use ark::arkoor::ArkoorCosignResponse;
+use ark::board::BoardCosignResponse;
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate};
@@ -278,6 +279,27 @@ impl TryFrom<protos::ArkoorCosignResponse> for ArkoorCosignResponse {
 impl TryFrom<protos::Bolt11PaymentDetails> for ArkoorCosignResponse {
 	type Error = ConvertError;
 	fn try_from(v: protos::Bolt11PaymentDetails) -> Result<Self, Self::Error> {
+		Ok(Self {
+			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
+				.map_err(|_| "invalid server public nonce")?,
+			partial_signature: musig::MusigPartialSignature::from_slice(&v.partial_sig)
+				.map_err(|_| "invalid server partial cosignature")?,
+		})
+	}
+}
+
+impl From<BoardCosignResponse> for protos::BoardCosignResponse {
+	fn from(v: BoardCosignResponse) -> Self {
+		Self {
+			pub_nonce: v.pub_nonce.serialize().to_vec(),
+			partial_sig: v.partial_signature.serialize().to_vec(),
+		}
+	}
+}
+
+impl TryFrom<protos::BoardCosignResponse> for BoardCosignResponse {
+	type Error = ConvertError;
+	fn try_from(v: protos::BoardCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
 			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
 				.map_err(|_| "invalid server public nonce")?,

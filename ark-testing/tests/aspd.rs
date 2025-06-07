@@ -4,8 +4,6 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ark::board::UserPart;
-use ark::vtxo::VtxoSpkSpec;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
@@ -16,22 +14,19 @@ use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST, P2TR_DUST_SAT};
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{error, info, trace};
-use rand::Rng;
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, VtxoId};
 use ark::rounds::VtxoOwnershipChallenge;
-use ark::util::{Decodable, Encodable, SECP};
+use ark::util::{Encodable, SECP};
+use ark::vtxo::VtxoSpkSpec;
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
-use aspd_rpc::protos::{
-	self, BoardCosignRequest, Bolt11PaymentRequest, ClaimBolt11OnboardRequest,
-	SubmitPaymentRequest,
-};
+use aspd_rpc::protos;
 use bark_json::exit::ExitState;
 
 use ark_testing::{Aspd, TestContext, btc, sat, Bark};
@@ -1085,13 +1080,9 @@ async fn reject_subdust_board_cosign() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_board_cosign(&mut self, req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
-			let mut user_part = UserPart::decode(&req.user_part).unwrap();
-			user_part.spec.amount = P2TR_DUST - Amount::ONE_SAT;
-
-			Ok(self.upstream().request_board_cosign(BoardCosignRequest {
-				user_part: user_part.encode(),
-			}).await?.into_inner())
+		async fn request_board_cosign(&mut self, mut req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
+			req.amount = P2TR_DUST_SAT - 1;
+			Ok(self.upstream().request_board_cosign(req).await?.into_inner())
 		}
 	}
 
@@ -1118,7 +1109,7 @@ async fn reject_subdust_vtxo_request() {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			Ok(self.upstream().submit_payment(SubmitPaymentRequest {
+			Ok(self.upstream().submit_payment(protos::SubmitPaymentRequest {
 				input_vtxos: req.input_vtxos,
 				vtxo_requests: vec![protos::VtxoRequest {
 					amount: P2TR_DUST_SAT - 1,
@@ -1157,15 +1148,9 @@ async fn reject_subdust_offboard_request() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			Ok(self.upstream().submit_payment(SubmitPaymentRequest {
-				input_vtxos: req.input_vtxos,
-				vtxo_requests: vec![],
-				offboard_requests: vec![protos::OffboardRequest {
-					amount: P2TR_DUST_SAT - 1,
-					offboard_spk: req.offboard_requests[0].offboard_spk.clone(),
-				}],
-			}).await?.into_inner())
+		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			req.offboard_requests[0].amount = P2TR_DUST_SAT - 1;
+			Ok(self.upstream().submit_payment(req).await?.into_inner())
 		}
 	}
 
@@ -1230,14 +1215,9 @@ async fn reject_subdust_bolt11_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
-			Ok(self.upstream().start_bolt11_payment(Bolt11PaymentRequest {
-				invoice: req.invoice,
-				user_amount_sat: Some(P2TR_DUST_SAT - 1),
-				input_vtxo: req.input_vtxo,
-				user_pubkey: req.user_pubkey,
-				user_nonce: req.user_nonce,
-			}).await?.into_inner())
+		async fn start_bolt11_payment(&mut self, mut req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
+			Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
 		}
 	}
 
@@ -1291,14 +1271,9 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn claim_bolt11_onboard(&mut self, req: protos::ClaimBolt11OnboardRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
-			let preimage = rand::rng().random::<[u8; 32]>();
-			Ok(self.upstream().claim_bolt11_onboard(ClaimBolt11OnboardRequest {
-				input_id: req.input_id,
-				outputs: req.outputs,
-				pub_nonce: req.pub_nonce,
-				payment_preimage: preimage.to_vec(),
-			}).await?.into_inner())
+		async fn claim_bolt11_onboard(&mut self, mut req: protos::ClaimBolt11OnboardRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+			req.payment_preimage = vec![1; 32];
+			Ok(self.upstream().claim_bolt11_onboard(req).await?.into_inner())
 		}
 	}
 

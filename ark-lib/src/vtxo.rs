@@ -133,7 +133,7 @@ fn exit_clause(
 }
 
 /// Returns taproot spend infos to build an exit spk
-fn exit_taproot(
+pub fn exit_taproot(
 	user_pubkey: PublicKey,
 	asp_pubkey: PublicKey,
 	exit_delta: u16,
@@ -160,8 +160,8 @@ pub fn exit_spk(
 /// When the `signature` argument is provided,
 /// it will be placed in the input witness.
 pub fn create_exit_tx(
-	spec: &VtxoSpec,
 	prevout: OutPoint,
+	txout: TxOut,
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
 	Transaction {
@@ -179,10 +179,7 @@ pub fn create_exit_tx(
 				ret
 			},
 		}],
-		output: vec![
-			spec.txout(),
-			fee::fee_anchor(),
-		],
+		output: vec![txout, fee::fee_anchor()],
 	}
 }
 

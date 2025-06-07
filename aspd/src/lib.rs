@@ -30,7 +30,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::util::Encodable;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
@@ -40,11 +39,13 @@ use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use ark::{BoardVtxo, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
+use ark::{PaymentRequest, Vtxo, VtxoId};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
+use ark::board::{BoardBuilder, BoardVtxo};
 use ark::lightning::revocation_payment_request;
 use ark::musig::{self, MusigPubNonce};
 use ark::rounds::RoundEvent;
+use ark::util::Encodable;
 use ark::vtxo::VtxoSpkSpec;
 use aspd_rpc::protos::{self, Bolt11PaymentResult};
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
@@ -402,60 +403,52 @@ impl Server {
 
 	pub async fn cosign_board(
 		&self,
-		user_part: ark::board::UserPart,
-	) -> anyhow::Result<ark::board::AspPart> {
-		if user_part.spec.asp_pubkey != self.asp_key.public_key() {
-			return badarg!("ASP public key is incorrect!");
-		}
-
-		if user_part.spec.amount < P2TR_DUST {
+		amount: Amount,
+		user_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+		utxo: OutPoint,
+		user_pub_nonce: MusigPubNonce,
+	) -> anyhow::Result<ark::board::BoardCosignResponse> {
+		if amount < P2TR_DUST {
 			return badarg!("board amount must be at least {}", P2TR_DUST);
 		}
 
 		if let Some(max) = self.config.max_vtxo_amount {
-			if user_part.spec.amount > max {
+			if amount > max {
 				return badarg!("board amount exceeds limit of {max}");
 			}
 		}
 
-		info!("Cosigning board request for utxo {}", user_part.utxo);
-		let ret = ark::board::new_asp(&user_part, &self.asp_key);
-		let exit_tx = user_part.exit_tx();
-		let exit_txid = exit_tx.compute_txid();
-		slog!(CosignedBoard, utxo: user_part.utxo, amount: user_part.spec.amount, exit_txid);
-		Ok(ret)
-	}
-
-	pub async fn validate_board_spec(&self, spec: &VtxoSpec) -> anyhow::Result<()> {
-		let tip = self.chain_tip().await;
-
-		if spec.asp_pubkey != self.asp_key.public_key() {
-			bail!("invalid asp pubkey: {} != {}", spec.asp_pubkey, self.asp_key.public_key());
-		}
-
 		//TODO(stevenroose) make this more robust
-		if spec.expiry_height < tip.height {
-			bail!("vtxo already expired: {} (tip = {})", spec.expiry_height, tip.height);
+		let tip = self.chain_tip().await;
+		if expiry_height < tip.height {
+			bail!("vtxo already expired: {} (tip = {})", expiry_height, tip.height);
 		}
 
-		if spec.exit_delta != self.config.vtxo_exit_delta {
-			bail!("invalid exit delta: {} != {}", spec.exit_delta, self.config.vtxo_exit_delta);
-		}
+		let builder = BoardBuilder::new_for_cosign(
+			amount,
+			user_pubkey,
+			expiry_height,
+			self.asp_key.public_key(),
+			self.config.vtxo_exit_delta,
+			utxo,
+			user_pub_nonce,
+		);
 
-		Ok(())
+		info!("Cosigning board request for utxo {}", utxo);
+		let resp = builder.server_cosign(&self.asp_key);
+
+		slog!(CosignedBoard, utxo, amount);
+
+		Ok(resp)
 	}
 
 	/// Registers a board
 	///
 	/// It will broadcast the funding_transaction if it is unseen and
 	/// wil regisert the vtxo in the databse
-	pub async fn register_board(
-		&self,
-		vtxo: BoardVtxo,
-		tx: Transaction,
-	) -> anyhow::Result<()> {
-		self.validate_board_spec(&vtxo.spec).await.badarg("invalid board vtxo spec")?;
-		vtxo.validate_tx(&tx).badarg("board tx doesn't match vtxo spec")?;
+	pub async fn register_board(&self, vtxo: BoardVtxo, tx: Transaction) -> anyhow::Result<()> {
+		//TODO(stevenroose) validate board vtxo
 
 		// Since the user might have just created and broadcast this tx very recently,
 		// it's very likely that we won't have it in our mempool yet.
@@ -491,7 +484,7 @@ impl Server {
 		self.db.upsert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
 
 		slog!(RegisteredBoard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
-			amount: vtxo.spec.amount,
+			amount: vtxo.amount(),
 		);
 
 		Ok(())
@@ -501,7 +494,7 @@ impl Server {
 	fn validate_board_inputs<V: Borrow<Vtxo>>(
 		&self,
 		inputs: &[V],
-	) -> anyhow::Result<Option<(VtxoId, usize)>> {
+	) -> anyhow::Result<()> {
 		// TODO(stevenroose) cache this check
 		for board in inputs.iter().filter_map(|v| v.borrow().as_board()) {
 			let txid = board.onchain_output.txid;
@@ -526,7 +519,7 @@ impl Server {
 			}
 		}
 
-		Ok(None)
+		Ok(())
 	}
 
 	pub async fn cosign_oor(
@@ -557,8 +550,7 @@ impl Server {
 				self.config.max_arkoor_depth, input.id());
 		}
 
-		self.validate_board_inputs(&[input])
-			.map_err(|e| e.context("arkoor cosign failed"))?;
+		self.validate_board_inputs(&[input]).context("invalid board inputs")?;
 
 		let builder = ArkoorBuilder::new(&input, outputs)
 			.badarg("invalid arkoor request")?;
@@ -608,9 +600,7 @@ impl Server {
 				self.config.max_arkoor_depth, input_vtxo.id());
 		}
 
-		if let Err(e) = self.validate_board_inputs(&[&input_vtxo]) {
-			return Err(e).context("oor cosign failed");
-		}
+		self.validate_board_inputs(&[&input_vtxo]).context("invalid board inputs")?;
 
 		//TODO(stevenroose) check that vtxos are valid
 
