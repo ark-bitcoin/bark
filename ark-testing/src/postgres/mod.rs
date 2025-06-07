@@ -1,4 +1,4 @@
-//!
+
 //! The testing framework will create postgres
 //! databases that are required to run aspd.
 //!
@@ -29,3 +29,9 @@
 
 pub mod external;
 pub mod test_managed;
+
+/// Check if the testing frame work is configured
+/// to use an external host
+pub fn externally_hosted() -> bool {
+	external::postgres_host().is_some()
+}

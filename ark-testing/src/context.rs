@@ -13,6 +13,7 @@ use aspd::config::{self, Config, HodlInvoiceClnPlugin};
 use aspd_rpc as rpc;
 
 use crate::daemon::aspd::postgresd::{self, Postgres};
+use crate::postgres;
 use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
@@ -137,7 +138,7 @@ impl TestContext {
 	}
 
 	pub async fn init_central_postgres(&mut self) -> config::Postgres {
-		let (postgres_config, postgresd) = if postgresd::use_host_database() {
+		let (postgres_config, postgresd) = if postgres::externally_hosted() {
 			postgresd::cleanup_dbs(&postgresd::global_client().await, &self.name).await;
 			let mut cfg = postgresd::host_base_config();
 			cfg.name = self.name.clone();
