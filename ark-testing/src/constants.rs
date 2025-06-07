@@ -22,6 +22,8 @@ pub mod env {
 	pub const POSTGRES_BINS: &str = "POSTGRES_BINS";
 	/// Remove the directory once a test is successful
 	pub const CLEAN_SUCCESSFUL_TESTS: &str = "CLEAN_SUCCESSFUL_TESTS";
+	/// Use an external database to run the tests
+	pub const TEST_POSTGRES_HOST: &str = "TEST_POSTGRES_HOST";
 }
 
 pub mod bitcoind {

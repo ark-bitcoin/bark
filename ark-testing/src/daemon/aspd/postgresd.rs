@@ -9,13 +9,14 @@ use tokio_postgres::{Client, Config, NoTls};
 
 use aspd::config;
 
-use crate::constants::env::POSTGRES_BINS;
+use crate::constants::env::{POSTGRES_BINS, TEST_POSTGRES_HOST};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
 pub fn use_host_database() -> bool {
-	env::var("TEST_POSTGRES_HOST").is_ok()
+	env::var(TEST_POSTGRES_HOST).is_ok()
 }
+
 
 pub async fn global_client() -> Client {
 	let mut config = Config::new();
