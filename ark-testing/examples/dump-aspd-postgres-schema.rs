@@ -55,7 +55,9 @@ async fn main() {
 		.code().unwrap_or(1);
 
 	// Clean the file
-	fs::remove_dir_all(&tmp_pg_datadir).expect("failed to remove existing temporary db file");
+	if tmp_pg_datadir.exists() {
+		fs::remove_dir_all(&tmp_pg_datadir).expect("failed to remove existing temporary db file");
+	}
 
 	process::exit(status);
 }
