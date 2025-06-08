@@ -23,6 +23,7 @@
 				rustVersion = "1.78.0";
 				bitcoinVersion = "29.0";
 				lightningVersion = "25.02";
+				postgresVersion = "16.9";
 				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 
 				lib = nixpkgs.lib;
@@ -143,6 +144,15 @@
 					"cln-grpc" = "${cln-grpc}/bin/cln-grpc";
 					"hold" = "${hold-invoice}/bin/hold";
 				};
+
+			  postgresql = pkgs.postgresql.overrideAttrs (old: {
+			    version = "${postgresVersion}";
+			    src = pkgs.fetchurl {
+			      url = "https://ftp.postgresql.org/pub/source/v${postgresVersion}/postgresql-${postgresVersion}.tar.bz2";
+			      hash = "sha256-B8APuCTfCgwpXySfRGkbhuMmZ1OzgMlvYzwzEeEL0AU=";
+			    };
+			  });
+
 			in
 			{
 				devShells.default = pkgs.mkShell {
@@ -169,7 +179,7 @@
 						clightning
 						electrs
 						pkgs.glibcLocales
-						pkgs.postgresql
+						postgresql
 					] ++ (if isDarwin then [
 						pkgs.darwin.apple_sdk.frameworks.Security
 						pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
@@ -186,7 +196,7 @@
 					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "acidbunny21/cln-hodl:v24.08.2.0" else null);
 					LIGHTNINGD_PLUGIN_DIR = (if isDarwin then "/plugins" else "${cln-plugins}");
 
-					POSTGRES_BINS = "${pkgs.postgresql}/bin";
+					POSTGRES_BINS = "${postgresql}/bin";
 				};
 			}
 		);
