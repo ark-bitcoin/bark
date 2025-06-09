@@ -12,7 +12,7 @@ use self::model::{ForfeitClaimState, ForfeitRoundState};
 
 
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Context;
 use bb8::Pool;
@@ -218,6 +218,7 @@ impl Db {
 		Ok(())
 	}
 
+	/// Get vtxos by id and ensure the order of the returned vtxos matches the order of the provided ids.
 	async fn get_vtxos_by_id_with_client<T>(client: &T, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>>
 		where T : GenericClient + Sized
 	{
@@ -232,23 +233,24 @@ impl Db {
 			.context("Query get_vtxos_by_id failed")?;
 
 		// Parse all rows
-		let vtxos = rows.into_iter()
-			.map(|row| VtxoState::try_from(row))
-			.collect::<Result<Vec<_>,_>>()
+		let mut vtxos = rows.into_iter()
+			.map(|row| {
+				let vtxo = VtxoState::try_from(row)?;
+				Ok((vtxo.vtxo.id(), vtxo))
+			})
+			.collect::<anyhow::Result<HashMap<_, _>>>()
 			.context("Failed to parse VtxoState from database")?;
 
 		// Bail if one of the id's could not be found
 		if vtxos.len() != ids.len() {
-			let found_ids = vtxos.iter().map(|v| v.id).collect::<HashSet<_>>();
-
 			for id in ids {
-				if !found_ids.contains(id) {
+				if !vtxos.contains_key(id) {
 					return not_found!([id], "vtxo does not exist");
 				}
 			}
 		}
 
-		Ok(vtxos)
+		Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
 	}
 
 	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
