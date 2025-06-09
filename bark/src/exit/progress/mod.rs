@@ -129,14 +129,14 @@ impl ProgressContext<'_> {
 		let psbt = self.onchain.wallet.make_cpfp(&[&exit_tx], self.fee_rate)
 			.map_err(|e| match e {
 				// An exit transaction must have a fee anchor, if not we can't create a CPFP package.
-				CpfpError::NoFeeAnchor(_) => ExitError::InternalError(e.to_string()),
+				CpfpError::NoFeeAnchor(_) => ExitError::InternalError { error: e.to_string() },
 				// This is thrown when the wallet doesn't have any confirmed UTXOs to use.
 				CpfpError::InsufficientConfirmedFunds(f) => ExitError::InsufficientConfirmedFunds {
 					needed: f.needed, available: f.available,
 				},
 			})?;
 		self.onchain.finish_tx(psbt)
-			.map_err(|e| ExitError::ExitPackageFinalizeFailure(e.to_string()))
+			.map_err(|e| ExitError::ExitPackageFinalizeFailure { error: e.to_string() })
 	}
 
 	pub async fn get_block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef, ExitError> {
@@ -202,7 +202,8 @@ impl ProgressContext<'_> {
 	}
 
 	pub async fn tip_height(&self) -> anyhow::Result<u32, ExitError> {
-		self.chain_source.tip().await.map_err(|e| ExitError::TipRetrievalFailure(e.to_string()))
+		self.chain_source.tip().await
+			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })
 	}
 
 	pub fn vtxo_recipient(&self) -> anyhow::Result<Address, ExitError> {
