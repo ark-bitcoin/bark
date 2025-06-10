@@ -11,7 +11,6 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
-use lightning_invoice::Bolt11Invoice;
 
 use crate::lightning::revocation_payment_request;
 use crate::vtxo::VtxoSpkSpec;
@@ -257,64 +256,6 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 				v.signature = Some(final_sig.clone());
 				v.into()
 			}).collect()
-	}
-}
-
-impl<'a> ArkoorBuilder<'a, PaymentRequest> {
-	/// Construct a new builder for a lightning payment.
-	pub fn new_lightning(
-		invoice: &Bolt11Invoice,
-		input: &'a Vtxo,
-		user_pubkey: PublicKey,
-		payment_amount: Amount,
-		htlc_expiry: u32,
-		user_nonce: &'a musig::MusigPubNonce,
-	) -> Result<ArkoorBuilder<'a, PaymentRequest>, ArkoorError> {
-		let (htlc_amount, change_amount) = {
-			let required = payment_amount;
-			let change = input.amount().checked_sub(required).ok_or_else(|| {
-				ArkoorError::Unbalanced {
-					input: input.amount(),
-					output: required,
-				}
-			})?;
-			if change > P2TR_DUST {
-				(required, Some(change))
-			} else {
-				(required + change, None)
-			}
-		};
-
-		let htlc_output = PaymentRequest {
-			amount: htlc_amount,
-			pubkey: user_pubkey,
-			spk: VtxoSpkSpec::HtlcOut {
-				payment_hash: *invoice.payment_hash(),
-				htlc_expiry: htlc_expiry,
-			},
-		};
-
-		let change_output = change_amount.map(|change| {
-			PaymentRequest {
-				amount: change,
-				pubkey: user_pubkey,
-				spk: VtxoSpkSpec::Exit,
-			}
-		});
-
-		Ok(ArkoorBuilder::new(
-			input,
-			user_nonce,
-			[htlc_output].into_iter().chain(change_output).collect::<Vec<_>>(),
-		)?)
-	}
-
-	/// Construct a builder to start a lightning payment recovation.
-	pub fn new_lightning_revocation(
-		htlc_vtxo: &'a Vtxo,
-		user_nonce: &'a musig::MusigPubNonce,
-	) -> Result<ArkoorBuilder<'a, PaymentRequest>, ArkoorError> {
-		ArkoorBuilder::new(htlc_vtxo, user_nonce, vec![revocation_payment_request(&htlc_vtxo)])
 	}
 }
 
