@@ -27,13 +27,13 @@ pub fn create_forfeit_tx(
 		input: vec![
 			TxIn {
 				previous_output: vtxo.point(),
-				sequence: Sequence::MAX,
+				sequence: Sequence::ZERO,
 				script_sig: ScriptBuf::new(),
 				witness: forfeit_sig.map(|s| Witness::from_slice(&[&s[..]])).unwrap_or_default(),
 			},
 			TxIn {
 				previous_output: connector,
-				sequence: Sequence::MAX,
+				sequence: Sequence::ZERO,
 				script_sig: ScriptBuf::new(),
 				witness: connector_sig.map(|s| Witness::from_slice(&[&s[..]])).unwrap_or_default(),
 			},
