@@ -3,11 +3,14 @@ use std::sync::Arc;
 
 use bitcoin::Amount;
 use cln_rpc as rpc;
-
-use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, util::FutureExt, TestContext};
-use bark_json::VtxoType;
-use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use log::{info, trace};
+
+use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
+
+use ark_testing::{btc, sat, TestContext};
+use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::util::FutureExt;
+
 
 #[tokio::test]
 async fn start_lightningd() {
@@ -218,12 +221,14 @@ async fn bark_pay_ln_fails() {
 		"user should get 2 VTXOs, change and revocation one, got: {:?}", vtxos,
 	);
 	assert!(
-		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == (board_amount - invoice_amount)),
-		"user should get a change VTXO of 1btc");
+		vtxos.iter().any(|v| v.amount == (board_amount - invoice_amount)),
+		"user should get a change VTXO of 1btc, got: {:?}", vtxos,
+	);
 
 	assert!(
-		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == invoice_amount),
-		"user should get a revocation arkoor of payment_amount + forwarding fee");
+		vtxos.iter().any(|v| v.amount == invoice_amount),
+		"user should get a revocation arkoor of payment_amount + forwarding fee, got: {:?}", vtxos,
+	);
 }
 
 #[tokio::test]
@@ -272,7 +277,6 @@ async fn bark_refresh_ln_change_vtxo() {
 	bark_1.refresh_all().await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
-	assert_eq!(vtxos[0].vtxo_type, VtxoType::Round);
 	assert_eq!(vtxos[0].amount, btc(3));
 }
 
@@ -312,7 +316,6 @@ async fn bark_refresh_payment_revocation() {
 	bark_1.refresh_all().await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
-	assert_eq!(vtxos[0].vtxo_type, VtxoType::Round);
 	assert_eq!(vtxos[0].amount, btc(2));
 }
 
@@ -412,8 +415,8 @@ async fn bark_can_onboard_from_lightning() {
 	res1.await.unwrap();
 
 	let vtxos = bark.vtxos().await;
-	assert!(vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == btc(1)), "should have received lightning amount");
-	assert!(vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == sat(199999650)), "should have fees change");
+	assert!(vtxos.iter().any(|v| v.amount == btc(1)), "should have received lightning amount");
+	assert!(vtxos.iter().any(|v| v.amount == sat(199999650)), "should have fees change");
 
 	let [ln_onboard_mvt, fee_split_mvt, board_mvt] = bark.list_movements().await
 		.try_into().expect("should have 3 movements");

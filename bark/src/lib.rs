@@ -12,14 +12,10 @@ mod lnurl;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
-use ark::vtxo::{VtxoSpec, VtxoSpkSpec};
 pub use persist::sqlite::SqliteClient;
 mod psbtext;
 pub mod vtxo_selection;
 mod vtxo_state;
-
-#[cfg(test)]
-pub mod test;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
@@ -47,13 +43,13 @@ use log::{trace, debug, info, warn, error};
 use rusqlite::ToSql;
 use tokio_stream::{Stream, StreamExt};
 
-use ark::{arkoor, ArkInfo, OffboardRequest, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
-use ark::arkoor::{ArkoorPackageBuilder, ArkoorVtxo};
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
+use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::arkoor::ArkoorPackageBuilder;
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
 use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundId, RoundInfo, RoundVtxo, VtxoOwnershipChallenge,
+	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
 	MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
@@ -697,15 +693,12 @@ impl Wallet {
 		let vtxo = self.db.get_vtxo(vtxo_id)?
 			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
 
-		let encoded_vtxo = vtxo.serialize();
-		let vtxo = vtxo.into_board().context("vtxo not a board vtxo")?;
-
-		let funding_tx = self.onchain.get_wallet_tx(vtxo.onchain_output.txid)
+		let funding_tx = self.onchain.get_wallet_tx(vtxo.chain_anchor().txid)
 			.context("Failed to find funding_tx for {}")?;
 
 		// Register the vtxo with the server
 		asp.client.register_board_vtxo(protos::BoardVtxoRequest {
-			board_vtxo: encoded_vtxo,
+			board_vtxo: vtxo.serialize(),
 			board_tx: bitcoin::consensus::serialize(&funding_tx),
 		}).await.context("error registering board with the asp")?;
 
@@ -714,7 +707,6 @@ impl Wallet {
 		let allowed_states = &[VtxoState::UnregisteredBoard, VtxoState::Spendable];
 		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
 
-
 		Ok(Board {
 			funding_txid: funding_tx.compute_txid(),
 			vtxos: vec![vtxo.into()],
@@ -722,20 +714,7 @@ impl Wallet {
 	}
 
 	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
-		let exit_branch = vtxos.exit_branch(leaf_idx).unwrap();
-		let dest = &vtxos.spec.spec.vtxos[leaf_idx];
-		let vtxo = Vtxo::Round(RoundVtxo {
-			spec: VtxoSpec {
-				user_pubkey: dest.pubkey,
-				asp_pubkey: vtxos.spec.spec.asp_pk,
-				expiry_height: vtxos.spec.spec.expiry_height,
-				exit_delta: vtxos.spec.spec.exit_delta,
-				amount: dest.amount,
-				spk: dest.spk,
-			},
-			leaf_idx: leaf_idx,
-			exit_branch: exit_branch.into_iter().cloned().collect(),
-		});
+		let vtxo = vtxos.build_vtxo(leaf_idx).context("invalid leaf idx..")?;
 
 		if self.db.get_vtxo(vtxo.id())?.is_some() {
 			debug!("Not adding vtxo {} because it already exists", vtxo.id());
@@ -748,14 +727,15 @@ impl Wallet {
 
 	/// Checks if the provided VTXO has some counterparty risk in the current wallet
 	///
-	/// A [Vtxo::Arkoor] is considered to have some counterparty risk
+	/// An arkoor vtxo is considered to have some counterparty risk
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
 	fn has_counterparty_risk(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
-		match vtxo {
-			Vtxo::Arkoor(ArkoorVtxo { input, .. }) => self.has_counterparty_risk(input),
-			Vtxo::Board(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
-			Vtxo::Round(_) => Ok(!self.db.check_vtxo_key_exists(&vtxo.spec().user_pubkey)?),
+		for past_pk in vtxo.past_arkoor_pubkeys() {
+			if !self.db.check_vtxo_key_exists(&past_pk)? {
+				return Ok(true);
+			}
 		}
+		Ok(false)
 	}
 
 	/// Sync with the Ark and look for received vtxos.
@@ -795,17 +775,15 @@ impl Wallet {
 				.into_cached_tree();
 
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-				if pubkeys.contains(&dest.pubkey) {
-					if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-						match vtxo.spec().spk {
-							VtxoSpkSpec::Exit { .. } => self.db.register_movement(MovementArgs {
+				if let VtxoPolicy::Pubkey { user_pubkey } = dest.vtxo.policy {
+					if pubkeys.contains(&user_pubkey) {
+						if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
+							self.db.register_movement(MovementArgs {
 								spends: &[],
 								receives: &[(&vtxo, VtxoState::Spendable)],
 								recipients: &[],
 								fees: None,
-							})?,
-							VtxoSpkSpec::HtlcIn { .. } => {},
-							VtxoSpkSpec::HtlcOut { .. } => {}
+							})?;
 						}
 					}
 				}
@@ -848,43 +826,41 @@ impl Wallet {
 		debug!("ASP has {} arkoor packages for us", packages.len());
 
 		for package in packages {
-			let vtxos = package.vtxos.into_iter().filter_map(|v| {
-				let vtxo = match Vtxo::deserialize(&v) {
+			let mut vtxos = Vec::with_capacity(package.vtxos.len());
+			for vtxo in package.vtxos {
+				let vtxo = match Vtxo::deserialize(&vtxo) {
 					Ok(vtxo) => vtxo,
 					Err(e) => {
 						warn!("Invalid vtxo from asp: {}", e);
-						return None;
+						continue;
 					}
 				};
 
-				let arkoor = match vtxo.as_arkoor() {
-					Some(arkoor) => arkoor,
-					None => {
-						warn!("VTXO is not an arkoor: {:?}", vtxo);
-						return None;
-					}
-				};
 
-				if let Err(e) = arkoor::verify_oor(arkoor, Some(*pk)) {
-					warn!("Could not validate OOR signature, dropping vtxo. {}", e);
-					return None;
+				let txid = vtxo.chain_anchor().txid;
+				let chain_anchor = self.onchain.chain.get_tx(&txid).await?.with_context(|| {
+					format!("received arkoor vtxo with unknown chain anchor: {}", txid)
+				})?;
+				if let Err(e) = vtxo.validate(&chain_anchor) {
+					error!("Received invalid arkoor VTXO from server: {}", e);
+					continue;
 				}
 
 				match self.db.has_spent_vtxo(vtxo.id()) {
 					Ok(spent) if spent => {
 						debug!("Not adding OOR vtxo {} because it is considered spent", vtxo.id());
-						return None;
+						continue;
 					},
 					_ => {}
 				}
 
 				if let Ok(Some(_)) = self.db.get_vtxo(vtxo.id()) {
 					debug!("Not adding OOR vtxo {} because it already exists", vtxo.id());
-					return None;
+					continue;
 				}
 
-				Some(vtxo)
-			}).collect::<Vec<_>>();
+				vtxos.push(vtxo);
+			}
 
 			self.db.register_movement(MovementArgs {
 				spends: &[],
@@ -993,14 +969,13 @@ impl Wallet {
 		let total_amount = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
-		let payment_request = VtxoRequest {
-			pubkey: user_keypair.public_key(),
+		let req = VtxoRequest {
+			policy: VtxoPolicy::Pubkey { user_pubkey: user_keypair.public_key() },
 			amount: total_amount,
-			spk: VtxoSpkSpec::Exit,
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok((input_vtxos.clone(), vec![payment_request.clone()], Vec::new()))
+			Ok((input_vtxos.clone(), vec![req.clone()], Vec::new()))
 		}).await.context("round failed")?;
 		Ok(Some(round_id))
 	}
@@ -1055,13 +1030,14 @@ impl Wallet {
 		let mut asp = self.require_asp()?;
 		let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
 
-		let pay_req = VtxoRequest {
-			pubkey: destination,
+		let req = VtxoRequest {
 			amount: amount,
-			spk: VtxoSpkSpec::Exit,
+			policy: VtxoPolicy::Pubkey { user_pubkey: destination },
 		};
 
-		let inputs = self.select_vtxos_to_cover(pay_req.amount + P2TR_DUST, Some(asp.info.max_arkoor_depth))?;
+		let inputs = self.select_vtxos_to_cover(
+			req.amount + P2TR_DUST, Some(asp.info.max_arkoor_depth),
+		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
@@ -1078,7 +1054,7 @@ impl Wallet {
 			keypairs.push(keypair);
 		}
 
-		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, Some(change_pubkey))?;
+		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, req, Some(change_pubkey))?;
 
 		let req = protos::ArkoorPackageCosignRequest {
 			arkoors: builder.arkoors.iter().map(|a| a.into()).collect(),
@@ -1171,9 +1147,9 @@ impl Wallet {
 
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
 		let pay_req = VtxoRequest {
-			pubkey: change_keypair.public_key(),
 			amount: amount,
-			spk: VtxoSpkSpec::HtlcOut {
+			policy: VtxoPolicy::ServerHtlcSend {
+				user_pubkey: change_keypair.public_key(),
 				payment_hash: *invoice.payment_hash(),
 				htlc_expiry: htlc_expiry,
 			},
@@ -1215,6 +1191,21 @@ impl Wallet {
 
 		let (htlc_vtxos, change_vtxo) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
+		// Validate the new vtxos. They have the same chain anchor.
+		for (vtxo, input) in htlc_vtxos.iter().zip(inputs.iter()) {
+			if let Ok(tx) = self.onchain.chain.get_tx(&input.chain_anchor().txid).await {
+				let tx = tx.with_context(|| {
+					format!("input vtxo chain anchor not found: {}", input.chain_anchor().txid)
+				})?;
+				vtxo.validate(&tx).context("invalid htlc vtxo")?;
+				if let Some(ref change) = change_vtxo {
+					change.validate(&tx).context("invalid htlc vtxo")?;
+				}
+			} else {
+				warn!("We couldn't validate the new VTXOs because of chain source error.");
+			}
+		}
+
 		let req = protos::SignedBolt11PaymentDetails {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
@@ -1226,14 +1217,13 @@ impl Wallet {
 		let payment_preimage = <[u8; 32]>::try_from(res.payment_preimage()).ok();
 
 		// The client will receive the change VTXO if it exists
-		let change_vtxo = if let Some(ref change_vtxo) = change_vtxo {
+		if let Some(ref change_vtxo) = change_vtxo {
 			info!("Adding change VTXO of {}", change_vtxo.amount());
-			Some(change_vtxo)
-		} else {
-			None
-		};
+
+		}
+
 		let receive_vtxos = change_vtxo.iter()
-			.map(|v| (*v, VtxoState::Spendable))
+			.map(|v| (v, VtxoState::Spendable))
 			.collect::<Vec<_>>();
 
 		if let Some(preimage) = payment_preimage {
@@ -1283,7 +1273,9 @@ impl Wallet {
 
 			self.db.register_movement(MovementArgs {
 				spends: &inputs.iter().collect::<Vec<_>>(),
-				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).chain(change_vtxo.map(|c| (c, VtxoState::Spendable))).collect::<Vec<_>>(),
+				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable))
+					.chain(change_vtxo.as_ref().map(|c| (c, VtxoState::Spendable)))
+					.collect::<Vec<_>>(),
 				recipients: &[],
 				fees: None,
 			})?;
@@ -1370,9 +1362,9 @@ impl Wallet {
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
 			let inputs = fee_vtxo_cloned.clone();
 			let htlc_pay_req = VtxoRequest {
-				pubkey: keypair.public_key(),
 				amount: amount,
-				spk: VtxoSpkSpec::HtlcIn {
+				policy: VtxoPolicy::ServerHtlcRecv {
+					user_pubkey: keypair.public_key(),
 					payment_hash: *invoice.payment_hash(),
 					htlc_expiry: htlc_expiry,
 				},
@@ -1387,9 +1379,8 @@ impl Wallet {
 
 		// Claiming arkoor against preimage
 		let pay_req = VtxoRequest {
-			pubkey: keypair.public_key(),
+			policy: VtxoPolicy::Pubkey { user_pubkey: keypair.public_key() },
 			amount: amount,
-			spk: VtxoSpkSpec::Exit,
 		};
 
 		let inputs = [htlc_vtxo];
@@ -1482,9 +1473,8 @@ impl Wallet {
 					let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 					info!("Adding change vtxo for {}", amount);
 					Some(VtxoRequest {
-						pubkey: change_keypair.public_key(),
 						amount: amount,
-						spk: VtxoSpkSpec::Exit,
+						policy: VtxoPolicy::Pubkey { user_pubkey: change_keypair.public_key() },
 					})
 				}
 			};
@@ -1500,8 +1490,8 @@ impl Wallet {
 		events: &mut S,
 		round_state: &mut RoundState,
 		input_vtxos: &HashMap<VtxoId, Vtxo>,
-		pay_reqs: &Vec<VtxoRequest>,
-		offb_reqs: &Vec<OffboardRequest>,
+		pay_reqs: &[VtxoRequest],
+		offb_reqs: &[OffboardRequest],
 	) -> anyhow::Result<AttemptResult> {
 		let mut asp = self.require_asp()?;
 
@@ -1513,10 +1503,8 @@ impl Wallet {
 			.collect::<Vec<_>>();
 		let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
 			SignedVtxoRequest {
-				pubkey: req.pubkey,
-				amount: req.amount,
+				vtxo: req.clone(),
 				cosign_pubkey: ck.public_key(),
-				spk: req.spk,
 			}
 		}).collect::<Vec<_>>();
 
@@ -1558,12 +1546,13 @@ impl Wallet {
 				}
 			}).collect(),
 			vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
-				protos::VtxoRequest {
-					amount: r.amount.to_sat(),
-					vtxo_public_key: r.pubkey.serialize().to_vec(),
+				protos::SignedVtxoRequest {
+					vtxo: Some(protos::VtxoRequest {
+						amount: r.vtxo.amount.to_sat(),
+						policy: r.vtxo.policy.serialize(),
+					}),
 					cosign_pubkey: r.cosign_pubkey.serialize().to_vec(),
 					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
-					vtxo_spk: r.spk.serialize().to_vec(),
 				}
 			}).collect(),
 			offboard_requests: offb_reqs.iter().map(|r| {
@@ -1649,11 +1638,9 @@ impl Wallet {
 		// Make vtxo signatures from top to bottom, just like sighashes are returned.
 		let unsigned_vtxos = vtxo_tree.into_unsigned_tree(vtxos_utxo);
 		for ((req, key), (sec, _pub)) in vtxo_reqs.iter().zip(&cosign_keys).zip(cosign_nonces) {
+			let leaf_idx = unsigned_vtxos.spec.leaf_idx_of(&req).expect("req included");
 			let part_sigs = unsigned_vtxos.cosign_branch(
-				&vtxo_cosign_agg_nonces,
-				req,
-				key,
-				sec,
+				&vtxo_cosign_agg_nonces, leaf_idx, key, sec,
 			).context("failed to cosign branch: our request not part of tree")?;
 			info!("Sending {} partial vtxo cosign signatures for pk {}",
 				part_sigs.len(), key.public_key(),
@@ -1710,7 +1697,8 @@ impl Wallet {
 			.into_cached_tree();
 
 		// Check that the connector key is correct.
-		let conn_txout = unsigned_round_tx.output.get(1).expect("checked before");
+		let conn_txout = unsigned_round_tx.output.get(ROUND_TX_CONNECTOR_VOUT as usize)
+			.expect("checked before");
 		let expected_conn_txout = ConnectorChain::output(forfeit_nonces.len(), connector_pubkey);
 		if *conn_txout != expected_conn_txout {
 			bail!("round tx from asp has unexpected connector output: {:?} (expected {:?})",
@@ -1744,7 +1732,7 @@ impl Wallet {
 					[asp.info.asp_pubkey],
 					&[asp_nonce],
 					sighash.to_byte_array(),
-					Some(vtxo.spec().vtxo_taptweak().to_byte_array()),
+					Some(vtxo.output_taproot().tap_tweak().to_byte_array()),
 				);
 				Ok((nonce, sig))
 			}).collect::<anyhow::Result<Vec<_>>>()?;
@@ -1810,16 +1798,24 @@ impl Wallet {
 		// Finally we save state after refresh
 		let mut new_vtxos: Vec<Vtxo> = vec![];
 		for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
-			//TODO(stevenroose) this is broken, need to match vtxorequest exactly
-			if pay_reqs.iter().any(|p| p.pubkey == req.pubkey && p.amount == req.amount) {
+			if pay_reqs.contains(&req.vtxo) {
 				let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
 				new_vtxos.push(vtxo);
 			}
 		}
 
+		for vtxo in &new_vtxos {
+			info!("New VTXO from round: {} ({}, {})", vtxo.id(), vtxo.amount(), vtxo.policy_type());
+		}
+
+		// validate the received vtxos
+		// This is more like a sanity check since we crafted them ourselves.
+		for vtxo in &new_vtxos {
+			vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
+		}
+
 		// if there is one offboard req, we register as a spend, else as a refresh
 		// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
-
 
 		let params = Params::new(self.properties().unwrap().network);
 		let sent = offb_reqs.iter().map(|o| {
@@ -1828,10 +1824,7 @@ impl Wallet {
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
 		let received = new_vtxos.iter()
-			.filter(|v| { matches!(
-				v.as_round().expect("comming from round").spec.spk,
-				VtxoSpkSpec::Exit { .. }
-			)})
+			.filter(|v| { matches!(v.policy(), VtxoPolicy::Pubkey { .. })})
 			.map(|v| (v, VtxoState::Spendable))
 			.collect::<Vec<_>>();
 

@@ -14,7 +14,6 @@ use ark::vtxo::exit_taproot;
 use aspd_rpc::{self as rpc, protos};
 use bark_json::cli::ExitProgressResponse;
 use bark_json::exit::error::ExitError;
-use bark_json::primitives::VtxoType;
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -374,7 +373,6 @@ async fn exit_oor() {
 	let vtxos = bark2.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "We have received one vtxo");
 	let oor_vtxo = &vtxos[0];
-	assert_eq!(oor_vtxo.vtxo_type, VtxoType::Arkoor);
 
 	// We stop the asp
 	aspd.stop().await.unwrap();

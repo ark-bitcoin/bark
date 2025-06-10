@@ -1,13 +1,15 @@
 
 use std::io;
 
-use bitcoin::{opcodes, ScriptBuf, Transaction};
+use bitcoin::{opcodes, ScriptBuf, TapSighash, TapTweakHash, Transaction};
 use bitcoin::hashes::{sha256, ripemd160, Hash};
-use bitcoin::secp256k1::{self, schnorr, XOnlyPublicKey};
+use bitcoin::secp256k1::{self, schnorr, PublicKey, XOnlyPublicKey};
 
 use bitcoin_ext::{BlockHeight, TAPROOT_KEYSPEND_WEIGHT};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+
+use crate::musig;
 
 lazy_static! {
 	/// Global secp context.
@@ -93,6 +95,25 @@ pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
 		input.witness.push(&sig[..]);
 		debug_assert_eq!(TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
 	}
+}
+
+/// Verify a partial signature from either of the two parties cosigning a tx.
+pub fn verify_partial_sig(
+	sighash: TapSighash,
+	tweak: TapTweakHash,
+	signer: (PublicKey, musig::MusigPubNonce),
+	other: (PublicKey, musig::MusigPubNonce),
+	partial_signature: musig::MusigPartialSignature,
+) -> bool {
+	let agg_nonce = musig::nonce_agg(&[&signer.1, &other.1]);
+	let agg_pk = musig::tweaked_key_agg([signer.0, other.0], tweak.to_byte_array()).0;
+
+	let msg = musig::secpm::Message::from_digest(sighash.to_byte_array());
+	let session = musig::MusigSession::new(&musig::SECP, &agg_pk, agg_nonce, msg);
+
+	session.partial_verify(
+		&musig::SECP, &agg_pk, partial_signature, signer.1, musig::pubkey_to(signer.0),
+	)
 }
 
 pub trait Encodable: Serialize {

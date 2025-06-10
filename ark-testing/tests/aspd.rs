@@ -4,6 +4,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bitcoin::hex::FromHex;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
@@ -16,10 +17,9 @@ use futures::{Stream, StreamExt};
 use log::{error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
-use ark::{musig, VtxoId};
+use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy};
 use ark::rounds::VtxoOwnershipChallenge;
-use ark::util::{Encodable, SECP};
-use ark::vtxo::VtxoSpkSpec;
+use ark::util::SECP;
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
@@ -544,11 +544,15 @@ async fn double_spend_round() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
 
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
 			let res1 = c1.submit_payment(req.clone()).await;
+			// avoid duplicate cosign key error
+			req.vtxo_requests[0].cosign_pubkey = Vec::<u8>::from_hex(
+				"028d887bb64dfea78040e7f94284245ea4468c003105d207f9b82cf8d6a66a9064",
+			).unwrap();
 			let res2 = c2.submit_payment(req).await;
 
 			assert!(res1.is_ok());
@@ -835,15 +839,16 @@ async fn bad_round_input() {
 		vtxo_id: vtxo.id.to_bytes().to_vec(),
 		ownership_proof: challenge.sign_with(vtxo.id, key).serialize().to_vec(),
 	};
-	let vtxo_req = protos::VtxoRequest {
-		amount: 1000,
-		vtxo_public_key: key.public_key().serialize().to_vec(),
+	let vtxo_req = protos::SignedVtxoRequest {
+		vtxo: Some(protos::VtxoRequest {
+			amount: 1000,
+			policy: VtxoPolicy::Pubkey { user_pubkey: key.public_key() }.serialize(),
+		}),
 		cosign_pubkey: key2.public_key().serialize().to_vec(),
 		public_nonces: iter::repeat({
 			let (_sec, pb) = musig::nonce_pair(&key);
 			pb.serialize().to_vec()
 		}).take(ark_info.nb_round_nonces as usize).collect(),
-		vtxo_spk: VtxoSpkSpec::Exit.serialize().to_vec(),
 	};
 	let offb_req = protos::OffboardRequest {
 		amount: 1000,
@@ -873,6 +878,9 @@ async fn bad_round_input() {
 		offboard_requests: vec![],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("invalid request: zero outputs and zero offboards"),
+		"[{}]: {}", err.code(), err.message(),
+	);
 
 	info!("unknown input");
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
@@ -1110,7 +1118,7 @@ async fn reject_dust_vtxo_request() {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			req.vtxo_requests.get_mut(0).unwrap().amount = P2TR_DUST_SAT - 1;
+			req.vtxo_requests.get_mut(0).unwrap().vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
 			Ok(self.upstream().submit_payment(req).await?.into_inner())
 		}
 	}

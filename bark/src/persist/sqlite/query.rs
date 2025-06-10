@@ -2,14 +2,14 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::{Amount, Network, Txid, BlockHash, FeeRate};
+use ark::util::Encodable;
+use bitcoin::{Amount, BlockHash, FeeRate, Network, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
 use rusqlite::{self, named_params, Connection, ToSql};
 
-use ark::util::{Decodable, Encodable};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
@@ -19,6 +19,7 @@ use crate::{
 };
 use crate::exit::vtxo::ExitEntry;
 use crate::movement::Movement;
+use ark::ProtocolEncoding;
 
 use super::convert::{row_to_movement, row_to_offchain_onboard};
 
@@ -205,7 +206,7 @@ pub fn store_vtxo_with_initial_state(
 	tx: &rusqlite::Transaction,
 	vtxo: &Vtxo,
 	movement_id: i32,
-	state: VtxoState
+	state: VtxoState,
 ) -> anyhow::Result<()> {
 	// Store the ftxo
 	let q1 =
@@ -380,7 +381,7 @@ pub fn store_vtxo_key(
 
 pub fn get_vtxo_key(conn: &Connection, vtxo: &Vtxo) -> anyhow::Result<Option<(KeychainKind, u32)>> {
 	let query = "SELECT keychain, idx FROM bark_vtxo_key WHERE public_key = (?1)";
-	let pk = vtxo.spec().user_pubkey.to_string();
+	let pk = vtxo.user_pubkey().to_string();
 
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query((pk, ))?;
@@ -584,11 +585,10 @@ pub fn get_exit_child_tx(
 
 #[cfg(test)]
 mod test {
-	use super::*;
-
-	use crate::test::dummy_board;
+	use ark::vtxo::test::VTXO_VECTORS;
 	use crate::persist::sqlite::test::in_memory;
 	use crate::persist::sqlite::migrations::MigrationContext;
+	use super::*;
 
 	#[test]
 	fn test_update_vtxo_state() {
@@ -596,9 +596,9 @@ mod test {
 		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
 
 		let tx = conn.transaction().unwrap();
-		let vtxo_1 = dummy_board(1);
-		let vtxo_2 = dummy_board(2);
-		let vtxo_3 = dummy_board(3);
+		let vtxo_1 = &VTXO_VECTORS.board_vtxo;
+		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
 		let movement_id = create_movement(&tx, None).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, VtxoState::UnregisteredBoard).unwrap();

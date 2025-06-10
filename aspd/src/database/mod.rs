@@ -27,10 +27,10 @@ use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 use log::info;
 
-use ark::{BoardVtxo, VtxoRequest, Vtxo, VtxoId};
+use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::encode::ProtocolEncoding;
 use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
-use ark::util::{Decodable, Encodable};
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
@@ -188,7 +188,7 @@ impl Db {
 	pub async fn get_expired_boards(
 		&self,
 		height: BlockHeight,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<BoardVtxo>> + '_> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
 		let conn = self.pool.get().await?;
 
 		// TODO: maybe store kind in a column to filter board at the db level
@@ -199,15 +199,19 @@ impl Db {
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
 
-		Ok(rows.filter_map(|row| async move {
-			row
-				.map(|row | VtxoState::try_from(row).expect("corrupt db").vtxo.into_board())
-				.map_err(Into::into)
-				.transpose()
+		//TODO(stevenroose) this is very inefficient but I suspect this code
+		// will be deprecated soon
+		Ok(rows.map_err(anyhow::Error::from).try_filter_map(|row| async {
+			let vtxo = VtxoState::try_from(row).expect("corrupt db").vtxo;
+			if !self.is_round_tx(vtxo.chain_anchor().txid).await? {
+				Ok(Some(vtxo))
+			} else {
+				Ok(None)
+			}
 		}).fuse())
 	}
 
-	pub async fn mark_board_swept(&self, vtxo: &BoardVtxo) -> anyhow::Result<()> {
+	pub async fn mark_board_swept(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
@@ -293,8 +297,7 @@ impl Db {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
-		let new_vtxos = builder.new_vtxos()
-			.into_iter().flatten().map(|v| Vtxo::Arkoor(v)).collect::<Vec<_>>();
+		let new_vtxos = builder.new_vtxos().into_iter().flatten().collect::<Vec<_>>();
 
 		for input in builder.inputs() {
 			let txid = builder.spending_tx(input.id())
@@ -423,6 +426,14 @@ impl Db {
 
 		tx.commit().await?;
 		Ok(())
+	}
+
+	pub async fn is_round_tx(&self, txid: Txid) -> anyhow::Result<bool> {
+		let conn = self.pool.get().await?;
+		let statement = conn.prepare("SELECT 1 FROM round WHERE id = $1 LIMIT 1;").await?;
+
+		let rows = conn.query(&statement, &[&txid.to_string()]).await?;
+		Ok(!rows.is_empty())
 	}
 
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {

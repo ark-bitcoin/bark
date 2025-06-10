@@ -40,8 +40,6 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::board::BoardVtxo;
-use ark::musig;
 use ark::tree::signed::cosign_taproot;
 use ark::vtxo::VtxoSpec;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
@@ -57,6 +55,7 @@ use futures::StreamExt;
 use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
 
+use ark::{musig, Vtxo};
 use ark::connectors::{ConnectorChain, CONNECTOR_TX_CHAIN_VOUT, CONNECTOR_TX_CONNECTOR_VOUT};
 use ark::rounds::{RoundId, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 
@@ -116,17 +115,20 @@ impl BoardSweepInput {
 	}
 
 	fn psbt(&self) -> psbt::Input {
-		let combined_pubkey = musig::combine_keys([self.vtxo_spec.user_pubkey, self.vtxo_spec.asp_pubkey]);
-		let taproot = cosign_taproot(combined_pubkey, self.vtxo_spec.asp_pubkey, self.vtxo_spec.expiry_height);
-		let board_txout = TxOut {
-			value: self.vtxo_spec.amount,
+		let spec = &self.vtxo_spec;
+		let combined_pubkey = musig::combine_keys([
+			self.vtxo_spec.policy.user_pubkey(), spec.asp_pubkey,
+		]);
+		let taproot = cosign_taproot(combined_pubkey, spec.asp_pubkey, spec.expiry_height);
+		let utxo = TxOut {
+			value: spec.amount,
 			script_pubkey: taproot.script_pubkey(),
 		};
 
 		let mut ret = psbt::Input{
-			witness_utxo: Some(board_txout),
+			witness_utxo: Some(utxo),
 			sighash_type: Some(sighash::TapSighashType::Default.into()),
-			tap_internal_key: Some(self.vtxo_spec.combined_pubkey()),
+			tap_internal_key: Some(combined_pubkey),
 			tap_scripts: taproot.psbt_tap_scripts(),
 			tap_merkle_root: Some(taproot.merkle_root().unwrap()),
 			non_witness_utxo: None,
@@ -261,7 +263,7 @@ impl<'a> SweepBuilder<'a> {
 		trace!("Adding connector sweep input {}", point);
 		self.sweeps.push(RoundSweepInput {
 			point, utxo, round,
-			internal_key: round.round.signed_tree.spec.asp_pk.x_only_public_key().0,
+			internal_key: round.round.signed_tree.spec.asp_pubkey.x_only_public_key().0,
 			sweep_meta: SweepMeta::Connector(round.round.connector_key),
 			weight: ark::connectors::INPUT_WEIGHT,
 		});
@@ -307,27 +309,31 @@ impl<'a> SweepBuilder<'a> {
 		});
 	}
 
-	async fn process_board(&mut self, board: &BoardVtxo, done_height: BlockHeight) -> anyhow::Result<()> {
-		let id = board.id();
-		let exit_tx = board.exit_tx();
-		let exit_txid = exit_tx.compute_txid();
-		let exit_tx = self.sweeper.txindex.get_or_insert_with_bitcoind(&exit_txid, || exit_tx, &self.sweeper.bitcoind).await?;
+	async fn process_board(&mut self, vtxo: &Vtxo, done_height: BlockHeight) -> anyhow::Result<()> {
+		let id = vtxo.id();
+		let exit_tx = vtxo.transactions().last().unwrap();
+		let exit_txid = exit_tx.tx.compute_txid();
+		let exit_tx = self.sweeper.txindex.get_or_insert_with_bitcoind(
+			&exit_txid, move || exit_tx.tx, &self.sweeper.bitcoind,
+		).await?;
 
-		Ok(if !exit_tx.confirmed().await {
-			if let Some((h, txid)) = self.sweeper.is_swept(board.onchain_output).await {
+		if !exit_tx.confirmed().await {
+			if let Some((h, txid)) = self.sweeper.is_swept(vtxo.chain_anchor()).await {
 				trace!("Board {id} is already swept by us at height {h}");
 				if h <= done_height {
-					slog!(BoardFullySwept, board_utxo: board.onchain_output, sweep_tx: txid);
-					self.sweeper.clear_board(board).await;
+					slog!(BoardFullySwept, board_utxo: vtxo.chain_anchor(), sweep_tx: txid);
+					self.sweeper.clear_board(vtxo).await;
 				}
 			} else {
 				trace!("Sweeping board vtxo {id}");
-				self.add_board_output(board.onchain_output, board.spec.clone());
+				self.add_board_output(vtxo.chain_anchor(), vtxo.spec());
 			}
 		} else {
 			trace!("User has broadcast board exit tx {} of board vtxo {id}", exit_txid);
-			self.sweeper.clear_board(board).await;
-		})
+			self.sweeper.clear_board(vtxo).await;
+		}
+
+		Ok(())
 	}
 
 	/// Sweep the leftovers of the vtxo tree of the given round.
@@ -506,6 +512,7 @@ impl<'a> SweepBuilder<'a> {
 		txb.manually_selected_only();
 
 		for sweep in &self.sweeps {
+			trace!("Adding round sweep: {}", sweep.point);
 			txb.add_foreign_utxo_with_sequence(
 				sweep.point,
 				sweep.psbt(),
@@ -514,6 +521,7 @@ impl<'a> SweepBuilder<'a> {
 			).expect("bdk rejected foreign utxo");
 		}
 		for sweep in &self.board_sweeps {
+			trace!("Adding board sweep: {}", sweep.point);
 			txb.add_foreign_utxo_with_sequence(
 				sweep.point,
 				sweep.psbt(),
@@ -585,15 +593,15 @@ impl Process {
 
 	/// Clear the board data from our database because we either swept it, or the user
 	/// has broadcast the exit tx, doing a unilateral exit.
-	async fn clear_board(&mut self, board: &BoardVtxo) {
-		if let Err(e) = self.db.mark_board_swept(board).await {
-			error!("Failed to mark board vtxo {} as swept: {}", board.id(), e);
+	async fn clear_board(&mut self, vtxo: &Vtxo) {
+		if let Err(e) = self.db.mark_board_swept(vtxo).await {
+			error!("Failed to mark board vtxo {} as swept: {}", vtxo.id(), e);
 		}
 
-		let reveal = board.exit_tx().compute_txid();
-		self.txindex.unregister_batch(&[&board.onchain_output.txid, &reveal]).await;
+		let reveal = vtxo.transactions().last().unwrap().tx.compute_txid();
+		self.txindex.unregister_batch(&[&vtxo.chain_anchor().txid, &reveal]).await;
 
-		self.pending_tx_by_utxo.remove(&board.onchain_output);
+		self.pending_tx_by_utxo.remove(&vtxo.chain_anchor());
 	}
 
 	/// Clean up all artifacts after a round has been swept.

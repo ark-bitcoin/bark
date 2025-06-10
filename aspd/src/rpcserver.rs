@@ -21,10 +21,8 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
-use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId, VtxoIdInput, SignedVtxoRequest};
+use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundId;
-use ark::vtxo::VtxoSpkSpec;
-use ark::util::{Decodable, Encodable};
 use aspd_rpc::{self as rpc, protos};
 use tonic::async_trait;
 
@@ -67,15 +65,12 @@ impl<T> ToStatus<T> for anyhow::Result<T> {
 
 			// NB it's important that not found goes first as a bad argument could
 			// have been added afterwards
+			trace!("RPC ERROR: {}", err.full_msg());
 			if let Some(nf) = err.downcast_ref::<NotFound>() {
 				let mut metadata = tonic::metadata::MetadataMap::new();
 				let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");
 				metadata.insert("identifiers", ids);
-				tonic::Status::with_metadata(
-					tonic::Code::NotFound,
-					err.full_msg(),
-					metadata,
-				)
+				tonic::Status::with_metadata(tonic::Code::NotFound, err.full_msg(), metadata)
 			} else if let Some(_) = err.downcast_ref::<BadArgument>() {
 				tonic::Status::invalid_argument(err.full_msg())
 			} else {
@@ -393,8 +388,7 @@ impl rpc::server::ArkService for Server {
 		let amount = Amount::from_sat(req.amount);
 		let user_pubkey = PublicKey::from_slice(&req.user_pubkey).badarg("invalid user_pubkey")?;
 		let expiry_height = req.expiry_height;
-		//TODO(stevenroose) use own serialization
-		let utxo = bitcoin::consensus::deserialize::<OutPoint>(&req.utxo).badarg("invalid utxo")?;
+		let utxo = OutPoint::deserialize(&req.utxo).badarg("invalid utxo")?;
 		let pub_nonce = MusigPubNonce::from_slice(&req.pub_nonce).badarg("invalid pub nonce")?;
 
 		let resp = self.cosign_board(
@@ -420,9 +414,7 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let vtxo = Vtxo::deserialize(&req.board_vtxo)
-			.badarg("invalid vtxo")?
-			.into_board()
-			.badarg("vtxo not an board vtxo")?;
+			.badarg("invalid vtxo")?;
 		let board_tx = bitcoin::consensus::deserialize(&req.board_tx)
 			.badarg("invalid board tx")?;
 		self.register_board(vtxo, board_tx).await.to_status()?;
@@ -452,10 +444,9 @@ impl rpc::server::ArkService for Server {
 			let outputs = arkoor.outputs.iter().map(|o| {
 				Ok(VtxoRequest {
 					amount: Amount::from_sat(o.amount),
-					pubkey: PublicKey::from_slice(&o.pubkey).badarg("invalid output pubkey")?,
-					spk: VtxoSpkSpec::Exit,
+					policy: VtxoPolicy::deserialize(&o.policy).badarg("invalid output policy")?,
 				})
-			}).collect::<anyhow::Result<Vec<_>>>().to_status()?;
+			}).collect::<Result<Vec<_>, tonic::Status>>()?;
 
 			arkoor_args.push((input_id, user_nonce, outputs))
 		}
@@ -700,8 +691,7 @@ impl rpc::server::ArkService for Server {
 		let output = arkoor.outputs.first().badarg("missing output")?;
 		let pay_req = VtxoRequest {
 			amount: Amount::from_sat(output.amount),
-			pubkey: PublicKey::from_slice(&output.pubkey).badarg("invalid output pubkey")?,
-			spk: VtxoSpkSpec::Exit,
+			policy: VtxoPolicy::deserialize(&output.policy).badarg("invalid policy")?,
 		};
 
 		let user_nonce = musig::MusigPubNonce::from_slice(&arkoor.pub_nonce)
@@ -761,29 +751,12 @@ impl rpc::server::ArkService for Server {
 		}).collect::<Result<_, tonic::Status>>()?;
 
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
-		let mut cosign_pub_nonces = Vec::with_capacity(req.vtxo_requests.len());
 		for r in req.vtxo_requests.clone() {
-			let amount = Amount::from_sat(r.amount);
-			let pubkey= PublicKey::from_slice(&r.vtxo_public_key)
-				.badarg("malformed pubkey")?;
-			let cosign_pk = PublicKey::from_slice(&r.cosign_pubkey)
-				.badarg("malformed cosign pubkey")?;
-			let spk = VtxoSpkSpec::deserialize(&r.vtxo_spk)
-				.badarg("malformed vtxo script pubkey")?;
-
-			vtxo_requests.push(SignedVtxoRequest { amount, pubkey, cosign_pubkey: cosign_pk, spk });
-
 			// Make sure users provided right number of nonces.
 			if r.public_nonces.len() != self.config.nb_round_nonces {
 				badarg!("need exactly {} public nonces", self.config.nb_round_nonces);
 			}
-			let public_nonces = r.public_nonces.into_iter()
-				.take(self.config.nb_round_nonces)
-				.map(|n| {
-					musig::MusigPubNonce::from_slice(&n)
-						.badarg("invalid public nonce")
-				}).collect::<Result<Vec<_>, _>>()?;
-			cosign_pub_nonces.push(public_nonces);
+			vtxo_requests.push(r.try_into().badarg("invalid vtxo request")?);
 		}
 
 		let offboards = req.offboard_requests.iter().map(|r| {
@@ -795,9 +768,7 @@ impl rpc::server::ArkService for Server {
 		}).collect::<Result<_, tonic::Status>>()?;
 
 		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::RegisterPayment {
-			inputs, vtxo_requests, cosign_pub_nonces, offboards,
-		};
+		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, offboards };
 
 		self.rounds.round_input_tx.send((inp, tx))
 			.expect("input channel closed");

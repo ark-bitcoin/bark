@@ -17,26 +17,21 @@ pub mod tree;
 pub mod util;
 pub mod vtxo;
 
-pub use crate::arkoor::ArkoorVtxo;
-pub use crate::board::BoardVtxo;
 pub use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
-pub use crate::rounds::RoundVtxo;
-pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};
+pub use crate::vtxo::{Vtxo, VtxoId, VtxoPolicy};
 
 #[cfg(test)]
 mod napkin;
-#[cfg(any(test, feature="test-util"))]
+#[cfg(any(test, feature = "test-util"))]
 pub mod test;
+
 
 use std::time::Duration;
 
-use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::{Amount, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{schnorr, PublicKey};
 
 use bitcoin_ext::{TxOutExt, P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
-
-use crate::vtxo::VtxoSpkSpec;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,35 +56,23 @@ pub struct VtxoIdInput {
 	/// See [`rounds::VtxoOwnershipChallenge`].
 	///
 	/// Should be produced using VTXO's private key
-	pub ownership_proof: Signature,
+	pub ownership_proof: schnorr::Signature,
 }
 
-/// Request for the creation of a VTXO.
-///
-/// NB This differs from the [SignedVtxoRequest] type in ark-lib in the fact that
-/// it doesn't have a cosign pubkey attached yet.
-/// With covenants we can remove this type distinction.
-/// Or we might be able to use it for OOR payments.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-//TODO(stevenroose) rename to vtxooutputrequest when suitable
+/// Request for the creation of an vtxo.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VtxoRequest {
-	pub pubkey: PublicKey,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
-	/// Specifications for the script pubkey locking the VTXO
-	pub spk: VtxoSpkSpec,
+	pub policy: VtxoPolicy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SignedVtxoRequest {
-	pub pubkey: PublicKey,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	pub amount: Amount,
+	/// The actual VTXO request.
+	pub vtxo: VtxoRequest,
 	/// The public key used by the client to cosign the transaction tree
 	/// The client SHOULD forget this key after signing it
 	pub cosign_pubkey: PublicKey,
-	/// Specifications for the script pubkey locking the VTXO
-	pub spk: VtxoSpkSpec,
 }
 
 

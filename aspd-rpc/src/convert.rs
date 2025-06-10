@@ -2,16 +2,14 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
-use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
-use ark::board::BoardCosignResponse;
-use ark::vtxo::VtxoSpkSpec;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate};
 
-use ark::{musig, VtxoRequest, VtxoId};
+use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
+use ark::board::BoardCosignResponse;
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::VtxoTreeSpec;
-use ark::util::{Decodable, Encodable};
 
 use crate::protos;
 
@@ -234,23 +232,21 @@ impl TryFrom<protos::WalletStatus> for crate::WalletStatus {
 }
 
 
-impl<'a> From<&'a VtxoRequest> for protos::ArkoorOutput {
+impl<'a> From<&'a VtxoRequest> for protos::VtxoRequest {
 	fn from(v: &'a VtxoRequest) -> Self {
-		protos::ArkoorOutput {
+		protos::VtxoRequest {
 			amount: v.amount.to_sat(),
-			pubkey: v.pubkey.serialize().to_vec(),
+			policy: v.policy.serialize(),
 		}
 	}
 }
 
-impl TryFrom<protos::ArkoorOutput> for VtxoRequest {
+impl TryFrom<protos::VtxoRequest> for VtxoRequest {
 	type Error = ConvertError;
-	fn try_from(v: protos::ArkoorOutput) -> Result<Self, Self::Error> {
+	fn try_from(v: protos::VtxoRequest) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pubkey: PublicKey::from_slice(&v.pubkey).map_err(|_| "invalid pubkey")?,
 			amount: Amount::from_sat(v.amount),
-			//TODO(stevenroose) should we make arkooroutput generic?
-			spk: VtxoSpkSpec::Exit,
+			policy: VtxoPolicy::deserialize(&v.policy).map_err(|_| "invalid policy")?,
 		})
 	}
 }

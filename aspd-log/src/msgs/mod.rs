@@ -1,4 +1,6 @@
 
+mod arkoor;
+pub use self::arkoor::*;
 mod board;
 pub use self::board::*;
 mod forfeits;

@@ -7,11 +7,10 @@ use std::str::FromStr;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::OutPoint;
 use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
-use bitcoin::secp256k1::{schnorr::{self, Signature}, Message};
+use bitcoin::secp256k1::{self, schnorr, Message};
 
-use crate::{musig, util, Vtxo, VtxoId, VtxoSpec};
+use crate::{musig, util, Vtxo, VtxoId};
 use crate::tree::signed::VtxoTreeSpec;
 
 /// A round tx must have at least vtxo tree and connector chain outputs.
@@ -54,12 +53,20 @@ impl VtxoOwnershipChallenge {
 		Message::from_digest(hash)
 	}
 
-	pub fn sign_with(&self, vtxo_id: VtxoId, vtxo_keypair: Keypair) -> Signature {
+	pub fn sign_with(&self, vtxo_id: VtxoId, vtxo_keypair: Keypair) -> schnorr::Signature {
 		util::SECP.sign_schnorr(&self.as_signable_message(vtxo_id), &vtxo_keypair)
 	}
 
-	pub fn verify_input_vtxo_sig(&self, vtxo: &Vtxo, sig: &Signature) -> Result<(), bitcoin::secp256k1::Error> {
-		util::SECP.verify_schnorr(sig, &self.as_signable_message(vtxo.id()), &vtxo.spec().user_pubkey.x_only_public_key().0)
+	pub fn verify_input_vtxo_sig(
+		&self,
+		vtxo: &Vtxo,
+		sig: &schnorr::Signature,
+	) -> Result<(), secp256k1::Error> {
+		util::SECP.verify_schnorr(
+			sig,
+			&self.as_signable_message(vtxo.id()),
+			&vtxo.user_pubkey().x_only_public_key().0,
+		)
 	}
 }
 
@@ -216,25 +223,5 @@ impl fmt::Display for RoundEvent {
 					.finish()
 			},
 		}
-	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RoundVtxo {
-	pub spec: VtxoSpec,
-	pub leaf_idx: usize,
-	//TODO(stevenroose) reduce this to just storing the signatures
-	// and calculate branch on exit
-	pub exit_branch: Vec<Transaction>,
-}
-
-impl RoundVtxo {
-	pub fn point(&self) -> OutPoint {
-		//TODO(stevenroose) consider caching this so that we don't have to calculate it
-		OutPoint::new(self.exit_branch.last().unwrap().compute_txid(), 0)
-	}
-
-	pub fn id(&self) -> VtxoId {
-		self.point().into()
 	}
 }

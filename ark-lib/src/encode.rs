@@ -13,9 +13,11 @@ use bitcoin::secp256k1::{self, schnorr, PublicKey};
 
 
 /// Error occuring during protocol decoding.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProtocolDecodingError {
-	Io(io::Error),
+	#[error("I/O error: {0}")]
+	Io(#[from] io::Error),
+	#[error("invalid protocol encoding: {message}")]
 	Invalid {
 		message: String,
 		source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
@@ -43,42 +45,12 @@ impl ProtocolDecodingError {
 	}
 }
 
-impl fmt::Display for ProtocolDecodingError {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::Io(e) => write!(f, "I/O error: {}", e),
-			Self::Invalid { message, source: Some(e) } => {
-				write!(f, "invalid encoding: {}: {}", message, e)
-			},
-			Self::Invalid { message, source: None } => {
-				write!(f, "invalid encoding: {}", message)
-			},
-		}
-	}
-}
-
-impl std::error::Error for ProtocolDecodingError {
-	fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-		match self {
-			Self::Io(e) => Some(e),
-			Self::Invalid { source: Some(e), .. } => Some(e.as_ref()),
-			Self::Invalid { source: None, .. } => None,
-		}
-	}
-}
-
 impl From<bitcoin::consensus::encode::Error> for ProtocolDecodingError {
 	fn from(e: bitcoin::consensus::encode::Error) -> Self {
 		match e {
 			bitcoin::consensus::encode::Error::Io(e) => Self::Io(e.into()),
 			e => Self::invalid_err(e, "bitcoin protocol decoding error"),
 		}
-	}
-}
-
-impl From<io::Error> for ProtocolDecodingError {
-	fn from(e: io::Error) -> Self {
-	    Self::Io(e)
 	}
 }
 

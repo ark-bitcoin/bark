@@ -58,14 +58,15 @@ impl ExitStateProgress for ExitStartState {
 		info!("Validated VTXO {}, exit process can now begin", id);
 
 		// Register the coin movement in the database
+		let recipient = ctx.vtxo_recipient()?.to_string();
 		let movement = MovementArgs {
 			spends: &[ctx.vtxo],
 			receives: &[],
-			recipients: &[(&ctx.vtxo_recipient()?.to_string(), ctx.vtxo.amount())],
+			recipients: &[(&recipient, ctx.vtxo.amount())],
 			fees: None,
 		};
 		debug!("Registering movement, spending VTXO: {}, recipient: {} to {}",
-			ctx.vtxo.id(), ctx.vtxo.amount(), ctx.vtxo_recipient()?.to_string()
+			ctx.vtxo.id(), ctx.vtxo.amount(), recipient,
 		);
 		ctx.persister.register_movement(movement)
 			.map_err(|e| ExitError::MovementRegistrationFailure { error: e.to_string() })?;

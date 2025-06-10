@@ -56,10 +56,7 @@ fn forfeit_input_sighash(
 	connector_pk: PublicKey,
 	input_idx: usize,
 ) -> (TapSighash, Transaction) {
-	let exit_prevout = TxOut {
-		script_pubkey: vtxo.spec().vtxo_spk(),
-		value: vtxo.amount(),
-	};
+	let exit_prevout = vtxo.txout();
 	let connector_prevout = TxOut {
 		script_pubkey: ConnectorChain::output_script(connector_pk),
 		value: P2TR_DUST,

@@ -2,11 +2,10 @@
 
 use std::borrow::{Borrow, BorrowMut};
 
-use ark::util::{Decodable, Encodable};
 use bitcoin::{psbt, sighash, taproot, Transaction, TxOut, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 
-use ark::Vtxo;
+use ark::{ProtocolEncoding, Vtxo};
 use ark::error::IncorrectSigningKeyError;
 
 const PROP_KEY_PREFIX: &'static [u8] = "bark".as_bytes();
@@ -65,7 +64,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		}
 
 		// Now we need to sign for this.
-		let exit_script = claim.spec().exit_clause().expect("a VTXO without exit clause should not be exited");
+		let exit_script = claim.policy().user_exit_clause(claim.exit_delta());
 		let leaf_hash = taproot::TapLeafHash::from_script(
 			&exit_script,
 			taproot::LeafVersion::TapScript,
@@ -76,7 +75,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 
 		let sig = secp.sign_schnorr(&sighash.into(), &vtxo_key);
 
-		let cb = claim.spec().vtxo_taproot()
+		let cb = claim.output_taproot()
 			.control_block(&(exit_script.clone(), taproot::LeafVersion::TapScript))
 			.expect("script is in taproot");
 

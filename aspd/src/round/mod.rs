@@ -6,13 +6,15 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use aspd_log::{LogMsg, RoundVtxoCreated};
+use aspd_rpc::protos;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
-use log::{trace, debug, info, warn, error};
+use log::{debug, error, info, log_enabled, trace, warn};
 use opentelemetry::global;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
@@ -20,15 +22,19 @@ use tokio::time::Instant;
 use tracing::info_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use ark::{OffboardRequest, Vtxo, VtxoId, VtxoIdInput, SignedVtxoRequest};
+use ark::{
+	OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
+	VtxoRequest,
+};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
-use ark::rounds::{RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
+use ark::rounds::{
+	RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge,
+	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
+};
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
-use ark::util::Encodable;
-use ark::vtxo::VtxoSpkSpec;
 
-use crate::{Server, SECP};
+use crate::{database, Server, SECP};
 use crate::database::model::{ForfeitState, DangerousMusigSecNonce, LightningHtlcSubscriptionStatus};
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
@@ -39,9 +45,7 @@ use crate::wallet::{BdkWalletExt, PersistedWallet};
 pub enum RoundInput {
 	RegisterPayment {
 		inputs: Vec<VtxoIdInput>,
-		vtxo_requests: Vec<SignedVtxoRequest>,
-		/// One set of nonces per vtxo request.
-		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
+		vtxo_requests: Vec<VtxoParticipant>,
 		offboards: Vec<OffboardRequest>,
 	},
 	VtxoSignatures {
@@ -66,8 +70,8 @@ fn validate_forfeit_sigs(
 	}
 
 	let (key_agg, _) = musig::tweaked_key_agg(
-		[vtxo.spec().user_pubkey, vtxo.asp_pubkey()],
-		vtxo.spec().vtxo_taptweak().to_byte_array(),
+		[vtxo.user_pubkey(), vtxo.asp_pubkey()],
+		vtxo.output_taproot().tap_tweak().to_byte_array(),
 	);
 	for (idx, (conn, _tx)) in connectors.connectors().enumerate() {
 		let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
@@ -89,7 +93,7 @@ fn validate_forfeit_sigs(
 			&key_agg,
 			*part_sig,
 			*user_nonce,
-			musig::pubkey_to(vtxo.spec().user_pubkey),
+			musig::pubkey_to(vtxo.user_pubkey()),
 		);
 		if !success {
 			bail!("Invalid partial forfeit signature");
@@ -104,6 +108,29 @@ pub struct VtxoParticipant {
 	pub nonces: Vec<MusigPubNonce>,
 }
 
+impl TryFrom<protos::SignedVtxoRequest> for VtxoParticipant {
+	type Error = anyhow::Error;
+	fn try_from(v: protos::SignedVtxoRequest) -> Result<Self, Self::Error> {
+		let vtxo = v.vtxo.context("incomplete message")?;
+		Ok(VtxoParticipant {
+			req: SignedVtxoRequest {
+				vtxo: VtxoRequest {
+					amount: Amount::from_sat(vtxo.amount),
+					policy: VtxoPolicy::deserialize(&vtxo.policy)
+						.badarg("invalid VtxoPolicy")?,
+				},
+				cosign_pubkey: PublicKey::from_slice(&v.cosign_pubkey)
+					.badarg("malformed cosign pubkey")?,
+			},
+			nonces: v.public_nonces.into_iter().map(|n| {
+				musig::MusigPubNonce::from_slice(&n)
+					.badarg("invalid public nonce")
+			}).collect::<Result<Vec<_>, _>>()?,
+		})
+	}
+}
+
+#[derive(Clone)]
 pub struct RoundData {
 	max_output_vtxos: usize,
 	nb_vtxo_nonces: usize,
@@ -180,7 +207,7 @@ impl CollectingPayments {
 	fn validate_payment_amounts(
 		&self,
 		inputs: &[Vtxo],
-		outputs: &[SignedVtxoRequest],
+		outputs: &[VtxoParticipant],
 		offboards: &[OffboardRequest],
 	) -> anyhow::Result<()> {
 		let mut in_set = HashSet::with_capacity(inputs.len());
@@ -197,23 +224,23 @@ impl CollectingPayments {
 
 		let mut out_sum = Amount::ZERO;
 		for output in outputs {
-			if output.amount < P2TR_DUST {
+			if output.req.vtxo.amount < P2TR_DUST {
 				return badarg!("vtxo amount must be at least {}", P2TR_DUST);
 			}
 
-			match output.spk {
+			match output.req.vtxo.policy {
 				// HTLCs are not included in the sum because they don't spend any
 				// round input. Instead, they are funded by provided the payment
 				// hash and handled in the `collect_htlcs` method.
-				VtxoSpkSpec::HtlcIn { .. } => {
+				VtxoPolicy::ServerHtlcRecv { .. } => {
 					continue;
-				}
-				VtxoSpkSpec::HtlcOut { .. } => {
-					return badarg!("invalid vtxo spk: {}", output.spk);
-				}
-				VtxoSpkSpec::Exit { .. } => {
-					out_sum += output.amount;
-				}
+				},
+				VtxoPolicy::ServerHtlcSend { .. } => {
+					return badarg!("invalid vtxo spk: {:?}", output.req.vtxo.policy);
+				},
+				VtxoPolicy::Pubkey { .. } => {
+					out_sum += output.req.vtxo.amount;
+				},
 			}
 
 			if out_sum > in_sum {
@@ -241,12 +268,30 @@ impl CollectingPayments {
 	fn validate_payment_data(
 		&self,
 		inputs: &[VtxoIdInput],
-		outputs: &[SignedVtxoRequest],
-		cosign_pub_nonces: &[Vec<musig::MusigPubNonce>],
+		outputs: &[VtxoParticipant],
 	) -> anyhow::Result<()> {
+		for out in outputs {
+			if out.nonces.len() != self.round_data.nb_vtxo_nonces {
+				slog!(RoundUserBadNbNonces, round_seq: self.round_seq,
+					attempt_seq: self.attempt_seq, nb_cosign_nonces: out.nonces.len(),
+				);
+				bail!("incorrect number of cosign nonces per set");
+			}
+
+			if self.inputs_per_cosigner.contains_key(&out.req.cosign_pubkey) {
+				slog!(RoundUserDuplicateCosignPubkey, round_seq: self.round_seq,
+					attempt_seq: self.attempt_seq, cosign_pubkey: out.req.cosign_pubkey,
+				);
+				bail!("duplicate cosign key {}", out.req.cosign_pubkey);
+			}
+		}
+
 		if let Some(max) = self.round_data.max_vtxo_amount {
 			for out in outputs {
-				if out.amount > max {
+				if out.req.vtxo.amount > max {
+					slog!(RoundUserBadOutputAmount, round_seq: self.round_seq,
+						attempt_seq: self.attempt_seq, amount: out.req.vtxo.amount,
+					);
 					return badarg!("output exceeds maximum vtxo amount of {max}");
 				}
 			}
@@ -284,22 +329,10 @@ impl CollectingPayments {
 			}
 		}
 
-		if outputs.len() != cosign_pub_nonces.len() {
-			bail!("incorrect number of sets of cosign nonces");
-		}
-		if cosign_pub_nonces.iter().any(|n| n.len() != self.round_data.nb_vtxo_nonces) {
-			bail!("incorrect number of cosign nonces per set");
-		}
-		for out in outputs {
-			if self.inputs_per_cosigner.contains_key(&out.cosign_pubkey) {
-				bail!("duplicate cosign key {}", out.cosign_pubkey);
-			}
-		}
-
 		Ok(())
 	}
 
-	/// If a [`VtxoRequest`] requests an [`VtxoSpkSpec::HtlcIn`], we check that
+	/// If a [SignedVtxoRequest] requests an [VtxoPolicy::ServerHtlcRecv], we check that
 	/// there is an incoming HTLC with the same payment hash that is accepted and
 	/// not already claimed.
 	///
@@ -307,23 +340,23 @@ impl CollectingPayments {
 	/// - Lightning Network
 	async fn check_vtxo_request_htlcs(
 		&self,
-		srv: &Server,
-		outputs: &[SignedVtxoRequest],
+		db: &database::Db,
+		reqs: &[VtxoParticipant],
 	) -> anyhow::Result<()> {
-		for output in outputs {
-			if let VtxoSpkSpec::HtlcIn { payment_hash, .. } = output.spk {
+		for req in reqs {
+			if let VtxoPolicy::ServerHtlcRecv { payment_hash, .. } = req.req.vtxo.policy {
 				let status = LightningHtlcSubscriptionStatus::Accepted;
-				let htlc = srv.db
-					.get_htlc_subscription_by_payment_hash(&payment_hash, status)
-					.await?;
+				let htlc = db.get_htlc_subscription_by_payment_hash(&payment_hash, status).await?;
 
 				// TODO: check if a non-expired htlc vtxo with same payment_hash exists and bail if so
 
 				if htlc.is_some() {
-						continue;
+					continue;
 				}
 
-				return not_found!([payment_hash], "Cannot find accepted htlc for provided payment hash");
+				return not_found!([payment_hash],
+					"Cannot find accepted htlc for provided payment hash",
+				);
 			}
 		}
 
@@ -374,11 +407,14 @@ impl CollectingPayments {
 		&mut self,
 		srv: &Server,
 		inputs: Vec<VtxoIdInput>,
-		vtxo_requests: Vec<SignedVtxoRequest>,
-		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
+		vtxo_requests: Vec<VtxoParticipant>,
 		offboards: Vec<OffboardRequest>,
 	) -> anyhow::Result<()> {
-		self.validate_payment_data(&inputs, &vtxo_requests, &cosign_pub_nonces)?;
+		if vtxo_requests.is_empty() && offboards.is_empty() {
+			return badarg!("invalid request: zero outputs and zero offboards");
+		}
+
+		self.validate_payment_data(&inputs, &vtxo_requests)?;
 
 		let input_ids: Vec<VtxoId> = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 		let lock = match srv.vtxos_in_flux.lock(input_ids.clone()) {
@@ -389,7 +425,7 @@ impl CollectingPayments {
 			},
 		};
 
-		self.check_vtxo_request_htlcs(srv, &vtxo_requests).await?;
+		self.check_vtxo_request_htlcs(&srv.db, &vtxo_requests).await?;
 
 		// Check if the input vtxos exist and are unspent.
 		let input_vtxos = match self.check_fetch_round_input_vtxos(srv, &inputs).await {
@@ -412,7 +448,7 @@ impl CollectingPayments {
 			return Err(e).context("registration failed");
 		}
 
-		if let Err(e) = srv.validate_board_inputs(&input_vtxos) {
+		if let Err(e) = srv.validate_board_inputs(&input_vtxos).await {
 			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt_seq: self.attempt_seq, error: e.to_string(),
 			);
@@ -420,7 +456,7 @@ impl CollectingPayments {
 		}
 
 		// Finally we are done
-		self.register_payment(lock, input_vtxos, vtxo_requests, cosign_pub_nonces, offboards);
+		self.register_payment(lock, input_vtxos, vtxo_requests, offboards);
 
 		Ok(())
 	}
@@ -429,8 +465,7 @@ impl CollectingPayments {
 		&mut self,
 		lock: VtxoFluxLock,
 		inputs: Vec<Vtxo>,
-		vtxo_requests: Vec<SignedVtxoRequest>,
-		cosign_pub_nonces: Vec<Vec<musig::MusigPubNonce>>,
+		vtxo_requests: Vec<VtxoParticipant>,
 		offboards: Vec<OffboardRequest>,
 	) {
 		slog!(RoundPaymentRegistered, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
@@ -445,13 +480,11 @@ impl CollectingPayments {
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 
-		assert_eq!(vtxo_requests.len(), cosign_pub_nonces.len());
-		self.all_outputs.reserve(vtxo_requests.len());
 		self.inputs_per_cosigner.reserve(vtxo_requests.len());
-		for (output, nonces) in vtxo_requests.into_iter().zip(cosign_pub_nonces) {
-			assert!(self.inputs_per_cosigner.insert(output.cosign_pubkey, input_ids.clone()).is_none());
-			self.all_outputs.push(VtxoParticipant { req: output, nonces });
+		for req in &vtxo_requests {
+			assert!(self.inputs_per_cosigner.insert(req.req.cosign_pubkey, input_ids.clone()).is_none());
 		}
+		self.all_outputs.extend(vtxo_requests);
 
 		self.all_offboards.extend(offboards);
 
@@ -505,10 +538,11 @@ impl CollectingPayments {
 				(secs, pubs)
 			};
 			let req = SignedVtxoRequest {
-				pubkey: *UNSPENDABLE,
-				amount: P2WSH_DUST,
+				vtxo: VtxoRequest {
+					policy: VtxoPolicy::Pubkey { user_pubkey: *UNSPENDABLE },
+					amount: P2WSH_DUST,
+				},
 				cosign_pubkey: cosign_key.public_key(),
-				spk: VtxoSpkSpec::Exit,
 			};
 			self.all_outputs.push(VtxoParticipant {
 				req: req.clone(),
@@ -600,12 +634,9 @@ impl CollectingPayments {
 
 		// first add our own change (or dummy) vtxo
 		if let Some((req, pk, sec, _pub)) = change_vtxo.take() {
-			let sigs = unsigned_vtxo_tree.cosign_branch(
-				&cosign_agg_nonces,
-				&req,
-				&pk,
-				sec,
-			).expect("we're in the tree");
+			let idx = unsigned_vtxo_tree.spec.leaf_idx_of(&req).expect("have change request");
+			let sigs = unsigned_vtxo_tree.cosign_branch(&cosign_agg_nonces, idx, &pk, sec)
+				.expect("correct key");
 			cosign_part_sigs.insert(pk.public_key(), sigs);
 			proceed = true;
 		}
@@ -982,6 +1013,13 @@ impl SigningForfeits {
 		span.set_int_attr("connectors-count", self.connectors.len());
 
 		trace!("Storing round result");
+		if log_enabled!(RoundVtxoCreated::LEVEL) {
+			for vtxo in self.signed_vtxos.all_vtxos() {
+				slog!(RoundVtxoCreated, round_seq: self.round_seq, vtxo_id: vtxo.id(),
+					vtxo_type: vtxo.policy().policy_type(),
+				);
+			}
+		}
 		let mut sec_nonces = self.forfeit_sec_nonces.take().unwrap();
 		let forfeit_vtxos = self.all_inputs.iter().map(|(id, vtxo)| {
 			slog!(StoringForfeitVtxo, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
@@ -1292,11 +1330,9 @@ async fn perform_round(
 					let (input, tx) = input.expect("broken channel");
 
 					let res = match input {
-						RoundInput::RegisterPayment {
-							inputs, vtxo_requests, cosign_pub_nonces, offboards,
-						} => {
+						RoundInput::RegisterPayment { inputs, vtxo_requests, offboards } => {
 							round_state.collecting_payments().process_payment(
-								srv, inputs, vtxo_requests, cosign_pub_nonces, offboards,
+								srv, inputs, vtxo_requests, offboards,
 							).await.map_err(|e| {
 								debug!("error processing payment: {e}");
 								telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
@@ -1628,20 +1664,16 @@ mod tests {
 	use std::collections::HashSet;
 	use std::str::FromStr;
 
-	use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
-	use bitcoin::hashes::Hash;
-	use bitcoin::secp256k1::{PublicKey, Secp256k1};
-	use bitcoin::secp256k1::schnorr::Signature;
+	use bitcoin::Amount;
+	use bitcoin::secp256k1::{schnorr, PublicKey, Secp256k1};
 
-	use ark::vtxo::VtxoSpkSpec;
-	use ark::{RoundVtxo, Vtxo, SignedVtxoRequest, VtxoSpec};
-	use bitcoin_ext::fee;
+	use ark::SignedVtxoRequest;
+	use ark::vtxo::test::VTXO_VECTORS;
 
 	use crate::flux::VtxosInFlux;
 
-
 	lazy_static::lazy_static! {
-		static ref TEST_SIG: Signature = Signature::from_str(
+		static ref TEST_SIG: schnorr::Signature = schnorr::Signature::from_str(
 			"d1c14325e2fe4c44466be57376c4ea093e2d6524503d13be7511e57ec29e13508b507db59dfa9aede12e3e20d120013c268c3af0c7776e0e1e326ae6c9bbc171"
 		).unwrap();
 
@@ -1656,60 +1688,23 @@ mod tests {
 		public_key
 	}
 
-	fn create_vtxo_spec(amount: u64) -> VtxoSpec {
-		VtxoSpec {
-			user_pubkey: generate_pubkey(),
-			asp_pubkey: *TEST_ASP_PK,
-			expiry_height: 100_000,
-			exit_delta: 2016,
-			spk: VtxoSpkSpec::Exit,
-			amount: Amount::from_sat(amount),
-		}
-	}
-
-	fn create_round_vtxo(amount: u64) -> Vtxo {
-		let spec = create_vtxo_spec(amount);
-		let tx = Transaction {
-			version: bitcoin::transaction::Version(3),
-			lock_time: bitcoin::absolute::LockTime::ZERO,
-			input: vec![TxIn {
-				previous_output: OutPoint::new(
-					Txid::from_slice(&rand::random::<[u8; 32]>()[..]).unwrap(),
-					0,
-				),
-				sequence: Sequence::MAX,
-				script_sig: ScriptBuf::new(),
-				witness: Witness::new(),
-			}],
-			output: vec![
-				TxOut {
-					script_pubkey: spec.vtxo_spk(),
-					value: spec.amount,
-				},
-				fee::fee_anchor(),
-			],
+	fn create_exit_participant(amount: u64, data: &RoundData) -> VtxoParticipant {
+		let nonces = {
+			let key = Keypair::new(&SECP, &mut rand::thread_rng());
+			let (_sec, pb) = musig::nonce_pair(&key);
+			vec![pb; data.nb_vtxo_nonces]
 		};
 
-		Vtxo::Round(RoundVtxo {
-			spec: spec,
-			leaf_idx: 0,
-			exit_branch: vec![tx],
-		})
-	}
-
-	fn create_exit_vtxo_request(amount: u64) -> SignedVtxoRequest {
-		SignedVtxoRequest {
-			pubkey: generate_pubkey(),
-			amount: Amount::from_sat(amount),
-			cosign_pubkey: generate_pubkey(),
-			spk: VtxoSpkSpec::Exit,
+		VtxoParticipant {
+			req: SignedVtxoRequest {
+				vtxo: VtxoRequest {
+					policy: VtxoPolicy::Pubkey { user_pubkey: generate_pubkey() },
+					amount: Amount::from_sat(amount),
+				},
+				cosign_pubkey: generate_pubkey(),
+			},
+			nonces: nonces,
 		}
-	}
-
-	fn create_nonces(nb: usize, data: &RoundData) -> Vec<Vec<MusigPubNonce>> {
-		let key = Keypair::new(&SECP, &mut rand::thread_rng());
-		let (_sec, pb) = musig::nonce_pair(&key);
-		vec![vec![pb; data.nb_vtxo_nonces]; nb]
 	}
 
 	fn create_collecting_payments(max_output_vtxos: usize) -> CollectingPayments {
@@ -1724,200 +1719,179 @@ mod tests {
 
 	#[test]
 	fn test_register_payment_valid() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT: u64 = 400;
-
 		let mut state = create_collecting_payments(2);
 
-		let inputs = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
 		let input_ids = inputs
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
-		let nonces = create_nonces(1, &state.round_data);
+		let outputs = vec![create_exit_participant(inputs[0].amount().to_sat(), &state.round_data)];
 
-		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap();
+		state.validate_payment_data(&input_ids, &outputs).unwrap();
 		state.validate_payment_amounts(&inputs, &outputs, &[]).unwrap();
 
 		let flux = VtxosInFlux::new();
-		state.register_payment(flux.empty_lock(), inputs, outputs.clone(), nonces, vec![]);
+		state.register_payment(flux.empty_lock(), inputs, outputs.clone(), vec![]);
 		assert_eq!(state.all_inputs.len(), 1);
 		assert_eq!(state.all_outputs.len(), 1);
 		assert_eq!(state.all_offboards.len(), 0);
 		assert_eq!(state.inputs_per_cosigner.len(), 1);
-		assert_eq!(1, state.inputs_per_cosigner.get(&outputs[0].cosign_pubkey).unwrap().len());
+		assert_eq!(1, state.inputs_per_cosigner.get(&outputs[0].req.cosign_pubkey).unwrap().len());
 	}
 
 	#[test]
 	fn test_register_payment_output_exceeds_input() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT: u64 = INPUT_AMOUNT + 100;
-
 		let state = create_collecting_payments(2);
 
-		let inputs = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
 		let input_ids = inputs
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
-		let nonces = create_nonces(1, &state.round_data);
+		let outputs = vec![create_exit_participant(
+			inputs[0].amount().to_sat() + 100, &state.round_data,
+		)];
 
-		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap();
+		state.validate_payment_data(&input_ids, &outputs).unwrap();
 		state.validate_payment_amounts(&inputs, &outputs, &[]).unwrap_err();
 	}
 
 	#[test]
 	fn test_register_payment_duplicate_inputs() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT: u64 = 300;
-
 		let state = create_collecting_payments(2);
 
-		let input = create_round_vtxo(INPUT_AMOUNT);
-		let inputs = vec![input.clone(), input.clone()];
+		let inputs = vec![
+			VTXO_VECTORS.round1_vtxo.clone(), VTXO_VECTORS.round1_vtxo.clone(),
+		];
 		let input_ids = inputs
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
-		let nonces = create_nonces(1, &state.round_data);
+		let outputs = vec![create_exit_participant(
+			inputs[0].amount().to_sat() - 100, &state.round_data,
+		)];
 
-		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap_err();
+		state.validate_payment_data(&input_ids, &outputs).unwrap_err();
 	}
 
 	#[test]
 	fn test_register_payment_exceeds_max_outputs() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT_1: u64 = 100;
-		const OUTPUT_AMOUNT_2: u64 = 300;
-
 		let state = create_collecting_payments(1);
 
-		let input = create_round_vtxo(INPUT_AMOUNT);
-		let inputs = vec![input.clone(), input.clone()];
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone(), VTXO_VECTORS.round1_vtxo.clone()];
 		let input_ids = inputs
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
 		let outputs = vec![
-			create_exit_vtxo_request(OUTPUT_AMOUNT_1),
-			create_exit_vtxo_request(OUTPUT_AMOUNT_2),
+			create_exit_participant(100, &state.round_data),
+			create_exit_participant(100, &state.round_data),
 		];
-		let nonces = create_nonces(2, &state.round_data);
 
-		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap_err();
+		state.validate_payment_data(&input_ids, &outputs).unwrap_err();
 	}
 
 	#[test]
 	fn test_register_payment_disallowed_input() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT: u64 = 300;
-
 		let mut state = create_collecting_payments(2);
 		state.allowed_inputs = Some(HashSet::new());
 
-		let inputs = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
 		let input_ids = inputs
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs = vec![create_exit_vtxo_request(OUTPUT_AMOUNT)];
-		let nonces = create_nonces(1, &state.round_data);
+		let outputs = vec![create_exit_participant(inputs[0].amount().to_sat(), &state.round_data)];
 
-		state.validate_payment_data(&input_ids, &outputs, &nonces).unwrap_err();
+		state.validate_payment_data(&input_ids, &outputs).unwrap_err();
 	}
 
 	#[test]
 	fn test_register_payment_duplicate_cosign_pubkey() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT_1: u64 = 200;
-		const OUTPUT_AMOUNT_2: u64 = 200;
-
 		let mut state = create_collecting_payments(2);
 
-		let inputs1 = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs1 = vec![VTXO_VECTORS.round1_vtxo.clone()];
 		let input_ids1 = inputs1
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
-		let inputs2 = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs2 = vec![VTXO_VECTORS.arkoor_htlc_out_vtxo.clone()];
 		let input_ids2 = inputs2
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT_1)];
-		let nonces1 = create_nonces(1, &state.round_data);
-		let mut outputs2 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT_2)];
-		outputs2[0].cosign_pubkey = outputs1[0].cosign_pubkey;
-		let nonces2 = create_nonces(1, &state.round_data);
+		let outputs1 = vec![create_exit_participant(inputs1[0].amount().to_sat(), &state.round_data)];
+		let mut outputs2 = vec![create_exit_participant(inputs2[0].amount().to_sat(), &state.round_data)];
+		outputs2[0].req.cosign_pubkey = outputs1[0].req.cosign_pubkey;
 
 		let flux = VtxosInFlux::new();
-		state.validate_payment_data(&input_ids1, &outputs1, &nonces1).unwrap();
-		state.register_payment(flux.empty_lock(), inputs1, outputs1, nonces1, vec![]);
-		state.validate_payment_data(&input_ids2, &outputs2, &nonces2).unwrap_err();
+		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
+		state.register_payment(flux.empty_lock(), inputs1, outputs1, vec![]);
+		state.validate_payment_data(&input_ids2, &outputs2).unwrap_err();
 	}
 
 	#[test]
 	fn test_register_wrong_nb_cosign_nonces() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT: u64 = 300;
-
 		let state = create_collecting_payments(4);
 
-		let inputs1 = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs1 = vec![VTXO_VECTORS.round1_vtxo.clone()];
 		let input_ids1 = inputs1
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
-		let nonces1 = create_nonces(1, &state.round_data);
+		let mut wrong_round_data = state.round_data.clone();
+		wrong_round_data.nb_vtxo_nonces = state.round_data.nb_vtxo_nonces + 1;
+		let outputs1 = vec![
+			create_exit_participant(100, &wrong_round_data),
+			create_exit_participant(100, &wrong_round_data),
+		];
 
-		state.validate_payment_data(&input_ids1, &outputs1, &nonces1).unwrap_err();
+		state.validate_payment_data(&input_ids1, &outputs1).unwrap_err();
 	}
 
 	#[test]
 	fn test_register_multiple_payments() {
-		const INPUT_AMOUNT: u64 = 400;
-		const OUTPUT_AMOUNT: u64 = 300;
-
 		let mut state = create_collecting_payments(4);
 
-		let inputs1 = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs1 = vec![VTXO_VECTORS.round1_vtxo.clone()];
 		let input_ids1 = inputs1
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
-		let inputs2 = vec![create_round_vtxo(INPUT_AMOUNT)];
+		let inputs2 = vec![VTXO_VECTORS.arkoor_htlc_out_vtxo.clone()];
 		let input_ids2 = inputs2
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
 
-		let outputs1 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
-		let nonces1 = create_nonces(2, &state.round_data);
-		let outputs2 = vec![create_exit_vtxo_request(OUTPUT_AMOUNT), create_exit_vtxo_request(OUTPUT_AMOUNT)];
-		let nonces2 = create_nonces(2, &state.round_data);
+		let outputs1 = vec![
+			create_exit_participant(100, &state.round_data),
+			create_exit_participant(100, &state.round_data),
+		];
+		let outputs2 = vec![
+			create_exit_participant(100, &state.round_data),
+			create_exit_participant(100, &state.round_data),
+		];
 
 		let flux = VtxosInFlux::new();
-		state.validate_payment_data(&input_ids1, &outputs1, &nonces1).unwrap();
-		state.register_payment(flux.empty_lock(), inputs1, outputs1.clone(), nonces1, vec![]);
-		state.validate_payment_data(&input_ids2, &outputs2, &nonces2).unwrap();
-		state.register_payment(flux.empty_lock(), inputs2, outputs2.clone(), nonces2, vec![]);
+		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
+		state.register_payment(flux.empty_lock(), inputs1, outputs1.clone(), vec![]);
+		state.validate_payment_data(&input_ids2, &outputs2).unwrap();
+		state.register_payment(flux.empty_lock(), inputs2, outputs2.clone(), vec![]);
 
 		assert_eq!(state.all_inputs.len(), 2);
 		assert_eq!(state.all_outputs.len(), 4);
 		assert_eq!(state.inputs_per_cosigner.len(), 4);
-		assert!(state.inputs_per_cosigner.contains_key(&outputs1[0].cosign_pubkey));
-		assert!(state.inputs_per_cosigner.contains_key(&outputs2[0].cosign_pubkey));
+		assert!(state.inputs_per_cosigner.contains_key(&outputs1[0].req.cosign_pubkey));
+		assert!(state.inputs_per_cosigner.contains_key(&outputs2[0].req.cosign_pubkey));
 		assert!(state.proceed, "Proceed should be set after second registration");
 	}
 }

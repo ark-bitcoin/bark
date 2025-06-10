@@ -2,7 +2,7 @@
 
 #[macro_export]
 macro_rules! impl_slog {
-	($name:ident, $lvl:ident, $msg:expr) => {
+	($name:ident, $lvl:ident, $msg:expr $(,)?) => {
 		impl $crate::LogMsg for $name {
 			//TODO(stevenroose) consider not using the struct name but something static
 			const LOGID: &'static str = stringify!($name);

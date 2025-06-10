@@ -15,16 +15,16 @@ use std::marker::PhantomData;
 
 use bitcoin::sighash::{self, SighashCache};
 use bitcoin::taproot::TaprootSpendInfo;
-use bitcoin::{Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
+use bitcoin::{Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut, Txid};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
+use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
 
 use crate::error::IncorrectSigningKeyError;
+use crate::{musig, Vtxo, VtxoPolicy};
 use crate::tree::signed::cosign_taproot;
-use crate::{musig, Vtxo, VtxoId};
-use crate::util::SECP;
-use crate::vtxo::{self, exit_taproot, VtxoSpec, VtxoSpkSpec};
+use crate::util::{verify_partial_sig, SECP};
+use crate::vtxo::{self, exit_taproot, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
 
@@ -95,7 +95,7 @@ pub mod state {
 /// cosign the request and return his partial signature (along with public nonce)
 /// back to the user so that the user can finish the request and create a [Vtxo].
 ///
-/// Currently you can only create VTXOs with [VtxoSpkSpec::Exit].
+/// Currently you can only create VTXOs with [VtxoPolicy::PublicKey].
 #[derive(Debug)]
 pub struct BoardBuilder<S: BuilderState> {
 	pub amount: Amount,
@@ -205,8 +205,9 @@ impl<S: state::CanSign> BoardBuilder<S> {
 		self.user_pub_nonce.expect("state invariant")
 	}
 
-	/// The signature hash to sign the exit tx and the taproot info used to calcualte it.
-	fn exit_tx_sighash_data(&self) -> (TapSighash, TaprootSpendInfo) {
+	/// The signature hash to sign the exit tx and the taproot info
+	/// (of the funding tx) used to calcualte it and the exit tx's txid.
+	fn exit_tx_sighash_data(&self) -> (TapSighash, TaprootSpendInfo, Txid) {
 		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
 		let funding_taproot = cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
@@ -221,8 +222,8 @@ impl<S: state::CanSign> BoardBuilder<S> {
 		};
 
 		let utxo = self.utxo.expect("state invariant");
-		let (sighash, _tx) = exit_tx_sighash(&funding_txout, utxo, exit_txout);
-		(sighash, funding_taproot)
+		let (sighash, tx) = exit_tx_sighash(&funding_txout, utxo, exit_txout);
+		(sighash, funding_taproot, tx.compute_txid())
 	}
 }
 
@@ -251,7 +252,7 @@ impl BoardBuilder<state::ServerCanCosign> {
 	///
 	/// Returns `None` if utxo or user_pub_nonce field is not provided.
 	pub fn server_cosign(&self, key: &Keypair) -> BoardCosignResponse {
-		let (sighash, taproot) = self.exit_tx_sighash_data();
+		let (sighash, taproot, _txid) = self.exit_tx_sighash_data();
 		let (pub_nonce, partial_signature) = musig::deterministic_partial_sign(
 			key,
 			[self.user_pubkey],
@@ -264,36 +265,16 @@ impl BoardBuilder<state::ServerCanCosign> {
 }
 
 impl BoardBuilder<state::CanBuild> {
-	/// Verify a partial signature from either of the two parties.
-	fn verify_partial_sig(
-		&self,
-		is_user: bool,
-		asp_nonce: musig::MusigPubNonce,
-		partial_signature: musig::MusigPartialSignature,
-	) -> bool {
-		let (sighash, taproot) = self.exit_tx_sighash_data();
-		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &asp_nonce]);
-		let agg_pk = musig::tweaked_key_agg(
-			[self.user_pubkey, self.asp_pubkey],
-			taproot.tap_tweak().to_byte_array(),
-		).0;
-
-		let msg = musig::secpm::Message::from_digest(sighash.to_byte_array());
-		let session = musig::MusigSession::new(&musig::SECP, &agg_pk, agg_nonce, msg);
-
-		let (pubkey, nonce) = if is_user {
-			(self.user_pubkey, self.user_pub_nonce())
-		} else {
-			(self.asp_pubkey, asp_nonce)
-		};
-		session.partial_verify(
-			&musig::SECP, &agg_pk, partial_signature, nonce, musig::pubkey_to(pubkey),
-		)
-	}
-
 	/// Validate the server's partial signature.
 	pub fn verify_cosign_response(&self, server_cosign: &BoardCosignResponse) -> bool {
-		self.verify_partial_sig(false, server_cosign.pub_nonce, server_cosign.partial_signature)
+		let (sighash, taproot, _txid) = self.exit_tx_sighash_data();
+		verify_partial_sig(
+			sighash,
+			taproot.tap_tweak(),
+			(self.asp_pubkey, server_cosign.pub_nonce),
+			(self.user_pubkey, self.user_pub_nonce()),
+			server_cosign.partial_signature
+		)
 	}
 
 	/// Finishes the board request and create a vtxo.
@@ -309,7 +290,7 @@ impl BoardBuilder<state::CanBuild> {
 			});
 		}
 
-		let (sighash, taproot) = self.exit_tx_sighash_data();
+		let (sighash, taproot, exit_txid) = self.exit_tx_sighash_data();
 
 		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &server_cosign.pub_nonce]);
 		let (user_sig, final_sig) = musig::partial_sign(
@@ -322,7 +303,13 @@ impl BoardBuilder<state::CanBuild> {
 			Some(&[&server_cosign.partial_signature]),
 		);
 		debug_assert!(
-			self.verify_partial_sig(true, server_cosign.pub_nonce, user_sig),
+			verify_partial_sig(
+				sighash,
+				taproot.tap_tweak(),
+				(self.user_pubkey, self.user_pub_nonce()),
+				(self.asp_pubkey, server_cosign.pub_nonce),
+				user_sig,
+			),
 			"invalid board partial exit tx signature produced",
 		);
 
@@ -334,18 +321,23 @@ impl BoardBuilder<state::CanBuild> {
 			"invalid board exit tx signature produced",
 		);
 
-		Ok(Vtxo::Board(BoardVtxo {
-			spec: VtxoSpec {
-				user_pubkey: self.user_pubkey,
-				expiry_height: self.expiry_height,
-				asp_pubkey: self.asp_pubkey,
-				exit_delta: self.exit_delta,
-				spk: VtxoSpkSpec::Exit,
-				amount: self.amount,
-			},
-			onchain_output: self.utxo.expect("state invariant"),
-			exit_tx_signature: final_sig,
-		}))
+		Ok(Vtxo {
+			amount: self.amount,
+			expiry_height: self.expiry_height,
+			asp_pubkey: self.asp_pubkey,
+			exit_delta: self.exit_delta,
+			anchor_point: self.utxo.expect("state invariant"),
+			genesis: vec![GenesisItem {
+				transition: GenesisTransition::Cosigned {
+					pubkeys: vec![self.user_pubkey, self.asp_pubkey],
+					signature: final_sig,
+				},
+				output_idx: 0,
+				other_outputs: vec![],
+			}],
+			policy: VtxoPolicy::Pubkey { user_pubkey: self.user_pubkey },
+			point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
+		})
 	}
 }
 
@@ -353,80 +345,12 @@ impl BoardBuilder<state::CanBuild> {
 #[error("board funding tx validation error: {0}")]
 pub struct BoardFundingTxValidationError(String);
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BoardVtxo {
-	pub spec: VtxoSpec,
-	/// The output of the board. This will be the input to the exit tx.
-	pub onchain_output: OutPoint,
-	pub exit_tx_signature: schnorr::Signature,
-}
-
-impl BoardVtxo {
-	pub fn exit_tx(&self) -> Transaction {
-		let ret = vtxo::create_exit_tx(
-			self.onchain_output,
-			self.spec.txout(),
-			Some(&self.exit_tx_signature),
-		);
-		assert_eq!(ret.weight(), crate::vtxo::EXIT_TX_WEIGHT);
-		ret
-	}
-
-	pub fn point(&self) -> OutPoint {
-		//TODO(stevenroose) consider caching this so that we don't have to calculate it
-		OutPoint::new(self.exit_tx().compute_txid(), 0)
-	}
-
-	pub fn id(&self) -> VtxoId {
-		self.point().into()
-	}
-
-	pub fn amount(&self) -> Amount {
-		self.spec.amount
-	}
-
-	pub fn validate_funding_tx(
-		&self,
-		funding_tx: &Transaction,
-	) -> Result<(), BoardFundingTxValidationError> {
-		let id = self.id();
-		if self.onchain_output.txid != funding_tx.compute_txid() {
-			return Err(BoardFundingTxValidationError(format!(
-				"onchain tx and vtxo board txid don't match",
-			)));
-		}
-
-		// Check that the output actually has the right script.
-		let output_idx = self.onchain_output.vout as usize;
-		if funding_tx.output.len() < output_idx {
-			return Err(BoardFundingTxValidationError(format!(
-				"non-existing point {} in tx {}", self.onchain_output, self.onchain_output.txid,
-			)));
-		}
-		let combined_pubkey = musig::combine_keys([self.spec.user_pubkey, self.spec.asp_pubkey]);
-		let funding_spk = cosign_taproot(
-			combined_pubkey, self.spec.asp_pubkey, self.spec.expiry_height,
-		).script_pubkey();
-		if funding_tx.output[output_idx].script_pubkey != funding_spk {
-			return Err(BoardFundingTxValidationError(format!(
-				"vtxo {} has incorrect board script: {}",
-				id, funding_tx.output[output_idx].script_pubkey,
-			)));
-		}
-		let amount = funding_tx.output[output_idx].value;
-		if amount != self.spec.amount {
-			return Err(BoardFundingTxValidationError(format!(
-				"vtxo {} has incorrect board amount: {}", id, amount,
-			)));
-		}
-		Ok(())
-	}
-}
-
 
 #[cfg(test)]
 mod test {
 	use bitcoin::Amount;
+
+	use crate::encode::test::encoding_roundtrip;
 
 	use super::*;
 
@@ -460,7 +384,8 @@ mod test {
 
 		// user
 		assert!(builder.verify_cosign_response(&cosign));
-		let _vtxo = builder.build_vtxo(&cosign, &user_key);
-		//TODO(stevenroose) check serialization roundtrip
+		let vtxo = builder.build_vtxo(&cosign, &user_key).unwrap();
+
+		encoding_roundtrip(&vtxo);
 	}
 }

@@ -269,7 +269,8 @@ pub mod test {
 	use bitcoin::bip32;
 	use rand::{distr, Rng};
 
-	use crate::test::dummy_board;
+	use ark::vtxo::test::VTXO_VECTORS;
+
 	use super::*;
 
 
@@ -301,9 +302,9 @@ pub mod test {
 	fn test_add_and_retreive_vtxos() {
 		let pk: PublicKey = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
 
-		let vtxo_1 = dummy_board(1);
-		let vtxo_2 = dummy_board(2);
-		let vtxo_3 = dummy_board(3);
+		let vtxo_1 = &VTXO_VECTORS.board_vtxo;
+		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
 		let (cs, conn) = in_memory();
 		let db = SqliteClient::open(cs).unwrap();
@@ -324,7 +325,7 @@ pub mod test {
 
 		// Check that vtxo-1 can be retrieved from the database
 		let vtxo_1_db = db.get_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
-		assert_eq!(vtxo_1_db, vtxo_1);
+		assert_eq!(vtxo_1_db, *vtxo_1);
 
 		// Verify that vtxo 3 is not in the database
 		assert!(db.get_vtxo(vtxo_3.id()).expect("No error").is_none());

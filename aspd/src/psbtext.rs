@@ -80,7 +80,11 @@ pub trait PsbtExt: BorrowMut<Psbt> {
 						let wit = Witness::from_slice(
 							&[&sig[..], script.as_bytes(), &control.serialize()],
 						);
-						debug_assert_eq!(wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize);
+						debug_assert!(
+							wit.size() <= ark::tree::signed::NODE_SPEND_WEIGHT.to_wu() as usize,
+							"weight: {}, NODE_SPEND_WEIGHT: {}",
+							wit.size(), ark::tree::signed::NODE_SPEND_WEIGHT.to_wu(),
+						);
 						input.final_script_witness = Some(wit);
 					},
 					SweepMeta::Connector(key) => {

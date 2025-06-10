@@ -1,7 +1,7 @@
 
 
+use std::{cmp, fmt, io, iter};
 use std::collections::{HashMap, VecDeque};
-use std::{cmp, iter};
 
 use bitcoin::hashes::Hash;
 use bitcoin::{
@@ -11,16 +11,16 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt, TransactionExt};
+use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt, TransactionExt, TxOutExt};
 
-use crate::util::{Decodable, Encodable};
-use crate::{musig, util, RoundVtxo, Vtxo, SignedVtxoRequest, VtxoSpec};
+use crate::error::IncorrectSigningKeyError;
+use crate::{musig, util, SignedVtxoRequest, Vtxo, VtxoPolicy, VtxoRequest};
+use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::tree::{self, Tree};
+use crate::vtxo::{self, GenesisItem, GenesisTransition};
 
 
-/// The witness weight to spend a node transaction.
-//NB this only works in regtest because it grows a few bytes when
-//the CLTV block height scriptnum grows
+/// The upper bound witness weight to spend a node transaction.
 pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
 /// The expiry clause hidden in the node taproot as only script.
@@ -40,25 +40,25 @@ pub fn cosign_taproot(
 }
 
 /// All the information that uniquely specifies a VTXO tree before it has been signed.
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VtxoTreeSpec {
 	pub vtxos: Vec<SignedVtxoRequest>,
-	pub asp_pk: PublicKey,
-	pub asp_cosign_pk: PublicKey,
 	pub expiry_height: BlockHeight,
+	pub asp_pubkey: PublicKey,
 	pub exit_delta: u16,
+	pub asp_cosign_pk: PublicKey,
 }
 
 impl VtxoTreeSpec {
 	pub fn new(
 		vtxos: Vec<SignedVtxoRequest>,
-		asp_pk: PublicKey,
+		asp_pubkey: PublicKey,
 		asp_cosign_pk: PublicKey,
 		expiry_height: BlockHeight,
 		exit_delta: u16,
 	) -> VtxoTreeSpec {
 		assert_ne!(vtxos.len(), 0);
-		VtxoTreeSpec { vtxos, asp_pk, asp_cosign_pk, expiry_height, exit_delta }
+		VtxoTreeSpec { vtxos, asp_pubkey, asp_cosign_pk, expiry_height, exit_delta }
 	}
 
 	pub fn nb_leaves(&self) -> usize {
@@ -83,11 +83,11 @@ impl VtxoTreeSpec {
 	/// This accounts for
 	/// - all vtxos getting their value
 	pub fn total_required_value(&self) -> Amount {
-		self.vtxos.iter().map(|d| d.amount).sum::<Amount>()
+		self.vtxos.iter().map(|d| d.vtxo.amount).sum::<Amount>()
 	}
 
 	pub fn cosign_taproot(&self, agg_pk: XOnlyPublicKey) -> taproot::TaprootSpendInfo {
-		cosign_taproot(agg_pk, self.asp_pk, self.expiry_height)
+		cosign_taproot(agg_pk, self.asp_pubkey, self.expiry_height)
 	}
 
 	/// The cosign pubkey used on the vtxo output of the round tx.
@@ -118,7 +118,7 @@ impl VtxoTreeSpec {
 			lock_time: bitcoin::absolute::LockTime::ZERO,
 			input: vec![TxIn {
 				previous_output: OutPoint::null(), // we will fill this later
-				sequence: Sequence::MAX,
+				sequence: Sequence::ZERO,
 				script_sig: ScriptBuf::new(),
 				witness: Witness::new(),
 			}],
@@ -132,21 +132,13 @@ impl VtxoTreeSpec {
 		}
 	}
 
-	fn leaf_tx(&self, vtxo: &SignedVtxoRequest) -> Transaction {
-		let spec = VtxoSpec {
-			user_pubkey: vtxo.pubkey,
-			asp_pubkey: self.asp_pk,
-			expiry_height: self.expiry_height,
-			exit_delta: self.exit_delta,
-			spk: vtxo.spk,
-			amount: vtxo.amount
+	fn leaf_tx(&self, vtxo: &VtxoRequest) -> Transaction {
+		let txout = TxOut {
+			value: vtxo.amount,
+			script_pubkey: vtxo.policy.script_pubkey(self.asp_pubkey, self.exit_delta),
 		};
 
-		crate::vtxo::create_exit_tx(
-			OutPoint::null(),
-			spec.txout(),
-			None,
-		)
+		vtxo::create_exit_tx(OutPoint::null(), txout, None)
 	}
 
 	/// Calculate all the aggregate cosign pubkeys by aggregating the leaf and asp pubkeys.
@@ -157,7 +149,7 @@ impl VtxoTreeSpec {
 	{
 		Tree::new(self.nb_leaves()).into_iter().map(|node| {
 			musig::combine_keys(
-				node.leaves().map(|i| self.vtxos[i].cosign_pubkey).chain(Some(self.asp_cosign_pk))
+				node.leaves().map(|i| self.vtxos[i].cosign_pubkey).chain([self.asp_cosign_pk])
 			)
 		})
 	}
@@ -171,7 +163,7 @@ impl VtxoTreeSpec {
 		let mut txs = Vec::with_capacity(tree.nb_nodes());
 		for node in tree.iter() {
 			let tx = if node.is_leaf() {
-				self.leaf_tx(&self.vtxos[node.idx()]).clone()
+				self.leaf_tx(&self.vtxos[node.idx()].vtxo).clone()
 			} else {
 				let mut buf = [None; tree::RADIX];
 				for (idx, child) in node.children().enumerate() {
@@ -240,9 +232,6 @@ impl VtxoTreeSpec {
 		UnsignedVtxoTree::new(self, utxo)
 	}
 }
-
-impl Encodable for VtxoTreeSpec {}
-impl Decodable for VtxoTreeSpec {}
 
 /// A VTXO tree ready to be signed.
 ///
@@ -316,11 +305,18 @@ impl UnsignedVtxoTree {
 	pub fn cosign_branch(
 		&self,
 		cosign_agg_nonces: &[MusigAggNonce],
-		request: &SignedVtxoRequest,
-		keypair: &Keypair,
+		leaf_idx: usize,
+		cosign_key: &Keypair,
 		cosign_sec_nonces: Vec<MusigSecNonce>,
-	) -> Option<Vec<MusigPartialSignature>> {
-		let leaf_idx = self.spec.leaf_idx_of(request)?;
+	) -> Result<Vec<MusigPartialSignature>, IncorrectSigningKeyError> {
+		let req = self.spec.vtxos.get(leaf_idx).expect("leaf idx out of bounds");
+		if cosign_key.public_key() != req.cosign_pubkey {
+			return Err(IncorrectSigningKeyError {
+				required: req.cosign_pubkey,
+				provided: cosign_key.public_key(),
+			});
+		}
+
 		let mut nonce_iter = cosign_sec_nonces.into_iter().enumerate();
 		let mut ret = Vec::with_capacity(self.tree.root().level() + 1);
 		for node in self.tree.iter_branch(leaf_idx) {
@@ -343,7 +339,7 @@ impl UnsignedVtxoTree {
 			let sig = musig::partial_sign(
 				cosign_pubkeys,
 				cosign_agg_nonces[node.idx()],
-				&keypair,
+				&cosign_key,
 				sec_nonce,
 				sighash.to_byte_array(),
 				Some(self.spec.cosign_taproot(agg_pk).tap_tweak().to_byte_array()),
@@ -352,7 +348,7 @@ impl UnsignedVtxoTree {
 			ret.push(sig);
 		}
 
-		Some(ret)
+		Ok(ret)
 	}
 
 	/// Generate partial musig signatures for all nodes in the tree.
@@ -371,10 +367,11 @@ impl UnsignedVtxoTree {
 
 		self.tree.iter().zip(cosign_sec_nonces.into_iter()).map(|(node, sec_nonce)| {
 			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
-				.chain(Some(self.spec.asp_cosign_pk));
+				.chain([self.spec.asp_cosign_pk]);
 			let sighash = self.sighashes[node.idx()];
 
 			let agg_pk = self.cosign_agg_pks[node.idx()];
+			debug_assert_eq!(agg_pk, musig::combine_keys(cosign_pubkeys.clone()));
 			musig::partial_sign(
 				cosign_pubkeys,
 				cosign_agg_nonces[node.idx()],
@@ -567,7 +564,7 @@ impl UnsignedVtxoTree {
 }
 
 /// Error returned from cosigning a VTXO tree.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(PartialEq, Eq, thiserror::Error)]
 pub enum CosignSignatureError {
 	#[error("missing cosign signature from pubkey {pk}")]
 	MissingSignature { pk: PublicKey },
@@ -575,6 +572,12 @@ pub enum CosignSignatureError {
 	InvalidSignature { pk: PublicKey },
 	#[error("not enough nonces")]
 	NotEnoughNonces,
+}
+
+impl fmt::Debug for CosignSignatureError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+	    fmt::Display::fmt(self, f)
+	}
 }
 
 impl CosignSignatureError {
@@ -587,7 +590,7 @@ impl CosignSignatureError {
 }
 
 /// All the information needed to uniquely specify a fully signed VTXO tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SignedVtxoTreeSpec {
 	pub spec: VtxoTreeSpec,
 	pub utxo: OutPoint,
@@ -638,14 +641,12 @@ impl SignedVtxoTreeSpec {
 	}
 }
 
-impl Encodable for SignedVtxoTreeSpec {}
-impl Decodable for SignedVtxoTreeSpec {}
-
 /// A fully signed VTXO tree, with all the transaction cached.
 ///
 /// This is useful for cheap extraction of VTXO branches.
 pub struct CachedSignedVtxoTree {
 	pub spec: SignedVtxoTreeSpec,
+	/// All signed txs in this tree, starting with the leaves, towards the root.
 	pub txs: Vec<Transaction>,
 }
 
@@ -673,32 +674,146 @@ impl CachedSignedVtxoTree {
 		&self.txs
 	}
 
+	/// Construct the VTXO at the given leaf index.
+	pub fn build_vtxo(&self, leaf_idx: usize) -> Option<Vtxo> {
+		let req = self.spec.spec.vtxos.get(leaf_idx)?;
+		let genesis = {
+			let mut genesis = Vec::new();
+
+			let mut last_node = None;
+			let tree = Tree::new(self.spec.spec.nb_leaves());
+			for node in tree.iter_branch(leaf_idx) {
+				let transition = GenesisTransition::Cosigned {
+					pubkeys: node.leaves().map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
+						.chain([self.spec.spec.asp_cosign_pk])
+						.collect(),
+					signature: self.spec.cosign_sigs.get(node.idx()).cloned()
+						.expect("enough sigs for all nodes"),
+				};
+				let output_idx = {
+					if let Some(last) = last_node {
+						node.children().position(|child_idx| last == child_idx)
+							.expect("last node should be our child") as u8
+					} else {
+						// we start with the leaf, so this is the exit tx
+						0
+					}
+				};
+				let other_outputs = self.txs.get(node.idx()).expect("we have all txs")
+					.output.iter().enumerate()
+					.filter(|(i, o)| !o.is_p2a_fee_anchor() && *i != output_idx as usize)
+					.map(|(_i, o)| o).cloned().collect();
+				genesis.push(GenesisItem { transition, output_idx, other_outputs });
+				last_node = Some(node.idx());
+			}
+			genesis.reverse();
+			genesis
+		};
+
+		Some(Vtxo {
+			amount: req.vtxo.amount,
+			expiry_height: self.spec.spec.expiry_height,
+			asp_pubkey: self.spec.spec.asp_pubkey,
+			exit_delta: self.spec.spec.exit_delta,
+			anchor_point: self.spec.utxo,
+			genesis: genesis,
+			policy: req.vtxo.policy.clone(),
+			point: {
+				let leaf_tx = self.txs.get(leaf_idx).expect("leaf idx exists");
+				OutPoint::new(leaf_tx.compute_txid(), 0)
+			},
+		})
+	}
+
 	/// Construct all individual vtxos from this round.
 	///
 	/// This call is pretty wasteful.
-	pub fn all_vtxos(&self) -> impl Iterator<Item = Vtxo> + '_ {
-		self.spec.spec.vtxos.iter().enumerate().map(|(idx, req)| {
-			Vtxo::Round(RoundVtxo {
-				spec: VtxoSpec {
-					user_pubkey: req.pubkey,
-					asp_pubkey: self.spec.spec.asp_pk,
-					expiry_height: self.spec.spec.expiry_height,
-					amount: req.amount,
-					exit_delta: self.spec.spec.exit_delta,
-					spk: req.spk,
-				},
-				leaf_idx: idx,
-				exit_branch: self.exit_branch(idx).unwrap().into_iter().cloned().collect(),
-			})
-		})
+	pub fn all_vtxos(&self) -> impl Iterator<Item = Vtxo> + ExactSizeIterator + '_ {
+		(0..self.nb_leaves()).map(|idx| self.build_vtxo(idx).unwrap())
+	}
+}
+
+/// The serialization version of [VtxoTreeSpec].
+const VTXO_TREE_SPEC_VERSION: u8 = 0x01;
+
+impl ProtocolEncoding for VtxoTreeSpec {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		w.emit_u8(VTXO_TREE_SPEC_VERSION)?;
+		w.emit_u32(self.expiry_height)?;
+		self.asp_pubkey.encode(w)?;
+		w.emit_u16(self.exit_delta)?;
+		self.asp_cosign_pk.encode(w)?;
+
+		w.emit_u32(self.vtxos.len() as u32)?;
+		for vtxo in &self.vtxos {
+			vtxo.vtxo.policy.encode(w)?;
+			w.emit_u64(vtxo.vtxo.amount.to_sat())?;
+			vtxo.cosign_pubkey.encode(w)?;
+		}
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, crate::encode::ProtocolDecodingError> {
+		let version = r.read_u8()?;
+		if version != VTXO_TREE_SPEC_VERSION {
+			return Err(ProtocolDecodingError::invalid(format_args!(
+				"invalid VtxoTreeSpec encoding version byte: {version:x}",
+			)));
+		}
+		let expiry_height = r.read_u32()?;
+		let asp_pubkey = PublicKey::decode(r)?;
+		let exit_delta = r.read_u16()?;
+		let asp_cosign_pk = PublicKey::decode(r)?;
+
+		let nb_vtxos = r.read_u32()?;
+		let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
+		for _ in 0..nb_vtxos {
+			let output = VtxoPolicy::decode(r)?;
+			let amount = Amount::from_sat(r.read_u64()?);
+			let cosign_pk = PublicKey::decode(r)?;
+			vtxos.push(SignedVtxoRequest { vtxo: VtxoRequest { policy: output, amount }, cosign_pubkey: cosign_pk });
+		}
+
+		Ok(VtxoTreeSpec { vtxos, expiry_height, asp_pubkey, exit_delta, asp_cosign_pk })
+	}
+}
+
+/// The serialization version of [SignedVtxoTreeSpec].
+const SIGNED_VTXO_TREE_SPEC_VERSION: u8 = 0x01;
+
+impl ProtocolEncoding for SignedVtxoTreeSpec {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		w.emit_u8(SIGNED_VTXO_TREE_SPEC_VERSION)?;
+		self.spec.encode(w)?;
+		self.utxo.encode(w)?;
+		w.emit_u32(self.cosign_sigs.len() as u32)?;
+		for sig in &self.cosign_sigs {
+			sig.encode(w)?;
+		}
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, crate::encode::ProtocolDecodingError> {
+		let version = r.read_u8()?;
+		if version != SIGNED_VTXO_TREE_SPEC_VERSION {
+			return Err(ProtocolDecodingError::invalid(format_args!(
+				"invalid SignedVtxoTreeSpec encoding version byte: {version:x}",
+			)));
+		}
+		let spec = VtxoTreeSpec::decode(r)?;
+		let utxo = OutPoint::decode(r)?;
+		let nb_cosign_sigs = r.read_u32()?;
+		let mut cosign_sigs = Vec::with_capacity(nb_cosign_sigs as usize);
+		for _ in 0..nb_cosign_sigs {
+			cosign_sigs.push(schnorr::Signature::decode(r)?);
+		}
+		Ok(SignedVtxoTreeSpec { spec, utxo, cosign_sigs })
 	}
 }
 
 
 #[cfg(test)]
 mod test {
-	use super::*;
-
 	use std::iter;
 	use std::collections::HashMap;
 	use std::str::FromStr;
@@ -707,7 +822,9 @@ mod test {
 	use bitcoin::secp256k1::{self, rand, Keypair};
 	use rand::SeedableRng;
 
-	use crate::vtxo::VtxoSpkSpec;
+	use crate::encode::test::encoding_roundtrip;
+	use crate::VtxoPolicy;
+	use super::*;
 
 	fn test_tree_amounts(
 		tree: &UnsignedVtxoTree,
@@ -755,10 +872,11 @@ mod test {
 		impl Req {
 			fn to_vtxo(&self) -> SignedVtxoRequest {
 				SignedVtxoRequest {
-					pubkey: self.key.public_key(),
-					amount: self.amount,
+					vtxo: VtxoRequest {
+						amount: self.amount,
+						policy: VtxoPolicy::Pubkey { user_pubkey: self.key.public_key() },
+					},
 					cosign_pubkey: self.cosign_key.public_key(),
-					spk: VtxoSpkSpec::Exit,
 				}
 			}
 		}
@@ -780,6 +898,9 @@ mod test {
 		);
 		assert_eq!(spec.nb_leaves(), nb_leaves);
 		assert_eq!(spec.total_required_value().to_sat(), 2700000);
+		let nb_nodes = spec.nb_nodes();
+
+		encoding_roundtrip(&spec);
 
 		let unsigned = spec.into_unsigned_tree(point);
 
@@ -790,9 +911,9 @@ mod test {
 			unsigned.sighashes.iter().for_each(|h| eng.input(&h[..]));
 			siphash24::Hash::from_engine(eng)
 		};
-		assert_eq!(sighashes_hash.to_string(), "c2bea07e614bda59");
+		assert_eq!(sighashes_hash.to_string(), "44c13179cd19569f");
 
-		let signed = unsigned.into_signed_tree(vec![random_sig; nb_leaves]);
+		let signed = unsigned.into_signed_tree(vec![random_sig; nb_nodes]);
 
 		for l in 0..nb_leaves {
 			let exit = signed.exit_branch(l).unwrap();
@@ -804,6 +925,11 @@ mod test {
 					assert_eq!(next.input[0].previous_output.txid, cur.compute_txid(), "{}", i);
 				}
 			}
+		}
+
+		let cached = signed.into_cached_tree();
+		for vtxo in cached.all_vtxos() {
+			encoding_roundtrip(&vtxo);
 		}
 	}
 }

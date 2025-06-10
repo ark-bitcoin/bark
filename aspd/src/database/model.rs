@@ -13,12 +13,11 @@ use chrono::{DateTime, Utc};
 use lightning_invoice::Bolt11Invoice;
 use tokio_postgres::Row;
 
-use ark::{Vtxo, VtxoId};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::musig::{MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 use ark::musig::secpm::ffi::MUSIG_SECNONCE_LEN;
 use ark::rounds::RoundId;
 use ark::tree::signed::SignedVtxoTreeSpec;
-use ark::util::Decodable;
 
 use super::ClnNodeId;
 

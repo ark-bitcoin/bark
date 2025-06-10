@@ -208,6 +208,6 @@ impl ProgressContext<'_> {
 
 	pub fn vtxo_recipient(&self) -> anyhow::Result<Address, ExitError> {
 		let params = Params::new(self.onchain.wallet.network());
-		Ok(Address::from_script(&self.vtxo.spec().vtxo_spk(), params)?)
+		Ok(Address::from_script(&self.vtxo.output_script_pubkey(), params)?)
 	}
 }

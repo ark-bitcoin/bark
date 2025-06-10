@@ -29,7 +29,7 @@ pub struct Exit {
 
 impl Exit {
 	pub (crate) async fn new(
-		persister: Arc<dyn BarkPersister>, 
+		persister: Arc<dyn BarkPersister>,
 		chain_source: ChainSource,
 		onchain: &onchain::Wallet,
 	) -> anyhow::Result<Exit> {

@@ -64,20 +64,20 @@ fn finalize_forfeit_tx(
 		]);
 		let sec_nonce = ff.sec_nonces.get(conn_idx).expect("sec nonce index").to_sec_nonce();
 		let (part, sig) = musig::partial_sign(
-			[vtxo.spec().user_pubkey, vtxo.asp_pubkey()],
+			[vtxo.user_pubkey(), vtxo.asp_pubkey()],
 			agg_nonce,
 			&asp_key,
 			sec_nonce,
 			sighash.to_byte_array(),
-			Some(vtxo.spec().vtxo_taptweak().to_byte_array()),
+			Some(vtxo.output_taproot().tap_tweak().to_byte_array()),
 			Some(&[&ff.user_part_sigs.get(conn_idx).expect("user part sig index")]),
 		);
 
 		// Validate our partial sig
 		debug_assert!({
 			let (key_agg, _) = musig::tweaked_key_agg(
-				[vtxo.spec().user_pubkey, vtxo.asp_pubkey()],
-				vtxo.spec().vtxo_taptweak().to_byte_array(),
+				[vtxo.user_pubkey(), vtxo.asp_pubkey()],
+				vtxo.output_taproot().tap_tweak().to_byte_array(),
 			);
 			let session = musig::MusigSession::new(
 				&musig::SECP,
@@ -333,8 +333,9 @@ impl Process {
 
 	async fn register_vtxo(&mut self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let vtxo_id = vtxo.id();
-		let exit_tx = vtxo.vtxo_tx();
-		self.exit_txs.push((self.txindex.register_with_bitcoind(exit_tx, &self.bitcoind).await?, vtxo_id));
+		let exit_tx = vtxo.transactions().last().unwrap().tx;
+		let indexed_tx = self.txindex.register_with_bitcoind(exit_tx, &self.bitcoind).await?;
+		self.exit_txs.push((indexed_tx, vtxo_id));
 		Ok(())
 	}
 
