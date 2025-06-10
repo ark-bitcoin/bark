@@ -1197,9 +1197,7 @@ async fn reject_subdust_arkoor_cosign() {
 	let bark2 = ctx.new_bark("bark2", &aspd).await;
 
 	let err = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000), true).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"bad user input: VTXO amount must be at least 0.00000330 BTC, requested 0.00000329 BTC",
-	), "err: {err}");
+	assert!(err.to_string().contains("arkoor output amounts cannot be below the p2tr dust threshold"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1231,7 +1229,7 @@ async fn reject_subdust_bolt11_payment() {
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
 	let err = bark.try_send_bolt11(invoice, Some(sat(100_000))).await.unwrap_err();
 	assert!(err.to_string().contains(
-		"bad user input: invalid arkoor request: arkoor output amounts cannot be below the p2tr dust threshold",
+		"arkoor output amounts cannot be below the p2tr dust threshold",
 	), "err: {err}");
 }
 
