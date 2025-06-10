@@ -7,6 +7,7 @@ use bitcoin::{psbt, sighash, taproot, Transaction, TxOut, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 
 use ark::Vtxo;
+use ark::error::IncorrectSigningKeyError;
 
 const PROP_KEY_PREFIX: &'static [u8] = "bark".as_bytes();
 
@@ -49,12 +50,19 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		prevouts: &sighash::Prevouts<impl Borrow<TxOut>>,
 		input_idx: usize,
 		vtxo_key: &Keypair,
-	) {
+	) -> Result<(), IncorrectSigningKeyError> {
 		let claim = if let Some(c) = self.get_exit_claim_input() {
 			c
 		} else {
-			return;
+			return Ok(());
 		};
+
+		if vtxo_key.public_key() != claim.user_pubkey() {
+			return Err(IncorrectSigningKeyError {
+				required: claim.user_pubkey(),
+				provided: vtxo_key.public_key(),
+			});
+		}
 
 		// Now we need to sign for this.
 		let exit_script = claim.spec().exit_clause().expect("a VTXO without exit clause should not be exited");
@@ -66,7 +74,6 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 			input_idx, prevouts, leaf_hash, sighash::TapSighashType::Default,
 		).expect("all prevouts provided");
 
-		assert_eq!(vtxo_key.public_key(), claim.spec().user_pubkey);
 		let sig = secp.sign_schnorr(&sighash.into(), &vtxo_key);
 
 		let cb = claim.spec().vtxo_taproot()
@@ -79,7 +86,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 
 		debug_assert_eq!(wit.size() as u64, claim.claim_satisfaction_weight().to_wu());
 		self.borrow_mut().final_script_witness = Some(wit);
+		Ok(())
 	}
 }
-
 impl PsbtInputExt for psbt::Input {}

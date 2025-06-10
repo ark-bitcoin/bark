@@ -12,6 +12,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
+use crate::error::IncorrectSigningKeyError;
 use crate::lightning::revocation_payment_request;
 use crate::vtxo::VtxoSpkSpec;
 use crate::{musig, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
@@ -222,19 +223,25 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 		&self,
 		user_sec_nonce: musig::MusigSecNonce,
 		user_pub_nonce: musig::MusigPubNonce,
-		user_keypair: &Keypair,
+		user_key: &Keypair,
 		cosign_resp: &ArkoorCosignResponse,
-	) -> Vec<Vtxo> {
+	) -> Result<Vec<Vtxo>, IncorrectSigningKeyError> {
+		if user_key.public_key() != self.input.user_pubkey() {
+			return Err(IncorrectSigningKeyError {
+				required: self.input.user_pubkey(),
+				provided: user_key.public_key(),
+			});
+		}
+
 		let outputs = self.output_specs();
 		let tx = unsigned_arkoor_tx(&self.input, &outputs);
 		let sighash = arkoor_sighash(&self.input, &tx);
 
-		assert_eq!(user_keypair.public_key(), self.input.spec().user_pubkey);
 		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &cosign_resp.pub_nonce]);
 		let (_part_sig, final_sig) = musig::partial_sign(
 			[self.input.spec().user_pubkey, self.input.asp_pubkey()],
 			agg_nonce,
-			user_keypair,
+			user_key,
 			user_sec_nonce,
 			sighash.to_byte_array(),
 			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
@@ -251,11 +258,11 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 			self.input.encode().as_hex(), &outputs,
 		);
 
-		build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid()).into_iter()
+		Ok(build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid()).into_iter()
 			.map(|mut v| {
 				v.signature = Some(final_sig.clone());
 				v.into()
-			}).collect()
+			}).collect())
 	}
 }
 
@@ -281,7 +288,7 @@ pub struct ArkoorPackageBuilder<'a, T: Clone> {
 	spending_tx_by_input: HashMap<VtxoId, Transaction>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ArkoorPackageError {
 	#[error("Payment has non-null change amount but no change pubkey provided")]
 	MissingChangePk,
@@ -299,6 +306,8 @@ pub enum ArkoorPackageError {
 	ArkoorError(ArkoorError),
 	#[error("Too many outputs")]
 	TooManyOutputs,
+	#[error("incorrect signing key provided")]
+	Signing(#[from] IncorrectSigningKeyError),
 }
 
 impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
@@ -416,7 +425,7 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 				*arkoor.user_nonce,
 				&keypairs[idx],
 				&cosign,
-			);
+			)?;
 
 			// The first one is of the recipient, we will post it to their mailbox.
 			let mut vtxo_iter = vtxos.into_iter();

@@ -6,6 +6,7 @@ pub extern crate bitcoin;
 
 pub mod arkoor;
 pub mod connectors;
+pub mod error;
 pub mod forfeit;
 pub mod lightning;
 pub mod musig;

@@ -227,7 +227,7 @@ impl Wallet {
 					&prevouts,
 					i,
 					&keypair
-				);
+				)?;
 			}
 		}
 

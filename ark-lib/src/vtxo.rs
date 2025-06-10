@@ -318,6 +318,10 @@ impl Vtxo {
 		self.spec().amount
 	}
 
+	pub fn user_pubkey(&self) -> PublicKey {
+		self.spec().user_pubkey
+	}
+
 	pub fn expiry_height(&self) -> BlockHeight {
 		self.spec().expiry_height
 	}

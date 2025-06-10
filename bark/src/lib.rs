@@ -669,7 +669,7 @@ impl Wallet {
 		}
 
 		// Store vtxo first before we actually make the on-chain tx.
-		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair);
+		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
 		self.db.register_movement(MovementArgs {
 			spends: &[],
@@ -1264,7 +1264,8 @@ impl Wallet {
 			let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
 				.into_inner().try_into().context("invalid server cosign response")?;
 
-			let (vtxos, _) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
+			let (vtxos, change) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
+			assert!(change.is_none(), "unexpected change: {:?}", change);
 
 			self.db.register_movement(MovementArgs {
 				spends: &inputs.iter().collect::<Vec<_>>(),

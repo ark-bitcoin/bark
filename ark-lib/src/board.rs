@@ -20,6 +20,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
 
+use crate::error::IncorrectSigningKeyError;
 use crate::{musig, Vtxo, VtxoId};
 use crate::util::{self, SECP};
 use crate::vtxo::{self, exit_taproot, VtxoSpec, VtxoSpkSpec};
@@ -319,7 +320,14 @@ impl BoardBuilder<state::CanBuild> {
 		mut self,
 		server_cosign: &BoardCosignResponse,
 		user_key: &Keypair,
-	) -> Vtxo {
+	) -> Result<Vtxo, IncorrectSigningKeyError> {
+		if user_key.public_key() != self.user_pubkey {
+			return Err(IncorrectSigningKeyError {
+				required: self.user_pubkey,
+				provided: user_key.public_key(),
+			});
+		}
+
 		let (sighash, taproot) = self.exit_tx_sighash_data();
 
 		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &server_cosign.pub_nonce]);
@@ -339,7 +347,7 @@ impl BoardBuilder<state::CanBuild> {
 			&taproot.output_key().to_x_only_public_key(),
 		).is_ok(), "invalid board exit tx signature produced");
 
-		Vtxo::Board(BoardVtxo {
+		Ok(Vtxo::Board(BoardVtxo {
 			spec: VtxoSpec {
 				user_pubkey: self.user_pubkey,
 				expiry_height: self.expiry_height,
@@ -350,7 +358,7 @@ impl BoardBuilder<state::CanBuild> {
 			},
 			onchain_output: self.utxo.expect("state invariant"),
 			exit_tx_signature: final_sig,
-		})
+		}))
 	}
 }
 
