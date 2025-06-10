@@ -23,6 +23,21 @@ use crate::tree::{self, Tree};
 //the CLTV block height scriptnum grows
 pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
+/// The expiry clause hidden in the node taproot as only script.
+pub fn expiry_clause(asp_pubkey: PublicKey, expiry_height: BlockHeight) -> ScriptBuf {
+	let pk = asp_pubkey.x_only_public_key().0;
+	util::timelock_sign(expiry_height, pk)
+}
+
+pub fn cosign_taproot(
+	agg_pk: XOnlyPublicKey,
+	asp_pubkey: PublicKey,
+	expiry_height: BlockHeight,
+) -> taproot::TaprootSpendInfo {
+	taproot::TaprootBuilder::new()
+		.add_leaf(0, expiry_clause(asp_pubkey, expiry_height)).unwrap()
+		.finalize(&util::SECP, agg_pk).unwrap()
+}
 
 /// All the information that uniquely specifies a VTXO tree before it has been signed.
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -71,28 +86,12 @@ impl VtxoTreeSpec {
 		self.vtxos.iter().map(|d| d.amount).sum::<Amount>()
 	}
 
-	/// The expiry clause hidden in the node taproot as only script.
-	fn expiry_clause(&self) -> ScriptBuf {
-		let pk = self.asp_pk.x_only_public_key().0;
-		util::timelock_sign(self.expiry_height, pk)
-	}
-
 	pub fn cosign_taproot(&self, agg_pk: XOnlyPublicKey) -> taproot::TaprootSpendInfo {
-		taproot::TaprootBuilder::new()
-			.add_leaf(0, self.expiry_clause()).unwrap()
-			.finalize(&util::SECP, agg_pk).unwrap()
-	}
-
-	pub fn cosign_taptweak(&self, agg_pk: XOnlyPublicKey) -> taproot::TapTweakHash {
-		self.cosign_taproot(agg_pk).tap_tweak()
-	}
-
-	pub fn cosign_spk(&self, agg_pk: XOnlyPublicKey) -> ScriptBuf {
-		self.cosign_taproot(agg_pk).script_pubkey()
+		cosign_taproot(agg_pk, self.asp_pk, self.expiry_height)
 	}
 
 	/// The cosign pubkey used on the vtxo output of the round tx.
-	pub fn round_tx_cosign_pk(&self) -> XOnlyPublicKey {
+	pub fn round_tx_cosign_pubkey(&self) -> XOnlyPublicKey {
 		let keys = self.vtxos.iter()
 			.map(|v| v.cosign_pubkey)
 			.chain(Some(self.asp_cosign_pk));
@@ -100,15 +99,15 @@ impl VtxoTreeSpec {
 	}
 
 	/// The scriptPubkey used on the vtxo output of the round tx.
-	pub fn round_tx_spk(&self) -> ScriptBuf {
-		let agg_pk = self.round_tx_cosign_pk();
+	pub fn round_tx_script_pubkey(&self) -> ScriptBuf {
+		let agg_pk = self.round_tx_cosign_pubkey();
 		self.cosign_taproot(agg_pk).script_pubkey()
 	}
 
 	/// The vtxo output of the round tx.
 	pub fn round_tx_txout(&self) -> TxOut {
 		TxOut {
-			script_pubkey: self.round_tx_spk(),
+			script_pubkey: self.round_tx_script_pubkey(),
 			value: self.total_required_value(),
 		}
 	}
@@ -340,13 +339,14 @@ impl UnsignedVtxoTree {
 				.chain(Some(self.spec.asp_cosign_pk));
 			let sighash = self.sighashes[node.idx()];
 
+			let agg_pk = self.cosign_agg_pks[node.idx()];
 			let sig = musig::partial_sign(
 				cosign_pubkeys,
 				cosign_agg_nonces[node.idx()],
 				&keypair,
 				sec_nonce,
 				sighash.to_byte_array(),
-				Some(self.spec.cosign_taptweak(self.cosign_agg_pks[node.idx()]).to_byte_array()),
+				Some(self.spec.cosign_taproot(agg_pk).tap_tweak().to_byte_array()),
 				None,
 			).0;
 			ret.push(sig);
@@ -374,13 +374,14 @@ impl UnsignedVtxoTree {
 				.chain(Some(self.spec.asp_cosign_pk));
 			let sighash = self.sighashes[node.idx()];
 
+			let agg_pk = self.cosign_agg_pks[node.idx()];
 			musig::partial_sign(
 				cosign_pubkeys,
 				cosign_agg_nonces[node.idx()],
 				&keypair,
 				sec_nonce,
 				sighash.to_byte_array(),
-				Some(self.spec.cosign_taptweak(self.cosign_agg_pks[node.idx()]).to_byte_array()),
+				Some(self.spec.cosign_taproot(agg_pk).tap_tweak().to_byte_array()),
 				None,
 			).0
 		}).collect()
@@ -399,7 +400,7 @@ impl UnsignedVtxoTree {
 			.chain(Some(self.spec.asp_cosign_pk));
 		let sighash = self.sighashes[node.idx()];
 
-		let taptweak = self.spec.cosign_taptweak(self.cosign_agg_pks[node.idx()]);
+		let taptweak = self.spec.cosign_taproot(self.cosign_agg_pks[node.idx()]).tap_tweak();
 		let key_agg = musig::tweaked_key_agg(cosign_pubkeys, taptweak.to_byte_array()).0;
 		let session = musig::MusigSession::new(
 			&musig::SECP,
@@ -520,11 +521,12 @@ impl UnsignedVtxoTree {
 			cosign_pks.push(self.spec.asp_cosign_pk);
 			part_sigs.push(&asp_sig);
 
+			let agg_pk = self.cosign_agg_pks[node.idx()];
 			Ok(musig::combine_partial_signatures(
 				cosign_pks,
 				*cosign_agg_nonces.get(node.idx()).ok_or(CosignSignatureError::NotEnoughNonces)?,
 				self.sighashes[node.idx()].to_byte_array(),
-				Some(self.spec.cosign_taptweak(self.cosign_agg_pks[node.idx()]).to_byte_array()),
+				Some(self.spec.cosign_taproot(agg_pk).tap_tweak().to_byte_array()),
 				&part_sigs
 			))
 		}).collect()

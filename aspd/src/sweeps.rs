@@ -41,6 +41,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::board::BoardVtxo;
+use ark::musig;
+use ark::tree::signed::cosign_taproot;
 use ark::vtxo::VtxoSpec;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize_hex;
@@ -114,9 +116,8 @@ impl BoardSweepInput {
 	}
 
 	fn psbt(&self) -> psbt::Input {
-		let taproot = ark::board::funding_taproot(
-			self.vtxo_spec.user_pubkey, self.vtxo_spec.expiry_height, self.vtxo_spec.asp_pubkey,
-		);
+		let combined_pubkey = musig::combine_keys([self.vtxo_spec.user_pubkey, self.vtxo_spec.asp_pubkey]);
+		let taproot = cosign_taproot(combined_pubkey, self.vtxo_spec.asp_pubkey, self.vtxo_spec.expiry_height);
 		let board_txout = TxOut {
 			value: self.vtxo_spec.amount,
 			script_pubkey: taproot.script_pubkey(),
@@ -161,7 +162,7 @@ impl<'a> RoundSweepInput<'a> {
 	}
 
 	fn psbt(&self) -> psbt::Input {
-		let round_cosign_pk = self.round.round.signed_tree.spec.round_tx_cosign_pk();
+		let round_cosign_pk = self.round.round.signed_tree.spec.round_tx_cosign_pubkey();
 		let taproot = self.round.round.signed_tree.spec.cosign_taproot(round_cosign_pk);
 		let mut ret = psbt::Input{
 			witness_utxo: Some(self.utxo.clone()),
@@ -354,7 +355,7 @@ impl<'a> SweepBuilder<'a> {
 			} else {
 				trace!("Sweeping round tx vtxo output {}", point);
 				let utxo = round.round.tx.output[0].clone();
-				let agg_pk = round.round.signed_tree.spec.round_tx_cosign_pk();
+				let agg_pk = round.round.signed_tree.spec.round_tx_cosign_pubkey();
 				self.add_vtxo_output(round, point, utxo, agg_pk);
 				return Ok(None);
 			}

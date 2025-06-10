@@ -15,14 +15,15 @@ use std::marker::PhantomData;
 
 use bitcoin::sighash::{self, SighashCache};
 use bitcoin::taproot::TaprootSpendInfo;
-use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
+use bitcoin::{Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
 
 use crate::error::IncorrectSigningKeyError;
+use crate::tree::signed::cosign_taproot;
 use crate::{musig, Vtxo, VtxoId};
-use crate::util::{self, SECP};
+use crate::util::SECP;
 use crate::vtxo::{self, exit_taproot, VtxoSpec, VtxoSpkSpec};
 
 use self::state::BuilderState;
@@ -30,30 +31,6 @@ use self::state::BuilderState;
 
 /// The output index of the board vtxo in the board tx.
 pub const BOARD_FUNDING_TX_VTXO_VOUT: u32 = 0;
-
-
-/// The taproot info for the output of the board funding tx (i.e. the onchain tx
-/// made by the user).
-pub fn funding_taproot(
-	user_pubkey: PublicKey,
-	expiry_height: BlockHeight,
-	asp_pubkey: PublicKey,
-) -> taproot::TaprootSpendInfo {
-	let expiry = util::timelock_sign(expiry_height, asp_pubkey.x_only_public_key().0);
-	let combined_pubkey = musig::combine_keys([user_pubkey, asp_pubkey]);
-	let ret = taproot::TaprootBuilder::new()
-		.add_leaf(0, expiry).unwrap()
-		.finalize(&util::SECP, combined_pubkey)
-		.unwrap();
-	debug_assert_eq!(
-		ret.output_key().to_x_only_public_key(),
-		musig::tweaked_key_agg(
-			[user_pubkey, asp_pubkey], ret.tap_tweak().to_byte_array(),
-		).1.x_only_public_key().0,
-		"unexpected output key",
-	);
-	ret
-}
 
 fn exit_tx_sighash(
 	prev_utxo: &TxOut,
@@ -136,7 +113,8 @@ pub struct BoardBuilder<S: BuilderState> {
 impl<S: BuilderState> BoardBuilder<S> {
 	/// The scriptPubkey to send the board funds to.
 	pub fn funding_script_pubkey(&self) -> ScriptBuf {
-		funding_taproot(self.user_pubkey, self.expiry_height, self.asp_pubkey).script_pubkey()
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
+		cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height).script_pubkey()
 	}
 }
 
@@ -180,7 +158,8 @@ impl BoardBuilder<state::Preparing> {
 impl BoardBuilder<state::CanGenerateNonces> {
 	/// Generate user nonces.
 	pub fn generate_user_nonces(self) -> BoardBuilder<state::CanBuild> {
-		let funding_taproot = funding_taproot(self.user_pubkey, self.expiry_height, self.asp_pubkey);
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
+		let funding_taproot = cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
 			script_pubkey: funding_taproot.script_pubkey(),
 			value: self.amount,
@@ -228,9 +207,8 @@ impl<S: state::CanSign> BoardBuilder<S> {
 
 	/// The signature hash to sign the exit tx and the taproot info used to calcualte it.
 	fn exit_tx_sighash_data(&self) -> (TapSighash, TaprootSpendInfo) {
-		let funding_taproot = funding_taproot(
-			self.user_pubkey, self.expiry_height, self.asp_pubkey,
-		);
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
+		let funding_taproot = cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
 			value: self.amount,
 			script_pubkey: funding_taproot.script_pubkey(),
@@ -416,8 +394,9 @@ impl BoardVtxo {
 				"non-existing point {} in tx {}", self.onchain_output, self.onchain_output.txid,
 			)));
 		}
-		let funding_spk = funding_taproot(
-			self.spec.user_pubkey, self.spec.expiry_height, self.spec.asp_pubkey,
+		let combined_pubkey = musig::combine_keys([self.spec.user_pubkey, self.spec.asp_pubkey]);
+		let funding_spk = cosign_taproot(
+			combined_pubkey, self.spec.asp_pubkey, self.spec.expiry_height,
 		).script_pubkey();
 		if funding_tx.output[output_idx].script_pubkey != funding_spk {
 			return Err(BoardFundingTxValidationError(format!(

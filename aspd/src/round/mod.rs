@@ -548,7 +548,7 @@ impl CollectingPayments {
 			b.current_height(tip);
 			b.unspendable(unspendable);
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
-			b.add_recipient(vtxos_spec.round_tx_spk(), vtxos_spec.total_required_value());
+			b.add_recipient(vtxos_spec.round_tx_script_pubkey(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
 			for offb in &self.all_offboards {
 				b.add_recipient(offb.script_pubkey.clone(), offb.amount);
