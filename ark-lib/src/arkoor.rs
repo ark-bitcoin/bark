@@ -135,6 +135,7 @@ pub struct ArkoorCosignResponse {
 ///   the signed resulting VTXOs
 pub struct ArkoorBuilder<'a, T: Clone> {
 	pub input: &'a Vtxo,
+	pub user_nonce: &'a musig::MusigPubNonce,
 	pub outputs: Cow<'a, [T]>,
 }
 
@@ -142,6 +143,7 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 	/// Construct a generic arkoor builder for the given input and outputs.
 	pub fn new(
 		input: &'a Vtxo,
+		user_nonce: &'a musig::MusigPubNonce,
 		outputs: impl Into<Cow<'a, [T]>>,
 	) -> Result<Self, ArkoorError> {
 		let outputs = outputs.into();
@@ -162,6 +164,7 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 
 		Ok(Self {
 			input,
+			user_nonce,
 			outputs,
 		})
 	}
@@ -191,15 +194,11 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 	}
 
 	/// Used by the Ark server to cosign the arkoor request.
-	pub fn server_cosign(
-		&self,
-		keypair: &Keypair,
-		user_nonce: musig::MusigPubNonce,
-	) -> ArkoorCosignResponse {
+	pub fn server_cosign(&self, keypair: &Keypair) -> ArkoorCosignResponse {
 		let (pub_nonce, partial_signature) = musig::deterministic_partial_sign(
 			keypair,
 			[self.input.spec().user_pubkey],
-			&[&user_nonce],
+			&[&self.user_nonce],
 			self.sighash().to_byte_array(),
 			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
 		);
@@ -267,6 +266,7 @@ impl<'a> ArkoorBuilder<'a, PaymentRequest> {
 		user_pubkey: PublicKey,
 		payment_amount: Amount,
 		htlc_expiry: u32,
+		user_nonce: &'a musig::MusigPubNonce,
 	) -> Result<ArkoorBuilder<'a, PaymentRequest>, ArkoorError> {
 		let (htlc_amount, change_amount) = {
 			let required = payment_amount;
@@ -301,16 +301,18 @@ impl<'a> ArkoorBuilder<'a, PaymentRequest> {
 		});
 
 		Ok(ArkoorBuilder::new(
-			&input,
+			input,
+			user_nonce,
 			[htlc_output].into_iter().chain(change_output).collect::<Vec<_>>(),
 		)?)
 	}
 
 	/// Construct a builder to start a lightning payment recovation.
 	pub fn new_lightning_revocation(
-		htlc_vtxo: &Vtxo,
-	) -> Result<ArkoorBuilder<'_, PaymentRequest>, ArkoorError> {
-		ArkoorBuilder::new(&htlc_vtxo, vec![revocation_payment_request(&htlc_vtxo)])
+		htlc_vtxo: &'a Vtxo,
+		user_nonce: &'a musig::MusigPubNonce,
+	) -> Result<ArkoorBuilder<'a, PaymentRequest>, ArkoorError> {
+		ArkoorBuilder::new(htlc_vtxo, user_nonce, vec![revocation_payment_request(&htlc_vtxo)])
 	}
 }
 

@@ -552,7 +552,7 @@ impl Server {
 
 		self.validate_board_inputs(&[input]).context("invalid board inputs")?;
 
-		let builder = ArkoorBuilder::new(&input, outputs)
+		let builder = ArkoorBuilder::new(&input, &user_nonce, outputs)
 			.badarg("invalid arkoor request")?;
 
 		let txid = builder.unsigned_transaction().compute_txid();
@@ -567,7 +567,7 @@ impl Server {
 			},
 			Ok(None) => {
 				info!("Cosigning OOR tx {} with input: {:?}", txid, input.id());
-				Ok(builder.server_cosign(&self.asp_key, user_nonce))
+				Ok(builder.server_cosign(&self.asp_key))
 			},
 			Err(e) => Err(e),
 		};
@@ -617,6 +617,7 @@ impl Server {
 			user_pk,
 			amount,
 			expiry,
+			&user_nonce,
 		).badarg("invalid arkoor request")?;
 		trace!("ArkoorBuilder::new_lightning, input={}, outputs={:?}",
 			input_vtxo.encode().as_hex(), builder.output_specs(),
@@ -633,11 +634,7 @@ impl Server {
 			Ok(None) => {
 				info!("Cosigning HTLC tx {} with input: {:?}", txid, input_id);
 				// let's sign the tx
-				let cosign_resp = builder.server_cosign(
-					&self.asp_key,
-					user_nonce,
-				);
-				Ok(cosign_resp)
+				Ok(builder.server_cosign(&self.asp_key))
 			},
 			Err(e) => Err(e),
 		}

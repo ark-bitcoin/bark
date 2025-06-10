@@ -1063,19 +1063,19 @@ impl Wallet {
 		};
 		let outputs = [output.clone()].into_iter().chain(change).collect::<Vec<_>>();
 
-		let builder = ArkoorBuilder::new(&input, &outputs)
+		let keypair = {
+			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
+			self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+		};
+		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+
+		let builder = ArkoorBuilder::new(&input, &pub_nonce, &outputs)
 			.context("arkoor builder error")?;
 
 		// it's a bit fragile, but if there is a second output, it's our change
 		if let Some(o) = builder.outputs.get(1) {
 			info!("Added change VTXO of {}", o.amount);
 		}
-
-		let keypair = {
-			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-			self.vtxo_seed.derive_keychain(keychain, keypair_idx)
-		};
-		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
 		let req = protos::ArkoorCosignRequest {
 			input_id: builder.input.id().to_bytes().to_vec(),
@@ -1189,6 +1189,7 @@ impl Wallet {
 			change_keypair.public_key(),
 			amount,
 			htlc_expiry,
+			&pub_nonce,
 		)?;
 
 		let req = protos::Bolt11PaymentRequest {
@@ -1252,7 +1253,7 @@ impl Wallet {
 			let cosign_resp = asp.client.revoke_bolt11_payment(req).await?.into_inner()
 				.try_into().context("invalid server arkoor cosign response")?;
 
-			let recovation_builder = ArkoorBuilder::new_lightning_revocation(&htlc_vtxo)
+			let recovation_builder = ArkoorBuilder::new_lightning_revocation(&htlc_vtxo, &pub_nonce)
 				.context("arkoor builder error")?;
 			let vtxos = recovation_builder.build_vtxos(
 				sec_nonce,
@@ -1378,9 +1379,9 @@ impl Wallet {
 		};
 
 		let pay_reqs = [&pay_req]; // appease borrowck
-		let builder = ArkoorBuilder::new(&htlc_vtxo, &pay_reqs)
-			.context("arkoor builder error")?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+		let builder = ArkoorBuilder::new(&htlc_vtxo, &pub_nonce, &pay_reqs)
+			.context("arkoor builder error")?;
 
 		let req = protos::ClaimBolt11OnboardRequest {
 			input_id: htlc_vtxo.id().to_bytes().to_vec(),
