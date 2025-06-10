@@ -451,6 +451,7 @@ impl TestContext {
 		if now.elapsed() < MIN_WAIT {
 			tokio::time::sleep(MIN_WAIT - now.elapsed()).await;
 		}
+		info!("New chain tip: {}", self.bitcoind().get_block_count().await);
 	}
 
 	/// Generated a block using the central bitcoind without waiting for propagation

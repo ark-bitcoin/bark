@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bitcoin::Amount;
 use cln_rpc as rpc;
 
-use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
+use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, util::FutureExt, TestContext};
 use bark_json::VtxoType;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use log::{info, trace};
@@ -192,27 +192,31 @@ async fn bark_pay_ln_fails() {
 	// The payment must fail
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	let aspd = ctx.new_aspd("aspd", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark = ctx.new_bark_with_funds("bark", &aspd, onchain_amount).await;
 
 	// Board funds into the Ark
-	bark_1.board(board_amount).await;
+	bark.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	let board_vtxo = bark.vtxos().await.into_iter().next().unwrap().id;
 
 	// Create a payable invoice
-	let invoice_amount = btc(1);
+	let invoice_amount = btc(0.5);
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
-	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+	assert_eq!(bark.offchain_balance().await, board_amount);
+	bark.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
 
-	let vtxos = bark_1.vtxos().await;
-	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
+	let vtxos = bark.vtxos().await;
+	assert!(!vtxos.iter().any(|v| v.id == board_vtxo), "board vtxo not spent");
+	assert_eq!(vtxos.len(), 2,
+		"user should get 2 VTXOs, change and revocation one, got: {:?}", vtxos,
+	);
 	assert!(
 		vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == (board_amount - invoice_amount)),
 		"user should get a change VTXO of 1btc");
@@ -390,28 +394,29 @@ async fn bark_can_onboard_from_lightning() {
 	lightningd_1.wait_for_gossip(1).await;
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+	let aspd = ctx.new_aspd_with_funds("aspd", Some(&lightningd_2), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to onboard
-	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd_1, btc(3)).await);
-	bark_1.board(btc(2)).await;
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, btc(3)).await);
+	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let invoice_info = bark_1.bolt11_invoice(btc(1)).await;
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
-	let cloned = bark_1.clone();
+	let cloned = bark.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
 		cloned.bolt11_onboard(cloned_invoice_info.invoice).await
 	});
-	lightningd_1.pay_bolt11(invoice_info.invoice).await;
+	lightningd_1.pay_bolt11(invoice_info.invoice).wait(30_000).await;
 	res1.await.unwrap();
 
-	let vtxos = bark_1.vtxos().await;
+	let vtxos = bark.vtxos().await;
 	assert!(vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == btc(1)), "should have received lightning amount");
 	assert!(vtxos.iter().any(|v| v.vtxo_type == VtxoType::Arkoor && v.amount == sat(199999650)), "should have fees change");
 
-	let [ln_onboard_mvt, fee_split_mvt, board_mvt] = bark_1.list_movements().await.try_into().expect("should have 3 movements");
+	let [ln_onboard_mvt, fee_split_mvt, board_mvt] = bark.list_movements().await
+		.try_into().expect("should have 3 movements");
 	assert!(
 		board_mvt.spends.is_empty() &&
 		board_mvt.fees == Amount::ZERO &&
@@ -434,5 +439,5 @@ async fn bark_can_onboard_from_lightning() {
 		board_mvt.recipients.is_empty()
 	);
 
-	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
+	assert_eq!(bark.offchain_balance().await, sat(299999650));
 }

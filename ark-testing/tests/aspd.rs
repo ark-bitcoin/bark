@@ -319,20 +319,22 @@ async fn sweep_vtxos() {
 	ctx.generate_blocks(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(147_520), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
-	assert_eq!(2, sweeps.len());
+	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "board");
 	assert_eq!(sweeps[1].sweep_type, "board");
+	assert_eq!(sat(147_520), surplus);
 
 	// now we swept both board vtxos, let's sweep the round we created above
 	ctx.generate_blocks(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(149_650), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
-	assert_eq!(1, sweeps.len());
+	assert_eq!(1, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "vtxo");
+	assert_eq!(sat(149_650), surplus);
 
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another board
@@ -341,11 +343,12 @@ async fn sweep_vtxos() {
 
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(101_255), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
-	assert_eq!(2, sweeps.len());
+	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "connector");
 	assert_eq!(sweeps[1].sweep_type, "board");
+	assert_eq!(sat(101_255), surplus);
 
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
@@ -1108,18 +1111,9 @@ async fn reject_subdust_vtxo_request() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			Ok(self.upstream().submit_payment(protos::SubmitPaymentRequest {
-				input_vtxos: req.input_vtxos,
-				vtxo_requests: vec![protos::VtxoRequest {
-					amount: P2TR_DUST_SAT - 1,
-					vtxo_public_key: req.vtxo_requests[0].vtxo_public_key.clone(),
-					cosign_pubkey: req.vtxo_requests[0].cosign_pubkey.clone(),
-					public_nonces: req.vtxo_requests[0].public_nonces.clone(),
-					vtxo_spk: req.vtxo_requests[0].vtxo_spk.clone(),
-				}],
-				offboard_requests: req.offboard_requests,
-			}).await?.into_inner())
+		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			req.vtxo_requests.get_mut(0).unwrap().amount = P2TR_DUST_SAT - 1;
+			Ok(self.upstream().submit_payment(req).await?.into_inner())
 		}
 	}
 
@@ -1276,7 +1270,7 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO to be able to onboard
-	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await);
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(3)).await);
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -1379,7 +1373,7 @@ async fn aspd_should_refuse_claim_twice() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move { cloned.bolt11_onboard(cloned_invoice_info.invoice).await });
-	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).await;
+	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).wait(10_000).await;
 	res1.await.unwrap();
 
 	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
@@ -1388,7 +1382,6 @@ async fn aspd_should_refuse_claim_twice() {
 	let err = bark_1.try_bolt11_onboard(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
 }
-
 
 #[tokio::test]
 async fn aspd_refuse_too_deep_arkoor_input() {
