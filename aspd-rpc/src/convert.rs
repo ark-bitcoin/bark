@@ -101,7 +101,7 @@ impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
 				} => {
 					protos::round_event::Event::VtxoProposal(protos::VtxoProposal {
 						round_seq: round_seq as u64,
-						vtxos_spec: vtxos_spec.encode(),
+						vtxos_spec: vtxos_spec.serialize(),
 						unsigned_round_tx: bitcoin::consensus::serialize(&unsigned_round_tx),
 						vtxos_agg_nonces: cosign_agg_nonces.into_iter()
 							.map(|n| n.serialize().to_vec())
@@ -161,7 +161,7 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					round_seq: m.round_seq as usize,
 					unsigned_round_tx: bitcoin::consensus::deserialize(&m.unsigned_round_tx)
 						.map_err(|_| "invalid unsigned_round_tx")?,
-					vtxos_spec: VtxoTreeSpec::decode(&m.vtxos_spec)
+					vtxos_spec: VtxoTreeSpec::deserialize(&m.vtxos_spec)
 						.map_err(|_| "invalid vtxos_spec")?,
 					cosign_agg_nonces: m.vtxos_agg_nonces.into_iter().map(|n| {
 						musig::MusigAggNonce::from_slice(&n)

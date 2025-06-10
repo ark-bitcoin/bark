@@ -28,12 +28,12 @@ lazy_static::lazy_static! {
 // they need to return errors
 pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 	fn set_exit_claim_input(&mut self, input: &Vtxo) {
-		self.borrow_mut().proprietary.insert(PROP_KEY_CLAIM_INPUT.clone(), input.encode());
+		self.borrow_mut().proprietary.insert(PROP_KEY_CLAIM_INPUT.clone(), input.serialize());
 	}
 
 	fn get_exit_claim_input(&self) -> Option<Vtxo> {
 		self.borrow().proprietary.get(&*PROP_KEY_CLAIM_INPUT)
-			.map(|e| Vtxo::decode(&e).expect("corrupt psbt"))
+			.map(|e| Vtxo::deserialize(&e).expect("corrupt psbt"))
 	}
 
 	/// If [`self`] has an exit claim input on it, it'll be signed using

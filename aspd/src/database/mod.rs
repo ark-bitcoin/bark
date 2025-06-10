@@ -154,7 +154,7 @@ impl Db {
 		for vtxo in vtxos {
 			let vtxo = vtxo.borrow();
 			ids.push(vtxo.id().to_string());
-			data.push(vtxo.encode());
+			data.push(vtxo.serialize());
 			expiry.push(vtxo.expiry_height() as i32);
 		}
 
@@ -329,10 +329,12 @@ impl Db {
 		let statement = conn.prepare("
 			INSERT INTO arkoor_mailbox (id, pubkey, arkoor_package_id, vtxo) VALUES ($1, $2, $3, $4);
 		").await?;
-		conn.execute(
-			&statement,
-			&[&vtxo.id().to_string(), &pubkey.serialize().to_vec(), &arkoor_package_id.to_vec(), &vtxo.encode()]
-		).await?;
+		conn.execute(&statement, &[
+			&vtxo.id().to_string(),
+			&pubkey.serialize().to_vec(),
+			&arkoor_package_id.to_vec(),
+			&vtxo.serialize(),
+		]).await?;
 
 		Ok(())
 	}
@@ -348,7 +350,7 @@ impl Db {
 		let rows = conn.query(&statement, &[&pubkey.serialize().to_vec()]).await?;
 
 		for row in &rows {
-			let vtxo = Vtxo::decode(row.get("vtxo"))?;
+			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
 			let package_id = row.get::<_, Vec<u8>>("arkoor_package_id")
 				.try_into().expect("invalid arkoor package id");
 
@@ -390,7 +392,7 @@ impl Db {
 			&[
 				&round_id.to_string(),
 				&serialize(&round_tx),
-				&vtxos.spec.encode(),
+				&vtxos.spec.serialize(),
 				&(forfeit_vtxos.len() as i32),
 				&connector_key.secret_bytes().to_vec(),
 				&(vtxos.spec.spec.expiry_height as i32)

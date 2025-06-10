@@ -40,7 +40,7 @@ impl TryFrom<Row> for StoredRound {
 
 		Ok(Self {
 			id, tx,
-			signed_tree: SignedVtxoTreeSpec::decode(value.get("signed_tree"))?,
+			signed_tree: SignedVtxoTreeSpec::deserialize(value.get("signed_tree"))?,
 			nb_input_vtxos: usize::try_from(value.get::<_, i32>("nb_input_vtxos"))?,
 			connector_key: SecretKey::from_slice(value.get("connector_key"))?,
 		})
@@ -92,7 +92,7 @@ impl TryFrom<Row> for VtxoState {
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
 		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("id"))?;
-		let vtxo = Vtxo::decode(row.get("vtxo"))?;
+		let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
 		debug_assert_eq!(vtxo_id, vtxo.id());
 
 		Ok(Self {

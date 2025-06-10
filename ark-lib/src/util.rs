@@ -96,7 +96,7 @@ pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
 }
 
 pub trait Encodable: Serialize {
-	fn encode(&self) -> Vec<u8> {
+	fn serialize(&self) -> Vec<u8> {
 		let mut buf = Vec::new();
 		ciborium::into_writer(self, &mut buf).unwrap();
 		buf
@@ -104,7 +104,7 @@ pub trait Encodable: Serialize {
 }
 
 pub trait Decodable: DeserializeOwned {
-	fn decode(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
+	fn deserialize(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
 		ciborium::from_reader(bytes)
 	}
 }

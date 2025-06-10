@@ -697,7 +697,7 @@ impl Wallet {
 		let vtxo = self.db.get_vtxo(vtxo_id)?
 			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
 
-		let encoded_vtxo = vtxo.encode();
+		let encoded_vtxo = vtxo.serialize();
 		let vtxo = vtxo.into_board().context("vtxo not a board vtxo")?;
 
 		let funding_tx = self.onchain.get_wallet_tx(vtxo.onchain_output.txid)
@@ -790,7 +790,7 @@ impl Wallet {
 			let req = protos::RoundId { txid: txid.to_byte_array().to_vec() };
 			let round = asp.client.get_round(req).await?.into_inner();
 
-			let tree = SignedVtxoTreeSpec::decode(&round.signed_vtxos)
+			let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
 				.context("invalid signed vtxo tree from asp")?
 				.into_cached_tree();
 
@@ -849,7 +849,7 @@ impl Wallet {
 
 		for package in packages {
 			let vtxos = package.vtxos.into_iter().filter_map(|v| {
-				let vtxo = match Vtxo::decode(&v) {
+				let vtxo = match Vtxo::deserialize(&v) {
 					Ok(vtxo) => vtxo,
 					Err(e) => {
 						warn!("Invalid vtxo from asp: {}", e);
@@ -1116,7 +1116,7 @@ impl Wallet {
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
 				pubkey: destination.serialize().to_vec(),
-				vtxo: v.encode().to_vec(),
+				vtxo: v.serialize().to_vec(),
 			}).collect(),
 		};
 
@@ -1258,8 +1258,12 @@ impl Wallet {
 			let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
 
 			let req = protos::RevokeBolt11PaymentRequest {
-				input_ids: revocation.arkoors.iter().map(|i| i.input.id().to_bytes().to_vec()).collect(),
-				pub_nonces: revocation.arkoors.iter().map(|i| i.user_nonce.serialize().to_vec()).collect(),
+				input_ids: revocation.arkoors.iter()
+					.map(|i| i.input.id().to_bytes().to_vec())
+					.collect(),
+				pub_nonces: revocation.arkoors.iter()
+					.map(|i| i.user_nonce.serialize().to_vec())
+					.collect(),
 			};
 			let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
 				.into_inner().try_into().context("invalid server cosign response")?;
@@ -1369,7 +1373,7 @@ impl Wallet {
 
 		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
 		info!("Got HTLC vtxo in round: {}", htlc_vtxo.id());
-		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.encode().as_hex());
+		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.serialize().as_hex());
 
 		// Claiming arkoor against preimage
 		let pay_req = VtxoRequest {
@@ -1546,7 +1550,7 @@ impl Wallet {
 					vtxo_public_key: r.pubkey.serialize().to_vec(),
 					cosign_pubkey: r.cosign_pubkey.serialize().to_vec(),
 					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
-					vtxo_spk: r.spk.encode().to_vec(),
+					vtxo_spk: r.spk.serialize().to_vec(),
 				}
 			}).collect(),
 			offboard_requests: offb_reqs.iter().map(|r| {

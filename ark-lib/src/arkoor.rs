@@ -294,7 +294,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 				&self.input.spec().taproot_pubkey(),
 			).is_ok(),
 			"invalid arkoor tx signature produced: input={}, outputs={:?}",
-			self.input.encode().as_hex(), &outputs,
+			self.input.serialize().as_hex(), &outputs,
 		);
 
 		Ok(build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid()).into_iter()

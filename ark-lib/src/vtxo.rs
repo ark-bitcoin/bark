@@ -558,7 +558,7 @@ use super::*;
 			onchain_output: point,
 			exit_tx_signature: sig,
 		});
-		assert_eq!(board, Vtxo::decode(&board.encode()).unwrap());
+		assert_eq!(board, Vtxo::deserialize(&board.serialize()).unwrap());
 
 		let round = Vtxo::Round(RoundVtxo {
 			spec: VtxoSpec {
@@ -572,7 +572,7 @@ use super::*;
 			leaf_idx: 3,
 			exit_branch: vec![tx.clone()],
 		});
-		assert_eq!(round, Vtxo::decode(&round.encode()).unwrap());
+		assert_eq!(round, Vtxo::deserialize(&round.serialize()).unwrap());
 
 		let output_specs = vec![VtxoSpec {
 			user_pubkey: pk,
@@ -589,7 +589,7 @@ use super::*;
 			signature: Some(oor_sig1),
 			point: OutPoint::new(tx.compute_txid(), 0)
 		});
-		assert_eq!(oor, Vtxo::decode(&oor.encode()).unwrap());
+		assert_eq!(oor, Vtxo::deserialize(&oor.serialize()).unwrap());
 
 		let output_specs_recursive = vec![VtxoSpec {
 			user_pubkey: pk,
@@ -606,7 +606,7 @@ use super::*;
 			signature: Some(oor_sig1),
 			point: OutPoint::new(tx_recursive.compute_txid(), 0)
 		});
-		assert_eq!(oor_recursive, Vtxo::decode(&oor_recursive.encode()).unwrap());
+		assert_eq!(oor_recursive, Vtxo::deserialize(&oor_recursive.serialize()).unwrap());
 	}
 
 

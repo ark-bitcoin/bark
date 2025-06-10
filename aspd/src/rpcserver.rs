@@ -370,7 +370,7 @@ impl rpc::server::ArkService for Server {
 
 		let response = protos::RoundInfo {
 			round_tx: bitcoin::consensus::serialize(&ret.tx),
-			signed_vtxos: ret.signed_tree.encode(),
+			signed_vtxos: ret.signed_tree.serialize(),
 		};
 
 		Ok(tonic::Response::new(response))
@@ -419,7 +419,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("board_txid", format!("{:?}", req.board_tx.as_hex())),
 		]);
 
-		let vtxo = Vtxo::decode(&req.board_vtxo)
+		let vtxo = Vtxo::deserialize(&req.board_vtxo)
 			.badarg("invalid vtxo")?
 			.into_board()
 			.badarg("vtxo not an board vtxo")?;
@@ -483,7 +483,7 @@ impl rpc::server::ArkService for Server {
 			let pubkey = PublicKey::from_slice(&arkoor.pubkey)
 				.badarg("invalid pubkey")?;
 
-			let vtxo = Vtxo::decode(&arkoor.vtxo)
+			let vtxo = Vtxo::deserialize(&arkoor.vtxo)
 				.badarg("invalid vtxo")?;
 
 			self.db.store_oor(pubkey, &arkoor_package_id, vtxo).await.to_status()?;
@@ -512,7 +512,7 @@ impl rpc::server::ArkService for Server {
 			packages: vtxos_by_package_id.into_iter().map(|(package_id, vtxos)| {
 				protos::ArkoorMailboxPackage {
 					arkoor_package_id: package_id.to_vec(),
-					vtxos: vtxos.into_iter().map(|v| v.encode()).collect(),
+					vtxos: vtxos.into_iter().map(|v| v.serialize()).collect(),
 				}
 			}).collect(),
 		};
@@ -768,7 +768,7 @@ impl rpc::server::ArkService for Server {
 				.badarg("malformed pubkey")?;
 			let cosign_pk = PublicKey::from_slice(&r.cosign_pubkey)
 				.badarg("malformed cosign pubkey")?;
-			let spk = VtxoSpkSpec::decode(&r.vtxo_spk)
+			let spk = VtxoSpkSpec::deserialize(&r.vtxo_spk)
 				.badarg("malformed vtxo script pubkey")?;
 
 			vtxo_requests.push(SignedVtxoRequest { amount, pubkey, cosign_pubkey: cosign_pk, spk });

@@ -842,7 +842,7 @@ async fn bad_round_input() {
 			let (_sec, pb) = musig::nonce_pair(&key);
 			pb.serialize().to_vec()
 		}).take(ark_info.nb_round_nonces as usize).collect(),
-		vtxo_spk: VtxoSpkSpec::Exit.encode().to_vec(),
+		vtxo_spk: VtxoSpkSpec::Exit.serialize().to_vec(),
 	};
 	let offb_req = protos::OffboardRequest {
 		amount: 1000,
@@ -1060,7 +1060,7 @@ async fn register_board_is_idempotent() {
 	// We will now call the register_board a few times
 	let mut rpc = aspd.get_public_client().await;
 	let request = protos::BoardVtxoRequest {
-		board_vtxo: vtxo.encode(),
+		board_vtxo: vtxo.serialize(),
 		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
 	};
 

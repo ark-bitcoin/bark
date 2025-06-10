@@ -699,7 +699,7 @@ async fn reject_arkoor_with_bad_signature() {
 
 			let keypair = Keypair::new(&ark::util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 			let (input, output_specs, point) = match
-				Vtxo::decode(&response.into_inner().packages[0].vtxos[0]).unwrap() {
+				Vtxo::deserialize(&response.into_inner().packages[0].vtxos[0]).unwrap() {
 					Vtxo::Arkoor(v) => (v.input, v.output_specs, v.point),
 					_ => panic!("expect oor vtxo")
 				};
@@ -719,7 +719,7 @@ async fn reject_arkoor_with_bad_signature() {
 			Ok(protos::ArkoorVtxosResponse {
 				packages: vec![protos::ArkoorMailboxPackage {
 					arkoor_package_id: [0; 32].to_vec(),
-					vtxos: vec![vtxo.encode()],
+					vtxos: vec![vtxo.serialize()],
 				}],
 			})
 		}

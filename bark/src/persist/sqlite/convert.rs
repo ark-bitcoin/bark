@@ -33,6 +33,6 @@ pub (crate) fn row_to_offchain_onboard(row: &Row<'_>) -> anyhow::Result<Offchain
 	Ok(OffchainOnboard {
 		payment_hash: row.get("payment_hash")?,
 		payment_preimage: row.get("preimage")?,
-		payment: OffchainPayment::decode(&row.get::<_, Vec<u8>>("serialised_payment")?)?,
+		payment: OffchainPayment::deserialize(&row.get::<_, Vec<u8>>("serialised_payment")?)?,
 	})
 }

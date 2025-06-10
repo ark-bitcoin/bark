@@ -217,7 +217,7 @@ pub fn store_vtxo_with_initial_state(
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
 		":received_in": movement_id,
-		":raw_vtxo": vtxo.encode(),
+		":raw_vtxo": vtxo.serialize(),
 	})?;
 
 	// Store the initial state
@@ -243,7 +243,7 @@ pub fn get_vtxo_by_id(
 
 	if let Some(row) = rows.next()? {
 		let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
-		let vtxo = Vtxo::decode(&raw_vtxo)?;
+		let vtxo = Vtxo::deserialize(&raw_vtxo)?;
 		Ok(Some(vtxo))
 	} else {
 		Ok(None)
@@ -268,7 +268,7 @@ pub fn get_vtxos_by_state(
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
 		let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
-		let vtxo = Vtxo::decode(&raw_vtxo)?;
+		let vtxo = Vtxo::deserialize(&raw_vtxo)?;
 		result.push(vtxo);
 	}
 	Ok(result)
@@ -290,7 +290,7 @@ pub fn delete_vtxo(
 			[id.to_string()],
 			|row| -> anyhow::Result<Vtxo> {
 				let raw_vtxo : Vec<u8> = row.get(0)?;
-				Ok(Vtxo::decode(&raw_vtxo)?)
+				Ok(Vtxo::deserialize(&raw_vtxo)?)
 			})?
 		.filter_map(|x| x.ok())
 		.next();
@@ -458,7 +458,7 @@ pub fn store_offchain_onboard(
 	statement.execute([
 		payment_hash.to_vec(),
 		preimage.to_vec(),
-		payment.encode(),
+		payment.serialize(),
 	])?;
 
 	Ok(())

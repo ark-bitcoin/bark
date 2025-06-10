@@ -1008,7 +1008,7 @@ impl SigningForfeits {
 		if let Err(e) = result {
 			slog!(FatalStoringRound, round_seq: self.round_seq, error: format!("{:?}", e),
 				signed_tx: serialize(&signed_round_tx.tx),
-				vtxo_tree: self.signed_vtxos.spec.encode(),
+				vtxo_tree: self.signed_vtxos.spec.serialize(),
 				connector_key: self.connector_key.secret_key(),
 				forfeit_vtxos: self.all_inputs.keys().copied().collect(),
 			);
