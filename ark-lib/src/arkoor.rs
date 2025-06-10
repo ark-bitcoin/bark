@@ -26,6 +26,8 @@ pub enum ArkoorError {
 	},
 	#[error("arkoor output amounts cannot be below the p2tr dust threshold")]
 	Dust,
+	#[error("arkoor cannot have more than 2 outputs")]
+	TooManyOutputs,
 }
 
 pub fn arkoor_sighash(input_vtxo: &Vtxo, arkoor_tx: &Transaction) -> TapSighash {
@@ -153,6 +155,11 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 				output: output_amount,
 			});
 		}
+
+		if outputs.len() > 2 {
+			return Err(ArkoorError::TooManyOutputs);
+		}
+
 		Ok(Self {
 			input,
 			outputs,
