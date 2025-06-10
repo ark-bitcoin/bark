@@ -264,33 +264,36 @@ impl BoardBuilder<state::ServerCanCosign> {
 }
 
 impl BoardBuilder<state::CanBuild> {
-	/// Validate the server's partial signature.
-	///
-	/// Returns `None` if utxo or user_pub_nonce field is not provided.
-	pub fn verify_cosign_response(
+	/// Verify a partial signature from either of the two parties.
+	fn verify_partial_sig(
 		&self,
-		server_cosign: &BoardCosignResponse,
+		is_user: bool,
+		asp_nonce: musig::MusigPubNonce,
+		partial_signature: musig::MusigPartialSignature,
 	) -> bool {
 		let (sighash, taproot) = self.exit_tx_sighash_data();
-		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &server_cosign.pub_nonce]);
+		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &asp_nonce]);
 		let agg_pk = musig::tweaked_key_agg(
 			[self.user_pubkey, self.asp_pubkey],
 			taproot.tap_tweak().to_byte_array(),
 		).0;
 
-		let session = musig::MusigSession::new(
-			&musig::SECP,
-			&agg_pk,
-			agg_nonce,
-			musig::secpm::Message::from_digest(sighash.to_byte_array()),
-		);
+		let msg = musig::secpm::Message::from_digest(sighash.to_byte_array());
+		let session = musig::MusigSession::new(&musig::SECP, &agg_pk, agg_nonce, msg);
+
+		let (pubkey, nonce) = if is_user {
+			(self.user_pubkey, self.user_pub_nonce())
+		} else {
+			(self.asp_pubkey, asp_nonce)
+		};
 		session.partial_verify(
-			&musig::SECP,
-			&agg_pk,
-			server_cosign.partial_signature,
-			server_cosign.pub_nonce,
-			musig::pubkey_to(self.asp_pubkey),
+			&musig::SECP, &agg_pk, partial_signature, nonce, musig::pubkey_to(pubkey),
 		)
+	}
+
+	/// Validate the server's partial signature.
+	pub fn verify_cosign_response(&self, server_cosign: &BoardCosignResponse) -> bool {
+		self.verify_partial_sig(false, server_cosign.pub_nonce, server_cosign.partial_signature)
 	}
 
 	/// Finishes the board request and create a vtxo.
@@ -309,7 +312,7 @@ impl BoardBuilder<state::CanBuild> {
 		let (sighash, taproot) = self.exit_tx_sighash_data();
 
 		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &server_cosign.pub_nonce]);
-		let (_user_sig, final_sig) = musig::partial_sign(
+		let (user_sig, final_sig) = musig::partial_sign(
 			[self.user_pubkey, self.asp_pubkey],
 			agg_nonce,
 			user_key,
@@ -318,12 +321,18 @@ impl BoardBuilder<state::CanBuild> {
 			Some(taproot.tap_tweak().to_byte_array()),
 			Some(&[&server_cosign.partial_signature]),
 		);
+		debug_assert!(
+			self.verify_partial_sig(true, server_cosign.pub_nonce, user_sig),
+			"invalid board partial exit tx signature produced",
+		);
+
 		let final_sig = final_sig.expect("we provided the other sig");
-		debug_assert!(SECP.verify_schnorr(
-			&final_sig,
-			&sighash.into(),
-			&taproot.output_key().to_x_only_public_key(),
-		).is_ok(), "invalid board exit tx signature produced");
+		debug_assert!(
+			SECP.verify_schnorr(
+				&final_sig, &sighash.into(), &taproot.output_key().to_x_only_public_key(),
+			).is_ok(),
+			"invalid board exit tx signature produced",
+		);
 
 		Ok(Vtxo::Board(BoardVtxo {
 			spec: VtxoSpec {
