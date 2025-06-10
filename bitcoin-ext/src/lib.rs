@@ -12,7 +12,7 @@ use std::fmt;
 
 #[cfg(feature = "bdk")]
 use bdk_wallet::chain::BlockId;
-pub use bitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt};
+pub use bitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt, TxOutExt};
 use cbitcoin::{Amount, BlockHash};
 
 /// The number of confirmations after which we don't expect a

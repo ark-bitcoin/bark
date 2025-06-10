@@ -26,12 +26,24 @@ pub trait KeypairExt: Borrow<Keypair> {
 impl KeypairExt for Keypair {}
 
 
+/// Extension trait for [TxOut].
+pub trait TxOutExt: Borrow<TxOut> {
+	/// Check whether this output is a p2a fee anchor.
+	fn is_p2a_fee_anchor(&self) -> bool {
+		self.borrow().script_pubkey == *fee::P2A_SCRIPT
+	}
+}
+impl TxOutExt for TxOut {}
+
+
 /// Extension trait for [Transaction].
 pub trait TransactionExt: Borrow<Transaction> {
 	/// Check if this tx has a fee anchor output and return the outpoint of it.
+	///
+	/// Only the first fee anchor is returned.
 	fn fee_anchor(&self) -> Option<(OutPoint, &TxOut)> {
 		for (i, out) in self.borrow().output.iter().enumerate() {
-			if out.script_pubkey == *fee::P2A_SCRIPT {
+			if out.is_p2a_fee_anchor() {
 				let point = OutPoint::new(self.borrow().compute_txid(), i as u32);
 				return Some((point, out));
 			}
