@@ -286,39 +286,6 @@ impl Db {
 	/// Returns [Some] for the first vtxo that was already signed.
 	///
 	/// Also stores the new OOR vtxos atomically.
-	pub async fn check_set_vtxo_oor_spent(
-		&self,
-		spent_ids: &[VtxoId],
-		spending_tx: Txid,
-		new_vtxos: &[Vtxo],
-	) -> anyhow::Result<Option<VtxoId>> {
-		let mut conn = self.pool.get().await?;
-		let tx = conn.transaction().await?;
-
-		let statement = tx.prepare_typed("
-			UPDATE vtxo SET oor_spent = $2 WHERE id = $1;
-		", &[Type::TEXT, Type::BYTEA]).await?;
-
-		let vtxos = Self::get_vtxos_by_id_with_client(&tx, spent_ids).await?;
-		for vtxo_state in vtxos {
-			if !vtxo_state.is_spendable() {
-				return Ok(Some(vtxo_state.id));
-			}
-
-			tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&spending_tx)]).await?;
-		}
-
-		Self::inner_upsert_vtxos(&tx, new_vtxos).await?;
-
-		tx.commit().await?;
-		Ok(None)
-	}
-
-	/// Returns [None] if all the ids were not previously marked as signed
-	/// and are now correctly marked as such.
-	/// Returns [Some] for the first vtxo that was already signed.
-	///
-	/// Also stores the new OOR vtxos atomically.
 	pub async fn check_set_vtxo_oor_spent_package(
 		&self,
 		package: &ArkoorPackageBuilder<'_, PaymentRequest>,

@@ -535,60 +535,6 @@ impl Server {
 		Ok(())
 	}
 
-	pub async fn cosign_oor(
-		&self,
-		input: &Vtxo,
-		outputs: &[PaymentRequest],
-		user_nonce: musig::MusigPubNonce,
-	) -> anyhow::Result<ArkoorCosignResponse> {
-		if let Some(out) = outputs.iter().find(|o| o.amount < P2TR_DUST) {
-			return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, out.amount);
-		}
-
-		if let Some(max) = self.config.max_vtxo_amount {
-			for r in outputs {
-				if r.amount > max {
-					return badarg!("output exceeds maximum vtxo amount of {max}");
-				}
-			}
-		}
-
-		let _lock = match self.vtxos_in_flux.lock([input.id()]) {
-			Ok(l) => l,
-			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
-		};
-
-		if input.arkoor_depth() >= self.config.max_arkoor_depth {
-			return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
-				self.config.max_arkoor_depth, input.id());
-		}
-
-		self.validate_board_inputs(&[input]).context("invalid board inputs")?;
-
-		let builder = ArkoorBuilder::new(&input, &user_nonce, outputs)
-			.badarg("invalid arkoor request")?;
-
-		let txid = builder.unsigned_transaction().compute_txid();
-		let new_vtxos = builder
-			.unsigned_output_vtxos()
-			.into_iter()
-			.map(|a| a.into())
-			.collect::<Vec<_>>();
-		let ret = match self.db.check_set_vtxo_oor_spent(&[input.id()], txid, &new_vtxos).await {
-			Ok(Some(dup)) => {
-				return badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup);
-			},
-			Ok(None) => {
-				info!("Cosigning OOR tx {} with input: {:?}", txid, input.id());
-				Ok(builder.server_cosign(&self.asp_key))
-			},
-			Err(e) => Err(e),
-		};
-
-		ret
-	}
-
-
 	async fn cosign_oor_package(
 		&self,
 		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<PaymentRequest>)>,
@@ -931,7 +877,7 @@ impl Server {
 	async fn claim_bolt11_htlc(
 		&self,
 		input_vtxo_id: VtxoId,
-		outputs: Vec<PaymentRequest>,
+		pay_req: PaymentRequest,
 		user_nonce: musig::MusigPubNonce,
 		payment_preimage: &[u8; 32],
 	) -> anyhow::Result<ArkoorCosignResponse> {
@@ -953,7 +899,12 @@ impl Server {
 				payment_preimage,
 			).await?.context("could not settle invoice")?;
 
-			self.cosign_oor(&input_vtxo.vtxo, &outputs, user_nonce).await
+			let input = [input_vtxo.vtxo];
+			let pubs = vec![user_nonce];
+			let package = ArkoorPackageBuilder::new(&input, &pubs, pay_req, None)?;
+
+			let mut arkoors = self.inner_cosign_oor_package(&package).await?;
+			Ok(arkoors.pop().expect("should have one"))
 		} else {
 			bail!("invalid claim input: {:?}", input_vtxo);
 		}

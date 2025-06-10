@@ -678,17 +678,24 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD);
 		let req = req.into_inner();
 
+		let arkoor = req.arkoor.badarg("missing arkoor")?;
+
 		add_tracing_attributes(vec![
-			KeyValue::new("payment", req.input_id.as_hex().to_string()),
-			KeyValue::new("pub_nonce", req.pub_nonce.as_hex().to_string()),
+			KeyValue::new("payment", arkoor.input_id.as_hex().to_string()),
+			KeyValue::new("pub_nonce", arkoor.pub_nonce.as_hex().to_string()),
 			KeyValue::new("payment_preimage", req.payment_preimage.as_hex().to_string()),
 		]);
 
-		let input_id = VtxoId::from_slice(&req.input_id).badarg("invalid vtxo id")?;
-		let outputs = req.outputs.into_iter().map(|o| o.try_into())
-			.collect::<Result<Vec<_>, _>>()
-			.badarg("invalid arkoor output request")?;
-		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
+		let input_id = VtxoId::from_slice(&arkoor.input_id).badarg("invalid vtxo id")?;
+
+		let output = arkoor.outputs.first().badarg("missing output")?;
+		let pay_req = PaymentRequest {
+			amount: Amount::from_sat(output.amount),
+			pubkey: PublicKey::from_slice(&output.pubkey).badarg("invalid output pubkey")?,
+			spk: VtxoSpkSpec::Exit,
+		};
+
+		let user_nonce = musig::MusigPubNonce::from_slice(&arkoor.pub_nonce)
 			.badarg("invalid public nonce")?;
 
 		let payment_preimage: [u8; 32] = req.payment_preimage.as_slice()
@@ -696,7 +703,7 @@ impl rpc::server::ArkService for Server {
 
 		let cosign_resp = self.claim_bolt11_htlc(
 			input_id,
-			outputs,
+			pay_req,
 			user_nonce,
 			&payment_preimage,
 		).await.to_status()?;

@@ -24,7 +24,6 @@ pub mod test;
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
-use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::iter;
@@ -49,7 +48,7 @@ use rusqlite::ToSql;
 use tokio_stream::{Stream, StreamExt};
 
 use ark::{arkoor, ArkInfo, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoRequest};
-use ark::arkoor::{ArkoorBuilder, ArkoorPackageBuilder, ArkoorVtxo};
+use ark::arkoor::{ArkoorPackageBuilder, ArkoorVtxo};
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, MusigPubNonce, MusigSecNonce};
@@ -1348,14 +1347,12 @@ impl Wallet {
 			spk: VtxoSpkSpec::Exit,
 		};
 
-		let pay_reqs = [&pay_req]; // appease borrowck
-		let builder = ArkoorBuilder::new(&htlc_vtxo, &pub_nonce, &pay_reqs)
-			.context("arkoor builder error")?;
+		let inputs = [htlc_vtxo];
+		let pubs = [pub_nonce];
+		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
 
 		let req = protos::ClaimBolt11OnboardRequest {
-			input_id: htlc_vtxo.id().to_bytes().to_vec(),
-			outputs: vec![pay_req.borrow().into()],
-			pub_nonce: pub_nonce.serialize().to_vec(),
+			arkoor: Some(builder.arkoors.first().unwrap().into()),
 			payment_preimage: offchain_onboard.payment_preimage.to_vec(),
 		};
 
@@ -1364,12 +1361,11 @@ impl Wallet {
 			.context("failed to claim bolt11 onboard")?
 			.into_inner().try_into().context("invalid server cosign response")?;
 
-		let vtxos = builder.build_vtxos(
-			sec_nonce,
-			pub_nonce,
-			&keypair,
-			&cosign_resp,
-		);
+		let (vtxos, _) = builder.build_vtxos(
+			&[cosign_resp],
+			&[keypair],
+			vec![sec_nonce],
+		)?;
 		let [vtxo] = vtxos.try_into().expect("had exactly one request");
 
 		info!("Got an arkoor from lightning! {}", vtxo.id());
