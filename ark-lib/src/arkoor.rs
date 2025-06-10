@@ -15,7 +15,7 @@ use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 use crate::error::IncorrectSigningKeyError;
 use crate::lightning::revocation_payment_request;
 use crate::vtxo::VtxoSpkSpec;
-use crate::{musig, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
+use crate::{musig, VtxoRequest, Vtxo, VtxoId, VtxoSpec};
 use crate::util::{self, Encodable, SECP};
 
 
@@ -141,7 +141,7 @@ pub struct ArkoorBuilder<'a, T: Clone> {
 	pub outputs: Cow<'a, [T]>,
 }
 
-impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
+impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 	/// Construct a generic arkoor builder for the given input and outputs.
 	pub fn new(
 		input: &'a Vtxo,
@@ -310,11 +310,11 @@ pub enum ArkoorPackageError {
 	Signing(#[from] IncorrectSigningKeyError),
 }
 
-impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
+impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 	pub fn new(
 		inputs: &'a [Vtxo],
 		user_nonces: &'a [musig::MusigPubNonce],
-		pay_req: PaymentRequest,
+		pay_req: VtxoRequest,
 		change: Option<PublicKey>,
 	) -> Result<Self, ArkoorPackageError> {
 		let mut remaining_amount = pay_req.amount;
@@ -327,14 +327,14 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 			let (output_amount, change) = if remaining_amount >= input.amount() {
 				(input.amount(), None)
 			} else {
-				(remaining_amount, Some(PaymentRequest {
+				(remaining_amount, Some(VtxoRequest {
 					pubkey: change.ok_or(ArkoorPackageError::MissingChangePk)?,
 					amount: input.amount() - remaining_amount,
 					spk: VtxoSpkSpec::Exit,
 				}))
 			};
 
-			let output = PaymentRequest {
+			let output = VtxoRequest {
 				amount: output_amount,
 				pubkey: pay_req.pubkey,
 				spk: pay_req.spk,
@@ -377,7 +377,7 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 	}
 
 	pub fn from_arkoors(
-		arkoors: Vec<ArkoorBuilder<'a, PaymentRequest>>,
+		arkoors: Vec<ArkoorBuilder<'a, VtxoRequest>>,
 	) -> Result<Self, ArkoorPackageError> {
 		let mut spending_tx_by_input = HashMap::new();
 

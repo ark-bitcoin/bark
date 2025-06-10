@@ -47,7 +47,7 @@ use log::{trace, debug, info, warn, error};
 use rusqlite::ToSql;
 use tokio_stream::{Stream, StreamExt};
 
-use ark::{arkoor, ArkInfo, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoRequest};
+use ark::{arkoor, ArkInfo, OffboardRequest, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::arkoor::{ArkoorPackageBuilder, ArkoorVtxo};
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::connectors::ConnectorChain;
@@ -993,7 +993,7 @@ impl Wallet {
 		let total_amount = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
-		let payment_request = PaymentRequest {
+		let payment_request = VtxoRequest {
 			pubkey: user_keypair.public_key(),
 			amount: total_amount,
 			spk: VtxoSpkSpec::Exit,
@@ -1055,7 +1055,7 @@ impl Wallet {
 		let mut asp = self.require_asp()?;
 		let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
 
-		let pay_req = PaymentRequest {
+		let pay_req = VtxoRequest {
 			pubkey: destination,
 			amount: amount,
 			spk: VtxoSpkSpec::Exit,
@@ -1167,7 +1167,7 @@ impl Wallet {
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
-		let pay_req = PaymentRequest {
+		let pay_req = VtxoRequest {
 			pubkey: change_keypair.public_key(),
 			amount: amount,
 			spk: VtxoSpkSpec::HtlcOut {
@@ -1355,7 +1355,7 @@ impl Wallet {
 		let fee_vtxo_cloned = fee_vtxos.clone();
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
 			let inputs = fee_vtxo_cloned.clone();
-			let htlc_pay_req = PaymentRequest {
+			let htlc_pay_req = VtxoRequest {
 				pubkey: keypair.public_key(),
 				amount: amount,
 				spk: VtxoSpkSpec::HtlcIn {
@@ -1372,7 +1372,7 @@ impl Wallet {
 		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.encode().as_hex());
 
 		// Claiming arkoor against preimage
-		let pay_req = PaymentRequest {
+		let pay_req = VtxoRequest {
 			pubkey: keypair.public_key(),
 			amount: amount,
 			spk: VtxoSpkSpec::Exit,
@@ -1464,7 +1464,7 @@ impl Wallet {
 					let amount = in_sum - spent_amount;
 					let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 					info!("Adding change vtxo for {}", amount);
-					Some(PaymentRequest {
+					Some(VtxoRequest {
 						pubkey: change_keypair.public_key(),
 						amount: amount,
 						spk: VtxoSpkSpec::Exit,
@@ -1483,7 +1483,7 @@ impl Wallet {
 		events: &mut S,
 		round_state: &mut RoundState,
 		input_vtxos: &HashMap<VtxoId, Vtxo>,
-		pay_reqs: &Vec<PaymentRequest>,
+		pay_reqs: &Vec<VtxoRequest>,
 		offb_reqs: &Vec<OffboardRequest>,
 	) -> anyhow::Result<AttemptResult> {
 		let mut asp = self.require_asp()?;
@@ -1495,10 +1495,10 @@ impl Wallet {
 			.take(pay_reqs.len())
 			.collect::<Vec<_>>();
 		let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
-			VtxoRequest {
+			SignedVtxoRequest {
 				pubkey: req.pubkey,
 				amount: req.amount,
-				cosign_pk: ck.public_key(),
+				cosign_pubkey: ck.public_key(),
 				spk: req.spk,
 			}
 		}).collect::<Vec<_>>();
@@ -1544,7 +1544,7 @@ impl Wallet {
 				protos::VtxoRequest {
 					amount: r.amount.to_sat(),
 					vtxo_public_key: r.pubkey.serialize().to_vec(),
-					cosign_pubkey: r.cosign_pk.serialize().to_vec(),
+					cosign_pubkey: r.cosign_pubkey.serialize().to_vec(),
 					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
 					vtxo_spk: r.spk.encode().to_vec(),
 				}
@@ -1849,7 +1849,7 @@ impl Wallet {
 	async fn participate_round(
 		&self,
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
-			(Vec<Vtxo>, Vec<PaymentRequest>, Vec<OffboardRequest>)
+			(Vec<Vtxo>, Vec<VtxoRequest>, Vec<OffboardRequest>)
 		>,
 	) -> anyhow::Result<RoundResult> {
 		let mut asp = self.require_asp()?;

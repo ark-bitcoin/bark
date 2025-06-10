@@ -14,7 +14,7 @@ use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce
 use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt, TransactionExt};
 
 use crate::util::{Decodable, Encodable};
-use crate::{musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
+use crate::{musig, util, RoundVtxo, Vtxo, SignedVtxoRequest, VtxoSpec};
 use crate::tree::{self, Tree};
 
 
@@ -27,7 +27,7 @@ pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 /// All the information that uniquely specifies a VTXO tree before it has been signed.
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct VtxoTreeSpec {
-	pub vtxos: Vec<VtxoRequest>,
+	pub vtxos: Vec<SignedVtxoRequest>,
 	pub asp_pk: PublicKey,
 	pub asp_cosign_pk: PublicKey,
 	pub expiry_height: BlockHeight,
@@ -36,7 +36,7 @@ pub struct VtxoTreeSpec {
 
 impl VtxoTreeSpec {
 	pub fn new(
-		vtxos: Vec<VtxoRequest>,
+		vtxos: Vec<SignedVtxoRequest>,
 		asp_pk: PublicKey,
 		asp_cosign_pk: PublicKey,
 		expiry_height: BlockHeight,
@@ -54,12 +54,12 @@ impl VtxoTreeSpec {
 		Tree::nb_nodes_for_leaves(self.nb_leaves())
 	}
 
-	pub fn iter_vtxos(&self) -> impl Iterator<Item = &VtxoRequest> {
+	pub fn iter_vtxos(&self) -> impl Iterator<Item = &SignedVtxoRequest> {
 		self.vtxos.iter()
 	}
 
 	/// Get the leaf index of the given vtxo request.
-	pub fn leaf_idx_of(&self, vtxo_request: &VtxoRequest) -> Option<usize> {
+	pub fn leaf_idx_of(&self, vtxo_request: &SignedVtxoRequest) -> Option<usize> {
 		self.vtxos.iter().position(|e| e == vtxo_request)
 	}
 
@@ -94,7 +94,7 @@ impl VtxoTreeSpec {
 	/// The cosign pubkey used on the vtxo output of the round tx.
 	pub fn round_tx_cosign_pk(&self) -> XOnlyPublicKey {
 		let keys = self.vtxos.iter()
-			.map(|v| v.cosign_pk)
+			.map(|v| v.cosign_pubkey)
 			.chain(Some(self.asp_cosign_pk));
 		musig::combine_keys(keys)
 	}
@@ -133,7 +133,7 @@ impl VtxoTreeSpec {
 		}
 	}
 
-	fn leaf_tx(&self, vtxo: &VtxoRequest) -> Transaction {
+	fn leaf_tx(&self, vtxo: &SignedVtxoRequest) -> Transaction {
 		let spec = VtxoSpec {
 			user_pubkey: vtxo.pubkey,
 			asp_pubkey: self.asp_pk,
@@ -158,7 +158,7 @@ impl VtxoTreeSpec {
 	{
 		Tree::new(self.nb_leaves()).into_iter().map(|node| {
 			musig::combine_keys(
-				node.leaves().map(|i| self.vtxos[i].cosign_pk).chain(Some(self.asp_cosign_pk))
+				node.leaves().map(|i| self.vtxos[i].cosign_pubkey).chain(Some(self.asp_cosign_pk))
 			)
 		})
 	}
@@ -220,7 +220,7 @@ impl VtxoTreeSpec {
 		let tree = Tree::new(self.nb_leaves());
 
 		tree.iter().zip(asp_cosign_nonces).map(|(node, asp)| {
-			let nonces = node.leaves().map(|i| self.vtxos[i].cosign_pk).map(|pk| {
+			let nonces = node.leaves().map(|i| self.vtxos[i].cosign_pubkey).map(|pk| {
 				leaf_cosign_nonces.get(&pk).expect("nonces are complete")
 					// note that we skip some nonces for some leaves that are at the edges
 					// and skip some levels
@@ -317,7 +317,7 @@ impl UnsignedVtxoTree {
 	pub fn cosign_branch(
 		&self,
 		cosign_agg_nonces: &[MusigAggNonce],
-		request: &VtxoRequest,
+		request: &SignedVtxoRequest,
 		keypair: &Keypair,
 		cosign_sec_nonces: Vec<MusigSecNonce>,
 	) -> Option<Vec<MusigPartialSignature>> {
@@ -336,7 +336,7 @@ impl UnsignedVtxoTree {
 				}
 			};
 
-			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pk)
+			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
 				.chain(Some(self.spec.asp_cosign_pk));
 			let sighash = self.sighashes[node.idx()];
 
@@ -370,7 +370,7 @@ impl UnsignedVtxoTree {
 		assert_eq!(cosign_sec_nonces.len(), self.nb_nodes());
 
 		self.tree.iter().zip(cosign_sec_nonces.into_iter()).map(|(node, sec_nonce)| {
-			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pk)
+			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
 				.chain(Some(self.spec.asp_cosign_pk));
 			let sighash = self.sighashes[node.idx()];
 
@@ -395,7 +395,7 @@ impl UnsignedVtxoTree {
 		part_sig: MusigPartialSignature,
 		pub_nonce: MusigPubNonce,
 	) -> Result<(), CosignSignatureError> {
-		let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pk)
+		let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
 			.chain(Some(self.spec.asp_cosign_pk));
 		let sighash = self.sighashes[node.idx()];
 
@@ -426,7 +426,7 @@ impl UnsignedVtxoTree {
 	pub fn verify_branch_cosign_partial_sigs(
 		&self,
 		cosign_agg_nonces: &[MusigAggNonce],
-		request: &VtxoRequest,
+		request: &SignedVtxoRequest,
 		cosign_pub_nonces: &[MusigPubNonce],
 		cosign_part_sigs: &[MusigPartialSignature],
 	) -> Result<(), String> {
@@ -451,7 +451,7 @@ impl UnsignedVtxoTree {
 			};
 			self.verify_node_cosign_partial_sig(
 				node,
-				request.cosign_pk,
+				request.cosign_pubkey,
 				cosign_agg_nonces,
 				part_sigs_iter.next().ok_or("not enough sigs")?.clone(),
 				*pub_nonce,
@@ -509,7 +509,7 @@ impl UnsignedVtxoTree {
 			let mut cosign_pks = Vec::with_capacity(max_level + 1);
 			let mut part_sigs = Vec::with_capacity(max_level + 1);
 			for leaf in node.leaves() {
-				let cosign_pk = self.spec.vtxos[leaf].cosign_pk;
+				let cosign_pk = self.spec.vtxos[leaf].cosign_pubkey;
 				let part_sig = leaf_part_sigs.get_mut(&cosign_pk)
 					.ok_or(CosignSignatureError::missing_sig(cosign_pk))?
 					.pop_front()
@@ -751,11 +751,11 @@ mod test {
 			amount: Amount,
 		}
 		impl Req {
-			fn to_vtxo(&self) -> VtxoRequest {
-				VtxoRequest {
+			fn to_vtxo(&self) -> SignedVtxoRequest {
+				SignedVtxoRequest {
 					pubkey: self.key.public_key(),
 					amount: self.amount,
-					cosign_pk: self.cosign_key.public_key(),
+					cosign_pubkey: self.cosign_key.public_key(),
 					spk: VtxoSpkSpec::Exit,
 				}
 			}

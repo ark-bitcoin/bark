@@ -39,7 +39,7 @@ use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use ark::{PaymentRequest, Vtxo, VtxoId};
+use ark::{VtxoRequest, Vtxo, VtxoId};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::{BoardBuilder, BoardVtxo};
 use ark::musig::{self, MusigPubNonce};
@@ -537,7 +537,7 @@ impl Server {
 
 	async fn cosign_oor_package(
 		&self,
-		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<PaymentRequest>)>,
+		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<VtxoRequest>)>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
 		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?;
@@ -561,7 +561,7 @@ impl Server {
 
 	async fn inner_cosign_oor_package(
 		&self,
-		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
+		package: &ArkoorPackageBuilder<'_, VtxoRequest>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		let inputs = package.inputs();
 		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
@@ -632,7 +632,7 @@ impl Server {
 			tip + self.config.htlc_expiry_delta as BlockHeight
 		};
 
-		let pay_req = PaymentRequest {
+		let pay_req = VtxoRequest {
 			pubkey: user_pubkey,
 			amount: amount,
 			spk: VtxoSpkSpec::HtlcOut {
@@ -792,7 +792,7 @@ impl Server {
 			_ => return badarg!("This lightning payment is not eligible for revocation yet")
 		}
 
-		let pay_req = PaymentRequest {
+		let pay_req = VtxoRequest {
 			pubkey: vtxos.first().unwrap().spec().user_pubkey,
 			amount: vtxos.iter().map(|v| v.amount()).sum(),
 			spk: VtxoSpkSpec::Exit,
@@ -877,7 +877,7 @@ impl Server {
 	async fn claim_bolt11_htlc(
 		&self,
 		input_vtxo_id: VtxoId,
-		pay_req: PaymentRequest,
+		vtxo_req: VtxoRequest,
 		user_nonce: musig::MusigPubNonce,
 		payment_preimage: &[u8; 32],
 	) -> anyhow::Result<ArkoorCosignResponse> {
@@ -901,7 +901,7 @@ impl Server {
 
 			let input = [input_vtxo.vtxo];
 			let pubs = vec![user_nonce];
-			let package = ArkoorPackageBuilder::new(&input, &pubs, pay_req, None)?;
+			let package = ArkoorPackageBuilder::new(&input, &pubs, vtxo_req, None)?;
 
 			let mut arkoors = self.inner_cosign_oor_package(&package).await?;
 			Ok(arkoors.pop().expect("should have one"))

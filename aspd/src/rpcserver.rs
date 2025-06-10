@@ -21,7 +21,7 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
-use ark::{musig, OffboardRequest, PaymentRequest, Vtxo, VtxoId, VtxoIdInput, VtxoRequest};
+use ark::{musig, OffboardRequest, VtxoRequest, Vtxo, VtxoId, VtxoIdInput, SignedVtxoRequest};
 use ark::rounds::RoundId;
 use ark::vtxo::VtxoSpkSpec;
 use ark::util::{Decodable, Encodable};
@@ -450,7 +450,7 @@ impl rpc::server::ArkService for Server {
 				.badarg("invalid public nonce")?;
 
 			let outputs = arkoor.outputs.iter().map(|o| {
-				Ok(PaymentRequest {
+				Ok(VtxoRequest {
 					amount: Amount::from_sat(o.amount),
 					pubkey: PublicKey::from_slice(&o.pubkey).badarg("invalid output pubkey")?,
 					spk: VtxoSpkSpec::Exit,
@@ -698,7 +698,7 @@ impl rpc::server::ArkService for Server {
 		let input_id = VtxoId::from_slice(&arkoor.input_id).badarg("invalid vtxo id")?;
 
 		let output = arkoor.outputs.first().badarg("missing output")?;
-		let pay_req = PaymentRequest {
+		let pay_req = VtxoRequest {
 			amount: Amount::from_sat(output.amount),
 			pubkey: PublicKey::from_slice(&output.pubkey).badarg("invalid output pubkey")?,
 			spk: VtxoSpkSpec::Exit,
@@ -771,7 +771,7 @@ impl rpc::server::ArkService for Server {
 			let spk = VtxoSpkSpec::decode(&r.vtxo_spk)
 				.badarg("malformed vtxo script pubkey")?;
 
-			vtxo_requests.push(VtxoRequest { amount, pubkey, cosign_pk, spk });
+			vtxo_requests.push(SignedVtxoRequest { amount, pubkey, cosign_pubkey: cosign_pk, spk });
 
 			// Make sure users provided right number of nonces.
 			if r.public_nonces.len() != self.config.nb_round_nonces {

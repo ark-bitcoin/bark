@@ -8,7 +8,7 @@ use bitcoin::taproot::TaprootSpendInfo;
 
 use bitcoin_ext::P2TR_DUST;
 
-use crate::{musig, util, PaymentRequest, Vtxo};
+use crate::{musig, util, VtxoRequest, Vtxo};
 use crate::util::SECP;
 use crate::vtxo::VtxoSpkSpec;
 
@@ -91,8 +91,8 @@ pub fn htlc_in_taproot(
 }
 
 /// Construct a [PaymentRequest] for a bolt11 payment recovation.
-pub fn revocation_payment_request(htlc_vtxo: &Vtxo) -> PaymentRequest {
-	PaymentRequest {
+pub fn revocation_payment_request(htlc_vtxo: &Vtxo) -> VtxoRequest {
+	VtxoRequest {
 		pubkey: htlc_vtxo.spec().user_pubkey,
 		amount: htlc_vtxo.amount(),
 		spk: VtxoSpkSpec::Exit,

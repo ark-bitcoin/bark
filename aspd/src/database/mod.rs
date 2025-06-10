@@ -27,7 +27,7 @@ use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 use log::info;
 
-use ark::{BoardVtxo, PaymentRequest, Vtxo, VtxoId};
+use ark::{BoardVtxo, VtxoRequest, Vtxo, VtxoId};
 use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
 use ark::util::{Decodable, Encodable};
@@ -288,16 +288,16 @@ impl Db {
 	/// Also stores the new OOR vtxos atomically.
 	pub async fn check_set_vtxo_oor_spent_package(
 		&self,
-		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
+		builder: &ArkoorPackageBuilder<'_, VtxoRequest>,
 	) -> anyhow::Result<Option<VtxoId>> {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
-		let new_vtxos = package.new_vtxos()
+		let new_vtxos = builder.new_vtxos()
 			.into_iter().flatten().map(|v| Vtxo::Arkoor(v)).collect::<Vec<_>>();
 
-		for input in package.inputs() {
-			let txid = package.spending_tx(input.id())
+		for input in builder.inputs() {
+			let txid = builder.spending_tx(input.id())
 				.expect("spending tx should be present").compute_txid();
 
 			let statement = tx.prepare_typed("

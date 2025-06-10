@@ -8,7 +8,7 @@ use ark::vtxo::VtxoSpkSpec;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate};
 
-use ark::{musig, PaymentRequest, VtxoId};
+use ark::{musig, VtxoRequest, VtxoId};
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::VtxoTreeSpec;
 use ark::util::{Decodable, Encodable};
@@ -234,8 +234,8 @@ impl TryFrom<protos::WalletStatus> for crate::WalletStatus {
 }
 
 
-impl<'a> From<&'a PaymentRequest> for protos::ArkoorOutput {
-	fn from(v: &'a PaymentRequest) -> Self {
+impl<'a> From<&'a VtxoRequest> for protos::ArkoorOutput {
+	fn from(v: &'a VtxoRequest) -> Self {
 		protos::ArkoorOutput {
 			amount: v.amount.to_sat(),
 			pubkey: v.pubkey.serialize().to_vec(),
@@ -243,7 +243,7 @@ impl<'a> From<&'a PaymentRequest> for protos::ArkoorOutput {
 	}
 }
 
-impl TryFrom<protos::ArkoorOutput> for PaymentRequest {
+impl TryFrom<protos::ArkoorOutput> for VtxoRequest {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorOutput) -> Result<Self, Self::Error> {
 		Ok(Self {
@@ -284,8 +284,8 @@ impl From<Vec<ArkoorCosignResponse>> for protos::ArkoorPackageCosignResponse {
 	}
 }
 
-impl<'a> From<&'a ArkoorBuilder<'_, PaymentRequest>> for protos::ArkoorCosignRequest {
-	fn from(v: &'a ArkoorBuilder<'_, PaymentRequest>) -> Self {
+impl<'a> From<&'a ArkoorBuilder<'_, VtxoRequest>> for protos::ArkoorCosignRequest {
+	fn from(v: &'a ArkoorBuilder<'_, VtxoRequest>) -> Self {
 		Self {
 			input_id: v.input.id().to_bytes().to_vec(),
 			outputs: v.outputs.iter().map(|o| o.into()).collect(),
