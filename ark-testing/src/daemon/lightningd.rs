@@ -7,6 +7,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use bitcoin::consensus::Decodable;
+use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, Network, Transaction};
 use log::{error, trace};
 use tokio::fs;
@@ -326,7 +327,7 @@ impl Lightningd {
 		let mut client = self.grpc_client().await;
 		client.connect_peer(
 			cln_rpc::ConnectRequest {
-				id: hex::encode(other_id),
+				id: other_id.as_hex().to_string(),
 				host: Some(other_host.to_owned()),
 				port: Some(u32::from(other_port))
 			}

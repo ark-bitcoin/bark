@@ -31,7 +31,6 @@ toml.workspace = true
 bitcoin.workspace = true
 bip39.workspace = true
 bdk_esplora.workspace = true
-hex.workspace = true
 log.workspace = true
 fern.workspace = true
 chrono.workspace = true

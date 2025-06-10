@@ -25,6 +25,8 @@ thiserror.workspace = true
 ciborium.workspace = true
 rand.workspace = true
 lightning-invoice.workspace = true
+# can use bitcoin::hex once they upgrade to v0.3.0
+hex-conservative = "0.3.0"
 
 # using PR branch for musig2 code
 [dependencies.secp256k1-musig]

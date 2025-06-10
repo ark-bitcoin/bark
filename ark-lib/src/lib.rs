@@ -6,6 +6,7 @@ pub extern crate bitcoin;
 
 pub mod arkoor;
 pub mod connectors;
+pub mod encode;
 pub mod error;
 pub mod forfeit;
 pub mod lightning;
@@ -18,6 +19,7 @@ pub mod vtxo;
 
 pub use crate::arkoor::ArkoorVtxo;
 pub use crate::board::BoardVtxo;
+pub use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
 pub use crate::rounds::RoundVtxo;
 pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};
 
