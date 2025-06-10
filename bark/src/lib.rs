@@ -981,17 +981,6 @@ impl Wallet {
 		self.refresh(&[], true).await
 	}
 
-	/// Find a single vtxo to fit the provided amount
-	fn find_vtxo_to_fit(&self, amount: Amount, max_depth: Option<u16>) -> anyhow::Result<Vtxo> {
-		let mut inputs = self.db.get_all_spendable_vtxos()?;
-		inputs.sort_by_key(|v| v.amount());
-
-		inputs.into_iter().find(|v| {
-			// VTXO must match higher than amount and have lower depth than max_depth, if provided
-			v.amount() >= amount + P2TR_DUST && Some(v.arkoor_depth()) < max_depth
-		}).with_context(|| format!("no input found to fit amount: required: {}", amount))
-	}
-
 	/// Select several vtxos to cover the provided amount
 	///
 	/// Returns an error if amount cannot be reached
@@ -1023,7 +1012,6 @@ impl Wallet {
 			amount, total_amount,
 		);
 	}
-
 
 	/// Create Arkoor VTXOs for a given destination and amount
 	///
@@ -1061,15 +1049,15 @@ impl Wallet {
 			keypairs.push(keypair);
 		}
 
-		let package = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, Some(change_pubkey))?;
+		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, Some(change_pubkey))?;
 
 		let req = protos::ArkoorPackageCosignRequest {
-			arkoors: package.arkoors.iter().map(|a| a.into()).collect(),
+			arkoors: builder.arkoors.iter().map(|a| a.into()).collect(),
 		};
 		let cosign_resp: Vec<_> = asp.client.request_arkoor_package_cosign(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 
-		let (sent, change) = package.build_vtxos(&cosign_resp, &keypairs, secs)?;
+		let (sent, change) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
 		if let Some(change) = change.as_ref() {
 			info!("Added change VTXO of {}", change.amount());
@@ -1149,44 +1137,51 @@ impl Wallet {
 
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
-		let input = self.find_vtxo_to_fit(amount, Some(asp.info.max_arkoor_depth))?;
-
-		let keypair = {
-			let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-			self.vtxo_seed.derive_keychain(keychain, keypair_idx)
-		};
-		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
-
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
-		let builder = ArkoorBuilder::new_lightning(
-			&invoice,
-			&input,
-			change_keypair.public_key(),
-			amount,
-			htlc_expiry,
-			&pub_nonce,
-		)?;
+		let pay_req = PaymentRequest {
+			pubkey: change_keypair.public_key(),
+			amount: amount,
+			spk: VtxoSpkSpec::HtlcOut {
+				payment_hash: *invoice.payment_hash(),
+				htlc_expiry: htlc_expiry,
+			},
+		};
+
+		let inputs = self.select_vtxos_to_cover(pay_req.amount + P2TR_DUST, Some(asp.info.max_arkoor_depth))?;
+
+		let mut secs = Vec::with_capacity(inputs.len());
+		let mut pubs = Vec::with_capacity(inputs.len());
+		let mut keypairs = Vec::with_capacity(inputs.len());
+		for input in inputs.iter() {
+			let keypair = {
+				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
+				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+			};
+
+			let (s, p) = musig::nonce_pair(&keypair);
+			secs.push(s);
+			pubs.push(p);
+			keypairs.push(keypair);
+		}
+
+		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, Some(change_keypair.public_key()))?;
 
 		let req = protos::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
-			input_vtxo: input.encode(),
+			input_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+			pub_nonces: pubs.iter().map(|p| p.serialize().to_vec()).collect(),
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
-			user_nonce: pub_nonce.serialize().to_vec(),
 		};
-		let cosign_resp = asp.client.start_bolt11_payment(req).await
-			.context("htlc request failed")?.into_inner()
-			.try_into().context("invalid arkoor cosign response from server")?;
 
-		let mut vtxos = builder.build_vtxos(
-			sec_nonce, pub_nonce, &keypair, &cosign_resp,
-		).into_iter();
-		let htlc_vtxo = vtxos.next().unwrap();
-		let change_vtxo = vtxos.next();
+		let cosign_resp: Vec<_> = asp.client.start_bolt11_payment(req).await?
+			.into_inner().try_into().context("invalid server cosign response")?;
+
+		let (htlc_vtxos, change_vtxo) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
 		let req = protos::SignedBolt11PaymentDetails {
 			invoice: invoice.to_string(),
-			htlc_vtxo_id: htlc_vtxo.id().to_bytes().to_vec(),
+			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			wait: true,
 		};
 
@@ -1206,45 +1201,45 @@ impl Wallet {
 			.collect::<Vec<_>>();
 
 		if let Some(preimage) = payment_preimage {
+			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
 			self.db.register_movement(MovementArgs {
-				spends: &[&input],
+				spends: &inputs.iter().collect::<Vec<_>>(),
 				receives: &receive_vtxos,
 				recipients: &[(&invoice.to_string(), amount)],
 				fees: None,
 			}).context("failed to store OOR vtxo")?;
 			Ok(preimage)
 		} else {
-			let keypair = {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&htlc_vtxo)?;
-				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
-			};
-			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+			info!("Payment failed! Revoking...");
+			let mut secs = Vec::with_capacity(htlc_vtxos.len());
+			let mut pubs = Vec::with_capacity(htlc_vtxos.len());
+			let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
+			for input in htlc_vtxos.iter() {
+				let keypair = {
+					let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
+					self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+				};
+
+				let (s, p) = musig::nonce_pair(&keypair);
+				secs.push(s);
+				pubs.push(p);
+				keypairs.push(keypair);
+			}
+
+			let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
 
 			let req = protos::RevokeBolt11PaymentRequest {
-				htlc_vtxo: htlc_vtxo.encode(),
-				pub_nonce: pub_nonce.serialize().to_vec(),
+				input_ids: revocation.arkoors.iter().map(|i| i.input.id().to_bytes().to_vec()).collect(),
+				pub_nonces: revocation.arkoors.iter().map(|i| i.user_nonce.serialize().to_vec()).collect(),
 			};
+			let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
+				.into_inner().try_into().context("invalid server cosign response")?;
 
-			let cosign_resp = asp.client.revoke_bolt11_payment(req).await?.into_inner()
-				.try_into().context("invalid server arkoor cosign response")?;
-
-			let recovation_builder = ArkoorBuilder::new_lightning_revocation(&htlc_vtxo, &pub_nonce)
-				.context("arkoor builder error")?;
-			let vtxos = recovation_builder.build_vtxos(
-				sec_nonce,
-				pub_nonce,
-				&keypair,
-				&cosign_resp,
-			);
-			let [vtxo] = vtxos.try_into().expect("recovation has single output");
+			let (vtxos, _) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
 			self.db.register_movement(MovementArgs {
-				spends: &[&input],
-				receives: &if let Some(ref change) = change_vtxo {
-					vec![(&vtxo, VtxoState::Spendable), (change, VtxoState::Spendable)]
-				} else {
-					vec![(&vtxo, VtxoState::Spendable)]
-				}[..],
+				spends: &inputs.iter().collect::<Vec<_>>(),
+				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).chain(change_vtxo.map(|c| (c, VtxoState::Spendable))).collect::<Vec<_>>(),
 				recipients: &[],
 				fees: None,
 			})?;

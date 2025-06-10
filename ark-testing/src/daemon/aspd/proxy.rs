@@ -46,7 +46,7 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().empty_arkoor_mailbox(req).await?.into_inner())
 	}
 
-	async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+	async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 		Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
 	}
 
@@ -58,7 +58,7 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().check_bolt11_payment(req).await?.into_inner())
 	}
 
-	async fn revoke_bolt11_payment(&mut self, req: protos::RevokeBolt11PaymentRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+	async fn revoke_bolt11_payment(&mut self, req: protos::RevokeBolt11PaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 		Ok(self.upstream().revoke_bolt11_payment(req).await?.into_inner())
 	}
 
@@ -213,7 +213,7 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 
 	async fn start_bolt11_payment(
 		&self, req: tonic::Request<protos::Bolt11PaymentRequest>,
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
@@ -231,7 +231,7 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 
 	async fn revoke_bolt11_payment(
 		&self, req: tonic::Request<protos::RevokeBolt11PaymentRequest>,
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::revoke_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 

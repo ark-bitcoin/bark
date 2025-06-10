@@ -1215,7 +1215,7 @@ async fn reject_subdust_bolt11_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn start_bolt11_payment(&mut self, mut req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+		async fn start_bolt11_payment(&mut self, mut req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
 			Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
 		}
