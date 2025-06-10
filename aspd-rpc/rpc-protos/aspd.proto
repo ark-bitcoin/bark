@@ -15,8 +15,8 @@ service ArkService {
 	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (Empty) {}
 
 	// * OOR PAYMENTS*
-	rpc RequestArkoorCosign(ArkoorCosignRequest) returns (ArkoorCosignResponse) {}
-	rpc PostArkoorMailbox(ArkoorVtxo) returns (Empty) {}
+	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
 	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
 
 	// * LN payments
@@ -113,14 +113,26 @@ message ArkoorCosignRequest {
 	bytes pub_nonce = 3;
 }
 
+message ArkoorPackageCosignRequest {
+	repeated ArkoorCosignRequest arkoors = 1;
+}
+
 message ArkoorCosignResponse {
 	bytes pub_nonce = 1;
 	bytes partial_sig = 2;
 }
 
+message ArkoorPackageCosignResponse {
+	repeated ArkoorCosignResponse sigs = 1;
+}
+
 message ArkoorVtxo {
 	bytes pubkey = 1;
 	bytes vtxo = 2;
+}
+
+message ArkoorPackage {
+	repeated ArkoorVtxo arkoors = 1;
 }
 
 message ArkoorVtxosRequest {

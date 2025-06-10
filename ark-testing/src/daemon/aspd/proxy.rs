@@ -34,12 +34,12 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().register_board_vtxo(req).await?.into_inner())
 	}
 
-	async fn request_arkoor_cosign(&mut self, req: protos::ArkoorCosignRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
-		Ok(self.upstream().request_arkoor_cosign(req).await?.into_inner())
+	async fn request_arkoor_package_cosign(&mut self, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		Ok(self.upstream().request_arkoor_package_cosign(req).await?.into_inner())
 	}
 
-	async fn post_arkoor_mailbox(&mut self, req: protos::ArkoorVtxo) -> Result<protos::Empty, tonic::Status> {
-		Ok(self.upstream().post_arkoor_mailbox(req).await?.into_inner())
+	async fn post_arkoor_package_mailbox(&mut self, req: protos::ArkoorPackage) -> Result<protos::Empty, tonic::Status> {
+		Ok(self.upstream().post_arkoor_package_mailbox(req).await?.into_inner())
 	}
 
 	async fn empty_arkoor_mailbox(&mut self, req: protos::ArkoorVtxosRequest) -> Result<protos::ArkoorVtxosResponse, tonic::Status> {
@@ -193,16 +193,16 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(AspdRpcProxy::register_board_vtxo(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn request_arkoor_cosign(
-		&self, req: tonic::Request<protos::ArkoorCosignRequest>,
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::request_arkoor_cosign(&mut self.0.clone(), req.into_inner()).await?))
+	async fn request_arkoor_package_cosign(
+		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::request_arkoor_package_cosign(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn post_arkoor_mailbox(
-		&self, req: tonic::Request<protos::ArkoorVtxo>,
+	async fn post_arkoor_package_mailbox(
+		&self, req: tonic::Request<protos::ArkoorPackage>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::post_arkoor_mailbox(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(AspdRpcProxy::post_arkoor_package_mailbox(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn empty_arkoor_mailbox(

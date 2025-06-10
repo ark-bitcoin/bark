@@ -252,7 +252,7 @@ pub fn get_vtxos_by_state(
 		SELECT raw_vtxo
 		FROM vtxo_view
 		WHERE state IN (SELECT atom FROM json_each(?))
-		ORDER BY expiry_height ASC";
+		ORDER BY amount_sat DESC, expiry_height ASC";
 
 	let mut statement = conn.prepare(query)?;
 

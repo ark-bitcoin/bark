@@ -15,6 +15,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 
 use anyhow::Context;
+use ark::arkoor::ArkoorPackageBuilder;
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
@@ -26,7 +27,7 @@ use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 use log::info;
 
-use ark::{BoardVtxo, Vtxo, VtxoId};
+use ark::{BoardVtxo, PaymentRequest, Vtxo, VtxoId};
 use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
 use ark::util::{Decodable, Encodable};
@@ -305,6 +306,45 @@ impl Db {
 			}
 
 			tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&spending_tx)]).await?;
+		}
+
+		Self::inner_upsert_vtxos(&tx, new_vtxos).await?;
+
+		tx.commit().await?;
+		Ok(None)
+	}
+
+	/// Returns [None] if all the ids were not previously marked as signed
+	/// and are now correctly marked as such.
+	/// Returns [Some] for the first vtxo that was already signed.
+	///
+	/// Also stores the new OOR vtxos atomically.
+	pub async fn check_set_vtxo_oor_spent_package(
+		&self,
+		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
+	) -> anyhow::Result<Option<VtxoId>> {
+		let mut conn = self.pool.get().await?;
+		let tx = conn.transaction().await?;
+
+		let new_vtxos = package.new_vtxos()
+			.into_iter().flatten().map(|v| Vtxo::Arkoor(v)).collect::<Vec<_>>();
+
+		for input in package.inputs() {
+			let txid = package.spending_tx(input.id())
+				.expect("spending tx should be present").compute_txid();
+
+			let statement = tx.prepare_typed("
+				UPDATE vtxo SET oor_spent = $2 WHERE id = $1;
+			", &[Type::TEXT, Type::BYTEA]).await?;
+
+			let vtxos = Self::get_vtxos_by_id_with_client(&tx, &[input.id()]).await?;
+			for vtxo_state in vtxos {
+				if !vtxo_state.is_spendable() {
+					return Ok(Some(vtxo_state.id));
+				}
+
+				tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&txid)]).await?;
+			}
 		}
 
 		Self::inner_upsert_vtxos(&tx, new_vtxos).await?;

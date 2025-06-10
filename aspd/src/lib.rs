@@ -40,7 +40,7 @@ use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ark::{PaymentRequest, Vtxo, VtxoId};
-use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
+use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::{BoardBuilder, BoardVtxo};
 use ark::lightning::revocation_payment_request;
 use ark::musig::{self, MusigPubNonce};
@@ -490,6 +490,21 @@ impl Server {
 		Ok(())
 	}
 
+	/// Validate all arkoor inputs are not too deep
+	fn validate_arkoor_inputs<V: Borrow<Vtxo>>(
+		&self,
+		inputs: &[V],
+	) -> anyhow::Result<()> {
+		for input in inputs.iter() {
+			if input.borrow().arkoor_depth() >= self.config.max_arkoor_depth {
+				return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
+					self.config.max_arkoor_depth, input.borrow().id());
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Validate all board inputs are deeply confirmed
 	fn validate_board_inputs<V: Borrow<Vtxo>>(
 		&self,
@@ -552,7 +567,7 @@ impl Server {
 
 		self.validate_board_inputs(&[input]).context("invalid board inputs")?;
 
-		let builder = ArkoorBuilder::new(input, &user_nonce, outputs)
+		let builder = ArkoorBuilder::new(&input, &user_nonce, outputs)
 			.badarg("invalid arkoor request")?;
 
 		let txid = builder.unsigned_transaction().compute_txid();
@@ -573,6 +588,71 @@ impl Server {
 		};
 
 		ret
+	}
+
+
+	async fn cosign_oor_package(
+		&self,
+		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<PaymentRequest>)>,
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
+		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?;
+
+		let arkoors = arkoor_args.iter().zip(input_vtxos.iter())
+			.map(|((_, user_nonce, outputs), vs)| {
+				ArkoorBuilder::new(
+					&vs.vtxo,
+					&user_nonce,
+					outputs,
+				).badarg("invalid arkoor")
+			})
+			.collect::<anyhow::Result<Vec<_>>>()?;
+
+		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
+			.badarg("error creating arkoor package")?;
+
+		self.inner_cosign_oor_package(&builder).await
+	}
+
+
+	async fn inner_cosign_oor_package(
+		&self,
+		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		let inputs = package.inputs();
+		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
+		let _lock = match self.vtxos_in_flux.lock(&input_ids) {
+			Ok(l) => l,
+			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
+		};
+
+		for output in package.output_specs() {
+			if output.amount < P2TR_DUST {
+				return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, output.amount);
+			}
+
+			if let Some(max) = self.config.max_vtxo_amount {
+				if output.amount > max {
+					return badarg!("output exceeds maximum vtxo amount of {max}");
+				}
+			}
+		}
+
+		self.validate_arkoor_inputs(&inputs)?;
+
+		self.validate_board_inputs(&inputs).context("invalid board inputs")?;
+
+		match self.db.check_set_vtxo_oor_spent_package(&package).await {
+			Ok(Some(dup)) => {
+				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
+			},
+			Ok(None) => {
+				info!("Cosigning arkoor for inputs: {:?}", input_ids);
+				// let's sign the tx
+				Ok(package.server_cosign(&self.asp_key))
+			},
+			Err(e) => Err(e),
+		}
 	}
 
 	// lightning
