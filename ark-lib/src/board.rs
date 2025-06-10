@@ -8,7 +8,7 @@
 //! * user sends all board info to the server
 //! * server creates a builder using [BoardBuilder::new_for_cosign]
 //! * server cosigns using [BoardBuilder::server_cosign] and sends cosign response to user
-//! * user validates cosign response using [BoardBuilder::verify_partial_sig]
+//! * user validates cosign response using [BoardBuilder::verify_cosign_response]
 //! * user finishes the vtxos by cross-signing using [BoardBuilder::build_vtxo]
 
 use std::marker::PhantomData;
@@ -289,7 +289,7 @@ impl BoardBuilder<state::CanBuild> {
 	/// Validate the server's partial signature.
 	///
 	/// Returns `None` if utxo or user_pub_nonce field is not provided.
-	pub fn verify_partial_sig(
+	pub fn verify_cosign_response(
 		&self,
 		server_cosign: &BoardCosignResponse,
 	) -> bool {
@@ -471,7 +471,7 @@ mod test {
 		};
 
 		// user
-		assert!(builder.verify_partial_sig(&cosign));
+		assert!(builder.verify_cosign_response(&cosign));
 		let _vtxo = builder.build_vtxo(&cosign, &user_key);
 		//TODO(stevenroose) check serialization roundtrip
 	}

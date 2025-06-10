@@ -664,9 +664,9 @@ impl Wallet {
 		}).await.context("error requesting board cosign")?
 			.into_inner().try_into().context("invalid cosign response from server")?;
 
-		if !builder.verify_partial_sig(&cosign_resp) {
-			bail!("invalid ASP board cosignature received");
-		}
+		ensure!(builder.verify_cosign_response(&cosign_resp),
+			"invalid board cosignature received from server",
+		);
 
 		// Store vtxo first before we actually make the on-chain tx.
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
