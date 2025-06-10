@@ -207,6 +207,45 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 		ArkoorCosignResponse { pub_nonce, partial_signature }
 	}
 
+	/// Verify a partial signature from either of the two parties.
+	fn verify_partial_sig(
+		&self,
+		is_user: bool,
+		asp_nonce: musig::MusigPubNonce,
+		user_nonce: musig::MusigPubNonce,
+		partial_signature: musig::MusigPartialSignature,
+	) -> bool {
+		let sighash = self.sighash();
+		let agg_nonce = musig::nonce_agg(&[&user_nonce, &asp_nonce]);
+		let agg_pk = musig::tweaked_key_agg(
+			[self.input.user_pubkey(), self.input.asp_pubkey()],
+			self.input.spec().vtxo_taptweak().to_byte_array(),
+		).0;
+
+		let msg = musig::secpm::Message::from_digest(sighash.to_byte_array());
+		let session = musig::MusigSession::new(&musig::SECP, &agg_pk, agg_nonce, msg);
+
+		let (pubkey, nonce) = if is_user {
+			(self.input.user_pubkey(), user_nonce)
+		} else {
+			(self.input.asp_pubkey(), asp_nonce)
+		};
+		session.partial_verify(
+			&musig::SECP, &agg_pk, partial_signature, nonce, musig::pubkey_to(pubkey),
+		)
+	}
+
+	/// Validate the server's partial signature.
+	pub fn verify_cosign_response(
+		&self,
+		user_pub_nonce: musig::MusigPubNonce,
+		server_cosign: &ArkoorCosignResponse,
+	) -> bool {
+		self.verify_partial_sig(
+			false, server_cosign.pub_nonce, user_pub_nonce, server_cosign.partial_signature,
+		)
+	}
+
 	/// Construct the vtxos of the outputs of this OOR tx.
 	///
 	/// These vtxos are not valid vtxos because they lack the signature.
