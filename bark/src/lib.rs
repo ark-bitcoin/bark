@@ -1085,6 +1085,9 @@ impl Wallet {
 		};
 		let cosign_resp: Vec<_> = asp.client.request_arkoor_package_cosign(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
+		ensure!(builder.verify_cosign_response(&cosign_resp),
+			"invalid arkoor cosignature received from server",
+		);
 
 		let (sent, change) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
@@ -1206,6 +1209,10 @@ impl Wallet {
 		let cosign_resp: Vec<_> = asp.client.start_bolt11_payment(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 
+		ensure!(builder.verify_cosign_response(&cosign_resp),
+			"invalid arkoor cosignature received from server",
+		);
+
 		let (htlc_vtxos, change_vtxo) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
 		let req = protos::SignedBolt11PaymentDetails {
@@ -1267,6 +1274,9 @@ impl Wallet {
 			};
 			let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
 				.into_inner().try_into().context("invalid server cosign response")?;
+			ensure!(revocation.verify_cosign_response(&cosign_resp),
+				"invalid arkoor cosignature received from server",
+			);
 
 			let (vtxos, change) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
 			assert!(change.is_none(), "unexpected change: {:?}", change);
@@ -1395,6 +1405,9 @@ impl Wallet {
 		let cosign_resp = asp.client.claim_bolt11_onboard(req).await
 			.context("failed to claim bolt11 onboard")?
 			.into_inner().try_into().context("invalid server cosign response")?;
+		ensure!(builder.verify_cosign_response(&[&cosign_resp]),
+			"invalid arkoor cosignature received from server",
+		);
 
 		let (vtxos, _) = builder.build_vtxos(
 			&[cosign_resp],
