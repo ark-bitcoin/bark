@@ -552,7 +552,7 @@ impl Server {
 
 		self.validate_board_inputs(&[input]).context("invalid board inputs")?;
 
-		let builder = ArkoorBuilder::new(&input, &user_nonce, outputs)
+		let builder = ArkoorBuilder::new(input, &user_nonce, outputs)
 			.badarg("invalid arkoor request")?;
 
 		let txid = builder.unsigned_transaction().compute_txid();
