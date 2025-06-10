@@ -68,7 +68,7 @@ impl ExitStateProgress for ExitStartState {
 			ctx.vtxo.id(), ctx.vtxo.amount(), ctx.vtxo_recipient()?.to_string()
 		);
 		ctx.persister.register_movement(movement)
-			.map_err(|e| ExitError::MovementRegistrationFailure(e.to_string()))?;
+			.map_err(|e| ExitError::MovementRegistrationFailure { error: e.to_string() })?;
 
 		Ok(ExitState::new_processing(
 			ctx.onchain.tip().await.unwrap_or(self.tip_height),

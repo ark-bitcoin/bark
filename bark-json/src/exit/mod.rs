@@ -49,8 +49,8 @@ impl ExitState {
 	}
 
 	pub fn new_awaiting_delta(
-		tip: BlockHeight, 
-		confirmed_block: BlockRef, 
+		tip: BlockHeight,
+		confirmed_block: BlockRef,
 		spendable_height: BlockHeight
 	) -> Self {
 		assert!(spendable_height >= confirmed_block.height);
@@ -62,8 +62,8 @@ impl ExitState {
 	}
 
 	pub fn new_spendable(
-		tip: BlockHeight, 
-		spendable_since: BlockRef, 
+		tip: BlockHeight,
+		spendable_since: BlockRef,
 		last_scanned_block: Option<BlockRef>
 	) -> Self {
 		ExitState::Spendable(ExitSpendableState {
@@ -74,8 +74,8 @@ impl ExitState {
 	}
 
 	pub fn new_spend_in_progress(
-		tip: BlockHeight, 
-		spendable_since: BlockRef, 
+		tip: BlockHeight,
+		spendable_since: BlockRef,
 		spending_txid: Txid
 	) -> Self {
 		ExitState::SpendInProgress(ExitSpendInProgressState {

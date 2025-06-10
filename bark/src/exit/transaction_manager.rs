@@ -176,12 +176,12 @@ impl ExitTransactionManager {
 		exit_txid: Txid,
 	) -> anyhow::Result<Arc<RwLock<ExitTransactionPackage>>, ExitError> {
 		self.index.get(&exit_txid)
-			.ok_or(ExitError::InternalError(
-				format!("Attempt to get package for untracked exit tx: {}", exit_txid))
-			)?.upgrade()
-			.ok_or(ExitError::InternalError(
-				format!("Attempt to get package for stale exit tx: {}", exit_txid))
-			)
+			.ok_or(ExitError::InternalError {
+				error: format!("Attempt to get package for untracked exit tx: {}", exit_txid),
+			})?.upgrade()
+			.ok_or(ExitError::InternalError {
+				error: format!("Attempt to get package for stale exit tx: {}", exit_txid),
+			})
 	}
 
 	pub async fn tx_status(&mut self, txid: Txid) -> anyhow::Result<TxStatus, ExitError> {
@@ -242,7 +242,7 @@ impl ExitTransactionManager {
 
 	async fn tip(&self) -> anyhow::Result<BlockHeight, ExitError> {
 		self.chain_source.tip().await
-			.map_err(|e| ExitError::TipRetrievalFailure(e.to_string()))
+			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })
 	}
 
 	async fn get_tx_status(&self, txid: Txid) -> anyhow::Result<TxStatus, ExitError> {
@@ -271,9 +271,9 @@ impl ExitTransactionManager {
 		if let Some(child_tx) = onchain.get_spending_tx(exit_txid) {
 			let child_txid = child_tx.compute_txid();
 			let child_wallet_tx = onchain.wallet.get_tx(child_txid)
-				.ok_or(ExitError::InvalidWalletState(
-					format!("no corresponding WalletTx for CPFP: {}", child_txid))
-				)?;
+				.ok_or(ExitError::InvalidWalletState {
+					error: format!("no corresponding WalletTx for CPFP: {}", child_txid),
+				})?;
 
 			// Check whether it is confirmed or not
 			let block = match child_wallet_tx.chain_position {
@@ -298,7 +298,7 @@ impl ExitTransactionManager {
 		exit_txid: Txid,
 	) -> Result<Option<ChildTransactionInfo>, ExitError> {
 		let result = self.persister.get_exit_child_tx(exit_txid)
-			.map_err(|e| ExitError::DatabaseChildRetrievalFailure(e.to_string()))?;
+			.map_err(|e| ExitError::DatabaseChildRetrievalFailure { error: e.to_string() })?;
 		if let Some((tx, block)) = result {
 			Ok(Some(ChildTransactionInfo::from_block(
 				TransactionInfo {
@@ -321,7 +321,7 @@ impl ExitTransactionManager {
 		let outpoint = {
 			let guard = package.read().await;
 			let (outpoint, _) = guard.exit.tx.fee_anchor()
-				.ok_or_else(|| ExitError::MissingAnchorOutput(guard.exit.txid))?;
+				.ok_or_else(|| ExitError::MissingAnchorOutput { txid: guard.exit.txid })?;
 			outpoint
 		};
 		let spend_results = self.chain_source
