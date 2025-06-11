@@ -7,10 +7,7 @@
 	inputs = {
 		nixpkgs.url = "nixpkgs/nixos-24.11";
 		nixpkgs-master.url = "github:NixOS/nixpkgs/master";
-		flake-utils = {
-			url = "github:numtide/flake-utils";
-			inputs.nixpkgs.follows = "nixpkgs";
-		};
+		flake-utils.url = "github:numtide/flake-utils";
 		rust-overlay = {
 			url = "github:oxalica/rust-overlay";
 			inputs.nixpkgs.follows = "nixpkgs";
@@ -22,7 +19,7 @@
 			let
 				rustVersion = "1.82.0";
 				bitcoinVersion = "29.0";
-				lightningVersion = "25.02";
+				lightningVersion = "25.02.2";
 				postgresVersion = "16.9";
 				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 
@@ -58,7 +55,7 @@
 						inherit pname version;
 						sha256 = "sha256-rwVny9i0vFycoeAesy2iP7sA16fECLu1UPbqrOJa1is=";
 					};
-					cargoSha256 = "sha256-dATviea1btnIVYKKgU1fMtZxKJitp/wXAuoIsxCSgf4=";
+					cargoHash = "sha256-dATviea1btnIVYKKgU1fMtZxKJitp/wXAuoIsxCSgf4=";
 				};
 
 				electrs = pkgs.rustPlatform.buildRustPackage rec {
@@ -88,7 +85,7 @@
 					version = lightningVersion;
 					src = pkgs.fetchurl {
 						url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-						hash = "sha256-00cG/DkRAwR/fMuuKXml2QAiE0yC6TlQUqXELbbDPRE=";
+						hash = "sha256-2wp9o1paWJWfxIvm9BDnsKX3GDUXKaPkpB89cwb6Oj8=";
 					};
 					makeFlags = [ "VERSION=v${lightningVersion}" ];
 					# some makefile bug: https://github.com/ElementsProject/lightning/issues/8141
@@ -193,7 +190,7 @@
 
 					# Use Docker for Core Lightning on macOS by default instead of a local daemon
 					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
-					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "acidbunny21/cln-hodl:v24.08.2.0" else null);
+					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "docker.io/secondark/cln-hodl:v${lightningVersion}" else null);
 					LIGHTNINGD_PLUGIN_DIR = (if isDarwin then "/plugins" else "${cln-plugins}");
 
 					POSTGRES_BINS = "${postgresql}/bin";
