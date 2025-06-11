@@ -9,7 +9,8 @@ use cln_rpc::listsendpays_request::ListsendpaysIndex;
 #[tokio::test]
 async fn upsert_vtxo() {
 	let mut ctx = TestContext::new_minimal("postgresd/upsert_vtxo").await;
-	let postgres_cfg = ctx.init_central_postgres().await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.name).await;
 
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
@@ -31,7 +32,8 @@ async fn upsert_vtxo() {
 #[tokio::test]
 async fn lightning_invoice() {
 	let mut ctx = TestContext::new_minimal("postgresd/lightning_node").await;
-	let postgres_cfg = ctx.init_central_postgres().await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.name).await;
 
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");

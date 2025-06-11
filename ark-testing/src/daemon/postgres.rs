@@ -13,32 +13,6 @@ use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
 
-pub fn use_host_database() -> bool {
-	env::var("TEST_POSTGRES_HOST").is_ok()
-}
-
-pub async fn global_client() -> Client {
-	let mut config = Config::new();
-
-	// we use default database and user to connect and create testing ones
-	config.dbname("postgres");
-	config.user("postgres");
-	config.password("postgres");
-
-	config.host("localhost");
-	config.port(5432);
-
-	let (client, connection) = config.connect(NoTls).await
-		.expect("failed to connect to global postgres client");
-	tokio::spawn(async move {
-		if let Err(e) = connection.await {
-			panic!("postgres daemon connection error: {}", e);
-		}
-	});
-
-	client
-}
-
 pub fn host_base_config() -> config::Postgres {
 	config::Postgres {
 		name: String::new(), // left empty to be filled
@@ -49,19 +23,6 @@ pub fn host_base_config() -> config::Postgres {
 	}
 }
 
-pub async fn cleanup_dbs(client: &Client, name: &str) {
-	let rows = client
-		.query(
-			"SELECT datname FROM pg_database WHERE datname LIKE $1",
-			&[&format!("{}%", name)],
-		).await.expect("failed to execute first cleanup query");
-
-	for row in rows {
-		let db_name = row.get::<_, &str>(0);
-		client.execute(&format!("DROP DATABASE \"{}\"", db_name), &[]).await
-			.expect("failed to drop db during cleanup");
-	}
-}
 
 pub type Postgres = Daemon<PostgresHelper>;
 
@@ -127,7 +88,7 @@ impl PostgresHelper {
 		}
 	}
 
-	async fn try_connect(&self) -> anyhow::Result<Client> {
+	pub async fn try_connect(&self) -> anyhow::Result<Client> {
 		let mut config = Config::new();
 
 		// we use default database and user to connect and create testing ones

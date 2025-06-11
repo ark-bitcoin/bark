@@ -56,6 +56,43 @@ in your `PATH` variable, alternatively you can set the following environmental v
 - `BITCOIND_EXEC`: e.g. `export BITCOIND_EXEC="${PATH_TO_BITCOIND}/bin/bitcoind"`
 - `LIGHTNINGD_EXEC`: e.g. `export LIGHTNINGD_EXEC="${PATH_TO_LIGHTNINGD}/bin/lightningd"`
 
+You also have to ensure you have a working postgres installation
+
+## Postgres
+
+There are two options to run the tests.
+- test managed host (default)
+- external host (CI)
+
+### Test managed host
+
+The test framework will launch a new host for every test.
+This approach requires that the postgres-binaries such as `initdb` and
+`pg_ctl` are installed on your system.
+
+You should either add the binaries to your path or set the `POSTGRES_BINS` environment
+variable to the folder that contains them.
+
+The nix-flake in this repository will ensure all binaries are installed correctly.
+
+### External host
+
+If you are running a postgres database it can be used as well. You
+can point the `TEST_POSTGRES_HOST` environment variable to your server.
+
+The testing framework will connect using the following credentials and
+create a new database on the host for every test.
+
+```
+  dbname: postgres
+  host: <TEST_POSTGRES_HOST>
+  port: 5432
+  user: postgres
+  password: postgres
+```
+
+## Running the tests
+
 Unit and integration tests are configured in the [justfile](justfile) and can be run using the
 following command:
 
@@ -63,10 +100,6 @@ following command:
 $ just test
 ```
 
-If you have a PostgreSQL database running on your system, you can use it by running tests
-command with `TEST_POSTGRES_HOST` env variable set.
-Else tests will look for `initdb` and `postgres` binaries to spin up a dedicated database server
-on different ports for every `aspd` test.
 
 ### macOS differences
 

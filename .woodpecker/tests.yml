@@ -41,11 +41,16 @@ steps:
   - name: generated-static-files
     depends_on: build
     image: registry.2nd.dev/build:17
+    environment:
+      TEST_POSTGRES_HOST: localhost
     commands:
       - just default-aspd-config
       - bash contrib/check-clean-diff.sh aspd/config.default.toml
       - just dump-bark-sql-schema
       - bash contrib/check-clean-diff.sh bark/schema.sql
+      - service postgresql start
+      - just dump-aspd-sql-schema
+      - bash contrib/check-clean-diff.sh aspd/schema.sql
 
   - name: use-bark-as-dependency
     depends_on: build

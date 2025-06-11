@@ -10,6 +10,7 @@ pub mod constants;
 pub mod daemon;
 pub mod util;
 pub mod bark;
+pub mod postgres;
 
 pub use context::TestContext;
 pub use daemon::{Daemon, DaemonHelper};
