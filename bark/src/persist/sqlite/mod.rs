@@ -12,7 +12,7 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
-use crate::vtxo_state::VtxoStateKind;
+use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
 	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
@@ -147,7 +147,7 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Get all VTXOs that are in one of the provided states
-	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<Vtxo>> {
+	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxos_by_state(&conn, state)
 	}
@@ -257,7 +257,7 @@ impl BarkPersister for SqliteClient {
 		vtxo_id: VtxoId,
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind]
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<WalletVtxo> {
 		let conn = self.connect()?;
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
 	}

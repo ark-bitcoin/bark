@@ -527,8 +527,8 @@ impl Wallet {
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
 		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
 		for board in unregistered_boards {
-			if let Err(e) = self.register_board(board.id()).await {
-				warn!("Failed to register board {}: {}", board.id(), e);
+			if let Err(e) = self.register_board(board.vtxo.id()).await {
+				warn!("Failed to register board {}: {}", board.vtxo.id(), e);
 			}
 		};
 

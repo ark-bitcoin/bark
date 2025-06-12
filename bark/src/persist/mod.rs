@@ -13,7 +13,7 @@ use crate::{
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
-use crate::vtxo_state::{VtxoState, VtxoStateKind};
+use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum OffchainPayment {
@@ -53,7 +53,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Fetch a VTXO by id in the database
 	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 	/// Fetch all VTXO's that are in a given state
-	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<Vtxo>>;
+	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>>;
 	/// Remove a VTXO from the database
 	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 	/// Check whether a VTXO has been spent already or not
@@ -96,11 +96,16 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight>;
 	fn store_last_ark_sync_height(&self, height: BlockHeight) -> anyhow::Result<()>;
 
-	fn update_vtxo_state_checked(&self, vtxo_id: VtxoId, new_state: VtxoState, allowed_old_states: &[VtxoStateKind]) -> anyhow::Result<()>;
+	fn update_vtxo_state_checked(
+		&self,
+		vtxo_id: VtxoId,
+		new_state: VtxoState,
+		allowed_old_states: &[VtxoStateKind],
+	) -> anyhow::Result<WalletVtxo>;
 
 	/// Fetch all currently spendable VTXOs in the database
 	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
-		self.get_vtxos_by_state(&[VtxoStateKind::Spendable])
+		Ok(self.get_vtxos_by_state(&[VtxoStateKind::Spendable])?.into_iter().map(|vtxo| vtxo.vtxo).collect())
 	}
 }
 

@@ -13,7 +13,7 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
 use crate::persist::{OffchainOnboard, OffchainPayment};
-use crate::vtxo_state::VtxoStateKind;
+use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
 	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
@@ -256,9 +256,9 @@ pub fn get_vtxo_by_id(
 pub fn get_vtxos_by_state(
 	conn: &Connection,
 	state: &[VtxoStateKind]
-) -> anyhow::Result<Vec<Vtxo>> {
+) -> anyhow::Result<Vec<WalletVtxo>> {
 	let query = "
-		SELECT raw_vtxo
+		SELECT raw_vtxo, state
 		FROM vtxo_view
 		WHERE state_kind IN (SELECT atom FROM json_each(?))
 		ORDER BY amount_sat DESC, expiry_height ASC";
@@ -269,9 +269,17 @@ pub fn get_vtxos_by_state(
 
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
-		let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
-		let vtxo = Vtxo::deserialize(&raw_vtxo)?;
-		result.push(vtxo);
+		let vtxo = {
+			let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
+			Vtxo::deserialize(&raw_vtxo)?
+		};
+
+		let state = {
+			let raw_state : Vec<u8> = row.get("state")?;
+			serde_json::from_slice::<VtxoState>(&raw_state)?
+		};
+
+		result.push(WalletVtxo { vtxo, state });
 	}
 	Ok(result)
 }
@@ -348,7 +356,7 @@ pub fn update_vtxo_state_checked(
 	vtxo_id: VtxoId,
 	new_state: VtxoState,
 	old_states: &[VtxoStateKind],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<WalletVtxo> {
 	let query = r"
 		INSERT INTO bark_vtxo_state (vtxo_id, state_kind, state)
 		SELECT :vtxo_id, :state_kind, :state FROM most_recent_vtxo_state
@@ -366,7 +374,10 @@ pub fn update_vtxo_state_checked(
 
 	match nb_inserted {
 		0 => bail!("No vtxo with provided id or old states"),
-		1 => Ok(()),
+		1 => Ok({
+			let vtxo = get_vtxo_by_id(conn, vtxo_id)?.unwrap();
+			WalletVtxo { vtxo, state: new_state }
+		}),
 		_ => panic!("Corrupted database. A vtxo can have only one state"),
 	}
 }

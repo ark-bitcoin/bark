@@ -1,3 +1,4 @@
+use ark::Vtxo;
 use bitcoin::Amount;
 use lightning_invoice::Bolt11Invoice;
 
@@ -50,6 +51,12 @@ impl VtxoState {
 			VtxoState::PendingLightningSend { .. } => VtxoStateKind::PendingLightningSend,
 		}
 	}
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletVtxo {
+	pub vtxo: Vtxo,
+	pub state: VtxoState,
 }
 
 #[cfg(test)]
