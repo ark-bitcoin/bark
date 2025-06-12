@@ -65,7 +65,7 @@ use crate::movement::{Movement, MovementArgs};
 use crate::onchain::Utxo;
 use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
-use crate::vtxo_state::{VtxoState, VtxoStateKind};
+use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
@@ -550,6 +550,7 @@ impl Wallet {
 		self.register_all_unregistered_boards().await?;
 		info!("Performing maintenance refresh");
 		self.maintenance_refresh().await?;
+		self.sync_pending_lightning_vtxos().await?;
 		Ok(())
 	}
 
@@ -979,6 +980,23 @@ impl Wallet {
 		}
 	}
 
+	async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
+		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
+		info!("Syncing {} pending lightning vtxos", vtxos.len());
+
+		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
+		for vtxo in vtxos {
+			let invoice = vtxo.state.as_pending_lightning().unwrap();
+			htlc_vtxos_by_payment_hash.entry(*invoice.0.payment_hash()).or_default().push(vtxo);
+		}
+
+		for (_, vtxos) in htlc_vtxos_by_payment_hash {
+			self.check_bolt11_payment(&vtxos).await?;
+		}
+
+		Ok(())
+	}
+
 	/// Select several vtxos to cover the provided amount
 	///
 	/// Returns an error if amount cannot be reached
@@ -1291,6 +1309,83 @@ impl Wallet {
 			self.process_bolt11_revocation(&htlc_vtxos).await?;
 			bail!("No preimage, payment failed: {}", res.progress_message);
 		}
+	}
+
+	pub async fn check_bolt11_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<[u8; 32]>> {
+		let mut asp = self.require_asp()?;
+		let tip = self.onchain.tip().await?;
+
+		// we check that all htlc have the same invoice, amount, and HTLC out spec
+		let mut parts = None;
+		for vtxo in htlc_vtxos.iter() {
+			if let VtxoState::PendingLightningSend { ref invoice, amount } = vtxo.state {
+				let policy = vtxo.vtxo.policy().as_server_htlc_send()
+					.context("VTXO is not an HTLC send")?;
+				let this_parts = (invoice, amount, policy);
+				if parts.get_or_insert_with(|| this_parts) != &this_parts {
+					bail!("All bolt11 htlc should have the same invoice, amount, and policy");
+				}
+			}
+		}
+
+		let (invoice, amount, spk_spec) = parts.context("no htlc vtxo provided")?;
+
+		let req = protos::CheckBolt11PaymentRequest {
+			hash: invoice.payment_hash().as_byte_array().to_vec(),
+			wait: false,
+		};
+		let res = asp.client.check_bolt11_payment(req).await?.into_inner();
+
+		let payment_status = protos::PaymentStatus::try_from(res.status)?;
+
+		let should_revoke = match payment_status {
+			protos::PaymentStatus::Failed => {
+				info!("Payment failed ({}): revoking VTXO", res.progress_message);
+				true
+			},
+			protos::PaymentStatus::Pending => {
+				trace!("Payment is still pending, HTLC expiry: {}, tip: {}", spk_spec.htlc_expiry, tip);
+				if tip > spk_spec.htlc_expiry {
+					info!("Payment is still pending, but HTLC is expired: revoking VTXO");
+					true
+				} else {
+					info!("Payment is still pending and HTLC is not expired ({}): doing nothing for now", spk_spec.htlc_expiry);
+					false
+				}
+			},
+			protos::PaymentStatus::Complete => {
+				let preimage: [u8; 32] = res.payment_preimage.context("payment completed but no preimage")?
+					.try_into().map_err(|_| anyhow!("preimage is not 32 bytes"))?;
+				info!("Payment is complete, preimage, {}", preimage.as_hex());
+
+				self.db.register_movement(MovementArgs {
+					spends: &htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
+					receives: &[],
+					recipients: &[(&invoice.to_string(), amount)],
+					fees: None,
+				}).context("failed to store OOR vtxo")?;
+
+				return Ok(Some(preimage));
+			},
+		};
+
+		if should_revoke {
+			if let Err(e) = self.process_bolt11_revocation(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>()).await {
+				warn!("Failed to revoke VTXO: {}", e);
+
+				// if one of the htlc is about to expire, we exit all of them.
+				// Maybe we want a different behavior here, but we have to decide whether
+				// htlc vtxos revocation is a all or nothing process.
+				let min_expiry = htlc_vtxos.iter()
+					.map(|v| v.vtxo.spec().expiry_height).min().unwrap();
+				if tip > min_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
+					warn!("Some VTXO is about to expire soon, must be exited");
+					self.exit.start_exit_for_vtxos(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(), &self.onchain).await?;
+				}
+			}
+		}
+
+		Ok(None)
 	}
 
 	/// Create, store and return a bolt11 invoice for offchain onboarding

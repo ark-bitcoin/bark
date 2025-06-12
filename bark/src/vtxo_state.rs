@@ -51,6 +51,13 @@ impl VtxoState {
 			VtxoState::PendingLightningSend { .. } => VtxoStateKind::PendingLightningSend,
 		}
 	}
+
+	pub fn as_pending_lightning(&self) -> Option<(&Bolt11Invoice, &Amount)> {
+		match self {
+			VtxoState::PendingLightningSend { invoice, amount } => Some((invoice, amount)),
+			_ => None,
+		}
+	}
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
