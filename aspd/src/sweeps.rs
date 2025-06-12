@@ -687,13 +687,13 @@ impl Process {
 				SweepMeta::Connector(_) => "connector",
 				SweepMeta::Board => unreachable!(),
 			};
-			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
-				surplus: s.surplus(feerate).unwrap(), sweep_type: tp.into(),
+			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(), sweep_type: tp.into(),
+				surplus: s.surplus(feerate).unwrap(), expiry_height: s.round.round.expiry_height,
 			);
 		}
 		for s in &builder.board_sweeps {
-			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(),
-				surplus: s.surplus(feerate).unwrap(), sweep_type: "board".into(),
+			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(), sweep_type: "board".into(),
+				surplus: s.surplus(feerate).unwrap(), expiry_height: s.vtxo_spec.expiry_height,
 			);
 		}
 

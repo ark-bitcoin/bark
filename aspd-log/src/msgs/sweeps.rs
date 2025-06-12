@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use ark::rounds::RoundId;
 use bitcoin::{Amount, OutPoint, Txid};
+use bitcoin_ext::BlockHeight;
 use serde::{Deserialize, Serialize};
 
 
@@ -34,6 +35,7 @@ pub struct SweepingOutput {
 	pub amount: Amount,
 	pub surplus: Amount,
 	pub sweep_type: Cow<'static, str>,
+	pub expiry_height: BlockHeight,
 }
 impl_slog!(SweepingOutput, Debug, "Sweeping output");
 
