@@ -874,7 +874,7 @@ mod test {
 				SignedVtxoRequest {
 					vtxo: VtxoRequest {
 						amount: self.amount,
-						policy: VtxoPolicy::Pubkey { user_pubkey: self.key.public_key() },
+						policy: VtxoPolicy::new_pubkey(self.key.public_key()),
 					},
 					cosign_pubkey: self.cosign_key.public_key(),
 				}

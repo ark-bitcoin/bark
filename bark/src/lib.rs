@@ -14,6 +14,7 @@ mod lnurl;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
+use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
 pub use persist::sqlite::SqliteClient;
 mod psbtext;
 pub mod vtxo_selection;
@@ -762,7 +763,7 @@ impl Wallet {
 				.into_cached_tree();
 
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-				if let VtxoPolicy::Pubkey { user_pubkey } = dest.vtxo.policy {
+				if let VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) = dest.vtxo.policy {
 					if pubkeys.contains(&user_pubkey) {
 						if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 							self.db.register_movement(MovementArgs {
@@ -937,7 +938,7 @@ impl Wallet {
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let req = VtxoRequest {
-			policy: VtxoPolicy::Pubkey { user_pubkey: user_keypair.public_key() },
+			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
 			amount: total_amount,
 		};
 
@@ -1025,7 +1026,7 @@ impl Wallet {
 
 		let req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::Pubkey { user_pubkey: destination },
+			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: destination }),
 		};
 
 		let inputs = self.select_vtxos_to_cover(
@@ -1194,11 +1195,11 @@ impl Wallet {
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
 		let pay_req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::ServerHtlcSend {
+			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 				user_pubkey: change_keypair.public_key(),
 				payment_hash: *invoice.payment_hash(),
 				htlc_expiry: htlc_expiry,
-			},
+			}),
 		};
 
 		let inputs = self.select_vtxos_to_cover(pay_req.amount + P2TR_DUST, Some(asp.info.max_arkoor_depth))?;
@@ -1371,11 +1372,7 @@ impl Wallet {
 			let inputs = fee_vtxo_cloned.clone();
 			let htlc_pay_req = VtxoRequest {
 				amount: amount,
-				policy: VtxoPolicy::ServerHtlcRecv {
-					user_pubkey: keypair.public_key(),
-					payment_hash: *invoice.payment_hash(),
-					htlc_expiry: htlc_expiry,
-				},
+				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), *invoice.payment_hash(), htlc_expiry),
 			};
 
 			Ok((inputs, vec![htlc_pay_req], vec![]))
@@ -1387,7 +1384,7 @@ impl Wallet {
 
 		// Claiming arkoor against preimage
 		let pay_req = VtxoRequest {
-			policy: VtxoPolicy::Pubkey { user_pubkey: keypair.public_key() },
+			policy: VtxoPolicy::new_pubkey(keypair.public_key()),
 			amount: amount,
 		};
 
@@ -1482,7 +1479,7 @@ impl Wallet {
 					info!("Adding change vtxo for {}", amount);
 					Some(VtxoRequest {
 						amount: amount,
-						policy: VtxoPolicy::Pubkey { user_pubkey: change_keypair.public_key() },
+						policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
 					})
 				}
 			};

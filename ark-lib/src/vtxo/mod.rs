@@ -289,6 +289,43 @@ impl<'de> serde::Deserialize<'de> for VtxoPolicyType {
 	}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PubkeyVtxoPolicy {
+	pub user_pubkey: PublicKey,
+}
+
+impl From<PubkeyVtxoPolicy> for VtxoPolicy {
+	fn from(policy: PubkeyVtxoPolicy) -> Self {
+		Self::Pubkey(policy)
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServerHtlcSendVtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub payment_hash: sha256::Hash,
+	pub htlc_expiry: BlockHeight,
+}
+
+impl From<ServerHtlcSendVtxoPolicy> for VtxoPolicy {
+	fn from(policy: ServerHtlcSendVtxoPolicy) -> Self {
+		Self::ServerHtlcSend(policy)
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServerHtlcRecvVtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub payment_hash: sha256::Hash,
+	pub htlc_expiry: BlockHeight,
+}
+
+impl From<ServerHtlcRecvVtxoPolicy> for VtxoPolicy {
+	fn from(policy: ServerHtlcRecvVtxoPolicy) -> Self {
+		Self::ServerHtlcRecv(policy)
+	}
+}
+
 /// The output policy of the VTXO.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VtxoPolicy {
@@ -299,24 +336,47 @@ pub enum VtxoPolicy {
 	/// - a round
 	/// - an arkoor tx
 	/// - change from a LN payment
-	Pubkey {
-		user_pubkey: PublicKey,
-	},
+	Pubkey(PubkeyVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to send money.
-	ServerHtlcSend {
-		user_pubkey: PublicKey,
-		payment_hash: sha256::Hash,
-		htlc_expiry: BlockHeight,
-	},
+	ServerHtlcSend(ServerHtlcSendVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
-	ServerHtlcRecv {
-		user_pubkey: PublicKey,
-		payment_hash: sha256::Hash,
-		htlc_expiry: BlockHeight,
-	},
+	ServerHtlcRecv(ServerHtlcRecvVtxoPolicy),
 }
 
 impl VtxoPolicy {
+	pub fn new_pubkey(user_pubkey: PublicKey) -> Self {
+		Self::Pubkey(PubkeyVtxoPolicy { user_pubkey })
+	}
+
+	pub fn new_server_htlc_send(user_pubkey: PublicKey, payment_hash: sha256::Hash, htlc_expiry: BlockHeight) -> Self {
+		Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
+	}
+
+	pub fn new_server_htlc_recv(user_pubkey: PublicKey, payment_hash: sha256::Hash, htlc_expiry: BlockHeight) -> Self {
+		Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
+	}
+
+	pub fn as_pubkey(&self) -> Option<&PubkeyVtxoPolicy> {
+		match self {
+			Self::Pubkey(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn as_server_htlc_send(&self) -> Option<&ServerHtlcSendVtxoPolicy> {
+		match self {
+			Self::ServerHtlcSend(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	pub fn as_server_htlc_recv(&self) -> Option<&ServerHtlcRecvVtxoPolicy> {
+		match self {
+			Self::ServerHtlcRecv(v) => Some(v),
+			_ => None,
+		}
+	}
+
 	/// The policy type id.
 	pub fn policy_type(&self) -> VtxoPolicyType {
 		match self {
@@ -339,18 +399,18 @@ impl VtxoPolicy {
 	/// This will return [None] if [VtxoPolicy::is_arkoor_compatible] returns false.
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
 		match self {
-			Self::Pubkey { user_pubkey } => Some(*user_pubkey),
-			Self::ServerHtlcSend { .. } => None,
-			Self::ServerHtlcRecv { .. } => None,
+			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
+			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 		}
 	}
 
 	/// Returns the user pubkey associated with a [Vtxo] with this output.
 	pub fn user_pubkey(&self) -> PublicKey {
 		match self {
-			Self::Pubkey { user_pubkey } => *user_pubkey,
-			Self::ServerHtlcSend { user_pubkey, .. } => *user_pubkey,
-			Self::ServerHtlcRecv { user_pubkey, .. } => *user_pubkey,
+			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,
+			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
+			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 		}
 	}
 
@@ -360,13 +420,13 @@ impl VtxoPolicy {
 		exit_delta: u16,
 	) -> taproot::TaprootSpendInfo {
 		match self {
-			Self::Pubkey { user_pubkey } => {
+			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				exit_taproot(*user_pubkey, asp_pubkey, exit_delta)
 			},
-			Self::ServerHtlcSend { user_pubkey, payment_hash, htlc_expiry } => {
+			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				server_htlc_send_taproot(*payment_hash, asp_pubkey, *user_pubkey, exit_delta, *htlc_expiry)
 			},
-			Self::ServerHtlcRecv { user_pubkey, payment_hash, htlc_expiry } => {
+			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				server_htlc_receive_taproot(*payment_hash, asp_pubkey, *user_pubkey, exit_delta, *htlc_expiry)
 			},
 		}
@@ -375,15 +435,15 @@ impl VtxoPolicy {
 	/// Returns the tapscript internal to the [VtxoPolicy::taproot] that is used for the user exit.
 	pub fn user_exit_clause(&self, exit_delta: u16) -> ScriptBuf {
 		match self {
-			Self::Pubkey { user_pubkey } => {
+			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				exit_clause(*user_pubkey, exit_delta)
 			},
-			Self::ServerHtlcSend { user_pubkey, htlc_expiry, .. } => {
+			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, htlc_expiry, .. }) => {
 				util::delay_timelock_sign(
 					2 * exit_delta, *htlc_expiry, user_pubkey.x_only_public_key().0,
 				)
 			},
-			Self::ServerHtlcRecv { user_pubkey, payment_hash, .. } => {
+			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, .. }) => {
 				util::hash_delay_sign(
 					*payment_hash, 2 * exit_delta, user_pubkey.x_only_public_key().0,
 				)
@@ -746,7 +806,7 @@ impl Vtxo {
 	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
 	pub fn server_htlc_out_payment_hash(&self) -> Option<sha256::Hash> {
 		match self.policy {
-			VtxoPolicy::ServerHtlcSend { payment_hash, .. } => Some(payment_hash),
+			VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
 			VtxoPolicy::ServerHtlcRecv { .. } => None,
 			VtxoPolicy::Pubkey { .. } => None,
 		}
@@ -875,17 +935,17 @@ const VTXO_POLICY_SERVER_HTLC_RECV: u8 = 0x03;
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
-			Self::Pubkey { user_pubkey } => {
+			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				w.emit_u8(VTXO_POLICY_REGULAR)?;
 				user_pubkey.encode(w)?;
 			},
-			Self::ServerHtlcSend { user_pubkey, payment_hash, htlc_expiry } => {
+			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_SEND)?;
 				user_pubkey.encode(w)?;
 				payment_hash.encode(w)?;
 				w.emit_u32(*htlc_expiry)?;
 			},
-			Self::ServerHtlcRecv { user_pubkey, payment_hash, htlc_expiry } => {
+			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_RECV)?;
 				user_pubkey.encode(w)?;
 				payment_hash.encode(w)?;
@@ -899,19 +959,19 @@ impl ProtocolEncoding for VtxoPolicy {
 		match r.read_u8()? {
 			VTXO_POLICY_REGULAR => {
 				let user_pubkey = PublicKey::decode(r)?;
-				Ok(Self::Pubkey { user_pubkey })
+				Ok(Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }))
 			},
 			VTXO_POLICY_SERVER_HTLC_SEND => {
 				let user_pubkey = PublicKey::decode(r)?;
 				let payment_hash = sha256::Hash::decode(r)?;
 				let htlc_expiry = r.read_u32()?;
-				Ok(Self::ServerHtlcSend { user_pubkey, payment_hash, htlc_expiry })
+				Ok(Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
 			},
 			VTXO_POLICY_SERVER_HTLC_RECV => {
 				let user_pubkey = PublicKey::decode(r)?;
 				let payment_hash = sha256::Hash::decode(r)?;
 				let htlc_expiry = r.read_u32()?;
-				Ok(Self::ServerHtlcRecv { user_pubkey, payment_hash, htlc_expiry })
+				Ok(Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid VtxoType type byte: {v:x}",
@@ -1136,15 +1196,15 @@ pub mod test {
 		let payment_hash = sha256::Hash::hash("arkoor1".as_bytes());
 		let arkoor1out1 = VtxoRequest {
 			amount: Amount::from_sat(9000),
-			policy: VtxoPolicy::ServerHtlcSend {
+			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 				user_pubkey: arkoor_htlc_out_user_key.public_key(),
 				payment_hash: payment_hash,
 				htlc_expiry: expiry_height - 1000,
-			},
+			}),
 		};
 		let arkoor1out2 = VtxoRequest {
 			amount: Amount::from_sat(1000),
-			policy: VtxoPolicy::Pubkey { user_pubkey: "0229b7de0ce4d573192d002a6f9fd1109e00f7bae52bf10780d6f6e73e12a8390f".parse().unwrap() },
+			policy: VtxoPolicy::new_pubkey("0229b7de0ce4d573192d002a6f9fd1109e00f7bae52bf10780d6f6e73e12a8390f".parse().unwrap()),
 		};
 		let outputs = [&arkoor1out1, &arkoor1out2];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&board_user_key);
@@ -1163,11 +1223,11 @@ pub mod test {
 		let arkoor2_user_key = Keypair::from_str("fcc43a4f03356092a945ca1d7218503156bed3f94c2fa224578ce5b158fbf5a6").unwrap();
 		let arkoor2out1 = VtxoRequest {
 			amount: Amount::from_sat(8000),
-			policy: VtxoPolicy::Pubkey { user_pubkey: arkoor2_user_key.public_key() },
+			policy: VtxoPolicy::new_pubkey(arkoor2_user_key.public_key()),
 		};
 		let arkoor2out2 = VtxoRequest {
 			amount: Amount::from_sat(1000),
-			policy: VtxoPolicy::Pubkey { user_pubkey: "037039dc4f4b16e78059d2d56eb98d181cb1bdff2675694d39d92c4a2ea08ced88".parse().unwrap() },
+			policy: VtxoPolicy::new_pubkey("037039dc4f4b16e78059d2d56eb98d181cb1bdff2675694d39d92c4a2ea08ced88".parse().unwrap()),
 		};
 		let outputs = [&arkoor2out1, &arkoor2out2];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&arkoor_htlc_out_user_key);
@@ -1190,7 +1250,7 @@ pub mod test {
 		let round1_req = SignedVtxoRequest {
 			vtxo: VtxoRequest {
 				amount: Amount::from_sat(10_000),
-				policy: VtxoPolicy::Pubkey { user_pubkey: round1_user_key.public_key() },
+				policy: VtxoPolicy::new_pubkey(round1_user_key.public_key()),
 			},
 			cosign_pubkey: round1_cosign_key.public_key(),
 		};
@@ -1203,11 +1263,9 @@ pub mod test {
 		let round2_req = SignedVtxoRequest {
 			vtxo: VtxoRequest {
 				amount: Amount::from_sat(10_000),
-				policy: VtxoPolicy::ServerHtlcRecv {
-					user_pubkey: round2_user_key.public_key(),
-					payment_hash: round2_payment_hash,
-					htlc_expiry: expiry_height - 2000,
-				},
+				policy: VtxoPolicy::new_server_htlc_recv(
+		round2_user_key.public_key(), round2_payment_hash, expiry_height - 2000
+				),
 			},
 			cosign_pubkey: round2_cosign_key.public_key(),
 		};
@@ -1228,7 +1286,7 @@ pub mod test {
 			other_reqs.push(SignedVtxoRequest {
 				vtxo: VtxoRequest {
 					amount: Amount::from_sat(5_000),
-				policy: VtxoPolicy::Pubkey { user_pubkey: user_key.public_key() },
+					policy: VtxoPolicy::new_pubkey(user_key.public_key()),
 				},
 				cosign_pubkey: cosign_key.public_key(),
 			});
@@ -1315,7 +1373,7 @@ pub mod test {
 		let arkoor3_user_key = Keypair::from_str("ad12595bdbdab56cb61d1f60ccc46ff96b11c5d6fe06ae7ba03d3a5f4347440f").unwrap();
 		let arkoor3out = VtxoRequest {
 			amount: Amount::from_sat(10_000),
-			policy: VtxoPolicy::Pubkey { user_pubkey: arkoor3_user_key.public_key() },
+			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: arkoor3_user_key.public_key() }),
 		};
 		let outputs = [&arkoor3out];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&round2_user_key);

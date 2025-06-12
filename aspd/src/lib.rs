@@ -30,6 +30,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
@@ -635,11 +636,7 @@ impl Server {
 
 		let pay_req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::ServerHtlcSend {
-				user_pubkey: user_pubkey,
-				payment_hash: *invoice.payment_hash(),
-				htlc_expiry: expiry,
-			},
+			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, *invoice.payment_hash(), expiry),
 		};
 
 		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
@@ -796,9 +793,7 @@ impl Server {
 
 		let pay_req = VtxoRequest {
 			amount: vtxos.iter().map(|v| v.amount()).sum(),
-			policy: VtxoPolicy::Pubkey {
-				user_pubkey: vtxos.first().unwrap().user_pubkey(),
-			},
+			policy: VtxoPolicy::new_pubkey(vtxos.first().unwrap().user_pubkey()),
 		};
 		let package = ArkoorPackageBuilder::new(&vtxos, &user_nonces, pay_req, None)?;
 		self.cosign_oor_package_with_builder(&package).await
@@ -886,7 +881,7 @@ impl Server {
 		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await
 			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
 
-		if let VtxoPolicy::ServerHtlcRecv { payment_hash, .. } = input_vtxo.vtxo.policy() {
+		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
 			if sha256::Hash::hash(payment_preimage) != *payment_hash {
 				bail!("input vtxo payment hash does not match preimage");
 			}

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use aspd_log::{LogMsg, RoundVtxoCreated};
 use aspd_rpc::protos;
 use bitcoin::consensus::encode::serialize;
@@ -344,7 +345,7 @@ impl CollectingPayments {
 		reqs: &[VtxoParticipant],
 	) -> anyhow::Result<()> {
 		for req in reqs {
-			if let VtxoPolicy::ServerHtlcRecv { payment_hash, .. } = req.req.vtxo.policy {
+			if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = req.req.vtxo.policy {
 				let status = LightningHtlcSubscriptionStatus::Accepted;
 				let htlc = db.get_htlc_subscription_by_payment_hash(&payment_hash, status).await?;
 
@@ -539,7 +540,7 @@ impl CollectingPayments {
 			};
 			let req = SignedVtxoRequest {
 				vtxo: VtxoRequest {
-					policy: VtxoPolicy::Pubkey { user_pubkey: *UNSPENDABLE },
+					policy: VtxoPolicy::new_pubkey(*UNSPENDABLE),
 					amount: P2WSH_DUST,
 				},
 				cosign_pubkey: cosign_key.public_key(),
@@ -1698,7 +1699,7 @@ mod tests {
 		VtxoParticipant {
 			req: SignedVtxoRequest {
 				vtxo: VtxoRequest {
-					policy: VtxoPolicy::Pubkey { user_pubkey: generate_pubkey() },
+					policy: VtxoPolicy::new_pubkey(generate_pubkey()),
 					amount: Amount::from_sat(amount),
 				},
 				cosign_pubkey: generate_pubkey(),
