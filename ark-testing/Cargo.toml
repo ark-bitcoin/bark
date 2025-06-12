@@ -42,3 +42,4 @@ tonic.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 tokio-postgres.workspace = true
+semver.workspace = true

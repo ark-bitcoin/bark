@@ -55,14 +55,14 @@ async fn progress_exit_to_broadcast(bark: &Bark) {
 
 #[tokio::test]
 async fn check_aspd_version() {
-	let output = Aspd::base_cmd()
-		.arg("--version")
-		.output()
-		.await
+	let output = Aspd::base_cmd().arg("--version").output().await
 		.expect("Failed to spawn process and capture output");
 
 	let stdout = String::from_utf8(output.stdout).expect("Output is valid utf-8");
-	assert!(stdout.starts_with("bark-aspd"))
+	let mut parts = stdout.split(' ');
+	assert_eq!(parts.next().unwrap(), "aspd");
+	let version_str = parts.next().unwrap().trim();
+	semver::Version::parse(&version_str).unwrap();
 }
 
 #[tokio::test]
