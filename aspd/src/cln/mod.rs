@@ -188,13 +188,13 @@ impl ClnManager {
 		instant_check: bool,
 	) -> anyhow::Result<[u8; 32]> {
 		let mut poll_interval = tokio::time::interval(self.invoice_poll_interval);
-		poll_interval.reset();
+
+		if !instant_check {
+			poll_interval.reset();
+		}
+
 		loop {
 			tokio::select! {
-				_ = async {}, if instant_check => {
-					trace!("instant_check triggered, polling");
-					continue;
-				},
 				_ = poll_interval.tick() => trace!("check bolt11 timeout reached, polling"),
 				// Trigger received on channel
 				rcv = update_rx.recv() => match rcv {
