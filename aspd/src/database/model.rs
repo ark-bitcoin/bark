@@ -1,6 +1,7 @@
 use std::fmt::{self, Display};
 use std::borrow::Cow;
 use anyhow::Context;
+use bitcoin_ext::BlockHeight;
 use postgres_types::{FromSql, ToSql};
 use std::str::FromStr;
 
@@ -28,6 +29,7 @@ pub struct StoredRound {
 	pub signed_tree: SignedVtxoTreeSpec,
 	pub nb_input_vtxos: usize,
 	pub connector_key: SecretKey,
+	pub expiry_height: BlockHeight,
 }
 
 impl TryFrom<Row> for StoredRound {
@@ -43,6 +45,7 @@ impl TryFrom<Row> for StoredRound {
 			signed_tree: SignedVtxoTreeSpec::deserialize(value.get("signed_tree"))?,
 			nb_input_vtxos: usize::try_from(value.get::<_, i32>("nb_input_vtxos"))?,
 			connector_key: SecretKey::from_slice(value.get("connector_key"))?,
+			expiry_height: value.get::<_, i32>("expiry") as BlockHeight,
 		})
 	}
 }

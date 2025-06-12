@@ -428,7 +428,8 @@ impl Db {
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE id = $1;
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			FROM round WHERE id = $1;
 		").await?;
 
 		let rows = conn.query(&statement, &[&id.to_string()]).await?;
@@ -456,7 +457,8 @@ impl Db {
 	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE expiry <= $1
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			FROM round WHERE expiry <= $1
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
@@ -466,7 +468,8 @@ impl Db {
 	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE expiry > $1
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			FROM round WHERE expiry > $1
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
