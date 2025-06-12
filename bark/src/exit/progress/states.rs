@@ -7,7 +7,7 @@ use json::exit::error::ExitError;
 use json::exit::ExitState;
 use json::exit::states::{
 	ExitAwaitingDeltaState, ExitProcessingState, ExitSpendInProgressState, ExitSpendableState,
-	ExitSpentState, ExitStartState, ExitTx, ExitTxStatus,
+	ExitSpentState, ExitStartState, ExitTx, ExitTxOrigin, ExitTxStatus,
 };
 
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
@@ -179,8 +179,7 @@ async fn progress_exit_tx(
 
 				let child_txid = ctx.tx_manager.update_child_tx(exit.txid, child_tx).await?;
 				info!("CPFP created with txid {} for exit tx {}", child_txid, exit.txid);
-
-				ctx.get_exit_tx_status(&exit).await
+				Ok(ExitTxStatus::NeedsBroadcasting { child_txid, origin: ExitTxOrigin::Wallet })
 			} else {
 				info!("Exit tx {} has likely been broadcast by another party", exit.txid);
 				Ok(new_status)
@@ -190,7 +189,24 @@ async fn progress_exit_tx(
 			info!("Checking if exit tx {} has been broadcast with CPFP tx {}",
 				exit.txid, child_txid,
 			);
-			ctx.get_exit_child_status(&exit, *child_txid).await
+			let status = ctx.get_exit_child_status(&exit, *child_txid).await?;
+			match status {
+				ExitTxStatus::NeedsBroadcasting { child_txid: new_child_txid, .. } => {
+					if new_child_txid != *child_txid {
+						warn!("Exit tx {} has a different child txid. Expected: {} Found: {}",
+							exit.txid, child_txid, new_child_txid,
+						);
+					}
+					info!("Attempting to broadcast exit tx {} with child tx {}", exit.txid, child_txid);
+					let package = ctx.tx_manager.get_package(exit.txid)?;
+					ctx.tx_manager.broadcast_package(&*package.read().await).await?;
+					ctx.get_exit_child_status(&exit, new_child_txid).await
+				},
+				_ => {
+					info!("Exit tx {} needed broadcasting but has changed status to: {}", exit.txid, status);
+					Ok(status)
+				},
+			}
 		},
 		ExitTxStatus::BroadcastWithCpfp { child_txid, .. } => {
 			let new_status = ctx.get_exit_child_status(exit, *child_txid).await?;
