@@ -1107,6 +1107,59 @@ impl Wallet {
 		Ok(arkoor.created)
 	}
 
+	async fn process_bolt11_revocation(&self, htlc_vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		let mut asp = self.require_asp()?;
+
+		info!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
+
+		let mut secs = Vec::with_capacity(htlc_vtxos.len());
+		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
+		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
+		for input in htlc_vtxos.into_iter() {
+			let keypair = {
+				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
+				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+			};
+
+			let (s, p) = musig::nonce_pair(&keypair);
+			secs.push(s);
+			pubs.push(p);
+			keypairs.push(keypair);
+		}
+
+		let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
+
+		let req = protos::RevokeBolt11PaymentRequest {
+			input_ids: revocation.arkoors.iter()
+				.map(|i| i.input.id().to_bytes().to_vec())
+				.collect(),
+			pub_nonces: revocation.arkoors.iter()
+				.map(|i| i.user_nonce.serialize().to_vec())
+				.collect(),
+		};
+		let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
+			.into_inner().try_into().context("invalid server cosign response")?;
+		ensure!(revocation.verify_cosign_response(&cosign_resp),
+			"invalid arkoor cosignature received from server",
+		);
+
+		let (vtxos, _) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
+		for vtxo in &vtxos {
+			info!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
+		}
+
+		self.db.register_movement(MovementArgs {
+			spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
+			receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
+			recipients: &[],
+			fees: None,
+		})?;
+
+		info!("Revoked {} HTLC VTXOs", vtxos.len());
+
+		Ok(())
+	}
+
 	pub async fn send_bolt11_payment(
 		&mut self,
 		invoice: &Bolt11Invoice,
@@ -1234,49 +1287,8 @@ impl Wallet {
 			}).context("failed to store OOR vtxo")?;
 			Ok(preimage)
 		} else {
-			info!("Payment failed! Revoking...");
-			let mut secs = Vec::with_capacity(htlc_vtxos.len());
-			let mut pubs = Vec::with_capacity(htlc_vtxos.len());
-			let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
-			for input in htlc_vtxos.iter() {
-				let keypair = {
-					let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-					self.vtxo_seed.derive_keychain(keychain, keypair_idx)
-				};
-
-				let (s, p) = musig::nonce_pair(&keypair);
-				secs.push(s);
-				pubs.push(p);
-				keypairs.push(keypair);
-			}
-
-			let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
-
-			let req = protos::RevokeBolt11PaymentRequest {
-				input_ids: revocation.arkoors.iter()
-					.map(|i| i.input.id().to_bytes().to_vec())
-					.collect(),
-				pub_nonces: revocation.arkoors.iter()
-					.map(|i| i.user_nonce.serialize().to_vec())
-					.collect(),
-			};
-			let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
-				.into_inner().try_into().context("invalid server cosign response")?;
-			ensure!(revocation.verify_cosign_response(&cosign_resp),
-				"invalid arkoor cosignature received from server",
-			);
-
-			let (vtxos, change) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
-			assert!(change.is_none(), "unexpected change: {:?}", change);
-
-			self.db.register_movement(MovementArgs {
-				spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
-				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
-				recipients: &[],
-				fees: None,
-			})?;
-
-			bail!("Payment failed: {}", res.progress_message);
+			self.process_bolt11_revocation(&htlc_vtxos).await?;
+			bail!("No preimage, payment failed: {}", res.progress_message);
 		}
 	}
 
