@@ -40,15 +40,12 @@ fn default_datadir() -> String {
 	}).join(".bark").display().to_string()
 }
 
-/// Generate the version string.
-fn version() -> &'static str {
-	// - CARGO_PKG_VERSION is set always by the cargo build process
-	// - GIT_HASH is set in build.rs
-	concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")")
-}
+/// The full version string we show in our binary.
+/// (GIT_HASH is set in build.rs)
+const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
 
 #[derive(Parser)]
-#[command(author = "Steven Roose <steven@roose.io>", name = "bark", version = version(), about)]
+#[command(name = "bark", author = "Steven Roose <steven@roose.io>", version = FULL_VERSION, about)]
 struct Cli {
 	/// Enable verbose logging
 	#[arg(long, short = 'v', global = true)]
