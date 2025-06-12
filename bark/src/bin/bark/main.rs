@@ -45,7 +45,7 @@ fn default_datadir() -> String {
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
 
 #[derive(Parser)]
-#[command(name = "bark", author = "Steven Roose <steven@roose.io>", version = FULL_VERSION, about)]
+#[command(name = "bark", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
 struct Cli {
 	/// Enable verbose logging
 	#[arg(long, short = 'v', global = true)]
