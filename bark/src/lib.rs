@@ -1199,6 +1199,21 @@ impl Wallet {
 			}
 		}
 
+		let pending_lightning_state = VtxoState::PendingLightningSend {
+			invoice: invoice.clone(),
+			amount: amount,
+		};
+
+		self.db.register_movement(MovementArgs {
+			spends: &inputs.iter().collect::<Vec<_>>(),
+			receives: &htlc_vtxos.iter()
+				.map(|v| (v, pending_lightning_state.clone()))
+				.chain(change_vtxo.as_ref().map(|c| (c, VtxoState::Spendable)))
+				.collect::<Vec<_>>(),
+			recipients: &[],
+			fees: None,
+		}).context("failed to store OOR vtxo")?;
+
 		let req = protos::SignedBolt11PaymentDetails {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
@@ -1209,21 +1224,11 @@ impl Wallet {
 		debug!("Progress update: {}", res.progress_message);
 		let payment_preimage = <[u8; 32]>::try_from(res.payment_preimage()).ok();
 
-		// The client will receive the change VTXO if it exists
-		if let Some(ref change_vtxo) = change_vtxo {
-			info!("Adding change VTXO of {}", change_vtxo.amount());
-
-		}
-
-		let receive_vtxos = change_vtxo.iter()
-			.map(|v| (v, VtxoState::Spendable))
-			.collect::<Vec<_>>();
-
 		if let Some(preimage) = payment_preimage {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
 			self.db.register_movement(MovementArgs {
-				spends: &inputs.iter().collect::<Vec<_>>(),
-				receives: &receive_vtxos,
+				spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
+				receives: &[],
 				recipients: &[(&invoice.to_string(), amount)],
 				fees: None,
 			}).context("failed to store OOR vtxo")?;
@@ -1265,10 +1270,8 @@ impl Wallet {
 			assert!(change.is_none(), "unexpected change: {:?}", change);
 
 			self.db.register_movement(MovementArgs {
-				spends: &inputs.iter().collect::<Vec<_>>(),
-				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable))
-					.chain(change_vtxo.as_ref().map(|c| (c, VtxoState::Spendable)))
-					.collect::<Vec<_>>(),
+				spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
+				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
 				recipients: &[],
 				fees: None,
 			})?;
