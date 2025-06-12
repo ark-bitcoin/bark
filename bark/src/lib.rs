@@ -64,7 +64,7 @@ use crate::movement::{Movement, MovementArgs};
 use crate::onchain::Utxo;
 use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
-use crate::vtxo_state::VtxoState;
+use crate::vtxo_state::{VtxoState, VtxoStateKind};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
@@ -524,7 +524,7 @@ impl Wallet {
 	}
 
 	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()> {
-		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoState::UnregisteredBoard])?;
+		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
 		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
 		for board in unregistered_boards {
 			if let Err(e) = self.register_board(board.id()).await {
@@ -691,7 +691,7 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		let allowed_states = &[VtxoState::UnregisteredBoard, VtxoState::Spendable];
+		let allowed_states = &[VtxoStateKind::UnregisteredBoard, VtxoStateKind::Spendable];
 		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
 
 		Ok(Board {

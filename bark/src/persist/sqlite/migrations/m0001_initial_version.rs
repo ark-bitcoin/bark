@@ -34,7 +34,8 @@ impl Migration for Migration0001 {
 				id INTEGER PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT  (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 				vtxo_id TEXT REFERENCES bark_vtxo(id),
-				state TEXT
+				state_kind TEXT NOT NULL,
+				state BLOB NOT NULL
 			);",
 			"CREATE TABLE IF NOT EXISTS bark_ark_sync (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,13 +47,14 @@ impl Migration for Migration0001 {
 				exit BLOB
 			)",
 			"CREATE VIEW IF NOT EXISTS most_recent_vtxo_state
-				(id, last_updated_at, vtxo_id, state)
+				(id, last_updated_at, vtxo_id, state_kind, state)
 			AS
 			WITH most_recent AS (SELECT MAX(id) as id FROM bark_vtxo_state GROUP BY vtxo_id)
 			SELECT
 					most_recent.id,
 					vs.created_at,
 					vs.vtxo_id,
+					vs.state_kind,
 					vs.state
 					FROM most_recent JOIN bark_vtxo_state as vs
 						ON vs.id = most_recent.id;
@@ -62,6 +64,7 @@ impl Migration for Migration0001 {
 				v.id,
 				v.expiry_height,
 				v.amount_sat,
+				vs.state_kind,
 				vs.state,
 				v.raw_vtxo,
 				v.created_at,

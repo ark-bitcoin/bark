@@ -13,6 +13,7 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
 use crate::persist::{OffchainOnboard, OffchainPayment};
+use crate::vtxo_state::VtxoStateKind;
 use crate::{
 	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
@@ -206,7 +207,7 @@ pub fn store_vtxo_with_initial_state(
 	tx: &rusqlite::Transaction,
 	vtxo: &Vtxo,
 	movement_id: i32,
-	state: VtxoState,
+	state: &VtxoState,
 ) -> anyhow::Result<()> {
 	// Store the ftxo
 	let q1 =
@@ -223,12 +224,13 @@ pub fn store_vtxo_with_initial_state(
 
 	// Store the initial state
 	let q2 =
-		"INSERT INTO bark_vtxo_state (vtxo_id, state)
-		VALUES (:vtxo_id, :state);";
+		"INSERT INTO bark_vtxo_state (vtxo_id, state_kind, state)
+		VALUES (:vtxo_id, :state_kind, :state);";
 	let mut statement = tx.prepare(q2)?;
 	statement.execute(named_params! {
 		":vtxo_id": vtxo.id().to_string(),
-		":state": state.to_string()
+		":state_kind": state.as_kind().as_str(),
+		":state": serde_json::to_vec(&state)?,
 	})?;
 
 	Ok(())
@@ -253,18 +255,17 @@ pub fn get_vtxo_by_id(
 
 pub fn get_vtxos_by_state(
 	conn: &Connection,
-	state: &[VtxoState]
+	state: &[VtxoStateKind]
 ) -> anyhow::Result<Vec<Vtxo>> {
 	let query = "
 		SELECT raw_vtxo
 		FROM vtxo_view
-		WHERE state IN (SELECT atom FROM json_each(?))
+		WHERE state_kind IN (SELECT atom FROM json_each(?))
 		ORDER BY amount_sat DESC, expiry_height ASC";
 
 	let mut statement = conn.prepare(query)?;
 
-	let json_state = serde_json::to_string(state)?;
-	let mut rows = statement.query(&[&json_state])?;
+	let mut rows = statement.query(&[&serde_json::to_string(&state)?])?;
 
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
@@ -313,8 +314,8 @@ pub fn get_vtxo_state(
 	let mut rows = statement.query([id.to_string()])?;
 
 	if let Some(row) = rows.next()? {
-		let state_str : String= row.get(0)?;
-		Ok(Some(VtxoState::from_str(&state_str)?))
+		let state = row.get::<_, Vec<u8>>(0)?;
+		Ok(Some(serde_json::from_slice(&state)?))
 	} else {
 		Ok(None)
 	}
@@ -346,19 +347,22 @@ pub fn update_vtxo_state_checked(
 	conn: &Connection,
 	vtxo_id: VtxoId,
 	new_state: VtxoState,
-	old_state: &[VtxoState],
+	old_states: &[VtxoStateKind],
 ) -> anyhow::Result<()> {
 	let query = r"
-		INSERT INTO bark_vtxo_state (vtxo_id, state)
-		SELECT ?1, ?2 FROM most_recent_vtxo_state
+		INSERT INTO bark_vtxo_state (vtxo_id, state_kind, state)
+		SELECT :vtxo_id, :state_kind, :state FROM most_recent_vtxo_state
 		WHERE
-			vtxo_id = ?1 AND
-			state IN (SELECT atom FROM json_each(?3))";
+			vtxo_id = :vtxo_id AND
+			state_kind IN (SELECT atom FROM json_each(:old_states))";
 
 	let mut statement = conn.prepare(query)?;
-	let nb_inserted = statement.execute(
-		(vtxo_id.to_string(), new_state, &serde_json::to_string(old_state)?)
-	)?;
+	let nb_inserted = statement.execute(named_params! {
+		":vtxo_id": vtxo_id.to_string(),
+		":state_kind": new_state.as_kind().as_str(),
+		":state": serde_json::to_vec(&new_state)?,
+		":old_states": &serde_json::to_string(old_states)?,
+	})?;
 
 	match nb_inserted {
 		0 => bail!("No vtxo with provided id or old states"),
@@ -602,20 +606,20 @@ mod test {
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
 		let movement_id = create_movement(&tx, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, VtxoState::UnregisteredBoard).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, VtxoState::UnregisteredBoard).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, VtxoState::UnregisteredBoard).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, &VtxoState::UnregisteredBoard).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::UnregisteredBoard).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::UnregisteredBoard).unwrap();
 
 		// This update will fail because the current state is UnregisteredOnboard
 		// We only allow the state to switch from VtxoState::Spendable
-		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoState::Spendable])
+		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoStateKind::Spendable])
 			.expect_err("The vtxo isn't spendable and query should fail");
 
 		// Perform a state-update on vtxo_1
-		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spendable, &[VtxoState::UnregisteredBoard]).unwrap();
+		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spendable, &[VtxoStateKind::UnregisteredBoard]).unwrap();
 
 		// Perform a second state-update on vtxo_1
-		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoState::Spendable]).unwrap();
+		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoStateKind::Spendable]).unwrap();
 
 		// Ensure the state of vtxo_2 and vtxo_3 isn't modified
 		let state_2 = get_vtxo_state(&tx, vtxo_2.id()).unwrap().unwrap();
@@ -654,5 +658,16 @@ mod test {
 		// Movement recipient
 		let serialised = r#"{"recipient":"03a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount_sat":150000}"#;
 		serde_json::from_str::<MovementRecipient>(serialised).unwrap();
+
+		// Vtxo state
+		let serialised = r#""Spendable""#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		let serialised = r#""Spent""#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		let serialised = r#""UnregisteredBoard""#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		let serialised = r#"{"PendingLightningSend":{"invoice":"lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8","amount":300000}}"#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+
 	}
 }

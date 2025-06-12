@@ -12,6 +12,7 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
+use crate::vtxo_state::VtxoStateKind;
 use crate::{
 	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
@@ -64,7 +65,8 @@ impl SqliteClient {
 
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
-		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &[VtxoState::Spendable])?;
+		let allowed_states = [VtxoStateKind::Spendable, VtxoStateKind::PendingLightningSend];
+		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &allowed_states)?;
 		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
 		Ok(())
 	}
@@ -128,13 +130,13 @@ impl BarkPersister for SqliteClient {
 		}
 
 		for (v, s) in movement.receives {
-			query::store_vtxo_with_initial_state(&tx, v, movement_id, *s)?;
+			query::store_vtxo_with_initial_state(&tx, v, movement_id, s)?;
 		}
 
 		for (recipient, amount) in movement.recipients {
 			self.create_recipient(&tx, movement_id, recipient, *amount)
 				.context("Failed to store change VTXOs")?
-				}
+		}
 		tx.commit()?;
 		Ok(())
 	}
@@ -145,7 +147,7 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Get all VTXOs that are in one of the provided states
-	fn get_vtxos_by_state(&self, state: &[VtxoState]) -> anyhow::Result<Vec<Vtxo>> {
+	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<Vtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxos_by_state(&conn, state)
 	}
@@ -254,7 +256,7 @@ impl BarkPersister for SqliteClient {
 		&self,
 		vtxo_id: VtxoId,
 		new_state: VtxoState,
-		allowed_old_states: &[VtxoState]
+		allowed_old_states: &[VtxoStateKind]
 	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
