@@ -23,7 +23,7 @@ const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("GIT_HASH"));
 
 #[derive(Parser)]
-#[command(author = "Steven Roose <steven@roose.io>", version = FULL_VERSION, about)]
+#[command(name = "aspd", author = "Steven Roose <steven@roose.io>", version = FULL_VERSION, about)]
 struct Cli {
 	/// Path to the configuration file
 	#[arg(global = true, short = 'C', long)]
