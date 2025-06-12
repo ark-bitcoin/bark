@@ -18,7 +18,7 @@ use bitcoin::taproot::TaprootSpendInfo;
 use bitcoin::{taproot, Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
 
 use crate::{musig, Vtxo, VtxoId};
 use crate::util::{self, SECP};
@@ -135,8 +135,7 @@ pub struct BoardBuilder<S: BuilderState> {
 impl<S: BuilderState> BoardBuilder<S> {
 	/// The scriptPubkey to send the board funds to.
 	pub fn funding_script_pubkey(&self) -> ScriptBuf {
-		let board_taproot = funding_taproot(self.user_pubkey, self.expiry_height, self.asp_pubkey);
-		ScriptBuf::new_p2tr_tweaked(board_taproot.output_key())
+		funding_taproot(self.user_pubkey, self.expiry_height, self.asp_pubkey).script_pubkey()
 	}
 }
 
@@ -182,14 +181,14 @@ impl BoardBuilder<state::CanGenerateNonces> {
 	pub fn generate_user_nonces(self) -> BoardBuilder<state::CanBuild> {
 		let funding_taproot = funding_taproot(self.user_pubkey, self.expiry_height, self.asp_pubkey);
 		let funding_txout = TxOut {
-			script_pubkey: ScriptBuf::new_p2tr_tweaked(funding_taproot.output_key()),
+			script_pubkey: funding_taproot.script_pubkey(),
 			value: self.amount,
 		};
 
 		let exit_taproot = exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta);
 		let exit_txout = TxOut {
 			value: self.amount,
-			script_pubkey: ScriptBuf::new_p2tr_tweaked(exit_taproot.output_key()),
+			script_pubkey: exit_taproot.script_pubkey(),
 		};
 
 		let utxo = self.utxo.expect("state invariant");
@@ -233,13 +232,13 @@ impl<S: state::CanSign> BoardBuilder<S> {
 		);
 		let funding_txout = TxOut {
 			value: self.amount,
-			script_pubkey: ScriptBuf::new_p2tr_tweaked(funding_taproot.output_key()),
+			script_pubkey: funding_taproot.script_pubkey(),
 		};
 
 		let exit_taproot = exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta);
 		let exit_txout = TxOut {
 			value: self.amount,
-			script_pubkey: ScriptBuf::new_p2tr_tweaked(exit_taproot.output_key()),
+			script_pubkey: exit_taproot.script_pubkey(),
 		};
 
 		let utxo = self.utxo.expect("state invariant");
@@ -409,10 +408,9 @@ impl BoardVtxo {
 				"non-existing point {} in tx {}", self.onchain_output, self.onchain_output.txid,
 			)));
 		}
-		let taproot = funding_taproot(
+		let funding_spk = funding_taproot(
 			self.spec.user_pubkey, self.spec.expiry_height, self.spec.asp_pubkey,
-		);
-		let funding_spk = ScriptBuf::new_p2tr_tweaked(taproot.output_key());
+		).script_pubkey();
 		if funding_tx.output[output_idx].script_pubkey != funding_spk {
 			return Err(BoardFundingTxValidationError(format!(
 				"vtxo {} has incorrect board script: {}",

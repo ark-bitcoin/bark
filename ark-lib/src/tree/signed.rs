@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 
-use bitcoin_ext::{fee, BlockHeight, TransactionExt};
+use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt, TransactionExt};
 
 use crate::util::{Decodable, Encodable};
 use crate::{musig, util, RoundVtxo, Vtxo, VtxoRequest, VtxoSpec};
@@ -88,7 +88,7 @@ impl VtxoTreeSpec {
 	}
 
 	pub fn cosign_spk(&self, agg_pk: XOnlyPublicKey) -> ScriptBuf {
-		ScriptBuf::new_p2tr_tweaked(self.cosign_taproot(agg_pk).output_key())
+		self.cosign_taproot(agg_pk).script_pubkey()
 	}
 
 	/// The cosign pubkey used on the vtxo output of the round tx.
@@ -101,7 +101,8 @@ impl VtxoTreeSpec {
 
 	/// The scriptPubkey used on the vtxo output of the round tx.
 	pub fn round_tx_spk(&self) -> ScriptBuf {
-		self.cosign_spk(self.round_tx_cosign_pk())
+		let agg_pk = self.round_tx_cosign_pk();
+		self.cosign_taproot(agg_pk).script_pubkey()
 	}
 
 	/// The vtxo output of the round tx.
@@ -123,8 +124,9 @@ impl VtxoTreeSpec {
 				witness: Witness::new(),
 			}],
 			output: children.map(|(tx, agg_pk)| {
+				let taproot = self.cosign_taproot(*agg_pk);
 				TxOut {
-					script_pubkey: self.cosign_spk(*agg_pk),
+					script_pubkey: taproot.script_pubkey(),
 					value: tx.output_value(),
 				}
 			}).chain(Some(fee::fee_anchor())).collect(),

@@ -46,7 +46,8 @@ use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
-	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxOut, Txid, Weight
+	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Sequence, Transaction, TxOut,
+	Txid, Weight,
 };
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
@@ -118,7 +119,7 @@ impl BoardSweepInput {
 		);
 		let board_txout = TxOut {
 			value: self.vtxo_spec.amount,
-			script_pubkey: ScriptBuf::new_p2tr_tweaked(taproot.output_key()),
+			script_pubkey: taproot.script_pubkey(),
 		};
 
 		let mut ret = psbt::Input{

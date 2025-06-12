@@ -9,7 +9,7 @@ use bitcoin::absolute::LockTime;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
-use bitcoin_ext::{fee, BlockHeight};
+use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt};
 
 use crate::lightning::{htlc_in_taproot, htlc_out_taproot};
 use crate::board::BoardVtxo;
@@ -151,8 +151,7 @@ pub fn exit_spk(
 	asp_pubkey: PublicKey,
 	exit_delta: u16,
 ) -> ScriptBuf {
-	let taproot = exit_taproot(user_pubkey, asp_pubkey, exit_delta);
-	ScriptBuf::new_p2tr_tweaked(taproot.output_key())
+	exit_taproot(user_pubkey, asp_pubkey, exit_delta).script_pubkey()
 }
 
 /// Create an exit tx.
@@ -268,7 +267,7 @@ impl VtxoSpec {
 	///
 	/// In most cases, VTXO spk includes a unilateral exit clause
 	pub fn vtxo_spk(&self) -> ScriptBuf {
-		ScriptBuf::new_p2tr_tweaked(self.vtxo_taproot().output_key())
+		self.vtxo_taproot().script_pubkey()
 	}
 
 	pub fn txout(&self) -> TxOut {

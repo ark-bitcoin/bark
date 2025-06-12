@@ -93,6 +93,11 @@ impl TransactionExt for Transaction {}
 
 /// An extension trait for [taproot::TaprootSpendInfo].
 pub trait TaprootSpendInfoExt: Borrow<taproot::TaprootSpendInfo> {
+	/// The p2tr output scriptPubkey for this taproot.
+	fn script_pubkey(&self) -> ScriptBuf {
+		ScriptBuf::new_p2tr_tweaked(self.borrow().output_key())
+	}
+
 	/// Return the existing tapscripts in the format that PSBT expects.
 	fn psbt_tap_scripts(&self) -> BTreeMap<ControlBlock, (ScriptBuf, taproot::LeafVersion)> {
 		let s = self.borrow();
@@ -161,8 +166,8 @@ pub(crate) const P2A_PROGRAM: [u8; 2] = [78, 115];
 /// Generates P2WSH-type of scriptPubkey with a given [`WitnessVersion`] and the program bytes.
 /// Does not do any checks on version or program length.
 ///
-/// Convenience method used by `new_p2wpkh`, `new_p2wsh`, `new_p2tr`, and `new_p2tr_tweaked`.
-/// Convenience method used by `new_p2a`, `new_p2wpkh`, `new_p2wsh`, `new_p2tr`, and `new_p2tr_tweaked`.
+/// Convenience method used by `new_p2a`, `new_p2wpkh`, `new_p2wsh`, `new_p2tr`,
+/// and `new_p2tr_tweaked`.
 pub(crate) fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
 	version: WitnessVersion,
 	program: T,
