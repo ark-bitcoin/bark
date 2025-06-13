@@ -1149,10 +1149,10 @@ impl Wallet {
 		let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
 
 		let req = protos::RevokeBolt11PaymentRequest {
-			input_ids: revocation.arkoors.iter()
+			htlc_vtxo_ids: revocation.arkoors.iter()
 				.map(|i| i.input.id().to_bytes().to_vec())
 				.collect(),
-			pub_nonces: revocation.arkoors.iter()
+			user_nonces: revocation.arkoors.iter()
 				.map(|i| i.user_nonce.serialize().to_vec())
 				.collect(),
 		};
@@ -1242,8 +1242,8 @@ impl Wallet {
 		let req = protos::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
-			input_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			pub_nonces: pubs.iter().map(|p| p.serialize().to_vec()).collect(),
+			input_vtxo_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+			user_nonces: pubs.iter().map(|p| p.serialize().to_vec()).collect(),
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 

@@ -526,8 +526,8 @@ impl rpc::server::ArkService for Server {
 			vec![
 				KeyValue::new("invoice", format!("{:?}", req.invoice)),
 				KeyValue::new("amount_sats", format!("{:?}", req.user_amount_sat)),
-				KeyValue::new("input_ids", format!("{:?}", req.input_ids)),
-				KeyValue::new("pub_nonces", format!("{:?}", req.pub_nonces)),
+				KeyValue::new("input_vtxo_ids", format!("{:?}", req.input_vtxo_ids)),
+				KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
 			]);
 
 		let invoice = Bolt11Invoice::from_str(&req.invoice)
@@ -544,14 +544,14 @@ impl rpc::server::ArkService for Server {
 		let amount = req.user_amount_sat.map(|v| Amount::from_sat(v)).or(inv_amount)
 			.badarg("amount field required for invoice without amount")?;
 
-		let input_ids = req.input_ids.iter()
+		let input_ids = req.input_vtxo_ids.iter()
 			.map(|id| VtxoId::from_slice(id).badarg("invalid input id"))
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let input_vtxos = self.db.get_vtxos_by_id(&input_ids).await
 			.to_status()?.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
-		let pub_nonces = req.pub_nonces
+		let user_nonces = req.user_nonces
 			.iter()
 			.map(|nonce| musig::MusigPubNonce::from_slice(nonce).badarg("invalid public nonce"))
 			.collect::<Result<Vec<_>, _>>()?;
@@ -560,7 +560,7 @@ impl rpc::server::ArkService for Server {
 			.badarg("invalid user pubkey")?;
 
 		let cosign_resp = self.start_bolt11_payment(
-			invoice, amount, user_pubkey, input_vtxos, pub_nonces
+			invoice, amount, user_pubkey, input_vtxos, user_nonces
 		).await.context("error making payment")?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))
@@ -580,7 +580,7 @@ impl rpc::server::ArkService for Server {
 
 		add_tracing_attributes(vec![
 			KeyValue::new("invoice", format!("{:?}", req.invoice)),
-			KeyValue::new("htlc_vtxos", format!("{:?}", htlc_vtxo_ids)),
+			KeyValue::new("htlc_vtxo_ids", format!("{:?}", htlc_vtxo_ids)),
 		]);
 
 		let invoice = Bolt11Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
@@ -615,21 +615,21 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("input_ids", format!("{:?}", req.input_ids)),
-			KeyValue::new("pub_nonces", format!("{:?}", req.pub_nonces)),
+			KeyValue::new("htlc_vtxo_ids", format!("{:?}", req.htlc_vtxo_ids)),
+			KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
 		]);
 
-		let htlc_vtxo_ids = req.input_ids
+		let htlc_vtxo_ids = req.htlc_vtxo_ids
 			.iter()
-			.map(|a| VtxoId::from_slice(&a).badarg("invalid vtxo id"))
+			.map(|h| VtxoId::from_slice(&h).badarg("invalid vtxo id"))
 			.collect::<Result<Vec<_>, _>>()?;
 
-		let pub_nonces = req.pub_nonces
+		let user_nonces = req.user_nonces
 			.iter()
-			.map(|a| musig::MusigPubNonce::from_slice(&a).badarg("invalid public nonce"))
+			.map(|n| musig::MusigPubNonce::from_slice(&n).badarg("invalid public nonce"))
 			.collect::<Result<Vec<_>, _>>()?;
 
-		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, pub_nonces).await.to_status()?;
+		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, user_nonces).await.to_status()?;
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
