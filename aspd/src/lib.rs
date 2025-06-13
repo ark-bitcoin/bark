@@ -757,36 +757,43 @@ impl Server {
 		htlc_vtxo_ids: Vec<VtxoId>,
 		user_nonces: Vec<musig::MusigPubNonce>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		let tip = self.bitcoind.get_block_count()? as BlockHeight;
 		let db = self.db.clone();
 
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
 
-		let first_payment_hash = htlc_vtxos.first()
-			.badarg("vtxo is empty")?.vtxo
-			.server_htlc_out_payment_hash()
-			.context("vtxo is not outgoing htcl vtxo")?;
+		let first = htlc_vtxos.first().badarg("vtxo is empty")?.vtxo.spec();
+		let first_policy = first.policy.as_server_htlc_send().context("vtxo is not outgoing htlc vtxo")?;
 
 		let mut vtxos = vec![];
 		for htlc_vtxo in htlc_vtxos {
-			let payment_hash = htlc_vtxo.vtxo.server_htlc_out_payment_hash()
+			let spec = htlc_vtxo.vtxo.spec();
+			let policy = spec.policy.as_server_htlc_send()
 				.context("vtxo is not outgoing htcl vtxo")?;
 
-			if payment_hash != first_payment_hash {
-				return badarg!("all revoked htlc vtxos must have same payment hash");
+			if policy != first_policy {
+				return badarg!("all revoked htlc vtxos must have same policy");
 			}
 
 			vtxos.push(htlc_vtxo.vtxo);
 		}
 
-		let invoice = db.get_lightning_invoice_by_payment_hash(&first_payment_hash).await
+		let invoice = db.get_lightning_invoice_by_payment_hash(&first_policy.payment_hash).await
 			.context("error fetching invoice by payment hash")?
-			.not_found([first_payment_hash], "invoice not found")?;
+			.not_found([first_policy.payment_hash], "invoice not found")?;
 
 		match &invoice.last_attempt_status {
 			Some(status) if status == &LightningPaymentStatus::Failed => {},
 			Some(status) if status == &LightningPaymentStatus::Succeeded => {
 				return badarg!("This lightning payment has completed. preimage: {}",
 					invoice.clone().preimage.unwrap().as_hex());
+			},
+			_ if tip > first_policy.htlc_expiry => {
+				// Check one last time to see if it completed
+				if let Ok(preimage) = self.cln.check_bolt11(&invoice.payment_hash, false).await {
+					return badarg!("This lightning payment has completed. preimage: {}",
+						preimage.as_hex());
+				}
 			},
 			_ => return badarg!("This lightning payment is not eligible for revocation yet")
 		}
