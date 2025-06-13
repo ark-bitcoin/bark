@@ -3,6 +3,8 @@
 use std::str::FromStr;
 
 use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
+use bark_json::exit::states::ExitStartState;
+use bark_json::exit::ExitState;
 use bitcoin::Address;
 use bitcoin::params::Params;
 use bitcoin_ext::TaprootSpendInfoExt;
@@ -564,4 +566,160 @@ async fn exit_revoked_lightning_payment() {
 	// check both change and revocation VTXOs were exited
 	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo_a.utxo && u.amount == vtxo_a.amount));
 	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo_b.utxo && u.amount == vtxo_b.amount));
+}
+
+#[tokio::test]
+async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
+	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+
+	/// This proxy will refuse to revoke the htlc out.
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+
+		async fn finish_bolt11_payment(
+			&mut self,
+			_req: aspd_rpc::protos::SignedBolt11PaymentDetails,
+		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
+			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
+		}
+
+		async fn revoke_bolt11_payment(
+			&mut self,
+			_req: aspd_rpc::protos::RevokeBolt11PaymentRequest,
+		) -> Result<aspd_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
+			Err(tonic::Status::internal("Refused to revoke htlc out"))
+		}
+	}
+
+	let proxy = Proxy(aspd_1.get_public_client().await);
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(3);
+	let board_amount = btc(2);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
+
+	// Board funds into the Ark
+	bark_1.board(board_amount).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(1);
+	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	// Try send coins through lightning
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+
+	// vtxo expiry is 144, so exit should be triggered after 120 blocks
+	ctx.generate_blocks(130).await;
+
+	// Triggers maintenance under the hood
+	bark_1.offchain_balance().await;
+
+	// Should start an exit
+	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 248 }));
+	complete_exit(&ctx, &bark_1).await;
+
+	assert!(bark_1.onchain_balance().await > (onchain_amount - board_amount));
+
+	// TODO: check received utxo point match htlc one
+}
+
+#[tokio::test]
+async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
+	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+
+	/// This proxy will refuse to revoke the htlc out.
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+
+		async fn finish_bolt11_payment(
+			&mut self,
+			_req: aspd_rpc::protos::SignedBolt11PaymentDetails,
+		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
+			Ok(aspd_rpc::protos::Bolt11PaymentResult {
+				progress_message: "Payment is pending".to_string(),
+				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
+				payment_hash: vec![],
+				payment_preimage: None,
+			})
+		}
+
+		async fn check_bolt11_payment(
+			&mut self,
+			_req: aspd_rpc::protos::CheckBolt11PaymentRequest,
+		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
+			Ok(aspd_rpc::protos::Bolt11PaymentResult {
+				progress_message: "Payment is pending".to_string(),
+				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
+				payment_hash: vec![],
+				payment_preimage: None,
+			})
+		}
+
+		async fn revoke_bolt11_payment(
+			&mut self,
+			_req: aspd_rpc::protos::RevokeBolt11PaymentRequest,
+		) -> Result<aspd_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
+			Err(tonic::Status::internal("Refused to revoke htlc out"))
+		}
+	}
+
+	let proxy = Proxy(aspd_1.get_public_client().await);
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(3);
+	let board_amount = btc(2);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
+
+	// Board funds into the Ark
+	bark_1.board(board_amount).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(1);
+	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	// Try send coins through lightning
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+
+	// vtxo expiry is 144, so exit should be triggered after 120 blocks
+	ctx.generate_blocks(130).await;
+
+	// Triggers maintenance under the hood
+	bark_1.offchain_balance().await;
+	complete_exit(&ctx, &bark_1).await;
+
+	assert!(bark_1.onchain_balance().await > (onchain_amount - board_amount));
+
+	// TODO: check received utxo point match htlc one
 }

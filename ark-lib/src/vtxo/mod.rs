@@ -1264,7 +1264,9 @@ pub mod test {
 			vtxo: VtxoRequest {
 				amount: Amount::from_sat(10_000),
 				policy: VtxoPolicy::new_server_htlc_recv(
-		round2_user_key.public_key(), round2_payment_hash, expiry_height - 2000
+					round2_user_key.public_key(),
+					round2_payment_hash,
+					expiry_height - 2000,
 				),
 			},
 			cosign_pubkey: round2_cosign_key.public_key(),

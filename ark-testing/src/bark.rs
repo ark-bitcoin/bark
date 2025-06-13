@@ -379,6 +379,10 @@ impl Bark {
 		self.run(["exit", "start", "--vtxo", &vtxo.to_string(),]).await;
 	}
 
+	pub async fn list_exits(&self) -> Vec<json::ExitTransactionStatus> {
+		self.run_json(["exit", "list"]).await
+	}
+
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>
 		where I: IntoIterator<Item = S>, S : AsRef<str>
 	{
