@@ -15,7 +15,7 @@ clone:
 
 steps:
   - name: check-commits
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     commands:
       - git log --oneline | head -n 1
       - just check-commits
@@ -23,24 +23,30 @@ steps:
 
   - name: test-unit
     depends_on: check-commits
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     commands:
       - git log --oneline | head -n 1
-      - just test-unit-all
+      - >
+        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+          cargo test --workspace --exclude ark-testing
+        "
 
   - name: build
     depends_on: check-commits
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     volumes:
       - /data:/host/data
     commands:
       - git log --oneline | head -n 1
-      - cargo version
-      - just build
+      - >
+        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+          cargo version &&
+          cargo build --workspace
+        "
 
   - name: generated-static-files
     depends_on: build
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     environment:
       TEST_POSTGRES_HOST: localhost
     commands:
@@ -54,61 +60,57 @@ steps:
 
   - name: use-bark-as-dependency
     depends_on: build
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     commands:
-      - cargo init barktest && cd barktest
-      - cargo add bark-client
-      - cargo update
-      - cargo build
+      - >
+        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+          cargo init barktest &&
+          cd barktest &&
+          cargo add bark-client &&
+          cargo update && cargo build
+        "
 
   - name: bark-as-libs
     depends_on: build
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     commands:
-      - cargo build -p bark-client --no-default-features --features=""
-      - cargo build -p bark-bitcoin-ext --no-default-features --features=""
-      - cargo build -p ark-lib --no-default-features --features=""
+      - >
+        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+          cargo build -p bark-client      --no-default-features --features=\"\" &&
+          cargo build -p bark-bitcoin-ext --no-default-features --features=\"\" &&
+          cargo build -p ark-lib          --no-default-features --features=\"\"
+        "
 
   - name: test-integration-esplora
     depends_on: build
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     volumes:
       - /data:/host/data
     environment:
-      BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/25.02.2/bin/lightningd
-      ELECTRS_EXEC: /root/.cargo/bin/electrs
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 4
-      LIGHTNINGD_PLUGIN_DIR: /plugins
     commands:
       - git log --oneline | head -n 1
-      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
-      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
-      - ls -al $${ELECTRS_EXEC}
+      - export ASPD_EXEC=${CI_WORKSPACE}/target/debug/aspd
+      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
 
   - name: test-integration-btc29.0
     depends_on: build
-    image: registry.2nd.dev/build:18
+    image: registry.2nd.dev/build:19
     volumes:
       - /data:/host/data
     environment:
-      BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/25.02.2/bin/lightningd
       TEST_DIRECTORY: ./test/btc29
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 4
-      LIGHTNINGD_PLUGIN_DIR: /plugins
     commands:
       - git log --oneline | head -n 1
-      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
-      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
-      - ls -al $${BITCOIND_EXEC}
-      - ls -al $${LIGHTNINGD_EXEC}
+      - export ASPD_EXEC=${CI_WORKSPACE}/target/debug/aspd
+      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
 

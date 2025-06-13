@@ -25,7 +25,7 @@ trap cleanup EXIT INT TERM
 WATCHDOG_PID=$!
 
 # Run main task
-just "${TEST_VERSION}"
+nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "just '${TEST_VERSION}'"
 TASK_EXIT_CODE=$?
 
 # Kill the watchdog if main task finishes first
