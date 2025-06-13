@@ -37,7 +37,7 @@ use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
-use log::{info, trace, warn};
+use log::{info, trace, warn, error};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
@@ -778,24 +778,29 @@ impl Server {
 			vtxos.push(htlc_vtxo.vtxo);
 		}
 
-		let invoice = db.get_lightning_invoice_by_payment_hash(&first_policy.payment_hash).await
-			.context("error fetching invoice by payment hash")?
-			.not_found([first_policy.payment_hash], "invoice not found")?;
+		let invoice = db.get_lightning_invoice_by_payment_hash(&first_policy.payment_hash).await?;
 
-		match &invoice.last_attempt_status {
-			Some(status) if status == &LightningPaymentStatus::Failed => {},
-			Some(status) if status == &LightningPaymentStatus::Succeeded => {
-				return badarg!("This lightning payment has completed. preimage: {}",
-					invoice.clone().preimage.unwrap().as_hex());
-			},
-			_ if tip > first_policy.htlc_expiry => {
-				// Check one last time to see if it completed
-				if let Ok(preimage) = self.cln.check_bolt11(&invoice.payment_hash, false).await {
-					return badarg!("This lightning payment has completed. preimage: {}",
-						preimage.as_hex());
-				}
-			},
-			_ => return badarg!("This lightning payment is not eligible for revocation yet")
+		// If payment not found but input vtxos are found, we can allow revoke
+		if let Some(invoice) = invoice {
+			match invoice.last_attempt_status {
+				Some(status) if status == LightningPaymentStatus::Failed => {},
+				Some(status) if status == LightningPaymentStatus::Succeeded => {
+					if let Some(preimage) = invoice.preimage {
+						return badarg!("This lightning payment has completed. preimage: {}",
+							preimage.as_hex());
+					} else {
+						error!("This lightning payment has completed, but no preimage found. Accepting revocation");
+					}
+				},
+				_ if tip > first_policy.htlc_expiry => {
+					// Check one last time to see if it completed
+					if let Ok(preimage) = self.cln.check_bolt11(&invoice.payment_hash, false).await {
+						return badarg!("This lightning payment has completed. preimage: {}",
+							preimage.as_hex());
+					}
+				},
+				_ => return badarg!("This lightning payment is not eligible for revocation yet")
+			}
 		}
 
 		let pay_req = VtxoRequest {
