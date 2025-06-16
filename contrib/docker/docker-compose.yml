@@ -53,9 +53,8 @@ services:
       bitcoind:
         condition: service_healthy
   aspd:
-    build:
-      context: ../../
-      dockerfile: contrib/docker/aspd.Dockerfile
+    image:
+      docker.io/secondark/aspd:latest
     volumes:
       - aspd:/data/aspd
       - postgres:/var/lib/postgresql/data
@@ -68,9 +67,8 @@ services:
       cln:
         condition: service_started
   bark:
-    build:
-      context: ../../
-      dockerfile: contrib/docker/bark.Dockerfile
+    image:
+      docker.io/secondark/bark:latest
     volumes:
       - bark:/root
     depends_on:
