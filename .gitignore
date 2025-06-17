@@ -16,3 +16,5 @@ flake_finder/
 # RustRover/IntelliJ
 .idea/
 ark-testing/tmp-pg-data
+
+.vscode/
