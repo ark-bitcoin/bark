@@ -26,7 +26,7 @@
 
 <br />
 
-Bark is an implementation of the Ark protocol on bitcoin, led by [Second](https://second.tech). The Ark protocol is a bitcoin layer 2 for making fast, low-cost, self-custodial payments at scale. Ark uses a client—server model to enable users to transact off-chain while still being able to "exit" their balances on-chain at any time.
+Bark is an implementation of the Ark protocol on bitcoin, led by [Second](https://second.tech). The Ark protocol is a bitcoin layer 2 for making fast, low-cost, self-custodial payments at scale. Ark uses a client-server model to enable users to transact off-chain while still being able to "exit" their balances on-chain at any time.
 
 The project consists of:
 
@@ -37,7 +37,7 @@ The project consists of:
 > **Warning**  
 > This repository contains experimental code. Using it with real bitcoin is reckless and can result in loss of funds.
 >
-> - Updating bark or aspd may corrupt your wallet—we prioritise development velocity over backward compatibility.
+> - Updating bark or aspd may corrupt your wallet—we prioritize development velocity over backward compatibility.
 > - Known bugs and vulnerabilities can still lead to loss of funds.
 
 ## Get started
@@ -91,4 +91,4 @@ If you happen to find a vulnerability we invite you to [file a public issue](htt
 
 ## License
 
-Released under the **CC0 1.0 Universal** license – see the [LICENSE](LICENSE) file for details.
+Released under the **CC0 1.0 Universal** license—see the [LICENSE](LICENSE) file for details.
