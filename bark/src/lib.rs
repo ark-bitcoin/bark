@@ -858,7 +858,7 @@ impl Wallet {
 				};
 
 				if let Err(e) = arkoor::verify_oor(arkoor, Some(*pk)) {
-					warn!("Invalid oor signature from asp: {}", e);
+					warn!("Could not validate OOR signature, dropping vtxo. {}", e);
 					return None;
 				}
 
