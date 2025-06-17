@@ -835,33 +835,55 @@ impl Wallet {
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
 		let req = protos::ArkoorVtxosRequest { pubkey: pk.serialize().to_vec() };
-		let resp = asp.client.empty_arkoor_mailbox(req).await.context("error fetching oors")?;
-		let oors = resp.into_inner().vtxos.into_iter()
-			.map(|b| Vtxo::decode(&b).context("invalid vtxo from asp"))
-			.collect::<Result<Vec<_>, _>>()?;
-		debug!("ASP has {} OOR vtxos for us", oors.len());
-		for vtxo in oors {
-			// TODO: we need to test receiving arkoors with invalid signatures
-			let arkoor = vtxo.as_arkoor().context("asp gave non-arkoor vtxo for arkoor sync")?;
-			if let Err(e) = arkoor::verify_oor(arkoor, Some(*pk)) {
-				warn!("Could not validate OOR signature, dropping vtxo. {}", e);
-				continue;
-			}
+		let packages = asp.client.empty_arkoor_mailbox(req).await
+			.context("error fetching oors")?.into_inner().packages;
+		debug!("ASP has {} arkoor packages for us", packages.len());
 
-			// Not sure if this can happen, but well.
-			if self.db.has_spent_vtxo(vtxo.id())? {
-				debug!("Not adding OOR vtxo {} because it is considered spent", vtxo.id());
-			}
+		for package in packages {
+			let vtxos = package.vtxos.into_iter().filter_map(|v| {
+				let vtxo = match Vtxo::decode(&v) {
+					Ok(vtxo) => vtxo,
+					Err(e) => {
+						warn!("Invalid vtxo from asp: {}", e);
+						return None;
+					}
+				};
 
-			if self.db.get_vtxo(vtxo.id())?.is_none() {
-				debug!("Storing new OOR vtxo {} with value {}", vtxo.id(), vtxo.amount());
-				self.db.register_movement(MovementArgs {
-					spends: &[],
-					receives: &[(&vtxo, VtxoState::Spendable)],
-					recipients: &[],
-					fees: None,
-				}).context("failed to store OOR vtxo")?;
-			}
+				let arkoor = match vtxo.as_arkoor() {
+					Some(arkoor) => arkoor,
+					None => {
+						warn!("VTXO is not an arkoor: {:?}", vtxo);
+						return None;
+					}
+				};
+
+				if let Err(e) = arkoor::verify_oor(arkoor, Some(*pk)) {
+					warn!("Invalid oor signature from asp: {}", e);
+					return None;
+				}
+
+				match self.db.has_spent_vtxo(vtxo.id()) {
+					Ok(spent) if spent => {
+						debug!("Not adding OOR vtxo {} because it is considered spent", vtxo.id());
+						return None;
+					},
+					_ => {}
+				}
+
+				if let Ok(Some(_)) = self.db.get_vtxo(vtxo.id()) {
+					debug!("Not adding OOR vtxo {} because it already exists", vtxo.id());
+					return None;
+				}
+
+				Some(vtxo)
+			}).collect::<Vec<_>>();
+
+			self.db.register_movement(MovementArgs {
+				spends: &[],
+				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
+				recipients: &[],
+				fees: None,
+			}).context("failed to store OOR vtxo")?;
 		}
 
 		Ok(())

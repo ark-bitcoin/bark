@@ -324,38 +324,44 @@ impl Db {
 	 * Arkoors
 	*/
 
-	pub async fn store_oor(&self, pubkey: PublicKey, vtxo: Vtxo) -> anyhow::Result<()> {
+	pub async fn store_oor(&self, pubkey: PublicKey, arkoor_package_id: &[u8; 32], vtxo: Vtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			INSERT INTO arkoor_mailbox (id, pubkey, vtxo) VALUES ($1, $2, $3);
+			INSERT INTO arkoor_mailbox (id, pubkey, arkoor_package_id, vtxo) VALUES ($1, $2, $3, $4);
 		").await?;
 		conn.execute(
 			&statement,
-			&[&vtxo.id().to_string(), &pubkey.serialize().to_vec(), &vtxo.encode()]
+			&[&vtxo.id().to_string(), &pubkey.serialize().to_vec(), &arkoor_package_id.to_vec(), &vtxo.encode()]
 		).await?;
 
 		Ok(())
 	}
 
-	pub async fn pull_oors(&self, pubkey: PublicKey) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn pull_oors(&self, pubkey: PublicKey) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo>>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT vtxo FROM arkoor_mailbox WHERE pubkey = $1
+			SELECT vtxo, arkoor_package_id FROM arkoor_mailbox WHERE pubkey = $1
 		").await?;
 
+
+		let mut vtxos_by_package_id = HashMap::<_, Vec<_>>::new();
 		let rows = conn.query(&statement, &[&pubkey.serialize().to_vec()]).await?;
-		let oors = rows
-			.into_iter()
-			.map(|row| -> anyhow::Result<Vtxo> { Ok(Vtxo::decode(row.get("vtxo"))?) })
-			.collect::<Result<Vec<_>, _>>()?;
+
+		for row in &rows {
+			let vtxo = Vtxo::decode(row.get("vtxo"))?;
+			let package_id = row.get::<_, Vec<u8>>("arkoor_package_id")
+				.try_into().expect("invalid arkoor package id");
+
+			vtxos_by_package_id.entry(package_id).or_default().push(vtxo);
+		}
 
 		let statement = conn.prepare("
 			UPDATE arkoor_mailbox SET deleted_at = NOW() WHERE pubkey = $1;
 		").await?;
 		let result = conn.execute(&statement, &[&pubkey.serialize().to_vec()]).await?;
-		assert_eq!(result, oors.len() as u64);
+		assert_eq!(result, rows.len() as u64);
 
-		Ok(oors)
+		Ok(vtxos_by_package_id)
 	}
 
 	/**

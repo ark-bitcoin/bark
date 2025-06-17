@@ -139,8 +139,13 @@ message ArkoorVtxosRequest {
 	bytes pubkey = 1;
 }
 
+message ArkoorMailboxPackage {
+	bytes arkoor_package_id = 1;
+	repeated bytes vtxos = 2;
+}
+
 message ArkoorVtxosResponse {
-	repeated bytes vtxos = 1;
+	repeated ArkoorMailboxPackage packages = 1;
 }
 
 // lightning
