@@ -133,7 +133,9 @@ impl Db {
 		let stmt = conn.prepare("
 			SELECT lightning_payment_attempt_id,
 				lightning_invoice_id, lightning_node_id, amount_msat, status, error,
-				created_at, updated_at
+				created_at, updated_at, (
+					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = lightning_payment_attempt.lightning_invoice_id)
+				) as is_self_payment
 			FROM lightning_payment_attempt
 			WHERE status != $1 AND status != $2 AND lightning_node_id = $3
 			ORDER BY created_at DESC;
@@ -157,7 +159,9 @@ impl Db {
 		let stmt = conn.prepare("
 			SELECT attempt.lightning_payment_attempt_id,
 				attempt.lightning_invoice_id, attempt.lightning_node_id, attempt.amount_msat,
-				attempt.status, attempt.error, attempt.created_at, attempt.updated_at
+				attempt.status, attempt.error, attempt.created_at, attempt.updated_at, (
+					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = attempt.lightning_invoice_id)
+				) as is_self_payment
 			FROM lightning_invoice invoice
 			JOIN lightning_payment_attempt attempt ON
 				invoice.lightning_invoice_id = attempt.lightning_invoice_id

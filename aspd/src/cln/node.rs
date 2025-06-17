@@ -258,6 +258,14 @@ impl ClnNodeMonitorProcess {
 		).await?;
 
 		for attempt in open_attempts.into_iter() {
+			if attempt.is_self_payment {
+				trace!("Lightning invoice ({}): Skipping since it is a self payment.",
+					attempt.lightning_invoice_id,
+				);
+
+				continue;
+			}
+
 			if attempt.created_at > Utc::now() - self.config.invoice_recheck_delay {
 				trace!("Lightning invoice ({}): Skipping since it was just created.",
 					attempt.lightning_invoice_id,
