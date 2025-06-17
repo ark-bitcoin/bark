@@ -15,15 +15,15 @@ service ArkService {
 	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (Empty) {}
 
 	// * OOR PAYMENTS*
-	rpc RequestArkoorCosign(ArkoorCosignRequest) returns (ArkoorCosignResponse) {}
-	rpc PostArkoorMailbox(ArkoorVtxo) returns (Empty) {}
+	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
 	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
 
 	// * LN payments
-	rpc StartBolt11Payment(Bolt11PaymentRequest) returns (ArkoorCosignResponse) {}
+	rpc StartBolt11Payment(Bolt11PaymentRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (Bolt11PaymentResult) {}
 	rpc CheckBolt11Payment(CheckBolt11PaymentRequest) returns (Bolt11PaymentResult) {}
-	rpc RevokeBolt11Payment(RevokeBolt11PaymentRequest) returns (ArkoorCosignResponse) {}
+	rpc RevokeBolt11Payment(RevokeBolt11PaymentRequest) returns (ArkoorPackageCosignResponse) {}
 
 	rpc StartBolt11Onboard(StartBolt11OnboardRequest) returns (StartBolt11OnboardResponse) {}
 	rpc SubscribeBolt11Onboard(SubscribeBolt11OnboardRequest) returns (SubscribeBolt11OnboardResponse) {}
@@ -113,14 +113,26 @@ message ArkoorCosignRequest {
 	bytes pub_nonce = 3;
 }
 
+message ArkoorPackageCosignRequest {
+	repeated ArkoorCosignRequest arkoors = 1;
+}
+
 message ArkoorCosignResponse {
 	bytes pub_nonce = 1;
 	bytes partial_sig = 2;
 }
 
+message ArkoorPackageCosignResponse {
+	repeated ArkoorCosignResponse sigs = 1;
+}
+
 message ArkoorVtxo {
 	bytes pubkey = 1;
 	bytes vtxo = 2;
+}
+
+message ArkoorPackage {
+	repeated ArkoorVtxo arkoors = 1;
 }
 
 message ArkoorVtxosRequest {
@@ -136,9 +148,9 @@ message ArkoorVtxosResponse {
 message Bolt11PaymentRequest {
 	string invoice = 1;
 	optional uint64 user_amount_sat = 2;
-	bytes input_vtxo = 3;
-	bytes user_pubkey = 4;
-	bytes user_nonce = 5;
+	repeated bytes input_ids = 3;
+	repeated bytes pub_nonces = 4;
+	bytes user_pubkey = 5;
 }
 
 message Bolt11PaymentDetails {
@@ -149,7 +161,7 @@ message Bolt11PaymentDetails {
 
 message SignedBolt11PaymentDetails {
 	string invoice = 1;
-	bytes htlc_vtxo_id = 2;
+	repeated bytes htlc_vtxo_ids = 2;
 	bool wait = 3;
 }
 
@@ -166,8 +178,8 @@ message Bolt11PaymentResult {
 }
 
 message RevokeBolt11PaymentRequest {
-	bytes htlc_vtxo = 1;
-	bytes pub_nonce = 2;
+	repeated bytes input_ids = 1;
+	repeated bytes pub_nonces = 2;
 }
 
 message StartBolt11OnboardRequest {
@@ -184,10 +196,8 @@ message SubscribeBolt11OnboardRequest {
 }
 
 message ClaimBolt11OnboardRequest {
-	bytes input_id = 1;
-	repeated ArkoorOutput outputs = 2;
-	bytes pub_nonce = 3;
-	bytes payment_preimage = 4;
+	ArkoorCosignRequest arkoor = 1;
+	bytes payment_preimage = 2;
 }
 
 message SubscribeBolt11OnboardResponse {

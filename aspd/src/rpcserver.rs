@@ -151,7 +151,7 @@ const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
 const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
 const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
 const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_vtxos";
-const RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN: &'static str = "request_arkoor_cosign";
+const RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN: &'static str = "request_arkoor_package_cosign";
 const RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX: &'static str = "post_arkoor_mailbox";
 const RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX: &'static str = "empty_arkoor_mailbox";
 const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment";
@@ -172,7 +172,7 @@ const RPC_SERVICE_ARK_METHODS: [&str; 15] = [
 	RPC_SERVICE_ARK_GET_ROUND,
 	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
 	RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS,
-	RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN,
+	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
 	RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX,
 	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
 	RPC_SERVICE_ARK_START_BOLT11_PAYMENT,
@@ -430,54 +430,60 @@ impl rpc::server::ArkService for Server {
 	}
 
 	// oor
-	async fn request_arkoor_cosign(
+	async fn request_arkoor_package_cosign(
 		&self,
-		req: tonic::Request<protos::ArkoorCosignRequest>,
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN);
+		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("input_vtxo_id", req.input_id.as_hex().to_string()),
+			KeyValue::new("arkoors", format!("{:?}", req.arkoors)),
 		]);
 
-		let input_id = VtxoId::from_slice(&req.input_id).badarg("invalid input id")?;
-		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_id]).await
-			.to_status()?.try_into().unwrap();
-		let outputs = req.outputs.iter().map(|o| {
-			Ok(PaymentRequest {
-				amount: Amount::from_sat(o.amount),
-				pubkey: PublicKey::from_slice(&o.pubkey).badarg("invalid output pubkey")?,
-				spk: VtxoSpkSpec::Exit,
-			})
-		}).collect::<Result<Vec<_>, tonic::Status>>()?;
+		let mut arkoor_args = vec![];
+		for arkoor in req.arkoors.iter() {
+			let input_id = VtxoId::from_slice(&arkoor.input_id).badarg("invalid input id")?;
 
-		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
-			.badarg("invalid public nonce")?;
+			let user_nonce = musig::MusigPubNonce::from_slice(&arkoor.pub_nonce)
+				.badarg("invalid public nonce")?;
 
-		let cosign_resp = self.cosign_oor(&input_vtxo.vtxo, &outputs, user_nonce).await.to_status()?;
+			let outputs = arkoor.outputs.iter().map(|o| {
+				Ok(PaymentRequest {
+					amount: Amount::from_sat(o.amount),
+					pubkey: PublicKey::from_slice(&o.pubkey).badarg("invalid output pubkey")?,
+					spk: VtxoSpkSpec::Exit,
+				})
+			}).collect::<anyhow::Result<Vec<_>>>().to_status()?;
+
+			arkoor_args.push((input_id, user_nonce, outputs))
+		}
+
+		let cosign_resp = self.cosign_oor_package(arkoor_args).await.to_status()?;
+
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
-	async fn post_arkoor_mailbox(
+	async fn post_arkoor_package_mailbox(
 		&self,
-		req: tonic::Request<protos::ArkoorVtxo>,
+		req: tonic::Request<protos::ArkoorPackage>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("pubkey", format!("{:?}", req.pubkey)),
-			KeyValue::new("vtxo", format!("{:?}", req.vtxo)),
+			KeyValue::new("arkoors", format!("{:?}", req.arkoors)),
 		]);
 
-		let pubkey = PublicKey::from_slice(&req.pubkey)
-			.badarg("invalid pubkey")?;
+		for arkoor in req.arkoors {
+			let pubkey = PublicKey::from_slice(&arkoor.pubkey)
+				.badarg("invalid pubkey")?;
 
-		let vtxo = Vtxo::decode(&req.vtxo)
-			.badarg("invalid vtxo")?;
+			let vtxo = Vtxo::decode(&arkoor.vtxo)
+				.badarg("invalid vtxo")?;
 
-		self.db.store_oor(pubkey, vtxo).await.to_status()?;
+			self.db.store_oor(pubkey, vtxo).await.to_status()?;
+		}
 
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
@@ -510,7 +516,7 @@ impl rpc::server::ArkService for Server {
 	async fn start_bolt11_payment(
 		&self,
 		req: tonic::Request<protos::Bolt11PaymentRequest>,
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
@@ -518,6 +524,8 @@ impl rpc::server::ArkService for Server {
 			vec![
 				KeyValue::new("invoice", format!("{:?}", req.invoice)),
 				KeyValue::new("amount_sats", format!("{:?}", req.user_amount_sat)),
+				KeyValue::new("input_ids", format!("{:?}", req.input_ids)),
+				KeyValue::new("pub_nonces", format!("{:?}", req.pub_nonces)),
 			]);
 
 		let invoice = Bolt11Invoice::from_str(&req.invoice)
@@ -534,15 +542,23 @@ impl rpc::server::ArkService for Server {
 		let amount = req.user_amount_sat.map(|v| Amount::from_sat(v)).or(inv_amount)
 			.badarg("amount field required for invoice without amount")?;
 
-		let input_vtxo = Vtxo::decode(&req.input_vtxo)
-			.badarg("invalid vtxo")?;
+		let input_ids = req.input_ids.iter()
+			.map(|id| VtxoId::from_slice(id).badarg("invalid input id"))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		let input_vtxos = self.db.get_vtxos_by_id(&input_ids).await
+			.to_status()?.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
+
+		let pub_nonces = req.pub_nonces
+			.iter()
+			.map(|nonce| musig::MusigPubNonce::from_slice(nonce).badarg("invalid public nonce"))
+			.collect::<Result<Vec<_>, _>>()?;
+
 		let user_pubkey = PublicKey::from_slice(&req.user_pubkey)
 			.badarg("invalid user pubkey")?;
-		let user_nonce = musig::MusigPubNonce::from_slice(&req.user_nonce)
-			.badarg("invalid public nonce")?;
 
 		let cosign_resp = self.start_bolt11_payment(
-			invoice, amount, input_vtxo, user_pubkey, user_nonce,
+			invoice, amount, user_pubkey, input_vtxos, pub_nonces
 		).await.context("error making payment")?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))
@@ -555,15 +571,19 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
+		let htlc_vtxo_ids = req.htlc_vtxo_ids
+			.iter()
+			.map(|id| VtxoId::from_slice(&id).badarg("invalid vtxo id"))
+			.collect::<Result<Vec<_>, _>>()?;
+
 		add_tracing_attributes(vec![
 			KeyValue::new("invoice", format!("{:?}", req.invoice)),
-			KeyValue::new("htlc_vtxo", req.htlc_vtxo_id.as_hex().to_string()),
+			KeyValue::new("htlc_vtxos", format!("{:?}", htlc_vtxo_ids)),
 		]);
 
 		let invoice = Bolt11Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
-		let htlc_vtxo_id = VtxoId::from_slice(&req.htlc_vtxo_id).badarg("invalid vtxo id")?;
 
-		let res = self.finish_bolt11_payment(invoice, htlc_vtxo_id, req.wait).await.to_status()?;
+		let res = self.finish_bolt11_payment(invoice, htlc_vtxo_ids, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
 
@@ -588,21 +608,26 @@ impl rpc::server::ArkService for Server {
 	async fn revoke_bolt11_payment(
 		&self,
 		req: tonic::Request<protos::RevokeBolt11PaymentRequest>
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REQUEST_ARKOOR_COSIGN);
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("htlc_vtxo", req.htlc_vtxo.as_hex().to_string()),
-			KeyValue::new("pub_nonce", req.pub_nonce.as_hex().to_string()),
+			KeyValue::new("input_ids", format!("{:?}", req.input_ids)),
+			KeyValue::new("pub_nonces", format!("{:?}", req.pub_nonces)),
 		]);
 
-		let htlc_vtxo = Vtxo::decode(&req.htlc_vtxo).badarg("invalid vtxo")?;
+		let htlc_vtxo_ids = req.input_ids
+			.iter()
+			.map(|a| VtxoId::from_slice(&a).badarg("invalid vtxo id"))
+			.collect::<Result<Vec<_>, _>>()?;
 
-		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
-			.badarg("invalid public nonce")?;
+		let pub_nonces = req.pub_nonces
+			.iter()
+			.map(|a| musig::MusigPubNonce::from_slice(&a).badarg("invalid public nonce"))
+			.collect::<Result<Vec<_>, _>>()?;
 
-		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo, user_nonce).await.to_status()?;
+		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, pub_nonces).await.to_status()?;
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
@@ -653,17 +678,24 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD);
 		let req = req.into_inner();
 
+		let arkoor = req.arkoor.badarg("missing arkoor")?;
+
 		add_tracing_attributes(vec![
-			KeyValue::new("payment", req.input_id.as_hex().to_string()),
-			KeyValue::new("pub_nonce", req.pub_nonce.as_hex().to_string()),
+			KeyValue::new("payment", arkoor.input_id.as_hex().to_string()),
+			KeyValue::new("pub_nonce", arkoor.pub_nonce.as_hex().to_string()),
 			KeyValue::new("payment_preimage", req.payment_preimage.as_hex().to_string()),
 		]);
 
-		let input_id = VtxoId::from_slice(&req.input_id).badarg("invalid vtxo id")?;
-		let outputs = req.outputs.into_iter().map(|o| o.try_into())
-			.collect::<Result<Vec<_>, _>>()
-			.badarg("invalid arkoor output request")?;
-		let user_nonce = musig::MusigPubNonce::from_slice(&req.pub_nonce)
+		let input_id = VtxoId::from_slice(&arkoor.input_id).badarg("invalid vtxo id")?;
+
+		let output = arkoor.outputs.first().badarg("missing output")?;
+		let pay_req = PaymentRequest {
+			amount: Amount::from_sat(output.amount),
+			pubkey: PublicKey::from_slice(&output.pubkey).badarg("invalid output pubkey")?,
+			spk: VtxoSpkSpec::Exit,
+		};
+
+		let user_nonce = musig::MusigPubNonce::from_slice(&arkoor.pub_nonce)
 			.badarg("invalid public nonce")?;
 
 		let payment_preimage: [u8; 32] = req.payment_preimage.as_slice()
@@ -671,7 +703,7 @@ impl rpc::server::ArkService for Server {
 
 		let cosign_resp = self.claim_bolt11_htlc(
 			input_id,
-			outputs,
+			pay_req,
 			user_nonce,
 			&payment_preimage,
 		).await.to_status()?;

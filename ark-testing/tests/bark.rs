@@ -235,8 +235,8 @@ async fn large_round() {
 }
 
 #[tokio::test]
-async fn send_oor() {
-	let ctx = TestContext::new("bark/just_oor").await;
+async fn send_simple_arkoor() {
+	let ctx = TestContext::new("bark/send_simple_arkoor").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
@@ -248,6 +248,31 @@ async fn send_oor() {
 
 	assert_eq!(60_000, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
+}
+
+#[tokio::test]
+async fn send_arkoor_package() {
+	let ctx = TestContext::new("bark/send_arkoor_package").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
+	bark1.board(sat(20_000)).await;
+	bark1.board(sat(20_000)).await;
+	bark1.board(sat(20_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let pk2 = bark2.vtxo_pubkey().await;
+	bark1.send_oor(pk2, sat(50_000)).await;
+
+	let [vtxo] = bark1.vtxos().await.try_into().expect("should only remain change vtxo");
+	assert_eq!(vtxo.amount, sat(10_000));
+
+	let mut vtxos = bark2.vtxos().await;
+	vtxos.sort_by_key(|v| v.amount);
+	let [vtxo1, vtxo2, vtxo3] = vtxos.try_into().expect("should have 3 vtxos");
+	assert_eq!(vtxo1.amount, sat(10_000));
+	assert_eq!(vtxo2.amount, sat(20_000));
+	assert_eq!(vtxo3.amount, sat(20_000));
 }
 
 #[tokio::test]
@@ -308,8 +333,10 @@ async fn bark_rejects_creating_arkoor_subdust_change() {
 	let err = bark1.try_send_oor(&bark2.vtxo_pubkey().await, sent_amount, true).await.unwrap_err();
 
 	assert!(err.to_string().contains(&format!(
+		"An error occurred: Insufficient money available. Needed {} but {} is available",
 		// sent amount (799_671) + change (330)
-		"no input found to fit amount: required: {}", sat(800_001),
+		sat(800_001),
+		board_amount,
 	)), "err: {err}");
 	assert_eq!(bark1.offchain_balance().await, board_amount);
 }
@@ -393,39 +420,40 @@ async fn list_movements() {
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(300_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let payments = bark1.list_movements().await;
-	assert_eq!(payments.len(), 1);
-	assert_eq!(payments[0].spends.len(), 0);
-	assert_eq!(payments[0].receives[0].amount, sat(300_000));
-	assert_eq!(payments[0].fees, Amount::ZERO);
-	assert!(payments[0].recipients.first().is_none());
+	let movements = bark1.list_movements().await;
+	assert_eq!(movements.len(), 1);
+	assert_eq!(movements[0].spends.len(), 0);
+	assert_eq!(movements[0].receives[0].amount, sat(300_000));
+	assert_eq!(movements[0].fees, Amount::ZERO);
+	assert!(movements[0].recipients.first().is_none());
 
 	// oor change
 	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(150_000)).await;
-	let payments = bark1.list_movements().await;
-	assert_eq!(payments.len(), 2);
-	assert_eq!(payments[0].spends[0].amount, sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, sat(150_000));
-	assert_eq!(payments[0].fees, Amount::ZERO);
-	assert!(payments[0].recipients.first().is_some());
+	let movements = bark1.list_movements().await;
+	assert_eq!(movements.len(), 2);
+	assert_eq!(movements[0].spends[0].amount, sat(300_000));
+	assert_eq!(movements[0].receives[0].amount, sat(150_000));
+	assert_eq!(movements[0].fees, Amount::ZERO);
+	assert!(movements[0].recipients.first().is_some());
 
 	// refresh vtxos
 	bark1.refresh_all().await;
-	let payments = bark1.list_movements().await;
-	assert_eq!(payments.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, sat(150_000));
-	assert_eq!(payments[0].receives[0].amount, sat(150_000));
-	assert_eq!(payments[0].fees, Amount::ZERO);
-	assert!(payments[0].recipients.first().is_none());
+	let movements = bark1.list_movements().await;
+	assert_eq!(movements.len(), 3);
+	assert_eq!(movements[0].spends[0].amount, sat(150_000));
+	assert_eq!(movements[0].receives[0].amount, sat(150_000));
+	assert_eq!(movements[0].fees, Amount::ZERO);
+	assert!(movements[0].recipients.first().is_none());
 
 	// oor vtxo
 	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
-	let payments = bark1.list_movements().await;
-	assert_eq!(payments.len(), 4);
-	assert_eq!(payments[0].spends.len(), 0);
-	assert_eq!(payments[0].receives[0].amount, sat(330_000));
-	assert_eq!(payments[0].fees, Amount::ZERO);
-	assert!(payments[0].recipients.first().is_none());
+	let movements = bark1.list_movements().await;
+
+	assert_eq!(movements.len(), 4);
+	assert_eq!(movements[0].spends.len(), 0);
+	assert_eq!(movements[0].receives[0].amount, sat(330_000));
+	assert_eq!(movements[0].fees, Amount::ZERO);
+	assert!(movements[0].recipients.first().is_none());
 }
 
 #[tokio::test]
@@ -445,13 +473,13 @@ async fn multiple_spends_in_payment() {
 
 	// refresh vtxos
 	bark1.refresh_all().await;
-	let payments = bark1.list_movements().await;
-	assert_eq!(payments[0].spends.len(), 3);
-	assert_eq!(payments[0].spends[0].amount, sat(100_000));
-	assert_eq!(payments[0].spends[1].amount, sat(200_000));
-	assert_eq!(payments[0].spends[2].amount, sat(300_000));
-	assert_eq!(payments[0].receives[0].amount, sat(600_000));
-	assert_eq!(payments[0].fees, Amount::ZERO);
+	let movements = bark1.list_movements().await;
+	assert_eq!(movements[0].spends.len(), 3);
+	assert_eq!(movements[0].spends[0].amount, sat(100_000));
+	assert_eq!(movements[0].spends[1].amount, sat(200_000));
+	assert_eq!(movements[0].spends[2].amount, sat(300_000));
+	assert_eq!(movements[0].receives[0].amount, sat(600_000));
+	assert_eq!(movements[0].fees, Amount::ZERO);
 }
 
 #[tokio::test]
@@ -955,6 +983,6 @@ async fn bark_does_not_spend_too_deep_arkoors() {
 
 	let err = bark1.try_send_oor(&pk, sat(100_000), false).await.unwrap_err();
 	assert!(err.to_string().contains(
-		"no input found to fit amount: required: 0.00100330 BTC",
+		"Insufficient money available. Needed 0.00100330 BTC but 0 BTC is available",
 	), "err: {err}");
 }

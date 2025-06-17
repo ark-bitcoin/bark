@@ -2,7 +2,7 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
-use ark::arkoor::ArkoorCosignResponse;
+use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::vtxo::VtxoSpkSpec;
 use bitcoin::secp256k1::{schnorr, PublicKey};
@@ -273,6 +273,31 @@ impl TryFrom<protos::ArkoorCosignResponse> for ArkoorCosignResponse {
 			partial_signature: musig::MusigPartialSignature::from_slice(&v.partial_sig)
 				.map_err(|_| "invalid server partial cosignature")?,
 		})
+	}
+}
+
+impl From<Vec<ArkoorCosignResponse>> for protos::ArkoorPackageCosignResponse {
+	fn from(v: Vec<ArkoorCosignResponse>) -> Self {
+		Self {
+			sigs: v.into_iter().map(|i| i.into()).collect(),
+		}
+	}
+}
+
+impl<'a> From<&'a ArkoorBuilder<'_, PaymentRequest>> for protos::ArkoorCosignRequest {
+	fn from(v: &'a ArkoorBuilder<'_, PaymentRequest>) -> Self {
+		Self {
+			input_id: v.input.id().to_bytes().to_vec(),
+			outputs: v.outputs.iter().map(|o| o.into()).collect(),
+			pub_nonce: v.user_nonce.serialize().to_vec(),
+		}
+	}
+}
+
+impl TryInto<Vec<ArkoorCosignResponse>> for protos::ArkoorPackageCosignResponse {
+	type Error = ConvertError;
+	fn try_into(self) -> Result<Vec<ArkoorCosignResponse>, Self::Error> {
+		Ok(self.sigs.into_iter().map(|i| i.try_into()).collect::<Result<_, _>>()?)
 	}
 }
 

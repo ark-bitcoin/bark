@@ -12,9 +12,10 @@ use self::model::{ForfeitClaimState, ForfeitRoundState};
 
 
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Context;
+use ark::arkoor::ArkoorPackageBuilder;
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
@@ -26,7 +27,7 @@ use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 use log::info;
 
-use ark::{BoardVtxo, Vtxo, VtxoId};
+use ark::{BoardVtxo, PaymentRequest, Vtxo, VtxoId};
 use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
 use ark::util::{Decodable, Encodable};
@@ -218,6 +219,7 @@ impl Db {
 		Ok(())
 	}
 
+	/// Get vtxos by id and ensure the order of the returned vtxos matches the order of the provided ids.
 	async fn get_vtxos_by_id_with_client<T>(client: &T, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>>
 		where T : GenericClient + Sized
 	{
@@ -232,23 +234,24 @@ impl Db {
 			.context("Query get_vtxos_by_id failed")?;
 
 		// Parse all rows
-		let vtxos = rows.into_iter()
-			.map(|row| VtxoState::try_from(row))
-			.collect::<Result<Vec<_>,_>>()
+		let mut vtxos = rows.into_iter()
+			.map(|row| {
+				let vtxo = VtxoState::try_from(row)?;
+				Ok((vtxo.vtxo.id(), vtxo))
+			})
+			.collect::<anyhow::Result<HashMap<_, _>>>()
 			.context("Failed to parse VtxoState from database")?;
 
 		// Bail if one of the id's could not be found
 		if vtxos.len() != ids.len() {
-			let found_ids = vtxos.iter().map(|v| v.id).collect::<HashSet<_>>();
-
 			for id in ids {
-				if !found_ids.contains(id) {
+				if !vtxos.contains_key(id) {
 					return not_found!([id], "vtxo does not exist");
 				}
 			}
 		}
 
-		Ok(vtxos)
+		Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
 	}
 
 	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
@@ -283,26 +286,32 @@ impl Db {
 	/// Returns [Some] for the first vtxo that was already signed.
 	///
 	/// Also stores the new OOR vtxos atomically.
-	pub async fn check_set_vtxo_oor_spent(
+	pub async fn check_set_vtxo_oor_spent_package(
 		&self,
-		spent_ids: &[VtxoId],
-		spending_tx: Txid,
-		new_vtxos: &[Vtxo],
+		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
 	) -> anyhow::Result<Option<VtxoId>> {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
-		let statement = tx.prepare_typed("
-			UPDATE vtxo SET oor_spent = $2 WHERE id = $1;
-		", &[Type::TEXT, Type::BYTEA]).await?;
+		let new_vtxos = package.new_vtxos()
+			.into_iter().flatten().map(|v| Vtxo::Arkoor(v)).collect::<Vec<_>>();
 
-		let vtxos = Self::get_vtxos_by_id_with_client(&tx, spent_ids).await?;
-		for vtxo_state in vtxos {
-			if !vtxo_state.is_spendable() {
-				return Ok(Some(vtxo_state.id));
+		for input in package.inputs() {
+			let txid = package.spending_tx(input.id())
+				.expect("spending tx should be present").compute_txid();
+
+			let statement = tx.prepare_typed("
+				UPDATE vtxo SET oor_spent = $2 WHERE id = $1;
+			", &[Type::TEXT, Type::BYTEA]).await?;
+
+			let vtxos = Self::get_vtxos_by_id_with_client(&tx, &[input.id()]).await?;
+			for vtxo_state in vtxos {
+				if !vtxo_state.is_spendable() {
+					return Ok(Some(vtxo_state.id));
+				}
+
+				tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&txid)]).await?;
 			}
-
-			tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&spending_tx)]).await?;
 		}
 
 		Self::inner_upsert_vtxos(&tx, new_vtxos).await?;

@@ -486,16 +486,16 @@ async fn double_spend_oor() {
 
 	/// This proxy will always duplicate OOR requests and store the latest request in the mutex.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient, Arc<Mutex<Option<protos::ArkoorCosignRequest>>>);
+	struct Proxy(aspd::ArkClient, Arc<Mutex<Option<protos::ArkoorPackageCosignRequest>>>);
 	#[tonic::async_trait]
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_arkoor_cosign(&mut self, req: protos::ArkoorCosignRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+		async fn request_arkoor_package_cosign(&mut self, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
 			let (res1, res2) = tokio::join!(
-				c1.request_arkoor_cosign(req.clone()),
-				c2.request_arkoor_cosign(req.clone()),
+				c1.request_arkoor_package_cosign(req.clone()),
+				c2.request_arkoor_package_cosign(req.clone()),
 			);
 			self.1.lock().await.replace(req);
 			match (res1, res2) {
@@ -526,7 +526,7 @@ async fn double_spend_oor() {
 
 	// then after it's done, fire the request again, which should fail.
 	let req = last_req.lock().await.take().unwrap();
-	let err = aspd.get_public_client().await.request_arkoor_cosign(req).await.unwrap_err();
+	let err = aspd.get_public_client().await.request_arkoor_package_cosign(req).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"bad user input: attempted to sign arkoor tx for already spent vtxo",
 	), "err: {err}");
@@ -1181,9 +1181,9 @@ async fn reject_subdust_arkoor_cosign() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn request_arkoor_cosign(&mut self, mut req: protos::ArkoorCosignRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
-			req.outputs[0].amount = P2TR_DUST.to_sat() - 1;
-			Ok(self.upstream().request_arkoor_cosign(req).await?.into_inner())
+		async fn request_arkoor_package_cosign(&mut self, mut req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			req.arkoors[0].outputs[0].amount = P2TR_DUST.to_sat() - 1;
+			Ok(self.upstream().request_arkoor_package_cosign(req).await?.into_inner())
 		}
 	}
 
@@ -1197,9 +1197,7 @@ async fn reject_subdust_arkoor_cosign() {
 	let bark2 = ctx.new_bark("bark2", &aspd).await;
 
 	let err = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000), true).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"bad user input: VTXO amount must be at least 0.00000330 BTC, requested 0.00000329 BTC",
-	), "err: {err}");
+	assert!(err.to_string().contains("arkoor output amounts cannot be below the p2tr dust threshold"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1215,7 +1213,7 @@ async fn reject_subdust_bolt11_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn start_bolt11_payment(&mut self, mut req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+		async fn start_bolt11_payment(&mut self, mut req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
 			Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
 		}
@@ -1231,7 +1229,7 @@ async fn reject_subdust_bolt11_payment() {
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
 	let err = bark.try_send_bolt11(invoice, Some(sat(100_000))).await.unwrap_err();
 	assert!(err.to_string().contains(
-		"bad user input: invalid arkoor request: arkoor output amounts cannot be below the p2tr dust threshold",
+		"arkoor output amounts cannot be below the p2tr dust threshold",
 	), "err: {err}");
 }
 

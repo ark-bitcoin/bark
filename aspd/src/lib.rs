@@ -40,12 +40,10 @@ use log::{trace, info, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ark::{PaymentRequest, Vtxo, VtxoId};
-use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
+use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::{BoardBuilder, BoardVtxo};
-use ark::lightning::revocation_payment_request;
 use ark::musig::{self, MusigPubNonce};
 use ark::rounds::RoundEvent;
-use ark::util::Encodable;
 use ark::vtxo::VtxoSpkSpec;
 use aspd_rpc::protos::{self, Bolt11PaymentResult};
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
@@ -490,6 +488,21 @@ impl Server {
 		Ok(())
 	}
 
+	/// Validate all arkoor inputs are not too deep
+	fn validate_arkoor_inputs<V: Borrow<Vtxo>>(
+		&self,
+		inputs: &[V],
+	) -> anyhow::Result<()> {
+		for input in inputs.iter() {
+			if input.borrow().arkoor_depth() >= self.config.max_arkoor_depth {
+				return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
+					self.config.max_arkoor_depth, input.borrow().id());
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Validate all board inputs are deeply confirmed
 	fn validate_board_inputs<V: Borrow<Vtxo>>(
 		&self,
@@ -522,57 +535,68 @@ impl Server {
 		Ok(())
 	}
 
-	pub async fn cosign_oor(
+	async fn cosign_oor_package(
 		&self,
-		input: &Vtxo,
-		outputs: &[PaymentRequest],
-		user_nonce: musig::MusigPubNonce,
-	) -> anyhow::Result<ArkoorCosignResponse> {
-		if let Some(out) = outputs.iter().find(|o| o.amount < P2TR_DUST) {
-			return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, out.amount);
-		}
+		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<PaymentRequest>)>,
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
+		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?;
 
-		if let Some(max) = self.config.max_vtxo_amount {
-			for r in outputs {
-				if r.amount > max {
+		let arkoors = arkoor_args.iter().zip(input_vtxos.iter())
+			.map(|((_, user_nonce, outputs), vs)| {
+				ArkoorBuilder::new(
+					&vs.vtxo,
+					&user_nonce,
+					outputs,
+				).badarg("invalid arkoor")
+			})
+			.collect::<anyhow::Result<Vec<_>>>()?;
+
+		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
+			.badarg("error creating arkoor package")?;
+
+		self.inner_cosign_oor_package(&builder).await
+	}
+
+
+	async fn inner_cosign_oor_package(
+		&self,
+		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		let inputs = package.inputs();
+		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
+		let _lock = match self.vtxos_in_flux.lock(&input_ids) {
+			Ok(l) => l,
+			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
+		};
+
+		for output in package.output_specs() {
+			if output.amount < P2TR_DUST {
+				return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, output.amount);
+			}
+
+			if let Some(max) = self.config.max_vtxo_amount {
+				if output.amount > max {
 					return badarg!("output exceeds maximum vtxo amount of {max}");
 				}
 			}
 		}
 
-		let _lock = match self.vtxos_in_flux.lock([input.id()]) {
-			Ok(l) => l,
-			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
-		};
+		self.validate_arkoor_inputs(&inputs)?;
 
-		if input.arkoor_depth() >= self.config.max_arkoor_depth {
-			return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
-				self.config.max_arkoor_depth, input.id());
-		}
+		self.validate_board_inputs(&inputs).context("invalid board inputs")?;
 
-		self.validate_board_inputs(&[input]).context("invalid board inputs")?;
-
-		let builder = ArkoorBuilder::new(&input, outputs)
-			.badarg("invalid arkoor request")?;
-
-		let txid = builder.unsigned_transaction().compute_txid();
-		let new_vtxos = builder
-			.unsigned_output_vtxos()
-			.into_iter()
-			.map(|a| a.into())
-			.collect::<Vec<_>>();
-		let ret = match self.db.check_set_vtxo_oor_spent(&[input.id()], txid, &new_vtxos).await {
+		match self.db.check_set_vtxo_oor_spent_package(&package).await {
 			Ok(Some(dup)) => {
-				return badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup);
+				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
 			},
 			Ok(None) => {
-				info!("Cosigning OOR tx {} with input: {:?}", txid, input.id());
-				Ok(builder.server_cosign(&self.asp_key, user_nonce))
+				info!("Cosigning arkoor for inputs: {:?}", input_ids);
+				// let's sign the tx
+				Ok(package.server_cosign(&self.asp_key))
 			},
 			Err(e) => Err(e),
-		};
-
-		ret
+		}
 	}
 
 	// lightning
@@ -581,26 +605,23 @@ impl Server {
 		&self,
 		invoice: Bolt11Invoice,
 		amount: Amount,
-		input_vtxo: Vtxo,
-		user_pk: PublicKey,
-		user_nonce: musig::MusigPubNonce,
-	) -> anyhow::Result<ArkoorCosignResponse> {
+		user_pubkey: PublicKey,
+		inputs: Vec<Vtxo>,
+		user_nonces: Vec<musig::MusigPubNonce>,
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice.payment_hash()).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
 		}
 
-		let input_id = input_vtxo.id();
-		let _lock = match self.vtxos_in_flux.lock([input_id]) {
+		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
+		let _lock = match self.vtxos_in_flux.lock(&input_ids) {
 			Ok(l) => l,
 			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
 		};
 
-		if input_vtxo.arkoor_depth() >= self.config.max_arkoor_depth {
-			return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
-				self.config.max_arkoor_depth, input_vtxo.id());
-		}
+		self.validate_arkoor_inputs(&inputs)?;
 
-		self.validate_board_inputs(&[&input_vtxo]).context("invalid board inputs")?;
+		self.validate_board_inputs(&inputs).context("invalid board inputs")?;
 
 		//TODO(stevenroose) check that vtxos are valid
 
@@ -611,33 +632,26 @@ impl Server {
 			tip + self.config.htlc_expiry_delta as BlockHeight
 		};
 
-		let builder = ArkoorBuilder::new_lightning(
-			&invoice,
-			&input_vtxo,
-			user_pk,
-			amount,
-			expiry,
-		).badarg("invalid arkoor request")?;
-		trace!("ArkoorBuilder::new_lightning, input={}, outputs={:?}",
-			input_vtxo.encode().as_hex(), builder.output_specs(),
-		);
+		let pay_req = PaymentRequest {
+			pubkey: user_pubkey,
+			amount: amount,
+			spk: VtxoSpkSpec::HtlcOut {
+				payment_hash: *invoice.payment_hash(),
+				htlc_expiry: expiry,
+			},
+		};
 
-		let txid = builder.unsigned_transaction().compute_txid();
-		let new_vtxos = builder.unsigned_output_vtxos().into_iter().map(|v| Vtxo::Arkoor(v))
-			.collect::<Vec<_>>();
+		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
+			.badarg("error creating arkoor package")?;
 
-		match self.db.check_set_vtxo_oor_spent(&[input_id], txid, &new_vtxos).await {
+		match self.db.check_set_vtxo_oor_spent_package(&package).await {
 			Ok(Some(dup)) => {
 				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
 			},
 			Ok(None) => {
-				info!("Cosigning HTLC tx {} with input: {:?}", txid, input_id);
+				info!("Cosigning arkoor for inputs: {:?}", input_ids);
 				// let's sign the tx
-				let cosign_resp = builder.server_cosign(
-					&self.asp_key,
-					user_nonce,
-				);
-				Ok(cosign_resp)
+				Ok(package.server_cosign(&self.asp_key))
 			},
 			Err(e) => Err(e),
 		}
@@ -647,44 +661,53 @@ impl Server {
 	async fn finish_bolt11_payment(
 		&self,
 		invoice: Bolt11Invoice,
-		htlc_vtxo_id: VtxoId,
+		htlc_vtxo_ids: Vec<VtxoId>,
 		wait: bool,
 	) -> anyhow::Result<protos::Bolt11PaymentResult> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 
-		let [htlc_vtxo] = self.db.get_vtxos_by_id(&[htlc_vtxo_id]).await?.try_into().unwrap();
-		if !htlc_vtxo.is_spendable() {
-			return badarg!("input vtxo is already spent");
-		}
-		let htlc_vtxo = htlc_vtxo.vtxo;
+		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
 
-		//TODO(stevenroose) need to check that the input vtxos are actually marked
-		// as spent for this specific payment
-		if htlc_vtxo.asp_pubkey() != self.asp_key.public_key() {
-			return badarg!("invalid asp pubkey used");
+		let mut vtxos = vec![];
+		for htlc_vtxo in htlc_vtxos {
+			if !htlc_vtxo.is_spendable() {
+				return badarg!("input vtxo is already spent");
+			}
+
+			let vtxo = htlc_vtxo.vtxo.clone();
+
+			//TODO(stevenroose) need to check that the input vtxos are actually marked
+			// as spent for this specific payment
+			if vtxo.asp_pubkey() != self.asp_key.public_key() {
+				return badarg!("invalid asp pubkey used");
+			}
+
+			let payment_hash = vtxo.server_htlc_out_payment_hash()
+				.context("vtxo provided is not an outgoing htlc vtxo")?;
+			if payment_hash != *invoice.payment_hash() {
+				return badarg!("htlc payment hash doesn't match invoice");
+			}
+
+			//TODO(stevenroose) no fee is charged here now
+			if vtxo.amount() < P2TR_DUST {
+				return badarg!("htlc vtxo amount is below dust threshold");
+			}
+
+			vtxos.push(vtxo);
 		}
 
-		let payment_hash = htlc_vtxo.server_htlc_out_payment_hash()
-			.context("vtxo provided is not an outgoing htlc vtxo")?;
-		if payment_hash != *invoice.payment_hash() {
-			return badarg!("htlc payment hash doesn't match invoice");
-		}
-
-		//TODO(stevenroose) no fee is charged here now
-		if htlc_vtxo.amount() < P2TR_DUST {
-			return badarg!("htlc vtxo amount is below dust threshold");
-		}
+		let htlc_vtxo_sum = vtxos.iter().map(|v| v.spec().amount).sum::<Amount>();
 		if let Some(amount) = invoice.amount_milli_satoshis() {
-			if htlc_vtxo.amount() < Amount::from_msat_ceil(amount) {
+			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
 				return badarg!("htlc vtxo amount too low for invoice");
 				// any remainder we just keep, can later become fee
 			}
 		}
 
 		// Spawn a task that performs the payment
-		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo.amount(), wait).await;
+		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, wait).await;
 
-		Self::process_bolt11_response(payment_hash, res)
+		Self::process_bolt11_response(*invoice.payment_hash(), res)
 	}
 
 	async fn check_bolt11_payment(
@@ -733,15 +756,31 @@ impl Server {
 
 	async fn revoke_bolt11_payment(
 		&self,
-		htlc_vtxo: Vtxo,
-		user_nonce: musig::MusigPubNonce,
-	) -> anyhow::Result<ArkoorCosignResponse> {
+		htlc_vtxo_ids: Vec<VtxoId>,
+		user_nonces: Vec<musig::MusigPubNonce>,
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		let db = self.db.clone();
 
-		let payment_hash = htlc_vtxo.server_htlc_out_payment_hash()
+		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
+
+		let first_payment_hash = htlc_vtxos.first()
+			.badarg("vtxo is empty")?.vtxo
+			.server_htlc_out_payment_hash()
 			.context("vtxo is not outgoing htcl vtxo")?;
 
-		let invoice = db.get_lightning_invoice_by_payment_hash(&payment_hash).await
+		let mut vtxos = vec![];
+		for htlc_vtxo in htlc_vtxos {
+			let payment_hash = htlc_vtxo.vtxo.server_htlc_out_payment_hash()
+				.context("vtxo is not outgoing htcl vtxo")?;
+
+			if payment_hash != first_payment_hash {
+				return badarg!("all revoked htlc vtxos must have same payment hash");
+			}
+
+			vtxos.push(htlc_vtxo.vtxo);
+		}
+
+		let invoice = db.get_lightning_invoice_by_payment_hash(&first_payment_hash).await
 			.context("error fetching invoice by payment hash")?;
 
 		match &invoice.last_attempt_status {
@@ -753,23 +792,14 @@ impl Server {
 			_ => return badarg!("This lightning payment is not eligible for revocation yet")
 		}
 
-		Ok(self.process_revocation(&htlc_vtxo, user_nonce).await?)
-	}
+		let pay_req = PaymentRequest {
+			pubkey: vtxos.first().unwrap().spec().user_pubkey,
+			amount: vtxos.iter().map(|v| v.amount()).sum(),
+			spk: VtxoSpkSpec::Exit,
+		};
 
-	async fn process_revocation(
-		&self,
-		htlc_vtxo: &Vtxo,
-		user_nonce: MusigPubNonce,
-	) -> anyhow::Result<ArkoorCosignResponse> {
-		self.db.upsert_vtxos([htlc_vtxo]).await?;
-
-		let cosign_resp = self.cosign_oor(
-			htlc_vtxo,
-			&[revocation_payment_request(&htlc_vtxo)],
-			user_nonce,
-		).await?;
-
-		Ok(cosign_resp)
+		let package = ArkoorPackageBuilder::new(&vtxos, &user_nonces, pay_req, None)?;
+		self.inner_cosign_oor_package(&package).await
 	}
 
 	async fn start_bolt11_onboard(&self, payment_hash: sha256::Hash, amount: Amount)
@@ -847,7 +877,7 @@ impl Server {
 	async fn claim_bolt11_htlc(
 		&self,
 		input_vtxo_id: VtxoId,
-		outputs: Vec<PaymentRequest>,
+		pay_req: PaymentRequest,
 		user_nonce: musig::MusigPubNonce,
 		payment_preimage: &[u8; 32],
 	) -> anyhow::Result<ArkoorCosignResponse> {
@@ -869,7 +899,12 @@ impl Server {
 				payment_preimage,
 			).await?.context("could not settle invoice")?;
 
-			self.cosign_oor(&input_vtxo.vtxo, &outputs, user_nonce).await
+			let input = [input_vtxo.vtxo];
+			let pubs = vec![user_nonce];
+			let package = ArkoorPackageBuilder::new(&input, &pubs, pay_req, None)?;
+
+			let mut arkoors = self.inner_cosign_oor_package(&package).await?;
+			Ok(arkoors.pop().expect("should have one"))
 		} else {
 			bail!("invalid claim input: {:?}", input_vtxo);
 		}
