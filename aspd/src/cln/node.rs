@@ -364,7 +364,8 @@ impl ClnNodeMonitorProcess {
 						);
 					} else {
 						let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
-						self.db.verify_and_update_invoice(
+
+						updated = self.db.verify_and_update_invoice(
 							&invoice.payment_hash,
 							&attempt,
 							desired_status,
@@ -372,8 +373,6 @@ impl ClnNodeMonitorProcess {
 							None,
 							preimage.as_ref(),
 						).await?;
-
-						updated = true;
 					}
 				}
 			}

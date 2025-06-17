@@ -328,7 +328,7 @@ impl Db {
 		old_lightning_invoice: LightningInvoice,
 		new_final_amount_msat: Option<u64>,
 		new_preimage: Option<&[u8; 32]>,
-	) -> anyhow::Result<DateTime<Utc>> {
+	) -> anyhow::Result<Option<DateTime<Utc>>> {
 		let conn = self.pool.get().await.unwrap();
 
 		let stmt = conn.prepare("
@@ -341,14 +341,14 @@ impl Db {
 		").await?;
 
 		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
-		let row = conn.query_one(&stmt, &[
+		let row = conn.query_opt(&stmt, &[
 			&old_lightning_invoice.lightning_invoice_id,
 			&old_lightning_invoice.updated_at,
 			&new_preimage.map(|p| &p[..]),
 			&final_amount_msat,
 		]).await?;
 
-		Ok(row.get("updated_at"))
+		Ok(row.map(|r| r.get("updated_at")))
 	}
 
 	pub async fn get_lightning_invoice_by_id(&self, id: i64) -> anyhow::Result<LightningInvoice> {

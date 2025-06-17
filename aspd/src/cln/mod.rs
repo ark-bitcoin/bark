@@ -814,7 +814,7 @@ impl database::Db {
 
 		self.update_lightning_payment_attempt_status(attempt, status, payment_error).await?;
 
-		self.update_lightning_invoice(li, final_amount_msat, preimage).await?;
+		let updated_at = self.update_lightning_invoice(li, final_amount_msat, preimage).await?;
 
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
 
@@ -824,6 +824,6 @@ impl database::Db {
 			status,
 		);
 
-		Ok(true)
+		Ok(updated_at.is_some())
 	}
 }
