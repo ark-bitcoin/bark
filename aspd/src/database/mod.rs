@@ -51,7 +51,7 @@ impl Db {
 		Ok(())
 	}
 
-	fn config(database: &str, config: &PostgresConfig) -> tokio_postgres::Config {
+	pub fn config(database: &str, config: &PostgresConfig) -> tokio_postgres::Config {
 		let mut pg_config = tokio_postgres::Config::new();
 		pg_config.host(&config.host);
 		pg_config.port(config.port);
