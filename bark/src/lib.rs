@@ -735,7 +735,7 @@ impl Wallet {
 				return Ok(true);
 			}
 		}
-		Ok(false)
+		Ok(!self.db.check_vtxo_key_exists(&vtxo.user_pubkey())?)
 	}
 
 	/// Sync with the Ark and look for received vtxos.
