@@ -190,7 +190,7 @@
 
 					# Use Docker for Core Lightning on macOS by default instead of a local daemon
 					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");
-					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "docker.io/secondark/cln-hodl:v${lightningVersion}" else null);
+					LIGHTNINGD_DOCKER_IMAGE = (if isDarwin then "docker.io/secondark/cln-hold:v${lightningVersion}" else null);
 					LIGHTNINGD_PLUGIN_DIR = (if isDarwin then "/plugins" else "${cln-plugins}");
 
 					POSTGRES_BINS = "${postgresql}/bin";
