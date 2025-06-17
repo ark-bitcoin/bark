@@ -15,8 +15,7 @@ use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tokio::sync::OnceCell;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::Registry;
-
+use tracing_subscriber::{EnvFilter, Registry};
 use crate::cln::ClnNodeStateKind;
 use crate::Config;
 use crate::database::model::LightningPaymentStatus;
@@ -137,8 +136,12 @@ impl Metrics {
 		global::set_tracer_provider(tracer_provider);
 
 		// Set up the tracing subscriber
+		let filter = EnvFilter::from_default_env()
+			.add_directive("h2=off".parse().unwrap());
 		let aspd_telemetry = OpenTelemetryLayer::new(aspd_tracer);
-		let subscriber = Registry::default().with(aspd_telemetry);
+		let subscriber = Registry::default()
+			.with(filter)
+			.with(aspd_telemetry);
 		tracing::subscriber::set_global_default(subscriber)
 			.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err)).unwrap();
 
