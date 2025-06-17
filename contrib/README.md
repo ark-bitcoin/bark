@@ -38,13 +38,25 @@ This script automates the process of cherry-picking commits from a feature branc
     - Checks out each commit individually and runs the validation checks.
 
 ## check-versions.sh
+#### parameters:
 1. tag-name
 
+#### info:
 This is a helper script for CI so it can verify the version number from the tag.
 It compares this version number with the version number defined in Cargo.toml of the respective project.
 There are 2 tagging options:
 * `aspd-0.0.1` this will check if `0.0.1` is also specified as version in `aspd/Cargo.toml`
 * `bark-0.0.1` this will check if `0.0.1` is also specified as version in `bark/Cargo.toml`
+
+## check-codeberg-release.sh
+#### parameters:
+1. tag-name
+
+#### info:
+This is a helper script for CI so it can verify the version number from the tag isn't already used.
+There are 2 tagging options:
+* `aspd-0.0.1` this will check if `0.0.1` is used for a previous aspd or all release
+* `bark-0.0.1` this will check if `0.0.1` is used for a previous bark or all release
 
 ## generate-index.sh
 #### parameters:

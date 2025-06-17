@@ -57,6 +57,13 @@ steps:
     commands:
       - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
 
+  - name: check-codeberg-release
+    when:
+      - event: tag
+    image: registry.2nd.dev/build:19
+    commands:
+      - bash ./contrib/check-codeberg-release.sh "${CI_COMMIT_TAG}"
+
 depends_on:
   - main
   - tests
