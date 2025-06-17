@@ -328,6 +328,7 @@ impl TestContext {
 			asp_url: aspd.asp_url(),
 			network: Network::Regtest,
 			chain_source,
+			fallback_fee: FeeRate::from_sat_per_vb(5).unwrap(),
 			extra_create_args: extra_create_args.into_iter()
 				.map(|s| s.as_ref().to_owned())
 				.collect(),

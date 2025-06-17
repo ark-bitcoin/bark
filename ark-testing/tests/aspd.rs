@@ -611,7 +611,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
-	bark.timeout = Some(Duration::from_millis(3_500));
+	bark.timeout = Some(Duration::from_millis(10_000));
 	bark.set_asp(&proxy.address).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");

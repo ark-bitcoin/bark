@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::{Amount, Network, Txid, BlockHash};
+use bitcoin::{Amount, Network, Txid, BlockHash, FeeRate};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
@@ -48,10 +48,12 @@ pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<
 	let query =
 		"INSERT INTO bark_config
 			(id, asp_address, esplora_address, bitcoind_address,
-			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_expiry_threshold)
+			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_expiry_threshold,
+			fallback_fee_kwu)
 		VALUES
 			(1, :asp_address, :esplora_address, :bitcoind_address,
-			:bitcoind_cookiefile, :bitcoind_user, :bitcoind_pass, :vtxo_refresh_expiry_threshold)
+			:bitcoind_cookiefile, :bitcoind_user, :bitcoind_pass, :vtxo_refresh_expiry_threshold,
+			:fallback_fee_kwu)
 		ON CONFLICT (id)
 		DO UPDATE SET
 			asp_address = :asp_address,
@@ -60,7 +62,8 @@ pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<
 			bitcoind_cookiefile = :bitcoind_cookiefile,
 			bitcoind_user = :bitcoind_user,
 			bitcoind_pass = :bitcoind_pass,
-			vtxo_refresh_expiry_threshold = :vtxo_refresh_expiry_threshold
+			vtxo_refresh_expiry_threshold = :vtxo_refresh_expiry_threshold,
+			fallback_fee_kwu = :fallback_fee_kwu
 		";
 	let mut statement = conn.prepare(query)?;
 
@@ -73,6 +76,7 @@ pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<
 		":bitcoind_user": config.bitcoind_user,
 		":bitcoind_pass": config.bitcoind_pass,
 		":vtxo_refresh_expiry_threshold": config.vtxo_refresh_expiry_threshold,
+		":fallback_fee_kwu": config.fallback_fee_rate.map(|f| f.to_sat_per_kwu()),
 	})?;
 
 	Ok(())
@@ -111,15 +115,17 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 			None
 		};
 
+		let kwu_fee: Option<u64> = row.get("fallback_fee_kwu")?;
 		Ok(Some(
 			Config {
 				asp_address: row.get("asp_address")?,
 				esplora_address: row.get("esplora_address")?,
 				bitcoind_address: row.get("bitcoind_address")?,
-				bitcoind_cookiefile: bitcoind_cookiefile,
+				bitcoind_cookiefile,
 				bitcoind_user: row.get("bitcoind_user")?,
 				bitcoind_pass: row.get("bitcoind_pass")?,
 				vtxo_refresh_expiry_threshold: row.get("vtxo_refresh_expiry_threshold")?,
+				fallback_fee_rate: kwu_fee.map(|f| FeeRate::from_sat_per_kwu(f)),
 			}
 		))
 	} else {

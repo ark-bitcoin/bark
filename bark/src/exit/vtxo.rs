@@ -73,7 +73,7 @@ impl ExitVtxo {
 			let mut context = ProgressContext {
 				vtxo: &self.vtxo,
 				exit_txids: &self.txids,
-				fee_rate: chain_source.urgent_feerate(),
+				fee_rate: onchain.fee_rates.fast,
 				chain_source: &chain_source,
 				persister,
 				onchain,

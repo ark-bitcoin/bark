@@ -65,7 +65,7 @@ CREATE TABLE bark_config (
 				bitcoind_user ,
 				bitcoind_pass ,
 				vtxo_refresh_expiry_threshold INTEGER NOT NULL
-			);
+			, fallback_fee_kwu INTEGER);
 CREATE TABLE bark_properties (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),

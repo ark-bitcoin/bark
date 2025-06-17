@@ -8,17 +8,19 @@ use anyhow::Context;
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
 use bdk_wallet::{LocalOutput, SignOptions, TxBuilder, TxOrdering, Wallet as BdkWallet};
 use bitcoin::{
-	bip32, psbt, sighash, Address, Amount, Network, Psbt, Sequence, Transaction, TxOut, Txid,
+	bip32, psbt, sighash, Address, Amount, FeeRate, Network, Psbt, Sequence, Transaction, TxOut,
+	Txid,
 };
+use log::error;
 
 use ark::util::SECP;
 use ark::Vtxo;
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, FeeRateExt};
 
 use crate::VtxoSeed;
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
-pub use crate::onchain::chain::{ChainSource, ChainSourceClient};
+pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum Utxo {
@@ -66,6 +68,8 @@ pub struct Wallet {
 
 	pub(crate) wallet: BdkWallet,
 	pub(crate) db: Arc<dyn BarkPersister>,
+	pub(crate) fee_rates: FeeRates,
+	pub(crate) fallback_fee: Option<FeeRate>,
 
 	pub(crate) exit_outputs: Vec<SpendableExit>,
 	pub(crate) chain: ChainSourceClient,
@@ -78,6 +82,7 @@ impl Wallet {
 		seed: [u8; 64],
 		db: Arc<dyn BarkPersister>,
 		chain_source: ChainSource,
+		fallback_fee: Option<FeeRate>,
 	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
@@ -97,6 +102,8 @@ impl Wallet {
 		};
 
 		let chain = ChainSourceClient::new(chain_source.clone())?;
+		let fee = fallback_fee.unwrap_or(FeeRate::BROADCAST_MIN);
+		let fee_rates = FeeRates { fast: fee, regular: fee, slow: fee };
 
 		Ok(Wallet {
 			seed,
@@ -104,6 +111,8 @@ impl Wallet {
 
 			wallet,
 			db,
+			fee_rates,
+			fallback_fee,
 
 			chain,
 			chain_source,
@@ -135,7 +144,25 @@ impl Wallet {
 	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
 		//TODO improve this..
 		let chain = ChainSourceClient::new(self.chain_source.clone())?;
+		self.update_fee_rates().await?;
 		Ok(chain.sync_wallet(self).await?)
+	}
+
+	/// Gets the current fee rates from the chain source, falling back to user-specified values if
+	/// necessary
+	pub async fn update_fee_rates(&mut self) -> anyhow::Result<()> {
+		let fee_rates = match (self.chain.fee_rates().await, self.fallback_fee) {
+			(Ok(fee_rates), _) => Ok(fee_rates),
+			(Err(e), None) => Err(e),
+			(Err(e), Some(fallback)) => {
+				error!("Error getting fee rates, falling back to {} sat/kvB: {}", 
+					fallback.to_btc_per_kvb(), e,
+				);
+				Ok(FeeRates { fast: fallback, regular: fallback, slow: fallback })
+			}
+		};
+		self.fee_rates = fee_rates?;
+		Ok(())
 	}
 
 	/// Return the balance of the onchain wallet.
@@ -156,7 +183,7 @@ impl Wallet {
 	pub (crate) fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
 		&mut self, outputs: T
 	) -> anyhow::Result<Psbt> {
-		let fee_rate = self.chain.regular_feerate();
+		let fee_rate = self.fee_rates.regular;
 		let mut b = self.wallet.build_tx();
 		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.ordering(TxOrdering::Untouched);
@@ -168,7 +195,7 @@ impl Wallet {
 	}
 
 	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
-		let fee_rate = self.chain.regular_feerate();
+		let fee_rate = self.fee_rates.regular;
 		let mut b = self.wallet.build_tx();
 		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.drain_to(dest.script_pubkey());
