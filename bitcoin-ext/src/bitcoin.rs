@@ -3,9 +3,11 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use bitcoin::TxOut;
+use cbitcoin::{
+	taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, WitnessVersion,
+};
 use cbitcoin::script::{Builder, PushBytes};
 use cbitcoin::taproot::ControlBlock;
-use cbitcoin::{taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, Weight, WitnessVersion};
 use cbitcoin::secp256k1::{self, Keypair, Secp256k1};
 
 use crate::fee;
@@ -89,8 +91,30 @@ impl AmountExt for Amount {}
 
 /// Extension trait for [FeeRate].
 pub trait FeeRateExt: Borrow<FeeRate> {
+	fn from_amount_per_kvb(amount_vkb: Amount) -> FeeRate {
+		FeeRate::from_sat_per_kvb(amount_vkb.to_sat())
+	}
+
+	fn from_sat_per_kvb(sat_kvb: u64) -> FeeRate {
+		FeeRate::from_sat_per_kwu(sat_kvb * 4)
+	}
+
+	fn from_sat_per_vb_decimal_checked(sat_vb: f64) -> Option<FeeRate> {
+		// Convert to sats per Wu then into kWu to maintain precision
+		let fee = (sat_vb * 4.0 * 1000.0).ceil();
+		if fee.is_finite() && fee >= 0.0 && fee <= u64::MAX as f64 {
+			Some(FeeRate::from_sat_per_kwu(fee as u64))
+		} else {
+			None
+		}
+	}
+
 	fn to_btc_per_kvb(&self) -> String {
-		(*self.borrow() * Weight::from_vb(1000).unwrap()).to_string_in(Denomination::Bitcoin)
+		Amount::from_sat(self.to_sat_per_kvb()).to_string_in(Denomination::Bitcoin)
+	}
+
+	fn to_sat_per_kvb(&self) -> u64 {
+		(self.borrow().to_sat_per_kwu() as f64 / 4.0).ceil() as u64
 	}
 }
 impl FeeRateExt for FeeRate {}
@@ -131,6 +155,7 @@ impl ScriptBufExt for ScriptBuf {
 #[cfg(test)]
 mod test {
 	use super::*;
+	use cbitcoin::Weight;
 
 	#[test]
 	fn amount_from_msat() {
@@ -141,5 +166,61 @@ mod test {
 		assert_eq!(Amount::from_msat_floor(3000), Amount::from_sat(3));
 		assert_eq!(Amount::from_msat_floor(3001), Amount::from_sat(3));
 		assert_eq!(Amount::from_msat_floor(3999), Amount::from_sat(3));
+	}
+
+	#[test]
+	fn fee_rate_from_amount_per_kvb() {
+		assert_eq!(FeeRate::from_amount_per_kvb(Amount::from_sat(1_000)),
+			FeeRate::from_sat_per_kwu(Weight::from_vb(1_000).unwrap().to_wu())
+		);
+		assert_eq!(FeeRate::from_amount_per_kvb(Amount::from_sat(7_372)),
+			FeeRate::from_sat_per_kwu(Weight::from_vb(7_372).unwrap().to_wu())
+		);
+		assert_eq!(FeeRate::from_amount_per_kvb(Amount::from_sat(238)),
+			FeeRate::from_sat_per_kwu(Weight::from_vb(238).unwrap().to_wu())
+		);
+	}
+
+	#[test]
+	fn fee_rate_from_sat_per_kvb() {
+		assert_eq!(FeeRate::from_sat_per_kvb(1_000),
+			FeeRate::from_sat_per_kwu(Weight::from_vb(1_000).unwrap().to_wu())
+		);
+		assert_eq!(FeeRate::from_sat_per_kvb(7_372),
+			FeeRate::from_sat_per_kwu(Weight::from_vb(7_372).unwrap().to_wu())
+		);
+		assert_eq!(FeeRate::from_sat_per_kvb(238),
+			FeeRate::from_sat_per_kwu(Weight::from_vb(238).unwrap().to_wu())
+		);
+	}
+
+	#[test]
+	fn fee_rate_from_sat_per_vb_decimal_checked() {
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(-1.0), None);
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(-15_4921.0), None);
+
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(1.0),
+			Some(FeeRate::from_sat_per_kwu(Weight::from_vb(1000).unwrap().to_wu()))
+		);
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(7.372),
+			Some(FeeRate::from_sat_per_kwu(Weight::from_vb(7_372).unwrap().to_wu()))
+		);
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(0.238),
+			Some(FeeRate::from_sat_per_kwu(Weight::from_vb(238).unwrap().to_wu()))
+		);
+	}
+
+	#[test]
+	fn fee_rate_to_btc_per_kvb() {
+		assert_eq!(FeeRate::from_sat_per_kwu(4_000).to_btc_per_kvb(), "0.00001");
+		assert_eq!(FeeRate::from_sat_per_kwu(29_488).to_btc_per_kvb(), "0.00007372");
+		assert_eq!(FeeRate::from_sat_per_kwu(952).to_btc_per_kvb(), "0.00000238");
+	}
+
+	#[test]
+	fn fee_rate_to_sat_per_kvb() {
+		assert_eq!(FeeRate::from_sat_per_kwu(4_000).to_sat_per_kvb(), 1_000);
+		assert_eq!(FeeRate::from_sat_per_kwu(29_488).to_sat_per_kvb(), 7_372);
+		assert_eq!(FeeRate::from_sat_per_kwu(952).to_sat_per_kvb(), 238);
 	}
 }

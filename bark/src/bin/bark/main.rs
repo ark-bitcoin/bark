@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{address, Address, Amount};
+use bitcoin::{address, Address, Amount, FeeRate};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
@@ -24,6 +24,7 @@ use ark::{Vtxo, VtxoId};
 use bark::{Config, KeychainKind, Pagination, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::cli as json;
+use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
@@ -104,7 +105,14 @@ struct ConfigOpts {
 	///
 	/// Default value: 288 (48 hrs)
 	#[arg(long)]
-	vtxo_refresh_expiry_threshold: Option<u32>
+	vtxo_refresh_expiry_threshold: Option<u32>,
+
+	/// A fallback fee rate in sats/kvB to use when we fail to retrieve a fee rate from the
+	/// configured bitcoind/esplora connection instead of erroring.
+	///
+	/// Example for 1 sat/vB: --fallback-fee-rate 1000
+	#[arg(long)]
+	fallback_fee_rate: Option<u64>,
 }
 
 impl ConfigOpts {
@@ -133,6 +141,7 @@ impl ConfigOpts {
 		if let Some(v) = self.vtxo_refresh_expiry_threshold {
 			cfg.vtxo_refresh_expiry_threshold = v;
 		}
+		cfg.fallback_fee_rate = self.fallback_fee_rate.map(|f| FeeRate::from_sat_per_kvb(f));
 
 		if cfg.esplora_address.is_none() && cfg.bitcoind_address.is_none() {
 			bail!("Provide either an esplora or bitcoind url as chain source.");

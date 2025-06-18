@@ -213,7 +213,7 @@ impl FilterVtxos for RefreshStrategy<'_> {
 						return true;
 					}
 
-					let fr = self.wallet.onchain.chain.urgent_feerate();
+					let fr = self.wallet.onchain.fee_rates.fast;
 					if vtxo.amount() < estimate_exit_cost(&[vtxo.clone()], fr) {
 						warn!("VTXO {} is uneconomical to exit, should be refreshed on next opportunity", vtxo.id());
 						return true;

@@ -196,7 +196,13 @@ pub struct Config {
 	/// The number of blocks before expiration to refresh vtxos.
 	///
 	/// Default value: 288 (48 hrs)
-	pub vtxo_refresh_expiry_threshold: BlockHeight
+	pub vtxo_refresh_expiry_threshold: BlockHeight,
+
+	/// A fallback fee rate to use in sat/kWu when we fail to retrieve a fee rate from the
+	/// configured bitcoind/esplora connection.
+	///
+	/// Example for 1 sat/vB: --fallback-fee-rate 250
+	pub fallback_fee_rate: Option<FeeRate>,
 }
 
 impl Default for Config {
@@ -209,6 +215,7 @@ impl Default for Config {
 			bitcoind_user: None,
 			bitcoind_pass: None,
 			vtxo_refresh_expiry_threshold: 288,
+			fallback_fee_rate: None,
 		}
 	}
 }
@@ -445,8 +452,9 @@ impl Wallet {
 		};
 
 		let db = Arc::new(db);
-		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain_source.clone())
-			.context("failed to create onchain wallet")?;
+		let onchain = onchain::Wallet::create(
+			properties.network, seed, db.clone(), chain_source.clone(), config.fallback_fee_rate,
+		).context("failed to create onchain wallet")?;
 
 		let asp = match AspConnection::handshake(&config.asp_address, properties.network).await {
 			Ok(asp) => Some(asp),

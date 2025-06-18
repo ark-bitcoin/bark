@@ -152,7 +152,7 @@ async fn list_utxos() {
 
 	assert_eq!(2, utxos.len());
 	// onboard change utxo
-	assert!(utxos.iter().any(|u| u.amount.to_sat() == 799_228));
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 799_226));
 	// offboard utxo
 	assert!(utxos.iter().any(|u| u.amount.to_sat() == 198_900));
 }
@@ -921,7 +921,7 @@ async fn onchain_drain() {
 	assert_eq!(sender_balance, Amount::ZERO);
 
 	let recipient_balance = recipient.onchain_balance().await;
-	assert_eq!(recipient_balance, sat(999443));
+	assert_eq!(recipient_balance, sat(999_441));
 }
 
 #[tokio::test]

@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, Network, OutPoint};
+use bitcoin::{Address, Amount, FeeRate, Network, OutPoint};
 use bitcoincore_rpc::Auth;
 use log::{trace, info, error};
 use serde_json;
@@ -21,6 +21,7 @@ use bark_json::InvoiceInfo;
 use bark::onchain::ChainSource;
 use bark::UtxoInfo;
 pub use bark_json::cli as json;
+use bitcoin_ext::FeeRateExt;
 
 use crate::Bitcoind;
 use crate::context::ToAspUrl;
@@ -36,6 +37,7 @@ pub struct BarkConfig {
 	pub asp_url: String,
 	pub network: Network,
 	pub chain_source: ChainSource,
+	pub fallback_fee: FeeRate,
 	pub extra_create_args: Vec<String>,
 }
 
@@ -76,7 +78,9 @@ impl Bark {
 			.arg(&cfg.asp_url)
 			.arg("--vtxo-refresh-expiry-threshold")
 			.arg("24")
-			.arg(format!("--{}", &cfg.network));
+			.arg(format!("--{}", &cfg.network))
+			.arg("--fallback-fee-rate")
+			.arg(&format!("{}", cfg.fallback_fee.to_sat_per_kvb()));
 
 		// allow extra args
 		for arg in &cfg.extra_create_args {

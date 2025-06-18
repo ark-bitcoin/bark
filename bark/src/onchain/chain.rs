@@ -5,20 +5,23 @@ use std::{borrow::Borrow, time::SystemTime};
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_bitcoind_rpc::{BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
+use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
+use bdk_bitcoind_rpc::bitcoincore_rpc::json::EstimateMode;
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
 use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
 use log::{debug, info, warn};
 
-use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt};
 use bitcoin_ext::bdk::{EsploraClientExt, WalletExt};
 pub(crate) use bitcoin_ext::rpc::{BitcoinRpcExt, TxStatus};
 
 use crate::onchain;
 
-
+const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
+const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
+const FEE_RATE_TARGET_CONF_SLOW: u16 = 6;
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 const MIN_BITCOIND_VERSION: usize = 290000;
 
@@ -66,6 +69,43 @@ impl ChainSourceClient {
 					.with_context(|| format!("failed to create esplora client for url {}", url))?
 			}),
 		})
+	}
+
+	pub async fn fee_rates(&self) -> anyhow::Result<FeeRates> {
+		match self {
+			ChainSourceClient::Bitcoind(ref bitcoind) => {
+				let get_fee_rate = |target| {
+					let fee = bitcoind.estimate_smart_fee(target, Some(EstimateMode::Economical))?;
+					if let Some(fee_rate) = fee.fee_rate {
+						Ok(FeeRate::from_amount_per_kvb(fee_rate))
+					} else {
+						Err(anyhow!("No rate returned from estimate_smart_fee for a {} confirmation target", target))
+					}
+				};
+				Ok(FeeRates {
+					fast: get_fee_rate(FEE_RATE_TARGET_CONF_FAST)?,
+					regular: get_fee_rate(FEE_RATE_TARGET_CONF_REGULAR).expect("should exist"),
+					slow: get_fee_rate(FEE_RATE_TARGET_CONF_SLOW).expect("should exist"),
+				})
+			},
+			ChainSourceClient::Esplora(ref client) => {
+				// The API should return rates for targets 1-25, 144 and 1008
+				let estimates = client.get_fee_estimates().await?;
+				let get_fee_rate = |target| {
+					let fee = estimates.get(&target).with_context(||
+						format!("No rate returned from get_fee_estimates for a {} confirmation target", target)
+					)?;
+					FeeRate::from_sat_per_vb_decimal_checked(*fee).with_context(||
+						format!("Invalid rate returned from get_fee_estimates {} for a {} confirmation target", fee, target)
+					)
+				};
+				Ok(FeeRates {
+					fast: get_fee_rate(FEE_RATE_TARGET_CONF_FAST)?,
+					regular: get_fee_rate(FEE_RATE_TARGET_CONF_REGULAR)?,
+					slow: get_fee_rate(FEE_RATE_TARGET_CONF_SLOW)?,
+				})
+			}
+		}
 	}
 
 	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
@@ -376,16 +416,13 @@ impl ChainSourceClient {
 		};
 		Ok(tx.output.get(outpoint.vout as usize).context("outpoint vout out of range")?.value)
 	}
+}
 
-	/// Fee rate to use for regular txs like boards.
-	pub (crate) fn regular_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(5).unwrap()
-	}
-
-	/// Fee rate to use for urgent txs like exits.
-	pub (crate) fn urgent_feerate(&self) -> FeeRate {
-		FeeRate::from_sat_per_vb(7).unwrap()
-	}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FeeRates {
+	pub fast: FeeRate,
+	pub regular: FeeRate,
+	pub slow: FeeRate,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
