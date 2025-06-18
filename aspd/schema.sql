@@ -162,7 +162,8 @@ CREATE TABLE public.all_arkoor_mailbox (
     id text NOT NULL,
     pubkey bytea NOT NULL,
     vtxo bytea NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    arkoor_package_id bytea NOT NULL
 );
 
 
@@ -215,7 +216,8 @@ CREATE VIEW public.arkoor_mailbox AS
  SELECT id,
     pubkey,
     vtxo,
-    deleted_at
+    deleted_at,
+    arkoor_package_id
    FROM public.all_arkoor_mailbox
   WHERE (deleted_at IS NULL);
 

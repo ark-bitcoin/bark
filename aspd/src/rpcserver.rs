@@ -8,10 +8,11 @@ use std::pin::Pin;
 use std::future::Future;
 
 use ark::musig::MusigPubNonce;
+use bip39::rand::Rng;
 use bitcoin::{Amount, OutPoint, ScriptBuf};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{schnorr::Signature, PublicKey};
+use bitcoin::secp256k1::{rand, schnorr::Signature, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
 use opentelemetry::{global, Context, KeyValue};
@@ -475,6 +476,9 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("arkoors", format!("{:?}", req.arkoors)),
 		]);
 
+
+		let arkoor_package_id = rand::thread_rng().gen::<[u8; 32]>();
+
 		for arkoor in req.arkoors {
 			let pubkey = PublicKey::from_slice(&arkoor.pubkey)
 				.badarg("invalid pubkey")?;
@@ -482,7 +486,7 @@ impl rpc::server::ArkService for Server {
 			let vtxo = Vtxo::decode(&arkoor.vtxo)
 				.badarg("invalid vtxo")?;
 
-			self.db.store_oor(pubkey, vtxo).await.to_status()?;
+			self.db.store_oor(pubkey, &arkoor_package_id, vtxo).await.to_status()?;
 		}
 
 		Ok(tonic::Response::new(protos::Empty{}))
@@ -502,10 +506,15 @@ impl rpc::server::ArkService for Server {
 		let pubkey = PublicKey::from_slice(&req.pubkey)
 			.badarg("invalid pubkey")?;
 
-		let vtxos = self.db.pull_oors(pubkey).await.to_status()?;
+		let vtxos_by_package_id = self.db.pull_oors(pubkey).await.to_status()?;
 
 		let response = protos::ArkoorVtxosResponse {
-			vtxos: vtxos.into_iter().map(|v| v.encode()).collect(),
+			packages: vtxos_by_package_id.into_iter().map(|(package_id, vtxos)| {
+				protos::ArkoorMailboxPackage {
+					arkoor_package_id: package_id.to_vec(),
+					vtxos: vtxos.into_iter().map(|v| v.encode()).collect(),
+				}
+			}).collect(),
 		};
 
 		Ok(tonic::Response::new(response))
