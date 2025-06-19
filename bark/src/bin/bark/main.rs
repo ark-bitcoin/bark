@@ -702,7 +702,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 
 			info!("Refreshing {} vtxos...", vtxos.len());
-			let round_id = w.refresh(&vtxos, false).await?;
+			let round_id = w.refresh_vtxos(vtxos).await?;
 			let refresh_output = json::Refresh {
 				participate_round: round_id.is_some(),
 				round: round_id,
