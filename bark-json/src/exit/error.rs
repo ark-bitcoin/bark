@@ -25,6 +25,9 @@ pub enum ExitError {
 	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
 	DustLimit { vtxo: Amount, dust: Amount },
 
+	#[error("Exit Package Broadcast Failure: Unable to broadcast exit transaction package {txid}: {error}")]
+	ExitPackageBroadcastFailure { txid: Txid, error: String },
+
 	#[error("Exit Package Finalize Failure: Unable to create exit transaction package: {error}")]
 	ExitPackageFinalizeFailure { error: String },
 

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::sync::{Arc, Weak};
 
 use bdk_wallet::chain::ChainPosition;
@@ -116,25 +115,33 @@ impl ExitTransactionManager {
 				// If the transaction is a package, we must query the status of both transactions
 				Some(weak_ptr) => {
 					let package = weak_ptr.upgrade().expect("index contains a stale package");
-					let current_status = {
-						let status = self.get_tx_status(txid).await?;
-						match status {
-							TxStatus::NotFound => {
-								// Broadcast the current package if we have one
-								self.broadcast_package(&*package.read().await).await
-							},
-							_ => {
-								// We should update/redownload from the network as a newer child
-								// transaction may exist in the mempool or in a confirmed block.
-								// We will skip this step once a transaction is deeply confirmed.
-								self.update_child_from_network(
-									&package,
-									status.confirmed_height().unwrap_or(tip),
-								).await?
-							},
-						}
-					};
-					self.status.insert(txid, current_status);
+					let status = self.get_tx_status(txid).await?;
+					match status {
+						TxStatus::NotFound => {
+							// Broadcast the current package if we have one
+							match self.broadcast_package(&*package.read().await).await {
+								Ok(()) => continue,
+								Err(ExitError::ExitPackageBroadcastFailure { error, .. }) => {
+									// We can just swallow these errors instead of stopping the
+									// entire syncing process
+									error!("{}", error);
+								},
+								Err(e) => {
+									return Err(e);
+								},
+							}
+						},
+						_ => {
+							// We should update/redownload from the network as a newer child
+							// transaction may exist in the mempool or in a confirmed block.
+							// We will skip this step once a transaction is deeply confirmed.
+							let status = self.update_child_from_network(
+								&package,
+								status.confirmed_height().unwrap_or(tip),
+							).await?;
+							self.status.insert(txid, status);
+						},
+					}
 				}
 			}
 		}
@@ -211,33 +218,37 @@ impl ExitTransactionManager {
 		});
 		self.index.insert(child_txid, Arc::downgrade(&package));
 		self.status.insert(exit_txid, TxStatus::NotFound);
-
-		// Attempt to broadcast the package
-		let status = self.broadcast_package(package.read().await.deref()).await;
-		self.status.insert(exit_txid, status);
 		Ok(child_txid)
 	}
 
-	async fn broadcast_package(&self, package: &ExitTransactionPackage) -> TxStatus {
-		match &package.child {
+	pub async fn broadcast_package(
+		&mut self,
+		package: &ExitTransactionPackage,
+	) -> Result<(), ExitError> {
+		// Set the default status first in case we error out
+		if !self.status.contains_key(&package.exit.txid) {
+			self.status.insert(package.exit.txid, TxStatus::NotFound);
+		}
+		let status = match &package.child {
 			None => {
 				trace!("Skipping broadcast of exit package with no CPFP: {}", package.exit.txid);
 				TxStatus::NotFound
 			},
 			Some(child) => {
-				let result = self.chain_source.broadcast_package(&[
-					&package.exit.tx, &child.info.tx
-				]).await;
+				self.chain_source.broadcast_package(&[
+						&package.exit.tx, &child.info.tx
+					]).await
+					.map_err(|e| ExitError::ExitPackageBroadcastFailure {
+						txid: package.exit.txid,
+						error: e.to_string(),
+					})?;
 
-				if let Err(e) = result {
-					error!("Failed to broadcast exit package {}: {}", package.exit.txid, e.to_string());
-					TxStatus::NotFound
-				} else {
-					info!("Successfully broadcast exit package: {}", package.exit.txid);
-					TxStatus::Mempool
-				}
+				info!("Successfully broadcast exit package: {}", package.exit.txid);
+				TxStatus::Mempool
 			}
-		}
+		};
+		self.status.insert(package.exit.txid, status);
+		Ok(())
 	}
 
 	async fn tip(&self) -> anyhow::Result<BlockHeight, ExitError> {
