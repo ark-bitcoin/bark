@@ -35,7 +35,12 @@ pub enum ExitError {
 	InsufficientConfirmedFunds { needed: Amount, available: Amount },
 
 	#[error("Insufficient Fee Error: Your balance is {balance} but an estimated {total_fee} (fee rate of {fee_rate}) is required to exit the VTXO")]
-	InsufficientFeeToStart { balance: Amount, total_fee: Amount, fee_rate: FeeRate },
+	InsufficientFeeToStart {
+		balance: Amount,
+		total_fee: Amount,
+		#[serde(rename = "fee_rate_kwu")]
+		fee_rate: FeeRate,
+	},
 
 	#[error("Internal Error: An unexpected problem occurred, {error}")]
 	InternalError { error: String },
