@@ -102,7 +102,6 @@ following command:
 $ just test
 ```
 
-
 ### macOS differences
 
 On macOS we use [Docker](https://www.docker.com/) for running Core Lightning. If Docker is not
@@ -114,6 +113,24 @@ Please also make sure "Host networking" feature is enabled, so that Docker-based
 can connect to a bitcoind outside the container. To do so, please refer to
 [Docker Desktop documentation](https://docs.docker.com/engine/network/drivers/host/)
 
+# Static files
+## Bark database migrations
+CI is dumping the resulting DDL into a file, and it's comparing it with `bark/schema.sql`.
+So if you add a database migration you should also update this file.
+
+There is a just command to generate this file `just dump-bark-sql-schema`.
+
+## Aspd database migrations
+Just like for bark, CI is also dumping and comparing the DDL for the aspd database in file `aspd/schema.sql`.
+So if you add a database migration you should also update this file.
+
+There is an equivalent just command to generate this file `just dump-aspd-sql-schema`.
+
+## Aspd default configuration
+CI is also dumping and comparing the default configuration parameters for the aspd using file `aspd/config.default.toml`.
+So whenever you change or add a configuration of aspd you should change this file accordingly.
+
+There is a just command to generate this file `just default-aspd-config`.
 
 # Code hygiene
 
