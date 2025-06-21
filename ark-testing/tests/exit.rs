@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
 use bitcoin::Address;
 use bitcoin::params::Params;
 use bitcoin_ext::TaprootSpendInfoExt;
@@ -146,8 +147,8 @@ async fn fail_handshake() {
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 
 	// now create bad proxy
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(NoHandshakeProxy(aspd.get_public_client().await)).await;
-	bark.set_asp(&proxy.address).await;
+	let proxy = AspdRpcProxyServer::start(NoHandshakeProxy(aspd.get_public_client().await)).await;
+	bark.set_asp(&proxy).await;
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;

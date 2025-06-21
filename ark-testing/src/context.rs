@@ -12,6 +12,7 @@ use tonic::transport::Uri;
 use aspd::config::{self, Config, HodlInvoiceClnPlugin};
 use aspd_rpc as rpc;
 
+use crate::daemon::aspd::proxy::AspdRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{should_use_electrs, test_data_directory, FutureExt};
 use crate::{
@@ -30,6 +31,9 @@ impl ToAspUrl for String {
 }
 impl ToAspUrl for str {
 	fn asp_url(&self) -> String { self.to_owned() }
+}
+impl ToAspUrl for AspdRpcProxyServer {
+	fn asp_url(&self) -> String { self.address.clone() }
 }
 
 pub struct TestContext {

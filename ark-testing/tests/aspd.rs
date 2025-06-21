@@ -466,9 +466,7 @@ async fn full_round() {
 
 	let proxy = Proxy(aspd.get_public_client().await, Arc::new(Mutex::new(0)), Arc::new(tx));
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
-	futures::future::join_all(barks.iter().map(|bark| {
-		bark.set_asp(&proxy.address)
-	})).await;
+	futures::future::join_all(barks.iter().map(|bark| bark.set_asp(&proxy))).await;
 
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
 	tokio::spawn(async move {
@@ -597,7 +595,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
-	bark.set_asp(&proxy.address).await;
+	bark.set_asp(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
 
@@ -615,7 +613,7 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
-	bark.set_asp(&proxy.address).await;
+	bark.set_asp(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
 
@@ -634,7 +632,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
-	bark.set_asp(&proxy.address).await;
+	bark.set_asp(&proxy).await;
 	bark.timeout = None;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
