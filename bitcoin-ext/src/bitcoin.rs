@@ -10,7 +10,7 @@ use cbitcoin::script::{Builder, PushBytes};
 use cbitcoin::taproot::ControlBlock;
 use cbitcoin::secp256k1::{self, Keypair, Secp256k1};
 
-use crate::fee;
+use crate::{fee, P2PKH_DUST, P2SH_DUST, P2TR_DUST, P2WPKH_DUST, P2WSH_DUST};
 
 /// Extension trait for [Keypair].
 pub trait KeypairExt: Borrow<Keypair> {
@@ -31,6 +31,29 @@ pub trait TxOutExt: Borrow<TxOut> {
 	/// Check whether this output is a p2a fee anchor.
 	fn is_p2a_fee_anchor(&self) -> bool {
 		self.borrow().script_pubkey == *fee::P2A_SCRIPT
+	}
+
+	/// Basic standardness check. Might be too strict.
+	fn is_standard(&self) -> bool {
+		let out = self.borrow();
+
+		let dust_limit = if out.script_pubkey.is_p2pkh() {
+			P2PKH_DUST
+		} else if out.script_pubkey.is_p2sh() {
+			P2SH_DUST
+		} else if out.script_pubkey.is_p2wpkh() {
+			P2WPKH_DUST
+		} else if out.script_pubkey.is_p2wsh() {
+			P2WSH_DUST
+		} else if out.script_pubkey.is_p2tr() {
+			P2TR_DUST
+		} else if out.script_pubkey.is_op_return() {
+			return out.script_pubkey.len() <= 83;
+		} else {
+			return false;
+		};
+
+		out.value >= dust_limit
 	}
 }
 impl TxOutExt for TxOut {}

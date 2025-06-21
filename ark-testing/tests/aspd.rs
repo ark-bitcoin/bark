@@ -909,7 +909,7 @@ async fn bad_round_input() {
 		}],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
-	assert!(err.message().contains("OP_RETURN"), "err: {}", err.message());
+	assert!(err.message().contains("non-standard"), "err: {}", err.message());
 }
 
 #[derive(Clone)]
@@ -1164,10 +1164,7 @@ async fn reject_subdust_offboard_request() {
 
 	let addr = bark.get_onchain_address().await;
 	let err = bark.try_offboard_all(&addr).await.unwrap_err();
-
-	assert!(err.to_string().contains(
-		"bad user input: offboard amount must be at least 0.00000330 BTC",
-	), "err: {err}");
+	assert!(err.to_string().contains("non-standard"), "err: {err}");
 }
 
 #[tokio::test]
