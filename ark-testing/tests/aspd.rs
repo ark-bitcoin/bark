@@ -1071,8 +1071,8 @@ async fn register_board_is_idempotent() {
 }
 
 #[tokio::test]
-async fn reject_subdust_board_cosign() {
-	let ctx = TestContext::new("aspd/reject_subdust_board_cosign").await;
+async fn reject_dust_board_cosign() {
+	let ctx = TestContext::new("aspd/reject_dust_board_cosign").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1099,8 +1099,8 @@ async fn reject_subdust_board_cosign() {
 
 
 #[tokio::test]
-async fn reject_subdust_vtxo_request() {
-	let ctx = TestContext::new("aspd/reject_subdust_vtxo_request").await;
+async fn reject_dust_vtxo_request() {
+	let ctx = TestContext::new("aspd/reject_dust_vtxo_request").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1130,8 +1130,8 @@ async fn reject_subdust_vtxo_request() {
 }
 
 #[tokio::test]
-async fn reject_subdust_offboard_request() {
-	let ctx = TestContext::new("aspd/reject_subdust_offboard_request").await;
+async fn reject_dust_offboard_request() {
+	let ctx = TestContext::new("aspd/reject_dust_offboard_request").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1160,8 +1160,8 @@ async fn reject_subdust_offboard_request() {
 }
 
 #[tokio::test]
-async fn reject_subdust_arkoor_cosign() {
-	let ctx = TestContext::new("aspd/reject_subdust_arkoor_cosign").await;
+async fn reject_dust_arkoor_cosign() {
+	let ctx = TestContext::new("aspd/reject_dust_arkoor_cosign").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1190,8 +1190,8 @@ async fn reject_subdust_arkoor_cosign() {
 }
 
 #[tokio::test]
-async fn reject_subdust_bolt11_payment() {
-	let ctx = TestContext::new("aspd/reject_subdust_bolt11_payment").await;
+async fn reject_dust_bolt11_payment() {
+	let ctx = TestContext::new("aspd/reject_dust_bolt11_payment").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
