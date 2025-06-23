@@ -69,6 +69,9 @@ pub fn tweaked_key_agg<'a>(
 	(ret, pubkey_from(pk))
 }
 
+/// Aggregates the public keys into their aggregate public key.
+///
+/// Key order is not important as keys are sorted before aggregation.
 pub fn combine_keys(keys: impl IntoIterator<Item = PublicKey>) -> XOnlyPublicKey {
 	xonly_from(key_agg(keys).agg_pk())
 }

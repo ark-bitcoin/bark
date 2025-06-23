@@ -2,16 +2,14 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
-use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
-use ark::board::BoardCosignResponse;
-use ark::vtxo::VtxoSpkSpec;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate};
 
-use ark::{musig, PaymentRequest, VtxoId};
+use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
+use ark::board::BoardCosignResponse;
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::VtxoTreeSpec;
-use ark::util::{Decodable, Encodable};
 
 use crate::protos;
 
@@ -101,7 +99,7 @@ impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
 				} => {
 					protos::round_event::Event::VtxoProposal(protos::VtxoProposal {
 						round_seq: round_seq as u64,
-						vtxos_spec: vtxos_spec.encode(),
+						vtxos_spec: vtxos_spec.serialize(),
 						unsigned_round_tx: bitcoin::consensus::serialize(&unsigned_round_tx),
 						vtxos_agg_nonces: cosign_agg_nonces.into_iter()
 							.map(|n| n.serialize().to_vec())
@@ -161,7 +159,7 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					round_seq: m.round_seq as usize,
 					unsigned_round_tx: bitcoin::consensus::deserialize(&m.unsigned_round_tx)
 						.map_err(|_| "invalid unsigned_round_tx")?,
-					vtxos_spec: VtxoTreeSpec::decode(&m.vtxos_spec)
+					vtxos_spec: VtxoTreeSpec::deserialize(&m.vtxos_spec)
 						.map_err(|_| "invalid vtxos_spec")?,
 					cosign_agg_nonces: m.vtxos_agg_nonces.into_iter().map(|n| {
 						musig::MusigAggNonce::from_slice(&n)
@@ -234,23 +232,21 @@ impl TryFrom<protos::WalletStatus> for crate::WalletStatus {
 }
 
 
-impl<'a> From<&'a PaymentRequest> for protos::ArkoorOutput {
-	fn from(v: &'a PaymentRequest) -> Self {
-		protos::ArkoorOutput {
+impl<'a> From<&'a VtxoRequest> for protos::VtxoRequest {
+	fn from(v: &'a VtxoRequest) -> Self {
+		protos::VtxoRequest {
 			amount: v.amount.to_sat(),
-			pubkey: v.pubkey.serialize().to_vec(),
+			policy: v.policy.serialize(),
 		}
 	}
 }
 
-impl TryFrom<protos::ArkoorOutput> for PaymentRequest {
+impl TryFrom<protos::VtxoRequest> for VtxoRequest {
 	type Error = ConvertError;
-	fn try_from(v: protos::ArkoorOutput) -> Result<Self, Self::Error> {
+	fn try_from(v: protos::VtxoRequest) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pubkey: PublicKey::from_slice(&v.pubkey).map_err(|_| "invalid pubkey")?,
 			amount: Amount::from_sat(v.amount),
-			//TODO(stevenroose) should we make arkooroutput generic?
-			spk: VtxoSpkSpec::Exit,
+			policy: VtxoPolicy::deserialize(&v.policy).map_err(|_| "invalid policy")?,
 		})
 	}
 }
@@ -284,8 +280,8 @@ impl From<Vec<ArkoorCosignResponse>> for protos::ArkoorPackageCosignResponse {
 	}
 }
 
-impl<'a> From<&'a ArkoorBuilder<'_, PaymentRequest>> for protos::ArkoorCosignRequest {
-	fn from(v: &'a ArkoorBuilder<'_, PaymentRequest>) -> Self {
+impl<'a> From<&'a ArkoorBuilder<'_, VtxoRequest>> for protos::ArkoorCosignRequest {
+	fn from(v: &'a ArkoorBuilder<'_, VtxoRequest>) -> Self {
 		Self {
 			input_id: v.input.id().to_bytes().to_vec(),
 			outputs: v.outputs.iter().map(|o| o.into()).collect(),

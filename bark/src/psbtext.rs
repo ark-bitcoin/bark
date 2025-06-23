@@ -2,11 +2,11 @@
 
 use std::borrow::{Borrow, BorrowMut};
 
-use ark::util::{Decodable, Encodable};
 use bitcoin::{psbt, sighash, taproot, Transaction, TxOut, Witness};
 use bitcoin::secp256k1::{self, Keypair};
 
-use ark::Vtxo;
+use ark::{ProtocolEncoding, Vtxo};
+use ark::error::IncorrectSigningKeyError;
 
 const PROP_KEY_PREFIX: &'static [u8] = "bark".as_bytes();
 
@@ -27,12 +27,12 @@ lazy_static::lazy_static! {
 // they need to return errors
 pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 	fn set_exit_claim_input(&mut self, input: &Vtxo) {
-		self.borrow_mut().proprietary.insert(PROP_KEY_CLAIM_INPUT.clone(), input.encode());
+		self.borrow_mut().proprietary.insert(PROP_KEY_CLAIM_INPUT.clone(), input.serialize());
 	}
 
 	fn get_exit_claim_input(&self) -> Option<Vtxo> {
 		self.borrow().proprietary.get(&*PROP_KEY_CLAIM_INPUT)
-			.map(|e| Vtxo::decode(&e).expect("corrupt psbt"))
+			.map(|e| Vtxo::deserialize(&e).expect("corrupt psbt"))
 	}
 
 	/// If [`self`] has an exit claim input on it, it'll be signed using
@@ -49,15 +49,22 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		prevouts: &sighash::Prevouts<impl Borrow<TxOut>>,
 		input_idx: usize,
 		vtxo_key: &Keypair,
-	) {
+	) -> Result<(), IncorrectSigningKeyError> {
 		let claim = if let Some(c) = self.get_exit_claim_input() {
 			c
 		} else {
-			return;
+			return Ok(());
 		};
 
+		if vtxo_key.public_key() != claim.user_pubkey() {
+			return Err(IncorrectSigningKeyError {
+				required: claim.user_pubkey(),
+				provided: vtxo_key.public_key(),
+			});
+		}
+
 		// Now we need to sign for this.
-		let exit_script = claim.spec().exit_clause().expect("a VTXO without exit clause should not be exited");
+		let exit_script = claim.policy().user_exit_clause(claim.exit_delta());
 		let leaf_hash = taproot::TapLeafHash::from_script(
 			&exit_script,
 			taproot::LeafVersion::TapScript,
@@ -66,10 +73,9 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 			input_idx, prevouts, leaf_hash, sighash::TapSighashType::Default,
 		).expect("all prevouts provided");
 
-		assert_eq!(vtxo_key.public_key(), claim.spec().user_pubkey);
 		let sig = secp.sign_schnorr(&sighash.into(), &vtxo_key);
 
-		let cb = claim.spec().vtxo_taproot()
+		let cb = claim.output_taproot()
 			.control_block(&(exit_script.clone(), taproot::LeafVersion::TapScript))
 			.expect("script is in taproot");
 
@@ -79,7 +85,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 
 		debug_assert_eq!(wit.size() as u64, claim.claim_satisfaction_weight().to_wu());
 		self.borrow_mut().final_script_witness = Some(wit);
+		Ok(())
 	}
 }
-
 impl PsbtInputExt for psbt::Input {}

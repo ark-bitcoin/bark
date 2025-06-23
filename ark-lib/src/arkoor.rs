@@ -5,17 +5,17 @@ use std::collections::HashMap;
 use std::iter;
 
 use bitcoin::hex::DisplayHex;
-use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, Txid, Weight, Witness};
+use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
-use crate::lightning::revocation_payment_request;
-use crate::vtxo::VtxoSpkSpec;
-use crate::{musig, PaymentRequest, Vtxo, VtxoId, VtxoSpec};
-use crate::util::{self, Encodable, SECP};
+use crate::error::IncorrectSigningKeyError;
+use crate::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use crate::util::{self, verify_partial_sig, SECP};
+use crate::vtxo::{GenesisItem, GenesisTransition};
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
@@ -40,7 +40,7 @@ pub fn arkoor_sighash(input_vtxo: &Vtxo, arkoor_tx: &Transaction) -> TapSighash 
 	).expect("sighash error")
 }
 
-pub fn unsigned_arkoor_tx(input: &Vtxo, outputs: &[VtxoSpec]) -> Transaction {
+pub fn unsigned_arkoor_tx(input: &Vtxo, outputs: &[TxOut]) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -50,26 +50,38 @@ pub fn unsigned_arkoor_tx(input: &Vtxo, outputs: &[VtxoSpec]) -> Transaction {
 			sequence: Sequence::ZERO,
 			witness: Witness::new(),
 		}],
-		output: outputs
-			.into_iter()
-			.map(VtxoSpec::txout)
-			.chain([fee::fee_anchor()])
-			.collect(),
+		output: outputs.into_iter().cloned().chain([fee::fee_anchor()]).collect(),
 	}
 }
 
 /// Inner utility method to construct the arkoor vtxos.
-fn build_arkoor_vtxos(
+fn build_arkoor_vtxos<T: Borrow<VtxoRequest>>(
 	input: &Vtxo,
-	outputs: &[VtxoSpec],
+	outputs: &[T],
+	txouts: &[TxOut],
 	arkoor_txid: Txid,
-) -> Vec<ArkoorVtxo> {
-	outputs.iter().enumerate().map(|(idx, _output)| {
-		ArkoorVtxo {
-			input: input.clone().into(),
-			signature: None,
-			output_specs: outputs.to_owned(),
-			point: OutPoint::new(arkoor_txid, idx as u32)
+	arkoor_signature: Option<schnorr::Signature>,
+) -> Vec<Vtxo> {
+	outputs.iter().enumerate().map(|(idx, output)| {
+		Vtxo {
+			amount: output.borrow().amount,
+			expiry_height: input.expiry_height,
+			asp_pubkey: input.asp_pubkey,
+			exit_delta: input.exit_delta,
+			anchor_point: input.anchor_point,
+			genesis: input.genesis.iter().cloned().chain([GenesisItem {
+				transition: GenesisTransition::Arkoor {
+					policy: input.policy.clone(),
+					signature: arkoor_signature,
+				},
+				output_idx: idx as u8,
+				// filter out our index from the txouts
+				other_outputs: txouts.iter().enumerate()
+					.filter(|(i, _)| *i != idx)
+					.map(|(_, o)| o).cloned().collect(),
+			}]).collect(),
+			policy: output.borrow().policy.clone(),
+			point: OutPoint::new(arkoor_txid, idx as u32),
 		}
 	}).collect()
 }
@@ -83,37 +95,12 @@ fn build_arkoor_vtxos(
 pub fn signed_arkoor_tx(
 	input: &Vtxo,
 	signature: schnorr::Signature,
-	outputs: &[VtxoSpec]
+	outputs: &[TxOut],
 ) -> Transaction {
 	let mut tx = unsigned_arkoor_tx(input, outputs);
 	util::fill_taproot_sigs(&mut tx, &[signature]);
 	tx
 }
-
-/// Build the oor tx with signatures and verify it
-///
-/// If a pubkey is provided, it'll check that vtxo's output user pubkey match
-/// it (later want to check it's derived from it)
-pub fn verify_oor(vtxo: &ArkoorVtxo, pubkey: Option<PublicKey>) -> Result<(), String> {
-	// TODO: we also need to check that inputs are valid (round tx broadcasted, not spent yet, etc...)
-
-	let sig = vtxo.signature.ok_or(format!("unsigned vtxo"))?;
-	let tx = signed_arkoor_tx(&vtxo.input, sig, &vtxo.output_specs);
-	let sighash = arkoor_sighash(&vtxo.input, &tx);
-	SECP.verify_schnorr(
-		&sig,
-		&sighash.into(),
-		&vtxo.input.spec().taproot_pubkey(),
-	).map_err(|e| format!("schnorr signature verification error: {}", e))?;
-
-	if let Some(pubkey) = pubkey {
-		//TODO: handle derived keys here
-		assert_eq!(pubkey, vtxo.output_specs[vtxo.point.vout as usize].user_pubkey)
-	}
-
-	Ok(())
-}
-
 
 /// The cosignature details received from the Ark server.
 #[derive(Debug)]
@@ -140,7 +127,7 @@ pub struct ArkoorBuilder<'a, T: Clone> {
 	pub outputs: Cow<'a, [T]>,
 }
 
-impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
+impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 	/// Construct a generic arkoor builder for the given input and outputs.
 	pub fn new(
 		input: &'a Vtxo,
@@ -170,19 +157,19 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 		})
 	}
 
-	pub fn output_specs(&self) -> Vec<VtxoSpec> {
-		self.outputs.iter().map(|o| VtxoSpec {
-			user_pubkey: o.borrow().pubkey,
-			amount: o.borrow().amount,
-			expiry_height: self.input.expiry_height(),
-			asp_pubkey: self.input.asp_pubkey(),
-			exit_delta: self.input.exit_delta(),
-			spk: o.borrow().spk,
-		}).collect::<Vec<_>>()
+	/// Construct the transaction outputs of the resulting arkoor tx.
+	pub fn txouts(&self) -> Vec<TxOut> {
+		self.outputs.iter().map(|out| {
+			out.borrow().policy.txout(
+				out.borrow().amount,
+				self.input.asp_pubkey(),
+				self.input.exit_delta(),
+			)
+		}).collect()
 	}
 
 	pub fn unsigned_transaction(&self) -> Transaction {
-		unsigned_arkoor_tx(&self.input, &self.output_specs())
+		unsigned_arkoor_tx(&self.input, &self.txouts())
 	}
 
 	pub fn sighash(&self) -> TapSighash {
@@ -198,21 +185,35 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 	pub fn server_cosign(&self, keypair: &Keypair) -> ArkoorCosignResponse {
 		let (pub_nonce, partial_signature) = musig::deterministic_partial_sign(
 			keypair,
-			[self.input.spec().user_pubkey],
+			[self.input.user_pubkey()],
 			&[&self.user_nonce],
 			self.sighash().to_byte_array(),
-			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
+			Some(self.input.output_taproot().tap_tweak().to_byte_array()),
 		);
 		ArkoorCosignResponse { pub_nonce, partial_signature }
+	}
+
+	/// Validate the server's partial signature.
+	pub fn verify_cosign_response(
+		&self,
+		server_cosign: &ArkoorCosignResponse,
+	) -> bool {
+		verify_partial_sig(
+			self.sighash(),
+			self.input.output_taproot().tap_tweak(),
+			(self.input.asp_pubkey(), server_cosign.pub_nonce),
+			(self.input.user_pubkey(), self.user_nonce.clone()),
+			server_cosign.partial_signature,
+		)
 	}
 
 	/// Construct the vtxos of the outputs of this OOR tx.
 	///
 	/// These vtxos are not valid vtxos because they lack the signature.
-	pub fn unsigned_output_vtxos(&self) -> Vec<ArkoorVtxo> {
-		let outputs = self.output_specs();
-		let tx = unsigned_arkoor_tx(&self.input, &outputs);
-		build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid())
+	pub fn unsigned_output_vtxos(&self) -> Vec<Vtxo> {
+		let txouts = self.txouts();
+		let tx = unsigned_arkoor_tx(&self.input, &txouts);
+		build_arkoor_vtxos(&self.input, self.outputs.as_ref(), &txouts, tx.compute_txid(), None)
 	}
 
 	/// Finish the arkoor process.
@@ -221,44 +222,61 @@ impl<'a, T: Borrow<PaymentRequest> + Clone> ArkoorBuilder<'a, T> {
 	pub fn build_vtxos(
 		&self,
 		user_sec_nonce: musig::MusigSecNonce,
-		user_pub_nonce: musig::MusigPubNonce,
-		user_keypair: &Keypair,
+		user_key: &Keypair,
 		cosign_resp: &ArkoorCosignResponse,
-	) -> Vec<Vtxo> {
-		let outputs = self.output_specs();
-		let tx = unsigned_arkoor_tx(&self.input, &outputs);
-		let sighash = arkoor_sighash(&self.input, &tx);
+	) -> Result<Vec<Vtxo>, IncorrectSigningKeyError> {
+		if user_key.public_key() != self.input.user_pubkey() {
+			return Err(IncorrectSigningKeyError {
+				required: self.input.user_pubkey(),
+				provided: user_key.public_key(),
+			});
+		}
 
-		assert_eq!(user_keypair.public_key(), self.input.spec().user_pubkey);
-		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &cosign_resp.pub_nonce]);
+		let txouts = self.txouts();
+		let tx = unsigned_arkoor_tx(&self.input, &txouts);
+		let sighash = arkoor_sighash(&self.input, &tx);
+		let taptweak = self.input.output_taproot().tap_tweak();
+
+		let agg_nonce = musig::nonce_agg(&[&self.user_nonce, &cosign_resp.pub_nonce]);
 		let (_part_sig, final_sig) = musig::partial_sign(
-			[self.input.spec().user_pubkey, self.input.asp_pubkey()],
+			[self.input.user_pubkey(), self.input.asp_pubkey()],
 			agg_nonce,
-			user_keypair,
+			user_key,
 			user_sec_nonce,
 			sighash.to_byte_array(),
-			Some(self.input.spec().vtxo_taptweak().to_byte_array()),
+			Some(taptweak.to_byte_array()),
 			Some(&[&cosign_resp.partial_signature]),
 		);
 		let final_sig = final_sig.expect("we provided the other sig");
 		debug_assert!(
+			verify_partial_sig(
+				sighash,
+				taptweak,
+				(self.input.user_pubkey(), self.user_nonce.clone()),
+				(self.input.asp_pubkey(), cosign_resp.pub_nonce),
+				_part_sig,
+			),
+			"invalid partial signature produced",
+		);
+		debug_assert!(
 			SECP.verify_schnorr(
 				&final_sig,
 				&sighash.into(),
-				&self.input.spec().taproot_pubkey(),
+				&self.input.output_taproot().output_key().to_x_only_public_key(),
 			).is_ok(),
 			"invalid arkoor tx signature produced: input={}, outputs={:?}",
-			self.input.encode().as_hex(), &outputs,
+			self.input.serialize().as_hex(), &txouts,
 		);
 
-		build_arkoor_vtxos(&self.input, &outputs, tx.compute_txid()).into_iter()
-			.map(|mut v| {
-				v.signature = Some(final_sig.clone());
-				v.into()
-			}).collect()
+		Ok(build_arkoor_vtxos(
+			&self.input,
+			self.outputs.as_ref(),
+			&txouts,
+			tx.compute_txid(),
+			Some(final_sig),
+		))
 	}
 }
-
 
 /// This type helps both the client and server with building multiple arkoor transactions
 /// in a synchronized way. It's purely a functional type, initialized with
@@ -281,7 +299,7 @@ pub struct ArkoorPackageBuilder<'a, T: Clone> {
 	spending_tx_by_input: HashMap<VtxoId, Transaction>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ArkoorPackageError {
 	#[error("Payment has non-null change amount but no change pubkey provided")]
 	MissingChangePk,
@@ -299,16 +317,18 @@ pub enum ArkoorPackageError {
 	ArkoorError(ArkoorError),
 	#[error("Too many outputs")]
 	TooManyOutputs,
+	#[error("incorrect signing key provided")]
+	Signing(#[from] IncorrectSigningKeyError),
 }
 
-impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
+impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 	pub fn new(
 		inputs: &'a [Vtxo],
 		user_nonces: &'a [musig::MusigPubNonce],
-		pay_req: PaymentRequest,
+		vtxo_request: VtxoRequest,
 		change: Option<PublicKey>,
 	) -> Result<Self, ArkoorPackageError> {
-		let mut remaining_amount = pay_req.amount;
+		let mut remaining_amount = vtxo_request.amount;
 		let mut arkoors = vec![];
 		let mut spending_tx_by_input = HashMap::new();
 
@@ -318,17 +338,17 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 			let (output_amount, change) = if remaining_amount >= input.amount() {
 				(input.amount(), None)
 			} else {
-				(remaining_amount, Some(PaymentRequest {
-					pubkey: change.ok_or(ArkoorPackageError::MissingChangePk)?,
+				(remaining_amount, Some(VtxoRequest {
 					amount: input.amount() - remaining_amount,
-					spk: VtxoSpkSpec::Exit,
+					policy: VtxoPolicy::Pubkey {
+						user_pubkey: change.ok_or(ArkoorPackageError::MissingChangePk)?,
+					},
 				}))
 			};
 
-			let output = PaymentRequest {
+			let output = VtxoRequest {
 				amount: output_amount,
-				pubkey: pay_req.pubkey,
-				spk: pay_req.spk,
+				policy: vtxo_request.policy.clone(),
 			};
 
 			let pay_reqs = iter::once(output.clone()).chain(change).collect::<Vec<_>>();
@@ -356,11 +376,15 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 		user_nonces: &'a [musig::MusigPubNonce],
 	) -> Result<Self, ArkoorPackageError> {
 		let arkoors = htlc_vtxos.iter().zip(user_nonces).map(|(v, u)| {
-			if !matches!(v.spec().spk, VtxoSpkSpec::HtlcOut { .. }) {
+			if !matches!(v.policy(), VtxoPolicy::ServerHtlcSend { .. }) {
 				return Err(ArkoorPackageError::InvalidRevocationSpk);
 			}
 
-			ArkoorBuilder::new(v, u, vec![revocation_payment_request(v)])
+			let refund = VtxoRequest {
+				amount: v.amount(),
+				policy: VtxoPolicy::Pubkey { user_pubkey: v.user_pubkey() },
+			};
+			ArkoorBuilder::new(v, u, vec![refund])
 				.map_err(ArkoorPackageError::ArkoorError)
 		}).collect::<Result<Vec<_>, ArkoorPackageError>>()?;
 
@@ -368,7 +392,7 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 	}
 
 	pub fn from_arkoors(
-		arkoors: Vec<ArkoorBuilder<'a, PaymentRequest>>,
+		arkoors: Vec<ArkoorBuilder<'a, VtxoRequest>>,
 	) -> Result<Self, ArkoorPackageError> {
 		let mut spending_tx_by_input = HashMap::new();
 
@@ -385,12 +409,6 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 
 	pub fn inputs(&self) -> Vec<&'a Vtxo> {
 		self.arkoors.iter().map(|a| a.input).collect::<Vec<_>>()
-	}
-
-	pub fn output_specs(&self) -> Vec<VtxoSpec> {
-		self.arkoors.iter().flat_map(|a| {
-			a.output_specs()
-		}).collect()
 	}
 
 	pub fn spending_tx(&self, input_id: VtxoId) -> Option<&Transaction> {
@@ -413,10 +431,9 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 
 			let vtxos = arkoor.build_vtxos(
 				sec_nonce,
-				*arkoor.user_nonce,
 				&keypairs[idx],
 				&cosign,
-			);
+			)?;
 
 			// The first one is of the recipient, we will post it to their mailbox.
 			let mut vtxo_iter = vtxos.into_iter();
@@ -431,11 +448,11 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 		Ok((sent_vtxos, change_vtxo))
 	}
 
-	pub fn new_vtxos(&self) -> Vec<Vec<ArkoorVtxo>> {
+	pub fn new_vtxos(&self) -> Vec<Vec<Vtxo>> {
 		self.arkoors.iter().map(|arkoor| {
-			let outputs = arkoor.output_specs();
-			let tx = arkoor.unsigned_transaction();
-			build_arkoor_vtxos(&arkoor.input, &outputs, tx.compute_txid())
+			let txouts = arkoor.txouts();
+			let tx = unsigned_arkoor_tx(&arkoor.input, &txouts);
+			build_arkoor_vtxos(&arkoor.input, &arkoor.outputs, &txouts, tx.compute_txid(), None) //TODO(stevenroose) signaature
 		}).collect::<Vec<Vec<_>>>()
 	}
 
@@ -449,33 +466,21 @@ impl<'a> ArkoorPackageBuilder<'a, PaymentRequest> {
 
 		cosign
 	}
-}
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ArkoorVtxo {
-	pub input: Box<Vtxo>,
-	pub signature: Option<schnorr::Signature>,
-	pub output_specs:  Vec<VtxoSpec>,
-	pub point: OutPoint,
-}
 
-impl ArkoorVtxo {
-	pub fn id(&self) -> VtxoId {
-		self.point.into()
-	}
-
-	pub fn spec(&self) -> &VtxoSpec {
-		&self.output_specs[self.point.vout as usize]
-	}
-
-	pub fn amount(&self) -> Amount {
-		self.spec().amount
-	}
-
-	pub fn asp_pubkey(&self) -> PublicKey {
-		self.spec().asp_pubkey
-	}
-
-	pub fn input_vtxo_id(&self) -> VtxoId {
-		self.input.id()
+	pub fn verify_cosign_response<T: Borrow<ArkoorCosignResponse>>(
+		&self,
+		server_cosign: &[T],
+	) -> bool {
+		for (idx, builder) in self.arkoors.iter().enumerate() {
+			if let Some(cosign) = server_cosign.get(idx) {
+				if !builder.verify_cosign_response(cosign.borrow()) {
+					return false;
+				}
+			} else {
+				return false;
+			}
+		}
+		true
 	}
 }
+

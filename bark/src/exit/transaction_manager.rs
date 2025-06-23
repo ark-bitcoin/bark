@@ -50,10 +50,10 @@ impl ExitTransactionManager {
 		vtxo: &Vtxo,
 		onchain: &onchain::Wallet,
 	) -> anyhow::Result<Vec<Txid>, ExitError> {
-		let exit_txs = vtxo.exit_txs();
+		let exit_txs = vtxo.transactions();
 		let mut txids = Vec::with_capacity(exit_txs.len());
 		for tx in exit_txs {
-			txids.push(self.track_exit_tx(tx, onchain).await?);
+			txids.push(self.track_exit_tx(tx.tx, onchain).await?);
 		}
 		Ok(txids)
 	}
@@ -99,7 +99,7 @@ impl ExitTransactionManager {
 
 		let keys = self.status.keys().cloned().collect::<Vec<_>>();
 		for txid in keys {
-			// We should query the status of every transaction unless they're already deeply 
+			// We should query the status of every transaction unless they're already deeply
 			// confirmed
 			let status = self.status.get(&txid).unwrap();
 			if let TxStatus::Confirmed(block) = status {
@@ -275,7 +275,7 @@ impl ExitTransactionManager {
 	}
 
 	fn find_child_in_wallet(
-		exit_txid: Txid, 
+		exit_txid: Txid,
 		onchain: &onchain::Wallet,
 	) -> anyhow::Result<Option<ChildTransactionInfo>, ExitError> {
 		// Check if we have a CPFP tx in our wallet
@@ -346,7 +346,7 @@ impl ExitTransactionManager {
 		if let Some((txid, status)) = spend_results.get(&outpoint) {
 			let mut guard = package.write().await;
 
-			// We only need to update the confirmation block for wallet transactions which haven't 
+			// We only need to update the confirmation block for wallet transactions which haven't
 			// been replaced
 			let current_txid = if let Some(child) = guard.child.as_mut() {
 				if matches!(child.origin, ExitTxOrigin::Wallet) && child.info.txid == *txid {

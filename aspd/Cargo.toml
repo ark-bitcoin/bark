@@ -71,5 +71,9 @@ tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+ark-lib = { path = "../ark-lib", features = [ "test-util" ] }
+
 [profile.release]
 debug = true
+

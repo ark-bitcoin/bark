@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use bitcoin::{OutPoint, Txid};
+use ark::vtxo::VtxoPolicyType;
+use bitcoin::{Amount, OutPoint, Txid};
 use bitcoin::secp256k1::{PublicKey, SecretKey};
 use bitcoin_ext::BlockHeight;
 use ark::VtxoId;
@@ -64,7 +65,7 @@ pub struct RoundUserVtxoInFlux {
 	pub attempt_seq: usize,
 	pub vtxo: VtxoId,
 }
-impl_slog!(RoundUserVtxoInFlux, Trace, "user attempted to spend vtxo already in flux");
+impl_slog!(RoundUserVtxoInFlux, Trace, "user attempted to submit vtxo already in flux to round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoUnknown {
@@ -72,6 +73,36 @@ pub struct RoundUserVtxoUnknown {
 	pub vtxo: Option<VtxoId>,
 }
 impl_slog!(RoundUserVtxoUnknown, Trace, "user attempted to spend unknown vtxo");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserDuplicateCosignPubkey {
+	pub round_seq: usize,
+	pub attempt_seq: usize,
+	pub cosign_pubkey: PublicKey,
+}
+impl_slog!(RoundUserDuplicateCosignPubkey, Trace,
+	"user attempted to register two payments with the same cosign pubkey",
+);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserBadNbNonces {
+	pub round_seq: usize,
+	pub attempt_seq: usize,
+	pub nb_cosign_nonces: usize,
+}
+impl_slog!(RoundUserBadNbNonces, Trace,
+	"user attempted to register output vtxo with incorrect number of cosign nonces",
+);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserBadOutputAmount {
+	pub round_seq: usize,
+	pub attempt_seq: usize,
+	pub amount: Amount,
+}
+impl_slog!(RoundUserBadOutputAmount, Trace,
+	"user requested an output with an amount exceeding maximum vtxo amount",
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundPaymentRegistered {
@@ -274,6 +305,14 @@ pub struct StoringForfeitVtxo {
 	pub out_point: OutPoint,
 }
 impl_slog!(StoringForfeitVtxo, Trace, "Storing forfeit vtxo for outpoint");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundVtxoCreated {
+	pub round_seq: usize,
+	pub vtxo_id: VtxoId,
+	pub vtxo_type: VtxoPolicyType,
+}
+impl_slog!(RoundVtxoCreated, Debug, "New VTXO created in round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundFinished {

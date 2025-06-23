@@ -4,6 +4,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bitcoin::hex::FromHex;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
@@ -16,10 +17,9 @@ use futures::{Stream, StreamExt};
 use log::{error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
-use ark::{musig, VtxoId};
+use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy};
 use ark::rounds::VtxoOwnershipChallenge;
-use ark::util::{Encodable, SECP};
-use ark::vtxo::VtxoSpkSpec;
+use ark::util::SECP;
 use aspd_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
@@ -319,20 +319,22 @@ async fn sweep_vtxos() {
 	ctx.generate_blocks(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(147_520), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
-	assert_eq!(2, sweeps.len());
+	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "board");
 	assert_eq!(sweeps[1].sweep_type, "board");
+	assert_eq!(sat(147_520), surplus);
 
 	// now we swept both board vtxos, let's sweep the round we created above
 	ctx.generate_blocks(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(149_650), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
-	assert_eq!(1, sweeps.len());
+	assert_eq!(1, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "vtxo");
+	assert_eq!(sat(149_650), surplus);
 
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another board
@@ -341,11 +343,12 @@ async fn sweep_vtxos() {
 
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	admin.trigger_sweep(protos::Empty{}).await.unwrap();
-	assert_eq!(sat(101_255), log_sweeping.recv().wait(15_000).await.unwrap().surplus);
+	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
-	assert_eq!(2, sweeps.len());
+	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "connector");
 	assert_eq!(sweeps[1].sweep_type, "board");
+	assert_eq!(sat(101_255), surplus);
 
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
@@ -463,9 +466,7 @@ async fn full_round() {
 
 	let proxy = Proxy(aspd.get_public_client().await, Arc::new(Mutex::new(0)), Arc::new(tx));
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
-	futures::future::join_all(barks.iter().map(|bark| {
-		bark.set_asp(&proxy.address)
-	})).await;
+	futures::future::join_all(barks.iter().map(|bark| bark.set_asp(&proxy))).await;
 
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
 	tokio::spawn(async move {
@@ -543,11 +544,15 @@ async fn double_spend_round() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
 
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
 			let res1 = c1.submit_payment(req.clone()).await;
+			// avoid duplicate cosign key error
+			req.vtxo_requests[0].cosign_pubkey = Vec::<u8>::from_hex(
+				"028d887bb64dfea78040e7f94284245ea4468c003105d207f9b82cf8d6a66a9064",
+			).unwrap();
 			let res2 = c2.submit_payment(req).await;
 
 			assert!(res1.is_ok());
@@ -594,7 +599,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
-	bark.set_asp(&proxy.address).await;
+	bark.set_asp(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
 
@@ -612,7 +617,7 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
-	bark.set_asp(&proxy.address).await;
+	bark.set_asp(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
 
@@ -631,7 +636,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
-	bark.set_asp(&proxy.address).await;
+	bark.set_asp(&proxy).await;
 	bark.timeout = None;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
@@ -834,15 +839,16 @@ async fn bad_round_input() {
 		vtxo_id: vtxo.id.to_bytes().to_vec(),
 		ownership_proof: challenge.sign_with(vtxo.id, key).serialize().to_vec(),
 	};
-	let vtxo_req = protos::VtxoRequest {
-		amount: 1000,
-		vtxo_public_key: key.public_key().serialize().to_vec(),
+	let vtxo_req = protos::SignedVtxoRequest {
+		vtxo: Some(protos::VtxoRequest {
+			amount: 1000,
+			policy: VtxoPolicy::Pubkey { user_pubkey: key.public_key() }.serialize(),
+		}),
 		cosign_pubkey: key2.public_key().serialize().to_vec(),
 		public_nonces: iter::repeat({
 			let (_sec, pb) = musig::nonce_pair(&key);
 			pb.serialize().to_vec()
 		}).take(ark_info.nb_round_nonces as usize).collect(),
-		vtxo_spk: VtxoSpkSpec::Exit.encode().to_vec(),
 	};
 	let offb_req = protos::OffboardRequest {
 		amount: 1000,
@@ -872,6 +878,9 @@ async fn bad_round_input() {
 		offboard_requests: vec![],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("invalid request: zero outputs and zero offboards"),
+		"[{}]: {}", err.code(), err.message(),
+	);
 
 	info!("unknown input");
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
@@ -909,7 +918,7 @@ async fn bad_round_input() {
 		}],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
-	assert!(err.message().contains("OP_RETURN"), "err: {}", err.message());
+	assert!(err.message().contains("non-standard"), "err: {}", err.message());
 }
 
 #[derive(Clone)]
@@ -1060,7 +1069,7 @@ async fn register_board_is_idempotent() {
 	// We will now call the register_board a few times
 	let mut rpc = aspd.get_public_client().await;
 	let request = protos::BoardVtxoRequest {
-		board_vtxo: vtxo.encode(),
+		board_vtxo: vtxo.serialize(),
 		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
 	};
 
@@ -1070,8 +1079,8 @@ async fn register_board_is_idempotent() {
 }
 
 #[tokio::test]
-async fn reject_subdust_board_cosign() {
-	let ctx = TestContext::new("aspd/reject_subdust_board_cosign").await;
+async fn reject_dust_board_cosign() {
+	let ctx = TestContext::new("aspd/reject_dust_board_cosign").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1098,8 +1107,8 @@ async fn reject_subdust_board_cosign() {
 
 
 #[tokio::test]
-async fn reject_subdust_vtxo_request() {
-	let ctx = TestContext::new("aspd/reject_subdust_vtxo_request").await;
+async fn reject_dust_vtxo_request() {
+	let ctx = TestContext::new("aspd/reject_dust_vtxo_request").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1108,18 +1117,9 @@ async fn reject_subdust_vtxo_request() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			Ok(self.upstream().submit_payment(protos::SubmitPaymentRequest {
-				input_vtxos: req.input_vtxos,
-				vtxo_requests: vec![protos::VtxoRequest {
-					amount: P2TR_DUST_SAT - 1,
-					vtxo_public_key: req.vtxo_requests[0].vtxo_public_key.clone(),
-					cosign_pubkey: req.vtxo_requests[0].cosign_pubkey.clone(),
-					public_nonces: req.vtxo_requests[0].public_nonces.clone(),
-					vtxo_spk: req.vtxo_requests[0].vtxo_spk.clone(),
-				}],
-				offboard_requests: req.offboard_requests,
-			}).await?.into_inner())
+		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			req.vtxo_requests.get_mut(0).unwrap().vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
+			Ok(self.upstream().submit_payment(req).await?.into_inner())
 		}
 	}
 
@@ -1138,8 +1138,8 @@ async fn reject_subdust_vtxo_request() {
 }
 
 #[tokio::test]
-async fn reject_subdust_offboard_request() {
-	let ctx = TestContext::new("aspd/reject_subdust_offboard_request").await;
+async fn reject_dust_offboard_request() {
+	let ctx = TestContext::new("aspd/reject_dust_offboard_request").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1164,15 +1164,12 @@ async fn reject_subdust_offboard_request() {
 
 	let addr = bark.get_onchain_address().await;
 	let err = bark.try_offboard_all(&addr).await.unwrap_err();
-
-	assert!(err.to_string().contains(
-		"bad user input: offboard amount must be at least 0.00000330 BTC",
-	), "err: {err}");
+	assert!(err.to_string().contains("non-standard"), "err: {err}");
 }
 
 #[tokio::test]
-async fn reject_subdust_arkoor_cosign() {
-	let ctx = TestContext::new("aspd/reject_subdust_arkoor_cosign").await;
+async fn reject_dust_arkoor_cosign() {
+	let ctx = TestContext::new("aspd/reject_dust_arkoor_cosign").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	#[derive(Clone)]
@@ -1201,8 +1198,8 @@ async fn reject_subdust_arkoor_cosign() {
 }
 
 #[tokio::test]
-async fn reject_subdust_bolt11_payment() {
-	let ctx = TestContext::new("aspd/reject_subdust_bolt11_payment").await;
+async fn reject_dust_bolt11_payment() {
+	let ctx = TestContext::new("aspd/reject_dust_bolt11_payment").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
@@ -1279,7 +1276,7 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO to be able to onboard
-	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await);
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(3)).await);
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -1382,7 +1379,7 @@ async fn aspd_should_refuse_claim_twice() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move { cloned.bolt11_onboard(cloned_invoice_info.invoice).await });
-	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).await;
+	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).wait(10_000).await;
 	res1.await.unwrap();
 
 	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
@@ -1391,7 +1388,6 @@ async fn aspd_should_refuse_claim_twice() {
 	let err = bark_1.try_bolt11_onboard(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
 }
-
 
 #[tokio::test]
 async fn aspd_refuse_too_deep_arkoor_input() {

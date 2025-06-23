@@ -5,15 +5,13 @@ use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use bitcoin::Amount;
-use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
 use log::info;
 use tokio::fs;
 
-use ark::{ArkoorVtxo, Vtxo};
-use ark::util::{Decodable, Encodable};
+use ark::{ProtocolEncoding, Vtxo};
 use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use aspd_rpc::{self as rpc, protos};
 use bark::movement::MovementRecipient;
@@ -693,33 +691,13 @@ async fn reject_arkoor_with_bad_signature() {
 		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn empty_arkoor_mailbox(&mut self, req: protos::ArkoorVtxosRequest) -> Result<protos::ArkoorVtxosResponse, tonic::Status>  {
-			info!("proxy handling oor request");
-			let response = self.upstream().empty_arkoor_mailbox(req).await?;
-			info!("proxy received real response");
-
-			let keypair = Keypair::new(&ark::util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
-			let (input, output_specs, point) = match
-				Vtxo::decode(&response.into_inner().packages[0].vtxos[0]).unwrap() {
-					Vtxo::Arkoor(v) => (v.input, v.output_specs, v.point),
-					_ => panic!("expect oor vtxo")
-				};
-
-			let sighash = ark::arkoor::arkoor_sighash(
-				&input, &ark::arkoor::unsigned_arkoor_tx(&input, &output_specs),
-			);
-			let fake_sig = ark::util::SECP.sign_schnorr(&sighash.into(), &keypair);
-
-			let vtxo = Vtxo::Arkoor(ArkoorVtxo {
-				input,
-				signature: Some(fake_sig),
-				output_specs,
-				point,
-			});
-
+			let response = self.upstream().empty_arkoor_mailbox(req).await?.into_inner();
+			let mut vtxo = Vtxo::deserialize(&response.packages[0].vtxos[0]).unwrap();
+			vtxo.invalidate_final_sig();
 			Ok(protos::ArkoorVtxosResponse {
 				packages: vec![protos::ArkoorMailboxPackage {
 					arkoor_package_id: [0; 32].to_vec(),
-					vtxos: vec![vtxo.encode()],
+					vtxos: vec![vtxo.serialize()],
 				}],
 			})
 		}
@@ -746,8 +724,8 @@ async fn reject_arkoor_with_bad_signature() {
 	// check that we saw a log
 	tokio::time::sleep(Duration::from_millis(250)).await;
 	assert!(io::BufReader::new(std::fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
-		line.unwrap().contains("Could not validate OOR signature, dropping vtxo. \
-			schnorr signature verification error: signature failed verification")
+		line.unwrap().contains("Received invalid arkoor VTXO from server: \
+			error verifying one of the genesis transitions (idx=1): invalid signature")
 	}));
 }
 

@@ -36,15 +36,14 @@ use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
-use log::{trace, info, warn};
+use log::{info, trace, warn};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use ark::{PaymentRequest, Vtxo, VtxoId};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
-use ark::board::{BoardBuilder, BoardVtxo};
+use ark::board::BoardBuilder;
 use ark::musig::{self, MusigPubNonce};
 use ark::rounds::RoundEvent;
-use ark::vtxo::VtxoSpkSpec;
 use aspd_rpc::protos::{self, Bolt11PaymentResult};
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
@@ -445,16 +444,16 @@ impl Server {
 	///
 	/// It will broadcast the funding_transaction if it is unseen and
 	/// wil regisert the vtxo in the databse
-	pub async fn register_board(&self, vtxo: BoardVtxo, tx: Transaction) -> anyhow::Result<()> {
+	pub async fn register_board(&self, vtxo: Vtxo, tx: Transaction) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate board vtxo
 
 		// Since the user might have just created and broadcast this tx very recently,
 		// it's very likely that we won't have it in our mempool yet.
 		// We will first check if we have it, if not, try to broadcast it.
-		match self.bitcoind.custom_get_raw_transaction_info(&vtxo.onchain_output.txid, None) {
+		match self.bitcoind.custom_get_raw_transaction_info(&vtxo.chain_anchor().txid, None) {
 			Ok(Some(txinfo)) => {
 				let conf = txinfo.confirmations.unwrap_or(0);
-				trace!("Board tx {} has {} confirmations", vtxo.onchain_output.txid, conf);
+				trace!("Board tx {} has {} confirmations", vtxo.chain_anchor().txid, conf);
 			},
 			Ok(None) => {
 				// First check if the tx is actually standard and inputs are unspent.
@@ -473,7 +472,7 @@ impl Server {
 						return badarg!("board tx not accepted in mempool");
 					}
 				}
-				trace!("We submitted board tx with txid {} to mempool", vtxo.onchain_output.txid);
+				trace!("We submitted board tx with txid {} to mempool", vtxo.chain_anchor().txid);
 			},
 			Err(e) => bail!("error fetching tx info for board tx: {e}"),
 		}
@@ -481,7 +480,7 @@ impl Server {
 		// Accepted, let's register
 		self.db.upsert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
 
-		slog!(RegisteredBoard, onchain_utxo: vtxo.onchain_output, vtxo: vtxo.point(),
+		slog!(RegisteredBoard, onchain_utxo: vtxo.chain_anchor(), vtxo: vtxo.point(),
 			amount: vtxo.amount(),
 		);
 
@@ -491,9 +490,9 @@ impl Server {
 	/// Validate all arkoor inputs are not too deep
 	fn validate_arkoor_inputs<V: Borrow<Vtxo>>(
 		&self,
-		inputs: &[V],
+		inputs: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
-		for input in inputs.iter() {
+		for input in inputs {
 			if input.borrow().arkoor_depth() >= self.config.max_arkoor_depth {
 				return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
 					self.config.max_arkoor_depth, input.borrow().id());
@@ -504,26 +503,34 @@ impl Server {
 	}
 
 	/// Validate all board inputs are deeply confirmed
-	fn validate_board_inputs<V: Borrow<Vtxo>>(
+	async fn validate_board_inputs<V: Borrow<Vtxo>>(
 		&self,
-		inputs: &[V],
+		inputs: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
 		// TODO(stevenroose) cache this check
-		for board in inputs.iter().filter_map(|v| v.borrow().as_board()) {
-			let txid = board.onchain_output.txid;
-			let id = board.id();
+		for vtxo in inputs {
+			let vtxo = vtxo.borrow();
+			if vtxo.is_arkoor() {
+				continue;
+			}
+
+			let txid = vtxo.chain_anchor().txid;
+			if self.db.is_round_tx(txid).await? {
+				continue;
+			}
+
 			match self.bitcoind.custom_get_raw_transaction_info(&txid, None) {
 				Ok(Some(tx)) => {
 					let confs = tx.confirmations.unwrap_or(0) as usize;
 					if confs < self.config.round_board_confirmations {
-						slog!(UnconfirmedBoardSpendAttempt, vtxo: id, confirmations: confs);
+						slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: confs);
 						return badarg!("input board vtxo tx not deeply confirmed (has {confs} confs, \
 							but requires {})", self.config.round_board_confirmations,
 						);
 					}
 				},
 				Ok(None) => {
-					slog!(UnconfirmedBoardSpendAttempt, vtxo: id, confirmations: 0);
+					slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: 0);
 					return badarg!("input board vtxo tx was not found, \
 						requires {} confs)", self.config.round_board_confirmations,
 					);
@@ -535,69 +542,64 @@ impl Server {
 		Ok(())
 	}
 
-	async fn cosign_oor_package(
+	/// Perform the arkoor cosign from the builder.
+	/// Assumes that sanity checks on the input have been performed.
+	/// Will lock the input vtxo in flux.
+	async fn cosign_oor_package_with_builder(
 		&self,
-		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<PaymentRequest>)>,
+		builder: &ArkoorPackageBuilder<'_, VtxoRequest>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
-		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?;
-
-		let arkoors = arkoor_args.iter().zip(input_vtxos.iter())
-			.map(|((_, user_nonce, outputs), vs)| {
-				ArkoorBuilder::new(
-					&vs.vtxo,
-					&user_nonce,
-					outputs,
-				).badarg("invalid arkoor")
-			})
-			.collect::<anyhow::Result<Vec<_>>>()?;
-
-		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
-			.badarg("error creating arkoor package")?;
-
-		self.inner_cosign_oor_package(&builder).await
-	}
-
-
-	async fn inner_cosign_oor_package(
-		&self,
-		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let inputs = package.inputs();
+		let inputs = builder.inputs();
 		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
 		let _lock = match self.vtxos_in_flux.lock(&input_ids) {
 			Ok(l) => l,
-			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
+			Err(id) => {
+				slog!(ArkoorInputAlreadyInFlux, vtxo: id);
+				return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id);
+			},
 		};
 
-		for output in package.output_specs() {
-			if output.amount < P2TR_DUST {
-				return badarg!("VTXO amount must be at least {}, requested {}", P2TR_DUST, output.amount);
-			}
-
-			if let Some(max) = self.config.max_vtxo_amount {
-				if output.amount > max {
-					return badarg!("output exceeds maximum vtxo amount of {max}");
-				}
-			}
-		}
-
-		self.validate_arkoor_inputs(&inputs)?;
-
-		self.validate_board_inputs(&inputs).context("invalid board inputs")?;
-
-		match self.db.check_set_vtxo_oor_spent_package(&package).await {
+		match self.db.check_set_vtxo_oor_spent_package(&builder).await {
 			Ok(Some(dup)) => {
 				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
 			},
 			Ok(None) => {
 				info!("Cosigning arkoor for inputs: {:?}", input_ids);
 				// let's sign the tx
-				Ok(package.server_cosign(&self.asp_key))
+				Ok(builder.server_cosign(&self.asp_key))
 			},
 			Err(e) => Err(e),
 		}
 	}
+
+	async fn cosign_oor_package(
+		&self,
+		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<VtxoRequest>)>,
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
+		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?
+			.into_iter().map(|s| s.vtxo).collect::<Vec<_>>();
+
+		let arkoors = arkoor_args.iter().zip(input_vtxos.iter())
+			.map(|((_, user_nonce, outputs), vtxo)| {
+				ArkoorBuilder::new(
+					&vtxo,
+					&user_nonce,
+					outputs,
+				).badarg("invalid arkoor")
+			})
+			.collect::<anyhow::Result<Vec<_>>>()?;
+
+		self.validate_arkoor_inputs(&input_vtxos)?;
+		self.validate_board_inputs(&input_vtxos).await
+			.context("invalid board inputs")?;
+
+		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
+			.badarg("error creating arkoor package")?;
+
+		self.cosign_oor_package_with_builder(&builder).await
+	}
+
 
 	// lightning
 
@@ -620,8 +622,7 @@ impl Server {
 		};
 
 		self.validate_arkoor_inputs(&inputs)?;
-
-		self.validate_board_inputs(&inputs).context("invalid board inputs")?;
+		self.validate_board_inputs(&inputs).await.context("invalid board inputs")?;
 
 		//TODO(stevenroose) check that vtxos are valid
 
@@ -632,10 +633,10 @@ impl Server {
 			tip + self.config.htlc_expiry_delta as BlockHeight
 		};
 
-		let pay_req = PaymentRequest {
-			pubkey: user_pubkey,
+		let pay_req = VtxoRequest {
 			amount: amount,
-			spk: VtxoSpkSpec::HtlcOut {
+			policy: VtxoPolicy::ServerHtlcSend {
+				user_pubkey: user_pubkey,
 				payment_hash: *invoice.payment_hash(),
 				htlc_expiry: expiry,
 			},
@@ -792,14 +793,14 @@ impl Server {
 			_ => return badarg!("This lightning payment is not eligible for revocation yet")
 		}
 
-		let pay_req = PaymentRequest {
-			pubkey: vtxos.first().unwrap().spec().user_pubkey,
+		let pay_req = VtxoRequest {
 			amount: vtxos.iter().map(|v| v.amount()).sum(),
-			spk: VtxoSpkSpec::Exit,
+			policy: VtxoPolicy::Pubkey {
+				user_pubkey: vtxos.first().unwrap().user_pubkey(),
+			},
 		};
-
 		let package = ArkoorPackageBuilder::new(&vtxos, &user_nonces, pay_req, None)?;
-		self.inner_cosign_oor_package(&package).await
+		self.cosign_oor_package_with_builder(&package).await
 	}
 
 	async fn start_bolt11_onboard(&self, payment_hash: sha256::Hash, amount: Amount)
@@ -877,15 +878,15 @@ impl Server {
 	async fn claim_bolt11_htlc(
 		&self,
 		input_vtxo_id: VtxoId,
-		pay_req: PaymentRequest,
+		vtxo_req: VtxoRequest,
 		user_nonce: musig::MusigPubNonce,
 		payment_preimage: &[u8; 32],
 	) -> anyhow::Result<ArkoorCosignResponse> {
 		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await
 			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
 
-		if let VtxoSpkSpec::HtlcIn { payment_hash, .. } = input_vtxo.vtxo.spec().spk {
-			if sha256::Hash::hash(payment_preimage) != payment_hash {
+		if let VtxoPolicy::ServerHtlcRecv { payment_hash, .. } = input_vtxo.vtxo.policy() {
+			if sha256::Hash::hash(payment_preimage) != *payment_hash {
 				bail!("input vtxo payment hash does not match preimage");
 			}
 
@@ -901,9 +902,9 @@ impl Server {
 
 			let input = [input_vtxo.vtxo];
 			let pubs = vec![user_nonce];
-			let package = ArkoorPackageBuilder::new(&input, &pubs, pay_req, None)?;
+			let package = ArkoorPackageBuilder::new(&input, &pubs, vtxo_req, None)?;
 
-			let mut arkoors = self.inner_cosign_oor_package(&package).await?;
+			let mut arkoors = self.cosign_oor_package_with_builder(&package).await?;
 			Ok(arkoors.pop().expect("should have one"))
 		} else {
 			bail!("invalid claim input: {:?}", input_vtxo);

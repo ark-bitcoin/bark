@@ -2,17 +2,18 @@
 
 use std::str::FromStr;
 
+use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
 use bitcoin::Address;
 use bitcoin::params::Params;
+use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
 use log::trace;
 
-use ark::vtxo::exit_spk;
+use ark::vtxo::exit_taproot;
 use aspd_rpc::{self as rpc, protos};
 use bark_json::cli::ExitProgressResponse;
 use bark_json::exit::error::ExitError;
-use bark_json::primitives::VtxoType;
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -145,8 +146,8 @@ async fn fail_handshake() {
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 
 	// now create bad proxy
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(NoHandshakeProxy(aspd.get_public_client().await)).await;
-	bark.set_asp(&proxy.address).await;
+	let proxy = AspdRpcProxyServer::start(NoHandshakeProxy(aspd.get_public_client().await)).await;
+	bark.set_asp(&proxy).await;
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
@@ -372,7 +373,6 @@ async fn exit_oor() {
 	let vtxos = bark2.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "We have received one vtxo");
 	let oor_vtxo = &vtxos[0];
-	assert_eq!(oor_vtxo.vtxo_type, VtxoType::Arkoor);
 
 	// We stop the asp
 	aspd.stop().await.unwrap();
@@ -426,7 +426,7 @@ async fn double_exit_call() {
 	let last_moves = &movements[0..=2];
 	assert!(
 		vtxos.iter().all(|v| last_moves.iter().any(|m| {
-				let exit_spk = exit_spk(v.user_pubkey, v.asp_pubkey, v.exit_delta);
+				let exit_spk = exit_taproot(v.user_pubkey, v.asp_pubkey, v.exit_delta).script_pubkey();
 				let address = Address::from_script(&exit_spk, Params::REGTEST)
 					.unwrap().to_string();
 				m.spends.first().unwrap().id == v.id &&
@@ -454,7 +454,7 @@ async fn double_exit_call() {
 	assert_eq!(last_move.spends.len(), 1, "we should only exit last spendable vtxo");
 	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
 
-	let exit_spk = exit_spk(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta);
+	let exit_spk = exit_taproot(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta).script_pubkey();
 	let address = Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string();
 	assert_eq!(last_move.recipients[0].recipient, address, "movement destination should be exit_spk");
 

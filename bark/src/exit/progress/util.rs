@@ -1,8 +1,12 @@
+
+use std::collections::HashMap;
+
 use bdk_esplora::esplora_client::Amount;
 use bitcoin::{FeeRate, Weight};
 
 use ark::Vtxo;
-use json::exit::states::{ExitTx, ExitTxStatus};
+
+use crate::json::exit::states::{ExitTx, ExitTxStatus};
 
 /// Counts how many of the given ExitTx objects exist in either the mempool or the blockchain
 pub(crate) fn count_broadcast(status: &[ExitTx]) -> usize {
@@ -28,11 +32,14 @@ pub(crate) fn estimate_exit_cost<'a, I>(vtxos: I, fee_rate: FeeRate) -> Amount
 where
 	I: IntoIterator<Item = &'a Vtxo>
 {
-	let mut all_txs = Vec::with_capacity(10);
+	let mut all_txs = HashMap::with_capacity(10);
 	for vtxo in vtxos {
-		vtxo.collect_exit_txs(&mut all_txs);
+		for tx in vtxo.transactions() {
+			all_txs.insert(tx.tx.compute_txid(), tx.tx);
+		}
 	}
-	let total_weight = all_txs.iter().map(|t| t.weight()).sum::<Weight>();
+
+	let total_weight = all_txs.values().map(|t| t.weight()).sum::<Weight>();
 	// we multiply by two as a rough upper bound of all the CPFP txs
 	fee_rate * total_weight * 2
 }

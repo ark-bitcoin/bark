@@ -27,13 +27,13 @@ pub fn create_forfeit_tx(
 		input: vec![
 			TxIn {
 				previous_output: vtxo.point(),
-				sequence: Sequence::MAX,
+				sequence: Sequence::ZERO,
 				script_sig: ScriptBuf::new(),
 				witness: forfeit_sig.map(|s| Witness::from_slice(&[&s[..]])).unwrap_or_default(),
 			},
 			TxIn {
 				previous_output: connector,
-				sequence: Sequence::MAX,
+				sequence: Sequence::ZERO,
 				script_sig: ScriptBuf::new(),
 				witness: connector_sig.map(|s| Witness::from_slice(&[&s[..]])).unwrap_or_default(),
 			},
@@ -56,10 +56,7 @@ fn forfeit_input_sighash(
 	connector_pk: PublicKey,
 	input_idx: usize,
 ) -> (TapSighash, Transaction) {
-	let exit_prevout = TxOut {
-		script_pubkey: vtxo.spec().vtxo_spk(),
-		value: vtxo.amount(),
-	};
+	let exit_prevout = vtxo.txout();
 	let connector_prevout = TxOut {
 		script_pubkey: ConnectorChain::output_script(connector_pk),
 		value: P2TR_DUST,

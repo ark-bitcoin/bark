@@ -22,13 +22,13 @@ use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
 pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub enum Utxo {
 	Local(LocalOutput),
 	Exit(SpendableExit),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub struct SpendableExit {
 	pub vtxo: Vtxo,
 	pub height: BlockHeight,
@@ -46,7 +46,7 @@ impl TxBuilderExt for TxBuilder<'_, BranchAndBoundCoinSelection> {
 			let mut psbt_in = psbt::Input::default();
 			psbt_in.set_exit_claim_input(&input.vtxo);
 			psbt_in.witness_utxo = Some(TxOut {
-				script_pubkey: input.vtxo.spec().vtxo_spk(),
+				script_pubkey: input.vtxo.output_script_pubkey(),
 				value: input.vtxo.amount(),
 			});
 
@@ -181,7 +181,8 @@ impl Wallet {
 	}
 
 	pub (crate) fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
-		&mut self, outputs: T
+		&mut self,
+		outputs: T,
 	) -> anyhow::Result<Psbt> {
 		let fee_rate = self.fee_rates.regular;
 		let mut b = self.wallet.build_tx();
@@ -227,7 +228,7 @@ impl Wallet {
 					&prevouts,
 					i,
 					&keypair
-				);
+				)?;
 			}
 		}
 

@@ -63,4 +63,5 @@ tokio-stream.workspace = true
 home = { version = "=0.5.9", optional = true }
 
 [dev-dependencies]
+ark-lib = { path = "../ark-lib", features = [ "test-util" ] }
 rand.workspace = true

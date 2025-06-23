@@ -47,7 +47,7 @@ impl Node {
 	}
 
 	/// An iterator over all leaf indices under this node.
-	pub fn leaves(&self) -> impl Iterator<Item = usize> {
+	pub fn leaves(&self) -> impl Iterator<Item = usize> + Clone {
 		let (first, last) = self.leaves;
 		let nb = self.nb_tree_leaves;
 		(first..)

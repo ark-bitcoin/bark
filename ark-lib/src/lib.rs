@@ -6,6 +6,8 @@ pub extern crate bitcoin;
 
 pub mod arkoor;
 pub mod connectors;
+pub mod encode;
+pub mod error;
 pub mod forfeit;
 pub mod lightning;
 pub mod musig;
@@ -15,23 +17,21 @@ pub mod tree;
 pub mod util;
 pub mod vtxo;
 
-pub use crate::arkoor::ArkoorVtxo;
-pub use crate::board::BoardVtxo;
-pub use crate::rounds::RoundVtxo;
-pub use crate::vtxo::{VtxoId, VtxoSpec, Vtxo};
+pub use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
+pub use crate::vtxo::{Vtxo, VtxoId, VtxoPolicy};
 
 #[cfg(test)]
 mod napkin;
-#[cfg(any(test, feature="test-util"))]
+#[cfg(any(test, feature = "test-util"))]
 pub mod test;
+
 
 use std::time::Duration;
 
-use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::{Amount, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
-use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::{P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
-use vtxo::VtxoSpkSpec;
+use bitcoin::secp256k1::{schnorr, PublicKey};
+
+use bitcoin_ext::{TxOutExt, P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB};
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,35 +56,23 @@ pub struct VtxoIdInput {
 	/// See [`rounds::VtxoOwnershipChallenge`].
 	///
 	/// Should be produced using VTXO's private key
-	pub ownership_proof: Signature,
+	pub ownership_proof: schnorr::Signature,
 }
 
-/// Request for the creation of a VTXO.
-///
-/// NB This differs from the [VtxoRequest] type in ark-lib in the fact that
-/// it doesn't have a cosign pubkey attached yet.
-/// With covenants we can remove this type distinction.
-/// Or we might be able to use it for OOR payments.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-//TODO(stevenroose) rename to vtxooutputrequest when suitable
-pub struct PaymentRequest {
-	pub pubkey: PublicKey,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	pub amount: Amount,
-	/// Specifications for the script pubkey locking the VTXO
-	pub spk: VtxoSpkSpec,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+/// Request for the creation of an vtxo.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VtxoRequest {
-	pub pubkey: PublicKey,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
+	pub policy: VtxoPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SignedVtxoRequest {
+	/// The actual VTXO request.
+	pub vtxo: VtxoRequest,
 	/// The public key used by the client to cosign the transaction tree
 	/// The client SHOULD forget this key after signing it
-	pub cosign_pk: PublicKey,
-	/// Specifications for the script pubkey locking the VTXO
-	pub spk: VtxoSpkSpec,
+	pub cosign_pubkey: PublicKey,
 }
 
 
@@ -145,8 +133,11 @@ impl OffboardRequest {
 
 	/// Validate that the offboard has a valid script.
 	pub fn validate(&self) -> Result<(), InvalidOffboardRequestError> {
-		Self::calculate_fee(&self.script_pubkey, FeeRate::ZERO)?;
-		Ok(())
+		if self.to_txout().is_standard() {
+			Ok(())
+		} else {
+			Err(InvalidOffboardRequestError("non-standard output"))
+		}
 	}
 
 	/// Convert into a tx output.

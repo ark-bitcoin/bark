@@ -10,7 +10,7 @@ use cbitcoin::script::{Builder, PushBytes};
 use cbitcoin::taproot::ControlBlock;
 use cbitcoin::secp256k1::{self, Keypair, Secp256k1};
 
-use crate::fee;
+use crate::{fee, P2PKH_DUST, P2SH_DUST, P2TR_DUST, P2WPKH_DUST, P2WSH_DUST};
 
 /// Extension trait for [Keypair].
 pub trait KeypairExt: Borrow<Keypair> {
@@ -26,12 +26,47 @@ pub trait KeypairExt: Borrow<Keypair> {
 impl KeypairExt for Keypair {}
 
 
+/// Extension trait for [TxOut].
+pub trait TxOutExt: Borrow<TxOut> {
+	/// Check whether this output is a p2a fee anchor.
+	fn is_p2a_fee_anchor(&self) -> bool {
+		self.borrow().script_pubkey == *fee::P2A_SCRIPT
+	}
+
+	/// Basic standardness check. Might be too strict.
+	fn is_standard(&self) -> bool {
+		let out = self.borrow();
+
+		let dust_limit = if out.script_pubkey.is_p2pkh() {
+			P2PKH_DUST
+		} else if out.script_pubkey.is_p2sh() {
+			P2SH_DUST
+		} else if out.script_pubkey.is_p2wpkh() {
+			P2WPKH_DUST
+		} else if out.script_pubkey.is_p2wsh() {
+			P2WSH_DUST
+		} else if out.script_pubkey.is_p2tr() {
+			P2TR_DUST
+		} else if out.script_pubkey.is_op_return() {
+			return out.script_pubkey.len() <= 83;
+		} else {
+			return false;
+		};
+
+		out.value >= dust_limit
+	}
+}
+impl TxOutExt for TxOut {}
+
+
 /// Extension trait for [Transaction].
 pub trait TransactionExt: Borrow<Transaction> {
 	/// Check if this tx has a fee anchor output and return the outpoint of it.
+	///
+	/// Only the first fee anchor is returned.
 	fn fee_anchor(&self) -> Option<(OutPoint, &TxOut)> {
 		for (i, out) in self.borrow().output.iter().enumerate() {
-			if out.script_pubkey == *fee::P2A_SCRIPT {
+			if out.is_p2a_fee_anchor() {
 				let point = OutPoint::new(self.borrow().compute_txid(), i as u32);
 				return Some((point, out));
 			}
@@ -58,6 +93,11 @@ impl TransactionExt for Transaction {}
 
 /// An extension trait for [taproot::TaprootSpendInfo].
 pub trait TaprootSpendInfoExt: Borrow<taproot::TaprootSpendInfo> {
+	/// The p2tr output scriptPubkey for this taproot.
+	fn script_pubkey(&self) -> ScriptBuf {
+		ScriptBuf::new_p2tr_tweaked(self.borrow().output_key())
+	}
+
 	/// Return the existing tapscripts in the format that PSBT expects.
 	fn psbt_tap_scripts(&self) -> BTreeMap<ControlBlock, (ScriptBuf, taproot::LeafVersion)> {
 		let s = self.borrow();
@@ -126,8 +166,8 @@ pub(crate) const P2A_PROGRAM: [u8; 2] = [78, 115];
 /// Generates P2WSH-type of scriptPubkey with a given [`WitnessVersion`] and the program bytes.
 /// Does not do any checks on version or program length.
 ///
-/// Convenience method used by `new_p2wpkh`, `new_p2wsh`, `new_p2tr`, and `new_p2tr_tweaked`.
-/// Convenience method used by `new_p2a`, `new_p2wpkh`, `new_p2wsh`, `new_p2tr`, and `new_p2tr_tweaked`.
+/// Convenience method used by `new_p2a`, `new_p2wpkh`, `new_p2wsh`, `new_p2tr`,
+/// and `new_p2tr_tweaked`.
 pub(crate) fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
 	version: WitnessVersion,
 	program: T,

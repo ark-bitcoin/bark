@@ -1,6 +1,7 @@
 use std::fmt::{self, Display};
 use std::borrow::Cow;
 use anyhow::Context;
+use bitcoin_ext::BlockHeight;
 use postgres_types::{FromSql, ToSql};
 use std::str::FromStr;
 
@@ -12,12 +13,11 @@ use chrono::{DateTime, Utc};
 use lightning_invoice::Bolt11Invoice;
 use tokio_postgres::Row;
 
-use ark::{Vtxo, VtxoId};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::musig::{MusigPartialSignature, MusigPubNonce, MusigSecNonce};
 use ark::musig::secpm::ffi::MUSIG_SECNONCE_LEN;
 use ark::rounds::RoundId;
 use ark::tree::signed::SignedVtxoTreeSpec;
-use ark::util::Decodable;
 
 use super::ClnNodeId;
 
@@ -28,6 +28,7 @@ pub struct StoredRound {
 	pub signed_tree: SignedVtxoTreeSpec,
 	pub nb_input_vtxos: usize,
 	pub connector_key: SecretKey,
+	pub expiry_height: BlockHeight,
 }
 
 impl TryFrom<Row> for StoredRound {
@@ -40,9 +41,10 @@ impl TryFrom<Row> for StoredRound {
 
 		Ok(Self {
 			id, tx,
-			signed_tree: SignedVtxoTreeSpec::decode(value.get("signed_tree"))?,
+			signed_tree: SignedVtxoTreeSpec::deserialize(value.get("signed_tree"))?,
 			nb_input_vtxos: usize::try_from(value.get::<_, i32>("nb_input_vtxos"))?,
 			connector_key: SecretKey::from_slice(value.get("connector_key"))?,
+			expiry_height: value.get::<_, i32>("expiry") as BlockHeight,
 		})
 	}
 }
@@ -92,7 +94,7 @@ impl TryFrom<Row> for VtxoState {
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
 		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("id"))?;
-		let vtxo = Vtxo::decode(row.get("vtxo"))?;
+		let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
 		debug_assert_eq!(vtxo_id, vtxo.id());
 
 		Ok(Self {

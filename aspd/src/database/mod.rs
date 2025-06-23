@@ -27,10 +27,10 @@ use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
 use log::info;
 
-use ark::{BoardVtxo, PaymentRequest, Vtxo, VtxoId};
+use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::encode::ProtocolEncoding;
 use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
-use ark::util::{Decodable, Encodable};
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
@@ -154,7 +154,7 @@ impl Db {
 		for vtxo in vtxos {
 			let vtxo = vtxo.borrow();
 			ids.push(vtxo.id().to_string());
-			data.push(vtxo.encode());
+			data.push(vtxo.serialize());
 			expiry.push(vtxo.expiry_height() as i32);
 		}
 
@@ -188,7 +188,7 @@ impl Db {
 	pub async fn get_expired_boards(
 		&self,
 		height: BlockHeight,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<BoardVtxo>> + '_> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
 		let conn = self.pool.get().await?;
 
 		// TODO: maybe store kind in a column to filter board at the db level
@@ -199,15 +199,19 @@ impl Db {
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
 
-		Ok(rows.filter_map(|row| async move {
-			row
-				.map(|row | VtxoState::try_from(row).expect("corrupt db").vtxo.into_board())
-				.map_err(Into::into)
-				.transpose()
+		//TODO(stevenroose) this is very inefficient but I suspect this code
+		// will be deprecated soon
+		Ok(rows.map_err(anyhow::Error::from).try_filter_map(|row| async {
+			let vtxo = VtxoState::try_from(row).expect("corrupt db").vtxo;
+			if !self.is_round_tx(vtxo.chain_anchor().txid).await? {
+				Ok(Some(vtxo))
+			} else {
+				Ok(None)
+			}
 		}).fuse())
 	}
 
-	pub async fn mark_board_swept(&self, vtxo: &BoardVtxo) -> anyhow::Result<()> {
+	pub async fn mark_board_swept(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
@@ -288,16 +292,15 @@ impl Db {
 	/// Also stores the new OOR vtxos atomically.
 	pub async fn check_set_vtxo_oor_spent_package(
 		&self,
-		package: &ArkoorPackageBuilder<'_, PaymentRequest>,
+		builder: &ArkoorPackageBuilder<'_, VtxoRequest>,
 	) -> anyhow::Result<Option<VtxoId>> {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
-		let new_vtxos = package.new_vtxos()
-			.into_iter().flatten().map(|v| Vtxo::Arkoor(v)).collect::<Vec<_>>();
+		let new_vtxos = builder.new_vtxos().into_iter().flatten().collect::<Vec<_>>();
 
-		for input in package.inputs() {
-			let txid = package.spending_tx(input.id())
+		for input in builder.inputs() {
+			let txid = builder.spending_tx(input.id())
 				.expect("spending tx should be present").compute_txid();
 
 			let statement = tx.prepare_typed("
@@ -329,10 +332,12 @@ impl Db {
 		let statement = conn.prepare("
 			INSERT INTO arkoor_mailbox (id, pubkey, arkoor_package_id, vtxo) VALUES ($1, $2, $3, $4);
 		").await?;
-		conn.execute(
-			&statement,
-			&[&vtxo.id().to_string(), &pubkey.serialize().to_vec(), &arkoor_package_id.to_vec(), &vtxo.encode()]
-		).await?;
+		conn.execute(&statement, &[
+			&vtxo.id().to_string(),
+			&pubkey.serialize().to_vec(),
+			&arkoor_package_id.to_vec(),
+			&vtxo.serialize(),
+		]).await?;
 
 		Ok(())
 	}
@@ -348,7 +353,7 @@ impl Db {
 		let rows = conn.query(&statement, &[&pubkey.serialize().to_vec()]).await?;
 
 		for row in &rows {
-			let vtxo = Vtxo::decode(row.get("vtxo"))?;
+			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
 			let package_id = row.get::<_, Vec<u8>>("arkoor_package_id")
 				.try_into().expect("invalid arkoor package id");
 
@@ -390,7 +395,7 @@ impl Db {
 			&[
 				&round_id.to_string(),
 				&serialize(&round_tx),
-				&vtxos.spec.encode(),
+				&vtxos.spec.serialize(),
 				&(forfeit_vtxos.len() as i32),
 				&connector_key.secret_bytes().to_vec(),
 				&(vtxos.spec.spec.expiry_height as i32)
@@ -423,10 +428,19 @@ impl Db {
 		Ok(())
 	}
 
+	pub async fn is_round_tx(&self, txid: Txid) -> anyhow::Result<bool> {
+		let conn = self.pool.get().await?;
+		let statement = conn.prepare("SELECT 1 FROM round WHERE id = $1 LIMIT 1;").await?;
+
+		let rows = conn.query(&statement, &[&txid.to_string()]).await?;
+		Ok(!rows.is_empty())
+	}
+
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE id = $1;
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			FROM round WHERE id = $1;
 		").await?;
 
 		let rows = conn.query(&statement, &[&id.to_string()]).await?;
@@ -454,7 +468,8 @@ impl Db {
 	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE expiry <= $1
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			FROM round WHERE expiry <= $1
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
@@ -464,7 +479,8 @@ impl Db {
 	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key FROM round WHERE expiry > $1
+			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			FROM round WHERE expiry > $1
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
