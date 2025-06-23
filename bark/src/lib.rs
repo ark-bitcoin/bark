@@ -928,45 +928,25 @@ impl Wallet {
 		Ok(self.offboard(input_vtxos, address).await?)
 	}
 
-	/// Refresh VTXOs.
+	/// This will refresh all provided VTXO Ids.
 	///
-	/// This will refresh all provided VTXOs.
-	///
-	/// If `include_auto_refresh` is set, it will also refresh any VTXO that meets
-	/// must-refresh criterias. Then, if there are some VTXOs to refresh, it will
-	/// also refresh those that meet should-refresh criterias.
-	///
-	/// Returns the [RoundId] of the round if a successful refresh occured.
+	/// Returns the [RoundId] of the round if a successful refresh occurred.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
-	pub async fn refresh(
-		&self,
-		vtxos: &[Vtxo],
-		include_auto_refresh: bool,
-	) -> anyhow::Result<Option<RoundId>> {
-		let mut vtxo_by_id = vtxos
-			.iter().map(|v| (v.id(), v.clone())).collect::<HashMap<_, _>>();
-
-		if include_auto_refresh || vtxo_by_id.is_empty() {
-			let tip = self.onchain.tip().await?;
-
-			let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip))?;
-			info!("Refreshing {} must-refresh VTXOs.", must_refresh_vtxos.len());
-			vtxo_by_id.extend(must_refresh_vtxos.into_iter().map(|v| (v.id(), v)));
-
-			// If no vtxos were specified and we don't have must-refresh vtxos, we can stop here.
-			if vtxo_by_id.is_empty() {
-				warn!("There is no VTXO to refresh.");
-				return Ok(None)
-			}
-
-			// If we have vtxos to refresh, we take the opportunity to refresh some should-refresh vtxos.
-			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
-			info!("Refreshing {} should-refresh VTXOs.", should_refresh_vtxos.len());
-			vtxo_by_id.extend(should_refresh_vtxos.into_iter().map(|v| (v.id(), v)));
+	pub async fn refresh_vtxos(&self, mut vtxos: Vec<Vtxo>) -> anyhow::Result<Option<RoundId>> {
+		if vtxos.is_empty() {
+			info!("Skipping refresh since no VTXOs are provided.");
+			return Ok(None);
 		}
 
-		let input_vtxos = vtxo_by_id.values().cloned().collect::<Vec<_>>();
-		let total_amount = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		vtxos.sort_unstable();
+
+		if let Some(dup) = vtxos.windows(2).find(|w| w[0].id() == w[1].id()) {
+			bail!("duplicate VTXO id detected: {}", dup[0].id());
+		}
+
+		let total_amount = vtxos.iter().map(|v| v.amount()).sum();
+
+		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let req = VtxoRequest {
@@ -975,14 +955,50 @@ impl Wallet {
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok((input_vtxos.clone(), vec![req.clone()], Vec::new()))
+			Ok((vtxos.to_vec(), vec![req.clone()], Vec::new()))
 		}).await.context("round failed")?;
+
 		Ok(Some(round_id))
 	}
 
 	/// Performs a refresh of all VTXOs that are due to be refreshed, if any.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
-		self.refresh(&[], true).await
+		let vtxos = self.get_vtxos_to_refresh().await?;
+		if vtxos.len() == 0 {
+			return Ok(None);
+		}
+
+		self.refresh_vtxos(vtxos).await
+	}
+
+	/// This will find any VTXO that meets must-refresh criteria.
+	/// Then, if there are some VTXOs to refresh, it will
+	/// also add those that meet should-refresh criteria.
+	///
+	/// Returns a list of Vtxo's
+	async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
+		let tip = self.onchain.tip().await?;
+
+		let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip))?;
+		if must_refresh_vtxos.is_empty() {
+			// We ignore should refresh when there are no must-refresh, as per function comment.
+			info!("No must-refresh VTXOs found.");
+			return Ok(vec![]);
+		}
+
+		info!("Found {} must-refresh VTXOs.", must_refresh_vtxos.len());
+
+		let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
+		if should_refresh_vtxos.is_empty() {
+			info!("No should-refresh VTXOs found.");
+		} else {
+			info!("Found {} should-refresh VTXOs.", should_refresh_vtxos.len());
+		}
+
+		let mut ret = must_refresh_vtxos;
+		ret.extend(should_refresh_vtxos);
+
+		Ok(ret)
 	}
 
 	/// Select several vtxos to cover the provided amount
