@@ -36,7 +36,7 @@
 				};
 
 				rust = pkgs.rust-bin.stable.${rustVersion}.default.override {
-					extensions = [ "rust-src" "rust-analyzer" ];
+					extensions = [ "rust-src" "rust-analyzer" "llvm-tools-preview" ];
 				};
 
 				bitcoin = masterPkgs.bitcoind.overrideAttrs (old: {
@@ -101,7 +101,7 @@
 						owner = "ElementsProject";
 						repo = "lightning";
 						rev = "v${lightningVersion}";
-						hash = "sha256-Xkh4ggUSX2xLJQes8cE5jyu2DZut/YRcQq5vsDH7S+k=";
+						hash = "sha256-SiPYB463l9279+zawsxmql1Ui/dTdah5KgJgmrWsR2A=";
 					};
 					buildAndTestSubdir = "plugins/grpc-plugin";
 					nativeBuildInputs = [ rust pkgs.protobuf ];
@@ -142,18 +142,18 @@
 					"hold" = "${hold-invoice}/bin/hold";
 				};
 
-			  postgresql = pkgs.postgresql.overrideAttrs (old: {
-			    version = "${postgresVersion}";
-			    src = pkgs.fetchurl {
-			      url = "https://ftp.postgresql.org/pub/source/v${postgresVersion}/postgresql-${postgresVersion}.tar.bz2";
-			      hash = "sha256-B8APuCTfCgwpXySfRGkbhuMmZ1OzgMlvYzwzEeEL0AU=";
-			    };
-			  });
+				postgresql = pkgs.postgresql.overrideAttrs (old: {
+					version = "${postgresVersion}";
+					src = pkgs.fetchurl {
+						url = "https://ftp.postgresql.org/pub/source/v${postgresVersion}/postgresql-${postgresVersion}.tar.bz2";
+						hash = "sha256-B8APuCTfCgwpXySfRGkbhuMmZ1OzgMlvYzwzEeEL0AU=";
+					};
+				});
 
 			in
 			{
 				devShells.default = pkgs.mkShell {
-					nativeBuildInput = [ ];
+					nativeBuildInputs = [ ];
 					buildInputs = [
 						# For CI image
 						pkgs.coreutils
@@ -161,7 +161,9 @@
 						pkgs.git
 						pkgs.gnugrep
 						# For building
-						pkgs.llvmPackages.clang
+						pkgs.llvmPackages_16.clang
+						pkgs.llvmPackages_16.bintools
+						pkgs.llvmPackages_16.llvm
 						pkgs.rustPlatform.bindgenHook
 						rust
 						pkgs.pkg-config
@@ -177,6 +179,7 @@
 						electrs
 						pkgs.glibcLocales
 						postgresql
+						pkgs.cargo-llvm-cov
 					] ++ (if isDarwin then [
 						pkgs.darwin.apple_sdk.frameworks.Security
 						pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
