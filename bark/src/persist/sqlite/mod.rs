@@ -13,12 +13,12 @@ use log::debug;
 use rusqlite::{Connection, Transaction};
 
 use crate::{
-	Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState,
+	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementArgs};
-use crate::persist::BarkPersister;
+use crate::persist::{BarkPersister, OffchainOnboard, OffchainPayment};
 
 
 #[derive(Clone)]

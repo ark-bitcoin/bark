@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
-use ark::util::Encodable;
 use bitcoin::{Amount, BlockHash, FeeRate, Network, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
@@ -13,8 +12,9 @@ use rusqlite::{self, named_params, Connection, ToSql};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
+use crate::persist::{OffchainOnboard, OffchainPayment};
 use crate::{
-	Config, KeychainKind, OffchainOnboard, OffchainPayment, Pagination, Vtxo, VtxoId, VtxoState,
+	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
@@ -459,7 +459,7 @@ pub fn store_offchain_onboard(
 	statement.execute([
 		payment_hash.to_vec(),
 		preimage.to_vec(),
-		payment.serialize(),
+		serde_json::to_vec(&payment)?,
 	])?;
 
 	Ok(())
