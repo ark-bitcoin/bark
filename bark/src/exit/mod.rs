@@ -3,11 +3,13 @@ pub(crate) mod transaction_manager;
 pub mod vtxo;
 
 use std::cmp;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bitcoin::Amount;
-use log::{info, error, warn};
+use anyhow::Context;
+use ark::util::SECP;
+use bitcoin::{sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+use log::{error, info, warn};
 
 use ark::{Vtxo, VtxoId};
 use bitcoin_ext::BlockHeight;
@@ -19,6 +21,8 @@ use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::exit::vtxo::{ExitEntry, ExitVtxo};
 use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
+use crate::psbtext::PsbtInputExt;
+use crate::Wallet;
 
 /// Handle the process of ongoing VTXO exits
 pub struct Exit {
@@ -307,5 +311,97 @@ impl Exit {
 			}
 		}
 		Ok(())
+	}
+
+	/// List all exits that are spendable
+	pub fn list_spendable(&self) -> anyhow::Result<Vec<&ExitVtxo>> {
+		let mut outputs = Vec::new();
+		for exit in &self.exit_vtxos {
+			if matches!(exit.state(), ExitState::Spendable(..)) {
+				outputs.push(exit);
+			}
+		}
+
+		Ok(outputs)
+	}
+
+	/// Sign any inputs of the PSBT that is an exit claim input
+	///
+	/// Can take the result PSBT of [`bdk_wallet::TxBuilder::finish`] on which
+	/// [`crate::onchain::TxBuilderExt::add_exit_claim_inputs`] has been used
+	///
+	/// Note: This doesn't mark the exit output as spent, it's up to the caller to
+	/// do that or it will be done once the transaction is seen in the network
+	pub fn sign_exit_claim_inputs(&self, psbt: &mut Psbt, wallet: &Wallet) -> anyhow::Result<()> {
+		let prevouts = psbt.inputs.iter()
+			.map(|i| i.witness_utxo.clone().unwrap())
+			.collect::<Vec<_>>();
+
+		let prevouts = sighash::Prevouts::All(&prevouts);
+		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
+
+		let spendable = self.list_spendable()?.into_iter().map(|v| (v.vtxo().id(), v)).collect::<HashMap<_, _>>();
+
+		let mut spent = Vec::new();
+		for (i, input) in psbt.inputs.iter_mut().enumerate() {
+			let vtxo = input.get_exit_claim_input();
+
+			if let Some(vtxo) = vtxo {
+				let exit_vtxo = *spendable.get(&vtxo.id()).context("vtxo is not exited yet")?;
+
+				let (keychain, keypair_idx) = wallet.db.get_vtxo_key(&vtxo)?;
+				let keypair = wallet.vtxo_seed.derive_keychain(keychain, keypair_idx);
+
+				input.maybe_sign_exit_claim_input(
+					&SECP,
+					&mut shc,
+					&prevouts,
+					i,
+					&keypair
+				)?;
+
+				spent.push(exit_vtxo);
+			}
+		}
+
+		Ok(())
+	}
+
+	/// Prepare and sign a PSBT to drain all spendable VTXOs to provided address
+	pub fn drain_spendable_outputs(&self, wallet: &Wallet, address: Address, fee_rate: FeeRate) -> anyhow::Result<Psbt> {
+		let inputs = self.list_spendable()?;
+
+		let output_amount = inputs.iter().map(|v| v.vtxo().spec().amount).sum();
+
+		let mut tx = Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: inputs.iter().map(|v| TxIn {
+				previous_output: v.vtxo().point(),
+				script_sig: ScriptBuf::default(),
+				sequence: Sequence::from_height(v.vtxo().exit_delta()),
+				witness: Witness::new(),
+			}).collect(),
+			output: vec![
+				TxOut {
+					script_pubkey: address.script_pubkey(),
+					value: output_amount,
+				},
+			],
+		};
+
+		// We adjust drain amount to cover the fee
+		let fee_amount = fee_rate * tx.weight();
+		tx.output[0].value -= fee_amount;
+
+		let mut psbt = Psbt::from_unsigned_tx(tx)?;
+		psbt.inputs.iter_mut().zip(inputs).for_each(|(i, v)| {
+			i.set_exit_claim_input(&v.vtxo());
+			i.witness_utxo = Some(v.vtxo().txout())
+		});
+
+		self.sign_exit_claim_inputs(&mut psbt, wallet)?;
+
+		Ok(psbt)
 	}
 }

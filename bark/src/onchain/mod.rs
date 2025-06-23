@@ -3,7 +3,7 @@ mod chain;
 mod bdk;
 
 pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
-pub use crate::onchain::bdk::OnchainWallet;
+pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 
 use std::sync::Arc;
 

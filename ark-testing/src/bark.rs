@@ -385,6 +385,15 @@ impl Bark {
 		self.run_json(["exit", "list"]).await
 	}
 
+	pub async fn claim_all_exits(&self, destination: impl fmt::Display) {
+		let destination = destination.to_string();
+		self.run(["exit", "claim", &destination, "--verbose", "--all"]).await;
+	}
+
+	pub async fn claim_single_exit(&self, vtxo: impl fmt::Display, destination: impl fmt::Display) {
+		self.run(["exit", "claim", &destination.to_string(), "--vtxo", &vtxo.to_string(), "--verbose"]).await;
+	}
+
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>
 		where I: IntoIterator<Item = S>, S : AsRef<str>
 	{

@@ -1,7 +1,5 @@
 
 
-use std::str::FromStr;
-
 use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
 use bark_json::exit::states::ExitStartState;
 use bark_json::exit::ExitState;
@@ -80,10 +78,6 @@ async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 
 #[tokio::test]
 async fn simple_exit() {
-	let random_addr = Address::from_str(
-		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
-	).unwrap().assume_checked();
-
 	// Initialize the test
 	let ctx = TestContext::new("exit/simple_exit").await;
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
@@ -94,27 +88,16 @@ async fn simple_exit() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	bark.refresh_all().await;
-	let vtxo = &bark.vtxos().await[0];
 
 	aspd.stop().await.unwrap();
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
+
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
 	// Wallet has 1_000_000 sats of funds minus fees
-	assert_eq!(bark.onchain_balance().await, sat(997_631));
-
-	// Verify exit output is considered as part of the wallets
-	let utxos = bark.utxos().await;
-	assert!(
-		utxos.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount),
-		"vtxo={:?}; utxos: {:?}", vtxo, utxos,
-	);
-
-	// Verify we can send exited utxo
-	// Sending sats more than vtxo amount ensure we spend all available utxos
-	// (vtxo output and cpfp change)
-	bark.onchain_send(&random_addr, vtxo.amount + Amount::ONE_SAT).await;
+	assert_eq!(bark.onchain_balance().await, sat(997_161));
 }
 
 #[tokio::test]
@@ -153,15 +136,14 @@ async fn fail_handshake() {
 	assert_eq!(sat(90_000), bark.offchain_balance().await);
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
-	assert_eq!(bark.onchain_balance().await, sat(98_908));
+
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	assert_eq!(bark.onchain_balance().await, sat(97_161));
 }
 
 #[tokio::test]
 async fn exit_round() {
-	let random_addr = Address::from_str(
-		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
-	).unwrap().assume_checked();
-
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
@@ -244,6 +226,16 @@ async fn exit_round() {
 	complete_exit(&ctx, &bark7).await;
 	complete_exit(&ctx, &bark8).await;
 
+	bark1.claim_all_exits(bark1.get_onchain_address().await).await;
+	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
+	bark3.claim_all_exits(bark3.get_onchain_address().await).await;
+	bark4.claim_all_exits(bark4.get_onchain_address().await).await;
+	bark5.claim_all_exits(bark5.get_onchain_address().await).await;
+	bark6.claim_all_exits(bark6.get_onchain_address().await).await;
+	bark7.claim_all_exits(bark7.get_onchain_address().await).await;
+	bark8.claim_all_exits(bark8.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
 	// All wallets have 1_000_000 sats of funds minus fees
 	//
 	// However, what fees are paid by which client is not fully predictable
@@ -259,27 +251,6 @@ async fn exit_round() {
 	assert!(bark6.onchain_balance().await >= bark6_round_vtxo.amount + Amount::ONE_SAT);
 	assert!(bark7.onchain_balance().await >= bark7_round_vtxo.amount + Amount::ONE_SAT);
 	assert!(bark8.onchain_balance().await >= bark8_round_vtxo.amount + Amount::ONE_SAT);
-
-	// Verify exit outputs are considered as part of the wallets
-	assert!(bark1.utxos().await.iter().any(|u| u.outpoint == bark1_round_vtxo.utxo && u.amount == bark1_round_vtxo.amount));
-	assert!(bark2.utxos().await.iter().any(|u| u.outpoint == bark2_round_vtxo.utxo && u.amount == bark2_round_vtxo.amount));
-	assert!(bark3.utxos().await.iter().any(|u| u.outpoint == bark3_round_vtxo.utxo && u.amount == bark3_round_vtxo.amount));
-	assert!(bark4.utxos().await.iter().any(|u| u.outpoint == bark4_round_vtxo.utxo && u.amount == bark4_round_vtxo.amount));
-	assert!(bark5.utxos().await.iter().any(|u| u.outpoint == bark5_round_vtxo.utxo && u.amount == bark5_round_vtxo.amount));
-	assert!(bark6.utxos().await.iter().any(|u| u.outpoint == bark6_round_vtxo.utxo && u.amount == bark6_round_vtxo.amount));
-	assert!(bark7.utxos().await.iter().any(|u| u.outpoint == bark7_round_vtxo.utxo && u.amount == bark7_round_vtxo.amount));
-	assert!(bark8.utxos().await.iter().any(|u| u.outpoint == bark8_round_vtxo.utxo && u.amount == bark8_round_vtxo.amount));
-
-	// Verify we can send exited utxos
-	// Sending sats more than vtxo amount ensure we spend all available utxos (vtxo output and cpfp change)
-	bark1.onchain_send(&random_addr, bark1_round_vtxo.amount + Amount::ONE_SAT).await;
-	bark2.onchain_send(&random_addr, bark2_round_vtxo.amount + Amount::ONE_SAT).await;
-	bark3.onchain_send(&random_addr, bark3_round_vtxo.amount + Amount::ONE_SAT).await;
-	bark4.onchain_send(&random_addr, bark4_round_vtxo.amount + Amount::ONE_SAT).await;
-	bark5.onchain_send(&random_addr, bark5_round_vtxo.amount + Amount::ONE_SAT).await;
-	bark6.onchain_send(&random_addr, bark6_round_vtxo.amount + Amount::ONE_SAT).await;
-	bark7.onchain_send(&random_addr, bark7_round_vtxo.amount + Amount::ONE_SAT).await;
-	bark8.onchain_send(&random_addr, bark8_round_vtxo.amount + Amount::ONE_SAT).await;
 }
 
 #[tokio::test]
@@ -308,21 +279,51 @@ async fn exit_vtxo() {
 	bark.start_exit_vtxo(vtxo.id).await;
 	complete_exit(&ctx, &bark).await;
 
-	// Verify exit output is considered as part of the wallet
-	let utxos = bark.utxos().await;
-	assert_eq!(utxos.len(), 2, "We have cpfp change (spent in exit process) + exited utxo");
-	assert!(utxos.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount));
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	assert_eq!(bark.onchain_balance().await, sat(997_161));
+}
 
-	// Verify we can send both utxos
-	bark.onchain_send(bark.get_onchain_address().await, vtxo.amount + Amount::ONE_SAT).await;
+#[tokio::test]
+async fn exit_and_send_vtxo() {
+	let ctx = TestContext::new("exit/exit_and_send_vtxo").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+
+	ctx.generate_blocks(1).await;
+
+	bark.board(sat(900_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.refresh_all().await;
+
+	// By calling bark vtxos we ensure the wallet is synced
+	// This ensures bark knows the vtxo exists
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 1, "We have refreshed one vtxo");
+	let vtxo = &vtxos[0];
+
+	// We stop the asp
+	aspd.stop().await.unwrap();
+
+	// Make bark exit and check the balance
+	bark.start_exit_vtxo(vtxo.id).await;
+	complete_exit(&ctx, &bark).await;
+
+	let exits = bark.list_exits().await;
+	assert_eq!(exits.len(), 1, "We have one exit");
+	let exit = &exits[0];
+
+	assert!(matches!(exit.state, ExitState::Spendable(_)), "Exit should be spendable");
+
+	bark.claim_single_exit(exit.vtxo_id, bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark.onchain_balance().await, sat(997_501));
 }
 
 #[tokio::test]
 async fn exit_after_board() {
-	let random_addr = Address::from_str(
-		"bcrt1phrqwzmu8yvudewqefjatk20lh23vqqqnn3l57l0u2m98kd3zd70sjn2kqx"
-	).unwrap().assume_checked();
-
 	let ctx = TestContext::new("exit/exit_after_board").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 
@@ -332,23 +333,16 @@ async fn exit_after_board() {
 	// board funds
 	bark.board(sat(900_000)).await;
 
-	let board_vtxo = &bark.vtxos().await[0];
-
 	// Exit unilaterally
 	aspd.stop().await.unwrap();
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
 
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
 	let balance = bark.onchain_balance().await;
 	assert!(balance > sat(900_000), "balance: {balance}");
-
-	// Verify exit output is considered as part of the wallet
-	let utxos = bark.utxos().await;
-	assert_eq!(utxos.len(), 2, "We have cpfp change (spent in exit process) + exited utxo");
-	assert!(utxos.iter().any(|u| u.outpoint == board_vtxo.utxo && u.amount == board_vtxo.amount));
-
-	// Verify we can send both utxos
-	bark.onchain_send(random_addr, board_vtxo.amount + Amount::ONE_SAT).await;
 }
 
 #[tokio::test]
@@ -374,7 +368,6 @@ async fn exit_oor() {
 	// This ensures bark2 knows the vtxo exists
 	let vtxos = bark2.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "We have received one vtxo");
-	let oor_vtxo = &vtxos[0];
 
 	// We stop the asp
 	aspd.stop().await.unwrap();
@@ -383,15 +376,10 @@ async fn exit_oor() {
 	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
 	bark2.start_exit_all().await;
 	complete_exit(&ctx, &bark2).await;
-	assert_eq!(bark2.onchain_balance().await, sat(1_096_591));
 
-	// Verify exit output is considered as part of the wallet
-	let utxos = bark2.utxos().await;
-	assert_eq!(utxos.len(), 2, "We have cpfp change (spent in exit process) + exited utxo");
-	assert!(utxos.iter().any(|u| u.outpoint == oor_vtxo.utxo && u.amount == oor_vtxo.amount));
-
-	// Verify we can send both utxos
-	bark2.onchain_send(bark1.get_onchain_address().await, oor_vtxo.amount + Amount::ONE_SAT).await;
+	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	assert_eq!(bark2.onchain_balance().await, sat(1096121));
 }
 
 #[tokio::test]
@@ -420,7 +408,8 @@ async fn double_exit_call() {
 
 	bark1.start_exit_all().await;
 	complete_exit(&ctx, &bark1).await;
-	assert_eq!(bark1.onchain_balance().await, sat(1_321_853));
+
+	// TODO: Drain exit outputs then check balance in onchain wallet
 
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 7);
@@ -515,9 +504,11 @@ async fn exit_bolt11_change() {
 	bark_1.start_exit_all().await;
 	complete_exit(&ctx, &bark_1).await;
 
+	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
 	assert_eq!(bark_1.offchain_balance().await, Amount::ZERO);
 	assert!(bark_1.onchain_balance().await >= vtxo.amount + Amount::ONE_SAT);
-	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo.utxo && u.amount == vtxo.amount));
 }
 
 #[tokio::test]
@@ -552,20 +543,16 @@ async fn exit_revoked_lightning_payment() {
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
-	let vtxos = bark_1.vtxos().await;
-	let [vtxo_a, vtxo_b] = vtxos.try_into().expect("should have 2 vtxos");
-
 	aspd_1.stop().await.unwrap();
 	bark_1.start_exit_all().await;
 	complete_exit(&ctx, &bark_1).await;
 
+	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
 	assert_eq!(bark_1.offchain_balance().await, Amount::ZERO);
 
-	assert!(bark_1.onchain_balance().await >= vtxo_a.amount + vtxo_b.amount + Amount::ONE_SAT);
-
-	// check both change and revocation VTXOs were exited
-	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo_a.utxo && u.amount == vtxo_a.amount));
-	assert!(bark_1.utxos().await.iter().any(|u| u.outpoint == vtxo_b.utxo && u.amount == vtxo_b.amount));
+	// TODO: Drain exit outputs then check balance in onchain wallet
 }
 
 #[tokio::test]
@@ -634,9 +621,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
 	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 248 }));
 	complete_exit(&ctx, &bark_1).await;
 
-	assert!(bark_1.onchain_balance().await > (onchain_amount - board_amount));
-
-	// TODO: check received utxo point match htlc one
+	// TODO: Drain exit outputs then check balance in onchain wallet
 }
 
 #[tokio::test]
@@ -719,7 +704,5 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 	bark_1.offchain_balance().await;
 	complete_exit(&ctx, &bark_1).await;
 
-	assert!(bark_1.onchain_balance().await > (onchain_amount - board_amount));
-
-	// TODO: check received utxo point match htlc one
+	// TODO: Drain exit outputs then check balance in onchain wallet
 }

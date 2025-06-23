@@ -1,11 +1,13 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use bitcoin::{address, Address};
 use clap;
 use log::{warn, info};
 
 use ark::VtxoId;
-use bark::{Wallet as BarkWallet};
+use bark::Wallet;
+use bark::onchain::TxBuilderExt;
 use bark::vtxo_selection::VtxoFilter;
 use bark::onchain::OnchainWallet;
 
@@ -25,6 +27,20 @@ pub enum ExitCommand {
 	/// Progress the exit until it completes
 	#[command()]
 	Progress(ProgressExitOpts),
+	/// Claim exited VTXOs
+	#[command()]
+	Claim {
+		destination: Address<address::NetworkUnchecked>,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
+		/// The ID of an exited VTXO to be claimed, can be specified multiple times.
+		#[arg(long = "vtxo", value_name = "VTXO_ID")]
+		vtxos: Option<Vec<String>>,
+		/// Claim all exited VTXOs
+		#[arg(long)]
+		all: bool,
+	},
 }
 
 #[derive(clap::Args)]
@@ -72,7 +88,7 @@ pub struct ProgressExitOpts {
 
 pub async fn execute_exit_command(
 	exit_command: ExitCommand,
-	wallet: &mut BarkWallet,
+	wallet: &mut Wallet,
 	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	match exit_command {
@@ -88,12 +104,15 @@ pub async fn execute_exit_command(
 		ExitCommand::Progress(opts) => {
 			progress_exit(opts, wallet, onchain).await
 		},
+		ExitCommand::Claim { destination, no_sync, vtxos, all } => {
+			claim_exits(destination, no_sync, vtxos, all, wallet, onchain).await
+		},
 	}
 }
 
 pub async fn get_exit_status(
 	args: StatusExitOpts,
-	wallet: &BarkWallet,
+	wallet: &Wallet,
 ) -> anyhow::Result<()> {
 	match wallet.exit.get_exit_status(args.vtxo, args.history, args.transactions).await? {
 		None => bail!("VTXO not found: {}", args.vtxo),
@@ -104,7 +123,7 @@ pub async fn get_exit_status(
 
 pub async fn list_exits(
 	args: ListExitsOpts,
-	wallet: &BarkWallet,
+	wallet: &Wallet,
 ) -> anyhow::Result<()> {
 	let mut statuses = Vec::with_capacity(wallet.exit.get_exit_vtxos().len());
 	for exit in wallet.exit.get_exit_vtxos() {
@@ -120,7 +139,7 @@ pub async fn list_exits(
 
 pub async fn start_exit(
 	args: StartExitOpts,
-	wallet: &mut BarkWallet,
+	wallet: &mut Wallet,
 	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	if !args.all && args.vtxos.is_empty() {
@@ -150,7 +169,7 @@ pub async fn start_exit(
 
 pub async fn progress_exit(
 	args: ProgressExitOpts,
-	wallet: &mut BarkWallet,
+	wallet: &mut Wallet,
 	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	let exit_status = if args.wait {
@@ -171,7 +190,7 @@ pub async fn progress_exit(
 }
 
 async fn progress_once(
-	wallet: &mut BarkWallet,
+	wallet: &mut Wallet,
 	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
 	info!("Starting onchain sync");
@@ -190,4 +209,56 @@ async fn progress_once(
 	Ok(bark_json::cli::ExitProgressResponse { done, spendable_height, exits, })
 }
 
+pub async fn claim_exits(
+	address: Address<address::NetworkUnchecked>,
+	no_sync: bool,
+	vtxos: Option<Vec<String>>,
+	all: bool,
+	wallet: &mut Wallet,
+	onchain: &mut OnchainWallet,
+) -> anyhow::Result<()> {
+	if !no_sync {
+		info!("Syncing wallet...");
+		if let Err(e) = wallet.sync().await {
+			warn!("Sync error: {}", e)
+		}
+		if let Err(e) = onchain.sync(&wallet.chain).await {
+			warn!("Sync error: {}", e)
+		}
+	}
 
+	let network = wallet.properties()?.network;
+	let address = address.require_network(network).with_context(|| {
+		format!("address is not valid for configured network {}", network)
+	})?;
+
+	let psbt = match (vtxos, all) {
+		(Some(vtxo_ids), false) => {
+			let vtxos = wallet.exit.list_spendable()?
+				.into_iter()
+				.filter(|v| vtxo_ids.contains(&v.id().to_string()))
+				.collect::<Vec<_>>();
+
+			let mut tx_builder = onchain.build_tx();
+			tx_builder.add_exit_claim_inputs(&vtxos)?;
+			tx_builder.drain_to(address.script_pubkey());
+
+			let mut psbt = tx_builder.finish()?;
+			wallet.exit.sign_exit_claim_inputs(&mut psbt, wallet)?;
+			Ok(psbt)
+		},
+		(None, true) => {
+			let fee_rate = wallet.chain.fee_rates().await.regular;
+			wallet.exit.drain_spendable_outputs(&wallet, address, fee_rate)
+		},
+		(None, false) => bail!("Either --vtxo or --all must be specified"),
+		(Some(_), true) => bail!("Cannot specify both --vtxo and --all"),
+	}?;
+
+	let tx = psbt.extract_tx()?;
+
+	wallet.chain.broadcast_tx(&tx).await?;
+	info!("Drain transaction broadcasted: {}", tx.compute_txid());
+
+	Ok(())
+}

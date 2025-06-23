@@ -10,16 +10,17 @@ use bitcoin_ext::bdk::{CpfpError, WalletExt};
 use log::{debug, info, warn};
 
 use bdk_wallet::Wallet as BdkWallet;
+use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering};
 use bitcoin::{
 	bip32, psbt, Address, Amount, FeeRate, Network, Psbt, Sequence, Transaction, TxOut, Txid
 };
+use json::exit::ExitState;
 
 use crate::onchain::chain::InnerChainSourceClient;
 use crate::onchain::{
 	ChainSourceClient,
 	LocalUtxo,
-	SpendableExit,
 	PrepareBoardTx,
 	GetBalance,
 	GetSpendingTx,
@@ -28,6 +29,7 @@ use crate::onchain::{
 	MakeCpfp,
 	Utxo,
 };
+use crate::exit::vtxo::ExitVtxo;
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
 
@@ -41,29 +43,40 @@ impl From<LocalOutput> for LocalUtxo {
 	}
 }
 
+/// Trait extension for TxBuilder to add exit outputs
+///
+/// When used, the resulting PSBT should be signed using [`crate::exit::Exit::sign_psbt`]
 pub trait TxBuilderExt {
-	fn add_exit_claim_inputs(&mut self, exit_outputs: &[SpendableExit]);
+	fn add_exit_claim_inputs(&mut self, exit_outputs: &[&ExitVtxo]) -> anyhow::Result<()>;
 }
 
 impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
-	fn add_exit_claim_inputs(&mut self, exit_outputs: &[SpendableExit]) {
+	fn add_exit_claim_inputs(&mut self, exit_outputs: &[&ExitVtxo]) -> anyhow::Result<()> {
 		self.version(2);
 
 		for input in exit_outputs {
+			if !matches!(input.state(), ExitState::Spendable(..)) {
+				bail!("VTXO exit is not spendable");
+			}
+
+			let vtxo = input.vtxo();
+
 			let mut psbt_in = psbt::Input::default();
-			psbt_in.set_exit_claim_input(&input.vtxo);
+			psbt_in.set_exit_claim_input(&vtxo);
 			psbt_in.witness_utxo = Some(TxOut {
-				script_pubkey: input.vtxo.output_script_pubkey(),
-				value: input.vtxo.amount(),
+				script_pubkey: vtxo.output_script_pubkey(),
+				value: vtxo.amount(),
 			});
 
 			self.add_foreign_utxo_with_sequence(
-				input.vtxo.point(),
+				vtxo.point(),
 				psbt_in,
-				input.vtxo.claim_satisfaction_weight(),
-				Sequence::from_height(input.vtxo.exit_delta()),
+				vtxo.claim_satisfaction_weight(),
+				Sequence::from_height(vtxo.exit_delta()),
 			).expect("error adding foreign utxo for claim input");
 		}
+
+		Ok(())
 	}
 }
 
@@ -244,6 +257,10 @@ impl OnchainWallet {
 		let tx = self.finish_tx(psbt)?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
+	}
+
+	pub fn build_tx(&mut self) -> TxBuilder<'_, DefaultCoinSelectionAlgorithm> {
+		self.inner.build_tx()
 	}
 
 	pub async fn sync(&mut self, chain: &ChainSourceClient) -> anyhow::Result<Amount> {
