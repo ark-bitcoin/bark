@@ -160,6 +160,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 
 		// Then build actual tx.
 		let mut b = wallet.build_tx();
+		b.ordering(TxOrdering::Untouched);
 		b.only_witness_utxo();
 		b.unspendable(untrusted_utxos);
 		b.version(3); // for 1p1c package relay
