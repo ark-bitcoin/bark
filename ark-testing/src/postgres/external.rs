@@ -23,7 +23,6 @@ pub struct ExternallyManagedPostgres {
 }
 
 impl ExternallyManagedPostgres {
-
 	pub async fn init() -> Self {
 		Self {
 			host: postgres_host().expect("Postgres host is configured"),
@@ -46,12 +45,16 @@ impl ExternallyManagedPostgres {
 		}
 	}
 
-	async fn global_client(&self) -> Client {
+	pub async fn database_client(&self, db_name: Option<&str>) -> Client {
 		let mut config = Config::new();
 		config.host(self.host.clone());
 		config.port(5432);
 
-		config.dbname(self.name.clone());
+		if let Some(db_name) = db_name {
+			config.dbname(db_name);
+		} else {
+			config.dbname(self.name.clone());
+		}
 
 		if self.user.is_some() {
 			config.user(self.user.clone().unwrap());
@@ -69,5 +72,9 @@ impl ExternallyManagedPostgres {
 		});
 
 		client
+	}
+
+	pub async fn global_client(&self) -> Client {
+		self.database_client(None).await
 	}
 }

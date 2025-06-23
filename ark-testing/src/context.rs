@@ -138,6 +138,10 @@ impl TestContext {
 		self.await_block_count_sync().await
 	}
 
+	pub fn postgres_manager(&self) -> &PostgresDatabaseManager {
+		self.postgres_manager.as_ref().unwrap()
+	}
+
 	pub async fn init_central_postgres(&mut self) {
 		if self.postgres_manager.is_none() {
 			let datadir = self.datadir.join("central_postgres");
