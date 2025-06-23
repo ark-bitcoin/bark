@@ -63,7 +63,7 @@ use bitcoin_ext::bdk::WalletExt;
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::onchain::Utxo;
+use crate::onchain::{ChainSourceClient, Utxo};
 use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -286,6 +286,8 @@ impl AspConnection {
 }
 
 pub struct Wallet {
+	/// The chain source the wallet is connected to
+	pub chain: Arc<ChainSourceClient>,
 	pub onchain: onchain::Wallet,
 	pub exit: Exit,
 
@@ -393,11 +395,11 @@ impl Wallet {
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
+		let chain = Arc::new(ChainSourceClient::new(chain_source, config.fallback_fee_rate)?);
 
 		let db = Arc::new(db);
-		let onchain = onchain::Wallet::create(
-			properties.network, seed, db.clone(), chain_source.clone(), config.fallback_fee_rate,
-		).context("failed to create onchain wallet")?;
+		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain.clone())
+			.context("failed to create onchain wallet")?;
 
 		let asp = match AspConnection::handshake(&config.asp_address, properties.network).await {
 			Ok(asp) => Some(asp),
@@ -407,9 +409,9 @@ impl Wallet {
 			}
 		};
 
-		let exit = Exit::new(db.clone(), chain_source.clone(), &onchain).await?;
+		let exit = Exit::new(db.clone(), chain.clone(), &onchain).await?;
 
-		Ok(Wallet { config, db, onchain, vtxo_seed, exit, asp })
+		Ok(Wallet { config, db, onchain, vtxo_seed, exit, asp, chain })
 	}
 
 	pub fn config(&self) -> &Config {
@@ -532,9 +534,19 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Sync both the onchain and offchain wallet.
+	// TODO: tmp utility to make borrow checker happy, will be removed as soon as we remove onchain wallet from bark
+	pub async fn sync_onchain_wallet(&mut self) -> anyhow::Result<()> {
+		self.chain.update_fee_rates(self.config.fallback_fee_rate).await?;
+		self.chain.sync_wallet(&mut self.onchain).await?;
+		Ok(())
+	}
+
+	/// Sync offchain wallet and update onchain fees
 	pub async fn sync(&mut self) -> anyhow::Result<()> {
-		self.onchain.sync().await?;
+		// NB: order matters here, if syncing call fails, we still want to update the fee rates
+		self.chain.update_fee_rates(self.config.fallback_fee_rate).await?;
+
+		self.sync_onchain_wallet().await?;
 		self.exit.sync_exit(&mut self.onchain).await?;
 		self.sync_ark().await?;
 
@@ -571,7 +583,8 @@ impl Wallet {
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
 		let throwaway_addr = self.onchain.address()?;
-		let board_all_tx = self.onchain.prepare_send_all_tx(throwaway_addr)?;
+		let fee_rate = self.chain.fee_rates().await.regular;
+		let board_all_tx = self.onchain.prepare_send_all_tx(throwaway_addr, fee_rate)?;
 
 		// Deduct fee from vtxo spec
 		let fee = board_all_tx.fee().context("Unable to calculate fee")?;
@@ -605,7 +618,8 @@ impl Wallet {
 		let addr = Address::from_script(&builder.funding_script_pubkey(), properties.network).unwrap();
 
 		// We create the board tx template, but don't sign it yet.
-		let board_psbt = self.onchain.prepare_tx([(addr, amount)])?;
+		let fee_rate = self.chain.fee_rates().await.regular;
+		let board_psbt = self.onchain.prepare_tx([(addr, amount)], fee_rate)?;
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 		let builder = builder
@@ -955,16 +969,17 @@ impl Wallet {
 	///
 	/// Returns a list of Vtxo's
 	async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
-		let tip = self.onchain.tip().await?;
+		let tip = self.chain.tip().await?;
+		let fee_rate = self.chain.fee_rates().await.fast;
 
 		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip))?;
+		let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip, fee_rate))?;
 		if must_refresh_vtxos.is_empty() {
 			return Ok(vec![]);
 		} else {
 			// If we need to do a refresh, we take all the should_refresh vtxo's as well
 			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
+			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip, fee_rate))?;
 			Ok(should_refresh_vtxos)
 		}
 	}

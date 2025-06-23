@@ -520,7 +520,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			OnchainCommand::Balance { no_sync } => {
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = w.onchain.sync().await {
+					if let Err(e) = w.sync_onchain_wallet().await {
 						warn!("Onchain sync error: {}", e)
 					}
 					if let Err(e) = w.sync_exits().await {
@@ -549,7 +549,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				let txid = w.onchain.send(addr, amount).await?;
+				let fee_rate = w.chain.fee_rates().await.regular;
+				let txid = w.onchain.send(addr, amount, fee_rate).await?;
 
 				let output = json::onchain::Send { txid };
 				output_json(&output);
@@ -566,7 +567,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				let txid = w.onchain.drain(addr).await?;
+				let fee_rate = w.chain.fee_rates().await.regular;
+				let txid = w.onchain.drain(addr, fee_rate).await?;
 
 				let output = json::onchain::Send { txid };
 				output_json(&output);
@@ -602,7 +604,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				let txid = w.onchain.send_many(outputs).await?;
+				let fee_rate = w.chain.fee_rates().await.regular;
+				let txid = w.onchain.send_many(outputs, fee_rate).await?;
 				let output = json::onchain::Send { txid };
 				output_json(&output);
 			},
@@ -711,7 +714,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = w.onchain.sync().await {
+				if let Err(e) = w.sync_onchain_wallet().await {
 					warn!("Sync error: {}", e)
 				}
 			}

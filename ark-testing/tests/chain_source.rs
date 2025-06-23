@@ -25,7 +25,7 @@ async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSourceC
 			ctx.electrs.as_ref().expect("electrs is not started").chain_source()
 		}
 	};
-	(ctx, ChainSourceClient::new(chain_source).expect("failed to create chain source client"))
+	(ctx, ChainSourceClient::new(chain_source, None).expect("failed to create chain source client"))
 }
 
 async fn test_bitcoind(ctx: &TestContext, id: usize) -> Bitcoind {

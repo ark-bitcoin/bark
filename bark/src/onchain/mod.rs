@@ -11,11 +11,10 @@ use bitcoin::{
 	bip32, psbt, sighash, Address, Amount, FeeRate, Network, Psbt, Sequence, Transaction, TxOut,
 	Txid,
 };
-use log::error;
 
 use ark::util::SECP;
 use ark::Vtxo;
-use bitcoin_ext::{BlockHeight, FeeRateExt};
+use bitcoin_ext::BlockHeight;
 
 use crate::VtxoSeed;
 use crate::persist::BarkPersister;
@@ -68,12 +67,9 @@ pub struct Wallet {
 
 	pub(crate) wallet: BdkWallet,
 	pub(crate) db: Arc<dyn BarkPersister>,
-	pub(crate) fee_rates: FeeRates,
-	pub(crate) fallback_fee: Option<FeeRate>,
 
 	pub(crate) exit_outputs: Vec<SpendableExit>,
-	pub(crate) chain: ChainSourceClient,
-	chain_source: ChainSource,
+	pub(crate) chain: Arc<ChainSourceClient>,
 }
 
 impl Wallet {
@@ -81,8 +77,7 @@ impl Wallet {
 		network: Network,
 		seed: [u8; 64],
 		db: Arc<dyn BarkPersister>,
-		chain_source: ChainSource,
-		fallback_fee: Option<FeeRate>,
+		chain: Arc<ChainSourceClient>,
 	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 
@@ -102,21 +97,14 @@ impl Wallet {
 				.create_wallet_no_persist()?,
 		};
 
-		let chain = ChainSourceClient::new(chain_source.clone())?;
-		let fee = fallback_fee.unwrap_or(FeeRate::BROADCAST_MIN);
-		let fee_rates = FeeRates { fast: fee, regular: fee, slow: fee };
-
 		Ok(Wallet {
 			seed,
 			network,
 
 			wallet,
 			db,
-			fee_rates,
-			fallback_fee,
 
 			chain,
-			chain_source,
 			exit_outputs: vec![]
 		})
 	}
@@ -141,31 +129,6 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Sync the onchain wallet and returns the balance.
-	pub async fn sync(&mut self) -> anyhow::Result<Amount> {
-		//TODO improve this..
-		let chain = ChainSourceClient::new(self.chain_source.clone())?;
-		self.update_fee_rates().await?;
-		Ok(chain.sync_wallet(self).await?)
-	}
-
-	/// Gets the current fee rates from the chain source, falling back to user-specified values if
-	/// necessary
-	pub async fn update_fee_rates(&mut self) -> anyhow::Result<()> {
-		let fee_rates = match (self.chain.fee_rates().await, self.fallback_fee) {
-			(Ok(fee_rates), _) => Ok(fee_rates),
-			(Err(e), None) => Err(e),
-			(Err(e), Some(fallback)) => {
-				error!("Error getting fee rates, falling back to {} sat/kvB: {}",
-					fallback.to_btc_per_kvb(), e,
-				);
-				Ok(FeeRates { fast: fallback, regular: fallback, slow: fallback })
-			}
-		};
-		self.fee_rates = fee_rates?;
-		Ok(())
-	}
-
 	/// Return the balance of the onchain wallet.
 	///
 	/// Make sure you sync before calling this method.
@@ -184,8 +147,8 @@ impl Wallet {
 	pub (crate) fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
 		&mut self,
 		outputs: T,
+		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt> {
-		let fee_rate = self.fee_rates.regular;
 		let mut b = self.wallet.build_tx();
 		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.ordering(TxOrdering::Untouched);
@@ -196,8 +159,7 @@ impl Wallet {
 		Ok(b.finish()?)
 	}
 
-	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address) -> anyhow::Result<Psbt> {
-		let fee_rate = self.fee_rates.regular;
+	pub (crate) fn prepare_send_all_tx(&mut self, dest: Address, fee_rate: FeeRate) -> anyhow::Result<Psbt> {
 		let mut b = self.wallet.build_tx();
 		b.add_exit_outputs(&self.exit_outputs.clone());
 		b.drain_to(dest.script_pubkey());
@@ -252,24 +214,26 @@ impl Wallet {
 		Ok(tx)
 	}
 
-	pub async fn send(&mut self, dest: Address, amount: Amount) -> anyhow::Result<Txid> {
-		let psbt = self.prepare_tx([(dest, amount)])?;
+	pub async fn send(&mut self, dest: Address, amount: Amount, fee_rate: FeeRate)
+		-> anyhow::Result<Txid>
+	{
+		let psbt = self.prepare_tx( [(dest, amount)], fee_rate)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
 	pub async fn send_many<T: IntoIterator<Item = (Address, Amount)>>(
-		&mut self, dests: T
+		&mut self, dests: T, fee_rate: FeeRate
 	) -> anyhow::Result<Txid> {
-		let pbst = self.prepare_tx(dests)?;
+		let pbst = self.prepare_tx( dests, fee_rate)?;
 		let tx = self.finish_tx(pbst)?;
 		self.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
-	pub async fn drain(&mut self, dest: Address) -> anyhow::Result<Txid> {
-		let psbt = self.prepare_send_all_tx(dest)?;
+	pub async fn drain(&mut self, dest: Address, fee_rate: FeeRate) -> anyhow::Result<Txid> {
+		let psbt = self.prepare_send_all_tx(dest, fee_rate)?;
 		let tx = self.finish_tx(psbt)?;
 		self.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())

@@ -16,7 +16,7 @@ use json::exit::error::ExitError;
 
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::exit::vtxo::{ExitEntry, ExitVtxo};
-use crate::onchain::{self, ChainSource, ChainSourceClient};
+use crate::onchain::{self, ChainSourceClient};
 use crate::persist::BarkPersister;
 
 /// Handle the process of ongoing VTXO exits
@@ -24,17 +24,16 @@ pub struct Exit {
 	exit_vtxos: Vec<ExitVtxo>,
 	tx_manager: ExitTransactionManager,
 	persister: Arc<dyn BarkPersister>,
-	chain_source: ChainSourceClient,
+	chain_source: Arc<ChainSourceClient>,
 }
 
 impl Exit {
 	pub (crate) async fn new(
 		persister: Arc<dyn BarkPersister>,
-		chain_source: ChainSource,
+		chain_source: Arc<ChainSourceClient>,
 		onchain: &onchain::Wallet,
 	) -> anyhow::Result<Exit> {
-		let chain_source_client = ChainSourceClient::new(chain_source.clone())?;
-		let mut tx_manager = ExitTransactionManager::new(persister.clone(), chain_source)?;
+		let mut tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
 
 		// Gather the database entries for our exit and convert them into ExitVtxo structs
 		let exit_vtxo_entries = persister.get_exit_vtxo_entries()?;
@@ -51,7 +50,7 @@ impl Exit {
 			exit_vtxos,
 			tx_manager,
 			persister,
-			chain_source: chain_source_client,
+			chain_source,
 		})
 	}
 

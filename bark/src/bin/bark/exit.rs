@@ -124,7 +124,7 @@ pub async fn start_exit(
 		bail!("No exit to start. Use either the --vtxo or --all flag.")
 	}
 	info!("Starting onchain sync");
-	if let Err(err) = wallet.onchain.sync().await {
+	if let Err(err) = wallet.sync_onchain_wallet().await {
 		warn!("Failed to perform onchain sync: {}", err.to_string());
 	}
 	info!("Starting offchain sync");
@@ -170,7 +170,7 @@ async fn progress_once(
 	wallet: &mut Wallet,
 ) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
 	info!("Starting onchain sync");
-	if let Err(error) = wallet.onchain.sync().await {
+	if let Err(error) = wallet.sync_onchain_wallet().await {
 		warn!("Failed to perform onchain sync: {}", error)
 	}
 	info!("Wallet sync completed");

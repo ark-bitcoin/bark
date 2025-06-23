@@ -13,7 +13,7 @@ use json::exit::error::ExitError;
 use json::exit::package::{ChildTransactionInfo, ExitTransactionPackage, TransactionInfo};
 use json::exit::states::ExitTxOrigin;
 
-use crate::onchain::{self, ChainSource, ChainSourceClient};
+use crate::onchain::{self, ChainSourceClient};
 use crate::persist::BarkPersister;
 
 #[derive(Clone, Copy, Debug,  Eq, PartialEq, Deserialize, Serialize)]
@@ -25,7 +25,7 @@ pub struct ExitChildStatus {
 
 pub struct ExitTransactionManager {
 	persister: Arc<dyn BarkPersister>,
-	chain_source: ChainSourceClient,
+	chain_source: Arc<ChainSourceClient>,
 	packages: Vec<Arc<RwLock<ExitTransactionPackage>>>,
 	index: HashMap<Txid, Weak<RwLock<ExitTransactionPackage>>>,
 	status: HashMap<Txid, TxStatus>,
@@ -34,11 +34,11 @@ pub struct ExitTransactionManager {
 impl ExitTransactionManager {
 	pub fn new(
 		persister: Arc<dyn BarkPersister>,
-		chain_source: ChainSource,
+		chain_source: Arc<ChainSourceClient>,
 	) -> anyhow::Result<Self> {
 		Ok(ExitTransactionManager {
 			persister,
-			chain_source: ChainSourceClient::new(chain_source)?,
+			chain_source,
 			packages: Vec::new(),
 			index: HashMap::new(),
 			status: HashMap::new(),
