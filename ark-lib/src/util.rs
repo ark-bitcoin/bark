@@ -1,13 +1,9 @@
 
-use std::io;
-
 use bitcoin::{opcodes, ScriptBuf, TapSighash, TapTweakHash, Transaction};
 use bitcoin::hashes::{sha256, ripemd160, Hash};
 use bitcoin::secp256k1::{self, schnorr, PublicKey, XOnlyPublicKey};
 
 use bitcoin_ext::{BlockHeight, TAPROOT_KEYSPEND_WEIGHT};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 use crate::musig;
 
@@ -114,18 +110,4 @@ pub fn verify_partial_sig(
 	session.partial_verify(
 		&musig::SECP, &agg_pk, partial_signature, signer.1, musig::pubkey_to(signer.0),
 	)
-}
-
-pub trait Encodable: Serialize {
-	fn serialize(&self) -> Vec<u8> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(self, &mut buf).unwrap();
-		buf
-	}
-}
-
-pub trait Decodable: DeserializeOwned {
-	fn deserialize(bytes: &[u8]) -> Result<Self, ciborium::de::Error<io::Error>> {
-		ciborium::from_reader(bytes)
-	}
 }
