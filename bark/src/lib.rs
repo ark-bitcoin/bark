@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 pub extern crate ark;
 pub extern crate bark_json as json;
 
