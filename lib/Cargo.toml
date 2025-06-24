@@ -10,7 +10,7 @@ repository = "https://codeberg.org/ark-bitcoin/bark"
 name = "ark"
 
 [features]
-test-util = []
+test-util = [ "serde_json" ]
 
 [dependencies]
 
@@ -28,6 +28,9 @@ lightning.workspace = true
 # can use bitcoin::hex once they upgrade to v0.3.0
 hex-conservative = "0.3.0"
 
+# testing
+serde_json = { workspace = true, optional = true }
+
 # using PR branch for musig2 code
 [dependencies.secp256k1-musig]
 package = "secp256k1"
@@ -35,7 +38,7 @@ git = "https://github.com/rust-bitcoin/rust-secp256k1.git"
 rev = "72822e16b1433337baceb0abb5134cc24a062adb"
 features = [ "serde" ]
 
-
 [dev-dependencies]
 bitcoinconsensus = "0.106.0+26.0"
 rand = { version = "0.9.0", features = [ "small_rng" ] }
+serde_json = { workspace = true }

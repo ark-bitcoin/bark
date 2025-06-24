@@ -590,7 +590,7 @@ impl CosignSignatureError {
 }
 
 /// All the information needed to uniquely specify a fully signed VTXO tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SignedVtxoTreeSpec {
 	pub spec: VtxoTreeSpec,
 	pub utxo: OutPoint,
@@ -822,7 +822,8 @@ mod test {
 	use bitcoin::secp256k1::{self, rand, Keypair};
 	use rand::SeedableRng;
 
-	use crate::encode::test::encoding_roundtrip;
+	use crate::encode::test::json_roundtrip;
+	use crate::encode::{self, test::encoding_roundtrip};
 	use crate::VtxoPolicy;
 	use super::*;
 
@@ -914,6 +915,16 @@ mod test {
 		assert_eq!(sighashes_hash.to_string(), "44c13179cd19569f");
 
 		let signed = unsigned.into_signed_tree(vec![random_sig; nb_nodes]);
+
+		encoding_roundtrip(&signed);
+
+		#[derive(Debug, PartialEq, Serialize, Deserialize)]
+		struct JsonSignedVtxoTreeSpec {
+			#[serde(with = "encode::serde")]
+			pub spec: SignedVtxoTreeSpec,
+		}
+
+		json_roundtrip(&JsonSignedVtxoTreeSpec { spec: signed.clone() });
 
 		for l in 0..nb_leaves {
 			let exit = signed.exit_branch(l).unwrap();
