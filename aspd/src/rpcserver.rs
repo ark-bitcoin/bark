@@ -860,7 +860,7 @@ impl rpc::server::AdminService for Server {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_WALLET_STATUS);
 
 		let rounds = async {
-			Ok(self.rounds_wallet.lock().await.status().await)
+			Ok(self.rounds_wallet.lock().await.status())
 		};
 		let forfeits = async {
 			self.forfeits.wallet_status().await
