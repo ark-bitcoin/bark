@@ -179,12 +179,13 @@
 						electrs
 						pkgs.glibcLocales
 						postgresql
-						pkgs.cargo-llvm-cov
 					] ++ (if isDarwin then [
 						pkgs.darwin.apple_sdk.frameworks.Security
 						pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
 						pkgs.docker
-					] else []);
+					] else [
+						pkgs.cargo-llvm-cov
+					]);
 
 					LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 
