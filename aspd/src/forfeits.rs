@@ -497,7 +497,7 @@ impl Process {
 							let _ = resp.send(());
 						},
 						Ctrl::WalletStatus(resp) => {
-							let _ = resp.send(self.wallet.status().await);
+							let _ = resp.send(self.wallet.status());
 						},
 					}
 					continue;

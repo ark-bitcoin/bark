@@ -232,7 +232,7 @@ impl PersistedWallet {
 		Ok(balance)
 	}
 
-	pub async fn status(&mut self) -> aspd_rpc::WalletStatus {
+	pub fn status(&mut self) -> aspd_rpc::WalletStatus {
 		// NB we decide not to persist the address reveal to make this call
 		// infallible even without database.
 		let address = self.reveal_next_address(KeychainKind::External).address;
