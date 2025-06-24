@@ -979,26 +979,16 @@ impl Wallet {
 	async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
 		let tip = self.onchain.tip().await?;
 
+		// Check if there is any VTXO that we must refresh
 		let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip))?;
 		if must_refresh_vtxos.is_empty() {
-			// We ignore should refresh when there are no must-refresh, as per function comment.
-			info!("No must-refresh VTXOs found.");
 			return Ok(vec![]);
-		}
-
-		info!("Found {} must-refresh VTXOs.", must_refresh_vtxos.len());
-
-		let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
-		if should_refresh_vtxos.is_empty() {
-			info!("No should-refresh VTXOs found.");
 		} else {
-			info!("Found {} should-refresh VTXOs.", should_refresh_vtxos.len());
+			// If we need to do a refresh, we take all the should_refresh vtxo's as well
+			// This helps us to aggregate some VTXOs
+			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
+			Ok(should_refresh_vtxos)
 		}
-
-		let mut ret = must_refresh_vtxos;
-		ret.extend(should_refresh_vtxos);
-
-		Ok(ret)
 	}
 
 	/// Select several vtxos to cover the provided amount
