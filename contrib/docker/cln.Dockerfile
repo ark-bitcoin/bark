@@ -3,12 +3,12 @@ FROM elementsproject/lightningd:v25.02.2
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	build-essential \
 	git \
-    curl \
-    gcc \
-    libpq-dev \
-    libsqlite3-dev \
+	curl \
+	gcc \
+	libpq-dev \
+	libsqlite3-dev \
 	protobuf-compiler \
-    dos2unix
+	dos2unix
 
 ENV RUST_BACKTRACE=1 \
 	RUSTUP_TOOLCHAIN_VERSION=1.82 \
@@ -31,6 +31,6 @@ RUN mkdir -p /root/cln/
 ADD ./contrib/docker/cln_start.sh /root/cln/start.sh
 
 RUN chmod a+x /root/cln/start.sh && \
-    dos2unix /root/cln/start.sh
+	dos2unix /root/cln/start.sh
 
 EXPOSE 9988
