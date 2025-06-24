@@ -75,6 +75,9 @@ pub struct ClnManager {
 	db: database::Db,
 	invoice_poll_interval: Duration,
 
+	/// This channel is to manage individual CLN integrations.
+	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
+
 	/// This channel sends payment requests to the process.
 	payment_tx: mpsc::UnboundedSender<(Bolt11Invoice, Option<Amount>)>,
 
@@ -97,6 +100,7 @@ impl ClnManager {
 		config: &Config,
 		db: database::Db,
 	) -> anyhow::Result<ClnManager> {
+		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_tx, payment_rx) = mpsc::unbounded_channel();
 		let (invoice_gen_tx, invoice_gen_rx) = mpsc::unbounded_channel();
 		let (invoice_settle_tx, invoice_settle_rx) = mpsc::unbounded_channel();
@@ -111,6 +115,7 @@ impl ClnManager {
 		};
 		let proc = ClnManagerProcess {
 			rtmgr,
+			ctrl_rx,
 			payment_rx,
 			node_monitor_config,
 			invoice_gen_rx,
@@ -131,6 +136,7 @@ impl ClnManager {
 
 		Ok(ClnManager {
 			db,
+			ctrl_tx,
 			payment_tx,
 			payment_update_tx,
 			invoice_gen_tx,
@@ -260,6 +266,16 @@ impl ClnManager {
 			.context("invoice settle channel broken")?;
 		rx.await.context("invoice settle return channel broken")
 	}
+
+	pub async fn activate(&self, uri: Uri) -> anyhow::Result<()> {
+		self.ctrl_tx.send(Ctrl::ActivateCln(uri)).context("ClnManager down")?;
+		Ok(())
+	}
+
+	pub async fn disable(&self, uri: Uri) -> anyhow::Result<()> {
+		self.ctrl_tx.send(Ctrl::DisableCln(uri)).context("ClnManager down")?;
+		Ok(())
+	}
 }
 
 #[derive(Debug)]
@@ -282,12 +298,14 @@ pub enum ClnNodeState {
 	Invalid {
 		msg: String,
 	},
+	Disabled,
 }
 
 const OFFLINE: &'static str = "offline";
 const ONLINE: &'static str = "online";
 const ERROR: &'static str = "error";
 const INVALID: &'static str = "invalid";
+const DISABLED: &'static str = "disabled";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ClnNodeStateKind {
@@ -299,6 +317,8 @@ pub enum ClnNodeStateKind {
 	Error,
 	/// see [ClnNodeState::Invalid]
 	Invalid,
+	/// see [ClnNodeState::Disabled]
+	Disabled,
 }
 
 impl ClnNodeStateKind {
@@ -308,6 +328,7 @@ impl ClnNodeStateKind {
 			ClnNodeStateKind::Online => ONLINE,
 			ClnNodeStateKind::Error => ERROR,
 			ClnNodeStateKind::Invalid => INVALID,
+			ClnNodeStateKind::Disabled => DISABLED,
 		}
 	}
 	pub fn get_all() -> &'static [ClnNodeStateKind] {
@@ -316,6 +337,7 @@ impl ClnNodeStateKind {
 			ClnNodeStateKind::Online,
 			ClnNodeStateKind::Error,
 			ClnNodeStateKind::Invalid,
+			ClnNodeStateKind::Disabled,
 		]
 	}
 }
@@ -327,6 +349,7 @@ impl ClnNodeState {
 			Self::Online(_) => ClnNodeStateKind::Online,
 			Self::Error { .. } => ClnNodeStateKind::Error,
 			Self::Invalid { .. } => ClnNodeStateKind::Invalid,
+			Self::Disabled => ClnNodeStateKind::Disabled,
 		}
 	}
 	fn error(msg: impl fmt::Display) -> Self {
@@ -344,6 +367,7 @@ impl fmt::Display for ClnNodeState {
 			ClnNodeState::Online(i) => write!(f, "online: {}", i.id),
 			ClnNodeState::Error { msg } => write!(f, "error: {}", msg),
 			ClnNodeState::Invalid { msg } => write!(f, "invalid: {}", msg),
+			ClnNodeState::Disabled => f.write_str("disabled"),
 		}
 	}
 }
@@ -421,9 +445,16 @@ impl ClnNodeInfo {
 	}
 }
 
+#[derive(Debug)]
+enum Ctrl {
+	ActivateCln(Uri),
+	DisableCln(Uri),
+}
+
 struct ClnManagerProcess {
 	db: database::Db,
 	rtmgr: RuntimeManager,
+	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
 	payment_rx: mpsc::UnboundedReceiver<(Bolt11Invoice, Option<Amount>)>,
 	invoice_gen_rx: mpsc::UnboundedReceiver<((sha256::Hash, Amount), oneshot::Sender<Bolt11Invoice>)>,
 	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, [u8; 32]), oneshot::Sender<anyhow::Result<()>>)>,
@@ -521,8 +552,84 @@ impl ClnManagerProcess {
 						}
 					}
 				},
-				ClnNodeState::Invalid { .. } => {}, // do nothing anymore
+				ClnNodeState::Invalid { .. } | ClnNodeState::Disabled => {}, // do nothing anymore
 			}
+		}
+	}
+
+	async fn disable_node(&mut self, uri: &Uri) {
+		let Some(node) = self.nodes.get_mut(uri) else {
+			error!("Cannot disable node since URI {uri} cannot be found.");
+			return;
+		};
+
+		let disable = match &node.state {
+			ClnNodeState::Online(_) => {
+				info!("ClnNode {uri} was Online and is now disabled.");
+				true
+			}
+			ClnNodeState::Error { .. } => {
+				info!("ClnNode {uri} was in Error and is now disabled.");
+				true
+			}
+			ClnNodeState::Offline => {
+				info!("ClnNode {uri} was Offline and is now disabled.");
+				true
+			}
+			ClnNodeState::Disabled => {
+				info!("ClnNode {uri} is already disabled.");
+				false
+			}
+			ClnNodeState::Invalid { .. } => {
+				info!("ClnNode {uri} is invalid.");
+				false
+			}
+		};
+
+		if disable {
+			let new_state = ClnNodeState::Disabled;
+			telemetry::set_lightning_node_state(
+				uri.clone(), None, None, new_state.kind(),
+			);
+			node.set_state(new_state)
+		}
+	}
+
+	async fn enable_node(&mut self, uri: &Uri) {
+		let Some(node) = self.nodes.get_mut(uri) else {
+			error!("Cannot enable node since URI {uri} cannot be found.");
+			return;
+		};
+
+		let enable = match &node.state {
+			ClnNodeState::Online(_) => {
+				info!("ClnNode with {uri} is already Online (not disabled).");
+				false
+			},
+			ClnNodeState::Error { .. } => {
+				info!("ClnNode with {uri} is in state Error (not disabled).");
+				false
+			},
+			ClnNodeState::Offline => {
+				info!("ClnNode with {uri} is in state Offline (not disabled).");
+				false
+			},
+			ClnNodeState::Disabled => {
+				info!("ClnNode with {uri} was disabled and is now enabled.");
+				true
+			},
+			ClnNodeState::Invalid { .. } => {
+				info!("ClnNode with {uri} is invalid.");
+				false
+			},
+		};
+
+		if enable {
+			let new_state = ClnNodeState::Disabled;
+			telemetry::set_lightning_node_state(
+				uri.clone(), None, None, new_state.kind(),
+			);
+			node.set_state(new_state);
 		}
 	}
 
@@ -645,6 +752,20 @@ impl ClnManagerProcess {
 				_ = interval.tick() => {
 					trace!("ClnManagerProcess checking nodes on interval");
 					self.check_nodes().await;
+				},
+
+				msg = self.ctrl_rx.recv() => if let Some(msg) = msg {
+					 match msg {
+						Ctrl::ActivateCln(uri) => {
+							self.enable_node(&uri).await;
+						},
+						Ctrl::DisableCln(uri) => {
+							self.disable_node(&uri).await;
+						}
+					}
+				} else {
+					warn!("control channel closed, shutting down ClnManager");
+					break;
 				},
 
 				msg = self.payment_rx.recv() => if let Some((invoice, amount)) = msg {
