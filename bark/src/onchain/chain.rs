@@ -77,7 +77,7 @@ impl ChainSourceClient {
 				let get_fee_rate = |target| {
 					let fee = bitcoind.estimate_smart_fee(target, Some(EstimateMode::Economical))?;
 					if let Some(fee_rate) = fee.fee_rate {
-						Ok(FeeRate::from_amount_per_kvb(fee_rate))
+						Ok(FeeRate::from_amount_per_kvb_ceil(fee_rate))
 					} else {
 						Err(anyhow!("No rate returned from estimate_smart_fee for a {} confirmation target", target))
 					}
@@ -95,7 +95,7 @@ impl ChainSourceClient {
 					let fee = estimates.get(&target).with_context(||
 						format!("No rate returned from get_fee_estimates for a {} confirmation target", target)
 					)?;
-					FeeRate::from_sat_per_vb_decimal_checked(*fee).with_context(||
+					FeeRate::from_sat_per_vb_decimal_checked_ceil(*fee).with_context(||
 						format!("Invalid rate returned from get_fee_estimates {} for a {} confirmation target", fee, target)
 					)
 				};
