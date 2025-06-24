@@ -42,10 +42,9 @@ This script automates the process of cherry-picking commits from a feature branc
 
 This is a helper script for CI so it can verify the version number from the tag.
 It compares this version number with the version number defined in Cargo.toml of the respective project.
-There are 3 tagging options:
+There are 2 tagging options:
 * `aspd-0.0.1` this will check if `0.0.1` is also specified as version in `aspd/Cargo.toml`
 * `bark-0.0.1` this will check if `0.0.1` is also specified as version in `bark/Cargo.toml`
-* `all-0.0.1` this will check if `0.0.1` is also specified as version in both `aspd/Cargo.toml` and `bark/Cargo.toml`
 
 ## generate-index.sh
 #### parameters:
@@ -60,12 +59,11 @@ that automatically forwards to `bark/struct.Wallet.html`
 1. tag-name
 
 This is a helper script for CI so it can parse the version number from the tag.
-There are 3 tagging options:
+There are 2 tagging options:
 * `aspd-0.0.1`
 * `bark-0.0.1`
-* `all-0.0.1`
 
-This script will return `0.0.1` for all 3 cases.
+This script will return `0.0.1` for all cases.
 
 ## prechecks.sh
 #### Parameters:
