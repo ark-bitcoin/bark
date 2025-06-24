@@ -51,11 +51,11 @@ steps:
       - cat VERSION
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
       # Build the containers
-      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile             --tag registry.2nd.dev/aspd:latest      .
+      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile --tag registry.2nd.dev/aspd:latest .
       # Push containers to registry.2nd.dev
       - buildah push registry.2nd.dev/aspd:latest
       # Tag containers with specific version number for registry.2nd.dev
-      - buildah tag registry.2nd.dev/aspd:latest      "registry.2nd.dev/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/aspd:latest "registry.2nd.dev/aspd:$(cat VERSION)"
       # Push containers with specific version number to registry.2nd.dev
       - buildah push "registry.2nd.dev/aspd:$(cat VERSION)"
 
@@ -82,11 +82,11 @@ steps:
       # Pull containers from registry.2nd.dev
       - buildah pull registry.2nd.dev/aspd:latest
       # Tag containers for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      docker.io/secondark/aspd:latest
+      - buildah tag registry.2nd.dev/aspd:latest docker.io/secondark/aspd:latest
       # Push containers to docker.io
       - buildah push docker.io/secondark/aspd:latest
       # Tag containers with specific version number for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest      "docker.io/secondark/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/aspd:latest "docker.io/secondark/aspd:$(cat VERSION)"
       # Push containers with specific version number to docker.io
       - buildah push "docker.io/secondark/aspd:$(cat VERSION)"
 

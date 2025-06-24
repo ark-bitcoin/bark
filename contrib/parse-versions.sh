@@ -7,9 +7,6 @@ if [ -z "$UNPARSED_VERSION" ]; then
 fi
 
 case "$UNPARSED_VERSION" in
-	all-*)
-		echo "${UNPARSED_VERSION#all-}"
-		;;
 	aspd-*)
 		echo "${UNPARSED_VERSION#aspd-}"
 		;;

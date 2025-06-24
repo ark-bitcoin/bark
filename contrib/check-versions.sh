@@ -30,10 +30,6 @@ check_version() {
 }
 
 case "$TAG_NAME" in
-	all-*)
-		check_version aspd all-
-		check_version bark all-
-		;;
 	aspd-*)
 		check_version aspd aspd-
 		;;
