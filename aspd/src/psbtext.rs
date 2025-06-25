@@ -34,15 +34,14 @@ lazy_static::lazy_static! {
 
 pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 	fn set_sweep_meta(&mut self, meta: SweepMeta) {
-		let mut buf = Vec::new();
-		ciborium::into_writer(&meta, &mut buf).expect("can't fail");
-		self.borrow_mut().proprietary.insert(PROP_KEY_SWEEP_META.clone(), buf);
+		let encoded = rmp_serde::to_vec_named(&meta).expect("serde serialization");
+		self.borrow_mut().proprietary.insert(PROP_KEY_SWEEP_META.clone(), encoded);
 	}
 
 	fn get_sweep_meta(&self) -> anyhow::Result<Option<SweepMeta>> {
 		for (key, val) in &self.borrow().proprietary {
 			if *key == *PROP_KEY_SWEEP_META {
-				let meta = ciborium::from_reader(&val[..]).context("corrupt psbt: SweepMeta")?;
+				let meta = rmp_serde::from_slice(&val[..]).context("corrupt psbt: SweepMeta")?;
 				return Ok(Some(meta));
 			}
 		}

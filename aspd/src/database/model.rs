@@ -107,7 +107,7 @@ impl TryFrom<Row> for VtxoState {
 				.transpose()?,
 			forfeit_state: row
 				.get::<_, Option<&[u8]>>("forfeit_state")
-				.map(|bytes| ciborium::from_reader(bytes))
+				.map(|bytes| rmp_serde::from_slice(bytes))
 				.transpose()?,
 			board_swept: row.get::<_, bool>("board_swept"),
 		})
@@ -470,14 +470,15 @@ mod serde {
 #[cfg(test)]
 mod test {
 	use super::*;
-	use bitcoin::hex::FromHex;
+	use bitcoin::hex::{DisplayHex, FromHex};
 	use bitcoin::key::Keypair;
 	use bitcoin::secp256k1::rand;
 	use ark::musig;
 	use crate::SECP;
 
 	#[test]
-	fn forfeit_state_round_trip() {
+	fn forfeit_state_encoding() {
+		// first test random roundtrip
 		let key = Keypair::new(&*SECP, &mut rand::thread_rng());
 		let (secn, pubn) = musig::nonce_pair(&key);
 		let part = MusigPartialSignature::from_slice(
@@ -491,11 +492,15 @@ mod test {
 			pub_nonces: vec![pubn, pubn],
 			sec_nonces: vec![DangerousMusigSecNonce::new(secn)],
 		};
-
-		let mut encoded = Vec::new();
-		ciborium::into_writer(&ffs, &mut encoded).unwrap();
-
-		let decoded = ciborium::from_reader(&encoded[..]).unwrap();
+		let encoded = rmp_serde::to_vec_named(&ffs).unwrap();
+		let decoded = rmp_serde::from_slice(&encoded[..]).unwrap();
 		assert_eq!(ffs, decoded);
+
+		// then test stability
+		let bytes = Vec::<u8>::from_hex("85a8726f756e645f6964c4200000000000000000000000000000000000000000000000000000000000000000ab757365725f6e6f6e63657392c4420267390f9da47a07b025839c8efcb1a7bde7cf811f83aa2492924a7144054779ee03c3386f8699df043c23d3da71f7f72b9b70157f97b34546de54efc5c0f8af4507c4420267390f9da47a07b025839c8efcb1a7bde7cf811f83aa2492924a7144054779ee03c3386f8699df043c23d3da71f7f72b9b70157f97b34546de54efc5c0f8af4507ae757365725f706172745f7369677392c420fe2b5cf922855b8318ba6224da3b0adabc0d9de4254b47d9687846861aa0f843c420fe2b5cf922855b8318ba6224da3b0adabc0d9de4254b47d9687846861aa0f843aa7075625f6e6f6e63657392c4420267390f9da47a07b025839c8efcb1a7bde7cf811f83aa2492924a7144054779ee03c3386f8699df043c23d3da71f7f72b9b70157f97b34546de54efc5c0f8af4507c4420267390f9da47a07b025839c8efcb1a7bde7cf811f83aa2492924a7144054779ee03c3386f8699df043c23d3da71f7f72b9b70157f97b34546de54efc5c0f8af4507aa7365635f6e6f6e63657391dc0084220eccdcccf10f4f42ccefcc89cc85cccc407bcc9e74ccefcce8454c695fcc86cce6cc86ccd9ccd779cc83ccbdcc97ccfeccd14a3bcce57268ccb073ccd8ccb3cc9810ccfc2e0735ccb6ccd6ccf832044e78ccb004cceecc9505434f10cc875eccfb453d7c30ccefcc8cccb740066025cc8eccdd0fccd90709cce30d017dcccfcccf12ccfdccf37fcce220ccdfcce7ccc1537563ccb3357339ccac09ccacccf31cccb8cc9c09cc8cccab144bcc826078ccfd11cc940d48ccd01dcc95ccd82c56cca9ccda").unwrap();
+		let stable = rmp_serde::from_slice::<ForfeitState>(&bytes).unwrap();
+		let encoded = rmp_serde::to_vec_named(&stable).unwrap();
+		assert_eq!(bytes.as_hex().to_string(), encoded.as_hex().to_string());
+
 	}
 }
