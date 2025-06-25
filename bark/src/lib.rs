@@ -55,7 +55,6 @@ use ark::rounds::{
 	MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
-use ark::util::{Decodable, Encodable};
 use aspd_rpc::{self as rpc, protos};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::WalletExt;
@@ -63,7 +62,7 @@ use bitcoin_ext::bdk::WalletExt;
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs};
 use crate::onchain::Utxo;
-use crate::persist::BarkPersister;
+use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::VtxoState;
 use crate::vtxo_selection::RefreshStrategy;
@@ -106,20 +105,6 @@ impl ToSql for KeychainKind {
 			KeychainKind::External => Ok(1.into()),
 		}
 	}
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub enum OffchainPayment {
-	Lightning(Bolt11Invoice),
-}
-
-impl Encodable for OffchainPayment {}
-impl Decodable for OffchainPayment {}
-
-pub struct OffchainOnboard {
-	pub payment_hash: [u8; 32],
-	pub payment_preimage: [u8; 32],
-	pub payment: OffchainPayment,
 }
 
 lazy_static::lazy_static! {

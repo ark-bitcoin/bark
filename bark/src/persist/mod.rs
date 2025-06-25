@@ -6,13 +6,25 @@ use bitcoin::secp256k1::PublicKey;
 
 use ark::{Vtxo, VtxoId};
 use bitcoin_ext::{BlockHeight, BlockRef};
+use lightning_invoice::Bolt11Invoice;
 
 use crate::{
-	Config, KeychainKind, Movement, MovementArgs, OffchainOnboard, OffchainPayment, Pagination,
+	Config, KeychainKind, Movement, MovementArgs, Pagination,
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
 use crate::vtxo_state::VtxoState;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum OffchainPayment {
+	Lightning(Bolt11Invoice),
+}
+
+pub struct OffchainOnboard {
+	pub payment_hash: [u8; 32],
+	pub payment_preimage: [u8; 32],
+	pub payment: OffchainPayment,
+}
 
 pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialise wallet in the database
@@ -91,3 +103,4 @@ pub trait BarkPersister: Send + Sync + 'static {
 		self.get_vtxos_by_state(&[VtxoState::Spendable])
 	}
 }
+
