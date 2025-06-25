@@ -103,3 +103,4 @@ pub trait BarkPersister: Send + Sync + 'static {
 		self.get_vtxos_by_state(&[VtxoState::Spendable])
 	}
 }
+
