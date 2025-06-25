@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use ark::vtxo::test::VTXO_VECTORS;
+use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::secp256k1::PublicKey;
 use ark_testing::TestContext;
 use aspd::database::Db;
@@ -54,3 +55,40 @@ async fn lightning_invoice() {
 	assert_eq!(payment_indexes.updated_index, 2);
 }
 
+#[tokio::test]
+async fn duplicated_lightning_invoice() {
+	let mut ctx = TestContext::new_minimal("postgresd/duplicated_lightning_invoice").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let dummy_public_key = PublicKey::from_str("038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354")
+		.expect("Failed to create dummy pubkey");
+
+	let invoice = Bolt11Invoice::from_str("lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8").unwrap();
+
+	let (lightning_node_id, _dt) = db.register_lightning_node(&dummy_public_key).await.unwrap();
+	assert_ne!(lightning_node_id, 0);
+
+	db.store_lightning_payment_start(lightning_node_id, &invoice, 1000).await.unwrap();
+
+	// We create a test db client because Db check lightning invoice uniqueness
+	let db_client = ctx.postgres_manager().database_client(Some(&ctx.name)).await;
+
+	let stmt = db_client.prepare("
+		INSERT INTO lightning_invoice (
+			invoice,
+			payment_hash,
+			created_at,
+			updated_at
+		) VALUES ($1, $2, NOW(), NOW())
+		RETURNING lightning_invoice_id;
+	").await.unwrap();
+
+	let err = db_client.query_one(
+		&stmt, &[&invoice.to_string(), &&invoice.payment_hash()[..]],
+	).await.unwrap_err();
+	assert!(err.to_string().contains("duplicate key value violates unique constraint \"lightning_invoice_payment_hash_key\""), "err: {}", err);
+}

@@ -10,7 +10,6 @@ pub struct TestManagedPostgres {
 }
 
 impl TestManagedPostgres {
-
 	pub async fn init(datadir: PathBuf) -> Self {
 		let mut postgresd = Postgres::new("postgres", datadir);
 		postgresd.start().await.unwrap();
@@ -25,10 +24,14 @@ impl TestManagedPostgres {
 		self.postgresd.helper().into_config(db_name)
 	}
 
-	async fn global_client(&self) -> Client {
+	pub async fn database_client(&self, db_name: Option<&str>) -> Client {
 		self.postgresd
 			.helper()
-			.try_connect().await
+			.try_connect(db_name).await
 			.expect("Failed to connect to postgres host")
+	}
+
+	pub async fn global_client(&self) -> Client {
+		self.database_client(None).await
 	}
 }

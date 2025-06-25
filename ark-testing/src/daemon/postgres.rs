@@ -88,11 +88,17 @@ impl PostgresHelper {
 		}
 	}
 
-	pub async fn try_connect(&self) -> anyhow::Result<Client> {
+	pub async fn try_connect(&self, dbname: Option<&str>) -> anyhow::Result<Client> {
 		let mut config = Config::new();
 
-		// we use default database and user to connect and create testing ones
-		config.dbname("postgres");
+		if let Some(dbname) = dbname {
+			// user can define a specific database to connect to for testing
+			config.dbname(dbname);
+		} else {
+			// we use default database to connect and create testing ones
+			config.dbname("postgres");
+		}
+
 		config.host("localhost");
 		config.port(self.port());
 
@@ -107,7 +113,7 @@ impl PostgresHelper {
 	}
 
 	pub async fn is_ready(&self) -> bool {
-		self.try_connect().await.is_ok()
+		self.try_connect(None).await.is_ok()
 	}
 
 	pub fn pgdata(&self) -> PathBuf {

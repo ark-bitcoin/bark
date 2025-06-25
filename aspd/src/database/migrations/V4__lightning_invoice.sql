@@ -54,9 +54,9 @@ CREATE TYPE lightning_payment_status AS ENUM('requested', 'submitted', 'succeede
 CREATE TABLE lightning_invoice (
   lightning_invoice_id BIGSERIAL NOT NULL PRIMARY KEY,
   invoice TEXT NOT NULL,
-  payment_hash BYTEA NOT NULL,
+  payment_hash BYTEA NOT NULL UNIQUE,
   final_amount_msat BIGINT,
-  preimage BYTEA,
+  preimage BYTEA UNIQUE,
   payment_status lightning_payment_status NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL

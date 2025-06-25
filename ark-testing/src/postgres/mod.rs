@@ -34,6 +34,8 @@ mod query;
 use std::path::PathBuf;
 
 
+use tokio_postgres::Client;
+
 use self::{external::ExternallyManagedPostgres, test_managed::TestManagedPostgres};
 
 /// Check if the testing frame work is configured
@@ -61,6 +63,22 @@ impl PostgresDatabaseManager {
 		match self{
 			Self::ExternallyHosted(m) => m.request_database(db_name).await,
 			Self::TestManaged(m) => m.request_database(db_name).await,
+		}
+	}
+
+	/// Returns a client for a specific database.
+	pub async fn database_client(&self, db_name: Option<&str>) -> Client {
+		match self {
+			Self::ExternallyHosted(p) => p.database_client(db_name).await,
+			Self::TestManaged(p) => p.database_client(db_name).await,
+		}
+	}
+
+	/// Returns a client for the global database, can be used to create test databases.
+	pub async fn global_client(&self) -> Client {
+		match self {
+			Self::ExternallyHosted(p) => p.global_client().await,
+			Self::TestManaged(p) => p.global_client().await,
 		}
 	}
 }

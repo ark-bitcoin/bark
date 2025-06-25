@@ -668,11 +668,27 @@ ALTER TABLE ONLY public.lightning_htlc_subscription
 
 
 --
+-- Name: lightning_invoice lightning_invoice_payment_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_invoice
+    ADD CONSTRAINT lightning_invoice_payment_hash_key UNIQUE (payment_hash);
+
+
+--
 -- Name: lightning_invoice lightning_invoice_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.lightning_invoice
     ADD CONSTRAINT lightning_invoice_pkey PRIMARY KEY (lightning_invoice_id);
+
+
+--
+-- Name: lightning_invoice lightning_invoice_preimage_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_invoice
+    ADD CONSTRAINT lightning_invoice_preimage_key UNIQUE (preimage);
 
 
 --
