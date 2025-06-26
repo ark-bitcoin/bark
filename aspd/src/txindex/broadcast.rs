@@ -118,21 +118,20 @@ impl TxNursery {
 				return;
 			}
 		} else {
-			let mut txs = Vec::with_capacity(pkg.len());
-			let lock = self.txindex.tx_map.read().await;
-			for txid in pkg {
-				if let Some(tx) = lock.get(&*txid) {
-					if !tx.status().await.confirmed() {
+			let txs = self.txindex.get_batch(pkg).await;
+			for (txid, opt_tx) in pkg.iter().zip(&txs) {
+				if let Some(tx) = opt_tx {
+					if ! tx.status().await.confirmed() {
 						slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
-						txs.push(tx.clone());
 					}
 				} else {
 					debug!("Instructed to broadcast a tx we don't know: {}", txid);
-					return;
 				}
 			}
-			drop(lock);
-			self.broadcast_pkg(&txs).await;
+
+			// Filter out all txs that are None
+			let broadcast = txs.iter().filter_map(|tx| tx.clone()).collect::<Vec<_>>();
+			self.broadcast_pkg(&broadcast).await;
 		}
 	}
 

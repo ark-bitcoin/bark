@@ -210,6 +210,20 @@ impl TxIndex {
 		self.tx_map.read().await.get(txid).cloned()
 	}
 
+	pub async fn get_batch(&self, batch: impl IntoIterator<Item=&Txid>) -> Vec<Option<Tx>> {
+		let iter = batch.into_iter();
+
+		let size_hint = iter.size_hint();
+		let mut result = Vec::with_capacity(size_hint.1.unwrap_or(size_hint.0));
+
+		let tx_map = self.tx_map.read().await;
+		for txid in iter {
+			result.push(tx_map.get(txid).cloned());
+		}
+
+		result
+	}
+
 	/// Quick getter for the status of a tx by txid.
 	///
 	/// Returns [None] for a tx not in the index.
