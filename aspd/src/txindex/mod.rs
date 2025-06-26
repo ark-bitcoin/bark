@@ -214,10 +214,7 @@ impl TxIndex {
 	///
 	/// Returns [None] for a tx not in the index.
 	pub async fn status_of(&self, txid: &Txid) -> Option<TxStatus> {
-		let tx_map = self.tx_map.read().await;
-		let tx = tx_map.get(txid).cloned();
-		drop(tx_map);
-		if let Some(tx) = tx {
+		if let Some(tx) = self.get(txid).await {
 			Some(tx.status().await)
 		} else {
 			None
@@ -226,11 +223,9 @@ impl TxIndex {
 
 	/// Get a tx from the index or insert when not present.
 	pub async fn get_or_insert(&self, txid: &Txid, register: impl FnOnce() -> (Transaction, TxStatus))-> Tx {
-		let tx_map_read_lock = self.tx_map.read().await;
-		if let Some(tx) = tx_map_read_lock.get(txid) {
-			tx.clone()
+		if let Some(tx) = self.get(txid).await {
+			tx
 		} else {
-			drop(tx_map_read_lock);
 			let (tx, status) = register();
 			let ret = IndexedTx::new_as(*txid, tx, status);
 			self.tx_map.write().await.insert(*txid, ret.clone());
@@ -244,11 +239,9 @@ impl TxIndex {
 		register: impl FnOnce() -> Transaction,
 		bitcoind: &BitcoinRpcClient
 	) -> anyhow::Result<Tx> {
-		let tx_map_read_lock = self.tx_map.read().await;
-		if let Some(tx) = tx_map_read_lock.get(txid) {
-			Ok(tx.clone())
+		if let Some(tx) = self.get(txid).await {
+			Ok(tx)
 		} else {
-			drop(tx_map_read_lock);
 			let status = bitcoind.tx_status(txid)?;
 			let ret = IndexedTx::new_as(*txid, register(), status.into());
 			self.tx_map.write().await.insert(*txid, ret.clone());
