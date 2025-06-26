@@ -155,7 +155,7 @@ impl TxNursery {
 	}
 
 	async fn broadcast_tx(&self, tx: &Tx) {
-		// Skip if tx already in mempol.
+		// Skip if tx already in mempool or confirmed.
 		if tx.seen().await {
 			return;
 		}
