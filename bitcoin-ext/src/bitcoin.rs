@@ -131,17 +131,17 @@ impl AmountExt for Amount {}
 
 /// Extension trait for [FeeRate].
 pub trait FeeRateExt: Borrow<FeeRate> {
-	fn from_amount_per_kvb(amount_vkb: Amount) -> FeeRate {
-		FeeRate::from_sat_per_kvb(amount_vkb.to_sat())
+	fn from_amount_per_kvb_ceil(amount_vkb: Amount) -> FeeRate {
+		FeeRate::from_sat_per_kvb_ceil(amount_vkb.to_sat())
 	}
 
-	fn from_sat_per_kvb(sat_kvb: u64) -> FeeRate {
-		FeeRate::from_sat_per_kwu(sat_kvb * 4)
+	fn from_sat_per_kvb_ceil(sat_kvb: u64) -> FeeRate {
+		// Adding 3 to sat_kvb ensures we always round up when performing integer division.
+		FeeRate::from_sat_per_kwu((sat_kvb + 3) / 4)
 	}
 
-	fn from_sat_per_vb_decimal_checked(sat_vb: f64) -> Option<FeeRate> {
-		// Convert to sats per Wu then into kWu to maintain precision
-		let fee = (sat_vb * 4.0 * 1000.0).ceil();
+	fn from_sat_per_vb_decimal_checked_ceil(sat_vb: f64) -> Option<FeeRate> {
+		let fee = (sat_vb * 250.0).ceil();
 		if fee.is_finite() && fee >= 0.0 && fee <= u64::MAX as f64 {
 			Some(FeeRate::from_sat_per_kwu(fee as u64))
 		} else {
@@ -154,7 +154,7 @@ pub trait FeeRateExt: Borrow<FeeRate> {
 	}
 
 	fn to_sat_per_kvb(&self) -> u64 {
-		(self.borrow().to_sat_per_kwu() as f64 / 4.0).ceil() as u64
+		self.borrow().to_sat_per_kwu() * 4
 	}
 }
 impl FeeRateExt for FeeRate {}
@@ -210,57 +210,79 @@ mod test {
 
 	#[test]
 	fn fee_rate_from_amount_per_kvb() {
-		assert_eq!(FeeRate::from_amount_per_kvb(Amount::from_sat(1_000)),
-			FeeRate::from_sat_per_kwu(Weight::from_vb(1_000).unwrap().to_wu())
+		assert_eq!(FeeRate::from_amount_per_kvb_ceil(Amount::from_sat(1_000)),
+			FeeRate::from_sat_per_kwu(250)
 		);
-		assert_eq!(FeeRate::from_amount_per_kvb(Amount::from_sat(7_372)),
-			FeeRate::from_sat_per_kwu(Weight::from_vb(7_372).unwrap().to_wu())
+		assert_eq!(FeeRate::from_amount_per_kvb_ceil(Amount::from_sat(7_372)),
+			FeeRate::from_sat_per_kwu(1_843)
 		);
-		assert_eq!(FeeRate::from_amount_per_kvb(Amount::from_sat(238)),
-			FeeRate::from_sat_per_kwu(Weight::from_vb(238).unwrap().to_wu())
+		assert_eq!(FeeRate::from_amount_per_kvb_ceil(Amount::from_sat(238)),
+			FeeRate::from_sat_per_kwu(60) // 59.5 rounded up
+		);
+		assert_eq!(FeeRate::from_amount_per_kvb_ceil(Amount::from_sat(15_775)),
+			FeeRate::from_sat_per_kwu(3_944) // 3943.75 rounded up
+		);
+		assert_eq!(FeeRate::from_amount_per_kvb_ceil(Amount::from_sat(10_125)),
+			FeeRate::from_sat_per_kwu(2_532) // 2531.25 rounded up
 		);
 	}
 
 	#[test]
 	fn fee_rate_from_sat_per_kvb() {
-		assert_eq!(FeeRate::from_sat_per_kvb(1_000),
-			FeeRate::from_sat_per_kwu(Weight::from_vb(1_000).unwrap().to_wu())
+		assert_eq!(FeeRate::from_sat_per_kvb_ceil(1_000),
+			FeeRate::from_sat_per_kwu(250)
 		);
-		assert_eq!(FeeRate::from_sat_per_kvb(7_372),
-			FeeRate::from_sat_per_kwu(Weight::from_vb(7_372).unwrap().to_wu())
+		assert_eq!(FeeRate::from_sat_per_kvb_ceil(7_372),
+			FeeRate::from_sat_per_kwu(1_843)
 		);
-		assert_eq!(FeeRate::from_sat_per_kvb(238),
-			FeeRate::from_sat_per_kwu(Weight::from_vb(238).unwrap().to_wu())
+		assert_eq!(FeeRate::from_sat_per_kvb_ceil(238),
+			FeeRate::from_sat_per_kwu(60) // 59.5 rounded up
+		);
+		assert_eq!(FeeRate::from_sat_per_kvb_ceil(15_775),
+			FeeRate::from_sat_per_kwu(3_944) // 3943.75 rounded up
+		);
+		assert_eq!(FeeRate::from_sat_per_kvb_ceil(10_125),
+			FeeRate::from_sat_per_kwu(2_532) // 2531.25 rounded up
 		);
 	}
 
 	#[test]
 	fn fee_rate_from_sat_per_vb_decimal_checked() {
-		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(-1.0), None);
-		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(-15_4921.0), None);
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked_ceil(-1.0), None);
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked_ceil(-15_4921.0), None);
 
-		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(1.0),
-			Some(FeeRate::from_sat_per_kwu(Weight::from_vb(1000).unwrap().to_wu()))
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked_ceil(1.0),
+			Some(FeeRate::from_sat_per_kwu(250))
 		);
-		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(7.372),
-			Some(FeeRate::from_sat_per_kwu(Weight::from_vb(7_372).unwrap().to_wu()))
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked_ceil(7.372),
+			Some(FeeRate::from_sat_per_kwu(1_843))
 		);
-		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked(0.238),
-			Some(FeeRate::from_sat_per_kwu(Weight::from_vb(238).unwrap().to_wu()))
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked_ceil(0.238),
+			Some(FeeRate::from_sat_per_kwu(60)) // 59.5 rounded up
+		);
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked_ceil(15.775),
+			Some(FeeRate::from_sat_per_kwu(3_944)) // 3943.75 rounded up
+		);
+		assert_eq!(FeeRate::from_sat_per_vb_decimal_checked_ceil(10.12452),
+			Some(FeeRate::from_sat_per_kwu(2_532)) // 2531.13 rounded up
 		);
 	}
 
 	#[test]
 	fn fee_rate_to_btc_per_kvb() {
-		assert_eq!(FeeRate::from_sat_per_kwu(4_000).to_btc_per_kvb(), "0.00001");
-		assert_eq!(FeeRate::from_sat_per_kwu(29_488).to_btc_per_kvb(), "0.00007372");
-		assert_eq!(FeeRate::from_sat_per_kwu(952).to_btc_per_kvb(), "0.00000238");
+		assert_eq!(FeeRate::from_sat_per_kwu(250).to_btc_per_kvb(), "0.00001");
+		assert_eq!(FeeRate::from_sat_per_kwu(1_843).to_btc_per_kvb(), "0.00007372");
+		assert_eq!(FeeRate::from_sat_per_kwu(60).to_btc_per_kvb(), "0.0000024");
+		assert_eq!(FeeRate::from_sat_per_kwu(3_944).to_btc_per_kvb(), "0.00015776");
+		assert_eq!(FeeRate::from_sat_per_kwu(2_532).to_btc_per_kvb(), "0.00010128");
 	}
 
 	#[test]
 	fn fee_rate_to_sat_per_kvb() {
-		assert_eq!(FeeRate::from_sat_per_kwu(4_000).to_sat_per_kvb(), 1_000);
-		assert_eq!(FeeRate::from_sat_per_kwu(29_488).to_sat_per_kvb(), 7_372);
-		assert_eq!(FeeRate::from_sat_per_kwu(952).to_sat_per_kvb(), 238);
+		assert_eq!(FeeRate::from_sat_per_kwu(250).to_sat_per_kvb(), 1_000);
+		assert_eq!(FeeRate::from_sat_per_kwu(1_843).to_sat_per_kvb(), 7_372);
+		assert_eq!(FeeRate::from_sat_per_kwu(60).to_sat_per_kvb(), 240);
+		assert_eq!(FeeRate::from_sat_per_kwu(3_944).to_sat_per_kvb(), 15_776);
+		assert_eq!(FeeRate::from_sat_per_kwu(2_532).to_sat_per_kvb(), 10_128);
 	}
 }
