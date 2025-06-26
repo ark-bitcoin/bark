@@ -43,7 +43,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
-use ark::musig::{self, MusigPubNonce};
+use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos::{self, Bolt11PaymentResult};
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
@@ -405,7 +405,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		utxo: OutPoint,
-		user_pub_nonce: MusigPubNonce,
+		user_pub_nonce: PublicNonce,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
 		if amount < P2TR_DUST {
 			return badarg!("board amount must be at least {}", P2TR_DUST);
@@ -575,7 +575,7 @@ impl Server {
 
 	async fn cosign_oor_package(
 		&self,
-		arkoor_args: Vec<(VtxoId, musig::MusigPubNonce, Vec<VtxoRequest>)>,
+		arkoor_args: Vec<(VtxoId, musig::PublicNonce, Vec<VtxoRequest>)>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
 		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?
@@ -610,7 +610,7 @@ impl Server {
 		amount: Amount,
 		user_pubkey: PublicKey,
 		inputs: Vec<Vtxo>,
-		user_nonces: Vec<musig::MusigPubNonce>,
+		user_nonces: Vec<musig::PublicNonce>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice.payment_hash()).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
@@ -755,7 +755,7 @@ impl Server {
 	async fn revoke_bolt11_payment(
 		&self,
 		htlc_vtxo_ids: Vec<VtxoId>,
-		user_nonces: Vec<musig::MusigPubNonce>,
+		user_nonces: Vec<musig::PublicNonce>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		let tip = self.bitcoind.get_block_count()? as BlockHeight;
 		let db = self.db.clone();
@@ -887,7 +887,7 @@ impl Server {
 		&self,
 		input_vtxo_id: VtxoId,
 		vtxo_req: VtxoRequest,
-		user_nonce: musig::MusigPubNonce,
+		user_nonce: musig::PublicNonce,
 		payment_preimage: &[u8; 32],
 	) -> anyhow::Result<ArkoorCosignResponse> {
 		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await

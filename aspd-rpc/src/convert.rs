@@ -38,6 +38,21 @@ pub trait TryFromBytes: Sized {
 	fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError>;
 }
 
+macro_rules! impl_try_from_byte_array {
+	($ty:path, $exp:expr) => {
+		impl TryFromBytes for $ty {
+			fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
+				Ok(TryFrom::try_from(b.as_ref()).ok()
+					.and_then(|b| <$ty>::from_byte_array(b).ok())
+					.ok_or(concat!("invalid ", $exp))?)
+			}
+		}
+	};
+}
+impl_try_from_byte_array!(musig::PublicNonce, "public musig nonce");
+impl_try_from_byte_array!(musig::PartialSignature, "partial musig signature");
+impl_try_from_byte_array!(musig::AggregatedNonce, "aggregated musig nonce");
+
 macro_rules! impl_try_from_byte_slice {
 	($ty:path, $exp:expr) => {
 		impl TryFromBytes for $ty {
@@ -54,10 +69,7 @@ impl_try_from_byte_slice!(sha256::Hash, "SHA-256 hash");
 impl_try_from_byte_slice!(PublicKey, "public key");
 impl_try_from_byte_slice!(schnorr::Signature, "Schnorr signature");
 impl_try_from_byte_slice!(VtxoId, "VTXO ID");
-impl_try_from_byte_slice!(RoundId, "round ID");
-impl_try_from_byte_slice!(musig::MusigPubNonce, "public musig nonce");
-impl_try_from_byte_slice!(musig::MusigPartialSignature, "partial musig signature");
-impl_try_from_byte_slice!(musig::MusigAggNonce, "aggregated musig nonce");
+impl_try_from_byte_slice!(RoundId, "VTXO ID");
 
 macro_rules! impl_try_from_bytes_protocol {
 	($ty:path, $exp:expr) => {
@@ -221,7 +233,7 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					vtxos_spec: VtxoTreeSpec::deserialize(&m.vtxos_spec)
 						.map_err(|_| "invalid vtxos_spec")?,
 					cosign_agg_nonces: m.vtxos_agg_nonces.into_iter().map(|n| {
-						musig::MusigAggNonce::from_bytes(&n)
+						musig::AggregatedNonce::from_bytes(&n)
 					}).collect::<Result<_, _>>()?,
 					connector_pubkey: PublicKey::from_slice(&m.connector_pubkey)
 						.map_err(|_| "invalid connector pubkey")?,
@@ -238,7 +250,7 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 						let vtxo_id = VtxoId::from_slice(&f.input_vtxo_id)
 							.map_err(|_| "invalid input_vtxo_id")?;
 						let nonces = f.pub_nonces.into_iter().map(|n| {
-							musig::MusigPubNonce::from_bytes(&n)
+							musig::PublicNonce::from_bytes(&n)
 						}).collect::<Result<_, _>>()?;
 						Ok((vtxo_id, nonces))
 					}).collect::<Result<_, ConvertError>>()?,
@@ -321,8 +333,8 @@ impl TryFrom<protos::ArkoorCosignResponse> for ArkoorCosignResponse {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pub_nonce: musig::MusigPubNonce::from_bytes(&v.pub_nonce)?,
-			partial_signature: musig::MusigPartialSignature::from_bytes(&v.partial_sig)?,
+			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
+			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
 		})
 	}
 }
@@ -356,8 +368,8 @@ impl TryFrom<protos::Bolt11PaymentDetails> for ArkoorCosignResponse {
 	type Error = ConvertError;
 	fn try_from(v: protos::Bolt11PaymentDetails) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pub_nonce: musig::MusigPubNonce::from_bytes(&v.pub_nonce)?,
-			partial_signature: musig::MusigPartialSignature::from_bytes(&v.partial_sig)?,
+			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
+			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
 		})
 	}
 }
@@ -375,8 +387,8 @@ impl TryFrom<protos::BoardCosignResponse> for BoardCosignResponse {
 	type Error = ConvertError;
 	fn try_from(v: protos::BoardCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pub_nonce: musig::MusigPubNonce::from_bytes(&v.pub_nonce)?,
-			partial_signature: musig::MusigPartialSignature::from_bytes(&v.partial_sig)?,
+			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
+			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
 		})
 	}
 }

@@ -1181,7 +1181,7 @@ pub mod test {
 				builder.asp_pubkey,
 				builder.exit_delta,
 				anchor_point,
-				builder.user_pub_nonce(),
+				*builder.user_pub_nonce(),
 			).server_cosign(&asp_key)
 		};
 

@@ -47,8 +47,8 @@ fn exit_tx_sighash(
 /// Partial signature the server responds to a board request.
 #[derive(Debug)]
 pub struct BoardCosignResponse {
-	pub pub_nonce: musig::MusigPubNonce,
-	pub partial_signature: musig::MusigPartialSignature,
+	pub pub_nonce: musig::PublicNonce,
+	pub partial_signature: musig::PartialSignature,
 }
 
 pub mod state {
@@ -105,8 +105,8 @@ pub struct BoardBuilder<S: BuilderState> {
 	pub exit_delta: u16,
 
 	utxo: Option<OutPoint>,
-	user_pub_nonce: Option<musig::MusigPubNonce>,
-	user_sec_nonce: Option<musig::MusigSecNonce>,
+	user_pub_nonce: Option<musig::PublicNonce>,
+	user_sec_nonce: Option<musig::SecretNonce>,
 	_state: PhantomData<S>,
 }
 
@@ -177,13 +177,14 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			[self.user_pubkey, self.asp_pubkey],
 			funding_taproot.tap_tweak().to_byte_array(),
 		);
+		//TODO(stevenroose) consider trying to move this to musig module
 		let (sec_nonce, pub_nonce) = agg.nonce_gen(
 			&musig::SECP,
-			musig::MusigSecRand::assume_unique_per_nonce_gen(rand::random()),
+			musig::SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
 			musig::pubkey_to(self.user_pubkey),
-			musig::secpm::Message::from_digest(reveal_sighash.to_byte_array()),
+			&reveal_sighash.to_byte_array(),
 			None,
-		).expect("non-zero session id");
+		);
 
 		BoardBuilder {
 			user_pub_nonce: Some(pub_nonce),
@@ -201,8 +202,8 @@ impl BoardBuilder<state::CanGenerateNonces> {
 }
 
 impl<S: state::CanSign> BoardBuilder<S> {
-	pub fn user_pub_nonce(&self) -> musig::MusigPubNonce {
-		self.user_pub_nonce.expect("state invariant")
+	pub fn user_pub_nonce(&self) -> &musig::PublicNonce {
+		self.user_pub_nonce.as_ref().expect("state invariant")
 	}
 
 	/// The signature hash to sign the exit tx and the taproot info
@@ -237,7 +238,7 @@ impl BoardBuilder<state::ServerCanCosign> {
 		asp_pubkey: PublicKey,
 		exit_delta: u16,
 		utxo: OutPoint,
-		user_pub_nonce: musig::MusigPubNonce,
+		user_pub_nonce: musig::PublicNonce,
 	) -> BoardBuilder<state::ServerCanCosign> {
 		BoardBuilder {
 			amount, user_pubkey, expiry_height, asp_pubkey, exit_delta,
@@ -271,9 +272,9 @@ impl BoardBuilder<state::CanBuild> {
 		verify_partial_sig(
 			sighash,
 			taproot.tap_tweak(),
-			(self.asp_pubkey, server_cosign.pub_nonce),
+			(self.asp_pubkey, &server_cosign.pub_nonce),
 			(self.user_pubkey, self.user_pub_nonce()),
-			server_cosign.partial_signature
+			&server_cosign.partial_signature
 		)
 	}
 
@@ -307,8 +308,8 @@ impl BoardBuilder<state::CanBuild> {
 				sighash,
 				taproot.tap_tweak(),
 				(self.user_pubkey, self.user_pub_nonce()),
-				(self.asp_pubkey, server_cosign.pub_nonce),
-				user_sig,
+				(self.asp_pubkey, &server_cosign.pub_nonce),
+				&user_sig,
 			),
 			"invalid board partial exit tx signature produced",
 		);
@@ -377,7 +378,7 @@ mod test {
 		// server
 		let cosign = {
 			let server_builder = BoardBuilder::new_for_cosign(
-				amount, builder.user_pubkey, expiry, asp_pubkey, exit_delta, utxo, builder.user_pub_nonce(),
+				amount, builder.user_pubkey, expiry, asp_pubkey, exit_delta, utxo, *builder.user_pub_nonce(),
 			);
 			server_builder.server_cosign(&asp_key)
 		};

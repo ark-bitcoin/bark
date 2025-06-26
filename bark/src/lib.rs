@@ -50,7 +50,7 @@ use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::connectors::ConnectorChain;
-use ark::musig::{self, MusigPubNonce, MusigSecNonce};
+use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
 	MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
@@ -1622,7 +1622,7 @@ impl Wallet {
 				(secs, pubs)
 			})
 			.take(vtxo_reqs.len())
-			.collect::<Vec<(Vec<MusigSecNonce>, Vec<MusigPubNonce>)>>();
+			.collect::<Vec<(Vec<SecretNonce>, Vec<PublicNonce>)>>();
 
 		// The round has now started. We can submit our payment.
 		debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",

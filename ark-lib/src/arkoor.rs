@@ -105,8 +105,8 @@ pub fn signed_arkoor_tx(
 /// The cosignature details received from the Ark server.
 #[derive(Debug)]
 pub struct ArkoorCosignResponse {
-	pub pub_nonce: musig::MusigPubNonce,
-	pub partial_signature: musig::MusigPartialSignature,
+	pub pub_nonce: musig::PublicNonce,
+	pub partial_signature: musig::PartialSignature,
 }
 
 /// This types helps both the client and server with building arkoor txs in
@@ -123,7 +123,7 @@ pub struct ArkoorCosignResponse {
 ///   the signed resulting VTXOs
 pub struct ArkoorBuilder<'a, T: Clone> {
 	pub input: &'a Vtxo,
-	pub user_nonce: &'a musig::MusigPubNonce,
+	pub user_nonce: &'a musig::PublicNonce,
 	pub outputs: Cow<'a, [T]>,
 }
 
@@ -131,7 +131,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 	/// Construct a generic arkoor builder for the given input and outputs.
 	pub fn new(
 		input: &'a Vtxo,
-		user_nonce: &'a musig::MusigPubNonce,
+		user_nonce: &'a musig::PublicNonce,
 		outputs: impl Into<Cow<'a, [T]>>,
 	) -> Result<Self, ArkoorError> {
 		let outputs = outputs.into();
@@ -201,9 +201,9 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 		verify_partial_sig(
 			self.sighash(),
 			self.input.output_taproot().tap_tweak(),
-			(self.input.asp_pubkey(), server_cosign.pub_nonce),
-			(self.input.user_pubkey(), self.user_nonce.clone()),
-			server_cosign.partial_signature,
+			(self.input.asp_pubkey(), &server_cosign.pub_nonce),
+			(self.input.user_pubkey(), &self.user_nonce),
+			&server_cosign.partial_signature,
 		)
 	}
 
@@ -221,7 +221,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 	/// Returns the resulting vtxos and the signed arkoor tx.
 	pub fn build_vtxos(
 		&self,
-		user_sec_nonce: musig::MusigSecNonce,
+		user_sec_nonce: musig::SecretNonce,
 		user_key: &Keypair,
 		cosign_resp: &ArkoorCosignResponse,
 	) -> Result<Vec<Vtxo>, IncorrectSigningKeyError> {
@@ -252,9 +252,9 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 			verify_partial_sig(
 				sighash,
 				taptweak,
-				(self.input.user_pubkey(), self.user_nonce.clone()),
-				(self.input.asp_pubkey(), cosign_resp.pub_nonce),
-				_part_sig,
+				(self.input.user_pubkey(), &self.user_nonce),
+				(self.input.asp_pubkey(), &cosign_resp.pub_nonce),
+				&_part_sig,
 			),
 			"invalid partial signature produced",
 		);
@@ -324,7 +324,7 @@ pub enum ArkoorPackageError {
 impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 	pub fn new(
 		inputs: &'a [Vtxo],
-		user_nonces: &'a [musig::MusigPubNonce],
+		user_nonces: &'a [musig::PublicNonce],
 		vtxo_request: VtxoRequest,
 		change: Option<PublicKey>,
 	) -> Result<Self, ArkoorPackageError> {
@@ -371,7 +371,7 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 
 	pub fn new_htlc_revocation(
 		htlc_vtxos: &'a [Vtxo],
-		user_nonces: &'a [musig::MusigPubNonce],
+		user_nonces: &'a [musig::PublicNonce],
 	) -> Result<Self, ArkoorPackageError> {
 		let arkoors = htlc_vtxos.iter().zip(user_nonces).map(|(v, u)| {
 			if !matches!(v.policy(), VtxoPolicy::ServerHtlcSend { .. }) {
@@ -417,7 +417,7 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 		self,
 		sigs: &[ArkoorCosignResponse],
 		keypairs: &[Keypair],
-		sec_nonces: Vec<musig::MusigSecNonce>,
+		sec_nonces: Vec<musig::SecretNonce>,
 	) -> Result<(Vec<Vtxo>, Option<Vtxo>), ArkoorPackageError> {
 		let mut sent_vtxos = vec![];
 		let mut change_vtxo = None;

@@ -398,7 +398,7 @@ impl rpc::server::ArkService for Server {
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 		let expiry_height = req.expiry_height;
 		let utxo = OutPoint::from_bytes(&req.utxo)?;
-		let pub_nonce = musig::MusigPubNonce::from_bytes(&req.pub_nonce)?;
+		let pub_nonce = musig::PublicNonce::from_bytes(&req.pub_nonce)?;
 
 		let resp = self.cosign_board(
 			amount, user_pubkey, expiry_height, utxo, pub_nonce,
@@ -444,7 +444,7 @@ impl rpc::server::ArkService for Server {
 		let mut arkoor_args = vec![];
 		for arkoor in req.arkoors.iter() {
 			let input_id = VtxoId::from_bytes(&arkoor.input_id)?;
-			let user_nonce = musig::MusigPubNonce::from_bytes(&arkoor.pub_nonce)?;
+			let user_nonce = musig::PublicNonce::from_bytes(&arkoor.pub_nonce)?;
 			let outputs = arkoor.outputs.iter().map(|o| {
 				Ok(VtxoRequest {
 					amount: Amount::from_sat(o.amount),
@@ -547,7 +547,7 @@ impl rpc::server::ArkService for Server {
 			.to_status()?.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
 		let user_nonces = req.user_nonces.iter()
-			.map(musig::MusigPubNonce::from_bytes)
+			.map(musig::PublicNonce::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
@@ -615,7 +615,7 @@ impl rpc::server::ArkService for Server {
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let user_nonces = req.user_nonces.iter()
-			.map(musig::MusigPubNonce::from_bytes)
+			.map(musig::PublicNonce::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, user_nonces).await.to_status()?;
@@ -684,7 +684,7 @@ impl rpc::server::ArkService for Server {
 			policy: VtxoPolicy::from_bytes(&output.policy)?,
 		};
 
-		let user_nonce = musig::MusigPubNonce::from_bytes(&arkoor.pub_nonce)?;
+		let user_nonce = musig::PublicNonce::from_bytes(&arkoor.pub_nonce)?;
 
 		let payment_preimage: [u8; 32] = req.payment_preimage.as_slice()
 			.try_into().badarg("invalid preimage, not 32 bytes")?;
@@ -781,7 +781,7 @@ impl rpc::server::ArkService for Server {
 		let inp = RoundInput::VtxoSignatures {
 			pubkey: PublicKey::from_bytes(&req.pubkey)?,
 			signatures: req.signatures.iter()
-				.map(musig::MusigPartialSignature::from_bytes)
+				.map(musig::PartialSignature::from_bytes)
 				.collect::<Result<_, _>>()?,
 		};
 
@@ -807,10 +807,10 @@ impl rpc::server::ArkService for Server {
 			signatures: req.signatures.iter().map(|ff| {
 				let id = VtxoId::from_bytes(&ff.input_vtxo_id)?;
 				let nonces = ff.pub_nonces.iter()
-					.map(musig::MusigPubNonce::from_bytes)
+					.map(musig::PublicNonce::from_bytes)
 					.collect::<Result<_, _>>()?;
 				let signatures = ff.signatures.iter()
-					.map(musig::MusigPartialSignature::from_bytes)
+					.map(musig::PartialSignature::from_bytes)
 					.collect::<Result<_, _>>()?;
 				Ok((id, nonces, signatures))
 			}).collect::<Result<_, tonic::Status>>()?

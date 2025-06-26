@@ -103,7 +103,7 @@ impl ExitVtxo {
 	}
 
 	fn update_state_if_newer(
-		&mut self, 
+		&mut self,
 		new: ExitState,
 		persister: &dyn BarkPersister,
 	) -> anyhow::Result<(), ExitError> {
@@ -119,7 +119,7 @@ impl ExitVtxo {
 
 	fn persist(&self, persister: &dyn BarkPersister) -> anyhow::Result<(), ExitError> {
 		persister.store_exit_vtxo_entry(&ExitEntry::new(self))
-			.map_err(|e| ExitError::DatabaseVtxoStoreFailure { 
+			.map_err(|e| ExitError::DatabaseVtxoStoreFailure {
 				vtxo_id: self.id(), error: e.to_string(),
 			})
 	}

@@ -79,17 +79,17 @@ fn finalize_forfeit_tx(
 				[vtxo.user_pubkey(), vtxo.asp_pubkey()],
 				vtxo.output_taproot().tap_tweak().to_byte_array(),
 			);
-			let session = musig::MusigSession::new(
+			let session = musig::Session::new(
 				&musig::SECP,
 				&key_agg,
 				agg_nonce,
-				musig::secpm::Message::from_digest(sighash.to_byte_array()),
+				&sighash.to_byte_array(),
 			);
 			session.partial_verify(
 				&musig::SECP,
 				&key_agg,
-				part,
-				*ff.pub_nonces.get(conn_idx).expect("pub nonce index"),
+				&part,
+				ff.pub_nonces.get(conn_idx).expect("pub nonce index"),
 				musig::pubkey_to(vtxo.asp_pubkey()),
 			)
 		}, "invalid partial ff signature created");
