@@ -47,7 +47,12 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool>;
 	/// Returns a paginated list of movements
 	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
-	/// Register a movement
+
+	/// Register a movement of VTXOs.
+	///
+	/// This call will also:
+	/// - create new VTXOs in `receives` in the database
+	/// - mark VTXOs in `spends` as spent
 	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
 
 	/// Fetch a VTXO by id in the database

@@ -660,7 +660,7 @@ impl Wallet {
 			spends: &[],
 			receives: &[(&vtxo, VtxoState::UnregisteredBoard)],
 			recipients: &[],
-			fees: None
+			fees: None,
 		}).context("db error storing vtxo")?;
 
 		let tx = self.onchain.finish_tx(board_psbt)?;
@@ -1938,7 +1938,7 @@ impl Wallet {
 				spends: &input_vtxos.values().collect::<Vec<_>>(),
 				receives: &received,
 				recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
-				fees: None
+				fees: None,
 			}).context("failed to store OOR vtxo")?;
 		}
 

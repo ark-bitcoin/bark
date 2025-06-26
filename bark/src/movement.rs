@@ -1,7 +1,10 @@
-use ark::{Vtxo, VtxoId};
+
 use bitcoin::Amount;
 
+use ark::{Vtxo, VtxoId};
+
 use crate::vtxo_state::VtxoState;
+
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VtxoSubset {
