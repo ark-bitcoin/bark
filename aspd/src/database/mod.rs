@@ -407,11 +407,8 @@ impl Db {
 			UPDATE vtxo SET forfeit_state = $2 WHERE id = $1 AND spendable = true;
 		", &[Type::TEXT, Type::BYTEA]).await?;
 		for (id, forfeit_state) in forfeit_vtxos {
-			let state_bytes = {
-				let mut buf = Vec::new();
-				ciborium::into_writer(&forfeit_state, &mut buf).expect("write into buf");
-				buf
-			};
+			let state_bytes = rmp_serde::to_vec_named(&forfeit_state)
+				.expect("serde serialization");
 			let rows_affected = tx.execute(&statement, &[
 				&id.to_string(),
 				&state_bytes,
@@ -542,15 +539,14 @@ impl Db {
 	// **********
 
 	pub async fn store_changeset(&self, wallet: WalletKind, c: &ChangeSet) -> anyhow::Result<()> {
-		let mut buf = Vec::new();
-		ciborium::into_writer(c, &mut buf).unwrap();
+		let bytes = rmp_serde::to_vec_named(c).expect("serde serialization");
 
 		let conn = self.pool.get().await?;
 		let table = wallet_table(wallet);
 		let statement = conn.prepare_typed(&format!("
 			INSERT INTO {table} (content) VALUES ($1);
 		"), &[Type::BYTEA]).await?;
-		conn.execute(&statement, &[&buf]).await?;
+		conn.execute(&statement, &[&bytes]).await?;
 
 		Ok(())
 	}
@@ -569,7 +565,7 @@ impl Db {
 		let mut ret = Option::<ChangeSet>::None;
 		for row in rows {
 			let value = row.get::<_, Vec<u8>>(0);
-			let cs = ciborium::from_reader::<ChangeSet, _>(&*value)
+			let cs = rmp_serde::from_slice::<ChangeSet>(&*value)
 				.context("corrupt db: changeset value")?;
 
 			if let Some(ref mut r) = ret {
@@ -662,3 +658,72 @@ fn wallet_table(kind: WalletKind) -> &'static str {
 	}
 }
 
+#[cfg(test)]
+mod test {
+	use std::str::FromStr;
+	use std::sync::Arc;
+
+	use bdk_wallet::chain::{keychain_txout, local_chain, tx_graph, ConfirmationBlockTime, DescriptorId};
+	use bitcoin::{BlockHash, OutPoint, Transaction};
+	use bitcoin::consensus::encode::deserialize_hex;
+	use bitcoin::hashes::{sha256, Hash};
+	use bitcoin::hashes::hex::DisplayHex;
+
+	#[test]
+	fn bdk_changeset_serialization_stability() {
+		let block1 = BlockHash::from_str("36781cb353907ac940052d1c6a88d599e48ef7351307803a24899b4f672bb22b").unwrap();
+		let block2 = BlockHash::from_str("9381aff9163f7ba4ae7504b4c95c0e3f8f5f99961db113d0dd57337127c23eb0").unwrap();
+		let tx = deserialize_hex::<Transaction>("020000000001012c4d834818787a979ed1f35104baf1b6d3d78c290d95b11f6c9c1796ece37f930000000000fdffffff0280841e0000000000225120d2e18c25e0947343ef6b0bc11daea76302fcb1e0a97de340582453a003ccd523793f7c3b0000000022512097abba9f4e0f470cbbbef97bc68ca8abf488b67aa97ef394cc7347dd5e96fc0301405f5489f911968a6d4e2bc57477c8b7f2d6f977d75dc603358754ea27f86dad666cf1c443a33a7cec7bba477800f954ed0600b13fcad4aab5865f72ee83d9236a69000000").unwrap();
+		let txid = tx.compute_txid();
+		let xpub = "xpub661MyMwAqRbcGUSLHUTToGHgqHDy17ZFcDgHtF6X1unzY9bhz8VyHqfVFoJZeYmtUz7G86sTRLPa4BjQ6aAzE1UqfizPhxKcPtrxNSGgYh9";
+		let conf = ConfirmationBlockTime {
+			block_id: (101456, block1).into(),
+			confirmation_time: 11_111_111,
+		};
+		let cs = bdk_wallet::ChangeSet {
+			descriptor: Some(format!("tr({xpub}/0'/0/*)").parse().unwrap()),
+			change_descriptor: Some(format!("tr({xpub}/0'/1/*)").parse().unwrap()),
+			network: Some(bitcoin::Network::Bitcoin),
+			local_chain: local_chain::ChangeSet {
+				blocks: [
+					(420, Some(block1)),
+					(421, Some(block2)),
+				].into_iter().collect(),
+			},
+			tx_graph: tx_graph::ChangeSet {
+				txs: [Arc::new(tx.clone()), Arc::new(tx.clone())].into_iter().collect(),
+				txouts: [
+					(OutPoint::new(txid, 0), tx.output[0].clone()),
+					(OutPoint::new(txid, 1), tx.output[1].clone()),
+				].into_iter().collect(),
+				anchors: [(conf.clone(), txid), (conf.clone(), txid)].into_iter().collect(),
+				last_seen: [(txid, 11_111_112), (txid, 22_222_222)].into_iter().collect(),
+				last_evicted: [(txid, 11_111_114), (txid, 22_222_224)].into_iter().collect(),
+				first_seen: [(txid, 11_111_115), (txid, 22_222_225)].into_iter().collect(),
+			},
+			indexer: keychain_txout::ChangeSet {
+				last_revealed: [
+				].into_iter().collect(),
+				spk_cache: [
+					(DescriptorId(sha256::Hash::hash(&[0])), [
+						(420, tx.output[0].script_pubkey.clone()),
+						(421, tx.output[1].script_pubkey.clone()),
+					].into_iter().collect()),
+					(DescriptorId(sha256::Hash::hash(&[1])), [
+						(430, tx.output[0].script_pubkey.clone()),
+						(431, tx.output[1].script_pubkey.clone()),
+					].into_iter().collect()),
+				].into_iter().collect(),
+			},
+		};
+
+		let encoded = rmp_serde::to_vec_named(&cs).unwrap();
+		let decoded = rmp_serde::from_slice(&encoded).unwrap();
+		assert_eq!(cs, decoded);
+		let re_encoded = rmp_serde::to_vec_named(&decoded).unwrap();
+		assert_eq!(encoded.as_hex().to_string(), re_encoded.as_hex().to_string());
+
+		let stable = "86aa64657363726970746f72d983747228787075623636314d794d7741715262634755534c485554546f4748677148447931375a46634467487446365831756e7a593962687a38567948716656466f4a5a65596d74557a374738367354524c506134426a513661417a4531557166697a5068784b63507472784e5347675968392f30272f302f2a2923713867333270336ab16368616e67655f64657363726970746f72d983747228787075623636314d794d7741715262634755534c485554546f4748677148447931375a46634467487446365831756e7a593962687a38567948716656466f4a5a65596d74557a374738367354524c506134426a513661417a4531557166697a5068784b63507472784e5347675968392f30272f312f2a2923336e647368357032a76e6574776f726ba7626974636f696eab6c6f63616c5f636861696e81a6626c6f636b7382cd01a4c4202bb22b674f9b89243a80071335f78ee499d5886a1c2d0540c97a9053b31c7836cd01a5c420b03ec227713357ddd013b11d96995f8f3f0e5cc9b40475aea47b3f16f9af8193a874785f677261706886a37478739184a776657273696f6e02a96c6f636b5f74696d6569a5696e7075749184af70726576696f75735f6f757470757482a474786964c4202c4d834818787a979ed1f35104baf1b6d3d78c290d95b11f6c9c1796ece37f93a4766f757400aa7363726970745f736967c400a873657175656e6365cefffffffda77769746e65737391dc00405f54cc89ccf911cc96cc8a6d4e2bccc57477ccc8ccb7ccf2ccd6ccf977ccd75dccc60335cc8754ccea27ccf86dccad666cccf1ccc443cca33a7cccec7bccba477800ccf954cced0600ccb13fcccaccd4ccaaccb5cc865f72cceecc83ccd9236aa66f75747075749282a576616c7565ce001e8480ad7363726970745f7075626b6579c4225120d2e18c25e0947343ef6b0bc11daea76302fcb1e0a97de340582453a003ccd52382a576616c7565ce3b7c3f79ad7363726970745f7075626b6579c422512097abba9f4e0f470cbbbef97bc68ca8abf488b67aa97ef394cc7347dd5e96fc03a674786f7574738282a474786964c420a7dec2bb3de2e38232180628c0a32ae87bba7f40afa639ed03090c9f57c5dcb0a4766f75740082a576616c7565ce001e8480ad7363726970745f7075626b6579c4225120d2e18c25e0947343ef6b0bc11daea76302fcb1e0a97de340582453a003ccd52382a474786964c420a7dec2bb3de2e38232180628c0a32ae87bba7f40afa639ed03090c9f57c5dcb0a4766f75740182a576616c7565ce3b7c3f79ad7363726970745f7075626b6579c422512097abba9f4e0f470cbbbef97bc68ca8abf488b67aa97ef394cc7347dd5e96fc03a7616e63686f7273919282a8626c6f636b5f696482a6686569676874ce00018c50a468617368c4202bb22b674f9b89243a80071335f78ee499d5886a1c2d0540c97a9053b31c7836b1636f6e6669726d6174696f6e5f74696d65ce00a98ac7c420a7dec2bb3de2e38232180628c0a32ae87bba7f40afa639ed03090c9f57c5dcb0a96c6173745f7365656e81c420a7dec2bb3de2e38232180628c0a32ae87bba7f40afa639ed03090c9f57c5dcb0ce0153158eac6c6173745f6576696374656481c420a7dec2bb3de2e38232180628c0a32ae87bba7f40afa639ed03090c9f57c5dcb0ce01531590aa66697273745f7365656e81c420a7dec2bb3de2e38232180628c0a32ae87bba7f40afa639ed03090c9f57c5dcb0ce01531591a7696e646578657282ad6c6173745f72657665616c656480a973706b5f636163686582c4204bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a82cd01aec4225120d2e18c25e0947343ef6b0bc11daea76302fcb1e0a97de340582453a003ccd523cd01afc422512097abba9f4e0f470cbbbef97bc68ca8abf488b67aa97ef394cc7347dd5e96fc03c4206e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d82cd01a4c4225120d2e18c25e0947343ef6b0bc11daea76302fcb1e0a97de340582453a003ccd523cd01a5c422512097abba9f4e0f470cbbbef97bc68ca8abf488b67aa97ef394cc7347dd5e96fc03";
+		assert_eq!(encoded.as_hex().to_string(), stable);
+	}
+}

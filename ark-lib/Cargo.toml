@@ -22,7 +22,6 @@ serde.workspace = true
 bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false }
 lazy_static.workspace = true
 thiserror.workspace = true
-ciborium.workspace = true
 rand.workspace = true
 lightning-invoice.workspace = true
 # can use bitcoin::hex once they upgrade to v0.3.0
