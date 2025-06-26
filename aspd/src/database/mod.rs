@@ -5,6 +5,7 @@ mod embedded {
 	embed_migrations!("src/database/migrations");
 }
 mod cln;
+mod utils;
 
 pub mod model;
 pub use self::cln::ClnNodeId;

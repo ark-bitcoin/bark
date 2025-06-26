@@ -3,6 +3,7 @@ use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Utc};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
+use futures::{Stream, TryStreamExt};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, warn};
 
@@ -16,6 +17,7 @@ use crate::database::model::{
 	LightningPaymentStatus,
 };
 use crate::error::ContextExt;
+use crate::database::utils;
 
 /// Identifier by which CLN nodes are stored in the database.
 pub type ClnNodeId = i64;
@@ -127,7 +129,7 @@ impl Db {
 	pub async fn get_open_lightning_payment_attempts(
 		&self,
 		node_id: ClnNodeId,
-	) -> anyhow::Result<Vec<LightningPaymentAttempt>> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<LightningPaymentAttempt>>> {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
@@ -143,11 +145,11 @@ impl Db {
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
-		let rows = conn.query(
-			&stmt, &[&status_failed, &status_succeeded, &node_id]
+		let rows = conn.query_raw(
+			&stmt, utils::slice_iter(&[&status_failed, &status_succeeded, &node_id])
 		).await?;
 
-		Ok(rows.iter().map(Into::into).collect())
+		Ok(rows.map_ok(Into::into).err_into())
 	}
 
 	pub async fn get_open_lightning_payment_attempt_by_payment_hash(
@@ -185,7 +187,7 @@ impl Db {
 		}
 
 		if let Some(row) = rows.get(0) {
-			Ok(Some(row.into()))
+			Ok(Some(row.clone().into()))
 		} else {
 			Ok(None)
 		}

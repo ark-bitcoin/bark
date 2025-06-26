@@ -10,6 +10,7 @@ use bitcoin::hex::DisplayHex;
 use chrono::{DateTime, Utc};
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::ClnGrpcClient;
+use futures::StreamExt;
 use log::{debug, error, info, trace, warn};
 use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::JoinHandle;
@@ -257,7 +258,9 @@ impl ClnNodeMonitorProcess {
 			self.node_id,
 		).await?;
 
-		for attempt in open_attempts.into_iter() {
+		tokio::pin!(open_attempts);
+
+		while let Some(Ok(attempt)) = open_attempts.next().await {
 			if attempt.is_self_payment {
 				trace!("Lightning invoice ({}): Skipping since it is a self payment.",
 					attempt.lightning_invoice_id,

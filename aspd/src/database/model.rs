@@ -225,8 +225,8 @@ pub struct LightningPaymentAttempt {
 	pub updated_at: DateTime<Utc>,
 }
 
-impl<'a> From<&'a Row> for LightningPaymentAttempt {
-	fn from(row: &'a Row) -> Self {
+impl From<Row> for LightningPaymentAttempt {
+	fn from(row: Row) -> Self {
 		LightningPaymentAttempt {
 			lightning_payment_attempt_id: row.get("lightning_payment_attempt_id"),
 			lightning_invoice_id: row.get("lightning_invoice_id"),
