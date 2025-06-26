@@ -195,7 +195,6 @@ impl ScriptBufExt for ScriptBuf {
 #[cfg(test)]
 mod test {
 	use super::*;
-	use cbitcoin::Weight;
 
 	#[test]
 	fn amount_from_msat() {
