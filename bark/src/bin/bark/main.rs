@@ -137,7 +137,10 @@ impl ConfigOpts {
 		if let Some(v) = self.vtxo_refresh_expiry_threshold {
 			cfg.vtxo_refresh_expiry_threshold = v;
 		}
-		cfg.fallback_fee_rate = self.fallback_fee_rate.map(|f| FeeRate::from_sat_per_kvb_ceil(f));
+
+		if let Some(v) = self.fallback_fee_rate {
+			cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_kvb_ceil(v));
+		}
 
 		if cfg.esplora_address.is_none() && cfg.bitcoind_address.is_none() {
 			bail!("Provide either an esplora or bitcoind url as chain source.");
