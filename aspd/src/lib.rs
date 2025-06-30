@@ -782,7 +782,8 @@ impl Server {
 		}
 
 		let invoice = db.get_lightning_invoice_by_payment_hash(&first_payment_hash).await
-			.context("error fetching invoice by payment hash")?;
+			.context("error fetching invoice by payment hash")?
+			.not_found([first_payment_hash], "invoice not found")?;
 
 		match &invoice.last_attempt_status {
 			Some(status) if status == &LightningPaymentStatus::Failed => {},

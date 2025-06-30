@@ -57,7 +57,7 @@ use tonic::transport::{Channel, Uri};
 
 use cln_rpc::node_client::NodeClient;
 
-use crate::error::AnyhowErrorExt;
+use crate::error::{AnyhowErrorExt, ContextExt};
 use crate::system::RuntimeManager;
 use crate::cln::node::ClnNodeMonitor;
 use crate::config::{self, Config};
@@ -215,7 +215,8 @@ impl ClnManager {
 				},
 			}
 
-			let invoice = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await?;
+			let invoice = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await?
+				.not_found([payment_hash], "invoice not found")?;
 
 			if let Some(status) = invoice.last_attempt_status {
 				// In both cases, check payment status
@@ -710,7 +711,7 @@ impl ClnManagerProcess {
 		let node = self.get_hodl_active_node().context("no active hodl-compatible cln node")?;
 		let mut hold_client = node.hodl_rpc.clone().expect("active node not hodl enabled");
 
-		if let Ok(existing) = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await {
+		if let Ok(Some(existing)) = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await {
 			trace!("Found invoice but no subscription, creating new one");
 
 			hold_client.inject(hold::InjectRequest {
@@ -967,7 +968,8 @@ impl database::Db {
 		final_amount_msat: Option<u64>,
 		preimage: Option<&[u8; 32]>,
 	) -> anyhow::Result<bool> {
-		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?;
+		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?
+			.not_found([payment_hash], "invoice not found")?;
 		let is_last_attempt_finalized = li.last_attempt_status
 			.map(|a| a.is_final()).unwrap_or(false);
 
