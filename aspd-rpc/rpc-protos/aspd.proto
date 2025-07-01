@@ -307,6 +307,8 @@ service AdminService {
 	rpc WalletStatus(Empty) returns (WalletStatusResponse) {}
 	rpc TriggerRound(Empty) returns (Empty) {}
 	rpc TriggerSweep(Empty) returns (Empty) {}
+	rpc StartLightningNode(LightningNodeUri) returns (Empty) {}
+	rpc StopLightningNode(LightningNodeUri) returns (Empty) {}
 	rpc Stop(Empty) returns (Empty) {}
 }
 
@@ -323,6 +325,10 @@ message WalletStatus {
 message WalletStatusResponse {
 	WalletStatus rounds = 1;
 	WalletStatus forfeits = 2;
+}
+
+message LightningNodeUri {
+	string uri = 1;
 }
 
 message Empty {}

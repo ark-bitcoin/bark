@@ -186,6 +186,8 @@ const RPC_SERVICE_ADMIN_WALLET_SYNC: &'static str = "wallet_sync";
 const RPC_SERVICE_ADMIN_WALLET_STATUS: &'static str = "wallet_status";
 const RPC_SERVICE_ADMIN_TRIGGER_ROUND: &'static str = "trigger_round";
 const RPC_SERVICE_ADMIN_TRIGGER_SWEEP: &'static str = "trigger_sweep";
+const RPC_SERVICE_ADMIN_START_LIGHTNING_NODE: &'static str = "start_lightning_node";
+const RPC_SERVICE_ADMIN_STOP_LIGHTNING_NODE: &'static str = "stop_lightning_node";
 const RPC_SERVICE_ADMIN_STOP: &'static str = "stop";
 
 const RPC_SERVICE_ADMIN_METHODS: [&str; 5] = [
@@ -898,6 +900,28 @@ impl rpc::server::AdminService for Server {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_SWEEP);
 		self.vtxo_sweeper.trigger_sweep()
 			.context("VtxoSweeper down")?;
+		Ok(tonic::Response::new(protos::Empty{}))
+	}
+
+	async fn start_lightning_node(
+		&self,
+		req: tonic::Request<protos::LightningNodeUri>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_START_LIGHTNING_NODE);
+		let req = req.into_inner();
+		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
+		let _ = self.cln.activate(uri);
+		Ok(tonic::Response::new(protos::Empty{}))
+	}
+
+	async fn stop_lightning_node(
+		&self,
+		req: tonic::Request<protos::LightningNodeUri>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_STOP_LIGHTNING_NODE);
+		let req = req.into_inner();
+		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
+		let _ = self.cln.disable(uri);
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
