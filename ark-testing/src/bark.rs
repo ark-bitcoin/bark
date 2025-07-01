@@ -447,6 +447,9 @@ impl Bark {
 		match exit_result {
 			Ok(Ok(ret)) if ret.success() => Ok(out.trim().to_string()),
 			_ => {
+				//TODO(stevenroose) do something fancy that puts the logs into
+				// a context object so that we can .contains it without dumping them
+				// to stdout on test failure
 				bail!("Failed to execute command on {} '{}': error={:?}\nOUTPUT:\n{}\n\nLOGS:\n{}",
 					self.name(), command_str, exit_result, out, logs,
 				)

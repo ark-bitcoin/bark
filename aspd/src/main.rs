@@ -17,8 +17,13 @@ use aspd_rpc::{self as rpc, protos};
 /// Defaults to our default port on localhost.
 const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
 
+/// The full semver version to set, which includes the git commit hash
+/// as the build suffix.
+/// (GIT_HASH is set in build.rs)
+const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("GIT_HASH"));
+
 #[derive(Parser)]
-#[command(author = "Steven Roose <steven@roose.io>", version, about)]
+#[command(name = "aspd", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
 struct Cli {
 	/// Path to the configuration file
 	#[arg(global = true, short = 'C', long)]
