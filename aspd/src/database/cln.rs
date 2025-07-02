@@ -3,6 +3,7 @@ use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Utc};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
+use futures::{Stream, TryStreamExt};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, warn};
 
@@ -16,6 +17,7 @@ use crate::database::model::{
 	LightningPaymentStatus,
 };
 use crate::error::ContextExt;
+use crate::database::utils;
 
 /// Identifier by which CLN nodes are stored in the database.
 pub type ClnNodeId = i64;
@@ -127,13 +129,15 @@ impl Db {
 	pub async fn get_open_lightning_payment_attempts(
 		&self,
 		node_id: ClnNodeId,
-	) -> anyhow::Result<Vec<LightningPaymentAttempt>> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<LightningPaymentAttempt>>> {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
 			SELECT lightning_payment_attempt_id,
 				lightning_invoice_id, lightning_node_id, amount_msat, status, error,
-				created_at, updated_at
+				created_at, updated_at, (
+					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = lightning_payment_attempt.lightning_invoice_id)
+				) as is_self_payment
 			FROM lightning_payment_attempt
 			WHERE status != $1 AND status != $2 AND lightning_node_id = $3
 			ORDER BY created_at DESC;
@@ -141,11 +145,11 @@ impl Db {
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
-		let rows = conn.query(
-			&stmt, &[&status_failed, &status_succeeded, &node_id]
+		let rows = conn.query_raw(
+			&stmt, utils::slice_iter(&[&status_failed, &status_succeeded, &node_id])
 		).await?;
 
-		Ok(rows.iter().map(Into::into).collect())
+		Ok(rows.map_ok(Into::into).err_into())
 	}
 
 	pub async fn get_open_lightning_payment_attempt_by_payment_hash(
@@ -157,7 +161,9 @@ impl Db {
 		let stmt = conn.prepare("
 			SELECT attempt.lightning_payment_attempt_id,
 				attempt.lightning_invoice_id, attempt.lightning_node_id, attempt.amount_msat,
-				attempt.status, attempt.error, attempt.created_at, attempt.updated_at
+				attempt.status, attempt.error, attempt.created_at, attempt.updated_at, (
+					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = attempt.lightning_invoice_id)
+				) as is_self_payment
 			FROM lightning_invoice invoice
 			JOIN lightning_payment_attempt attempt ON
 				invoice.lightning_invoice_id = attempt.lightning_invoice_id
@@ -181,7 +187,7 @@ impl Db {
 		}
 
 		if let Some(row) = rows.get(0) {
-			Ok(Some(row.into()))
+			Ok(Some(row.clone().into()))
 		} else {
 			Ok(None)
 		}
@@ -328,7 +334,7 @@ impl Db {
 		old_lightning_invoice: LightningInvoice,
 		new_final_amount_msat: Option<u64>,
 		new_preimage: Option<&[u8; 32]>,
-	) -> anyhow::Result<DateTime<Utc>> {
+	) -> anyhow::Result<Option<DateTime<Utc>>> {
 		let conn = self.pool.get().await.unwrap();
 
 		let stmt = conn.prepare("
@@ -341,14 +347,14 @@ impl Db {
 		").await?;
 
 		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
-		let row = conn.query_one(&stmt, &[
+		let row = conn.query_opt(&stmt, &[
 			&old_lightning_invoice.lightning_invoice_id,
 			&old_lightning_invoice.updated_at,
 			&new_preimage.map(|p| &p[..]),
 			&final_amount_msat,
 		]).await?;
 
-		Ok(row.get("updated_at"))
+		Ok(row.map(|r| r.get("updated_at")))
 	}
 
 	pub async fn get_lightning_invoice_by_id(&self, id: i64) -> anyhow::Result<LightningInvoice> {

@@ -48,8 +48,7 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::AmountExt;
-use cln_rpc::plugins::hold;
-use cln_rpc::plugins::hold::hold_client::HoldClient;
+use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
 use tokio::sync::broadcast::Receiver;
@@ -63,7 +62,7 @@ use crate::system::RuntimeManager;
 use crate::cln::node::ClnNodeMonitor;
 use crate::config::{self, Config};
 use crate::database::{self, ClnNodeId};
-use crate::database::model::{LightningHtlcSubscriptionStatus, LightningPaymentAttempt, LightningPaymentStatus};
+use crate::database::model::{LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentAttempt, LightningPaymentStatus};
 use self::node::ClnNodeMonitorConfig;
 use crate::telemetry;
 
@@ -260,6 +259,19 @@ impl ClnManager {
 	}
 
 	pub async fn settle_invoice(&self, subscription_id: i64, preimage: &[u8; 32]) -> anyhow::Result<anyhow::Result<()>> {
+		let payment_hash = sha256::Hash::hash(preimage);
+
+		// If an open payment attempt exists for the payment hash, it's an ASP self-payment
+		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
+		let payment_attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
+		if let Some(payment_attempt) = payment_attempt {
+			let status = LightningPaymentStatus::Succeeded;
+			self.db.verify_and_update_invoice(
+				&payment_hash, &payment_attempt, status, None, None, Some(preimage),
+			).await?;
+			return Ok(Ok(()));
+		}
+
 		let (tx, rx) = oneshot::channel();
 		self.invoice_settle_tx
 			.send(((subscription_id, preimage.to_owned()), tx))
@@ -491,6 +503,12 @@ impl ClnManagerProcess {
 			.min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
 	}
 
+	fn get_node_by_id(&self, id: ClnNodeId) -> Option<&ClnNodeOnlineState> {
+		self.online_nodes()
+			.find(|(_, node)| node.id == id)
+			.map(|(_, node)| node)
+	}
+
 	async fn check_nodes(&mut self) {
 		for (uri, node) in self.nodes.iter_mut() {
 			match node.state {
@@ -650,6 +668,17 @@ impl ClnManagerProcess {
 		};
 		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
 
+		// If there is an existing subscription, it's an ASP self-payment
+		// so we can directly mark it as accepted, then skip cln payment
+		let subscription = self.db.get_htlc_subscription_by_payment_hash(
+			invoice.payment_hash(),
+			LightningHtlcSubscriptionStatus::Created,
+		).await?;
+		if let Some(subscription) = subscription {
+			self.cancel_invoice(subscription, LightningHtlcSubscriptionStatus::Accepted).await?;
+			return Ok(());
+		}
+
 		// Call pay over GRPC
 		// If it returns a pre-image we know the call succeeded,
 		//  however we ignore the response because it should get processed by the maintenance task.
@@ -729,6 +758,27 @@ impl ClnManagerProcess {
 
 		self.db.store_lightning_htlc_subscription_status(
 			subscription_id, LightningHtlcSubscriptionStatus::Settled).await?;
+
+		Ok(())
+	}
+
+	/// Cancels an invoice by sending a cancel request to the hodl plugin.
+	///
+	/// Note that in the case of an ASP self-payment, the invoice can be
+	/// cancelled on CLN but the htlc subscription marked as accepted and
+	/// later settled when receiver provides preimage, we just don't need
+	/// to watch it on lightning anymore.
+	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription, status: LightningHtlcSubscriptionStatus) -> anyhow::Result<()> {
+		// NB: we need to use the node that created the subscription
+		let mut hold_client = self.get_node_by_id(subscription.lightning_node_id)
+			.context("invoice cannot be cancelled: node is now offline")?
+			.hodl_rpc.clone().context("node doesn't support hodl anymore")?;
+
+		hold_client.cancel(hold::CancelRequest {
+			payment_hash: subscription.invoice.payment_hash().as_byte_array().to_vec(),
+		}).await?;
+
+		self.db.store_lightning_htlc_subscription_status(subscription.lightning_htlc_subscription_id, status).await?;
 
 		Ok(())
 	}
@@ -935,7 +985,7 @@ impl database::Db {
 
 		self.update_lightning_payment_attempt_status(attempt, status, payment_error).await?;
 
-		self.update_lightning_invoice(li, final_amount_msat, preimage).await?;
+		let updated_at = self.update_lightning_invoice(li, final_amount_msat, preimage).await?;
 
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
 
@@ -945,6 +995,6 @@ impl database::Db {
 			status,
 		);
 
-		Ok(true)
+		Ok(updated_at.is_some())
 	}
 }
