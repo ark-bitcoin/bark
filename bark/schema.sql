@@ -22,7 +22,8 @@ CREATE TABLE bark_vtxo_state (
 				id INTEGER PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT  (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 				vtxo_id TEXT REFERENCES bark_vtxo(id),
-				state TEXT
+				state_kind TEXT NOT NULL,
+				state BLOB NOT NULL
 			);
 CREATE TABLE bark_ark_sync (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,22 +31,24 @@ CREATE TABLE bark_ark_sync (
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);
 CREATE VIEW most_recent_vtxo_state
-				(id, last_updated_at, vtxo_id, state)
+				(id, last_updated_at, vtxo_id, state_kind, state)
 			AS
 			WITH most_recent AS (SELECT MAX(id) as id FROM bark_vtxo_state GROUP BY vtxo_id)
 			SELECT
 					most_recent.id,
 					vs.created_at,
 					vs.vtxo_id,
+					vs.state_kind,
 					vs.state
 					FROM most_recent JOIN bark_vtxo_state as vs
 						ON vs.id = most_recent.id
-/* most_recent_vtxo_state(id,last_updated_at,vtxo_id,state) */;
+/* most_recent_vtxo_state(id,last_updated_at,vtxo_id,state_kind,state) */;
 CREATE VIEW vtxo_view
 			AS SELECT
 				v.id,
 				v.expiry_height,
 				v.amount_sat,
+				vs.state_kind,
 				vs.state,
 				v.raw_vtxo,
 				v.created_at,
@@ -53,7 +56,7 @@ CREATE VIEW vtxo_view
 			FROM bark_vtxo as v
 			JOIN most_recent_vtxo_state as vs
 				ON v.id = vs.vtxo_id
-/* vtxo_view(id,expiry_height,amount_sat,state,raw_vtxo,created_at,last_updated_at) */;
+/* vtxo_view(id,expiry_height,amount_sat,state_kind,state,raw_vtxo,created_at,last_updated_at) */;
 CREATE TABLE bark_config (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),

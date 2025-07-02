@@ -335,7 +335,7 @@ impl BoardBuilder<state::CanBuild> {
 				output_idx: 0,
 				other_outputs: vec![],
 			}],
-			policy: VtxoPolicy::Pubkey { user_pubkey: self.user_pubkey },
+			policy: VtxoPolicy::new_pubkey(self.user_pubkey),
 			point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
 		})
 	}

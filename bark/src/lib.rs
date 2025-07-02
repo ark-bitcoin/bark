@@ -14,6 +14,7 @@ mod lnurl;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
+use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
 pub use persist::sqlite::SqliteClient;
 mod psbtext;
 pub mod vtxo_selection;
@@ -64,7 +65,7 @@ use crate::movement::{Movement, MovementArgs};
 use crate::onchain::Utxo;
 use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
-use crate::vtxo_state::VtxoState;
+use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
@@ -524,11 +525,11 @@ impl Wallet {
 	}
 
 	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()> {
-		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoState::UnregisteredBoard])?;
+		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
 		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
 		for board in unregistered_boards {
-			if let Err(e) = self.register_board(board.id()).await {
-				warn!("Failed to register board {}: {}", board.id(), e);
+			if let Err(e) = self.register_board(board.vtxo.id()).await {
+				warn!("Failed to register board {}: {}", board.vtxo.id(), e);
 			}
 		};
 
@@ -549,6 +550,7 @@ impl Wallet {
 		self.register_all_unregistered_boards().await?;
 		info!("Performing maintenance refresh");
 		self.maintenance_refresh().await?;
+		self.sync_pending_lightning_vtxos().await?;
 		Ok(())
 	}
 
@@ -691,7 +693,7 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		let allowed_states = &[VtxoState::UnregisteredBoard, VtxoState::Spendable];
+		let allowed_states = &[VtxoStateKind::UnregisteredBoard, VtxoStateKind::Spendable];
 		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
 
 		Ok(Board {
@@ -762,7 +764,7 @@ impl Wallet {
 				.into_cached_tree();
 
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-				if let VtxoPolicy::Pubkey { user_pubkey } = dest.vtxo.policy {
+				if let VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) = dest.vtxo.policy {
 					if pubkeys.contains(&user_pubkey) {
 						if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 							self.db.register_movement(MovementArgs {
@@ -937,7 +939,7 @@ impl Wallet {
 
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let req = VtxoRequest {
-			policy: VtxoPolicy::Pubkey { user_pubkey: user_keypair.public_key() },
+			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
 			amount: total_amount,
 		};
 
@@ -976,6 +978,23 @@ impl Wallet {
 			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip))?;
 			Ok(should_refresh_vtxos)
 		}
+	}
+
+	async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
+		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
+		info!("Syncing {} pending lightning vtxos", vtxos.len());
+
+		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
+		for vtxo in vtxos {
+			let invoice = vtxo.state.as_pending_lightning().unwrap();
+			htlc_vtxos_by_payment_hash.entry(*invoice.0.payment_hash()).or_default().push(vtxo);
+		}
+
+		for (_, vtxos) in htlc_vtxos_by_payment_hash {
+			self.check_bolt11_payment(&vtxos).await?;
+		}
+
+		Ok(())
 	}
 
 	/// Select several vtxos to cover the provided amount
@@ -1025,7 +1044,7 @@ impl Wallet {
 
 		let req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::Pubkey { user_pubkey: destination },
+			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: destination }),
 		};
 
 		let inputs = self.select_vtxos_to_cover(
@@ -1107,6 +1126,59 @@ impl Wallet {
 		Ok(arkoor.created)
 	}
 
+	async fn process_bolt11_revocation(&self, htlc_vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		let mut asp = self.require_asp()?;
+
+		info!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
+
+		let mut secs = Vec::with_capacity(htlc_vtxos.len());
+		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
+		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
+		for input in htlc_vtxos.into_iter() {
+			let keypair = {
+				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
+				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+			};
+
+			let (s, p) = musig::nonce_pair(&keypair);
+			secs.push(s);
+			pubs.push(p);
+			keypairs.push(keypair);
+		}
+
+		let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
+
+		let req = protos::RevokeBolt11PaymentRequest {
+			htlc_vtxo_ids: revocation.arkoors.iter()
+				.map(|i| i.input.id().to_bytes().to_vec())
+				.collect(),
+			user_nonces: revocation.arkoors.iter()
+				.map(|i| i.user_nonce.serialize().to_vec())
+				.collect(),
+		};
+		let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
+			.into_inner().try_into().context("invalid server cosign response")?;
+		ensure!(revocation.verify_cosign_response(&cosign_resp),
+			"invalid arkoor cosignature received from server",
+		);
+
+		let (vtxos, _) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
+		for vtxo in &vtxos {
+			info!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
+		}
+
+		self.db.register_movement(MovementArgs {
+			spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
+			receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
+			recipients: &[],
+			fees: None,
+		})?;
+
+		info!("Revoked {} HTLC VTXOs", vtxos.len());
+
+		Ok(())
+	}
+
 	pub async fn send_bolt11_payment(
 		&mut self,
 		invoice: &Bolt11Invoice,
@@ -1141,11 +1213,11 @@ impl Wallet {
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
 		let pay_req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::ServerHtlcSend {
+			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 				user_pubkey: change_keypair.public_key(),
 				payment_hash: *invoice.payment_hash(),
 				htlc_expiry: htlc_expiry,
-			},
+			}),
 		};
 
 		let inputs = self.select_vtxos_to_cover(pay_req.amount + P2TR_DUST, Some(asp.info.max_arkoor_depth))?;
@@ -1170,8 +1242,8 @@ impl Wallet {
 		let req = protos::Bolt11PaymentRequest {
 			invoice: invoice.to_string(),
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
-			input_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			pub_nonces: pubs.iter().map(|p| p.serialize().to_vec()).collect(),
+			input_vtxo_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+			user_nonces: pubs.iter().map(|p| p.serialize().to_vec()).collect(),
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
@@ -1199,6 +1271,21 @@ impl Wallet {
 			}
 		}
 
+		let pending_lightning_state = VtxoState::PendingLightningSend {
+			invoice: invoice.clone(),
+			amount: amount,
+		};
+
+		self.db.register_movement(MovementArgs {
+			spends: &inputs.iter().collect::<Vec<_>>(),
+			receives: &htlc_vtxos.iter()
+				.map(|v| (v, pending_lightning_state.clone()))
+				.chain(change_vtxo.as_ref().map(|c| (c, VtxoState::Spendable)))
+				.collect::<Vec<_>>(),
+			recipients: &[],
+			fees: None,
+		}).context("failed to store OOR vtxo")?;
+
 		let req = protos::SignedBolt11PaymentDetails {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
@@ -1209,72 +1296,96 @@ impl Wallet {
 		debug!("Progress update: {}", res.progress_message);
 		let payment_preimage = <[u8; 32]>::try_from(res.payment_preimage()).ok();
 
-		// The client will receive the change VTXO if it exists
-		if let Some(ref change_vtxo) = change_vtxo {
-			info!("Adding change VTXO of {}", change_vtxo.amount());
-
-		}
-
-		let receive_vtxos = change_vtxo.iter()
-			.map(|v| (v, VtxoState::Spendable))
-			.collect::<Vec<_>>();
-
 		if let Some(preimage) = payment_preimage {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
 			self.db.register_movement(MovementArgs {
-				spends: &inputs.iter().collect::<Vec<_>>(),
-				receives: &receive_vtxos,
+				spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
+				receives: &[],
 				recipients: &[(&invoice.to_string(), amount)],
 				fees: None,
 			}).context("failed to store OOR vtxo")?;
 			Ok(preimage)
 		} else {
-			info!("Payment failed! Revoking...");
-			let mut secs = Vec::with_capacity(htlc_vtxos.len());
-			let mut pubs = Vec::with_capacity(htlc_vtxos.len());
-			let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
-			for input in htlc_vtxos.iter() {
-				let keypair = {
-					let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-					self.vtxo_seed.derive_keychain(keychain, keypair_idx)
-				};
-
-				let (s, p) = musig::nonce_pair(&keypair);
-				secs.push(s);
-				pubs.push(p);
-				keypairs.push(keypair);
-			}
-
-			let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
-
-			let req = protos::RevokeBolt11PaymentRequest {
-				input_ids: revocation.arkoors.iter()
-					.map(|i| i.input.id().to_bytes().to_vec())
-					.collect(),
-				pub_nonces: revocation.arkoors.iter()
-					.map(|i| i.user_nonce.serialize().to_vec())
-					.collect(),
-			};
-			let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
-				.into_inner().try_into().context("invalid server cosign response")?;
-			ensure!(revocation.verify_cosign_response(&cosign_resp),
-				"invalid arkoor cosignature received from server",
-			);
-
-			let (vtxos, change) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
-			assert!(change.is_none(), "unexpected change: {:?}", change);
-
-			self.db.register_movement(MovementArgs {
-				spends: &inputs.iter().collect::<Vec<_>>(),
-				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable))
-					.chain(change_vtxo.as_ref().map(|c| (c, VtxoState::Spendable)))
-					.collect::<Vec<_>>(),
-				recipients: &[],
-				fees: None,
-			})?;
-
-			bail!("Payment failed: {}", res.progress_message);
+			self.process_bolt11_revocation(&htlc_vtxos).await?;
+			bail!("No preimage, payment failed: {}", res.progress_message);
 		}
+	}
+
+	pub async fn check_bolt11_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<[u8; 32]>> {
+		let mut asp = self.require_asp()?;
+		let tip = self.onchain.tip().await?;
+
+		// we check that all htlc have the same invoice, amount, and HTLC out spec
+		let mut parts = None;
+		for vtxo in htlc_vtxos.iter() {
+			if let VtxoState::PendingLightningSend { ref invoice, amount } = vtxo.state {
+				let policy = vtxo.vtxo.policy().as_server_htlc_send()
+					.context("VTXO is not an HTLC send")?;
+				let this_parts = (invoice, amount, policy);
+				if parts.get_or_insert_with(|| this_parts) != &this_parts {
+					bail!("All bolt11 htlc should have the same invoice, amount, and policy");
+				}
+			}
+		}
+
+		let (invoice, amount, spk_spec) = parts.context("no htlc vtxo provided")?;
+
+		let req = protos::CheckBolt11PaymentRequest {
+			hash: invoice.payment_hash().as_byte_array().to_vec(),
+			wait: false,
+		};
+		let res = asp.client.check_bolt11_payment(req).await?.into_inner();
+
+		let payment_status = protos::PaymentStatus::try_from(res.status)?;
+
+		let should_revoke = match payment_status {
+			protos::PaymentStatus::Failed => {
+				info!("Payment failed ({}): revoking VTXO", res.progress_message);
+				true
+			},
+			protos::PaymentStatus::Pending => {
+				trace!("Payment is still pending, HTLC expiry: {}, tip: {}", spk_spec.htlc_expiry, tip);
+				if tip > spk_spec.htlc_expiry {
+					info!("Payment is still pending, but HTLC is expired: revoking VTXO");
+					true
+				} else {
+					info!("Payment is still pending and HTLC is not expired ({}): doing nothing for now", spk_spec.htlc_expiry);
+					false
+				}
+			},
+			protos::PaymentStatus::Complete => {
+				let preimage: [u8; 32] = res.payment_preimage.context("payment completed but no preimage")?
+					.try_into().map_err(|_| anyhow!("preimage is not 32 bytes"))?;
+				info!("Payment is complete, preimage, {}", preimage.as_hex());
+
+				self.db.register_movement(MovementArgs {
+					spends: &htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
+					receives: &[],
+					recipients: &[(&invoice.to_string(), amount)],
+					fees: None,
+				}).context("failed to store OOR vtxo")?;
+
+				return Ok(Some(preimage));
+			},
+		};
+
+		if should_revoke {
+			if let Err(e) = self.process_bolt11_revocation(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>()).await {
+				warn!("Failed to revoke VTXO: {}", e);
+
+				// if one of the htlc is about to expire, we exit all of them.
+				// Maybe we want a different behavior here, but we have to decide whether
+				// htlc vtxos revocation is a all or nothing process.
+				let min_expiry = htlc_vtxos.iter()
+					.map(|v| v.vtxo.spec().expiry_height).min().unwrap();
+				if tip > min_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
+					warn!("Some VTXO is about to expire soon, must be exited");
+					self.exit.start_exit_for_vtxos(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(), &self.onchain).await?;
+				}
+			}
+		}
+
+		Ok(None)
 	}
 
 	/// Create, store and return a bolt11 invoice for offchain onboarding
@@ -1356,11 +1467,7 @@ impl Wallet {
 			let inputs = fee_vtxo_cloned.clone();
 			let htlc_pay_req = VtxoRequest {
 				amount: amount,
-				policy: VtxoPolicy::ServerHtlcRecv {
-					user_pubkey: keypair.public_key(),
-					payment_hash: *invoice.payment_hash(),
-					htlc_expiry: htlc_expiry,
-				},
+				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), *invoice.payment_hash(), htlc_expiry),
 			};
 
 			Ok((inputs, vec![htlc_pay_req], vec![]))
@@ -1372,7 +1479,7 @@ impl Wallet {
 
 		// Claiming arkoor against preimage
 		let pay_req = VtxoRequest {
-			policy: VtxoPolicy::Pubkey { user_pubkey: keypair.public_key() },
+			policy: VtxoPolicy::new_pubkey(keypair.public_key()),
 			amount: amount,
 		};
 
@@ -1467,7 +1574,7 @@ impl Wallet {
 					info!("Adding change vtxo for {}", amount);
 					Some(VtxoRequest {
 						amount: amount,
-						policy: VtxoPolicy::Pubkey { user_pubkey: change_keypair.public_key() },
+						policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
 					})
 				}
 			};

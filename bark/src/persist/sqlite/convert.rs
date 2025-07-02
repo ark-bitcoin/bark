@@ -1,16 +1,8 @@
 use bitcoin::Amount;
-use rusqlite::{Result, Row};
-use rusqlite::types::{ToSql, ToSqlOutput};
+use rusqlite::Row;
 
 use crate::movement::{Movement, MovementRecipient, VtxoSubset};
 use crate::persist::OffchainOnboard;
-use crate::VtxoState;
-
-impl ToSql for VtxoState {
-	fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
-		self.as_str().to_sql()
-	}
-}
 
 pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 	let fees: Amount = Amount::from_sat(row.get("fees_sat")?);

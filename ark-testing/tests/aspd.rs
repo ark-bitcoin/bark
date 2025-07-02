@@ -842,7 +842,7 @@ async fn bad_round_input() {
 	let vtxo_req = protos::SignedVtxoRequest {
 		vtxo: Some(protos::VtxoRequest {
 			amount: 1000,
-			policy: VtxoPolicy::Pubkey { user_pubkey: key.public_key() }.serialize(),
+			policy: VtxoPolicy::new_pubkey(key.public_key()).serialize(),
 		}),
 		cosign_pubkey: key2.public_key().serialize().to_vec(),
 		public_nonces: iter::repeat({

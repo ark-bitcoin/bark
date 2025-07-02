@@ -16,7 +16,6 @@ use crate::database::model::{
 	LightningPaymentAttempt,
 	LightningPaymentStatus,
 };
-use crate::error::ContextExt;
 use crate::database::utils;
 
 /// Identifier by which CLN nodes are stored in the database.
@@ -380,7 +379,7 @@ impl Db {
 	pub async fn get_lightning_invoice_by_payment_hash(
 		&self,
 		payment_hash: &sha256::Hash,
-	) -> anyhow::Result<LightningInvoice> {
+	) -> anyhow::Result<Option<LightningInvoice>> {
 		let conn = self.pool.get().await?;
 
 		let res = conn.query_opt("
@@ -396,7 +395,12 @@ impl Db {
 			ORDER BY invoice.lightning_invoice_id, attempt.created_at DESC;",
 			&[&&payment_hash[..]],
 		).await.context("error fetching lightning invoice by payment_hash")?;
-		Ok(res.not_found([payment_hash], "payment not found")?.try_into()?)
+
+		if let Some(row) = res {
+			Ok(Some(row.try_into()?))
+		} else {
+			Ok(None)
+		}
 	}
 
 	pub async fn store_generated_lightning_invoice(

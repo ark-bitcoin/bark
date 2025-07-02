@@ -154,8 +154,8 @@ message ArkoorVtxosResponse {
 message Bolt11PaymentRequest {
 	string invoice = 1;
 	optional uint64 user_amount_sat = 2;
-	repeated bytes input_ids = 3;
-	repeated bytes pub_nonces = 4;
+	repeated bytes input_vtxo_ids = 3;
+	repeated bytes user_nonces = 4;
 	bytes user_pubkey = 5;
 }
 
@@ -184,8 +184,8 @@ message Bolt11PaymentResult {
 }
 
 message RevokeBolt11PaymentRequest {
-	repeated bytes input_ids = 1;
-	repeated bytes pub_nonces = 2;
+	repeated bytes htlc_vtxo_ids = 1;
+	repeated bytes user_nonces = 2;
 }
 
 message StartBolt11OnboardRequest {

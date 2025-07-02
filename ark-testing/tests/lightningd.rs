@@ -3,13 +3,12 @@ use std::sync::Arc;
 
 use bitcoin::Amount;
 use cln_rpc as rpc;
+
 use log::{info, trace};
 
-use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
-
-use ark_testing::{btc, sat, TestContext};
-use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, daemon::aspd, sat, TestContext};
 use ark_testing::util::FutureExt;
+use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 
 
 #[tokio::test]
@@ -498,4 +497,84 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 	assert!(vtxos.iter().any(|v| v.amount == sat(199999650)), "should have fees change");
 
 	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
+}
+
+#[tokio::test]
+async fn bark_revoke_expired_pending_ln_payment() {
+	let ctx = TestContext::new("lightningd/bark_revoke_expired_pending_ln_payment").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	/// This proxy will refuse to revoke the htlc out.
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+
+		async fn finish_bolt11_payment(
+			&mut self,
+			_req: aspd_rpc::protos::SignedBolt11PaymentDetails,
+		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
+			// Never return - wait indefinitely
+			loop {
+				tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+			}
+		}
+
+		async fn check_bolt11_payment(
+			&mut self,
+			_req: aspd_rpc::protos::CheckBolt11PaymentRequest,
+		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
+			Ok(aspd_rpc::protos::Bolt11PaymentResult {
+				progress_message: "Payment is pending".to_string(),
+				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
+				payment_hash: vec![],
+				payment_preimage: None,
+			})
+		}
+	}
+
+	let proxy = Proxy(aspd_1.get_public_client().await);
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(3);
+	let board_amount = btc(2);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
+
+	// Board funds into the Ark
+	bark_1.board(board_amount).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(1);
+	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	// Try send coins through lightning
+	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	bark_1.try_send_bolt11(invoice, None).try_fast().await.expect_err("the payment is held");
+
+	// htlc expiry is 6 ahead of current block
+	ctx.generate_blocks(8).await;
+
+	// Triggers maintenance under the hood
+	bark_1.offchain_balance().await;
+
+	let vtxos = bark_1.vtxos().await;
+	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
+	assert!(
+		vtxos.iter().any(|v| v.amount == (board_amount - invoice_amount)),
+		"user should get a change VTXO of 1btc");
+
+	assert!(
+		vtxos.iter().any(|v| v.amount == invoice_amount),
+		"user should get a revocation arkoor of payment_amount + forwarding fee");
 }

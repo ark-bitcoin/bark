@@ -30,13 +30,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
-use log::{info, trace, warn};
+use log::{info, trace, warn, error};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
@@ -635,11 +636,7 @@ impl Server {
 
 		let pay_req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::ServerHtlcSend {
-				user_pubkey: user_pubkey,
-				payment_hash: *invoice.payment_hash(),
-				htlc_expiry: expiry,
-			},
+			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, *invoice.payment_hash(), expiry),
 		};
 
 		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
@@ -760,44 +757,55 @@ impl Server {
 		htlc_vtxo_ids: Vec<VtxoId>,
 		user_nonces: Vec<musig::MusigPubNonce>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		let tip = self.bitcoind.get_block_count()? as BlockHeight;
 		let db = self.db.clone();
 
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
 
-		let first_payment_hash = htlc_vtxos.first()
-			.badarg("vtxo is empty")?.vtxo
-			.server_htlc_out_payment_hash()
-			.context("vtxo is not outgoing htcl vtxo")?;
+		let first = htlc_vtxos.first().badarg("vtxo is empty")?.vtxo.spec();
+		let first_policy = first.policy.as_server_htlc_send().context("vtxo is not outgoing htlc vtxo")?;
 
 		let mut vtxos = vec![];
 		for htlc_vtxo in htlc_vtxos {
-			let payment_hash = htlc_vtxo.vtxo.server_htlc_out_payment_hash()
+			let spec = htlc_vtxo.vtxo.spec();
+			let policy = spec.policy.as_server_htlc_send()
 				.context("vtxo is not outgoing htcl vtxo")?;
 
-			if payment_hash != first_payment_hash {
-				return badarg!("all revoked htlc vtxos must have same payment hash");
+			if policy != first_policy {
+				return badarg!("all revoked htlc vtxos must have same policy");
 			}
 
 			vtxos.push(htlc_vtxo.vtxo);
 		}
 
-		let invoice = db.get_lightning_invoice_by_payment_hash(&first_payment_hash).await
-			.context("error fetching invoice by payment hash")?;
+		let invoice = db.get_lightning_invoice_by_payment_hash(&first_policy.payment_hash).await?;
 
-		match &invoice.last_attempt_status {
-			Some(status) if status == &LightningPaymentStatus::Failed => {},
-			Some(status) if status == &LightningPaymentStatus::Succeeded => {
-				return badarg!("This lightning payment has completed. preimage: {}",
-					invoice.clone().preimage.unwrap().as_hex());
-			},
-			_ => return badarg!("This lightning payment is not eligible for revocation yet")
+		// If payment not found but input vtxos are found, we can allow revoke
+		if let Some(invoice) = invoice {
+			match invoice.last_attempt_status {
+				Some(status) if status == LightningPaymentStatus::Failed => {},
+				Some(status) if status == LightningPaymentStatus::Succeeded => {
+					if let Some(preimage) = invoice.preimage {
+						return badarg!("This lightning payment has completed. preimage: {}",
+							preimage.as_hex());
+					} else {
+						error!("This lightning payment has completed, but no preimage found. Accepting revocation");
+					}
+				},
+				_ if tip > first_policy.htlc_expiry => {
+					// Check one last time to see if it completed
+					if let Ok(preimage) = self.cln.check_bolt11(&invoice.payment_hash, false).await {
+						return badarg!("This lightning payment has completed. preimage: {}",
+							preimage.as_hex());
+					}
+				},
+				_ => return badarg!("This lightning payment is not eligible for revocation yet")
+			}
 		}
 
 		let pay_req = VtxoRequest {
 			amount: vtxos.iter().map(|v| v.amount()).sum(),
-			policy: VtxoPolicy::Pubkey {
-				user_pubkey: vtxos.first().unwrap().user_pubkey(),
-			},
+			policy: VtxoPolicy::new_pubkey(vtxos.first().unwrap().user_pubkey()),
 		};
 		let package = ArkoorPackageBuilder::new(&vtxos, &user_nonces, pay_req, None)?;
 		self.cosign_oor_package_with_builder(&package).await
@@ -885,7 +893,7 @@ impl Server {
 		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await
 			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
 
-		if let VtxoPolicy::ServerHtlcRecv { payment_hash, .. } = input_vtxo.vtxo.policy() {
+		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
 			if sha256::Hash::hash(payment_preimage) != *payment_hash {
 				bail!("input vtxo payment hash does not match preimage");
 			}

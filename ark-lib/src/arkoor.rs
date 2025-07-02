@@ -340,9 +340,7 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 			} else {
 				(remaining_amount, Some(VtxoRequest {
 					amount: input.amount() - remaining_amount,
-					policy: VtxoPolicy::Pubkey {
-						user_pubkey: change.ok_or(ArkoorPackageError::MissingChangePk)?,
-					},
+					policy: VtxoPolicy::new_pubkey(change.ok_or(ArkoorPackageError::MissingChangePk)?),
 				}))
 			};
 
@@ -382,7 +380,7 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 
 			let refund = VtxoRequest {
 				amount: v.amount(),
-				policy: VtxoPolicy::Pubkey { user_pubkey: v.user_pubkey() },
+				policy: VtxoPolicy::new_pubkey(v.user_pubkey()),
 			};
 			ArkoorBuilder::new(v, u, vec![refund])
 				.map_err(ArkoorPackageError::ArkoorError)

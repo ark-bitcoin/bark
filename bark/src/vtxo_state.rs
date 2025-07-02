@@ -1,45 +1,69 @@
-use std::fmt;
-use std::str::FromStr;
+use ark::Vtxo;
+use bitcoin::Amount;
+use lightning_invoice::Bolt11Invoice;
 
 const SPENDABLE: &'static str = "Spendable";
 const UNREGISTERED_BOARD : &'static str = "UnregisteredBoard";
 const SPENT: &'static str = "Spent";
+const PENDING_LIGHTNING_SEND: &'static str = "PendingLightningSend";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum VtxoStateKind {
+	Spendable,
+	UnregisteredBoard,
+	Spent,
+	PendingLightningSend,
+}
+
+impl VtxoStateKind {
+	pub fn as_str(&self) -> &str {
+		match self {
+			VtxoStateKind::UnregisteredBoard => UNREGISTERED_BOARD,
+			VtxoStateKind::Spendable => SPENDABLE,
+			VtxoStateKind::Spent => SPENT,
+			VtxoStateKind::PendingLightningSend => PENDING_LIGHTNING_SEND,
+		}
+	}
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VtxoState {
 	Spendable,
 	Spent,
 	UnregisteredBoard,
-}
-
-impl fmt::Display for VtxoState {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.as_str())
-	}
-}
-
-impl FromStr for VtxoState {
-
-	type Err = anyhow::Error;
-
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		match s {
-			UNREGISTERED_BOARD => Ok(VtxoState::UnregisteredBoard),
-			SPENDABLE => Ok(VtxoState::Spendable),
-			SPENT => Ok(VtxoState::Spent),
-			_ => bail!("Invalid VtxoState: {}", s)
-		}
-	}
+	/// The current vtxo is spent in a pending lightning payment
+	///
+	/// The VTXO hold by the state is the HTLC vtxo that can be
+	/// used to either revoke the payment if the lightning part fails,
+	/// or exit the Ark if the ASP don't accept to revoke the payment
+	PendingLightningSend {
+		invoice: Bolt11Invoice,
+		amount: Amount,
+	},
 }
 
 impl VtxoState {
-	pub fn as_str(&self) -> &str {
+	pub fn as_kind(&self) -> VtxoStateKind {
 		match self {
-			Self::UnregisteredBoard => UNREGISTERED_BOARD,
-			Self::Spendable => SPENDABLE,
-			Self::Spent => SPENT,
+			VtxoState::UnregisteredBoard => VtxoStateKind::UnregisteredBoard,
+			VtxoState::Spendable => VtxoStateKind::Spendable,
+			VtxoState::Spent => VtxoStateKind::Spent,
+			VtxoState::PendingLightningSend { .. } => VtxoStateKind::PendingLightningSend,
 		}
 	}
+
+	pub fn as_pending_lightning(&self) -> Option<(&Bolt11Invoice, &Amount)> {
+		match self {
+			VtxoState::PendingLightningSend { invoice, amount } => Some((invoice, amount)),
+			_ => None,
+		}
+	}
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletVtxo {
+	pub vtxo: Vtxo,
+	pub state: VtxoState,
 }
 
 #[cfg(test)]
@@ -47,33 +71,17 @@ mod test {
 	use super::*;
 
 	#[test]
-	fn convert_vtxo_state_and_back() {
-		// From str to vtxostate
-		assert_eq!(VtxoState::from_str(SPENDABLE).unwrap(), VtxoState::Spendable);
-		assert_eq!(VtxoState::from_str(SPENT).unwrap(), VtxoState::Spent);
-		assert_eq!(VtxoState::from_str(UNREGISTERED_BOARD).unwrap(), VtxoState::UnregisteredBoard);
-
-		// From VtxoState to str
-		assert_eq!(VtxoState::Spendable.as_str(), SPENDABLE);
-		assert_eq!(VtxoState::Spent.as_str(), SPENT);
-		assert_eq!(VtxoState::UnregisteredBoard.as_str(), UNREGISTERED_BOARD);
-
-		// If a compiler error occurs,
-		// This is a reminder that you should update the test above
-		match VtxoState::Spent {
-			VtxoState::Spendable => {},
-			VtxoState::Spent => {},
-			VtxoState::UnregisteredBoard => (),
-		}
-	}
-
-	#[test]
 	fn convert_serialize() {
-		let states = [VtxoState::Spendable, VtxoState::Spent, VtxoState::UnregisteredBoard];
+		let states = [
+			VtxoStateKind::Spendable,
+			VtxoStateKind::Spent,
+			VtxoStateKind::UnregisteredBoard,
+			VtxoStateKind::PendingLightningSend,
+		];
 
 		assert_eq!(
 			serde_json::to_string(&states).unwrap(),
-			serde_json::to_string(&[SPENDABLE, SPENT, UNREGISTERED_BOARD]).unwrap(),
+			serde_json::to_string(&[SPENDABLE, SPENT, UNREGISTERED_BOARD, PENDING_LIGHTNING_SEND]).unwrap(),
 		);
 
 		// If a compiler error occurs,
@@ -82,6 +90,7 @@ mod test {
 			VtxoState::Spendable => {},
 			VtxoState::Spent => {},
 			VtxoState::UnregisteredBoard => (),
+			VtxoState::PendingLightningSend { .. } => (),
 		}
 	}
 }
