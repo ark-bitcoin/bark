@@ -255,7 +255,7 @@ impl ClaimState {
 	) -> anyhow::Result<(Tx, Tx)> {
 		//TODO(stevenroose) use fee estimation here once available
 		let feerate = proc.config.claim_fallback_feerate;
-		let psbt = proc.wallet.make_cpfp(&[&connector_tx], feerate)
+		let psbt = proc.wallet.make_p2a_cpfp(&connector_tx, feerate)
 			.context("error making cpfp tx for connector")?;
 		let cpfp = proc.wallet.finish_tx(psbt)?;
 
@@ -442,7 +442,7 @@ impl Process {
 			// Let's broadcast the forfeit then finally.
 			//TODO(stevenroose) use fee estimationi here
 			let feerate = self.config.claim_fallback_feerate;
-			let psbt = self.wallet.make_cpfp(&[&claim.forfeit_tx.tx], feerate)
+			let psbt = self.wallet.make_p2a_cpfp(&claim.forfeit_tx.tx, feerate)
 				.context("error making cpfp tx for forfeit")?;
 			let cpfp = self.wallet.finish_tx(psbt)?;
 

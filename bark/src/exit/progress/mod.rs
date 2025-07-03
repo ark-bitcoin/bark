@@ -126,7 +126,7 @@ impl ProgressContext<'_> {
 		&mut self,
 		exit_tx: &Transaction,
 	) -> anyhow::Result<Transaction, ExitError> {
-		let psbt = self.onchain.wallet.make_cpfp(&[&exit_tx], self.fee_rate)
+		let psbt = self.onchain.wallet.make_p2a_cpfp(&exit_tx, self.fee_rate)
 			.map_err(|e| match e {
 				// An exit transaction must have a fee anchor, if not we can't create a CPFP package.
 				CpfpError::NoFeeAnchor(_) => ExitError::InternalError { error: e.to_string() },
