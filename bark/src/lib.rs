@@ -1446,17 +1446,16 @@ impl Wallet {
 		let fee_vtxos = self.create_fee_vtxos(*LN_BOARD_FEE_SATS).await?;
 
 		let htlc_expiry = current_height + asp.info.vtxo_expiry_delta as u32;
-		let fee_vtxo_cloned = fee_vtxos.clone();
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
-			let inputs = fee_vtxo_cloned.clone();
 			let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
+
 			let htlc_pay_req = VtxoRequest {
 				amount,
 				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, htlc_expiry),
 			};
 
-			// NB: state won't be used for now since we don't store movement for htlc yet
-			Ok((inputs, vec![(htlc_pay_req, VtxoState::Spendable)], vec![]))
+			let state = VtxoState::PendingLightningRecv { payment_hash: offchain_board.payment_hash };
+			Ok((fee_vtxos.clone(), vec![(htlc_pay_req, state)], vec![]))
 		}).await.context("round failed")?;
 
 		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
@@ -1497,10 +1496,10 @@ impl Wallet {
 
 		info!("Got an arkoor from lightning! {}", vtxo.id());
 		self.db.register_movement(MovementArgs {
-			spends: &fee_vtxos.iter().collect::<Vec<_>>(),
+			spends: &inputs.iter().collect::<Vec<_>>(),
 			receives: &[(&vtxo, VtxoState::Spendable)],
 			recipients: &[],
-			fees: Some(fee_vtxos.iter().map(|v| v.amount()).sum::<Amount>()),
+			fees: None,
 		})?;
 
 		Ok(())
@@ -1909,23 +1908,12 @@ impl Wallet {
 			Ok((address.to_string(), o.amount))
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
-		let received = new_vtxos.iter()
-			.filter(|v| { matches!(v.vtxo.policy(), VtxoPolicy::Pubkey { .. })})
-			.collect::<Vec<_>>();
-
-		// NB: if there is no received VTXO nor sent in the round, for now we assume
-		// the movement will be registered later (e.g: lightning receive use case)
-		//
-		// Later, we will split the round participation and registration might be more
-		// manual
-		if !sent.is_empty() || !received.is_empty() {
-			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos.values().collect::<Vec<_>>(),
-				receives: &received.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
-				recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
-				fees: None,
-			}).context("failed to store OOR vtxo")?;
-		}
+		self.db.register_movement(MovementArgs {
+			spends: &input_vtxos.values().collect::<Vec<_>>(),
+			receives: &new_vtxos.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
+			recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
+			fees: None
+		}).context("failed to store OOR vtxo")?;
 
 		info!("Round finished");
 		return Ok(AttemptResult::Success(RoundResult {

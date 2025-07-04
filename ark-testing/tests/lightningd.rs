@@ -417,8 +417,8 @@ async fn bark_can_board_from_lightning() {
 	assert!(vtxos.iter().any(|v| v.amount == btc(1)), "should have received lightning amount");
 	assert!(vtxos.iter().any(|v| v.amount == sat(199999650)), "should have fees change");
 
-	let [ln_board_mvt, fee_split_mvt, board_mvt] = bark.list_movements().await
-		.try_into().expect("should have 3 movements");
+	let [ln_claim_mvt, ln_htlc_mvt, fee_split_mvt, board_mvt] = bark.list_movements().await
+		.try_into().expect("should have 4 movements");
 	assert!(
 		board_mvt.spends.is_empty() &&
 		board_mvt.fees == Amount::ZERO &&
@@ -431,14 +431,21 @@ async fn bark_can_board_from_lightning() {
 		fee_split_mvt.fees == Amount::ZERO &&
 		fee_split_mvt.receives[0].amount == sat(350) &&
 		fee_split_mvt.receives[1].amount == sat(199999650) &&
-		board_mvt.recipients.is_empty()
+		fee_split_mvt.recipients.is_empty()
 	);
 
 	assert!(
-		ln_board_mvt.spends[0].amount == sat(350) &&
-		ln_board_mvt.fees == sat(350) &&
-		ln_board_mvt.receives[0].amount == btc(1) &&
-		board_mvt.recipients.is_empty()
+		ln_htlc_mvt.spends[0].amount == sat(350) &&
+		ln_htlc_mvt.fees == Amount::ZERO &&
+		ln_htlc_mvt.receives[0].amount == btc(1) &&
+		ln_htlc_mvt.recipients.is_empty()
+	);
+
+	assert!(
+		ln_claim_mvt.spends[0].amount == btc(1) &&
+		ln_claim_mvt.fees == Amount::ZERO &&
+		ln_claim_mvt.receives[0].amount == btc(1) &&
+		ln_claim_mvt.recipients.is_empty()
 	);
 
 	assert_eq!(bark.offchain_balance().await, sat(299999650));
