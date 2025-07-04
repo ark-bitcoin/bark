@@ -28,6 +28,7 @@ use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
 use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
+use bitcoin_ext::BlockDelta;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId};
@@ -432,6 +433,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - payment_hash: Unique payment hash.
 	/// - preimage: Payment preimage (kept until disclosure).
 	/// - invoice: The associated BOLT11 invoice.
+	/// - htlc_recv_cltv_delta: The CLTV delta for the HTLC VTXO.
 	///
 	/// Errors:
 	/// - Returns an error if the receive cannot be stored.
@@ -440,6 +442,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 		payment_hash: PaymentHash,
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
+		htlc_recv_cltv_delta: BlockDelta,
 	) -> anyhow::Result<()>;
 
 	/// Returns a list of all pending lightning receives

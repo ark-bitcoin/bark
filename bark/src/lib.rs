@@ -1936,7 +1936,12 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		self.db.store_lightning_receive(payment_hash, preimage, &invoice)?;
+		self.db.store_lightning_receive(
+			payment_hash,
+			preimage,
+			&invoice,
+			requested_min_cltv_delta,
+		)?;
 
 		Ok(invoice)
 	}

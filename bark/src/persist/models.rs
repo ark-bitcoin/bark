@@ -9,6 +9,7 @@
 //! - Enable forward/backward compatibility when schema migrations occur.
 
 use bdk_esplora::esplora_client::Amount;
+use bitcoin_ext::BlockDelta;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{VtxoId, VtxoPolicy, VtxoRequest};
@@ -44,6 +45,7 @@ pub struct LightningReceive {
 	pub invoice: Bolt11Invoice,
 	pub preimage_revealed_at: Option<u64>,
 	pub htlc_vtxos: Option<Vec<WalletVtxo>>,
+	pub htlc_recv_cltv_delta: BlockDelta,
 }
 
 /// Persistable view of an [ExitVtxo].
