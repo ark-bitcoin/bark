@@ -7,7 +7,7 @@ use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, TxOut, Txid, Weight, Wtxid};
+use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, TxOut, Txid, Wtxid};
 use cbitcoin::{BlockHash, Psbt, Witness};
 use reqwest::{Body, Response};
 use serde::Deserialize;
@@ -91,20 +91,18 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		ret
 	}
 
-	/// Create a cpfp spend that spends the fee anchors in the given txs.
+	/// Create a cpfp spend that spends the P2A fee anchors in the given tx.
 	///
 	/// This method doesn't broadcast any txs.
-	fn make_cpfp(
+	fn make_p2a_cpfp(
 		&mut self,
-		txs: &[&Transaction],
+		tx: &Transaction,
 		fee_rate: FeeRate,
 	) -> Result<Psbt, CpfpError> {
 		let wallet = self.borrow_mut();
 
-		assert!(!txs.is_empty());
-		let anchors = txs.iter().map(|tx| {
-			tx.fee_anchor().ok_or_else(|| CpfpError::NoFeeAnchor(tx.compute_txid()))
-		}).collect::<Result<Vec<_>, _>>()?;
+		let anchor = tx.fee_anchor()
+			.ok_or_else(|| CpfpError::NoFeeAnchor(tx.compute_txid()))?;
 
 		// Since BDK doesn't support adding extra weight for fees, we have to
 		// first build the tx regularly, and then build it again.
@@ -112,8 +110,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		// we will "fake" create an output on the first attempt. This might
 		// overshoot the fee, but we prefer that over undershooting it.
 
-		let package_weight = txs.iter().map(|t| t.weight()).sum::<Weight>();
-		let extra_fee_needed = fee_rate * package_weight;
+		let extra_fee_needed = fee_rate * tx.weight();
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
@@ -121,14 +118,13 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		let balance = wallet.balance().total();
 
 		let untrusted_utxos = wallet.untrusted_utxos(None);
+
 		let template_weight = {
 			let mut b = wallet.build_tx();
 			b.ordering(TxOrdering::Untouched);
 			b.only_witness_utxo();
 			b.unspendable(untrusted_utxos.clone());
-			for (point, txout) in &anchors {
-				b.add_fee_anchor_spend(*point, txout);
-			}
+			b.add_fee_anchor_spend(anchor.0, anchor.1);
 			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + P2TR_DUST);
 			b.fee_rate(fee_rate);
 			let mut psbt = match b.finish() {
@@ -154,7 +150,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			tx.weight()
 		};
 
-		let total_weight = template_weight + package_weight;
+		let total_weight = template_weight + tx.weight();
 		let total_fee = fee_rate * total_weight;
 		let extra_fee_needed = total_fee;
 
@@ -164,9 +160,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		b.only_witness_utxo();
 		b.unspendable(untrusted_utxos);
 		b.version(3); // for 1p1c package relay
-		for (point, txout) in &anchors {
-			b.add_fee_anchor_spend(*point, txout);
-		}
+		b.add_fee_anchor_spend(anchor.0, anchor.1);
 		b.drain_to(change_addr.address.script_pubkey());
 		b.fee_absolute(extra_fee_needed);
 		Ok(b.finish().expect("failed to craft anchor spend tx"))
