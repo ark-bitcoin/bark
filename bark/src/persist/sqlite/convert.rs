@@ -26,6 +26,7 @@ pub (crate) fn row_to_offchain_board(row: &Row<'_>) -> anyhow::Result<OffchainBo
 	Ok(OffchainBoard {
 		payment_hash: PaymentHash::from(row.get::<_, [u8; 32]>("payment_hash")?),
 		payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
+		preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
 		payment: serde_json::from_slice(&raw_payment)?,
 	})
 }

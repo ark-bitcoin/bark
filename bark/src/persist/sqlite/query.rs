@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bitcoin::{Amount, BlockHash, FeeRate, Network, Txid};
@@ -474,6 +475,16 @@ pub fn store_offchain_board(
 		serde_json::to_vec(&payment)?,
 	])?;
 
+	Ok(())
+}
+
+pub fn set_preimage_revealed(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<()> {
+	let query = "UPDATE bark_offchain_board SET preimage_revealed_at = :revealed_at WHERE payment_hash = :payment_hash";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.to_vec(),
+		":revealed_at": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+	})?;
 	Ok(())
 }
 

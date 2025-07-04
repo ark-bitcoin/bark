@@ -194,6 +194,12 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::set_preimage_revealed(&conn, payment_hash)?;
+		Ok(())
+	}
+
 	/// Fetch an offchain board by payment hash
 	fn fetch_offchain_board_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<OffchainBoard>> {
 		let conn = self.connect()?;

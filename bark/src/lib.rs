@@ -1478,9 +1478,11 @@ impl Wallet {
 		};
 
 		info!("Claiming arkoor against payment preimage");
+		self.db.set_preimage_revealed(&offchain_board.payment_hash)?;
 		let cosign_resp = asp.client.claim_bolt11_board(req).await
 			.context("failed to claim bolt11 board")?
 			.into_inner().try_into().context("invalid server cosign response")?;
+
 		ensure!(builder.verify_cosign_response(&[&cosign_resp]),
 			"invalid arkoor cosignature received from server",
 		);
