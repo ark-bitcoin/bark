@@ -37,7 +37,6 @@ use bip39::Mnemonic;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::hashes::Hash;
-use bitcoin::hex::DisplayHex;
 use bitcoin::params::Params;
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
@@ -1419,56 +1418,26 @@ impl Wallet {
 		Ok(oor.created)
 	}
 
-	pub async fn claim_bolt11_payment(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+	async fn claim_htlc_vtxo(&mut self, vtxo: &WalletVtxo) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
-		let current_height = self.onchain.tip().await?;
+
+		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
 
 		let offchain_board = self.db.fetch_offchain_board_by_payment_hash(
-			&ark::lightning::PaymentHash::from(*invoice.payment_hash())
+			&payment_hash
 		)?.context("no offchain board found")?;
 
-		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		let (keychain, index) = self.db.get_vtxo_key(&vtxo.vtxo)?;
+		let keypair = self.peak_keypair(keychain, index)?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
-
-		let amount = Amount::from_msat_floor(
-			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
-		);
-
-		let req = protos::SubscribeBolt11BoardRequest {
-			bolt11: invoice.to_string(),
-		};
-
-		info!("Waiting payment...");
-		asp.client.subscribe_bolt11_board(req).await?.into_inner();
-		info!("Lightning payment arrived!");
-
-		// Create a VTXO to pay receive fees:
-		let fee_vtxos = self.create_fee_vtxos(*LN_BOARD_FEE_SATS).await?;
-
-		let htlc_expiry = current_height + asp.info.vtxo_expiry_delta as u32;
-		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
-			let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
-
-			let htlc_pay_req = VtxoRequest {
-				amount,
-				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, htlc_expiry),
-			};
-
-			let state = VtxoState::PendingLightningRecv { payment_hash: offchain_board.payment_hash };
-			Ok((fee_vtxos.clone(), vec![(htlc_pay_req, state)], vec![]))
-		}).await.context("round failed")?;
-
-		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
-		info!("Got HTLC vtxo in round: {}", htlc_vtxo.vtxo.id());
-		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.vtxo.serialize().as_hex());
 
 		// Claiming arkoor against preimage
 		let pay_req = VtxoRequest {
 			policy: VtxoPolicy::new_pubkey(keypair.public_key()),
-			amount: amount,
+			amount: vtxo.vtxo.amount(),
 		};
 
-		let inputs = [htlc_vtxo.vtxo];
+		let inputs = [vtxo.vtxo.clone()];
 		let pubs = [pub_nonce];
 		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
 
@@ -1501,6 +1470,48 @@ impl Wallet {
 			recipients: &[],
 			fees: None,
 		})?;
+
+		Ok(())
+	}
+
+
+	pub async fn finish_bolt11_board(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+		let tip = self.onchain.tip().await?;
+		let mut asp = self.require_asp()?;
+
+		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
+
+		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+
+		let amount = Amount::from_msat_floor(
+			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
+		);
+
+		let req = protos::SubscribeBolt11BoardRequest {
+			bolt11: invoice.to_string(),
+		};
+
+		info!("Waiting payment...");
+		asp.client.subscribe_bolt11_board(req).await?.into_inner();
+		info!("Lightning payment arrived!");
+
+		// Create a VTXO to pay receive fees:
+		let fee_vtxos = self.create_fee_vtxos(*LN_BOARD_FEE_SATS).await?;
+
+		let state = VtxoState::PendingLightningRecv { payment_hash };
+
+		let expiry_height = tip + asp.info.htlc_expiry_delta as BlockHeight;
+		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
+			let htlc_pay_req = VtxoRequest {
+				amount: amount,
+				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
+			};
+
+			Ok((fee_vtxos.clone(), vec![(htlc_pay_req, state.clone())], vec![]))
+		}).await.context("round failed")?;
+
+		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
+		self.claim_htlc_vtxo(&htlc_vtxo).await?;
 
 		Ok(())
 	}

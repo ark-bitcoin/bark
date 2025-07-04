@@ -61,7 +61,7 @@ pub async fn execute_lightning_command(
 		LightningCommand::Claim { invoice } => {
 			let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
 
-			wallet.claim_bolt11_payment(invoice).await?;
+			wallet.finish_bolt11_board(invoice).await?;
 		}
 	}
 
