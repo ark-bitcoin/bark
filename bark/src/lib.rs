@@ -968,7 +968,7 @@ impl Wallet {
 
 		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
 		for vtxo in vtxos {
-			let invoice = vtxo.state.as_pending_lightning().unwrap();
+			let invoice = vtxo.state.as_pending_lightning_send().unwrap();
 			htlc_vtxos_by_payment_hash.entry(*invoice.0.payment_hash()).or_default().push(vtxo);
 		}
 
