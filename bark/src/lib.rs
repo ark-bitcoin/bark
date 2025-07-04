@@ -920,7 +920,7 @@ impl Wallet {
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok((vtxos.to_vec(), vec![req.clone()], Vec::new()))
+			Ok((vtxos.to_vec(), vec![(req.clone(), VtxoState::Spendable)], Vec::new()))
 		}).await.context("round failed")?;
 
 		Ok(Some(round_id))
@@ -1455,7 +1455,8 @@ impl Wallet {
 				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, htlc_expiry),
 			};
 
-			Ok((inputs, vec![htlc_pay_req], vec![]))
+			// NB: state won't be used for now since we don't store movement for htlc yet
+			Ok((inputs, vec![(htlc_pay_req, VtxoState::Spendable)], vec![]))
 		}).await.context("round failed")?;
 
 		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
@@ -1566,7 +1567,7 @@ impl Wallet {
 				}
 			};
 
-			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
+			Ok((input_vtxos.clone(), change.into_iter().map(|c| (c, VtxoState::Spendable)).collect(), vec![offb]))
 		}).await.context("round failed")?;
 
 		Ok(SendOnchain { round: round_id })
@@ -1577,7 +1578,7 @@ impl Wallet {
 		events: &mut S,
 		round_state: &mut RoundState,
 		input_vtxos: &HashMap<VtxoId, Vtxo>,
-		pay_reqs: &[VtxoRequest],
+		pay_reqs: &[(VtxoRequest, VtxoState)],
 		offb_reqs: &[OffboardRequest],
 	) -> anyhow::Result<AttemptResult> {
 		let mut asp = self.require_asp()?;
@@ -1590,7 +1591,7 @@ impl Wallet {
 			.collect::<Vec<_>>();
 		let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
 			SignedVtxoRequest {
-				vtxo: req.clone(),
+				vtxo: req.0.clone(),
 				cosign_pubkey: ck.public_key(),
 			}
 		}).collect::<Vec<_>>();
@@ -1883,22 +1884,20 @@ impl Wallet {
 		}
 
 		// Finally we save state after refresh
-		let mut new_vtxos: Vec<Vtxo> = vec![];
+		let mut new_vtxos = vec![];
 		for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
-			if pay_reqs.contains(&req.vtxo) {
+			let req = pay_reqs.into_iter().find(|(r, _)| r == &req.vtxo);
+			if let Some((_, s)) = req {
 				let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
-				new_vtxos.push(vtxo);
+
+				info!("New VTXO from round: {} ({}, {})", vtxo.id(), vtxo.amount(), vtxo.policy_type());
+
+				// validate the received vtxos
+				// This is more like a sanity check since we crafted them ourselves.
+				vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
+
+				new_vtxos.push((vtxo, s.clone()));
 			}
-		}
-
-		for vtxo in &new_vtxos {
-			info!("New VTXO from round: {} ({}, {})", vtxo.id(), vtxo.amount(), vtxo.policy_type());
-		}
-
-		// validate the received vtxos
-		// This is more like a sanity check since we crafted them ourselves.
-		for vtxo in &new_vtxos {
-			vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
 		}
 
 		// if there is one offboard req, we register as a spend, else as a refresh
@@ -1911,8 +1910,7 @@ impl Wallet {
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
 		let received = new_vtxos.iter()
-			.filter(|v| { matches!(v.policy(), VtxoPolicy::Pubkey { .. })})
-			.map(|v| (v, VtxoState::Spendable))
+			.filter(|v| { matches!(v.0.policy(), VtxoPolicy::Pubkey { .. })})
 			.collect::<Vec<_>>();
 
 		// NB: if there is no received VTXO nor sent in the round, for now we assume
@@ -1923,7 +1921,7 @@ impl Wallet {
 		if !sent.is_empty() || !received.is_empty() {
 			self.db.register_movement(MovementArgs {
 				spends: &input_vtxos.values().collect::<Vec<_>>(),
-				receives: &received,
+				receives: &received.iter().map(|(v, s)| (v, s.clone())).collect::<Vec<_>>(),
 				recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
 				fees: None,
 			}).context("failed to store OOR vtxo")?;
@@ -1932,7 +1930,7 @@ impl Wallet {
 		info!("Round finished");
 		return Ok(AttemptResult::Success(RoundResult {
 			round_id: signed_round_tx.compute_txid().into(),
-			vtxos: new_vtxos,
+			vtxos: new_vtxos.into_iter().map(|(v, _)| v).collect(),
 		}))
 	}
 
@@ -1946,7 +1944,7 @@ impl Wallet {
 	async fn participate_round(
 		&self,
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
-			(Vec<Vtxo>, Vec<VtxoRequest>, Vec<OffboardRequest>)
+			(Vec<Vtxo>, Vec<(VtxoRequest, VtxoState)>, Vec<OffboardRequest>)
 		>,
 	) -> anyhow::Result<RoundResult> {
 		let mut asp = self.require_asp()?;
@@ -1989,8 +1987,8 @@ impl Wallet {
 			let (input_vtxos, pay_reqs, offb_reqs) = round_input(&round_state.info)
 				.context("error providing round input")?;
 
-			if let Some(payreq) = pay_reqs.iter().find(|p| p.amount < P2TR_DUST) {
-				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
+			if let Some(payreq) = pay_reqs.iter().find(|p| p.0.amount < P2TR_DUST) {
+				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.0.amount);
 			}
 
 			if let Some(offb) = offb_reqs.iter().find(|o| o.amount < P2TR_DUST) {
