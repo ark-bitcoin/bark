@@ -219,6 +219,8 @@ impl VtxoSeed {
 ///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
 ///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
 ///     - [Wallet::sync_pending_lightning_send_vtxos]: Updates the status of pending lightning payments,
+///     - [Wallet::check_and_claim_all_open_ln_receives]: Wait for payment receipt of all open invoices, then claim them,
+///     - [Wallet::claim_all_pending_htlc_recvs]: Attempts to claim all pending lightning receives,
 ///     - [Wallet::register_all_confirmed_boards]: Registers boards which are available for use
 ///       in offchain payments
 ///
@@ -810,6 +812,7 @@ impl Wallet {
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
 		self.sync_exits(onchain).await?;
+
 		Ok(())
 	}
 
@@ -859,6 +862,11 @@ impl Wallet {
 			async {
 				if let Err(e) = self.sync_pending_lightning_send_vtxos().await {
 					warn!("Error syncing pending lightning payments: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.claim_all_pending_htlc_recvs().await {
+					warn!("Error claiming pending lightning receives: {:#}", e);
 				}
 			},
 			async {
@@ -2003,7 +2011,7 @@ impl Wallet {
 	///   [PaymentHash].
 	async fn claim_ln_receive(
 		&self,
-		lightning_receive: LightningReceive,
+		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
@@ -2228,7 +2236,7 @@ impl Wallet {
 		wait: bool,
 	) -> anyhow::Result<()> {
 		let receive = self.check_ln_receive(payment_hash, wait).await?;
-		self.claim_ln_receive(receive).await
+		self.claim_ln_receive(&receive).await
 	}
 
 	/// Check and claim all opened Lightning receive
@@ -2253,6 +2261,64 @@ impl Wallet {
 					error!("Error claiming lightning receive: {}", e);
 				}
 			}).await;
+
+		Ok(())
+	}
+
+	/// Claim all pending lightning receives
+	///
+	/// This is different from [Wallet::check_and_claim_all_open_ln_receives] in
+	/// that it only affect pending lightning receives whose HTLC VTXOs
+	/// have already been issued.
+	///
+	/// Note:
+	///   - If an HTLC VTXO cannot be claimed and the htlc expiry is too close,
+	///   it will either mark the htlc as cancelled (preimage not revealed) or
+	///   mark the vtxo for exit (preimage revealed).
+	async fn claim_all_pending_htlc_recvs(&self) -> anyhow::Result<()> {
+		let srv = self.require_server()?;
+		let tip = self.chain.tip().await?;
+		let lightning_receives = self.db.get_all_pending_lightning_receives()?;
+		info!("Syncing {} pending lightning receives", lightning_receives.len());
+
+		for lightning_receive in lightning_receives {
+			let vtxos = match &lightning_receive.htlc_vtxos {
+				Some(vtxos) => vtxos,
+				None => continue,
+			};
+
+			if let Err(e) = self.claim_ln_receive(&lightning_receive).await {
+				error!("Failed to claim pubkey vtxo from htlc vtxo: {}", e);
+
+				let first_vtxo = &vtxos.first().unwrap().vtxo;
+				debug_assert!(vtxos.iter().all(|v| {
+					v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
+				}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
+
+				let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
+					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
+
+				let safe_exit_margin = first_vtxo.exit_delta() +
+					srv.info.htlc_expiry_delta +
+					self.config.vtxo_exit_margin;
+
+				if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
+					if lightning_receive.preimage_revealed_at.is_some() {
+						warn!("HTLC-recv VTXOs are about to expire and preimage has been disclosed, must exit");
+						self.exit.write().await.mark_vtxos_for_exit(&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>());
+					} else {
+						warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
+						self.db.register_movement(MovementArgs {
+							kind: MovementKind::LightningReceive,
+							spends: &vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
+							receives: &[],
+							recipients: &[],
+							fees: None,
+						})?;
+					}
+				}
+			}
+		}
 
 		Ok(())
 	}
