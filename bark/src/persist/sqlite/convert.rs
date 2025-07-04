@@ -2,7 +2,7 @@ use bitcoin::Amount;
 use rusqlite::Row;
 
 use crate::movement::{Movement, MovementRecipient, VtxoSubset};
-use crate::persist::OffchainOnboard;
+use crate::persist::OffchainBoard;
 
 pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 	let fees: Amount = Amount::from_sat(row.get("fees_sat")?);
@@ -21,9 +21,9 @@ pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 	})
 }
 
-pub (crate) fn row_to_offchain_onboard(row: &Row<'_>) -> anyhow::Result<OffchainOnboard> {
+pub (crate) fn row_to_offchain_board(row: &Row<'_>) -> anyhow::Result<OffchainBoard> {
 	let raw_payment = row.get::<_, Vec<u8>>("serialised_payment")?;
-	Ok(OffchainOnboard {
+	Ok(OffchainBoard {
 		payment_hash: row.get("payment_hash")?,
 		payment_preimage: row.get("preimage")?,
 		payment: serde_json::from_slice(&raw_payment)?,

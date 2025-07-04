@@ -62,22 +62,22 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().revoke_bolt11_payment(req).await?.into_inner())
 	}
 
-	async fn start_bolt11_onboard(
+	async fn start_bolt11_board(
 		&self,
-		req: protos::StartBolt11OnboardRequest,
-	) -> Result<protos::StartBolt11OnboardResponse, tonic::Status> {
-		Ok(self.upstream().start_bolt11_onboard(req).await?.into_inner())
+		req: protos::StartBolt11BoardRequest,
+	) -> Result<protos::StartBolt11BoardResponse, tonic::Status> {
+		Ok(self.upstream().start_bolt11_board(req).await?.into_inner())
 	}
 
-	async fn subscribe_bolt11_onboard(
+	async fn subscribe_bolt11_board(
 		&self,
-		req: protos::SubscribeBolt11OnboardRequest,
-	) -> Result<protos::SubscribeBolt11OnboardResponse, tonic::Status> {
-		Ok(self.upstream().subscribe_bolt11_onboard(req).await?.into_inner())
+		req: protos::SubscribeBolt11BoardRequest,
+	) -> Result<protos::SubscribeBolt11BoardResponse, tonic::Status> {
+		Ok(self.upstream().subscribe_bolt11_board(req).await?.into_inner())
 	}
 
-	async fn claim_bolt11_onboard(&mut self, req: protos::ClaimBolt11OnboardRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
-		Ok(self.upstream().claim_bolt11_onboard(req).await?.into_inner())
+	async fn claim_bolt11_board(&mut self, req: protos::ClaimBolt11BoardRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+		Ok(self.upstream().claim_bolt11_board(req).await?.into_inner())
 	}
 
 	async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
@@ -235,24 +235,24 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(AspdRpcProxy::revoke_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn start_bolt11_onboard(
+	async fn start_bolt11_board(
 		&self,
-		req: tonic::Request<protos::StartBolt11OnboardRequest>,
-	) -> Result<tonic::Response<protos::StartBolt11OnboardResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_onboard(&mut self.0.clone(), req.into_inner()).await?))
+		req: tonic::Request<protos::StartBolt11BoardRequest>,
+	) -> Result<tonic::Response<protos::StartBolt11BoardResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_board(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn subscribe_bolt11_onboard(
+	async fn subscribe_bolt11_board(
 		&self,
-		req: tonic::Request<protos::SubscribeBolt11OnboardRequest>,
-	) -> Result<tonic::Response<protos::SubscribeBolt11OnboardResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::subscribe_bolt11_onboard(&mut self.0.clone(), req.into_inner()).await?))
+		req: tonic::Request<protos::SubscribeBolt11BoardRequest>,
+	) -> Result<tonic::Response<protos::SubscribeBolt11BoardResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::subscribe_bolt11_board(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn claim_bolt11_onboard(
-		&self, req: tonic::Request<protos::ClaimBolt11OnboardRequest>,
+	async fn claim_bolt11_board(
+		&self, req: tonic::Request<protos::ClaimBolt11BoardRequest>,
 	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::claim_bolt11_onboard(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(AspdRpcProxy::claim_bolt11_board(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	type SubscribeRoundsStream = Box<

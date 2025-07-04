@@ -163,9 +163,9 @@ const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment
 const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payment";
 const RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT: &'static str = "check_bolt11_payment";
 const RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT: &'static str = "revoke_bolt11_payment";
-const RPC_SERVICE_ARK_START_BOLT11_ONBOARD: &'static str = "start_bolt11_onboard";
-const RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_ONBOARD: &'static str = "subscribe_bolt11_onboard";
-const RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD: &'static str = "claim_bolt11_onboard";
+const RPC_SERVICE_ARK_START_BOLT11_BOARD: &'static str = "start_bolt11_board";
+const RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_BOARD: &'static str = "subscribe_bolt11_board";
+const RPC_SERVICE_ARK_CLAIM_BOLT11_BOARD: &'static str = "claim_bolt11_board";
 const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
 const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
@@ -622,11 +622,11 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
-	async fn start_bolt11_onboard(
+	async fn start_bolt11_board(
 		&self,
-		req: tonic::Request<protos::StartBolt11OnboardRequest>,
-	) -> Result<tonic::Response<protos::StartBolt11OnboardResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_ONBOARD);
+		req: tonic::Request<protos::StartBolt11BoardRequest>,
+	) -> Result<tonic::Response<protos::StartBolt11BoardResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_BOARD);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
@@ -637,16 +637,16 @@ impl rpc::server::ArkService for Server {
 		let payment_hash = sha256::Hash::from_bytes(&req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
 
-		let resp = self.start_bolt11_onboard(payment_hash, amount).await.to_status()?;
+		let resp = self.start_bolt11_board(payment_hash, amount).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
 	}
 
-	async fn subscribe_bolt11_onboard(
+	async fn subscribe_bolt11_board(
 		&self,
-		req: tonic::Request<protos::SubscribeBolt11OnboardRequest>,
-	) -> Result<tonic::Response<protos::SubscribeBolt11OnboardResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_ONBOARD);
+		req: tonic::Request<protos::SubscribeBolt11BoardRequest>,
+	) -> Result<tonic::Response<protos::SubscribeBolt11BoardResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_BOARD);
 		let req = req.into_inner();
 
 		let invoice = &req.bolt11;
@@ -656,16 +656,16 @@ impl rpc::server::ArkService for Server {
 
 		let invoice = Bolt11Invoice::from_str(invoice).badarg("invalid invoice")?;
 
-		let update = self.subscribe_bolt11_onboard(invoice).await.to_status()?;
+		let update = self.subscribe_bolt11_board(invoice).await.to_status()?;
 
 		Ok(tonic::Response::new(update))
 	}
 
-	async fn claim_bolt11_onboard(
+	async fn claim_bolt11_board(
 		&self,
-		req: tonic::Request<protos::ClaimBolt11OnboardRequest>
+		req: tonic::Request<protos::ClaimBolt11BoardRequest>
 	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_BOLT11_BOARD);
 		let req = req.into_inner();
 
 		let arkoor = req.arkoor.badarg("missing arkoor")?;

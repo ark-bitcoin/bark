@@ -19,7 +19,7 @@ use crate::{
 };
 use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementArgs};
-use crate::persist::{BarkPersister, OffchainOnboard, OffchainPayment};
+use crate::persist::{BarkPersister, OffchainBoard, OffchainPayment};
 
 
 #[derive(Clone)]
@@ -187,17 +187,17 @@ impl BarkPersister for SqliteClient {
 		query::get_vtxo_key(&conn, vtxo)?.context("vtxo not found in the db")
 	}
 
-	/// Store an offchain onboard
-	fn store_offchain_onboard(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()> {
+	/// Store an offchain board
+	fn store_offchain_board(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_offchain_onboard(&conn, payment_hash, preimage, payment)?;
+		query::store_offchain_board(&conn, payment_hash, preimage, payment)?;
 		Ok(())
 	}
 
-	/// Fetch an offchain onboard by payment hash
-	fn fetch_offchain_onboard_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>> {
+	/// Fetch an offchain board by payment hash
+	fn fetch_offchain_board_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainBoard>> {
 		let conn = self.connect()?;
-		query::fetch_offchain_onboard_by_payment_hash(&conn, payment_hash)
+		query::fetch_offchain_board_by_payment_hash(&conn, payment_hash)
 	}
 
 	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()> {
