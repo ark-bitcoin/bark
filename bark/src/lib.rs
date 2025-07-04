@@ -174,7 +174,7 @@ enum AttemptResult {
 struct RoundResult {
 	round_id: RoundId,
 	/// VTXOs created in the round
-	vtxos: Vec<Vtxo>,
+	vtxos: Vec<WalletVtxo>,
 }
 
 /// Read-only properties of the Bark wallet.
@@ -1460,8 +1460,8 @@ impl Wallet {
 		}).await.context("round failed")?;
 
 		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
-		info!("Got HTLC vtxo in round: {}", htlc_vtxo.id());
-		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.serialize().as_hex());
+		info!("Got HTLC vtxo in round: {}", htlc_vtxo.vtxo.id());
+		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.vtxo.serialize().as_hex());
 
 		// Claiming arkoor against preimage
 		let pay_req = VtxoRequest {
@@ -1469,7 +1469,7 @@ impl Wallet {
 			amount: amount,
 		};
 
-		let inputs = [htlc_vtxo];
+		let inputs = [htlc_vtxo.vtxo];
 		let pubs = [pub_nonce];
 		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
 
@@ -1896,7 +1896,7 @@ impl Wallet {
 				// This is more like a sanity check since we crafted them ourselves.
 				vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
 
-				new_vtxos.push((vtxo, s.clone()));
+				new_vtxos.push(WalletVtxo { vtxo, state: s.clone() });
 			}
 		}
 
@@ -1910,7 +1910,7 @@ impl Wallet {
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
 		let received = new_vtxos.iter()
-			.filter(|v| { matches!(v.0.policy(), VtxoPolicy::Pubkey { .. })})
+			.filter(|v| { matches!(v.vtxo.policy(), VtxoPolicy::Pubkey { .. })})
 			.collect::<Vec<_>>();
 
 		// NB: if there is no received VTXO nor sent in the round, for now we assume
@@ -1921,7 +1921,7 @@ impl Wallet {
 		if !sent.is_empty() || !received.is_empty() {
 			self.db.register_movement(MovementArgs {
 				spends: &input_vtxos.values().collect::<Vec<_>>(),
-				receives: &received.iter().map(|(v, s)| (v, s.clone())).collect::<Vec<_>>(),
+				receives: &received.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
 				recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
 				fees: None,
 			}).context("failed to store OOR vtxo")?;
@@ -1930,7 +1930,7 @@ impl Wallet {
 		info!("Round finished");
 		return Ok(AttemptResult::Success(RoundResult {
 			round_id: signed_round_tx.compute_txid().into(),
-			vtxos: new_vtxos.into_iter().map(|(v, _)| v).collect(),
+			vtxos: new_vtxos,
 		}))
 	}
 
