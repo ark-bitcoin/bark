@@ -236,18 +236,18 @@ pub fn store_vtxo_with_initial_state(
 	Ok(())
 }
 
-pub fn get_vtxo_by_id(
+pub fn get_wallet_vtxo_by_id(
 	conn: &Connection,
 	id: VtxoId
-) -> anyhow::Result<Option<Vtxo>> {
-	let query = "SELECT raw_vtxo FROM bark_vtxo WHERE id = ?1";
+) -> anyhow::Result<Option<WalletVtxo>> {
+	let query = "SELECT raw_vtxo, state FROM vtxo_view WHERE id = ?1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([id.to_string()])?;
 
 	if let Some(row) = rows.next()? {
-		let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
-		let vtxo = Vtxo::deserialize(&raw_vtxo)?;
-		Ok(Some(vtxo))
+		let vtxo = Vtxo::deserialize(&row.get::<_, Vec<u8>>("raw_vtxo")?)?;
+		let state = serde_json::from_slice::<VtxoState>(&row.get::<_, Vec<u8>>("state")?)?;
+		Ok(Some(WalletVtxo { vtxo, state }))
 	} else {
 		Ok(None)
 	}
@@ -374,10 +374,7 @@ pub fn update_vtxo_state_checked(
 
 	match nb_inserted {
 		0 => bail!("No vtxo with provided id or old states"),
-		1 => Ok({
-			let vtxo = get_vtxo_by_id(conn, vtxo_id)?.unwrap();
-			WalletVtxo { vtxo, state: new_state }
-		}),
+		1 => Ok(get_wallet_vtxo_by_id(conn, vtxo_id)?.unwrap()),
 		_ => panic!("Corrupted database. A vtxo can have only one state"),
 	}
 }

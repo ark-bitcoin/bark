@@ -141,9 +141,9 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
 		let conn = self.connect()?;
-		query::get_vtxo_by_id(&conn, id)
+		query::get_wallet_vtxo_by_id(&conn, id)
 	}
 
 	/// Get all VTXOs that are in one of the provided states
@@ -326,11 +326,11 @@ pub mod test {
 		}).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
-		let vtxo_1_db = db.get_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
-		assert_eq!(vtxo_1_db, *vtxo_1);
+		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
+		assert_eq!(vtxo_1_db.vtxo, *vtxo_1);
 
 		// Verify that vtxo 3 is not in the database
-		assert!(db.get_vtxo(vtxo_3.id()).expect("No error").is_none());
+		assert!(db.get_wallet_vtxo(vtxo_3.id()).expect("No error").is_none());
 
 		// Verify that we have two entries in the database
 		let vtxos = db.get_all_spendable_vtxos().unwrap();

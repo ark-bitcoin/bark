@@ -686,11 +686,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				},
 				(None, None, false, true, None) => w.vtxos()?,
 				(None, None, false, false, Some(vs)) => {
-					let vtxos = vs.iter().map(|s| {
-						let id = VtxoId::from_str(s)?;
-						w.get_vtxo_by_id(id)
-					})
-						.collect::<Result<Vec<Vtxo>, _>>()
+					let vtxos = vs.iter()
+						.map(|s| {
+							let id = VtxoId::from_str(s)?;
+							Ok(w.get_vtxo_by_id(id)?.vtxo)
+						})
+						.collect::<anyhow::Result<Vec<Vtxo>>>()
 						.with_context(|| "Invalid vtxo_id")?;
 
 					vtxos

@@ -56,7 +56,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
 
 	/// Fetch a VTXO by id in the database
-	fn get_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
+	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
 	/// Fetch all VTXO's that are in a given state
 	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>>;
 	/// Remove a VTXO from the database
