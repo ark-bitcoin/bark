@@ -7,12 +7,11 @@ use std::time::Instant;
 use std::pin::Pin;
 use std::future::Future;
 
-use ark::musig::MusigPubNonce;
 use bip39::rand::Rng;
-use bitcoin::{Amount, OutPoint, ScriptBuf};
+use bitcoin::{Amount, OutPoint, ScriptBuf, Transaction};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{rand, schnorr::Signature, PublicKey};
+use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
 use opentelemetry::{global, Context, KeyValue};
@@ -23,7 +22,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundId;
-use aspd_rpc::{self as rpc, protos};
+use aspd_rpc::{self as rpc, protos, TryFromBytes};
 use tonic::async_trait;
 
 use crate::Server;
@@ -50,37 +49,47 @@ macro_rules! not_found {
 	($($arg:tt)*) => { return $crate::error::not_found!($($arg)*).to_status(); };
 }
 
-/// A trait to easily convert [mod@anyhow] errors to [tonic::Status].
-trait ToStatus<T> {
+
+/// A trait to easily convert some errors to [tonic::Status].
+trait ToStatus {
+	fn to_status(self) -> tonic::Status;
+}
+
+impl ToStatus for anyhow::Error {
+	fn to_status(self) -> tonic::Status {
+		// NB tonic seems to have an undocumented limit on the body size
+		// of error messages. We don't return the full stack trace, which
+		// is included when we format the error with Debug.
+
+		// NB it's important that not found goes first as a bad argument could
+		// have been added afterwards
+		trace!("RPC ERROR: {}", self.full_msg());
+		if let Some(nf) = self.downcast_ref::<NotFound>() {
+			let mut metadata = tonic::metadata::MetadataMap::new();
+			let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");
+			metadata.insert("identifiers", ids);
+			tonic::Status::with_metadata(tonic::Code::NotFound, self.full_msg(), metadata)
+		} else if let Some(_) = self.downcast_ref::<BadArgument>() {
+			tonic::Status::invalid_argument(self.full_msg())
+		} else {
+			if RPC_RICH_ERRORS.load(atomic::Ordering::Relaxed) {
+				tonic::Status::internal(self.full_msg())
+			} else {
+				tonic::Status::internal("internal error")
+			}
+		}
+	}
+}
+
+/// A trait to easily convert some generic [Result]s into [tonic] [Result].
+trait ToStatusResult<T> {
 	/// Convert the error into a tonic error.
 	fn to_status(self) -> Result<T, tonic::Status>;
 }
 
-impl<T> ToStatus<T> for anyhow::Result<T> {
+impl<T, E: ToStatus> ToStatusResult<T> for Result<T, E> {
 	fn to_status(self) -> Result<T, tonic::Status> {
-		self.map_err(|err| {
-			// NB tonic seems to have an undocumented limit on the body size
-			// of error messages. We don't return the full stack trace, which
-			// is included when we format the error with Debug.
-
-			// NB it's important that not found goes first as a bad argument could
-			// have been added afterwards
-			trace!("RPC ERROR: {}", err.full_msg());
-			if let Some(nf) = err.downcast_ref::<NotFound>() {
-				let mut metadata = tonic::metadata::MetadataMap::new();
-				let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");
-				metadata.insert("identifiers", ids);
-				tonic::Status::with_metadata(tonic::Code::NotFound, err.full_msg(), metadata)
-			} else if let Some(_) = err.downcast_ref::<BadArgument>() {
-				tonic::Status::invalid_argument(err.full_msg())
-			} else {
-				if RPC_RICH_ERRORS.load(atomic::Ordering::Relaxed) {
-					tonic::Status::internal(err.full_msg())
-				} else {
-					tonic::Status::internal("internal error")
-				}
-			}
-		})
+		self.map_err(ToStatus::to_status)
 	}
 }
 
@@ -357,9 +366,7 @@ impl rpc::server::ArkService for Server {
 
 		add_tracing_attributes(vec![KeyValue::new("txid", format!("{:?}", req.txid))]);
 
-		let id = RoundId::from_slice(req.txid.as_slice())
-			.badarg("invalid txid")?;
-
+		let id = RoundId::from_bytes(req.txid.as_slice())?;
 
 		let ret = self.db.get_round(id).await
 			.context("db error")?
@@ -388,10 +395,10 @@ impl rpc::server::ArkService for Server {
 		add_tracing_attributes(vec![KeyValue::new("utxo", req.utxo.as_hex().to_string())]);
 
 		let amount = Amount::from_sat(req.amount);
-		let user_pubkey = PublicKey::from_slice(&req.user_pubkey).badarg("invalid user_pubkey")?;
+		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 		let expiry_height = req.expiry_height;
-		let utxo = OutPoint::deserialize(&req.utxo).badarg("invalid utxo")?;
-		let pub_nonce = MusigPubNonce::from_slice(&req.pub_nonce).badarg("invalid pub nonce")?;
+		let utxo = OutPoint::from_bytes(&req.utxo)?;
+		let pub_nonce = musig::MusigPubNonce::from_bytes(&req.pub_nonce)?;
 
 		let resp = self.cosign_board(
 			amount, user_pubkey, expiry_height, utxo, pub_nonce,
@@ -415,10 +422,8 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("board_txid", format!("{:?}", req.board_tx.as_hex())),
 		]);
 
-		let vtxo = Vtxo::deserialize(&req.board_vtxo)
-			.badarg("invalid vtxo")?;
-		let board_tx = bitcoin::consensus::deserialize(&req.board_tx)
-			.badarg("invalid board tx")?;
+		let vtxo = Vtxo::from_bytes(&req.board_vtxo)?;
+		let board_tx = Transaction::from_bytes(&req.board_tx)?;
 		self.register_board(vtxo, board_tx).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::Empty {}))
@@ -438,18 +443,14 @@ impl rpc::server::ArkService for Server {
 
 		let mut arkoor_args = vec![];
 		for arkoor in req.arkoors.iter() {
-			let input_id = VtxoId::from_slice(&arkoor.input_id).badarg("invalid input id")?;
-
-			let user_nonce = musig::MusigPubNonce::from_slice(&arkoor.pub_nonce)
-				.badarg("invalid public nonce")?;
-
+			let input_id = VtxoId::from_bytes(&arkoor.input_id)?;
+			let user_nonce = musig::MusigPubNonce::from_bytes(&arkoor.pub_nonce)?;
 			let outputs = arkoor.outputs.iter().map(|o| {
 				Ok(VtxoRequest {
 					amount: Amount::from_sat(o.amount),
-					policy: VtxoPolicy::deserialize(&o.policy).badarg("invalid output policy")?,
+					policy: VtxoPolicy::from_bytes(&o.policy)?,
 				})
 			}).collect::<Result<Vec<_>, tonic::Status>>()?;
-
 			arkoor_args.push((input_id, user_nonce, outputs))
 		}
 
@@ -473,12 +474,8 @@ impl rpc::server::ArkService for Server {
 		let arkoor_package_id = rand::thread_rng().gen::<[u8; 32]>();
 
 		for arkoor in req.arkoors {
-			let pubkey = PublicKey::from_slice(&arkoor.pubkey)
-				.badarg("invalid pubkey")?;
-
-			let vtxo = Vtxo::deserialize(&arkoor.vtxo)
-				.badarg("invalid vtxo")?;
-
+			let pubkey = PublicKey::from_bytes(&arkoor.pubkey)?;
+			let vtxo = Vtxo::from_bytes(&arkoor.vtxo)?;
 			self.db.store_oor(pubkey, &arkoor_package_id, vtxo).await.to_status()?;
 		}
 
@@ -496,9 +493,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("pubkey", format!("{:?}", req.pubkey)),
 		]);
 
-		let pubkey = PublicKey::from_slice(&req.pubkey)
-			.badarg("invalid pubkey")?;
-
+		let pubkey = PublicKey::from_bytes(&req.pubkey)?;
 		let vtxos_by_package_id = self.db.pull_oors(pubkey).await.to_status()?;
 
 		let response = protos::ArkoorVtxosResponse {
@@ -545,19 +540,17 @@ impl rpc::server::ArkService for Server {
 			.badarg("amount field required for invoice without amount")?;
 
 		let input_ids = req.input_vtxo_ids.iter()
-			.map(|id| VtxoId::from_slice(id).badarg("invalid input id"))
+			.map(VtxoId::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let input_vtxos = self.db.get_vtxos_by_id(&input_ids).await
 			.to_status()?.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
-		let user_nonces = req.user_nonces
-			.iter()
-			.map(|nonce| musig::MusigPubNonce::from_slice(nonce).badarg("invalid public nonce"))
+		let user_nonces = req.user_nonces.iter()
+			.map(musig::MusigPubNonce::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
-		let user_pubkey = PublicKey::from_slice(&req.user_pubkey)
-			.badarg("invalid user pubkey")?;
+		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 
 		let cosign_resp = self.start_bolt11_payment(
 			invoice, amount, user_pubkey, input_vtxos, user_nonces
@@ -573,9 +566,8 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
-		let htlc_vtxo_ids = req.htlc_vtxo_ids
-			.iter()
-			.map(|id| VtxoId::from_slice(&id).badarg("invalid vtxo id"))
+		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
+			.map(VtxoId::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
 		add_tracing_attributes(vec![
@@ -596,8 +588,7 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
-		let payment_hash = sha256::Hash::from_slice(&req.hash)
-			.badarg("payment hash should be 32 bytes")?;
+		let payment_hash = sha256::Hash::from_bytes(&req.hash)?;
 
 		add_tracing_attributes(vec![
 			KeyValue::new("payment_hash", payment_hash.to_string()),
@@ -619,14 +610,12 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
 		]);
 
-		let htlc_vtxo_ids = req.htlc_vtxo_ids
-			.iter()
-			.map(|h| VtxoId::from_slice(&h).badarg("invalid vtxo id"))
+		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
+			.map(VtxoId::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
-		let user_nonces = req.user_nonces
-			.iter()
-			.map(|n| musig::MusigPubNonce::from_slice(&n).badarg("invalid public nonce"))
+		let user_nonces = req.user_nonces.iter()
+			.map(musig::MusigPubNonce::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, user_nonces).await.to_status()?;
@@ -645,8 +634,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("amount_sats", format!("{:?}", req.amount_sat)),
 		]);
 
-		let payment_hash = Hash::from_slice(&req.payment_hash)
-			.badarg("invalid payment hash")?;
+		let payment_hash = sha256::Hash::from_bytes(&req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
 
 		let resp = self.start_bolt11_onboard(payment_hash, amount).await.to_status()?;
@@ -688,16 +676,15 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("payment_preimage", req.payment_preimage.as_hex().to_string()),
 		]);
 
-		let input_id = VtxoId::from_slice(&arkoor.input_id).badarg("invalid vtxo id")?;
+		let input_id = VtxoId::from_bytes(&arkoor.input_id)?;
 
 		let output = arkoor.outputs.first().badarg("missing output")?;
 		let pay_req = VtxoRequest {
 			amount: Amount::from_sat(output.amount),
-			policy: VtxoPolicy::deserialize(&output.policy).badarg("invalid policy")?,
+			policy: VtxoPolicy::from_bytes(&output.policy)?,
 		};
 
-		let user_nonce = musig::MusigPubNonce::from_slice(&arkoor.pub_nonce)
-			.badarg("invalid public nonce")?;
+		let user_nonce = musig::MusigPubNonce::from_bytes(&arkoor.pub_nonce)?;
 
 		let payment_preimage: [u8; 32] = req.payment_preimage.as_slice()
 			.try_into().badarg("invalid preimage, not 32 bytes")?;
@@ -746,9 +733,8 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
-			let vtxo_id = VtxoId::from_slice(&input.vtxo_id).badarg("invalid vtxo id")?;
-			let ownership_proof = Signature::from_slice(&input.ownership_proof)
-				.badarg("invalid round input signature")?;
+			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
+			let ownership_proof = schnorr::Signature::from_bytes(&input.ownership_proof)?;
 			Ok(VtxoIdInput { vtxo_id, ownership_proof })
 		}).collect::<Result<_, tonic::Status>>()?;
 
@@ -793,12 +779,10 @@ impl rpc::server::ArkService for Server {
 
 		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::VtxoSignatures {
-			pubkey: PublicKey::from_slice(&req.pubkey)
-				.badarg("invalid pubkey")?,
-			signatures: req.signatures.iter().map(|s| {
-				musig::MusigPartialSignature::from_slice(s)
-					.badarg("invalid signature")
-			}).collect::<Result<_, _>>()?,
+			pubkey: PublicKey::from_bytes(&req.pubkey)?,
+			signatures: req.signatures.iter()
+				.map(musig::MusigPartialSignature::from_bytes)
+				.collect::<Result<_, _>>()?,
 		};
 
 		self.rounds.round_input_tx.send((inp, tx)).expect("input channel closed");
@@ -821,16 +805,13 @@ impl rpc::server::ArkService for Server {
 		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::ForfeitSignatures {
 			signatures: req.signatures.iter().map(|ff| {
-				let id = VtxoId::from_slice(&ff.input_vtxo_id)
-					.badarg("invalid vtxo id")?;
-				let nonces = ff.pub_nonces.iter().map(|n| {
-					musig::MusigPubNonce::from_slice(n)
-						.badarg("invalid forfeit nonce")
-				}).collect::<Result<_, _>>()?;
-				let signatures = ff.signatures.iter().map(|s| {
-					musig::MusigPartialSignature::from_slice(s)
-						.badarg("invalid forfeit sig")
-				}).collect::<Result<_, _>>()?;
+				let id = VtxoId::from_bytes(&ff.input_vtxo_id)?;
+				let nonces = ff.pub_nonces.iter()
+					.map(musig::MusigPubNonce::from_bytes)
+					.collect::<Result<_, _>>()?;
+				let signatures = ff.signatures.iter()
+					.map(musig::MusigPartialSignature::from_bytes)
+					.collect::<Result<_, _>>()?;
 				Ok((id, nonces, signatures))
 			}).collect::<Result<_, tonic::Status>>()?
 		};
