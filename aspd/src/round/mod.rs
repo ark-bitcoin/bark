@@ -28,7 +28,7 @@ use ark::{
 	VtxoRequest,
 };
 use ark::connectors::ConnectorChain;
-use ark::musig::{self, MusigPubNonce, MusigSecNonce};
+use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge,
 	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
@@ -36,7 +36,7 @@ use ark::rounds::{
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 
 use crate::{database, Server, SECP};
-use crate::database::model::{ForfeitState, DangerousMusigSecNonce, LightningHtlcSubscriptionStatus};
+use crate::database::model::{ForfeitState, DangerousSecretNonce, LightningHtlcSubscriptionStatus};
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::telemetry::{self, SpanExt};
@@ -51,10 +51,10 @@ pub enum RoundInput {
 	},
 	VtxoSignatures {
 		pubkey: PublicKey,
-		signatures: Vec<musig::MusigPartialSignature>,
+		signatures: Vec<musig::PartialSignature>,
 	},
 	ForfeitSignatures {
-		signatures: Vec<(VtxoId, Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
+		signatures: Vec<(VtxoId, Vec<musig::PublicNonce>, Vec<musig::PartialSignature>)>,
 	},
 }
 
@@ -62,9 +62,9 @@ fn validate_forfeit_sigs(
 	vtxo: &Vtxo,
 	connectors: &ConnectorChain,
 	connector_pk: PublicKey,
-	asp_nonces: &[musig::MusigPubNonce],
-	user_nonces: &[musig::MusigPubNonce],
-	part_sigs: &[musig::MusigPartialSignature],
+	asp_nonces: &[musig::PublicNonce],
+	user_nonces: &[musig::PublicNonce],
+	part_sigs: &[musig::PartialSignature],
 ) -> anyhow::Result<()> {
 	if user_nonces.len() != connectors.len() || part_sigs.len() != connectors.len() {
 		bail!("not enough forfeit signatures provided");
@@ -83,17 +83,17 @@ fn validate_forfeit_sigs(
 		let user_nonce = user_nonces.get(idx).expect("we checked length");
 		let agg_nonce = musig::nonce_agg(&[&user_nonce, &asp_nonce]);
 
-		let session = musig::MusigSession::new(
+		let session = musig::Session::new(
 			&musig::SECP,
 			&key_agg,
 			agg_nonce,
-			musig::secpm::Message::from_digest(sighash.to_byte_array()),
+			&sighash.to_byte_array(),
 		);
 		let success = session.partial_verify(
 			&musig::SECP,
 			&key_agg,
-			*part_sig,
-			*user_nonce,
+			part_sig,
+			user_nonce,
 			musig::pubkey_to(vtxo.user_pubkey()),
 		);
 		if !success {
@@ -106,7 +106,7 @@ fn validate_forfeit_sigs(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VtxoParticipant {
 	pub req: SignedVtxoRequest,
-	pub nonces: Vec<MusigPubNonce>,
+	pub nonces: Vec<PublicNonce>,
 }
 
 impl TryFrom<protos::SignedVtxoRequest> for VtxoParticipant {
@@ -124,7 +124,8 @@ impl TryFrom<protos::SignedVtxoRequest> for VtxoParticipant {
 					.badarg("malformed cosign pubkey")?,
 			},
 			nonces: v.public_nonces.into_iter().map(|n| {
-				musig::MusigPubNonce::from_slice(&n)
+				TryFrom::try_from(&n[..]).ok()
+					.and_then(|b| musig::PublicNonce::from_byte_array(&b).ok())
 					.badarg("invalid public nonce")
 			}).collect::<Result<Vec<_>, _>>()?,
 		})
@@ -680,10 +681,10 @@ pub struct SigningVtxoTree {
 	expiry_height: BlockHeight,
 
 	cosign_key: Keypair,
-	cosign_sec_nonces: Vec<MusigSecNonce>,
-	cosign_pub_nonces: Vec<MusigPubNonce>,
-	cosign_part_sigs: HashMap<PublicKey, Vec<musig::MusigPartialSignature>>,
-	cosign_agg_nonces: Vec<musig::MusigAggNonce>,
+	cosign_sec_nonces: Vec<SecretNonce>,
+	cosign_pub_nonces: Vec<PublicNonce>,
+	cosign_part_sigs: HashMap<PublicKey, Vec<musig::PartialSignature>>,
+	cosign_agg_nonces: Vec<musig::AggregatedNonce>,
 	unsigned_vtxo_tree: UnsignedVtxoTree,
 	wallet_lock: OwnedMutexGuard<PersistedWallet>,
 	round_tx_psbt: Psbt,
@@ -692,7 +693,7 @@ pub struct SigningVtxoTree {
 
 	// data from earlier
 	all_inputs: HashMap<VtxoId, Vtxo>,
-	user_cosign_nonces: HashMap<PublicKey, Vec<musig::MusigPubNonce>>,
+	user_cosign_nonces: HashMap<PublicKey, Vec<musig::PublicNonce>>,
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	/// All inputs that have participated, but might have dropped out.
 	locked_inputs: OwnedVtxoFluxLock,
@@ -706,7 +707,7 @@ impl SigningVtxoTree {
 	pub fn register_signature(
 		&mut self,
 		pubkey: PublicKey,
-		signatures: Vec<musig::MusigPartialSignature>,
+		signatures: Vec<musig::PartialSignature>,
 	) -> anyhow::Result<()> {
 		// Check for duplicates.
 		if self.cosign_part_sigs.contains_key(&pubkey) {
@@ -865,9 +866,9 @@ pub struct SigningForfeits {
 	round_data: RoundData,
 	expiry_height: BlockHeight,
 
-	forfeit_sec_nonces: Option<HashMap<VtxoId, Vec<MusigSecNonce>>>,
-	forfeit_pub_nonces: HashMap<VtxoId, Vec<MusigPubNonce>>,
-	forfeit_part_sigs: HashMap<VtxoId, (Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
+	forfeit_sec_nonces: Option<HashMap<VtxoId, Vec<SecretNonce>>>,
+	forfeit_pub_nonces: HashMap<VtxoId, Vec<PublicNonce>>,
+	forfeit_part_sigs: HashMap<VtxoId, (Vec<musig::PublicNonce>, Vec<musig::PartialSignature>)>,
 
 	// data from earlier
 	signed_vtxos: CachedSignedVtxoTree,
@@ -889,7 +890,7 @@ pub struct SigningForfeits {
 impl SigningForfeits {
 	pub fn register_forfeits(
 		&mut self,
-		signatures: Vec<(VtxoId, Vec<musig::MusigPubNonce>, Vec<musig::MusigPartialSignature>)>,
+		signatures: Vec<(VtxoId, Vec<musig::PublicNonce>, Vec<musig::PartialSignature>)>,
 	) -> anyhow::Result<()> {
 		slog!(ReceivedForfeitSignatures, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			nb_forfeits: signatures.len(), vtxo_ids: signatures.iter().map(|v| v.0).collect::<Vec<_>>(),
@@ -1033,7 +1034,7 @@ impl SigningForfeits {
 				user_nonces, user_part_sigs,
 				pub_nonces: self.forfeit_pub_nonces.remove(id).expect("missing vtxo"),
 				sec_nonces: sec_nonces.remove(id).expect("missing vtxo").into_iter()
-					.map(DangerousMusigSecNonce::new)
+					.map(DangerousSecretNonce::new)
 					.collect(),
 			};
 			(*id, forfeit_state)

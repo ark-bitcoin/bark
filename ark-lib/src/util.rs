@@ -97,16 +97,14 @@ pub fn fill_taproot_sigs(tx: &mut Transaction, sigs: &[schnorr::Signature]) {
 pub fn verify_partial_sig(
 	sighash: TapSighash,
 	tweak: TapTweakHash,
-	signer: (PublicKey, musig::MusigPubNonce),
-	other: (PublicKey, musig::MusigPubNonce),
-	partial_signature: musig::MusigPartialSignature,
+	signer: (PublicKey, &musig::PublicNonce),
+	other: (PublicKey, &musig::PublicNonce),
+	partial_signature: &musig::PartialSignature,
 ) -> bool {
 	let agg_nonce = musig::nonce_agg(&[&signer.1, &other.1]);
 	let agg_pk = musig::tweaked_key_agg([signer.0, other.0], tweak.to_byte_array()).0;
 
-	let msg = musig::secpm::Message::from_digest(sighash.to_byte_array());
-	let session = musig::MusigSession::new(&musig::SECP, &agg_pk, agg_nonce, msg);
-
+	let session = musig::Session::new(&musig::SECP, &agg_pk, agg_nonce, &sighash.to_byte_array());
 	session.partial_verify(
 		&musig::SECP, &agg_pk, partial_signature, signer.1, musig::pubkey_to(signer.0),
 	)

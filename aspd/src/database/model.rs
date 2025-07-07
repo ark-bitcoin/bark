@@ -14,8 +14,8 @@ use lightning_invoice::Bolt11Invoice;
 use tokio_postgres::Row;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
-use ark::musig::{MusigPartialSignature, MusigPubNonce, MusigSecNonce};
-use ark::musig::secpm::ffi::MUSIG_SECNONCE_LEN;
+use ark::musig::{PartialSignature, PublicNonce, SecretNonce};
+use ark::musig::secpm::ffi::MUSIG_SECNONCE_SIZE;
 use ark::rounds::RoundId;
 use ark::tree::signed::SignedVtxoTreeSpec;
 
@@ -56,12 +56,12 @@ pub struct ForfeitState {
 	/// of the forfeit tx will come from.
 	pub round_id: RoundId,
 	#[serde(with = "serde::pub_nonces")]
-	pub user_nonces: Vec<MusigPubNonce>,
+	pub user_nonces: Vec<PublicNonce>,
 	#[serde(with = "serde::part_sigs")]
-	pub user_part_sigs: Vec<MusigPartialSignature>,
+	pub user_part_sigs: Vec<PartialSignature>,
 	#[serde(with = "serde::pub_nonces")]
-	pub pub_nonces: Vec<MusigPubNonce>,
-	pub sec_nonces: Vec<DangerousMusigSecNonce>,
+	pub pub_nonces: Vec<PublicNonce>,
+	pub sec_nonces: Vec<DangerousSecretNonce>,
 }
 
 #[derive(Debug)]
@@ -371,19 +371,19 @@ impl TryFrom<Row> for ForfeitClaimState<'static> {
 }
 
 
-/// A type that actually represents a [MusigSecNonce] but without the
+/// A type that actually represents a [SecretNonce] but without the
 /// typesystem defenses for dangerous usage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DangerousMusigSecNonce(Vec<u8>);
+pub struct DangerousSecretNonce(Vec<u8>);
 
-impl DangerousMusigSecNonce {
-	pub fn new(n: MusigSecNonce) -> Self {
-		DangerousMusigSecNonce(n.dangerous_into_bytes().to_vec())
+impl DangerousSecretNonce {
+	pub fn new(n: SecretNonce) -> Self {
+		DangerousSecretNonce(n.dangerous_into_bytes().to_vec())
 	}
 
-	pub fn to_sec_nonce(&self) -> MusigSecNonce {
-		assert_eq!(self.0.len(), MUSIG_SECNONCE_LEN);
-		MusigSecNonce::dangerous_from_bytes(TryFrom::try_from(&self.0[..]).expect("right size"))
+	pub fn to_sec_nonce(&self) -> SecretNonce {
+		assert_eq!(self.0.len(), MUSIG_SECNONCE_SIZE);
+		SecretNonce::dangerous_from_bytes(TryFrom::try_from(&self.0[..]).expect("right size"))
 	}
 }
 
@@ -395,9 +395,9 @@ mod serde {
 	pub mod pub_nonces {
 		use super::*;
 		use serde::ser::SerializeSeq;
-		use ark::musig::MusigPubNonce;
+		use ark::musig::PublicNonce;
 
-		pub fn serialize<S: Serializer>(nonces: &Vec<MusigPubNonce>, s: S) -> Result<S::Ok, S::Error> {
+		pub fn serialize<S: Serializer>(nonces: &Vec<PublicNonce>, s: S) -> Result<S::Ok, S::Error> {
 			let mut seq = s.serialize_seq(Some(nonces.len()))?;
 			for nonce in nonces {
 				seq.serialize_element(&Bytes(nonce.serialize()[..].into()))?;
@@ -405,11 +405,11 @@ mod serde {
 			seq.end()
 		}
 
-		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<MusigPubNonce>, D::Error> {
+		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PublicNonce>, D::Error> {
 			struct Visitor;
 
 			impl<'de> serde::de::Visitor<'de> for Visitor {
-				type Value = Vec<MusigPubNonce>;
+				type Value = Vec<PublicNonce>;
 
 				fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
 					f.write_str("a list of public musig nonces")
@@ -420,8 +420,9 @@ mod serde {
 				{
 					let mut ret = Vec::with_capacity(s.size_hint().unwrap_or(0));
 					while let Some(e) = s.next_element::<Bytes>()? {
-						ret.push(MusigPubNonce::from_slice(e.0.as_ref())
-							.map_err(serde::de::Error::custom)?);
+						ret.push(PublicNonce::from_byte_array(
+							&TryFrom::try_from(e.0.as_ref()).map_err(serde::de::Error::custom)?
+						).map_err(serde::de::Error::custom)?);
 					}
 					Ok(ret)
 				}
@@ -433,9 +434,9 @@ mod serde {
 	pub mod part_sigs {
 		use super::*;
 		use serde::ser::SerializeSeq;
-		use ark::musig::MusigPartialSignature;
+		use ark::musig::PartialSignature;
 
-		pub fn serialize<S: Serializer>(nonces: &Vec<MusigPartialSignature>, s: S) -> Result<S::Ok, S::Error> {
+		pub fn serialize<S: Serializer>(nonces: &Vec<PartialSignature>, s: S) -> Result<S::Ok, S::Error> {
 			let mut seq = s.serialize_seq(Some(nonces.len()))?;
 			for nonce in nonces {
 				seq.serialize_element(&Bytes(nonce.serialize()[..].into()))?;
@@ -443,11 +444,11 @@ mod serde {
 			seq.end()
 		}
 
-		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<MusigPartialSignature>, D::Error> {
+		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PartialSignature>, D::Error> {
 			struct Visitor;
 
 			impl<'de> serde::de::Visitor<'de> for Visitor {
-				type Value = Vec<MusigPartialSignature>;
+				type Value = Vec<PartialSignature>;
 
 				fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
 					f.write_str("a list of partial musig signatures")
@@ -458,8 +459,9 @@ mod serde {
 				{
 					let mut ret = Vec::with_capacity(s.size_hint().unwrap_or(0));
 					while let Some(e) = s.next_element::<Bytes>()? {
-						ret.push(MusigPartialSignature::from_slice(e.0.as_ref())
-							.map_err(serde::de::Error::custom)?);
+						ret.push(PartialSignature::from_byte_array(
+							&TryFrom::try_from(e.0.as_ref()).map_err(serde::de::Error::custom)?
+						).map_err(serde::de::Error::custom)?);
 					}
 					Ok(ret)
 				}
@@ -483,8 +485,8 @@ mod test {
 		// first test random roundtrip
 		let key = Keypair::new(&*SECP, &mut rand::thread_rng());
 		let (secn, pubn) = musig::nonce_pair(&key);
-		let part = MusigPartialSignature::from_slice(
-			&Vec::<u8>::from_hex("fe2b5cf922855b8318ba6224da3b0adabc0d9de4254b47d9687846861aa0f843").unwrap(),
+		let part = PartialSignature::from_byte_array(
+			&FromHex::from_hex("fe2b5cf922855b8318ba6224da3b0adabc0d9de4254b47d9687846861aa0f843").unwrap(),
 		).unwrap();
 
 		let ffs = ForfeitState {
@@ -492,7 +494,7 @@ mod test {
 			user_nonces: vec![pubn, pubn],
 			user_part_sigs: vec![part, part],
 			pub_nonces: vec![pubn, pubn],
-			sec_nonces: vec![DangerousMusigSecNonce::new(secn)],
+			sec_nonces: vec![DangerousSecretNonce::new(secn)],
 		};
 		let encoded = rmp_serde::to_vec_named(&ffs).unwrap();
 		let decoded = rmp_serde::from_slice(&encoded[..]).unwrap();

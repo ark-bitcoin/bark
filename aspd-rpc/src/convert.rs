@@ -2,13 +2,14 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
+use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{schnorr, PublicKey};
-use bitcoin::{self, Amount, FeeRate};
+use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
 
-use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
-use ark::rounds::VtxoOwnershipChallenge;
+use ark::rounds::{RoundId, VtxoOwnershipChallenge};
 use ark::tree::signed::VtxoTreeSpec;
 
 use crate::protos;
@@ -17,7 +18,7 @@ use crate::protos;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("rpc conversion error: {msg}")]
 pub struct ConvertError {
-	msg: &'static str,
+	pub msg: &'static str,
 }
 
 impl From<&'static str> for ConvertError {
@@ -25,6 +26,76 @@ impl From<&'static str> for ConvertError {
 		ConvertError { msg }
 	}
 }
+
+impl From<ConvertError> for tonic::Status {
+	fn from(e: ConvertError) -> Self {
+		tonic::Status::invalid_argument(e.msg)
+	}
+}
+
+/// Trait to convert some types from byte slices.
+pub trait TryFromBytes: Sized {
+	fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError>;
+}
+
+macro_rules! impl_try_from_byte_array {
+	($ty:path, $exp:expr) => {
+		impl TryFromBytes for $ty {
+			fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
+				Ok(TryFrom::try_from(b.as_ref()).ok()
+					.and_then(|b| <$ty>::from_byte_array(b).ok())
+					.ok_or(concat!("invalid ", $exp))?)
+			}
+		}
+	};
+}
+impl_try_from_byte_array!(musig::PublicNonce, "public musig nonce");
+impl_try_from_byte_array!(musig::PartialSignature, "partial musig signature");
+impl_try_from_byte_array!(musig::AggregatedNonce, "aggregated musig nonce");
+
+macro_rules! impl_try_from_byte_slice {
+	($ty:path, $exp:expr) => {
+		impl TryFromBytes for $ty {
+			fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
+				#[allow(unused)] // used for the impls of hash types
+				use bitcoin::hashes::Hash;
+
+				Ok(<$ty>::from_slice(b.as_ref()).map_err(|_| concat!("invalid ", $exp))?)
+			}
+		}
+	};
+}
+impl_try_from_byte_slice!(sha256::Hash, "SHA-256 hash");
+impl_try_from_byte_slice!(PublicKey, "public key");
+impl_try_from_byte_slice!(schnorr::Signature, "Schnorr signature");
+impl_try_from_byte_slice!(VtxoId, "VTXO ID");
+impl_try_from_byte_slice!(RoundId, "VTXO ID");
+
+macro_rules! impl_try_from_bytes_protocol {
+	($ty:path, $exp:expr) => {
+		impl TryFromBytes for $ty {
+			fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
+				Ok(ProtocolEncoding::deserialize(b.as_ref())
+					.map_err(|_| concat!("invalid ", $exp))?)
+			}
+		}
+	};
+}
+impl_try_from_bytes_protocol!(OutPoint, "outpoint");
+impl_try_from_bytes_protocol!(Vtxo, "VTXO");
+impl_try_from_bytes_protocol!(VtxoPolicy, "VTXO policy");
+
+macro_rules! impl_try_from_bytes_bitcoin {
+	($ty:path, $exp:expr) => {
+		impl TryFromBytes for $ty {
+			fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
+				Ok(bitcoin::consensus::encode::deserialize(b.as_ref())
+					.map_err(|_| concat!("invalid ", $exp))?)
+			}
+		}
+	};
+}
+impl_try_from_bytes_bitcoin!(Transaction, "bitcoin transaction");
 
 
 impl From<ark::ArkInfo> for protos::ArkInfo {
@@ -162,11 +233,10 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					vtxos_spec: VtxoTreeSpec::deserialize(&m.vtxos_spec)
 						.map_err(|_| "invalid vtxos_spec")?,
 					cosign_agg_nonces: m.vtxos_agg_nonces.into_iter().map(|n| {
-						musig::MusigAggNonce::from_slice(&n)
-							.map_err(|_| "invalid vtxos_agg_nonces")
+						musig::AggregatedNonce::from_bytes(&n)
 					}).collect::<Result<_, _>>()?,
 					connector_pubkey: PublicKey::from_slice(&m.connector_pubkey)
-						.map_err(|_| "invaid connector pubkey")?,
+						.map_err(|_| "invalid connector pubkey")?,
 				}
 			},
 			protos::round_event::Event::RoundProposal(m) => {
@@ -180,8 +250,7 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 						let vtxo_id = VtxoId::from_slice(&f.input_vtxo_id)
 							.map_err(|_| "invalid input_vtxo_id")?;
 						let nonces = f.pub_nonces.into_iter().map(|n| {
-							musig::MusigPubNonce::from_slice(&n)
-								.map_err(|_| "invalid pub_nonces")
+							musig::PublicNonce::from_bytes(&n)
 						}).collect::<Result<_, _>>()?;
 						Ok((vtxo_id, nonces))
 					}).collect::<Result<_, ConvertError>>()?,
@@ -264,10 +333,8 @@ impl TryFrom<protos::ArkoorCosignResponse> for ArkoorCosignResponse {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
-				.map_err(|_| "invalid server public nonce")?,
-			partial_signature: musig::MusigPartialSignature::from_slice(&v.partial_sig)
-				.map_err(|_| "invalid server partial cosignature")?,
+			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
+			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
 		})
 	}
 }
@@ -301,10 +368,8 @@ impl TryFrom<protos::Bolt11PaymentDetails> for ArkoorCosignResponse {
 	type Error = ConvertError;
 	fn try_from(v: protos::Bolt11PaymentDetails) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
-				.map_err(|_| "invalid server public nonce")?,
-			partial_signature: musig::MusigPartialSignature::from_slice(&v.partial_sig)
-				.map_err(|_| "invalid server partial cosignature")?,
+			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
+			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
 		})
 	}
 }
@@ -322,10 +387,8 @@ impl TryFrom<protos::BoardCosignResponse> for BoardCosignResponse {
 	type Error = ConvertError;
 	fn try_from(v: protos::BoardCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
-			pub_nonce: musig::MusigPubNonce::from_slice(&v.pub_nonce)
-				.map_err(|_| "invalid server public nonce")?,
-			partial_signature: musig::MusigPartialSignature::from_slice(&v.partial_sig)
-				.map_err(|_| "invalid server partial cosignature")?,
+			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
+			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
 		})
 	}
 }

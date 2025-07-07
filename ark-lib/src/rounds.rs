@@ -173,13 +173,13 @@ pub enum RoundEvent {
 		round_seq: usize,
 		unsigned_round_tx: Transaction,
 		vtxos_spec: VtxoTreeSpec,
-		cosign_agg_nonces: Vec<musig::MusigAggNonce>,
+		cosign_agg_nonces: Vec<musig::AggregatedNonce>,
 		connector_pubkey: PublicKey,
 	},
 	RoundProposal {
 		round_seq: usize,
 		cosign_sigs: Vec<schnorr::Signature>,
-		forfeit_nonces: HashMap<VtxoId, Vec<musig::MusigPubNonce>>,
+		forfeit_nonces: HashMap<VtxoId, Vec<musig::PublicNonce>>,
 	},
 	Finished {
 		round_seq: usize,

@@ -2,6 +2,7 @@ pub extern crate tonic;
 
 mod aspd; // generated
 mod convert;
+pub use convert::{ConvertError, TryFromBytes};
 
 pub mod protos {
 	pub use crate::aspd::*;

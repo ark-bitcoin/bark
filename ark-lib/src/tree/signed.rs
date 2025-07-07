@@ -9,7 +9,7 @@ use bitcoin::{
 };
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
-use secp256k1_musig::musig::{MusigAggNonce, MusigPartialSignature, MusigPubNonce, MusigSecNonce};
+use secp256k1_musig::musig::{AggregatedNonce, PartialSignature, PublicNonce, SecretNonce};
 
 use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt, TransactionExt, TxOutExt};
 
@@ -205,9 +205,9 @@ impl VtxoTreeSpec {
 	/// Nonces expected and returned ordered from leaves to root.
 	pub fn calculate_cosign_agg_nonces(
 		&self,
-		leaf_cosign_nonces: &HashMap<PublicKey, Vec<MusigPubNonce>>,
-		asp_cosign_nonces: &[MusigPubNonce],
-	) -> Vec<MusigAggNonce> {
+		leaf_cosign_nonces: &HashMap<PublicKey, Vec<PublicNonce>>,
+		asp_cosign_nonces: &[PublicNonce],
+	) -> Vec<AggregatedNonce> {
 		let tree = Tree::new(self.nb_leaves());
 
 		tree.iter().zip(asp_cosign_nonces).map(|(node, asp)| {
@@ -304,11 +304,11 @@ impl UnsignedVtxoTree {
 	//TODO(stevenroose) streamline indices of nonces and sigs
 	pub fn cosign_branch(
 		&self,
-		cosign_agg_nonces: &[MusigAggNonce],
+		cosign_agg_nonces: &[AggregatedNonce],
 		leaf_idx: usize,
 		cosign_key: &Keypair,
-		cosign_sec_nonces: Vec<MusigSecNonce>,
-	) -> Result<Vec<MusigPartialSignature>, IncorrectSigningKeyError> {
+		cosign_sec_nonces: Vec<SecretNonce>,
+	) -> Result<Vec<PartialSignature>, IncorrectSigningKeyError> {
 		let req = self.spec.vtxos.get(leaf_idx).expect("leaf idx out of bounds");
 		if cosign_key.public_key() != req.cosign_pubkey {
 			return Err(IncorrectSigningKeyError {
@@ -358,10 +358,10 @@ impl UnsignedVtxoTree {
 	/// Returns [None] if the vtxo request is not part of the tree.
 	pub fn cosign_tree(
 		&self,
-		cosign_agg_nonces: &[MusigAggNonce],
+		cosign_agg_nonces: &[AggregatedNonce],
 		keypair: &Keypair,
-		cosign_sec_nonces: Vec<MusigSecNonce>,
-	) -> Vec<MusigPartialSignature> {
+		cosign_sec_nonces: Vec<SecretNonce>,
+	) -> Vec<PartialSignature> {
 		assert_eq!(cosign_agg_nonces.len(), self.nb_nodes());
 		assert_eq!(cosign_sec_nonces.len(), self.nb_nodes());
 
@@ -389,9 +389,9 @@ impl UnsignedVtxoTree {
 		&self,
 		node: &tree::Node,
 		pk: PublicKey,
-		agg_nonces: &[MusigAggNonce],
-		part_sig: MusigPartialSignature,
-		pub_nonce: MusigPubNonce,
+		agg_nonces: &[AggregatedNonce],
+		part_sig: PartialSignature,
+		pub_nonce: PublicNonce,
 	) -> Result<(), CosignSignatureError> {
 		let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
 			.chain(Some(self.spec.asp_cosign_pk));
@@ -399,17 +399,17 @@ impl UnsignedVtxoTree {
 
 		let taptweak = self.spec.cosign_taproot(self.cosign_agg_pks[node.idx()]).tap_tweak();
 		let key_agg = musig::tweaked_key_agg(cosign_pubkeys, taptweak.to_byte_array()).0;
-		let session = musig::MusigSession::new(
+		let session = musig::Session::new(
 			&musig::SECP,
 			&key_agg,
 			*agg_nonces.get(node.idx()).ok_or(CosignSignatureError::NotEnoughNonces)?,
-			musig::secpm::Message::from_digest(sighash.to_byte_array()),
+			&sighash.to_byte_array(),
 		);
 		let success = session.partial_verify(
 			&musig::SECP,
 			&key_agg,
-			part_sig,
-			pub_nonce,
+			&part_sig,
+			&pub_nonce,
 			musig::pubkey_to(pk),
 		);
 		if !success {
@@ -423,10 +423,10 @@ impl UnsignedVtxoTree {
 	/// Nonces and partial signatures expected ordered from leaves to root.
 	pub fn verify_branch_cosign_partial_sigs(
 		&self,
-		cosign_agg_nonces: &[MusigAggNonce],
+		cosign_agg_nonces: &[AggregatedNonce],
 		request: &SignedVtxoRequest,
-		cosign_pub_nonces: &[MusigPubNonce],
-		cosign_part_sigs: &[MusigPartialSignature],
+		cosign_pub_nonces: &[PublicNonce],
+		cosign_part_sigs: &[PartialSignature],
 	) -> Result<(), String> {
 		assert_eq!(cosign_agg_nonces.len(), self.nb_nodes());
 
@@ -465,9 +465,9 @@ impl UnsignedVtxoTree {
 	pub fn verify_all_cosign_partial_sigs(
 		&self,
 		pk: PublicKey,
-		agg_nonces: &[MusigAggNonce],
-		pub_nonces: &[MusigPubNonce],
-		part_sigs: &[MusigPartialSignature],
+		agg_nonces: &[AggregatedNonce],
+		pub_nonces: &[PublicNonce],
+		part_sigs: &[PartialSignature],
 	) -> Result<(), CosignSignatureError> {
 		for node in self.tree.iter() {
 			self.verify_node_cosign_partial_sig(
@@ -489,9 +489,9 @@ impl UnsignedVtxoTree {
 	/// ASP signatures expected ordered from leaves to root.
 	pub fn combine_partial_signatures(
 		&self,
-		cosign_agg_nonces: &[MusigAggNonce],
-		leaf_part_sigs: &HashMap<PublicKey, Vec<MusigPartialSignature>>,
-		asp_sigs: Vec<MusigPartialSignature>,
+		cosign_agg_nonces: &[AggregatedNonce],
+		leaf_part_sigs: &HashMap<PublicKey, Vec<PartialSignature>>,
+		asp_sigs: Vec<PartialSignature>,
 	) -> Result<Vec<schnorr::Signature>, CosignSignatureError> {
 		// to ease implementation, we're reconstructing the part sigs map with dequeues
 		let mut leaf_part_sigs = leaf_part_sigs.iter()
