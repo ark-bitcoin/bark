@@ -2,7 +2,8 @@ use std::env;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
-use log::{error, trace};
+
+use log::{debug, error, trace};
 use tokio::fs;
 use tokio::process::{Child, Command};
 use tokio_postgres::{Client, Config, NoTls};
@@ -12,6 +13,9 @@ use aspd::config;
 use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
+
+
+const LOCK_DIR: &str = "/tmp/ark-testing-postgres-locks";
 
 pub fn host_base_config() -> config::Postgres {
 	config::Postgres {
@@ -141,13 +145,15 @@ impl DaemonHelper for PostgresHelper {
 	}
 
 	async fn prepare(&self) -> anyhow::Result<()> {
+		fs::create_dir_all(LOCK_DIR).await.expect("failed to create postgres lock dir");
+
 		if self.datadir.exists() {
 			fs::remove_dir_all(&self.datadir).await.expect("failed to clear postgres datadir");
 		}
-		fs::create_dir_all(&self.datadir()).await?;
+		fs::create_dir_all(&self.datadir()).await.expect("failed to create postgres datadir");
 
 		// also create dedicated dir for pgdata
-		fs::create_dir_all(&self.pgdata()).await?;
+		fs::create_dir_all(&self.pgdata()).await.expect("failed to create pgdata dir");
 
 		let output = Command::new(Postgres::initdb())
 			.args(["-D", &self.pgdata().display().to_string()])
@@ -168,9 +174,12 @@ impl DaemonHelper for PostgresHelper {
 	async fn get_command(&self) -> anyhow::Result<Command> {
 		let mut cmd = Command::new(Postgres::postgres());
 		cmd.args([
+			"-k", LOCK_DIR,
 			"-D", &self.pgdata().display().to_string(),
-			"-p", &self.port.expect("a port should be configured").to_string()
-			]);
+			"-p", &self.port.expect("a port should be configured").to_string(),
+		]);
+
+		debug!("postgresql command: {:?}", cmd);
 
 		return Ok(cmd)
 	}
