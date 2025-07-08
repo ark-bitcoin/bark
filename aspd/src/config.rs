@@ -125,7 +125,7 @@ pub struct Config {
 	pub network: bitcoin::Network,
 	/// The number of blocks after which a VTXO expires, by default 6*24*30 so that
 	/// a VTXO can live for up to 30 days.
-	pub vtxo_expiry_delta: u16,
+	pub vtxo_lifetime: u16,
 	pub vtxo_exit_delta: u16,
 	pub htlc_expiry_delta: u16,
 
@@ -211,7 +211,7 @@ impl Default for Config {
 			data_dir: "./aspd".into(),
 			log_dir: None,
 			network: bitcoin::Network::Regtest,
-			vtxo_expiry_delta: 6 * 24 * 30,
+			vtxo_lifetime: 6 * 24 * 30,
 			vtxo_exit_delta: 2 * 6,
 			htlc_expiry_delta: 6,
 
@@ -453,7 +453,7 @@ mod test {
 		let client_key_path = "/hooli/http_public/certs/client.key";
 
 		let env = [
-			("ASPD__VTXO_EXPIRY_DELTA", "42"),
+			("ASPD__VTXO_LIFETIME", "42"),
 			("ASPD__BITCOIND__COOKIE", "/not/hot/dog/but/cookie"),
 			("ASPD__CLN_ARRAY", r#"[{
 				"uri": "http://belson.labs:12345",
@@ -467,7 +467,7 @@ mod test {
 		let cfg = Config::load_with_custom_env(None, Some(env)).unwrap();
 		cfg.validate().expect("invalid configuration");
 
-		assert_eq!(cfg.vtxo_expiry_delta, 42);
+		assert_eq!(cfg.vtxo_lifetime, 42);
 		assert_eq!(cfg.bitcoind.cookie, Some("/not/hot/dog/but/cookie".into()));
 		let lncfg = cfg.cln_array.get(0).unwrap();
 		assert_eq!(lncfg.uri, Uri::from_str(uri).unwrap());
