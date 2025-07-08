@@ -157,7 +157,7 @@ const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
 const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
 const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_vtxos";
 const RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN: &'static str = "request_arkoor_package_cosign";
-const RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX: &'static str = "post_arkoor_mailbox";
+const RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX: &'static str = "post_arkoor_package_mailbox";
 const RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX: &'static str = "empty_arkoor_mailbox";
 const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment";
 const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payment";
@@ -171,18 +171,22 @@ const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
 const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
 
-const RPC_SERVICE_ARK_METHODS: [&str; 15] = [
+const RPC_SERVICE_ARK_METHODS: [&str; 19] = [
 	RPC_SERVICE_ARK_HANDSHAKE,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
 	RPC_SERVICE_ARK_GET_ROUND,
 	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
 	RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS,
 	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
-	RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX,
+	RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX,
 	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
 	RPC_SERVICE_ARK_START_BOLT11_PAYMENT,
+	RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT,
 	RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT,
 	RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT,
+	RPC_SERVICE_ARK_START_BOLT11_ONBOARD,
+	RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_ONBOARD,
+	RPC_SERVICE_ARK_CLAIM_BOLT11_ONBOARD,
 	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
 	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
 	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
@@ -463,7 +467,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorPackage>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_POST_ARKOOR_MAILBOX);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
