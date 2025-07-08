@@ -9,13 +9,14 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
+mod config;
+pub use self::config::Config;
 mod exit;
 mod lnurl;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
-use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
-pub use persist::sqlite::SqliteClient;
+pub use self::persist::sqlite::SqliteClient;
 mod psbtext;
 pub mod vtxo_selection;
 mod vtxo_state;
@@ -23,10 +24,10 @@ mod vtxo_state;
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
+
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::iter;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,6 +57,7 @@ use ark::rounds::{
 	MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
+use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
 use aspd_rpc::{self as rpc, protos};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::WalletExt;
@@ -142,64 +144,6 @@ impl From<Utxo> for UtxoInfo {
 				amount: e.vtxo.amount(),
 				confirmation_height: Some(e.height),
 			},
-		}
-	}
-}
-
-/// Configuration of the Bark wallet.
-#[derive(Debug, Clone)]
-pub struct Config {
-	/// The address of your ASP.
-	pub asp_address: String,
-
-	/// The address of the Esplora HTTP server to use.
-	///
-	/// Either this or the `bitcoind_address` field has to be provided.
-	pub esplora_address: Option<String>,
-
-	/// The address of the bitcoind RPC server to use.
-	///
-	/// Either this or the `esplora_address` field has to be provided.
-	pub bitcoind_address: Option<String>,
-
-	/// The path to the bitcoind rpc cookie file.
-	///
-	/// Only used with `bitcoind_address`.
-	pub bitcoind_cookiefile: Option<PathBuf>,
-
-	/// The bitcoind RPC username.
-	///
-	/// Only used with `bitcoind_address`.
-	pub bitcoind_user: Option<String>,
-
-	/// The bitcoind RPC password.
-	///
-	/// Only used with `bitcoind_address`.
-	pub bitcoind_pass: Option<String>,
-
-	/// The number of blocks before expiration to refresh vtxos.
-	///
-	/// Default value: 288 (48 hrs)
-	pub vtxo_refresh_expiry_threshold: BlockHeight,
-
-	/// A fallback fee rate to use in sat/kWu when we fail to retrieve a fee rate from the
-	/// configured bitcoind/esplora connection.
-	///
-	/// Example for 1 sat/vB: --fallback-fee-rate 250
-	pub fallback_fee_rate: Option<FeeRate>,
-}
-
-impl Default for Config {
-	fn default() -> Config {
-		Config {
-			asp_address: "http://127.0.0.1:3535".to_owned(),
-			esplora_address: None,
-			bitcoind_address: None,
-			bitcoind_cookiefile: None,
-			bitcoind_user: None,
-			bitcoind_pass: None,
-			vtxo_refresh_expiry_threshold: 288,
-			fallback_fee_rate: None,
 		}
 	}
 }
