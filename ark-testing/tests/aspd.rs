@@ -1069,7 +1069,7 @@ async fn register_board_is_idempotent() {
 	// We will now call the register_board a few times
 	let mut rpc = aspd.get_public_client().await;
 	let request = protos::BoardVtxoRequest {
-		board_vtxo: vtxo.serialize(),
+		board_vtxo: vtxo.vtxo.serialize(),
 		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
 	};
 

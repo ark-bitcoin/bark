@@ -438,8 +438,8 @@ impl Wallet {
 		Ok(sum)
 	}
 
-	pub fn get_vtxo_by_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Vtxo> {
-		let vtxo = self.db.get_vtxo(vtxo_id)
+	pub fn get_vtxo_by_id(&self, vtxo_id: VtxoId) -> anyhow::Result<WalletVtxo> {
+		let vtxo = self.db.get_wallet_vtxo(vtxo_id)
 			.with_context(|| format!("Error when querying vtxo {} in database", vtxo_id))?
 			.with_context(|| format!("The VTXO with id {} cannot be found", vtxo_id))?;
 		Ok(vtxo)
@@ -623,15 +623,15 @@ impl Wallet {
 		let mut asp = self.require_asp()?;
 
 		// Get the vtxo and funding transaction from the database
-		let vtxo = self.db.get_vtxo(vtxo_id)?
+		let vtxo = self.db.get_wallet_vtxo(vtxo_id)?
 			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
 
-		let funding_tx = self.onchain.get_wallet_tx(vtxo.chain_anchor().txid)
+		let funding_tx = self.onchain.get_wallet_tx(vtxo.vtxo.chain_anchor().txid)
 			.context("Failed to find funding_tx for {}")?;
 
 		// Register the vtxo with the server
 		asp.client.register_board_vtxo(protos::BoardVtxoRequest {
-			board_vtxo: vtxo.serialize(),
+			board_vtxo: vtxo.vtxo.serialize(),
 			board_tx: bitcoin::consensus::serialize(&funding_tx),
 		}).await.context("error registering board with the asp")?;
 
@@ -642,14 +642,14 @@ impl Wallet {
 
 		Ok(Board {
 			funding_txid: funding_tx.compute_txid(),
-			vtxos: vec![vtxo.into()],
+			vtxos: vec![vtxo.vtxo.into()],
 		})
 	}
 
 	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
 		let vtxo = vtxos.build_vtxo(leaf_idx).context("invalid leaf idx..")?;
 
-		if self.db.get_vtxo(vtxo.id())?.is_some() {
+		if self.db.get_wallet_vtxo(vtxo.id())?.is_some() {
 			debug!("Not adding vtxo {} because it already exists", vtxo.id());
 			return Ok(None)
 		}
@@ -787,7 +787,7 @@ impl Wallet {
 					_ => {}
 				}
 
-				if let Ok(Some(_)) = self.db.get_vtxo(vtxo.id()) {
+				if let Ok(Some(_)) = self.db.get_wallet_vtxo(vtxo.id()) {
 					debug!("Not adding OOR vtxo {} because it already exists", vtxo.id());
 					continue;
 				}
@@ -852,8 +852,8 @@ impl Wallet {
 	) -> anyhow::Result<Offboard> {
 		let input_vtxos =  vtxos
 				.into_iter()
-				.map(|vtxoid| match self.db.get_vtxo(vtxoid)? {
-					Some(vtxo) => Ok(vtxo),
+				.map(|vtxoid| match self.db.get_wallet_vtxo(vtxoid)? {
+					Some(vtxo) => Ok(vtxo.vtxo),
 					_ => bail!("cannot find requested vtxo: {}", vtxoid),
 				})
 				.collect::<anyhow::Result<_>>()?;

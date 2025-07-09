@@ -40,9 +40,9 @@ impl Exit {
 		let exit_vtxo_entries = persister.get_exit_vtxo_entries()?;
 		let mut exit_vtxos = Vec::with_capacity(exit_vtxo_entries.len());
 		for entry in exit_vtxo_entries {
-			if let Some(vtxo) = persister.get_vtxo(entry.vtxo_id)? {
-				let txids = tx_manager.track_vtxo_exits(&vtxo, onchain).await?;
-				exit_vtxos.push(ExitVtxo::from_parts(vtxo, txids, entry.state, entry.history));
+			if let Some(vtxo) = persister.get_wallet_vtxo(entry.vtxo_id)? {
+				let txids = tx_manager.track_vtxo_exits(&vtxo.vtxo, onchain).await?;
+				exit_vtxos.push(ExitVtxo::from_parts(vtxo.vtxo, txids, entry.state, entry.history));
 			} else {
 				error!("VTXO {} is marked for exit but it's missing from the database", entry.vtxo_id);
 			}
