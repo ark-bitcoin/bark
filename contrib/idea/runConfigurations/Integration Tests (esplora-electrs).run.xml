@@ -1,12 +1,12 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Integration Tests (electrs)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+  <configuration default="false" name="Integration Tests (esplora-electrs)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
     <option name="buildProfileId" value="dev" />
     <option name="command" value="test --package ark-testing" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
       <env name="ASPD_EXEC" value="../target/debug/aspd" />
       <env name="BARK_EXEC" value="../target/debug/bark" />
-      <env name="CHAIN_SOURCE" value="esplora" />
+      <env name="CHAIN_SOURCE" value="esplora-electrs" />
     </envs>
     <option name="emulateTerminal" value="true" />
     <option name="channel" value="DEFAULT" />

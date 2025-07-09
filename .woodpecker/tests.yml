@@ -87,7 +87,7 @@ steps:
     volumes:
       - /data:/host/data
     environment:
-      CHAIN_SOURCE: esplora
+      CHAIN_SOURCE: esplora-electrs
       TEST_DIRECTORY: ./test/esplora
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 4

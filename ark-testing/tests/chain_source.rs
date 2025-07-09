@@ -10,18 +10,19 @@ use bitcoin_ext::BlockHeight;
 use bitcoin_ext::rpc::TxStatus;
 
 use ark_testing::{sat, Bitcoind, TestContext};
-use ark_testing::util::should_use_electrs;
+use ark_testing::util::{get_bark_chain_source_from_env, TestContextChainSource};
 
 async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSourceClient) {
 	let mut ctx = TestContext::new_minimal(name).await;
 	ctx.init_central_bitcoind().await;
 	ctx.init_central_electrs().await;
 
-	let chain_source = {
-		if should_use_electrs() {
-			ctx.electrs.as_ref().expect("electrs is not started").chain_source()
-		} else {
+	let chain_source = match get_bark_chain_source_from_env() {
+		TestContextChainSource::BitcoinCore => {
 			ctx.bitcoind.as_ref().expect("bitcoind is not started").chain_source()
+		}
+		TestContextChainSource::ElectrsRest(_) => {
+			ctx.electrs.as_ref().expect("electrs is not started").chain_source()
 		}
 	};
 	(ctx, ChainSourceClient::new(chain_source).expect("failed to create chain source client"))

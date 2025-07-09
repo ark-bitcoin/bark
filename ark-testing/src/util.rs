@@ -10,6 +10,33 @@ use tokio::fs;
 use tokio::process::Child;
 
 use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY};
+use crate::daemon::electrs::ElectrsType;
+
+pub enum TestContextChainSource {
+	BitcoinCore,
+	ElectrsRest(ElectrsType),
+}
+
+impl TestContextChainSource {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			TestContextChainSource::BitcoinCore => "bitcoin-core",
+			TestContextChainSource::ElectrsRest(ElectrsType::Esplora) => "esplora-electrs",
+			TestContextChainSource::ElectrsRest(ElectrsType::Mempool) => "mempool-electrs",
+		}
+	}
+}
+
+impl From<String> for TestContextChainSource {
+	fn from(s: String) -> Self {
+		match s.as_str() {
+			"bitcoin-core" => TestContextChainSource::BitcoinCore,
+			"esplora-electrs" => TestContextChainSource::ElectrsRest(ElectrsType::Esplora),
+			"mempool-electrs" => TestContextChainSource::ElectrsRest(ElectrsType::Mempool),
+			_ => panic!("invalid chain source {}", s),
+		}
+	}
+}
 
 pub fn init_logging() -> anyhow::Result<()> {
 	match env::var("RUST_LOG") {
@@ -108,12 +135,11 @@ pub async fn wait_for_completion(child: &mut Child) -> () {
 	}
 }
 
-pub fn should_use_electrs() -> bool {
-	let chain_source = env::var(&CHAIN_SOURCE);
-	if let Ok(chain_source) = chain_source {
-		chain_source == "esplora" || chain_source == "electrum"
+pub fn get_bark_chain_source_from_env() -> TestContextChainSource {
+	if let Ok(cs) = env::var(&CHAIN_SOURCE) {
+		TestContextChainSource::from(cs)
 	} else {
-		false
+		TestContextChainSource::BitcoinCore
 	}
 }
 
