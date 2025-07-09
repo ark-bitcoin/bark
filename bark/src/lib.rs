@@ -743,21 +743,24 @@ impl Wallet {
 			self.vtxo_seed.derive_keychain(keychain, idx).public_key()
 		}).collect::<HashSet<_>>();
 
-		for pk in pubkeys {
-			self.sync_arkoor_by_pk(&pk).await?;
-		}
+		self.sync_arkoor_for_pubkeys(pubkeys.into_iter()).await?;
 
 		Ok(())
 	}
 
 	/// Sync with the Ark and look for out-of-round received VTXOs
 	/// by public key
-	pub async fn sync_arkoor_by_pk(&self, pk: &PublicKey) -> anyhow::Result<()> {
+	pub async fn sync_arkoor_for_pubkeys(
+		&self,
+		public_keys: impl Iterator<Item = PublicKey>,
+	) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
 		// Then sync OOR vtxos.
 		debug!("Emptying OOR mailbox at ASP...");
-		let req = protos::ArkoorVtxosRequest { pubkey: pk.serialize().to_vec() };
+		let req = protos::ArkoorVtxosRequest {
+			pubkeys: public_keys.map(|pk| pk.serialize().to_vec()).collect(),
+		};
 		let packages = asp.client.empty_arkoor_mailbox(req).await
 			.context("error fetching oors")?.into_inner().packages;
 		debug!("ASP has {} arkoor packages for us", packages.len());

@@ -137,7 +137,7 @@ message ArkoorPackage {
 }
 
 message ArkoorVtxosRequest {
-	bytes pubkey = 1;
+	repeated bytes pubkeys = 1;
 }
 
 message ArkoorMailboxPackage {
