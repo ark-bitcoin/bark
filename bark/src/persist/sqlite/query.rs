@@ -12,7 +12,7 @@ use rusqlite::{self, named_params, Connection, ToSql};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
-use crate::persist::{OffchainOnboard, OffchainPayment};
+use crate::persist::{OffchainBoard, OffchainPayment};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
 	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
@@ -22,7 +22,7 @@ use crate::exit::vtxo::ExitEntry;
 use crate::movement::Movement;
 use ark::ProtocolEncoding;
 
-use super::convert::{row_to_movement, row_to_offchain_onboard};
+use super::convert::{row_to_movement, row_to_offchain_board};
 
 /// Set read-only properties for the wallet
 ///
@@ -456,14 +456,14 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight
 	}
 }
 
-pub fn store_offchain_onboard(
+pub fn store_offchain_board(
 	conn: &Connection,
 	payment_hash: &[u8; 32],
 	preimage: &[u8; 32],
 	payment: OffchainPayment,
 ) -> anyhow::Result<()> {
 	let query = "
-		INSERT INTO bark_offchain_onboard (payment_hash, preimage, serialised_payment)
+		INSERT INTO bark_offchain_board (payment_hash, preimage, serialised_payment)
 		VALUES (?1, ?2, ?3);
 	";
 	let mut statement = conn.prepare(query)?;
@@ -477,12 +477,12 @@ pub fn store_offchain_onboard(
 	Ok(())
 }
 
-pub fn fetch_offchain_onboard_by_payment_hash(conn: &Connection, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>> {
-	let query = "SELECT * FROM bark_offchain_onboard WHERE payment_hash = ?1";
+pub fn fetch_offchain_board_by_payment_hash(conn: &Connection, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainBoard>> {
+	let query = "SELECT * FROM bark_offchain_board WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query((payment_hash, ))?;
 
-	Ok(rows.next()?.map(|row| row_to_offchain_onboard(&row)).transpose()?)
+	Ok(rows.next()?.map(|row| row_to_offchain_board(&row)).transpose()?)
 }
 
 pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &ExitEntry) -> anyhow::Result<()> {
@@ -618,7 +618,7 @@ mod test {
 		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::UnregisteredBoard).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::UnregisteredBoard).unwrap();
 
-		// This update will fail because the current state is UnregisteredOnboard
+		// This update will fail because the current state is UnregisteredBoard
 		// We only allow the state to switch from VtxoState::Spendable
 		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoStateKind::Spendable])
 			.expect_err("The vtxo isn't spendable and query should fail");

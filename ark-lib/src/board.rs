@@ -89,7 +89,7 @@ pub mod state {
 	impl CanSign for CanBuild {}
 }
 
-/// A request for the server to cosign an onboard vtxo.
+/// A request for the server to cosign an board vtxo.
 ///
 /// An object of this type is created by the user, sent to the server who will
 /// cosign the request and return his partial signature (along with public nonce)

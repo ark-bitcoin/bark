@@ -116,8 +116,8 @@ lazy_static::lazy_static! {
 }
 
 lazy_static::lazy_static! {
-	/// Arbitrary fee for Lightning onboarding. Subject to change when we have a fee schedule.
-	static ref LN_ONBOARD_FEE_SATS: Amount = Amount::from_sat(350);
+	/// Arbitrary fee for Lightning boarding. Subject to change when we have a fee schedule.
+	static ref LN_BOARD_FEE_SATS: Amount = Amount::from_sat(350);
 }
 
 struct ArkoorCreateResult {
@@ -483,7 +483,7 @@ impl Wallet {
 	/// Performs maintenance tasks on the wallet
 	///
 	/// This tasks include onchain-sync, off-chain sync,
-	/// registering onboard with the server.
+	/// registering board with the server.
 	///
 	/// This tasks will only include anything that has to wait
 	/// for a round. The maintenance call cannot be used to
@@ -576,7 +576,7 @@ impl Wallet {
 
 		let addr = Address::from_script(&builder.funding_script_pubkey(), properties.network).unwrap();
 
-		// We create the onboard tx template, but don't sign it yet.
+		// We create the board tx template, but don't sign it yet.
 		let board_psbt = self.onchain.prepare_tx([(addr, amount)])?;
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
@@ -1332,27 +1332,27 @@ impl Wallet {
 		Ok(None)
 	}
 
-	/// Create, store and return a bolt11 invoice for offchain onboarding
+	/// Create, store and return a bolt11 invoice for offchain boarding
 	pub async fn bolt11_invoice(&mut self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let mut asp = self.require_asp()?;
 
 		let preimage = rand::thread_rng().gen::<[u8; 32]>();
 		let payment_hash = sha256::Hash::hash(&preimage);
-		info!("Start bolt11 onboard with preimage / payment hash: {} / {}",
+		info!("Start bolt11 board with preimage / payment hash: {} / {}",
 			preimage.as_hex(), payment_hash.as_byte_array().as_hex());
 
-		let req = protos::StartBolt11OnboardRequest {
+		let req = protos::StartBolt11BoardRequest {
 			payment_hash: payment_hash.as_byte_array().to_vec(),
 			amount_sat: amount.to_sat(),
 		};
 
-		let resp = asp.client.start_bolt11_onboard(req).await?.into_inner();
+		let resp = asp.client.start_bolt11_board(req).await?.into_inner();
 		info!("Ark Server is ready to receive LN payment to invoice: {}.", resp.bolt11);
 
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by asp")?;
 
-		self.db.store_offchain_onboard(
+		self.db.store_offchain_board(
 			payment_hash.as_byte_array(),
 			&preimage,
 			OffchainPayment::Lightning(invoice.clone()),
@@ -1383,9 +1383,9 @@ impl Wallet {
 		let mut asp = self.require_asp()?;
 		let current_height = self.onchain.tip().await?;
 
-		let offchain_onboard = self.db.fetch_offchain_onboard_by_payment_hash(
+		let offchain_board = self.db.fetch_offchain_board_by_payment_hash(
 			invoice.payment_hash().as_byte_array()
-		)?.context("no offchain onboard found")?;
+		)?.context("no offchain board found")?;
 
 		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
@@ -1394,16 +1394,16 @@ impl Wallet {
 			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
 		);
 
-		let req = protos::SubscribeBolt11OnboardRequest {
+		let req = protos::SubscribeBolt11BoardRequest {
 			bolt11: invoice.to_string(),
 		};
 
 		info!("Waiting payment...");
-		asp.client.subscribe_bolt11_onboard(req).await?.into_inner();
+		asp.client.subscribe_bolt11_board(req).await?.into_inner();
 		info!("Lightning payment arrived!");
 
 		// Create a VTXO to pay receive fees:
-		let fee_vtxos = self.create_fee_vtxos(*LN_ONBOARD_FEE_SATS).await?;
+		let fee_vtxos = self.create_fee_vtxos(*LN_BOARD_FEE_SATS).await?;
 
 		let htlc_expiry = current_height + asp.info.vtxo_expiry_delta as u32;
 		let fee_vtxo_cloned = fee_vtxos.clone();
@@ -1431,14 +1431,14 @@ impl Wallet {
 		let pubs = [pub_nonce];
 		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
 
-		let req = protos::ClaimBolt11OnboardRequest {
+		let req = protos::ClaimBolt11BoardRequest {
 			arkoor: Some(builder.arkoors.first().unwrap().into()),
-			payment_preimage: offchain_onboard.payment_preimage.to_vec(),
+			payment_preimage: offchain_board.payment_preimage.to_vec(),
 		};
 
 		info!("Claiming arkoor against payment preimage");
-		let cosign_resp = asp.client.claim_bolt11_onboard(req).await
-			.context("failed to claim bolt11 onboard")?
+		let cosign_resp = asp.client.claim_bolt11_board(req).await
+			.context("failed to claim bolt11 board")?
 			.into_inner().try_into().context("invalid server cosign response")?;
 		ensure!(builder.verify_cosign_response(&[&cosign_resp]),
 			"invalid arkoor cosignature received from server",

@@ -149,7 +149,7 @@ async fn list_utxos() {
 	let utxos = bark.utxos().await;
 
 	assert_eq!(2, utxos.len());
-	// onboard change utxo
+	// board change utxo
 	assert!(utxos.iter().any(|u| u.amount.to_sat() == 799_228));
 	// offboard utxo
 	assert!(utxos.iter().any(|u| u.amount.to_sat() == 198_900));

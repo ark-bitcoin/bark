@@ -369,8 +369,8 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 }
 
 #[tokio::test]
-async fn bark_can_onboard_from_lightning() {
-	let ctx = TestContext::new("lightningd/bark_can_onboard_from_lightning").await;
+async fn bark_can_board_from_lightning() {
+	let ctx = TestContext::new("lightningd/bark_can_board_from_lightning").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -398,7 +398,7 @@ async fn bark_can_onboard_from_lightning() {
 	// Start an aspd and link it to our cln installation
 	let aspd = ctx.new_aspd_with_funds("aspd", Some(&lightningd_2), btc(10)).await;
 
-	// Start a bark and create a VTXO to be able to onboard
+	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, btc(3)).await);
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -408,7 +408,7 @@ async fn bark_can_onboard_from_lightning() {
 	let cloned = bark.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.bolt11_onboard(cloned_invoice_info.invoice).await
+		cloned.bolt11_board(cloned_invoice_info.invoice).await
 	});
 	lightningd_1.pay_bolt11(invoice_info.invoice).wait(30_000).await;
 	res1.await.unwrap();
@@ -417,7 +417,7 @@ async fn bark_can_onboard_from_lightning() {
 	assert!(vtxos.iter().any(|v| v.amount == btc(1)), "should have received lightning amount");
 	assert!(vtxos.iter().any(|v| v.amount == sat(199999650)), "should have fees change");
 
-	let [ln_onboard_mvt, fee_split_mvt, board_mvt] = bark.list_movements().await
+	let [ln_board_mvt, fee_split_mvt, board_mvt] = bark.list_movements().await
 		.try_into().expect("should have 3 movements");
 	assert!(
 		board_mvt.spends.is_empty() &&
@@ -435,9 +435,9 @@ async fn bark_can_onboard_from_lightning() {
 	);
 
 	assert!(
-		ln_onboard_mvt.spends[0].amount == sat(350) &&
-		ln_onboard_mvt.fees == sat(350) &&
-		ln_onboard_mvt.receives[0].amount == btc(1) &&
+		ln_board_mvt.spends[0].amount == sat(350) &&
+		ln_board_mvt.fees == sat(350) &&
+		ln_board_mvt.receives[0].amount == btc(1) &&
 		board_mvt.recipients.is_empty()
 	);
 
@@ -474,7 +474,7 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 	// Start an aspd and link it to our cln installation
 	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
 
-	// Start a bark and create a VTXO to be able to onboard
+	// Start a bark and create a VTXO to be able to board
 	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd_1, btc(3)).await);
 	let bark_2 = Arc::new(ctx.new_bark_with_funds("bark-2", &aspd_1, btc(3)).await);
 	bark_1.board(btc(2)).await;
@@ -486,7 +486,7 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.bolt11_onboard(cloned_invoice_info.invoice).await
+		cloned.bolt11_board(cloned_invoice_info.invoice).await
 	});
 
 	bark_2.send_bolt11(invoice_info.invoice, None).await;

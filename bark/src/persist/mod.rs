@@ -20,7 +20,7 @@ pub enum OffchainPayment {
 	Lightning(Bolt11Invoice),
 }
 
-pub struct OffchainOnboard {
+pub struct OffchainBoard {
 	pub payment_hash: [u8; 32],
 	pub payment_preimage: [u8; 32],
 	pub payment: OffchainPayment,
@@ -74,10 +74,10 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// meaning that it is owned by the wallet
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
 
-	/// Store an offchain onboard
-	fn store_offchain_onboard(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()>;
-	/// Fetch an offchain onboard by payment hash
-	fn fetch_offchain_onboard_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainOnboard>>;
+	/// Store an offchain board
+	fn store_offchain_board(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()>;
+	/// Fetch an offchain board by payment hash
+	fn fetch_offchain_board_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainBoard>>;
 
 	/// Store the VTXOs currently being exited
 	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()>;

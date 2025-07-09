@@ -25,9 +25,9 @@ service ArkService {
 	rpc CheckBolt11Payment(CheckBolt11PaymentRequest) returns (Bolt11PaymentResult) {}
 	rpc RevokeBolt11Payment(RevokeBolt11PaymentRequest) returns (ArkoorPackageCosignResponse) {}
 
-	rpc StartBolt11Onboard(StartBolt11OnboardRequest) returns (StartBolt11OnboardResponse) {}
-	rpc SubscribeBolt11Onboard(SubscribeBolt11OnboardRequest) returns (SubscribeBolt11OnboardResponse) {}
-	rpc ClaimBolt11Onboard(ClaimBolt11OnboardRequest) returns (ArkoorCosignResponse) {}
+	rpc StartBolt11Board(StartBolt11BoardRequest) returns (StartBolt11BoardResponse) {}
+	rpc SubscribeBolt11Board(SubscribeBolt11BoardRequest) returns (SubscribeBolt11BoardResponse) {}
+	rpc ClaimBolt11Board(ClaimBolt11BoardRequest) returns (ArkoorCosignResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
@@ -188,25 +188,25 @@ message RevokeBolt11PaymentRequest {
 	repeated bytes user_nonces = 2;
 }
 
-message StartBolt11OnboardRequest {
+message StartBolt11BoardRequest {
 	bytes payment_hash = 1;
 	uint64 amount_sat = 2;
 }
 
-message StartBolt11OnboardResponse {
+message StartBolt11BoardResponse {
 	string bolt11 = 1;
 }
 
-message SubscribeBolt11OnboardRequest {
+message SubscribeBolt11BoardRequest {
 	string bolt11 = 1;
 }
 
-message ClaimBolt11OnboardRequest {
+message ClaimBolt11BoardRequest {
 	ArkoorCosignRequest arkoor = 1;
 	bytes payment_preimage = 2;
 }
 
-message SubscribeBolt11OnboardResponse {
+message SubscribeBolt11BoardResponse {
 	string invoice = 1;
 	uint64 amount_sat = 2;
 }

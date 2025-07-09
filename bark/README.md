@@ -31,7 +31,7 @@ Bark is an implementation of the Ark protocol on bitcoin, led by [Second](https:
 
 Integrating the Ark-protocol offers
 
-- 🏃‍♂️ **Smooth onboarding**: No channels to open, no on-chain setup required—create a wallet and start transacting
+- 🏃‍♂️ **Smooth boarding**: No channels to open, no on-chain setup required—create a wallet and start transacting
 - 🤌 **Simplified UX**: Send and receive without managing channels, liquidity, or routing
 - 🌐 **Universal payments**: Send Ark, Lightning, and on-chain payments from a single off-chain balance
 - 🔌 **Easier integration**: Client-server architecture reduces complexity compared to P2P protocols
@@ -50,7 +50,7 @@ can be used to recover funds. Typically, most apps request the user
 to write down the mnemonic or ensure they use another method for a secure back-up.
 
 The user can select an Ark server and a [onchain::ChainSource] as part of
-the configuration. The example below configures 
+the configuration. The example below configures
 
 You will also need a place to store all [ark::Vtxo]s on the users device.
 We have implemented [SqliteClient] which is a sane default on most devices.
@@ -96,7 +96,7 @@ async fn main() {
     config,
     db,
     birthday
-  ).await.unwrap(); 
+  ).await.unwrap();
 }
 ```
 
@@ -130,7 +130,7 @@ async fn main() {
 
 ## Receiving coins
 
-For the time being we haven't implemented an Ark address type (yet). You 
+For the time being we haven't implemented an Ark address type (yet). You
 can send funds directly to a public key.
 
 If you are on signet and your Ark server is [https://ark.signet.2nd.dev](https://ark.signet.2nd.dev),
@@ -159,7 +159,7 @@ you can request some sats from our [faucet](https://signet.2nd.dev).
 
 use bark::KeychainKind;
 
-#[tokio::main] 
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
   let wallet = get_wallet().await;
   let vtxo_pubkey = wallet.derive_store_next_keypair(KeychainKind::External)?.public_key();
@@ -197,7 +197,7 @@ The snippet below shows how you can inspect your [ark::Vtxo]s.
 # }
 #
 
-#[tokio::main] 
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
   let mut wallet = get_wallet().await;
 

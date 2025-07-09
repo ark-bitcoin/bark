@@ -110,7 +110,7 @@ CREATE VIEW movement_view AS
 					) AS recipients
 				FROM bark_movement
 /* movement_view(id,fees_sat,created_at,spends,receives,recipients) */;
-CREATE TABLE bark_offchain_onboard (
+CREATE TABLE bark_offchain_board (
 			payment_hash BLOB NOT NULL PRIMARY KEY,
 			preimage BLOB NOT NULL UNIQUE,
 			serialised_payment BLOB,

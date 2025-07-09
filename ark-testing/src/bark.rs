@@ -305,13 +305,13 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn try_bolt11_onboard(&self, invoice: String) -> anyhow::Result<()> {
+	pub async fn try_bolt11_board(&self, invoice: String) -> anyhow::Result<()> {
 		self.try_run(["lightning", "claim", &invoice, "--verbose"]).await?;
 		Ok(())
 	}
 
-	pub async fn bolt11_onboard(&self, invoice: String) -> () {
-		self.try_bolt11_onboard(invoice).await.unwrap();
+	pub async fn bolt11_board(&self, invoice: String) -> () {
+		self.try_bolt11_board(invoice).await.unwrap();
 	}
 
 	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::Board> {
