@@ -16,9 +16,12 @@ pub mod server {
 	pub use crate::aspd::admin_service_server::{AdminService, AdminServiceServer};
 }
 
-
 use bitcoin::{Address, Amount, OutPoint};
 use bitcoin::address::NetworkUnchecked;
+
+/// The maximum number of pubkeys that should be provided to the
+/// `empty_arkoor_mailbox` endpoint.
+pub const MAX_NB_MAILBOX_PUBKEYS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct WalletStatus {

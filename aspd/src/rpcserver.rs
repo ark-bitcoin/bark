@@ -497,6 +497,10 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("pubkeys", format!("{:?}", req.pubkeys)),
 		]);
 
+		if req.pubkeys.len() > rpc::MAX_NB_MAILBOX_PUBKEYS {
+			badarg!("too many pubkeys: max {}", rpc::MAX_NB_MAILBOX_PUBKEYS);
+		}
+
 		let pubkeys = req.pubkeys.iter()
 			.map(PublicKey::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
