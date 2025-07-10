@@ -11,33 +11,53 @@ use tokio::process::Command;
 use bark::onchain::ChainSource;
 
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
-use crate::constants::env::ELECTRS_EXEC;
+use crate::constants::env::{ESPLORA_ELECTRS_EXEC, MEMPOOL_ELECTRS_EXEC};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::resolve_path;
+
+#[derive(Clone, Copy)]
+pub enum ElectrsType {
+	Esplora,
+	Mempool,
+}
+
+impl fmt::Debug for ElectrsType {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			ElectrsType::Esplora => write!(f, "esplora-electrs"),
+			ElectrsType::Mempool => write!(f, "mempool-electrs"),
+		}
+	}
+}
 
 pub type Electrs = Daemon<ElectrsHelper>;
 
 impl fmt::Debug for Electrs {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "esplora-electrs in {}", self.inner.datadir().display())
+		write!(f, "{:?} in {}", self.inner.electrs_type, self.inner.datadir().display())
 	}
 }
 
 impl Electrs {
-	fn exec() -> PathBuf {
-		if let Ok(e) = std::env::var(&ELECTRS_EXEC) {
-			resolve_path(e).expect("failed to resolve ELECTRS_EXEC")
+	fn exec(electrs_type: ElectrsType) -> PathBuf {
+		let env_name = match electrs_type {
+			ElectrsType::Esplora => ESPLORA_ELECTRS_EXEC,
+			ElectrsType::Mempool => MEMPOOL_ELECTRS_EXEC,
+		};
+		if let Ok(e) = std::env::var(&env_name) {
+			resolve_path(e).expect(&format!("failed to resolve {}", env_name))
 		} else if let Ok(e) = which::which("electrs") {
 			e.into()
 		} else {
-			panic!("ELECTRS_EXEC env not set")
+			panic!("{} env not set", env_name)
 		}
 	}
 
-	pub fn new(name: impl AsRef<str>, config: ElectrsConfig) -> Self {
+	pub fn new(name: impl AsRef<str>, config: ElectrsConfig, electrs_type: ElectrsType) -> Self {
 		let inner = ElectrsHelper {
 			name: name.as_ref().to_owned(),
 			config,
+			electrs_type,
 			state: ElectrsHelperState::default()
 		};
 		Daemon::wrap(inner)
@@ -112,7 +132,8 @@ pub struct ElectrsConfig {
 pub struct ElectrsHelper {
 	name: String,
 	config: ElectrsConfig,
-	state: ElectrsHelperState
+	electrs_type: ElectrsType,
+	state: ElectrsHelperState,
 }
 
 impl ElectrsHelper {
@@ -181,7 +202,10 @@ impl DaemonHelper for ElectrsHelper {
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		let mut cmd = Command::new(Electrs::exec());
+		let exec = Electrs::exec(self.electrs_type);
+		trace!("Starting {}", exec.display());
+
+		let mut cmd = Command::new(exec);
 		cmd.args([
 			"-vvvv",
 			"--network", &self.config.network.to_string(),

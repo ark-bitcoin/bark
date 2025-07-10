@@ -21,7 +21,8 @@
 				bitcoinVersion = "29.0";
 				lightningVersion = "25.02.2";
 				postgresVersion = "16.9";
-				electrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
+				esploraElectrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
+				mempoolElectrsRevision = "v3.2.0";
 
 				lib = nixpkgs.lib;
 				isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
@@ -58,13 +59,36 @@
 					cargoHash = "sha256-dATviea1btnIVYKKgU1fMtZxKJitp/wXAuoIsxCSgf4=";
 				};
 
-				electrs = pkgs.rustPlatform.buildRustPackage rec {
+				esploraElectrs = pkgs.rustPlatform.buildRustPackage rec {
 					pname = "esplora-electrs";
 					version = "99.99.99";
 					src = pkgs.fetchFromGitHub {
 						owner = "stevenroose";
 						repo = "electrs";
-						rev = electrsRevision;
+						rev = esploraElectrsRevision;
+						hash = "sha256-3/0dl+HhUQdCX66ALj+gMndhQAx3AoPJMCqQyq/PK+g=";
+					};
+
+					nativeBuildInputs = [ pkgs.rustPlatform.bindgenHook ];
+					buildInputs = [
+						pkgs.llvmPackages.clang
+					];
+					doCheck = false;
+					cargoLock.lockFile = "${src}/Cargo.lock";
+					cargoLock.outputHashes = {
+						"electrum-client-0.8.0" = "sha256-HDRdGS7CwWsPXkA1HdurwrVu4lhEx0Ay8vHi08urjZ0=";
+						"electrumd-0.1.0" = "sha256-QsoMD2uVDEITuYmYItfP6BJCq7ApoRztOCs7kdeRL9Y=";
+						"jsonrpc-0.12.0" = "sha256-lSNkkQttb8LnJej4Vfe7MrjiNPOuJ5A6w5iLstl9O1k=";
+					};
+				};
+
+				mempoolElectrs = pkgs.rustPlatform.buildRustPackage rec {
+					pname = "mempool-electrs";
+					version = "99.99.99";
+					src = pkgs.fetchFromGitHub {
+						owner = "mempool";
+						repo = "electrs";
+						rev = mempoolElectrsRevision;
 						hash = "sha256-3/0dl+HhUQdCX66ALj+gMndhQAx3AoPJMCqQyq/PK+g=";
 					};
 
@@ -176,7 +200,8 @@
 						pkgs.python3 # for clightning
 						bitcoin
 						clightning
-						electrs
+						esploraElectrs
+						mempoolElectrs
 						pkgs.glibcLocales
 						postgresql
 					] ++ (if isDarwin then [
@@ -190,7 +215,8 @@
 					LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 
 					BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
-					ELECTRS_EXEC = "${electrs}/bin/electrs";
+					ESPLORA_ELECTRS_EXEC = "${esploraElectrs}/bin/electrs";
+					MEMPOOL_ELECTRS_EXEC = "${mempoolElectrs}/bin/electrs";
 
 					# Use Docker for Core Lightning on macOS by default instead of a local daemon
 					LIGHTNINGD_EXEC = (if isDarwin then null else "${clightning}/bin/lightningd");

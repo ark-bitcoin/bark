@@ -14,7 +14,9 @@ use aspd_rpc as rpc;
 
 use crate::daemon::aspd::proxy::AspdRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};
-use crate::util::{should_use_electrs, test_data_directory, FutureExt};
+use crate::util::{
+	get_bark_chain_source_from_env, test_data_directory, FutureExt, TestContextChainSource,
+};
 use crate::{
 	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
@@ -43,7 +45,7 @@ pub struct TestContext {
 
 	pub bitcoind: Option<Bitcoind>,
 
-	// use a central Electrs for the Esplora API if necessary
+	// use a central Electrs for the Esplora and mempool.space API if necessary
 	pub electrs: Option<Electrs>,
 
 	// ensures postgres daemon, if any, stays alive the TestContext's lifetime
@@ -54,7 +56,7 @@ impl TestContext {
 	pub async fn new_minimal(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
 
-		let postfix = if should_use_electrs() { "esplora" } else { "bitcoind" };
+		let postfix = get_bark_chain_source_from_env().as_str();
 		let name = format!("{}-{}", name.as_ref(), postfix);
 		let datadir = test_data_directory().await.join(&name);
 
@@ -119,19 +121,20 @@ impl TestContext {
 	}
 
 	pub async fn init_central_electrs(&mut self) {
-		let electrs = if should_use_electrs() {
-			let cfg = ElectrsConfig {
-				network: Network::Regtest,
-				bitcoin_dir: self.bitcoind().datadir(),
-				bitcoin_rpc_port: self.bitcoind().rpc_port(),
-				bitcoin_zmq_port: self.bitcoind().zmq_port(),
-				electrs_dir: self.datadir.join("electrs"),
-			};
-			let mut electrs = Electrs::new(&self.name, cfg);
-			electrs.start().await.unwrap();
-			Some(electrs)
-		} else {
-			None
+		let electrs = match get_bark_chain_source_from_env() {
+			TestContextChainSource::BitcoinCore => None,
+			TestContextChainSource::ElectrsRest(electrs_type) => {
+				let cfg = ElectrsConfig {
+					network: Network::Regtest,
+					bitcoin_dir: self.bitcoind().datadir(),
+					bitcoin_rpc_port: self.bitcoind().rpc_port(),
+					bitcoin_zmq_port: self.bitcoind().zmq_port(),
+					electrs_dir: self.datadir.join("electrs"),
+				};
+				let mut electrs = Electrs::new(&self.name, cfg, electrs_type);
+				electrs.start().await.unwrap();
+				Some(electrs)
+			},
 		};
 
 		self.electrs = electrs;
