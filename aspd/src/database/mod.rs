@@ -21,7 +21,7 @@ use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
-use bitcoin::consensus::serialize;
+use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{PublicKey, SecretKey};
 use bitcoin_ext::BlockHeight;
 use futures::{Stream, TryStreamExt, StreamExt};
@@ -651,6 +651,52 @@ impl Db {
 
 		Ok(rows.into_iter().map(TryFrom::try_from).collect::<Result<_, _>>()
 				.context("corrupt db: invalid forfeit claim state row")?)
+	}
+
+	/// Adds a [bitcoin::Transaction] to the database
+	/// that can be queried by [bitcoin::Txid].
+	pub async fn upsert_bitcoin_transaction(
+		&self,
+		txid: Txid,
+		tx: &Transaction
+	) -> anyhow::Result<()> {
+		let conn = self.pool.get().await?;
+		let statement = conn.prepare_typed(
+			"INSERT INTO bitcoin_transaction
+				(txid, tx, created_at)
+			VALUES
+				($1, $2, NOW())
+			ON CONFLICT DO NOTHING"
+			, &[Type::TEXT, Type::BYTEA]).await?;
+
+		// Prepare the data
+
+		conn.execute(
+			&statement,
+			&[&txid.to_string(), &serialize(&tx)]
+		).await?;
+
+		Ok(())
+	}
+
+	pub async fn get_bitcoin_transaction_by_id(
+		&self,
+		txid: Txid,
+	) -> anyhow::Result<Option<Transaction>> {
+		let conn = self.pool.get().await?;
+		let statement = conn.prepare(
+			"SELECT tx FROM bitcoin_transaction WHERE txid = $1",
+		).await?;
+
+		match conn.query_opt(&statement, &[&txid.to_string()]).await? {
+			Some(row) => {
+				let tx_bytes: &[u8] = row.get("tx");
+				let tx = deserialize(tx_bytes)
+					.expect("Corrupt transaction in database");
+				Ok(Some(tx))
+			},
+			None => Ok(None)
+		}
 	}
 }
 
