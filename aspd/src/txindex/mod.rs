@@ -107,10 +107,6 @@ pub type Tx = Arc<IndexedTx>;
 pub struct IndexedTx {
 	pub txid: Txid,
 	pub tx: Transaction,
-	/// An incomplete tx is a tx that is missing some witness data to be valid for broadcast.
-	/// This is used for txs that we don't fully control and can potentially be broadcast
-	/// by users when they finalize the tx with their signature.
-	pub incomplete: bool,
 	//TODO(stevenroose) if we persist the txindex, we can do away with this Option
 	// and the complications it brings for updating the status
 	status: Mutex<TxStatus>,
@@ -123,18 +119,7 @@ impl IndexedTx {
 		Arc::new(
 			IndexedTx {
 				txid, tx,
-				incomplete: false,
 				status: Mutex::new(status),
-			}
-		)
-	}
-
-	fn new_incomplete(txid: Txid, tx: Transaction) -> Tx {
-		Arc::new(
-			IndexedTx {
-				txid, tx,
-				incomplete: true,
-				status: Mutex::new(TxStatus::Unseen),
 			}
 		)
 	}
@@ -294,19 +279,6 @@ impl TxIndex {
 		};
 
 		Ok(self.register_as(tx, status).await)
-	}
-
-	/// Register a new tx in the index and return the tx handle.
-	pub async fn register_incomplete(&self, tx: Transaction) -> Tx {
-		let txid = tx.compute_txid();
-		let mut tx_map = self.tx_map.write().await;
-		if let Some(tx) = tx_map.get(&txid) {
-			tx.clone()
-		} else {
-			let ret = IndexedTx::new_incomplete(txid, tx);
-			tx_map.insert(txid, ret.clone());
-			ret
-		}
 	}
 
 	/// Unregister a transaction
