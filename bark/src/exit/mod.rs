@@ -100,7 +100,7 @@ impl Exit {
 	}
 
 	/// Returns the total amount of all VTXOs requiring more txs to be confirmed
-	pub async fn pending_total(&self) -> anyhow::Result<Amount> {
+	pub fn pending_total(&self) -> anyhow::Result<Amount> {
 		let amount = self.exit_vtxos
 			.iter()
 			.filter_map(|ev| {

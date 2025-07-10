@@ -120,6 +120,20 @@ lazy_static::lazy_static! {
 	static ref LN_BOARD_FEE_SATS: Amount = Amount::from_sat(350);
 }
 
+/// The different balances of a Bark wallet.
+#[derive(Debug, Clone)]
+pub struct Balance {
+	// TODO: remove this balance once onchain wallet is removed
+	/// Coins that are spendable onchain.
+	pub onchain: Amount,
+	/// Coins that are spendable in the Ark, either in-round or out-of-round.
+	pub offchain: Amount,
+	/// Coins that are in the process of being sent over Lightning.
+	pub pending_lightning_send: Amount,
+	/// Coins that are in the process of unilaterally exiting the Ark.
+	pub pending_exit: Amount,
+}
+
 struct ArkoorCreateResult {
 	input: Vec<Vtxo>,
 	created: Vec<Vtxo>,
@@ -426,16 +440,25 @@ impl Wallet {
 		self.asp.as_ref().map(|a| &a.info)
 	}
 
-	/// Retrieve the off-chain balance of the wallet.
+	/// Return the balance of the wallet.
 	///
 	/// Make sure you sync before calling this method.
-	pub fn offchain_balance(&self) -> anyhow::Result<Amount> {
-		let mut sum = Amount::ZERO;
-		for vtxo in self.db.get_all_spendable_vtxos()? {
-			sum += vtxo.amount();
-			debug!("Vtxo {}: {}", vtxo.id(), vtxo.amount());
-		}
-		Ok(sum)
+	pub fn balance(&self) -> anyhow::Result<Balance> {
+		let onchain = self.onchain.balance();
+		let offchain = self.db.get_all_spendable_vtxos()?.iter()
+			.map(|v| v.amount()).sum();
+
+		let pending_lightning_send = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?
+			.iter().map(|v| v.vtxo.amount()).sum();
+
+		let pending_exit = self.exit.pending_total()?;
+
+		Ok(Balance {
+			onchain,
+			offchain,
+			pending_lightning_send,
+			pending_exit,
+		})
 	}
 
 	pub fn get_vtxo_by_id(&self, vtxo_id: VtxoId) -> anyhow::Result<WalletVtxo> {
@@ -1493,7 +1516,7 @@ impl Wallet {
 	///
 	/// It is advised to sync your wallet before calling this method.
 	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
-		let balance = self.offchain_balance()?;
+		let balance = self.balance()?.offchain;
 
 		// do a quick check to fail early and not wait for round if we don't have enough money
 		let early_fees = OffboardRequest::calculate_fee(
