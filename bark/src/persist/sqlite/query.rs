@@ -20,7 +20,7 @@ use crate::{
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
-use crate::movement::Movement;
+use crate::movement::{Movement, MovementKind};
 use ark::ProtocolEncoding;
 
 use super::convert::{row_to_movement, row_to_offchain_board};
@@ -136,11 +136,12 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 	}
 }
 
-pub fn create_movement(conn: &Connection, fees_sat: Option<Amount>) -> anyhow::Result<i32> {
+pub fn create_movement(conn: &Connection, kind: MovementKind, fees_sat: Option<Amount>) -> anyhow::Result<i32> {
 	// Store the vtxo
-	let query = "INSERT INTO bark_movement (fees_sat) VALUES (:fees_sat) RETURNING *;";
+	let query = "INSERT INTO bark_movement (kind, fees_sat) VALUES (:kind, :fees_sat) RETURNING *;";
 	let mut statement = conn.prepare(query)?;
 	let movement_id = statement.query_row(named_params! {
+		":kind" : kind.as_str(),
 		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat()
 	}, |row| row.get::<_, i32>(0))?;
 
@@ -624,7 +625,7 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let movement_id = create_movement(&tx, None).unwrap();
+		let movement_id = create_movement(&tx, MovementKind::Board, None).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, &VtxoState::UnregisteredBoard).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::UnregisteredBoard).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::UnregisteredBoard).unwrap();

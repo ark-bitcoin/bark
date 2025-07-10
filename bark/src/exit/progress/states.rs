@@ -12,7 +12,7 @@ use json::exit::states::{
 
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
 use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_cost};
-use crate::movement::MovementArgs;
+use crate::movement::{MovementArgs, MovementKind};
 
 #[async_trait]
 impl ExitStateProgress for ExitState {
@@ -60,6 +60,7 @@ impl ExitStateProgress for ExitStartState {
 		// Register the coin movement in the database
 		let recipient = ctx.vtxo_recipient()?.to_string();
 		let movement = MovementArgs {
+			kind: MovementKind::Exit,
 			spends: &[ctx.vtxo],
 			receives: &[],
 			recipients: &[(&recipient, ctx.vtxo.amount())],

@@ -18,7 +18,7 @@ use crate::{
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
-use crate::movement::{Movement, MovementArgs};
+use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::persist::{BarkPersister, OffchainBoard, OffchainPayment};
 
 
@@ -45,8 +45,8 @@ impl SqliteClient {
 	}
 
 	/// Create a movement to link VTXOs to it
-	fn create_movement(&self, tx: &Transaction, fees: Option<Amount>) -> anyhow::Result<i32> {
-		let movement_id = query::create_movement(&tx, fees)?;
+	fn create_movement(&self, tx: &Transaction, kind: MovementKind, fees: Option<Amount>) -> anyhow::Result<i32> {
+		let movement_id = query::create_movement(&tx, kind, fees)?;
 
 		Ok(movement_id)
 	}
@@ -123,7 +123,7 @@ impl BarkPersister for SqliteClient {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
-		let movement_id = self.create_movement(&tx, movement.fees)?;
+		let movement_id = self.create_movement(&tx, movement.kind, movement.fees)?;
 
 		for v in movement.spends {
 			self.mark_vtxo_as_spent(&tx, v.id(), movement_id)
@@ -319,6 +319,7 @@ pub mod test {
 		let db = SqliteClient::open(cs).unwrap();
 
 		db.register_movement(MovementArgs {
+			kind: MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo_1, VtxoState::Spendable)],
 			recipients: &[],
@@ -326,6 +327,7 @@ pub mod test {
 		}).unwrap();
 
 		db.register_movement(MovementArgs {
+			kind: MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo_2, VtxoState::Spendable)],
 			recipients: &[],
@@ -348,6 +350,7 @@ pub mod test {
 
 		// Verify that we can mark a vtxo as spent
 		db.register_movement(MovementArgs {
+			kind: MovementKind::Board,
 			spends: &[&vtxo_1],
 			receives: &[],
 			recipients: &[
@@ -361,6 +364,7 @@ pub mod test {
 
 		// Add the third entry to the database
 		db.register_movement(MovementArgs {
+			kind: MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo_3, VtxoState::Spendable)],
 			recipients: &[],

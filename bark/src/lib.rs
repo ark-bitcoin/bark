@@ -62,7 +62,7 @@ use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::WalletExt;
 
 use crate::exit::Exit;
-use crate::movement::{Movement, MovementArgs};
+use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::Utxo;
 use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
@@ -629,6 +629,7 @@ impl Wallet {
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
 		self.db.register_movement(MovementArgs {
+			kind: MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo, VtxoState::UnregisteredBoard)],
 			recipients: &[],
@@ -740,6 +741,7 @@ impl Wallet {
 					if pubkeys.contains(&user_pubkey) {
 						if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
 							self.db.register_movement(MovementArgs {
+								kind: MovementKind::Round,
 								spends: &[],
 								receives: &[(&vtxo, VtxoState::Spendable)],
 								recipients: &[],
@@ -828,6 +830,7 @@ impl Wallet {
 				}
 
 				self.db.register_movement(MovementArgs {
+					kind: MovementKind::ArkoorReceive,
 					spends: &[],
 					receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
 					recipients: &[],
@@ -1108,6 +1111,7 @@ impl Wallet {
 		}
 
 		self.db.register_movement(MovementArgs {
+			kind: MovementKind::ArkoorSend,
 			spends: &arkoor.input.iter().collect::<Vec<_>>(),
 			receives: &arkoor.change.as_ref().map(|v| vec![(v, VtxoState::Spendable)]).unwrap_or(vec![]),
 			recipients: &[(&destination.to_string(), amount)],
@@ -1159,6 +1163,7 @@ impl Wallet {
 		}
 
 		self.db.register_movement(MovementArgs {
+			kind: MovementKind::LightningSendRevocation,
 			spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
 			receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
 			recipients: &[],
@@ -1270,6 +1275,7 @@ impl Wallet {
 		};
 
 		self.db.register_movement(MovementArgs {
+			kind: MovementKind::LightningSend,
 			spends: &inputs.iter().collect::<Vec<_>>(),
 			receives: &htlc_vtxos.iter()
 				.map(|v| (v, pending_lightning_state.clone()))
@@ -1292,6 +1298,7 @@ impl Wallet {
 		if let Some(preimage) = payment_preimage {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
 			self.db.register_movement(MovementArgs {
+				kind: MovementKind::LightningSend,
 				spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
 				receives: &[],
 				recipients: &[(&invoice.to_string(), amount)],
@@ -1352,6 +1359,7 @@ impl Wallet {
 				info!("Payment is complete, preimage, {}", preimage.as_hex());
 
 				self.db.register_movement(MovementArgs {
+					kind: MovementKind::LightningSend,
 					spends: &htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
 					receives: &[],
 					recipients: &[(&invoice.to_string(), amount)],
@@ -1457,6 +1465,7 @@ impl Wallet {
 
 		info!("Got an arkoor from lightning! {}", output_vtxo.id());
 		self.db.register_movement(MovementArgs {
+			kind: MovementKind::LightningReceive,
 			spends: &[&vtxo.vtxo],
 			receives: &[(&output_vtxo, VtxoState::Spendable)],
 			recipients: &[],
@@ -1934,6 +1943,7 @@ impl Wallet {
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
 		self.db.register_movement(MovementArgs {
+			kind: MovementKind::Round,
 			spends: &participation.inputs.iter().collect::<Vec<_>>(),
 			receives: &new_vtxos.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
 			recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
