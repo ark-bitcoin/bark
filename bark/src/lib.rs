@@ -470,6 +470,11 @@ impl Wallet {
 
 	async fn register_all_unregistered_boards(&self) -> anyhow::Result<()> {
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
+
+		if unregistered_boards.is_empty() {
+			return Ok(());
+		}
+
 		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
 		for board in unregistered_boards {
 			if let Err(e) = self.register_board(board.vtxo.id()).await {
@@ -492,7 +497,6 @@ impl Wallet {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
 		self.register_all_unregistered_boards().await?;
-		info!("Performing maintenance refresh");
 		self.maintenance_refresh().await?;
 		self.sync_pending_lightning_vtxos().await?;
 		Ok(())
@@ -901,6 +905,7 @@ impl Wallet {
 			return Ok(None);
 		}
 
+		info!("Performing maintenance refresh");
 		self.refresh_vtxos(vtxos).await
 	}
 
@@ -926,6 +931,11 @@ impl Wallet {
 
 	async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
 		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
+
+		if vtxos.is_empty() {
+			return Ok(());
+		}
+
 		info!("Syncing {} pending lightning vtxos", vtxos.len());
 
 		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
