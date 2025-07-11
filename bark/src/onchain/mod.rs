@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
-use bdk_wallet::{LocalOutput, SignOptions, TxBuilder, TxOrdering, Wallet as BdkWallet};
+use bdk_wallet::{KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering, Wallet as BdkWallet};
 use bitcoin::{
 	bip32, psbt, sighash, Address, Amount, FeeRate, Network, Psbt, Sequence, Transaction, TxOut,
 	Txid,
@@ -85,11 +85,12 @@ impl Wallet {
 		fallback_fee: Option<FeeRate>,
 	) -> anyhow::Result<Wallet> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
-		let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
+
+		let desc = bdk_wallet::template::Bip86(xpriv, KeychainKind::External);
 
 		let changeset = db.initialize_bdk_wallet().context("error reading bdk wallet state")?;
 		let wallet_opt = bdk_wallet::Wallet::load()
-			.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
+			.descriptor(KeychainKind::External, Some(desc.clone()))
 			.extract_keys()
 			.check_network(network)
 			.load_wallet_no_persist(changeset)?;
@@ -155,7 +156,7 @@ impl Wallet {
 			(Ok(fee_rates), _) => Ok(fee_rates),
 			(Err(e), None) => Err(e),
 			(Err(e), Some(fallback)) => {
-				error!("Error getting fee rates, falling back to {} sat/kvB: {}", 
+				error!("Error getting fee rates, falling back to {} sat/kvB: {}",
 					fallback.to_btc_per_kvb(), e,
 				);
 				Ok(FeeRates { fast: fallback, regular: fallback, slow: fallback })
