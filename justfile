@@ -89,10 +89,10 @@ codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
 
 release-aspd:
-	cargo build    --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
 
 release-bark:
-	cargo build --release --target x86_64-unknown-linux-gnu        --locked --manifest-path bark/Cargo.toml
+	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml
 	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml
 	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml
 	cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark/Cargo.toml
