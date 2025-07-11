@@ -14,7 +14,7 @@ steps:
     when:
       - event: tag
         ref: refs/tags/aspd-*
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
       - cat VERSION
@@ -24,7 +24,7 @@ steps:
       - event: tag
         ref: refs/tags/aspd-*
     depends_on: parse-versions
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
     commands:
@@ -95,7 +95,7 @@ steps:
       - event: tag
         ref: refs/tags/aspd-*
     depends_on: build-aspd
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - cat VERSION
       - cd ./target

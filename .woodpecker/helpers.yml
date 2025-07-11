@@ -15,7 +15,7 @@ clone:
 
 steps:
   - name: tar-and-print-test-data
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     volumes:
       - /data:/host/data
     commands:
@@ -27,7 +27,7 @@ steps:
   - name: tar-and-print-codecov-data
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     volumes:
       - /data:/host/data
     commands:
@@ -41,7 +41,7 @@ steps:
       - event: push
         branch: master
     failure: ignore
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     volumes:
       - /data:/host/data
     commands:
@@ -53,14 +53,14 @@ steps:
   - name: check-versions
     when:
       - event: tag
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
 
   - name: check-codeberg-release
     when:
       - event: tag
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - bash ./contrib/check-codeberg-release.sh "${CI_COMMIT_TAG}"
 
