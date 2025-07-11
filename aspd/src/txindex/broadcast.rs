@@ -8,7 +8,7 @@ use log::{trace, debug, info, warn};
 use tokio::sync::mpsc;
 
 use crate::system::RuntimeManager;
-use crate::txindex::{Tx, TxIndex, TxStatus};
+use crate::txindex::{Tx, TxIndex};
 
 #[derive(Clone)]
 pub struct TxBroadcastHandle {
@@ -153,8 +153,8 @@ impl TxNursery {
 			}
 
 			for (txid, indexed_tx) in pkg.iter().zip(indexed_package.expect("No error")) {
-				if indexed_tx.is_none() || indexed_tx.unwrap().status().await == TxStatus::Unregistered {
-					debug!("Broadcast pkg has unknown or unregistered tx {}. Dropping", txid);
+				if indexed_tx.is_none() {
+					debug!("Broadcast pkg has unknown tx {}. Dropping", txid);
 					self.broadcast.swap_remove(i);
 					continue 'outer;
 				}

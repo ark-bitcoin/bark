@@ -607,9 +607,6 @@ impl Process {
 			error!("Failed to mark board vtxo {} as swept: {}", vtxo.id(), e);
 		}
 
-		let reveal = vtxo.transactions().last().unwrap().tx.compute_txid();
-		self.txindex.unregister_batch(&[&vtxo.chain_anchor().txid, &reveal]).await;
-
 		self.pending_tx_by_utxo.remove(&vtxo.chain_anchor());
 	}
 
@@ -618,7 +615,6 @@ impl Process {
 		// round tx root
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_VTXO_TREE_VOUT));
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT));
-		self.txindex.unregister(round.id.as_round_txid()).await;
 
 		// vtxo tree txs
 		let vtxo_txs = round.round.signed_tree.all_signed_txs();
@@ -629,9 +625,6 @@ impl Process {
 			}
 		}
 
-		trace!("Removing vtxo txs from txindex...");
-		self.txindex.unregister_batch(vtxo_txs.iter()).await;
-
 		// connector txs
 		trace!("Connector txs from internal pending...");
 		for tx in round.connectors.iter_unsigned_txs() {
@@ -639,8 +632,6 @@ impl Process {
 				self.pending_tx_by_utxo.remove(&OutPoint::new(tx.compute_txid(), i as u32));
 			}
 		}
-		trace!("Removing connector txs from txindex...");
-		self.txindex.unregister_batch(round.connectors.iter_unsigned_txs()).await;
 
 		if let Err(e) = self.db.remove_round(round.id).await {
 			error!("Failed to remove round from db after successful sweeping: {}", e);
@@ -746,7 +737,6 @@ impl Process {
 			}
 
 			self.db.drop_pending_sweep(txid).await?;
-			self.txindex.unregister(txid).await;
 			to_remove.insert(*txid);
 		}
 		for txid in to_remove {

@@ -37,9 +37,6 @@ pub enum TxStatus {
 	MempoolSince(DateTime<Local>),
 	/// This transcation was confirmed in the given block height.
 	ConfirmedIn(BlockRef),
-
-	/// This tx is no longer being tracked by the txindex.
-	Unregistered,
 }
 
 impl TxStatus {
@@ -49,14 +46,13 @@ impl TxStatus {
 			TxStatus::Unseen => false,
 			TxStatus::MempoolSince(_) => true,
 			TxStatus::ConfirmedIn(_) => true,
-			TxStatus::Unregistered => false,
 		}
 	}
 
 	pub fn confirmed_in(&self) -> Option<BlockRef> {
 		match self {
 			Self::ConfirmedIn(h) => Some(*h),
-			Self::Unseen | Self::MempoolSince(_) | Self::Unregistered => None,
+			Self::Unseen | Self::MempoolSince(_) => None,
 		}
 	}
 
@@ -66,7 +62,6 @@ impl TxStatus {
 
 	fn update_mempool(&mut self, time: DateTime<Local>) {
 		match self {
-			TxStatus::Unregistered => {},
 			TxStatus::MempoolSince(ref prev) => {
 				*self = TxStatus::MempoolSince(cmp::min(*prev, time));
 			}
@@ -77,7 +72,6 @@ impl TxStatus {
 
 	fn update_not_in_mempool(&mut self) {
 		match self {
-			TxStatus::Unregistered => {},
 			TxStatus::MempoolSince(_) => { *self = TxStatus::Unseen },
 			TxStatus::Unseen => {},
 			TxStatus::ConfirmedIn(_) => {},
@@ -255,32 +249,6 @@ impl TxIndexData {
 		}
 	}
 
-	/// Unregister a transaction
-	async fn unregister(&self, tx: impl TxOrTxid) {
-		let mut tx_map = self.tx_map.write().await;
-		let tx = tx_map.remove(&tx.txid()).map(|wtx| wtx.upgrade()).flatten();
-		drop(tx_map);
-		if let Some(tx) = tx {
-			*tx.status.lock().await = TxStatus::Unregistered;
-		}
-	}
-
-	/// Unregister a batch of transactions at once.
-	async fn unregister_batch(&self, txs: impl IntoIterator<Item = impl TxOrTxid>) {
-		let mut tx_map = self.tx_map.write().await;
-		let mut unregister = Vec::new();
-		for tx in txs {
-			let txid = tx.txid();
-			if let Some(tx) = tx_map.remove(&txid).map(|wtx| wtx.upgrade()).flatten() {
-				unregister.push(tx);
-			}
-		}
-		drop(tx_map);
-		for tx in unregister {
-			*tx.status.lock().await = TxStatus::Unregistered;
-		}
-	}
-
 	/// Adds a new block to the [TxIndex].
 	///
 	/// It will assume that all blocks with a higher index are evicted
@@ -424,15 +392,6 @@ impl TxIndex {
 		let txid = tx.compute_txid();
 		self.db.upsert_bitcoin_transaction(txid, &tx).await?;
 		Ok(self.data.register_as(tx, status).await)
-	}
-
-	pub async fn unregister(&self, tx: impl TxOrTxid) {
-		// We don't need to remove
-		self.data.unregister(tx).await
-	}
-
-	pub async fn unregister_batch(&self, txs: impl IntoIterator<Item = impl TxOrTxid>) {
-		self.data.unregister_batch(txs).await;
 	}
 
 	async fn dump_transaction(&self, txid: Txid, tx: Transaction) -> anyhow::Result<Tx> {
