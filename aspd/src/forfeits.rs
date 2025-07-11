@@ -22,7 +22,7 @@ use bitcoin_ext::bdk::WalletExt;
 use crate::database::model::{ForfeitClaimState, ForfeitRoundState, ForfeitState, StoredRound};
 use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
-use crate::txindex::{Tx, TxIndex};
+use crate::txindex::{TxIndex, Tx};
 use crate::txindex::broadcast::TxBroadcastHandle;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
 use crate::{serde_util, SECP, database, telemetry};
@@ -226,21 +226,21 @@ pub struct ClaimState {
 }
 
 impl ClaimState {
-	async fn new_from_db(txindex: &TxIndex, state: ForfeitClaimState<'_>, bitcoind: &BitcoinRpcClient) -> anyhow::Result<ClaimState> {
+	async fn new_from_db(txindex: &TxIndex, state: ForfeitClaimState<'_>) -> anyhow::Result<ClaimState> {
 		Ok(ClaimState {
 			vtxo: state.vtxo,
 			connector_tx: match state.connector_tx {
-				Some(tx) => Some(txindex.register_with_bitcoind(tx.into_owned(), bitcoind).await?),
+				Some(tx) => Some(txindex.register(tx.into_owned()).await?),
 				None => None,
 			},
 			_connector_cpfp: match state.connector_cpfp {
-				Some(tx) => Some(txindex.register_with_bitcoind(tx.into_owned(), bitcoind).await?),
+				Some(tx) => Some(txindex.register(tx.into_owned()).await?),
 				None => None,
 			},
 			connector: state.connector,
-			forfeit_tx: txindex.register_with_bitcoind(state.forfeit_tx.into_owned(), bitcoind).await?,
+			forfeit_tx: txindex.register(state.forfeit_tx.into_owned()).await?,
 			forfeit_cpfp: match state.forfeit_cpfp {
-				Some(tx) => Some(txindex.register_with_bitcoind(tx.into_owned(), bitcoind).await?),
+				Some(tx) => Some(txindex.register(tx.into_owned()).await?),
 				None => None,
 			},
 		})
@@ -259,7 +259,8 @@ impl ClaimState {
 			.context("error making cpfp tx for connector")?;
 		let cpfp = proc.wallet.finish_tx(psbt)?;
 
-		let txs = proc.broadcaster.broadcast_pkg([connector_tx, cpfp]).await;
+		let txs = proc.broadcaster.broadcast_pkg([connector_tx, cpfp]).await
+			.context("Failed to broadcast pkg with connector and cpfp")?;
 		let [conn, cpfp] = txs.try_into().unwrap();
 		debug!("Broadcasted cpfp tx {} for connector tx {}", cpfp.txid, conn.txid);
 		Ok((conn, cpfp))
@@ -285,7 +286,7 @@ impl ClaimState {
 			vtxo, connector_tx,
 			_connector_cpfp: connector_cpfp,
 			connector: connector_point,
-			forfeit_tx: proc.txindex.register_with_bitcoind(forfeit_tx, &proc.bitcoind).await?,
+			forfeit_tx: proc.txindex.register(forfeit_tx).await?,
 			forfeit_cpfp: None,
 		})
 	}
@@ -325,7 +326,7 @@ impl Process {
 		let claims = self.db.get_forfeits_claim_states().await?;
 		self.claims = Vec::with_capacity(claims.len());
 		for claim in claims {
-			self.claims.push(ClaimState::new_from_db(&self.txindex, claim, &self.bitcoind).await?);
+			self.claims.push(ClaimState::new_from_db(&self.txindex, claim).await?);
 		}
 
 		Ok(())
@@ -334,7 +335,7 @@ impl Process {
 	async fn register_vtxo(&mut self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let vtxo_id = vtxo.id();
 		let exit_tx = vtxo.transactions().last().unwrap().tx;
-		let indexed_tx = self.txindex.register_with_bitcoind(exit_tx, &self.bitcoind).await?;
+		let indexed_tx = self.txindex.register(exit_tx).await?;
 		self.exit_txs.push((indexed_tx, vtxo_id));
 		Ok(())
 	}
@@ -433,7 +434,8 @@ impl Process {
 			let block_ref = match claim.connector_tx {
 				Some(ref tx) => tx.status().await.confirmed_in().expect("just confirmed"),
 				// If there is no connector tx, it's the round tx. Quickly fetch status.
-				None => self.txindex.get(&claim.connector.txid).await.expect("In index").status().await
+				None => self.txindex.get(claim.connector.txid).await?
+					.expect("In index").status().await
 					.confirmed_in()
 					.expect("connector tx should be confirmed"),
 			};
@@ -446,7 +448,8 @@ impl Process {
 				.context("error making cpfp tx for forfeit")?;
 			let cpfp = self.wallet.finish_tx(psbt)?;
 
-			let txs = self.broadcaster.broadcast_pkg([claim.forfeit_tx.tx.clone(), cpfp]).await;
+			let txs = self.broadcaster.broadcast_pkg([claim.forfeit_tx.tx.clone(), cpfp]).await
+				.context("Failed to broadcast package of connector and cpfp")?;
 			let [forfeit, cpfp] = txs.try_into().unwrap();
 			debug!("Broadcasted cpfp tx {} for forfeit tx {}", cpfp.txid, forfeit.txid);
 			slog!(ForfeitBroadcasted, forfeit_txid: forfeit.txid, vtxo: claim.vtxo, cpfp_txid: cpfp.txid);

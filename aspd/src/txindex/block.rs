@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 
 use bitcoin::{BlockHash, Txid};
 use bitcoin_ext::{BlockHeight, BlockRef};
@@ -131,6 +130,7 @@ impl BlockIndex {
 		Ok(())
 	}
 
+	#[allow(unused)]
 	pub fn contains(&self, block_ref: BlockRef) -> bool {
 		let first_height = self.first().height;
 		if block_ref.height < first_height {
