@@ -60,7 +60,7 @@ RUN bash -c '\
 
 RUN echo "clone bark" && \
 	cd /root && \
-	git clone -b nix-in-ci https://codeberg.org/ark-bitcoin/bark.git
+	git clone -b mempool-in-ci https://codeberg.org/ark-bitcoin/bark.git
 
 RUN echo "build nix devShell" && \
 	. /etc/profile.d/nix.sh && \

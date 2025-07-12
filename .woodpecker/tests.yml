@@ -15,7 +15,7 @@ clone:
 
 steps:
   - name: check-commits
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - git log --oneline | head -n 1
       - just check-commits
@@ -23,7 +23,7 @@ steps:
 
   - name: test-unit
     depends_on: check-commits
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - git log --oneline | head -n 1
       - >
@@ -33,7 +33,7 @@ steps:
 
   - name: build
     depends_on: check-commits
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     volumes:
       - /data:/host/data
     commands:
@@ -46,7 +46,7 @@ steps:
 
   - name: generated-static-files
     depends_on: build
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     environment:
       TEST_POSTGRES_HOST: localhost
     commands:
@@ -60,7 +60,7 @@ steps:
 
   - name: use-bark-as-dependency
     depends_on: build
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - >
         nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
@@ -72,7 +72,7 @@ steps:
 
   - name: bark-as-libs
     depends_on: build
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     commands:
       - >
         nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
@@ -82,8 +82,11 @@ steps:
         "
 
   - name: test-integration-esplora
+    when:
+      - event: push
+        branch: master
     depends_on: build
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     volumes:
       - /data:/host/data
     environment:
@@ -98,9 +101,26 @@ steps:
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
 
+  - name: test-integration-mempool
+    depends_on: build
+    image: registry.2nd.dev/build:20
+    volumes:
+      - /data:/host/data
+    environment:
+      CHAIN_SOURCE: mempool-electrs
+      TEST_DIRECTORY: ./test/mempool
+      TEST_POSTGRES_HOST: localhost
+      RUST_TEST_THREADS: 4
+    commands:
+      - git log --oneline | head -n 1
+      - export ASPD_EXEC=${CI_WORKSPACE}/target/debug/aspd
+      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
+      - service postgresql start
+      - bash ./contrib/ci-run-test.sh test-integration
+
   - name: test-integration-btc29.0
     depends_on: build
-    image: registry.2nd.dev/build:19
+    image: registry.2nd.dev/build:20
     volumes:
       - /data:/host/data
     environment:
