@@ -381,15 +381,6 @@ impl CollectingPayments {
 		let ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 
 		match srv.db.get_vtxos_by_id(&ids).await {
-			Err(e) => {
-				if let Some(nf) = e.downcast_ref::<NotFound>() {
-					for id in nf.identifiers() {
-						slog!(RoundUserVtxoUnknown, round_seq: self.round_seq,
-							vtxo: Some(VtxoId::from_str(id).expect("should be a valid vtxoid")));
-					}
-				}
-				Err(e)
-			},
 			Ok(v) => {
 				// Check if the input vtxos exist, unspent and owned by user.
 				for vtxo_state in v {
@@ -401,7 +392,16 @@ impl CollectingPayments {
 					ret.push(vtxo_state.vtxo);
 				}
 				Ok(ret)
-			}
+			},
+			Err(e) => {
+				if let Some(nf) = e.downcast_ref::<NotFound>() {
+					for id in nf.identifiers() {
+						slog!(RoundUserVtxoUnknown, round_seq: self.round_seq,
+							vtxo: Some(VtxoId::from_str(id).expect("should be a valid vtxoid")));
+					}
+				}
+				Err(e)
+			},
 		}
 	}
 
@@ -418,8 +418,8 @@ impl CollectingPayments {
 
 		self.validate_payment_data(&inputs, &vtxo_requests)?;
 
-		let input_ids: Vec<VtxoId> = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		let lock = match srv.vtxos_in_flux.lock(input_ids.clone()) {
+		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
+		let lock = match srv.vtxos_in_flux.lock(&input_ids) {
 			Ok(l) => l,
 			Err(id) => {
 				slog!(RoundUserVtxoInFlux, round_seq: self.round_seq, attempt_seq: self.attempt_seq, vtxo: id);
