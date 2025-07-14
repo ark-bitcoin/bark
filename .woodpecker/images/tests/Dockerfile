@@ -113,7 +113,7 @@ RUN echo "pre-build bark" && \
 	cargo install cargo-zigbuild && \
 	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
 	cd /root/bark && \
-	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path aspd/Cargo.toml && \
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml && \
 	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \
 	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml && \
