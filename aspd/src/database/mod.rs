@@ -343,16 +343,21 @@ impl Db {
 		Ok(())
 	}
 
-	pub async fn pull_oors(&self, pubkey: PublicKey) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo>>> {
+	pub async fn pull_oors(
+		&self,
+		pubkeys: &[PublicKey],
+	) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo>>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT vtxo, arkoor_package_id FROM arkoor_mailbox WHERE pubkey = $1
+			SELECT vtxo, arkoor_package_id FROM arkoor_mailbox WHERE pubkey = ANY($1)
 		").await?;
 
+		let serialized_pubkeys = pubkeys.iter()
+			.map(|pk| pk.serialize().to_vec())
+			.collect::<Vec<_>>();
+		let rows = conn.query(&statement, &[&serialized_pubkeys]).await?;
 
 		let mut vtxos_by_package_id = HashMap::<_, Vec<_>>::new();
-		let rows = conn.query(&statement, &[&pubkey.serialize().to_vec()]).await?;
-
 		for row in &rows {
 			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
 			let package_id = row.get::<_, Vec<u8>>("arkoor_package_id")
@@ -362,9 +367,9 @@ impl Db {
 		}
 
 		let statement = conn.prepare("
-			UPDATE arkoor_mailbox SET deleted_at = NOW() WHERE pubkey = $1;
+			UPDATE arkoor_mailbox SET deleted_at = NOW() WHERE pubkey = ANY($1);
 		").await?;
-		let result = conn.execute(&statement, &[&pubkey.serialize().to_vec()]).await?;
+		let result = conn.execute(&statement, &[&serialized_pubkeys]).await?;
 		assert_eq!(result, rows.len() as u64);
 
 		Ok(vtxos_by_package_id)

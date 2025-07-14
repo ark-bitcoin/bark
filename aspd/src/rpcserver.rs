@@ -494,11 +494,17 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("pubkey", format!("{:?}", req.pubkey)),
+			KeyValue::new("pubkeys", format!("{:?}", req.pubkeys)),
 		]);
 
-		let pubkey = PublicKey::from_bytes(&req.pubkey)?;
-		let vtxos_by_package_id = self.db.pull_oors(pubkey).await.to_status()?;
+		if req.pubkeys.len() > rpc::MAX_NB_MAILBOX_PUBKEYS {
+			badarg!("too many pubkeys: max {}", rpc::MAX_NB_MAILBOX_PUBKEYS);
+		}
+
+		let pubkeys = req.pubkeys.iter()
+			.map(PublicKey::from_bytes)
+			.collect::<Result<Vec<_>, _>>()?;
+		let vtxos_by_package_id = self.db.pull_oors(&pubkeys).await.to_status()?;
 
 		let response = protos::ArkoorVtxosResponse {
 			packages: vtxos_by_package_id.into_iter().map(|(package_id, vtxos)| {

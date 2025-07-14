@@ -17,6 +17,10 @@ service ArkService {
 	// * OOR PAYMENTS*
 	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
+
+    // Empty the arkoor mailbox for certain pubkeys.
+    //
+    // At most 100 pubkeys should be provided.
 	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
 
 	// * LN payments
@@ -137,7 +141,7 @@ message ArkoorPackage {
 }
 
 message ArkoorVtxosRequest {
-	bytes pubkey = 1;
+	repeated bytes pubkeys = 1;
 }
 
 message ArkoorMailboxPackage {

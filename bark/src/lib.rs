@@ -741,70 +741,75 @@ impl Wallet {
 		let last_pk_index = self.db.get_last_vtxo_key_index(keychain)?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
 			self.vtxo_seed.derive_keychain(keychain, idx).public_key()
-		}).collect::<HashSet<_>>();
+		}).collect::<Vec<_>>();
 
-		for pk in pubkeys {
-			self.sync_arkoor_by_pk(&pk).await?;
-		}
+		self.sync_arkoor_for_pubkeys(&pubkeys).await?;
 
 		Ok(())
 	}
 
 	/// Sync with the Ark and look for out-of-round received VTXOs
 	/// by public key
-	pub async fn sync_arkoor_by_pk(&self, pk: &PublicKey) -> anyhow::Result<()> {
+	pub async fn sync_arkoor_for_pubkeys(
+		&self,
+		public_keys: &[PublicKey],
+	) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
-		// Then sync OOR vtxos.
-		debug!("Emptying OOR mailbox at ASP...");
-		let req = protos::ArkoorVtxosRequest { pubkey: pk.serialize().to_vec() };
-		let packages = asp.client.empty_arkoor_mailbox(req).await
-			.context("error fetching oors")?.into_inner().packages;
-		debug!("ASP has {} arkoor packages for us", packages.len());
+		for pubkeys in public_keys.chunks(rpc::MAX_NB_MAILBOX_PUBKEYS) {
+			// Then sync OOR vtxos.
+			debug!("Emptying OOR mailbox at ASP...");
+			let req = protos::ArkoorVtxosRequest {
+				pubkeys: pubkeys.iter().map(|pk| pk.serialize().to_vec()).collect(),
+			};
+			let packages = asp.client.empty_arkoor_mailbox(req).await
+				.context("error fetching oors")?.into_inner().packages;
+			debug!("ASP has {} arkoor packages for us", packages.len());
 
-		for package in packages {
-			let mut vtxos = Vec::with_capacity(package.vtxos.len());
-			for vtxo in package.vtxos {
-				let vtxo = match Vtxo::deserialize(&vtxo) {
-					Ok(vtxo) => vtxo,
-					Err(e) => {
-						warn!("Invalid vtxo from asp: {}", e);
+			for package in packages {
+				let mut vtxos = Vec::with_capacity(package.vtxos.len());
+				for vtxo in package.vtxos {
+					let vtxo = match Vtxo::deserialize(&vtxo) {
+						Ok(vtxo) => vtxo,
+						Err(e) => {
+							warn!("Invalid vtxo from asp: {}", e);
+							continue;
+						}
+					};
+
+
+					let txid = vtxo.chain_anchor().txid;
+					let chain_anchor = self.onchain.chain.get_tx(&txid).await?.with_context(|| {
+						format!("received arkoor vtxo with unknown chain anchor: {}", txid)
+					})?;
+					if let Err(e) = vtxo.validate(&chain_anchor) {
+						error!("Received invalid arkoor VTXO from server: {}", e);
 						continue;
 					}
-				};
 
+					match self.db.has_spent_vtxo(vtxo.id()) {
+						Ok(spent) if spent => {
+							debug!("Not adding OOR vtxo {} because it is considered spent", vtxo.id());
+							continue;
+						},
+						_ => {}
+					}
 
-				let txid = vtxo.chain_anchor().txid;
-				let chain_anchor = self.onchain.chain.get_tx(&txid).await?.with_context(|| {
-					format!("received arkoor vtxo with unknown chain anchor: {}", txid)
-				})?;
-				if let Err(e) = vtxo.validate(&chain_anchor) {
-					error!("Received invalid arkoor VTXO from server: {}", e);
-					continue;
-				}
-
-				match self.db.has_spent_vtxo(vtxo.id()) {
-					Ok(spent) if spent => {
-						debug!("Not adding OOR vtxo {} because it is considered spent", vtxo.id());
+					if let Ok(Some(_)) = self.db.get_wallet_vtxo(vtxo.id()) {
+						debug!("Not adding OOR vtxo {} because it already exists", vtxo.id());
 						continue;
-					},
-					_ => {}
+					}
+
+					vtxos.push(vtxo);
 				}
 
-				if let Ok(Some(_)) = self.db.get_wallet_vtxo(vtxo.id()) {
-					debug!("Not adding OOR vtxo {} because it already exists", vtxo.id());
-					continue;
-				}
-
-				vtxos.push(vtxo);
+				self.db.register_movement(MovementArgs {
+					spends: &[],
+					receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
+					recipients: &[],
+					fees: None,
+				}).context("failed to store OOR vtxo")?;
 			}
-
-			self.db.register_movement(MovementArgs {
-				spends: &[],
-				receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
-				recipients: &[],
-				fees: None,
-			}).context("failed to store OOR vtxo")?;
 		}
 
 		Ok(())
