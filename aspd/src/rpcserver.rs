@@ -24,7 +24,7 @@ use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, V
 use ark::rounds::RoundId;
 use aspd_rpc::{self as rpc, protos, TryFromBytes};
 use tonic::async_trait;
-
+use ark::lightning::Preimage;
 use crate::Server;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
 use crate::round::RoundInput;
@@ -696,8 +696,9 @@ impl rpc::server::ArkService for Server {
 
 		let user_nonce = musig::PublicNonce::from_bytes(&arkoor.pub_nonce)?;
 
-		let payment_preimage: [u8; 32] = req.payment_preimage.as_slice()
+		let payment_preimage: Preimage = req.payment_preimage.as_slice()
 			.try_into().badarg("invalid preimage, not 32 bytes")?;
+
 
 		let cosign_resp = self.claim_bolt11_htlc(
 			input_id,

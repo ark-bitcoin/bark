@@ -40,7 +40,6 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::params::Params;
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
-use bitcoin::secp256k1::rand::Rng;
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn, error};
@@ -51,6 +50,7 @@ use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::connectors::ConnectorChain;
+use ark::lightning::Preimage;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
@@ -1142,7 +1142,7 @@ impl Wallet {
 		&mut self,
 		invoice: &Bolt11Invoice,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<[u8; 32]> {
+	) -> anyhow::Result<Preimage> {
 		let properties = self.db.read_properties()?.context("Missing config")?;
 		let current_height = self.onchain.tip().await?;
 
@@ -1253,7 +1253,7 @@ impl Wallet {
 
 		let res = asp.client.finish_bolt11_payment(req).await?.into_inner();
 		debug!("Progress update: {}", res.progress_message);
-		let payment_preimage = <[u8; 32]>::try_from(res.payment_preimage()).ok();
+		let payment_preimage = Preimage::try_from(res.payment_preimage()).ok();
 
 		if let Some(preimage) = payment_preimage {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
@@ -1270,7 +1270,7 @@ impl Wallet {
 		}
 	}
 
-	pub async fn check_bolt11_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<[u8; 32]>> {
+	pub async fn check_bolt11_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
 		let mut asp = self.require_asp()?;
 		let tip = self.onchain.tip().await?;
 
@@ -1313,7 +1313,7 @@ impl Wallet {
 				}
 			},
 			protos::PaymentStatus::Complete => {
-				let preimage: [u8; 32] = res.payment_preimage.context("payment completed but no preimage")?
+				let preimage: Preimage = res.payment_preimage.context("payment completed but no preimage")?
 					.try_into().map_err(|_| anyhow!("preimage is not 32 bytes"))?;
 				info!("Payment is complete, preimage, {}", preimage.as_hex());
 
@@ -1351,8 +1351,8 @@ impl Wallet {
 	pub async fn bolt11_invoice(&mut self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let mut asp = self.require_asp()?;
 
-		let preimage = rand::thread_rng().gen::<[u8; 32]>();
-		let payment_hash = sha256::Hash::hash(&preimage);
+		let preimage = Preimage::random();
+		let payment_hash = sha256::Hash::hash(&preimage.as_ref());
 		info!("Start bolt11 board with preimage / payment hash: {} / {}",
 			preimage.as_hex(), payment_hash.as_byte_array().as_hex());
 
@@ -1485,7 +1485,7 @@ impl Wallet {
 		addr: &LightningAddress,
 		amount: Amount,
 		comment: Option<&str>,
-	) -> anyhow::Result<(Bolt11Invoice, [u8; 32])> {
+	) -> anyhow::Result<(Bolt11Invoice, Preimage)> {
 		let invoice = lnurl::lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);

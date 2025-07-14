@@ -7,7 +7,7 @@ use bitcoin::secp256k1::PublicKey;
 use ark::{Vtxo, VtxoId};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use lightning_invoice::Bolt11Invoice;
-
+use ark::lightning::Preimage;
 use crate::{
 	Config, KeychainKind, Movement, MovementArgs, Pagination,
 	WalletProperties,
@@ -22,7 +22,7 @@ pub enum OffchainPayment {
 
 pub struct OffchainBoard {
 	pub payment_hash: [u8; 32],
-	pub payment_preimage: [u8; 32],
+	pub payment_preimage: Preimage,
 	pub payment: OffchainPayment,
 }
 
@@ -75,7 +75,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
 
 	/// Store an offchain board
-	fn store_offchain_board(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()>;
+	fn store_offchain_board(&self, payment_hash: &[u8; 32], preimage: &Preimage, payment: OffchainPayment) -> anyhow::Result<()>;
 	/// Fetch an offchain board by payment hash
 	fn fetch_offchain_board_by_payment_hash(&self, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainBoard>>;
 

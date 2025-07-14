@@ -43,6 +43,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
+use ark::lightning::Preimage;
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos::{self, Bolt11PaymentResult};
@@ -720,7 +721,7 @@ impl Server {
 
 	fn process_bolt11_response(
 		payment_hash: sha256::Hash,
-		res: anyhow::Result<[u8; 32]>,
+		res: anyhow::Result<Preimage>,
 	) -> anyhow::Result<Bolt11PaymentResult> {
 		match res {
 			Ok(preimage) => {
@@ -888,13 +889,13 @@ impl Server {
 		input_vtxo_id: VtxoId,
 		vtxo_req: VtxoRequest,
 		user_nonce: musig::PublicNonce,
-		payment_preimage: &[u8; 32],
+		payment_preimage: &Preimage,
 	) -> anyhow::Result<ArkoorCosignResponse> {
 		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await
 			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
 
 		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
-			if sha256::Hash::hash(payment_preimage) != *payment_hash {
+			if sha256::Hash::hash(payment_preimage.as_ref()) != *payment_hash {
 				bail!("input vtxo payment hash does not match preimage");
 			}
 

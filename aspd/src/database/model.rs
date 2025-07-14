@@ -14,6 +14,7 @@ use lightning_invoice::Bolt11Invoice;
 use tokio_postgres::Row;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::lightning::Preimage;
 use ark::musig::{PartialSignature, PublicNonce, SecretNonce};
 use ark::musig::secpm::ffi::MUSIG_SECNONCE_SIZE;
 use ark::rounds::RoundId;
@@ -185,7 +186,7 @@ pub struct LightningInvoice {
 	pub invoice: Bolt11Invoice,
 	pub payment_hash: sha256::Hash,
 	pub final_amount_msat: Option<u64>,
-	pub preimage: Option<[u8; 32]>,
+	pub preimage: Option<Preimage>,
 	pub last_attempt_status: Option<LightningPaymentStatus>,
 	pub created_at: DateTime<Utc>,
 	pub updated_at: DateTime<Utc>,

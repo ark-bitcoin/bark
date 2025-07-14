@@ -8,7 +8,7 @@ use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
 use rusqlite::{self, named_params, Connection, ToSql};
-
+use ark::lightning::Preimage;
 use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
@@ -459,7 +459,7 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight
 pub fn store_offchain_board(
 	conn: &Connection,
 	payment_hash: &[u8; 32],
-	preimage: &[u8; 32],
+	preimage: &Preimage,
 	payment: OffchainPayment,
 ) -> anyhow::Result<()> {
 	let query = "

@@ -45,7 +45,6 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::AmountExt;
 use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
@@ -54,7 +53,7 @@ use log::{debug, error, info, trace, warn};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
-
+use ark::lightning::Preimage;
 use cln_rpc::node_client::NodeClient;
 
 use crate::error::{AnyhowErrorExt, ContextExt};
@@ -84,7 +83,7 @@ pub struct ClnManager {
 	invoice_gen_tx: mpsc::UnboundedSender<((sha256::Hash, Amount), oneshot::Sender<Bolt11Invoice>)>,
 
 	/// This channel sends invoice settle requests to the process.
-	invoice_settle_tx: mpsc::UnboundedSender<((i64, [u8; 32]), oneshot::Sender<anyhow::Result<()>>)>,
+	invoice_settle_tx: mpsc::UnboundedSender<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
 
 	/// We also keep a handle of the update channel to update from
 	/// payment request that fail before the hit the sendpay stream.
@@ -154,7 +153,7 @@ impl ClnManager {
 		invoice: &Bolt11Invoice,
 		htlc_amount: Amount,
 		wait: bool,
-	) -> anyhow::Result<[u8; 32]> {
+	) -> anyhow::Result<Preimage> {
 		if invoice.check_signature().is_err() {
 			bail!("Invalid signature in Bolt-11 invoice");
 		}
@@ -179,7 +178,7 @@ impl ClnManager {
 		&self,
 		payment_hash: &sha256::Hash,
 		wait: bool,
-	) -> anyhow::Result<[u8; 32]> {
+	) -> anyhow::Result<Preimage> {
 		let update_rx = self.payment_update_tx.subscribe();
 
 		self.inner_check_bolt11(update_rx, payment_hash, wait, true).await
@@ -191,7 +190,7 @@ impl ClnManager {
 		payment_hash: &sha256::Hash,
 		wait: bool,
 		instant_check: bool,
-	) -> anyhow::Result<[u8; 32]> {
+	) -> anyhow::Result<Preimage> {
 		let mut poll_interval = tokio::time::interval(self.invoice_poll_interval);
 
 		if !instant_check {
@@ -228,7 +227,7 @@ impl ClnManager {
 					let preimage = invoice.preimage
 						.context("missing preimage on bolt11 success")?;
 					debug!("Done, preimage: {} for invoice {}", preimage.as_hex(), invoice.invoice);
-					return Ok(preimage);
+					return Ok(Preimage::from(preimage));
 				}
 
 				if status == LightningPaymentStatus::Failed {
@@ -259,8 +258,8 @@ impl ClnManager {
 		rx.await.context("invoice return channel broken")
 	}
 
-	pub async fn settle_invoice(&self, subscription_id: i64, preimage: &[u8; 32]) -> anyhow::Result<anyhow::Result<()>> {
-		let payment_hash = sha256::Hash::hash(preimage);
+	pub async fn settle_invoice(&self, subscription_id: i64, preimage: &Preimage) -> anyhow::Result<anyhow::Result<()>> {
+		let payment_hash = sha256::Hash::hash(preimage.as_ref());
 
 		// If an open payment attempt exists for the payment hash, it's an ASP self-payment
 		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
@@ -470,7 +469,7 @@ struct ClnManagerProcess {
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
 	payment_rx: mpsc::UnboundedReceiver<(Bolt11Invoice, Option<Amount>)>,
 	invoice_gen_rx: mpsc::UnboundedReceiver<((sha256::Hash, Amount), oneshot::Sender<Bolt11Invoice>)>,
-	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, [u8; 32]), oneshot::Sender<anyhow::Result<()>>)>,
+	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
 	payment_update_tx: broadcast::Sender<sha256::Hash>,
 	waker: Arc<Notify>,
 
@@ -738,7 +737,7 @@ impl ClnManagerProcess {
 		Ok(invoice)
 	}
 
-	async fn settle_invoice(&self, subscription_id: i64, preimage: [u8; 32]) -> anyhow::Result<()> {
+	async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<()> {
 		let htlc_subscription = self.db
 			.get_htlc_subscription_by_id(subscription_id).await?
 			.expect("can only settle known invoice");
@@ -914,7 +913,7 @@ async fn call_pay_bolt11(
 	rpc: &mut ClnGrpcClient,
 	invoice: &Bolt11Invoice,
 	user_amount: Option<Amount>,
-) -> anyhow::Result<[u8; 32]> {
+) -> anyhow::Result<Preimage> {
 	match (user_amount, invoice.amount_milli_satoshis()) {
 		(Some(user), Some(inv)) => {
 			let inv = Amount::from_msat_ceil(inv);
@@ -966,7 +965,7 @@ impl database::Db {
 		status: LightningPaymentStatus,
 		payment_error: Option<&str>,
 		final_amount_msat: Option<u64>,
-		preimage: Option<&[u8; 32]>,
+		preimage: Option<&Preimage>,
 	) -> anyhow::Result<bool> {
 		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "invoice not found")?;

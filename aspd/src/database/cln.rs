@@ -6,7 +6,7 @@ use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use futures::{Stream, TryStreamExt};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, warn};
-
+use ark::lightning::Preimage;
 use crate::database::Db;
 use crate::database::model::{
 	LightningHtlcSubscription,
@@ -332,7 +332,7 @@ impl Db {
 		&self,
 		old_lightning_invoice: LightningInvoice,
 		new_final_amount_msat: Option<u64>,
-		new_preimage: Option<&[u8; 32]>,
+		new_preimage: Option<&Preimage>,
 	) -> anyhow::Result<Option<DateTime<Utc>>> {
 		let conn = self.pool.get().await.unwrap();
 
@@ -349,7 +349,7 @@ impl Db {
 		let row = conn.query_opt(&stmt, &[
 			&old_lightning_invoice.lightning_invoice_id,
 			&old_lightning_invoice.updated_at,
-			&new_preimage.map(|p| &p[..]),
+			&new_preimage.map(|p| &p.as_ref()[..]),
 			&final_amount_msat,
 		]).await?;
 

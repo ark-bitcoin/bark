@@ -1,11 +1,13 @@
 
-use std::fmt;
-
+use std::{fmt, io};
+use std::array::TryFromSliceError;
 use bitcoin::Amount;
 use bitcoin::hashes::sha256;
+use bitcoin::hex::{fmt_hex_exact, Case};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::taproot::TaprootSpendInfo;
-
+use hex_conservative::DisplayHex;
+use rand::Rng;
 use bitcoin_ext::P2TR_DUST;
 
 use crate::{musig, util};
@@ -15,6 +17,70 @@ use crate::util::SECP;
 /// The minimum fee we consider for an HTLC transaction.
 pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Preimage([u8; 32]);
+
+impl fmt::Debug for Preimage {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+impl fmt::Display for Preimage {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt_hex_exact!(f, 32, &self.0, Case::Lower)
+	}
+}
+
+impl From<[u8; 32]> for Preimage {
+	fn from(inner: [u8; 32]) -> Self {
+		Preimage(inner)
+	}
+}
+
+impl From<Preimage> for [u8; 32] {
+	fn from(p: Preimage) -> Self {
+		p.0
+	}
+}
+
+impl TryFrom<Vec<u8>> for Preimage {
+	type Error = TryFromSliceError;
+
+	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+		Preimage::try_from(vec.as_slice())
+	}
+}
+
+impl TryFrom<&[u8]> for Preimage {
+	type Error = TryFromSliceError;
+
+	fn try_from(slice: &[u8]) -> Result<Self, Self::Error> {
+		<&[u8; 32]>::try_from(slice).map(|arr| Preimage(*arr))
+	}
+}
+
+impl AsRef<[u8]> for Preimage {
+	fn as_ref(&self) -> &[u8] {
+		&self.0
+	}
+}
+
+impl Preimage {
+	/// Returns the preimage as a lowercase hex string.
+	pub fn as_hex(&self) -> String {
+		self.0.to_lower_hex_string()
+	}
+
+	/// Returns the preimage as a `Vec<u8>`.
+	pub fn to_vec(&self) -> Vec<u8> {
+		self.0.to_vec()
+	}
+
+	pub fn random() -> Preimage {
+		Preimage::from(rand::random::<[u8; 32]>())
+	}
+}
 /// Build taproot spend info to build a VTXO to enable lightning send
 ///
 /// This related to the [VtxoPolicy::ServerHtlcSend] policy.
