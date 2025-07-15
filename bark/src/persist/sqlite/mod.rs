@@ -126,7 +126,8 @@ impl BarkPersister for SqliteClient {
 		let movement_id = self.create_movement(&tx, movement.fees)?;
 
 		for v in movement.spends {
-			self.mark_vtxo_as_spent(&tx, v.id(), movement_id).context("Failed to mark vtxo as spent")?;
+			self.mark_vtxo_as_spent(&tx, v.id(), movement_id)
+				.context("Failed to mark vtxo as spent")?;
 		}
 
 		for (v, s) in movement.receives {
