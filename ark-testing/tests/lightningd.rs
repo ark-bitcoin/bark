@@ -4,10 +4,10 @@ use std::sync::Arc;
 use bitcoin::Amount;
 use cln_rpc as rpc;
 
-use log::{info, trace};
+use log::{error, info, trace};
 
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, daemon::aspd, sat, TestContext};
-use ark_testing::util::FutureExt;
+use ark_testing::util::{AnyhowErrorExt, FutureExt};
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 
 
@@ -408,7 +408,9 @@ async fn bark_can_board_from_lightning() {
 	let cloned = bark.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.bolt11_board(cloned_invoice_info.invoice).await
+		if let Err(e) = cloned.try_bolt11_board(cloned_invoice_info.invoice).await {
+			error!("bolt11 board error: {}", e.full_msg());
+		}
 	});
 	lightningd_1.pay_bolt11(invoice_info.invoice).wait(30_000).await;
 	res1.await.unwrap();

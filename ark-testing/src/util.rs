@@ -1,5 +1,7 @@
 
 use std::env;
+use std::borrow::Borrow;
+use std::fmt::Write;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -55,7 +57,21 @@ pub fn init_logging() -> anyhow::Result<()> {
 		.format(|out, msg, rec| {
 			let now = chrono::Local::now();
 			let stamp = now.format("%H:%M:%S.%3f");
-			out.finish(format_args!("[{} {: >5}] {}", stamp, rec.level(), msg))
+			let lvl = rec.level();
+			let module = rec.module_path().expect("no module");
+			if module.starts_with("ark_testing") {
+				let module = module.strip_prefix("ark_").unwrap();
+				let file = rec.file().expect("log record without file");
+				let file = file.split("ark-testing/src/").last().unwrap();
+				let line = rec.line().expect("log record without line");
+				out.finish(format_args!(
+					"[{stamp} {lvl: >5} {module} {file}:{line}] {msg}",
+				))
+			} else {
+				out.finish(format_args!(
+					"[{stamp} {lvl: >5} {module}] {msg}",
+				))
+			}
 		})
 		.chain(std::io::stdout())
 		.apply();
@@ -207,3 +223,18 @@ impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
 		while let Ok(_) = self.try_recv() {}
 	}
 }
+
+pub trait AnyhowErrorExt: Borrow<anyhow::Error> {
+	fn full_msg(&self) -> String {
+		let mut ret = String::new();
+		for (i, e) in self.borrow().chain().enumerate() {
+			if i == 0 {
+				write!(ret, "{}", e).expect("write to buf");
+			} else {
+				write!(ret, ": {}", e).expect("write to buf");
+			}
+		}
+		ret
+	}
+}
+impl AnyhowErrorExt for anyhow::Error {}
