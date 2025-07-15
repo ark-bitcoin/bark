@@ -249,11 +249,8 @@ impl Db {
 
 		// Bail if one of the id's could not be found
 		if vtxos.len() != ids.len() {
-			for id in ids {
-				if !vtxos.contains_key(id) {
-					return not_found!([id], "vtxo does not exist");
-				}
-			}
+			let missing = ids.into_iter().filter(|id| !vtxos.contains_key(id));
+			return not_found!(missing, "vtxo does not exist");
 		}
 
 		Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
