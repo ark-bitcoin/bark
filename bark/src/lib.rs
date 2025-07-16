@@ -36,7 +36,7 @@ use anyhow::{bail, Context};
 use bip39::Mnemonic;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
-use bitcoin::hashes::{sha256, Hash};
+use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::params::Params;
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
@@ -50,7 +50,7 @@ use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::connectors::ConnectorChain;
-use ark::lightning::Preimage;
+use ark::lightning::{PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
@@ -1193,12 +1193,13 @@ impl Wallet {
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
+		let payment_hash = PaymentHash::from(invoice.payment_hash());
 		let pay_req = VtxoRequest {
-			amount: amount,
+			amount,
 			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 				user_pubkey: change_keypair.public_key(),
-				payment_hash: *invoice.payment_hash(),
-				htlc_expiry: htlc_expiry,
+				payment_hash,
+				htlc_expiry,
 			}),
 		};
 
@@ -1311,9 +1312,9 @@ impl Wallet {
 		}
 
 		let (invoice, amount, spk_spec) = parts.context("no htlc vtxo provided")?;
-
+		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
 		let req = protos::CheckBolt11PaymentRequest {
-			hash: invoice.payment_hash().as_byte_array().to_vec(),
+			hash: payment_hash.to_vec(),
 			wait: false,
 		};
 		let res = asp.client.check_bolt11_payment(req).await?.into_inner();
@@ -1375,12 +1376,12 @@ impl Wallet {
 		let mut asp = self.require_asp()?;
 
 		let preimage = Preimage::random();
-		let payment_hash = sha256::Hash::hash(&preimage.as_ref());
+		let payment_hash = ark::lightning::PaymentHash::from_preimage(preimage);
 		info!("Start bolt11 board with preimage / payment hash: {} / {}",
-			preimage.as_hex(), payment_hash.as_byte_array().as_hex());
+			preimage.as_hex(), payment_hash.as_hex());
 
 		let req = protos::StartBolt11BoardRequest {
-			payment_hash: payment_hash.as_byte_array().to_vec(),
+			payment_hash: payment_hash.to_vec(),
 			amount_sat: amount.to_sat(),
 		};
 
@@ -1391,7 +1392,7 @@ impl Wallet {
 			.context("invalid bolt11 invoice returned by asp")?;
 
 		self.db.store_offchain_board(
-			payment_hash.as_byte_array(),
+			&payment_hash,
 			&preimage,
 			OffchainPayment::Lightning(invoice.clone()),
 		)?;
@@ -1422,7 +1423,7 @@ impl Wallet {
 		let current_height = self.onchain.tip().await?;
 
 		let offchain_board = self.db.fetch_offchain_board_by_payment_hash(
-			invoice.payment_hash().as_byte_array()
+			&ark::lightning::PaymentHash::from(*invoice.payment_hash())
 		)?.context("no offchain board found")?;
 
 		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
@@ -1447,9 +1448,10 @@ impl Wallet {
 		let fee_vtxo_cloned = fee_vtxos.clone();
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
 			let inputs = fee_vtxo_cloned.clone();
+			let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
 			let htlc_pay_req = VtxoRequest {
-				amount: amount,
-				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), *invoice.payment_hash(), htlc_expiry),
+				amount,
+				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, htlc_expiry),
 			};
 
 			Ok((inputs, vec![htlc_pay_req], vec![]))

@@ -9,7 +9,7 @@ use std::future::Future;
 
 use bip39::rand::Rng;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Transaction};
-use bitcoin::hashes::{sha256, Hash};
+use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use lightning_invoice::Bolt11Invoice;
@@ -24,7 +24,7 @@ use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, V
 use ark::rounds::RoundId;
 use aspd_rpc::{self as rpc, protos, TryFromBytes};
 use tonic::async_trait;
-use ark::lightning::Preimage;
+use ark::lightning::{PaymentHash, Preimage};
 use crate::Server;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
 use crate::round::RoundInput;
@@ -598,10 +598,11 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT);
 		let req = req.into_inner();
 
-		let payment_hash = sha256::Hash::from_bytes(&req.hash)?;
+		let payment_hash = PaymentHash::try_from(req.hash)
+			.expect("payment hash must be 32 bytes");
 
 		add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", payment_hash.to_string()),
+			KeyValue::new("payment_hash", payment_hash.as_hex()),
 		]);
 
 		let res = self.check_bolt11_payment(payment_hash, req.wait).await.to_status()?;
@@ -644,7 +645,8 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("amount_sats", format!("{:?}", req.amount_sat)),
 		]);
 
-		let payment_hash = sha256::Hash::from_bytes(&req.payment_hash)?;
+		let payment_hash = PaymentHash::try_from(req.payment_hash)
+			.expect("payment hash must be 32 bytes");
 		let amount = Amount::from_sat(req.amount_sat);
 
 		let resp = self.start_bolt11_board(payment_hash, amount).await.to_status()?;

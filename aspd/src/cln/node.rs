@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::hashes::{sha256, Hash};
+use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use chrono::{DateTime, Utc};
 use cln_rpc::plugins::hold::{self, InvoiceState};
@@ -15,7 +15,7 @@ use log::{debug, error, info, trace, warn};
 use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::JoinHandle;
 use tonic::transport::Channel;
-
+use ark::lightning::PaymentHash;
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use cln_rpc::node_client::NodeClient;
@@ -44,7 +44,7 @@ impl ClnNodeMonitor {
 		rtmgr: RuntimeManager,
 		mgr_waker: Arc<Notify>,
 		db: database::Db,
-		payment_update_tx: broadcast::Sender<sha256::Hash>,
+		payment_update_tx: broadcast::Sender<PaymentHash>,
 		node_id: ClnNodeId,
 		node_rpc: ClnGrpcClient,
 		hold_rpc: Option<HoldClient<Channel>>,
@@ -118,7 +118,7 @@ enum Ctrl {
 struct ClnNodeMonitorProcess {
 	config: ClnNodeMonitorConfig,
 	db: database::Db,
-	payment_update_tx: broadcast::Sender<sha256::Hash>,
+	payment_update_tx: broadcast::Sender<PaymentHash>,
 	ctrl_rx: mpsc::Receiver<Ctrl>,
 
 	node_id: ClnNodeId,
@@ -159,7 +159,7 @@ impl ClnNodeMonitorProcess {
 			let updated_index = update.updated_index();
 			max_index = cmp::max(max_index, updated_index);
 
-			let payment_hash = sha256::Hash::from_slice(&update.payment_hash)
+			let payment_hash = PaymentHash::try_from(update.payment_hash.clone())
 				.expect("payment hash must be 32 bytes");
 
 			let attempt = match self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await? {
@@ -297,7 +297,7 @@ impl ClnNodeMonitorProcess {
 
 			let req = cln_rpc::ListpaysRequest {
 				bolt11: None,
-				payment_hash: Some(invoice.payment_hash[..].to_vec()),
+				payment_hash: Some(invoice.payment_hash.to_vec()),
 				status: None,
 				index: None,
 				limit: None,

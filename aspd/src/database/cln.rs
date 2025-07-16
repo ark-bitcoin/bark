@@ -1,12 +1,11 @@
 use anyhow::Context;
-use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Utc};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use futures::{Stream, TryStreamExt};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, warn};
-use ark::lightning::Preimage;
+use ark::lightning::{PaymentHash, Preimage};
 use crate::database::Db;
 use crate::database::model::{
 	LightningHtlcSubscription,
@@ -153,7 +152,7 @@ impl Db {
 
 	pub async fn get_open_lightning_payment_attempt_by_payment_hash(
 		&self,
-		payment_hash: &sha256::Hash,
+		payment_hash: &PaymentHash,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
 		let conn = self.pool.get().await?;
 
@@ -174,7 +173,7 @@ impl Db {
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
 		let rows = conn.query(
-			&stmt, &[&&payment_hash[..], &status_failed, &status_succeeded],
+			&stmt, &[&payment_hash.to_vec(), &status_failed, &status_succeeded],
 		).await?;
 
 		if rows.is_empty() {
@@ -378,7 +377,7 @@ impl Db {
 
 	pub async fn get_lightning_invoice_by_payment_hash(
 		&self,
-		payment_hash: &sha256::Hash,
+		payment_hash: &PaymentHash,
 	) -> anyhow::Result<Option<LightningInvoice>> {
 		let conn = self.pool.get().await?;
 
@@ -393,7 +392,7 @@ impl Db {
 			LEFT JOIN lightning_payment_attempt attempt
 			ON invoice.lightning_invoice_id = attempt.lightning_invoice_id
 			ORDER BY invoice.lightning_invoice_id, attempt.created_at DESC;",
-			&[&&payment_hash[..]],
+			&[&payment_hash.to_vec()],
 		).await.context("error fetching lightning invoice by payment_hash")?;
 
 		if let Some(row) = res {
@@ -548,7 +547,7 @@ impl Db {
 	/// Retrieves all htlc subscriptions for the provided payment hash.
 	pub async fn get_htlc_subscriptions_by_payment_hash(
 		&self,
-		payment_hash: &sha256::Hash,
+		payment_hash: &PaymentHash,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
 		let conn = self.pool.get().await?;
 
@@ -564,7 +563,7 @@ impl Db {
 		").await?;
 
 		let rows = conn.query(
-			&stmt, &[&&payment_hash[..]]
+			&stmt, &[&payment_hash.to_vec()]
 		).await?;
 
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
@@ -572,7 +571,7 @@ impl Db {
 
 	pub async fn get_htlc_subscription_by_payment_hash(
 		&self,
-		payment_hash: &sha256::Hash,
+		payment_hash: &PaymentHash,
 		status: LightningHtlcSubscriptionStatus,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let conn = self.pool.get().await?;
@@ -589,7 +588,7 @@ impl Db {
 		").await?;
 
 		let rows = conn.query(
-			&stmt, &[&&payment_hash[..], &status]
+			&stmt, &[&payment_hash.to_vec(), &status]
 		).await?;
 
 		if rows.is_empty() {
