@@ -634,11 +634,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 
-			let onchain = w.onchain.balance();
-			let offchain =  w.offchain_balance()?;
-			let pending_exit = w.exit.pending_total().await?;
-			let balance = json::Balance {onchain, offchain, pending_exit };
-			output_json(&balance);
+			let balance = w.balance()?;
+			output_json(&json::Balance {
+				onchain: balance.onchain,
+				offchain: balance.offchain,
+				pending_lightning_send: balance.pending_lightning_send,
+				pending_exit: balance.pending_exit,
+			});
 		},
 		Command::Vtxos { no_sync } => {
 			if !no_sync {

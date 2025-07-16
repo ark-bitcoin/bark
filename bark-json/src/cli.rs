@@ -37,6 +37,8 @@ pub struct Balance {
 	pub onchain: Amount,
 	#[serde(rename = "offchain_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub offchain: Amount,
+	#[serde(rename = "pending_lightning_send_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub pending_lightning_send: Amount,
 	#[serde(rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_exit: Amount,
 }
