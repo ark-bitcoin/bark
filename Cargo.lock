@@ -418,7 +418,6 @@ dependencies = [
  "lnurl-rs",
  "log",
  "miniscript",
- "prost",
  "rand 0.9.0",
  "rusqlite",
  "serde",
