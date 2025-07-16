@@ -1,6 +1,6 @@
 use bitcoin::Amount;
 use rusqlite::Row;
-
+use ark::lightning::Preimage;
 use crate::movement::{Movement, MovementRecipient, VtxoSubset};
 use crate::persist::OffchainBoard;
 
@@ -25,7 +25,7 @@ pub (crate) fn row_to_offchain_board(row: &Row<'_>) -> anyhow::Result<OffchainBo
 	let raw_payment = row.get::<_, Vec<u8>>("serialised_payment")?;
 	Ok(OffchainBoard {
 		payment_hash: row.get("payment_hash")?,
-		payment_preimage: row.get("preimage")?,
+		payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
 		payment: serde_json::from_slice(&raw_payment)?,
 	})
 }

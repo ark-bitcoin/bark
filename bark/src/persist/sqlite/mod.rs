@@ -11,7 +11,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{BlockHeight, BlockRef};
 use log::debug;
 use rusqlite::{Connection, Transaction};
-
+use ark::lightning::Preimage;
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
 	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
@@ -188,7 +188,7 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Store an offchain board
-	fn store_offchain_board(&self, payment_hash: &[u8; 32], preimage: &[u8; 32], payment: OffchainPayment) -> anyhow::Result<()> {
+	fn store_offchain_board(&self, payment_hash: &[u8; 32], preimage: &Preimage, payment: OffchainPayment) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_offchain_board(&conn, payment_hash, preimage, payment)?;
 		Ok(())
