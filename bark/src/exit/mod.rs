@@ -33,25 +33,38 @@ impl Exit {
 		chain_source: Arc<ChainSourceClient>,
 		onchain: &onchain::Wallet,
 	) -> anyhow::Result<Exit> {
-		let mut tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
+		let tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
 
 		// Gather the database entries for our exit and convert them into ExitVtxo structs
 		let exit_vtxo_entries = persister.get_exit_vtxo_entries()?;
-		let mut exit_vtxos = Vec::with_capacity(exit_vtxo_entries.len());
+
+		let mut exit = Exit {
+			exit_vtxos: Vec::with_capacity(exit_vtxo_entries.len()),
+			tx_manager,
+			persister,
+			chain_source,
+		};
+
+		exit.load(onchain).await?;
+
+		Ok(exit)
+	}
+
+	pub (crate) async fn load(
+		&mut self,
+		onchain: &onchain::Wallet,
+	) -> anyhow::Result<()> {
+		let exit_vtxo_entries = self.persister.get_exit_vtxo_entries()?;
 		for entry in exit_vtxo_entries {
-			if let Some(vtxo) = persister.get_wallet_vtxo(entry.vtxo_id)? {
-				let txids = tx_manager.track_vtxo_exits(&vtxo.vtxo, onchain).await?;
-				exit_vtxos.push(ExitVtxo::from_parts(vtxo.vtxo, txids, entry.state, entry.history));
+			if let Some(vtxo) = self.persister.get_wallet_vtxo(entry.vtxo_id)? {
+				let txids = self.tx_manager.track_vtxo_exits(&vtxo.vtxo, onchain).await?;
+				self.exit_vtxos.push(ExitVtxo::from_parts(vtxo.vtxo, txids, entry.state, entry.history));
 			} else {
 				error!("VTXO {} is marked for exit but it's missing from the database", entry.vtxo_id);
 			}
 		}
-		Ok(Exit {
-			exit_vtxos,
-			tx_manager,
-			persister,
-			chain_source,
-		})
+
+		Ok(())
 	}
 
 	pub async fn get_exit_status(
