@@ -2568,13 +2568,11 @@ dependencies = [
  "cfg-if",
  "log",
  "regex",
- "serde",
  "siphasher",
  "thiserror 1.0.69",
  "time",
  "tokio",
  "tokio-postgres",
- "toml",
  "url",
  "walkdir",
 ]

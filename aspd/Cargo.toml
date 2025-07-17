@@ -38,7 +38,7 @@ tokio-postgres.workspace = true
 bb8.workspace = true
 bb8-postgres.workspace = true
 postgres-types.workspace = true
-refinery = { version = "0.8.14", features = ["tokio-postgres"] }
+refinery = { version = "0.8.14", default-features = false, features = ["tokio-postgres"] }
 
 lazy_static.workspace = true
 fern.workspace = true
