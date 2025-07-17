@@ -3,7 +3,6 @@ use std::str::FromStr;
 use anyhow::Context;
 use bark_json::InvoiceInfo;
 use bitcoin::Amount;
-use bitcoin::hex::DisplayHex;
 use clap;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, warn};
