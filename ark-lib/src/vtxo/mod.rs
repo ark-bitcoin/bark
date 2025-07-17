@@ -72,7 +72,7 @@ use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt};
 
 use crate::{musig, util};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
-use crate::lightning::{server_htlc_receive_taproot, server_htlc_send_taproot};
+use crate::lightning::{server_htlc_receive_taproot, server_htlc_send_taproot, PaymentHash};
 use crate::tree::signed::cosign_taproot;
 
 
@@ -303,7 +303,7 @@ impl From<PubkeyVtxoPolicy> for VtxoPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerHtlcSendVtxoPolicy {
 	pub user_pubkey: PublicKey,
-	pub payment_hash: sha256::Hash,
+	pub payment_hash: PaymentHash,
 	pub htlc_expiry: BlockHeight,
 }
 
@@ -316,7 +316,7 @@ impl From<ServerHtlcSendVtxoPolicy> for VtxoPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerHtlcRecvVtxoPolicy {
 	pub user_pubkey: PublicKey,
-	pub payment_hash: sha256::Hash,
+	pub payment_hash: PaymentHash,
 	pub htlc_expiry: BlockHeight,
 }
 
@@ -348,11 +348,11 @@ impl VtxoPolicy {
 		Self::Pubkey(PubkeyVtxoPolicy { user_pubkey })
 	}
 
-	pub fn new_server_htlc_send(user_pubkey: PublicKey, payment_hash: sha256::Hash, htlc_expiry: BlockHeight) -> Self {
+	pub fn new_server_htlc_send(user_pubkey: PublicKey, payment_hash: PaymentHash, htlc_expiry: BlockHeight) -> Self {
 		Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
 	}
 
-	pub fn new_server_htlc_recv(user_pubkey: PublicKey, payment_hash: sha256::Hash, htlc_expiry: BlockHeight) -> Self {
+	pub fn new_server_htlc_recv(user_pubkey: PublicKey, payment_hash: PaymentHash, htlc_expiry: BlockHeight) -> Self {
 		Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
 	}
 
@@ -445,7 +445,7 @@ impl VtxoPolicy {
 			},
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, .. }) => {
 				util::hash_delay_sign(
-					*payment_hash, 2 * exit_delta, user_pubkey.x_only_public_key().0,
+					payment_hash.to_sha256_hash(), 2 * exit_delta, user_pubkey.x_only_public_key().0,
 				)
 			},
 		}
@@ -804,7 +804,7 @@ impl Vtxo {
 	}
 
 	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
-	pub fn server_htlc_out_payment_hash(&self) -> Option<sha256::Hash> {
+	pub fn server_htlc_out_payment_hash(&self) -> Option<PaymentHash> {
 		match self.policy {
 			VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
 			VtxoPolicy::ServerHtlcRecv { .. } => None,
@@ -812,7 +812,7 @@ impl Vtxo {
 		}
 	}
 
-	/// Whether this [Vtxo] can be spend in an arkoor tx.
+	/// Whether this [Vtxo] can be spent in an arkoor tx.
 	pub fn is_arkoor_compatible(&self) -> bool {
 		self.genesis.iter().all(|i| match i.transition {
 			GenesisTransition::Cosigned { .. } => true,
@@ -942,13 +942,13 @@ impl ProtocolEncoding for VtxoPolicy {
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_SEND)?;
 				user_pubkey.encode(w)?;
-				payment_hash.encode(w)?;
+				payment_hash.to_sha256_hash().encode(w)?;
 				w.emit_u32(*htlc_expiry)?;
 			},
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_RECV)?;
 				user_pubkey.encode(w)?;
-				payment_hash.encode(w)?;
+				payment_hash.to_sha256_hash().encode(w)?;
 				w.emit_u32(*htlc_expiry)?;
 			},
 		}
@@ -963,13 +963,13 @@ impl ProtocolEncoding for VtxoPolicy {
 			},
 			VTXO_POLICY_SERVER_HTLC_SEND => {
 				let user_pubkey = PublicKey::decode(r)?;
-				let payment_hash = sha256::Hash::decode(r)?;
+				let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
 				let htlc_expiry = r.read_u32()?;
 				Ok(Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
 			},
 			VTXO_POLICY_SERVER_HTLC_RECV => {
 				let user_pubkey = PublicKey::decode(r)?;
-				let payment_hash = sha256::Hash::decode(r)?;
+				let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
 				let htlc_expiry = r.read_u32()?;
 				Ok(Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
 			},
@@ -1193,12 +1193,12 @@ pub mod test {
 		// arkoor1: htlc send
 
 		let arkoor_htlc_out_user_key = Keypair::from_str("33b6f3ede430a1a53229f55da7117242d8392cbfc64a57249ba70731dba71408").unwrap();
-		let payment_hash = sha256::Hash::hash("arkoor1".as_bytes());
+		let payment_hash = PaymentHash::from(sha256::Hash::hash("arkoor1".as_bytes()).to_byte_array());
 		let arkoor1out1 = VtxoRequest {
 			amount: Amount::from_sat(9000),
 			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 				user_pubkey: arkoor_htlc_out_user_key.public_key(),
-				payment_hash: payment_hash,
+				payment_hash,
 				htlc_expiry: expiry_height - 1000,
 			}),
 		};
@@ -1259,7 +1259,7 @@ pub mod test {
 		let round2_user_key = Keypair::from_str("c0b645b01cac427717a18b30c7c9238dee2b3885f659930144fbe05061ad6166").unwrap();
 		let round2_cosign_key = Keypair::from_str("628789cd7b7e02766d184ecfecc433798c9640349e41822df7996c66a56fc633").unwrap();
 		println!("round2_cosign_key: {}", round2_cosign_key.public_key());
-		let round2_payment_hash = sha256::Hash::hash("round2".as_bytes());
+		let round2_payment_hash = PaymentHash::from(sha256::Hash::hash("round2".as_bytes()).to_byte_array());
 		let round2_req = SignedVtxoRequest {
 			vtxo: VtxoRequest {
 				amount: Amount::from_sat(10_000),

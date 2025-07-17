@@ -8,7 +8,7 @@ use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
 use rusqlite::{self, named_params, Connection, ToSql};
-use ark::lightning::Preimage;
+use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
@@ -458,7 +458,7 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight
 
 pub fn store_offchain_board(
 	conn: &Connection,
-	payment_hash: &[u8; 32],
+	payment_hash: &PaymentHash,
 	preimage: &Preimage,
 	payment: OffchainPayment,
 ) -> anyhow::Result<()> {
@@ -477,10 +477,10 @@ pub fn store_offchain_board(
 	Ok(())
 }
 
-pub fn fetch_offchain_board_by_payment_hash(conn: &Connection, payment_hash: &[u8; 32]) -> anyhow::Result<Option<OffchainBoard>> {
+pub fn fetch_offchain_board_by_payment_hash(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<Option<OffchainBoard>> {
 	let query = "SELECT * FROM bark_offchain_board WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query((payment_hash, ))?;
+	let mut rows = statement.query((payment_hash.as_ref(), ))?;
 
 	Ok(rows.next()?.map(|row| row_to_offchain_board(&row)).transpose()?)
 }

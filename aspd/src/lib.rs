@@ -32,9 +32,7 @@ use std::time::Duration;
 use anyhow::Context;
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin::hex::DisplayHex;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
-use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use log::{info, trace, warn, error};
@@ -43,7 +41,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
-use ark::lightning::Preimage;
+use ark::lightning::{PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos::{self, Bolt11PaymentResult};
@@ -613,7 +611,8 @@ impl Server {
 		inputs: Vec<Vtxo>,
 		user_nonces: Vec<musig::PublicNonce>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice.payment_hash()).await?.is_some() {
+		let payment_hash = PaymentHash::from(*invoice.payment_hash());
+		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
 		}
 
@@ -637,7 +636,7 @@ impl Server {
 
 		let pay_req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, *invoice.payment_hash(), expiry),
+			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, payment_hash, expiry),
 		};
 
 		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
@@ -664,6 +663,7 @@ impl Server {
 		wait: bool,
 	) -> anyhow::Result<protos::Bolt11PaymentResult> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
+		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash());
 
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
 
@@ -683,7 +683,7 @@ impl Server {
 
 			let payment_hash = vtxo.server_htlc_out_payment_hash()
 				.context("vtxo provided is not an outgoing htlc vtxo")?;
-			if payment_hash != *invoice.payment_hash() {
+			if payment_hash != invoice_payment_hash {
 				return badarg!("htlc payment hash doesn't match invoice");
 			}
 
@@ -706,12 +706,12 @@ impl Server {
 		// Spawn a task that performs the payment
 		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, wait).await;
 
-		Self::process_bolt11_response(*invoice.payment_hash(), res)
+		Self::process_bolt11_response(invoice_payment_hash, res)
 	}
 
 	async fn check_bolt11_payment(
 		&self,
-		payment_hash: sha256::Hash,
+		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<protos::Bolt11PaymentResult> {
 		let res = self.cln.check_bolt11(&payment_hash, wait).await;
@@ -720,7 +720,7 @@ impl Server {
 	}
 
 	fn process_bolt11_response(
-		payment_hash: sha256::Hash,
+		payment_hash: PaymentHash,
 		res: anyhow::Result<Preimage>,
 	) -> anyhow::Result<Bolt11PaymentResult> {
 		match res {
@@ -728,7 +728,7 @@ impl Server {
 				Ok(protos::Bolt11PaymentResult {
 					progress_message: "Payment completed".to_string(),
 					status: protos::PaymentStatus::Complete.into(),
-					payment_hash: payment_hash.as_byte_array().to_vec(),
+					payment_hash: payment_hash.to_vec(),
 					payment_preimage: Some(preimage.to_vec())
 				})
 			},
@@ -738,14 +738,14 @@ impl Server {
 					Ok(protos::Bolt11PaymentResult {
 						progress_message: format!("Payment failed: {}", e),
 						status: protos::PaymentStatus::Failed.into(),
-						payment_hash: payment_hash.as_byte_array().to_vec(),
+						payment_hash: payment_hash.to_vec(),
 						payment_preimage: None
 					})
 				} else {
 					Ok(protos::Bolt11PaymentResult {
 						progress_message: format!("Error during payment: {:?}", e),
 						status: protos::PaymentStatus::Failed.into(),
-						payment_hash: payment_hash.as_byte_array().to_vec(),
+						payment_hash: payment_hash.to_vec(),
 						payment_preimage: None
 					})
 				}
@@ -812,10 +812,10 @@ impl Server {
 		self.cosign_oor_package_with_builder(&package).await
 	}
 
-	async fn start_bolt11_board(&self, payment_hash: sha256::Hash, amount: Amount)
+	async fn start_bolt11_board(&self, payment_hash: PaymentHash, amount: Amount)
 		-> anyhow::Result<protos::StartBolt11BoardResponse>
 	{
-		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_byte_array().as_hex());
+		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
 		let subscriptions = self.db
 			.get_htlc_subscriptions_by_payment_hash(&payment_hash)
@@ -855,9 +855,10 @@ impl Server {
 	async fn subscribe_bolt11_board(&self, invoice: Bolt11Invoice)
 		-> anyhow::Result<protos::SubscribeBolt11BoardResponse>
 	{
+		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash());
 		let status = LightningHtlcSubscriptionStatus::Settled;
 		if self.db.get_htlc_subscription_by_payment_hash(
-			&invoice.payment_hash(), status).await?.is_some()
+			&invoice_payment_hash, status).await?.is_some()
 		{
 			bail!("invoice already settled");
 		}
@@ -865,7 +866,7 @@ impl Server {
 		let htlc = loop {
 			let status = LightningHtlcSubscriptionStatus::Accepted;
 			let htlc = self.db
-				.get_htlc_subscription_by_payment_hash(&invoice.payment_hash(), status)
+				.get_htlc_subscription_by_payment_hash(&invoice_payment_hash, status)
 				.await?;
 
 			if let Some(htlc) = htlc {
@@ -895,7 +896,8 @@ impl Server {
 			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
 
 		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
-			if sha256::Hash::hash(payment_preimage.as_ref()) != *payment_hash {
+			let payment_hash_from_preimage = PaymentHash::from_preimage(*payment_preimage);
+			if payment_hash_from_preimage != *payment_hash {
 				bail!("input vtxo payment hash does not match preimage");
 			}
 
