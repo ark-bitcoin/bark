@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 use bdk_wallet::chain::ChainPosition;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Network, Transaction, Txid};
 use log::{debug, error, info, trace};
 use tokio::sync::RwLock;
 
@@ -43,6 +43,10 @@ impl ExitTransactionManager {
 			index: HashMap::new(),
 			status: HashMap::new(),
 		})
+	}
+
+	pub fn network(&self) -> Network {
+		self.chain_source.network()
 	}
 
 	pub async fn track_vtxo_exits(

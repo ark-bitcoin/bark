@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use bitcoin::{BlockHash, OutPoint, ScriptBuf};
+use bitcoin::{BlockHash, Network, OutPoint, ScriptBuf};
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256::HashEngine;
 
@@ -25,7 +25,8 @@ async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSourceC
 			ctx.electrs.as_ref().expect("electrs is not started").chain_source()
 		}
 	};
-	(ctx, ChainSourceClient::new(chain_source, None).expect("failed to create chain source client"))
+	(ctx, ChainSourceClient::new(chain_source, Network::Regtest, None).await
+		.expect("failed to create chain source client"))
 }
 
 async fn test_bitcoind(ctx: &TestContext, id: usize) -> Bitcoind {

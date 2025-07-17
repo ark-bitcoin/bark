@@ -10,7 +10,8 @@ use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_bitcoind_rpc::bitcoincore_rpc::json::EstimateMode;
 use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
-use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
+use bitcoin::constants::genesis_block;
+use bitcoin::{Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Wtxid};
 use log::{debug, error, info, warn};
 use tokio::sync::RwLock;
 
@@ -43,8 +44,30 @@ pub (crate) enum InnerChainSourceClient {
 	Esplora(esplora_client::AsyncClient),
 }
 
+impl InnerChainSourceClient {
+	async fn check_network(&self, expected: Network) -> anyhow::Result<()> {
+		match self {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
+				let network = bitcoind.get_blockchain_info()?;
+				if expected != network.chain {
+					bail!("Network mismatch: expected {:?}, got {:?}", expected, network.chain);
+				}
+			},
+			InnerChainSourceClient::Esplora(ref client) => {
+				let genesis_hash = client.get_block_hash(0).await?;
+				if genesis_hash != genesis_block(expected).block_hash() {
+					bail!("Network mismatch: expected {:?}, got {:?}", expected, genesis_hash);
+				}
+			},
+		};
+
+		Ok(())
+	}
+}
+
 pub struct ChainSourceClient {
 	inner: InnerChainSourceClient,
+	network: Network,
 	fee_rates: RwLock<FeeRates>,
 }
 
@@ -67,7 +90,11 @@ impl ChainSourceClient {
 		self.fee_rates.read().await.clone()
 	}
 
-	pub fn new(chain_source: ChainSource, fallback_fee: Option<FeeRate>) -> anyhow::Result<Self> {
+	pub fn network(&self) -> Network {
+		self.network
+	}
+
+	pub async fn new(chain_source: ChainSource, network: Network, fallback_fee: Option<FeeRate>) -> anyhow::Result<Self> {
 		let inner = match chain_source {
 			ChainSource::Bitcoind { url, auth } => InnerChainSourceClient::Bitcoind(
 				bitcoincore_rpc::Client::new(&url, auth)
@@ -81,10 +108,12 @@ impl ChainSourceClient {
 			}),
 		};
 
+		inner.check_network(network).await?;
+
 		let fee = fallback_fee.unwrap_or(FeeRate::BROADCAST_MIN);
 		let fee_rates = RwLock::new(FeeRates { fast: fee, regular: fee, slow: fee });
 
-		Ok(Self { inner, fee_rates })
+		Ok(Self { inner, network, fee_rates })
 	}
 
 	async fn fetch_fee_rates(&self) -> anyhow::Result<FeeRates> {

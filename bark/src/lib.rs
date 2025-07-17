@@ -395,7 +395,10 @@ impl Wallet {
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
-		let chain = Arc::new(ChainSourceClient::new(chain_source, config.fallback_fee_rate)?);
+
+		let chain_source_client = ChainSourceClient::new(
+			chain_source, properties.network, config.fallback_fee_rate).await?;
+		let chain = Arc::new(chain_source_client);
 
 		let db = Arc::new(db);
 		let onchain = onchain::Wallet::create(properties.network, seed, db.clone(), chain.clone())
