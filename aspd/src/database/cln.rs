@@ -331,7 +331,7 @@ impl Db {
 		&self,
 		old_lightning_invoice: LightningInvoice,
 		new_final_amount_msat: Option<u64>,
-		new_preimage: Option<&Preimage>,
+		new_preimage: Option<Preimage>,
 	) -> anyhow::Result<Option<DateTime<Utc>>> {
 		let conn = self.pool.get().await.unwrap();
 
@@ -348,7 +348,7 @@ impl Db {
 		let row = conn.query_opt(&stmt, &[
 			&old_lightning_invoice.lightning_invoice_id,
 			&old_lightning_invoice.updated_at,
-			&new_preimage.map(|p| &p.as_ref()[..]),
+			&new_preimage.as_ref().map(|p| &p.as_ref()[..]),
 			&final_amount_msat,
 		]).await?;
 
@@ -547,7 +547,7 @@ impl Db {
 	/// Retrieves all htlc subscriptions for the provided payment hash.
 	pub async fn get_htlc_subscriptions_by_payment_hash(
 		&self,
-		payment_hash: &PaymentHash,
+		payment_hash: PaymentHash,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
 		let conn = self.pool.get().await?;
 
@@ -571,7 +571,7 @@ impl Db {
 
 	pub async fn get_htlc_subscription_by_payment_hash(
 		&self,
-		payment_hash: &PaymentHash,
+		payment_hash: PaymentHash,
 		status: LightningHtlcSubscriptionStatus,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let conn = self.pool.get().await?;

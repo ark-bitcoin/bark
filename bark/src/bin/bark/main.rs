@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{address, Address, Amount, FeeRate};
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 use lightning_invoice::Bolt11Invoice;

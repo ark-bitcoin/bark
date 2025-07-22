@@ -33,6 +33,7 @@ use anyhow::Context;
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use log::{info, trace, warn, error};
@@ -817,9 +818,7 @@ impl Server {
 	{
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
-		let subscriptions = self.db
-			.get_htlc_subscriptions_by_payment_hash(&payment_hash)
-			.await?;
+		let subscriptions = self.db.get_htlc_subscriptions_by_payment_hash(payment_hash).await?;
 
 		let subscriptions_by_status = subscriptions.iter()
 			.fold::<HashMap<_, Vec<_>>, _>(HashMap::new(), |mut acc, sub| {
@@ -857,16 +856,17 @@ impl Server {
 	{
 		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash());
 		let status = LightningHtlcSubscriptionStatus::Settled;
-		if self.db.get_htlc_subscription_by_payment_hash(
-			&invoice_payment_hash, status).await?.is_some()
-		{
+		let settled = self.db.get_htlc_subscription_by_payment_hash(
+			invoice_payment_hash, status,
+		).await?;
+		if settled.is_some() {
 			bail!("invoice already settled");
 		}
 
 		let htlc = loop {
 			let status = LightningHtlcSubscriptionStatus::Accepted;
 			let htlc = self.db
-				.get_htlc_subscription_by_payment_hash(&invoice_payment_hash, status)
+				.get_htlc_subscription_by_payment_hash(invoice_payment_hash, status)
 				.await?;
 
 			if let Some(htlc) = htlc {
@@ -890,20 +890,19 @@ impl Server {
 		input_vtxo_id: VtxoId,
 		vtxo_req: VtxoRequest,
 		user_nonce: musig::PublicNonce,
-		payment_preimage: &Preimage,
+		payment_preimage: Preimage,
 	) -> anyhow::Result<ArkoorCosignResponse> {
 		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await
 			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
 
 		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
-			let payment_hash_from_preimage = PaymentHash::from_preimage(*payment_preimage);
-			if payment_hash_from_preimage != *payment_hash {
+			if *payment_hash != PaymentHash::from_preimage(payment_preimage) {
 				bail!("input vtxo payment hash does not match preimage");
 			}
 
 			let status = LightningHtlcSubscriptionStatus::Accepted;
 			let htlc_subscription = self.db
-				.get_htlc_subscription_by_payment_hash(&payment_hash, status).await?
+				.get_htlc_subscription_by_payment_hash(*payment_hash, status).await?
 				.context("no htlc subscription found")?;
 
 			self.cln.settle_invoice(

@@ -44,6 +44,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::AmountExt;
 use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
@@ -257,8 +258,8 @@ impl ClnManager {
 		rx.await.context("invoice return channel broken")
 	}
 
-	pub async fn settle_invoice(&self, subscription_id: i64, preimage: &Preimage) -> anyhow::Result<anyhow::Result<()>> {
-		let payment_hash = PaymentHash::from_preimage(*preimage);
+	pub async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<anyhow::Result<()>> {
+		let payment_hash = PaymentHash::from_preimage(preimage);
 
 		// If an open payment attempt exists for the payment hash, it's an ASP self-payment
 		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
@@ -670,7 +671,7 @@ impl ClnManagerProcess {
 		// If there is an existing subscription, it's an ASP self-payment
 		// so we can directly mark it as accepted, then skip cln payment
 		let subscription = self.db.get_htlc_subscription_by_payment_hash(
-			&PaymentHash::from(invoice.payment_hash()),
+			PaymentHash::from(*invoice.payment_hash()),
 			LightningHtlcSubscriptionStatus::Created,
 		).await?;
 		if let Some(subscription) = subscription {
@@ -965,7 +966,7 @@ impl database::Db {
 		status: LightningPaymentStatus,
 		payment_error: Option<&str>,
 		final_amount_msat: Option<u64>,
-		preimage: Option<&Preimage>,
+		preimage: Option<Preimage>,
 	) -> anyhow::Result<bool> {
 		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "invoice not found")?;

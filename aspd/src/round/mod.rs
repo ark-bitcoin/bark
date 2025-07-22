@@ -348,7 +348,7 @@ impl CollectingPayments {
 		for req in reqs {
 			if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = req.req.vtxo.policy {
 				let status = LightningHtlcSubscriptionStatus::Accepted;
-				let htlc = db.get_htlc_subscription_by_payment_hash(&payment_hash, status).await?;
+				let htlc = db.get_htlc_subscription_by_payment_hash(payment_hash, status).await?;
 
 				// TODO: check if a non-expired htlc vtxo with same payment_hash exists and bail if so
 

@@ -4,6 +4,7 @@ pub extern crate bitcoin;
 #[macro_use] extern crate serde;
 #[macro_use] extern crate lazy_static;
 
+#[macro_use] pub mod util;
 pub mod arkoor;
 pub mod connectors;
 pub mod encode;
@@ -14,7 +15,6 @@ pub mod musig;
 pub mod board;
 pub mod rounds;
 pub mod tree;
-pub mod util;
 pub mod vtxo;
 
 pub use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
