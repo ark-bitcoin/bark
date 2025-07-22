@@ -37,7 +37,6 @@ use bip39::Mnemonic;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::hashes::Hash;
-use bitcoin::hex::DisplayHex;
 use bitcoin::params::Params;
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
@@ -174,7 +173,7 @@ enum AttemptResult {
 struct RoundResult {
 	round_id: RoundId,
 	/// VTXOs created in the round
-	vtxos: Vec<Vtxo>,
+	vtxos: Vec<WalletVtxo>,
 }
 
 /// Read-only properties of the Bark wallet.
@@ -920,7 +919,7 @@ impl Wallet {
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok((vtxos.to_vec(), vec![req.clone()], Vec::new()))
+			Ok((vtxos.to_vec(), vec![(req.clone(), VtxoState::Spendable)], Vec::new()))
 		}).await.context("round failed")?;
 
 		Ok(Some(round_id))
@@ -968,7 +967,7 @@ impl Wallet {
 
 		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
 		for vtxo in vtxos {
-			let invoice = vtxo.state.as_pending_lightning().unwrap();
+			let invoice = vtxo.state.as_pending_lightning_send().unwrap();
 			htlc_vtxos_by_payment_hash.entry(*invoice.0.payment_hash()).or_default().push(vtxo);
 		}
 
@@ -1419,16 +1418,70 @@ impl Wallet {
 		Ok(oor.created)
 	}
 
-	pub async fn claim_bolt11_payment(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+	async fn claim_htlc_vtxo(&mut self, vtxo: &WalletVtxo) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
-		let current_height = self.onchain.tip().await?;
+
+		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
 
 		let offchain_board = self.db.fetch_offchain_board_by_payment_hash(
-			&ark::lightning::PaymentHash::from(*invoice.payment_hash())
+			&payment_hash
 		)?.context("no offchain board found")?;
 
-		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		let (keychain, index) = self.db.get_vtxo_key(&vtxo.vtxo)?;
+		let keypair = self.peak_keypair(keychain, index)?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+
+		// Claiming arkoor against preimage
+		let pay_req = VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(keypair.public_key()),
+			amount: vtxo.vtxo.amount(),
+		};
+
+		let inputs = [vtxo.vtxo.clone()];
+		let pubs = [pub_nonce];
+		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
+
+		let req = protos::ClaimBolt11BoardRequest {
+			arkoor: Some(builder.arkoors.first().unwrap().into()),
+			payment_preimage: offchain_board.payment_preimage.to_vec(),
+		};
+
+		info!("Claiming arkoor against payment preimage");
+		self.db.set_preimage_revealed(&offchain_board.payment_hash)?;
+		let cosign_resp = asp.client.claim_bolt11_board(req).await
+			.context("failed to claim bolt11 board")?
+			.into_inner().try_into().context("invalid server cosign response")?;
+
+		ensure!(builder.verify_cosign_response(&[&cosign_resp]),
+			"invalid arkoor cosignature received from server",
+		);
+
+		let (vtxos, _) = builder.build_vtxos(
+			&[cosign_resp],
+			&[keypair],
+			vec![sec_nonce],
+		)?;
+		let [vtxo] = vtxos.try_into().expect("had exactly one request");
+
+		info!("Got an arkoor from lightning! {}", vtxo.id());
+		self.db.register_movement(MovementArgs {
+			spends: &inputs.iter().collect::<Vec<_>>(),
+			receives: &[(&vtxo, VtxoState::Spendable)],
+			recipients: &[],
+			fees: None,
+		})?;
+
+		Ok(())
+	}
+
+
+	pub async fn finish_bolt11_board(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+		let tip = self.onchain.tip().await?;
+		let mut asp = self.require_asp()?;
+
+		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
+
+		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
 		let amount = Amount::from_msat_floor(
 			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
@@ -1445,60 +1498,20 @@ impl Wallet {
 		// Create a VTXO to pay receive fees:
 		let fee_vtxos = self.create_fee_vtxos(*LN_BOARD_FEE_SATS).await?;
 
-		let htlc_expiry = current_height + asp.info.vtxo_expiry_delta as u32;
-		let fee_vtxo_cloned = fee_vtxos.clone();
+		let state = VtxoState::PendingLightningRecv { payment_hash };
+
+		let expiry_height = tip + asp.info.htlc_expiry_delta as BlockHeight;
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
-			let inputs = fee_vtxo_cloned.clone();
-			let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
 			let htlc_pay_req = VtxoRequest {
-				amount,
-				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, htlc_expiry),
+				amount: amount,
+				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
 			};
 
-			Ok((inputs, vec![htlc_pay_req], vec![]))
+			Ok((fee_vtxos.clone(), vec![(htlc_pay_req, state.clone())], vec![]))
 		}).await.context("round failed")?;
 
 		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
-		info!("Got HTLC vtxo in round: {}", htlc_vtxo.id());
-		trace!("Got HTLC vtxo in round: {}", htlc_vtxo.serialize().as_hex());
-
-		// Claiming arkoor against preimage
-		let pay_req = VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(keypair.public_key()),
-			amount: amount,
-		};
-
-		let inputs = [htlc_vtxo];
-		let pubs = [pub_nonce];
-		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
-
-		let req = protos::ClaimBolt11BoardRequest {
-			arkoor: Some(builder.arkoors.first().unwrap().into()),
-			payment_preimage: offchain_board.payment_preimage.to_vec(),
-		};
-
-		info!("Claiming arkoor against payment preimage");
-		let cosign_resp = asp.client.claim_bolt11_board(req).await
-			.context("failed to claim bolt11 board")?
-			.into_inner().try_into().context("invalid server cosign response")?;
-		ensure!(builder.verify_cosign_response(&[&cosign_resp]),
-			"invalid arkoor cosignature received from server",
-		);
-
-		let (vtxos, _) = builder.build_vtxos(
-			&[cosign_resp],
-			&[keypair],
-			vec![sec_nonce],
-		)?;
-		let [vtxo] = vtxos.try_into().expect("had exactly one request");
-
-		info!("Got an arkoor from lightning! {}", vtxo.id());
-		self.db.register_movement(MovementArgs {
-			spends: &fee_vtxos.iter().collect::<Vec<_>>(),
-			receives: &[(&vtxo, VtxoState::Spendable)],
-			recipients: &[],
-			fees: Some(fee_vtxos.iter().map(|v| v.amount()).sum::<Amount>()),
-		})?;
+		self.claim_htlc_vtxo(&htlc_vtxo).await?;
 
 		Ok(())
 	}
@@ -1564,7 +1577,7 @@ impl Wallet {
 				}
 			};
 
-			Ok((input_vtxos.clone(), change.into_iter().collect(), vec![offb]))
+			Ok((input_vtxos.clone(), change.into_iter().map(|c| (c, VtxoState::Spendable)).collect(), vec![offb]))
 		}).await.context("round failed")?;
 
 		Ok(SendOnchain { round: round_id })
@@ -1575,7 +1588,7 @@ impl Wallet {
 		events: &mut S,
 		round_state: &mut RoundState,
 		input_vtxos: &HashMap<VtxoId, Vtxo>,
-		pay_reqs: &[VtxoRequest],
+		pay_reqs: &[(VtxoRequest, VtxoState)],
 		offb_reqs: &[OffboardRequest],
 	) -> anyhow::Result<AttemptResult> {
 		let mut asp = self.require_asp()?;
@@ -1588,7 +1601,7 @@ impl Wallet {
 			.collect::<Vec<_>>();
 		let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
 			SignedVtxoRequest {
-				vtxo: req.clone(),
+				vtxo: req.0.clone(),
 				cosign_pubkey: ck.public_key(),
 			}
 		}).collect::<Vec<_>>();
@@ -1881,22 +1894,20 @@ impl Wallet {
 		}
 
 		// Finally we save state after refresh
-		let mut new_vtxos: Vec<Vtxo> = vec![];
+		let mut new_vtxos = vec![];
 		for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
-			if pay_reqs.contains(&req.vtxo) {
+			let req = pay_reqs.into_iter().find(|(r, _)| r == &req.vtxo);
+			if let Some((_, s)) = req {
 				let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
-				new_vtxos.push(vtxo);
+
+				info!("New VTXO from round: {} ({}, {})", vtxo.id(), vtxo.amount(), vtxo.policy_type());
+
+				// validate the received vtxos
+				// This is more like a sanity check since we crafted them ourselves.
+				vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
+
+				new_vtxos.push(WalletVtxo { vtxo, state: s.clone() });
 			}
-		}
-
-		for vtxo in &new_vtxos {
-			info!("New VTXO from round: {} ({}, {})", vtxo.id(), vtxo.amount(), vtxo.policy_type());
-		}
-
-		// validate the received vtxos
-		// This is more like a sanity check since we crafted them ourselves.
-		for vtxo in &new_vtxos {
-			vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
 		}
 
 		// if there is one offboard req, we register as a spend, else as a refresh
@@ -1908,24 +1919,12 @@ impl Wallet {
 			Ok((address.to_string(), o.amount))
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
-		let received = new_vtxos.iter()
-			.filter(|v| { matches!(v.policy(), VtxoPolicy::Pubkey { .. })})
-			.map(|v| (v, VtxoState::Spendable))
-			.collect::<Vec<_>>();
-
-		// NB: if there is no received VTXO nor sent in the round, for now we assume
-		// the movement will be registered later (e.g: lightning receive use case)
-		//
-		// Later, we will split the round participation and registration might be more
-		// manual
-		if !sent.is_empty() || !received.is_empty() {
-			self.db.register_movement(MovementArgs {
-				spends: &input_vtxos.values().collect::<Vec<_>>(),
-				receives: &received,
-				recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
-				fees: None,
-			}).context("failed to store OOR vtxo")?;
-		}
+		self.db.register_movement(MovementArgs {
+			spends: &input_vtxos.values().collect::<Vec<_>>(),
+			receives: &new_vtxos.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
+			recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
+			fees: None
+		}).context("failed to store OOR vtxo")?;
 
 		info!("Round finished");
 		return Ok(AttemptResult::Success(RoundResult {
@@ -1944,7 +1943,7 @@ impl Wallet {
 	async fn participate_round(
 		&self,
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
-			(Vec<Vtxo>, Vec<VtxoRequest>, Vec<OffboardRequest>)
+			(Vec<Vtxo>, Vec<(VtxoRequest, VtxoState)>, Vec<OffboardRequest>)
 		>,
 	) -> anyhow::Result<RoundResult> {
 		let mut asp = self.require_asp()?;
@@ -1987,8 +1986,8 @@ impl Wallet {
 			let (input_vtxos, pay_reqs, offb_reqs) = round_input(&round_state.info)
 				.context("error providing round input")?;
 
-			if let Some(payreq) = pay_reqs.iter().find(|p| p.amount < P2TR_DUST) {
-				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
+			if let Some(payreq) = pay_reqs.iter().find(|p| p.0.amount < P2TR_DUST) {
+				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.0.amount);
 			}
 
 			if let Some(offb) = offb_reqs.iter().find(|o| o.amount < P2TR_DUST) {

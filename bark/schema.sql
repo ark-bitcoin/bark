@@ -113,6 +113,7 @@ CREATE VIEW movement_view AS
 CREATE TABLE bark_offchain_board (
 			payment_hash BLOB NOT NULL PRIMARY KEY,
 			preimage BLOB NOT NULL UNIQUE,
+			preimage_revealed_at TIMESTAMP,
 			serialised_payment BLOB,
 			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 		);

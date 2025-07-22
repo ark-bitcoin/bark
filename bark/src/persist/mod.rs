@@ -24,6 +24,7 @@ pub struct OffchainBoard {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
 	pub payment: OffchainPayment,
+	pub preimage_revealed_at: Option<u64>,
 }
 
 pub trait BarkPersister: Send + Sync + 'static {
@@ -76,6 +77,8 @@ pub trait BarkPersister: Send + Sync + 'static {
 
 	/// Store an offchain board
 	fn store_offchain_board(&self, payment_hash: &PaymentHash, preimage: &Preimage, payment: OffchainPayment) -> anyhow::Result<()>;
+	/// Set preimage disclosed
+	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()>;
 	/// Fetch an offchain board by payment hash
 	fn fetch_offchain_board_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<OffchainBoard>>;
 

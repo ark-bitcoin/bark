@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bitcoin::{Amount, BlockHash, FeeRate, Network, Txid};
@@ -477,6 +478,16 @@ pub fn store_offchain_board(
 	Ok(())
 }
 
+pub fn set_preimage_revealed(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<()> {
+	let query = "UPDATE bark_offchain_board SET preimage_revealed_at = :revealed_at WHERE payment_hash = :payment_hash";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.to_vec(),
+		":revealed_at": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+	})?;
+	Ok(())
+}
+
 pub fn fetch_offchain_board_by_payment_hash(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<Option<OffchainBoard>> {
 	let query = "SELECT * FROM bark_offchain_board WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
@@ -676,6 +687,7 @@ mod test {
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#"{"PendingLightningSend":{"invoice":"lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8","amount":300000}}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
-
+		let serialised = r#"{"PendingLightningRecv":{"payment_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
 	}
 }

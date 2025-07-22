@@ -1,4 +1,4 @@
-use ark::Vtxo;
+use ark::{lightning::PaymentHash, Vtxo};
 use bitcoin::Amount;
 use lightning_invoice::Bolt11Invoice;
 
@@ -6,6 +6,7 @@ const SPENDABLE: &'static str = "Spendable";
 const UNREGISTERED_BOARD : &'static str = "UnregisteredBoard";
 const SPENT: &'static str = "Spent";
 const PENDING_LIGHTNING_SEND: &'static str = "PendingLightningSend";
+const PENDING_LIGHTNING_RECV: &'static str = "PendingLightningRecv";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VtxoStateKind {
@@ -13,6 +14,7 @@ pub enum VtxoStateKind {
 	UnregisteredBoard,
 	Spent,
 	PendingLightningSend,
+	PendingLightningRecv,
 }
 
 impl VtxoStateKind {
@@ -22,6 +24,7 @@ impl VtxoStateKind {
 			VtxoStateKind::Spendable => SPENDABLE,
 			VtxoStateKind::Spent => SPENT,
 			VtxoStateKind::PendingLightningSend => PENDING_LIGHTNING_SEND,
+			VtxoStateKind::PendingLightningRecv => PENDING_LIGHTNING_RECV,
 		}
 	}
 }
@@ -40,6 +43,13 @@ pub enum VtxoState {
 		invoice: Bolt11Invoice,
 		amount: Amount,
 	},
+	/// The current vtxo is pending claim from recipient
+	///
+	/// The VTXO hold by the state is the HTLC vtxo that can be
+	/// used to either revoke the board if the lightning part fails
+	PendingLightningRecv {
+		payment_hash: PaymentHash,
+	},
 }
 
 impl VtxoState {
@@ -49,12 +59,20 @@ impl VtxoState {
 			VtxoState::Spendable => VtxoStateKind::Spendable,
 			VtxoState::Spent => VtxoStateKind::Spent,
 			VtxoState::PendingLightningSend { .. } => VtxoStateKind::PendingLightningSend,
+			VtxoState::PendingLightningRecv { .. } => VtxoStateKind::PendingLightningRecv,
 		}
 	}
 
-	pub fn as_pending_lightning(&self) -> Option<(&Bolt11Invoice, &Amount)> {
+	pub fn as_pending_lightning_send(&self) -> Option<(&Bolt11Invoice, &Amount)> {
 		match self {
 			VtxoState::PendingLightningSend { invoice, amount } => Some((invoice, amount)),
+			_ => None,
+		}
+	}
+
+	pub fn as_pending_lightning_recv(&self) -> Option<&PaymentHash> {
+		match self {
+			VtxoState::PendingLightningRecv { payment_hash } => Some(payment_hash),
 			_ => None,
 		}
 	}
@@ -77,11 +95,12 @@ mod test {
 			VtxoStateKind::Spent,
 			VtxoStateKind::UnregisteredBoard,
 			VtxoStateKind::PendingLightningSend,
+			VtxoStateKind::PendingLightningRecv,
 		];
 
 		assert_eq!(
 			serde_json::to_string(&states).unwrap(),
-			serde_json::to_string(&[SPENDABLE, SPENT, UNREGISTERED_BOARD, PENDING_LIGHTNING_SEND]).unwrap(),
+			serde_json::to_string(&[SPENDABLE, SPENT, UNREGISTERED_BOARD, PENDING_LIGHTNING_SEND, PENDING_LIGHTNING_RECV]).unwrap(),
 		);
 
 		// If a compiler error occurs,
@@ -91,6 +110,7 @@ mod test {
 			VtxoState::Spent => {},
 			VtxoState::UnregisteredBoard => (),
 			VtxoState::PendingLightningSend { .. } => (),
+			VtxoState::PendingLightningRecv { .. } => (),
 		}
 	}
 }

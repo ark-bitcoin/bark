@@ -65,7 +65,7 @@ impl SqliteClient {
 
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
-		let allowed_states = [VtxoStateKind::Spendable, VtxoStateKind::PendingLightningSend];
+		let allowed_states = [VtxoStateKind::Spendable, VtxoStateKind::PendingLightningSend, VtxoStateKind::PendingLightningRecv];
 		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &allowed_states)?;
 		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
 		Ok(())
@@ -191,6 +191,12 @@ impl BarkPersister for SqliteClient {
 	fn store_offchain_board(&self, payment_hash: &PaymentHash, preimage: &Preimage, payment: OffchainPayment) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_offchain_board(&conn, payment_hash, preimage, payment)?;
+		Ok(())
+	}
+
+	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::set_preimage_revealed(&conn, payment_hash)?;
 		Ok(())
 	}
 
