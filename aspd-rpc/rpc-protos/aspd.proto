@@ -24,10 +24,10 @@ service ArkService {
 	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
 
 	// * LN payments
-	rpc StartBolt11Payment(Bolt11PaymentRequest) returns (ArkoorPackageCosignResponse) {}
-	rpc FinishBolt11Payment(SignedBolt11PaymentDetails) returns (Bolt11PaymentResult) {}
-	rpc CheckBolt11Payment(CheckBolt11PaymentRequest) returns (Bolt11PaymentResult) {}
-	rpc RevokeBolt11Payment(RevokeBolt11PaymentRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc StartLightningPayment(LightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
+	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
+	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
 
 	rpc StartBolt11Board(StartBolt11BoardRequest) returns (StartBolt11BoardResponse) {}
 	rpc SubscribeBolt11Board(SubscribeBolt11BoardRequest) returns (SubscribeBolt11BoardResponse) {}
@@ -155,7 +155,7 @@ message ArkoorVtxosResponse {
 
 // lightning
 
-message Bolt11PaymentRequest {
+message LightningPaymentRequest {
 	string invoice = 1;
 	optional uint64 user_amount_sat = 2;
 	repeated bytes input_vtxo_ids = 3;
@@ -163,31 +163,31 @@ message Bolt11PaymentRequest {
 	bytes user_pubkey = 5;
 }
 
-message Bolt11PaymentDetails {
+message LightningPaymentDetails {
 	bytes details = 1;
 	bytes pub_nonce = 2;
 	bytes partial_sig = 3;
 }
 
-message SignedBolt11PaymentDetails {
+message SignedLightningPaymentDetails {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
 	bool wait = 3;
 }
 
-message CheckBolt11PaymentRequest {
+message CheckLightningPaymentRequest {
 	bytes hash = 1;
 	bool wait = 2;
 }
 
-message Bolt11PaymentResult {
+message LightningPaymentResult {
 	string progress_message = 1;
 	PaymentStatus status = 2;
 	bytes payment_hash = 3;
 	optional bytes payment_preimage = 4;
 }
 
-message RevokeBolt11PaymentRequest {
+message RevokeLightningPaymentRequest {
 	repeated bytes htlc_vtxo_ids = 1;
 	repeated bytes user_nonces = 2;
 }

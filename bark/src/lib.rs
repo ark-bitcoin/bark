@@ -973,7 +973,7 @@ impl Wallet {
 		}
 
 		for (_, vtxos) in htlc_vtxos_by_payment_hash {
-			self.check_bolt11_payment(&vtxos).await?;
+			self.check_lightning_payment(&vtxos).await?;
 		}
 
 		Ok(())
@@ -1108,7 +1108,7 @@ impl Wallet {
 		Ok(arkoor.created)
 	}
 
-	async fn process_bolt11_revocation(&self, htlc_vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	async fn process_lightning_revocation(&self, htlc_vtxos: &[Vtxo]) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
 		info!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
@@ -1130,7 +1130,7 @@ impl Wallet {
 
 		let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
 
-		let req = protos::RevokeBolt11PaymentRequest {
+		let req = protos::RevokeLightningPaymentRequest {
 			htlc_vtxo_ids: revocation.arkoors.iter()
 				.map(|i| i.input.id().to_bytes().to_vec())
 				.collect(),
@@ -1138,7 +1138,7 @@ impl Wallet {
 				.map(|i| i.user_nonce.serialize().to_vec())
 				.collect(),
 		};
-		let cosign_resp: Vec<_> = asp.client.revoke_bolt11_payment(req).await?
+		let cosign_resp: Vec<_> = asp.client.revoke_lightning_payment(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 		ensure!(revocation.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
@@ -1161,7 +1161,7 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub async fn send_bolt11_payment(
+	pub async fn send_lightning_payment(
 		&mut self,
 		invoice: &Bolt11Invoice,
 		user_amount: Option<Amount>,
@@ -1222,7 +1222,7 @@ impl Wallet {
 
 		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, Some(change_keypair.public_key()))?;
 
-		let req = protos::Bolt11PaymentRequest {
+		let req = protos::LightningPaymentRequest {
 			invoice: invoice.to_string(),
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
 			input_vtxo_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
@@ -1230,8 +1230,9 @@ impl Wallet {
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
-		let cosign_resp: Vec<_> = asp.client.start_bolt11_payment(req).await?
-			.into_inner().try_into().context("invalid server cosign response")?;
+		let cosign_resp: Vec<_> = asp.client.start_lightning_payment(req).await
+			.context("htlc request failed")?.into_inner()
+			.try_into().context("invalid arkoor cosign response from server")?;
 
 		ensure!(builder.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
@@ -1269,13 +1270,13 @@ impl Wallet {
 			fees: None,
 		}).context("failed to store OOR vtxo")?;
 
-		let req = protos::SignedBolt11PaymentDetails {
+		let req = protos::SignedLightningPaymentDetails {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			wait: true,
 		};
 
-		let res = asp.client.finish_bolt11_payment(req).await?.into_inner();
+		let res = asp.client.finish_lightning_payment(req).await?.into_inner();
 		debug!("Progress update: {}", res.progress_message);
 		let payment_preimage = Preimage::try_from(res.payment_preimage()).ok();
 
@@ -1289,12 +1290,12 @@ impl Wallet {
 			}).context("failed to store OOR vtxo")?;
 			Ok(preimage)
 		} else {
-			self.process_bolt11_revocation(&htlc_vtxos).await?;
+			self.process_lightning_revocation(&htlc_vtxos).await?;
 			bail!("No preimage, payment failed: {}", res.progress_message);
 		}
 	}
 
-	pub async fn check_bolt11_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
+	pub async fn check_lightning_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
 		let mut asp = self.require_asp()?;
 		let tip = self.onchain.tip().await?;
 
@@ -1306,18 +1307,18 @@ impl Wallet {
 					.context("VTXO is not an HTLC send")?;
 				let this_parts = (invoice, amount, policy);
 				if parts.get_or_insert_with(|| this_parts) != &this_parts {
-					bail!("All bolt11 htlc should have the same invoice, amount, and policy");
+					bail!("All lightning htlc should have the same invoice, amount, and policy");
 				}
 			}
 		}
 
 		let (invoice, amount, spk_spec) = parts.context("no htlc vtxo provided")?;
 		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
-		let req = protos::CheckBolt11PaymentRequest {
+		let req = protos::CheckLightningPaymentRequest {
 			hash: payment_hash.to_vec(),
 			wait: false,
 		};
-		let res = asp.client.check_bolt11_payment(req).await?.into_inner();
+		let res = asp.client.check_lightning_payment(req).await?.into_inner();
 
 		let payment_status = protos::PaymentStatus::try_from(res.status)?;
 
@@ -1353,7 +1354,7 @@ impl Wallet {
 		};
 
 		if should_revoke {
-			if let Err(e) = self.process_bolt11_revocation(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>()).await {
+			if let Err(e) = self.process_lightning_revocation(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>()).await {
 				warn!("Failed to revoke VTXO: {}", e);
 
 				// if one of the htlc is about to expire, we exit all of them.
@@ -1514,7 +1515,7 @@ impl Wallet {
 		let invoice = lnurl::lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);
-		let preimage = self.send_bolt11_payment(&invoice, None).await
+		let preimage = self.send_lightning_payment(&invoice, None).await
 			.context("bolt11 payment error")?;
 		Ok((invoice, preimage))
 	}

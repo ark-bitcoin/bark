@@ -159,10 +159,10 @@ const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_vtxos
 const RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN: &'static str = "request_arkoor_package_cosign";
 const RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX: &'static str = "post_arkoor_package_mailbox";
 const RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX: &'static str = "empty_arkoor_mailbox";
-const RPC_SERVICE_ARK_START_BOLT11_PAYMENT: &'static str = "start_bolt11_payment";
-const RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT: &'static str = "finish_bolt11_payment";
-const RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT: &'static str = "check_bolt11_payment";
-const RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT: &'static str = "revoke_bolt11_payment";
+const RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT: &'static str = "start_lightning_payment";
+const RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT: &'static str = "finish_lightning_payment";
+const RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT: &'static str = "check_lightning_payment";
+const RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT: &'static str = "revoke_lightning_payment";
 const RPC_SERVICE_ARK_START_BOLT11_BOARD: &'static str = "start_bolt11_board";
 const RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_BOARD: &'static str = "subscribe_bolt11_board";
 const RPC_SERVICE_ARK_CLAIM_BOLT11_BOARD: &'static str = "claim_bolt11_board";
@@ -180,10 +180,10 @@ const RPC_SERVICE_ARK_METHODS: [&str; 19] = [
 	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
 	RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX,
 	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
-	RPC_SERVICE_ARK_START_BOLT11_PAYMENT,
-	RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT,
-	RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT,
-	RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT,
+	RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_START_BOLT11_BOARD,
 	RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_BOARD,
 	RPC_SERVICE_ARK_CLAIM_BOLT11_BOARD,
@@ -522,11 +522,11 @@ impl rpc::server::ArkService for Server {
 
 	// lightning
 
-	async fn start_bolt11_payment(
+	async fn start_lightning_payment(
 		&self,
-		req: tonic::Request<protos::Bolt11PaymentRequest>,
+		req: tonic::Request<protos::LightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		add_tracing_attributes(
@@ -564,18 +564,18 @@ impl rpc::server::ArkService for Server {
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 
-		let cosign_resp = self.start_bolt11_payment(
+		let cosign_resp = self.start_lightning_payment(
 			invoice, amount, user_pubkey, input_vtxos, user_nonces
 		).await.context("error making payment")?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
-	async fn finish_bolt11_payment(
+	async fn finish_lightning_payment(
 		&self,
-		req: tonic::Request<protos::SignedBolt11PaymentDetails>,
-	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FINISH_BOLT11_PAYMENT);
+		req: tonic::Request<protos::SignedLightningPaymentDetails>,
+	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
@@ -589,15 +589,15 @@ impl rpc::server::ArkService for Server {
 
 		let invoice = Bolt11Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 
-		let res = self.finish_bolt11_payment(invoice, htlc_vtxo_ids, req.wait).await.to_status()?;
+		let res = self.finish_lightning_payment(invoice, htlc_vtxo_ids, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
 
-	async fn check_bolt11_payment(
+	async fn check_lightning_payment(
 		&self,
-		req: tonic::Request<protos::CheckBolt11PaymentRequest>,
-	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CHECK_BOLT11_PAYMENT);
+		req: tonic::Request<protos::CheckLightningPaymentRequest>,
+	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::try_from(req.hash)
@@ -607,15 +607,15 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("payment_hash", payment_hash.as_hex()),
 		]);
 
-		let res = self.check_bolt11_payment(payment_hash, req.wait).await.to_status()?;
+		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
 
-	async fn revoke_bolt11_payment(
+	async fn revoke_lightning_payment(
 		&self,
-		req: tonic::Request<protos::RevokeBolt11PaymentRequest>
+		req: tonic::Request<protos::RevokeLightningPaymentRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REVOKE_BOLT11_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![

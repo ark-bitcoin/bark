@@ -505,7 +505,7 @@ async fn exit_bolt11_change() {
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.send_bolt11(invoice, None).await;
+	bark_1.send_lightning(invoice, None).await;
 	assert_eq!(bark_1.offchain_balance().await, btc(3));
 
 	// We try to perform an exit for ln payment change
@@ -550,7 +550,7 @@ async fn exit_revoked_lightning_payment() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	let vtxos = bark_1.vtxos().await;
 	let [vtxo_a, vtxo_b] = vtxos.try_into().expect("should have 2 vtxos");
@@ -589,16 +589,16 @@ async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
-		async fn finish_bolt11_payment(
+		async fn finish_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::SignedBolt11PaymentDetails,
-		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
+			_req: aspd_rpc::protos::SignedLightningPaymentDetails,
+		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
 			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
 		}
 
-		async fn revoke_bolt11_payment(
+		async fn revoke_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::RevokeBolt11PaymentRequest,
+			_req: aspd_rpc::protos::RevokeLightningPaymentRequest,
 		) -> Result<aspd_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
@@ -622,7 +622,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	// vtxo expiry is 144, so exit should be triggered after 120 blocks
 	ctx.generate_blocks(130).await;
@@ -660,11 +660,11 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
-		async fn finish_bolt11_payment(
+		async fn finish_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::SignedBolt11PaymentDetails,
-		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
-			Ok(aspd_rpc::protos::Bolt11PaymentResult {
+			_req: aspd_rpc::protos::SignedLightningPaymentDetails,
+		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
+			Ok(aspd_rpc::protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),
 				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
 				payment_hash: vec![],
@@ -672,11 +672,11 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 			})
 		}
 
-		async fn check_bolt11_payment(
+		async fn check_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::CheckBolt11PaymentRequest,
-		) -> Result<aspd_rpc::protos::Bolt11PaymentResult, tonic::Status> {
-			Ok(aspd_rpc::protos::Bolt11PaymentResult {
+			_req: aspd_rpc::protos::CheckLightningPaymentRequest,
+		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
+			Ok(aspd_rpc::protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),
 				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
 				payment_hash: vec![],
@@ -684,9 +684,9 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 			})
 		}
 
-		async fn revoke_bolt11_payment(
+		async fn revoke_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::RevokeBolt11PaymentRequest,
+			_req: aspd_rpc::protos::RevokeLightningPaymentRequest,
 		) -> Result<aspd_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
@@ -710,7 +710,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.try_send_bolt11(invoice, None).await.expect_err("The payment fails");
+	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	// vtxo expiry is 144, so exit should be triggered after 120 blocks
 	ctx.generate_blocks(130).await;

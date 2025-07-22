@@ -46,20 +46,20 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().empty_arkoor_mailbox(req).await?.into_inner())
 	}
 
-	async fn start_bolt11_payment(&mut self, req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-		Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
+	async fn start_lightning_payment(&mut self, req: protos::LightningPaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		Ok(self.upstream().start_lightning_payment(req).await?.into_inner())
 	}
 
-	async fn finish_bolt11_payment(&mut self, req: protos::SignedBolt11PaymentDetails) -> Result<protos::Bolt11PaymentResult, tonic::Status> {
-		Ok(self.upstream().finish_bolt11_payment(req).await?.into_inner())
+	async fn finish_lightning_payment(&mut self, req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
+		Ok(self.upstream().finish_lightning_payment(req).await?.into_inner())
 	}
 
-	async fn check_bolt11_payment(&mut self, req: protos::CheckBolt11PaymentRequest) -> Result<protos::Bolt11PaymentResult, tonic::Status> {
-		Ok(self.upstream().check_bolt11_payment(req).await?.into_inner())
+	async fn check_lightning_payment(&mut self, req: protos::CheckLightningPaymentRequest) -> Result<protos::LightningPaymentResult, tonic::Status> {
+		Ok(self.upstream().check_lightning_payment(req).await?.into_inner())
 	}
 
-	async fn revoke_bolt11_payment(&mut self, req: protos::RevokeBolt11PaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-		Ok(self.upstream().revoke_bolt11_payment(req).await?.into_inner())
+	async fn revoke_lightning_payment(&mut self, req: protos::RevokeLightningPaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		Ok(self.upstream().revoke_lightning_payment(req).await?.into_inner())
 	}
 
 	async fn start_bolt11_board(
@@ -211,28 +211,28 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(AspdRpcProxy::empty_arkoor_mailbox(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn start_bolt11_payment(
-		&self, req: tonic::Request<protos::Bolt11PaymentRequest>,
+	async fn start_lightning_payment(
+		&self, req: tonic::Request<protos::LightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(AspdRpcProxy::start_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn finish_bolt11_payment(
-		&self, req: tonic::Request<protos::SignedBolt11PaymentDetails>,
-	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::finish_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
+	async fn finish_lightning_payment(
+		&self, req: tonic::Request<protos::SignedLightningPaymentDetails>,
+	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::finish_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn check_bolt11_payment(
-		&self, req: tonic::Request<protos::CheckBolt11PaymentRequest>,
-	) -> Result<tonic::Response<protos::Bolt11PaymentResult>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::check_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
+	async fn check_lightning_payment(
+		&self, req: tonic::Request<protos::CheckLightningPaymentRequest>,
+	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::check_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn revoke_bolt11_payment(
-		&self, req: tonic::Request<protos::RevokeBolt11PaymentRequest>,
+	async fn revoke_lightning_payment(
+		&self, req: tonic::Request<protos::RevokeLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::revoke_bolt11_payment(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(AspdRpcProxy::revoke_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn start_bolt11_board(

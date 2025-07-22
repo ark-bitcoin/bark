@@ -718,19 +718,19 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn finish_bolt11_payment(
-			&mut self, req: protos::SignedBolt11PaymentDetails,
-		) -> Result<protos::Bolt11PaymentResult, tonic::Status> {
-			trace!("AspdRpcProxy: Calling finish_bolt11_payment.");
+		async fn finish_lightning_payment(
+			&mut self, req: protos::SignedLightningPaymentDetails,
+		) -> Result<protos::LightningPaymentResult, tonic::Status> {
+			trace!("AspdRpcProxy: Calling finish_lightning_payment.");
 			// Wait until payment is successful then we drop update so client asks for revocation
-			let res = self.upstream().finish_bolt11_payment(req).await?.into_inner();
+			let res = self.upstream().finish_lightning_payment(req).await?.into_inner();
 			if res.payment_preimage().len() > 0 {
 				trace!("AspdRpcProxy: Received preimage which we are 'dropping' for this test.");
 			} else {
 				trace!("AspdRpcProxy: Received message but no preimage yet.");
 			}
 
-			Ok(protos::Bolt11PaymentResult {
+			Ok(protos::LightningPaymentResult {
 				progress_message: "intercepted by proxy".into(),
 				status: protos::PaymentStatus::Failed.into(),
 				payment_hash: vec![],
@@ -777,7 +777,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	let err = bark_1.try_send_bolt11(invoice, None).await.unwrap_err();
+	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"This lightning payment has completed. preimage: ",
 	), "err: {err}");
@@ -799,7 +799,7 @@ async fn spend_unconfirmed_board_lightning() {
 
 	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
 	tokio::spawn(async move {
-		let _ = bark1.send_bolt11(invoice, Some(sat(400_000))).await;
+		let _ = bark1.send_lightning(invoice, Some(sat(400_000))).await;
 		// we don't care that that call fails
 	});
 	l.recv().wait(2500).await;
@@ -1210,9 +1210,11 @@ async fn reject_dust_bolt11_payment() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn start_bolt11_payment(&mut self, mut req: protos::Bolt11PaymentRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		async fn start_lightning_payment(&mut self, mut req: protos::LightningPaymentRequest)
+			-> Result<protos::ArkoorPackageCosignResponse, tonic::Status>
+		{
 			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
-			Ok(self.upstream().start_bolt11_payment(req).await?.into_inner())
+			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())
 		}
 	}
 
@@ -1224,7 +1226,7 @@ async fn reject_dust_bolt11_payment() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
-	let err = bark.try_send_bolt11(invoice, Some(sat(100_000))).await.unwrap_err();
+	let err = bark.try_send_lightning(invoice, Some(sat(100_000))).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"arkoor output amounts cannot be below the p2tr dust threshold",
 	), "err: {err}");

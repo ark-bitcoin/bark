@@ -3,7 +3,6 @@ use std::str::FromStr;
 use anyhow::Context;
 use bark_json::InvoiceInfo;
 use bitcoin::Amount;
-use bitcoin::hex::DisplayHex;
 use clap;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, warn};
@@ -95,7 +94,7 @@ pub async fn pay(
 	}
 
 	info!("Sending bolt11 payment of {} to invoice {}", final_amount, invoice);
-	let preimage = wallet.send_bolt11_payment(&invoice, amount).await?;
+	let preimage = wallet.send_lightning_payment(&invoice, amount).await?;
 	info!("Payment preimage received: {}", preimage.as_hex());
 
 	Ok(())
