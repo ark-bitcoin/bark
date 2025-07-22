@@ -400,10 +400,12 @@ async fn bark_can_board_from_lightning() {
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, btc(3)).await);
-	bark.board(btc(2)).await;
+	let board_amount = btc(2);
+	bark.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let pay_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
 
 	let cloned = bark.clone();
 	let cloned_invoice_info = invoice_info.clone();
@@ -414,41 +416,34 @@ async fn bark_can_board_from_lightning() {
 	res1.await.unwrap();
 
 	let vtxos = bark.vtxos().await;
-	assert!(vtxos.iter().any(|v| v.amount == btc(1)), "should have received lightning amount");
-	assert!(vtxos.iter().any(|v| v.amount == sat(199999650)), "should have fees change");
+	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
+	assert!(vtxos.iter().any(|v| v.amount == board_amount));
 
-	let [ln_claim_mvt, ln_htlc_mvt, fee_split_mvt, board_mvt] = bark.list_movements().await
+	let [ln_claim_mvt, ln_round_mvt, board_mvt] = bark.list_movements().await
 		.try_into().expect("should have 4 movements");
 	assert!(
 		board_mvt.spends.is_empty() &&
 		board_mvt.fees == Amount::ZERO &&
-		board_mvt.receives[0].amount == btc(2) &&
+		board_mvt.receives[0].amount == board_amount &&
 		board_mvt.recipients.is_empty()
 	);
 
 	assert!(
-		fee_split_mvt.spends[0].amount == btc(2) &&
-		fee_split_mvt.fees == Amount::ZERO &&
-		fee_split_mvt.receives[0].amount == sat(350) &&
-		fee_split_mvt.receives[1].amount == sat(199999650) &&
-		fee_split_mvt.recipients.is_empty()
+		ln_round_mvt.spends[0].amount == board_amount &&
+		ln_round_mvt.fees == Amount::ZERO &&
+		ln_round_mvt.receives[0].amount == pay_amount &&
+		ln_round_mvt.receives[1].amount == board_amount &&
+		ln_round_mvt.recipients.is_empty()
 	);
 
 	assert!(
-		ln_htlc_mvt.spends[0].amount == sat(350) &&
-		ln_htlc_mvt.fees == Amount::ZERO &&
-		ln_htlc_mvt.receives[0].amount == btc(1) &&
-		ln_htlc_mvt.recipients.is_empty()
-	);
-
-	assert!(
-		ln_claim_mvt.spends[0].amount == btc(1) &&
+		ln_claim_mvt.spends[0].amount == pay_amount &&
 		ln_claim_mvt.fees == Amount::ZERO &&
-		ln_claim_mvt.receives[0].amount == btc(1) &&
+		ln_claim_mvt.receives[0].amount == pay_amount &&
 		ln_claim_mvt.recipients.is_empty()
 	);
 
-	assert_eq!(bark.offchain_balance().await, sat(299999650));
+	assert_eq!(bark.offchain_balance().await, board_amount + pay_amount);
 }
 
 #[tokio::test]
@@ -484,11 +479,13 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 	// Start a bark and create a VTXO to be able to board
 	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd_1, btc(3)).await);
 	let bark_2 = Arc::new(ctx.new_bark_with_funds("bark-2", &aspd_1, btc(3)).await);
-	bark_1.board(btc(2)).await;
-	bark_2.board(btc(2)).await;
+	let board_amount = btc(2);
+	bark_1.board(board_amount).await;
+	bark_2.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let invoice_info = bark_1.bolt11_invoice(btc(1)).await;
+	let pay_amount = btc(1);
+	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
 
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
@@ -500,10 +497,10 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 	res1.await.unwrap();
 
 	let vtxos = bark_1.vtxos().await;
-	assert!(vtxos.iter().any(|v| v.amount == btc(1)), "should have received lightning amount");
-	assert!(vtxos.iter().any(|v| v.amount == sat(199999650)), "should have fees change");
+	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
+	assert!(vtxos.iter().any(|v| v.amount == board_amount), "should have fees change");
 
-	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
+	assert_eq!(bark_1.offchain_balance().await, board_amount + pay_amount);
 }
 
 #[tokio::test]

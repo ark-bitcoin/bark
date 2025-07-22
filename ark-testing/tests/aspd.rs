@@ -1384,7 +1384,7 @@ async fn aspd_should_refuse_claim_twice() {
 	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).wait(10_000).await;
 	res1.await.unwrap();
 
-	assert_eq!(bark_1.offchain_balance().await, sat(299999650));
+	assert_eq!(bark_1.offchain_balance().await, sat(300000000));
 
 	// bark should not be able to subscribe to already settled invoice
 	let err = bark_1.try_bolt11_board(invoice_info.invoice).await.unwrap_err();

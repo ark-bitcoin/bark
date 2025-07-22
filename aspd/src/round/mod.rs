@@ -238,7 +238,7 @@ impl CollectingPayments {
 					continue;
 				},
 				VtxoPolicy::ServerHtlcSend { .. } => {
-					return badarg!("invalid vtxo spk: {:?}", output.req.vtxo.policy);
+					return badarg!("invalid vtxo policy: {:?}", output.req.vtxo.policy);
 				},
 				VtxoPolicy::Pubkey { .. } => {
 					out_sum += output.req.vtxo.amount;

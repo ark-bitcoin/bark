@@ -56,7 +56,7 @@ use ark::rounds::{
 	MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
-use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
+use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
 use aspd_rpc::{self as rpc, protos};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::WalletExt;
@@ -112,11 +112,6 @@ impl ToSql for KeychainKind {
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
-}
-
-lazy_static::lazy_static! {
-	/// Arbitrary fee for Lightning boarding. Subject to change when we have a fee schedule.
-	static ref LN_BOARD_FEE_SATS: Amount = Amount::from_sat(350);
 }
 
 /// The different balances of a Bark wallet.
@@ -1400,24 +1395,6 @@ impl Wallet {
 		Ok(invoice)
 	}
 
-	async fn create_fee_vtxos(&mut self, fees: Amount) -> anyhow::Result<Vec<Vtxo>> {
-		let pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
-		let oor = self.create_arkoor_vtxos(pubkey, fees).await?;
-		let receives = oor.created.iter().map(|v| (v, VtxoState::Spendable))
-			.chain(oor.change.iter().map(|v| (v, VtxoState::Spendable)))
-			.collect::<Vec<_>>();
-
-		// TODO: we should ensure no fee is applied in this send
-		self.db.register_movement(MovementArgs {
-			spends: &oor.input.iter().collect::<Vec<_>>(),
-			receives: &receives,
-			recipients: &[],
-			fees: None,
-		})?;
-
-		Ok(oor.created)
-	}
-
 	async fn claim_htlc_vtxo(&mut self, vtxo: &WalletVtxo) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
@@ -1456,17 +1433,17 @@ impl Wallet {
 			"invalid arkoor cosignature received from server",
 		);
 
-		let (vtxos, _) = builder.build_vtxos(
+		let (outputs, _) = builder.build_vtxos(
 			&[cosign_resp],
 			&[keypair],
 			vec![sec_nonce],
 		)?;
-		let [vtxo] = vtxos.try_into().expect("had exactly one request");
+		let [output_vtxo] = outputs.try_into().expect("had exactly one request");
 
-		info!("Got an arkoor from lightning! {}", vtxo.id());
+		info!("Got an arkoor from lightning! {}", output_vtxo.id());
 		self.db.register_movement(MovementArgs {
-			spends: &inputs.iter().collect::<Vec<_>>(),
-			receives: &[(&vtxo, VtxoState::Spendable)],
+			spends: &[&vtxo.vtxo],
+			receives: &[(&output_vtxo, VtxoState::Spendable)],
 			recipients: &[],
 			fees: None,
 		})?;
@@ -1495,22 +1472,45 @@ impl Wallet {
 		asp.client.subscribe_bolt11_board(req).await?.into_inner();
 		info!("Lightning payment arrived!");
 
-		// Create a VTXO to pay receive fees:
-		let fee_vtxos = self.create_fee_vtxos(*LN_BOARD_FEE_SATS).await?;
+		// In order to onboard we need to show an input.
+		// (this is so that it can be slashed if we bail on the round)
+		// We create an output with the same value.
+		let (antidos_input, antidos_output) = {
+			let inputs = self.select_vtxos_to_cover(Amount::ONE_SAT, None)?;
+			if inputs.is_empty() {
+				bail!("Need to have existing VTXOs in order to receive lightning");
+			}
+			assert_eq!(inputs.len(), 1);
+			let [input] = inputs.try_into().unwrap();
+			let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
+			let output = VtxoRequest {
+				amount: input.amount(),
+				policy: VtxoPolicy::new_pubkey(change_pubkey),
+			};
+			(input, output)
+		};
 
 		let state = VtxoState::PendingLightningRecv { payment_hash };
 
 		let expiry_height = tip + asp.info.htlc_expiry_delta as BlockHeight;
+		let antidos_input_cloned = antidos_input.clone();
+		let antidos_output_cloned = antidos_output.clone();
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
 			let htlc_pay_req = VtxoRequest {
 				amount: amount,
 				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
 			};
 
-			Ok((fee_vtxos.clone(), vec![(htlc_pay_req, state.clone())], vec![]))
+			let inputs = vec![antidos_input_cloned.clone()];
+			let outputs = vec![
+				(htlc_pay_req, state.clone()),
+				(antidos_output_cloned.clone(), VtxoState::Spendable),
+			];
+			Ok((inputs, outputs, vec![]))
 		}).await.context("round failed")?;
 
-		let [htlc_vtxo] = vtxos.try_into().expect("should have only one");
+		let [htlc_vtxo, _antidos_output_vtxo] = vtxos.try_into().expect("should have two");
+		assert_eq!(htlc_vtxo.vtxo.policy_type(), VtxoPolicyType::ServerHtlcRecv);
 		self.claim_htlc_vtxo(&htlc_vtxo).await?;
 
 		Ok(())
