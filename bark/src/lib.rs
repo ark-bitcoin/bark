@@ -156,6 +156,13 @@ impl From<Utxo> for UtxoInfo {
 	}
 }
 
+/// Struct to communicate your specific participation requests for an Ark round.
+struct RoundParticipation {
+	inputs: Vec<Vtxo>,
+	outputs: Vec<(VtxoRequest, VtxoState)>,
+	offboards: Vec<OffboardRequest>,
+}
+
 #[derive(Debug)]
 enum AttemptResult {
 	Success(RoundResult),
@@ -857,7 +864,11 @@ impl Wallet {
 				script_pubkey: addr.script_pubkey(),
 			};
 
-			Ok((vtxos.clone(), Vec::new(), vec![offb]))
+			Ok(RoundParticipation {
+				inputs: vtxos.clone(),
+				outputs: Vec::new(),
+				offboards: vec![offb],
+			})
 		}).await.context("round failed")?;
 
 		Ok(Offboard { round: round_id })
@@ -914,7 +925,11 @@ impl Wallet {
 		};
 
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok((vtxos.to_vec(), vec![(req.clone(), VtxoState::Spendable)], Vec::new()))
+			Ok(RoundParticipation {
+				inputs: vtxos.to_vec(),
+				outputs: vec![(req.clone(), VtxoState::Spendable)],
+				offboards: Vec::new(),
+			})
 		}).await.context("round failed")?;
 
 		Ok(Some(round_id))
@@ -1501,12 +1516,14 @@ impl Wallet {
 				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
 			};
 
-			let inputs = vec![antidos_input_cloned.clone()];
-			let outputs = vec![
-				(htlc_pay_req, state.clone()),
-				(antidos_output_cloned.clone(), VtxoState::Spendable),
-			];
-			Ok((inputs, outputs, vec![]))
+			Ok(RoundParticipation {
+				inputs: vec![antidos_input_cloned.clone()],
+				outputs: vec![
+					(htlc_pay_req, state.clone()),
+					(antidos_output_cloned.clone(), VtxoState::Spendable),
+				],
+				offboards: vec![],
+			})
 		}).await.context("round failed")?;
 
 		let [htlc_vtxo, _antidos_output_vtxo] = vtxos.try_into().expect("should have two");
@@ -1577,7 +1594,11 @@ impl Wallet {
 				}
 			};
 
-			Ok((input_vtxos.clone(), change.into_iter().map(|c| (c, VtxoState::Spendable)).collect(), vec![offb]))
+			Ok(RoundParticipation {
+				inputs: input_vtxos.clone(),
+				outputs: change.into_iter().map(|c| (c, VtxoState::Spendable)).collect(),
+				offboards: vec![offb],
+			})
 		}).await.context("round failed")?;
 
 		Ok(SendOnchain { round: round_id })
@@ -1587,9 +1608,7 @@ impl Wallet {
 		&self,
 		events: &mut S,
 		round_state: &mut RoundState,
-		input_vtxos: &HashMap<VtxoId, Vtxo>,
-		pay_reqs: &[(VtxoRequest, VtxoState)],
-		offb_reqs: &[OffboardRequest],
+		participation: &RoundParticipation,
 	) -> anyhow::Result<AttemptResult> {
 		let mut asp = self.require_asp()?;
 
@@ -1597,9 +1616,9 @@ impl Wallet {
 
 		// Assign cosign pubkeys to the payment requests.
 		let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
-			.take(pay_reqs.len())
+			.take(participation.outputs.len())
 			.collect::<Vec<_>>();
-		let vtxo_reqs = pay_reqs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
+		let vtxo_reqs = participation.outputs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
 			SignedVtxoRequest {
 				vtxo: req.0.clone(),
 				cosign_pubkey: ck.public_key(),
@@ -1622,13 +1641,8 @@ impl Wallet {
 			.take(vtxo_reqs.len())
 			.collect::<Vec<(Vec<SecretNonce>, Vec<PublicNonce>)>>();
 
-		// The round has now started. We can submit our payment.
-		debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
-			input_vtxos.len(), vtxo_reqs.len(), offb_reqs.len(),
-		);
-
 		let res = asp.client.submit_payment(protos::SubmitPaymentRequest {
-			input_vtxos: input_vtxos.iter().map(|(id, vtxo)| {
+			input_vtxos: participation.inputs.iter().map(|vtxo| {
 				let keypair = {
 					let (keychain, keypair_idx) = self.db.get_vtxo_key(vtxo)
 						.expect("owned vtxo key should be in database");
@@ -1636,9 +1650,9 @@ impl Wallet {
 				};
 
 				protos::InputVtxo {
-					vtxo_id: id.to_bytes().to_vec(),
+					vtxo_id: vtxo.id().to_bytes().to_vec(),
 					ownership_proof: {
-						let sig = round_state.challenge().sign_with(*id, keypair);
+						let sig = round_state.challenge().sign_with(vtxo.id(), keypair);
 						sig.serialize().to_vec()
 					},
 				}
@@ -1653,7 +1667,7 @@ impl Wallet {
 					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
 				}
 			}).collect(),
-			offboard_requests: offb_reqs.iter().map(|r| {
+			offboard_requests: participation.offboards.iter().map(|r| {
 				protos::OffboardRequest {
 					amount: r.amount.to_sat(),
 					offboard_spk: r.script_pubkey.to_bytes(),
@@ -1721,7 +1735,7 @@ impl Wallet {
 				return Ok(AttemptResult::WaitNewRound)
 			}
 
-			let mut my_offbs = offb_reqs.iter().collect::<Vec<_>>();
+			let mut my_offbs = participation.offboards.to_vec();
 			for offb in unsigned_round_tx.output.iter().skip(2) {
 				if let Some(i) = my_offbs.iter().position(|o| o.to_txout() == *offb) {
 					my_offbs.swap_remove(i);
@@ -1810,7 +1824,7 @@ impl Wallet {
 			conns_utxo,
 			connector_pubkey,
 		);
-		let forfeit_sigs = input_vtxos.iter().map(|(id, vtxo)| {
+		let forfeit_sigs = participation.inputs.iter().map(|vtxo| {
 			let vtxo_keypair = {
 				let (keychain, keypair_idx) = self.db.get_vtxo_key(&vtxo)?;
 				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
@@ -1820,8 +1834,8 @@ impl Wallet {
 				let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
 					vtxo, conn, connector_pubkey,
 				);
-				let asp_nonce = forfeit_nonces.get(&id)
-					.with_context(|| format!("missing asp forfeit nonce for {}", id))?
+				let asp_nonce = forfeit_nonces.get(&vtxo.id())
+					.with_context(|| format!("missing asp forfeit nonce for {}", vtxo.id()))?
 					.get(i)
 					.context("asp didn't provide enough forfeit nonces")?;
 
@@ -1834,7 +1848,7 @@ impl Wallet {
 				);
 				Ok((nonce, sig))
 			}).collect::<anyhow::Result<Vec<_>>>()?;
-			Ok((id, sigs))
+			Ok((vtxo.id(), sigs))
 		}).collect::<anyhow::Result<HashMap<_, _>>>()?;
 		debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
 		let res = asp.client.provide_forfeit_signatures(protos::ForfeitSignaturesRequest {
@@ -1896,7 +1910,7 @@ impl Wallet {
 		// Finally we save state after refresh
 		let mut new_vtxos = vec![];
 		for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
-			let req = pay_reqs.into_iter().find(|(r, _)| r == &req.vtxo);
+			let req = participation.outputs.iter().find(|(r, _)| r == &req.vtxo);
 			if let Some((_, s)) = req {
 				let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
 
@@ -1914,13 +1928,13 @@ impl Wallet {
 		// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
 
 		let params = Params::new(self.properties().unwrap().network);
-		let sent = offb_reqs.iter().map(|o| {
+		let sent = participation.offboards.iter().map(|o| {
 			let address = Address::from_script(&o.script_pubkey, &params)?;
 			Ok((address.to_string(), o.amount))
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
 		self.db.register_movement(MovementArgs {
-			spends: &input_vtxos.values().collect::<Vec<_>>(),
+			spends: &participation.inputs.iter().collect::<Vec<_>>(),
 			receives: &new_vtxos.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
 			recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
 			fees: None
@@ -1942,9 +1956,7 @@ impl Wallet {
 	/// round attempts for better privacy.
 	async fn participate_round(
 		&self,
-		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<
-			(Vec<Vtxo>, Vec<(VtxoRequest, VtxoState)>, Vec<OffboardRequest>)
-		>,
+		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<RoundParticipation>,
 	) -> anyhow::Result<RoundResult> {
 		let mut asp = self.require_asp()?;
 
@@ -1983,14 +1995,14 @@ impl Wallet {
 
 			info!("Round started");
 
-			let (input_vtxos, pay_reqs, offb_reqs) = round_input(&round_state.info)
+			let participation = round_input(&round_state.info)
 				.context("error providing round input")?;
 
-			if let Some(payreq) = pay_reqs.iter().find(|p| p.0.amount < P2TR_DUST) {
+			if let Some(payreq) = participation.outputs.iter().find(|p| p.0.amount < P2TR_DUST) {
 				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.0.amount);
 			}
 
-			if let Some(offb) = offb_reqs.iter().find(|o| o.amount < P2TR_DUST) {
+			if let Some(offb) = participation.offboards.iter().find(|o| o.amount < P2TR_DUST) {
 				bail!("Offboard amount must be at least {}, requested {}", P2TR_DUST, offb.amount);
 			}
 
@@ -2007,19 +2019,15 @@ impl Wallet {
 				other => panic!("Unexpected message: {:?}", other),
 			};
 
-			// Convert the input vtxos to a map to cache their ids.
-			let input_vtxos = input_vtxos.into_iter()
-				.map(|v| (v.id(), v))
-				.collect::<HashMap<_, _>>();
-			debug!("Spending vtxos: {:?}", input_vtxos.keys());
+			debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
+				participation.inputs.len(), participation.outputs.len(), participation.outputs.len(),
+			);
 
 			'attempt: loop {
 				let attempt_res = self.new_round_attempt(
 					&mut events,
 					&mut round_state,
-					&input_vtxos,
-					&pay_reqs,
-					&offb_reqs,
+					&participation,
 				).await?;
 
 				match attempt_res {
