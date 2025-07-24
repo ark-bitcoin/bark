@@ -1,6 +1,5 @@
 
 
-use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
 use bark_json::exit::states::ExitStartState;
 use bark_json::exit::ExitState;
 use bitcoin::Address;
@@ -11,7 +10,6 @@ use bitcoincore_rpc::RpcApi;
 use log::trace;
 
 use ark::vtxo::exit_taproot;
-use aspd_rpc::{self as rpc, protos};
 use bark_json::cli::ExitProgressResponse;
 use bark_json::exit::error::ExitError;
 
@@ -98,48 +96,6 @@ async fn simple_exit() {
 
 	// Wallet has 1_000_000 sats of funds minus fees
 	assert_eq!(bark.onchain_balance().await, sat(997_161));
-}
-
-#[tokio::test]
-async fn fail_handshake() {
-	//! Test that we can still access our balance and exit if server handshake fails.
-	let ctx = TestContext::new("exit/fail_handshake").await;
-
-	#[derive(Clone)]
-	struct NoHandshakeProxy(rpc::ArkServiceClient<tonic::transport::Channel>);
-
-	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for NoHandshakeProxy {
-		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
-
-		async fn handshake(&mut self, _: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status>  {
-			Ok(protos::HandshakeResponse {
-				psa: None,
-				error: Some("don't like you".into()),
-				ark_info: None,
-			})
-		}
-	}
-
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(100_000)).await;
-
-	bark.board(sat(90_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.refresh_all().await;
-	ctx.generate_blocks(1).await;
-	assert_eq!(sat(90_000), bark.offchain_balance().await);
-
-	// now create bad proxy
-	let proxy = AspdRpcProxyServer::start(NoHandshakeProxy(aspd.get_public_client().await)).await;
-	bark.set_asp(&proxy).await;
-	assert_eq!(sat(90_000), bark.offchain_balance().await);
-	bark.start_exit_all().await;
-	complete_exit(&ctx, &bark).await;
-
-	bark.claim_all_exits(bark.get_onchain_address().await).await;
-	ctx.generate_blocks(1).await;
-	assert_eq!(bark.onchain_balance().await, sat(97_161));
 }
 
 #[tokio::test]

@@ -1401,10 +1401,10 @@ async fn aspd_refuse_too_deep_arkoor_input() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn handshake(&mut self, req: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status>  {
-			let mut res = self.upstream().handshake(req).await?.into_inner();
-			res.ark_info.as_mut().unwrap().max_arkoor_depth = 10;
-			Ok(protos::HandshakeResponse { ..res })
+		async fn get_ark_info(&mut self, req: protos::Empty) -> Result<protos::ArkInfo, tonic::Status>  {
+			let mut info = self.upstream().get_ark_info(req).await?.into_inner();
+			info.max_arkoor_depth = 10;
+			Ok(info)
 		}
 	}
 

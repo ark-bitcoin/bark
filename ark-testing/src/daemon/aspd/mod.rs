@@ -31,10 +31,6 @@ pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 
 pub const ASPD_CONFIG_FILE: &str = "config.toml";
 
-/// The bark client version we report in handshake message
-/// that will always give us ark-info.
-const TESTING_CLIENT_VERSION: &str = "testing";
-
 
 pub trait SlogHandler {
 	/// Process a log line. Return true when you're done.
@@ -114,9 +110,8 @@ impl Aspd {
 	}
 
 	pub async fn ark_info(&self) -> ark::ArkInfo {
-		self.get_public_client().await.handshake(protos::HandshakeRequest {
-			version: TESTING_CLIENT_VERSION.into(),
-		}).await.unwrap().into_inner().ark_info.unwrap().try_into().expect("invalid ark info")
+		self.get_public_client().await.get_ark_info(protos::Empty {}).await.unwrap()
+			.into_inner().try_into().expect("invalid ark info")
 	}
 
 	pub async fn wallet_status(&self) -> WalletStatuses {
@@ -293,9 +288,7 @@ impl AspdHelper {
 	async fn public_grpc_is_ready(&self) -> bool {
 		match self.connect_public_client().await {
 			Ok(mut c) => {
-				c.handshake(protos::HandshakeRequest {
-					version: TESTING_CLIENT_VERSION.into(),
-				}).await.is_ok()
+				c.handshake(protos::HandshakeRequest { bark_version: None }).await.is_ok()
 			},
 			Err(_e) => false,
 		}

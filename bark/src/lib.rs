@@ -18,6 +18,7 @@ pub mod onchain;
 pub mod persist;
 pub use self::persist::sqlite::SqliteClient;
 mod psbtext;
+pub mod server;
 pub mod vtxo_selection;
 mod vtxo_state;
 
@@ -31,7 +32,6 @@ use std::convert::TryFrom;
 use std::iter;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
@@ -65,6 +65,7 @@ use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo};
 use crate::persist::BarkPersister;
+use crate::server::ServerConnection;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 use crate::vtxo_selection::RefreshStrategy;
@@ -174,75 +175,6 @@ impl VtxoSeed {
 	}
 }
 
-#[derive(Clone)]
-struct AspConnection {
-	pub info: ArkInfo,
-	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
-}
-
-impl AspConnection {
-	fn create_endpoint(asp_address: &str) -> anyhow::Result<tonic::transport::Endpoint> {
-		let asp_uri = tonic::transport::Uri::from_str(asp_address)
-			.context("failed to parse Ark server as a URI")?;
-
-		let scheme = asp_uri.scheme_str().unwrap_or("");
-		if scheme != "http" && scheme != "https" {
-			bail!("ASP scheme must be either http or https. Found: {}", scheme);
-		}
-
-		let mut endpoint = tonic::transport::Channel::builder(asp_uri.clone())
-			.keep_alive_timeout(Duration::from_secs(600))
-			.timeout(Duration::from_secs(600));
-
-		if scheme == "https" {
-			info!("Connecting to ASP using TLS...");
-			let uri_auth = asp_uri.clone().into_parts().authority
-				.context("Ark server URI is missing an authority part")?;
-			let domain = uri_auth.host();
-
-			let tls_config = tonic::transport::ClientTlsConfig::new()
-				.domain_name(domain);
-			endpoint = endpoint.tls_config(tls_config)?
-		} else {
-			info!("Connecting to ASP without TLS...");
-		};
-		Ok(endpoint)
-	}
-
-	/// Try to perform the handshake with the ASP.
-	async fn handshake(
-		asp_address: &str,
-		network: Network,
-	) -> anyhow::Result<AspConnection> {
-		let our_version = env!("CARGO_PKG_VERSION").into();
-
-		let endpoint = AspConnection::create_endpoint(asp_address)?;
-		let mut client = rpc::ArkServiceClient::connect(endpoint).await
-			.context("couldn't connect to Ark server")?;
-
-		let res = client.handshake(protos::HandshakeRequest { version: our_version })
-			.await.context("ark info request failed")?.into_inner();
-
-		if let Some(ref msg) = res.psa {
-			warn!("Message from Ark server: \"{}\"", msg);
-		}
-
-		if let Some(info) = res.ark_info {
-			let info = ArkInfo::try_from(info).context("invalid ark info from asp")?;
-			if network != info.network {
-				bail!("ASP is for net {} while we are on net {}", info.network, network);
-			}
-			// we print the error message as a warning, because we still succeeded
-			if let Some(msg) = res.error {
-				warn!("Warning from Ark server: \"{}\"", msg);
-			}
-			Ok(AspConnection { info, client })
-		} else {
-			let msg = res.error.as_ref().map(|s| s.as_str()).unwrap_or("NO MESSAGE");
-			bail!("Ark server handshake failed: {}", msg);
-		}
-	}
-}
 
 pub struct Wallet {
 	/// The chain source the wallet is connected to
@@ -252,7 +184,7 @@ pub struct Wallet {
 	config: Config,
 	db: Arc<dyn BarkPersister>,
 	vtxo_seed: VtxoSeed,
-	asp: Option<AspConnection>,
+	asp: Option<ServerConnection>,
 
 }
 
@@ -389,7 +321,7 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let asp = match AspConnection::handshake(&config.asp_address, properties.network).await {
+		let asp = match ServerConnection::connect(&config.asp_address, properties.network).await {
 			Ok(asp) => Some(asp),
 			Err(e) => {
 				warn!("Ark server handshake failed: {}", e);
@@ -432,7 +364,7 @@ impl Wallet {
 		self.db.write_config(&self.config)
 	}
 
-	fn require_asp(&self) -> anyhow::Result<AspConnection> {
+	fn require_asp(&self) -> anyhow::Result<ServerConnection> {
 		self.asp.clone().context("You should be connected to ASP to perform this action")
 	}
 
