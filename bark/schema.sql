@@ -80,7 +80,7 @@ CREATE TABLE bark_movement (
 				id INTEGER PRIMARY KEY,
 				fees_sat INTEGER NOT NULL,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-			);
+			, kind TEXT NOT NULL);
 CREATE TABLE bark_recipient (
 				id INTEGER PRIMARY KEY,
 				movement REFERENCES bark_movement(id),
@@ -109,7 +109,7 @@ CREATE VIEW movement_view AS
 						)) FROM bark_recipient WHERE bark_recipient.movement = bark_movement.id
 					) AS recipients
 				FROM bark_movement
-/* movement_view(id,fees_sat,created_at,spends,receives,recipients) */;
+/* movement_view(id,fees_sat,created_at,kind,spends,receives,recipients) */;
 CREATE TABLE bark_offchain_board (
 			payment_hash BLOB NOT NULL PRIMARY KEY,
 			preimage BLOB NOT NULL UNIQUE,

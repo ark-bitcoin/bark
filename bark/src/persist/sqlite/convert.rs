@@ -1,18 +1,21 @@
 use bitcoin::Amount;
 use rusqlite::Row;
 use ark::lightning::{PaymentHash, Preimage};
-use crate::movement::{Movement, MovementRecipient, VtxoSubset};
+
+use crate::movement::{Movement, MovementKind, MovementRecipient, VtxoSubset};
 use crate::persist::OffchainBoard;
 
 pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 	let fees: Amount = Amount::from_sat(row.get("fees_sat")?);
 
+	let kind = MovementKind::from_str(&row.get::<_, String>("kind")?)?;
 	let spends = serde_json::from_str::<Vec<VtxoSubset>>(&row.get::<_, String>("spends")?)?;
 	let receives = serde_json::from_str::<Vec<VtxoSubset>>(&row.get::<_, String>("receives")?)?;
 	let recipients = serde_json::from_str::<Vec<MovementRecipient>>(&row.get::<_, String>("recipients")?)?;
 
 	Ok(Movement {
 		id: row.get("id")?,
+		kind: kind,
 		fees: fees,
 		spends: spends,
 		receives: receives,
