@@ -50,13 +50,21 @@ pub trait GetWalletTx {
 	fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>>;
 }
 
-/// Trait for wallets that can be used to board vtxos.
-pub trait PrepareBoardTx: GetBalance + SignPsbt + GetWalletTx {
-	fn prepare_board_funding_tx<T: IntoIterator<Item = (Address, Amount)>>(
-		&mut self, outputs: T, fee_rate: FeeRate
+/// A trait to support creating funded PSBTs.
+pub trait PreparePsbt {
+	/// Prepare a funded tx sending to the given destinations.
+	fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
+		&mut self,
+		destinations: T,
+		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt>;
 
-	fn prepare_board_all_funding_tx(&mut self, fee_rate: FeeRate) -> anyhow::Result<Psbt>;
+	/// Prepare a funded tx sending all wallet funds to the given destination.
+	fn prepare_drain_tx(
+		&mut self,
+		destination: Address,
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Psbt>;
 }
 
 pub trait GetSpendingTx {

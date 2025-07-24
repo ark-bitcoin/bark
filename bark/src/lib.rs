@@ -23,6 +23,7 @@ mod vtxo_state;
 
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
+use onchain::{GetWalletTx, SignPsbt};
 
 
 use std::collections::{HashMap, HashSet};
@@ -62,7 +63,7 @@ use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::onchain::{ChainSourceClient, PrepareBoardTx, ExitUnilaterally, Utxo};
+use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo};
 use crate::persist::{BarkPersister, OffchainPayment};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -526,7 +527,10 @@ impl Wallet {
 		Ok(self.vtxos_with(filter)?)
 	}
 
-	async fn register_all_unregistered_boards(&self, wallet: &mut impl PrepareBoardTx) -> anyhow::Result<()> {
+	async fn register_all_unregistered_boards(
+		&self,
+		wallet: &mut impl GetWalletTx,
+	) -> anyhow::Result<()> {
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
 
 		if unregistered_boards.is_empty() {
@@ -553,7 +557,7 @@ impl Wallet {
 	/// This tasks will only include anything that has to wait
 	/// for a round. The maintenance call cannot be used to
 	/// refresh VTXOs.
-	pub async fn maintenance<W: PrepareBoardTx + ExitUnilaterally>(
+	pub async fn maintenance<W: PreparePsbt + SignPsbt + ExitUnilaterally>(
 		&mut self,
 		wallet: &mut W,
 	) -> anyhow::Result<()> {
@@ -607,35 +611,31 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Board a vtxo with the given vtxo amount.
+	/// Board a VTXO with the given amount.
 	///
-	/// NB we will spend a little more on-chain to cover minrelayfee.
-	pub async fn board_amount(&mut self, wallet: &mut impl PrepareBoardTx, amount: Amount) -> anyhow::Result<Board> {
-		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
-		self.board(wallet, amount, user_keypair).await
-	}
-
-	pub async fn board_all(&mut self, wallet: &mut impl PrepareBoardTx) -> anyhow::Result<Board> {
-		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
-
-		let fee_rate = self.chain.fee_rates().await.regular;
-		let board_all_tx = wallet.prepare_board_all_funding_tx(fee_rate)?;
-
-		// Deduct fee from vtxo spec
-		let fee = board_all_tx.fee().context("Unable to calculate fee")?;
-		let amount = wallet.get_balance().checked_sub(fee)
-			.context("not enough money for a board")?;
-
-		assert_eq!(board_all_tx.outputs.len(), 1);
-		assert_eq!(board_all_tx.unsigned_tx.tx_out(0).unwrap().value, amount);
-
-		self.board(wallet, amount, user_keypair).await
-	}
-
-	async fn board(
+	/// NB we will spend a little more on-chain to cover fees.
+	pub async fn board_amount<W: PreparePsbt + SignPsbt + GetWalletTx>(
 		&mut self,
-		wallet: &mut impl PrepareBoardTx,
+		wallet: &mut W,
 		amount: Amount,
+	) -> anyhow::Result<Board> {
+		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		self.board(wallet, Some(amount), user_keypair).await
+	}
+
+	/// Board a VTXO with all the funds in your on-chain wallet.
+	pub async fn board_all<W: PreparePsbt + SignPsbt + GetWalletTx>(
+		&mut self,
+		wallet: &mut W,
+	) -> anyhow::Result<Board> {
+		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		self.board(wallet, None, user_keypair).await
+	}
+
+	async fn board<W: PreparePsbt + SignPsbt + GetWalletTx>(
+		&mut self,
+		wallet: &mut W,
+		amount: Option<Amount>,
 		user_keypair: Keypair,
 	) -> anyhow::Result<Board> {
 		let mut asp = self.require_asp()?;
@@ -654,7 +654,15 @@ impl Wallet {
 
 		// We create the board tx template, but don't sign it yet.
 		let fee_rate = self.chain.fee_rates().await.regular;
-		let board_psbt = wallet.prepare_board_funding_tx([(addr, amount)], fee_rate)?;
+		let (board_psbt, amount) = if let Some(amount) = amount {
+			let psbt = wallet.prepare_tx([(addr, amount)], fee_rate)?;
+			(psbt, amount)
+		} else {
+			let psbt = wallet.prepare_drain_tx(addr, fee_rate)?;
+			assert_eq!(psbt.unsigned_tx.output.len(), 1);
+			let amount = psbt.unsigned_tx.output[0].value;
+			(psbt, amount)
+		};
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 		let builder = builder
@@ -696,7 +704,11 @@ impl Wallet {
 	}
 
 	/// Registers a board to the Ark server
-	async fn register_board(&self, wallet: &mut impl PrepareBoardTx, vtxo_id: VtxoId) -> anyhow::Result<Board> {
+	async fn register_board(
+		&self,
+		wallet: &mut impl GetWalletTx,
+		vtxo_id: VtxoId,
+	) -> anyhow::Result<Board> {
 		trace!("Attempting to register board {} to server", vtxo_id);
 		let mut asp = self.require_asp()?;
 

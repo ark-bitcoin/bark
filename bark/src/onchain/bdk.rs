@@ -19,15 +19,8 @@ use json::exit::ExitState;
 
 use crate::onchain::chain::InnerChainSourceClient;
 use crate::onchain::{
-	ChainSourceClient,
-	LocalUtxo,
-	PrepareBoardTx,
-	GetBalance,
-	GetSpendingTx,
-	GetWalletTx,
-	SignPsbt,
-	MakeCpfp,
-	Utxo,
+	ChainSourceClient, LocalUtxo, GetBalance, GetSpendingTx, GetWalletTx, PreparePsbt,
+	SignPsbt, MakeCpfp, Utxo,
 };
 use crate::exit::vtxo::ExitVtxo;
 use crate::persist::BarkPersister;
@@ -112,27 +105,30 @@ impl <W: Deref<Target = BdkWallet>> GetWalletTx for W {
 	}
 }
 
-impl <W: DerefMut<Target = BdkWallet> + SignPsbt> PrepareBoardTx for W {
-	fn prepare_board_funding_tx<T: IntoIterator<Item = (Address, Amount)>>(
+impl <W: DerefMut<Target = BdkWallet>> PreparePsbt for W {
+	fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
 		&mut self,
-		outputs: T,
+		destinations: T,
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt> {
 		let mut b = self.deref_mut().build_tx();
 		b.ordering(TxOrdering::Untouched);
-		for (dest, amount) in outputs {
+		for (dest, amount) in destinations {
 			b.add_recipient(dest.script_pubkey(), amount);
 		}
 		b.fee_rate(fee_rate);
-		Ok(b.finish()?)
+		b.finish().context("error building tx")
 	}
 
-	fn prepare_board_all_funding_tx(&mut self, fee_rate: FeeRate) -> anyhow::Result<Psbt> {
-		let throwaway_addr = self.deref().peek_address(KeychainKind::External, u32::MIN).address;
+	fn prepare_drain_tx(
+		&mut self,
+		destination: Address,
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Psbt> {
 		let mut b = self.deref_mut().build_tx();
-		b.drain_to(throwaway_addr.script_pubkey());
-		b.drain_wallet();
+		b.drain_to(destination.script_pubkey());
 		b.fee_rate(fee_rate);
+		b.drain_wallet();
 		b.finish().context("error building tx")
 	}
 }
@@ -231,29 +227,32 @@ impl OnchainWallet {
 
 	pub async fn send(&mut self, chain: &ChainSourceClient, dest: Address, amount: Amount, fee_rate: FeeRate
 	)	-> anyhow::Result<Txid> {
-		let psbt = self.prepare_board_funding_tx([(dest, amount)], fee_rate)?;
+		let psbt = self.prepare_tx([(dest, amount)], fee_rate)?;
 		let tx = self.finish_tx(psbt)?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
 	pub async fn send_many<T: IntoIterator<Item = (Address, Amount)>>(
-		&mut self, chain: &ChainSourceClient, dests: T, fee_rate: FeeRate
+		&mut self,
+		chain: &ChainSourceClient,
+		destinations: T,
+		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
-		let pbst = self.prepare_board_funding_tx(dests, fee_rate)?;
+		let pbst = self.prepare_tx(destinations, fee_rate)?;
 		let tx = self.finish_tx(pbst)?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
 
-	pub async fn drain(&mut self, chain: &ChainSourceClient, addr: Address, fee_rate: FeeRate) -> anyhow::Result<Txid> {
-		let mut b = self.inner.build_tx();
-		b.drain_to(addr.script_pubkey());
-		b.drain_wallet();
-		b.fee_rate(fee_rate);
-		let psbt = b.finish().context("error building tx")?;
-
+	pub async fn drain(
+		&mut self,
+		chain: &ChainSourceClient,
+		destination: Address,
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Txid> {
+		let psbt = self.prepare_drain_tx(destination, fee_rate)?;
 		let tx = self.finish_tx(psbt)?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
