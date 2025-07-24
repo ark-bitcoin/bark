@@ -1147,8 +1147,8 @@ pub mod test {
 		let exit_delta = 2016;
 		let asp_key = Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap();
 		let board_user_key = Keypair::from_str("fab9e598081a3e74b2233d470c4ad87bcc285b6912ed929568e62ac0e9409879").unwrap();
+		let amount = Amount::from_sat(10_000);
 		let builder = BoardBuilder::new(
-			Amount::from_sat(10_000),
 			board_user_key.public_key(),
 			expiry_height,
 			asp_key.public_key(),
@@ -1170,16 +1170,16 @@ pub mod test {
 		};
 		println!("chain anchor tx: {}", serialize_hex(&anchor_tx));
 		let anchor_point = OutPoint::new(anchor_tx.compute_txid(), 0);
-		let builder = builder.set_funding_utxo(anchor_point)
+		let builder = builder.set_funding_details(amount, anchor_point)
 			.generate_user_nonces();
 
 		let board_cosign = {
 			BoardBuilder::new_for_cosign(
-				builder.amount,
 				builder.user_pubkey,
 				builder.expiry_height,
 				builder.asp_pubkey,
 				builder.exit_delta,
+				amount,
 				anchor_point,
 				*builder.user_pub_nonce(),
 			).server_cosign(&asp_key)

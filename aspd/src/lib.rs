@@ -423,11 +423,11 @@ impl Server {
 		}
 
 		let builder = BoardBuilder::new_for_cosign(
-			amount,
 			user_pubkey,
 			expiry_height,
 			self.asp_key.public_key(),
 			self.config.vtxo_exit_delta,
+			amount,
 			utxo,
 			user_pub_nonce,
 		);

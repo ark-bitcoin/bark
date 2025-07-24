@@ -607,9 +607,9 @@ impl Wallet {
 		Ok(())
 	}
 
-	// Board a vtxo with the given vtxo amount.
-	//
-	// NB we will spend a little more on-chain to cover minrelayfee.
+	/// Board a vtxo with the given vtxo amount.
+	///
+	/// NB we will spend a little more on-chain to cover minrelayfee.
 	pub async fn board_amount(&mut self, wallet: &mut impl PrepareBoardTx, amount: Amount) -> anyhow::Result<Board> {
 		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 		self.board(wallet, amount, user_keypair).await
@@ -644,7 +644,6 @@ impl Wallet {
 
 		let expiry_height = current_height + asp.info.vtxo_expiry_delta as BlockHeight;
 		let builder = BoardBuilder::new(
-			amount,
 			user_keypair.public_key(),
 			expiry_height,
 			asp.info.asp_pubkey,
@@ -659,7 +658,7 @@ impl Wallet {
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 		let builder = builder
-			.set_funding_utxo(utxo)
+			.set_funding_details(amount, utxo)
 			.generate_user_nonces();
 
 		let cosign_resp = asp.client.request_board_cosign(protos::BoardCosignRequest {

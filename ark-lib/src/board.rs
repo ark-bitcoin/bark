@@ -98,13 +98,14 @@ pub mod state {
 /// Currently you can only create VTXOs with [VtxoPolicy::PublicKey].
 #[derive(Debug)]
 pub struct BoardBuilder<S: BuilderState> {
-	pub amount: Amount,
 	pub user_pubkey: PublicKey,
 	pub expiry_height: BlockHeight,
 	pub asp_pubkey: PublicKey,
 	pub exit_delta: u16,
 
+	amount: Option<Amount>,
 	utxo: Option<OutPoint>,
+
 	user_pub_nonce: Option<musig::PublicNonce>,
 	user_sec_nonce: Option<musig::SecretNonce>,
 	_state: PhantomData<S>,
@@ -123,14 +124,14 @@ impl BoardBuilder<state::Preparing> {
 	///
 	/// See module-level documentation for an overview of the board flow.
 	pub fn new(
-		amount: Amount,
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		asp_pubkey: PublicKey,
 		exit_delta: u16,
 	) -> BoardBuilder<state::Preparing> {
 		BoardBuilder {
-			amount, user_pubkey, expiry_height, asp_pubkey, exit_delta,
+			user_pubkey, expiry_height, asp_pubkey, exit_delta,
+			amount: None,
 			utxo: None,
 			user_pub_nonce: None,
 			user_sec_nonce: None,
@@ -138,12 +139,16 @@ impl BoardBuilder<state::Preparing> {
 		}
 	}
 
-	/// Set the UTXO where the board will be funded.
-	pub fn set_funding_utxo(self, utxo: OutPoint) -> BoardBuilder<state::CanGenerateNonces> {
+	/// Set the UTXO where the board will be funded and the board amount.
+	pub fn set_funding_details(
+		self,
+		amount: Amount,
+		utxo: OutPoint,
+	) -> BoardBuilder<state::CanGenerateNonces> {
 		BoardBuilder {
+			amount: Some(amount),
 			utxo: Some(utxo),
 			// copy the rest
-			amount: self.amount,
 			user_pubkey: self.user_pubkey,
 			expiry_height: self.expiry_height,
 			asp_pubkey: self.asp_pubkey,
@@ -162,12 +167,12 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		let funding_taproot = cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
 			script_pubkey: funding_taproot.script_pubkey(),
-			value: self.amount,
+			value: self.amount.expect("state invariant"),
 		};
 
 		let exit_taproot = exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta);
 		let exit_txout = TxOut {
-			value: self.amount,
+			value: self.amount.expect("state invariant"),
 			script_pubkey: exit_taproot.script_pubkey(),
 		};
 
@@ -212,13 +217,13 @@ impl<S: state::CanSign> BoardBuilder<S> {
 		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
 		let funding_taproot = cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
-			value: self.amount,
+			value: self.amount.expect("state invariant"),
 			script_pubkey: funding_taproot.script_pubkey(),
 		};
 
 		let exit_taproot = exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta);
 		let exit_txout = TxOut {
-			value: self.amount,
+			value: self.amount.expect("state invariant"),
 			script_pubkey: exit_taproot.script_pubkey(),
 		};
 
@@ -232,16 +237,17 @@ impl BoardBuilder<state::ServerCanCosign> {
 	/// This constructor is to be used by the server with the information provided
 	/// by the user.
 	pub fn new_for_cosign(
-		amount: Amount,
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		asp_pubkey: PublicKey,
 		exit_delta: u16,
+		amount: Amount,
 		utxo: OutPoint,
 		user_pub_nonce: musig::PublicNonce,
 	) -> BoardBuilder<state::ServerCanCosign> {
 		BoardBuilder {
-			amount, user_pubkey, expiry_height, asp_pubkey, exit_delta,
+			user_pubkey, expiry_height, asp_pubkey, exit_delta,
+			amount: Some(amount),
 			utxo: Some(utxo),
 			user_pub_nonce: Some(user_pub_nonce),
 			user_sec_nonce: None,
@@ -323,7 +329,7 @@ impl BoardBuilder<state::CanBuild> {
 		);
 
 		Ok(Vtxo {
-			amount: self.amount,
+			amount: self.amount.expect("state invariant"),
 			expiry_height: self.expiry_height,
 			asp_pubkey: self.asp_pubkey,
 			exit_delta: self.exit_delta,
@@ -370,15 +376,15 @@ mod test {
 		let asp_pubkey = asp_key.public_key();
 		let exit_delta = 24;
 		let builder = BoardBuilder::new(
-			amount, user_key.public_key(), expiry, asp_pubkey, exit_delta,
+			user_key.public_key(), expiry, asp_pubkey, exit_delta,
 		)
-			.set_funding_utxo(utxo)
+			.set_funding_details(amount, utxo)
 			.generate_user_nonces();
 
 		// server
 		let cosign = {
 			let server_builder = BoardBuilder::new_for_cosign(
-				amount, builder.user_pubkey, expiry, asp_pubkey, exit_delta, utxo, *builder.user_pub_nonce(),
+				builder.user_pubkey, expiry, asp_pubkey, exit_delta, amount, utxo, *builder.user_pub_nonce(),
 			);
 			server_builder.server_cosign(&asp_key)
 		};
