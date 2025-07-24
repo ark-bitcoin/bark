@@ -1,4 +1,5 @@
 
+use std::sync::Arc;
 use std::{env, fmt};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
@@ -150,7 +151,8 @@ impl Bark {
 		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 
 		let db = bark::SqliteClient::open(self.config.datadir.join(DB_FILE))?;
-		Ok(bark::Wallet::open(&mnemonic, db).await?)
+
+		Ok(bark::Wallet::open(&mnemonic, Arc::new(db)).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {
@@ -184,12 +186,12 @@ impl Bark {
 
 	pub async fn offchain_balance(&self) -> Amount {
 		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap().offchain
+		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
 	}
 
 	pub async fn offchain_balance_no_sync(&self) -> Amount {
 		let json = self.run(["balance", "--no-sync"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap().offchain
+		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
 	}
 
 	pub async fn get_onchain_address(&self) -> Address {
@@ -381,6 +383,15 @@ impl Bark {
 
 	pub async fn list_exits(&self) -> Vec<json::ExitTransactionStatus> {
 		self.run_json(["exit", "list"]).await
+	}
+
+	pub async fn claim_all_exits(&self, destination: impl fmt::Display) {
+		let destination = destination.to_string();
+		self.run(["exit", "claim", &destination, "--verbose", "--all"]).await;
+	}
+
+	pub async fn claim_single_exit(&self, vtxo: impl fmt::Display, destination: impl fmt::Display) {
+		self.run(["exit", "claim", &destination.to_string(), "--vtxo", &vtxo.to_string(), "--verbose"]).await;
 	}
 
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>

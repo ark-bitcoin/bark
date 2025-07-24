@@ -2,9 +2,9 @@
 use std::collections::{HashMap, HashSet};
 use std::borrow::BorrowMut;
 
+use bdk_wallet::chain::BlockId;
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
-use bdk_wallet::chain::BlockId;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, TxOut, Txid, Wtxid};
@@ -91,9 +91,18 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		ret
 	}
 
-	/// Create a cpfp spend that spends the P2A fee anchors in the given tx.
+	/// Insert a checkpoint into the wallet.
 	///
-	/// This method doesn't broadcast any txs.
+	/// It's advised to use this only when recovering a wallet with a birthday.
+	fn set_checkpoint(&mut self, height: u32, hash: BlockHash) {
+		let checkpoint = BlockId { height, hash };
+		let wallet = self.borrow_mut();
+		wallet.apply_update(bdk_wallet::Update {
+			chain: Some(wallet.latest_checkpoint().insert(checkpoint)),
+			..Default::default()
+		}).expect("should work, might fail if tip is genesis");
+	}
+
 	fn make_p2a_cpfp(
 		&mut self,
 		tx: &Transaction,
@@ -165,21 +174,9 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		b.fee_absolute(extra_fee_needed);
 		Ok(b.finish().expect("failed to craft anchor spend tx"))
 	}
-
-	/// Insert a checkpoint into the wallet.
-	///
-	/// It's advised to use this only when recovering a wallet with a birthday.
-	fn set_checkpoint(&mut self, height: u32, hash: BlockHash) {
-		let checkpoint = BlockId { height, hash };
-		let wallet = self.borrow_mut();
-		wallet.apply_update(bdk_wallet::Update {
-			chain: Some(wallet.latest_checkpoint().insert(checkpoint)),
-			..Default::default()
-		}).expect("should work, might fail if tip is genesis");
-	}
 }
-impl WalletExt for Wallet {}
 
+impl WalletExt for Wallet {}
 
 #[derive(Deserialize, Debug)]
 pub struct SubmitPackageResult {

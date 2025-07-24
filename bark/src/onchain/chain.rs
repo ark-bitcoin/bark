@@ -1,27 +1,27 @@
 
 
-use std::time::UNIX_EPOCH;
-use std::{borrow::Borrow, time::SystemTime};
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::{BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
-use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
 use bdk_bitcoind_rpc::bitcoincore_rpc::json::EstimateMode;
-use bdk_esplora::{esplora_client, EsploraAsyncExt};
-use bdk_wallet::chain::{BlockId, ChainPosition, CheckPoint};
-use bitcoin::{Amount, Block, BlockHash, FeeRate, OutPoint, Transaction, Txid, Wtxid};
-use log::{debug, info, warn};
+use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bdk_bitcoind_rpc::{bitcoincore_rpc, BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
+use bdk_esplora::esplora_client;
+use bdk_wallet::chain::{BlockId, CheckPoint};
+use bitcoin::constants::genesis_block;
+use bitcoin::{Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Wtxid};
+use log::{debug, error, info};
+use tokio::sync::RwLock;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt};
-use bitcoin_ext::bdk::{EsploraClientExt, WalletExt};
+use bitcoin_ext::bdk::EsploraClientExt;
 pub(crate) use bitcoin_ext::rpc::{BitcoinRpcExt, TxStatus};
-
-use crate::onchain;
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
 const FEE_RATE_TARGET_CONF_SLOW: u16 = 6;
+
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 const MIN_BITCOIND_VERSION: usize = 290000;
 
@@ -36,9 +36,36 @@ pub enum ChainSource {
 	},
 }
 
-pub enum ChainSourceClient {
+pub (crate) enum InnerChainSourceClient {
 	Bitcoind(bitcoincore_rpc::Client),
 	Esplora(esplora_client::AsyncClient),
+}
+
+impl InnerChainSourceClient {
+	async fn check_network(&self, expected: Network) -> anyhow::Result<()> {
+		match self {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
+				let network = bitcoind.get_blockchain_info()?;
+				if expected != network.chain {
+					bail!("Network mismatch: expected {:?}, got {:?}", expected, network.chain);
+				}
+			},
+			InnerChainSourceClient::Esplora(ref client) => {
+				let genesis_hash = client.get_block_hash(0).await?;
+				if genesis_hash != genesis_block(expected).block_hash() {
+					bail!("Network mismatch: expected {:?}, got {:?}", expected, genesis_hash);
+				}
+			},
+		};
+
+		Ok(())
+	}
+}
+
+pub struct ChainSourceClient {
+	inner: InnerChainSourceClient,
+	network: Network,
+	fee_rates: RwLock<FeeRates>,
 }
 
 impl ChainSourceClient {
@@ -47,7 +74,7 @@ impl ChainSourceClient {
 	/// For bitcoind, it checks if the version is at least 29.0
 	/// This is the first version for which 0 fee-anchors are considered standard
 	pub fn require_version(&self) -> anyhow::Result<()> {
-		if let ChainSourceClient::Bitcoind(ref bitcoind) = self {
+		if let InnerChainSourceClient::Bitcoind(ref bitcoind) = self.inner {
 			if bitcoind.version()? < MIN_BITCOIND_VERSION {
 				bail!("Bitcoin Core version is too old, you can participate in rounds but won't be able to unilaterally exit. Please upgrade to 29.0 or higher.");
 			}
@@ -56,24 +83,43 @@ impl ChainSourceClient {
 		Ok(())
 	}
 
-	pub fn new(chain_source: ChainSource) -> anyhow::Result<Self> {
-		Ok(match chain_source {
-			ChainSource::Bitcoind { url, auth } => ChainSourceClient::Bitcoind(
+	pub (crate) fn inner(&self) -> &InnerChainSourceClient {
+		&self.inner
+	}
+
+	pub async fn fee_rates(&self) -> FeeRates {
+		self.fee_rates.read().await.clone()
+	}
+
+	pub fn network(&self) -> Network {
+		self.network
+	}
+
+	pub async fn new(chain_source: ChainSource, network: Network, fallback_fee: Option<FeeRate>) -> anyhow::Result<Self> {
+		let inner = match chain_source {
+			ChainSource::Bitcoind { url, auth } => InnerChainSourceClient::Bitcoind(
 				bitcoincore_rpc::Client::new(&url, auth)
 					.context("failed to create bitcoind rpc client")?
 			),
-			ChainSource::Esplora { url } => ChainSourceClient::Esplora({
+			ChainSource::Esplora { url } => InnerChainSourceClient::Esplora({
 				// the esplora client doesn't deal well with trailing slash in url
 				let url = url.strip_suffix("/").unwrap_or(&url);
 				esplora_client::Builder::new(url).build_async()
 					.with_context(|| format!("failed to create esplora client for url {}", url))?
 			}),
-		})
+		};
+
+		inner.check_network(network).await?;
+
+		let fee = fallback_fee.unwrap_or(FeeRate::BROADCAST_MIN);
+		let fee_rates = RwLock::new(FeeRates { fast: fee, regular: fee, slow: fee });
+
+		Ok(Self { inner, network, fee_rates })
 	}
 
-	pub async fn fee_rates(&self) -> anyhow::Result<FeeRates> {
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+	async fn fetch_fee_rates(&self) -> anyhow::Result<FeeRates> {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				let get_fee_rate = |target| {
 					let fee = bitcoind.estimate_smart_fee(target, Some(EstimateMode::Economical))?;
 					if let Some(fee_rate) = fee.fee_rate {
@@ -88,7 +134,7 @@ impl ChainSourceClient {
 					slow: get_fee_rate(FEE_RATE_TARGET_CONF_SLOW).expect("should exist"),
 				})
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				// The API should return rates for targets 1-25, 144 and 1008
 				let estimates = client.get_fee_estimates().await?;
 				let get_fee_rate = |target| {
@@ -109,23 +155,23 @@ impl ChainSourceClient {
 	}
 
 	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				Ok(bitcoind.get_block_count()? as BlockHeight)
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				Ok(client.get_height().await?)
 			},
 		}
 	}
 
 	pub async fn block_id(&self, height: BlockHeight) -> anyhow::Result<BlockId> {
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				let hash = bitcoind.get_block_hash(height as u64)?;
 				Ok(BlockId::from((height, hash)))
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				let hash = client.get_block_hash(height).await?;
 				Ok(BlockId::from((height, hash)))
 			},
@@ -133,87 +179,18 @@ impl ChainSourceClient {
 	}
 
 	pub async fn block(&self, hash: &BlockHash) -> anyhow::Result<Option<Block>> {
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				match bitcoind.get_block(hash) {
 					Ok(b) => Ok(Some(b)),
 					Err(e) if e.is_not_found_error() => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				Ok(client.get_block_by_hash(hash).await?)
 			},
 		}
-	}
-
-	pub async fn sync_wallet(
-		&self,
-		onchain: &mut onchain::Wallet,
-	) -> anyhow::Result<Amount> {
-		debug!("Starting wallet sync...");
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
-
-		let prev_tip = onchain.wallet.latest_checkpoint();
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
-				debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
-				let unconfirmed = onchain.wallet.unconfirmed_txids();
-				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, prev_tip.clone(), prev_tip.height(), unconfirmed,
-				);
-				let mut count = 0;
-				while let Some(em) = emitter.next_block()? {
-					onchain.wallet.apply_block_connected_to(
-						&em.block, em.block_height(), em.connected_to(),
-					)?;
-					count += 1;
-
-					if count % 10_000 == 0 {
-						onchain.persist()?;
-						info!("Synced until block height {}", em.block_height());
-					}
-				}
-
-				let mempool = emitter.mempool()?;
-				onchain.wallet.apply_evicted_txs(mempool.evicted_ats());
-				onchain.wallet.apply_unconfirmed_txs(mempool.new_txs);
-				onchain.persist()?;
-				debug!("Finished syncing with bitcoind, {}", onchain.wallet.balance());
-			},
-			ChainSourceClient::Esplora(ref client) => {
-				debug!("Syncing with esplora...");
-				const STOP_GAP: usize = 50;
-				const PARALLEL_REQS: usize = 4;
-
-				let request = onchain.wallet.start_full_scan();
-				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
-				onchain.wallet.apply_update(update)?;
-				onchain.persist()?;
-				debug!("Finished syncing with esplora, {}", onchain.wallet.balance());
-			},
-		}
-
-		let balance = onchain.wallet.balance();
-
-		// Ultimately, let's try to rebroadcast all our unconfirmed txs.
-		let transactions = onchain.wallet.transactions().filter(|tx| {
-			if let ChainPosition::Unconfirmed { last_seen, .. } = tx.chain_position {
-				match last_seen {
-					Some(last_seen) => last_seen < now,
-					None => true,
-				}
-			} else {
-				false
-			}
-		}).collect::<Vec<_>>();
-		for tx in transactions {
-			if let Err(e) = self.broadcast_tx(&tx.tx_node.tx).await {
-				warn!("Error broadcasting tx {}: {}", tx.tx_node.txid, e);
-			}
-		}
-
-		Ok(balance.total())
 	}
 
 	/// For each provided outpoint, fetches the ID of any confirmed or unconfirmed in which the
@@ -223,9 +200,9 @@ impl ChainSourceClient {
 		outpoints: T,
 		block_scan_start: BlockHeight,
 	) -> anyhow::Result<TxsSpendingInputsResult> {
-		let mut r = TxsSpendingInputsResult::new();
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		let mut res = TxsSpendingInputsResult::new();
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				// We must offset the height to account for the fact we iterate using next_block()
 				let start = if block_scan_start == 0 { 0 } else { block_scan_start - 1 };
 				let block = self.block_id(start).await?;
@@ -245,7 +222,7 @@ impl ChainSourceClient {
 					for tx in &em.block.txdata {
 						for txin in tx.input.iter() {
 							if outpoint_set.contains(&txin.previous_output) {
-								r.add(
+								res.add(
 									txin.previous_output.clone(),
 									tx.compute_txid(),
 									TxStatus::Confirmed(BlockRef {
@@ -262,13 +239,13 @@ impl ChainSourceClient {
 				for (tx, _last_seen) in &mempool.new_txs {
 					for txin in tx.input.iter() {
 						if outpoint_set.contains(&txin.previous_output) {
-							r.add(txin.previous_output.clone(), tx.compute_txid(), TxStatus::Mempool);
+							res.add(txin.previous_output.clone(), tx.compute_txid(), TxStatus::Mempool);
 						}
 					}
 				}
 				debug!("Finished checking the mempool for spent outpoints");
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				for outpoint in outpoints {
 					let output_status = client.get_output_status(&outpoint.txid, outpoint.vout.into()).await?;
 
@@ -286,19 +263,19 @@ impl ChainSourceClient {
 								}
 							};
 							let txid = output_status.txid.expect("Txid should be valid if an outpoint is spent");
-							r.add(outpoint, txid, tx_status);
+							res.add(outpoint, txid, tx_status);
 						}
 					}
 				}
 			},
 		}
 
-		Ok(r)
+		Ok(res)
 	}
 
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				match bitcoind.send_raw_transaction(tx) {
 					Ok(_) => Ok(()),
 					Err(bitcoincore_rpc::Error::JsonRpc(
@@ -307,7 +284,7 @@ impl ChainSourceClient {
 					Err(e) => Err(e.into()),
 				}
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				client.broadcast(tx).await?;
 				Ok(())
 			},
@@ -327,8 +304,8 @@ impl ChainSourceClient {
 			package_msg: String,
 		}
 
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				let hexes = txs.iter()
 					.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
 					.collect::<Vec<_>>();
@@ -343,7 +320,7 @@ impl ChainSourceClient {
 				}
 				Ok(())
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				let txs = txs.iter().map(|t| t.borrow().clone()).collect::<Vec<_>>();
 				let res = client.submit_package(&txs, None, None).await?;
 				if res.package_msg != "success" {
@@ -361,15 +338,15 @@ impl ChainSourceClient {
 	}
 
 	pub async fn get_tx(&self, txid: &Txid) -> anyhow::Result<Option<Transaction>> {
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				match bitcoind.get_raw_transaction(txid, None) {
 					Ok(tx) => Ok(Some(tx)),
 					Err(e) if e.is_not_found_error() => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				Ok(client.get_tx(txid).await?)
 			},
 		}
@@ -382,12 +359,12 @@ impl ChainSourceClient {
 
 	/// Returns the status of the given transaction, including the block height if it is confirmed
 	pub async fn tx_status(&self, txid: &Txid) -> anyhow::Result<TxStatus> {
-		match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				bitcoind.tx_status(&txid)
 					.map_err(|e| format_err!(e))
 			},
-			ChainSourceClient::Esplora(ref esplora) => {
+			InnerChainSourceClient::Esplora(ref esplora) => {
 				match esplora.get_tx_info(&txid).await? {
 					Some(info) => match (info.status.block_height, info.status.block_hash) {
 						(Some(block_height), Some(block_hash)) => Ok(TxStatus::Confirmed(BlockRef {
@@ -404,17 +381,35 @@ impl ChainSourceClient {
 
 	#[allow(unused)]
 	pub async fn txout_value(&self, outpoint: &OutPoint) -> anyhow::Result<Amount> {
-		let tx = match self {
-			ChainSourceClient::Bitcoind(ref bitcoind) => {
+		let tx = match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				bitcoind.get_raw_transaction(&outpoint.txid, None)
 					.with_context(|| format!("tx {} unknown", outpoint.txid))?
 			},
-			ChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(ref client) => {
 				client.get_tx(&outpoint.txid).await?
 					.with_context(|| format!("tx {} unknown", outpoint.txid))?
 			},
 		};
 		Ok(tx.output.get(outpoint.vout as usize).context("outpoint vout out of range")?.value)
+	}
+
+	/// Gets the current fee rates from the chain source, falling back to user-specified values if
+	/// necessary
+	pub async fn update_fee_rates(&self, fallback_fee: Option<FeeRate>) -> anyhow::Result<()> {
+		let fee_rates = match (self.fetch_fee_rates().await, fallback_fee) {
+			(Ok(fee_rates), _) => Ok(fee_rates),
+			(Err(e), None) => Err(e),
+			(Err(e), Some(fallback)) => {
+				error!("Error getting fee rates, falling back to {} sat/kvB: {}",
+					fallback.to_btc_per_kvb(), e,
+				);
+				Ok(FeeRates { fast: fallback, regular: fallback, slow: fallback })
+			}
+		}?;
+
+		*self.fee_rates.write().await = fee_rates;
+		Ok(())
 	}
 }
 

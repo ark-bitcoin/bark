@@ -54,13 +54,11 @@ pub async fn execute_lightning_command(
 			pay(invoice, amount, comment, no_sync, wallet).await?;
 		},
 		LightningCommand::Invoice { amount } => {
-			wallet.onchain.sync().await.context("sync error")?;
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 		},
 		LightningCommand::Claim { invoice } => {
 			let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
-
 			wallet.finish_bolt11_board(invoice).await?;
 		}
 	}
@@ -88,7 +86,7 @@ pub async fn pay(
 
 	if !no_sync {
 		info!("Syncing wallet...");
-		if let Err(e) = wallet.sync_ark().await {
+		if let Err(e) = wallet.sync().await {
 			warn!("Sync error: {}", e)
 		}
 	}

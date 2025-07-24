@@ -3,10 +3,13 @@ pub(crate) mod transaction_manager;
 pub mod vtxo;
 
 use std::cmp;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bitcoin::Amount;
-use log::{info, error, warn};
+use anyhow::Context;
+use ark::util::SECP;
+use bitcoin::{sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+use log::{error, info, warn};
 
 use ark::{Vtxo, VtxoId};
 use bitcoin_ext::BlockHeight;
@@ -16,43 +19,55 @@ use json::exit::error::ExitError;
 
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::exit::vtxo::{ExitEntry, ExitVtxo};
-use crate::onchain::{self, ChainSource, ChainSourceClient};
+use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
+use crate::psbtext::PsbtInputExt;
+use crate::Wallet;
 
 /// Handle the process of ongoing VTXO exits
 pub struct Exit {
-	exit_vtxos: Vec<ExitVtxo>,
 	tx_manager: ExitTransactionManager,
 	persister: Arc<dyn BarkPersister>,
-	chain_source: ChainSourceClient,
+	chain_source: Arc<ChainSourceClient>,
+
+	vtxos_to_exit: HashSet<VtxoId>,
+	exit_vtxos: Vec<ExitVtxo>,
 }
 
 impl Exit {
 	pub (crate) async fn new(
 		persister: Arc<dyn BarkPersister>,
-		chain_source: ChainSource,
-		onchain: &onchain::Wallet,
+		chain_source: Arc<ChainSourceClient>,
 	) -> anyhow::Result<Exit> {
-		let chain_source_client = ChainSourceClient::new(chain_source.clone())?;
-		let mut tx_manager = ExitTransactionManager::new(persister.clone(), chain_source)?;
+		let tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
 
 		// Gather the database entries for our exit and convert them into ExitVtxo structs
 		let exit_vtxo_entries = persister.get_exit_vtxo_entries()?;
-		let mut exit_vtxos = Vec::with_capacity(exit_vtxo_entries.len());
+
+		Ok(Exit {
+			vtxos_to_exit: HashSet::new(),
+			exit_vtxos: Vec::with_capacity(exit_vtxo_entries.len()),
+			tx_manager,
+			persister,
+			chain_source,
+		})
+	}
+
+	pub (crate) async fn load<W: ExitUnilaterally>(
+		&mut self,
+		onchain: &W,
+	) -> anyhow::Result<()> {
+		let exit_vtxo_entries = self.persister.get_exit_vtxo_entries()?;
 		for entry in exit_vtxo_entries {
-			if let Some(vtxo) = persister.get_wallet_vtxo(entry.vtxo_id)? {
-				let txids = tx_manager.track_vtxo_exits(&vtxo.vtxo, onchain).await?;
-				exit_vtxos.push(ExitVtxo::from_parts(vtxo.vtxo, txids, entry.state, entry.history));
+			if let Some(vtxo) = self.persister.get_wallet_vtxo(entry.vtxo_id)? {
+				let txids = self.tx_manager.track_vtxo_exits(&vtxo.vtxo, onchain).await?;
+				self.exit_vtxos.push(ExitVtxo::from_parts(vtxo.vtxo, txids, entry.state, entry.history));
 			} else {
 				error!("VTXO {} is marked for exit but it's missing from the database", entry.vtxo_id);
 			}
 		}
-		Ok(Exit {
-			exit_vtxos,
-			tx_manager,
-			persister,
-			chain_source: chain_source_client,
-		})
+
+		Ok(())
 	}
 
 	pub async fn get_exit_status(
@@ -134,9 +149,9 @@ impl Exit {
 	/// Add all vtxos in the current wallet to the exit process.
 	///
 	/// It is recommended to sync with ASP before calling this
-	pub async fn start_exit_for_entire_wallet(
+	pub async fn start_exit_for_entire_wallet<W: ExitUnilaterally>(
 		&mut self,
-		onchain: &onchain::Wallet,
+		onchain: &W,
 	) -> anyhow::Result<()> {
 		let vtxos = self.persister.get_all_spendable_vtxos()?;
 		self.start_exit_for_vtxos(&vtxos, onchain).await?;
@@ -144,33 +159,81 @@ impl Exit {
 		Ok(())
 	}
 
-	/// Add provided vtxo to the exit process.
-	pub async fn start_exit_for_vtxos(
+	/// Mark a list of vtxos for exit and start the exit process.
+	pub async fn start_exit_for_vtxos<W: ExitUnilaterally>(
 		&mut self,
 		vtxos: &[Vtxo],
-		onchain: &onchain::Wallet,
+		onchain: &W,
 	) -> anyhow::Result<()> {
-		if vtxos.is_empty() {
+		self.mark_vtxos_for_exit(vtxos)?;
+		self.start_vtxo_exits(onchain).await?;
+		Ok(())
+	}
+
+	/// Mark a vtxo for exit.
+	///
+	/// This is used as a buffer to mark vtxos for exit without having to provide an onchain wallet.
+	/// The actual exit process is started by `start_vtxo_exits`.
+	pub fn mark_vtxos_for_exit(&mut self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		for vtxo in vtxos {
+			if self.exit_vtxos.iter().any(|ev| ev.id() == vtxo.id()) {
+				warn!("VTXO {} is already in the exit process", vtxo.id());
+				continue;
+			}
+			self.vtxos_to_exit.insert(vtxo.id());
+		}
+
+		Ok(())
+	}
+
+	pub fn list_vtxos_to_exit(&self) -> Vec<VtxoId> {
+		self.vtxos_to_exit.iter().cloned().collect()
+	}
+
+	async fn maybe_start_exit_for_vtxos(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
+		if !self.vtxos_to_exit.is_empty() {
+			self.start_vtxo_exits(onchain).await?;
+		}
+
+		Ok(())
+	}
+
+	/// Add marked vtxos to the exit process.
+	pub (crate) async fn start_vtxo_exits(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
+		let tip = self.chain_source.tip().await?;
+		if self.vtxos_to_exit.is_empty() {
 			warn!("There are VTXOs to exit!");
 			return Ok(());
 		}
 
-		let tip = self.chain_source.tip().await?;
-		for vtxo in vtxos {
+		let cloned = self.vtxos_to_exit.clone().into_iter().collect::<Vec<_>>();
+		for vtxo_id in cloned {
+			let vtxo = match self.persister.get_wallet_vtxo(vtxo_id)? {
+				Some(vtxo) => vtxo.vtxo,
+				None => {
+					error!("Could not find vtxo to exit {}", vtxo_id);
+					continue;
+				}
+			};
+
 			if self.exit_vtxos.iter().any(|ev| ev.id() == vtxo.id()) {
 				warn!("VTXO {} is already in the exit process", vtxo.id());
 				continue;
 			} else {
 				// The idea is to convert all our vtxos into an exit process structure
 				// that we then store in the database, and we can gradually proceed on.
-				let txids = self.tx_manager.track_vtxo_exits(vtxo, onchain).await?;
+				let txids = self.tx_manager.track_vtxo_exits(&vtxo, onchain).await?;
 				let exit = ExitVtxo::new(vtxo.clone(), txids, tip);
 				self.persister.store_exit_vtxo_entry(&ExitEntry::new(&exit))?;
 				self.exit_vtxos.push(exit);
 			}
+
+			self.vtxos_to_exit.remove(&vtxo_id);
 		}
+
 		Ok(())
 	}
+
 
 	/// Reset exit to an empty state. Should be called when dropping VTXOs
 	///
@@ -193,9 +256,9 @@ impl Exit {
 	/// ### Return
 	///
 	/// The exit status of each VTXO being exited that has not yet been spent
-	pub async fn progress_exit(
+	pub async fn progress_exit<W: ExitUnilaterally>(
 		&mut self,
-		onchain: &mut onchain::Wallet,
+		onchain: &mut W,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
 		self.tx_manager.sync().await?;
 		let mut exit_statuses = Vec::with_capacity(self.exit_vtxos.len());
@@ -231,8 +294,12 @@ impl Exit {
 	/// For use when syncing.
 	/// This progresses any unilateral exit in a state that needs updating on sync such as a
 	/// spendable exit may have been spent on-chain.
-	pub (crate) async fn sync_exit(&mut self, onchain: &mut onchain::Wallet) -> anyhow::Result<()> {
+	pub (crate) async fn sync_exit<W: ExitUnilaterally>(
+		&mut self,
+		onchain: &mut W,
+	) -> anyhow::Result<()> {
 		self.tx_manager.sync().await?;
+		self.maybe_start_exit_for_vtxos(onchain).await?;
 		for exit in &mut self.exit_vtxos {
 			// If the exit is waiting for new blocks, we should trigger an update
 			if exit.state().requires_network_update() {
@@ -244,5 +311,97 @@ impl Exit {
 			}
 		}
 		Ok(())
+	}
+
+	/// List all exits that are spendable
+	pub fn list_spendable(&self) -> anyhow::Result<Vec<&ExitVtxo>> {
+		let mut outputs = Vec::new();
+		for exit in &self.exit_vtxos {
+			if matches!(exit.state(), ExitState::Spendable(..)) {
+				outputs.push(exit);
+			}
+		}
+
+		Ok(outputs)
+	}
+
+	/// Sign any inputs of the PSBT that is an exit claim input
+	///
+	/// Can take the result PSBT of [`bdk_wallet::TxBuilder::finish`] on which
+	/// [`crate::onchain::TxBuilderExt::add_exit_claim_inputs`] has been used
+	///
+	/// Note: This doesn't mark the exit output as spent, it's up to the caller to
+	/// do that or it will be done once the transaction is seen in the network
+	pub fn sign_exit_claim_inputs(&self, psbt: &mut Psbt, wallet: &Wallet) -> anyhow::Result<()> {
+		let prevouts = psbt.inputs.iter()
+			.map(|i| i.witness_utxo.clone().unwrap())
+			.collect::<Vec<_>>();
+
+		let prevouts = sighash::Prevouts::All(&prevouts);
+		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
+
+		let spendable = self.list_spendable()?.into_iter().map(|v| (v.vtxo().id(), v)).collect::<HashMap<_, _>>();
+
+		let mut spent = Vec::new();
+		for (i, input) in psbt.inputs.iter_mut().enumerate() {
+			let vtxo = input.get_exit_claim_input();
+
+			if let Some(vtxo) = vtxo {
+				let exit_vtxo = *spendable.get(&vtxo.id()).context("vtxo is not exited yet")?;
+
+				let (keychain, keypair_idx) = wallet.db.get_vtxo_key(&vtxo)?;
+				let keypair = wallet.vtxo_seed.derive_keychain(keychain, keypair_idx);
+
+				input.maybe_sign_exit_claim_input(
+					&SECP,
+					&mut shc,
+					&prevouts,
+					i,
+					&keypair
+				)?;
+
+				spent.push(exit_vtxo);
+			}
+		}
+
+		Ok(())
+	}
+
+	/// Prepare and sign a PSBT to drain all spendable VTXOs to provided address
+	pub fn drain_spendable_outputs(&self, wallet: &Wallet, address: Address, fee_rate: FeeRate) -> anyhow::Result<Psbt> {
+		let inputs = self.list_spendable()?;
+
+		let output_amount = inputs.iter().map(|v| v.vtxo().spec().amount).sum();
+
+		let mut tx = Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: inputs.iter().map(|v| TxIn {
+				previous_output: v.vtxo().point(),
+				script_sig: ScriptBuf::default(),
+				sequence: Sequence::from_height(v.vtxo().exit_delta()),
+				witness: Witness::new(),
+			}).collect(),
+			output: vec![
+				TxOut {
+					script_pubkey: address.script_pubkey(),
+					value: output_amount,
+				},
+			],
+		};
+
+		// We adjust drain amount to cover the fee
+		let fee_amount = fee_rate * tx.weight();
+		tx.output[0].value -= fee_amount;
+
+		let mut psbt = Psbt::from_unsigned_tx(tx)?;
+		psbt.inputs.iter_mut().zip(inputs).for_each(|(i, v)| {
+			i.set_exit_claim_input(&v.vtxo());
+			i.witness_utxo = Some(v.vtxo().txout())
+		});
+
+		self.sign_exit_claim_inputs(&mut psbt, wallet)?;
+
+		Ok(psbt)
 	}
 }

@@ -9,7 +9,7 @@ use log::{debug, error, info, warn};
 use tonic::async_trait;
 
 use ark::Vtxo;
-use bitcoin_ext::bdk::{CpfpError, WalletExt};
+use bitcoin_ext::bdk::CpfpError;
 use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::rpc::TxStatus;
 use json::exit::error::ExitError;
@@ -17,7 +17,7 @@ use json::exit::ExitState;
 use json::exit::states::{ExitTx, ExitTxStatus};
 
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain;
+use crate::onchain::{ExitUnilaterally};
 use crate::onchain::ChainSourceClient;
 use crate::persist::BarkPersister;
 
@@ -29,7 +29,8 @@ use crate::persist::BarkPersister;
 pub(crate) trait ExitStateProgress {
 	async fn progress(
 		self,
-		ctx: &mut ProgressContext,
+		ctx: &mut ProgressContext<'_>,
+		onchain: &mut impl ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError>;
 }
 
@@ -91,11 +92,10 @@ pub(crate) struct ProgressContext<'a> {
 	pub chain_source: &'a ChainSourceClient,
 	pub fee_rate: FeeRate,
 	pub persister: &'a dyn BarkPersister,
-	pub onchain: &'a mut onchain::Wallet,
 	pub tx_manager: &'a mut ExitTransactionManager,
 }
 
-impl ProgressContext<'_> {
+impl<'a> ProgressContext<'a> {
 	pub async fn check_confirmed(&mut self, txid: Txid) -> bool {
 		matches!(self.tx_manager.tx_status(txid).await, Ok(TxStatus::Confirmed(_)))
 	}
@@ -122,11 +122,12 @@ impl ProgressContext<'_> {
 		}
 	}
 
-	pub fn create_exit_cpfp_tx(
+	pub fn create_exit_cpfp_tx<W: ExitUnilaterally>(
 		&mut self,
 		exit_tx: &Transaction,
+		onchain: &mut W,
 	) -> anyhow::Result<Transaction, ExitError> {
-		let psbt = self.onchain.wallet.make_p2a_cpfp(&exit_tx, self.fee_rate)
+		let psbt = onchain.make_p2a_cpfp(&exit_tx, self.fee_rate)
 			.map_err(|e| match e {
 				// An exit transaction must have a fee anchor, if not we can't create a CPFP package.
 				CpfpError::NoFeeAnchor(_) => ExitError::InternalError { error: e.to_string() },
@@ -135,7 +136,7 @@ impl ProgressContext<'_> {
 					needed: f.needed, available: f.available,
 				},
 			})?;
-		self.onchain.finish_tx(psbt)
+		onchain.finish_tx(psbt)
 			.map_err(|e| ExitError::ExitPackageFinalizeFailure { error: e.to_string() })
 	}
 
@@ -207,7 +208,7 @@ impl ProgressContext<'_> {
 	}
 
 	pub fn vtxo_recipient(&self) -> anyhow::Result<Address, ExitError> {
-		let params = Params::new(self.onchain.wallet.network());
+		let params = Params::new(self.chain_source.network());
 		Ok(Address::from_script(&self.vtxo.output_script_pubkey(), params)?)
 	}
 }

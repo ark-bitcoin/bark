@@ -61,8 +61,9 @@ The code-snippet below shows how you can create a [Wallet].
 
 ```no_run
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs;
-use bark::{Config, SqliteClient, Wallet};
+use bark::{Config, onchain, SqliteClient, Wallet};
 
 const MNEMONIC_FILE : &str = "mnemonic";
 const DB_FILE: &str = "db.sqlite";
@@ -81,21 +82,17 @@ async fn main() {
 
   // Create a sqlite database
   let datadir = PathBuf::from("./bark");
-  let db = SqliteClient::open(datadir.join(DB_FILE)).unwrap();
+  let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 
   // Generate and seed and store it somewhere
   let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
   fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await.unwrap();
-
-  // The block height at which the mnemonic was created
-  let birthday = None;
 
   let wallet = Wallet::create(
     &mnemonic,
     network,
     config,
     db,
-    birthday
   ).await.unwrap();
 }
 ```
@@ -106,6 +103,7 @@ The [Wallet] can be opened again by providing the [bip39::Mnemonic] and
 the [BarkPersister] again. Note, that [SqliteClient] implements the [BarkPersister]-trait.
 
 ```no_run
+# use std::sync::Arc;
 # use std::path::PathBuf;
 # use std::str::FromStr;
 #
@@ -121,7 +119,7 @@ const DB_FILE: &str = "db.sqlite";
 async fn main() {
   let datadir = PathBuf::from("./bark");
 
-  let db = SqliteClient::open(datadir.join(DB_FILE)).unwrap();
+  let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
   let wallet = Wallet::open(&mnemonic, db).await.unwrap();
@@ -137,6 +135,7 @@ If you are on signet and your Ark server is [https://ark.signet.2nd.dev](https:/
 you can request some sats from our [faucet](https://signet.2nd.dev).
 
 ```no_run
+# use std::sync::Arc;
 # use std::str::FromStr;
 # use std::path::PathBuf;
 #
@@ -150,7 +149,7 @@ you can request some sats from our [faucet](https://signet.2nd.dev).
 # async fn get_wallet() -> Wallet {
 #   let datadir = PathBuf::from("./bark");
 #
-#   let db = SqliteClient::open(datadir.join(DB_FILE)).unwrap();
+#   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
 #   Wallet::open(&mnemonic, db).await.unwrap()
@@ -177,6 +176,7 @@ a unilateral exit at any time.
 The snippet below shows how you can inspect your [ark::Vtxo]s.
 
 ```no_run
+# use std::sync::Arc;
 # use std::str::FromStr;
 # use std::path::PathBuf;
 #
@@ -190,7 +190,7 @@ The snippet below shows how you can inspect your [ark::Vtxo]s.
 # async fn get_wallet() -> Wallet {
 #   let datadir = PathBuf::from("./bark");
 #
-#   let db = SqliteClient::open(datadir.join(DB_FILE)).unwrap();
+#   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
 #   Wallet::open(&mnemonic, db).await.unwrap()
@@ -227,7 +227,7 @@ This example uses [RefreshStrategy::must_refresh] which is a sane
 default that selects all [ark::Vtxo]s that must be refreshed.
 
 ```no_run
-
+# use std::sync::Arc;
 # use std::str::FromStr;
 # use std::path::PathBuf;
 #
@@ -241,7 +241,7 @@ default that selects all [ark::Vtxo]s that must be refreshed.
 # async fn get_wallet() -> Wallet {
 #   let datadir = PathBuf::from("./bark");
 #
-#   let db = SqliteClient::open(datadir.join(DB_FILE)).unwrap();
+#   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
 #   Wallet::open(&mnemonic, db).await.unwrap()
@@ -254,8 +254,9 @@ async fn main() -> anyhow::Result<()> {
   let wallet = get_wallet().await;
 
   // Select all vtxos that refresh soon
-  let tip = wallet.onchain.tip().await?;
-  let strategy = RefreshStrategy::must_refresh(&wallet, tip);
+  let tip = wallet.chain.tip().await?;
+  let fee_rate = wallet.chain.fee_rates().await.fast;
+  let strategy = RefreshStrategy::must_refresh(&wallet, tip, fee_rate);
 
   let vtxos = wallet.vtxos_with(strategy)?;
   wallet.refresh_vtxos(vtxos).await?;

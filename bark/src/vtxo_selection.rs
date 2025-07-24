@@ -2,6 +2,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
+use bitcoin::FeeRate;
 use bitcoin_ext::BlockHeight;
 
 use ark::{Vtxo, VtxoId};
@@ -157,22 +158,25 @@ pub struct RefreshStrategy<'a> {
 	inner: InnerRefreshStrategy,
 	tip: BlockHeight,
 	wallet: &'a Wallet,
+	fee_rate: FeeRate,
 }
 
 impl<'a> RefreshStrategy<'a> {
-	pub fn must_refresh(wallet: &'a Wallet, tip: BlockHeight) -> Self {
+	pub fn must_refresh(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
 		Self {
 			inner: InnerRefreshStrategy::MustRefresh,
 			tip,
 			wallet,
+			fee_rate,
 		}
 	}
 
-	pub fn should_refresh(wallet: &'a Wallet, tip: BlockHeight) -> Self {
+	pub fn should_refresh(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
 		Self {
 			inner: InnerRefreshStrategy::ShouldRefresh,
 			tip,
 			wallet,
+			fee_rate,
 		}
 	}
 }
@@ -213,7 +217,7 @@ impl FilterVtxos for RefreshStrategy<'_> {
 						return true;
 					}
 
-					let fr = self.wallet.onchain.fee_rates.fast;
+					let fr = self.fee_rate;
 					if vtxo.amount() < estimate_exit_cost(&[vtxo.clone()], fr) {
 						warn!("VTXO {} is uneconomical to exit, should be refreshed on next opportunity", vtxo.id());
 						return true;

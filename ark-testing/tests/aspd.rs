@@ -1062,9 +1062,9 @@ async fn register_board_is_idempotent() {
 	let board = bark_wallet.board_all().await;
 
 	let bark_client = bark_wallet.client().await;
-	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
-	let funding_tx = bark_client.onchain.get_wallet_tx(board.funding_txid).unwrap();
 
+	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
+	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
 
 	// We will now call the register_board a few times
 	let mut rpc = aspd.get_public_client().await;
