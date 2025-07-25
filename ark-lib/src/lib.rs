@@ -5,6 +5,7 @@ pub extern crate bitcoin;
 #[macro_use] extern crate lazy_static;
 
 #[macro_use] pub mod util;
+pub mod address;
 pub mod arkoor;
 pub mod connectors;
 pub mod encode;
@@ -17,6 +18,7 @@ pub mod rounds;
 pub mod tree;
 pub mod vtxo;
 
+pub use crate::address::Address;
 pub use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
 pub use crate::vtxo::{Vtxo, VtxoId, VtxoPolicy};
 
