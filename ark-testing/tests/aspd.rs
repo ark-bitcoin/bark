@@ -395,9 +395,9 @@ async fn restart_aspd_with_payments() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 	bark1.refresh_all().await;
-	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(350_000)).await;
+	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
 	aspd.stop().await.unwrap();
 	aspd.start().await.unwrap();
 }
@@ -523,7 +523,8 @@ async fn double_spend_oor() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	bark.send_oor(&*RANDOM_PK, sat(100_000)).await;
+	let addr = ark::Address::new_testnet(aspd.ark_info().await.asp_pubkey, *RANDOM_PK);
+	bark.send_oor(addr, sat(100_000)).await;
 
 	// then after it's done, fire the request again, which should fail.
 	let req = last_req.lock().await.take().unwrap();
@@ -702,7 +703,7 @@ async fn spend_unconfirmed_board_oor() {
 
 	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
 	tokio::spawn(async move {
-		let _ = bark1.send_oor(bark2.vtxo_pubkey().await, sat(400_000)).await;
+		let _ = bark1.send_oor(bark2.address().await, sat(400_000)).await;
 		// we don't care that that call fails
 	});
 	l.recv().wait(2500).await;
@@ -1193,7 +1194,7 @@ async fn reject_dust_arkoor_cosign() {
 
 	let bark2 = ctx.new_bark("bark2", &aspd).await;
 
-	let err = bark.try_send_oor(bark2.vtxo_pubkey().await, sat(10_000), true).await.unwrap_err();
+	let err = bark.try_send_oor(bark2.address().await, sat(10_000), true).await.unwrap_err();
 	assert!(err.to_string().contains("arkoor output amounts cannot be below the p2tr dust threshold"), "err: {err}");
 }
 
@@ -1417,16 +1418,16 @@ async fn aspd_refuse_too_deep_arkoor_input() {
 	bark1.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let pk = bark2.vtxo_pubkey().await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
+	let addr = bark2.address().await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
 
 	let [vtxo] = bark1.vtxos_no_sync().await.try_into().unwrap();
 
-	let err = bark1.try_send_oor(&pk, sat(100_000), false).await.unwrap_err();
+	let err = bark1.try_send_oor(&addr, sat(100_000), false).await.unwrap_err();
 	assert!(err
 		.to_string()
 		.contains(&format!("bad user input: OOR depth reached maximum of 5, please refresh your VTXO: {}", vtxo.id)),

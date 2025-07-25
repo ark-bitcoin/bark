@@ -248,12 +248,12 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn vtxo_pubkey(&self) -> String {
-		self.run(["vtxo-pubkey"]).await
+	pub async fn address(&self) -> String {
+		self.run(["address"]).await
 	}
 
-	pub async fn vtxo_pubkey_at_idx(&self, idx: u32) -> String {
-		self.run(["vtxo-pubkey", "--index", &idx.to_string()]).await
+	pub async fn address_at_idx(&self, idx: u32) -> String {
+		self.run(["address", "--index", &idx.to_string()]).await
 	}
 
 	/// Use bark wallet to send bitcoin onchain

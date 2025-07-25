@@ -12,9 +12,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{address, Address, Amount, FeeRate};
+use bitcoin::{address, Amount, FeeRate};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::PublicKey;
 use clap::Parser;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
@@ -177,10 +176,10 @@ enum Command {
 	#[command()]
 	ArkInfo,
 
-	/// The public key used to receive VTXOs
+	/// Get an address to receive VTXOs
 	#[command()]
-	VtxoPubkey {
-		/// Pubkey index to peak
+	Address {
+		/// address pubkey index to peak
 		#[arg(long)]
 		index: Option<u32>,
 	},
@@ -264,7 +263,7 @@ enum Command {
 	/// Send money using Ark
 	#[command()]
 	Send {
-		/// The destination can be a VtxoPubkey, a BOLT11-invoice, LNURL or a lightning address
+		/// The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
 		destination: String,
 		/// The amount to send (optional for bolt11)
 		///
@@ -343,7 +342,7 @@ enum OnchainCommand {
 	/// Send using the on-chain wallet
 	#[command()]
 	Send {
-		destination: Address<address::NetworkUnchecked>,
+		destination: bitcoin::Address<address::NetworkUnchecked>,
 		/// Amount to send
 		///
 		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
@@ -363,7 +362,7 @@ enum OnchainCommand {
 		/// Adds an output to the given address, this can be specified multiple times and requires a
 		/// corresponding --amount parameter
 		#[arg(long = "address", required = true)]
-		addresses: Vec<Address<address::NetworkUnchecked>>,
+		addresses: Vec<bitcoin::Address<address::NetworkUnchecked>>,
 
 		/// Sets the amount to send an address, this is applied in the order you supplied the
 		/// addresses.
@@ -382,7 +381,7 @@ enum OnchainCommand {
 	/// Send all wallet funds to provided destination
 	#[command()]
 	Drain {
-		destination: Address<address::NetworkUnchecked>,
+		destination: bitcoin::Address<address::NetworkUnchecked>,
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
@@ -627,11 +626,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				output_json(&utxos);
 			},
 		},
-		Command::VtxoPubkey { index } => {
+		Command::Address { index } => {
 			if let Some(index) = index {
-				println!("{}", wallet.peak_keypair(index)?.public_key())
+				println!("{}", wallet.peak_address(index)?)
 			} else {
-				println!("{}", wallet.derive_store_next_keypair()?.public_key())
+				println!("{}", wallet.new_address()?)
 			}
 		},
 		Command::Balance { no_sync } => {
@@ -738,10 +737,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			output_json(&board);
 		},
 		Command::Send { destination, amount, comment, no_sync } => {
-			if let Ok(pk) = PublicKey::from_str(&destination) {
+			if let Ok(addr) = ark::Address::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
 				if comment.is_some() {
-					bail!("comment not supported for VTXO pubkey");
+					bail!("comment not supported for Ark address");
 				}
 
 				if !no_sync {
@@ -750,8 +749,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 						warn!("Sync error: {}", e)
 					}
 				}
-				info!("Sending arkoor payment of {} to pubkey {}", amount, pk);
-				wallet.send_arkoor_payment(pk, amount).await?;
+
+				info!("Sending arkoor payment of {} to address {}", amount, addr);
+				wallet.send_arkoor_payment(&addr, amount).await?;
 			} else if let Ok(invoice) = Bolt11Invoice::from_str(&destination) {
 				lightning::pay(invoice, amount, comment, no_sync,&mut wallet).await?;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
@@ -763,6 +763,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 						warn!("Sync error: {}", e)
 					}
 				}
+
 				info!("Sending {} to lightning address {}", amount, addr);
 				let comment = comment.as_ref().map(|c| c.as_str());
 				let (inv, preimage) = wallet.send_lnaddr(&addr, amount, comment).await?;
@@ -776,7 +777,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			info!("Payment sent succesfully!");
 		},
 		Command::SendOnchain { destination, amount, no_sync } => {
-			if let Ok(addr) = Address::from_str(&destination) {
+			if let Ok(addr) = bitcoin::Address::from_str(&destination) {
 				let addr = addr.require_network(net).with_context(|| {
 					format!("address is not valid for configured network {}", net)
 				})?;
@@ -796,7 +797,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Offboard { address, vtxos , all, no_sync } => {
 			let address = if let Some(address) = address {
-				let address = Address::from_str(&address)?
+				let address = bitcoin::Address::from_str(&address)?
 					.require_network(net)
 					.with_context(|| {
 						format!("address is not valid for configured network {}", net)

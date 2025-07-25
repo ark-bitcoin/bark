@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Txid};
+use bitcoin::{Amount, FeeRate, Network, OutPoint, Txid};
 use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
@@ -304,6 +304,34 @@ impl Wallet {
 			Ok(keypair)
 		} else {
 			bail!("VTXO key {} does not exist, please derive it first", index)
+		}
+	}
+
+	/// Generate a new Ark address.
+	///
+	/// This derives and stores the keypair directly after currently last revealed one
+	pub fn new_address(&self) -> anyhow::Result<ark::Address> {
+		let ark = &self.require_asp()?;
+		let network = self.properties()?.network;
+		let pubkey = self.derive_store_next_keypair()?.public_key();
+
+		if network == bitcoin::Network::Bitcoin {
+			Ok(ark::Address::new(ark.info.asp_pubkey, pubkey))
+		} else {
+			Ok(ark::Address::new_testnet(ark.info.asp_pubkey, pubkey))
+		}
+	}
+
+	/// Peak for Ark address at the given key index.
+	pub fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
+		let ark = &self.require_asp()?;
+		let network = self.properties()?.network;
+		let pubkey = self.peak_keypair(index)?.public_key();
+
+		if network == bitcoin::Network::Bitcoin {
+			Ok(ark::Address::new(ark.info.asp_pubkey, pubkey))
+		} else {
+			Ok(ark::Address::new_testnet(ark.info.asp_pubkey, pubkey))
 		}
 	}
 
@@ -613,7 +641,7 @@ impl Wallet {
 			asp.info.vtxo_exit_delta,
 		);
 
-		let addr = Address::from_script(&builder.funding_script_pubkey(), properties.network).unwrap();
+		let addr = bitcoin::Address::from_script(&builder.funding_script_pubkey(), properties.network).unwrap();
 
 		// We create the board tx template, but don't sign it yet.
 		let fee_rate = self.chain.fee_rates().await.regular;
@@ -857,7 +885,11 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn offboard(&mut self, vtxos: Vec<Vtxo>, address: Address) -> anyhow::Result<Offboard> {
+	async fn offboard(
+		&mut self,
+		vtxos: Vec<Vtxo>,
+		address: bitcoin::Address,
+	) -> anyhow::Result<Offboard> {
 		if vtxos.is_empty() {
 			bail!("no VTXO to offboard");
 		}
@@ -888,7 +920,7 @@ impl Wallet {
 	}
 
 	/// Offboard all vtxos to a given address or default to bark onchain address
-	pub async fn offboard_all(&mut self, address: Address) -> anyhow::Result<Offboard> {
+	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
 		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
 		Ok(self.offboard(input_vtxos, address).await?)
@@ -898,7 +930,7 @@ impl Wallet {
 	pub async fn offboard_vtxos(
 		&mut self,
 		vtxos: Vec<VtxoId>,
-		address: Address,
+		address: bitcoin::Address,
 	) -> anyhow::Result<Offboard> {
 		let input_vtxos =  vtxos
 				.into_iter()
@@ -1098,20 +1130,24 @@ impl Wallet {
 
 	pub async fn send_arkoor_payment(
 		&mut self,
-		destination: PublicKey,
+		destination: &ark::Address,
 		amount: Amount,
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let mut asp = self.require_asp()?;
+
+		if !destination.ark_id().is_for_server(asp.info.asp_pubkey) {
+			bail!("Ark address is for different server");
+		}
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let arkoor = self.create_arkoor_vtxos(destination, amount).await?;
+		let arkoor = self.create_arkoor_vtxos(destination.user_pubkey(), amount).await?;
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-				pubkey: destination.serialize().to_vec(),
+				pubkey: destination.user_pubkey().serialize().to_vec(),
 				vtxo: v.serialize().to_vec(),
 			}).collect(),
 		};
@@ -1228,7 +1264,10 @@ impl Wallet {
 			}),
 		};
 
-		let inputs = self.select_vtxos_to_cover(pay_req.amount + P2TR_DUST, Some(asp.info.max_arkoor_depth))?;
+		let inputs = self.select_vtxos_to_cover(
+			pay_req.amount + P2TR_DUST,
+			Some(asp.info.max_arkoor_depth),
+		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
@@ -1245,7 +1284,9 @@ impl Wallet {
 			keypairs.push(keypair);
 		}
 
-		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, Some(change_keypair.public_key()))?;
+		let builder = ArkoorPackageBuilder::new(
+			&inputs, &pubs, pay_req, Some(change_keypair.public_key()),
+		)?;
 
 		let req = protos::LightningPaymentRequest {
 			invoice: invoice.to_string(),
@@ -1573,7 +1614,11 @@ impl Wallet {
 	/// Send to an onchain address in an Ark round.
 	///
 	/// It is advised to sync your wallet before calling this method.
-	pub async fn send_round_onchain_payment(&mut self, addr: Address, amount: Amount) -> anyhow::Result<SendOnchain> {
+	pub async fn send_round_onchain_payment(
+		&mut self,
+		addr: bitcoin::Address,
+		amount: Amount,
+	) -> anyhow::Result<SendOnchain> {
 		let balance = self.balance()?.spendable;
 
 		// do a quick check to fail early and not wait for round if we don't have enough money
@@ -1949,7 +1994,7 @@ impl Wallet {
 
 		let params = Params::new(self.properties().unwrap().network);
 		let sent = participation.offboards.iter().map(|o| {
-			let address = Address::from_script(&o.script_pubkey, &params)?;
+			let address = bitcoin::Address::from_script(&o.script_pubkey, &params)?;
 			Ok((address.to_string(), o.amount))
 		}).collect::<anyhow::Result<Vec<_>>>()?;
 
