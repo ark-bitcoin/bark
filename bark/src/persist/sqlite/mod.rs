@@ -14,7 +14,7 @@ use rusqlite::{Connection, Transaction};
 use ark::lightning::{PaymentHash, Preimage};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
-	Config, KeychainKind, Pagination, Vtxo, VtxoId, VtxoState,
+	Config, Pagination, Vtxo, VtxoId, VtxoState,
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
@@ -168,14 +168,14 @@ impl BarkPersister for SqliteClient {
 		result
 	}
 
-	fn store_vtxo_key(&self, keychain: KeychainKind, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
+	fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_vtxo_key(&conn, keychain, index, public_key)
+		query::store_vtxo_key(&conn, index, public_key)
 	}
 
-	fn get_last_vtxo_key_index(&self, keychain: KeychainKind) -> anyhow::Result<Option<u32>> {
+	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
 		let conn = self.connect()?;
-		query::get_last_vtxo_key_index(&conn, keychain)
+		query::get_last_vtxo_key_index(&conn)
 	}
 
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool> {
@@ -183,7 +183,7 @@ impl BarkPersister for SqliteClient {
 		query::check_vtxo_key_exists(&conn, public_key)
 	}
 
-	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<(KeychainKind, u32)> {
+	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<u32> {
 		let conn = self.connect()?;
 		query::get_vtxo_key(&conn, vtxo)?.context("vtxo not found in the db")
 	}
@@ -389,12 +389,11 @@ pub mod test {
 		let seed = bip39::Mnemonic::generate(12).unwrap().to_seed("");
 		let xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
 
-		let edesc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
-		let idesc = format!("tr({}/84'/0'/0'/1/*)", xpriv);
+		let desc = format!("tr({}/84'/0'/0'/*)", xpriv);
 
 		// need to call init before we call store
 		let _ = db.initialize_bdk_wallet().unwrap();
-		let mut created = bdk_wallet::Wallet::create(edesc.clone(), idesc.clone())
+		let mut created = bdk_wallet::Wallet::create_single(desc.clone())
 			.network(network)
 			.create_wallet_no_persist()
 			.unwrap();
@@ -403,8 +402,7 @@ pub mod test {
 		let loaded = {
 			let changeset = db.initialize_bdk_wallet().unwrap();
 			bdk_wallet::Wallet::load()
-				.descriptor(bdk_wallet::KeychainKind::External, Some(edesc.clone()))
-				.descriptor(bdk_wallet::KeychainKind::Internal, Some(idesc.clone()))
+				.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
 				.extract_keys()
 				.check_network(network)
 				.load_wallet_no_persist(changeset)

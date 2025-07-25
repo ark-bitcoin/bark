@@ -349,8 +349,8 @@ impl Exit {
 			if let Some(vtxo) = vtxo {
 				let exit_vtxo = *spendable.get(&vtxo.id()).context("vtxo is not exited yet")?;
 
-				let (keychain, keypair_idx) = wallet.db.get_vtxo_key(&vtxo)?;
-				let keypair = wallet.vtxo_seed.derive_keychain(keychain, keypair_idx);
+				let keypair_idx = wallet.db.get_vtxo_key(&vtxo)?;
+				let keypair = wallet.vtxo_seed.derive_keypair(keypair_idx);
 
 				input.maybe_sign_exit_claim_input(
 					&SECP,

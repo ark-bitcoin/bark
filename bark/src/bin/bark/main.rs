@@ -20,7 +20,7 @@ use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 
 use ark::{Vtxo, VtxoId};
-use bark::{Config, KeychainKind, Pagination, UtxoInfo};
+use bark::{Config, Pagination, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::cli as json;
 use bitcoin_ext::FeeRateExt;
@@ -628,9 +628,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::VtxoPubkey { index } => {
 			if let Some(index) = index {
-				println!("{}", wallet.peak_keypair(KeychainKind::External, index)?.public_key())
+				println!("{}", wallet.peak_keypair(index)?.public_key())
 			} else {
-				println!("{}", wallet.derive_store_next_keypair(KeychainKind::External)?.public_key())
+				println!("{}", wallet.derive_store_next_keypair()?.public_key())
 			}
 		},
 		Command::Balance { no_sync } => {

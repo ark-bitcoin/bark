@@ -156,12 +156,10 @@ you can request some sats from our [faucet](https://signet.2nd.dev).
 # }
 #
 
-use bark::KeychainKind;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
   let wallet = get_wallet().await;
-  let vtxo_pubkey = wallet.derive_store_next_keypair(KeychainKind::External)?.public_key();
+  let vtxo_pubkey = wallet.derive_store_next_keypair()?.public_key();
   Ok(())
 }
 ```

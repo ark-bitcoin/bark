@@ -9,7 +9,7 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use lightning_invoice::Bolt11Invoice;
 use ark::lightning::{PaymentHash, Preimage};
 use crate::{
-	Config, KeychainKind, Movement, MovementArgs, Pagination,
+	Config, Movement, MovementArgs, Pagination,
 	WalletProperties,
 };
 use crate::exit::vtxo::ExitEntry;
@@ -66,11 +66,11 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool>;
 
 	/// Store a newly revealed index
-	fn store_vtxo_key(&self, keychain: KeychainKind, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
+	fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
 	/// Get last revealed index
-	fn get_last_vtxo_key_index(&self, keychain: KeychainKind) -> anyhow::Result<Option<u32>>;
+	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>>;
 	/// Get index of vtxo key
-	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<(KeychainKind, u32)>;
+	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<u32>;
 	/// Checks if provided public key exists in the database,
 	/// meaning that it is owned by the wallet
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
