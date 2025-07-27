@@ -19,7 +19,7 @@ use bark::movement::MovementRecipient;
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::aspd;
-use ark_testing::util::FutureExt;
+use ark_testing::util::{AnyhowErrorExt, FutureExt};
 
 const OFFBOARD_FEES: Amount = sat(900);
 
@@ -54,7 +54,6 @@ async fn bark_address_changes() {
 	assert_eq!(addr1, bark1.address_at_idx(0).await);
 	assert_eq!(addr2, bark1.address_at_idx(1).await);
 }
-
 
 #[tokio::test]
 async fn bark_create_is_atomic() {
@@ -966,4 +965,23 @@ async fn bark_does_not_spend_too_deep_arkoors() {
 	assert!(err.to_string().contains(
 		"Insufficient money available. Needed 0.00100330 BTC but 0 BTC is available",
 	), "err: {err}");
+}
+
+#[tokio::test]
+async fn test_ark_address_other_ark() {
+	let ctx = TestContext::new("bark/test_ark_address_other_ark").await;
+
+	let aspd1 = ctx.new_aspd_with_funds("aspd1", None, btc(1)).await;
+	let aspd2 = ctx.new_aspd_with_funds("aspd2", None, btc(1)).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd1, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd2, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	bark2.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let addr1 = bark1.address().await;
+	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().full_msg();
+	assert!(err.contains("Ark address is for different server"), "err: {err}");
 }
