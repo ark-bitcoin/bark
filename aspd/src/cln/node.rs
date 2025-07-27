@@ -212,7 +212,7 @@ impl ClnNodeMonitorProcess {
 
 					let status = LightningPaymentStatus::Succeeded;
 					let ok = self.db.verify_and_update_invoice(
-						&payment_hash, &attempt, status, None, Some(final_msat), Some(&preimage),
+						&payment_hash, &attempt, status, None, Some(final_msat), Some(preimage),
 					).await?;
 					if ok {
 						self.payment_update_tx.send(payment_hash)?;
@@ -382,7 +382,7 @@ impl ClnNodeMonitorProcess {
 							desired_status,
 							error_string,
 							None,
-							preimage.as_ref(),
+							preimage,
 						).await?;
 					}
 				}

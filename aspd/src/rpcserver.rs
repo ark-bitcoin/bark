@@ -600,13 +600,12 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
-		let payment_hash = PaymentHash::try_from(req.hash)
-			.expect("payment hash must be 32 bytes");
-
 		add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", payment_hash.as_hex()),
+			KeyValue::new("payment_hash", req.hash.as_hex().to_string()),
 		]);
 
+		let payment_hash = PaymentHash::try_from(req.hash)
+			.expect("payment hash must be 32 bytes");
 		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
@@ -703,12 +702,11 @@ impl rpc::server::ArkService for Server {
 		let payment_preimage: Preimage = req.payment_preimage.as_slice()
 			.try_into().badarg("invalid preimage, not 32 bytes")?;
 
-
 		let cosign_resp = self.claim_bolt11_htlc(
 			input_id,
 			pay_req,
 			user_nonce,
-			&payment_preimage,
+			payment_preimage,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))

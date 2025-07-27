@@ -38,6 +38,7 @@ use bip39::Mnemonic;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Txid};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::hashes::Hash;
+use bitcoin::hex::DisplayHex;
 use bitcoin::params::Params;
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
@@ -1257,7 +1258,7 @@ impl Wallet {
 		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
 
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
-		let payment_hash = PaymentHash::from(invoice.payment_hash());
+		let payment_hash = PaymentHash::from(*invoice.payment_hash());
 		let pay_req = VtxoRequest {
 			amount,
 			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
