@@ -56,8 +56,7 @@ impl TestContext {
 	pub async fn new_minimal(name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
 
-		let postfix = get_bark_chain_source_from_env().as_str();
-		let name = format!("{}-{}", name.as_ref(), postfix);
+		let name = name.as_ref().to_owned();
 		let datadir = test_data_directory().await.join(&name);
 
 		if datadir.exists() {
