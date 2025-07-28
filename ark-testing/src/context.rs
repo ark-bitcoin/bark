@@ -210,8 +210,9 @@ impl TestContext {
 			Vec::new()
 		};
 
-		// Create a new postgres database with the name of the test
-		let postgres_cfg = self.new_postgres(&self.test_name).await;
+		// Create a new postgres database with the name of the test and database
+		let db_name = format!("{}/{}", self.test_name, name);
+		let postgres_cfg = self.new_postgres(&db_name).await;
 
 		// NB we don't auto-complete `..Default::default()` here
 		// to force us to evaluate every value in test context.

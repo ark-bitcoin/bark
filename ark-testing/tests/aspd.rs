@@ -1434,7 +1434,6 @@ async fn aspd_refuse_too_deep_arkoor_input() {
 	);
 }
 
-#[ignore = "This test will fail and reproduces issue 843"]
 #[tokio::test]
 async fn run_two_aspds() {
 	let ctx = TestContext::new("aspd/run_two_aspds").await;
