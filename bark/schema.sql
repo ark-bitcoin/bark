@@ -11,13 +11,6 @@ CREATE TABLE bark_vtxo (
 				raw_vtxo BLOB,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			, received_in TEXT NOT NULL REFERENCES bark_movement(id), spent_in TEXT REFERENCES bark_movement(id));
-CREATE TABLE bark_vtxo_key (
-				public_key TEXT NOT NULL PRIMARY KEY,
-				keychain INTEGER NOT NULL,
-				idx INTEGER NOT NULL,
-				-- each index must be unique in a keychain
-				UNIQUE (keychain, idx)
-			);
 CREATE TABLE bark_vtxo_state (
 				id INTEGER PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT  (strftime('%Y-%m-%d %H:%M:%f', 'now')),
@@ -127,4 +120,8 @@ CREATE TABLE bark_exit_child_transactions (
 				child_tx BLOB NOT NULL,
 				block_hash BLOB,
 				height INTEGER
+			);
+CREATE TABLE bark_vtxo_key (
+				public_key TEXT NOT NULL PRIMARY KEY,
+				idx INTEGER NOT NULL UNIQUE
 			);

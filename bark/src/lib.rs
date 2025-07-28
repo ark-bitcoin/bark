@@ -36,7 +36,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint, Txid};
-use bitcoin::bip32::{self, ChildNumber, Fingerprint};
+use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::params::Params;
@@ -44,7 +44,6 @@ use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn, error};
-use rusqlite::ToSql;
 use tokio_stream::{Stream, StreamExt};
 
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
@@ -71,44 +70,6 @@ use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KeychainKind {
-	/// Internal keypairs are used for VTXO board, refreshes and change outputs
-	Internal,
-	/// External keypairs are shared externally to receive payments
-	External,
-}
-
-impl Into<ChildNumber> for KeychainKind {
-	fn into(self) -> ChildNumber {
-		match self {
-			KeychainKind::Internal => ChildNumber::from_hardened_idx(0).unwrap(),
-			KeychainKind::External => ChildNumber::from_hardened_idx(1).unwrap(),
-		}
-	}
-}
-
-impl TryFrom<i64> for KeychainKind {
-	type Error = anyhow::Error;
-
-	fn try_from(value: i64) -> Result<Self, Self::Error> {
-		match value {
-			0 => Ok(KeychainKind::Internal),
-			1 => Ok(KeychainKind::External),
-			_ => Err(anyhow::anyhow!("Invalid keychain kind: {}", value)),
-		}
-	}
-}
-
-impl ToSql for KeychainKind {
-	fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-		match self {
-			KeychainKind::Internal => Ok(0.into()),
-			KeychainKind::External => Ok(1.into()),
-		}
-	}
-}
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -208,8 +169,8 @@ impl VtxoSeed {
 		self.0.fingerprint(&SECP)
 	}
 
-	fn derive_keychain(&self, kind: KeychainKind, keypair_idx: u32) -> Keypair {
-		self.0.derive_priv(&SECP, &[kind.into(), keypair_idx.into()]).unwrap().to_keypair(&SECP)
+	fn derive_keypair(&self, idx: u32) -> Keypair {
+		self.0.derive_priv(&SECP, &[idx.into()]).unwrap().to_keypair(&SECP)
 	}
 }
 
@@ -327,18 +288,18 @@ impl Wallet {
 	}
 
 	/// Derive and store the keypair directly after currently last revealed one
-	pub fn derive_store_next_keypair(&self, keychain: KeychainKind) -> anyhow::Result<Keypair> {
-		let last_revealed = self.db.get_last_vtxo_key_index(keychain)?;
+	pub fn derive_store_next_keypair(&self) -> anyhow::Result<Keypair> {
+		let last_revealed = self.db.get_last_vtxo_key_index()?;
 
 		let index = last_revealed.map(|i| i + 1).unwrap_or(u32::MIN);
-		let keypair = self.vtxo_seed.derive_keychain(keychain, index);
+		let keypair = self.vtxo_seed.derive_keypair(index);
 
-		self.db.store_vtxo_key(keychain, index, keypair.public_key())?;
+		self.db.store_vtxo_key(index, keypair.public_key())?;
 		Ok(keypair)
 	}
 
-	pub fn peak_keypair(&self, keychain: KeychainKind, index: u32) -> anyhow::Result<Keypair> {
-		let keypair = self.vtxo_seed.derive_keychain(keychain, index);
+	pub fn peak_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
+		let keypair = self.vtxo_seed.derive_keypair(index);
 		if self.db.check_vtxo_key_exists(&keypair.public_key())? {
 			Ok(keypair)
 		} else {
@@ -424,7 +385,8 @@ impl Wallet {
 		};
 
 		let chain_source_client = ChainSourceClient::new(
-			chain_source, properties.network, config.fallback_fee_rate).await?;
+			chain_source, properties.network, config.fallback_fee_rate,
+		).await?;
 		let chain = Arc::new(chain_source_client);
 
 		let asp = match AspConnection::handshake(&config.asp_address, properties.network).await {
@@ -620,7 +582,7 @@ impl Wallet {
 		wallet: &mut W,
 		amount: Amount,
 	) -> anyhow::Result<Board> {
-		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		let user_keypair = self.derive_store_next_keypair()?;
 		self.board(wallet, Some(amount), user_keypair).await
 	}
 
@@ -629,7 +591,7 @@ impl Wallet {
 		&mut self,
 		wallet: &mut W,
 	) -> anyhow::Result<Board> {
-		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		let user_keypair = self.derive_store_next_keypair()?;
 		self.board(wallet, None, user_keypair).await
 	}
 
@@ -768,10 +730,9 @@ impl Wallet {
 	pub async fn sync_rounds(&self) -> anyhow::Result<()> {
 		let mut asp = self.require_asp()?;
 
-		let keychain = KeychainKind::Internal;
-		let last_pk_index = self.db.get_last_vtxo_key_index(keychain)?.unwrap_or_default();
+		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
-			self.vtxo_seed.derive_keychain(keychain, idx).public_key()
+			self.vtxo_seed.derive_keypair(idx).public_key()
 		}).collect::<HashSet<_>>();
 
 		//TODO(stevenroose) we won't do reorg handling here
@@ -818,10 +779,9 @@ impl Wallet {
 	}
 
 	async fn sync_oors(&self) -> anyhow::Result<()> {
-		let keychain = KeychainKind::External;
-		let last_pk_index = self.db.get_last_vtxo_key_index(keychain)?.unwrap_or_default();
+		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
-			self.vtxo_seed.derive_keychain(keychain, idx).public_key()
+			self.vtxo_seed.derive_keypair(idx).public_key()
 		}).collect::<Vec<_>>();
 
 		self.sync_arkoor_for_pubkeys(&pubkeys).await?;
@@ -971,7 +931,7 @@ impl Wallet {
 
 		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
 
-		let user_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		let user_keypair = self.derive_store_next_keypair()?;
 		let req = VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
 			amount: total_amount,
@@ -1085,7 +1045,7 @@ impl Wallet {
 		amount: Amount,
 	) -> anyhow::Result<ArkoorCreateResult> {
 		let mut asp = self.require_asp()?;
-		let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
+		let change_pubkey = self.derive_store_next_keypair()?.public_key();
 
 		let req = VtxoRequest {
 			amount: amount,
@@ -1101,8 +1061,8 @@ impl Wallet {
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
 			let keypair = {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+				let keypair_idx = self.db.get_vtxo_key(&input)?;
+				self.vtxo_seed.derive_keypair(keypair_idx)
 			};
 
 			let (s, p) = musig::nonce_pair(&keypair);
@@ -1182,8 +1142,8 @@ impl Wallet {
 		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
 		for input in htlc_vtxos.into_iter() {
 			let keypair = {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+				let keypair_idx = self.db.get_vtxo_key(&input)?;
+				self.vtxo_seed.derive_keypair(keypair_idx)
 			};
 
 			let (s, p) = musig::nonce_pair(&keypair);
@@ -1255,7 +1215,7 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		let change_keypair = self.derive_store_next_keypair()?;
 
 		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
 		let payment_hash = PaymentHash::from(*invoice.payment_hash());
@@ -1275,8 +1235,8 @@ impl Wallet {
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
 			let keypair = {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&input)?;
-				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+				let keypair_idx = self.db.get_vtxo_key(&input)?;
+				self.vtxo_seed.derive_keypair(keypair_idx)
 			};
 
 			let (s, p) = musig::nonce_pair(&keypair);
@@ -1478,8 +1438,8 @@ impl Wallet {
 			&payment_hash
 		)?.context("no offchain board found")?;
 
-		let (keychain, index) = self.db.get_vtxo_key(&vtxo.vtxo)?;
-		let keypair = self.peak_keypair(keychain, index)?;
+		let keypair_index = self.db.get_vtxo_key(&vtxo.vtxo)?;
+		let keypair = self.peak_keypair(keypair_index)?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
 		// Claiming arkoor against preimage
@@ -1533,7 +1493,7 @@ impl Wallet {
 
 		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
 
-		let keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+		let keypair = self.derive_store_next_keypair()?;
 
 		let amount = Amount::from_msat_floor(
 			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
@@ -1557,7 +1517,7 @@ impl Wallet {
 			}
 			assert_eq!(inputs.len(), 1);
 			let [input] = inputs.try_into().unwrap();
-			let change_pubkey = self.derive_store_next_keypair(KeychainKind::Internal)?.public_key();
+			let change_pubkey = self.derive_store_next_keypair()?.public_key();
 			let output = VtxoRequest {
 				amount: input.amount(),
 				policy: VtxoPolicy::new_pubkey(change_pubkey),
@@ -1645,7 +1605,7 @@ impl Wallet {
 					None
 				} else {
 					let amount = in_sum - spent_amount;
-					let change_keypair = self.derive_store_next_keypair(KeychainKind::Internal)?;
+					let change_keypair = self.derive_store_next_keypair()?;
 					info!("Adding change vtxo for {}", amount);
 					Some(VtxoRequest {
 						amount: amount,
@@ -1704,9 +1664,9 @@ impl Wallet {
 		let res = asp.client.submit_payment(protos::SubmitPaymentRequest {
 			input_vtxos: participation.inputs.iter().map(|vtxo| {
 				let keypair = {
-					let (keychain, keypair_idx) = self.db.get_vtxo_key(vtxo)
+					let keypair_idx = self.db.get_vtxo_key(vtxo)
 						.expect("owned vtxo key should be in database");
-					self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+					self.vtxo_seed.derive_keypair(keypair_idx)
 				};
 
 				protos::InputVtxo {
@@ -1886,8 +1846,8 @@ impl Wallet {
 		);
 		let forfeit_sigs = participation.inputs.iter().map(|vtxo| {
 			let vtxo_keypair = {
-				let (keychain, keypair_idx) = self.db.get_vtxo_key(&vtxo)?;
-				self.vtxo_seed.derive_keychain(keychain, keypair_idx)
+				let keypair_idx = self.db.get_vtxo_key(&vtxo)?;
+				self.vtxo_seed.derive_keypair(keypair_idx)
 			};
 
 			let sigs = connectors.connectors().enumerate().map(|(i, (conn, _))| {
