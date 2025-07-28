@@ -17,7 +17,7 @@ impl TestManagedPostgres {
 	}
 
 	pub async fn request_database(
-		&self, db_name: &str
+		&self, db_name: &str,
 	) -> aspd::config::Postgres {
 		let client = self.global_client().await;
 		drop_and_create_database(&client, db_name).await;
