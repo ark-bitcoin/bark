@@ -414,7 +414,7 @@ async fn bark_can_board_from_lightning() {
 			error!("bolt11 board error: {}", e.full_msg());
 		}
 	});
-	lightningd_1.pay_bolt11(invoice_info.invoice).wait(30_000).await;
+	lightningd_1.pay_bolt11(&invoice_info.invoice).wait(30_000).await;
 	res1.await.unwrap();
 
 	let vtxos = bark.vtxos().await;
@@ -446,6 +446,11 @@ async fn bark_can_board_from_lightning() {
 	);
 
 	assert_eq!(bark.offchain_balance().await, board_amount + pay_amount);
+
+	let receives = bark.list_lightning_receives().await;
+	assert_eq!(receives.len(), 1);
+	assert_eq!(receives[0].invoice.to_string(), invoice_info.invoice);
+	assert!(receives[0].preimage_revealed_at.is_some());
 }
 
 #[tokio::test]

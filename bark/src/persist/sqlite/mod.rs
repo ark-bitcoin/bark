@@ -196,6 +196,11 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	fn get_paginated_lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {
+		let conn = self.connect()?;
+		query::get_paginated_lightning_receives(&conn, pagination)
+	}
+
 	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::set_preimage_revealed(&conn, payment_hash)?;
