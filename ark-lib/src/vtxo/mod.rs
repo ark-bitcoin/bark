@@ -974,7 +974,7 @@ impl ProtocolEncoding for VtxoPolicy {
 				Ok(Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid VtxoType type byte: {v:x}",
+				"invalid VtxoType type byte: {v:#x}",
 			))),
 		}
 	}
@@ -1023,7 +1023,7 @@ impl ProtocolEncoding for GenesisTransition {
 				Ok(Self::Arkoor { policy, signature })
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid GenesisTransistion type byte: {v:x}",
+				"invalid GenesisTransistion type byte: {v:#x}",
 			))),
 		}
 	}
@@ -1058,7 +1058,7 @@ impl ProtocolEncoding for Vtxo {
 		let version = r.read_u16()?;
 		if version != VTXO_ENCODING_VERSION {
 			return Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid Vtxo encoding version byte: {version:x}",
+				"invalid Vtxo encoding version byte: {version:#x}",
 			)));
 		}
 
