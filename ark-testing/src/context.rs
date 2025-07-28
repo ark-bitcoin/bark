@@ -39,8 +39,7 @@ impl ToAspUrl for AspdRpcProxyServer {
 }
 
 pub struct TestContext {
-	#[allow(dead_code)]
-	pub name: String,
+	pub test_name: String,
 	pub datadir: PathBuf,
 
 	pub bitcoind: Option<Bitcoind>,
@@ -53,11 +52,11 @@ pub struct TestContext {
 }
 
 impl TestContext {
-	pub async fn new_minimal(name: impl AsRef<str>) -> Self {
+	pub async fn new_minimal(test_name: impl AsRef<str>) -> Self {
 		crate::util::init_logging().expect("Logging can be initialized");
 
-		let name = name.as_ref().to_owned();
-		let datadir = test_data_directory().await.join(&name);
+		let test_name = test_name.as_ref().to_owned();
+		let datadir = test_data_directory().await.join(&test_name);
 
 		if datadir.exists() {
 			fs::remove_dir_all(&datadir).await.unwrap();
@@ -65,7 +64,7 @@ impl TestContext {
 		fs::create_dir_all(&datadir).await.unwrap();
 
 		TestContext {
-			name,
+			test_name,
 			datadir,
 			bitcoind: None,
 			electrs: None,
@@ -73,8 +72,8 @@ impl TestContext {
 		}
 	}
 
-	pub async fn new(name: impl AsRef<str>) -> Self {
-		let mut ctx = Self::new_minimal(name).await;
+	pub async fn new(test_name: impl AsRef<str>) -> Self {
+		let mut ctx = Self::new_minimal(test_name).await;
 
 		ctx.init_central_bitcoind().await;
 		ctx.init_central_electrs().await;
@@ -130,7 +129,7 @@ impl TestContext {
 					bitcoin_zmq_port: self.bitcoind().zmq_port(),
 					electrs_dir: self.datadir.join("electrs"),
 				};
-				let mut electrs = Electrs::new(&self.name, cfg, electrs_type);
+				let mut electrs = Electrs::new(&self.test_name, cfg, electrs_type);
 				electrs.start().await.unwrap();
 				Some(electrs)
 			},
@@ -212,7 +211,7 @@ impl TestContext {
 		};
 
 		// Create a new postgres database with the name of the test
-		let postgres_cfg = self.new_postgres(&self.name).await;
+		let postgres_cfg = self.new_postgres(&self.test_name).await;
 
 		// NB we don't auto-complete `..Default::default()` here
 		// to force us to evaluate every value in test context.

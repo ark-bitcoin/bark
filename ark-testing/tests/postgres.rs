@@ -11,7 +11,7 @@ use cln_rpc::listsendpays_request::ListsendpaysIndex;
 async fn upsert_vtxo() {
 	let mut ctx = TestContext::new_minimal("postgresd/upsert_vtxo").await;
 	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.name).await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
 
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
@@ -34,7 +34,7 @@ async fn upsert_vtxo() {
 async fn lightning_invoice() {
 	let mut ctx = TestContext::new_minimal("postgresd/lightning_node").await;
 	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.name).await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
 
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
@@ -59,7 +59,7 @@ async fn lightning_invoice() {
 async fn duplicated_lightning_invoice() {
 	let mut ctx = TestContext::new_minimal("postgresd/duplicated_lightning_invoice").await;
 	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.name).await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
 
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
@@ -75,7 +75,7 @@ async fn duplicated_lightning_invoice() {
 	db.store_lightning_payment_start(lightning_node_id, &invoice, 1000).await.unwrap();
 
 	// We create a test db client because Db check lightning invoice uniqueness
-	let db_client = ctx.postgres_manager().database_client(Some(&ctx.name)).await;
+	let db_client = ctx.postgres_manager().database_client(Some(&ctx.test_name)).await;
 
 	let stmt = db_client.prepare("
 		INSERT INTO lightning_invoice (
