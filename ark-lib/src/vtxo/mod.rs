@@ -924,7 +924,7 @@ impl std::hash::Hash for Vtxo {
 }
 
 /// The byte used to encode the [VtxoPolicy::Pubkey] output type.
-const VTXO_POLICY_REGULAR: u8 = 0x01;
+const VTXO_POLICY_PUBKEY: u8 = 0x01;
 
 /// The byte used to encode the [VtxoPolicy::ServerHtlcSend] output type.
 const VTXO_POLICY_SERVER_HTLC_SEND: u8 = 0x02;
@@ -936,7 +936,7 @@ impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
-				w.emit_u8(VTXO_POLICY_REGULAR)?;
+				w.emit_u8(VTXO_POLICY_PUBKEY)?;
 				user_pubkey.encode(w)?;
 			},
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
@@ -957,7 +957,7 @@ impl ProtocolEncoding for VtxoPolicy {
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		match r.read_u8()? {
-			VTXO_POLICY_REGULAR => {
+			VTXO_POLICY_PUBKEY => {
 				let user_pubkey = PublicKey::decode(r)?;
 				Ok(Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }))
 			},
