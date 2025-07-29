@@ -6,8 +6,8 @@ use bitcoin_ext::BlockHeight;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 use opentelemetry::{Key, Value};
 use opentelemetry::{global, propagation::Extractor, KeyValue};
-use opentelemetry::trace::{TracerProvider, Span};
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry::trace::{Span, TracerProvider};
+use opentelemetry_otlp::{Compression, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::Resource;
@@ -101,7 +101,6 @@ struct Metrics {
 	grpc_error_counter: Counter<u64>,
 }
 
-
 impl Metrics {
 	fn init(config: &Config, public_key: PublicKey) -> Self {
 		let endpoint = config.otel_collector_endpoint.as_ref().unwrap();
@@ -111,7 +110,8 @@ impl Metrics {
 		let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
 			.with_tonic()
 			.with_endpoint(endpoint.clone())
-			.with_timeout(Duration::from_secs(3))
+			.with_timeout(Duration::from_secs(10))
+			.with_compression(Compression::Gzip)
 			.build().unwrap();
 
 		let resource = Resource::builder()
@@ -153,7 +153,8 @@ impl Metrics {
 			// .with_temporality(opentelemetry_sdk::metrics::Temporality::Delta)
 			.with_tonic()
 			.with_endpoint(endpoint)
-			.with_timeout(Duration::from_secs(3))
+			.with_timeout(Duration::from_secs(10))
+			.with_compression(Compression::Gzip)
 			.build().unwrap();
 
 		let metrics_reader = PeriodicReader::builder(metrics_exporter).build();
