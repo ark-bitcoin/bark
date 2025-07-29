@@ -2,7 +2,7 @@ mod m0001_initial_version;
 mod m0002_config;
 mod m0003_payment_history;
 mod m0004_unregistered_board;
-mod m0005_offchain_boards;
+mod m0005_lightning_receive;
 mod m0006_exit_rework;
 mod m0007_vtxo_refresh_expiry_threshold;
 mod m0008_fee_rate_implementation;
@@ -17,7 +17,7 @@ use m0001_initial_version::Migration0001;
 use m0002_config::Migration0002;
 use m0003_payment_history::Migration0003;
 use m0004_unregistered_board::Migration0004;
-use m0005_offchain_boards::Migration0005;
+use m0005_lightning_receive::Migration0005;
 use m0006_exit_rework::Migration0006;
 use m0007_vtxo_refresh_expiry_threshold::Migration0007;
 use m0008_fee_rate_implementation::Migration0008;
@@ -211,7 +211,7 @@ mod test {
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_config").unwrap());
 		assert!(table_exists(&conn, "bark_movement").unwrap());
-		assert!(table_exists(&conn, "bark_offchain_board").unwrap());
+		assert!(table_exists(&conn, "bark_lightning_receive").unwrap());
 		assert!(table_exists(&conn, "bark_exit_states").unwrap());
 		assert!(table_exists(&conn, "bark_exit_child_transactions").unwrap());
 

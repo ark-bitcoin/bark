@@ -15,15 +15,11 @@ use crate::{
 use crate::exit::vtxo::ExitEntry;
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 
-#[derive(Clone, Serialize, Deserialize)]
-pub enum OffchainPayment {
-	Lightning(Bolt11Invoice),
-}
-
-pub struct OffchainBoard {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightningReceive {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
-	pub payment: OffchainPayment,
+	pub invoice: Bolt11Invoice,
 	pub preimage_revealed_at: Option<u64>,
 }
 
@@ -75,12 +71,12 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// meaning that it is owned by the wallet
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
 
-	/// Store an offchain board
-	fn store_offchain_board(&self, payment_hash: &PaymentHash, preimage: &Preimage, payment: OffchainPayment) -> anyhow::Result<()>;
+	/// Store a lightning receive
+	fn store_lightning_receive(&self, payment_hash: &PaymentHash, preimage: &Preimage, invoice: Bolt11Invoice) -> anyhow::Result<()>;
 	/// Set preimage disclosed
 	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()>;
-	/// Fetch an offchain board by payment hash
-	fn fetch_offchain_board_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<OffchainBoard>>;
+	/// Fetch a lightning receive by payment hash
+	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<LightningReceive>>;
 
 	/// Store the VTXOs currently being exited
 	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()>;
