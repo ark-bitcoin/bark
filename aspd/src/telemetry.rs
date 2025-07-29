@@ -62,7 +62,6 @@ pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_
 /// of the gRPC request.
 pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;
 
-
 /// The global open-telemetry context to register metrics.
 static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
 
@@ -125,9 +124,15 @@ impl Metrics {
 			))
 			.build();
 
+		let tracer_sampler = if let Some(sampler) = config.otel_tracing_sampler {
+			Sampler::TraceIdRatioBased(sampler)
+		} else {
+			Sampler::AlwaysOff
+		};
+
 		let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
 			.with_batch_exporter(trace_exporter)
-			.with_sampler(Sampler::AlwaysOn)
+			.with_sampler(tracer_sampler)
 			.with_id_generator(RandomIdGenerator::default())
 			.with_max_events_per_span(64)
 			.with_max_attributes_per_span(16)
