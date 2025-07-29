@@ -211,6 +211,7 @@ impl Server {
 			rtmgr.clone(),
 			bitcoind.clone(),
 			cfg.txindex_check_interval,
+			db.clone(),
 		);
 
 		let tx_nursery = TxNursery::new(
@@ -364,7 +365,9 @@ impl Server {
 				};
 				drop(wallet);
 
-				let tx = self.tx_broadcast_handle.broadcast_tx(tx).await;
+				let tx = self.tx_broadcast_handle.broadcast_tx(tx).await
+					.context("Failed to broadcast transaction")?;
+
 				// wait until it's actually broadcast
 				tokio::time::timeout(Duration::from_millis(5_000), async {
 					loop {

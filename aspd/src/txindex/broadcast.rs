@@ -2,41 +2,41 @@ use std::collections::HashMap;
 
 use bitcoin::{Txid, Transaction, Wtxid};
 use bitcoin::consensus::encode::serialize;
-use bdk_bitcoind_rpc::bitcoincore_rpc::{self, RpcApi};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bitcoin_ext::rpc::BitcoinRpcClient;
 use log::{trace, debug, info, warn};
 use tokio::sync::mpsc;
 
 use crate::system::RuntimeManager;
-use crate::txindex::{Tx, TxStatus, TxIndex};
+use crate::txindex::{Tx, TxIndex};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TxBroadcastHandle {
 	sender: mpsc::UnboundedSender<Vec<Txid>>,
-	index: TxIndex,
+	txindex: TxIndex,
 }
 
 impl TxBroadcastHandle {
 	/// Adds the transaction to TxIndex and ensures
 	/// it will be broadcast
-	pub async fn broadcast_tx(&self, tx: Transaction) -> Tx {
-		let ret = self.index.register_as(tx, TxStatus::Unseen).await;
+	pub async fn broadcast_tx(&self, tx: Transaction) -> anyhow::Result<Tx> {
+		let ret = self.txindex.register(tx).await?;
 		self.inner_broadcast(vec![ret.txid]);
-		ret
+		Ok(ret)
 	}
 
 	/// Adds the package to TxIndex and ensures it
 	/// will be broadcast
-	pub async fn broadcast_pkg(&self, pkg: impl Into<Vec<Transaction>>) -> Vec<Tx> {
+	pub async fn broadcast_pkg(&self, pkg: impl Into<Vec<Transaction>>) -> anyhow::Result<Vec<Tx>> {
 		let pkg = pkg.into();
 		let mut ret = Vec::with_capacity(pkg.len());
 		for tx in pkg {
-			ret.push(self.index.register_as(tx, TxStatus::Unseen).await);
+			ret.push(self.txindex.register(tx).await?);
 		}
 		let txids = ret.iter().map(|t| t.txid).collect::<Vec<_>>();
 		log::debug!("Registering tx package for broadcast: {:?}", txids);
 		self.inner_broadcast(txids);
-		ret
+		Ok(ret)
 	}
 
 	/// Adds the transaction to the queue for broadcasting
@@ -74,7 +74,7 @@ impl TxNursery {
 	pub fn broadcast_handle(&self) -> TxBroadcastHandle {
 		TxBroadcastHandle {
 			sender: self.sender.clone(),
-			index: self.txindex.clone(),
+			txindex: self.txindex.clone(),
 		}
 	}
 
@@ -105,34 +105,39 @@ impl TxNursery {
 	async fn broadcast(&self, pkg: &[Txid]) {
 		if pkg.len() == 1 {
 			let txid = pkg[0];
-			let lock = self.txindex.tx_map.read().await;
-			let tx = lock.get(&txid).cloned();
-			drop(lock);
-			if let Some(tx) = tx {
-				if !tx.status().await.confirmed() {
-					slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
-					self.broadcast_tx(&tx).await;
-				}
-			} else {
-				debug!("Instructed to broadcast a tx we don't know: {}", txid);
-				return;
+			match self.txindex.get(txid).await {
+				Ok(Some(tx)) => {
+					if !tx.status().await.confirmed() {
+						slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
+						self.broadcast_tx(&tx).await;
+					}
+				},
+				Ok(None) => debug!("instructed to broadcast a tx we don't know: {}", txid),
+				Err(e) => debug!("Error while fetching tx that must be broadcast {txid}: {e}"),
 			}
 		} else {
-			let mut txs = Vec::with_capacity(pkg.len());
-			let lock = self.txindex.tx_map.read().await;
-			for txid in pkg {
-				if let Some(tx) = lock.get(&*txid) {
-					if !tx.status().await.confirmed() {
+			let txs = self.txindex.get_batch(pkg).await;
+
+			if let Err(e) = txs {
+				debug!("Error while fetching broadcast pkg {pkg:?}: {e}");
+				return
+			}
+
+			let txs = txs.expect("No error");
+
+			for (txid, opt_tx) in pkg.iter().zip(&txs) {
+				if let Some(tx) = opt_tx {
+					if ! tx.status().await.confirmed() {
 						slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
-						txs.push(tx.clone());
 					}
 				} else {
 					debug!("Instructed to broadcast a tx we don't know: {}", txid);
-					return;
 				}
 			}
-			drop(lock);
-			self.broadcast_pkg(&txs).await;
+
+			// Filter out all txs that are None
+			let broadcast = txs.iter().filter_map(|tx| tx.clone()).collect::<Vec<_>>();
+			self.broadcast_pkg(&broadcast).await;
 		}
 	}
 
@@ -140,11 +145,16 @@ impl TxNursery {
 		let mut i = 0;
 		'outer: while i < self.broadcast.len() {
 			let pkg = &self.broadcast[i];
-			let txs = self.txindex.tx_map.read().await;
-			for txid in pkg.iter() {
-				let res = txs.get(txid);
-				if res.is_none() || res.unwrap().status().await == TxStatus::Unregistered {
-					debug!("Broadcast pkg has unknown or unregistered tx {}. Dropping", txid);
+			let indexed_package = self.txindex.get_batch(&pkg).await;
+
+			if let Err(e) = indexed_package {
+				debug!("Failed to get package from index: {e}");
+				continue 'outer
+			}
+
+			for (txid, indexed_tx) in pkg.iter().zip(indexed_package.expect("No error")) {
+				if indexed_tx.is_none() {
+					debug!("Broadcast pkg has unknown tx {}. Dropping", txid);
 					self.broadcast.swap_remove(i);
 					continue 'outer;
 				}
@@ -155,7 +165,7 @@ impl TxNursery {
 	}
 
 	async fn broadcast_tx(&self, tx: &Tx) {
-		// Skip if tx already in mempol.
+		// Skip if tx already in mempool or confirmed.
 		if tx.seen().await {
 			return;
 		}

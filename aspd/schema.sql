@@ -223,6 +223,32 @@ CREATE VIEW public.arkoor_mailbox AS
 
 
 --
+-- Name: bitcoin_transaction; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.bitcoin_transaction (
+    id bigint NOT NULL,
+    txid text NOT NULL,
+    tx bytea NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: bitcoin_transaction_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.bitcoin_transaction ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.bitcoin_transaction_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: forfeits_claim_state; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -633,6 +659,22 @@ ALTER TABLE ONLY public.all_round
 
 ALTER TABLE ONLY public.all_vtxo
     ADD CONSTRAINT all_vtxo_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: bitcoin_transaction bitcoin_transaction_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bitcoin_transaction
+    ADD CONSTRAINT bitcoin_transaction_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: bitcoin_transaction bitcoin_transaction_txid_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bitcoin_transaction
+    ADD CONSTRAINT bitcoin_transaction_txid_key UNIQUE (txid);
 
 
 --

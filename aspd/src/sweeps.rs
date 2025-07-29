@@ -63,7 +63,7 @@ use crate::database::model::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
 
-use crate::txindex::{self, TxIndex, TxStatus};
+use crate::txindex::{self, TxIndex};
 use crate::txindex::broadcast::TxBroadcastHandle;
 
 use crate::wallet::BdkWalletExt;
@@ -313,8 +313,8 @@ impl<'a> SweepBuilder<'a> {
 		let id = vtxo.id();
 		let exit_tx = vtxo.transactions().last().unwrap();
 		let exit_txid = exit_tx.tx.compute_txid();
-		let exit_tx = self.sweeper.txindex.get_or_insert_with_bitcoind(
-			&exit_txid, move || exit_tx.tx, &self.sweeper.bitcoind,
+		let exit_tx = self.sweeper.txindex.get_or_insert(
+			exit_txid, move || exit_tx.tx
 		).await?;
 
 		if !exit_tx.confirmed().await {
@@ -345,10 +345,9 @@ impl<'a> SweepBuilder<'a> {
 		let tree_root = round.vtxo_txs.last().unwrap();
 		let tree_root_txid = tree_root.compute_txid();
 
-		let tree_root = self.sweeper.txindex.get_or_insert_with_bitcoind(
-			&tree_root_txid,
+		let tree_root = self.sweeper.txindex.get_or_insert(
+			tree_root_txid,
 			|| tree_root.clone(),
-			&self.sweeper.bitcoind
 		).await?;
 
 		if !tree_root.confirmed().await {
@@ -382,7 +381,7 @@ impl<'a> SweepBuilder<'a> {
 		let agg_pkgs = round.round.signed_tree.spec.cosign_agg_pks();
 		for (signed_tx, agg_pk) in signed_txs.into_iter().zip(agg_pkgs).rev() {
 			let txid = signed_tx.compute_txid();
-			let tx = self.sweeper.txindex.get_or_insert_with_bitcoind(&txid, || signed_tx.clone(), &self.sweeper.bitcoind).await?;
+			let tx = self.sweeper.txindex.get_or_insert(txid, || signed_tx.clone()).await?;
 			if !tx.confirmed().await {
 				trace!("tx {} did not confirm yet, not sweeping", tx.txid);
 				continue;
@@ -431,16 +430,24 @@ impl<'a> SweepBuilder<'a> {
 			};
 
 			let txid = tx.compute_txid();
-			let tx = self.sweeper.txindex.get_or_insert(&txid, move || {
+			let indexed_tx = self.sweeper.txindex.get_or_insert(txid, move || {
 				error!("Txindex should have all connector txs. Missing {} for round {}",
 					txid, round.id,
 				);
-				(tx, TxStatus::Unseen)
+				tx
 			}).await;
 
-			if tx.confirmed().await {
+			let is_confirmed = if let Ok(tx) = indexed_tx.as_ref() {
+				tx.confirmed().await
+			} else {
+				error!("The connector tx is not present in the TxIndex. Missing {} for round {}", txid, round.id);
+				false
+			};
+
+			if is_confirmed {
+				let indexed_tx = indexed_tx.expect("We know it is in the index and confirmed");
 				// Check if the connector output is still unspent.
-				let conn = OutPoint::new(tx.txid, CONNECTOR_TX_CONNECTOR_VOUT);
+				let conn = OutPoint::new(indexed_tx.txid, CONNECTOR_TX_CONNECTOR_VOUT);
 				match self.sweeper.bitcoind.get_tx_out(&conn.txid, conn.vout, Some(true)) {
 					Ok(Some(out)) => {
 						if let Some((h, _txid)) = self.sweeper.is_swept(conn).await {
@@ -463,7 +470,7 @@ impl<'a> SweepBuilder<'a> {
 				}
 
 				// Then continue the chain.
-				last = (OutPoint::new(tx.txid, CONNECTOR_TX_CHAIN_VOUT), tx.tx.output[CONNECTOR_TX_CHAIN_VOUT as usize].clone());
+				last = (OutPoint::new(indexed_tx.txid, CONNECTOR_TX_CHAIN_VOUT), indexed_tx.tx.output[CONNECTOR_TX_CHAIN_VOUT as usize].clone());
 			} else {
 				// add the last point
 				let (point, output) = last;
@@ -574,7 +581,9 @@ impl Process {
 		self.db.store_pending_sweep(&txid, &tx).await
 			.with_context(|| format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
 
-		let tx = self.tx_broadcaster.broadcast_tx(tx).await;
+		let tx = self.tx_broadcaster.broadcast_tx(tx).await
+			.context("Failed to broadcast sweeping transaction")?;
+
 		self.store_pending(tx);
 		Ok(())
 	}
@@ -598,9 +607,6 @@ impl Process {
 			error!("Failed to mark board vtxo {} as swept: {}", vtxo.id(), e);
 		}
 
-		let reveal = vtxo.transactions().last().unwrap().tx.compute_txid();
-		self.txindex.unregister_batch(&[&vtxo.chain_anchor().txid, &reveal]).await;
-
 		self.pending_tx_by_utxo.remove(&vtxo.chain_anchor());
 	}
 
@@ -609,7 +615,6 @@ impl Process {
 		// round tx root
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_VTXO_TREE_VOUT));
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT));
-		self.txindex.unregister(round.id.as_round_txid()).await;
 
 		// vtxo tree txs
 		let vtxo_txs = round.round.signed_tree.all_signed_txs();
@@ -620,9 +625,6 @@ impl Process {
 			}
 		}
 
-		trace!("Removing vtxo txs from txindex...");
-		self.txindex.unregister_batch(vtxo_txs.iter()).await;
-
 		// connector txs
 		trace!("Connector txs from internal pending...");
 		for tx in round.connectors.iter_unsigned_txs() {
@@ -630,8 +632,6 @@ impl Process {
 				self.pending_tx_by_utxo.remove(&OutPoint::new(tx.compute_txid(), i as u32));
 			}
 		}
-		trace!("Removing connector txs from txindex...");
-		self.txindex.unregister_batch(round.connectors.iter_unsigned_txs()).await;
 
 		if let Err(e) = self.db.remove_round(round.id).await {
 			error!("Failed to remove round from db after successful sweeping: {}", e);
@@ -737,7 +737,6 @@ impl Process {
 			}
 
 			self.db.drop_pending_sweep(txid).await?;
-			self.txindex.unregister(txid).await;
 			to_remove.insert(*txid);
 		}
 		for txid in to_remove {
@@ -846,7 +845,8 @@ impl VtxoSweeper {
 		};
 
 		for (_txid, raw_tx) in raw_pending {
-			let tx = proc.tx_broadcaster.broadcast_tx(raw_tx).await;
+			let tx = proc.tx_broadcaster.broadcast_tx(raw_tx).await
+					.context("Failed to broadcast sweeping tx")?;
 			proc.store_pending(tx);
 		}
 
