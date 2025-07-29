@@ -29,9 +29,9 @@ service ArkService {
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
 
-	rpc StartBolt11Board(StartBolt11BoardRequest) returns (StartBolt11BoardResponse) {}
-	rpc SubscribeBolt11Board(SubscribeBolt11BoardRequest) returns (SubscribeBolt11BoardResponse) {}
-	rpc ClaimBolt11Board(ClaimBolt11BoardRequest) returns (ArkoorCosignResponse) {}
+	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
+	rpc SubscribeLightningReceive(SubscribeLightningReceiveRequest) returns (SubscribeLightningReceiveResponse) {}
+	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorCosignResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
@@ -192,25 +192,25 @@ message RevokeLightningPaymentRequest {
 	repeated bytes user_nonces = 2;
 }
 
-message StartBolt11BoardRequest {
+message StartLightningReceiveRequest {
 	bytes payment_hash = 1;
 	uint64 amount_sat = 2;
 }
 
-message StartBolt11BoardResponse {
+message StartLightningReceiveResponse {
 	string bolt11 = 1;
 }
 
-message SubscribeBolt11BoardRequest {
+message SubscribeLightningReceiveRequest {
 	string bolt11 = 1;
 }
 
-message ClaimBolt11BoardRequest {
+message ClaimLightningReceiveRequest {
 	ArkoorCosignRequest arkoor = 1;
 	bytes payment_preimage = 2;
 }
 
-message SubscribeBolt11BoardResponse {
+message SubscribeLightningReceiveResponse {
 	string invoice = 1;
 	uint64 amount_sat = 2;
 }

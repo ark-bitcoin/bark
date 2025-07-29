@@ -94,7 +94,7 @@ pub fn server_htlc_send_taproot(
 		.finalize(&SECP, combined_pk).unwrap()
 }
 
-/// Build taproot spend info to build a VTXO for Alice lightning board
+/// Build taproot spend info to build a VTXO for Alice lightning receive
 ///
 /// This related to the [VtxoPolicy::ServerHtlcRecv] policy.
 ///

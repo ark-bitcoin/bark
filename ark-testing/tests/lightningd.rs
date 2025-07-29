@@ -410,7 +410,7 @@ async fn bark_can_board_from_lightning() {
 	let cloned = bark.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		if let Err(e) = cloned.try_bolt11_board(cloned_invoice_info.invoice).await {
+		if let Err(e) = cloned.try_lightning_receive(cloned_invoice_info.invoice).await {
 			error!("bolt11 board error: {}", e.full_msg());
 		}
 	});
@@ -492,7 +492,7 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.bolt11_board(cloned_invoice_info.invoice).await
+		cloned.lightning_receive(cloned_invoice_info.invoice).await
 	});
 
 	bark_2.send_lightning(invoice_info.invoice, None).await;

@@ -1268,9 +1268,9 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 	impl aspd::proxy::AspdRpcProxy for Proxy {
 		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
 
-		async fn claim_bolt11_board(&mut self, mut req: protos::ClaimBolt11BoardRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+		async fn claim_lightning_receive(&mut self, mut req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
 			req.payment_preimage = vec![1; 32];
-			Ok(self.upstream().claim_bolt11_board(req).await?.into_inner())
+			Ok(self.upstream().claim_lightning_receive(req).await?.into_inner())
 		}
 	}
 
@@ -1286,7 +1286,7 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 
 	let cloned = invoice_info.clone();
 	tokio::spawn(async move { lightningd_1.pay_bolt11(cloned.invoice).await; });
-	let err = bark.try_bolt11_board(invoice_info.invoice).await.unwrap_err();
+	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
 
 	assert!(err.to_string().contains(
 		"input vtxo payment hash does not match preimage",
@@ -1380,14 +1380,14 @@ async fn aspd_should_refuse_claim_twice() {
 
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
-	let res1 = tokio::spawn(async move { cloned.bolt11_board(cloned_invoice_info.invoice).await });
+	let res1 = tokio::spawn(async move { cloned.lightning_receive(cloned_invoice_info.invoice).await });
 	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).wait(10_000).await;
 	res1.await.unwrap();
 
 	assert_eq!(bark_1.offchain_balance().await, sat(300000000));
 
 	// bark should not be able to subscribe to already settled invoice
-	let err = bark_1.try_bolt11_board(invoice_info.invoice).await.unwrap_err();
+	let err = bark_1.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
 }
 

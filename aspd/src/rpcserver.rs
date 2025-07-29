@@ -163,9 +163,9 @@ const RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT: &'static str = "start_lightning_p
 const RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT: &'static str = "finish_lightning_payment";
 const RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT: &'static str = "check_lightning_payment";
 const RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT: &'static str = "revoke_lightning_payment";
-const RPC_SERVICE_ARK_START_BOLT11_BOARD: &'static str = "start_bolt11_board";
-const RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_BOARD: &'static str = "subscribe_bolt11_board";
-const RPC_SERVICE_ARK_CLAIM_BOLT11_BOARD: &'static str = "claim_bolt11_board";
+const RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE: &'static str = "start_lightning_receive";
+const RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE: &'static str = "subscribe_lightning_receive";
+const RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE: &'static str = "claim_lightning_receive";
 const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
 const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
@@ -184,9 +184,9 @@ const RPC_SERVICE_ARK_METHODS: [&str; 19] = [
 	RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_START_BOLT11_BOARD,
-	RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_BOARD,
-	RPC_SERVICE_ARK_CLAIM_BOLT11_BOARD,
+	RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE,
+	RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE,
+	RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE,
 	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
 	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
 	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
@@ -634,11 +634,11 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
-	async fn start_bolt11_board(
+	async fn start_lightning_receive(
 		&self,
-		req: tonic::Request<protos::StartBolt11BoardRequest>,
-	) -> Result<tonic::Response<protos::StartBolt11BoardResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_BOLT11_BOARD);
+		req: tonic::Request<protos::StartLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
@@ -650,16 +650,16 @@ impl rpc::server::ArkService for Server {
 			.expect("payment hash must be 32 bytes");
 		let amount = Amount::from_sat(req.amount_sat);
 
-		let resp = self.start_bolt11_board(payment_hash, amount).await.to_status()?;
+		let resp = self.start_lightning_receive(payment_hash, amount).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
 	}
 
-	async fn subscribe_bolt11_board(
+	async fn subscribe_lightning_receive(
 		&self,
-		req: tonic::Request<protos::SubscribeBolt11BoardRequest>,
-	) -> Result<tonic::Response<protos::SubscribeBolt11BoardResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_BOLT11_BOARD);
+		req: tonic::Request<protos::SubscribeLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::SubscribeLightningReceiveResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
 		let invoice = &req.bolt11;
@@ -669,16 +669,16 @@ impl rpc::server::ArkService for Server {
 
 		let invoice = Bolt11Invoice::from_str(invoice).badarg("invalid invoice")?;
 
-		let update = self.subscribe_bolt11_board(invoice).await.to_status()?;
+		let update = self.subscribe_lightning_receive(invoice).await.to_status()?;
 
 		Ok(tonic::Response::new(update))
 	}
 
-	async fn claim_bolt11_board(
+	async fn claim_lightning_receive(
 		&self,
-		req: tonic::Request<protos::ClaimBolt11BoardRequest>
+		req: tonic::Request<protos::ClaimLightningReceiveRequest>
 	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_BOLT11_BOARD);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
 		let arkoor = req.arkoor.badarg("missing arkoor")?;

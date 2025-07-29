@@ -1409,12 +1409,12 @@ impl Wallet {
 		info!("Start bolt11 board with preimage / payment hash: {} / {}",
 			preimage.as_hex(), payment_hash.as_hex());
 
-		let req = protos::StartBolt11BoardRequest {
+		let req = protos::StartLightningReceiveRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_sat: amount.to_sat(),
 		};
 
-		let resp = asp.client.start_bolt11_board(req).await?.into_inner();
+		let resp = asp.client.start_lightning_receive(req).await?.into_inner();
 		info!("Ark Server is ready to receive LN payment to invoice: {}.", resp.bolt11);
 
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
@@ -1448,14 +1448,14 @@ impl Wallet {
 		let pubs = [pub_nonce];
 		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
 
-		let req = protos::ClaimBolt11BoardRequest {
+		let req = protos::ClaimLightningReceiveRequest {
 			arkoor: Some(builder.arkoors.first().unwrap().into()),
 			payment_preimage: lightning_receive.payment_preimage.to_vec(),
 		};
 
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(&lightning_receive.payment_hash)?;
-		let cosign_resp = asp.client.claim_bolt11_board(req).await
+		let cosign_resp = asp.client.claim_lightning_receive(req).await
 			.context("failed to claim bolt11 board")?
 			.into_inner().try_into().context("invalid server cosign response")?;
 
@@ -1483,7 +1483,7 @@ impl Wallet {
 	}
 
 
-	pub async fn finish_bolt11_board(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+	pub async fn finish_lightning_receive(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
 		let tip = self.chain.tip().await?;
 		let mut asp = self.require_asp()?;
 
@@ -1495,12 +1495,12 @@ impl Wallet {
 			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
 		);
 
-		let req = protos::SubscribeBolt11BoardRequest {
+		let req = protos::SubscribeLightningReceiveRequest {
 			bolt11: invoice.to_string(),
 		};
 
 		info!("Waiting payment...");
-		asp.client.subscribe_bolt11_board(req).await?.into_inner();
+		asp.client.subscribe_lightning_receive(req).await?.into_inner();
 		info!("Lightning payment arrived!");
 
 		// In order to onboard we need to show an input.
