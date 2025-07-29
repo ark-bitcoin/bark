@@ -757,7 +757,7 @@ impl ProtocolEncoding for VtxoTreeSpec {
 		let version = r.read_u8()?;
 		if version != VTXO_TREE_SPEC_VERSION {
 			return Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid VtxoTreeSpec encoding version byte: {version:x}",
+				"invalid VtxoTreeSpec encoding version byte: {version:#x}",
 			)));
 		}
 		let expiry_height = r.read_u32()?;
@@ -797,7 +797,7 @@ impl ProtocolEncoding for SignedVtxoTreeSpec {
 		let version = r.read_u8()?;
 		if version != SIGNED_VTXO_TREE_SPEC_VERSION {
 			return Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid SignedVtxoTreeSpec encoding version byte: {version:x}",
+				"invalid SignedVtxoTreeSpec encoding version byte: {version:#x}",
 			)));
 		}
 		let spec = VtxoTreeSpec::decode(r)?;
