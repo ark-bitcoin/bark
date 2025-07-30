@@ -6,8 +6,8 @@ use bitcoin_ext::BlockHeight;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 use opentelemetry::{Key, Value};
 use opentelemetry::{global, propagation::Extractor, KeyValue};
-use opentelemetry::trace::{TracerProvider, Span};
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry::trace::{Span, TracerProvider};
+use opentelemetry_otlp::{Compression, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::Resource;
@@ -62,6 +62,10 @@ pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_
 /// of the gRPC request.
 pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;
 
+/// This value is used to limit the cardinality (buckets) of metrics.
+/// i.e. when we use `round_id` then the metric bucket growth would never stop,
+///   by using `round_id` % `CARDINALITY` we have a fixed amount of metric buckets.
+pub const CARDINALITY: usize = 100;
 
 /// The global open-telemetry context to register metrics.
 static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
@@ -82,7 +86,8 @@ struct Metrics {
 	protocol_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
-	round_gauge: Gauge<u64>,
+	round_id_gauge: Gauge<u64>,
+	round_state_gauge: Gauge<u64>,
 	round_attempt_gauge: Gauge<u64>,
 	round_volume_gauge: Gauge<u64>,
 	round_vtxo_count_gauge: Gauge<u64>,
@@ -101,7 +106,6 @@ struct Metrics {
 	grpc_error_counter: Counter<u64>,
 }
 
-
 impl Metrics {
 	fn init(config: &Config, public_key: PublicKey) -> Self {
 		let endpoint = config.otel_collector_endpoint.as_ref().unwrap();
@@ -111,7 +115,8 @@ impl Metrics {
 		let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
 			.with_tonic()
 			.with_endpoint(endpoint.clone())
-			.with_timeout(Duration::from_secs(3))
+			.with_timeout(Duration::from_secs(10))
+			.with_compression(Compression::Gzip)
 			.build().unwrap();
 
 		let resource = Resource::builder()
@@ -125,9 +130,15 @@ impl Metrics {
 			))
 			.build();
 
+		let tracer_sampler = if let Some(sampler) = config.otel_tracing_sampler {
+			Sampler::TraceIdRatioBased(sampler)
+		} else {
+			Sampler::AlwaysOff
+		};
+
 		let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
 			.with_batch_exporter(trace_exporter)
-			.with_sampler(Sampler::AlwaysOn)
+			.with_sampler(tracer_sampler)
 			.with_id_generator(RandomIdGenerator::default())
 			.with_max_events_per_span(64)
 			.with_max_attributes_per_span(16)
@@ -153,7 +164,8 @@ impl Metrics {
 			// .with_temporality(opentelemetry_sdk::metrics::Temporality::Delta)
 			.with_tonic()
 			.with_endpoint(endpoint)
-			.with_timeout(Duration::from_secs(3))
+			.with_timeout(Duration::from_secs(10))
+			.with_compression(Compression::Gzip)
 			.build().unwrap();
 
 		let metrics_reader = PeriodicReader::builder(metrics_exporter).build();
@@ -169,7 +181,8 @@ impl Metrics {
 		let protocol_version_counter = meter.u64_counter("protocol_version_counter").build();
 		let wallet_balance_gauge = meter.u64_gauge("wallet_balance_gauge").build();
 		let block_height_gauge = meter.u64_gauge("block_gauge").build();
-		let round_gauge = meter.u64_gauge("round_gauge").build();
+		let round_id_gauge = meter.u64_gauge("round_id_gauge").build();
+		let round_state_gauge = meter.u64_gauge("round_state_gauge").build();
 		let round_attempt_gauge = meter.u64_gauge("round_attempt_gauge").build();
 		let round_volume_gauge = meter.u64_gauge("round_volume_gauge").build();
 		let round_vtxo_count_gauge = meter.u64_gauge("round_vtxo_count_gauge").build();
@@ -199,7 +212,8 @@ impl Metrics {
 			protocol_version_counter,
 			wallet_balance_gauge,
 			block_height_gauge,
-			round_gauge,
+			round_id_gauge,
+			round_state_gauge,
 			round_attempt_gauge,
 			round_volume_gauge,
 			round_vtxo_count_gauge,
@@ -274,6 +288,13 @@ pub fn set_block_height(block_height: BlockHeight) {
 
 pub fn set_round_state(round_id: usize, state: RoundStateKind) {
 	if let Some(m) = TELEMETRY.get() {
+		// Keep only last few digits to limit the cardinality.
+		let short_round_id = round_id % CARDINALITY;
+		// Link round_id with short_round_id.
+		m.round_id_gauge.record(round_id as u64, &[
+			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
+		]);
+
 		for s in RoundStateKind::get_all() {
 			let value = if *s == state {
 				1
@@ -281,8 +302,8 @@ pub fn set_round_state(round_id: usize, state: RoundStateKind) {
 				0
 			};
 
-			m.round_gauge.record(value, &[
-				KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+			m.round_state_gauge.record(value, &[
+				KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
 				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
 			]);
 		}
@@ -291,10 +312,12 @@ pub fn set_round_state(round_id: usize, state: RoundStateKind) {
 
 pub fn set_round_metrics(round_id: usize, attempt: usize, state: RoundStateKind) {
 	if let Some(m) = TELEMETRY.get() {
-		set_round_state(round_id, state.clone());
+		// Keep only last few digits to limit the cardinality.
+		let short_round_id = round_id % CARDINALITY;
+		set_round_state(short_round_id, state.clone());
 
 		m.round_attempt_gauge.record(attempt as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
 		]);
 	}
 }
@@ -307,13 +330,15 @@ pub fn set_full_round_metrics(
 	vtxo_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
-		set_round_metrics(round_id, attempt, state.clone());
+		// Keep only last few digits to limit the cardinality.
+		let short_round_id = round_id % CARDINALITY;
+		set_round_metrics(short_round_id, attempt, state.clone());
 
 		m.round_volume_gauge.record(volume.to_sat(), &[
-			KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
 		]);
 		m.round_vtxo_count_gauge.record(vtxo_count as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_ID, round_id.to_string()),
+			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
 		]);
 	}
 }

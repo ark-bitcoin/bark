@@ -236,6 +236,7 @@ impl TestContext {
 			txindex_check_interval: Duration::from_millis(500),
 			handshake_psa: None,
 			otel_collector_endpoint: None,
+			otel_tracing_sampler: None,
 			vtxo_sweeper: aspd::sweeps::Config {
 				sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
 				round_sweep_interval: Duration::from_secs(60),

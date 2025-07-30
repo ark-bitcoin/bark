@@ -161,6 +161,10 @@ pub struct Config {
 	pub handshake_psa: Option<String>,
 
 	pub otel_collector_endpoint: Option<String>,
+	/// <=0 -> Tracing always disabled,
+	/// 0.5 -> Tracing enabled 50% of the time, and
+	/// >=1 -> Tracing always active.
+	pub otel_tracing_sampler: Option<f64>,
 
 	/// Config for the VtxoSweeper process.
 	pub vtxo_sweeper: sweeps::Config,
@@ -233,6 +237,7 @@ impl Default for Config {
 			txindex_check_interval: Duration::from_secs(30),
 
 			otel_collector_endpoint: None,
+			otel_tracing_sampler: None,
 			vtxo_sweeper: Default::default(),
 			forfeit_watcher: Default::default(),
 			forfeit_watcher_min_balance: Amount::from_sat(10_000_000),
