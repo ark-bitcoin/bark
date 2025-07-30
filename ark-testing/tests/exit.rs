@@ -317,8 +317,8 @@ async fn exit_oor() {
 	bark1.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let bark2_pubkey = bark2.vtxo_pubkey().await;
-	bark1.send_oor(bark2_pubkey, sat(100_000)).await;
+	let bark2_addr = bark2.address().await;
+	bark1.send_oor(bark2_addr, sat(100_000)).await;
 
 	// By calling bark2 vtxos we ensure the wallet is synced
 	// This ensures bark2 knows the vtxo exists
@@ -357,7 +357,7 @@ async fn double_exit_call() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
 
 	let vtxos = bark1.vtxos().await;
@@ -385,7 +385,7 @@ async fn double_exit_call() {
 	assert_eq!(bark1.vtxos().await.len(), 0, "all vtxos should be marked as spent");
 
 	// create a new vtxo to exit
-	bark2.send_oor(bark1.vtxo_pubkey().await, sat(145_000)).await;
+	bark2.send_oor(bark1.address().await, sat(145_000)).await;
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(vtxos.len(), 1);
 	let vtxo = vtxos.first().unwrap();

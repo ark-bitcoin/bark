@@ -19,7 +19,7 @@ use bark::movement::MovementRecipient;
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::aspd;
-use ark_testing::util::FutureExt;
+use ark_testing::util::{AnyhowErrorExt, FutureExt};
 
 const OFFBOARD_FEES: Amount = sat(900);
 
@@ -42,19 +42,18 @@ async fn bark_ark_info() {
 }
 
 #[tokio::test]
-async fn bark_vtxo_pubkey_changes() {
-	let ctx = TestContext::new("bark/bark_vtxo_pubkey_changes").await;
+async fn bark_address_changes() {
+	let ctx = TestContext::new("bark/bark_address_changes").await;
 	let aspd = ctx.new_aspd("aspd", None).await;
 	let bark1 = ctx.new_bark("bark1", &aspd).await;
 
-	let pk1 = bark1.vtxo_pubkey().await;
-	let pk2 = bark1.vtxo_pubkey().await;
+	let addr1 = bark1.address().await;
+	let addr2 = bark1.address().await;
 
-	assert_ne!(pk1, pk2);
-	assert_eq!(pk1, bark1.vtxo_pubkey_at_idx(0).await);
-	assert_eq!(pk2, bark1.vtxo_pubkey_at_idx(1).await);
+	assert_ne!(addr1, addr2);
+	assert_eq!(addr1, bark1.address_at_idx(0).await);
+	assert_eq!(addr2, bark1.address_at_idx(1).await);
 }
-
 
 #[tokio::test]
 async fn bark_create_is_atomic() {
@@ -175,7 +174,7 @@ async fn list_vtxos() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
@@ -241,8 +240,8 @@ async fn send_simple_arkoor() {
 	bark1.board(sat(80_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let pk2 = bark2.vtxo_pubkey().await;
-	bark1.send_oor(pk2, sat(20_000)).await;
+	let addr2 = bark2.address().await;
+	bark1.send_oor(addr2, sat(20_000)).await;
 
 	assert_eq!(60_000, bark1.offchain_balance().await.to_sat());
 	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
@@ -259,8 +258,8 @@ async fn send_arkoor_package() {
 	bark1.board(sat(20_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let pk2 = bark2.vtxo_pubkey().await;
-	bark1.send_oor(pk2, sat(50_000)).await;
+	let addr2 = bark2.address().await;
+	bark1.send_oor(addr2, sat(50_000)).await;
 
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should only remain change vtxo");
 	assert_eq!(vtxo.amount, sat(10_000));
@@ -285,11 +284,11 @@ async fn refresh_all() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// We want bark2 to have a refresh, board, round and oor vtxo
-	let pk1 = bark1.vtxo_pubkey().await;
-	let pk2 = bark2.vtxo_pubkey().await;
-	bark2.send_oor(&pk1, sat(20_000)).await; // generates change
+	let addr1 = bark1.address().await;
+	let addr2 = bark2.address().await;
+	bark2.send_oor(&addr1, sat(20_000)).await; // generates change
 	bark1.refresh_all().await;
-	bark1.send_oor(&pk2, sat(20_000)).await;
+	bark1.send_oor(&addr2, sat(20_000)).await;
 	bark2.board(sat(20_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -310,7 +309,7 @@ async fn bark_rejects_sending_subdust_oor() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let subdust_amount = sat(P2TR_DUST_SAT - 1);
-	let res = bark1.try_send_oor(&bark2.vtxo_pubkey().await, subdust_amount, true).await;
+	let res = bark1.try_send_oor(&bark2.address().await, subdust_amount, true).await;
 
 	assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
 	assert_eq!(bark1.offchain_balance().await, board_amount);
@@ -328,7 +327,7 @@ async fn bark_rejects_creating_arkoor_subdust_change() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let sent_amount = board_amount - sat(P2TR_DUST_SAT - 1);
-	let err = bark1.try_send_oor(&bark2.vtxo_pubkey().await, sent_amount, true).await.unwrap_err();
+	let err = bark1.try_send_oor(&bark2.address().await, sent_amount, true).await.unwrap_err();
 
 	assert!(err.to_string().contains(&format!(
 		"An error occurred: Insufficient money available. Needed {} but {} is available",
@@ -358,7 +357,7 @@ async fn refresh_counterparty() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
 	let (arkoor_vtxo, others): (Vec<_>, Vec<_>) = bark1.vtxos().await
 		.into_iter()
@@ -394,7 +393,7 @@ async fn compute_balance() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
 	let balance = bark1.offchain_balance().await;
 	assert_eq!(balance, sat(830_000));
@@ -426,7 +425,7 @@ async fn list_movements() {
 	assert!(movements[0].recipients.first().is_none());
 
 	// oor change
-	bark1.send_oor(&bark2.vtxo_pubkey().await, sat(150_000)).await;
+	bark1.send_oor(&bark2.address().await, sat(150_000)).await;
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 2);
 	assert_eq!(movements[0].spends[0].amount, sat(300_000));
@@ -444,7 +443,7 @@ async fn list_movements() {
 	assert!(movements[0].recipients.first().is_none());
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 	let movements = bark1.list_movements().await;
 
 	assert_eq!(movements.len(), 4);
@@ -497,7 +496,7 @@ async fn offboard_all() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
 	let address = ctx.bitcoind().get_new_address();
 
@@ -546,7 +545,7 @@ async fn offboard_vtxos() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// oor vtxo
-	bark2.send_oor(&bark1.vtxo_pubkey().await, sat(330_000)).await;
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
@@ -716,7 +715,7 @@ async fn reject_arkoor_with_bad_signature() {
 	// create a third wallet to receive the invalid arkoor
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
 
-	bark1.send_oor(bark2.vtxo_pubkey().await, sat(10_000)).await;
+	bark1.send_oor(bark2.address().await, sat(10_000)).await;
 
 	// we should drop invalid arkoors
 	assert_eq!(bark2.vtxos().await.len(), 0);
@@ -767,7 +766,7 @@ async fn second_round_attempt() {
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
-	bark1.send_oor(bark2.vtxo_pubkey().await, sat(200_000)).await;
+	bark1.send_oor(bark2.address().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
 	let mut log_missing_forfeits = aspd.subscribe_log::<MissingForfeits>().await;
@@ -955,15 +954,34 @@ async fn bark_does_not_spend_too_deep_arkoors() {
 	bark1.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let pk = bark2.vtxo_pubkey().await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
-	bark1.send_oor(&pk, sat(100_000)).await;
+	let addr = bark2.address().await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
+	bark1.send_oor(&addr, sat(100_000)).await;
 
-	let err = bark1.try_send_oor(&pk, sat(100_000), false).await.unwrap_err();
+	let err = bark1.try_send_oor(&addr, sat(100_000), false).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"Insufficient money available. Needed 0.00100330 BTC but 0 BTC is available",
 	), "err: {err}");
+}
+
+#[tokio::test]
+async fn test_ark_address_other_ark() {
+	let ctx = TestContext::new("bark/test_ark_address_other_ark").await;
+
+	let aspd1 = ctx.new_aspd_with_funds("aspd1", None, btc(1)).await;
+	let aspd2 = ctx.new_aspd_with_funds("aspd2", None, btc(1)).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1", &aspd1, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &aspd2, sat(1_000_000)).await;
+
+	bark1.board(sat(800_000)).await;
+	bark2.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let addr1 = bark1.address().await;
+	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().full_msg();
+	assert!(err.contains("Ark address is for different server"), "err: {err}");
 }
