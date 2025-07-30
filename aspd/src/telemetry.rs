@@ -47,7 +47,9 @@ pub const ATTRIBUTE_TYPE: &str = "type";
 pub const ATTRIBUTE_KIND: &str = "kind";
 pub const ATTRIBUTE_URI: &str = "uri";
 pub const ATTRIBUTE_PUBLIC_KEY: &str = "public_key";
-pub const ATTRIBUTE_VERSION: &str = "version";
+pub const ATTRIBUTE_ASPD_VERSION: &str = "server_version";
+pub const ATTRIBUTE_BARK_VERSION: &str = "bark_version";
+pub const ATTRIBUTE_PROTOCOL_VERSION: &str = "protocol_version";
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 
@@ -76,7 +78,8 @@ pub fn init_telemetry(config: &Config, public_key: PublicKey) {
 #[derive(Debug)]
 struct Metrics {
 	spawn_counter: UpDownCounter<i64>,
-	handshake_version_counter: Counter<u64>,
+	bark_version_counter: Counter<u64>,
+	protocol_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
 	round_gauge: Gauge<u64>,
@@ -162,8 +165,8 @@ impl Metrics {
 
 		let meter = global::meter_provider().meter(METER_ASPD);
 		let spawn_counter = meter.i64_up_down_counter("spawn_counter").build();
-		let version_counter = meter.u64_counter("version_counter").build();
-		let handshake_version_counter = meter.u64_counter("handshake_version_counter").build();
+		let bark_version_counter = meter.u64_counter("bark_version_counter").build();
+		let protocol_version_counter = meter.u64_counter("protocol_version_counter").build();
 		let wallet_balance_gauge = meter.u64_gauge("wallet_balance_gauge").build();
 		let block_height_gauge = meter.u64_gauge("block_gauge").build();
 		let round_gauge = meter.u64_gauge("round_gauge").build();
@@ -185,11 +188,15 @@ impl Metrics {
 		let grpc_request_counter = meter.u64_counter("grpc_requests_total").build();
 		let grpc_error_counter = meter.u64_counter("grpc_errors_total").build();
 
-		version_counter.add(1u64, &[KeyValue::new(ATTRIBUTE_VERSION, env!("CARGO_PKG_VERSION"))]);
+		// log the current aspd version
+		meter.u64_counter("version_counter").build().add(
+			1u64, &[KeyValue::new(ATTRIBUTE_ASPD_VERSION, env!("CARGO_PKG_VERSION"))],
+		);
 
 		Metrics {
 			spawn_counter,
-			handshake_version_counter,
+			bark_version_counter,
+			protocol_version_counter,
 			wallet_balance_gauge,
 			block_height_gauge,
 			round_gauge,
@@ -225,9 +232,16 @@ pub fn worker_dropped(worker: &str) {
 	}
 }
 
-pub fn count_version(version: &str) {
+pub fn count_bark_version(client: Option<String>) {
 	if let Some(m) = TELEMETRY.get() {
-		m.handshake_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_VERSION, version.to_owned())]);
+		let client = client.unwrap_or_else(|| format!("UNKNOWN"));
+		m.bark_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_BARK_VERSION, client)]);
+	}
+}
+
+pub fn count_protocol_version(pver: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		m.protocol_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_PROTOCOL_VERSION, Value::I64(pver as i64))]);
 	}
 }
 

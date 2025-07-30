@@ -6,6 +6,7 @@ package aspd;
 /// Public ark service for arkd.
 service ArkService {
 	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
+	rpc GetArkInfo(Empty) returns (ArkInfo) {}
 
 	rpc GetFreshRounds(FreshRoundsRequest) returns (FreshRounds) {}
 	rpc GetRound(RoundId) returns (RoundInfo) {}
@@ -40,6 +41,18 @@ service ArkService {
 	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (Empty) {}
 }
 
+message HandshakeRequest {
+	optional string bark_version = 1;
+}
+
+message HandshakeResponse {
+	uint64 min_protocol_version = 1;
+	uint64 max_protocol_version = 2;
+	// Public Service Announcement, a generalized message from the server to be
+	// displayed to the user.
+	optional string psa = 3;
+}
+
 message ArkInfo {
 	string network = 1;
 	bytes asp_pubkey = 2;
@@ -50,20 +63,6 @@ message ArkInfo {
 	uint32 htlc_expiry_delta = 7;
 	optional uint64 max_vtxo_amount = 8;
 	uint32 max_arkoor_depth = 9;
-}
-
-message HandshakeRequest {
-	string version = 1;
-}
-
-message HandshakeResponse {
-	// Public Service Announcement, a generalized message from the server to be
-	// displayed to the user.
-	optional string psa = 1;
-	// Error message explaining why the handshake failed.
-	optional string error = 3;
-	// Ark info on succesful handshake.
-	optional ArkInfo ark_info = 2;
 }
 
 message FreshRoundsRequest {

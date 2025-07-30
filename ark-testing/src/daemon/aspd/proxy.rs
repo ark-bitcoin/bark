@@ -18,6 +18,10 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().handshake(req).await?.into_inner())
 	}
 
+	async fn get_ark_info(&mut self, req: protos::Empty) -> Result<protos::ArkInfo, tonic::Status> {
+		Ok(self.upstream().get_ark_info(req).await?.into_inner())
+	}
+
 	async fn get_fresh_rounds(&mut self, req: protos::FreshRoundsRequest) -> Result<protos::FreshRounds, tonic::Status> {
 		Ok(self.upstream().get_fresh_rounds(req).await?.into_inner())
 	}
@@ -167,6 +171,12 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::HandshakeRequest>,
 	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::handshake(&mut self.0.clone(), req.into_inner()).await?))
+	}
+
+	async fn get_ark_info(
+		&self, req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::get_ark_info(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_fresh_rounds(

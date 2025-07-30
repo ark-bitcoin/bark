@@ -15,30 +15,37 @@ use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn, error};
 use opentelemetry::{global, Context, KeyValue};
-use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
+use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundId;
-use aspd_rpc::{self as rpc, protos, TryFromBytes};
+use aspd_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
 use tonic::async_trait;
 use ark::lightning::{PaymentHash, Preimage};
 use crate::Server;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
 use crate::round::RoundInput;
-use crate::telemetry::{self, ATTRIBUTE_VERSION, RPC_GRPC_STATUS_CODE};
+use crate::telemetry::{self, RPC_GRPC_STATUS_CODE};
 
+
+/// The minimum protocol version supported by the server.
+///
+/// For info on protocol versions, see [aspd_rpc] module documentation.
+pub const MIN_PROTOCOL_VERSION: u64 = 1;
+
+/// The maximum protocol version supported by the server.
+///
+/// For info on protocol versions, see [aspd_rpc] module documentation.
+pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
 /// Whether to provide rich internal errors to RPC users.
 ///
 /// We keep this static because it's hard to propagate the config
 /// into all error conversions.
 static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
-
-/// The minimum 0.0.0-alpha.XXX version we serve.
-pub const MIN_ALPHA_VERSION: usize = 10;
 
 macro_rules! badarg {
 	($($arg:tt)*) => { return $crate::error::badarg!($($arg)*).to_status(); };
@@ -152,6 +159,7 @@ const RPC_SERVICES: [&str; 2] = [RPC_SERVICE_ARK, RPC_SERVICE_ADMIN];
 const RPC_SERVICE_ARK: &'static str = "ArkService";
 
 const RPC_SERVICE_ARK_HANDSHAKE: &'static str = "handshake";
+const RPC_SERVICE_ARK_GET_ARK_INFO: &'static str = "get_ark_info";
 const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
 const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
 const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
@@ -171,8 +179,9 @@ const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
 const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
 
-const RPC_SERVICE_ARK_METHODS: [&str; 19] = [
+const RPC_SERVICE_ARK_METHODS: [&str; 20] = [
 	RPC_SERVICE_ARK_HANDSHAKE,
+	RPC_SERVICE_ARK_GET_ARK_INFO,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
 	RPC_SERVICE_ARK_GET_ROUND,
 	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
@@ -269,35 +278,42 @@ fn add_tracing_attributes(attributes: Vec<KeyValue>) -> () {
 	})
 }
 
+/// Get the protocol version sent by the user and check if it's supported.
+#[allow(unused)]
+fn validate_pver<T>(req: &tonic::Request<T>) -> Result<u64, tonic::Status> {
+	let pver = req.pver()?;
+
+	if !(MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION).contains(&pver) {
+		return Err(tonic::Status::invalid_argument("unsupported protocol version"));
+	}
+
+	Ok(pver)
+}
+
 #[tonic::async_trait]
 impl rpc::server::ArkService for Server {
 	async fn handshake(
 		&self,
 		req: tonic::Request<protos::HandshakeRequest>,
 	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
-		let method_details = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_HANDSHAKE);
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_HANDSHAKE);
+		let req = req.into_inner();
 
-		let version = req.into_inner().version;
+		telemetry::count_bark_version(req.bark_version);
 
-		let alpha_version = version.strip_prefix("0.0.0-alpha").and_then(|alpha| {
-			match alpha.strip_prefix(".") {
-				Some(ver) => usize::from_str(ver).ok(),
-				None => Some(0), // special value for master build
-			}
-		});
+		let ret = protos::HandshakeResponse {
+			min_protocol_version: MIN_PROTOCOL_VERSION,
+			max_protocol_version: MAX_PROTOCOL_VERSION,
+			psa: self.config.handshake_psa.clone(),
+		};
+		Ok(tonic::Response::new(ret))
+	}
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
-
-		let parent_context = Context::current();
-
-		let mut span = tracer_provider
-			.span_builder(method_details.method)
-			.start_with_context(&tracer_provider, &parent_context);
-		span.set_attribute(KeyValue::new(ATTRIBUTE_VERSION, version.clone()));
-
-		telemetry::count_version(&version);
-
-		// NB future note to always accept version "testing" which our tests use
+	async fn get_ark_info(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_GET_ARK_INFO);
 
 		let ark_info = ark::ArkInfo {
 			network: self.config.network,
@@ -310,36 +326,7 @@ impl rpc::server::ArkService for Server {
 			max_vtxo_amount: self.config.max_vtxo_amount,
 			max_arkoor_depth: self.config.max_arkoor_depth,
 		};
-
-		let res = match alpha_version {
-			// NB 0 represents master
-			Some(0) => protos::HandshakeResponse {
-				psa: self.config.handshake_psa.clone(),
-				error: Some("You are running a manual build of bark; \
-				it may be incompatible with the server.".into()),
-				ark_info: Some(ark_info.into()),
-			},
-			None => protos::HandshakeResponse {
-				psa: self.config.handshake_psa.clone(),
-				error: Some("You're running an unknown version of bark.".into()),
-				ark_info: Some(ark_info.into()),
-			},
-			Some(v) if v >= MIN_ALPHA_VERSION => protos::HandshakeResponse {
-				psa: self.config.handshake_psa.clone(),
-				error: None,
-				ark_info: Some(ark_info.into()),
-			},
-			// this means < MIN_ALPHA_VERSION
-			Some(_) => protos::HandshakeResponse {
-				psa: None,
-				error: Some("Your version of bark is incompatible with this server. \
-					Please upgrade to a compatible version. \
-					You can still do a unilateral exit.".into()),
-				ark_info: None,
-			},
-		};
-
-		Ok(tonic::Response::new(res))
+		Ok(tonic::Response::new(ark_info.into()))
 	}
 
 	async fn get_fresh_rounds(
@@ -963,9 +950,7 @@ where
 
 	fn call(&mut self, req: http::Request<B>) -> Self::Future {
 		let uri = req.uri();
-		let headers = req.headers();
-		let is_grpc = headers
-			.get("content-type")
+		let is_grpc = req.headers().get("content-type")
 			.map_or(false, |ct| ct == "application/grpc");
 
 		let mut rpc_method_details = RpcMethodDetails {
@@ -980,6 +965,15 @@ where
 				rpc_method_details.service = service;
 				rpc_method_details.method = method;
 			}
+
+			// log protocol version used by user
+			if let Some(hv) = req.headers().get("grpc-pver") {
+				if let Ok(s) = hv.to_str() {
+					if let Ok(pver) = u64::from_str(s) {
+						telemetry::count_protocol_version(pver);
+					}
+				}
+			}
 		}
 
 		let attributes = [
@@ -987,11 +981,9 @@ where
 			KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 			KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
 		];
-
 		telemetry::add_grpc_in_progress(&attributes);
 
 		let tracer = global::tracer(telemetry::TRACER_ASPD);
-
 		let mut span = tracer
 			.span_builder(rpc_method_details.format_path())
 			.with_kind(SpanKind::Server)
