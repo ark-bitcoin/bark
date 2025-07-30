@@ -476,6 +476,25 @@ pub fn store_lightning_receive(
 	Ok(())
 }
 
+pub fn get_paginated_lightning_receives<'a>(
+	conn: &'a Connection,
+	pagination: Pagination,
+) -> anyhow::Result<Vec<LightningReceive>> {
+	let query = "SELECT * FROM bark_lightning_receive ORDER BY created_at DESC LIMIT :take OFFSET :skip";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(named_params! {
+		":take": pagination.page_size,
+		":skip": pagination.page_index * pagination.page_size,
+	})?;
+
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		result.push(row_to_lightning_receive(&row)?);
+	}
+
+	Ok(result)
+}
+
 pub fn set_preimage_revealed(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<()> {
 	let query = "UPDATE bark_lightning_receive SET preimage_revealed_at = :revealed_at WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;

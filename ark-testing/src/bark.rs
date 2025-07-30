@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use bark::persist::LightningReceive;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint};
 use bitcoincore_rpc::Auth;
 use log::{trace, info, error};
@@ -314,6 +315,11 @@ impl Bark {
 
 	pub async fn lightning_receive(&self, invoice: String) -> () {
 		self.try_lightning_receive(invoice).await.unwrap();
+	}
+
+	pub async fn list_lightning_receives(&self) -> Vec<LightningReceive> {
+		let res = self.run(["lightning", "list-invoices"]).await;
+		serde_json::from_str(&res).expect("json error")
 	}
 
 	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::Board> {

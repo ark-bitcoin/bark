@@ -7,10 +7,10 @@ use clap;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, warn};
 
-use bark::Wallet;
+use bark::{Pagination, Wallet};
 use bark_json::InvoiceInfo;
 
-use crate::util::output_json;
+use crate::{util::output_json, DEFAULT_PAGE_INDEX, DEFAULT_PAGE_SIZE};
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
@@ -41,6 +41,15 @@ pub enum LightningCommand {
 		/// The invoice to claim
 		invoice: String,
 	},
+	#[command()]
+	ListInvoices {
+		/// The page index
+		#[arg(long)]
+		page_index: Option<u16>,
+		/// The page size
+		#[arg(long)]
+		page_size: Option<u16>,
+	},
 }
 
 pub async fn execute_lightning_command(
@@ -61,6 +70,15 @@ pub async fn execute_lightning_command(
 		LightningCommand::Claim { invoice } => {
 			let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
 			wallet.finish_lightning_receive(invoice).await?;
+		}
+		LightningCommand::ListInvoices { page_index, page_size } => {
+			let pagination = Pagination {
+				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX),
+				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+			};
+
+			let boards = wallet.lightning_receives(pagination)?;
+			output_json(&boards);
 		}
 	}
 

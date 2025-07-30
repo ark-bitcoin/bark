@@ -64,7 +64,7 @@ use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo};
-use crate::persist::BarkPersister;
+use crate::persist::{BarkPersister, LightningReceive};
 use crate::server::ServerConnection;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -1396,6 +1396,10 @@ impl Wallet {
 		self.db.store_lightning_receive(&payment_hash, &preimage, invoice.clone())?;
 
 		Ok(invoice)
+	}
+
+	pub fn lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {
+		Ok(self.db.get_paginated_lightning_receives(pagination)?)
 	}
 
 	async fn claim_htlc_vtxo(&mut self, vtxo: &WalletVtxo) -> anyhow::Result<()> {

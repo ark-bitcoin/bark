@@ -73,6 +73,8 @@ pub trait BarkPersister: Send + Sync + 'static {
 
 	/// Store a lightning receive
 	fn store_lightning_receive(&self, payment_hash: &PaymentHash, preimage: &Preimage, invoice: Bolt11Invoice) -> anyhow::Result<()>;
+	/// Returns a paginated list of lightning receives
+	fn get_paginated_lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>>;
 	/// Set preimage disclosed
 	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()>;
 	/// Fetch a lightning receive by payment hash
