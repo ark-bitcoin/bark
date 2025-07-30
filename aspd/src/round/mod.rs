@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
@@ -1615,9 +1615,15 @@ pub async fn run_round_coordinator(
 ) -> anyhow::Result<()> {
 	let _worker = srv.rtmgr.spawn_critical("RoundCoordinator");
 
-	loop {
-		let round_seq = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as usize;
+	let mut round_seq = {
+		// we offset by the time of our first release just to slightly reduce
+		// absolute number size
+		let epoch = UNIX_EPOCH + Duration::from_secs(1741015334);
+		SystemTime::now().duration_since(epoch).unwrap().as_secs() as usize
+	};
 
+	loop {
+		round_seq += 1;
 		match perform_round(srv, &mut round_input_rx, round_seq).await {
 			RoundResult::Success => {},
 			RoundResult::Empty => {},
