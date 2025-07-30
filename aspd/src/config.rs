@@ -201,12 +201,6 @@ pub struct Config {
 	/// generated invoice will be cancelled if not settled yet.
 	#[serde(with = "serde_util::duration")]
 	pub htlc_subscription_timeout: Duration,
-
-
-
-	// compatibility flags
-
-	pub legacy_wallet: bool,
 }
 
 impl Default for Config {
@@ -269,8 +263,6 @@ impl Default for Config {
 			invoice_check_max_delay: Duration::from_secs(10*60),
 			invoice_poll_interval: Duration::from_secs(30),
 			htlc_subscription_timeout: Duration::from_secs(10*60),
-
-			legacy_wallet: false,
 		}
 	}
 }

@@ -23,7 +23,6 @@ invoice_check_base_delay = "10s"
 invoice_check_max_delay = "10m"
 invoice_poll_interval = "30s"
 htlc_subscription_timeout = "10m"
-legacy_wallet = false
 
 [vtxo_sweeper]
 sweep_tx_fallback_feerate = "2500sat/kwu"

@@ -102,37 +102,21 @@ impl PersistedWallet {
 		xpriv: &bip32::Xpriv,
 		kind: WalletKind,
 		deep_tip: BlockRef,
-		legacy_wallet: bool,
 	) -> anyhow::Result<Self> {
 		let init = db.read_aggregate_changeset(kind).await?;
 		let fresh = init.is_none();
 
+		let desc = format!("tr({}/0/*)", xpriv);
 		let mut wallet = if let Some(changeset) = init {
-			if legacy_wallet {
-				let desc = format!("tr({}/84'/0'/0'/0/*)", xpriv);
-				bdk_wallet::Wallet::load()
-					.descriptor(bdk_wallet::KeychainKind::External, Some(desc))
-					.check_network(network)
-					.extract_keys()
-					.load_wallet_no_persist(changeset)
-					.context("error loading bdk wallet")?
-					.expect("changeset is not empty")
-			} else {
-				let ext = format!("tr({}/0/*)", xpriv);
-				let int = format!("tr({}/1/*)", xpriv);
-				bdk_wallet::Wallet::load()
-					.descriptor(bdk_wallet::KeychainKind::External, Some(ext))
-					.descriptor(bdk_wallet::KeychainKind::Internal, Some(int))
-					.check_network(network)
-					.extract_keys()
-					.load_wallet_no_persist(changeset)
-					.context("error loading bdk wallet")?
-					.expect("changeset is not empty")
-			}
+			bdk_wallet::Wallet::load()
+				.descriptor(bdk_wallet::KeychainKind::External, Some(desc))
+				.check_network(network)
+				.extract_keys()
+				.load_wallet_no_persist(changeset)
+				.context("error loading bdk wallet")?
+				.expect("changeset is not empty")
 		} else {
-			let ext = format!("tr({}/0/*)", xpriv);
-			let int = format!("tr({}/1/*)", xpriv);
-			bdk_wallet::Wallet::create(ext, int)
+			bdk_wallet::Wallet::create_single(desc)
 				.network(network)
 				.create_wallet_no_persist()
 				.context("error creating bdk wallet")?

@@ -99,10 +99,6 @@ pub struct Server {
 
 impl Server {
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
-		if cfg.legacy_wallet {
-			bail!("We don't support creating new legacy wallets.");
-		}
-
 		// Check for mnemonic file to see if aspd was already initialized.
 		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
 			bail!("Found existing mnemonic file in datadir, aspd probably already initialized!");
@@ -143,7 +139,7 @@ impl Server {
 			let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[wallet.child_number()])
 				.expect("can't error");
 			let _wallet = PersistedWallet::load_from_xpriv(
-				db.clone(), cfg.network, &wallet_xpriv, wallet, deep_tip, false,
+				db.clone(), cfg.network, &wallet_xpriv, wallet, deep_tip,
 			);
 		}
 
@@ -156,14 +152,10 @@ impl Server {
 		master_xpriv: &bip32::Xpriv,
 		deep_tip: BlockRef,
 	) -> anyhow::Result<PersistedWallet> {
-		let wallet_xpriv = if cfg.legacy_wallet {
-			master_xpriv.clone()
-		} else {
-			master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
-				.expect("can't error")
-		};
+		let wallet_xpriv = master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
+			.expect("can't error");
 		Ok(PersistedWallet::load_from_xpriv(
-			db, cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip, cfg.legacy_wallet,
+			db, cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
 		).await?)
 	}
 

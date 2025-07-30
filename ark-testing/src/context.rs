@@ -269,7 +269,6 @@ impl TestContext {
 			invoice_check_max_delay: Duration::from_secs(10),
 			invoice_poll_interval: Duration::from_secs(10),
 			htlc_subscription_timeout: Duration::from_secs(10*60),
-			legacy_wallet: false,
 		}
 	}
 
