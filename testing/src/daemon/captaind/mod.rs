@@ -220,15 +220,19 @@ impl DaemonHelper for CaptaindHelper {
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
 		let public_port = portpicker::pick_unused_port().expect("No ports free");
 		let admin_port = portpicker::pick_unused_port().expect("No ports free");
+		let integration_port = portpicker::pick_unused_port().expect("No ports free");
 
 		let public_address = format!("0.0.0.0:{}", public_port);
 		let admin_address = format!("127.0.0.1:{}", admin_port);
+		let integration_address = format!("127.0.0.1:{}", integration_port);
 		trace!("public rpc address: {}", public_address.to_string());
 		trace!("admin rpc address: {}", admin_address.to_string());
+		trace!("integration rpc address: {}", integration_port.to_string());
 
 		self.cfg.rpc = config::Rpc {
 			public_address: SocketAddr::from_str(public_address.as_str())?,
 			admin_address: Some(SocketAddr::from_str(admin_address.as_str())?),
+			integration_address: Some(SocketAddr::from_str(integration_address.as_str())?),
 		};
 
 		Ok(())
