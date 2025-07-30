@@ -599,7 +599,6 @@ impl ForfeitWatcher {
 			&wallet_xpriv,
 			WalletKind::Forfeits,
 			deep_tip,
-			false,
 		).await.context("error loading ForfeitWatcher wallet")?;
 
 		let mut proc = Process {
