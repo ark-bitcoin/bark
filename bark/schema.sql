@@ -103,11 +103,11 @@ CREATE VIEW movement_view AS
 					) AS recipients
 				FROM bark_movement
 /* movement_view(id,fees_sat,created_at,kind,spends,receives,recipients) */;
-CREATE TABLE bark_offchain_board (
+CREATE TABLE bark_lightning_receive (
 			payment_hash BLOB NOT NULL PRIMARY KEY,
 			preimage BLOB NOT NULL UNIQUE,
 			preimage_revealed_at TIMESTAMP,
-			serialised_payment BLOB,
+			invoice TEXT NOT NULL,
 			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 		);
 CREATE TABLE bark_exit_states (

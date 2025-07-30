@@ -9,6 +9,7 @@ use bdk_wallet::ChangeSet;
 use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{BlockHeight, BlockRef};
+use lightning_invoice::Bolt11Invoice;
 use log::debug;
 use rusqlite::{Connection, Transaction};
 use ark::lightning::{PaymentHash, Preimage};
@@ -19,7 +20,7 @@ use crate::{
 };
 use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::persist::{BarkPersister, OffchainBoard, OffchainPayment};
+use crate::persist::{BarkPersister, LightningReceive};
 
 
 #[derive(Clone)]
@@ -188,10 +189,10 @@ impl BarkPersister for SqliteClient {
 		query::get_vtxo_key(&conn, vtxo)?.context("vtxo not found in the db")
 	}
 
-	/// Store an offchain board
-	fn store_offchain_board(&self, payment_hash: &PaymentHash, preimage: &Preimage, payment: OffchainPayment) -> anyhow::Result<()> {
+	/// Store a lightning receive
+	fn store_lightning_receive(&self, payment_hash: &PaymentHash, preimage: &Preimage, invoice: Bolt11Invoice) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_offchain_board(&conn, payment_hash, preimage, payment)?;
+		query::store_lightning_receive(&conn, payment_hash, preimage, invoice)?;
 		Ok(())
 	}
 
@@ -201,10 +202,10 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	/// Fetch an offchain board by payment hash
-	fn fetch_offchain_board_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<OffchainBoard>> {
+	/// Fetch a lightning receive by payment hash
+	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<LightningReceive>> {
 		let conn = self.connect()?;
-		query::fetch_offchain_board_by_payment_hash(&conn, payment_hash)
+		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
 	}
 
 	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()> {

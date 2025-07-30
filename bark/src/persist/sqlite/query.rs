@@ -8,12 +8,13 @@ use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
+use lightning_invoice::Bolt11Invoice;
 use rusqlite::{self, named_params, Connection, ToSql};
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use json::exit::ExitState;
 
-use crate::persist::{OffchainBoard, OffchainPayment};
+use crate::persist::LightningReceive;
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
 	Config, Pagination, Vtxo, VtxoId, VtxoState,
@@ -23,7 +24,7 @@ use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementKind};
 use ark::ProtocolEncoding;
 
-use super::convert::{row_to_movement, row_to_offchain_board};
+use super::convert::{row_to_movement, row_to_lightning_receive};
 
 /// Set read-only properties for the wallet
 ///
@@ -454,29 +455,29 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight
 	}
 }
 
-pub fn store_offchain_board(
+pub fn store_lightning_receive(
 	conn: &Connection,
 	payment_hash: &PaymentHash,
 	preimage: &Preimage,
-	payment: OffchainPayment,
+	invoice: Bolt11Invoice,
 ) -> anyhow::Result<()> {
 	let query = "
-		INSERT INTO bark_offchain_board (payment_hash, preimage, serialised_payment)
-		VALUES (?1, ?2, ?3);
+		INSERT INTO bark_lightning_receive (payment_hash, preimage, invoice)
+		VALUES (:payment_hash, :preimage, :invoice);
 	";
 	let mut statement = conn.prepare(query)?;
 
-	statement.execute([
-		payment_hash.to_vec(),
-		preimage.to_vec(),
-		serde_json::to_vec(&payment)?,
-	])?;
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.to_vec(),
+		":preimage": preimage.to_vec(),
+		":invoice": invoice.to_string(),
+	})?;
 
 	Ok(())
 }
 
 pub fn set_preimage_revealed(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<()> {
-	let query = "UPDATE bark_offchain_board SET preimage_revealed_at = :revealed_at WHERE payment_hash = :payment_hash";
+	let query = "UPDATE bark_lightning_receive SET preimage_revealed_at = :revealed_at WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
 		":payment_hash": payment_hash.to_vec(),
@@ -485,12 +486,12 @@ pub fn set_preimage_revealed(conn: &Connection, payment_hash: &PaymentHash) -> a
 	Ok(())
 }
 
-pub fn fetch_offchain_board_by_payment_hash(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<Option<OffchainBoard>> {
-	let query = "SELECT * FROM bark_offchain_board WHERE payment_hash = ?1";
+pub fn fetch_lightning_receive_by_payment_hash(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<Option<LightningReceive>> {
+	let query = "SELECT * FROM bark_lightning_receive WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query((payment_hash.as_ref(), ))?;
 
-	Ok(rows.next()?.map(|row| row_to_offchain_board(&row)).transpose()?)
+	Ok(rows.next()?.map(|row| row_to_lightning_receive(&row)).transpose()?)
 }
 
 pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &ExitEntry) -> anyhow::Result<()> {
@@ -648,11 +649,7 @@ mod test {
 	#[test]
 	/// Each struct stored as JSON in the database should have test to check for backwards compatibility
 	/// Parsing can occur either in convert.rs or this file (query.rs)
-	fn test_serialised_offchain_payment() {
-		// Offchain payment
-		let serialised = r#"{"Lightning":"lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8"}"#;
-		serde_json::from_str::<OffchainPayment>(serialised).unwrap();
-
+	fn test_serialised_structs() {
 		// Exit state
 		let serialised = r#"{"type":"start","tip_height":119}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();

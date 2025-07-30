@@ -62,22 +62,22 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().revoke_lightning_payment(req).await?.into_inner())
 	}
 
-	async fn start_bolt11_board(
+	async fn start_lightning_receive(
 		&self,
-		req: protos::StartBolt11BoardRequest,
-	) -> Result<protos::StartBolt11BoardResponse, tonic::Status> {
-		Ok(self.upstream().start_bolt11_board(req).await?.into_inner())
+		req: protos::StartLightningReceiveRequest,
+	) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
+		Ok(self.upstream().start_lightning_receive(req).await?.into_inner())
 	}
 
-	async fn subscribe_bolt11_board(
+	async fn subscribe_lightning_receive(
 		&self,
-		req: protos::SubscribeBolt11BoardRequest,
-	) -> Result<protos::SubscribeBolt11BoardResponse, tonic::Status> {
-		Ok(self.upstream().subscribe_bolt11_board(req).await?.into_inner())
+		req: protos::SubscribeLightningReceiveRequest,
+	) -> Result<protos::SubscribeLightningReceiveResponse, tonic::Status> {
+		Ok(self.upstream().subscribe_lightning_receive(req).await?.into_inner())
 	}
 
-	async fn claim_bolt11_board(&mut self, req: protos::ClaimBolt11BoardRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
-		Ok(self.upstream().claim_bolt11_board(req).await?.into_inner())
+	async fn claim_lightning_receive(&mut self, req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+		Ok(self.upstream().claim_lightning_receive(req).await?.into_inner())
 	}
 
 	async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
@@ -235,24 +235,24 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(AspdRpcProxy::revoke_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn start_bolt11_board(
+	async fn start_lightning_receive(
 		&self,
-		req: tonic::Request<protos::StartBolt11BoardRequest>,
-	) -> Result<tonic::Response<protos::StartBolt11BoardResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::start_bolt11_board(&mut self.0.clone(), req.into_inner()).await?))
+		req: tonic::Request<protos::StartLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::start_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn subscribe_bolt11_board(
+	async fn subscribe_lightning_receive(
 		&self,
-		req: tonic::Request<protos::SubscribeBolt11BoardRequest>,
-	) -> Result<tonic::Response<protos::SubscribeBolt11BoardResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::subscribe_bolt11_board(&mut self.0.clone(), req.into_inner()).await?))
+		req: tonic::Request<protos::SubscribeLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::SubscribeLightningReceiveResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::subscribe_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn claim_bolt11_board(
-		&self, req: tonic::Request<protos::ClaimBolt11BoardRequest>,
+	async fn claim_lightning_receive(
+		&self, req: tonic::Request<protos::ClaimLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::claim_bolt11_board(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(AspdRpcProxy::claim_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	type SubscribeRoundsStream = Box<
