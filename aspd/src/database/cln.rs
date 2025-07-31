@@ -1,6 +1,6 @@
 use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use futures::{Stream, TryStreamExt};
 use lightning_invoice::Bolt11Invoice;
@@ -28,7 +28,7 @@ impl Db {
 	pub async fn register_lightning_node(
 		&self,
 		public_key: &PublicKey,
-	) -> anyhow::Result<(ClnNodeId, DateTime<Utc>)> {
+	) -> anyhow::Result<(ClnNodeId, DateTime<Local>)> {
 		let conn = self.pool.get().await?;
 
 		let select_stmt = conn.prepare("
@@ -103,7 +103,7 @@ impl Db {
 		node_id: ClnNodeId,
 		kind: ListsendpaysIndex,
 		index: u64,
-	) -> anyhow::Result<DateTime<Utc>> {
+	) -> anyhow::Result<DateTime<Local>> {
 		let conn = self.pool.get().await?;
 		let statement = match kind {
 			ListsendpaysIndex::Created => conn.prepare("
@@ -247,7 +247,7 @@ impl Db {
 		lightning_invoice_id: i64,
 		amount_msat: u64,
 		node_id: ClnNodeId,
-	) -> anyhow::Result<(i64, DateTime<Utc>)> {
+	) -> anyhow::Result<(i64, DateTime<Local>)> {
 		let requested_status = LightningPaymentStatus::Requested;
 
 		let stmt = tx.prepare("
@@ -332,7 +332,7 @@ impl Db {
 		old_lightning_invoice: LightningInvoice,
 		new_final_amount_msat: Option<u64>,
 		new_preimage: Option<Preimage>,
-	) -> anyhow::Result<Option<DateTime<Utc>>> {
+	) -> anyhow::Result<Option<DateTime<Local>>> {
 		let conn = self.pool.get().await.unwrap();
 
 		let stmt = conn.prepare("
@@ -456,7 +456,7 @@ impl Db {
 		conn: T,
 		lightning_invoice_id: i64,
 		node_id: ClnNodeId,
-	) -> anyhow::Result<(i64, DateTime<Utc>)>
+	) -> anyhow::Result<(i64, DateTime<Local>)>
 	where
 		T: std::ops::Deref<Target = C>,
 		C: tokio_postgres::GenericClient,

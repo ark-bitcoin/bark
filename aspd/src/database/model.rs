@@ -9,7 +9,7 @@ use bitcoin::{OutPoint, Transaction, Txid};
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::SecretKey;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 use tokio_postgres::Row;
 
@@ -188,8 +188,8 @@ pub struct LightningInvoice {
 	pub final_amount_msat: Option<u64>,
 	pub preimage: Option<Preimage>,
 	pub last_attempt_status: Option<LightningPaymentStatus>,
-	pub created_at: DateTime<Utc>,
-	pub updated_at: DateTime<Utc>,
+	pub created_at: DateTime<Local>,
+	pub updated_at: DateTime<Local>,
 }
 
 impl TryFrom<Row> for LightningInvoice {
@@ -222,8 +222,8 @@ pub struct LightningPaymentAttempt {
 	pub status: LightningPaymentStatus,
 	pub is_self_payment: bool,
 	pub error: Option<String>,
-	pub created_at: DateTime<Utc>,
-	pub updated_at: DateTime<Utc>,
+	pub created_at: DateTime<Local>,
+	pub updated_at: DateTime<Local>,
 }
 
 impl From<Row> for LightningPaymentAttempt {
@@ -287,8 +287,8 @@ pub struct LightningHtlcSubscription {
 	pub lightning_node_id: ClnNodeId,
 	pub invoice: Bolt11Invoice,
 	pub status: LightningHtlcSubscriptionStatus,
-	pub created_at: DateTime<Utc>,
-	pub updated_at: DateTime<Utc>,
+	pub created_at: DateTime<Local>,
+	pub updated_at: DateTime<Local>,
 }
 
 impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
