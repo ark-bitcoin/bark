@@ -68,6 +68,7 @@ impl ServerConnection {
 			let domain = uri_auth.host();
 
 			let tls_config = tonic::transport::ClientTlsConfig::new()
+				.with_enabled_roots()
 				.domain_name(domain);
 			endpoint = endpoint.tls_config(tls_config)?
 		} else {
