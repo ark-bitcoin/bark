@@ -1771,7 +1771,8 @@ impl Wallet {
 				protos::InputVtxo {
 					vtxo_id: vtxo.id().to_bytes().to_vec(),
 					ownership_proof: {
-						let sig = round_state.challenge().sign_with(vtxo.id(), keypair);
+						let sig = round_state.challenge()
+							.sign_with(vtxo.id(), &vtxo_reqs, &participation.offboards, keypair);
 						sig.serialize().to_vec()
 					},
 				}
