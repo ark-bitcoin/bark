@@ -851,14 +851,14 @@ impl Wallet {
 		Ok(Offboard { round: round_id })
 	}
 
-	/// Offboard all vtxos to a given address or default to bark onchain address
+	/// Offboard all vtxos to a given address
 	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
 		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
 		Ok(self.offboard(input_vtxos, address).await?)
 	}
 
-	/// Offboard vtxos selection to a given address or default to bark onchain address
+	/// Offboard vtxos selection to a given address
 	pub async fn offboard_vtxos(
 		&mut self,
 		vtxos: Vec<VtxoId>,
