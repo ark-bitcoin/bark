@@ -616,7 +616,8 @@ impl ForfeitWatcher {
 			.context("db: failed to fetch forfeited vtxos")?);
 		while let Some(res) = forfeited_vtxos.next().await {
 			let (vtxo, _) = res.context("db: error fetching forfeited vtxo")?;
-			proc.register_vtxo(&vtxo).await.context("bitcoind: Failed to get status of vtxo")?;
+			proc.register_vtxo(&vtxo).await
+				.context("bitcoind: failed to register forfeited vtxo")?;
 		}
 		drop(forfeited_vtxos); // make borrowck happy
 
