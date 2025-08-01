@@ -9,23 +9,22 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
-mod config;
-pub use self::config::Config;
-mod exit;
-mod lnurl;
+pub mod exit;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
-pub use self::persist::sqlite::SqliteClient;
-mod psbtext;
 pub mod server;
+pub mod vtxo_state;
 pub mod vtxo_selection;
-mod vtxo_state;
 
+pub use self::config::Config;
+pub use self::persist::sqlite::SqliteClient;
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
-use onchain::{GetWalletTx, SignPsbt};
 
+mod config;
+mod lnurl;
+mod psbtext;
 
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
@@ -63,7 +62,7 @@ use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo};
+use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::{BarkPersister, LightningReceive};
 use crate::server::ServerConnection;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
