@@ -508,7 +508,9 @@ impl Wallet {
 	/// Sync offchain wallet and update onchain fees
 	pub async fn sync(&mut self) -> anyhow::Result<()> {
 		// NB: order matters here, if syncing call fails, we still want to update the fee rates
-		self.chain.update_fee_rates(self.config.fallback_fee_rate).await?;
+		if let Err(e) = self.chain.update_fee_rates(self.config.fallback_fee_rate).await {
+			warn!("Error updating fee rates: {}", e);
+		}
 
 		self.sync_rounds().await?;
 		self.sync_oors().await?;
