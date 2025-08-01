@@ -1992,6 +1992,7 @@ impl Wallet {
 			};
 
 			info!("Round started");
+			debug!("Started round #{}", round_state.info.round_seq);
 
 			let participation = round_input(&round_state.info)
 				.context("error providing round input")?;
