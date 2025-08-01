@@ -122,9 +122,10 @@ async fn try_create_wallet(
 	// open db
 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
 
-	let bdk_wallet = OnchainWallet::load_or_create(net, seed, db.clone())?;
-	BarkWallet::create_with_onchain(&mnemonic, net, config, db, &bdk_wallet).await.context("error creating wallet")?;
+	let mut onchain = OnchainWallet::load_or_create(net, seed, db.clone())?;
+	let wallet = BarkWallet::create_with_onchain(&mnemonic, net, config, db, &onchain).await.context("error creating wallet")?;
 
+	onchain.fullscan(&wallet.chain).await?;
 	Ok(())
 }
 
