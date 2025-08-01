@@ -625,7 +625,9 @@ impl Server {
 				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
 			},
 			Ok(None) => {
-				info!("Cosigning arkoor for inputs: {:?}", input_ids);
+				let output_ids = builder.new_vtxos().into_iter().flatten()
+					.map(|v| v.id()).collect::<Vec<_>>();
+				slog!(ArkoorCosign, input_ids, output_ids);
 				// let's sign the tx
 				Ok(builder.server_cosign(&self.asp_key))
 			},
