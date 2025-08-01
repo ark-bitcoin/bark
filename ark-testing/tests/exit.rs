@@ -232,7 +232,7 @@ async fn exit_vtxo() {
 	aspd.stop().await.unwrap();
 
 	// Make bark exit and check the balance
-	bark.start_exit_vtxo(vtxo.id).await;
+	bark.start_exit_vtxos([vtxo.id]).await;
 	complete_exit(&ctx, &bark).await;
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
@@ -263,7 +263,7 @@ async fn exit_and_send_vtxo() {
 	aspd.stop().await.unwrap();
 
 	// Make bark exit and check the balance
-	bark.start_exit_vtxo(vtxo.id).await;
+	bark.start_exit_vtxos([vtxo.id]).await;
 	complete_exit(&ctx, &bark).await;
 
 	let exits = bark.list_exits().await;
@@ -272,7 +272,7 @@ async fn exit_and_send_vtxo() {
 
 	assert!(matches!(exit.state, ExitState::Spendable(_)), "Exit should be spendable");
 
-	bark.claim_single_exit(exit.vtxo_id, bark.get_onchain_address().await).await;
+	bark.claim_exits([exit.vtxo_id], bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
 	assert_eq!(bark.onchain_balance().await, sat(997_501));

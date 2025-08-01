@@ -964,7 +964,7 @@ async fn claim_forfeit_connector_chain() {
 
 	// start the exit process
 	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
-	bark.start_exit_vtxo(vtxo.id).await;
+	bark.start_exit_vtxos([vtxo.id]).await;
 	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
@@ -1025,7 +1025,7 @@ async fn claim_forfeit_round_connector() {
 
 	// start the exit process
 	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
-	bark.start_exit_vtxo(vtxo.id).await;
+	bark.start_exit_vtxos([vtxo.id]).await;
 	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
