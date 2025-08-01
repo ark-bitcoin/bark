@@ -12,7 +12,7 @@ use bitcoin::{sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Tran
 use log::{error, info, warn};
 
 use ark::{Vtxo, VtxoId};
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use json::exit::ExitState;
 use json::exit::error::ExitError;
@@ -314,15 +314,8 @@ impl Exit {
 	}
 
 	/// List all exits that are spendable
-	pub fn list_spendable(&self) -> anyhow::Result<Vec<&ExitVtxo>> {
-		let mut outputs = Vec::new();
-		for exit in &self.exit_vtxos {
-			if matches!(exit.state(), ExitState::Spendable(..)) {
-				outputs.push(exit);
-			}
-		}
-
-		Ok(outputs)
+	pub fn list_spendable(&self) -> Vec<&ExitVtxo> {
+		self.exit_vtxos.iter().filter(|ev| ev.is_spendable()).collect()
 	}
 
 	/// Sign any inputs of the PSBT that is an exit claim input
@@ -340,7 +333,10 @@ impl Exit {
 		let prevouts = sighash::Prevouts::All(&prevouts);
 		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
 
-		let spendable = self.list_spendable()?.into_iter().map(|v| (v.vtxo().id(), v)).collect::<HashMap<_, _>>();
+		let spendable = self.list_spendable()
+			.into_iter()
+			.map(|v| (v.vtxo().id(), v))
+			.collect::<HashMap<_, _>>();
 
 		let mut spent = Vec::new();
 		for (i, input) in psbt.inputs.iter_mut().enumerate() {
@@ -367,41 +363,75 @@ impl Exit {
 		Ok(())
 	}
 
-	/// Prepare and sign a PSBT to drain all spendable VTXOs to provided address
-	pub fn drain_spendable_outputs(&self, wallet: &Wallet, address: Address, fee_rate: FeeRate) -> anyhow::Result<Psbt> {
-		let inputs = self.list_spendable()?;
-
-		let output_amount = inputs.iter().map(|v| v.vtxo().spec().amount).sum();
-
-		let mut tx = Transaction {
-			version: bitcoin::transaction::Version(3),
-			lock_time: bitcoin::absolute::LockTime::ZERO,
-			input: inputs.iter().map(|v| TxIn {
-				previous_output: v.vtxo().point(),
-				script_sig: ScriptBuf::default(),
-				sequence: Sequence::from_height(v.vtxo().exit_delta()),
-				witness: Witness::new(),
-			}).collect(),
-			output: vec![
-				TxOut {
-					script_pubkey: address.script_pubkey(),
-					value: output_amount,
-				},
-			],
+	/// Prepare and sign a PSBT to drain the given VTXOs to the provided address
+	pub fn drain_exits<'a>(
+		&self,
+		inputs: &[&ExitVtxo],
+		wallet: &Wallet,
+		address: Address,
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Psbt, ExitError> {
+		let mut tx = {
+			let mut output_amount = Amount::ZERO;
+			let mut tx_ins = Vec::with_capacity(inputs.len());
+			for input in inputs {
+				if !matches!(input.state(), ExitState::Spendable(..)) {
+					return Err(ExitError::VtxoNotSpendable { vtxo: input.id() });
+				}
+				output_amount += input.vtxo().amount();
+				tx_ins.push(TxIn {
+					previous_output: input.vtxo().point(),
+					script_sig: ScriptBuf::default(),
+					sequence: Sequence::from_height(input.vtxo().exit_delta()),
+					witness: Witness::new(),
+				});
+			}
+			Transaction {
+				version: bitcoin::transaction::Version(3),
+				lock_time: bitcoin::absolute::LockTime::ZERO,
+				input: tx_ins,
+				output: vec![
+					TxOut {
+						script_pubkey: address.script_pubkey(),
+						value: output_amount,
+					},
+				],
+			}
 		};
 
-		// We adjust drain amount to cover the fee
-		let fee_amount = fee_rate * tx.weight();
+		// Create a PSBT to determine the weight of the transaction so we can deduct a tx fee
+		let create_psbt = |tx: Transaction| {
+			let mut psbt = Psbt::from_unsigned_tx(tx)
+				.map_err(|e| ExitError::InternalError {
+					error: format!("Failed to create exit claim PSBT: {}", e),
+				})?;
+			psbt.inputs.iter_mut().zip(inputs).for_each(|(i, v)| {
+				i.set_exit_claim_input(&v.vtxo());
+				i.witness_utxo = Some(v.vtxo().txout())
+			});
+			self.sign_exit_claim_inputs(&mut psbt, wallet)
+				.map_err(|e| ExitError::ClaimSigningError { error: e.to_string() })?;
+			Ok(psbt)
+		};
+		let fee_amount = {
+			fee_rate * create_psbt(tx.clone())?
+				.extract_tx()
+				.map_err(|e| ExitError::InternalError {
+					error: format!("Failed to get tx from signed exit claim PSBT: {}", e),
+				})?
+				.weight()
+		};
+
+		// We adjust the drain output to cover the fee
+		let needed = fee_amount + P2TR_DUST;
+		if needed > tx.output[0].value {
+			return Err(ExitError::ClaimFeeExceedsOutput {
+				needed, output: tx.output[0].value,
+			});
+		}
 		tx.output[0].value -= fee_amount;
 
-		let mut psbt = Psbt::from_unsigned_tx(tx)?;
-		psbt.inputs.iter_mut().zip(inputs).for_each(|(i, v)| {
-			i.set_exit_claim_input(&v.vtxo());
-			i.witness_utxo = Some(v.vtxo().txout())
-		});
-
-		self.sign_exit_claim_inputs(&mut psbt, wallet)?;
-
-		Ok(psbt)
+		// Now create the final signed PSBT
+		create_psbt(tx)
 	}
 }

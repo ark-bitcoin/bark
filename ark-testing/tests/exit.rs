@@ -1,17 +1,17 @@
 
 
-use bark_json::exit::states::ExitStartState;
-use bark_json::exit::ExitState;
-use bitcoin::Address;
+use bitcoin::{Address, FeeRate};
 use bitcoin::params::Params;
-use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
 use log::trace;
 
 use ark::vtxo::exit_taproot;
 use bark_json::cli::ExitProgressResponse;
+use bark_json::exit::ExitState;
 use bark_json::exit::error::ExitError;
+use bark_json::exit::states::ExitStartState;
+use bitcoin_ext::TaprootSpendInfoExt;
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -95,7 +95,7 @@ async fn simple_exit() {
 	ctx.generate_blocks(1).await;
 
 	// Wallet has 1_000_000 sats of funds minus fees
-	assert_eq!(bark.onchain_balance().await, sat(997_161));
+	assert_eq!(bark.onchain_balance().await, sat(996_986));
 }
 
 #[tokio::test]
@@ -237,7 +237,7 @@ async fn exit_vtxo() {
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark.onchain_balance().await, sat(997_161));
+	assert_eq!(bark.onchain_balance().await, sat(996_986));
 }
 
 #[tokio::test]
@@ -275,7 +275,7 @@ async fn exit_and_send_vtxo() {
 	bark.claim_exits([exit.vtxo_id], bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark.onchain_balance().await, sat(997_501));
+	assert_eq!(bark.onchain_balance().await, sat(996_986));
 }
 
 #[tokio::test]
@@ -335,7 +335,7 @@ async fn exit_oor() {
 
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark2.onchain_balance().await, sat(1096121));
+	assert_eq!(bark2.onchain_balance().await, sat(1_095_946));
 }
 
 #[tokio::test]
@@ -661,4 +661,77 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 	complete_exit(&ctx, &bark_1).await;
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
+}
+
+#[tokio::test]
+async fn bark_claim_specific_exit_in_low_fee_market() {
+	let ctx = TestContext::new("exit/bark_claim_specific_exit_in_low_fee_market").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark = ctx.try_new_bark_with_create_args::<String>(
+		"bark",
+		&aspd.asp_url(),
+		Some(FeeRate::from_sat_per_vb(1).unwrap()),
+		[],
+	).await.unwrap();
+	ctx.fund_bark(&bark, sat(10_000_000)).await;
+
+	// Create multiple VTXOs
+	bark.board(sat(100_000)).await;
+	bark.board(sat(50_000)).await;
+	bark.board(sat(200_000)).await;
+	bark.board(sat(1_000_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 4);
+	let exits = vtxos.into_iter()
+		.filter(|v| v.amount == sat(100_000) || v.amount == sat(50_000)).collect::<Vec<_>>();
+	assert_eq!(exits.len(), 2);
+
+	// Complete the exit process
+	aspd.stop().await.unwrap();
+	bark.start_exit_vtxos(exits.iter().map(|v| v.id)).await;
+	complete_exit(&ctx, &bark).await;
+
+	let onchain_address = bark.get_onchain_address().await;
+	bark.claim_exits(exits.iter().map(|v| v.id), onchain_address).await;
+	assert_eq!(bark.onchain_balance().await, sat(8_798_535));
+	assert_eq!(bark.utxos().await.len(), 2);
+	assert_eq!(bark.vtxos().await.len(), 2);
+}
+
+#[tokio::test]
+async fn bark_claim_all_exits_in_low_fee_market() {
+	let ctx = TestContext::new("exit/bark_claim_all_exits_in_low_fee_market").await;
+	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let bark = ctx.try_new_bark_with_create_args::<String>(
+		"bark",
+		&aspd.asp_url(),
+		Some(FeeRate::from_sat_per_vb(1).unwrap()),
+		[],
+	).await.unwrap();
+	ctx.fund_bark(&bark, sat(10_000_000)).await;
+
+	// Create multiple VTXOs
+	bark.board(sat(100_000)).await;
+	bark.board(sat(50_000)).await;
+	bark.board(sat(200_000)).await;
+	bark.board(sat(1_000_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 4);
+
+	// Complete the exit process
+	aspd.stop().await.unwrap();
+	bark.start_exit_all().await;
+	complete_exit(&ctx, &bark).await;
+
+	let onchain_address = bark.get_onchain_address().await;
+	bark.claim_all_exits(onchain_address).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark.onchain_balance().await, sat(9_997_744));
+	assert_eq!(bark.utxos().await.len(), 2);
+	assert_eq!(bark.vtxos().await.len(), 0);
 }
