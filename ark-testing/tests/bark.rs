@@ -813,13 +813,13 @@ async fn recover_mnemonic() {
 	// first check we need birthday
 	let args = &["--mnemonic", &mnemonic];
 	// it's not easy to get a grip of what the actual error was
-	let err = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, args).await.unwrap_err();
+	let err = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, None, args).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"You need to set the --birthday-height field when recovering from mnemonic.",
 	));
 
 	let args = &["--mnemonic", &mnemonic, "--birthday-height", "0"];
-	let recovered = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, args).await.unwrap();
+	let recovered = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, None, args).await.unwrap();
 	assert_eq!(onchain, recovered.onchain_balance().await);
 	//TODO(stevenroose) implement offchain recovery
 	// assert_eq!(offchain, recovered.offchain_balance().await);
