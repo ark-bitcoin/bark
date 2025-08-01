@@ -137,6 +137,53 @@ async fn bark_pay_ln_succeeds() {
 }
 
 #[tokio::test]
+async fn bark_pay_ln_with_multiple_inputs() {
+	let ctx = TestContext::new("lightningd/bark_pay_ln_with_multiple_inputs").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	ctx.await_transaction(&txid).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+
+	// Start a bark and create a VTXO
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, btc(10)).await;
+	let bark_2 = ctx.new_bark_with_funds("bark-2", &aspd_1, btc(10)).await;
+
+	bark_1.board(btc(1)).await;
+	bark_2.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark_1.refresh_all().await;
+	bark_1.board(btc(1)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark_2.send_oor(bark_1.address().await, btc(1)).await;
+
+	let expected_balance = btc(3);
+	assert_eq!(bark_1.offchain_balance().await, expected_balance, "bark should have 3BTC spendable offchain");
+
+	let invoice = lightningd_2.invoice(Some(expected_balance - sat(10_000)), "test_payment", "A test payment").await.clone();
+	bark_1.send_lightning(invoice.clone(), None).await;
+}
+
+
+#[tokio::test]
 async fn bark_pay_invoice_twice() {
 	let ctx = TestContext::new("lightningd/bark_pay_invoice_twice").await;
 
