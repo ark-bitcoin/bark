@@ -512,8 +512,12 @@ impl Wallet {
 			warn!("Error updating fee rates: {}", e);
 		}
 
-		self.sync_rounds().await?;
-		self.sync_oors().await?;
+		if let Err(e) = self.sync_rounds().await {
+			error!("Error in round sync: {}", e);
+		}
+		if let Err(e) = self.sync_oors().await {
+			error!("Error in arkoor sync: {}", e);
+		}
 
 		Ok(())
 	}
