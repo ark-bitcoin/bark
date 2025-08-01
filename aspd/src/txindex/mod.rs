@@ -384,30 +384,37 @@ impl TxIndex {
 
 	pub async fn register(&self, tx: Transaction) -> anyhow::Result<Tx> {
 		let txid = tx.compute_txid();
-		self.db.upsert_bitcoin_transaction(txid, &tx).await?;
-		Ok(self.data.register_as(tx, self.rpc.tx_status(&txid)?.into()).await)
+		self.db.upsert_bitcoin_transaction(txid, &tx).await
+			.context("failed to store bitcoin tx in db")?;
+		let status = self.rpc.tx_status(&txid)
+			.context("failed to get bitcoin tx status")?;
+		Ok(self.data.register_as(tx, status.into()).await)
 	}
 
 	pub async fn register_as(&self, tx: Transaction, status: TxStatus) -> anyhow::Result<Tx> {
 		let txid = tx.compute_txid();
-		self.db.upsert_bitcoin_transaction(txid, &tx).await?;
+		self.db.upsert_bitcoin_transaction(txid, &tx).await
+			.context("failed to store bitcoin tx in db")?;
 		Ok(self.data.register_as(tx, status).await)
 	}
 
 	async fn dump_transaction(&self, txid: Txid, tx: Transaction) -> anyhow::Result<Tx> {
-		self.db.upsert_bitcoin_transaction(txid, &tx).await?;
+		self.db.upsert_bitcoin_transaction(txid, &tx).await
+			.context("failed to store bitcoin tx in db")?;
 		let status = self.rpc.tx_status(&txid)?;
 		let indexed_tx = self.data.get_or_insert(&txid, || (tx, status.into())).await;
 		Ok(indexed_tx)
 	}
 
 	async fn database_to_index(&self, txid: Txid) -> anyhow::Result<Option<Tx>> {
-		let db_tx = self.db.get_bitcoin_transaction_by_id(txid).await?;
+		let db_tx = self.db.get_bitcoin_transaction_by_id(txid).await
+			.context("failed to query bitcoin tx from db")?;
 
 		match db_tx {
 			None => Ok(None),
 			Some(tx) => {
-				let status = self.rpc.tx_status(&txid)?;
+				let status = self.rpc.tx_status(&txid)
+					.context("failed to get bitcoin tx status")?;
 				let indexed_tx = self.data.get_or_insert(&txid, || (tx, status.into())).await;
 				Ok(Some(indexed_tx))
 			}
