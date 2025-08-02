@@ -11,7 +11,7 @@ use bdk_esplora::esplora_client;
 use bdk_wallet::chain::{BlockId, CheckPoint};
 use bitcoin::constants::genesis_block;
 use bitcoin::{Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Wtxid};
-use log::{debug, error, info};
+use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt};
@@ -401,7 +401,7 @@ impl ChainSourceClient {
 			(Ok(fee_rates), _) => Ok(fee_rates),
 			(Err(e), None) => Err(e),
 			(Err(e), Some(fallback)) => {
-				error!("Error getting fee rates, falling back to {} sat/kvB: {}",
+				warn!("Error getting fee rates, falling back to {} sat/kvB: {}",
 					fallback.to_btc_per_kvb(), e,
 				);
 				Ok(FeeRates { fast: fallback, regular: fallback, slow: fallback })
