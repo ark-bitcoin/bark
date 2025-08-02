@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::ClnGrpcClient;
 use futures::StreamExt;
@@ -132,7 +132,7 @@ struct ClnNodeMonitorProcess {
 	updated_index: Option<u64>,
 
 	/// Map from invoice id to number of attempts and time of last update.
-	invoice_next_check_at: HashMap<i64, (usize, DateTime<Utc>)>,
+	invoice_next_check_at: HashMap<i64, (usize, DateTime<Local>)>,
 }
 
 impl ClnNodeMonitorProcess {
@@ -237,7 +237,7 @@ impl ClnNodeMonitorProcess {
 
 	fn update_next_invoice_check(&mut self, invoice_id: i64) {
 		let (attempts, next_check) = self.invoice_next_check_at.entry(invoice_id)
-			.or_insert((0, Utc::now()));
+			.or_insert((0, Local::now()));
 		*attempts += 1;
 
 		// Calculate delay: grows with each attempt
@@ -246,7 +246,7 @@ impl ClnNodeMonitorProcess {
 		let max_delay_secs = self.config.check_max_delay.as_secs();
 		let delay_secs = (base_delay_secs * 2u64.pow(*attempts as u32 - 1)).min(max_delay_secs);
 
-		*next_check = Utc::now() + Duration::from_secs(delay_secs);
+		*next_check = Local::now() + Duration::from_secs(delay_secs);
 
 		trace!("Lightning invoice ({}): Check {} done, updated next check to {}.",
 			invoice_id, attempts, next_check,
@@ -269,7 +269,7 @@ impl ClnNodeMonitorProcess {
 				continue;
 			}
 
-			if attempt.created_at > Utc::now() - self.config.invoice_recheck_delay {
+			if attempt.created_at > Local::now() - self.config.invoice_recheck_delay {
 				trace!("Lightning invoice ({}): Skipping since it was just created.",
 					attempt.lightning_invoice_id,
 				);
@@ -278,7 +278,7 @@ impl ClnNodeMonitorProcess {
 			}
 
 			let next_check = self.invoice_next_check_at.get(&attempt.lightning_invoice_id);
-			if next_check.is_some() && next_check.unwrap().1 > Utc::now() {
+			if next_check.is_some() && next_check.unwrap().1 > Local::now() {
 				trace!("Lightning invoice ({}): Skipping since it was checked recently.",
 					attempt.lightning_invoice_id,
 				);
@@ -399,7 +399,7 @@ impl ClnNodeMonitorProcess {
 			self.update_next_invoice_check(invoice.lightning_invoice_id);
 		}
 
-		self.invoice_next_check_at.retain(|_, &mut (_, datetime)| datetime > Utc::now());
+		self.invoice_next_check_at.retain(|_, &mut (_, datetime)| datetime > Local::now());
 
 		telemetry::set_pending_invoice_verifications(
 			self.node_id,
@@ -458,7 +458,7 @@ impl ClnNodeMonitorProcess {
 					continue;
 			}
 
-			if htlc_subscription.created_at < Utc::now() - self.config.htlc_subscription_timeout {
+			if htlc_subscription.created_at < Local::now() - self.config.htlc_subscription_timeout {
 				info!("Lightning htlc subscription ({}) timed out.",
 					htlc_subscription.lightning_htlc_subscription_id,
 				);
