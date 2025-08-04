@@ -204,7 +204,8 @@ CREATE TABLE public.all_vtxo (
     oor_spent bytea,
     deleted_at timestamp with time zone,
     board_swept boolean DEFAULT false NOT NULL,
-    forfeit_state bytea
+    forfeit_state bytea,
+    forfeit_round_id text
 );
 
 
@@ -552,6 +553,7 @@ CREATE VIEW public.vtxo AS
     deleted_at,
     board_swept,
     forfeit_state,
+    forfeit_round_id,
     ((oor_spent IS NULL) AND (forfeit_state IS NULL)) AS spendable
    FROM public.all_vtxo
   WHERE (deleted_at IS NULL);
