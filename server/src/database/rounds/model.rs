@@ -8,7 +8,7 @@ use bitcoin_ext::BlockHeight;
 use tokio_postgres::Row;
 
 use ark::ProtocolEncoding;
-use ark::rounds::RoundId;
+use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::SignedVtxoTreeSpec;
 
 
@@ -16,6 +16,7 @@ use ark::tree::signed::SignedVtxoTreeSpec;
 pub struct StoredRound {
 	pub id: RoundId,
 	pub tx: Transaction,
+	pub seq: RoundSeq,
 	pub signed_tree: SignedVtxoTreeSpec,
 	pub nb_input_vtxos: usize,
 	pub connector_key: SecretKey,
@@ -32,6 +33,7 @@ impl TryFrom<Row> for StoredRound {
 
 		Ok(Self {
 			id, tx,
+			seq: RoundSeq::new(value.get::<_, i64>("seq") as u64),
 			signed_tree: SignedVtxoTreeSpec::deserialize(value.get("signed_tree"))?,
 			nb_input_vtxos: usize::try_from(value.get::<_, i32>("nb_input_vtxos"))?,
 			connector_key: SecretKey::from_slice(value.get("connector_key"))?,

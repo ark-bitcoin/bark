@@ -1054,6 +1054,7 @@ impl SigningForfeits {
 			(*id, forfeit_state)
 		}).collect();
 		let result = srv.db.finish_round(
+			self.round_seq,
 			&signed_round_tx.tx,
 			&self.signed_vtxos,
 			&self.connector_key.secret_key(),
