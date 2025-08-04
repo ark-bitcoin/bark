@@ -312,9 +312,10 @@ pub fn set_round_state(round_id: usize, state: RoundStateKind) {
 
 pub fn set_round_metrics(round_id: usize, attempt: usize, state: RoundStateKind) {
 	if let Some(m) = TELEMETRY.get() {
+		set_round_state(round_id, state.clone());
+
 		// Keep only last few digits to limit the cardinality.
 		let short_round_id = round_id % CARDINALITY;
-		set_round_state(short_round_id, state.clone());
 
 		m.round_attempt_gauge.record(attempt as u64, &[
 			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
@@ -330,9 +331,10 @@ pub fn set_full_round_metrics(
 	vtxo_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
+		set_round_metrics(round_id, attempt, state.clone());
+
 		// Keep only last few digits to limit the cardinality.
 		let short_round_id = round_id % CARDINALITY;
-		set_round_metrics(short_round_id, attempt, state.clone());
 
 		m.round_volume_gauge.record(volume.to_sat(), &[
 			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),

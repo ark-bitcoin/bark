@@ -1448,7 +1448,11 @@ async fn perform_round(
 
 					if need_new_round {
 						round_state = round_state.into_finished(RoundResult::Abandoned);
-						telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
+
+						telemetry::set_full_round_metrics(
+							round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+						);
+
 						return round_state.result().unwrap();
 					}
 
@@ -1502,7 +1506,11 @@ async fn perform_round(
 			Ok(s) => s,
 			Err(e) => return {
 				round_state = RoundState::Finished(RoundResult::Err(e));
-				telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
+
+				telemetry::set_full_round_metrics(
+					round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+				);
+
 				round_state.result().unwrap()
 			},
 		};
@@ -1534,7 +1542,11 @@ async fn perform_round(
 
 					if need_new_round {
 						round_state = round_state.into_finished(RoundResult::Abandoned);
-						telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
+
+						telemetry::set_full_round_metrics(
+							round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+						);
+
 						return round_state.result().unwrap();
 					}
 
@@ -1601,7 +1613,9 @@ async fn perform_round(
 			},
 		};
 
-		telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
+		telemetry::set_full_round_metrics(
+			round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+		);
 
 		return round_state.result().unwrap();
 	}
