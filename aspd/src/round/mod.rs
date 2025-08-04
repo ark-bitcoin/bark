@@ -16,8 +16,8 @@ use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use log::{debug, error, info, log_enabled, trace, warn};
-use opentelemetry::global;
-use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
+use opentelemetry::{global, KeyValue};
+use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
 use tracing::info_span;
@@ -39,7 +39,7 @@ use crate::{database, Server, SECP};
 use crate::database::model::{ForfeitState, DangerousSecretNonce, LightningHtlcSubscriptionStatus};
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
-use crate::telemetry::{self, SpanExt};
+use crate::telemetry::{self, SpanExt, ATTRIBUTE_ROUND_ID};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
 #[derive(Debug)]
@@ -1015,6 +1015,7 @@ impl SigningForfeits {
 			.start_with_context(&tracer_provider, &parent_context.clone());
 		span.set_int_attr("signed-vtxo-count", self.signed_vtxos.nb_leaves());
 		span.set_int_attr("connectors-count", self.connectors.len());
+		span.set_attribute(KeyValue::new(ATTRIBUTE_ROUND_ID, round_txid.to_string()));
 
 		trace!("Storing round result");
 		if log_enabled!(RoundVtxoCreated::LEVEL) {
@@ -1255,7 +1256,7 @@ async fn perform_round(
 		.span_builder(telemetry::TRACE_RUN_ROUND)
 		.with_kind(SpanKind::Server)
 		.start(&tracer_provider);
-	span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+	span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
 
 	let parent_context = opentelemetry::Context::current_with_span(span);
 
@@ -1304,7 +1305,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_ATTEMPT)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		// Release all vtxos in flux from previous attempt
@@ -1323,7 +1324,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_submit_time); }
@@ -1403,7 +1404,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		let input_count = round_state.collecting_payments().all_inputs.len();
@@ -1499,7 +1500,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		round_state = match round_state.progress(&srv).await {
@@ -1527,7 +1528,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_sign_time); }
@@ -1601,7 +1602,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_FINALIZING)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_ID, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		round_state = match state.finish(&srv).await {

@@ -51,6 +51,7 @@ pub const ATTRIBUTE_ASPD_VERSION: &str = "server_version";
 pub const ATTRIBUTE_BARK_VERSION: &str = "bark_version";
 pub const ATTRIBUTE_PROTOCOL_VERSION: &str = "protocol_version";
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
+pub const ATTRIBUTE_ROUND_SEQ: &str = "round_seq";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 
 pub const SERVICE_NAME: &str = opentelemetry_semantic_conventions::attribute::SERVICE_NAME;
@@ -86,7 +87,7 @@ struct Metrics {
 	protocol_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
-	round_id_gauge: Gauge<u64>,
+	round_seq_gauge: Gauge<u64>,
 	round_state_gauge: Gauge<u64>,
 	round_attempt_gauge: Gauge<u64>,
 	round_volume_gauge: Gauge<u64>,
@@ -181,7 +182,7 @@ impl Metrics {
 		let protocol_version_counter = meter.u64_counter("protocol_version_counter").build();
 		let wallet_balance_gauge = meter.u64_gauge("wallet_balance_gauge").build();
 		let block_height_gauge = meter.u64_gauge("block_gauge").build();
-		let round_id_gauge = meter.u64_gauge("round_id_gauge").build();
+		let round_seq_gauge = meter.u64_gauge("round_seq_gauge").build();
 		let round_state_gauge = meter.u64_gauge("round_state_gauge").build();
 		let round_attempt_gauge = meter.u64_gauge("round_attempt_gauge").build();
 		let round_volume_gauge = meter.u64_gauge("round_volume_gauge").build();
@@ -212,7 +213,7 @@ impl Metrics {
 			protocol_version_counter,
 			wallet_balance_gauge,
 			block_height_gauge,
-			round_id_gauge,
+			round_seq_gauge,
 			round_state_gauge,
 			round_attempt_gauge,
 			round_volume_gauge,
@@ -286,13 +287,13 @@ pub fn set_block_height(block_height: BlockHeight) {
 	}
 }
 
-pub fn set_round_state(round_id: usize, state: RoundStateKind) {
+pub fn set_round_state(round_seq: usize, state: RoundStateKind) {
 	if let Some(m) = TELEMETRY.get() {
 		// Keep only last few digits to limit the cardinality.
-		let short_round_id = round_id % CARDINALITY;
+		let short_round_seq = round_seq % CARDINALITY;
 		// Link round_id with short_round_id.
-		m.round_id_gauge.record(round_id as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
+		m.round_seq_gauge.record(round_seq as u64, &[
+			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 		]);
 
 		for s in RoundStateKind::get_all() {
@@ -303,44 +304,44 @@ pub fn set_round_state(round_id: usize, state: RoundStateKind) {
 			};
 
 			m.round_state_gauge.record(value, &[
-				KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
+				KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
 			]);
 		}
 	}
 }
 
-pub fn set_round_metrics(round_id: usize, attempt: usize, state: RoundStateKind) {
+pub fn set_round_metrics(round_seq: usize, attempt: usize, state: RoundStateKind) {
 	if let Some(m) = TELEMETRY.get() {
-		set_round_state(round_id, state.clone());
+		set_round_state(round_seq, state.clone());
 
 		// Keep only last few digits to limit the cardinality.
-		let short_round_id = round_id % CARDINALITY;
+		let short_round_seq = round_seq % CARDINALITY;
 
 		m.round_attempt_gauge.record(attempt as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
+			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 		]);
 	}
 }
 
 pub fn set_full_round_metrics(
-	round_id: usize,
+	round_seq: usize,
 	attempt: usize,
 	state: RoundStateKind,
 	volume: Amount,
 	vtxo_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
-		set_round_metrics(round_id, attempt, state.clone());
+		set_round_metrics(round_seq, attempt, state.clone());
 
 		// Keep only last few digits to limit the cardinality.
-		let short_round_id = round_id % CARDINALITY;
+		let short_round_seq = round_seq % CARDINALITY;
 
 		m.round_volume_gauge.record(volume.to_sat(), &[
-			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
+			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 		]);
 		m.round_vtxo_count_gauge.record(vtxo_count as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_ID, short_round_id.to_string()),
+			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 		]);
 	}
 }
