@@ -521,7 +521,11 @@ async fn double_spend_oor() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let addr = ark::Address::new_testnet(srv.ark_info().await.server_pubkey, *RANDOM_PK);
+	let addr = ark::Address::builder()
+		.testnet(true)
+		.server_pubkey(srv.ark_info().await.server_pubkey)
+		.pubkey_policy(*RANDOM_PK)
+		.into_address().unwrap();
 	bark.send_oor(addr, sat(100_000)).await;
 
 	// then after it's done, fire the request again, which should fail.
