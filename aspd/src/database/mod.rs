@@ -194,7 +194,7 @@ impl Db {
 
 		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, board_swept FROM vtxo \
+			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept FROM vtxo \
 			WHERE expiry <= $1 AND board_swept = false
 		", &[Type::INT4]).await?;
 
@@ -229,7 +229,7 @@ impl Db {
 		where T : GenericClient + Sized
 	{
 		let statement = client.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, board_swept
+			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept
 			FROM vtxo
 			WHERE id = any($1);
 		", &[Type::TEXT_ARRAY]).await?;
@@ -267,7 +267,7 @@ impl Db {
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Vtxo, ForfeitState)>> + '_> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, board_swept \
+			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept \
 			FROM vtxo WHERE forfeit_state IS NOT NULL
 		").await?;
 
@@ -407,14 +407,15 @@ impl Db {
 
 		// Then mark inputs as forfeited.
 		let statement = tx.prepare_typed("
-			UPDATE vtxo SET forfeit_state = $2 WHERE id = $1 AND spendable = true;
-		", &[Type::TEXT, Type::BYTEA]).await?;
+			UPDATE vtxo SET forfeit_state = $2, forfeit_round_id = $3 WHERE id = $1 AND spendable = true;
+		", &[Type::TEXT, Type::BYTEA, Type::TEXT]).await?;
 		for (id, forfeit_state) in forfeit_vtxos {
 			let state_bytes = rmp_serde::to_vec_named(&forfeit_state)
 				.expect("serde serialization");
 			let rows_affected = tx.execute(&statement, &[
 				&id.to_string(),
 				&state_bytes,
+				&round_id.to_string(),
 			]).await?;
 			if rows_affected == 0 {
 				bail!("tried to mark unspendable vtxo as forfeited: {}", id);

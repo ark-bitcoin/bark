@@ -80,6 +80,8 @@ pub struct VtxoState {
 	/// The round id this vtxo was forfeited in, plus the forfeit tx signatures
 	/// of the user, if the vtxo was forfeited.
 	pub forfeit_state: Option<ForfeitState>,
+	/// The round id this vtxo was forfeited in.
+	pub forfeit_round_id: Option<RoundId>,
 	/// If this is an board vtxo, true after it has been swept.
 	pub board_swept: bool,
 }
@@ -109,6 +111,9 @@ impl TryFrom<Row> for VtxoState {
 			forfeit_state: row
 				.get::<_, Option<&[u8]>>("forfeit_state")
 				.map(|bytes| rmp_serde::from_slice(bytes))
+				.transpose()?,
+			forfeit_round_id: row.get::<_, Option<&str>>("forfeit_round_id")
+				.map(|id| RoundId::from_str(id))
 				.transpose()?,
 			board_swept: row.get::<_, bool>("board_swept"),
 		})
