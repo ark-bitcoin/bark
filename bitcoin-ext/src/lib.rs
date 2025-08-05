@@ -1,19 +1,21 @@
 
 #[macro_use] extern crate lazy_static;
-extern crate bitcoin as cbitcoin;
+#[macro_use] extern crate serde;
+pub extern crate bitcoin;
 
-mod bitcoin;
+#[path = "bitcoin.rs"]
+mod mbitcoin;
 pub mod fee;
+#[cfg(feature = "rpc")]
 pub mod rpc;
 #[cfg(feature = "bdk")]
 pub mod bdk;
 
+pub use mbitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, ScriptBufExt, TransactionExt, TxOutExt};
+
 use std::fmt;
 
-#[cfg(feature = "bdk")]
-use bdk_wallet::chain::BlockId;
-pub use bitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt, TxOutExt};
-use cbitcoin::{Amount, BlockHash};
+use bitcoin::{Amount, BlockHash};
 
 /// The number of confirmations after which we don't expect a
 /// re-org to ever happen.
@@ -50,7 +52,7 @@ pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 /// Type representing a block height in the bitcoin blockchain.
 pub type BlockHeight = u32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct BlockRef {
 	pub height: BlockHeight,
 	pub hash: BlockHash,
@@ -63,8 +65,8 @@ impl fmt::Display for BlockRef {
 }
 
 #[cfg(feature = "bdk")]
-impl From<BlockId> for BlockRef {
-	fn from(id: BlockId) -> Self {
+impl From<bdk_wallet::chain::BlockId> for BlockRef {
+	fn from(id: bdk_wallet::chain::BlockId) -> Self {
 		Self {
 			height: id.height,
 			hash: id.hash,

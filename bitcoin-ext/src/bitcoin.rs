@@ -3,12 +3,12 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use bitcoin::TxOut;
-use cbitcoin::{
+use bitcoin::{
 	taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, WitnessVersion,
 };
-use cbitcoin::script::{Builder, PushBytes};
-use cbitcoin::taproot::ControlBlock;
-use cbitcoin::secp256k1::{self, Keypair, Secp256k1};
+use bitcoin::script::{Builder, PushBytes};
+use bitcoin::taproot::ControlBlock;
+use bitcoin::secp256k1::{self, Keypair, Secp256k1};
 
 use crate::{fee, P2PKH_DUST, P2SH_DUST, P2TR_DUST, P2WPKH_DUST, P2WSH_DUST};
 
