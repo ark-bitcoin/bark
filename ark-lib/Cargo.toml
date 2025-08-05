@@ -15,15 +15,14 @@ test-util = []
 [dependencies]
 
 # * EXPORTED DEPS
-bitcoin.workspace = true
-serde.workspace = true
+bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
+bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false }
+serde = { version = "1.0.219" }
 
 # * INTERNAL DEPS
-bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false }
 lazy_static.workspace = true
 thiserror.workspace = true
 rand.workspace = true
-lightning-invoice.workspace = true
 # can use bitcoin::hex once they upgrade to v0.3.0
 hex-conservative = "0.3.0"
 

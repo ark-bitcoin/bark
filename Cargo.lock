@@ -132,7 +132,6 @@ dependencies = [
  "bitcoinconsensus",
  "hex-conservative 0.3.0",
  "lazy_static",
- "lightning-invoice",
  "rand 0.9.0",
  "secp256k1 0.31.1",
  "serde",
