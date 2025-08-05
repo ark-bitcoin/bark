@@ -251,6 +251,9 @@ impl Exit {
 	///
 	/// - `onchain` is used to build the CPFP transaction package we use to broadcast
 	///   the unilateral exit transaction
+	/// - `fee_rate_override` sets the desired fee-rate in sats/kvB to use broadcasting exit 
+	///   transactions. Note that due to rules imposed by the network with regard to RBF fee bumping,
+	///   replaced transactions may have a higher fee rate than you specify here.
 	///
 	/// ### Return
 	///
@@ -258,13 +261,18 @@ impl Exit {
 	pub async fn progress_exit<W: ExitUnilaterally>(
 		&mut self,
 		onchain: &mut W,
+		fee_rate_override: Option<FeeRate>, 
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
 		self.tx_manager.sync().await?;
 		let mut exit_statuses = Vec::with_capacity(self.exit_vtxos.len());
 		for ev in self.exit_vtxos.iter_mut() {
 			info!("Progressing exit for VTXO {}", ev.id());
 			let error = match ev.progress(
-				&self.chain_source, &mut self.tx_manager, &*self.persister, onchain
+				&self.chain_source,
+				&mut self.tx_manager,
+				&*self.persister,
+				onchain,
+				fee_rate_override,
 			).await {
 				Ok(_) => None,
 				Err(e) => {
@@ -303,7 +311,7 @@ impl Exit {
 			// If the exit is waiting for new blocks, we should trigger an update
 			if exit.state().requires_network_update() {
 				if let Err(e) = exit.progress(
-					&self.chain_source, &mut self.tx_manager, &*self.persister, onchain,
+					&self.chain_source, &mut self.tx_manager, &*self.persister, onchain, None,
 				).await {
 					error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 				}
