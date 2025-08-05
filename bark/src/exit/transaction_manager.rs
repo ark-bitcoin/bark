@@ -132,7 +132,7 @@ impl ExitTransactionManager {
 						TxStatus::NotFound => {
 							// Broadcast the current package if we have one
 							match self.broadcast_package(&*package.read().await).await {
-								Ok(()) => continue,
+								Ok(_) => continue,
 								Err(ExitError::ExitPackageBroadcastFailure { error, .. }) => {
 									// We can just swallow these errors instead of stopping the
 									// entire syncing process
@@ -237,7 +237,7 @@ impl ExitTransactionManager {
 	pub async fn broadcast_package(
 		&mut self,
 		package: &ExitTransactionPackage,
-	) -> Result<(), ExitError> {
+	) -> Result<TxStatus, ExitError> {
 		// Set the default status first in case we error out
 		if !self.status.contains_key(&package.exit.txid) {
 			self.status.insert(package.exit.txid, TxStatus::NotFound);
@@ -261,7 +261,7 @@ impl ExitTransactionManager {
 			}
 		};
 		self.status.insert(package.exit.txid, status);
-		Ok(())
+		Ok(status)
 	}
 
 	async fn tip(&self) -> anyhow::Result<BlockHeight, ExitError> {

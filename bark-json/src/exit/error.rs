@@ -16,6 +16,9 @@ pub enum ExitError {
 	#[error("Block Retrieval Failure: Unable to retrieve a block at height {height}: {error}")]
 	BlockRetrievalFailure { height: BlockHeight, error: String },
 
+	#[error("Claim Missing Inputs: No inputs given to claim")]
+	ClaimMissingInputs,
+
 	#[error("Claim Fee Exceeds Output: Cost to claim exits was {needed}, but the total output was {output}")]
 	ClaimFeeExceedsOutput { needed: Amount, output: Amount },
 
@@ -39,6 +42,9 @@ pub enum ExitError {
 
 	#[error("Exit Package Finalize Failure: Unable to create exit transaction package: {error}")]
 	ExitPackageFinalizeFailure { error: String },
+
+	#[error("Exit Package Store Failure: Unable to store exit transaction package {txid}: {error}")]
+	ExitPackageStoreFailure { txid: Txid, error: String },
 
 	#[error("Insufficient Confirmed Funds: {needed} is needed but only {available} is available")]
 	InsufficientConfirmedFunds { needed: Amount, available: Amount },

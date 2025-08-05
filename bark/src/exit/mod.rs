@@ -378,6 +378,9 @@ impl Exit {
 		address: Address,
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt, ExitError> {
+		if inputs.is_empty() {
+			return Err(ExitError::ClaimMissingInputs);
+		}
 		let mut tx = {
 			let mut output_amount = Amount::ZERO;
 			let mut tx_ins = Vec::with_capacity(inputs.len());

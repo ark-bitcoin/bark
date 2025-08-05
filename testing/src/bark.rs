@@ -161,6 +161,10 @@ impl Bark {
 		self.try_client().await.expect("failed to create bark::Wallet client")
 	}
 
+	pub fn bitcoind(&self) -> Option<&Bitcoind> {
+		self._bitcoind.as_ref()
+	}
+
 	pub fn command_log_file(&self) -> PathBuf {
 		self.config.datadir.join(COMMAND_LOG_FILE)
 	}
@@ -391,6 +395,12 @@ impl Bark {
 		self.run_json(["exit", "progress"]).await
 	}
 
+	pub async fn progress_exit_with_fee_rate(&self, fee_rate: FeeRate) -> json::ExitProgressResponse {
+		self.run_json(
+			["exit", "progress", "--fee-rate", &fee_rate.to_btc_per_kvb()],
+		).await
+	}
+
 	pub async fn start_exit_all(&self) {
 		self.run(["exit", "start", "--all"]).await;
 	}
@@ -410,6 +420,10 @@ impl Bark {
 
 	pub async fn list_exits(&self) -> Vec<json::ExitTransactionStatus> {
 		self.run_json(["exit", "list"]).await
+	}
+
+	pub async fn list_exits_with_details(&self) -> Vec<json::ExitTransactionStatus> {
+		self.run_json(["exit", "list", "--transactions", "--history"]).await
 	}
 
 	pub async fn claim_all_exits(&self, destination: impl fmt::Display) {

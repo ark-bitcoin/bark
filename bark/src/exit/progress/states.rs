@@ -181,7 +181,7 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 					let guard = package.read().await;
 					assert_eq!(guard.child, None);
 
-					ctx.create_exit_cpfp_tx(&guard.exit.tx, onchain)?
+					ctx.create_exit_cpfp_tx(&guard.exit.tx, onchain, None)?
 				};
 
 				// Update the transaction manager so our package can be broadcast later
@@ -197,6 +197,32 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 				Ok(new_status)
 			}
 		}
+		ExitTxStatus::NeedsReplacementPackage { .. } => {
+			// Ensure we still need to replace the package
+			match ctx.get_exit_tx_status(exit).await? {
+				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
+					info!("Creating replacement exit package with a fee rate of at least {}sats/kWu and a minimum fee of {} for exit tx {}", min_fee_rate, min_fee, exit.txid);
+					let child_tx = ctx.create_exit_cpfp_tx(
+						&ctx.tx_manager.get_package(exit.txid)?.read().await.exit.tx,
+						onchain,
+						Some((min_fee_rate, min_fee)),
+					)?;
+
+					// Update the transaction manager so our package can be broadcast later
+					let origin = ExitTxOrigin::Wallet { confirmed_in: None };
+					let child_txid = ctx.tx_manager.set_wallet_child_tx(
+						exit.txid, child_tx, origin,
+					).await?;
+
+					info!("RBF CPFP created with txid {} for exit tx {}", child_txid, exit.txid);
+					Ok(ExitTxStatus::NeedsBroadcasting { child_txid, origin })
+				},
+				s => {
+					info!("Status has changed for exit tx {}, no longer creating a replacement package", exit.txid);
+					Ok(s)
+				},
+			}
+		},
 		ExitTxStatus::NeedsBroadcasting { child_txid, .. } => {
 			info!("Checking if exit tx {} has been broadcast with CPFP tx {}",
 				exit.txid, child_txid,
@@ -211,7 +237,19 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 					}
 					info!("Attempting to broadcast exit tx {} with child tx {}", exit.txid, child_txid);
 					let package = ctx.tx_manager.get_package(exit.txid)?;
-					ctx.tx_manager.broadcast_package(&*package.read().await).await?;
+					let guard = package.read().await;
+					let status = ctx.tx_manager.broadcast_package(&*guard).await?;
+					if matches!(status, TxStatus::Mempool) {
+						info!("Commiting exit CPFP {} to database", new_child_txid);
+						let tx = &guard.child.as_ref().expect("child can't be missing").info.tx;
+						onchain.store_signed_p2a_cpfp(tx)
+							.map_err(|e| ExitError::ExitPackageStoreFailure {
+								txid: exit.txid,
+								error: e.to_string(),
+							})?;
+					}
+
+					// Finally, we can go to the next state
 					ctx.get_exit_child_status(&exit, new_child_txid).await
 				},
 				_ => {

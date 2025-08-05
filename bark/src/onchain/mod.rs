@@ -2,6 +2,8 @@
 mod chain;
 mod bdk;
 
+pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
+/// TODO: BDK compilation
 pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
 
@@ -12,7 +14,6 @@ use bitcoin::{
 };
 
 use ark::Vtxo;
-use bitcoin_ext::bdk::CpfpError;
 use bitcoin_ext::{BlockHeight, BlockRef};
 
 #[derive(Debug, Clone)]
@@ -79,7 +80,13 @@ pub trait GetSpendingTx {
 }
 
 pub trait MakeCpfp {
-	fn make_p2a_cpfp(&mut self, tx: &Transaction, fee_rate: FeeRate) -> Result<Psbt, CpfpError>;
+	fn make_signed_p2a_cpfp(
+		&mut self,
+		tx: &Transaction,
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpError>;
+
+	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;
 }
 
 /// Trait for wallets that can be used to unilaterally exit vtxos

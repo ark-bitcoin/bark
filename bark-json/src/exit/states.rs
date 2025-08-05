@@ -20,6 +20,11 @@ pub enum ExitTxStatus {
 	VerifyInputs,
 	AwaitingInputConfirmation { txids: HashSet<Txid> },
 	NeedsSignedPackage,
+	NeedsReplacementPackage {
+		#[serde(rename = "min_fee_rate_kwu")]
+		min_fee_rate: FeeRate,
+		min_fee: Amount,
+	},
 	NeedsBroadcasting { child_txid: Txid, origin: ExitTxOrigin, },
 	BroadcastWithCpfp { child_txid: Txid, origin: ExitTxOrigin, },
 	Confirmed { child_txid: Txid, block: BlockRef, origin: ExitTxOrigin, },

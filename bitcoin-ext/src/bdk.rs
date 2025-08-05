@@ -3,19 +3,21 @@ use std::collections::{HashMap, HashSet};
 use std::borrow::BorrowMut;
 use std::sync::Arc;
 
+use bdk_wallet::{SignOptions, TxBuilder, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::coin_selection::InsufficientFunds;
-use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::error::CreateTxError;
+use bdk_wallet::signer::SignerError;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, TxOut, Txid, Wtxid};
-use bitcoin::{BlockHash, Psbt, Witness};
+use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, TxOut, Txid, Weight, Wtxid};
+use bitcoin::{BlockHash, Witness};
+use bitcoin::psbt::ExtractTxError;
+use log::{debug, trace};
 use reqwest::{Body, Response};
 use serde::Deserialize;
 
-use crate::{fee, BlockHeight, P2TR_DUST};
-use crate::TransactionExt;
-
+use crate::{fee, BlockHeight, TransactionExt};
+use crate::cpfp::MakeCpfpFees;
 
 /// An extension trait for [TxBuilder].
 pub trait TxBuilderExt<'a, A>: BorrowMut<TxBuilder<'a, A>> {
@@ -35,16 +37,25 @@ pub trait TxBuilderExt<'a, A>: BorrowMut<TxBuilder<'a, A>> {
 }
 impl<'a, A> TxBuilderExt<'a, A> for TxBuilder<'a, A> {}
 
-
-/// Error resulting from the [WalletExt::make_cpfp] function.
 #[derive(Debug, thiserror::Error)]
-pub enum CpfpError {
-	#[error("tx has no fee anchor: {0}")]
-	NoFeeAnchor(Txid),
-	#[error("you need more confirmations on your on-chain funds: {0}")]
+pub enum CpfpInternalError {
+	#[error("{0}")]
+	General(String),
+	#[error("Unable to construct transaction: {0}")]
+	Create(CreateTxError),
+	#[error("Unable to extract the final transaction after signing the PSBT: {0}")]
+	Extract(ExtractTxError),
+	#[error("Failed to determine the weight/fee when creating a P2A CPFP")]
+	Fee(),
+	#[error("Unable to finalize CPFP transaction: {0}")]
+	FinalizeError(String),
+	#[error("You need more confirmations on your on-chain funds: {0}")]
 	InsufficientConfirmedFunds(InsufficientFunds),
+	#[error("Transaction has no fee anchor: {0}")]
+	NoFeeAnchor(Txid),
+	#[error("Unable to sign transaction: {0}")]
+	Signer(SignerError),
 }
-
 
 /// An extension trait for [Wallet].
 pub trait WalletExt: BorrowMut<Wallet> {
@@ -71,7 +82,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		})
 	}
 
-	/// Return all vtxos that are untrusted: unconfirmed and not change.
+	/// Return all UTXOs that are untrusted: unconfirmed and not change.
 	fn untrusted_utxos(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
 		let w = self.borrow();
 		let mut ret = Vec::new();
@@ -115,76 +126,102 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		}).expect("should work, might fail if tip is genesis");
 	}
 
-	fn make_p2a_cpfp(
+	fn make_signed_p2a_cpfp(
 		&mut self,
 		tx: &Transaction,
-		fee_rate: FeeRate,
-	) -> Result<Psbt, CpfpError> {
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpInternalError> {
 		let wallet = self.borrow_mut();
+		let (outpoint, txout) = tx.fee_anchor()
+			.ok_or_else(|| CpfpInternalError::NoFeeAnchor(tx.compute_txid()))?;
 
-		let anchor = tx.fee_anchor()
-			.ok_or_else(|| CpfpError::NoFeeAnchor(tx.compute_txid()))?;
-
-		// Since BDK doesn't support adding extra weight for fees, we have to
-		// first build the tx regularly, and then build it again.
-		// Since we have to guarantee that we have enough money in the inputs,
-		// we will "fake" create an output on the first attempt. This might
-		// overshoot the fee, but we prefer that over undershooting it.
-
-		let extra_fee_needed = fee_rate * tx.weight();
+		// Since BDK doesn't support adding extra weight for fees, we have to loop to achieve the
+		// effective fee rate and potential minimum fee we need.
+		let p2a_weight = tx.weight();
+		let extra_fee_needed = p2a_weight * fees.effective();
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
 
-		let balance = wallet.balance().total();
-
-		let untrusted_utxos = wallet.untrusted_utxos(None);
-
-		let template_weight = {
+		// We will loop, constructing the transaction and signing it until we exceed the effective
+		// fee rate and meet any minimum fee requirements
+		let mut spend_weight = Weight::ZERO;
+		let mut fee_needed = extra_fee_needed;
+		for i in 0..100 {
 			let mut b = wallet.build_tx();
-			b.ordering(TxOrdering::Untouched);
 			b.only_witness_utxo();
-			b.unspendable(untrusted_utxos.clone());
-			b.add_fee_anchor_spend(anchor.0, anchor.1);
-			b.add_recipient(change_addr.address.script_pubkey(), extra_fee_needed + P2TR_DUST);
-			b.fee_rate(fee_rate);
-			let mut psbt = match b.finish() {
-				Ok(psbt) => psbt,
-				Err(CreateTxError::CoinSelection(e)) if e.needed <= balance => {
-					return Err(CpfpError::InsufficientConfirmedFunds(e));
-				},
-				Err(e) => panic!("error creating tx: {}", e),
-			};
+			b.exclude_unconfirmed();
+			b.version(3); // for 1p1c package relay, all inputs must be confirmed
+			b.add_fee_anchor_spend(outpoint, txout);
+			b.drain_to(change_addr.address.script_pubkey());
+			b.fee_absolute(fee_needed);
+
+			// Attempt to create and sign the transaction
+			let mut psbt = b.finish().map_err(|e| match e {
+				CreateTxError::CoinSelection(e) => CpfpInternalError::InsufficientConfirmedFunds(e),
+				_ => CpfpInternalError::Create(e),
+			})?;
 			let opts = SignOptions {
 				trust_witness_utxo: true,
 				..Default::default()
 			};
 			let finalized = wallet.sign(&mut psbt, opts)
-				.expect("failed to sign anchor spend template");
-			assert!(finalized);
+				.map_err(|e| CpfpInternalError::Signer(e))?;
+			if !finalized {
+				return Err(CpfpInternalError::FinalizeError("finalization failed".into()));
+			}
 			let tx = psbt.extract_tx()
-				.expect("anchor spend template not fully signed");
-			assert_eq!(
-				tx.input[0].witness.size() as u64,
-				fee::FEE_ANCHOR_SPEND_WEIGHT.to_wu(),
+				.map_err(|e| CpfpInternalError::Extract(e))?;
+			let anchor_weight = fee::FEE_ANCHOR_SPEND_WEIGHT.to_wu();
+			assert!(tx.input.iter().any(|i| i.witness.size() as u64 == anchor_weight),
+				"Missing anchor spend, tx is {}", serialize_hex(&tx),
 			);
-			tx.weight()
-		};
 
-		let total_weight = template_weight + tx.weight();
-		let total_fee = fee_rate * total_weight;
-		let extra_fee_needed = total_fee;
+			// We can finally check the fees and weight
+			let tx_weight = tx.weight();
+			let total_weight = tx_weight + p2a_weight;
+			if tx_weight != spend_weight {
+				// Since the weight changed, we can drop the transaction and recalculate the
+				// required fee amount.
+				wallet.cancel_tx(&tx);
+				spend_weight = tx_weight;
+				fee_needed = match fees {
+					MakeCpfpFees::Effective(fr) => total_weight * fr,
+					MakeCpfpFees::Rbf { min_effective_fee_rate, package_fee } => {
+						// RBF requires that you spend at least the total fee of every
+						// unconfirmed ancestor and the transaction you want to replace,
+						// then you must add mintxrelayfee * package_vbytes on top.
+						let min_tx_relay_fee = FeeRate::from_sat_per_vb(1).unwrap();
+						let min_package_fee = package_fee +
+							p2a_weight * min_tx_relay_fee +
+							tx_weight * min_tx_relay_fee;
 
-		// Then build actual tx.
-		let mut b = wallet.build_tx();
-		b.ordering(TxOrdering::Untouched);
-		b.only_witness_utxo();
-		b.unspendable(untrusted_utxos);
-		b.version(3); // for 1p1c package relay
-		b.add_fee_anchor_spend(anchor.0, anchor.1);
-		b.drain_to(change_addr.address.script_pubkey());
-		b.fee_absolute(extra_fee_needed);
-		Ok(b.finish().expect("failed to craft anchor spend tx"))
+						// This is the fee we want to pay based on the given minimum effective fee
+						// rate. It's possible that the desired fee is lower than the minimum
+						// package fee if the currently broadcast child transaction is bigger than
+						// the transaction we just produced.
+						let desired_fee = total_weight * min_effective_fee_rate;
+						if desired_fee < min_package_fee {
+							debug!("Using a minimum fee of {} instead of the desired fee of {} for RBF",
+								min_package_fee, desired_fee,
+							);
+							min_package_fee
+						} else {
+							trace!("Attempting to use the desired fee of {} for CPFP RBF",
+								desired_fee,
+							);
+							desired_fee
+						}
+					}
+				}
+			} else {
+				debug!("Created P2A CPFP with weight {} and fee {} in {} iterations",
+					total_weight, fee_needed, i,
+				);
+				return Ok(tx);
+			}
+		}
+		Err(CpfpInternalError::General("Reached max iterations".into()))
 	}
 }
 

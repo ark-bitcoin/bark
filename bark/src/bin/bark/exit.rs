@@ -12,6 +12,7 @@ use bark::Wallet;
 use bark::vtxo_selection::VtxoFilter;
 use bark::onchain::OnchainWallet;
 use bitcoin_ext::FeeRateExt;
+
 use crate::util::output_json;
 
 #[derive(clap::Subcommand)]

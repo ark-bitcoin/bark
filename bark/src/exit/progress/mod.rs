@@ -3,22 +3,21 @@ pub(crate) mod util;
 
 use std::collections::HashSet;
 
-use bitcoin::{Address, FeeRate, Transaction, Txid};
+use bitcoin::{Address, Amount, FeeRate, Transaction, Txid};
 use bitcoin::params::Params;
 use log::{debug, error, info, warn};
 use tonic::async_trait;
 
 use ark::Vtxo;
-use bitcoin_ext::bdk::CpfpError;
 use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 use bitcoin_ext::rpc::TxStatus;
 use json::exit::error::ExitError;
 use json::exit::ExitState;
-use json::exit::states::{ExitTx, ExitTxStatus};
+use json::exit::states::{ExitTx, ExitTxOrigin, ExitTxStatus};
 
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::{ExitUnilaterally};
-use crate::onchain::ChainSourceClient;
+use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
@@ -51,6 +50,7 @@ impl ProgressStep {
 						ExitTxStatus::VerifyInputs => true,
 						ExitTxStatus::AwaitingInputConfirmation { .. } => false,
 						ExitTxStatus::NeedsSignedPackage => true,
+						ExitTxStatus::NeedsReplacementPackage { .. } => true,
 						ExitTxStatus::NeedsBroadcasting { .. } => true,
 						ExitTxStatus::BroadcastWithCpfp { .. } => false,
 						// We don't need to handle the case when every transaction is confirmed as
@@ -126,18 +126,31 @@ impl<'a> ProgressContext<'a> {
 		&mut self,
 		exit_tx: &Transaction,
 		onchain: &mut W,
+		min_rbf_fees: Option<(FeeRate, Amount)>,
 	) -> anyhow::Result<Transaction, ExitError> {
-		let psbt = onchain.make_p2a_cpfp(&exit_tx, self.fee_rate)
+		let fees = if let Some((min_fee_rate, min_fee)) = min_rbf_fees {
+			MakeCpfpFees::Rbf {
+				min_effective_fee_rate: if min_fee_rate < self.fee_rate {
+					self.fee_rate
+				} else {
+					min_fee_rate
+				},
+				package_fee: min_fee,
+			}
+		} else {
+			MakeCpfpFees::Effective(self.fee_rate)
+		};
+		onchain.make_signed_p2a_cpfp(&exit_tx, fees)
 			.map_err(|e| match e {
 				// An exit transaction must have a fee anchor, if not we can't create a CPFP package.
 				CpfpError::NoFeeAnchor(_) => ExitError::InternalError { error: e.to_string() },
 				// This is thrown when the wallet doesn't have any confirmed UTXOs to use.
-				CpfpError::InsufficientConfirmedFunds(f) => ExitError::InsufficientConfirmedFunds {
-					needed: f.needed, available: f.available,
+				CpfpError::InsufficientConfirmedFunds { needed, available } => {
+					ExitError::InsufficientConfirmedFunds { needed, available }
 				},
-			})?;
-		onchain.finish_tx(psbt)
-			.map_err(|e| ExitError::ExitPackageFinalizeFailure { error: e.to_string() })
+				// Something broken that users can't be expected to fix
+				e => ExitError::ExitPackageFinalizeFailure { error: e.to_string() },
+			})
 	}
 
 	pub async fn get_block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef, ExitError> {
@@ -174,10 +187,34 @@ impl<'a> ProgressContext<'a> {
 					child_txid: child.txid,
 					origin: child.origin,
 				}),
-				TxStatus::Mempool => Ok(ExitTxStatus::BroadcastWithCpfp {
-					child_txid: child.txid,
-					origin: child.origin,
-				}),
+				TxStatus::Mempool => {
+					// Check if we need to RBF
+					match child.origin {
+						ExitTxOrigin::Wallet { .. } => {
+							Ok(ExitTxStatus::BroadcastWithCpfp {
+								child_txid: child.txid,
+								origin: child.origin,
+							})
+						},
+						ExitTxOrigin::Mempool { fee_rate, total_fee } => {
+							if fee_rate < self.fee_rate {
+								Ok(ExitTxStatus::NeedsReplacementPackage {
+									min_fee_rate: fee_rate,
+									min_fee: total_fee,
+								})
+							} else {
+								Ok(ExitTxStatus::BroadcastWithCpfp {
+									child_txid: child.txid,
+									origin: child.origin,
+								})
+							}
+						},
+						ExitTxOrigin::Block { .. } => Err(ExitError::InternalError {
+							error: format!("TxStatus was {:?} when origin is {}, this should never happen", child.status, child.origin),
+						})
+					}
+
+				},
 				TxStatus::Confirmed(b) => Ok(ExitTxStatus::Confirmed {
 					child_txid: child.txid,
 					block: b,

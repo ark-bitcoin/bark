@@ -67,7 +67,7 @@ impl fmt::Display for WalletKind {
 pub trait BdkWalletExt: WalletExt {
 	/// Finish the PSBT by signing it and committing it to the wallet.
 	///
-	/// This method does not persist changes to the databse.
+	/// This method does not persist changes to the database.
 	fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
 		let opts = SignOptions {
 			trust_witness_utxo: true,
