@@ -10,6 +10,9 @@ use crate::exit::states::ExitTxStatus;
 #[derive(Clone, Debug, Error, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ExitError {
+	#[error("Transaction Retrieval Failure: Unable to retrieve ancestral data for TX {txid}: {error}")]
+	AncestorRetrievalFailure { txid: Txid, error: String },
+
 	#[error("Block Retrieval Failure: Unable to retrieve a block at height {height}: {error}")]
 	BlockRetrievalFailure { height: BlockHeight, error: String },
 

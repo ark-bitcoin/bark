@@ -115,13 +115,12 @@ CREATE TABLE bark_exit_states (
 				state TEXT NOT NULL,
 				history TEXT NOT NULL
 			);
-CREATE TABLE bark_exit_child_transactions (
-				exit_id TEXT PRIMARY KEY,
-				child_tx BLOB NOT NULL,
-				block_hash BLOB,
-				height INTEGER
-			);
 CREATE TABLE bark_vtxo_key (
 				public_key TEXT NOT NULL PRIMARY KEY,
 				idx INTEGER NOT NULL UNIQUE
+			);
+CREATE TABLE bark_exit_child_transactions (
+				exit_id TEXT PRIMARY KEY,
+				child_tx BLOB NOT NULL,
+				tx_origin TEXT NOT NULL
 			);

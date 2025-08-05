@@ -6,22 +6,24 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc;
 use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
-use bitcoin_ext::bdk::{CpfpError, WalletExt};
-use log::{debug, info, warn};
-
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering};
 use bitcoin::{
-	bip32, psbt, Address, Amount, FeeRate, Network, Psbt, Sequence, Transaction, TxOut, Txid
+	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
+	Txid,
 };
+use log::{debug, info, warn};
+
+use bitcoin_ext::BlockRef;
+use bitcoin_ext::bdk::{CpfpError, WalletExt};
 use json::exit::ExitState;
 
-use crate::onchain::chain::InnerChainSourceClient;
 use crate::onchain::{
 	ChainSourceClient, LocalUtxo, GetBalance, GetSpendingTx, GetWalletTx, PreparePsbt,
 	SignPsbt, MakeCpfp, Utxo,
 };
+use crate::onchain::chain::InnerChainSourceClient;
 use crate::exit::vtxo::ExitVtxo;
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
@@ -107,6 +109,16 @@ impl <W: Deref<Target = BdkWallet>> GetWalletTx for W {
 	fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
 		self.deref().get_tx(txid).map(|tx| tx.tx_node.tx)
 	}
+
+	fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>> {
+		match self.deref().get_tx(txid) {
+			Some(tx) => match tx.chain_position {
+				ChainPosition::Confirmed { anchor, .. } => Ok(Some(anchor.block_id.into())),
+				ChainPosition::Unconfirmed { .. } => Ok(None),
+			},
+			None => Err(anyhow!("Tx {} does not exist in the wallet", txid)),
+		}
+	}
 }
 
 impl <W: DerefMut<Target = BdkWallet>> PreparePsbt for W {
@@ -138,9 +150,9 @@ impl <W: DerefMut<Target = BdkWallet>> PreparePsbt for W {
 }
 
 impl <W: Deref<Target = BdkWallet>> GetSpendingTx for W {
-	fn get_spending_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
+	fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>> {
 		for transaction in self.deref().transactions() {
-			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output.txid == txid) {
+			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output == outpoint) {
 				return Some(transaction.tx_node.tx);
 			}
 		}

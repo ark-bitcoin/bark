@@ -1,7 +1,5 @@
 use bitcoin::{Transaction, Txid};
 
-use bitcoin_ext::BlockRef;
-
 use crate::exit::states::ExitTxOrigin;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -27,15 +25,4 @@ pub struct TransactionInfo {
 pub struct ChildTransactionInfo {
 	pub info: TransactionInfo,
 	pub origin: ExitTxOrigin,
-	pub confirmed_in: Option<BlockRef>,
-}
-
-impl ChildTransactionInfo {
-	pub fn from_block(info: TransactionInfo, block: Option<BlockRef>) -> Self {
-		if let Some(block) = block {
-			ChildTransactionInfo { info, origin: ExitTxOrigin::Block, confirmed_in: Some(block) }
-		} else {
-			ChildTransactionInfo { info, origin: ExitTxOrigin::Mempool, confirmed_in: None }
-		}
-	}
 }

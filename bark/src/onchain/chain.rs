@@ -10,7 +10,9 @@ use bdk_bitcoind_rpc::{bitcoincore_rpc, BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL
 use bdk_esplora::esplora_client;
 use bdk_wallet::chain::{BlockId, CheckPoint};
 use bitcoin::constants::genesis_block;
-use bitcoin::{Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Wtxid};
+use bitcoin::{
+	Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Weight, Wtxid,
+};
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
@@ -192,6 +194,67 @@ impl ChainSourceClient {
 		}
 	}
 
+	/// Retrieves basic CPFP ancestry information of the given transaction. Confirmed transactions
+	/// are ignored as they are not relevant to CPFP.
+	pub async fn mempool_ancestor_info(&self, txid: Txid) -> anyhow::Result<MempoolAncestorInfo> {
+		let mut result = MempoolAncestorInfo::new(txid);
+
+		// TODO: Determine if any line of descendant transactions increase the effective fee rate 
+		//		 of the target txid.
+		match self.inner {
+			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
+				let entry = bitcoind.get_mempool_entry(&txid)?;
+				let err = || anyhow!("missing weight parameter from getmempoolentry");
+
+				result.total_fee = entry.fees.ancestor;
+				result.total_weight = Weight::from_wu(entry.weight.ok_or_else(err)?) +
+					Weight::from_vb(entry.ancestor_size).ok_or_else(err)?;
+			},
+			InnerChainSourceClient::Esplora(ref client) => {
+				// We should first verify the transaction is in the mempool to maintain the same
+				// behavior as Bitcoin Core
+				let status = self.tx_status(&txid).await?;
+				if !matches!(status, TxStatus::Mempool) {
+					return Err(anyhow!("{} is not in the mempool, status is {:?}", txid, status));
+				}
+
+				let mut info_map: HashMap<Txid, esplora_client::Tx> = HashMap::new();
+				let mut set = HashSet::from([txid]);
+				while !set.is_empty() {
+					// Start requests asynchronously
+					let requests = set.iter().filter_map(|txid| if info_map.contains_key(txid) {
+						None
+					} else {
+						Some((txid, client.get_tx_info(&txid)))
+					}).collect::<Vec<_>>();
+
+					// Collect txids to be added to the set
+					let mut next_set = HashSet::new();
+
+					// Process each request, ignoring parents of confirmed transactions
+					for (txid, request) in requests {
+						let info = request.await?
+							.ok_or_else(|| anyhow!("unable to retrieve tx info for {}", txid))?;
+						if !info.status.confirmed {
+							for vin in info.vin.iter() {
+								next_set.insert(vin.txid);
+							}
+						}
+						info_map.insert(*txid, info);
+					}
+					set = next_set;
+				}
+				// Calculate the total weight and fee of the unconfirmed ancestry
+				for info in info_map.into_values().filter(|info| !info.status.confirmed) {
+					result.total_fee += info.fee();
+					result.total_weight += info.weight();
+				}
+			},
+		}
+		// Now calculate the effective fee rate of the package
+		Ok(result)
+	}
+
 	/// For each provided outpoint, fetches the ID of any confirmed or unconfirmed in which the
 	/// outpoint is spent.
 	pub async fn txs_spending_inputs<T: IntoIterator<Item = OutPoint>>(
@@ -228,6 +291,10 @@ impl ChainSourceClient {
 										height: em.block_height(), hash: em.block.block_hash().clone()
 									})
 								);
+								// We can stop early if we've found a spending tx for each outpoint
+								if res.map.len() == outpoint_set.len() {
+									return Ok(res);
+								}
 							}
 						}
 					}
@@ -238,7 +305,16 @@ impl ChainSourceClient {
 				for (tx, _last_seen) in &mempool.update {
 					for txin in tx.input.iter() {
 						if outpoint_set.contains(&txin.previous_output) {
-							res.add(txin.previous_output.clone(), tx.compute_txid(), TxStatus::Mempool);
+							res.add(
+								txin.previous_output.clone(),
+								tx.compute_txid(),
+								TxStatus::Mempool,
+							);
+
+							// We can stop early if we've found a spending tx for each outpoint
+							if res.map.len() == outpoint_set.len() {
+								return Ok(res);
+							}
 						}
 					}
 				}
@@ -361,7 +437,7 @@ impl ChainSourceClient {
 		match self.inner {
 			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				bitcoind.tx_status(&txid)
-					.map_err(|e| format_err!(e))
+					.map_err(|e| anyhow!(e))
 			},
 			InnerChainSourceClient::Esplora(ref esplora) => {
 				match esplora.get_tx_info(&txid).await? {
@@ -417,6 +493,32 @@ pub struct FeeRates {
 	pub fast: FeeRate,
 	pub regular: FeeRate,
 	pub slow: FeeRate,
+}
+
+/// Contains the fee information for an unconfirmed transaction found in the mempool.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MempoolAncestorInfo {
+	/// The ID of the transaction that was queried.
+	pub txid: Txid,
+	/// The total fee of this transaction and all of its unconfirmed ancestors. If the transaction
+	/// is to be replaced, the total fees of the published package MUST exceed this.
+	pub total_fee: Amount,
+	/// The total weight of this transaction and all of its unconfirmed ancestors.
+	pub total_weight: Weight,
+}
+
+impl MempoolAncestorInfo {
+	pub fn new(txid: Txid) -> Self {
+		Self {
+			txid,
+			total_fee: Amount::ZERO,
+			total_weight: Weight::ZERO,
+		}
+	}
+
+	pub fn effective_fee_rate(&self) -> Option<FeeRate> {
+		FeeRate::from_amount_and_weight_ceil(self.total_fee, self.total_weight)
+	}
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

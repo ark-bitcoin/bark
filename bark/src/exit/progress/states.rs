@@ -184,9 +184,14 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 					ctx.create_exit_cpfp_tx(&guard.exit.tx, onchain)?
 				};
 
-				let child_txid = ctx.tx_manager.update_child_tx(exit.txid, child_tx).await?;
+				// Update the transaction manager so our package can be broadcast later
+				let origin = ExitTxOrigin::Wallet { confirmed_in: None };
+				let child_txid = ctx.tx_manager.set_wallet_child_tx(
+					exit.txid, child_tx, origin,
+				).await?;
+
 				info!("CPFP created with txid {} for exit tx {}", child_txid, exit.txid);
-				Ok(ExitTxStatus::NeedsBroadcasting { child_txid, origin: ExitTxOrigin::Wallet })
+				Ok(ExitTxStatus::NeedsBroadcasting { child_txid, origin })
 			} else {
 				info!("Exit tx {} has likely been broadcast by another party", exit.txid);
 				Ok(new_status)
