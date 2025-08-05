@@ -528,8 +528,15 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				}
 
-				let total = onchain.balance().trusted_spendable();
-				let onchain_balance  = json::onchain::Balance { total };
+				let balance = onchain.balance();
+				let onchain_balance  = json::onchain::Balance {
+					total: balance.total(),
+					trusted_spendable: balance.trusted_spendable(),
+					immature: balance.immature,
+					trusted_pending: balance.trusted_pending,
+					untrusted_pending: balance.untrusted_pending,
+					confirmed: balance.confirmed,
+				};
 				output_json(&onchain_balance);
 			},
 			OnchainCommand::Address => {
