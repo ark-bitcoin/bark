@@ -3,10 +3,7 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use bitcoin::TxOut;
-use bitcoin::{
-	taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, WitnessVersion,
-};
-use bitcoin::script::{Builder, PushBytes};
+use bitcoin::{taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction};
 use bitcoin::taproot::ControlBlock;
 use bitcoin::secp256k1::{self, Keypair, Secp256k1};
 
@@ -159,38 +156,6 @@ pub trait FeeRateExt: Borrow<FeeRate> {
 }
 impl FeeRateExt for FeeRate {}
 
-
-/// The P2A program which is given by 0x4e73.
-pub(crate) const P2A_PROGRAM: [u8; 2] = [78, 115];
-
-/// Generates P2WSH-type of scriptPubkey with a given [`WitnessVersion`] and the program bytes.
-/// Does not do any checks on version or program length.
-///
-/// Convenience method used by `new_p2a`, `new_p2wpkh`, `new_p2wsh`, `new_p2tr`,
-/// and `new_p2tr_tweaked`.
-pub(crate) fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
-	version: WitnessVersion,
-	program: T,
-) -> ScriptBuf {
-	let program = program.as_ref();
-	debug_assert!(program.len() >= 2 && program.len() <= 40);
-	// In SegWit v0, the program must be 20 or 32 bytes long.
-	// In SegWit v0, the program must be either 20 (P2WPKH) bytes or 32 (P2WSH) bytes long
-	debug_assert!(version != WitnessVersion::V0 || program.len() == 20 || program.len() == 32);
-	Builder::new().push_opcode(version.into()).push_slice(program).into_script()
-}
-
-pub trait ScriptBufExt {
-	/// Generates pay to anchor output.
-	fn new_p2a() -> Self;
-}
-
-impl ScriptBufExt for ScriptBuf {
-	/// Generates pay to anchor output.
-	fn new_p2a() -> Self {
-		new_witness_program_unchecked(WitnessVersion::V1, P2A_PROGRAM)
-	}
-}
 
 #[cfg(test)]
 mod test {

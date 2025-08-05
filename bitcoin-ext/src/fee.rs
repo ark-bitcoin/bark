@@ -2,8 +2,6 @@
 use bitcoin::{ScriptBuf, TxOut, Weight};
 use bitcoin::Amount;
 
-use crate::ScriptBufExt;
-
 
 /// The size in bytes of a fee anchor created with P2A script.
 pub const FEE_ANCHOR_WEIGHT: Weight = Weight::from_vb_unchecked(13);

@@ -11,7 +11,9 @@ pub mod rpc;
 #[cfg(feature = "bdk")]
 pub mod bdk;
 
-pub use mbitcoin::{AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, ScriptBufExt, TransactionExt, TxOutExt};
+pub use mbitcoin::{
+	AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt, TxOutExt,
+};
 
 use std::fmt;
 
