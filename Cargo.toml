@@ -1,15 +1,15 @@
 
 [workspace]
 members = [
+  "bitcoin-ext",
   "lib",
-  "ark-testing",
+  "bark",
+  "bark-json",
   "server",
   "server-log",
   "server-rpc",
-  "bark",
-  "bitcoin-ext",
+  "testing",
   "cln-rpc",
-  "bark-json",
 ]
 
 resolver = "2"
