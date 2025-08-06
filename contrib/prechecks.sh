@@ -68,7 +68,7 @@ unused_aspd_logs() {
 
 	# Use a temporary file instead of process substitution
 	TMP_FILE=$(mktemp)
-	grep -E "pub struct " ./aspd-log/src/msgs/* | sed 's/^.*pub struct //' | awk '{print $1}' > "$TMP_FILE"
+	grep -E "pub struct " ./server-log/src/msgs/* | sed 's/^.*pub struct //' | awk '{print $1}' > "$TMP_FILE"
 
 	while read -r log; do
 		if ! grep -r -E "slog.*\\(${log}" ./server/src/* > /dev/null 2>&1; then

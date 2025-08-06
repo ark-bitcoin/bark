@@ -12,7 +12,7 @@ use log::info;
 use tokio::fs;
 
 use ark::{ProtocolEncoding, Vtxo};
-use aspd_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
+use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use aspd_rpc::{self as rpc, protos};
 use bark::movement::MovementRecipient;
 

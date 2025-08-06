@@ -9,7 +9,7 @@ slow_test = []
 [dependencies]
 ark-lib = { path = "../ark-lib", features = ["test-util"] }
 bark-server = { path = "../server" }
-aspd-log = { path = "../aspd-log" }
+bark-server-log = { path = "../server-log" }
 aspd-rpc = { path = "../aspd-rpc", features = ["server"] }
 bark-cln-rpc = { path = "../cln-rpc"}
 bark-json = { path = "../bark-json"}

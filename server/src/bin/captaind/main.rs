@@ -11,7 +11,7 @@ use log::{error, info};
 use tonic::transport::Uri;
 
 use aspd::{Server, Config};
-use aspd_log::{RecordSerializeWrapper, SLOG_FILENAME};
+use server_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use aspd_rpc::{self as rpc, protos};
 
 /// Defaults to our default port on localhost.
@@ -118,7 +118,7 @@ fn init_logging(slog_dir: Option<&Path>) {
 				let kv = if rec.key_values().count() > 0 {
 					let mut buf = Vec::new();
 					buf.extend(" -- ".as_bytes());
-					serde_json::to_writer(&mut buf, &aspd_log::SourceSerializeWrapper(rec.key_values())).unwrap();
+					serde_json::to_writer(&mut buf, &server_log::SourceSerializeWrapper(rec.key_values())).unwrap();
 					String::from_utf8(buf).unwrap()
 				} else {
 					String::new()
@@ -135,7 +135,7 @@ fn init_logging(slog_dir: Option<&Path>) {
 		// structured logging dispatch
 		let slog_file = fern::log_file(dir.join(SLOG_FILENAME)).expect("failed to open log file");
 		dispatch = dispatch.chain(fern::Dispatch::new()
-			.filter(|m| m.target() == aspd_log::SLOG_TARGET)
+			.filter(|m| m.target() == server_log::SLOG_TARGET)
 			.format(|out, _msg, rec| {
 				#[derive(serde::Serialize)]
 				struct Rec<'a> {

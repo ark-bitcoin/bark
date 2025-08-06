@@ -1,7 +1,7 @@
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate async_trait;
 #[macro_use] extern crate serde;
-#[macro_use] extern crate aspd_log;
+#[macro_use] extern crate server_log;
 
 #[macro_use]
 mod error;

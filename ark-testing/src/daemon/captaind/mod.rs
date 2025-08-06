@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{self, mpsc, Mutex};
 use tokio::process::Command;
 
-use aspd_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
+use server_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
 use aspd_rpc::{self as rpc, protos};
 pub use aspd::config::{self, Config};
 

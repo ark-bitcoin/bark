@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, Mutex};
 use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy};
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::util::SECP;
-use aspd_log::{
+use server_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
@@ -92,17 +92,17 @@ async fn round_started_log_can_be_captured() {
 	let ctx = TestContext::new("server/capture_log").await;
 	let srv = ctx.new_captaind("server", None).await;
 
-	let mut log_stream = srv.subscribe_log::<aspd_log::RoundStarted>().await;
+	let mut log_stream = srv.subscribe_log::<server_log::RoundStarted>().await;
 	while let Some(l) = log_stream.recv().await {
 		info!("Captured log: Round started at {}", l.round_seq);
 		break;
 	}
 
-	let l = srv.wait_for_log::<aspd_log::RoundStarted>().await;
+	let l = srv.wait_for_log::<server_log::RoundStarted>().await;
 	info!("Captured log: Round started with round_num {}", l.round_seq);
 
 	// make sure we only capture the log once.
-	assert!(srv.wait_for_log::<aspd_log::RoundStarted>().try_fast().await.is_err());
+	assert!(srv.wait_for_log::<server_log::RoundStarted>().try_fast().await.is_err());
 }
 
 #[tokio::test]
