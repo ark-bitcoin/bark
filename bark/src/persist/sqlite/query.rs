@@ -51,16 +51,16 @@ pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<
 	// Store the ftxo
 	let query =
 		"INSERT INTO bark_config
-			(id, asp_address, esplora_address, bitcoind_address,
+			(id, server_address, esplora_address, bitcoind_address,
 			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_expiry_threshold,
 			fallback_fee_kwu)
 		VALUES
-			(1, :asp_address, :esplora_address, :bitcoind_address,
+			(1, :server_address, :esplora_address, :bitcoind_address,
 			:bitcoind_cookiefile, :bitcoind_user, :bitcoind_pass, :vtxo_refresh_expiry_threshold,
 			:fallback_fee_kwu)
 		ON CONFLICT (id)
 		DO UPDATE SET
-			asp_address = :asp_address,
+			server_address = :server_address,
 			esplora_address = :esplora_address,
 			bitcoind_address = :bitcoind_address,
 			bitcoind_cookiefile = :bitcoind_cookiefile,
@@ -72,7 +72,7 @@ pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<
 	let mut statement = conn.prepare(query)?;
 
 	statement.execute(named_params! {
-		":asp_address": config.asp_address,
+		":server_address": config.server_address,
 		":esplora_address": config.esplora_address,
 		":bitcoind_address": config.bitcoind_address,
 		":bitcoind_cookiefile": config.bitcoind_cookiefile
@@ -122,7 +122,7 @@ pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>>
 		let kwu_fee: Option<u64> = row.get("fallback_fee_kwu")?;
 		Ok(Some(
 			Config {
-				asp_address: row.get("asp_address")?,
+				server_address: row.get("server_address")?,
 				esplora_address: row.get("esplora_address")?,
 				bitcoind_address: row.get("bitcoind_address")?,
 				bitcoind_cookiefile,

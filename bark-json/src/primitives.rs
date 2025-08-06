@@ -28,7 +28,7 @@ pub struct VtxoInfo {
 	/// The offchain UTXO.
 	pub utxo: OutPoint,
 	pub user_pubkey: PublicKey,
-	pub asp_pubkey: PublicKey,
+	pub server_pubkey: PublicKey,
 	pub expiry_height: u32,
 	pub exit_delta: u16,
 }
@@ -41,7 +41,7 @@ impl From<Vtxo> for VtxoInfo {
 			policy_type: v.policy().policy_type(),
 			utxo: v.point(),
 			user_pubkey: v.user_pubkey(),
-			asp_pubkey: v.server_pubkey(),
+			server_pubkey: v.server_pubkey(),
 			expiry_height: v.expiry_height(),
 			exit_delta: v.exit_delta(),
 		}

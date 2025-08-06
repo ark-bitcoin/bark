@@ -20,7 +20,7 @@ impl Migration for Migration0002 {
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 
-				asp_address TEXT NOT NULL,
+				server_address TEXT NOT NULL,
 				esplora_address ,
 				bitcoind_address ,
 				bitcoind_cookiefile ,
@@ -38,7 +38,8 @@ impl Migration for Migration0002 {
 			];
 
 		for query in queries {
-			conn.execute(query, ()).with_context(|| format!("Failed to execute migration: {}", self.summary()))?;
+			conn.execute(query, ())
+				.with_context(|| format!("Failed to execute migration: {}", self.summary()))?;
 		}
 		Ok(())
 	}

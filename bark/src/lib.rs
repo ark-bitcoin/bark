@@ -349,7 +349,7 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let srv = match ServerConnection::connect(&config.asp_address, properties.network).await {
+		let srv = match ServerConnection::connect(&config.server_address, properties.network).await {
 			Ok(s) => Some(s),
 			Err(e) => {
 				warn!("Ark server handshake failed: {}", e);

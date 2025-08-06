@@ -54,7 +54,7 @@ CREATE TABLE bark_config (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 
-				asp_address TEXT NOT NULL,
+				server_address TEXT NOT NULL,
 				esplora_address ,
 				bitcoind_address ,
 				bitcoind_cookiefile ,

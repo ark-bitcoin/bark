@@ -76,7 +76,7 @@ impl Bark {
 			.arg("--datadir")
 			.arg(&cfg.datadir)
 			.arg("--verbose")
-			.arg("--asp")
+			.arg("--ark")
 			.arg(&cfg.ark_url)
 			.arg("--vtxo-refresh-expiry-threshold")
 			.arg("24")
@@ -167,7 +167,7 @@ impl Bark {
 	/// Set the bark's server address.
 	pub async fn set_ark_url(&self, srv: &dyn ToArkUrl) {
 		let url = srv.ark_url();
-		self.run(["config", "--dangerous", "--asp", &url]).await;
+		self.run(["config", "--dangerous", "--ark", &url]).await;
 	}
 
 	pub async fn ark_info(&self) -> json::ArkInfo {

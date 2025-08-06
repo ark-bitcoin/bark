@@ -63,7 +63,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 
 	let mut config = Config {
 		// required args
-		asp_address: opts.config.asp.clone().context("ASP address missing, use --asp")?,
+		server_address: opts.config.ark.clone().context("Ark server address missing, use --ark")?,
 		..Default::default()
 	};
 	opts.config.merge_into(&mut config).context("invalid configuration")?;

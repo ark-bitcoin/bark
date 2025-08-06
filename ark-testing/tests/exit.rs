@@ -374,7 +374,7 @@ async fn double_exit_call() {
 	let last_moves = &movements[0..=2];
 	assert!(
 		vtxos.iter().all(|v| last_moves.iter().any(|m| {
-				let exit_spk = exit_taproot(v.user_pubkey, v.asp_pubkey, v.exit_delta).script_pubkey();
+				let exit_spk = exit_taproot(v.user_pubkey, v.server_pubkey, v.exit_delta).script_pubkey();
 				let address = Address::from_script(&exit_spk, Params::REGTEST)
 					.unwrap().to_string();
 				m.spends.first().unwrap().id == v.id &&
@@ -402,7 +402,7 @@ async fn double_exit_call() {
 	assert_eq!(last_move.spends.len(), 1, "we should only exit last spendable vtxo");
 	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
 
-	let exit_spk = exit_taproot(vtxo.user_pubkey, vtxo.asp_pubkey, vtxo.exit_delta).script_pubkey();
+	let exit_spk = exit_taproot(vtxo.user_pubkey, vtxo.server_pubkey, vtxo.exit_delta).script_pubkey();
 	let address = Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string();
 	assert_eq!(last_move.recipients[0].recipient, address, "movement destination should be exit_spk");
 
