@@ -45,15 +45,15 @@ pub struct DrainArgs {
 
 #[derive(clap::Subcommand)]
 enum Command {
-	/// Create and configure asp server
+	/// Create and configure the server
 	#[command()]
 	Create,
 
-	/// Start asp server
+	/// Start the server
 	#[command()]
 	Start,
 
-	/// Drain funds of asp
+	/// Drain funds from the server
 	#[command()]
 	Drain {
 		/// The address to send all the wallet funds to
@@ -80,7 +80,7 @@ enum RpcCommand {
 	#[command()]
 	Wallet,
 
-	/// Start a new asp round
+	/// Start a new round
 	#[command()]
 	TriggerRound,
 }
@@ -228,12 +228,12 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 	} else {
 		format!("http://{}", addr)
 	};
-	let asp_endpoint = Uri::from_str(&addr).context("invalid asp addr")?;
+	let endpoint = Uri::from_str(&addr).context("invalid rpc addr")?;
 
 	match cmd {
 		RpcCommand::Wallet => {
-			let mut rpc = rpc::admin::WalletAdminServiceClient::connect(asp_endpoint)
-				.await.context("failed to connect to asp")?;
+			let mut rpc = rpc::admin::WalletAdminServiceClient::connect(endpoint)
+				.await.context("failed to connect to rpc")?;
 
 			let res = rpc.wallet_status(protos::Empty {}).await?.into_inner();
 			let ret = serde_json::json!({
@@ -243,8 +243,8 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 			println!("");
 		},
 		RpcCommand::TriggerRound => {
-			let mut rpc = rpc::admin::RoundAdminServiceClient::connect(asp_endpoint)
-				.await.context("failed to connect to asp")?;
+			let mut rpc = rpc::admin::RoundAdminServiceClient::connect(endpoint)
+				.await.context("failed to connect to rpc")?;
 
 			rpc.trigger_round(protos::Empty {}).await?.into_inner();
 		}

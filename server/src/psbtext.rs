@@ -18,7 +18,7 @@ pub enum SweepMeta {
 	Vtxo,
 }
 
-const PROP_KEY_PREFIX: &'static [u8] = "aspd".as_bytes();
+const PROP_KEY_PREFIX: &'static [u8] = "bark-server".as_bytes();
 
 enum PropKey {
 	SweepMeta = 1,
@@ -52,7 +52,7 @@ impl PsbtInputExt for psbt::Input {}
 
 
 pub trait PsbtExt: BorrowMut<Psbt> {
-	fn try_sign_sweeps(&mut self, asp_key: &Keypair) -> anyhow::Result<()> {
+	fn try_sign_sweeps(&mut self, server_key: &Keypair) -> anyhow::Result<()> {
 		let psbt = self.borrow_mut();
 
 		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
@@ -75,7 +75,7 @@ pub trait PsbtExt: BorrowMut<Psbt> {
 							sighash::TapSighashType::Default,
 						).expect("all prevouts provided");
 						trace!("Signing expired VTXO input for sighash {}", sighash);
-						let sig = SECP.sign_schnorr(&sighash.into(), &asp_key);
+						let sig = SECP.sign_schnorr(&sighash.into(), &server_key);
 						let wit = Witness::from_slice(
 							&[&sig[..], script.as_bytes(), &control.serialize()],
 						);

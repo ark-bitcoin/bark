@@ -544,7 +544,7 @@ impl<'a> SweepBuilder<'a> {
 
 		// SIGNING
 
-		psbt.try_sign_sweeps(&self.sweeper.asp_key)?;
+		psbt.try_sign_sweeps(&self.sweeper.server_key)?;
 		Ok(self.sweeper.wallet.finish_tx(psbt)?)
 	}
 }
@@ -557,7 +557,7 @@ struct Process {
 	txindex: TxIndex,
 	tx_broadcaster: TxBroadcastHandle,
 	wallet: bdk_wallet::Wallet,
-	asp_key: Keypair,
+	server_key: Keypair,
 	drain_address: Address,
 
 	// runtime fields
@@ -818,7 +818,7 @@ impl VtxoSweeper {
 		db: database::Db,
 		txindex: TxIndex,
 		tx_broadcaster: TxBroadcastHandle,
-		asp_key: Keypair,
+		server_key: Keypair,
 		drain_address: Address,
 	) -> anyhow::Result<Self> {
 		let wallet = {
@@ -839,7 +839,7 @@ impl VtxoSweeper {
 			.context("error fetching pending sweeps")?;
 
 		let mut proc = Process {
-			config, bitcoind, db, txindex, wallet, asp_key, drain_address, tx_broadcaster,
+			config, bitcoind, db, txindex, wallet, server_key, drain_address, tx_broadcaster,
 			pending_txs: HashMap::with_capacity(raw_pending.len()),
 			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
 		};

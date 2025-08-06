@@ -206,7 +206,7 @@ pub struct Config {
 impl Default for Config {
 	fn default() -> Self {
 		Config {
-			data_dir: "./aspd".into(),
+			data_dir: "./bark-server".into(),
 			log_dir: None,
 			network: bitcoin::Network::Regtest,
 			vtxo_lifetime: 6 * 24 * 30,
@@ -251,7 +251,7 @@ impl Default for Config {
 			postgres: Postgres {
 				host: String::from("localhost"),
 				port: 5432,
-				name: String::from("aspdb"),
+				name: String::from("bark-server-db"),
 				user: None,
 				password: None
 			},
@@ -279,7 +279,7 @@ impl Config {
 		// We'll add three layers of config:
 		// - the defaults defined in Config's Default impl
 		// - the config file passed in this function, if any
-		// - environment variables (prefixed with `ASPD_`)
+		// - environment variables (prefixed with `BARK_SERVER_`)
 
 		let mut builder = config::Config::builder()
 			.add_source(default);
@@ -287,7 +287,7 @@ impl Config {
 			builder = builder.add_source(File::from(file));
 		}
 
-		let env = Environment::with_prefix("ASPD")
+		let env = Environment::with_prefix("BARK_SERVER")
 			.separator("__");
 		#[cfg(test)]
 		let env = env.source(custom_env);
@@ -450,9 +450,9 @@ mod test {
 		let client_key_path = "/hooli/http_public/certs/client.key";
 
 		let env = [
-			("ASPD__VTXO_LIFETIME", "42"),
-			("ASPD__BITCOIND__COOKIE", "/not/hot/dog/but/cookie"),
-			("ASPD__CLN_ARRAY", r#"[{
+			("BARK_SERVER__VTXO_LIFETIME", "42"),
+			("BARK_SERVER__BITCOIND__COOKIE", "/not/hot/dog/but/cookie"),
+			("BARK_SERVER__CLN_ARRAY", r#"[{
 				"uri": "http://belson.labs:12345",
 				"priority": 1,
 				"server_cert_path": "/hooli/http_public/certs/server.crt",

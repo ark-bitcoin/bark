@@ -106,7 +106,7 @@ macro_rules! not_found {
 pub(crate) use not_found;
 
 
-/// Extension trait for adding aspd-specific error info.
+/// Extension trait for adding bark-server-specific error info.
 pub trait ContextExt<T, E>: Context<T, E> {
 	/// Tag an error with [BadArgument].
 	fn badarg<C>(self, context: C) -> anyhow::Result<T>

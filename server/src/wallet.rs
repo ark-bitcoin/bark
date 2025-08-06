@@ -17,7 +17,7 @@ use log::{error, trace};
 
 use crate::{database, telemetry};
 
-/// The location of the mnemonic file in aspd's datadir.
+/// The location of the mnemonic file in server's datadir.
 pub const MNEMONIC_FILE: &str = "mnemonic";
 
 /// The BIP32 child index of the rounds wallet.
@@ -62,7 +62,7 @@ impl fmt::Display for WalletKind {
 	}
 }
 
-/// aspd-specific extension trait for the BDK [Wallet] struct.
+/// server-specific extension trait for the BDK [Wallet] struct.
 #[async_trait]
 pub trait BdkWalletExt: WalletExt {
 	/// Finish the PSBT by signing it and committing it to the wallet.

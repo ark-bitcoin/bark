@@ -74,8 +74,8 @@ lazy_static::lazy_static! {
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
-/// The HD keypath to use for the ASP key.
-const ASP_KEY_PATH: &str = "m/2'/0'";
+/// The HD keypath to use for the server key.
+const SERVER_KEY_PATH: &str = "m/2'/0'";
 
 
 /// Return type for the round event RPC stream.
@@ -140,7 +140,7 @@ impl RoundHandle {
 pub struct Server {
 	config: Config,
 	db: database::Db,
-	asp_key: Keypair,
+	server_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
@@ -159,9 +159,9 @@ pub struct Server {
 
 impl Server {
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
-		// Check for mnemonic file to see if server was already initialized.
+		// Check for a mnemonic file to see if the server was already initialized.
 		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
-			bail!("Found existing mnemonic file in datadir, server probably already initialized!");
+			bail!("Found an existing mnemonic file in datadir, the server is probably already initialized!");
 		}
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
@@ -245,11 +245,11 @@ impl Server {
 		let mut rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
 			.await.context("error loading wallet")?;
 
-		let asp_path = bip32::DerivationPath::from_str(ASP_KEY_PATH).unwrap();
-		let asp_xpriv = master_xpriv.derive_priv(&SECP, &asp_path).unwrap();
-		let asp_key = Keypair::from_secret_key(&SECP, &asp_xpriv.private_key);
+		let server_key_path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
+		let server_key_xpriv = master_xpriv.derive_priv(&SECP, &server_key_path).unwrap();
+		let server_key = Keypair::from_secret_key(&SECP, &server_key_xpriv.private_key);
 
-		init_telemetry(&cfg, asp_key.public_key());
+		init_telemetry(&cfg, server_key.public_key());
 		// *******************
 		// * START PROCESSES *
 		// *******************
@@ -281,7 +281,7 @@ impl Server {
 			db.clone(),
 			txindex.clone(),
 			tx_nursery.broadcast_handle(),
-			asp_key.clone(),
+			server_key.clone(),
 			rounds_wallet.reveal_next_address(
 				bdk_wallet::KeychainKind::External,
 			).address,
@@ -297,7 +297,7 @@ impl Server {
 			tx_nursery.broadcast_handle(),
 			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 				.expect("can't error"),
-			asp_key.clone(),
+			server_key.clone(),
 		).await.context("failed to start VtxoSweeper")?;
 
 		let cln = ClnManager::start(
@@ -322,7 +322,7 @@ impl Server {
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
 			db,
-			asp_key,
+			server_key,
 			bitcoind,
 			rtmgr,
 			tx_broadcast_handle: tx_nursery.broadcast_handle(),
@@ -486,7 +486,7 @@ impl Server {
 		let builder = BoardBuilder::new_for_cosign(
 			user_pubkey,
 			expiry_height,
-			self.asp_key.public_key(),
+			self.server_key.public_key(),
 			self.config.vtxo_exit_delta,
 			amount,
 			utxo,
@@ -494,7 +494,7 @@ impl Server {
 		);
 
 		info!("Cosigning board request for utxo {}", utxo);
-		let resp = builder.server_cosign(&self.asp_key);
+		let resp = builder.server_cosign(&self.server_key);
 
 		slog!(CosignedBoard, utxo, amount);
 
@@ -629,7 +629,7 @@ impl Server {
 					.map(|v| v.id()).collect::<Vec<_>>();
 				slog!(ArkoorCosign, input_ids, output_ids);
 				// let's sign the tx
-				Ok(builder.server_cosign(&self.asp_key))
+				Ok(builder.server_cosign(&self.server_key))
 			},
 			Err(e) => Err(e),
 		}
@@ -724,8 +724,8 @@ impl Server {
 
 			//TODO(stevenroose) need to check that the input vtxos are actually marked
 			// as spent for this specific payment
-			if vtxo.asp_pubkey() != self.asp_key.public_key() {
-				return badarg!("invalid asp pubkey used");
+			if vtxo.asp_pubkey() != self.server_key.public_key() {
+				return badarg!("invalid server pubkey used");
 			}
 
 			let payment_hash = vtxo.server_htlc_out_payment_hash()

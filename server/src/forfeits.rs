@@ -51,7 +51,7 @@ fn finalize_forfeit_tx(
 	conn_idx: usize,
 	conn: OutPoint,
 	conn_key: &Keypair,
-	asp_key: &Keypair,
+	server_key: &Keypair,
 ) -> Transaction {
 	// First sign the forfeit input and combine with user part sig.
 	let forfeit_sig = {
@@ -66,7 +66,7 @@ fn finalize_forfeit_tx(
 		let (part, sig) = musig::partial_sign(
 			[vtxo.user_pubkey(), vtxo.asp_pubkey()],
 			agg_nonce,
-			&asp_key,
+			&server_key,
 			sec_nonce,
 			sighash.to_byte_array(),
 			Some(vtxo.output_taproot().tap_tweak().to_byte_array()),
@@ -299,7 +299,7 @@ struct Process {
 	broadcaster: TxBroadcastHandle,
 	bitcoind: BitcoinRpcClient,
 	wallet: PersistedWallet,
-	asp_key: Keypair,
+	server_key: Keypair,
 
 	// runtime state
 
@@ -365,7 +365,7 @@ impl Process {
 			conn_idx as usize,
 			connector,
 			&round_state.connector_key,
-			&self.asp_key,
+			&self.server_key,
 		);
 
 		let connector = if let Some(conn_tx) = conn_tx {
@@ -589,7 +589,7 @@ impl ForfeitWatcher {
 		txindex: TxIndex,
 		broadcaster: TxBroadcastHandle,
 		wallet_xpriv: bip32::Xpriv,
-		asp_key: Keypair,
+		server_key: Keypair,
 	) -> anyhow::Result<Self> {
 		let deep_tip = bitcoind.deep_tip().context("failed to fetch deep tip from bitcoind")?;
 		let wallet = PersistedWallet::load_from_xpriv(
@@ -601,7 +601,7 @@ impl ForfeitWatcher {
 		).await.context("error loading ForfeitWatcher wallet")?;
 
 		let mut proc = Process {
-			config, db: db.clone(), txindex, bitcoind, wallet, asp_key, broadcaster,
+			config, db: db.clone(), txindex, bitcoind, wallet, server_key, broadcaster,
 			exit_txs: Vec::new(),
 			rounds: HashMap::new(),
 			claims: Vec::new(),

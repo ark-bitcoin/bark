@@ -146,8 +146,8 @@ pub struct LightningIndexes {
 
 /// The status of a lightning invoice payment.
 ///
-/// Once the aspd receives a payment request, its status is `Requested`.
-/// The aspd will pass on the payment to a lightning node which changes the status to `Submitted`.
+/// Once the server receives a payment request, its status is `Requested`.
+/// The server will pass on the payment to a lightning node which changes the status to `Submitted`.
 /// The lightning node payment will either fail or succeed,
 /// updating the status to `Failed` or `Succeeded` respectively.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSql, FromSql, PartialEq, Eq)]
@@ -249,8 +249,8 @@ impl From<Row> for LightningPaymentAttempt {
 
 /// The status of a lightning htlc subscription
 ///
-/// Once the aspd receives an invoice subscription request, its status is `Started`.
-/// The aspd will monitor this invoice for incoming HTLCs
+/// Once the server receives an invoice subscription request, its status is `Started`.
+/// The server will monitor this invoice for incoming HTLCs
 /// Once one of the HTLCs got accepted, the subscription is set to `Completed`
 /// If no HTLC is accepted within the subscription lifetime, subscription will
 /// get automatically `Terminated`
@@ -269,7 +269,7 @@ pub enum LightningHtlcSubscriptionStatus {
 	/// The subscription was cancelled
 	///
 	/// Can be set either manually by the user or automatically by the
-	/// aspd after `htlc_subscription_timeout`
+	/// server after `htlc_subscription_timeout`
 	#[postgres(name = "cancelled")]
 	Cancelled,
 }

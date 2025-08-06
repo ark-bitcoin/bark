@@ -4,7 +4,7 @@
 //!
 //! ## A high-level summary of the payment flow.
 //!
-//! * User makes a payment over grpc, aspd calls [ClnManager::pay_bolt11].
+//! * User makes a payment over grpc, server calls [ClnManager::pay_bolt11].
 //! * The payment request is sent over the payment channel to the processor.
 //! * The calling thread will then subscribe to the payment update channel,
 //!   - and wait for a msg with its payment hash, or
@@ -265,7 +265,7 @@ impl ClnManager {
 	pub async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<anyhow::Result<()>> {
 		let payment_hash = PaymentHash::from_preimage(preimage);
 
-		// If an open payment attempt exists for the payment hash, it's an ASP self-payment
+		// If an open payment attempt exists for the payment hash, it's a server self-payment
 		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
 		let payment_attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
 		if let Some(payment_attempt) = payment_attempt {
@@ -684,7 +684,7 @@ impl ClnManagerProcess {
 		};
 		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
 
-		// If there is an existing subscription, it's an ASP self-payment
+		// If there is an existing subscription, it's a server self-payment
 		// so we can directly mark it as accepted, then skip cln payment
 		let subscription = self.db.get_htlc_subscription_by_payment_hash(
 			invoice.payment_hash(),
@@ -780,10 +780,10 @@ impl ClnManagerProcess {
 
 	/// Cancels an invoice by sending a cancel request to the hodl plugin.
 	///
-	/// Note that in the case of an ASP self-payment, the invoice can be
-	/// cancelled on CLN but the htlc subscription marked as accepted and
-	/// later settled when receiver provides preimage, we just don't need
-	/// to watch it on lightning anymore.
+	/// Note that in the case of a server self-payment, the invoice can be
+	/// canceled on CLN, but the htlc subscription marked as accepted and
+	/// later settled when the receiver provides a preimage, we just don't
+	/// need to watch it on lightning anymore.
 	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription, status: LightningHtlcSubscriptionStatus) -> anyhow::Result<()> {
 		// NB: we need to use the node that created the subscription
 		let mut hold_client = self.get_node_by_id(subscription.lightning_node_id)

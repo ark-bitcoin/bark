@@ -62,7 +62,7 @@ fn validate_forfeit_sigs(
 	vtxo: &Vtxo,
 	connectors: &ConnectorChain,
 	connector_pk: PublicKey,
-	asp_nonces: &[musig::PublicNonce],
+	server_nonces: &[musig::PublicNonce],
 	user_nonces: &[musig::PublicNonce],
 	part_sigs: &[musig::PartialSignature],
 ) -> anyhow::Result<()> {
@@ -79,9 +79,9 @@ fn validate_forfeit_sigs(
 			vtxo, conn, connector_pk,
 		);
 		let part_sig = part_sigs.get(idx).expect("we checked length");
-		let asp_nonce = asp_nonces.get(idx).expect("we checked length");
+		let server_nonce = server_nonces.get(idx).expect("we checked length");
 		let user_nonce = user_nonces.get(idx).expect("we checked length");
-		let agg_nonce = musig::nonce_agg(&[&user_nonce, &asp_nonce]);
+		let agg_nonce = musig::nonce_agg(&[&user_nonce, &server_nonce]);
 
 		let session = musig::Session::new(
 			&musig::SECP,
@@ -519,8 +519,8 @@ impl CollectingPayments {
 
 		// Since it's possible in testing that we only have to do offboards,
 		// and since it's pretty annoying to deal with the case of no vtxos,
-		// if there are no vtxos, we will just add a fake vtxo for the ASP.
-		// In practice, in later versions, it is very likely that the ASP
+		// if there are no vtxos, we will just add a fake vtxo for the server.
+		// In practice, in later versions, it is very likely that the server
 		// will actually want to create change vtxos, so temporarily, this
 		// dummy vtxo will be a placeholder for a potential change vtxo.
 		let mut change_vtxo = if self.all_outputs.is_empty() {
@@ -557,7 +557,7 @@ impl CollectingPayments {
 
 		let vtxos_spec = VtxoTreeSpec::new(
 			self.all_outputs.iter().map(|p| p.req.clone()).collect(),
-			srv.asp_key.public_key(),
+			srv.server_key.public_key(),
 			self.cosign_key.public_key(),
 			expiry_height,
 			srv.config.vtxo_exit_delta,
@@ -780,7 +780,7 @@ impl SigningVtxoTree {
 			.span_builder(telemetry::TRACE_RUN_ROUND_COMBINE_VTXO_SIGNATURES)
 			.start_with_context(&tracer_provider, &parent_context.clone());
 
-		let asp_cosign_sigs = self.unsigned_vtxo_tree.cosign_tree(
+		let srv_cosign_sigs = self.unsigned_vtxo_tree.cosign_tree(
 			&self.cosign_agg_nonces,
 			&self.cosign_key,
 			self.cosign_sec_nonces,
@@ -789,12 +789,12 @@ impl SigningVtxoTree {
 			self.cosign_key.public_key(),
 			&self.cosign_agg_nonces,
 			&self.cosign_pub_nonces,
-			&asp_cosign_sigs,
+			&srv_cosign_sigs,
 		), Ok(()));
 		let cosign_sigs = self.unsigned_vtxo_tree.combine_partial_signatures(
 			&self.cosign_agg_nonces,
 			&self.cosign_part_sigs,
-			asp_cosign_sigs,
+			srv_cosign_sigs,
 		).expect("failed to combine partial vtxo cosign signatures: should have checked partials");
 		debug_assert_eq!(self.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
@@ -819,7 +819,7 @@ impl SigningVtxoTree {
 			let mut secs = Vec::with_capacity(self.all_inputs.len());
 			let mut pubs = Vec::with_capacity(self.all_inputs.len());
 			for _ in 0..self.all_inputs.len() {
-				let (s, p) = musig::nonce_pair(&srv.asp_key);
+				let (s, p) = musig::nonce_pair(&srv.server_key);
 				secs.push(s);
 				pubs.push(p);
 			}
@@ -985,7 +985,7 @@ impl SigningForfeits {
 		self.wallet_lock.commit_tx(&signed_round_tx);
 		if let Err(e) = self.wallet_lock.persist().await {
 			// Failing to persist the tx data at this point means that we might
-			// accidentally re-use certain inputs if we reboot the aspd.
+			// accidentally re-use certain inputs if we reboot the server.
 			// We keep the change set in the wallet if this happens.
 			warn!("Failed to persist BDK wallet to db: {:?}", e);
 		}
@@ -1700,10 +1700,6 @@ mod tests {
 	lazy_static::lazy_static! {
 		static ref TEST_SIG: schnorr::Signature = schnorr::Signature::from_str(
 			"d1c14325e2fe4c44466be57376c4ea093e2d6524503d13be7511e57ec29e13508b507db59dfa9aede12e3e20d120013c268c3af0c7776e0e1e326ae6c9bbc171"
-		).unwrap();
-
-		static ref TEST_ASP_PK: PublicKey = PublicKey::from_str(
-			"02e6642fd69bd211f93f7f1f36ca51a26a5290eb2dd1b0d8279a87bb0d480c8443",
 		).unwrap();
 	}
 
