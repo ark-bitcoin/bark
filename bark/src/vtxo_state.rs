@@ -37,7 +37,7 @@ pub enum VtxoState {
 	///
 	/// The VTXO hold by the state is the HTLC vtxo that can be
 	/// used to either revoke the payment if the lightning part fails,
-	/// or exit the Ark if the ASP don't accept to revoke the payment
+	/// or exit the Ark if the server don't accept to revoke the payment
 	PendingLightningSend {
 		invoice: Invoice,
 		amount: Amount,

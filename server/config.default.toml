@@ -1,4 +1,4 @@
-data_dir = "./aspd"
+data_dir = "./bark-server"
 network = "regtest"
 vtxo_lifetime = 4320
 vtxo_exit_delta = 12
@@ -40,7 +40,7 @@ admin_address = "127.0.0.1:3536"
 [postgres]
 host = "localhost"
 port = 5432
-name = "aspdb"
+name = "bark-server-db"
 
 [bitcoind]
 url = "http://127.0.0.1:18443"

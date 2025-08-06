@@ -184,7 +184,7 @@ pub struct Wallet {
 	config: Config,
 	db: Arc<dyn BarkPersister>,
 	vtxo_seed: VtxoSeed,
-	asp: Option<ServerConnection>,
+	server: Option<ServerConnection>,
 
 }
 
@@ -243,7 +243,7 @@ impl Wallet {
 	///
 	/// This derives and stores the keypair directly after currently last revealed one
 	pub fn new_address(&self) -> anyhow::Result<ark::Address> {
-		let ark = &self.require_asp()?;
+		let ark = &self.require_server()?;
 		let network = self.properties()?.network;
 		let pubkey = self.derive_store_next_keypair()?.public_key();
 
@@ -256,7 +256,7 @@ impl Wallet {
 
 	/// Peak for Ark address at the given key index.
 	pub fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
-		let ark = &self.require_asp()?;
+		let ark = &self.require_server()?;
 		let network = self.properties()?.network;
 		let pubkey = self.peak_keypair(index)?.public_key();
 
@@ -293,8 +293,8 @@ impl Wallet {
 		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
 		wallet.require_chainsource_version()?;
 
-		if wallet.asp.is_none() {
-			bail!("Cannot create bark if asp is not available");
+		if wallet.server.is_none() {
+			bail!("Cannot create bark if the Ark server is not available");
 		}
 
 		Ok(wallet)
@@ -349,8 +349,8 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let asp = match ServerConnection::connect(&config.asp_address, properties.network).await {
-			Ok(asp) => Some(asp),
+		let srv = match ServerConnection::connect(&config.asp_address, properties.network).await {
+			Ok(s) => Some(s),
 			Err(e) => {
 				warn!("Ark server handshake failed: {}", e);
 				None
@@ -359,7 +359,7 @@ impl Wallet {
 
 		let exit = Exit::new(db.clone(), chain.clone()).await?;
 
-		Ok(Wallet { config, db, vtxo_seed, exit, asp, chain })
+		Ok(Wallet { config, db, vtxo_seed, exit, server: srv, chain })
 	}
 
 	pub async fn open_with_onchain<P: BarkPersister, W: ExitUnilaterally>(
@@ -392,13 +392,13 @@ impl Wallet {
 		self.db.write_config(&self.config)
 	}
 
-	fn require_asp(&self) -> anyhow::Result<ServerConnection> {
-		self.asp.clone().context("You should be connected to ASP to perform this action")
+	fn require_server(&self) -> anyhow::Result<ServerConnection> {
+		self.server.clone().context("You should be connected to Ark server to perform this action")
 	}
 
 	/// Return ArkInfo fetched on last handshake
 	pub fn ark_info(&self) -> Option<&ArkInfo> {
-		self.asp.as_ref().map(|a| &a.info)
+		self.server.as_ref().map(|a| &a.info)
 	}
 
 	/// Return the balance of the wallet.
@@ -567,16 +567,16 @@ impl Wallet {
 		amount: Option<Amount>,
 		user_keypair: Keypair,
 	) -> anyhow::Result<Board> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 		let current_height = self.chain.tip().await?;
 
-		let expiry_height = current_height + asp.info.vtxo_expiry_delta as BlockHeight;
+		let expiry_height = current_height + srv.info.vtxo_expiry_delta as BlockHeight;
 		let builder = BoardBuilder::new(
 			user_keypair.public_key(),
 			expiry_height,
-			asp.info.asp_pubkey,
-			asp.info.vtxo_exit_delta,
+			srv.info.asp_pubkey,
+			srv.info.vtxo_exit_delta,
 		);
 
 		let addr = bitcoin::Address::from_script(&builder.funding_script_pubkey(), properties.network).unwrap();
@@ -598,7 +598,7 @@ impl Wallet {
 			.set_funding_details(amount, utxo)
 			.generate_user_nonces();
 
-		let cosign_resp = asp.client.request_board_cosign(protos::BoardCosignRequest {
+		let cosign_resp = srv.client.request_board_cosign(protos::BoardCosignRequest {
 			amount: amount.to_sat(),
 			utxo: bitcoin::consensus::serialize(&utxo), //TODO(stevenroose) change to own
 			expiry_height: expiry_height,
@@ -639,7 +639,7 @@ impl Wallet {
 		vtxo_id: VtxoId,
 	) -> anyhow::Result<Board> {
 		trace!("Attempting to register board {} to server", vtxo_id);
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		// Get the vtxo and funding transaction from the database
 		let vtxo = self.db.get_wallet_vtxo(vtxo_id)?
@@ -650,10 +650,10 @@ impl Wallet {
 			.context(anyhow!("Failed to find funding_tx for {}", txid))?;
 
 		// Register the vtxo with the server
-		asp.client.register_board_vtxo(protos::BoardVtxoRequest {
+		srv.client.register_board_vtxo(protos::BoardVtxoRequest {
 			board_vtxo: vtxo.vtxo.serialize(),
 			board_tx: bitcoin::consensus::serialize(&funding_tx),
-		}).await.context("error registering board with the asp")?;
+		}).await.context("error registering board with the Ark server")?;
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
@@ -694,7 +694,7 @@ impl Wallet {
 	/// Fetch new rounds from the Ark Server and check if one of their VTXOs
 	/// is in the provided set of public keys
 	pub async fn sync_rounds(&self) -> anyhow::Result<()> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
@@ -706,16 +706,16 @@ impl Wallet {
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
 		debug!("Querying ark for rounds since height {}", last_sync_height);
 		let req = protos::FreshRoundsRequest { start_height: last_sync_height };
-		let fresh_rounds = asp.client.get_fresh_rounds(req).await?.into_inner();
+		let fresh_rounds = srv.client.get_fresh_rounds(req).await?.into_inner();
 		debug!("Received {} new rounds from ark", fresh_rounds.txids.len());
 
 		for txid in fresh_rounds.txids {
-			let txid = Txid::from_slice(&txid).context("invalid txid from asp")?;
+			let txid = Txid::from_slice(&txid).context("invalid txid from Ark server")?;
 			let req = protos::RoundId { txid: txid.to_byte_array().to_vec() };
-			let round = asp.client.get_round(req).await?.into_inner();
+			let round = srv.client.get_round(req).await?.into_inner();
 
 			let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
-				.context("invalid signed vtxo tree from asp")?
+				.context("invalid signed vtxo tree from Ark server")?
 				.into_cached_tree();
 
 			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
@@ -761,17 +761,17 @@ impl Wallet {
 		&self,
 		public_keys: &[PublicKey],
 	) -> anyhow::Result<()> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		for pubkeys in public_keys.chunks(rpc::MAX_NB_MAILBOX_PUBKEYS) {
 			// Then sync OOR vtxos.
-			debug!("Emptying OOR mailbox at ASP...");
+			debug!("Emptying OOR mailbox at Ark server...");
 			let req = protos::ArkoorVtxosRequest {
 				pubkeys: pubkeys.iter().map(|pk| pk.serialize().to_vec()).collect(),
 			};
-			let packages = asp.client.empty_arkoor_mailbox(req).await
+			let packages = srv.client.empty_arkoor_mailbox(req).await
 				.context("error fetching oors")?.into_inner().packages;
-			debug!("ASP has {} arkoor packages for us", packages.len());
+			debug!("Ark server has {} arkoor packages for us", packages.len());
 
 			for package in packages {
 				let mut vtxos = Vec::with_capacity(package.vtxos.len());
@@ -779,7 +779,7 @@ impl Wallet {
 					let vtxo = match Vtxo::deserialize(&vtxo) {
 						Ok(vtxo) => vtxo,
 						Err(e) => {
-							warn!("Invalid vtxo from asp: {}", e);
+							warn!("Invalid vtxo from Ark server: {}", e);
 							continue;
 						}
 					};
@@ -1014,7 +1014,7 @@ impl Wallet {
 		destination: PublicKey,
 		amount: Amount,
 	) -> anyhow::Result<ArkoorCreateResult> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 		let change_pubkey = self.derive_store_next_keypair()?.public_key();
 
 		let req = VtxoRequest {
@@ -1023,7 +1023,7 @@ impl Wallet {
 		};
 
 		let inputs = self.select_vtxos_to_cover(
-			req.amount + P2TR_DUST, Some(asp.info.max_arkoor_depth),
+			req.amount + P2TR_DUST, Some(srv.info.max_arkoor_depth),
 		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
@@ -1046,7 +1046,7 @@ impl Wallet {
 		let req = protos::ArkoorPackageCosignRequest {
 			arkoors: builder.arkoors.iter().map(|a| a.into()).collect(),
 		};
-		let cosign_resp: Vec<_> = asp.client.request_arkoor_package_cosign(req).await?
+		let cosign_resp: Vec<_> = srv.client.request_arkoor_package_cosign(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 		ensure!(builder.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
@@ -1071,9 +1071,9 @@ impl Wallet {
 		destination: &ark::Address,
 		amount: Amount,
 	) -> anyhow::Result<Vec<Vtxo>> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
-		if !destination.ark_id().is_for_server(asp.info.asp_pubkey) {
+		if !destination.ark_id().is_for_server(srv.info.asp_pubkey) {
 			bail!("Ark address is for different server");
 		}
 
@@ -1090,7 +1090,7 @@ impl Wallet {
 			}).collect(),
 		};
 
-		if let Err(e) = asp.client.post_arkoor_package_mailbox(req).await {
+		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{}'", e);
 			//NB we will continue to at least not lose our own change
 		}
@@ -1107,7 +1107,7 @@ impl Wallet {
 	}
 
 	async fn process_lightning_revocation(&self, htlc_vtxos: &[Vtxo]) -> anyhow::Result<()> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		info!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
 
@@ -1136,7 +1136,7 @@ impl Wallet {
 				.map(|i| i.user_nonce.serialize().to_vec())
 				.collect(),
 		};
-		let cosign_resp: Vec<_> = asp.client.revoke_lightning_payment(req).await?
+		let cosign_resp: Vec<_> = srv.client.revoke_lightning_payment(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 		ensure!(revocation.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
@@ -1178,7 +1178,7 @@ impl Wallet {
 
 		invoice.check_signature()?;
 
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		let inv_amount = invoice.amount_milli_satoshis().map(|v| Amount::from_msat_ceil(v));
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
@@ -1193,7 +1193,7 @@ impl Wallet {
 
 		let change_keypair = self.derive_store_next_keypair()?;
 
-		let htlc_expiry = current_height + asp.info.htlc_expiry_delta as u32;
+		let htlc_expiry = current_height + srv.info.htlc_expiry_delta as u32;
 		let pay_req = VtxoRequest {
 			amount,
 			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
@@ -1205,7 +1205,7 @@ impl Wallet {
 
 		let inputs = self.select_vtxos_to_cover(
 			pay_req.amount + P2TR_DUST,
-			Some(asp.info.max_arkoor_depth),
+			Some(srv.info.max_arkoor_depth),
 		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
@@ -1235,7 +1235,7 @@ impl Wallet {
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
-		let cosign_resp: Vec<_> = asp.client.start_lightning_payment(req).await
+		let cosign_resp: Vec<_> = srv.client.start_lightning_payment(req).await
 			.context("htlc request failed")?.into_inner()
 			.try_into().context("invalid arkoor cosign response from server")?;
 
@@ -1282,7 +1282,7 @@ impl Wallet {
 			wait: true,
 		};
 
-		let res = asp.client.finish_lightning_payment(req).await?.into_inner();
+		let res = srv.client.finish_lightning_payment(req).await?.into_inner();
 		debug!("Progress update: {}", res.progress_message);
 		let payment_preimage = Preimage::try_from(res.payment_preimage()).ok();
 
@@ -1303,7 +1303,7 @@ impl Wallet {
 	}
 
 	pub async fn check_lightning_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 		let tip = self.chain.tip().await?;
 
 		// we check that all htlc have the same invoice, amount, and HTLC out spec
@@ -1325,7 +1325,7 @@ impl Wallet {
 			hash: payment_hash.to_vec(),
 			wait: false,
 		};
-		let res = asp.client.check_lightning_payment(req).await?.into_inner();
+		let res = srv.client.check_lightning_payment(req).await?.into_inner();
 
 		let payment_status = protos::PaymentStatus::try_from(res.status)?;
 
@@ -1382,7 +1382,7 @@ impl Wallet {
 
 	/// Create, store and return a bolt11 invoice for offchain boarding
 	pub async fn bolt11_invoice(&mut self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		let preimage = Preimage::random();
 		let payment_hash = ark::lightning::PaymentHash::from_preimage(preimage);
@@ -1394,11 +1394,11 @@ impl Wallet {
 			amount_sat: amount.to_sat(),
 		};
 
-		let resp = asp.client.start_lightning_receive(req).await?.into_inner();
+		let resp = srv.client.start_lightning_receive(req).await?.into_inner();
 		info!("Ark Server is ready to receive LN payment to invoice: {}.", resp.bolt11);
 
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
-			.context("invalid bolt11 invoice returned by asp")?;
+			.context("invalid bolt11 invoice returned by Ark server")?;
 
 		self.db.store_lightning_receive(&payment_hash, &preimage, invoice.clone())?;
 
@@ -1410,7 +1410,7 @@ impl Wallet {
 	}
 
 	async fn claim_htlc_vtxo(&mut self, vtxo: &WalletVtxo) -> anyhow::Result<()> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
 
@@ -1439,7 +1439,7 @@ impl Wallet {
 
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(&lightning_receive.payment_hash)?;
-		let cosign_resp = asp.client.claim_lightning_receive(req).await
+		let cosign_resp = srv.client.claim_lightning_receive(req).await
 			.context("failed to claim bolt11 board")?
 			.into_inner().try_into().context("invalid server cosign response")?;
 
@@ -1469,7 +1469,7 @@ impl Wallet {
 
 	pub async fn finish_lightning_receive(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
 		let tip = self.chain.tip().await?;
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
 
@@ -1484,7 +1484,7 @@ impl Wallet {
 		};
 
 		info!("Waiting payment...");
-		asp.client.subscribe_lightning_receive(req).await?.into_inner();
+		srv.client.subscribe_lightning_receive(req).await?.into_inner();
 		info!("Lightning payment arrived!");
 
 		// In order to onboard we need to show an input.
@@ -1507,7 +1507,7 @@ impl Wallet {
 
 		let state = VtxoState::PendingLightningRecv { payment_hash };
 
-		let expiry_height = tip + asp.info.htlc_expiry_delta as BlockHeight;
+		let expiry_height = tip + srv.info.htlc_expiry_delta as BlockHeight;
 		let antidos_input_cloned = antidos_input.clone();
 		let antidos_output_cloned = antidos_output.clone();
 		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
@@ -1555,7 +1555,7 @@ impl Wallet {
 		offer: Offer,
 		amount: Option<Amount>,
 	) -> anyhow::Result<(Bolt12Invoice, Preimage)> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		let offer_bytes = {
 			let mut bytes = Vec::new();
@@ -1568,7 +1568,7 @@ impl Wallet {
 			amount_sat: amount.map(|a| a.to_sat()),
 		};
 
-		let resp = asp.client.fetch_bolt12_invoice(req).await?.into_inner();
+		let resp = srv.client.fetch_bolt12_invoice(req).await?.into_inner();
 
 		let invoice = Bolt12Invoice::try_from(resp.invoice)
 			.map_err(|_| anyhow::anyhow!("invalid invoice"))?;
@@ -1644,7 +1644,7 @@ impl Wallet {
 		round_state: &mut RoundState,
 		participation: &RoundParticipation,
 	) -> anyhow::Result<AttemptResult> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		assert!(round_state.attempt.is_some());
 
@@ -1663,9 +1663,9 @@ impl Wallet {
 		// For each of our requested vtxo output, we need a set of public and secret nonces.
 		let cosign_nonces = cosign_keys.iter()
 			.map(|key| {
-				let mut secs = Vec::with_capacity(asp.info.nb_round_nonces);
-				let mut pubs = Vec::with_capacity(asp.info.nb_round_nonces);
-				for _ in 0..asp.info.nb_round_nonces {
+				let mut secs = Vec::with_capacity(srv.info.nb_round_nonces);
+				let mut pubs = Vec::with_capacity(srv.info.nb_round_nonces);
+				for _ in 0..srv.info.nb_round_nonces {
 					let (s, p) = musig::nonce_pair(key);
 					secs.push(s);
 					pubs.push(p);
@@ -1675,7 +1675,7 @@ impl Wallet {
 			.take(vtxo_reqs.len())
 			.collect::<Vec<(Vec<SecretNonce>, Vec<PublicNonce>)>>();
 
-		let res = asp.client.submit_payment(protos::SubmitPaymentRequest {
+		let res = srv.client.submit_payment(protos::SubmitPaymentRequest {
 			input_vtxos: participation.inputs.iter().map(|vtxo| {
 				let keypair = {
 					let keypair_idx = self.db.get_vtxo_key(vtxo)
@@ -1716,10 +1716,10 @@ impl Wallet {
 
 
 		// ****************************************************************
-		// * Wait for vtxo proposal from asp.
+		// * Wait for vtxo proposal from the Ark server.
 		// ****************************************************************
 
-		debug!("Waiting for vtxo proposal from asp...");
+		debug!("Waiting for a vtxo proposal from the Ark server...");
 		let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces, connector_pubkey) = {
 			match events.next().await.context("events stream broke")?? {
 				RoundEvent::VtxoProposal {
@@ -1749,7 +1749,7 @@ impl Wallet {
 		};
 
 		if unsigned_round_tx.output.len() < MIN_ROUND_TX_OUTPUTS {
-			bail!("asp sent round tx with less than 2 outputs: {}",
+			bail!("Ark server sent round tx with less than 2 outputs: {}",
 				bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx),
 			);
 		}
@@ -1765,7 +1765,7 @@ impl Wallet {
 				}
 			}
 			if !my_vtxos.is_empty() {
-				error!("asp didn't include all of our vtxos, missing: {:?}", my_vtxos);
+				error!("Ark server didn't include all of our vtxos, missing: {:?}", my_vtxos);
 				return Ok(AttemptResult::WaitNewRound)
 			}
 
@@ -1776,7 +1776,7 @@ impl Wallet {
 				}
 			}
 			if !my_offbs.is_empty() {
-				error!("asp didn't include all of our offboards, missing: {:?}", my_offbs);
+				error!("Ark server didn't include all of our offboards, missing: {:?}", my_offbs);
 				return Ok(AttemptResult::WaitNewRound)
 			}
 		}
@@ -1791,7 +1791,7 @@ impl Wallet {
 			info!("Sending {} partial vtxo cosign signatures for pk {}",
 				part_sigs.len(), key.public_key(),
 			);
-			let res = asp.client.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
+			let res = srv.client.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
 				pubkey: key.public_key().serialize().to_vec(),
 				signatures: part_sigs.iter().map(|s| s.serialize().to_vec()).collect(),
 			}).await;
@@ -1807,7 +1807,7 @@ impl Wallet {
 		// * Then proceed to get a round proposal and sign forfeits
 		// ****************************************************************
 
-		debug!("Wait for round proposal from asp...");
+		debug!("Wait for round proposal from Ark server...");
 		let (vtxo_cosign_sigs, forfeit_nonces) = {
 				match events.next().await.context("events stream broke")?? {
 					RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
@@ -1836,7 +1836,7 @@ impl Wallet {
 
 		// Validate the vtxo tree.
 		if let Err(e) = unsigned_vtxos.verify_cosign_sigs(&vtxo_cosign_sigs) {
-			bail!("Received incorrect vtxo cosign signatures from asp: {}", e);
+			bail!("Received incorrect vtxo cosign signatures from Ark server: {}", e);
 		}
 		let signed_vtxos = unsigned_vtxos
 			.into_signed_tree(vtxo_cosign_sigs)
@@ -1847,7 +1847,7 @@ impl Wallet {
 			.expect("checked before");
 		let expected_conn_txout = ConnectorChain::output(forfeit_nonces.len(), connector_pubkey);
 		if *conn_txout != expected_conn_txout {
-			bail!("round tx from asp has unexpected connector output: {:?} (expected {:?})",
+			bail!("round tx from Ark server has unexpected connector output: {:?} (expected {:?})",
 				conn_txout, expected_conn_txout,
 			);
 		}
@@ -1868,15 +1868,15 @@ impl Wallet {
 				let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
 					vtxo, conn, connector_pubkey,
 				);
-				let asp_nonce = forfeit_nonces.get(&vtxo.id())
-					.with_context(|| format!("missing asp forfeit nonce for {}", vtxo.id()))?
+				let srv_nonce = forfeit_nonces.get(&vtxo.id())
+					.with_context(|| format!("missing Ark server forfeit nonce for {}", vtxo.id()))?
 					.get(i)
-					.context("asp didn't provide enough forfeit nonces")?;
+					.context("Ark server didn't provide enough forfeit nonces")?;
 
 				let (nonce, sig) = musig::deterministic_partial_sign(
 					&vtxo_keypair,
-					[asp.info.asp_pubkey],
-					&[asp_nonce],
+					[srv.info.asp_pubkey],
+					&[srv_nonce],
 					sighash.to_byte_array(),
 					Some(vtxo.output_taproot().tap_tweak().to_byte_array()),
 				);
@@ -1885,7 +1885,7 @@ impl Wallet {
 			Ok((vtxo.id(), sigs))
 		}).collect::<anyhow::Result<HashMap<_, _>>>()?;
 		debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
-		let res = asp.client.provide_forfeit_signatures(protos::ForfeitSignaturesRequest {
+		let res = srv.client.provide_forfeit_signatures(protos::ForfeitSignaturesRequest {
 			signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
 				protos::ForfeitSignatures {
 					input_vtxo_id: id.to_bytes().to_vec(),
@@ -1927,7 +1927,7 @@ impl Wallet {
 		};
 
 		if signed_round_tx.compute_txid() != unsigned_round_tx.compute_txid() {
-			warn!("ASP changed the round transaction during the round!");
+			warn!("Ark server changed the round transaction during the round!");
 			warn!("unsigned tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx));
 			warn!("signed tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_round_tx));
 			//TODO(stevenroose) keep the unsigned tx because it might get broadcast
@@ -1993,10 +1993,10 @@ impl Wallet {
 		&self,
 		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<RoundParticipation>,
 	) -> anyhow::Result<RoundResult> {
-		let mut asp = self.require_asp()?;
+		let mut srv = self.require_server()?;
 
 		info!("Waiting for a round start...");
-		let mut events = asp.client.subscribe_rounds(protos::Empty {}).await?.into_inner()
+		let mut events = srv.client.subscribe_rounds(protos::Empty {}).await?.into_inner()
 			.map(|m| {
 				let m = m.context("received error on event stream")?;
 				let e = RoundEvent::try_from(m).context("error converting rpc round event")?;
@@ -2008,7 +2008,7 @@ impl Wallet {
 		// It allows us to conveniently restart when something unexpected happens:
 		// - when a new attempt starts, we update the info and restart
 		// - when a new round starts, we set it to the new round info and restart
-		// - when the asp misbehaves, we set it to None and restart
+		// - when the server misbehaves, we set it to None and restart
 		let mut next_round_info = None;
 
 		'round: loop {
