@@ -20,7 +20,7 @@ pub struct ArkInfo {
     #[prost(string, tag = "1")]
     pub network: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
-    pub asp_pubkey: ::prost::alloc::vec::Vec<u8>,
+    pub server_pubkey: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint32, tag = "3")]
     pub round_interval_secs: u32,
     #[prost(uint32, tag = "4")]
