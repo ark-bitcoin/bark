@@ -15,7 +15,6 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use chrono::{DateTime, Local};
 use log::{trace, info, warn};
-use tokio::sync::RwLock;
 
 use crate::database::Db;
 use crate::system::RuntimeManager;
@@ -168,15 +167,15 @@ impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
 /// The handle to the transaction index.
 #[derive(Clone, Debug)]
 struct TxIndexData {
-	tx_map: Arc<RwLock<HashMap<Txid, WeakTx>>>,
-	block_index: Arc<RwLock<BlockIndex>>,
+	tx_map: Arc<tokio::sync::RwLock<HashMap<Txid, WeakTx>>>,
+	block_index: Arc<tokio::sync::RwLock<BlockIndex>>,
 }
 
 impl TxIndexData {
 	fn new(base: BlockRef) -> TxIndexData {
 		TxIndexData {
-			tx_map: Arc::new(RwLock::new(HashMap::new())),
-			block_index: Arc::new(RwLock::new(BlockIndex::from_base(base))),
+			tx_map: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+			block_index: Arc::new(tokio::sync::RwLock::new(BlockIndex::from_base(base))),
 		}
 	}
 

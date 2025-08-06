@@ -37,7 +37,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 use log::{info, trace, warn, error};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
@@ -82,7 +82,7 @@ pub struct Server {
 	db: database::Db,
 	asp_key: Keypair,
 	// NB this needs to be an Arc so we can take a static guard
-	rounds_wallet: Arc<Mutex<PersistedWallet>>,
+	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
 	chain_tip: parking_lot::Mutex<BlockRef>,
 
@@ -251,7 +251,7 @@ impl Server {
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 
 		let srv = Server {
-			rounds_wallet: Arc::new(Mutex::new(rounds_wallet)),
+			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
 			chain_tip: parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: RoundHandle { round_event_tx, round_input_tx, round_trigger_tx },
 			vtxos_in_flux: VtxosInFlux::new(),
