@@ -146,7 +146,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "ark-lib",
- "aspd-rpc",
  "async-trait",
  "bark-bitcoin-ext",
  "bark-client",
@@ -154,6 +153,7 @@ dependencies = [
  "bark-json",
  "bark-server",
  "bark-server-log",
+ "bark-server-rpc",
  "bdk_esplora",
  "bip39",
  "bitcoin",
@@ -190,19 +190,6 @@ name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-
-[[package]]
-name = "aspd-rpc"
-version = "0.0.0-alpha"
-dependencies = [
- "ark-lib",
- "bitcoin",
- "prost",
- "thiserror 2.0.12",
- "tokio",
- "tonic",
- "tonic-build",
-]
 
 [[package]]
 name = "async-trait"
@@ -309,9 +296,9 @@ version = "0.0.0-alpha"
 dependencies = [
  "anyhow",
  "ark-lib",
- "aspd-rpc",
  "bark-bitcoin-ext",
  "bark-json",
+ "bark-server-rpc",
  "bdk_bitcoind_rpc",
  "bdk_esplora",
  "bdk_wallet",
@@ -367,11 +354,11 @@ version = "0.0.0-alpha"
 dependencies = [
  "anyhow",
  "ark-lib",
- "aspd-rpc",
  "async-trait",
  "bark-bitcoin-ext",
  "bark-cln-rpc",
  "bark-server-log",
+ "bark-server-rpc",
  "bb8",
  "bb8-postgres",
  "bdk_bitcoind_rpc",
@@ -429,6 +416,19 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-opentelemetry",
+]
+
+[[package]]
+name = "bark-server-rpc"
+version = "0.0.0-alpha"
+dependencies = [
+ "ark-lib",
+ "bitcoin",
+ "prost",
+ "thiserror 2.0.12",
+ "tokio",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]

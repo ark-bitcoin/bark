@@ -50,7 +50,7 @@ use ark::board::BoardBuilder;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
-use aspd_rpc::protos;
+use server_rpc::protos;
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;

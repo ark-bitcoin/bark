@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio_stream::Stream;
 
-use aspd_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos};
 
 use crate::util::FutureExt;
 

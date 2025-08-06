@@ -528,12 +528,12 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+		fn upstream(&self) -> server_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn finish_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::SignedLightningPaymentDetails,
-		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
+			_req: server_rpc::protos::SignedLightningPaymentDetails,
+		) -> Result<server_rpc::protos::LightningPaymentResult, tonic::Status> {
 			// Never return - wait indefinitely
 			loop {
 				tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -542,11 +542,11 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 		async fn check_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::CheckLightningPaymentRequest,
-		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
-			Ok(aspd_rpc::protos::LightningPaymentResult {
+			_req: server_rpc::protos::CheckLightningPaymentRequest,
+		) -> Result<server_rpc::protos::LightningPaymentResult, tonic::Status> {
+			Ok(server_rpc::protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),
-				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
+				status: server_rpc::protos::PaymentStatus::Pending as i32,
 				payment_hash: vec![],
 				payment_preimage: None,
 			})

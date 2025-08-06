@@ -12,7 +12,7 @@ use tonic::transport::Uri;
 
 use aspd::{Server, Config};
 use server_log::{RecordSerializeWrapper, SLOG_FILENAME};
-use aspd_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos};
 
 /// Defaults to our default port on localhost.
 const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";

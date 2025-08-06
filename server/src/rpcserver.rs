@@ -23,7 +23,7 @@ use tokio_stream::{Stream, StreamExt};
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount};
 use ark::rounds::RoundId;
-use aspd_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
+use server_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
 use tonic::async_trait;
 use ark::lightning::{PaymentHash, Preimage};
 use crate::Server;
@@ -34,12 +34,12 @@ use crate::telemetry::{self, RPC_GRPC_STATUS_CODE};
 
 /// The minimum protocol version supported by the server.
 ///
-/// For info on protocol versions, see [aspd_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc] module documentation.
 pub const MIN_PROTOCOL_VERSION: u64 = 1;
 
 /// The maximum protocol version supported by the server.
 ///
-/// For info on protocol versions, see [aspd_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc] module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
 /// Whether to provide rich internal errors to RPC users.

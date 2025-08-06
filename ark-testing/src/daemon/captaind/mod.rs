@@ -16,7 +16,7 @@ use tokio::sync::{self, mpsc, Mutex};
 use tokio::process::Command;
 
 use server_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
-use aspd_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos};
 pub use aspd::config::{self, Config};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};

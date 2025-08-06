@@ -33,7 +33,7 @@ use ark::rounds::{
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use server_log::{LogMsg, RoundVtxoCreated};
-use aspd_rpc::protos;
+use server_rpc::protos;
 
 use crate::{database, Server, SECP};
 use crate::database::model::{ForfeitState, DangerousSecretNonce, LightningHtlcSubscriptionStatus};

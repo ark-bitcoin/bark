@@ -58,7 +58,7 @@ use ark::rounds::{
 };
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
-use aspd_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use crate::exit::Exit;

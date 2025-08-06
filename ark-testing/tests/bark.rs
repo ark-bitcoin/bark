@@ -13,7 +13,7 @@ use tokio::fs;
 
 use ark::{ProtocolEncoding, Vtxo};
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
-use aspd_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos};
 use bark::movement::MovementRecipient;
 
 use ark_testing::{TestContext, btc, sat};

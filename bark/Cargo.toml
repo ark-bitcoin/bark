@@ -27,9 +27,9 @@ required-features = ["cli"]
 
 # OWN
 ark-lib = { path = "../ark-lib" }
-bark-json = { path = "../bark-json" }
-aspd-rpc = { path = "../aspd-rpc" }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
+bark-json = { path = "../bark-json" }
+bark-server-rpc = { path = "../server-rpc" }
 
 # EXPORTED
 bitcoin.workspace = true

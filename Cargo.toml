@@ -3,9 +3,9 @@
 members = [
   "ark-lib",
   "ark-testing",
-  "aspd-rpc",
   "server",
   "server-log",
+  "server-rpc",
   "bark",
   "bitcoin-ext",
   "cln-rpc",

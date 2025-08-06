@@ -14,7 +14,7 @@ use tokio_stream::StreamExt;
 use ark::{musig, Vtxo, VtxoId};
 use ark::connectors::{ConnectorChain, ConnectorIter};
 use ark::rounds::RoundId;
-use aspd_rpc as rpc;
+use server_rpc as rpc;
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{KeypairExt, TransactionExt};

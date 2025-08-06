@@ -216,14 +216,14 @@ impl PersistedWallet {
 		Ok(balance)
 	}
 
-	pub fn status(&mut self) -> aspd_rpc::WalletStatus {
+	pub fn status(&mut self) -> server_rpc::WalletStatus {
 		// NB we decide not to persist the address reveal to make this call
 		// infallible even without database.
 		let address = self.reveal_next_address(KeychainKind::External).address;
 		let (confirmed, unconfirmed) = self.list_unspent()
 			.partition::<Vec<_>, _>(|u| u.chain_position.is_confirmed());
 		let balance = self.balance();
-		aspd_rpc::WalletStatus {
+		server_rpc::WalletStatus {
 			total_balance: balance.total(),
 			trusted_pending_balance: balance.trusted_pending,
 			untrusted_pending_balance: balance.untrusted_pending,

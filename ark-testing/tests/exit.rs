@@ -12,6 +12,7 @@ use bark_json::exit::ExitState;
 use bark_json::exit::error::ExitError;
 use bark_json::exit::states::ExitStartState;
 use bitcoin_ext::TaprootSpendInfoExt;
+use server_rpc::protos;
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -530,19 +531,19 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+		fn upstream(&self) -> server_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn finish_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::SignedLightningPaymentDetails,
-		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
+			_req: protos::SignedLightningPaymentDetails,
+		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
 		}
 
 		async fn revoke_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::RevokeLightningPaymentRequest,
-		) -> Result<aspd_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
+			_req: protos::RevokeLightningPaymentRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}
@@ -598,15 +599,15 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
+		fn upstream(&self) -> server_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn finish_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::SignedLightningPaymentDetails,
-		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
-			Ok(aspd_rpc::protos::LightningPaymentResult {
+			_req: protos::SignedLightningPaymentDetails,
+		) -> Result<protos::LightningPaymentResult, tonic::Status> {
+			Ok(protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),
-				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
+				status: protos::PaymentStatus::Pending as i32,
 				payment_hash: vec![],
 				payment_preimage: None,
 			})
@@ -614,11 +615,11 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 		async fn check_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::CheckLightningPaymentRequest,
-		) -> Result<aspd_rpc::protos::LightningPaymentResult, tonic::Status> {
-			Ok(aspd_rpc::protos::LightningPaymentResult {
+			_req: protos::CheckLightningPaymentRequest,
+		) -> Result<protos::LightningPaymentResult, tonic::Status> {
+			Ok(protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),
-				status: aspd_rpc::protos::PaymentStatus::Pending as i32,
+				status: protos::PaymentStatus::Pending as i32,
 				payment_hash: vec![],
 				payment_preimage: None,
 			})
@@ -626,8 +627,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 		async fn revoke_lightning_payment(
 			&mut self,
-			_req: aspd_rpc::protos::RevokeLightningPaymentRequest,
-		) -> Result<aspd_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
+			_req: protos::RevokeLightningPaymentRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}

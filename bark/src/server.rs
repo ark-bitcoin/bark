@@ -9,17 +9,17 @@ use bitcoin::Network;
 use log::{info, warn};
 
 use ark::ArkInfo;
-use aspd_rpc::{self as rpc, protos, RequestExt};
+use server_rpc::{self as rpc, protos, RequestExt};
 
 
 /// The minimum protocol version supported by the client.
 ///
-/// For info on protocol versions, see [aspd_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc] module documentation.
 pub const MIN_PROTOCOL_VERSION: u64 = 1;
 
 /// The maximum protocol version supported by the client.
 ///
-/// For info on protocol versions, see [aspd_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc] module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
 
@@ -40,7 +40,7 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 pub struct ServerConnection {
 	/// Protocol version used for rpc protocol.
 	///
-	/// For info on protocol versions, see [aspd_rpc] module documentation.
+	/// For info on protocol versions, see [server_rpc] module documentation.
 	#[allow(unused)]
 	pub pver: u64,
 	pub info: ArkInfo,

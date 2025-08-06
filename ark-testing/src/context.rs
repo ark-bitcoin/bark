@@ -10,7 +10,7 @@ use tokio::fs;
 use tonic::transport::Uri;
 
 use aspd::config::{self, Config, HodlInvoiceClnPlugin};
-use aspd_rpc as rpc;
+use server_rpc as rpc;
 
 use crate::daemon::captaind::proxy::ArkRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};

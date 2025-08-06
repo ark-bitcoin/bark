@@ -26,7 +26,7 @@ use server_log::{
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
-use aspd_rpc::protos;
+use server_rpc::protos;
 use bark_json::exit::ExitState;
 
 use ark_testing::{Captaind, TestContext, btc, sat, Bark};

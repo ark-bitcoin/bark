@@ -1,10 +1,13 @@
 [package]
-name = "aspd-rpc"
+name = "bark-server-rpc"
 version = "0.0.0-alpha"
 license = "CC0-1.0"
 authors = [ "Steven Roose <steven@roose.io>" ]
 edition = "2021"
 repository = "https://codeberg.org/ark-bitcoin/bark"
+
+[lib]
+name = "server_rpc"
 
 [features]
 server = []
