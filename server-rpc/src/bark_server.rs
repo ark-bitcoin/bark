@@ -547,10 +547,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/Handshake",
+                "/bark_server.ArkService/Handshake",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("aspd.ArkService", "Handshake"));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("bark_server.ArkService", "Handshake"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_ark_info(
@@ -567,11 +568,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/GetArkInfo",
+                "/bark_server.ArkService/GetArkInfo",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "GetArkInfo"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "GetArkInfo"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_fresh_rounds(
@@ -588,11 +589,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/GetFreshRounds",
+                "/bark_server.ArkService/GetFreshRounds",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "GetFreshRounds"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "GetFreshRounds"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_round(
@@ -608,9 +609,12 @@ pub mod ark_service_client {
                     )
                 })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/aspd.ArkService/GetRound");
+            let path = http::uri::PathAndQuery::from_static(
+                "/bark_server.ArkService/GetRound",
+            );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("aspd.ArkService", "GetRound"));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("bark_server.ArkService", "GetRound"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn request_board_cosign(
@@ -630,11 +634,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/RequestBoardCosign",
+                "/bark_server.ArkService/RequestBoardCosign",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "RequestBoardCosign"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "RequestBoardCosign"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn register_board_vtxo(
@@ -651,11 +655,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/RegisterBoardVtxo",
+                "/bark_server.ArkService/RegisterBoardVtxo",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "RegisterBoardVtxo"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "RegisterBoardVtxo"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn request_arkoor_package_cosign(
@@ -675,12 +679,15 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/RequestArkoorPackageCosign",
+                "/bark_server.ArkService/RequestArkoorPackageCosign",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("aspd.ArkService", "RequestArkoorPackageCosign"),
+                    GrpcMethod::new(
+                        "bark_server.ArkService",
+                        "RequestArkoorPackageCosign",
+                    ),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -698,11 +705,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/PostArkoorPackageMailbox",
+                "/bark_server.ArkService/PostArkoorPackageMailbox",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "PostArkoorPackageMailbox"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "PostArkoorPackageMailbox"),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Empty the arkoor mailbox for certain pubkeys.
@@ -725,11 +734,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/EmptyArkoorMailbox",
+                "/bark_server.ArkService/EmptyArkoorMailbox",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "EmptyArkoorMailbox"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "EmptyArkoorMailbox"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn start_lightning_payment(
@@ -749,11 +758,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/StartLightningPayment",
+                "/bark_server.ArkService/StartLightningPayment",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "StartLightningPayment"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "StartLightningPayment"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn finish_lightning_payment(
@@ -773,11 +784,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/FinishLightningPayment",
+                "/bark_server.ArkService/FinishLightningPayment",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "FinishLightningPayment"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "FinishLightningPayment"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn check_lightning_payment(
@@ -797,11 +810,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/CheckLightningPayment",
+                "/bark_server.ArkService/CheckLightningPayment",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "CheckLightningPayment"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "CheckLightningPayment"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn revoke_lightning_payment(
@@ -821,11 +836,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/RevokeLightningPayment",
+                "/bark_server.ArkService/RevokeLightningPayment",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "RevokeLightningPayment"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "RevokeLightningPayment"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn fetch_bolt12_invoice(
@@ -845,11 +862,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/FetchBolt12Invoice",
+                "/bark_server.ArkService/FetchBolt12Invoice",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "FetchBolt12Invoice"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "FetchBolt12Invoice"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn start_lightning_receive(
@@ -869,11 +886,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/StartLightningReceive",
+                "/bark_server.ArkService/StartLightningReceive",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "StartLightningReceive"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "StartLightningReceive"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn subscribe_lightning_receive(
@@ -893,11 +912,16 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/SubscribeLightningReceive",
+                "/bark_server.ArkService/SubscribeLightningReceive",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "SubscribeLightningReceive"));
+                .insert(
+                    GrpcMethod::new(
+                        "bark_server.ArkService",
+                        "SubscribeLightningReceive",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn claim_lightning_receive(
@@ -917,11 +941,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/ClaimLightningReceive",
+                "/bark_server.ArkService/ClaimLightningReceive",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "ClaimLightningReceive"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "ClaimLightningReceive"),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Subscribe to the round events. Immediatelly returns the last event that happened.
@@ -942,11 +968,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/SubscribeRounds",
+                "/bark_server.ArkService/SubscribeRounds",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "SubscribeRounds"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "SubscribeRounds"));
             self.inner.server_streaming(req, path, codec).await
         }
         pub async fn submit_payment(
@@ -963,11 +989,11 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/SubmitPayment",
+                "/bark_server.ArkService/SubmitPayment",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "SubmitPayment"));
+                .insert(GrpcMethod::new("bark_server.ArkService", "SubmitPayment"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn provide_vtxo_signatures(
@@ -984,11 +1010,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/ProvideVtxoSignatures",
+                "/bark_server.ArkService/ProvideVtxoSignatures",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "ProvideVtxoSignatures"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "ProvideVtxoSignatures"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn provide_forfeit_signatures(
@@ -1005,11 +1033,13 @@ pub mod ark_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.ArkService/ProvideForfeitSignatures",
+                "/bark_server.ArkService/ProvideForfeitSignatures",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.ArkService", "ProvideForfeitSignatures"));
+                .insert(
+                    GrpcMethod::new("bark_server.ArkService", "ProvideForfeitSignatures"),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
@@ -1119,11 +1149,11 @@ pub mod wallet_admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.WalletAdminService/WalletSync",
+                "/bark_server.WalletAdminService/WalletSync",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.WalletAdminService", "WalletSync"));
+                .insert(GrpcMethod::new("bark_server.WalletAdminService", "WalletSync"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn wallet_status(
@@ -1143,11 +1173,13 @@ pub mod wallet_admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.WalletAdminService/WalletStatus",
+                "/bark_server.WalletAdminService/WalletStatus",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.WalletAdminService", "WalletStatus"));
+                .insert(
+                    GrpcMethod::new("bark_server.WalletAdminService", "WalletStatus"),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
@@ -1257,11 +1289,13 @@ pub mod round_admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.RoundAdminService/TriggerRound",
+                "/bark_server.RoundAdminService/TriggerRound",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.RoundAdminService", "TriggerRound"));
+                .insert(
+                    GrpcMethod::new("bark_server.RoundAdminService", "TriggerRound"),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
@@ -1371,12 +1405,15 @@ pub mod lightning_admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.LightningAdminService/StartLightningNode",
+                "/bark_server.LightningAdminService/StartLightningNode",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("aspd.LightningAdminService", "StartLightningNode"),
+                    GrpcMethod::new(
+                        "bark_server.LightningAdminService",
+                        "StartLightningNode",
+                    ),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -1394,12 +1431,15 @@ pub mod lightning_admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.LightningAdminService/StopLightningNode",
+                "/bark_server.LightningAdminService/StopLightningNode",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("aspd.LightningAdminService", "StopLightningNode"),
+                    GrpcMethod::new(
+                        "bark_server.LightningAdminService",
+                        "StopLightningNode",
+                    ),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -1510,11 +1550,13 @@ pub mod sweep_admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/aspd.SweepAdminService/TriggerSweep",
+                "/bark_server.SweepAdminService/TriggerSweep",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("aspd.SweepAdminService", "TriggerSweep"));
+                .insert(
+                    GrpcMethod::new("bark_server.SweepAdminService", "TriggerSweep"),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
@@ -1743,7 +1785,7 @@ pub mod ark_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/aspd.ArkService/Handshake" => {
+                "/bark_server.ArkService/Handshake" => {
                     #[allow(non_camel_case_types)]
                     struct HandshakeSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -1788,7 +1830,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/GetArkInfo" => {
+                "/bark_server.ArkService/GetArkInfo" => {
                     #[allow(non_camel_case_types)]
                     struct GetArkInfoSvc<T: ArkService>(pub Arc<T>);
                     impl<T: ArkService> tonic::server::UnaryService<super::Empty>
@@ -1831,7 +1873,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/GetFreshRounds" => {
+                "/bark_server.ArkService/GetFreshRounds" => {
                     #[allow(non_camel_case_types)]
                     struct GetFreshRoundsSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -1876,7 +1918,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/GetRound" => {
+                "/bark_server.ArkService/GetRound" => {
                     #[allow(non_camel_case_types)]
                     struct GetRoundSvc<T: ArkService>(pub Arc<T>);
                     impl<T: ArkService> tonic::server::UnaryService<super::RoundId>
@@ -1919,7 +1961,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/RequestBoardCosign" => {
+                "/bark_server.ArkService/RequestBoardCosign" => {
                     #[allow(non_camel_case_types)]
                     struct RequestBoardCosignSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -1965,7 +2007,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/RegisterBoardVtxo" => {
+                "/bark_server.ArkService/RegisterBoardVtxo" => {
                     #[allow(non_camel_case_types)]
                     struct RegisterBoardVtxoSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2011,7 +2053,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/RequestArkoorPackageCosign" => {
+                "/bark_server.ArkService/RequestArkoorPackageCosign" => {
                     #[allow(non_camel_case_types)]
                     struct RequestArkoorPackageCosignSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2060,7 +2102,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/PostArkoorPackageMailbox" => {
+                "/bark_server.ArkService/PostArkoorPackageMailbox" => {
                     #[allow(non_camel_case_types)]
                     struct PostArkoorPackageMailboxSvc<T: ArkService>(pub Arc<T>);
                     impl<T: ArkService> tonic::server::UnaryService<super::ArkoorPackage>
@@ -2107,7 +2149,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/EmptyArkoorMailbox" => {
+                "/bark_server.ArkService/EmptyArkoorMailbox" => {
                     #[allow(non_camel_case_types)]
                     struct EmptyArkoorMailboxSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2153,7 +2195,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/StartLightningPayment" => {
+                "/bark_server.ArkService/StartLightningPayment" => {
                     #[allow(non_camel_case_types)]
                     struct StartLightningPaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2199,7 +2241,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/FinishLightningPayment" => {
+                "/bark_server.ArkService/FinishLightningPayment" => {
                     #[allow(non_camel_case_types)]
                     struct FinishLightningPaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2245,7 +2287,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/CheckLightningPayment" => {
+                "/bark_server.ArkService/CheckLightningPayment" => {
                     #[allow(non_camel_case_types)]
                     struct CheckLightningPaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2291,7 +2333,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/RevokeLightningPayment" => {
+                "/bark_server.ArkService/RevokeLightningPayment" => {
                     #[allow(non_camel_case_types)]
                     struct RevokeLightningPaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2337,7 +2379,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/FetchBolt12Invoice" => {
+                "/bark_server.ArkService/FetchBolt12Invoice" => {
                     #[allow(non_camel_case_types)]
                     struct FetchBolt12InvoiceSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2383,7 +2425,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/StartLightningReceive" => {
+                "/bark_server.ArkService/StartLightningReceive" => {
                     #[allow(non_camel_case_types)]
                     struct StartLightningReceiveSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2429,7 +2471,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/SubscribeLightningReceive" => {
+                "/bark_server.ArkService/SubscribeLightningReceive" => {
                     #[allow(non_camel_case_types)]
                     struct SubscribeLightningReceiveSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2481,7 +2523,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/ClaimLightningReceive" => {
+                "/bark_server.ArkService/ClaimLightningReceive" => {
                     #[allow(non_camel_case_types)]
                     struct ClaimLightningReceiveSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2527,7 +2569,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/SubscribeRounds" => {
+                "/bark_server.ArkService/SubscribeRounds" => {
                     #[allow(non_camel_case_types)]
                     struct SubscribeRoundsSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2573,7 +2615,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/SubmitPayment" => {
+                "/bark_server.ArkService/SubmitPayment" => {
                     #[allow(non_camel_case_types)]
                     struct SubmitPaymentSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2618,7 +2660,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/ProvideVtxoSignatures" => {
+                "/bark_server.ArkService/ProvideVtxoSignatures" => {
                     #[allow(non_camel_case_types)]
                     struct ProvideVtxoSignaturesSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2664,7 +2706,7 @@ pub mod ark_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.ArkService/ProvideForfeitSignatures" => {
+                "/bark_server.ArkService/ProvideForfeitSignatures" => {
                     #[allow(non_camel_case_types)]
                     struct ProvideForfeitSignaturesSvc<T: ArkService>(pub Arc<T>);
                     impl<
@@ -2748,7 +2790,7 @@ pub mod ark_service_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "aspd.ArkService";
+    pub const SERVICE_NAME: &str = "bark_server.ArkService";
     impl<T> tonic::server::NamedService for ArkServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
@@ -2854,7 +2896,7 @@ pub mod wallet_admin_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/aspd.WalletAdminService/WalletSync" => {
+                "/bark_server.WalletAdminService/WalletSync" => {
                     #[allow(non_camel_case_types)]
                     struct WalletSyncSvc<T: WalletAdminService>(pub Arc<T>);
                     impl<T: WalletAdminService> tonic::server::UnaryService<super::Empty>
@@ -2898,7 +2940,7 @@ pub mod wallet_admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.WalletAdminService/WalletStatus" => {
+                "/bark_server.WalletAdminService/WalletStatus" => {
                     #[allow(non_camel_case_types)]
                     struct WalletStatusSvc<T: WalletAdminService>(pub Arc<T>);
                     impl<T: WalletAdminService> tonic::server::UnaryService<super::Empty>
@@ -2977,7 +3019,7 @@ pub mod wallet_admin_service_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "aspd.WalletAdminService";
+    pub const SERVICE_NAME: &str = "bark_server.WalletAdminService";
     impl<T> tonic::server::NamedService for WalletAdminServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
@@ -3076,7 +3118,7 @@ pub mod round_admin_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/aspd.RoundAdminService/TriggerRound" => {
+                "/bark_server.RoundAdminService/TriggerRound" => {
                     #[allow(non_camel_case_types)]
                     struct TriggerRoundSvc<T: RoundAdminService>(pub Arc<T>);
                     impl<T: RoundAdminService> tonic::server::UnaryService<super::Empty>
@@ -3155,7 +3197,7 @@ pub mod round_admin_service_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "aspd.RoundAdminService";
+    pub const SERVICE_NAME: &str = "bark_server.RoundAdminService";
     impl<T> tonic::server::NamedService for RoundAdminServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
@@ -3259,7 +3301,7 @@ pub mod lightning_admin_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/aspd.LightningAdminService/StartLightningNode" => {
+                "/bark_server.LightningAdminService/StartLightningNode" => {
                     #[allow(non_camel_case_types)]
                     struct StartLightningNodeSvc<T: LightningAdminService>(pub Arc<T>);
                     impl<
@@ -3308,7 +3350,7 @@ pub mod lightning_admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/aspd.LightningAdminService/StopLightningNode" => {
+                "/bark_server.LightningAdminService/StopLightningNode" => {
                     #[allow(non_camel_case_types)]
                     struct StopLightningNodeSvc<T: LightningAdminService>(pub Arc<T>);
                     impl<
@@ -3392,7 +3434,7 @@ pub mod lightning_admin_service_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "aspd.LightningAdminService";
+    pub const SERVICE_NAME: &str = "bark_server.LightningAdminService";
     impl<T> tonic::server::NamedService for LightningAdminServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
@@ -3491,7 +3533,7 @@ pub mod sweep_admin_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/aspd.SweepAdminService/TriggerSweep" => {
+                "/bark_server.SweepAdminService/TriggerSweep" => {
                     #[allow(non_camel_case_types)]
                     struct TriggerSweepSvc<T: SweepAdminService>(pub Arc<T>);
                     impl<T: SweepAdminService> tonic::server::UnaryService<super::Empty>
@@ -3570,7 +3612,7 @@ pub mod sweep_admin_service_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "aspd.SweepAdminService";
+    pub const SERVICE_NAME: &str = "bark_server.SweepAdminService";
     impl<T> tonic::server::NamedService for SweepAdminServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
