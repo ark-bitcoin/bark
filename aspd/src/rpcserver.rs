@@ -18,7 +18,6 @@ use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
-use tokio_stream::wrappers::BroadcastStream;
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundId;
@@ -711,12 +710,8 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS);
 
-		let chan = self.rounds.round_event_tx.subscribe();
-		let stream = BroadcastStream::new(chan);
-
-		Ok(tonic::Response::new(Box::new(stream.map(|e| {
-			Ok(e.context("broken stream")?.into())
-		}))))
+		let stream = self.rounds.events();
+		Ok(tonic::Response::new(Box::new(stream.map(|e| Ok(e.as_ref().into())))))
 	}
 
 	async fn submit_payment(

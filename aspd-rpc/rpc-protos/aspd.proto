@@ -12,10 +12,12 @@ service ArkService {
 	rpc GetRound(RoundId) returns (RoundInfo) {}
 
 	// * BOARDING *
+
 	rpc RequestBoardCosign(BoardCosignRequest) returns (BoardCosignResponse) {}
 	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (Empty) {}
 
 	// * OOR PAYMENTS*
+
 	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
 
@@ -25,6 +27,7 @@ service ArkService {
 	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
 
 	// * LN payments
+
 	rpc StartLightningPayment(LightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
@@ -35,6 +38,8 @@ service ArkService {
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorCosignResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
+
+	// Subscribe to the round events. Immediatelly returns the last event that happened.
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
 	rpc SubmitPayment(SubmitPaymentRequest) returns (Empty) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (Empty) {}

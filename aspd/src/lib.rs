@@ -25,8 +25,10 @@ pub use crate::config::Config;
 use std::borrow::Borrow;
 use std::collections::{HashSet, HashMap};
 use std::fs;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -35,6 +37,7 @@ use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, trace, warn, error};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -48,6 +51,8 @@ use ark::rounds::RoundEvent;
 use aspd_rpc::protos;
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::cln::ClnManager;
 use crate::database::model::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
@@ -71,10 +76,63 @@ lazy_static::lazy_static! {
 const ASP_KEY_PATH: &str = "m/2'/0'";
 
 
+/// Return type for the round event RPC stream.
+///
+/// It contains a first item that is yielded first and then it refers to the stream.
+pub struct RoundEventStream {
+	first: Option<Arc<RoundEvent>>,
+	events: BroadcastStream<Arc<RoundEvent>>,
+}
+
+impl Stream for RoundEventStream {
+	type Item = Arc<RoundEvent>;
+
+	fn poll_next(
+		mut self: Pin<&mut Self>,
+		cx: &mut std::task::Context,
+	) -> Poll<Option<Self::Item>> {
+		if let Some(e) = self.first.take() {
+			return Poll::Ready(Some(e));
+		}
+
+		loop {
+			match Pin::new(&mut self.events).poll_next(cx) {
+				// We lagged behind, we continue which will give us new messages
+				Poll::Ready(Some(Err(BroadcastStreamRecvError::Lagged(_)))) => continue,
+				Poll::Ready(Some(Ok(e))) => break Poll::Ready(Some(e)),
+				Poll::Ready(None) => break Poll::Ready(None),
+				Poll::Pending => break Poll::Pending,
+			}
+		}
+	}
+}
+
 pub struct RoundHandle {
-	round_event_tx: broadcast::Sender<RoundEvent>,
+	round_event_tx: broadcast::Sender<Arc<RoundEvent>>,
+	last_round_event: parking_lot::Mutex<Option<Arc<RoundEvent>>>,
 	round_input_tx: mpsc::UnboundedSender<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_trigger_tx: mpsc::Sender<()>,
+}
+
+impl RoundHandle {
+	pub fn events(&self) -> RoundEventStream {
+		// If we keep the lock just as long as we create a new receiver,
+		// we will never miss any messages.
+		let guard = self.last_round_event.lock();
+		let events = BroadcastStream::new(self.round_event_tx.subscribe());
+		let first = guard.clone();
+		RoundEventStream { first, events }
+	}
+}
+
+impl RoundHandle {
+	/// Broadcast a new event and store it as the last sent event.
+	fn broadcast_event(&self, event: RoundEvent) {
+		let event = Arc::new(event);
+		let mut last_lock = self.last_round_event.lock();
+		let _ = self.round_event_tx.send(event.clone());
+		*last_lock = Some(event);
+	}
 }
 
 pub struct Server {
@@ -253,7 +311,12 @@ impl Server {
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
 			chain_tip: parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
-			rounds: RoundHandle { round_event_tx, round_input_tx, round_trigger_tx },
+			rounds: RoundHandle {
+				round_event_tx,
+				last_round_event: parking_lot::Mutex::new(None),
+				round_input_tx,
+				round_trigger_tx,
+			},
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
 			db,
