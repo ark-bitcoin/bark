@@ -937,16 +937,6 @@ impl rpc::server::AdminService for Server {
 		let _ = self.cln.disable(uri);
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
-
-	async fn stop(
-		&self,
-		_req: tonic::Request<protos::Empty>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_STOP);
-		info!("Shutting down because of RPC stop command...");
-		self.rtmgr.shutdown();
-		Ok(tonic::Response::new(protos::Empty {}))
-	}
 }
 
 

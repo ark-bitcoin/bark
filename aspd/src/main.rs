@@ -78,10 +78,6 @@ enum RpcCommand {
 	/// Start a new asp round
 	#[command()]
 	TriggerRound,
-
-	/// Stop aspd
-	#[command()]
-	Stop,
 }
 
 #[tokio::main]
@@ -243,7 +239,6 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		RpcCommand::TriggerRound => {
 			asp.trigger_round(protos::Empty {}).await?.into_inner();
 		}
-		RpcCommand::Stop => unimplemented!(),
 	}
 	Ok(())
 }

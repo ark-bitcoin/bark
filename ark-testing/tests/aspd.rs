@@ -209,7 +209,6 @@ async fn restart_key_stability() {
 	ctx.generate_blocks(1).await;
 
 	// Restart aspd.
-	let _ = aspd.get_admin_client().await.stop(protos::Empty {}).await;
 	// bitcoind must be shut down gracefully otherwise it will not restart properly
 	aspd.shutdown_bitcoind().await;
 	aspd.stop().await.unwrap();
