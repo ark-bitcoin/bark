@@ -84,7 +84,7 @@ pub struct Server {
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
-	chain_tip: Mutex<BlockRef>,
+	chain_tip: parking_lot::Mutex<BlockRef>,
 
 	rtmgr: RuntimeManager,
 	tx_broadcast_handle: TxBroadcastHandle,
@@ -252,7 +252,7 @@ impl Server {
 
 		let srv = Server {
 			rounds_wallet: Arc::new(Mutex::new(rounds_wallet)),
-			chain_tip: Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
+			chain_tip: parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
 			rounds: RoundHandle { round_event_tx, round_input_tx, round_trigger_tx },
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
@@ -320,8 +320,8 @@ impl Server {
 		Ok(())
 	}
 
-	pub async fn chain_tip(&self) -> BlockRef {
-		self.chain_tip.lock().await.clone()
+	pub fn chain_tip(&self) -> BlockRef {
+		self.chain_tip.lock().clone()
 	}
 
 	/// Sync all the system's wallets.
@@ -413,7 +413,7 @@ impl Server {
 		}
 
 		//TODO(stevenroose) make this more robust
-		let tip = self.chain_tip().await;
+		let tip = self.chain_tip();
 		if expiry_height < tip.height {
 			bail!("vtxo already expired: {} (tip = {})", expiry_height, tip.height);
 		}
@@ -933,7 +933,7 @@ async fn run_tip_fetcher(srv: Arc<Server>) {
 
 		match srv.bitcoind.tip() {
 			Ok(t) => {
-				let mut lock = srv.chain_tip.lock().await;
+				let mut lock = srv.chain_tip.lock();
 				if t != *lock {
 					*lock = t;
 					telemetry::set_block_height(t.height);
