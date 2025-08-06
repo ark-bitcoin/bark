@@ -503,7 +503,7 @@ impl CollectingPayments {
 		let tip = srv.chain_tip().height;
 		let expiry_height = tip + srv.config.vtxo_lifetime as BlockHeight;
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
 
 		let parent_context = opentelemetry::Context::current();
 
@@ -772,7 +772,7 @@ impl SigningVtxoTree {
 		// Combine the vtxo signatures.
 		let combine_signatures_start = Instant::now();
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
 
 		let parent_context = opentelemetry::Context::current();
 
@@ -1008,7 +1008,7 @@ impl SigningForfeits {
 			signed_round_tx: signed_round_tx.tx.clone(),
 		});
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
 		let parent_context = opentelemetry::Context::current();
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
@@ -1250,7 +1250,7 @@ async fn perform_round(
 	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_seq: usize,
 ) -> RoundResult {
-	let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);
+	let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
 
 	let mut span = tracer_provider
 		.span_builder(telemetry::TRACE_RUN_ROUND)

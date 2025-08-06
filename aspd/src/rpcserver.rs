@@ -1014,7 +1014,7 @@ where
 		];
 		telemetry::add_grpc_in_progress(&attributes);
 
-		let tracer = global::tracer(telemetry::TRACER_ASPD);
+		let tracer = global::tracer(telemetry::TRACER_CAPTAIND);
 		let mut span = tracer
 			.span_builder(rpc_method_details.format_path())
 			.with_kind(SpanKind::Server)

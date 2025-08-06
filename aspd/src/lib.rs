@@ -159,9 +159,9 @@ pub struct Server {
 
 impl Server {
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
-		// Check for mnemonic file to see if aspd was already initialized.
+		// Check for mnemonic file to see if server was already initialized.
 		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
-			bail!("Found existing mnemonic file in datadir, aspd probably already initialized!");
+			bail!("Found existing mnemonic file in datadir, server probably already initialized!");
 		}
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
@@ -176,7 +176,7 @@ impl Server {
 		let deep_tip = bitcoind.deep_tip()
 			.context("failed to fetch deep tip from bitcoind")?;
 
-		info!("Creating aspd server at {}", cfg.data_dir.display());
+		info!("Creating server at {}", cfg.data_dir.display());
 
 		// create dir if not exit, but check that it's empty
 		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
@@ -221,7 +221,7 @@ impl Server {
 
 	/// Start the server.
 	pub async fn start(cfg: Config) -> anyhow::Result<Arc<Self>> {
-		info!("Starting aspd at {}", cfg.data_dir.display());
+		info!("Starting server at {}", cfg.data_dir.display());
 
 		info!("Connecting to db at {}:{}", cfg.postgres.host, cfg.postgres.port);
 		let db = database::Db::connect(&cfg.postgres)
@@ -370,10 +370,10 @@ impl Server {
 		Ok(srv)
 	}
 
-	/// Waits for aspd to terminate.
+	/// Waits for server to terminate.
 	pub async fn wait(&self) {
 		self.rtmgr.wait().await;
-		slog!(AspdTerminated);
+		slog!(ServerTerminated);
 	}
 
 	/// Starts the server and waits until it terminates.

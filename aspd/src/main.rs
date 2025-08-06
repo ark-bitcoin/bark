@@ -23,7 +23,12 @@ const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("GIT_HASH"));
 
 #[derive(Parser)]
-#[command(name = "aspd", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
+#[command(
+	name = "captaind",
+	author = "Team Second <hello@second.tech>",
+	version = FULL_VERSION,
+	about,
+)]
 struct Cli {
 	/// Path to the configuration file
 	#[arg(global = true, short = 'C', long)]
@@ -71,7 +76,7 @@ enum Command {
 
 #[derive(clap::Subcommand)]
 enum RpcCommand {
-	/// Report aspd wallet status
+	/// Report server wallet status
 	#[command()]
 	Wallet,
 
@@ -171,7 +176,7 @@ async fn inner_main() -> anyhow::Result<()> {
 		}
 		Command::Start => {
 			if let Err(e) = Server::run(cfg).await {
-				error!("Shutdown error from aspd {:?}", e);
+				error!("Shutdown error from server {:?}", e);
 
 				process::exit(1);
 			};

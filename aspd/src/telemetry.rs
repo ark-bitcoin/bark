@@ -22,7 +22,7 @@ use crate::database::model::LightningPaymentStatus;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
-pub const TRACER_ASPD: &str = "aspd";
+pub const TRACER_CAPTAIND: &str = "captaind";
 
 pub const TRACE_RUN_ROUND: &str = "round";
 pub const TRACE_RUN_ROUND_EMPTY: &str = "round_empty";
@@ -38,7 +38,7 @@ pub const TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES: &str = "round_receiving_
 pub const TRACE_RUN_ROUND_FINALIZING: &str = "round_final_stage";
 pub const TRACE_RUN_ROUND_PERSIST: &str = "round_persist";
 
-pub const METER_ASPD: &str = "aspd";
+pub const METER_CAPTAIND: &str = "captaind";
 
 pub const ATTRIBUTE_WORKER: &str = "worker";
 pub const ATTRIBUTE_STATUS: &str = "status";
@@ -47,7 +47,7 @@ pub const ATTRIBUTE_TYPE: &str = "type";
 pub const ATTRIBUTE_KIND: &str = "kind";
 pub const ATTRIBUTE_URI: &str = "uri";
 pub const ATTRIBUTE_PUBLIC_KEY: &str = "public_key";
-pub const ATTRIBUTE_ASPD_VERSION: &str = "server_version";
+pub const ATTRIBUTE_SERVER_VERSION: &str = "server_version";
 pub const ATTRIBUTE_BARK_VERSION: &str = "bark_version";
 pub const ATTRIBUTE_PROTOCOL_VERSION: &str = "protocol_version";
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
@@ -121,12 +121,12 @@ impl Metrics {
 			.build().unwrap();
 
 		let resource = Resource::builder()
-			.with_attribute(KeyValue::new(SERVICE_NAME, "aspd"))
+			.with_attribute(KeyValue::new(SERVICE_NAME, "captaind"))
 			.with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
-			.with_attribute(KeyValue::new("aspd.public_key", public_key.to_string()))
-			.with_attribute(KeyValue::new("aspd.network", config.network.to_string()))
-			.with_attribute(KeyValue::new("aspd.round_interval", config.round_interval.as_secs().to_string()))
-			.with_attribute(KeyValue::new("aspd.maximum_vtxo_amount",
+			.with_attribute(KeyValue::new("captaind.public_key", public_key.to_string()))
+			.with_attribute(KeyValue::new("captaind.network", config.network.to_string()))
+			.with_attribute(KeyValue::new("captaind.round_interval", config.round_interval.as_secs().to_string()))
+			.with_attribute(KeyValue::new("captaind.maximum_vtxo_amount",
 				config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
 			))
 			.build();
@@ -146,17 +146,17 @@ impl Metrics {
 			.with_resource(resource.clone())
 			.build();
 
-		let aspd_tracer = tracer_provider.tracer(TRACER_ASPD);
+		let captaind_tracer = tracer_provider.tracer(TRACER_CAPTAIND);
 
 		global::set_tracer_provider(tracer_provider);
 
 		// Set up the tracing subscriber
 		let filter = EnvFilter::from_default_env()
 			.add_directive("h2=off".parse().unwrap());
-		let aspd_telemetry = OpenTelemetryLayer::new(aspd_tracer);
+		let captaind_telemetry = OpenTelemetryLayer::new(captaind_tracer);
 		let subscriber = Registry::default()
 			.with(filter)
-			.with(aspd_telemetry);
+			.with(captaind_telemetry);
 		tracing::subscriber::set_global_default(subscriber)
 			.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err)).unwrap();
 
@@ -176,7 +176,7 @@ impl Metrics {
 			.build();
 		global::set_meter_provider(provider);
 
-		let meter = global::meter_provider().meter(METER_ASPD);
+		let meter = global::meter_provider().meter(METER_CAPTAIND);
 		let spawn_counter = meter.i64_up_down_counter("spawn_counter").build();
 		let bark_version_counter = meter.u64_counter("bark_version_counter").build();
 		let protocol_version_counter = meter.u64_counter("protocol_version_counter").build();
@@ -202,9 +202,9 @@ impl Metrics {
 		let grpc_request_counter = meter.u64_counter("grpc_requests_total").build();
 		let grpc_error_counter = meter.u64_counter("grpc_errors_total").build();
 
-		// log the current aspd version
-		meter.u64_counter("version_counter").build().add(
-			1u64, &[KeyValue::new(ATTRIBUTE_ASPD_VERSION, env!("CARGO_PKG_VERSION"))],
+		// log the current server version
+		meter.u64_counter("server_version_counter").build().add(
+			1u64, &[KeyValue::new(ATTRIBUTE_SERVER_VERSION, env!("CARGO_PKG_VERSION"))],
 		);
 
 		Metrics {
