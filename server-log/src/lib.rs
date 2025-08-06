@@ -16,7 +16,7 @@ use serde::ser::{Serialize, Serializer, SerializeMap};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// The "target" field used for structured logging.
-pub const SLOG_TARGET: &str = "aspd-slog";
+pub const SLOG_TARGET: &str = "bark-server-slog";
 
 pub const LOGID_FIELD: &str = "slog_id";
 pub const TRACEID_FIELD: &str = "slog_trace_id";
