@@ -2,7 +2,7 @@
 use std::borrow::Borrow;
 use std::ops;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use ark::VtxoId;
 
@@ -15,13 +15,13 @@ struct VtxosInFluxInner {
 /// Simple locking structure to keep track of vtxos that are currently in flux.
 #[derive(Debug, Clone)]
 pub struct VtxosInFlux {
-	inner: Arc<Mutex<VtxosInFluxInner>>,
+	inner: Arc<parking_lot::Mutex<VtxosInFluxInner>>,
 }
 
 impl VtxosInFlux {
 	pub fn new() -> VtxosInFlux {
 		VtxosInFlux {
-			inner: Arc::new(Mutex::new(VtxosInFluxInner {
+			inner: Arc::new(parking_lot::Mutex::new(VtxosInFluxInner {
 				vtxos: HashSet::new(),
 			}))
 		}
@@ -59,7 +59,7 @@ impl VtxosInFlux {
 	{
 		let ids = ids.into_iter();
 		let mut buf = Vec::with_capacity(ids.size_hint().0);
-		let mut inner = self.inner.lock().unwrap();
+		let mut inner = self.inner.lock();
 		for id in ids {
 			let id = *id.borrow();
 			if !inner.vtxos.insert(id) {
@@ -75,7 +75,7 @@ impl VtxosInFlux {
 	}
 
 	fn release<V: Borrow<VtxoId>>(&self, ids: impl IntoIterator<Item = V>) {
-		let mut inner = self.inner.lock().unwrap();
+		let mut inner = self.inner.lock();
 		for id in ids {
 			inner.vtxos.remove(id.borrow());
 		}
@@ -83,7 +83,7 @@ impl VtxosInFlux {
 
 	#[cfg(test)]
 	fn vtxos(&self) -> Vec<VtxoId> {
-		let mut ret = self.inner.lock().unwrap().vtxos.iter().copied().collect::<Vec<_>>();
+		let mut ret = self.inner.lock().vtxos.iter().copied().collect::<Vec<_>>();
 		ret.sort();
 		ret
 	}
@@ -188,17 +188,17 @@ mod test {
 
 		flux.atomic_check_put([vtxos[0], vtxos[1]]).unwrap();
 		flux.atomic_check_put([vtxos[2], vtxos[3]]).unwrap();
-		assert_eq!(4, flux.inner.lock().unwrap().vtxos.len());
+		assert_eq!(4, flux.inner.lock().vtxos.len());
 		flux.atomic_check_put([vtxos[0], vtxos[4]]).unwrap_err();
-		assert_eq!(4, flux.inner.lock().unwrap().vtxos.len());
+		assert_eq!(4, flux.inner.lock().vtxos.len());
 		flux.release([vtxos[0]]);
-		assert_eq!(3, flux.inner.lock().unwrap().vtxos.len());
+		assert_eq!(3, flux.inner.lock().vtxos.len());
 		flux.atomic_check_put([vtxos[0], vtxos[4]]).unwrap();
-		assert_eq!(5, flux.inner.lock().unwrap().vtxos.len());
+		assert_eq!(5, flux.inner.lock().vtxos.len());
 
 		flux.atomic_check_put([vtxos[1], vtxos[5]]).unwrap_err();
-		assert_eq!(5, flux.inner.lock().unwrap().vtxos.len());
-		assert!(!flux.inner.lock().unwrap().vtxos.contains(&vtxos[5]));
+		assert_eq!(5, flux.inner.lock().vtxos.len());
+		assert!(!flux.inner.lock().vtxos.contains(&vtxos[5]));
 	}
 
 	#[test]
