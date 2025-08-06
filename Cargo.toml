@@ -1,7 +1,7 @@
 
 [workspace]
 members = [
-  "ark-lib",
+  "lib",
   "ark-testing",
   "server",
   "server-log",

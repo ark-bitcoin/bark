@@ -20,7 +20,7 @@ tonic-build.workspace = true
 [dependencies]
 
 # OWN
-ark-lib = { path = "../ark-lib" }
+ark-lib = { path = "../lib" }
 bark-cln-rpc = { path = "../cln-rpc" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }
@@ -75,4 +75,4 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-ark-lib = { path = "../ark-lib", features = [ "test-util" ] }
+ark-lib = { path = "../lib", features = [ "test-util" ] }

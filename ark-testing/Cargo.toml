@@ -7,7 +7,7 @@ edition = "2021"
 slow_test = []
 
 [dependencies]
-ark-lib = { path = "../ark-lib", features = ["test-util"] }
+ark-lib = { path = "../lib", features = ["test-util"] }
 bark-server = { path = "../server" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }

@@ -14,7 +14,7 @@ server = []
 
 [dependencies]
 # OWN
-ark-lib = { path = "../ark-lib" }
+ark-lib = { path = "../lib" }
 bitcoin.workspace = true
 
 # EXPORTED

@@ -8,7 +8,7 @@ name = "server_log"
 
 [dependencies]
 # OWN
-ark-lib = { path = "../ark-lib" }
+ark-lib = { path = "../lib" }
 bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false }
 
 log.workspace = true
