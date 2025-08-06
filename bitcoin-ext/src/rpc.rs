@@ -1,12 +1,11 @@
 use std::borrow::Borrow;
 
-use cbitcoin::address::NetworkUnchecked;
-use cbitcoin::hex::FromHex;
-use cbitcoin::{Address, Amount, Transaction};
+use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Auth, Client, Error, Result as RpcResult, RpcApi};
+use bitcoin::address::NetworkUnchecked;
+use bitcoin::hex::FromHex;
+use bitcoin::{Address, Amount, Transaction};
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
-
-use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Auth, Client, Error, Result as RpcResult, RpcApi};
 
 use crate::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
 

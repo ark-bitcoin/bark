@@ -8,12 +8,12 @@ use bdk_wallet::{SignOptions, TxBuilder, TxOrdering, Wallet};
 use bdk_wallet::error::CreateTxError;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{psbt, Amount, FeeRate, OutPoint, Transaction, TxOut, Txid, Wtxid};
-use cbitcoin::{BlockHash, Psbt, Witness};
+use bitcoin::{BlockHash, Psbt, Witness};
 use reqwest::{Body, Response};
 use serde::Deserialize;
 
 use crate::{fee, BlockHeight, P2TR_DUST};
-use crate::bitcoin::TransactionExt;
+use crate::TransactionExt;
 
 
 /// An extension trait for [TxBuilder].

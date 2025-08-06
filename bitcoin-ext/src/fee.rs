@@ -1,8 +1,6 @@
 
 use bitcoin::{ScriptBuf, TxOut, Weight};
-use cbitcoin::Amount;
-
-use crate::bitcoin::ScriptBufExt;
+use bitcoin::Amount;
 
 
 /// The size in bytes of a fee anchor created with P2A script.
@@ -32,7 +30,7 @@ pub fn fee_anchor() -> TxOut {
 
 #[cfg(test)]
 mod test {
-	use cbitcoin::{absolute::Height, psbt, transaction::Version, Transaction, TxIn, Witness};
+	use bitcoin::{absolute::Height, psbt, transaction::Version, Transaction, TxIn, Witness};
 
 use super::*;
 
@@ -58,7 +56,7 @@ use super::*;
 
 			unsigned_tx: Transaction {
 				version: Version::TWO,
-				lock_time: cbitcoin::absolute::LockTime::Blocks(Height::ZERO),
+				lock_time: bitcoin::absolute::LockTime::Blocks(Height::ZERO),
 				input: vec![TxIn::default()],
 				output: vec![],
 			},
