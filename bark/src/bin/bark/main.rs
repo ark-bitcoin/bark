@@ -507,7 +507,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::ArkInfo => {
 			if let Some(info) = wallet.ark_info() {
 				output_json(&bark_json::cli::ArkInfo {
-					asp_pubkey: info.asp_pubkey.to_string(),
+					asp_pubkey: info.server_pubkey.to_string(),
 					round_interval: info.round_interval,
 					nb_round_nonces: info.nb_round_nonces,
 					vtxo_expiry_delta: info.vtxo_expiry_delta,

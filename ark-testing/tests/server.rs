@@ -201,7 +201,7 @@ async fn restart_key_stability() {
 	let ctx = TestContext::new("server/restart_key_stability").await;
 	let srv = ctx.new_captaind("server", None).await;
 
-	let server_key1 = srv.ark_info().await.asp_pubkey;
+	let server_key1 = srv.ark_info().await.server_pubkey;
 	let addr1 = srv.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
 
 	// Fund the server's addr
@@ -218,7 +218,7 @@ async fn restart_key_stability() {
 	let srv = ctx.new_captaind_with_cfg("server", None, move |cfg| {
 		*cfg = new_cfg;
 	}).await;
-	let server_key2 = srv.ark_info().await.asp_pubkey;
+	let server_key2 = srv.ark_info().await.server_pubkey;
 	let addr2 = srv.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
 
 	assert_eq!(server_key1, server_key2);
@@ -521,7 +521,7 @@ async fn double_spend_oor() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let addr = ark::Address::new_testnet(srv.ark_info().await.asp_pubkey, *RANDOM_PK);
+	let addr = ark::Address::new_testnet(srv.ark_info().await.server_pubkey, *RANDOM_PK);
 	bark.send_oor(addr, sat(100_000)).await;
 
 	// then after it's done, fire the request again, which should fail.

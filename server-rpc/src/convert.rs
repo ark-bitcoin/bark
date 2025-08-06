@@ -102,7 +102,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 	fn from(v: ark::ArkInfo) -> Self {
 		protos::ArkInfo {
 			network: v.network.to_string(),
-			asp_pubkey: v.asp_pubkey.serialize().to_vec(),
+			asp_pubkey: v.server_pubkey.serialize().to_vec(),
 			round_interval_secs: v.round_interval.as_secs() as u32,
 			nb_round_nonces: v.nb_round_nonces as u32,
 			vtxo_exit_delta: v.vtxo_exit_delta as u32,
@@ -119,7 +119,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 	fn try_from(v: protos::ArkInfo) -> Result<Self, Self::Error> {
 		Ok(ark::ArkInfo {
 			network: v.network.parse().map_err(|_| "invalid network")?,
-			asp_pubkey: PublicKey::from_slice(&v.asp_pubkey).map_err(|_| "invalid asp pubkey")?,
+			server_pubkey: PublicKey::from_slice(&v.asp_pubkey).map_err(|_| "invalid asp pubkey")?,
 			round_interval: Duration::from_secs(v.round_interval_secs as u64),
 			nb_round_nonces: v.nb_round_nonces as usize,
 			vtxo_exit_delta: v.vtxo_exit_delta.try_into()

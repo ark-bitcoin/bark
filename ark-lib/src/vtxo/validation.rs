@@ -69,11 +69,11 @@ fn verify_transition(
 
 	let next_output = vtxo.genesis.get(genesis_idx + 1).map(|item| {
 		item.transition.input_txout(
-			next_amount, vtxo.asp_pubkey, vtxo.expiry_height, vtxo.exit_delta,
+			next_amount, vtxo.server_pubkey, vtxo.expiry_height, vtxo.exit_delta,
 		)
 	}).unwrap_or_else(|| {
 		// when we reach the end of the chain, we take the eventual output of the vtxo
-		vtxo.policy.txout(vtxo.amount, vtxo.asp_pubkey, vtxo.exit_delta)
+		vtxo.policy.txout(vtxo.amount, vtxo.server_pubkey, vtxo.exit_delta)
 	});
 
 	let prevout = OutPoint::new(prev_tx.compute_txid(), prev_vout as u32);
@@ -88,7 +88,7 @@ fn verify_transition(
 
 	let pubkey = {
 		let transition_taproot = item.transition.input_taproot(
-			vtxo.asp_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
+			vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
 		);
 		transition_taproot.output_key().to_x_only_public_key()
 	};
@@ -126,13 +126,13 @@ fn check_transitions_cosigned_then_arkoor<'a>(
 	Ok(())
 }
 
-/// The last Cosigned transition should have only two pubkey: user and asp.
+/// The last Cosigned transition should have only two pubkey: user and server.
 /// This holds for rounds and for board (where it's the only cosigned transition).
 #[inline]
 fn determine_cosign_pubkey<'a>(
 	transitions: impl Iterator<Item = &'a GenesisTransition> + DoubleEndedIterator,
 ) -> Result<PublicKey, VtxoValidationError> {
-	// The last Cosigned transition should have only two pubkey: user and asp.
+	// The last Cosigned transition should have only two pubkey: user and server.
 	// This holds for rounds and for board (where it's the only cosigned transition).
 	let last_cosign_pubkeys = transitions.rev().find_map(|t| match t {
 		GenesisTransition::Cosigned { ref pubkeys, .. } => Some(pubkeys),
@@ -157,7 +157,7 @@ pub fn validate(
 		i.other_outputs.iter().map(|o| o.value).sum()
 	}).sum();
 	let expected_anchor_txout = vtxo.genesis.get(0).unwrap().transition.input_txout(
-		onchain_amount, vtxo.asp_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
+		onchain_amount, vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
 	);
 	if *anchor_txout != expected_anchor_txout {
 		return Err(VtxoValidationError::IncorrectChainAnchor { expected: expected_anchor_txout });

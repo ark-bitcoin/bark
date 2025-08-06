@@ -64,7 +64,7 @@ fn finalize_forfeit_tx(
 		]);
 		let sec_nonce = ff.sec_nonces.get(conn_idx).expect("sec nonce index").to_sec_nonce();
 		let (part, sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.asp_pubkey()],
+			[vtxo.user_pubkey(), vtxo.server_pubkey()],
 			agg_nonce,
 			&server_key,
 			sec_nonce,
@@ -76,7 +76,7 @@ fn finalize_forfeit_tx(
 		// Validate our partial sig
 		debug_assert!({
 			let (key_agg, _) = musig::tweaked_key_agg(
-				[vtxo.user_pubkey(), vtxo.asp_pubkey()],
+				[vtxo.user_pubkey(), vtxo.server_pubkey()],
 				vtxo.output_taproot().tap_tweak().to_byte_array(),
 			);
 			let session = musig::Session::new(
@@ -90,7 +90,7 @@ fn finalize_forfeit_tx(
 				&key_agg,
 				&part,
 				ff.pub_nonces.get(conn_idx).expect("pub nonce index"),
-				musig::pubkey_to(vtxo.asp_pubkey()),
+				musig::pubkey_to(vtxo.server_pubkey()),
 			)
 		}, "invalid partial ff signature created");
 

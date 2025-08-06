@@ -66,7 +66,7 @@ fn build_arkoor_vtxos<T: Borrow<VtxoRequest>>(
 		Vtxo {
 			amount: output.borrow().amount,
 			expiry_height: input.expiry_height,
-			asp_pubkey: input.asp_pubkey,
+			server_pubkey: input.server_pubkey,
 			exit_delta: input.exit_delta,
 			anchor_point: input.anchor_point,
 			genesis: input.genesis.iter().cloned().chain([GenesisItem {
@@ -162,7 +162,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 		self.outputs.iter().map(|out| {
 			out.borrow().policy.txout(
 				out.borrow().amount,
-				self.input.asp_pubkey(),
+				self.input.server_pubkey(),
 				self.input.exit_delta(),
 			)
 		}).collect()
@@ -201,7 +201,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 		verify_partial_sig(
 			self.sighash(),
 			self.input.output_taproot().tap_tweak(),
-			(self.input.asp_pubkey(), &server_cosign.pub_nonce),
+			(self.input.server_pubkey(), &server_cosign.pub_nonce),
 			(self.input.user_pubkey(), &self.user_nonce),
 			&server_cosign.partial_signature,
 		)
@@ -239,7 +239,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 
 		let agg_nonce = musig::nonce_agg(&[&self.user_nonce, &cosign_resp.pub_nonce]);
 		let (_part_sig, final_sig) = musig::partial_sign(
-			[self.input.user_pubkey(), self.input.asp_pubkey()],
+			[self.input.user_pubkey(), self.input.server_pubkey()],
 			agg_nonce,
 			user_key,
 			user_sec_nonce,
@@ -253,7 +253,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 				sighash,
 				taptweak,
 				(self.input.user_pubkey(), &self.user_nonce),
-				(self.input.asp_pubkey(), &cosign_resp.pub_nonce),
+				(self.input.server_pubkey(), &cosign_resp.pub_nonce),
 				&_part_sig,
 			),
 			"invalid partial signature produced",

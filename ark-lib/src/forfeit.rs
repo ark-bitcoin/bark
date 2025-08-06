@@ -41,7 +41,7 @@ pub fn create_forfeit_tx(
 		output: vec![
 			TxOut {
 				value: vtxo.amount(),
-				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.asp_pubkey().into(), None),
+				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.server_pubkey().into(), None),
 			},
 			// We throw the connector dust value into the fee anchor
 			// because we can't have zero-value anchors and a non-zero fee.

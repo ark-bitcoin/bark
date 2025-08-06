@@ -24,18 +24,18 @@ use crate::vtxo::{self, GenesisItem, GenesisTransition};
 pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
 /// The expiry clause hidden in the node taproot as only script.
-pub fn expiry_clause(asp_pubkey: PublicKey, expiry_height: BlockHeight) -> ScriptBuf {
-	let pk = asp_pubkey.x_only_public_key().0;
+pub fn expiry_clause(server_pubkey: PublicKey, expiry_height: BlockHeight) -> ScriptBuf {
+	let pk = server_pubkey.x_only_public_key().0;
 	util::timelock_sign(expiry_height, pk)
 }
 
 pub fn cosign_taproot(
 	agg_pk: XOnlyPublicKey,
-	asp_pubkey: PublicKey,
+	server_pubkey: PublicKey,
 	expiry_height: BlockHeight,
 ) -> taproot::TaprootSpendInfo {
 	taproot::TaprootBuilder::new()
-		.add_leaf(0, expiry_clause(asp_pubkey, expiry_height)).unwrap()
+		.add_leaf(0, expiry_clause(server_pubkey, expiry_height)).unwrap()
 		.finalize(&util::SECP, agg_pk).unwrap()
 }
 
@@ -44,21 +44,21 @@ pub fn cosign_taproot(
 pub struct VtxoTreeSpec {
 	pub vtxos: Vec<SignedVtxoRequest>,
 	pub expiry_height: BlockHeight,
-	pub asp_pubkey: PublicKey,
+	pub server_pubkey: PublicKey,
 	pub exit_delta: u16,
-	pub asp_cosign_pk: PublicKey,
+	pub server_cosign_pk: PublicKey,
 }
 
 impl VtxoTreeSpec {
 	pub fn new(
 		vtxos: Vec<SignedVtxoRequest>,
-		asp_pubkey: PublicKey,
-		asp_cosign_pk: PublicKey,
+		server_pubkey: PublicKey,
+		server_cosign_pk: PublicKey,
 		expiry_height: BlockHeight,
 		exit_delta: u16,
 	) -> VtxoTreeSpec {
 		assert_ne!(vtxos.len(), 0);
-		VtxoTreeSpec { vtxos, asp_pubkey, asp_cosign_pk, expiry_height, exit_delta }
+		VtxoTreeSpec { vtxos, server_pubkey, server_cosign_pk, expiry_height, exit_delta }
 	}
 
 	pub fn nb_leaves(&self) -> usize {
@@ -87,14 +87,14 @@ impl VtxoTreeSpec {
 	}
 
 	pub fn cosign_taproot(&self, agg_pk: XOnlyPublicKey) -> taproot::TaprootSpendInfo {
-		cosign_taproot(agg_pk, self.asp_pubkey, self.expiry_height)
+		cosign_taproot(agg_pk, self.server_pubkey, self.expiry_height)
 	}
 
 	/// The cosign pubkey used on the vtxo output of the round tx.
 	pub fn round_tx_cosign_pubkey(&self) -> XOnlyPublicKey {
 		let keys = self.vtxos.iter()
 			.map(|v| v.cosign_pubkey)
-			.chain(Some(self.asp_cosign_pk));
+			.chain(Some(self.server_cosign_pk));
 		musig::combine_keys(keys)
 	}
 
@@ -135,13 +135,13 @@ impl VtxoTreeSpec {
 	fn leaf_tx(&self, vtxo: &VtxoRequest) -> Transaction {
 		let txout = TxOut {
 			value: vtxo.amount,
-			script_pubkey: vtxo.policy.script_pubkey(self.asp_pubkey, self.exit_delta),
+			script_pubkey: vtxo.policy.script_pubkey(self.server_pubkey, self.exit_delta),
 		};
 
 		vtxo::create_exit_tx(OutPoint::null(), txout, None)
 	}
 
-	/// Calculate all the aggregate cosign pubkeys by aggregating the leaf and asp pubkeys.
+	/// Calculate all the aggregate cosign pubkeys by aggregating the leaf and server pubkeys.
 	///
 	/// Pubkeys expected and returned ordered from leaves to root.
 	pub fn cosign_agg_pks(&self)
@@ -149,7 +149,7 @@ impl VtxoTreeSpec {
 	{
 		Tree::new(self.nb_leaves()).into_iter().map(|node| {
 			musig::combine_keys(
-				node.leaves().map(|i| self.vtxos[i].cosign_pubkey).chain([self.asp_cosign_pk])
+				node.leaves().map(|i| self.vtxos[i].cosign_pubkey).chain([self.server_cosign_pk])
 			)
 		})
 	}
@@ -200,23 +200,23 @@ impl VtxoTreeSpec {
 		txs
 	}
 
-	/// Calculate all the aggregate cosign nonces by aggregating the leaf and asp nonces.
+	/// Calculate all the aggregate cosign nonces by aggregating the leaf and server nonces.
 	///
 	/// Nonces expected and returned ordered from leaves to root.
 	pub fn calculate_cosign_agg_nonces(
 		&self,
 		leaf_cosign_nonces: &HashMap<PublicKey, Vec<PublicNonce>>,
-		asp_cosign_nonces: &[PublicNonce],
+		server_cosign_nonces: &[PublicNonce],
 	) -> Vec<AggregatedNonce> {
 		let tree = Tree::new(self.nb_leaves());
 
-		tree.iter().zip(asp_cosign_nonces).map(|(node, asp)| {
+		tree.iter().zip(server_cosign_nonces).map(|(node, srv)| {
 			let nonces = node.leaves().map(|i| self.vtxos[i].cosign_pubkey).map(|pk| {
 				leaf_cosign_nonces.get(&pk).expect("nonces are complete")
 					// note that we skip some nonces for some leaves that are at the edges
 					// and skip some levels
 					.get(node.level()).expect("sufficient nonces provided")
-			}).chain(Some(asp)).collect::<Vec<_>>();
+			}).chain(Some(srv)).collect::<Vec<_>>();
 			musig::nonce_agg(&nonces)
 		}).collect()
 	}
@@ -332,7 +332,7 @@ impl UnsignedVtxoTree {
 			};
 
 			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
-				.chain(Some(self.spec.asp_cosign_pk));
+				.chain(Some(self.spec.server_cosign_pk));
 			let sighash = self.sighashes[node.idx()];
 
 			let agg_pk = self.cosign_agg_pks[node.idx()];
@@ -367,7 +367,7 @@ impl UnsignedVtxoTree {
 
 		self.tree.iter().zip(cosign_sec_nonces.into_iter()).map(|(node, sec_nonce)| {
 			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
-				.chain([self.spec.asp_cosign_pk]);
+				.chain([self.spec.server_cosign_pk]);
 			let sighash = self.sighashes[node.idx()];
 
 			let agg_pk = self.cosign_agg_pks[node.idx()];
@@ -394,7 +394,7 @@ impl UnsignedVtxoTree {
 		pub_nonce: PublicNonce,
 	) -> Result<(), CosignSignatureError> {
 		let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
-			.chain(Some(self.spec.asp_cosign_pk));
+			.chain(Some(self.spec.server_cosign_pk));
 		let sighash = self.sighashes[node.idx()];
 
 		let taptweak = self.spec.cosign_taproot(self.cosign_agg_pks[node.idx()]).tap_tweak();
@@ -486,24 +486,24 @@ impl UnsignedVtxoTree {
 	///
 	/// Nonces expected ordered from leaves to root.
 	/// Leaf signatures expected over leaf branch ordered from leaf to root.
-	/// ASP signatures expected ordered from leaves to root.
+	/// server signatures expected ordered from leaves to root.
 	pub fn combine_partial_signatures(
 		&self,
 		cosign_agg_nonces: &[AggregatedNonce],
 		leaf_part_sigs: &HashMap<PublicKey, Vec<PartialSignature>>,
-		asp_sigs: Vec<PartialSignature>,
+		server_sigs: Vec<PartialSignature>,
 	) -> Result<Vec<schnorr::Signature>, CosignSignatureError> {
 		// to ease implementation, we're reconstructing the part sigs map with dequeues
 		let mut leaf_part_sigs = leaf_part_sigs.iter()
 			.map(|(pk, sigs)| (pk, sigs.iter().collect()))
 			.collect::<HashMap<_, VecDeque<_>>>();
 
-		if asp_sigs.len() != self.nb_nodes() {
-			return Err(CosignSignatureError::MissingSignature { pk: self.spec.asp_cosign_pk });
+		if server_sigs.len() != self.nb_nodes() {
+			return Err(CosignSignatureError::MissingSignature { pk: self.spec.server_cosign_pk });
 		}
 
 		let max_level = self.tree.root().level();
-		self.tree.iter().zip(asp_sigs.into_iter()).map(|(node, asp_sig)| {
+		self.tree.iter().zip(server_sigs.into_iter()).map(|(node, server_sig)| {
 			let mut cosign_pks = Vec::with_capacity(max_level + 1);
 			let mut part_sigs = Vec::with_capacity(max_level + 1);
 			for leaf in node.leaves() {
@@ -515,8 +515,8 @@ impl UnsignedVtxoTree {
 				cosign_pks.push(cosign_pk);
 				part_sigs.push(part_sig);
 			}
-			cosign_pks.push(self.spec.asp_cosign_pk);
-			part_sigs.push(&asp_sig);
+			cosign_pks.push(self.spec.server_cosign_pk);
+			part_sigs.push(&server_sig);
 
 			let agg_pk = self.cosign_agg_pks[node.idx()];
 			Ok(musig::combine_partial_signatures(
@@ -685,7 +685,7 @@ impl CachedSignedVtxoTree {
 			for node in tree.iter_branch(leaf_idx) {
 				let transition = GenesisTransition::Cosigned {
 					pubkeys: node.leaves().map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
-						.chain([self.spec.spec.asp_cosign_pk])
+						.chain([self.spec.spec.server_cosign_pk])
 						.collect(),
 					signature: self.spec.cosign_sigs.get(node.idx()).cloned()
 						.expect("enough sigs for all nodes"),
@@ -713,7 +713,7 @@ impl CachedSignedVtxoTree {
 		Some(Vtxo {
 			amount: req.vtxo.amount,
 			expiry_height: self.spec.spec.expiry_height,
-			asp_pubkey: self.spec.spec.asp_pubkey,
+			server_pubkey: self.spec.spec.server_pubkey,
 			exit_delta: self.spec.spec.exit_delta,
 			anchor_point: self.spec.utxo,
 			genesis: genesis,
@@ -740,9 +740,9 @@ impl ProtocolEncoding for VtxoTreeSpec {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		w.emit_u8(VTXO_TREE_SPEC_VERSION)?;
 		w.emit_u32(self.expiry_height)?;
-		self.asp_pubkey.encode(w)?;
+		self.server_pubkey.encode(w)?;
 		w.emit_u16(self.exit_delta)?;
-		self.asp_cosign_pk.encode(w)?;
+		self.server_cosign_pk.encode(w)?;
 
 		w.emit_u32(self.vtxos.len() as u32)?;
 		for vtxo in &self.vtxos {
@@ -761,9 +761,9 @@ impl ProtocolEncoding for VtxoTreeSpec {
 			)));
 		}
 		let expiry_height = r.read_u32()?;
-		let asp_pubkey = PublicKey::decode(r)?;
+		let server_pubkey = PublicKey::decode(r)?;
 		let exit_delta = r.read_u16()?;
-		let asp_cosign_pk = PublicKey::decode(r)?;
+		let server_cosign_pk = PublicKey::decode(r)?;
 
 		let nb_vtxos = r.read_u32()?;
 		let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
@@ -774,7 +774,7 @@ impl ProtocolEncoding for VtxoTreeSpec {
 			vtxos.push(SignedVtxoRequest { vtxo: VtxoRequest { policy: output, amount }, cosign_pubkey: cosign_pk });
 		}
 
-		Ok(VtxoTreeSpec { vtxos, expiry_height, asp_pubkey, exit_delta, asp_cosign_pk })
+		Ok(VtxoTreeSpec { vtxos, expiry_height, server_pubkey, exit_delta, server_cosign_pk })
 	}
 }
 
@@ -855,14 +855,14 @@ mod test {
 		let secp = secp256k1::Secp256k1::new();
 		let mut rand = rand::rngs::StdRng::seed_from_u64(42);
 		let random_sig = {
-			let key = Keypair::new(&secp, &mut rand); // asp
+			let key = Keypair::new(&secp, &mut rand);
 			let sha = sha256::Hash::from_str("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a").unwrap();
 			let msg = secp256k1::Message::from_digest(sha.to_byte_array());
 			secp.sign_schnorr(&msg, &key)
 		};
 
-		let asp_key = Keypair::new(&secp, &mut rand); // asp
-		let asp_cosign_key = Keypair::new(&secp, &mut rand); // asp
+		let server_key = Keypair::new(&secp, &mut rand);
+		let server_cosign_key = Keypair::new(&secp, &mut rand);
 
 		struct Req {
 			key: Keypair,
@@ -891,8 +891,8 @@ mod test {
 
 		let spec = VtxoTreeSpec::new(
 			reqs.iter().map(|r| r.to_vtxo()).collect(),
-			asp_key.public_key(),
-			asp_cosign_key.public_key(),
+			server_key.public_key(),
+			server_cosign_key.public_key(),
 			101_000,
 			2016,
 		);

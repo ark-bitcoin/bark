@@ -117,9 +117,9 @@ impl BoardSweepInput {
 	fn psbt(&self) -> psbt::Input {
 		let spec = &self.vtxo_spec;
 		let combined_pubkey = musig::combine_keys([
-			self.vtxo_spec.policy.user_pubkey(), spec.asp_pubkey,
+			self.vtxo_spec.policy.user_pubkey(), spec.server_pubkey,
 		]);
-		let taproot = cosign_taproot(combined_pubkey, spec.asp_pubkey, spec.expiry_height);
+		let taproot = cosign_taproot(combined_pubkey, spec.server_pubkey, spec.expiry_height);
 		let utxo = TxOut {
 			value: spec.amount,
 			script_pubkey: taproot.script_pubkey(),
@@ -263,7 +263,7 @@ impl<'a> SweepBuilder<'a> {
 		trace!("Adding connector sweep input {}", point);
 		self.sweeps.push(RoundSweepInput {
 			point, utxo, round,
-			internal_key: round.round.signed_tree.spec.asp_pubkey.x_only_public_key().0,
+			internal_key: round.round.signed_tree.spec.server_pubkey.x_only_public_key().0,
 			sweep_meta: SweepMeta::Connector(round.round.connector_key),
 			weight: ark::connectors::INPUT_WEIGHT,
 		});

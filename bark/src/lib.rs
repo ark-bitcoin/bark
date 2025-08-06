@@ -248,9 +248,9 @@ impl Wallet {
 		let pubkey = self.derive_store_next_keypair()?.public_key();
 
 		if network == bitcoin::Network::Bitcoin {
-			Ok(ark::Address::new(ark.info.asp_pubkey, pubkey))
+			Ok(ark::Address::new(ark.info.server_pubkey, pubkey))
 		} else {
-			Ok(ark::Address::new_testnet(ark.info.asp_pubkey, pubkey))
+			Ok(ark::Address::new_testnet(ark.info.server_pubkey, pubkey))
 		}
 	}
 
@@ -261,9 +261,9 @@ impl Wallet {
 		let pubkey = self.peak_keypair(index)?.public_key();
 
 		if network == bitcoin::Network::Bitcoin {
-			Ok(ark::Address::new(ark.info.asp_pubkey, pubkey))
+			Ok(ark::Address::new(ark.info.server_pubkey, pubkey))
 		} else {
-			Ok(ark::Address::new_testnet(ark.info.asp_pubkey, pubkey))
+			Ok(ark::Address::new_testnet(ark.info.server_pubkey, pubkey))
 		}
 	}
 
@@ -575,7 +575,7 @@ impl Wallet {
 		let builder = BoardBuilder::new(
 			user_keypair.public_key(),
 			expiry_height,
-			srv.info.asp_pubkey,
+			srv.info.server_pubkey,
 			srv.info.vtxo_exit_delta,
 		);
 
@@ -1073,7 +1073,7 @@ impl Wallet {
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let mut srv = self.require_server()?;
 
-		if !destination.ark_id().is_for_server(srv.info.asp_pubkey) {
+		if !destination.ark_id().is_for_server(srv.info.server_pubkey) {
 			bail!("Ark address is for different server");
 		}
 
@@ -1875,7 +1875,7 @@ impl Wallet {
 
 				let (nonce, sig) = musig::deterministic_partial_sign(
 					&vtxo_keypair,
-					[srv.info.asp_pubkey],
+					[srv.info.server_pubkey],
 					&[srv_nonce],
 					sighash.to_byte_array(),
 					Some(vtxo.output_taproot().tap_tweak().to_byte_array()),

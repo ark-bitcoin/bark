@@ -100,7 +100,7 @@ pub mod state {
 pub struct BoardBuilder<S: BuilderState> {
 	pub user_pubkey: PublicKey,
 	pub expiry_height: BlockHeight,
-	pub asp_pubkey: PublicKey,
+	pub server_pubkey: PublicKey,
 	pub exit_delta: u16,
 
 	amount: Option<Amount>,
@@ -114,8 +114,8 @@ pub struct BoardBuilder<S: BuilderState> {
 impl<S: BuilderState> BoardBuilder<S> {
 	/// The scriptPubkey to send the board funds to.
 	pub fn funding_script_pubkey(&self) -> ScriptBuf {
-		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
-		cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height).script_pubkey()
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
+		cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height).script_pubkey()
 	}
 }
 
@@ -126,11 +126,11 @@ impl BoardBuilder<state::Preparing> {
 	pub fn new(
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
-		asp_pubkey: PublicKey,
+		server_pubkey: PublicKey,
 		exit_delta: u16,
 	) -> BoardBuilder<state::Preparing> {
 		BoardBuilder {
-			user_pubkey, expiry_height, asp_pubkey, exit_delta,
+			user_pubkey, expiry_height, server_pubkey, exit_delta,
 			amount: None,
 			utxo: None,
 			user_pub_nonce: None,
@@ -151,7 +151,7 @@ impl BoardBuilder<state::Preparing> {
 			// copy the rest
 			user_pubkey: self.user_pubkey,
 			expiry_height: self.expiry_height,
-			asp_pubkey: self.asp_pubkey,
+			server_pubkey: self.server_pubkey,
 			exit_delta: self.exit_delta,
 			user_pub_nonce: self.user_pub_nonce,
 			user_sec_nonce: self.user_sec_nonce,
@@ -163,14 +163,14 @@ impl BoardBuilder<state::Preparing> {
 impl BoardBuilder<state::CanGenerateNonces> {
 	/// Generate user nonces.
 	pub fn generate_user_nonces(self) -> BoardBuilder<state::CanBuild> {
-		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
-		let funding_taproot = cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height);
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
+		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
 			script_pubkey: funding_taproot.script_pubkey(),
 			value: self.amount.expect("state invariant"),
 		};
 
-		let exit_taproot = exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta);
+		let exit_taproot = exit_taproot(self.user_pubkey, self.server_pubkey, self.exit_delta);
 		let exit_txout = TxOut {
 			value: self.amount.expect("state invariant"),
 			script_pubkey: exit_taproot.script_pubkey(),
@@ -179,7 +179,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		let utxo = self.utxo.expect("state invariant");
 		let (reveal_sighash, _tx) = exit_tx_sighash(&funding_txout, utxo, exit_txout);
 		let (agg, _) = musig::tweaked_key_agg(
-			[self.user_pubkey, self.asp_pubkey],
+			[self.user_pubkey, self.server_pubkey],
 			funding_taproot.tap_tweak().to_byte_array(),
 		);
 		//TODO(stevenroose) consider trying to move this to musig module
@@ -198,7 +198,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			amount: self.amount,
 			user_pubkey: self.user_pubkey,
 			expiry_height: self.expiry_height,
-			asp_pubkey: self.asp_pubkey,
+			server_pubkey: self.server_pubkey,
 			exit_delta: self.exit_delta,
 			utxo: self.utxo,
 			_state: PhantomData,
@@ -214,14 +214,14 @@ impl<S: state::CanSign> BoardBuilder<S> {
 	/// The signature hash to sign the exit tx and the taproot info
 	/// (of the funding tx) used to calcualte it and the exit tx's txid.
 	fn exit_tx_sighash_data(&self) -> (TapSighash, TaprootSpendInfo, Txid) {
-		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.asp_pubkey]);
-		let funding_taproot = cosign_taproot(combined_pubkey, self.asp_pubkey, self.expiry_height);
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
+		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
 			value: self.amount.expect("state invariant"),
 			script_pubkey: funding_taproot.script_pubkey(),
 		};
 
-		let exit_taproot = exit_taproot(self.user_pubkey, self.asp_pubkey, self.exit_delta);
+		let exit_taproot = exit_taproot(self.user_pubkey, self.server_pubkey, self.exit_delta);
 		let exit_txout = TxOut {
 			value: self.amount.expect("state invariant"),
 			script_pubkey: exit_taproot.script_pubkey(),
@@ -239,14 +239,14 @@ impl BoardBuilder<state::ServerCanCosign> {
 	pub fn new_for_cosign(
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
-		asp_pubkey: PublicKey,
+		server_pubkey: PublicKey,
 		exit_delta: u16,
 		amount: Amount,
 		utxo: OutPoint,
 		user_pub_nonce: musig::PublicNonce,
 	) -> BoardBuilder<state::ServerCanCosign> {
 		BoardBuilder {
-			user_pubkey, expiry_height, asp_pubkey, exit_delta,
+			user_pubkey, expiry_height, server_pubkey, exit_delta,
 			amount: Some(amount),
 			utxo: Some(utxo),
 			user_pub_nonce: Some(user_pub_nonce),
@@ -278,7 +278,7 @@ impl BoardBuilder<state::CanBuild> {
 		verify_partial_sig(
 			sighash,
 			taproot.tap_tweak(),
-			(self.asp_pubkey, &server_cosign.pub_nonce),
+			(self.server_pubkey, &server_cosign.pub_nonce),
 			(self.user_pubkey, self.user_pub_nonce()),
 			&server_cosign.partial_signature
 		)
@@ -301,7 +301,7 @@ impl BoardBuilder<state::CanBuild> {
 
 		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &server_cosign.pub_nonce]);
 		let (user_sig, final_sig) = musig::partial_sign(
-			[self.user_pubkey, self.asp_pubkey],
+			[self.user_pubkey, self.server_pubkey],
 			agg_nonce,
 			user_key,
 			self.user_sec_nonce.take().expect("state invariant"),
@@ -314,7 +314,7 @@ impl BoardBuilder<state::CanBuild> {
 				sighash,
 				taproot.tap_tweak(),
 				(self.user_pubkey, self.user_pub_nonce()),
-				(self.asp_pubkey, &server_cosign.pub_nonce),
+				(self.server_pubkey, &server_cosign.pub_nonce),
 				&user_sig,
 			),
 			"invalid board partial exit tx signature produced",
@@ -331,12 +331,12 @@ impl BoardBuilder<state::CanBuild> {
 		Ok(Vtxo {
 			amount: self.amount.expect("state invariant"),
 			expiry_height: self.expiry_height,
-			asp_pubkey: self.asp_pubkey,
+			server_pubkey: self.server_pubkey,
 			exit_delta: self.exit_delta,
 			anchor_point: self.utxo.expect("state invariant"),
 			genesis: vec![GenesisItem {
 				transition: GenesisTransition::Cosigned {
-					pubkeys: vec![self.user_pubkey, self.asp_pubkey],
+					pubkeys: vec![self.user_pubkey, self.server_pubkey],
 					signature: final_sig,
 				},
 				output_idx: 0,
@@ -367,16 +367,16 @@ mod test {
 		//! inside the code are ran at least once.
 
 		let user_key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
-		let asp_key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+		let server_key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 		let utxo = "0000000000000000000000000000000000000000000000000000000000000001:1".parse().unwrap();
 
 		// user
 		let amount = Amount::from_btc(1.5).unwrap();
 		let expiry = 100_000;
-		let asp_pubkey = asp_key.public_key();
+		let server_pubkey = server_key.public_key();
 		let exit_delta = 24;
 		let builder = BoardBuilder::new(
-			user_key.public_key(), expiry, asp_pubkey, exit_delta,
+			user_key.public_key(), expiry, server_pubkey, exit_delta,
 		)
 			.set_funding_details(amount, utxo)
 			.generate_user_nonces();
@@ -384,9 +384,9 @@ mod test {
 		// server
 		let cosign = {
 			let server_builder = BoardBuilder::new_for_cosign(
-				builder.user_pubkey, expiry, asp_pubkey, exit_delta, amount, utxo, *builder.user_pub_nonce(),
+				builder.user_pubkey, expiry, server_pubkey, exit_delta, amount, utxo, *builder.user_pub_nonce(),
 			);
-			server_builder.server_cosign(&asp_key)
+			server_builder.server_cosign(&server_key)
 		};
 
 		// user

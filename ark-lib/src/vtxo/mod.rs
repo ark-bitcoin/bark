@@ -196,10 +196,10 @@ fn exit_clause(
 /// Returns taproot spend info for a regular vtxo exit output.
 pub fn exit_taproot(
 	user_pubkey: PublicKey,
-	asp_pubkey: PublicKey,
+	server_pubkey: PublicKey,
 	exit_delta: u16,
 ) -> taproot::TaprootSpendInfo {
-	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
+	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
 	taproot::TaprootBuilder::new()
 		.add_leaf(0, exit_clause(user_pubkey, exit_delta)).unwrap()
 		.finalize(&util::SECP, combined_pk).unwrap()
@@ -416,18 +416,18 @@ impl VtxoPolicy {
 
 	pub(crate) fn taproot(
 		&self,
-		asp_pubkey: PublicKey,
+		server_pubkey: PublicKey,
 		exit_delta: u16,
 	) -> taproot::TaprootSpendInfo {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
-				exit_taproot(*user_pubkey, asp_pubkey, exit_delta)
+				exit_taproot(*user_pubkey, server_pubkey, exit_delta)
 			},
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
-				server_htlc_send_taproot(*payment_hash, asp_pubkey, *user_pubkey, exit_delta, *htlc_expiry)
+				server_htlc_send_taproot(*payment_hash, server_pubkey, *user_pubkey, exit_delta, *htlc_expiry)
 			},
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
-				server_htlc_receive_taproot(*payment_hash, asp_pubkey, *user_pubkey, exit_delta, *htlc_expiry)
+				server_htlc_receive_taproot(*payment_hash, server_pubkey, *user_pubkey, exit_delta, *htlc_expiry)
 			},
 		}
 	}
@@ -452,14 +452,14 @@ impl VtxoPolicy {
 
 	}
 
-	pub(crate) fn script_pubkey(&self, asp_pubkey: PublicKey, exit_delta: u16) -> ScriptBuf {
-		self.taproot(asp_pubkey, exit_delta).script_pubkey()
+	pub(crate) fn script_pubkey(&self, server_pubkey: PublicKey, exit_delta: u16) -> ScriptBuf {
+		self.taproot(server_pubkey, exit_delta).script_pubkey()
 	}
 
-	pub(crate) fn txout(&self, amount: Amount, asp_pubkey: PublicKey, exit_delta: u16) -> TxOut {
+	pub(crate) fn txout(&self, amount: Amount, server_pubkey: PublicKey, exit_delta: u16) -> TxOut {
 		TxOut {
 			value: amount,
-			script_pubkey: self.script_pubkey(asp_pubkey, exit_delta),
+			script_pubkey: self.script_pubkey(server_pubkey, exit_delta),
 		}
 	}
 }
@@ -492,16 +492,16 @@ impl GenesisTransition {
 	/// Taproot that this transition is satisfying.
 	fn input_taproot(
 		&self,
-		asp_pubkey: PublicKey,
+		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		exit_delta: u16,
 	) -> taproot::TaprootSpendInfo {
 		match self {
 			Self::Cosigned { pubkeys, .. } => {
 				let agg_pk = musig::combine_keys(pubkeys.iter().copied());
-				cosign_taproot(agg_pk, asp_pubkey, expiry_height)
+				cosign_taproot(agg_pk, server_pubkey, expiry_height)
 			},
-			Self::Arkoor { policy, .. } => policy.taproot(asp_pubkey, exit_delta),
+			Self::Arkoor { policy, .. } => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 
@@ -509,11 +509,11 @@ impl GenesisTransition {
 	fn input_txout(
 		&self,
 		amount: Amount,
-		asp_pubkey: PublicKey,
+		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		exit_delta: u16,
 	) -> TxOut {
-		let taproot = self.input_taproot(asp_pubkey, expiry_height, exit_delta);
+		let taproot = self.input_taproot(server_pubkey, expiry_height, exit_delta);
 		TxOut {
 			value: amount,
 			script_pubkey: taproot.script_pubkey(),
@@ -641,7 +641,7 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 			self.exit = self.exit || item.transition.has_exit();
 			item.transition.input_txout(
 				next_amount,
-				self.vtxo.asp_pubkey,
+				self.vtxo.server_pubkey,
 				self.vtxo.expiry_height,
 				self.vtxo.exit_delta,
 			)
@@ -649,7 +649,7 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 			// when we reach the end of the chain, we take the eventual output of the vtxo
 			self.done = true;
 			self.exit = true;
-			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.asp_pubkey, self.vtxo.exit_delta)
+			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.server_pubkey, self.vtxo.exit_delta)
 		};
 
 		let tx = item.tx(self.prev, next_output);
@@ -675,24 +675,24 @@ pub struct VtxoSpec {
 	pub policy: VtxoPolicy,
 	pub amount: Amount,
 	pub expiry_height: BlockHeight,
-	pub asp_pubkey: PublicKey,
+	pub server_pubkey: PublicKey,
 	pub exit_delta: u16,
 }
 
 impl VtxoSpec {
 	/// The taproot spend info for the output of this [Vtxo].
 	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
-		self.policy.taproot(self.asp_pubkey, self.exit_delta)
+		self.policy.taproot(self.server_pubkey, self.exit_delta)
 	}
 
 	/// The scriptPubkey of the output of this [Vtxo].
 	pub fn output_script_pubkey(&self) -> ScriptBuf {
-		self.policy.script_pubkey(self.asp_pubkey, self.exit_delta)
+		self.policy.script_pubkey(self.server_pubkey, self.exit_delta)
 	}
 
 	/// The transaction output (eventual UTXO) of this [Vtxo].
 	pub fn txout(&self) -> TxOut {
-		self.policy.txout(self.amount, self.asp_pubkey, self.exit_delta)
+		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta)
 	}
 }
 
@@ -715,7 +715,7 @@ pub struct Vtxo {
 	pub(crate) amount: Amount,
 	pub(crate) expiry_height: BlockHeight,
 
-	pub(crate) asp_pubkey: PublicKey,
+	pub(crate) server_pubkey: PublicKey,
 	pub(crate) exit_delta: u16,
 
 	pub(crate) anchor_point: OutPoint,
@@ -744,7 +744,7 @@ impl Vtxo {
 			policy: self.policy.clone(),
 			amount: self.amount,
 			expiry_height: self.expiry_height,
-			asp_pubkey: self.asp_pubkey,
+			server_pubkey: self.server_pubkey,
 			exit_delta: self.exit_delta,
 		}
 	}
@@ -784,8 +784,8 @@ impl Vtxo {
 	}
 
 	/// The server pubkey used in arkoor transitions.
-	pub fn asp_pubkey(&self) -> PublicKey {
-		self.asp_pubkey
+	pub fn server_pubkey(&self) -> PublicKey {
+		self.server_pubkey
 	}
 
 	/// The relative timelock block delta used for exits.
@@ -848,17 +848,17 @@ impl Vtxo {
 
 	/// The taproot spend info for the output of this [Vtxo].
 	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
-		self.policy.taproot(self.asp_pubkey, self.exit_delta)
+		self.policy.taproot(self.server_pubkey, self.exit_delta)
 	}
 
 	/// The scriptPubkey of the output of this [Vtxo].
 	pub fn output_script_pubkey(&self) -> ScriptBuf {
-		self.policy.script_pubkey(self.asp_pubkey, self.exit_delta)
+		self.policy.script_pubkey(self.server_pubkey, self.exit_delta)
 	}
 
 	/// The transaction output (eventual UTXO) of this [Vtxo].
 	pub fn txout(&self) -> TxOut {
-		self.policy.txout(self.amount, self.asp_pubkey, self.exit_delta)
+		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta)
 	}
 
 	/// Whether this VTXO contains our-of-round parts. This is true for both
@@ -1034,7 +1034,7 @@ impl ProtocolEncoding for Vtxo {
 		w.emit_u16(VTXO_ENCODING_VERSION)?;
 		w.emit_u64(self.amount.to_sat())?;
 		w.emit_u32(self.expiry_height)?;
-		self.asp_pubkey.encode(w)?;
+		self.server_pubkey.encode(w)?;
 		w.emit_u16(self.exit_delta)?;
 		self.anchor_point.encode(w)?;
 
@@ -1064,7 +1064,7 @@ impl ProtocolEncoding for Vtxo {
 
 		let amount = Amount::from_sat(r.read_u64()?);
 		let expiry_height = r.read_u32()?;
-		let asp_pubkey = PublicKey::decode(r)?;
+		let server_pubkey = PublicKey::decode(r)?;
 		let exit_delta = r.read_u16()?;
 		let anchor_point = OutPoint::decode(r)?;
 
@@ -1087,7 +1087,7 @@ impl ProtocolEncoding for Vtxo {
 		let point = OutPoint::decode(r)?;
 
 		Ok(Self {
-			amount, expiry_height, asp_pubkey, exit_delta, anchor_point, genesis, policy: output, point,
+			amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis, policy: output, point,
 		})
 	}
 }
@@ -1145,13 +1145,13 @@ pub mod test {
 	fn generate_vtxo_vectors() -> VtxoTestVectors {
 		let expiry_height = 101_010;
 		let exit_delta = 2016;
-		let asp_key = Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap();
+		let server_pubkey = Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap();
 		let board_user_key = Keypair::from_str("fab9e598081a3e74b2233d470c4ad87bcc285b6912ed929568e62ac0e9409879").unwrap();
 		let amount = Amount::from_sat(10_000);
 		let builder = BoardBuilder::new(
 			board_user_key.public_key(),
 			expiry_height,
-			asp_key.public_key(),
+			server_pubkey.public_key(),
 			exit_delta,
 		);
 		let anchor_tx = Transaction {
@@ -1177,12 +1177,12 @@ pub mod test {
 			BoardBuilder::new_for_cosign(
 				builder.user_pubkey,
 				builder.expiry_height,
-				builder.asp_pubkey,
+				builder.server_pubkey,
 				builder.exit_delta,
 				amount,
 				anchor_point,
 				*builder.user_pub_nonce(),
-			).server_cosign(&asp_key)
+			).server_cosign(&server_pubkey)
 		};
 
 		assert!(builder.verify_cosign_response(&board_cosign));
@@ -1209,7 +1209,7 @@ pub mod test {
 		let outputs = [&arkoor1out1, &arkoor1out2];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&board_user_key);
 		let builder = ArkoorBuilder::new(&board_vtxo, &pub_nonce, &outputs).unwrap();
-		let cosign = builder.server_cosign(&asp_key);
+		let cosign = builder.server_cosign(&server_pubkey);
 		assert!(builder.verify_cosign_response(&cosign));
 		let [arkoor_htlc_out_vtxo, change] = builder.build_vtxos(
 			sec_nonce, &board_user_key, &cosign,
@@ -1232,7 +1232,7 @@ pub mod test {
 		let outputs = [&arkoor2out1, &arkoor2out2];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&arkoor_htlc_out_user_key);
 		let builder = ArkoorBuilder::new(&arkoor_htlc_out_vtxo, &pub_nonce, &outputs).unwrap();
-		let arkoor2_cosign = builder.server_cosign(&asp_key);
+		let arkoor2_cosign = builder.server_cosign(&server_pubkey);
 		assert!(builder.verify_cosign_response(&arkoor2_cosign));
 		let [arkoor2_vtxo, change] = builder.build_vtxos(
 			sec_nonce, &arkoor_htlc_out_user_key, &arkoor2_cosign,
@@ -1295,11 +1295,11 @@ pub mod test {
 			other_nonces.push(iter::repeat_with(|| musig::nonce_pair(&cosign_key)).take(5).collect::<Vec<_>>());
 		}
 
-		let asp_cosign_key = Keypair::from_str("4371a4a7989b89ebe1b2582db4cd658cb95070977e6f10601ddc1e9b53edee79").unwrap();
+		let server_cosign_key = Keypair::from_str("4371a4a7989b89ebe1b2582db4cd658cb95070977e6f10601ddc1e9b53edee79").unwrap();
 		let spec = VtxoTreeSpec::new(
 			[&round1_req, &round2_req].into_iter().chain(other_reqs.iter()).cloned().collect(),
-			asp_key.public_key(),
-			asp_cosign_key.public_key(),
+			server_pubkey.public_key(),
+			server_cosign_key.public_key(),
 			expiry_height,
 			exit_delta,
 		);
@@ -1327,10 +1327,10 @@ pub mod test {
 			}
 			map
 		};
-		let (asp_cosign_sec_nonces, asp_cosign_pub_nonces) = iter::repeat_with(|| {
-			musig::nonce_pair(&asp_cosign_key)
+		let (server_cosign_sec_nonces, server_cosign_pub_nonces) = iter::repeat_with(|| {
+			musig::nonce_pair(&server_cosign_key)
 		}).take(spec.nb_nodes()).unzip::<_, _, Vec<_>, Vec<_>>();
-		let cosign_agg_nonces = spec.calculate_cosign_agg_nonces(&all_nonces, &asp_cosign_pub_nonces);
+		let cosign_agg_nonces = spec.calculate_cosign_agg_nonces(&all_nonces, &server_cosign_pub_nonces);
 		let root_point = OutPoint::new(round_tx.compute_txid(), 0);
 		let tree = spec.into_unsigned_tree(root_point);
 		let part_sigs = {
@@ -1355,10 +1355,10 @@ pub mod test {
 			}
 			map
 		};
-		let asp_cosign_sigs = tree.cosign_tree(
-			&cosign_agg_nonces, &asp_cosign_key, asp_cosign_sec_nonces,
+		let server_cosign_sigs = tree.cosign_tree(
+			&cosign_agg_nonces, &server_cosign_key, server_cosign_sec_nonces,
 		);
-		let cosign_sigs = tree.combine_partial_signatures(&cosign_agg_nonces, &part_sigs, asp_cosign_sigs).unwrap();
+		let cosign_sigs = tree.combine_partial_signatures(&cosign_agg_nonces, &part_sigs, server_cosign_sigs).unwrap();
 		tree.verify_cosign_sigs(&cosign_sigs).unwrap();
 		let signed = tree.into_signed_tree(cosign_sigs).into_cached_tree();
 		// we don't need forfeits
@@ -1380,7 +1380,7 @@ pub mod test {
 		let outputs = [&arkoor3out];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&round2_user_key);
 		let builder = ArkoorBuilder::new(&round2_vtxo, &pub_nonce, &outputs).unwrap();
-		let arkoor3_cosign = builder.server_cosign(&asp_key);
+		let arkoor3_cosign = builder.server_cosign(&server_pubkey);
 		assert!(builder.verify_cosign_response(&arkoor3_cosign));
 		let [arkoor3_vtxo] = builder.build_vtxos(
 			sec_nonce, &round2_user_key, &arkoor3_cosign,

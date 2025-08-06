@@ -41,7 +41,7 @@ impl From<Vtxo> for VtxoInfo {
 			policy_type: v.policy().policy_type(),
 			utxo: v.point(),
 			user_pubkey: v.user_pubkey(),
-			asp_pubkey: v.asp_pubkey(),
+			asp_pubkey: v.server_pubkey(),
 			expiry_height: v.expiry_height(),
 			exit_delta: v.exit_delta(),
 		}

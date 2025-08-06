@@ -96,21 +96,21 @@ impl PaymentHash {
 /// or give Alice her money back.
 pub fn server_htlc_send_taproot(
 	payment_hash: PaymentHash,
-	asp_pubkey: PublicKey,
+	server_pubkey: PublicKey,
 	user_pubkey: PublicKey,
 	exit_delta: u16,
 	htlc_expiry: u32,
 ) -> TaprootSpendInfo {
-	let asp_branch = util::hash_delay_sign(
-		payment_hash.to_sha256_hash(), exit_delta, asp_pubkey.x_only_public_key().0,
+	let server_branch = util::hash_delay_sign(
+		payment_hash.to_sha256_hash(), exit_delta, server_pubkey.x_only_public_key().0,
 	);
 	let user_branch = util::delay_timelock_sign(
 		2 * exit_delta, htlc_expiry, user_pubkey.x_only_public_key().0,
 	);
 
-	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
+	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
 	bitcoin::taproot::TaprootBuilder::new()
-		.add_leaf(1, asp_branch).unwrap()
+		.add_leaf(1, server_branch).unwrap()
 		.add_leaf(1, user_branch).unwrap()
 		.finalize(&SECP, combined_pk).unwrap()
 }
@@ -134,22 +134,22 @@ pub fn server_htlc_send_taproot(
 /// refused to collaborate using the 1rst path.
 pub fn server_htlc_receive_taproot(
 	payment_hash: PaymentHash,
-	asp_pubkey: PublicKey,
+	server_pubkey: PublicKey,
 	user_pubkey: PublicKey,
 	exit_delta: u16,
 	htlc_expiry: u32,
 ) -> TaprootSpendInfo {
-	let asp_branch =
-		util::delay_timelock_sign(exit_delta, htlc_expiry, asp_pubkey.x_only_public_key().0);
+	let server_branch =
+		util::delay_timelock_sign(exit_delta, htlc_expiry, server_pubkey.x_only_public_key().0);
 	let user_branch = util::hash_delay_sign(
 		payment_hash.to_sha256_hash(),
 		2 * exit_delta,
 		user_pubkey.x_only_public_key().0,
 	);
 
-	let combined_pk = musig::combine_keys([user_pubkey, asp_pubkey]);
+	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
 	bitcoin::taproot::TaprootBuilder::new()
-		.add_leaf(1, asp_branch).unwrap()
+		.add_leaf(1, server_branch).unwrap()
 		.add_leaf(1, user_branch).unwrap()
 		.finalize(&SECP, combined_pk).unwrap()
 }

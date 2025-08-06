@@ -724,7 +724,7 @@ impl Server {
 
 			//TODO(stevenroose) need to check that the input vtxos are actually marked
 			// as spent for this specific payment
-			if vtxo.asp_pubkey() != self.server_key.public_key() {
+			if vtxo.server_pubkey() != self.server_key.public_key() {
 				return badarg!("invalid server pubkey used");
 			}
 
