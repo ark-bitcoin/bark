@@ -60,6 +60,7 @@ tonic = { workspace = true, features = ["tls-native-roots"] }
 tower.workspace = true
 http.workspace = true
 http-body.workspace = true
+parking_lot.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tokio-stream.workspace = true
