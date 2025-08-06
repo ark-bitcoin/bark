@@ -363,7 +363,7 @@ impl Server {
 				// wait until it's actually broadcast
 				tokio::time::timeout(Duration::from_millis(5_000), async {
 					loop {
-						if tx.status().await.seen() {
+						if tx.status().seen() {
 							break;
 						}
 						tokio::time::sleep(Duration::from_millis(500)).await;

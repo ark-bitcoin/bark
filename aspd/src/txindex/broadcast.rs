@@ -107,7 +107,7 @@ impl TxNursery {
 			let txid = pkg[0];
 			match self.txindex.get(txid).await {
 				Ok(Some(tx)) => {
-					if !tx.status().await.confirmed() {
+					if !tx.status().confirmed() {
 						slog!(BroadcastingTx, txid: tx.txid, raw_tx: serialize(&tx.tx));
 						self.broadcast_tx(&tx).await;
 					}
@@ -127,7 +127,7 @@ impl TxNursery {
 
 			for (txid, opt_tx) in pkg.iter().zip(&txs) {
 				if let Some(tx) = opt_tx {
-					if ! tx.status().await.confirmed() {
+					if ! tx.status().confirmed() {
 						slog!(BroadcastingTx, txid: *txid, raw_tx: serialize(&tx.tx));
 					}
 				} else {
@@ -166,7 +166,7 @@ impl TxNursery {
 
 	async fn broadcast_tx(&self, tx: &Tx) {
 		// Skip if tx already in mempool or confirmed.
-		if tx.seen().await {
+		if tx.seen() {
 			return;
 		}
 
@@ -183,7 +183,7 @@ impl TxNursery {
 		// Skip if all txs in mempool.
 		let mut skip = true;
 		for tx in pkg {
-			if !tx.seen().await {
+			if !tx.seen() {
 				skip = false;
 			}
 		}
