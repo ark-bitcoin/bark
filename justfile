@@ -1,19 +1,19 @@
 # Find the target directory
 CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_directory'`
 JUSTFILE_DIR := justfile_directory()
-export ASPD_EXEC := CARGO_TARGET / "debug" / "aspd"
+export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
-DEFAULT_ASPD_CONFIG_PATH := "aspd/config.default.toml"
+DEFAULT_SERVER_CONFIG_PATH := "server/config.default.toml"
+SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
-ASPD_SQL_SCHEMA_PATH := "aspd/schema.sql"
 
 precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
 prechecks:
 	just precheck rust_no_spaces_for_indent
 	just precheck rust_no_whitespace_on_empty_lines
-	just precheck unused_aspd_logs
+	just precheck unused_server_logs
 
 check:
 	cargo check --all --tests
@@ -88,8 +88,8 @@ test: test-unit test-integration test-integration-esplora test-integration-mempo
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
 
-release-aspd:
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml
+release-captaind:
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path server/Cargo.toml
 
 release-bark:
 	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml
@@ -127,8 +127,9 @@ clean:
 	cargo clean \
 		-p ark-lib \
 		-p ark-testing \
-		-p aspd-log \
-		-p bark-aspd \
+		-p bark-server \
+		-p bark-server-log \
+		-p bark-server-rpc \
 		-p bark-bitcoin-ext \
 		-p bark-client \
 		-p bark-json
@@ -138,16 +139,16 @@ clippy LINT:
 	cargo clippy -- -A clippy::all -W clippy::{{LINT}}
 
 
-default-aspd-config:
-	cargo run -p bark-aspd --example dump-default-config > {{DEFAULT_ASPD_CONFIG_PATH}}
-	echo "Default aspd config file written to {{DEFAULT_ASPD_CONFIG_PATH}}"
+default-server-config:
+	cargo run -p bark-server --example dump-default-config > {{DEFAULT_SERVER_CONFIG_PATH}}
+	echo "Default server config file written to {{DEFAULT_SERVER_CONFIG_PATH}}"
 
-dump-aspd-sql-schema:
-	cargo run -p ark-testing --example dump-aspd-postgres-schema > {{ASPD_SQL_SCHEMA_PATH}}
+dump-server-sql-schema:
+	cargo run -p ark-testing --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
 	# Use sed to remove lines that are hard to reproduce across different systems
-	sed -i '/^-- Dumped by .*$/d' {{ASPD_SQL_SCHEMA_PATH}}
-	sed -i '/^-- Dumped from .*$/d' {{ASPD_SQL_SCHEMA_PATH}}
-	echo "aspd SQL schema written to {{ASPD_SQL_SCHEMA_PATH}}"
+	sed -i '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
+	sed -i '/^-- Dumped from .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
+	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
 
 dump-bark-sql-schema:
 	cargo run -p bark-client --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}

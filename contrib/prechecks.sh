@@ -62,8 +62,8 @@ rust_no_whitespace_on_empty_lines() {
 	exit $ok
 }
 
-# Check if there are structure log messages in aspd-logs that are not used.
-unused_aspd_logs() {
+# Check if there are structure log messages in server-logs that are not used.
+unused_server_logs() {
 	ok=0
 
 	# Use a temporary file instead of process substitution
