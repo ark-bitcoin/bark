@@ -13,31 +13,31 @@ steps:
   - name: parse-versions
     when:
       - event: tag
-        ref: refs/tags/aspd-*
+        ref: refs/tags/server-*
     image: registry.2nd.dev/build:20
     commands:
       - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
       - cat VERSION
 
-  - name: build-aspd
+  - name: build-captaind
     when:
       - event: tag
-        ref: refs/tags/aspd-*
+        ref: refs/tags/server-*
     depends_on: parse-versions
     image: registry.2nd.dev/build:20
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
     commands:
       - cat VERSION
-      - just release-aspd
-      - cp ./target/x86_64-unknown-linux-gnu/release/aspd aspd-linux-x86_64
+      - just release-captaind
+      - cp ./target/x86_64-unknown-linux-gnu/release/captaind captaind-linux-x86_64
 
-  - name: build-and-push-aspd-to-registry
+  - name: build-and-push-captaind-to-registry
     when:
       - event: tag
-        ref: refs/tags/aspd-*
+        ref: refs/tags/server-*
     failure: ignore
-    depends_on: build-aspd
+    depends_on: build-captaind
     # When this task fails make sure the sha256 is still available.
     #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
     #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
@@ -51,7 +51,7 @@ steps:
       - cat VERSION
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
       # Build the containers
-      - buildah build -f ./.woodpecker/images/releases/aspd/Dockerfile --tag registry.2nd.dev/aspd:latest .
+      - buildah build -f ./.woodpecker/images/releases/captaind/Dockerfile --tag registry.2nd.dev/aspd:latest .
       # Push containers to registry.2nd.dev
       - buildah push registry.2nd.dev/aspd:latest
       # Tag containers with specific version number for registry.2nd.dev
@@ -59,11 +59,11 @@ steps:
       # Push containers with specific version number to registry.2nd.dev
       - buildah push "registry.2nd.dev/aspd:$(cat VERSION)"
 
-  - name: push-aspd-to-docker
+  - name: push-captaind-to-docker
     when:
-      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/aspd-" && CI_FORGE_TYPE == "forgejo"'
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/server-" && CI_FORGE_TYPE == "forgejo"'
     failure: ignore
-    depends_on: build-and-push-aspd-to-registry
+    depends_on: build-and-push-captaind-to-registry
     # When this task fails make sure the sha256 is still available.
     #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
     #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
@@ -90,27 +90,27 @@ steps:
       # Push containers with specific version number to docker.io
       - buildah push "docker.io/secondark/aspd:$(cat VERSION)"
 
-  - name: release-aspd
+  - name: release-captaind
     when:
       - event: tag
-        ref: refs/tags/aspd-*
-    depends_on: build-aspd
+        ref: refs/tags/sesrver-*
+    depends_on: build-captaind
     image: registry.2nd.dev/build:20
     commands:
       - cat VERSION
       - cd ./target
-      - cp x86_64-unknown-linux-gnu/release/aspd "aspd-$(cat ../VERSION)-linux-x86_64"
-      - sha256sum "aspd-$(cat ../VERSION)-linux-x86_64" > SHA256SUMS
+      - cp x86_64-unknown-linux-gnu/release/captaind "captaind-$(cat ../VERSION)-linux-x86_64"
+      - sha256sum "captaind-$(cat ../VERSION)-linux-x86_64" > SHA256SUMS
 
-  - name: publish-aspd
+  - name: publish-captaind
     when:
       - event: tag
-        ref: refs/tags/aspd-*
-    depends_on: release-aspd
+        ref: refs/tags/server-*
+    depends_on: release-captaind
     image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
     settings:
       files:
-        - "./target/aspd-*-linux-x86_64"
+        - "./target/captaind-*-linux-x86_64"
         - "./target/SHA256SUMS"
       api_key:
         from_secret: RELEASE

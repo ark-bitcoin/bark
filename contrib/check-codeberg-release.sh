@@ -19,7 +19,7 @@ check_release_exists() {
 
 VERSION=
 case "${TAG_NAME}" in
-  aspd-*) VERSION=${TAG_NAME#aspd-} ;;
+  server-*) VERSION=${TAG_NAME#server-} ;;
   bark-*) VERSION=${TAG_NAME#bark-} ;;
   *)      log_error "Unknown tag ${TAG_NAME}." ;;
 esac

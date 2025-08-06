@@ -1,10 +1,10 @@
 #!/bin/sh
-export ASPD_URL="http://aspd:3535"
+export SERVER_URL="http://captaind:3535"
 export BITCOIND_RPC_URL="http://bitcoind:18443"
 export BITCOIND_RPC_USER="second"
 export BITCOIND_RPC_PASS="ark"
 
-ADDRESS="${ASPD_URL#*://}"
+ADDRESS="${SERVER_URL#*://}"
 HOST=${ADDRESS%%:*}
 PORT=${ADDRESS##*:}
 
@@ -33,9 +33,9 @@ if [ -d /root/.bark ]; then
   echo "Bark already created"
 else
   if [ -n "$ESPLORA_ADDRESS" ]; then
-  	/usr/local/bin/bark create --regtest --asp "${ASPD_URL}" --esplora "${ESPLORA_ADDRESS}"
+  	/usr/local/bin/bark create --regtest --ark "${SERVER_URL}" --esplora "${ESPLORA_ADDRESS}"
   else
-  	/usr/local/bin/bark create --regtest --asp "${ASPD_URL}" \
+  	/usr/local/bin/bark create --regtest --ark "${SERVER_URL}" \
       --bitcoind "${BITCOIND_RPC_URL}" --bitcoind-user "${BITCOIND_RPC_USER}" --bitcoind-pass "${BITCOIND_RPC_PASS}"
   fi
   sleep 2s

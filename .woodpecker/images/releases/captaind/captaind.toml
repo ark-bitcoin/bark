@@ -1,4 +1,4 @@
-data_dir = "/data/aspd"
+data_dir = "/data/captaind"
 network = "regtest"
 
 [bitcoind]
@@ -9,7 +9,7 @@ rpc_pass = "ark"
 [postgres]
 host = "localhost"
 port = 5432
-name = "aspdb"
+name = "bark-server-db"
 user = "postgres"
 password = "postgres"
 

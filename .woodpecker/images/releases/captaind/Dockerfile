@@ -20,16 +20,16 @@ RUN apt-get update && \
         postgresql-client-16 \
         && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /root/aspd/
-COPY ./aspd-linux-x86_64                          /usr/local/bin/aspd
-COPY ./.woodpecker/images/releases/aspd/start.sh  /root/aspd/start.sh
-COPY ./.woodpecker/images/releases/aspd/aspd.toml /root/aspd/aspd.toml
+RUN mkdir -p /root/captaind/
+COPY ./captaind-linux-x86_64                              /usr/local/bin/captaind
+COPY ./.woodpecker/images/releases/captaind/start.sh      /root/captaind/start.sh
+COPY ./.woodpecker/images/releases/captaind/captaind.toml /root/captaind/captaind.toml
 
-RUN chmod a+x /usr/local/bin/aspd && \
-    chmod a+x /root/aspd/start.sh && \
-    dos2unix /root/aspd/start.sh
+RUN chmod a+x /usr/local/bin/captaind && \
+    chmod a+x /root/captaind/start.sh && \
+    dos2unix /root/captaind/start.sh
 
 EXPOSE 5432
 EXPOSE 3535
 
-CMD ["/root/aspd/start.sh"]
+CMD ["/root/captaind/start.sh"]

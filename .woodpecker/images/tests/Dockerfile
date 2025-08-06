@@ -78,7 +78,7 @@ RUN echo "build bark" && \
 		cargo build --workspace && \
 		cargo llvm-cov --workspace --exclude ark-testing --html && \
 		cargo install --locked --path bark && \
-		cargo install --locked --path aspd"
+		cargo install --locked --path server"
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
@@ -113,7 +113,7 @@ RUN echo "pre-build bark" && \
 	cargo install cargo-zigbuild && \
 	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
 	cd /root/bark && \
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path aspd/Cargo.toml && \
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path server/Cargo.toml && \
 	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \
 	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml && \
