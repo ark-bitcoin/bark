@@ -33,10 +33,10 @@ impl ExternallyManagedPostgres {
 		}
 	}
 
-	pub async fn request_database(&self, db_name: &str) -> aspd::config::Postgres {
+	pub async fn request_database(&self, db_name: &str) -> server::config::Postgres {
 		let client = self.global_client().await;
 		drop_and_create_database(&client, db_name).await;
-		aspd::config::Postgres {
+		server::config::Postgres {
 			host: self.host.clone(),
 			port: self.port,
 			name: db_name.to_string(),

@@ -6,7 +6,7 @@
 use std::io;
 
 fn main() {
-	aspd::Config::default()
+	server::Config::default()
 		.write_into(&mut io::stdout())
 		.expect("error writing to stdout");
 }

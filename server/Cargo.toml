@@ -7,7 +7,7 @@ edition = "2021"
 repository = "https://codeberg.org/ark-bitcoin/bark"
 
 [lib]
-name = "aspd"
+name = "server"
 path = "src/lib.rs"
 
 [[bin]]

@@ -8,7 +8,7 @@ use tokio::fs;
 use tokio::process::{Child, Command};
 use tokio_postgres::{Client, Config, NoTls};
 
-use aspd::config;
+use server::config;
 
 use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};

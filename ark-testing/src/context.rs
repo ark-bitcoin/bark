@@ -9,7 +9,7 @@ use log::info;
 use tokio::fs;
 use tonic::transport::Uri;
 
-use aspd::config::{self, Config, HodlInvoiceClnPlugin};
+use server::config::{self, Config, HodlInvoiceClnPlugin};
 use server_rpc as rpc;
 
 use crate::daemon::captaind::proxy::ArkRpcProxyServer;
@@ -171,7 +171,7 @@ impl TestContext {
 		bitcoind
 	}
 
-	pub async fn new_postgres(&self, db_name: &str) -> aspd::config::Postgres {
+	pub async fn new_postgres(&self, db_name: &str) -> server::config::Postgres {
 		self.postgres_manager.as_ref().unwrap()
 			.request_database(db_name).await
 	}
@@ -237,12 +237,12 @@ impl TestContext {
 			handshake_psa: None,
 			otel_collector_endpoint: None,
 			otel_tracing_sampler: None,
-			vtxo_sweeper: aspd::sweeps::Config {
+			vtxo_sweeper: server::sweeps::Config {
 				sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
 				round_sweep_interval: Duration::from_secs(60),
 				sweep_threshold: Amount::from_sat(1_000_000),
 			},
-			forfeit_watcher: aspd::forfeits::Config {
+			forfeit_watcher: server::forfeits::Config {
 				claim_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(25),
 				wake_interval: Duration::from_millis(1_000),
 			},
@@ -276,7 +276,7 @@ impl TestContext {
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
-		mod_cfg: impl FnOnce(&mut aspd::Config),
+		mod_cfg: impl FnOnce(&mut server::Config),
 	) -> Captaind {
 		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
 		let mut cfg = self.captaind_default_cfg(name.as_ref(), lightningd).await;

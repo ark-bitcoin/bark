@@ -17,7 +17,7 @@ use tokio::process::Command;
 
 use server_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
 use server_rpc::{self as rpc, protos};
-pub use aspd::config::{self, Config};
+pub use server::config::{self, Config};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::CAPTAIND_EXEC;

@@ -10,7 +10,7 @@ use clap::Parser;
 use log::{error, info};
 use tonic::transport::Uri;
 
-use aspd::{Server, Config};
+use server::{Server, Config};
 use server_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use server_rpc::{self as rpc, protos};
 
@@ -182,10 +182,10 @@ async fn inner_main() -> anyhow::Result<()> {
 			};
 		}
 		Command::Drain { address } => {
-			let db = aspd::database::Db::connect(&cfg.postgres).await?;
+			let db = server::database::Db::connect(&cfg.postgres).await?;
 			let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())?;
 
-			let seed = aspd::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
+			let seed = server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
 			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
 			let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
@@ -195,7 +195,7 @@ async fn inner_main() -> anyhow::Result<()> {
 			println!("{}", tx.compute_txid());
 		}
 		Command::GetMnemonic => {
-			println!("{}", aspd::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?);
+			println!("{}", server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?);
 		}
 	}
 

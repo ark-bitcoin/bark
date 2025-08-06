@@ -3,7 +3,7 @@ use ark::{lightning::Invoice, vtxo::test::VTXO_VECTORS};
 use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::secp256k1::PublicKey;
 use ark_testing::TestContext;
-use aspd::database::Db;
+use server::database::Db;
 
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 

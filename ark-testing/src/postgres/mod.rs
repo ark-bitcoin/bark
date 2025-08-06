@@ -59,7 +59,7 @@ impl PostgresDatabaseManager {
 		}
 	}
 
-	pub async fn request_database(&self, db_name: &str) -> aspd::config::Postgres {
+	pub async fn request_database(&self, db_name: &str) -> server::config::Postgres {
 		match self{
 			Self::ExternallyHosted(m) => m.request_database(db_name).await,
 			Self::TestManaged(m) => m.request_database(db_name).await,

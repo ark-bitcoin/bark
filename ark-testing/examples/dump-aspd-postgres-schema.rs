@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use aspd::database::Db;
+use server::database::Db;
 
 use ark_testing::postgres::PostgresDatabaseManager;
 
