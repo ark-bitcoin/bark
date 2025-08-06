@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bitcoin::consensus::Decodable;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, Network, Transaction};
-use log::{error, trace};
+use log::{error, debug, trace};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -225,7 +225,15 @@ impl LightningDHelper {
 	async fn is_ready(&self) -> bool {
 		if let Ok(mut client) = self.try_grpc_client().await {
 			let req = cln_rpc::GetinfoRequest{};
-			client.getinfo(req).await.is_ok()
+			match client.getinfo(req).await {
+				Ok(resp) => {
+					let resp = resp.into_inner();
+					debug!("GetInfoResponse={:?}", resp);
+
+					resp.warning_bitcoind_sync.is_none() && resp.warning_lightningd_sync.is_none()
+				},
+				Err(_) => false,
+			}
 		} else {
 			false
 		}
