@@ -72,9 +72,20 @@ const ASP_KEY_PATH: &str = "m/2'/0'";
 
 
 pub struct RoundHandle {
-	round_event_tx: broadcast::Sender<RoundEvent>,
+	round_event_tx: broadcast::Sender<Arc<RoundEvent>>,
+	last_round_event: parking_lot::Mutex<Option<Arc<RoundEvent>>>,
 	round_input_tx: mpsc::UnboundedSender<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_trigger_tx: mpsc::Sender<()>,
+}
+
+impl RoundHandle {
+	/// Broadcast a new event and store it as the last sent event.
+	fn broadcast_event(&self, event: RoundEvent) {
+		let event = Arc::new(event);
+		let mut last_lock = self.last_round_event.lock();
+		let _ = self.round_event_tx.send(event.clone());
+		*last_lock = Some(event);
+	}
 }
 
 pub struct Server {
@@ -253,7 +264,12 @@ impl Server {
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
 			chain_tip: parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
-			rounds: RoundHandle { round_event_tx, round_input_tx, round_trigger_tx },
+			rounds: RoundHandle {
+				round_event_tx,
+				last_round_event: parking_lot::Mutex::new(None),
+				round_input_tx,
+				round_trigger_tx,
+			},
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
 			db,

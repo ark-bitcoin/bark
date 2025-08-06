@@ -622,7 +622,7 @@ impl CollectingPayments {
 		);
 
 		// Send out vtxo proposal to signers.
-		let _ = srv.rounds.round_event_tx.send(RoundEvent::VtxoProposal {
+		srv.rounds.broadcast_event(RoundEvent::VtxoProposal {
 			round_seq: self.round_seq,
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
@@ -828,7 +828,7 @@ impl SigningVtxoTree {
 		}
 
 		// Send out round proposal to signers.
-		let _ = srv.rounds.round_event_tx.send(RoundEvent::RoundProposal {
+		srv.rounds.broadcast_event(RoundEvent::RoundProposal {
 			round_seq: self.round_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
@@ -1003,7 +1003,7 @@ impl SigningForfeits {
 
 		// Send out the finished round to users.
 		trace!("Sending out finish event.");
-		let _ = srv.rounds.round_event_tx.send(RoundEvent::Finished {
+		srv.rounds.broadcast_event(RoundEvent::Finished {
 			round_seq: self.round_seq,
 			signed_round_tx: signed_round_tx.tx.clone(),
 		});
@@ -1269,7 +1269,7 @@ async fn perform_round(
 
 	// Start new round, announce.
 	let offboard_feerate = srv.config.round_tx_feerate;
-	let _ = srv.rounds.round_event_tx.send(RoundEvent::Start(RoundInfo {
+	srv.rounds.broadcast_event(RoundEvent::Start(RoundInfo {
 		round_seq,
 		offboard_feerate,
 	}));
@@ -1311,7 +1311,7 @@ async fn perform_round(
 		let state = round_state.collecting_payments();
 		state.locked_inputs.release_all();
 
-		let _ = srv.rounds.round_event_tx.send(RoundEvent::Attempt(RoundAttempt {
+		srv.rounds.broadcast_event(RoundEvent::Attempt(RoundAttempt {
 			round_seq,
 			attempt_seq,
 			challenge: state.vtxo_ownership_challenge

@@ -144,15 +144,15 @@ impl From<ark::lightning::PaymentStatus> for protos::PaymentStatus {
 	}
 }
 
-impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
-	fn from(e: ark::rounds::RoundEvent) -> Self {
+impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
+	fn from(e: &'a ark::rounds::RoundEvent) -> Self {
 		protos::RoundEvent {
 			event: Some(match e {
 				ark::rounds::RoundEvent::Start(ark::rounds::RoundInfo {
 					round_seq, offboard_feerate,
 				}) => {
 					protos::round_event::Event::Start(protos::RoundStart {
-						round_seq: round_seq as u64,
+						round_seq: *round_seq as u64,
 						offboard_feerate_sat_vkb: offboard_feerate.to_sat_per_kwu() * 4,
 					})
 				},
@@ -160,8 +160,8 @@ impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
 					round_seq, attempt_seq, challenge,
 				}) => {
 					protos::round_event::Event::Attempt(protos::RoundAttempt {
-						round_seq: round_seq as u64,
-						attempt_seq: attempt_seq as u64,
+						round_seq: *round_seq as u64,
+						attempt_seq: *attempt_seq as u64,
 						vtxo_ownership_challenge: challenge.inner().to_vec(),
 					})
 				},
@@ -169,7 +169,7 @@ impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
 					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey,
 				} => {
 					protos::round_event::Event::VtxoProposal(protos::VtxoProposal {
-						round_seq: round_seq as u64,
+						round_seq: *round_seq as u64,
 						vtxos_spec: vtxos_spec.serialize(),
 						unsigned_round_tx: bitcoin::consensus::serialize(&unsigned_round_tx),
 						vtxos_agg_nonces: cosign_agg_nonces.into_iter()
@@ -180,7 +180,7 @@ impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
 				},
 				ark::rounds::RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
 					protos::round_event::Event::RoundProposal(protos::RoundProposal {
-						round_seq: round_seq as u64,
+						round_seq: *round_seq as u64,
 						vtxo_cosign_signatures: cosign_sigs.into_iter()
 							.map(|s| s.serialize().to_vec()).collect(),
 						forfeit_nonces: forfeit_nonces.into_iter().map(|(id, nonces)| {
@@ -195,7 +195,7 @@ impl From<ark::rounds::RoundEvent> for protos::RoundEvent {
 				},
 				ark::rounds::RoundEvent::Finished { round_seq, signed_round_tx } => {
 					protos::round_event::Event::Finished(protos::RoundFinished {
-						round_seq: round_seq as u64,
+						round_seq: *round_seq as u64,
 						signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 					})
 				},

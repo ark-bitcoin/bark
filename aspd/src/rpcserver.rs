@@ -715,7 +715,7 @@ impl rpc::server::ArkService for Server {
 		let stream = BroadcastStream::new(chan);
 
 		Ok(tonic::Response::new(Box::new(stream.map(|e| {
-			Ok(e.context("broken stream")?.into())
+			Ok(e.context("broken stream")?.as_ref().into())
 		}))))
 	}
 
