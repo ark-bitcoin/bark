@@ -20,10 +20,10 @@ use aspd_rpc::{self as rpc, protos};
 pub use aspd::config::{self, Config};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
-use crate::constants::env::ASPD_EXEC;
+use crate::constants::env::CAPTAIND_EXEC;
 use crate::util::{resolve_path, AnyhowErrorExt};
 
-pub type Aspd = Daemon<AspdHelper>;
+pub type Captaind = Daemon<CaptaindHelper>;
 
 pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
 pub type WalletAdminClient = rpc::admin::WalletAdminServiceClient<tonic::transport::Channel>;
@@ -31,7 +31,7 @@ pub type RoundAdminClient = rpc::admin::RoundAdminServiceClient<tonic::transport
 pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport::Channel>;
 
 
-pub const ASPD_CONFIG_FILE: &str = "config.toml";
+pub const CAPTAIND_CONFIG_FILE: &str = "config.toml";
 
 
 pub trait SlogHandler {
@@ -60,14 +60,14 @@ impl WalletStatuses {
 	}
 }
 
-pub struct AspdHelper {
+pub struct CaptaindHelper {
 	name: String,
 	cfg: Config,
 	bitcoind: Bitcoind,
 	slog_handlers: Arc<Mutex<Vec<Box<dyn SlogHandler + Send + Sync + 'static>>>>,
 }
 
-impl Aspd {
+impl Captaind {
 	pub fn bitcoind(&self) -> &Bitcoind {
 		&self.inner.bitcoind
 	}
@@ -76,20 +76,20 @@ impl Aspd {
 		&self.inner.cfg
 	}
 
-	/// Gracefully shutdown bitcoind associated with this ASP.
+	/// Gracefully shutdown bitcoind associated with this server.
 	pub async fn shutdown_bitcoind(&self) {
 		self.inner.bitcoind.stop().await.expect("error stopping bitcoind");
 	}
 
 	pub fn base_cmd() -> Command {
-		let e = env::var(ASPD_EXEC).expect("ASPD_EXEC env not set");
-		let exec = resolve_path(e).expect("failed to resolve ASPD_EXEC");
+		let e = env::var(CAPTAIND_EXEC).expect("CAPTAIND_EXEC env not set");
+		let exec = resolve_path(e).expect("failed to resolve CAPTAIND_EXEC");
 		Command::new(exec)
 	}
 
-	/// Creates ASP with a dedicated bitcoind daemon.
+	/// Creates server with a dedicated bitcoind daemon.
 	pub fn new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: Config) -> Self {
-		let helper = AspdHelper {
+		let helper = CaptaindHelper {
 			name: name.as_ref().to_string(),
 			cfg,
 			bitcoind,
@@ -99,12 +99,12 @@ impl Aspd {
 		Daemon::wrap(helper)
 	}
 
-	pub fn asp_url(&self) -> String {
-		self.inner.asp_url()
+	pub fn ark_url(&self) -> String {
+		self.inner.ark_url()
 	}
 
 	pub async fn get_public_rpc(&self) -> ArkClient {
-		ArkClient::connect(self.asp_url()).await.expect("can't connect server public rpc")
+		ArkClient::connect(self.ark_url()).await.expect("can't connect server public rpc")
 	}
 
 	pub async fn get_wallet_rpc(&self) -> WalletAdminClient {
@@ -189,7 +189,7 @@ impl Aspd {
 }
 
 #[tonic::async_trait]
-impl DaemonHelper for AspdHelper {
+impl DaemonHelper for CaptaindHelper {
 	fn name(&self) -> &str {
 		&self.name
 	}
@@ -199,9 +199,9 @@ impl DaemonHelper for AspdHelper {
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		let config_file = self.datadir().join(ASPD_CONFIG_FILE);
+		let config_file = self.datadir().join(CAPTAIND_CONFIG_FILE);
 
-		let mut cmd = Aspd::base_cmd();
+		let mut cmd = Captaind::base_cmd();
 		let args = vec![
 			"start",
 			"--config",
@@ -219,8 +219,8 @@ impl DaemonHelper for AspdHelper {
 
 		let public_address = format!("0.0.0.0:{}", public_port);
 		let admin_address = format!("127.0.0.1:{}", admin_port);
-		trace!("ASPD_RPC_PUBLIC_ADDRESS: {}", public_address.to_string());
-		trace!("ASPD_RPC_ADMIN_ADDRESS: {}", admin_address.to_string());
+		trace!("public rpc address: {}", public_address.to_string());
+		trace!("admin rpc address: {}", admin_address.to_string());
 
 		self.cfg.rpc = config::Rpc {
 			public_address: SocketAddr::from_str(public_address.as_str())?,
@@ -240,11 +240,11 @@ impl DaemonHelper for AspdHelper {
 			first_run = true;
 		}
 
-		let config_path = data_dir.join(ASPD_CONFIG_FILE);
+		let config_path = data_dir.join(CAPTAIND_CONFIG_FILE);
 		info!("Preparing to create configuration file at: {}", config_path.display());
 		let mut config_file = fs::File::create(&config_path).unwrap();
 		self.cfg.write_into(&mut config_file)
-			.with_context(|| format!("error writing aspd config to '{}'", config_path.display()))?;
+			.with_context(|| format!("error writing server config to '{}'", config_path.display()))?;
 		info!("Configuration file successfully created at: {}", config_path.display());
 
 		if first_run {
@@ -294,9 +294,9 @@ impl DaemonHelper for AspdHelper {
 	}
 }
 
-impl AspdHelper {
+impl CaptaindHelper {
 	async fn try_is_ready(&self) -> anyhow::Result<()> {
-		let mut public = ArkClient::connect(self.asp_url()).await.context("public rpc")?;
+		let mut public = ArkClient::connect(self.ark_url()).await.context("public rpc")?;
 		let req = protos::HandshakeRequest { bark_version: None };
 		let _ = public.handshake(req).await.context("handshake")?;
 
@@ -315,7 +315,7 @@ impl AspdHelper {
 		}
 	}
 
-	pub fn asp_url(&self) -> String {
+	pub fn ark_url(&self) -> String {
 		format!("http://{}", self.cfg.rpc.public_address)
 	}
 
@@ -324,9 +324,9 @@ impl AspdHelper {
 	}
 
 	async fn create(&self) -> anyhow::Result<()> {
-		let config_file = self.datadir().join(ASPD_CONFIG_FILE);
+		let config_file = self.datadir().join(CAPTAIND_CONFIG_FILE);
 
-		let mut cmd = Aspd::base_cmd();
+		let mut cmd = Captaind::base_cmd();
 		let args = vec![
 			"create",
 			"--config",
@@ -343,7 +343,7 @@ impl AspdHelper {
 		if status.success() {
 			Ok(())
 		} else {
-			bail!("Failed to create aspd '{}'", self.name);
+			bail!("Failed to create captaind '{}'", self.name);
 		}
 	}
 }

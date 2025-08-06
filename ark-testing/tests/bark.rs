@@ -18,7 +18,7 @@ use bark::movement::MovementRecipient;
 
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
-use ark_testing::daemon::aspd;
+use ark_testing::daemon::captaind;
 use ark_testing::util::{AnyhowErrorExt, FutureExt};
 
 const OFFBOARD_FEES: Amount = sat(900);
@@ -26,8 +26,8 @@ const OFFBOARD_FEES: Amount = sat(900);
 #[tokio::test]
 async fn bark_version() {
 	let ctx = TestContext::new("bark/bark_version").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark1 = ctx.new_bark("bark1", &aspd).await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark1 = ctx.new_bark("bark1", &srv).await;
 	let result = bark1.run(&[&"--version"]).await;
 	assert!(result.starts_with("bark "));
 }
@@ -35,8 +35,8 @@ async fn bark_version() {
 #[tokio::test]
 async fn bark_ark_info() {
 	let ctx = TestContext::new("bark/bark_ark_info").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark1 = ctx.new_bark("bark1", &aspd).await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark1 = ctx.new_bark("bark1", &srv).await;
 	let result = bark1.run(&[&"ark-info"]).await;
 	serde_json::from_str::<bark_json::cli::ArkInfo>(&result).expect("should deserialise");
 }
@@ -44,8 +44,8 @@ async fn bark_ark_info() {
 #[tokio::test]
 async fn bark_address_changes() {
 	let ctx = TestContext::new("bark/bark_address_changes").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark1 = ctx.new_bark("bark1", &aspd).await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark1 = ctx.new_bark("bark1", &srv).await;
 
 	let addr1 = bark1.address().await;
 	let addr2 = bark1.address().await;
@@ -58,24 +58,24 @@ async fn bark_address_changes() {
 #[tokio::test]
 async fn bark_create_is_atomic() {
 	let ctx = TestContext::new("bark/bark_create_is_atomic").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	// Create a bark defines the folder
-	let _  = ctx.try_new_bark("bark_ok", &aspd).await.expect("Can create bark");
+	let _  = ctx.try_new_bark("bark_ok", &srv).await.expect("Can create bark");
 	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_ok").as_path()));
 
 	// You can't create a bark twice
 	// If you want to overwrite the folder you need force
-	let _ = ctx.try_new_bark("bark_twice", &aspd).await.expect("Can create bark");
+	let _ = ctx.try_new_bark("bark_twice", &srv).await.expect("Can create bark");
 	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_twice").as_path()));
 
-	let _ = ctx.try_new_bark("bark_twice", &aspd).await.expect_err("Can create bark");
+	let _ = ctx.try_new_bark("bark_twice", &srv).await.expect_err("Can create bark");
 	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_twice").as_path()));
 
-	// We stop the asp
+	// We stop the server
 	// This ensures that clients cannot be created
-	aspd.stop().await.unwrap();
-	let _ = ctx.try_new_bark("bark_fails", &aspd).await.expect_err("Cannot create bark if asp is not available");
+	srv.stop().await.unwrap();
+	let _ = ctx.try_new_bark("bark_fails", &srv).await.expect_err("Cannot create bark if server is not available");
 	assert!(!std::path::Path::is_dir(ctx.datadir.join("bark_fails").as_path()));
 }
 
@@ -83,8 +83,8 @@ async fn bark_create_is_atomic() {
 async fn board_bark() {
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_bark").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(100_000)).await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(100_000)).await;
 
 	bark1.board(sat(BOARD_AMOUNT)).await;
 
@@ -95,8 +95,8 @@ async fn board_bark() {
 async fn board_all_bark() {
 	let ctx = TestContext::new("bark/board_all_bark").await;
 
-	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark1 = ctx.new_bark("bark1", &aspd).await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark1 = ctx.new_bark("bark1", &srv).await;
 
 	// Get the bark-address and fund it
 	ctx.fund_bark(&bark1, sat(100_000)).await;
@@ -119,8 +119,8 @@ async fn board_all_bark() {
 #[tokio::test]
 async fn bark_rejects_boarding_subdust_amount() {
 	let ctx = TestContext::new("bark/bark_rejects_boarding_subdust_amount").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 
 	let board_amount = sat(P2TR_DUST_SAT - 1);
 	let res =bark1.try_board(board_amount).await;
@@ -133,8 +133,8 @@ async fn bark_rejects_boarding_subdust_amount() {
 async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -157,9 +157,9 @@ async fn list_utxos() {
 #[tokio::test]
 async fn list_vtxos() {
 	let ctx = TestContext::new("bark/list_vtxos").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -182,8 +182,8 @@ async fn list_vtxos() {
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 300_000));
 	assert!(vtxos.iter().any(|v| v.amount.to_sat() == 330_000));
 
-	// Should have the same behaviour when ASP is offline
-	aspd.stop().await.unwrap();
+	// Should have the same behavior when the server is offline
+	srv.stop().await.unwrap();
 
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(3, vtxos.len());
@@ -202,17 +202,17 @@ async fn large_round() {
 
 	info!("Running multiple_round_test with N set to {}", N);
 
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_millis(2_000);
 		cfg.round_submit_time = Duration::from_millis(100 * N as u64);
 		cfg.round_sign_time = Duration::from_millis(1000 * N as u64);
 		cfg.nb_round_nonces = 200;
 	}).await;
-	ctx.fund_asp(&aspd, btc(10)).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
 
 	let barks = join_all((0..N).map(|i| {
 		let name = format!("bark{}", i);
-		ctx.new_bark_with_funds(name, &aspd, sat(90_000))
+		ctx.new_bark_with_funds(name, &srv, sat(90_000))
 	})).await;
 	ctx.generate_blocks(1).await;
 
@@ -234,9 +234,9 @@ async fn large_round() {
 #[tokio::test]
 async fn send_simple_arkoor() {
 	let ctx = TestContext::new("bark/send_simple_arkoor").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(90_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(5_000)).await;
 	bark1.board(sat(80_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -250,9 +250,9 @@ async fn send_simple_arkoor() {
 #[tokio::test]
 async fn send_arkoor_package() {
 	let ctx = TestContext::new("bark/send_arkoor_package").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(90_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(5_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(90_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(5_000)).await;
 	bark1.board(sat(20_000)).await;
 	bark1.board(sat(20_000)).await;
 	bark1.board(sat(20_000)).await;
@@ -275,9 +275,9 @@ async fn send_arkoor_package() {
 #[tokio::test]
 async fn refresh_all() {
 	let ctx = TestContext::new("bark/refresh_all").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark1.board(sat(800_000)).await;
 	bark2.board(sat(800_000)).await;
@@ -300,9 +300,9 @@ async fn refresh_all() {
 #[tokio::test]
 async fn bark_rejects_sending_subdust_oor() {
 	let ctx = TestContext::new("bark/bark_rejects_sending_subdust_oor").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	let board_amount = sat(800_000);
 	bark1.board(board_amount).await;
@@ -318,9 +318,9 @@ async fn bark_rejects_sending_subdust_oor() {
 #[tokio::test]
 async fn bark_rejects_creating_arkoor_subdust_change() {
 	let ctx = TestContext::new("bark/bark_rejects_creating_arkoor_subdust_change").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	let board_amount = sat(800_000);
 	bark1.board(board_amount).await;
@@ -341,9 +341,9 @@ async fn bark_rejects_creating_arkoor_subdust_change() {
 #[tokio::test]
 async fn refresh_counterparty() {
 	let ctx = TestContext::new("bark/refresh_counterparty").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -377,9 +377,9 @@ async fn refresh_counterparty() {
 #[tokio::test]
 async fn compute_balance() {
 	let ctx = TestContext::new("bark/compute_balance").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -398,8 +398,8 @@ async fn compute_balance() {
 	let balance = bark1.offchain_balance().await;
 	assert_eq!(balance, sat(830_000));
 
-	// Should have the same behaviour when ASP is offline
-	aspd.stop().await.unwrap();
+	// Should have the same behavior when the server is offline
+	srv.stop().await.unwrap();
 
 	let balance = bark1.offchain_balance().await;
 	assert_eq!(balance, sat(830_000));
@@ -410,9 +410,9 @@ async fn list_movements() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/list_movements").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(300_000)).await;
@@ -458,8 +458,8 @@ async fn multiple_spends_in_payment() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/multiple_spends_in_payment").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 
 	bark1.board(sat(100_000)).await;
 	ctx.generate_blocks(1).await;
@@ -482,9 +482,9 @@ async fn multiple_spends_in_payment() {
 #[tokio::test]
 async fn offboard_all() {
 	let ctx = TestContext::new("bark/offboard_all").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark1.board(sat(200_000)).await;
 	bark2.board(sat(800_000)).await;
@@ -528,9 +528,9 @@ async fn offboard_all() {
 #[tokio::test]
 async fn offboard_vtxos() {
 	let ctx = TestContext::new("bark/offboard_vtxos").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -585,9 +585,9 @@ async fn offboard_vtxos() {
 #[tokio::test]
 async fn bark_send_onchain() {
 	let ctx = TestContext::new("bark/bark_send_onchain").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2", &aspd).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2", &srv).await;
 
 	bark1.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -621,9 +621,9 @@ async fn bark_send_onchain() {
 #[tokio::test]
 async fn bark_send_onchain_too_much() {
 	let ctx = TestContext::new("bark/bark_send_onchain_too_much").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	let board_amount = sat(800_000);
 	bark1.board(board_amount).await;
@@ -645,9 +645,9 @@ async fn bark_send_onchain_too_much() {
 #[tokio::test]
 async fn bark_rejects_offboarding_subdust_amount() {
 	let ctx = TestContext::new("bark/bark_rejects_offboarding_subdust_amount").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2", &aspd).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2", &srv).await;
 
 	let board_amount = sat(800_000);
 	bark1.board(board_amount).await;
@@ -663,8 +663,8 @@ async fn bark_rejects_offboarding_subdust_amount() {
 #[tokio::test]
 async fn drop_vtxos() {
 	let ctx = TestContext::new("bark/drop_vtxos").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
@@ -686,7 +686,7 @@ async fn reject_arkoor_with_bad_signature() {
 	struct InvalidSigProxy(rpc::ArkServiceClient<tonic::transport::Channel>);
 
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for InvalidSigProxy {
+	impl captaind::proxy::ArkRpcProxy for InvalidSigProxy {
 		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn empty_arkoor_mailbox(&mut self, req: protos::ArkoorVtxosRequest) -> Result<protos::ArkoorVtxosResponse, tonic::Status>  {
@@ -702,15 +702,15 @@ async fn reject_arkoor_with_bad_signature() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// create a proxy to return an arkoor with invalid signatures
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(aspd.get_public_rpc().await)).await;
+	let proxy = captaind::proxy::ArkRpcProxyServer::start(InvalidSigProxy(srv.get_public_rpc().await)).await;
 
 	// create a third wallet to receive the invalid arkoor
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
@@ -737,7 +737,7 @@ async fn second_round_attempt() {
 	struct Proxy(rpc::ArkServiceClient<tonic::transport::Channel>, Arc<AtomicBool>);
 
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
+	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn provide_forfeit_signatures(
@@ -753,32 +753,32 @@ async fn second_round_attempt() {
 	}
 
 	let ctx = TestContext::new("bark/second_round_attempt").await;
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
-	ctx.fund_asp(&aspd, btc(10)).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	bark1.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let proxy = Proxy(aspd.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
+	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
 
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
 	bark1.send_oor(bark2.address().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
-	let mut log_missing_forfeits = aspd.subscribe_log::<MissingForfeits>().await;
-	let mut log_not_allowed = aspd.subscribe_log::<RoundUserVtxoNotAllowed>().await;
+	let mut log_missing_forfeits = srv.subscribe_log::<MissingForfeits>().await;
+	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>().await;
 
 	ctx.generate_blocks(1).await;
 	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
-	let _ = aspd.wallet_status().await;
-	aspd.trigger_round().await;
-	aspd.wait_for_log::<RestartMissingForfeits>().await;
+	let _ = srv.wallet_status().await;
+	srv.trigger_round().await;
+	srv.wait_for_log::<RestartMissingForfeits>().await;
 	res1.await.unwrap();
 	// check that bark2 was kicked
 	assert_eq!(log_missing_forfeits.recv().fast().await.unwrap().input, bark2_vtxo);
@@ -786,16 +786,16 @@ async fn second_round_attempt() {
 
 	// bark2 is kicked out of the first round, so we need to start another one
 	ctx.generate_blocks(1).await;
-	let _ = aspd.wallet_status().await;
-	aspd.trigger_round().await;
+	let _ = srv.wallet_status().await;
+	srv.trigger_round().await;
 	res2.await.unwrap();
 }
 
 #[tokio::test]
 async fn recover_mnemonic() {
 	let ctx = TestContext::new("bark/recover_mnemonic").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(2_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(2_000_000)).await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -813,13 +813,13 @@ async fn recover_mnemonic() {
 	// first check we need birthday
 	let args = &["--mnemonic", &mnemonic];
 	// it's not easy to get a grip of what the actual error was
-	let err = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, None, args).await.unwrap_err();
+	let err = ctx.try_new_bark_with_create_args("bark_recovered", &srv, None, args).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"You need to set the --birthday-height field when recovering from mnemonic.",
 	));
 
 	let args = &["--mnemonic", &mnemonic, "--birthday-height", "0"];
-	let recovered = ctx.try_new_bark_with_create_args("bark_recovered", &aspd, None, args).await.unwrap();
+	let recovered = ctx.try_new_bark_with_create_args("bark_recovered", &srv, None, args).await.unwrap();
 	assert_eq!(onchain, recovered.onchain_balance().await);
 	//TODO(stevenroose) implement offchain recovery
 	// assert_eq!(offchain, recovered.offchain_balance().await);
@@ -828,9 +828,9 @@ async fn recover_mnemonic() {
 #[tokio::test]
 async fn onchain_send() {
 	let ctx = TestContext::new("bark/onchain_send").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
-	let sender = ctx.new_bark_with_funds("bark_sender", &aspd, sat(1_000_000)).await;
-	let recipient = ctx.new_bark("bark_recipient", &aspd).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	let sender = ctx.new_bark_with_funds("bark_sender", &srv, sat(1_000_000)).await;
+	let recipient = ctx.new_bark("bark_recipient", &srv).await;
 
 	sender.onchain_send(recipient.get_onchain_address().await, sat(200_000)).await;
 	ctx.generate_blocks(1).await;
@@ -850,9 +850,9 @@ async fn onchain_send() {
 #[tokio::test]
 async fn onchain_send_many() {
 	let ctx = TestContext::new("bark/onchain_send_many").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
-	let sender = ctx.new_bark_with_funds("bark_sender", &aspd, sat(10_000_000)).await;
-	let recipient = ctx.new_bark("bark_recipient", &aspd).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	let sender = ctx.new_bark_with_funds("bark_sender", &srv, sat(10_000_000)).await;
+	let recipient = ctx.new_bark("bark_recipient", &srv).await;
 	let addresses = [
 		recipient.get_onchain_address().await,
 		recipient.get_onchain_address().await,
@@ -890,9 +890,9 @@ async fn onchain_send_many() {
 #[tokio::test]
 async fn onchain_drain() {
 	let ctx = TestContext::new("bark/onchain_drain").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
-	let sender = ctx.new_bark_with_funds("bark_sender", &aspd, sat(1_000_000)).await;
-	let recipient = ctx.new_bark("bark_recipient", &aspd).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	let sender = ctx.new_bark_with_funds("bark_sender", &srv, sat(1_000_000)).await;
+	let recipient = ctx.new_bark("bark_recipient", &srv).await;
 
 	sender.onchain_drain(recipient.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
@@ -908,16 +908,16 @@ async fn onchain_drain() {
 async fn bark_recover_unregistered_board() {
 	let ctx = TestContext::new("bark/recover_unregistered_board").await;
 
-	// Set up an aspd.
-	// The aspd misbehaves and drops the first request to register_board_vtxo
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+	// Set up the server.
+	// The server misbehaves and drops the first request to register_board_vtxo
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
 
 	/// This proxy will drop the very first request to register_board
 	#[derive(Clone)]
 	struct Proxy(rpc::ArkServiceClient<tonic::transport::Channel>, Arc<AtomicBool>);
 
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
+	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn register_board_vtxo(
@@ -932,8 +932,8 @@ async fn bark_recover_unregistered_board() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
+	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;
 	bark.try_board_all().await.expect_err("The Ark server should have refused the registration");
@@ -947,9 +947,9 @@ async fn bark_recover_unregistered_board() {
 #[tokio::test]
 async fn bark_does_not_spend_too_deep_arkoors() {
 	let ctx = TestContext::new("bark/does_not_spend_too_deep_arkoors").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark1.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -971,11 +971,11 @@ async fn bark_does_not_spend_too_deep_arkoors() {
 async fn test_ark_address_other_ark() {
 	let ctx = TestContext::new("bark/test_ark_address_other_ark").await;
 
-	let aspd1 = ctx.new_aspd_with_funds("aspd1", None, btc(1)).await;
-	let aspd2 = ctx.new_aspd_with_funds("aspd2", None, btc(1)).await;
+	let srv1 = ctx.new_captaind_with_funds("server1", None, btc(1)).await;
+	let srv2 = ctx.new_captaind_with_funds("server2", None, btc(1)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd1, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd2, sat(1_000_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv1, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv2, sat(1_000_000)).await;
 
 	bark1.board(sat(800_000)).await;
 	bark2.board(sat(800_000)).await;

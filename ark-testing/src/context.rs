@@ -12,30 +12,30 @@ use tonic::transport::Uri;
 use aspd::config::{self, Config, HodlInvoiceClnPlugin};
 use aspd_rpc as rpc;
 
-use crate::daemon::aspd::proxy::AspdRpcProxyServer;
+use crate::daemon::captaind::proxy::ArkRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{
 	get_bark_chain_source_from_env, test_data_directory, FutureExt, TestContextChainSource,
 };
 use crate::{
-	constants, Aspd, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
+	constants, Captaind, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
 };
 
-pub trait ToAspUrl {
-	fn asp_url(&self) -> String;
+pub trait ToArkUrl {
+	fn ark_url(&self) -> String;
 }
-impl ToAspUrl for Aspd {
-	fn asp_url(&self) -> String { self.asp_url() }
+impl ToArkUrl for Captaind {
+	fn ark_url(&self) -> String { self.ark_url() }
 }
-impl ToAspUrl for String {
-	fn asp_url(&self) -> String { self.clone() }
+impl ToArkUrl for String {
+	fn ark_url(&self) -> String { self.clone() }
 }
-impl ToAspUrl for str {
-	fn asp_url(&self) -> String { self.to_owned() }
+impl ToArkUrl for str {
+	fn ark_url(&self) -> String { self.to_owned() }
 }
-impl ToAspUrl for AspdRpcProxyServer {
-	fn asp_url(&self) -> String { self.address.clone() }
+impl ToArkUrl for ArkRpcProxyServer {
+	fn ark_url(&self) -> String { self.address.clone() }
 }
 
 pub struct TestContext {
@@ -176,7 +176,7 @@ impl TestContext {
 			.request_database(db_name).await
 	}
 
-	async fn aspd_default_cfg(
+	async fn captaind_default_cfg(
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
@@ -272,14 +272,14 @@ impl TestContext {
 		}
 	}
 
-	pub async fn new_aspd_with_cfg(
+	pub async fn new_captaind_with_cfg(
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
 		mod_cfg: impl FnOnce(&mut aspd::Config),
-	) -> Aspd {
+	) -> Captaind {
 		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-		let mut cfg = self.aspd_default_cfg(name.as_ref(), lightningd).await;
+		let mut cfg = self.captaind_default_cfg(name.as_ref(), lightningd).await;
 		mod_cfg(&mut cfg);
 
 		assert_eq!("", cfg.bitcoind.url, "bitcoind url already set");
@@ -290,38 +290,38 @@ impl TestContext {
 			cfg.bitcoind.cookie = Some(bitcoind.rpc_cookie());
 		}
 
-		let mut ret = Aspd::new(name, bitcoind, cfg);
+		let mut ret = Captaind::new(name, bitcoind, cfg);
 		ret.start().await.unwrap();
 
 		ret
 	}
 
-	/// Creates new aspd without any funds.
-	pub async fn new_aspd(
+	/// Creates new captaind without any funds.
+	pub async fn new_captaind(
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
-	) -> Aspd {
-		self.new_aspd_with_cfg(name, lightningd, |_| {}).await
+	) -> Captaind {
+		self.new_captaind_with_cfg(name, lightningd, |_| {}).await
 	}
 
-	/// Creates new aspd and immediately funds it. Waits until the aspd's bitcoind
+	/// Creates new captaind and immediately funds it. Waits until the captaind's bitcoind
 	/// receives funding transaction.
-	pub async fn new_aspd_with_funds(
+	pub async fn new_captaind_with_funds(
 		&self,
 		name: impl AsRef<str>,
 		lightningd: Option<&Lightningd>,
 		amount: Amount
-	) -> Aspd {
-		let asp = self.new_aspd(name, lightningd).await;
-		let _txid = self.fund_asp(&asp, amount).await;
-		asp
+	) -> Captaind {
+		let srv = self.new_captaind(name, lightningd).await;
+		let _txid = self.fund_captaind(&srv, amount).await;
+		srv
 	}
 
 	pub async fn try_new_bark_with_create_args<T: AsRef<str>>(
 		&self,
 		name: impl AsRef<str>,
-		aspd: &dyn ToAspUrl,
+		srv: &dyn ToArkUrl,
 		fallback_fee_override: Option<FeeRate>,
 		extra_create_args: impl IntoIterator<Item = T>,
 	) -> anyhow::Result<Bark> {
@@ -336,7 +336,7 @@ impl TestContext {
 		};
 		let cfg = BarkConfig {
 			datadir,
-			asp_url: aspd.asp_url(),
+			ark_url: srv.ark_url(),
 			network: Network::Regtest,
 			chain_source,
 			fallback_fee: fallback_fee_override.unwrap_or(FeeRate::from_sat_per_vb(5).unwrap()),
@@ -350,20 +350,20 @@ impl TestContext {
 	pub async fn try_new_bark(
 		&self,
 		name: impl AsRef<str>,
-		aspd: &dyn ToAspUrl,
+		srv: &dyn ToArkUrl,
 	) -> anyhow::Result<Bark> {
-		self.try_new_bark_with_create_args::<&str>(name, aspd, None, []).await
+		self.try_new_bark_with_create_args::<&str>(name, srv, None, []).await
 	}
 
 	/// Creates new bark without any funds.
-	pub async fn new_bark(&self, name: impl AsRef<str>, aspd: &dyn ToAspUrl) -> Bark {
-		self.try_new_bark(name, aspd).await.unwrap()
+	pub async fn new_bark(&self, name: impl AsRef<str>, srv: &dyn ToArkUrl) -> Bark {
+		self.try_new_bark(name, srv).await.unwrap()
 	}
 
 	/// Creates new bark and immediately funds it. Waits until the bark's bitcoind
 	/// receives funding transaction.
-	pub async fn new_bark_with_funds(&self, name: impl AsRef<str>, aspd: &dyn ToAspUrl, amount: Amount) -> Bark {
-		let bark = self.try_new_bark(name, aspd).await.unwrap();
+	pub async fn new_bark_with_funds(&self, name: impl AsRef<str>, srv: &dyn ToArkUrl, amount: Amount) -> Bark {
+		let bark = self.try_new_bark(name, srv).await.unwrap();
 		let _txid = self.fund_bark(&bark, amount).await;
 		bark
 	}
@@ -395,15 +395,15 @@ impl TestContext {
 		ret
 	}
 
-	pub async fn fund_asp(&self, asp: &Aspd, amount: Amount) {
-		info!("Fund {} {}", asp.name, amount);
-		let rounds_address = asp.get_rounds_funding_address().await;
+	pub async fn fund_captaind(&self, srv: &Captaind, amount: Amount) {
+		info!("Fund {} {}", srv.name, amount);
+		let rounds_address = srv.get_rounds_funding_address().await;
 		self.bitcoind().fund_addr(rounds_address, amount).await;
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 		self.bitcoind().generate(1).await;
 		tokio::time::sleep(Duration::from_millis(1000)).await;
-		asp.get_wallet_rpc().await.wallet_sync(rpc::protos::Empty {}).await
-			.expect("error calling wallet status after funding aspd");
+		srv.get_wallet_rpc().await.wallet_sync(rpc::protos::Empty {}).await
+			.expect("error calling wallet status after funding server");
 	}
 
 	/// Send `amount` to an onchain address of this Bark client.

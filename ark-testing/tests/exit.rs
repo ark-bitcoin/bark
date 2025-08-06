@@ -15,7 +15,7 @@ use bitcoin_ext::TaprootSpendInfoExt;
 
 use ark_testing::{TestContext, Bark, btc, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
-use ark_testing::daemon::aspd;
+use ark_testing::daemon::captaind;
 
 async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	let mut flip = false;
@@ -78,8 +78,8 @@ async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 async fn simple_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/simple_exit").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	ctx.generate_blocks(1).await;
 
 	bark.board(sat(500_000)).await;
@@ -87,7 +87,7 @@ async fn simple_exit() {
 
 	bark.refresh_all().await;
 
-	aspd.stop().await.unwrap();
+	srv.stop().await.unwrap();
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
 
@@ -102,20 +102,20 @@ async fn simple_exit() {
 async fn exit_round() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let srv = ctx.new_captaind("server", None).await;
 
-	// Fund the asp
-	ctx.fund_asp(&aspd, btc(10)).await;
+	// Fund the server
+	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Create a few clients
-	let bark1 = ctx.new_bark("bark1".to_string(), &aspd).await;
-	let bark2 = ctx.new_bark("bark2".to_string(), &aspd).await;
-	let bark3 = ctx.new_bark("bark3".to_string(), &aspd).await;
-	let bark4 = ctx.new_bark("bark4".to_string(), &aspd).await;
-	let bark5 = ctx.new_bark("bark5".to_string(), &aspd).await;
-	let bark6 = ctx.new_bark("bark6".to_string(), &aspd).await;
-	let bark7 = ctx.new_bark("bark7".to_string(), &aspd).await;
-	let bark8 = ctx.new_bark("bark8".to_string(), &aspd).await;
+	let bark1 = ctx.new_bark("bark1".to_string(), &srv).await;
+	let bark2 = ctx.new_bark("bark2".to_string(), &srv).await;
+	let bark3 = ctx.new_bark("bark3".to_string(), &srv).await;
+	let bark4 = ctx.new_bark("bark4".to_string(), &srv).await;
+	let bark5 = ctx.new_bark("bark5".to_string(), &srv).await;
+	let bark6 = ctx.new_bark("bark6".to_string(), &srv).await;
+	let bark7 = ctx.new_bark("bark7".to_string(), &srv).await;
+	let bark8 = ctx.new_bark("bark8".to_string(), &srv).await;
 
 	tokio::join!(
 		ctx.fund_bark(&bark1, sat(1_000_000)),
@@ -161,8 +161,8 @@ async fn exit_round() {
 	let bark7_round_vtxo = &bark7.vtxos().await[0];
 	let bark8_round_vtxo = &bark8.vtxos().await[0];
 
-	// We don't need ASP for exits.
-	aspd.stop().await.unwrap();
+	// We don't need server for exits.
+	srv.stop().await.unwrap();
 
 	bark1.start_exit_all().await;
 	bark2.start_exit_all().await;
@@ -212,9 +212,9 @@ async fn exit_round() {
 #[tokio::test]
 async fn exit_vtxo() {
 	let ctx = TestContext::new("exit/exit_vtxo").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	ctx.generate_blocks(1).await;
 
@@ -228,8 +228,8 @@ async fn exit_vtxo() {
 	assert_eq!(vtxos.len(), 1, "We have refreshed one vtxo");
 	let vtxo = &vtxos[0];
 
-	// We stop the asp
-	aspd.stop().await.unwrap();
+	// We stop the server
+	srv.stop().await.unwrap();
 
 	// Make bark exit and check the balance
 	bark.start_exit_vtxos([vtxo.id]).await;
@@ -243,9 +243,9 @@ async fn exit_vtxo() {
 #[tokio::test]
 async fn exit_and_send_vtxo() {
 	let ctx = TestContext::new("exit/exit_and_send_vtxo").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	ctx.generate_blocks(1).await;
 
@@ -259,8 +259,8 @@ async fn exit_and_send_vtxo() {
 	assert_eq!(vtxos.len(), 1, "We have refreshed one vtxo");
 	let vtxo = &vtxos[0];
 
-	// We stop the asp
-	aspd.stop().await.unwrap();
+	// We stop the server
+	srv.stop().await.unwrap();
 
 	// Make bark exit and check the balance
 	bark.start_exit_vtxos([vtxo.id]).await;
@@ -281,16 +281,16 @@ async fn exit_and_send_vtxo() {
 #[tokio::test]
 async fn exit_after_board() {
 	let ctx = TestContext::new("exit/exit_after_board").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	// Fund the bark instance
-	let bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	// board funds
 	bark.board(sat(900_000)).await;
 
 	// Exit unilaterally
-	aspd.stop().await.unwrap();
+	srv.stop().await.unwrap();
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
 
@@ -304,12 +304,12 @@ async fn exit_after_board() {
 #[tokio::test]
 async fn exit_oor() {
 	let ctx = TestContext::new("exit/exit_oor").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	// Bark1 will pay bark2 oor.
 	// Bark2 will attempt an exit
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	ctx.generate_blocks(1).await;
 
@@ -325,8 +325,8 @@ async fn exit_oor() {
 	let vtxos = bark2.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "We have received one vtxo");
 
-	// We stop the asp
-	aspd.stop().await.unwrap();
+	// We stop the server
+	srv.stop().await.unwrap();
 
 	// Make bark2 exit and check the balance
 	// It should be FUND_AMOUNT + VTXO_AMOUNT - fees
@@ -341,9 +341,9 @@ async fn exit_oor() {
 #[tokio::test]
 async fn double_exit_call() {
 	let ctx = TestContext::new("exit/double_exit_call").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -436,11 +436,11 @@ async fn exit_bolt11_change() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, btc(7)).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
 
 	let board_amount = btc(5);
 	bark_1.board(board_amount).await;
@@ -456,7 +456,7 @@ async fn exit_bolt11_change() {
 	// We try to perform an exit for ln payment change
 	let vtxo = &bark_1.vtxos().await[0];
 
-	aspd_1.stop().await.unwrap();
+	srv.stop().await.unwrap();
 	bark_1.start_exit_all().await;
 	complete_exit(&ctx, &bark_1).await;
 
@@ -479,13 +479,13 @@ async fn exit_revoked_lightning_payment() {
 
 	// No channels are created so that payment will fail
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
@@ -499,7 +499,7 @@ async fn exit_revoked_lightning_payment() {
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
-	aspd_1.stop().await.unwrap();
+	srv.stop().await.unwrap();
 	bark_1.start_exit_all().await;
 	complete_exit(&ctx, &bark_1).await;
 
@@ -512,8 +512,8 @@ async fn exit_revoked_lightning_payment() {
 }
 
 #[tokio::test]
-async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
-	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke").await;
+async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
+	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -521,15 +521,15 @@ async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_1), btc(10)).await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
+	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn finish_lightning_payment(
@@ -547,8 +547,8 @@ async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_rpc().await);
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -581,24 +581,23 @@ async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
 }
 
 #[tokio::test]
-async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
-	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke").await;
+async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
+	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
+	// Start three lightning nodes and connect them in a line.
 	trace!("Start lightningd-1, lightningd-2, ...");
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_1), btc(10)).await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
+	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn finish_lightning_payment(
@@ -633,8 +632,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_rpc().await);
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -666,10 +665,10 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 #[tokio::test]
 async fn bark_claim_specific_exit_in_low_fee_market() {
 	let ctx = TestContext::new("exit/bark_claim_specific_exit_in_low_fee_market").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark = ctx.try_new_bark_with_create_args::<String>(
 		"bark",
-		&aspd.asp_url(),
+		&srv.ark_url(),
 		Some(FeeRate::from_sat_per_vb(1).unwrap()),
 		[],
 	).await.unwrap();
@@ -689,7 +688,7 @@ async fn bark_claim_specific_exit_in_low_fee_market() {
 	assert_eq!(exits.len(), 2);
 
 	// Complete the exit process
-	aspd.stop().await.unwrap();
+	srv.stop().await.unwrap();
 	bark.start_exit_vtxos(exits.iter().map(|v| v.id)).await;
 	complete_exit(&ctx, &bark).await;
 
@@ -703,10 +702,10 @@ async fn bark_claim_specific_exit_in_low_fee_market() {
 #[tokio::test]
 async fn bark_claim_all_exits_in_low_fee_market() {
 	let ctx = TestContext::new("exit/bark_claim_all_exits_in_low_fee_market").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark = ctx.try_new_bark_with_create_args::<String>(
 		"bark",
-		&aspd.asp_url(),
+		&srv.ark_url(),
 		Some(FeeRate::from_sat_per_vb(1).unwrap()),
 		[],
 	).await.unwrap();
@@ -723,7 +722,7 @@ async fn bark_claim_all_exits_in_low_fee_market() {
 	assert_eq!(vtxos.len(), 4);
 
 	// Complete the exit process
-	aspd.stop().await.unwrap();
+	srv.stop().await.unwrap();
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
 

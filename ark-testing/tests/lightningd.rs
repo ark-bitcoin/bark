@@ -6,7 +6,7 @@ use cln_rpc as rpc;
 
 use log::{error, info, trace};
 
-use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, daemon::aspd, sat, TestContext};
+use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, daemon::captaind, sat, TestContext};
 use ark_testing::util::{AnyhowErrorExt, FutureExt};
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 
@@ -29,7 +29,7 @@ async fn start_lightningd() {
 
 /// A test that makes a simple lightning payment
 /// If this tests fails there is something wrong with your lightning set-up
-/// We don't integrate with `aspd` yet
+/// We don't integrate with `server` yet
 #[tokio::test]
 async fn cln_can_pay_lightning() {
 	let ctx = TestContext::new("lightningd/cln_can_pay_lightning").await;
@@ -99,13 +99,13 @@ async fn bark_pay_ln_succeeds() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -160,11 +160,11 @@ async fn bark_pay_invoice_twice() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, btc(7)).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
 
 	bark_1.board(btc(5)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -193,13 +193,13 @@ async fn bark_pay_ln_fails() {
 	// No channels are created
 	// The payment must fail
 
-	// Start an aspd and link it to our cln installation
-	let aspd = ctx.new_aspd("aspd", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark = ctx.new_bark_with_funds("bark", &aspd, onchain_amount).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, onchain_amount).await;
 
 	// Board funds into the Ark
 	bark.board(board_amount).await;
@@ -254,13 +254,13 @@ async fn bark_refresh_ln_change_vtxo() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_1), btc(10)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -292,13 +292,13 @@ async fn bark_refresh_payment_revocation() {
 	// No channels are created
 	// The payment must fail
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_1), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_1), btc(10)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
@@ -342,13 +342,13 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -395,11 +395,11 @@ async fn bark_can_board_from_lightning() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd = ctx.new_aspd_with_funds("aspd", Some(&lightningd_2), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, btc(3)).await);
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
 	let board_amount = btc(2);
 	bark.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -455,8 +455,8 @@ async fn bark_can_board_from_lightning() {
 
 
 #[tokio::test]
-async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
-	let ctx = TestContext::new("lightningd/bark_can_pay_an_invoice_generated_by_same_asp_user").await;
+async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
+	let ctx = TestContext::new("lightningd/bark_can_pay_an_invoice_generated_by_same_server_user").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -481,12 +481,12 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd_1, btc(3)).await);
-	let bark_2 = Arc::new(ctx.new_bark_with_funds("bark-2", &aspd_1, btc(3)).await);
+	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
+	let bark_2 = Arc::new(ctx.new_bark_with_funds("bark-2", &srv, btc(3)).await);
 	let board_amount = btc(2);
 	bark_1.board(board_amount).await;
 	bark_2.board(board_amount).await;
@@ -515,20 +515,19 @@ async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 async fn bark_revoke_expired_pending_ln_payment() {
 	let ctx = TestContext::new("lightningd/bark_revoke_expired_pending_ln_payment").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
+	// Start three lightning nodes and connect them in a line.
 	trace!("Start lightningd-1, lightningd-2, ...");
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
+	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> aspd_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
 
 		async fn finish_lightning_payment(
@@ -554,8 +553,8 @@ async fn bark_revoke_expired_pending_ln_payment() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_rpc().await);
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -619,13 +618,13 @@ async fn bark_pay_ln_offer() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start an Ark Server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -672,13 +671,13 @@ async fn bark_pay_twice_ln_offer() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start an Ark Server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;

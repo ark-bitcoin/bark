@@ -26,7 +26,7 @@ pub use bark_json::cli as json;
 use bitcoin_ext::FeeRateExt;
 
 use crate::Bitcoind;
-use crate::context::ToAspUrl;
+use crate::context::ToArkUrl;
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
 
@@ -36,7 +36,7 @@ const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Debug)]
 pub struct BarkConfig {
 	pub datadir: PathBuf,
-	pub asp_url: String,
+	pub ark_url: String,
 	pub network: Network,
 	pub chain_source: ChainSource,
 	pub fallback_fee: FeeRate,
@@ -77,7 +77,7 @@ impl Bark {
 			.arg(&cfg.datadir)
 			.arg("--verbose")
 			.arg("--asp")
-			.arg(&cfg.asp_url)
+			.arg(&cfg.ark_url)
 			.arg("--vtxo-refresh-expiry-threshold")
 			.arg("24")
 			.arg(format!("--{}", &cfg.network))
@@ -164,9 +164,9 @@ impl Bark {
 		self.config.datadir.join(COMMAND_LOG_FILE)
 	}
 
-	/// Set the bark's ASP address.
-	pub async fn set_asp(&self, asp: &dyn ToAspUrl) {
-		let url = asp.asp_url();
+	/// Set the bark's server address.
+	pub async fn set_ark_url(&self, srv: &dyn ToArkUrl) {
+		let url = srv.ark_url();
 		self.run(["config", "--dangerous", "--asp", &url]).await;
 	}
 

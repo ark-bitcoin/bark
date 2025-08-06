@@ -29,11 +29,11 @@ use aspd_log::{
 use aspd_rpc::protos;
 use bark_json::exit::ExitState;
 
-use ark_testing::{Aspd, TestContext, btc, sat, Bark};
+use ark_testing::{Captaind, TestContext, btc, sat, Bark};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
-use ark_testing::daemon::aspd;
-use ark_testing::daemon::aspd::proxy::AspdRpcProxyServer;
+use ark_testing::daemon::captaind;
+use ark_testing::daemon::captaind::proxy::ArkRpcProxyServer;
 use ark_testing::util::{FutureExt, ReceiverExt};
 
 lazy_static::lazy_static! {
@@ -54,96 +54,96 @@ async fn progress_exit_to_broadcast(bark: &Bark) {
 }
 
 #[tokio::test]
-async fn check_aspd_version() {
-	let output = Aspd::base_cmd().arg("--version").output().await
+async fn check_captaind_version() {
+	let output = Captaind::base_cmd().arg("--version").output().await
 		.expect("Failed to spawn process and capture output");
 
 	let stdout = String::from_utf8(output.stdout).expect("Output is valid utf-8");
 	let mut parts = stdout.split(' ');
-	assert_eq!(parts.next().unwrap(), "aspd");
+	assert_eq!(parts.next().unwrap(), "captaind");
 	let version_str = parts.next().unwrap().trim();
 	semver::Version::parse(&version_str).unwrap();
 }
 
 #[tokio::test]
 async fn bitcoind_auth_connection() {
-	let ctx = TestContext::new("aspd/bitcoind_auth_connection").await;
+	let ctx = TestContext::new("server/bitcoind_auth_connection").await;
 
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.bitcoind.url = "".into(); //t set later by test framework
 		cfg.bitcoind.cookie = None;
 		cfg.bitcoind.rpc_user = Some(BITCOINRPC_TEST_USER.to_string());
 		cfg.bitcoind.rpc_pass = Some(BITCOINRPC_TEST_PASSWORD.to_string());
 	}).await;
-	ctx.fund_asp(&aspd, sat(1_000_000)).await;
+	ctx.fund_captaind(&srv, sat(1_000_000)).await;
 
-	assert_eq!(aspd.wallet_status().await.total().to_sat(), 1_000_000);
+	assert_eq!(srv.wallet_status().await.total().to_sat(), 1_000_000);
 }
 
 #[tokio::test]
 async fn bitcoind_cookie_connection() {
-	let ctx = TestContext::new("aspd/bitcoind_cookie_connection").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(0.01)).await;
-	assert_eq!(aspd.wallet_status().await.total().to_sat(), 1_000_000);
+	let ctx = TestContext::new("server/bitcoind_cookie_connection").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(0.01)).await;
+	assert_eq!(srv.wallet_status().await.total().to_sat(), 1_000_000);
 }
 
 #[tokio::test]
 async fn round_started_log_can_be_captured() {
-	let ctx = TestContext::new("aspd/capture_log").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("server/capture_log").await;
+	let srv = ctx.new_captaind("server", None).await;
 
-	let mut log_stream = aspd.subscribe_log::<aspd_log::RoundStarted>().await;
+	let mut log_stream = srv.subscribe_log::<aspd_log::RoundStarted>().await;
 	while let Some(l) = log_stream.recv().await {
 		info!("Captured log: Round started at {}", l.round_seq);
 		break;
 	}
 
-	let l = aspd.wait_for_log::<aspd_log::RoundStarted>().await;
+	let l = srv.wait_for_log::<aspd_log::RoundStarted>().await;
 	info!("Captured log: Round started with round_num {}", l.round_seq);
 
 	// make sure we only capture the log once.
-	assert!(aspd.wait_for_log::<aspd_log::RoundStarted>().try_fast().await.is_err());
+	assert!(srv.wait_for_log::<aspd_log::RoundStarted>().try_fast().await.is_err());
 }
 
 #[tokio::test]
-async fn fund_asp() {
-	let ctx = TestContext::new("aspd/fund_aspd").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+async fn fund_captaind() {
+	let ctx = TestContext::new("server/fund_captaind").await;
+	let srv = ctx.new_captaind("server", None).await;
 
-	// Query the wallet balance of the asp
-	assert_eq!(aspd.wallet_status().await.total().to_sat(), 0);
+	// Query the wallet balance of the server
+	assert_eq!(srv.wallet_status().await.total().to_sat(), 0);
 
-	// Fund the aspd
-	ctx.fund_asp(&aspd, btc(10)).await;
+	// Fund the server
+	ctx.fund_captaind(&srv, btc(10)).await;
 	ctx.generate_blocks(1).await;
 
 	// Confirm that the balance is updated
-	assert!(aspd.wallet_status().await.total().to_sat() > 0);
+	assert!(srv.wallet_status().await.total().to_sat() > 0);
 }
 
 #[tokio::test]
 async fn cant_spend_untrusted() {
-	let ctx = TestContext::new("aspd/cant_spend_untrusted").await;
+	let ctx = TestContext::new("server/cant_spend_untrusted").await;
 
 	const NEED_CONFS: u32 = 2;
 
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS as usize;
 	}).await;
 
-	let mut bark = ctx.new_bark_with_funds("bark", &aspd, sat(1_000_000)).await;
+	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	assert_eq!(aspd.wallet_status().await.total().to_sat(), 0);
+	assert_eq!(srv.wallet_status().await.total().to_sat(), 0);
 
-	// fund aspd without confirming
-	let addr = aspd.get_rounds_funding_address().await;
+	// fund server without confirming
+	let addr = srv.get_rounds_funding_address().await;
 	ctx.bitcoind().fund_addr(addr, btc(10)).await;
-	assert_eq!(aspd.wallet_status().await.total().to_sat(), 0);
+	assert_eq!(srv.wallet_status().await.total().to_sat(), 0);
 
-	let mut log_round_err = aspd.subscribe_log::<RoundError>().await;
+	let mut log_round_err = srv.subscribe_log::<RoundError>().await;
 
 	// Set a time-out on the bark command for the refresh --all
 	// The command is expected to time-out
@@ -151,7 +151,7 @@ async fn cant_spend_untrusted() {
 	let mut bark = Arc::new(bark);
 
 	// we will launch bark to try refresh, it will produce an error log at first,
-	// then we'll confirm the aspd's money and then bark should succeed by retrying
+	// then we'll confirm the server's money and then bark should succeed by retrying
 	let bark_clone = bark.clone();
 	let attempt_handle = tokio::spawn(async move {
 		bark_clone.try_refresh_all().await.unwrap_err();
@@ -195,44 +195,44 @@ async fn cant_spend_untrusted() {
 
 #[tokio::test]
 async fn restart_key_stability() {
-	//! Test to ensure that the asp key stays stable accross loads
+	//! Test to ensure that the server key stays stable accross loads
 	//! but gives new on-chain addresses.
 
-	let ctx = TestContext::new("aspd/restart_key_stability").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("server/restart_key_stability").await;
+	let srv = ctx.new_captaind("server", None).await;
 
-	let asp_key1 = aspd.ark_info().await.asp_pubkey;
-	let addr1 = aspd.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
+	let server_key1 = srv.ark_info().await.asp_pubkey;
+	let addr1 = srv.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
 
-	// Fund the aspd's addr
+	// Fund the server's addr
 	ctx.bitcoind().fund_addr(&addr1, btc(1)).await;
 	ctx.generate_blocks(1).await;
 
-	// Restart aspd.
+	// Restart server.
 	// bitcoind must be shut down gracefully otherwise it will not restart properly
-	aspd.shutdown_bitcoind().await;
-	aspd.stop().await.unwrap();
+	srv.shutdown_bitcoind().await;
+	srv.stop().await.unwrap();
 
-	let mut new_cfg = aspd.config().clone();
+	let mut new_cfg = srv.config().clone();
 	new_cfg.bitcoind.url = String::new();
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, move |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", None, move |cfg| {
 		*cfg = new_cfg;
 	}).await;
-	let asp_key2 = aspd.ark_info().await.asp_pubkey;
-	let addr2 = aspd.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
+	let server_key2 = srv.ark_info().await.asp_pubkey;
+	let addr2 = srv.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
 
-	assert_eq!(asp_key1, asp_key2);
+	assert_eq!(server_key1, server_key2);
 	assert_ne!(addr1, addr2);
 }
 
 #[tokio::test]
 async fn max_vtxo_amount() {
-	let ctx = TestContext::new("aspd/max_vtxo_amount").await;
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let ctx = TestContext::new("server/max_vtxo_amount").await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.max_vtxo_amount = Some(Amount::from_sat(500_000));
 	}).await;
-	ctx.fund_asp(&aspd, Amount::from_int_btc(10)).await;
-	let mut bark1 = ctx.new_bark_with_funds("bark1", &aspd, Amount::from_sat(1_500_000)).await;
+	ctx.fund_captaind(&srv, Amount::from_int_btc(10)).await;
+	let mut bark1 = ctx.new_bark_with_funds("bark1", &srv, Amount::from_sat(1_500_000)).await;
 
 	let cfg_max_amount = bark1.ark_info().await.max_vtxo_amount.unwrap();
 
@@ -264,27 +264,27 @@ async fn max_vtxo_amount() {
 
 #[tokio::test]
 async fn sweep_vtxos() {
-	//! Testing aspd spending expired rounds.
-	let ctx = TestContext::new("aspd/sweep_vtxos").await;
+	//! Testing server spending expired rounds.
+	let ctx = TestContext::new("server/sweep_vtxos").await;
 
-	// TODO: in this test, blocks are generated by aspd's bitcoin node.
+	// TODO: in this test, blocks are generated by the server's bitcoin node.
 	// Ideally they would be generated by ctx.bitcoind but it will
 	// require some synchronization.
 
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_millis(500000000);
 		cfg.vtxo_lifetime = 64;
 		cfg.vtxo_sweeper.sweep_threshold = sat(100_000);
 	}).await;
-	ctx.fund_asp(&aspd, sat(1_000_000)).await;
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, sat(500_000)).await);
+	ctx.fund_captaind(&srv, sat(1_000_000)).await;
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, sat(500_000)).await);
 
 	// subscribe to a few log messages
-	let mut log_not_sweeping = aspd.subscribe_log::<NotSweeping>().await;
-	let mut log_sweeping = aspd.subscribe_log::<SweepBroadcast>().await;
-	let mut log_board_done = aspd.subscribe_log::<BoardFullySwept>().await;
-	let mut log_round_done = aspd.subscribe_log::<RoundFullySwept>().await;
-	let mut log_sweeps = aspd.subscribe_log::<SweepingOutput>().await;
+	let mut log_not_sweeping = srv.subscribe_log::<NotSweeping>().await;
+	let mut log_sweeping = srv.subscribe_log::<SweepBroadcast>().await;
+	let mut log_board_done = srv.subscribe_log::<BoardFullySwept>().await;
+	let mut log_round_done = srv.subscribe_log::<RoundFullySwept>().await;
+	let mut log_sweeps = srv.subscribe_log::<SweepingOutput>().await;
 
 	// we board one vtxo and then a few blocks later another
 	bark.board(sat(75_000)).await;
@@ -293,8 +293,8 @@ async fn sweep_vtxos() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// before either expires not sweeping yet because nothing available
-	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	aspd.trigger_sweep().await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().await;
+	srv.trigger_sweep().await;
 	assert_eq!(sat(0), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
@@ -303,20 +303,20 @@ async fn sweep_vtxos() {
 	tokio::spawn(async move {
 		b.refresh_all().await;
 	});
-	aspd.trigger_round().await;
+	srv.trigger_round().await;
 
-	let _ = aspd.wait_for_log::<RoundFinished>().try_wait(5_000).await;
+	let _ = srv.wait_for_log::<RoundFinished>().try_wait(5_000).await;
 	ctx.generate_blocks(30).await;
 
 	// now we expire the first one, still not sweeping because not enough surplus
-	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
-	aspd.trigger_sweep().await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
+	srv.trigger_sweep().await;
 	assert_eq!(sat(73_760), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
 	ctx.generate_blocks(5).await;
-	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
-	aspd.trigger_sweep().await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
+	srv.trigger_sweep().await;
 	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
@@ -326,8 +326,8 @@ async fn sweep_vtxos() {
 
 	// now we swept both board vtxos, let's sweep the round we created above
 	ctx.generate_blocks(30).await;
-	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	aspd.trigger_sweep().await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().await;
+	srv.trigger_sweep().await;
 	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len(), "sweeps: {:?}", sweeps);
@@ -339,8 +339,8 @@ async fn sweep_vtxos() {
 	bark.board(sat(102_000)).await;
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
 
-	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	aspd.trigger_sweep().await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().await;
+	srv.trigger_sweep().await;
 	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
@@ -349,9 +349,9 @@ async fn sweep_vtxos() {
 	assert_eq!(sat(101_255), surplus);
 
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
-	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
-	aspd.trigger_sweep().await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().await;
+	let mut log_stats = srv.subscribe_log::<SweeperStats>().await;
+	srv.trigger_sweep().await;
 
 	// and eventually the round should be finished
 	log_board_done.recv().wait(10_000).await.unwrap();
@@ -360,31 +360,31 @@ async fn sweep_vtxos() {
 	info!("Round done signal received");
 	let stats = log_stats.recv().fast().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);
-	assert_eq!(1_242_122, aspd.wallet_status().await.total().to_sat());
+	assert_eq!(1_242_122, srv.wallet_status().await.total().to_sat());
 }
 
 #[tokio::test]
-async fn restart_fresh_aspd() {
-	let ctx = TestContext::new("aspd/restart_fresh_aspd").await;
-	let mut aspd = ctx.new_aspd("aspd", None).await;
-	aspd.stop().await.unwrap();
-	aspd.start().await.unwrap();
+async fn restart_fresh_server() {
+	let ctx = TestContext::new("server/restart_fresh_server").await;
+	let mut srv = ctx.new_captaind("server", None).await;
+	srv.stop().await.unwrap();
+	srv.start().await.unwrap();
 }
 
 #[tokio::test]
-async fn restart_funded_aspd() {
-	let ctx = TestContext::new("aspd/restart_funded_aspd").await;
-	let mut aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	aspd.stop().await.unwrap();
-	aspd.start().await.unwrap();
+async fn restart_funded_server() {
+	let ctx = TestContext::new("server/restart_funded_server").await;
+	let mut srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	srv.stop().await.unwrap();
+	srv.start().await.unwrap();
 }
 
 #[tokio::test]
-async fn restart_aspd_with_payments() {
-	let ctx = TestContext::new("aspd/restart_aspd_with_payments").await;
-	let mut aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let bark1 = ctx.new_bark("bark1", &aspd).await;
-	let bark2 = ctx.new_bark("bark2", &aspd).await;
+async fn restart_server_with_payments() {
+	let ctx = TestContext::new("server/restart_server_with_payments").await;
+	let mut srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark("bark1", &srv).await;
+	let bark2 = ctx.new_bark("bark2", &srv).await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
 	ctx.fund_bark(&bark2, sat(1_000_000)).await;
 
@@ -396,20 +396,20 @@ async fn restart_aspd_with_payments() {
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 	bark1.refresh_all().await;
 	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
-	aspd.stop().await.unwrap();
-	aspd.start().await.unwrap();
+	srv.stop().await.unwrap();
+	srv.start().await.unwrap();
 }
 
 #[tokio::test]
 async fn full_round() {
-	let ctx = TestContext::new("aspd/full_round").await;
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let ctx = TestContext::new("server/full_round").await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_millis(2_000);
 		cfg.round_submit_time = Duration::from_millis(10_000);
 		cfg.round_sign_time = Duration::from_millis(10_000);
 		cfg.nb_round_nonces = 2;
 	}).await;
-	ctx.fund_asp(&aspd, btc(10)).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// based on nb_round_nonces
 	const MAX_OUTPUTS: usize = 16;
@@ -421,7 +421,7 @@ async fn full_round() {
 
 	let barks = join_all((1..=NB_BARKS).map(|i| {
 		let name = format!("bark{}", i);
-		ctx.new_bark_with_funds(name, &aspd, sat(40_000))
+		ctx.new_bark_with_funds(name, &srv, sat(40_000))
 	})).await;
 	ctx.generate_blocks(1).await;
 
@@ -439,10 +439,10 @@ async fn full_round() {
 	/// Once it reaches MAX_OUTPUTS, it asserts the next one fails.
 	/// Once that happened succesfully, it fullfils the result channel.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient, Arc<Mutex<usize>>, Arc<mpsc::UnboundedSender<tonic::Status>>);
+	struct Proxy(captaind::ArkClient, Arc<Mutex<usize>>, Arc<mpsc::UnboundedSender<tonic::Status>>);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			let mut lock = self.1.lock().await;
@@ -462,9 +462,9 @@ async fn full_round() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await, Arc::new(Mutex::new(0)), Arc::new(tx));
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
-	futures::future::join_all(barks.iter().map(|bark| bark.set_asp(&proxy))).await;
+	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(Mutex::new(0)), Arc::new(tx));
+	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
+	futures::future::join_all(barks.iter().map(|bark| bark.set_ark_url(&proxy))).await;
 
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
 	tokio::spawn(async move {
@@ -481,14 +481,14 @@ async fn full_round() {
 
 #[tokio::test]
 async fn double_spend_oor() {
-	let ctx = TestContext::new("aspd/double_spend_oor").await;
+	let ctx = TestContext::new("server/double_spend_oor").await;
 
 	/// This proxy will always duplicate OOR requests and store the latest request in the mutex.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient, Arc<Mutex<Option<protos::ArkoorPackageCosignRequest>>>);
+	struct Proxy(captaind::ArkClient, Arc<Mutex<Option<protos::ArkoorPackageCosignRequest>>>);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn request_arkoor_package_cosign(&mut self, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
@@ -512,21 +512,21 @@ async fn double_spend_oor() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let last_req = Arc::new(Mutex::new(None));
-	let proxy = Proxy(aspd.get_public_rpc().await, last_req.clone());
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await, last_req.clone());
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let addr = ark::Address::new_testnet(aspd.ark_info().await.asp_pubkey, *RANDOM_PK);
+	let addr = ark::Address::new_testnet(srv.ark_info().await.asp_pubkey, *RANDOM_PK);
 	bark.send_oor(addr, sat(100_000)).await;
 
 	// then after it's done, fire the request again, which should fail.
 	let req = last_req.lock().await.take().unwrap();
-	let err = aspd.get_public_rpc().await.request_arkoor_package_cosign(req).await.unwrap_err();
+	let err = srv.get_public_rpc().await.request_arkoor_package_cosign(req).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"bad user input: attempted to sign arkoor tx for already spent vtxo",
 	), "err: {err}");
@@ -534,14 +534,14 @@ async fn double_spend_oor() {
 
 #[tokio::test]
 async fn double_spend_round() {
-	let ctx = TestContext::new("aspd/double_spend_round").await;
+	let ctx = TestContext::new("server/double_spend_round").await;
 
 	/// This proxy will duplicate all round payment submission requests.
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
@@ -563,32 +563,32 @@ async fn double_spend_round() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_rpc().await)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let proxy = ArkRpcProxyServer::start(Proxy(srv.get_public_rpc().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let mut l = aspd.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
+	let mut l = srv.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
 	bark.refresh_all().await;
 	l.recv().wait(2500).await;
 }
 
 #[tokio::test]
 async fn test_participate_round_wrong_step() {
-	let ctx = TestContext::new("aspd/test_participate_round_wrong_step").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, Amount::from_int_btc(10)).await;
-	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &aspd, Amount::from_sat(1_000_000)).await;
+	let ctx = TestContext::new("server/test_participate_round_wrong_step").await;
+	let srv = ctx.new_captaind_with_funds("server", None, Amount::from_int_btc(10)).await;
+	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &srv, Amount::from_sat(1_000_000)).await;
 	bark.board(Amount::from_sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	/// This proxy will send a `provide_vtxo_signatures` req instead of `submit_payment` one
 	#[derive(Clone)]
-	struct ProxyA(aspd::ArkClient);
+	struct ProxyA(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for ProxyA {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for ProxyA {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 		async fn submit_payment(&mut self, _req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			self.0.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
 				pubkey: RANDOM_PK.serialize().to_vec(), signatures: vec![]
@@ -597,35 +597,35 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_rpc().await)).await;
-	bark.set_asp(&proxy).await;
+	let proxy = ArkRpcProxyServer::start(ProxyA(srv.get_public_rpc().await)).await;
+	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
 
 	/// This proxy will send a `provide_forfeit_signatures` req instead of `provide_vtxo_signatures` one
 	#[derive(Clone)]
-	struct ProxyB(aspd::ArkClient);
+	struct ProxyB(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for ProxyB {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for ProxyB {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 		async fn provide_vtxo_signatures(&mut self, _req: protos::VtxoSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
 			self.0.provide_forfeit_signatures(protos::ForfeitSignaturesRequest { signatures: vec![] }).await?;
 			Ok(protos::Empty{})
 		}
 	}
 
-	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_rpc().await)).await;
+	let proxy = ArkRpcProxyServer::start(ProxyB(srv.get_public_rpc().await)).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
-	bark.set_asp(&proxy).await;
+	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
 
 	/// This proxy will send a `submit_payment` req instead of `provide_forfeit_signatures` one
 	#[derive(Clone)]
-	struct ProxyC(aspd::ArkClient);
+	struct ProxyC(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for ProxyC {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for ProxyC {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 		async fn provide_forfeit_signatures(&mut self, _req: protos::ForfeitSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
 			self.0.submit_payment(protos::SubmitPaymentRequest {
 				input_vtxos: vec![], vtxo_requests: vec![], offboard_requests: vec![]
@@ -634,8 +634,8 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_rpc().await)).await;
-	bark.set_asp(&proxy).await;
+	let proxy = ArkRpcProxyServer::start(ProxyC(srv.get_public_rpc().await)).await;
+	bark.set_ark_url(&proxy).await;
 	bark.timeout = None;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
@@ -643,13 +643,13 @@ async fn test_participate_round_wrong_step() {
 
 #[tokio::test]
 async fn spend_unregistered_board() {
-	let ctx = TestContext::new("aspd/spend_unregistered_board").await;
+	let ctx = TestContext::new("server/spend_unregistered_board").await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn register_board_vtxo(&mut self, _req: protos::BoardVtxoRequest) -> Result<protos::Empty, tonic::Status> {
 			// drop the request
@@ -657,14 +657,14 @@ async fn spend_unregistered_board() {
 		}
 	}
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_rpc().await)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let proxy = ArkRpcProxyServer::start(Proxy(srv.get_public_rpc().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let mut l = aspd.subscribe_log::<RoundUserVtxoUnknown>().await;
+	let mut l = srv.subscribe_log::<RoundUserVtxoUnknown>().await;
 	tokio::spawn(async move {
 		let _ = bark.refresh_all().await;
 		// we don't care that that call fails
@@ -674,14 +674,14 @@ async fn spend_unregistered_board() {
 
 #[tokio::test]
 async fn spend_unconfirmed_board_round() {
-	let ctx = TestContext::new("aspd/spend_unconfirmed_board_round").await;
+	let ctx = TestContext::new("server/spend_unconfirmed_board_round").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &aspd, sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
 
-	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
 	tokio::spawn(async move {
 		let _ = bark.refresh_all().await;
 		// we don't care that that call fails
@@ -691,15 +691,15 @@ async fn spend_unconfirmed_board_round() {
 
 #[tokio::test]
 async fn spend_unconfirmed_board_oor() {
-	let ctx = TestContext::new("aspd/spend_unconfirmed_board_oor").await;
+	let ctx = TestContext::new("server/spend_unconfirmed_board_oor").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2".to_string(), &aspd).await;
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2".to_string(), &srv).await;
 	bark1.board(sat(800_000)).await;
 
-	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
 	tokio::spawn(async move {
 		let _ = bark1.send_oor(bark2.address().await, sat(400_000)).await;
 		// we don't care that that call fails
@@ -709,24 +709,24 @@ async fn spend_unconfirmed_board_oor() {
 
 #[tokio::test]
 async fn reject_revocation_on_successful_lightning_payment() {
-	let ctx = TestContext::new("aspd/reject_revocation_on_successful_lightning_payment").await;
+	let ctx = TestContext::new("server/reject_revocation_on_successful_lightning_payment").await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn finish_lightning_payment(
 			&mut self, req: protos::SignedLightningPaymentDetails,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
-			trace!("AspdRpcProxy: Calling finish_lightning_payment.");
+			trace!("ArkRpcProxy: Calling finish_lightning_payment.");
 			// Wait until payment is successful then we drop update so client asks for revocation
 			let res = self.upstream().finish_lightning_payment(req).await?.into_inner();
 			if res.payment_preimage().len() > 0 {
-				trace!("AspdRpcProxy: Received preimage which we are 'dropping' for this test.");
+				trace!("ArkRpcProxy: Received preimage which we are 'dropping' for this test.");
 			} else {
-				trace!("AspdRpcProxy: Received message but no preimage yet.");
+				trace!("ArkRpcProxy: Received message but no preimage yet.");
 			}
 
 			Ok(protos::LightningPaymentResult {
@@ -758,14 +758,14 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
 
-	let proxy = AspdRpcProxyServer::start(Proxy(aspd_1.get_public_rpc().await)).await;
+	let proxy = ArkRpcProxyServer::start(Proxy(srv.get_public_rpc().await)).await;
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
@@ -784,19 +784,19 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 #[tokio::test]
 async fn spend_unconfirmed_board_lightning() {
-	let ctx = TestContext::new("aspd/spend_unconfirmed_board_lightning").await;
+	let ctx = TestContext::new("server/spend_unconfirmed_board_lightning").await;
 
 	// Start a lightning node to generate an invoice, we won't perform any payment so no need for others
 	trace!("Start lightningd-1");
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 	let invoice = lightningd_1.invoice(None, "a testing invoice", "my description").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &aspd, sat(1_000_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	bark1.board(sat(800_000)).await;
 
-	let mut l = aspd.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
 	tokio::spawn(async move {
 		let _ = bark1.send_lightning(invoice, Some(sat(400_000))).await;
 		// we don't care that that call fails
@@ -806,19 +806,19 @@ async fn spend_unconfirmed_board_lightning() {
 
 #[tokio::test]
 async fn bad_round_input() {
-	let ctx = TestContext::new("aspd/bad_round_input").await;
-	let aspd = ctx.new_aspd_with_cfg("aspd", None, |cfg| {
+	let ctx = TestContext::new("server/bad_round_input").await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_secs(10000000);
 		cfg.round_submit_time = Duration::from_secs(30);
 	}).await;
-	let bark = ctx.new_bark_with_funds("bark", &aspd, btc(1)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
 	bark.board(btc(0.5)).await;
 	let [vtxo] = bark.vtxos().await.try_into().unwrap();
 
-	let ark_info = aspd.ark_info().await;
-	let mut rpc = aspd.get_public_rpc().await;
+	let ark_info = srv.ark_info().await;
+	let mut rpc = srv.get_public_rpc().await;
 	let mut stream = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
-	aspd.trigger_round().await;
+	srv.trigger_round().await;
 	let challenge = loop {
 		match stream.next().await.unwrap().unwrap() {
 			protos::RoundEvent { event: Some(event) } => match event {
@@ -921,10 +921,10 @@ async fn bad_round_input() {
 }
 
 #[derive(Clone)]
-struct NoFinishRoundProxy(aspd::ArkClient);
+struct NoFinishRoundProxy(captaind::ArkClient);
 #[tonic::async_trait]
-impl aspd::proxy::AspdRpcProxy for NoFinishRoundProxy {
-	fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
+	fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 	async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
 		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
@@ -941,10 +941,10 @@ impl aspd::proxy::AspdRpcProxy for NoFinishRoundProxy {
 
 #[tokio::test]
 async fn claim_forfeit_connector_chain() {
-	let ctx = TestContext::new("aspd/claim_forfeit_connector_chain").await;
+	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_rpc().await)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let proxy = ArkRpcProxyServer::start(NoFinishRoundProxy(srv.get_public_rpc().await)).await;
 
 	// To make sure we have a chain of connector, we make a bunch of inputs
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(5_000_000)).await;
@@ -955,19 +955,19 @@ async fn claim_forfeit_connector_chain() {
 
 	// we do a refresh, but make it seem to the client that it failed
 	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
-	let mut log_round = aspd.subscribe_log::<RoundFinished>().await;
+	let mut log_round = srv.subscribe_log::<RoundFinished>().await;
 	assert!(bark.try_refresh_all().await.is_err());
 	assert!(bark.vtxos().await.contains(&vtxo));
 	assert_eq!(log_round.recv().fast().await.unwrap().nb_input_vtxos, 10);
 
 	// start the exit process
-	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
+	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>().await;
 	bark.start_exit_vtxos([vtxo.id]).await;
 	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
-	let mut log_confirmed = aspd.subscribe_log::<ForfeitedExitConfirmed>().await;
+	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>().await;
 	ctx.generate_blocks(1).await;
 	let msg = log_confirmed.recv().await.unwrap();
 	assert_eq!(msg.vtxo, vtxo.id);
@@ -975,11 +975,11 @@ async fn claim_forfeit_connector_chain() {
 	ctx.generate_blocks(1).await;
 
 	// wait for connector txs to confirm and watcher to broadcast ff tx
-	let mut log_broadcast = aspd.subscribe_log::<ForfeitBroadcasted>().await;
+	let mut log_broadcast = srv.subscribe_log::<ForfeitBroadcasted>().await;
 	let txid = async {
 		loop {
 			ctx.generate_blocks(1).await;
-			aspd.wait_for_log::<TxIndexUpdateFinished>().await;
+			srv.wait_for_log::<TxIndexUpdateFinished>().await;
 			if let Ok(m) = log_broadcast.try_recv() {
 				break m.forfeit_txid;
 			}
@@ -1005,10 +1005,10 @@ async fn claim_forfeit_connector_chain() {
 #[tokio::test]
 async fn claim_forfeit_round_connector() {
 	//! Special case of the forfeit caim test where the connector output is on the round tx
-	let ctx = TestContext::new("aspd/claim_forfeit_round_connector").await;
+	let ctx = TestContext::new("server/claim_forfeit_round_connector").await;
 
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_rpc().await)).await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let proxy = ArkRpcProxyServer::start(NoFinishRoundProxy(srv.get_public_rpc().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -1016,20 +1016,20 @@ async fn claim_forfeit_round_connector() {
 
 	// we do a refresh, but make it seem to the client that it failed
 	let [vtxo] = bark.vtxos().await.try_into().expect("1 vtxo");
-	let mut log_round = aspd.subscribe_log::<RoundFinished>().await;
+	let mut log_round = srv.subscribe_log::<RoundFinished>().await;
 	assert!(bark.try_refresh_all().await.is_err());
 	assert!(bark.vtxos().await.contains(&vtxo));
 	assert_eq!(log_round.recv().try_fast().await.expect("time-out").unwrap().nb_input_vtxos, 1);
 
 	// start the exit process
-	let mut log_detected = aspd.subscribe_log::<ForfeitedExitInMempool>().await;
+	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>().await;
 	bark.start_exit_vtxos([vtxo.id]).await;
 	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
-	let mut log_forfeit_broadcasted = aspd.subscribe_log::<ForfeitBroadcasted>().await;
-	let mut log_confirmed = aspd.subscribe_log::<ForfeitedExitConfirmed>().await;
+	let mut log_forfeit_broadcasted = srv.subscribe_log::<ForfeitBroadcasted>().await;
+	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>().await;
 	ctx.generate_blocks(1).await;
 	assert_eq!(log_confirmed.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
@@ -1053,9 +1053,9 @@ async fn claim_forfeit_round_connector() {
 
 #[tokio::test]
 async fn register_board_is_idempotent() {
-	let ctx = TestContext::new("aspd/register_board_is_idempotent").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark_wallet = ctx.new_bark("bark", &aspd).await;
+	let ctx = TestContext::new("server/register_board_is_idempotent").await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark_wallet = ctx.new_bark("bark", &srv).await;
 
 	ctx.fund_bark(&bark_wallet, bitcoin::Amount::from_sat(50_000)).await;
 	let board = bark_wallet.board_all().await;
@@ -1066,7 +1066,7 @@ async fn register_board_is_idempotent() {
 	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
 
 	// We will now call the register_board a few times
-	let mut rpc = aspd.get_public_rpc().await;
+	let mut rpc = srv.get_public_rpc().await;
 	let request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
 		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
@@ -1079,14 +1079,14 @@ async fn register_board_is_idempotent() {
 
 #[tokio::test]
 async fn reject_dust_board_cosign() {
-	let ctx = TestContext::new("aspd/reject_dust_board_cosign").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("server/reject_dust_board_cosign").await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn request_board_cosign(&mut self, mut req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
 			req.amount = P2TR_DUST_SAT - 1;
@@ -1094,8 +1094,8 @@ async fn reject_dust_board_cosign() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	let err = bark.try_board_all().await.unwrap_err();
@@ -1107,14 +1107,14 @@ async fn reject_dust_board_cosign() {
 
 #[tokio::test]
 async fn reject_dust_vtxo_request() {
-	let ctx = TestContext::new("aspd/reject_dust_vtxo_request").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("server/reject_dust_vtxo_request").await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			req.vtxo_requests.get_mut(0).unwrap().vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
@@ -1122,8 +1122,8 @@ async fn reject_dust_vtxo_request() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	bark.board_all().await;
@@ -1138,14 +1138,14 @@ async fn reject_dust_vtxo_request() {
 
 #[tokio::test]
 async fn reject_dust_offboard_request() {
-	let ctx = TestContext::new("aspd/reject_dust_offboard_request").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("server/reject_dust_offboard_request").await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 			req.offboard_requests[0].amount = P2TR_DUST_SAT - 1;
@@ -1153,8 +1153,8 @@ async fn reject_dust_offboard_request() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
 
@@ -1168,14 +1168,14 @@ async fn reject_dust_offboard_request() {
 
 #[tokio::test]
 async fn reject_dust_arkoor_cosign() {
-	let ctx = TestContext::new("aspd/reject_dust_arkoor_cosign").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("server/reject_dust_arkoor_cosign").await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn request_arkoor_package_cosign(&mut self, mut req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.arkoors[0].outputs[0].amount = P2TR_DUST.to_sat() - 1;
@@ -1183,14 +1183,14 @@ async fn reject_dust_arkoor_cosign() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let bark2 = ctx.new_bark("bark2", &aspd).await;
+	let bark2 = ctx.new_bark("bark2", &srv).await;
 
 	let err = bark.try_send_oor(bark2.address().await, sat(10_000), true).await.unwrap_err();
 	assert!(err.to_string().contains("arkoor output amounts cannot be below the p2tr dust threshold"), "err: {err}");
@@ -1198,16 +1198,16 @@ async fn reject_dust_arkoor_cosign() {
 
 #[tokio::test]
 async fn reject_dust_bolt11_payment() {
-	let ctx = TestContext::new("aspd/reject_dust_bolt11_payment").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
+	let ctx = TestContext::new("server/reject_dust_bolt11_payment").await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn start_lightning_payment(&mut self, mut req: protos::LightningPaymentRequest)
 			-> Result<protos::ArkoorPackageCosignResponse, tonic::Status>
@@ -1217,8 +1217,8 @@ async fn reject_dust_bolt11_payment() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	bark.board_all().await;
@@ -1232,8 +1232,8 @@ async fn reject_dust_bolt11_payment() {
 }
 
 #[tokio::test]
-async fn aspd_refuse_claim_invoice_not_settled() {
-	let ctx = TestContext::new("aspd/aspd_refuse_claim_invoice_not_settled").await;
+async fn server_refuse_claim_invoice_not_settled() {
+	let ctx = TestContext::new("server/server_refuse_claim_invoice_not_settled").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -1258,14 +1258,14 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd = ctx.new_aspd_with_funds("aspd", Some(&lightningd_2), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn claim_lightning_receive(&mut self, mut req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
 			req.payment_preimage = vec![1; 32];
@@ -1273,8 +1273,8 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(3)).await);
@@ -1293,8 +1293,8 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 }
 
 #[tokio::test]
-async fn aspd_should_release_hodl_invoice_when_subscription_is_cancelled() {
-	let ctx = TestContext::new("aspd/aspd_should_release_hodl_invoice_when_subscription_is_cancelled").await;
+async fn server_should_release_hodl_invoice_when_subscription_is_cancelled() {
+	let ctx = TestContext::new("server/server_should_release_hodl_invoice_when_subscription_is_cancelled").await;
 	let cfg_htlc_subscription_timeout = Duration::from_secs(5);
 
 	// Start a three lightning nodes
@@ -1320,20 +1320,20 @@ async fn aspd_should_release_hodl_invoice_when_subscription_is_cancelled() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	let aspd = ctx.new_aspd_with_cfg("aspd", Some(&lightningd_2), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightningd_2), |cfg| {
 		// Set the subscription timeout very short to cancel the subscription quickly
 		cfg.htlc_subscription_timeout = cfg_htlc_subscription_timeout
 	}).await;
-	ctx.fund_asp(&aspd, btc(10)).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd, btc(3)).await);
+	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
-	tokio::time::sleep(cfg_htlc_subscription_timeout + aspd.config().invoice_check_interval).await;
+	tokio::time::sleep(cfg_htlc_subscription_timeout + srv.config().invoice_check_interval).await;
 
 	// cln rpc error code when cannot pay invoice
 	let err = lightningd_1.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
@@ -1341,8 +1341,8 @@ async fn aspd_should_release_hodl_invoice_when_subscription_is_cancelled() {
 }
 
 #[tokio::test]
-async fn aspd_should_refuse_claim_twice() {
-	let ctx = TestContext::new("aspd/aspd_should_refuse_claim_twice").await;
+async fn server_should_refuse_claim_twice() {
+	let ctx = TestContext::new("server/server_should_refuse_claim_twice").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -1367,11 +1367,11 @@ async fn aspd_should_refuse_claim_twice() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &aspd_1, btc(3)).await);
+	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
 	bark_1.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -1391,14 +1391,14 @@ async fn aspd_should_refuse_claim_twice() {
 }
 
 #[tokio::test]
-async fn aspd_refuse_too_deep_arkoor_input() {
-	let ctx = TestContext::new("aspd/aspd_refuse_too_deep_arkoor_input").await;
-	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(1)).await;
+async fn server_refuse_too_deep_arkoor_input() {
+	let ctx = TestContext::new("server/server_refuse_too_deep_arkoor_input").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn get_ark_info(&mut self, req: protos::Empty) -> Result<protos::ArkInfo, tonic::Status>  {
 			let mut info = self.upstream().get_ark_info(req).await?.into_inner();
@@ -1407,11 +1407,11 @@ async fn aspd_refuse_too_deep_arkoor_input() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_rpc().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 
 	let bark1 = ctx.new_bark_with_funds("bark1", &proxy.address, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &aspd, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	bark1.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -1434,8 +1434,8 @@ async fn aspd_refuse_too_deep_arkoor_input() {
 }
 
 #[tokio::test]
-async fn run_two_aspds() {
-	let ctx = TestContext::new("aspd/run_two_aspds").await;
-	let _aspd1 = ctx.new_aspd("aspd1", None).await;
-	let _aspd2 = ctx.new_aspd("aspd2", None).await;
+async fn run_two_captainds() {
+	let ctx = TestContext::new("server/run_two_captainds").await;
+	let _srv1 = ctx.new_captaind("server1", None).await;
+	let _srv2 = ctx.new_captaind("server2", None).await;
 }

@@ -16,7 +16,7 @@ async fn main() {
 	}
 
 	let db_manager = PostgresDatabaseManager::init(tmp_pg_datadir.clone()).await;
-	let db_config = db_manager.request_database("aspd-schema-dump").await;
+	let db_config = db_manager.request_database("bark-server-schema-dump").await;
 
 	Db::create(&db_config).await.expect("Can initialize database");
 

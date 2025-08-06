@@ -11,7 +11,7 @@ pub mod env {
 	pub const ESPLORA_ELECTRS_EXEC: &str = "ESPLORA_ELECTRS_EXEC";
 	pub const MEMPOOL_ELECTRS_EXEC: &str = "MEMPOOL_ELECTRS_EXEC";
 	pub const BARK_EXEC: &str = "BARK_EXEC";
-	pub const ASPD_EXEC: &str = "ASPD_EXEC";
+	pub const CAPTAIND_EXEC: &str = "CAPTAIND_EXEC";
 	pub const LIGHTNINGD_DOCKER_IMAGE: &str = "LIGHTNINGD_DOCKER_IMAGE";
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
 	pub const LIGHTNINGD_PLUGIN_DIR: &str = "LIGHTNINGD_PLUGIN_DIR";

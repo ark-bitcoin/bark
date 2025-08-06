@@ -9,9 +9,9 @@ use aspd_rpc::{self as rpc, protos};
 
 use crate::util::FutureExt;
 
-/// Trait used to easily implement aspd proxy interfaces.
+/// Trait used to easily implement Ark proxy interfaces.
 #[tonic::async_trait]
-pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
+pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 	fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel>;
 
 	async fn handshake(&mut self, req: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status> {
@@ -107,22 +107,22 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 	}
 }
 
-pub struct AspdRpcProxyServer {
+pub struct ArkRpcProxyServer {
 	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
 	pub stop: tokio::sync::oneshot::Sender<()>,
 	pub address: String,
 }
 
-impl AspdRpcProxyServer {
-	/// Run an aspd proxy server.
-	pub async fn start(proxy: impl AspdRpcProxy) -> AspdRpcProxyServer {
+impl ArkRpcProxyServer {
+	/// Run an ark proxy server.
+	pub async fn start(proxy: impl ArkRpcProxy) -> ArkRpcProxyServer {
 		loop {
 			let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
 			let stop_rx = futures::FutureExt::map(stop_rx, |_| ());
 
 			let port = portpicker::pick_unused_port().expect("free port available");
 			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-			let server = rpc::server::ArkServiceServer::new(AspdRpcProxyWrapper(proxy.clone()));
+			let server = rpc::server::ArkServiceServer::new(ArkRpcProxyWrapper(proxy.clone()));
 
 			// The serve_with_shutdown call stays running if the port number
 			// is accepted, but returns immediatelly if it's not.
@@ -157,7 +157,7 @@ impl AspdRpcProxyServer {
 				}
 			};
 
-			return AspdRpcProxyServer {
+			return ArkRpcProxyServer {
 				client: client,
 				stop: stop_tx,
 				address: addr,
@@ -167,112 +167,112 @@ impl AspdRpcProxyServer {
 }
 
 /// A wrapper struct around a proxy implementation to run a tonic server.
-struct AspdRpcProxyWrapper<T: AspdRpcProxy>(T);
+struct ArkRpcProxyWrapper<T: ArkRpcProxy>(T);
 
 #[tonic::async_trait]
-impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
+impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	async fn handshake(
 		&self, req: tonic::Request<protos::HandshakeRequest>,
 	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::handshake(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::handshake(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_ark_info(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::get_ark_info(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::get_ark_info(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_fresh_rounds(
 		&self, req: tonic::Request<protos::FreshRoundsRequest>,
 	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::get_fresh_rounds(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::get_fresh_rounds(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_round(
 		&self, req: tonic::Request<protos::RoundId>,
 	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::get_round(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::get_round(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_board_cosign(
 		&self, req: tonic::Request<protos::BoardCosignRequest>,
 	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::request_board_cosign(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_board_cosign(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn register_board_vtxo(
 		&self, req: tonic::Request<protos::BoardVtxoRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::register_board_vtxo(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::register_board_vtxo(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_arkoor_package_cosign(
 		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::request_arkoor_package_cosign(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_arkoor_package_cosign(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn post_arkoor_package_mailbox(
 		&self, req: tonic::Request<protos::ArkoorPackage>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::post_arkoor_package_mailbox(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::post_arkoor_package_mailbox(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn empty_arkoor_mailbox(
 		&self, req: tonic::Request<protos::ArkoorVtxosRequest>,
 	) -> Result<tonic::Response<protos::ArkoorVtxosResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::empty_arkoor_mailbox(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::empty_arkoor_mailbox(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn start_lightning_payment(
 		&self, req: tonic::Request<protos::LightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::start_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn finish_lightning_payment(
 		&self, req: tonic::Request<protos::SignedLightningPaymentDetails>,
 	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::finish_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::finish_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn check_lightning_payment(
 		&self, req: tonic::Request<protos::CheckLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::check_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn revoke_lightning_payment(
 		&self, req: tonic::Request<protos::RevokeLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::revoke_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::revoke_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn fetch_bolt12_invoice(
 		&self, req: tonic::Request<protos::FetchBolt12InvoiceRequest>,
 	) -> Result<tonic::Response<protos::FetchBolt12InvoiceResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::fetch_bolt12_invoice(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::fetch_bolt12_invoice(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn start_lightning_receive(
 		&self,
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::start_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn subscribe_lightning_receive(
 		&self,
 		req: tonic::Request<protos::SubscribeLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::SubscribeLightningReceiveResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::subscribe_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::subscribe_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn claim_lightning_receive(
 		&self, req: tonic::Request<protos::ClaimLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::claim_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::claim_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	type SubscribeRoundsStream = Box<
@@ -282,24 +282,24 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 	async fn subscribe_rounds(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::subscribe_rounds(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::subscribe_rounds(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn submit_payment(
 		&self, req: tonic::Request<protos::SubmitPaymentRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::submit_payment(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::submit_payment(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn provide_vtxo_signatures(
 		&self, req: tonic::Request<protos::VtxoSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::provide_vtxo_signatures(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::provide_vtxo_signatures(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn provide_forfeit_signatures(
 		&self, req: tonic::Request<protos::ForfeitSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(AspdRpcProxy::provide_forfeit_signatures(&mut self.0.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::provide_forfeit_signatures(&mut self.0.clone(), req.into_inner()).await?))
 	}
 }

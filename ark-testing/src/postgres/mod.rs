@@ -1,6 +1,6 @@
 
 //! The testing framework will create postgres
-//! databases that are required to run aspd.
+//! databases that are required to run the server.
 //!
 //! It can be configured in two different methods
 //! - test-managed hosts (default)
