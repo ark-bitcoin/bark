@@ -547,7 +547,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_asp_refuse_to_revoke() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_client().await);
+	let proxy = Proxy(aspd_1.get_public_rpc().await);
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO
@@ -633,7 +633,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_asp_refuse_to_revoke() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_client().await);
+	let proxy = Proxy(aspd_1.get_public_rpc().await);
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO

@@ -39,12 +39,21 @@ pub mod protos {
 	pub use crate::aspd::*;
 }
 pub use crate::aspd::ark_service_client::ArkServiceClient;
-pub use crate::aspd::admin_service_client::AdminServiceClient;
+
+pub mod admin {
+	pub use crate::aspd::wallet_admin_service_client::WalletAdminServiceClient;
+	pub use crate::aspd::round_admin_service_client::RoundAdminServiceClient;
+	pub use crate::aspd::lightning_admin_service_client::LightningAdminServiceClient;
+	pub use crate::aspd::sweep_admin_service_client::SweepAdminServiceClient;
+}
 
 #[cfg(feature = "server")]
 pub mod server {
 	pub use crate::aspd::ark_service_server::{ArkService, ArkServiceServer};
-	pub use crate::aspd::admin_service_server::{AdminService, AdminServiceServer};
+	pub use crate::aspd::wallet_admin_service_server::{WalletAdminService, WalletAdminServiceServer};
+	pub use crate::aspd::round_admin_service_server::{RoundAdminService, RoundAdminServiceServer};
+	pub use crate::aspd::lightning_admin_service_server::{LightningAdminService, LightningAdminServiceServer};
+	pub use crate::aspd::sweep_admin_service_server::{SweepAdminService, SweepAdminServiceServer};
 }
 
 use std::str::FromStr;

@@ -278,7 +278,6 @@ async fn sweep_vtxos() {
 	}).await;
 	ctx.fund_asp(&aspd, sat(1_000_000)).await;
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &aspd, sat(500_000)).await);
-	let mut admin = aspd.get_admin_client().await;
 
 	// subscribe to a few log messages
 	let mut log_not_sweeping = aspd.subscribe_log::<NotSweeping>().await;
@@ -295,7 +294,7 @@ async fn sweep_vtxos() {
 
 	// before either expires not sweeping yet because nothing available
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(protos::Empty{}).await.unwrap();
+	aspd.trigger_sweep().await;
 	assert_eq!(sat(0), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
@@ -311,13 +310,13 @@ async fn sweep_vtxos() {
 
 	// now we expire the first one, still not sweeping because not enough surplus
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
-	admin.trigger_sweep(protos::Empty{}).await.unwrap();
+	aspd.trigger_sweep().await;
 	assert_eq!(sat(73_760), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
 	ctx.generate_blocks(5).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
-	admin.trigger_sweep(protos::Empty{}).await.unwrap();
+	aspd.trigger_sweep().await;
 	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
@@ -328,7 +327,7 @@ async fn sweep_vtxos() {
 	// now we swept both board vtxos, let's sweep the round we created above
 	ctx.generate_blocks(30).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(protos::Empty{}).await.unwrap();
+	aspd.trigger_sweep().await;
 	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len(), "sweeps: {:?}", sweeps);
@@ -341,7 +340,7 @@ async fn sweep_vtxos() {
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
 
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
-	admin.trigger_sweep(protos::Empty{}).await.unwrap();
+	aspd.trigger_sweep().await;
 	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
@@ -352,7 +351,7 @@ async fn sweep_vtxos() {
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
 	aspd.wait_for_log::<TxIndexUpdateFinished>().await;
 	let mut log_stats = aspd.subscribe_log::<SweeperStats>().await;
-	admin.trigger_sweep(protos::Empty{}).await.unwrap();
+	aspd.trigger_sweep().await;
 
 	// and eventually the round should be finished
 	log_board_done.recv().wait(10_000).await.unwrap();
@@ -463,7 +462,7 @@ async fn full_round() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await, Arc::new(Mutex::new(0)), Arc::new(tx));
+	let proxy = Proxy(aspd.get_public_rpc().await, Arc::new(Mutex::new(0)), Arc::new(tx));
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 	futures::future::join_all(barks.iter().map(|bark| bark.set_asp(&proxy))).await;
 
@@ -515,7 +514,7 @@ async fn double_spend_oor() {
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
 	let last_req = Arc::new(Mutex::new(None));
-	let proxy = Proxy(aspd.get_public_client().await, last_req.clone());
+	let proxy = Proxy(aspd.get_public_rpc().await, last_req.clone());
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
@@ -527,7 +526,7 @@ async fn double_spend_oor() {
 
 	// then after it's done, fire the request again, which should fail.
 	let req = last_req.lock().await.take().unwrap();
-	let err = aspd.get_public_client().await.request_arkoor_package_cosign(req).await.unwrap_err();
+	let err = aspd.get_public_rpc().await.request_arkoor_package_cosign(req).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"bad user input: attempted to sign arkoor tx for already spent vtxo",
 	), "err: {err}");
@@ -565,7 +564,7 @@ async fn double_spend_round() {
 	}
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_rpc().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -598,7 +597,7 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(ProxyA(aspd.get_public_rpc().await)).await;
 	bark.set_asp(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
@@ -615,7 +614,7 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(ProxyB(aspd.get_public_rpc().await)).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
 	bark.set_asp(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
@@ -635,7 +634,7 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(ProxyC(aspd.get_public_rpc().await)).await;
 	bark.set_asp(&proxy).await;
 	bark.timeout = None;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
@@ -659,7 +658,7 @@ async fn spend_unregistered_board() {
 	}
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(Proxy(aspd.get_public_rpc().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -766,7 +765,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
 
-	let proxy = AspdRpcProxyServer::start(Proxy(aspd_1.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(Proxy(aspd_1.get_public_rpc().await)).await;
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
@@ -817,9 +816,9 @@ async fn bad_round_input() {
 	let [vtxo] = bark.vtxos().await.try_into().unwrap();
 
 	let ark_info = aspd.ark_info().await;
-	let mut rpc = aspd.get_public_client().await;
+	let mut rpc = aspd.get_public_rpc().await;
 	let mut stream = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
-	aspd.get_admin_client().await.trigger_round(protos::Empty {}).await.unwrap();
+	aspd.trigger_round().await;
 	let challenge = loop {
 		match stream.next().await.unwrap().unwrap() {
 			protos::RoundEvent { event: Some(event) } => match event {
@@ -945,7 +944,7 @@ async fn claim_forfeit_connector_chain() {
 	let ctx = TestContext::new("aspd/claim_forfeit_connector_chain").await;
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_rpc().await)).await;
 
 	// To make sure we have a chain of connector, we make a bunch of inputs
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(5_000_000)).await;
@@ -1009,7 +1008,7 @@ async fn claim_forfeit_round_connector() {
 	let ctx = TestContext::new("aspd/claim_forfeit_round_connector").await;
 
 	let aspd = ctx.new_aspd_with_funds("aspd", None, btc(10)).await;
-	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_client().await)).await;
+	let proxy = AspdRpcProxyServer::start(NoFinishRoundProxy(aspd.get_public_rpc().await)).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -1067,7 +1066,7 @@ async fn register_board_is_idempotent() {
 	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
 
 	// We will now call the register_board a few times
-	let mut rpc = aspd.get_public_client().await;
+	let mut rpc = aspd.get_public_rpc().await;
 	let request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
 		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
@@ -1095,7 +1094,7 @@ async fn reject_dust_board_cosign() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = Proxy(aspd.get_public_rpc().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
@@ -1123,7 +1122,7 @@ async fn reject_dust_vtxo_request() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = Proxy(aspd.get_public_rpc().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
@@ -1154,7 +1153,7 @@ async fn reject_dust_offboard_request() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = Proxy(aspd.get_public_rpc().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
@@ -1184,7 +1183,7 @@ async fn reject_dust_arkoor_cosign() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = Proxy(aspd.get_public_rpc().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
@@ -1218,7 +1217,7 @@ async fn reject_dust_bolt11_payment() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = Proxy(aspd.get_public_rpc().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
@@ -1274,7 +1273,7 @@ async fn aspd_refuse_claim_invoice_not_settled() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = Proxy(aspd.get_public_rpc().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
@@ -1408,7 +1407,7 @@ async fn aspd_refuse_too_deep_arkoor_input() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await);
+	let proxy = Proxy(aspd.get_public_rpc().await);
 	let proxy = AspdRpcProxyServer::start(proxy).await;
 
 	let bark1 = ctx.new_bark_with_funds("bark1", &proxy.address, sat(1_000_000)).await;

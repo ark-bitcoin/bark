@@ -14,7 +14,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use bitcoin_ext::AmountExt;
 use lightning_invoice::Bolt11Invoice;
-use log::{trace, info, warn, error};
+use log::{trace, info, warn};
 use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer};
 use tokio::sync::oneshot;
@@ -856,7 +856,7 @@ impl rpc::server::ArkService for Server {
 }
 
 #[tonic::async_trait]
-impl rpc::server::AdminService for Server {
+impl rpc::server::WalletAdminService for Server {
 	async fn wallet_sync(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -888,7 +888,10 @@ impl rpc::server::AdminService for Server {
 			forfeits: Some(forfeits.into()),
 		}))
 	}
+}
 
+#[tonic::async_trait]
+impl rpc::server::RoundAdminService for Server {
 	async fn trigger_round(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -905,17 +908,10 @@ impl rpc::server::AdminService for Server {
 
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
+}
 
-	async fn trigger_sweep(
-		&self,
-		_req: tonic::Request<protos::Empty>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_SWEEP);
-		self.vtxo_sweeper.trigger_sweep()
-			.context("VtxoSweeper down")?;
-		Ok(tonic::Response::new(protos::Empty{}))
-	}
-
+#[tonic::async_trait]
+impl rpc::server::LightningAdminService for Server {
 	async fn start_lightning_node(
 		&self,
 		req: tonic::Request<protos::LightningNodeUri>,
@@ -935,6 +931,19 @@ impl rpc::server::AdminService for Server {
 		let req = req.into_inner();
 		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
 		let _ = self.cln.disable(uri);
+		Ok(tonic::Response::new(protos::Empty{}))
+	}
+}
+
+#[tonic::async_trait]
+impl rpc::server::SweepAdminService for Server {
+	async fn trigger_sweep(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_SWEEP);
+		self.vtxo_sweeper.trigger_sweep()
+			.context("VtxoSweeper down")?;
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 }
@@ -1116,32 +1125,26 @@ fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'stati
 }
 
 /// Run the public gRPC endpoint.
-pub async fn run_public_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
-	RPC_RICH_ERRORS.store(server.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+pub async fn run_public_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(srv.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 
-	let _worker = server.rtmgr.spawn_critical("PublicRpcServer");
+	let _worker = srv.rtmgr.spawn_critical("PublicRpcServer");
 
-	let addr = server.config.rpc.public_address;
+	let addr = srv.config.rpc.public_address;
 	info!("Starting public gRPC service on address {}", addr);
-	let ark_server = rpc::server::ArkServiceServer::from_arc(server.clone());
 
-	if server.config.otel_collector_endpoint.is_some() {
+	let routes = tonic::service::Routes::default()
+		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone()));
+
+	if srv.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
-			.add_service(ark_server)
-			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
-			.map_err(|e| {
-				error!("Failed to start gRPC server on {}: {}", addr, e);
-				e
-			})?;
+			.add_routes(routes)
+			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 	} else {
 		tonic::transport::Server::builder()
-			.add_service(ark_server)
-			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
-			.map_err(|e| {
-				error!("Failed to start gRPC server on {}: {}", addr, e);
-				e
-			})?;
+			.add_routes(routes)
+			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 	}
 
 	info!("Terminated public gRPC service on address {}", addr);
@@ -1150,35 +1153,30 @@ pub async fn run_public_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
 }
 
 /// Run the public gRPC endpoint.
-pub async fn run_admin_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
-	RPC_RICH_ERRORS.store(server.config.rpc_rich_errors, atomic::Ordering::Relaxed);
+pub async fn run_admin_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
+	RPC_RICH_ERRORS.store(srv.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 
-	let _worker = server.rtmgr.spawn_critical("AdminRpcServer");
+	let _worker = srv.rtmgr.spawn_critical("AdminRpcServer");
 
-	let addr = server.config.rpc.admin_address.expect("shouldn't call this method otherwise");
+	let addr = srv.config.rpc.admin_address.expect("shouldn't call this method otherwise");
 	info!("Starting admin gRPC service on address {}", addr);
-	let admin_server = rpc::server::AdminServiceServer::from_arc(server.clone());
 
-	if server.config.otel_collector_endpoint.is_some() {
+	let routes = tonic::service::Routes::default()
+		.add_service(rpc::server::WalletAdminServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::RoundAdminServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::LightningAdminServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::SweepAdminServiceServer::from_arc(srv.clone()));
+
+	if srv.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
 			.layer(TelemetryMetricsLayer)
-			.add_service(admin_server)
-			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
-			.map_err(|e| {
-				error!("Failed to start admin gRPC server on {}: {}", addr, e);
-
-				e
-			})?;
+			.add_routes(routes)
+			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 	} else {
 		tonic::transport::Server::builder()
-			.add_service(admin_server)
-			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
-			.map_err(|e| {
-				error!("Failed to start admin gRPC server on {}: {}", addr, e);
-
-				e
-			})?;
-	};
+			.add_routes(routes)
+			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
+	}
 
 	info!("Terminated admin gRPC service on address {}", addr);
 

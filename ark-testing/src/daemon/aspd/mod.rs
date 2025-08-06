@@ -21,12 +21,14 @@ pub use aspd::config::{self, Config};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::ASPD_EXEC;
-use crate::util::resolve_path;
+use crate::util::{resolve_path, AnyhowErrorExt};
 
 pub type Aspd = Daemon<AspdHelper>;
 
-pub type AdminClient = rpc::AdminServiceClient<tonic::transport::Channel>;
 pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
+pub type WalletAdminClient = rpc::admin::WalletAdminServiceClient<tonic::transport::Channel>;
+pub type RoundAdminClient = rpc::admin::RoundAdminServiceClient<tonic::transport::Channel>;
+pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport::Channel>;
 
 
 pub const ASPD_CONFIG_FILE: &str = "config.toml";
@@ -101,21 +103,29 @@ impl Aspd {
 		self.inner.asp_url()
 	}
 
-	pub async fn get_admin_client(&self) -> AdminClient {
-		self.inner.connect_admin_client().await.unwrap()
+	pub async fn get_public_rpc(&self) -> ArkClient {
+		ArkClient::connect(self.asp_url()).await.expect("can't connect server public rpc")
 	}
 
-	pub async fn get_public_client(&self) -> ArkClient {
-		self.inner.connect_public_client().await.unwrap()
+	pub async fn get_wallet_rpc(&self) -> WalletAdminClient {
+		WalletAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server wallet rpc")
+	}
+
+	pub async fn get_round_rpc(&self) -> RoundAdminClient {
+		RoundAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server wallet rpc")
+	}
+
+	pub async fn get_sweep_rpc(&self) -> SweepAdminClient {
+		SweepAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server wallet rpc")
 	}
 
 	pub async fn ark_info(&self) -> ark::ArkInfo {
-		self.get_public_client().await.get_ark_info(protos::Empty {}).await.unwrap()
+		self.get_public_rpc().await.get_ark_info(protos::Empty {}).await.unwrap()
 			.into_inner().try_into().expect("invalid ark info")
 	}
 
 	pub async fn wallet_status(&self) -> WalletStatuses {
-		let mut rpc = self.get_admin_client().await;
+		let mut rpc = self.get_wallet_rpc().await;
 		rpc.wallet_sync(protos::Empty{}).await.expect("sync error");
 		let res = rpc.wallet_status(protos::Empty{}).await.expect("sync error").into_inner();
 		WalletStatuses {
@@ -125,8 +135,8 @@ impl Aspd {
 	}
 
 	pub async fn get_rounds_funding_address(&self) -> Address {
-		let mut admin_client = self.get_admin_client().await;
-		let response = admin_client.wallet_status(protos::Empty {}).await.unwrap().into_inner();
+		let mut rpc = self.get_wallet_rpc().await;
+		let response = rpc.wallet_status(protos::Empty {}).await.unwrap().into_inner();
 		response.rounds.unwrap().address.parse::<Address<NetworkUnchecked>>().unwrap()
 			.require_network(Network::Regtest).unwrap()
 	}
@@ -139,7 +149,11 @@ impl Aspd {
 		self.bitcoind().generate(1).await;
 		let _ = tokio::join!(l1.recv(), l2.recv(), minimum_wait);
 		trace!("Waited {} ms before starting round", start.elapsed().as_millis());
-		self.get_admin_client().await.trigger_round(protos::Empty {}).await.unwrap();
+		self.get_round_rpc().await.trigger_round(protos::Empty {}).await.unwrap();
+	}
+
+	pub async fn trigger_sweep(&self) {
+		self.get_sweep_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
 	}
 
 	pub async fn add_slog_handler<L: SlogHandler + Send + Sync + 'static>(&self, handler: L) {
@@ -205,8 +219,8 @@ impl DaemonHelper for AspdHelper {
 
 		let public_address = format!("0.0.0.0:{}", public_port);
 		let admin_address = format!("127.0.0.1:{}", admin_port);
-		trace!("ASPD_RPC_PUBLIC_ADDRESS: {}", public_port.to_string());
-		trace!("ASPD_RPC_ADMIN_ADDRESS: {}", admin_port.to_string());
+		trace!("ASPD_RPC_PUBLIC_ADDRESS: {}", public_address.to_string());
+		trace!("ASPD_RPC_ADMIN_ADDRESS: {}", admin_address.to_string());
 
 		self.cfg.rpc = config::Rpc {
 			public_address: SocketAddr::from_str(public_address.as_str())?,
@@ -281,23 +295,23 @@ impl DaemonHelper for AspdHelper {
 }
 
 impl AspdHelper {
+	async fn try_is_ready(&self) -> anyhow::Result<()> {
+		let mut public = ArkClient::connect(self.asp_url()).await.context("public rpc")?;
+		let req = protos::HandshakeRequest { bark_version: None };
+		let _ = public.handshake(req).await.context("handshake")?;
+
+		let mut wallet = WalletAdminClient::connect(self.admin_url()).await.context("wallet")?;
+		let _ = wallet.wallet_status(protos::Empty {}).await.context("wallet status")?;
+
+		Ok(())
+	}
+
 	async fn is_ready(&self) -> bool {
-		return self.admin_grpc_is_ready().await && self.public_grpc_is_ready().await
-	}
-
-	async fn public_grpc_is_ready(&self) -> bool {
-		match self.connect_public_client().await {
-			Ok(mut c) => {
-				c.handshake(protos::HandshakeRequest { bark_version: None }).await.is_ok()
-			},
-			Err(_e) => false,
-		}
-	}
-
-	async fn admin_grpc_is_ready(&self) -> bool {
-		match self.connect_admin_client().await {
-			Ok(mut c) => c.wallet_status(protos::Empty {}).await.is_ok(),
-			Err(_e) => false,
+		if let Err(e) = self.try_is_ready().await {
+			trace!("Error from is_ready: {}", e.full_msg());
+			false
+		} else {
+			true
 		}
 	}
 
@@ -307,14 +321,6 @@ impl AspdHelper {
 
 	pub fn admin_url(&self) -> String {
 		format!("http://{}", self.cfg.rpc.admin_address.expect("missing admin addr"))
-	}
-
-	pub async fn connect_public_client(&self) -> anyhow::Result<ArkClient> {
-		ArkClient::connect(self.asp_url()).await.context("can't connect asp public rpc")
-	}
-
-	pub async fn connect_admin_client(&self) -> anyhow::Result<AdminClient> {
-		AdminClient::connect(self.admin_url()).await.context("can't connect asp admin rpc")
 	}
 
 	async fn create(&self) -> anyhow::Result<()> {

@@ -320,14 +320,22 @@ message VtxoSignaturesRequest {
 }
 
 
-/// Administration service for arkd.
-service AdminService {
+service WalletAdminService {
 	rpc WalletSync(Empty) returns (Empty) {}
 	rpc WalletStatus(Empty) returns (WalletStatusResponse) {}
+}
+
+service RoundAdminService {
 	rpc TriggerRound(Empty) returns (Empty) {}
-	rpc TriggerSweep(Empty) returns (Empty) {}
+}
+
+service LightningAdminService {
 	rpc StartLightningNode(LightningNodeUri) returns (Empty) {}
 	rpc StopLightningNode(LightningNodeUri) returns (Empty) {}
+}
+
+service SweepAdminService {
+	rpc TriggerSweep(Empty) returns (Empty) {}
 }
 
 message WalletStatus {

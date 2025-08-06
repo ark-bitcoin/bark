@@ -710,7 +710,7 @@ async fn reject_arkoor_with_bad_signature() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// create a proxy to return an arkoor with invalid signatures
-	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(aspd.get_public_client().await)).await;
+	let proxy = aspd::proxy::AspdRpcProxyServer::start(InvalidSigProxy(aspd.get_public_rpc().await)).await;
 
 	// create a third wallet to receive the invalid arkoor
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
@@ -762,7 +762,7 @@ async fn second_round_attempt() {
 	bark1.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let proxy = Proxy(aspd.get_public_client().await, Arc::new(AtomicBool::new(true)));
+	let proxy = Proxy(aspd.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
@@ -776,7 +776,7 @@ async fn second_round_attempt() {
 	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
-	let _ = aspd.get_admin_client().await.wallet_sync(protos::Empty {}).await.unwrap();
+	let _ = aspd.wallet_status().await;
 	aspd.trigger_round().await;
 	aspd.wait_for_log::<RestartMissingForfeits>().await;
 	res1.await.unwrap();
@@ -786,7 +786,7 @@ async fn second_round_attempt() {
 
 	// bark2 is kicked out of the first round, so we need to start another one
 	ctx.generate_blocks(1).await;
-	let _ = aspd.get_admin_client().await.wallet_sync(protos::Empty {}).await.unwrap();
+	let _ = aspd.wallet_status().await;
 	aspd.trigger_round().await;
 	res2.await.unwrap();
 }
@@ -932,7 +932,7 @@ async fn bark_recover_unregistered_board() {
 		}
 	}
 
-	let proxy = Proxy(aspd.get_public_client().await, Arc::new(AtomicBool::new(true)));
+	let proxy = Proxy(aspd.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;

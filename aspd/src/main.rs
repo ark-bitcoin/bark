@@ -224,12 +224,13 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		format!("http://{}", addr)
 	};
 	let asp_endpoint = Uri::from_str(&addr).context("invalid asp addr")?;
-	let mut asp = rpc::AdminServiceClient::connect(asp_endpoint)
-		.await.context("failed to connect to asp")?;
 
 	match cmd {
 		RpcCommand::Wallet => {
-			let res = asp.wallet_status(protos::Empty {}).await?.into_inner();
+			let mut rpc = rpc::admin::WalletAdminServiceClient::connect(asp_endpoint)
+				.await.context("failed to connect to asp")?;
+
+			let res = rpc.wallet_status(protos::Empty {}).await?.into_inner();
 			let ret = serde_json::json!({
 				"rounds": WalletStatus(res.rounds.unwrap().try_into().expect("invalid response")),
 			});
@@ -237,7 +238,10 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 			println!("");
 		},
 		RpcCommand::TriggerRound => {
-			asp.trigger_round(protos::Empty {}).await?.into_inner();
+			let mut rpc = rpc::admin::RoundAdminServiceClient::connect(asp_endpoint)
+				.await.context("failed to connect to asp")?;
+
+			rpc.trigger_round(protos::Empty {}).await?.into_inner();
 		}
 	}
 	Ok(())

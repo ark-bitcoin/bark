@@ -554,7 +554,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_client().await);
+	let proxy = Proxy(aspd_1.get_public_rpc().await);
 	let proxy = aspd::proxy::AspdRpcProxyServer::start(proxy).await;
 
 	// Start a bark and create a VTXO
