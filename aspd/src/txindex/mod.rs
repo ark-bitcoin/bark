@@ -15,7 +15,6 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use chrono::{DateTime, Local};
 use log::{trace, info, warn};
-use tokio::sync::{Mutex, RwLock};
 
 use crate::database::Db;
 use crate::system::RuntimeManager;
@@ -99,7 +98,7 @@ type WeakTx = Weak<IndexedTx>;
 pub struct IndexedTx {
 	pub txid: Txid,
 	pub tx: Transaction,
-	status: Mutex<TxStatus>,
+	status: parking_lot::Mutex<TxStatus>,
 }
 
 impl IndexedTx {
@@ -107,25 +106,25 @@ impl IndexedTx {
 		Arc::new(
 			IndexedTx {
 				txid, tx,
-				status: Mutex::new(status),
+				status: parking_lot::Mutex::new(status),
 			}
 		)
 	}
 
 	/// Check the transaction's status.
-	pub async fn status(&self) -> TxStatus {
+	pub fn status(&self) -> TxStatus {
 		//TODO(stevenroose) we can do await with this wait once we persist the txindex
-		self.status.lock().await.clone()
+		self.status.lock().clone()
 	}
 
 	/// Whether we have seen this tx in either the mempool or the chain.
-	pub async fn seen(&self) -> bool {
-		self.status().await.seen()
+	pub fn seen(&self) -> bool {
+		self.status().seen()
 	}
 
 	/// Whether this tx is confirmed.
-	pub async fn confirmed(&self) -> bool {
-		self.status().await.confirmed()
+	pub fn confirmed(&self) -> bool {
+		self.status().confirmed()
 	}
 }
 
@@ -168,15 +167,15 @@ impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
 /// The handle to the transaction index.
 #[derive(Clone, Debug)]
 struct TxIndexData {
-	tx_map: Arc<RwLock<HashMap<Txid, WeakTx>>>,
-	block_index: Arc<RwLock<BlockIndex>>,
+	tx_map: Arc<tokio::sync::RwLock<HashMap<Txid, WeakTx>>>,
+	block_index: Arc<tokio::sync::RwLock<BlockIndex>>,
 }
 
 impl TxIndexData {
 	fn new(base: BlockRef) -> TxIndexData {
 		TxIndexData {
-			tx_map: Arc::new(RwLock::new(HashMap::new())),
-			block_index: Arc::new(RwLock::new(BlockIndex::from_base(base))),
+			tx_map: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+			block_index: Arc::new(tokio::sync::RwLock::new(BlockIndex::from_base(base))),
 		}
 	}
 
@@ -208,7 +207,7 @@ impl TxIndexData {
 	/// Returns [None] for a tx not in the index.
 	async fn status_of(&self, txid: &Txid) -> Option<TxStatus> {
 		if let Some(tx) = self.get(txid).await {
-			Some(tx.status().await)
+			Some(tx.status())
 		} else {
 			None
 		}
@@ -272,7 +271,7 @@ impl TxIndexData {
 			};
 
 
-			let mut status = tx.status.lock().await;
+			let mut status = tx.status.lock();
 			// If the transaction is added to the latest block we update the status
 			if block_txids.contains(txid) {
 				*status = TxStatus::ConfirmedIn(block.block_ref);
@@ -307,7 +306,7 @@ impl TxIndexData {
 				None => continue,
 			};
 
-			let mut current_status = index.status.lock().await;
+			let mut current_status = index.status.lock();
 			if txids.contains(txid) {
 				current_status.update_mempool(mempool_data.observed_at);
 			} else {
@@ -364,7 +363,7 @@ impl TxIndex {
 			Some(status) => Ok(Some(status)),
 			None => {
 				match self.database_to_index(txid).await? {
-					Some(tx) => Ok(Some(tx.status().await)),
+					Some(tx) => Ok(Some(tx.status())),
 					None => Ok(None),
 				}
 			}
@@ -583,13 +582,13 @@ mod test {
 		// it has been registered
 		let arc = index.register_as(tx.clone(), TxStatus::Unseen).await;
 		let tx_handle = index.get(&txid).await.expect("Transaction in index");
-		assert_eq!(tx_handle.status().await, TxStatus::Unseen);
+		assert_eq!(tx_handle.status(), TxStatus::Unseen);
 		drop(arc);
 
 
 		// Register the transaction again
 		index.register_as(tx.clone(), TxStatus::Unseen).await;
-		assert_eq!(tx_handle.status().await, TxStatus::Unseen);
+		assert_eq!(tx_handle.status(), TxStatus::Unseen);
 	}
 
 	#[tokio::test]
@@ -651,9 +650,9 @@ mod test {
 			observed_at: t4,
 		}).await.unwrap();
 
-		assert_eq!(tx_a1_1.status().await, TxStatus::ConfirmedIn(block_ref_a1));
-		assert_eq!(tx_a2_1.status().await, TxStatus::ConfirmedIn(block_ref_a2));
-		assert_eq!(tx_a3_1.status().await, TxStatus::ConfirmedIn(block_ref_a3));
+		assert_eq!(tx_a1_1.status(), TxStatus::ConfirmedIn(block_ref_a1));
+		assert_eq!(tx_a2_1.status(), TxStatus::ConfirmedIn(block_ref_a2));
+		assert_eq!(tx_a3_1.status(), TxStatus::ConfirmedIn(block_ref_a3));
 
 		// Now we do a reorg by introducing block_ref_b2
 		// ai_1 transactions will be in the new block
@@ -666,12 +665,12 @@ mod test {
 			observed_at: t5,
 		}).await.unwrap();
 
-		assert_eq!(tx_a1_1.status().await, TxStatus::ConfirmedIn(block_ref_a1));
-		assert_eq!(tx_a1_2.status().await, TxStatus::ConfirmedIn(block_ref_a1));
-		assert_eq!(tx_a2_1.status().await, TxStatus::ConfirmedIn(block_ref_b2));
-		assert_eq!(tx_a2_2.status().await, TxStatus::MempoolSince(t5));
-		assert_eq!(tx_a3_1.status().await, TxStatus::ConfirmedIn(block_ref_b2));
-		assert_eq!(tx_a3_2.status().await, TxStatus::MempoolSince(t5));
-		assert_eq!(old_tx.status().await,TxStatus::ConfirmedIn(old_block));
+		assert_eq!(tx_a1_1.status(), TxStatus::ConfirmedIn(block_ref_a1));
+		assert_eq!(tx_a1_2.status(), TxStatus::ConfirmedIn(block_ref_a1));
+		assert_eq!(tx_a2_1.status(), TxStatus::ConfirmedIn(block_ref_b2));
+		assert_eq!(tx_a2_2.status(), TxStatus::MempoolSince(t5));
+		assert_eq!(tx_a3_1.status(), TxStatus::ConfirmedIn(block_ref_b2));
+		assert_eq!(tx_a3_2.status(), TxStatus::MempoolSince(t5));
+		assert_eq!(old_tx.status(),TxStatus::ConfirmedIn(old_block));
 	}
 }

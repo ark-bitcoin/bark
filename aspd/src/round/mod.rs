@@ -500,7 +500,7 @@ impl CollectingPayments {
 	}
 
 	async fn progress(mut self, srv: &Server) -> Result<SigningVtxoTree, RoundError> {
-		let tip = srv.chain_tip().await.height;
+		let tip = srv.chain_tip().height;
 		let expiry_height = tip + srv.config.vtxo_lifetime as BlockHeight;
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_ASPD);

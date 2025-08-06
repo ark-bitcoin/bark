@@ -317,7 +317,7 @@ impl<'a> SweepBuilder<'a> {
 			exit_txid, move || exit_tx.tx
 		).await?;
 
-		if !exit_tx.confirmed().await {
+		if !exit_tx.confirmed() {
 			if let Some((h, txid)) = self.sweeper.is_swept(vtxo.chain_anchor()).await {
 				trace!("Board {id} is already swept by us at height {h}");
 				if h <= done_height {
@@ -350,7 +350,7 @@ impl<'a> SweepBuilder<'a> {
 			|| tree_root.clone(),
 		).await?;
 
-		if !tree_root.confirmed().await {
+		if !tree_root.confirmed() {
 			trace!("Tree root tx {} not yet confirmed, sweeping round tx...", tree_root.txid);
 			let point = OutPoint::new(round.id.as_round_txid(), ROUND_TX_VTXO_TREE_VOUT);
 			if let Some((h, txid)) = self.sweeper.is_swept(point).await {
@@ -382,7 +382,7 @@ impl<'a> SweepBuilder<'a> {
 		for (signed_tx, agg_pk) in signed_txs.into_iter().zip(agg_pkgs).rev() {
 			let txid = signed_tx.compute_txid();
 			let tx = self.sweeper.txindex.get_or_insert(txid, || signed_tx.clone()).await?;
-			if !tx.confirmed().await {
+			if !tx.confirmed() {
 				trace!("tx {} did not confirm yet, not sweeping", tx.txid);
 				continue;
 			}
@@ -438,7 +438,7 @@ impl<'a> SweepBuilder<'a> {
 			}).await;
 
 			let is_confirmed = if let Ok(tx) = indexed_tx.as_ref() {
-				tx.confirmed().await
+				tx.confirmed()
 			} else {
 				error!("The connector tx is not present in the TxIndex. Missing {} for round {}", txid, round.id);
 				false
@@ -592,7 +592,7 @@ impl Process {
 		if let Some(txs) = self.pending_tx_by_utxo.get(&point) {
 			for txid in txs {
 				let tx = self.pending_txs.get(txid).expect("broken: utxo but no tx");
-				if let Some(block) = tx.status().await.confirmed_in() {
+				if let Some(block) = tx.status().confirmed_in() {
 					return Some((block.height, tx.txid));
 				}
 			}
@@ -722,7 +722,7 @@ impl Process {
 				continue;
 			}
 
-			if let Some(block) = tx.status().await.confirmed_in() {
+			if let Some(block) = tx.status().confirmed_in() {
 				if tip.height - block.height >= 2 * DEEPLY_CONFIRMED {
 					slog!(SweepTxFullyConfirmed, txid: *txid);
 				} else {

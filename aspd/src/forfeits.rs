@@ -389,7 +389,7 @@ impl Process {
 	async fn detect_forfeit_confirms(&mut self) -> anyhow::Result<()> {
 		let mut new_confirmed = HashSet::new();
 		for (tx, vtxo) in &self.exit_txs {
-			let status = tx.status().await;
+			let status = tx.status();
 			if let Some(block_ref) = status.confirmed_in() {
 				slog!(ForfeitedExitConfirmed, vtxo: *vtxo, exit_tx: tx.txid, block_height: block_ref.height);
 				new_confirmed.insert(*vtxo);
@@ -417,13 +417,13 @@ impl Process {
 		let claim = self.claims.get_mut(claim_idx).unwrap();
 		trace!("Progressing claim for vtxo {}", claim.vtxo);
 
-		if claim.forfeit_tx.confirmed().await {
+		if claim.forfeit_tx.confirmed() {
 			trace!("Forfeit tx {} confirmed, done", claim.forfeit_tx.txid);
 			return Ok(true);
 		}
 
 		if let Some(ref tx) = claim.connector_tx {
-			if !tx.confirmed().await {
+			if !tx.confirmed() {
 				trace!("Connector tx {} not yet confirmed", tx.txid);
 				return Ok(false);
 			}
@@ -432,11 +432,10 @@ impl Process {
 		if claim.forfeit_cpfp.is_none() {
 			trace!("Preparing to broadcast forfeit tx and cpfp...");
 			let block_ref = match claim.connector_tx {
-				Some(ref tx) => tx.status().await.confirmed_in().expect("just confirmed"),
+				Some(ref tx) => tx.status().confirmed_in().expect("just confirmed"),
 				// If there is no connector tx, it's the round tx. Quickly fetch status.
 				None => self.txindex.get(claim.connector.txid).await?
-					.expect("In index").status().await
-					.confirmed_in()
+					.expect("In index").status().confirmed_in()
 					.expect("connector tx should be confirmed"),
 			};
 			slog!(ConnectorConfirmed, connector_txid: claim.connector.txid, vtxo: claim.vtxo, block_height: block_ref.height);
