@@ -11,8 +11,8 @@ name = "aspd"
 path = "src/lib.rs"
 
 [[bin]]
-name = "aspd"
-path = "src/main.rs"
+name = "captaind"
+path = "src/bin/captaind/main.rs"
 
 [build-dependencies]
 tonic-build.workspace = true
