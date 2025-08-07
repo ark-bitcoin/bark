@@ -42,6 +42,15 @@ async fn bark_ark_info() {
 }
 
 #[tokio::test]
+async fn bark_config_json() {
+	let ctx = TestContext::new("bark/bark_config_json").await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark1 = ctx.new_bark("bark1", &srv).await;
+	let result = bark1.run(&[&"config"]).await;
+	serde_json::from_str::<bark_json::cli::Config>(&result).expect("should deserialise");
+}
+
+#[tokio::test]
 async fn bark_address_changes() {
 	let ctx = TestContext::new("bark/bark_address_changes").await;
 	let srv = ctx.new_captaind("server", None).await;

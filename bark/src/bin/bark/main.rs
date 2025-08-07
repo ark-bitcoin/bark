@@ -502,7 +502,17 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				wallet.set_config(cfg);
 				wallet.persist_config().context("failed to persist config")?;
 			}
-			println!("{:#?}", wallet.config());
+			let config = wallet.config().clone();
+			output_json(&bark_json::cli::Config {
+				ark: config.server_address,
+				bitcoind: config.bitcoind_address,
+				bitcoind_cookie: config.bitcoind_cookiefile.map(|p| p.display().to_string()),
+				bitcoind_user: config.bitcoind_user,
+				bitcoind_pass: config.bitcoind_pass,
+				esplora: config.esplora_address,
+				vtxo_refresh_expiry_threshold: config.vtxo_refresh_expiry_threshold,
+				fallback_fee_rate: config.fallback_fee_rate,
+			})
 		},
 		Command::ArkInfo => {
 			if let Some(info) = wallet.ark_info() {
