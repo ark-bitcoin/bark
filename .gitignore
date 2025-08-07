@@ -1,5 +1,5 @@
 # generated rpc server/client
-aspd-rpc/src/aspd.rs
+server-rpc/src/bark_server.rs
 cln-rpc/src/cln.rs
 cln-rpc/src/plugins/hold.rs
 
@@ -15,6 +15,6 @@ flake_finder/
 
 # RustRover/IntelliJ
 .idea/
-ark-testing/tmp-pg-data
+testing/tmp-pg-data
 
 .vscode/

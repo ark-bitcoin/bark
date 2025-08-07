@@ -51,13 +51,13 @@ steps:
       - cat VERSION
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
       # Build the containers
-      - buildah build -f ./.woodpecker/images/releases/captaind/Dockerfile --tag registry.2nd.dev/aspd:latest .
+      - buildah build -f ./.woodpecker/images/releases/captaind/Dockerfile --tag registry.2nd.dev/captaind:latest .
       # Push containers to registry.2nd.dev
-      - buildah push registry.2nd.dev/aspd:latest
+      - buildah push registry.2nd.dev/captaind:latest
       # Tag containers with specific version number for registry.2nd.dev
-      - buildah tag registry.2nd.dev/aspd:latest "registry.2nd.dev/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/captaind:latest "registry.2nd.dev/captaind:$(cat VERSION)"
       # Push containers with specific version number to registry.2nd.dev
-      - buildah push "registry.2nd.dev/aspd:$(cat VERSION)"
+      - buildah push "registry.2nd.dev/captaind:$(cat VERSION)"
 
   - name: push-captaind-to-docker
     when:
@@ -80,20 +80,20 @@ steps:
       - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
       - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
       # Pull containers from registry.2nd.dev
-      - buildah pull registry.2nd.dev/aspd:latest
+      - buildah pull registry.2nd.dev/captaind:latest
       # Tag containers for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest docker.io/secondark/aspd:latest
+      - buildah tag registry.2nd.dev/captaind:latest docker.io/secondark/captaind:latest
       # Push containers to docker.io
-      - buildah push docker.io/secondark/aspd:latest
+      - buildah push docker.io/secondark/captaind:latest
       # Tag containers with specific version number for docker.io
-      - buildah tag registry.2nd.dev/aspd:latest "docker.io/secondark/aspd:$(cat VERSION)"
+      - buildah tag registry.2nd.dev/captaind:latest "docker.io/secondark/captaind:$(cat VERSION)"
       # Push containers with specific version number to docker.io
-      - buildah push "docker.io/secondark/aspd:$(cat VERSION)"
+      - buildah push "docker.io/secondark/captaind:$(cat VERSION)"
 
   - name: release-captaind
     when:
       - event: tag
-        ref: refs/tags/sesrver-*
+        ref: refs/tags/server-*
     depends_on: build-captaind
     image: registry.2nd.dev/build:20
     commands:
