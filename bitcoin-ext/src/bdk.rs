@@ -1,6 +1,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::borrow::BorrowMut;
+use std::sync::Arc;
 
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::coin_selection::InsufficientFunds;
@@ -47,12 +48,23 @@ pub enum CpfpError {
 
 /// An extension trait for [Wallet].
 pub trait WalletExt: BorrowMut<Wallet> {
-	/// Returns an iterator for each unconfirmed transaction in the wallet. Useful for syncing the
-	/// wallet with bitcoind.
+	/// Returns an iterator for each unconfirmed transaction in the wallet.
 	fn unconfirmed_txids(&self) -> impl Iterator<Item = Txid> {
 		self.borrow().transactions().filter_map(|tx| {
 			if tx.chain_position.is_unconfirmed() {
 				Some(tx.tx_node.txid)
+			} else {
+				None
+			}
+		})
+	}
+
+	/// Returns an iterator for each unconfirmed transaction in the wallet, useful for syncing
+	/// with bitcoin core.
+	fn unconfirmed_txs(&self) -> impl Iterator<Item = Arc<Transaction>> {
+		self.borrow().transactions().filter_map(|tx| {
+			if tx.chain_position.is_unconfirmed() {
+				Some(tx.tx_node.tx.clone())
 			} else {
 				None
 			}

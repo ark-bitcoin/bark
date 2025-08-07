@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::json::EstimateMode;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bdk_bitcoind_rpc::{bitcoincore_rpc, BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXIDS};
+use bdk_bitcoind_rpc::{bitcoincore_rpc, BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXS};
 use bdk_esplora::esplora_client;
 use bdk_wallet::chain::{BlockId, CheckPoint};
 use bitcoin::constants::genesis_block;
@@ -208,7 +208,7 @@ impl ChainSourceClient {
 				let cp = CheckPoint::new(block);
 
 				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, cp.clone(), cp.height(), NO_EXPECTED_MEMPOOL_TXIDS,
+					bitcoind, cp.clone(), cp.height(), NO_EXPECTED_MEMPOOL_TXS,
 				);
 
 				debug!("Scanning blocks for spent outpoints with bitcoind, starting at block height {}...", block_scan_start);
@@ -235,7 +235,7 @@ impl ChainSourceClient {
 
 				debug!("Finished scanning blocks for spent outpoints, now checking the mempool...");
 				let mempool = emitter.mempool()?;
-				for (tx, _last_seen) in &mempool.new_txs {
+				for (tx, _last_seen) in &mempool.update {
 					for txin in tx.input.iter() {
 						if outpoint_set.contains(&txin.previous_output) {
 							res.add(txin.previous_output.clone(), tx.compute_txid(), TxStatus::Mempool);
