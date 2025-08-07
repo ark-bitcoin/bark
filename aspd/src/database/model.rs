@@ -14,7 +14,7 @@ use lightning_invoice::Bolt11Invoice;
 use tokio_postgres::Row;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::{PartialSignature, PublicNonce, SecretNonce};
 use ark::musig::secpm::ffi::MUSIG_SECNONCE_SIZE;
 use ark::rounds::RoundId;
@@ -188,7 +188,7 @@ impl fmt::Display for LightningPaymentStatus {
 #[derive(Debug, Clone)]
 pub struct LightningInvoice {
 	pub lightning_invoice_id: i64,
-	pub invoice: Bolt11Invoice,
+	pub invoice: Invoice,
 	pub payment_hash: PaymentHash,
 	pub final_amount_msat: Option<u64>,
 	pub preimage: Option<Preimage>,
@@ -203,8 +203,8 @@ impl TryFrom<Row> for LightningInvoice {
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
 		Ok(LightningInvoice {
 			lightning_invoice_id: row.get("lightning_invoice_id"),
-			invoice: Bolt11Invoice::from_str(row.get("invoice"))
-				.context("error decoding bolt11 invoice from db")?,
+			invoice: Invoice::from_str(row.get("invoice"))
+				.context("error decoding invoice from db")?,
 			payment_hash: PaymentHash::try_from(row.get::<_, &[u8]>("payment_hash"))
 				.context("error decoding payment hash from db")?,
 			final_amount_msat: row.get::<_, Option<i64>>("final_amount_msat").map(|i| i as u64),

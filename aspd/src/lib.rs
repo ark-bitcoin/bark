@@ -33,7 +33,9 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
+use ark::lightning::{Bolt12Invoice, Offer};
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
+use bitcoin::hashes::Hash;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -45,7 +47,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use aspd_rpc::protos;
@@ -664,14 +666,14 @@ impl Server {
 
 	pub async fn start_lightning_payment(
 		&self,
-		invoice: Bolt11Invoice,
+		invoice: Invoice,
 		amount: Amount,
 		user_pubkey: PublicKey,
 		inputs: Vec<Vtxo>,
 		user_nonces: Vec<musig::PublicNonce>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let payment_hash = PaymentHash::from(*invoice.payment_hash());
-		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?.is_some() {
+		let invoice_payment_hash = invoice.payment_hash();
+		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
 		}
 
@@ -695,7 +697,7 @@ impl Server {
 
 		let pay_req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, payment_hash, expiry),
+			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry),
 		};
 
 		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
@@ -717,12 +719,12 @@ impl Server {
 	/// Try to finish the lightning payment that was previously started.
 	async fn finish_lightning_payment(
 		&self,
-		invoice: Bolt11Invoice,
+		invoice: Invoice,
 		htlc_vtxo_ids: Vec<VtxoId>,
 		wait: bool,
 	) -> anyhow::Result<protos::LightningPaymentResult> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
-		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash());
+		let invoice_payment_hash = invoice.payment_hash();
 
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
 
@@ -754,7 +756,16 @@ impl Server {
 			vtxos.push(vtxo);
 		}
 
-		let htlc_vtxo_sum = vtxos.iter().map(|v| v.spec().amount).sum::<Amount>();
+		let mut htlc_vtxo_sum = Amount::ZERO;
+		for htlc_vtxo in vtxos {
+			let payment_hash = htlc_vtxo.server_htlc_out_payment_hash()
+				.context("vtxo provided is not an outgoing htlc vtxo")?;
+			if payment_hash != invoice_payment_hash {
+				return badarg!("htlc payment hash doesn't match invoice");
+			}
+			htlc_vtxo_sum += htlc_vtxo.amount();
+		}
+
 		if let Some(amount) = invoice.amount_milli_satoshis() {
 			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
 				return badarg!("htlc vtxo amount too low for invoice");
@@ -810,6 +821,11 @@ impl Server {
 				}
 			},
 		}
+	}
+
+	async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount) -> anyhow::Result<Bolt12Invoice> {
+		let invoice = self.cln.fetch_bolt12_invoice(offer, amount).await?;
+		Ok(invoice)
 	}
 
 	async fn revoke_bolt11_payment(
@@ -912,7 +928,7 @@ impl Server {
 	async fn subscribe_lightning_receive(&self, invoice: Bolt11Invoice)
 		-> anyhow::Result<protos::SubscribeLightningReceiveResponse>
 	{
-		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash());
+		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash().as_byte_array());
 		let status = LightningHtlcSubscriptionStatus::Settled;
 		let settled = self.db.get_htlc_subscription_by_payment_hash(
 			invoice_payment_hash, status,

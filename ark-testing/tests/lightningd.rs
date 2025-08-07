@@ -453,6 +453,7 @@ async fn bark_can_board_from_lightning() {
 	assert!(receives[0].preimage_revealed_at.is_some());
 }
 
+
 #[tokio::test]
 async fn bark_can_pay_an_invoice_generated_by_same_asp_user() {
 	let ctx = TestContext::new("lightningd/bark_can_pay_an_invoice_generated_by_same_asp_user").await;
@@ -588,4 +589,105 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	assert!(
 		vtxos.iter().any(|v| v.amount == invoice_amount),
 		"user should get a revocation arkoor of payment_amount + forwarding fee");
+}
+
+
+#[tokio::test]
+async fn bark_pay_ln_offer() {
+	let ctx = TestContext::new("lightningd/bark_pay_ln_offer").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(7);
+	let board_amount = btc(5);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+
+	bark_1.board(board_amount).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Pay invoice with no amount specified
+	{
+		let offer = lightningd_2.offer(None, Some("A test payment")).await;
+		bark_1.send_lightning(offer, Some(btc(1))).await;
+		assert_eq!(bark_1.offchain_balance().await, btc(4));
+	}
+
+	// Pay invoice with amount specified
+	{
+		let offer = lightningd_2.offer(Some(btc(1)), Some("A test payment")).await;
+		bark_1.send_lightning(offer, None).await;
+		assert_eq!(bark_1.offchain_balance().await, btc(3));
+	}
+}
+
+#[tokio::test]
+async fn bark_pay_twice_ln_offer() {
+	let ctx = TestContext::new("lightningd/bark_pay_twice_ln_offer").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd("aspd-1", Some(&lightningd_1)).await;
+
+	// Start a bark and create a VTXO
+	let onchain_amount = btc(7);
+	let board_amount = btc(5);
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &aspd_1, onchain_amount).await;
+
+	bark_1.board(board_amount).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let offer = lightningd_2.offer(None, Some("A test payment")).await;
+
+	bark_1.send_lightning(offer.clone(), Some(btc(1))).await;
+	assert_eq!(bark_1.offchain_balance().await, btc(4));
+
+	bark_1.send_lightning(offer, Some(btc(2))).await;
+	assert_eq!(bark_1.offchain_balance().await, btc(2));
 }

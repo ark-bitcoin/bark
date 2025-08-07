@@ -66,6 +66,10 @@ pub trait AspdRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().revoke_lightning_payment(req).await?.into_inner())
 	}
 
+	async fn fetch_bolt12_invoice(&mut self, req: protos::FetchBolt12InvoiceRequest) -> Result<protos::FetchBolt12InvoiceResponse, tonic::Status> {
+		Ok(self.upstream().fetch_bolt12_invoice(req).await?.into_inner())
+	}
+
 	async fn start_lightning_receive(
 		&self,
 		req: protos::StartLightningReceiveRequest,
@@ -243,6 +247,12 @@ impl<T: AspdRpcProxy> rpc::server::ArkService for AspdRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::RevokeLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(AspdRpcProxy::revoke_lightning_payment(&mut self.0.clone(), req.into_inner()).await?))
+	}
+
+	async fn fetch_bolt12_invoice(
+		&self, req: tonic::Request<protos::FetchBolt12InvoiceRequest>,
+	) -> Result<tonic::Response<protos::FetchBolt12InvoiceResponse>, tonic::Status> {
+		Ok(tonic::Response::new(AspdRpcProxy::fetch_bolt12_invoice(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn start_lightning_receive(

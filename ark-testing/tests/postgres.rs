@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use ark::vtxo::test::VTXO_VECTORS;
+use ark::{lightning::Invoice, vtxo::test::VTXO_VECTORS};
 use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::secp256k1::PublicKey;
 use ark_testing::TestContext;
@@ -68,6 +68,7 @@ async fn duplicated_lightning_invoice() {
 		.expect("Failed to create dummy pubkey");
 
 	let invoice = Bolt11Invoice::from_str("lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8").unwrap();
+	let invoice = Invoice::Bolt11(invoice);
 
 	let (lightning_node_id, _dt) = db.register_lightning_node(&dummy_public_key).await.unwrap();
 	assert_ne!(lightning_node_id, 0);
@@ -88,7 +89,7 @@ async fn duplicated_lightning_invoice() {
 	").await.unwrap();
 
 	let err = db_client.query_one(
-		&stmt, &[&invoice.to_string(), &&invoice.payment_hash()[..]],
+		&stmt, &[&invoice.to_string(), &&invoice.payment_hash().to_vec()[..]],
 	).await.unwrap_err();
 	assert!(err.to_string().contains("duplicate key value violates unique constraint \"lightning_invoice_payment_hash_key\""), "err: {}", err);
 }

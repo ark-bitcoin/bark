@@ -52,6 +52,7 @@ miniscript.workspace = true
 bdk_wallet = { workspace = true, features = [ "rusqlite" ] }
 bdk_bitcoind_rpc.workspace = true
 bdk_esplora.workspace = true
+lightning.workspace = true
 
 tonic.workspace = true
 tokio.workspace = true

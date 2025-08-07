@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{address, Amount, FeeRate};
-use bitcoin::hex::DisplayHex;
 use clap::Parser;
+use ::lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
@@ -759,26 +759,15 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				info!("Sending arkoor payment of {} to address {}", amount, addr);
 				wallet.send_arkoor_payment(&addr, amount).await?;
-			} else if let Ok(invoice) = Bolt11Invoice::from_str(&destination) {
-				lightning::pay(invoice, amount, comment, no_sync,&mut wallet).await?;
+			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
+				lightning::pay_invoice(inv, amount, comment, no_sync, &mut wallet).await?;
+			} else if let Ok(offer) = Offer::from_str(&destination) {
+				lightning::pay_offer(offer, amount, comment, no_sync, &mut wallet).await?;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
-				let amount = amount.context("amount missing")?;
-
-				if !no_sync {
-					info!("Syncing wallet...");
-					if let Err(e) = wallet.sync().await {
-						warn!("Sync error: {}", e)
-					}
-				}
-
-				info!("Sending {} to lightning address {}", amount, addr);
-				let comment = comment.as_ref().map(|c| c.as_str());
-				let (inv, preimage) = wallet.send_lnaddr(&addr, amount, comment).await?;
-				info!("Paid invoice {}", inv);
-				info!("Payment preimage received: {}", preimage.as_hex());
+				lightning::pay_lnaddr(addr, amount, comment, no_sync, &mut wallet).await?;
 			} else {
 				bail!("Argument is not a valid destination. Supported are: \
-					VTXO pubkeys, bolt11 invoices, lightning addresses",
+					VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",
 				);
 			}
 			info!("Payment sent succesfully!");

@@ -1,6 +1,8 @@
 use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Local};
+
+use ark::lightning::Invoice;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use futures::{Stream, TryStreamExt};
 use lightning_invoice::Bolt11Invoice;
@@ -198,7 +200,7 @@ impl Db {
 	pub async fn store_lightning_payment_start(
 		&self,
 		node_id: ClnNodeId,
-		invoice: &Bolt11Invoice,
+		invoice: &Invoice,
 		amount_msat: u64,
 	) -> anyhow::Result<()> {
 		let mut conn = self.pool.get().await?;
@@ -209,7 +211,7 @@ impl Db {
 		").await?;
 
 		let payment_hash = invoice.payment_hash();
-		let existing = tx.query_opt(&select_stmt, &[&&payment_hash[..]]).await?;
+		let existing = tx.query_opt(&select_stmt, &[&&payment_hash.to_vec()[..]]).await?;
 
 		let lightning_invoice_id = if let Some(row) = existing {
 			row.get("lightning_invoice_id")
@@ -225,7 +227,7 @@ impl Db {
 			").await?;
 
 			let row = tx.query_one(
-				&stmt, &[&invoice.to_string(), &&payment_hash[..]],
+				&stmt, &[&invoice.to_string(), &&payment_hash.to_vec()[..]],
 			).await?;
 
 			row.get("lightning_invoice_id")
