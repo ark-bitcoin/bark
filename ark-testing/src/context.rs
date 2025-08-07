@@ -322,6 +322,7 @@ impl TestContext {
 		&self,
 		name: impl AsRef<str>,
 		aspd: &dyn ToAspUrl,
+		fallback_fee_override: Option<FeeRate>,
 		extra_create_args: impl IntoIterator<Item = T>,
 	) -> anyhow::Result<Bark> {
 		let datadir = self.datadir.join(name.as_ref());
@@ -338,7 +339,7 @@ impl TestContext {
 			asp_url: aspd.asp_url(),
 			network: Network::Regtest,
 			chain_source,
-			fallback_fee: FeeRate::from_sat_per_vb(5).unwrap(),
+			fallback_fee: fallback_fee_override.unwrap_or(FeeRate::from_sat_per_vb(5).unwrap()),
 			extra_create_args: extra_create_args.into_iter()
 				.map(|s| s.as_ref().to_owned())
 				.collect(),
@@ -351,7 +352,7 @@ impl TestContext {
 		name: impl AsRef<str>,
 		aspd: &dyn ToAspUrl,
 	) -> anyhow::Result<Bark> {
-		self.try_new_bark_with_create_args::<&str>(name, aspd, []).await
+		self.try_new_bark_with_create_args::<&str>(name, aspd, None, []).await
 	}
 
 	/// Creates new bark without any funds.

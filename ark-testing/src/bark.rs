@@ -383,8 +383,17 @@ impl Bark {
 		self.run(["exit", "start", "--all"]).await;
 	}
 
-	pub async fn start_exit_vtxo(&self, vtxo: impl fmt::Display) {
-		self.run(["exit", "start", "--vtxo", &vtxo.to_string(),]).await;
+	pub async fn start_exit_vtxos<I, T>(&self, vtxos: I)
+	where
+		I: IntoIterator<Item = T>,
+		T: fmt::Display,
+	{
+		let mut command : Vec<String> = ["exit", "start", "--verbose"]
+			.iter()
+			.map(|s| s.to_string())
+			.collect();
+		command.extend(vtxos.into_iter().flat_map(|v| vec!["--vtxo".into(), v.to_string()]));
+		self.run(command).await;
 	}
 
 	pub async fn list_exits(&self) -> Vec<json::ExitTransactionStatus> {
@@ -396,8 +405,18 @@ impl Bark {
 		self.run(["exit", "claim", &destination, "--verbose", "--all"]).await;
 	}
 
-	pub async fn claim_single_exit(&self, vtxo: impl fmt::Display, destination: impl fmt::Display) {
-		self.run(["exit", "claim", &destination.to_string(), "--vtxo", &vtxo.to_string(), "--verbose"]).await;
+	pub async fn claim_exits<I, T>(&self, vtxos: I, destination: impl fmt::Display)
+	where
+		I: IntoIterator<Item = T>,
+		T: fmt::Display,
+	{
+		let mut command : Vec<String> = ["exit", "claim", "--verbose"]
+			.iter()
+			.map(|s| s.to_string())
+			.collect();
+		command.push(destination.to_string());
+		command.extend(vtxos.into_iter().flat_map(|v| vec!["--vtxo".into(), v.to_string()]));
+		self.run(command).await;
 	}
 
 	pub async fn try_run<I,S>(&self, args: I) -> anyhow::Result<String>

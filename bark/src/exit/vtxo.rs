@@ -61,6 +61,10 @@ impl ExitVtxo {
 		&self.txids
 	}
 
+	pub fn is_spendable(&self) -> bool {
+		matches!(self.state, ExitState::Spendable(..))
+	}
+
 	pub async fn progress<W: ExitUnilaterally>(
 		&mut self,
 		chain_source: &ChainSourceClient,

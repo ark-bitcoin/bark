@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -7,7 +9,6 @@ use log::{warn, info};
 
 use ark::VtxoId;
 use bark::Wallet;
-use bark::onchain::TxBuilderExt;
 use bark::vtxo_selection::VtxoFilter;
 use bark::onchain::OnchainWallet;
 
@@ -232,31 +233,27 @@ pub async fn claim_exits(
 		format!("address is not valid for configured network {}", network)
 	})?;
 
-	let psbt = match (vtxos, all) {
+	let vtxos = match (vtxos, all) {
 		(Some(vtxo_ids), false) => {
-			let vtxos = wallet.exit.list_spendable()?
-				.into_iter()
-				.filter(|v| vtxo_ids.contains(&v.id().to_string()))
+			let mut vtxo_ids = vtxo_ids.iter().map(|s| {
+				VtxoId::from_str(s).with_context(|| format!("invalid vtxo id: {}", s))
+			}).collect::<anyhow::Result<HashSet<_>>>()?;
+			let vtxos = wallet.exit.list_spendable().into_iter()
+				.filter(|v| vtxo_ids.remove(&v.id()))
 				.collect::<Vec<_>>();
-
-			let mut tx_builder = onchain.build_tx();
-			tx_builder.add_exit_claim_inputs(&vtxos)?;
-			tx_builder.drain_to(address.script_pubkey());
-
-			let mut psbt = tx_builder.finish()?;
-			wallet.exit.sign_exit_claim_inputs(&mut psbt, wallet)?;
-			Ok(psbt)
+			for id in vtxo_ids {
+				bail!("Unspendable VTXO provided: {}", id);
+			}
+			vtxos
 		},
-		(None, true) => {
-			let fee_rate = wallet.chain.fee_rates().await.regular;
-			wallet.exit.drain_spendable_outputs(&wallet, address, fee_rate)
-		},
+		(None, true) => wallet.exit.list_spendable(),
 		(None, false) => bail!("Either --vtxo or --all must be specified"),
 		(Some(_), true) => bail!("Cannot specify both --vtxo and --all"),
-	}?;
+	};
 
+	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let psbt = wallet.exit.drain_exits(&vtxos, &wallet, address, fee_rate)?;
 	let tx = psbt.extract_tx()?;
-
 	wallet.chain.broadcast_tx(&tx).await?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
 

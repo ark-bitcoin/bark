@@ -13,6 +13,12 @@ pub enum ExitError {
 	#[error("Block Retrieval Failure: Unable to retrieve a block at height {height}: {error}")]
 	BlockRetrievalFailure { height: BlockHeight, error: String },
 
+	#[error("Claim Fee Exceeds Output: Cost to claim exits was {needed}, but the total output was {output}")]
+	ClaimFeeExceedsOutput { needed: Amount, output: Amount },
+
+	#[error("Claim Signing Error: Unable to sign claim: {error}")]
+	ClaimSigningError { error: String },
+
 	#[error("Cyclic Exit Transactions Error: The exit transactions for VTXO {vtxo} are cyclic")]
 	CyclicExitTransactions { vtxo: VtxoId },
 
@@ -65,6 +71,9 @@ pub enum ExitError {
 
 	#[error("Transaction Retrieval Failure: Unable to check the status of TX {txid}: {error}")]
 	TransactionRetrievalFailure { txid: Txid, error: String },
+
+	#[error("VTXO Not Spendable Error: Attempted to claim a VTXO which is not in a spendable state: {vtxo}")]
+	VtxoNotSpendable { vtxo: VtxoId },
 
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },
