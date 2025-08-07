@@ -677,12 +677,6 @@ impl Server {
 			return badarg!("payment already in progress for this invoice");
 		}
 
-		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
-		let _lock = match self.vtxos_in_flux.lock(&input_ids) {
-			Ok(l) => l,
-			Err(id) => return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id),
-		};
-
 		self.validate_arkoor_inputs(&inputs)?;
 		self.validate_board_inputs(&inputs).await.context("invalid board inputs")?;
 
@@ -703,17 +697,7 @@ impl Server {
 		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
 			.badarg("error creating arkoor package")?;
 
-		match self.db.check_set_vtxo_oor_spent_package(&package).await {
-			Ok(Some(dup)) => {
-				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
-			},
-			Ok(None) => {
-				info!("Cosigning arkoor for inputs: {:?}", input_ids);
-				// let's sign the tx
-				Ok(package.server_cosign(&self.asp_key))
-			},
-			Err(e) => Err(e),
-		}
+		self.cosign_oor_package_with_builder(&package).await
 	}
 
 	/// Try to finish the lightning payment that was previously started.
