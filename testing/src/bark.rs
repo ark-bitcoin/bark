@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::lightning::PaymentHash;
 use bark::persist::LightningReceive;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint};
 use bitcoincore_rpc::Auth;
@@ -321,6 +322,15 @@ impl Bark {
 
 	pub async fn list_lightning_receives(&self) -> Vec<LightningReceive> {
 		let res = self.run(["lightning", "invoices"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
+	pub async fn lightning_receive_status(
+		&self,
+		payment_hash: impl Into<PaymentHash>,
+	) -> Option<LightningReceive> {
+		let hash = payment_hash.into().to_string();
+		let res = self.run(["lightning", "status", &hash]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
