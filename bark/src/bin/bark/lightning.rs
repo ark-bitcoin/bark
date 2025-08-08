@@ -9,7 +9,7 @@ use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use log::{info, warn};
 
-use ark::lightning::Invoice;
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bark::{Pagination, Wallet};
 use bark_json::InvoiceInfo;
 
@@ -17,7 +17,7 @@ use crate::{util::output_json, DEFAULT_PAGE_INDEX, DEFAULT_PAGE_SIZE};
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
-	/// Pay a bolt11 invoice
+	/// pay a bolt11 invoice
 	#[command()]
 	Pay {
 		/// The invoice to pay
@@ -32,20 +32,25 @@ pub enum LightningCommand {
 		#[arg(long)]
 		no_sync: bool,
 	},
-	/// Creates a bolt11 invoice with the provided amount
+	/// creates a bolt11 invoice with the provided amount
 	///
 	/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
 	#[command()]
 	Invoice {
 		amount: Amount,
 	},
+	/// get the status of an invoice
 	#[command()]
-	Claim {
-		/// The invoice to claim
-		invoice: String,
+	Status {
+		/// payment hash or invoice string
+		filter: Option<String>,
+		/// filter by preimage
+		#[arg(long)]
+		preimage: Option<Preimage>,
 	},
+	/// list all generated invoices
 	#[command()]
-	ListInvoices {
+	Invoices {
 		/// The page index
 		#[arg(long)]
 		page_index: Option<u16>,
@@ -53,6 +58,22 @@ pub enum LightningCommand {
 		#[arg(long)]
 		page_size: Option<u16>,
 	},
+	/// claim the receipt of an invoice
+	#[command()]
+	Claim {
+		/// The invoice to claim
+		invoice: String,
+	},
+}
+
+fn payment_hash_from_filter(filter: &str) -> anyhow::Result<PaymentHash> {
+	if let Ok(h) = PaymentHash::from_str(&filter) {
+		Ok(h)
+	} else if let Ok(i) = Bolt11Invoice::from_str(&filter) {
+		Ok(i.into())
+	} else {
+		bail!("filter is not valid payment hash nor invoice");
+	}
 }
 
 pub async fn execute_lightning_command(
@@ -75,19 +96,32 @@ pub async fn execute_lightning_command(
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 		},
-		LightningCommand::Claim { invoice } => {
-			let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
-			wallet.finish_lightning_receive(invoice).await?;
-		}
-		LightningCommand::ListInvoices { page_index, page_size } => {
+		LightningCommand::Status { filter, preimage } => {
+			let payment_hash = match (filter, preimage) {
+				(Some(filter), None) => payment_hash_from_filter(&filter)?,
+				(None, Some(p)) => p.into(),
+				(None, None) => bail!("need to provide a filter"),
+				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
+			};
+			if let Some(ret) = wallet.lightning_receive_status(payment_hash)? {
+				output_json(&ret);
+			} else {
+				info!("No invoice found");
+			}
+		},
+		LightningCommand::Invoices { page_index, page_size } => {
 			let pagination = Pagination {
 				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX),
 				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
 			};
 
-			let boards = wallet.lightning_receives(pagination)?;
-			output_json(&boards);
-		}
+			let receives = wallet.lightning_receives(pagination)?;
+			output_json(&receives);
+		},
+		LightningCommand::Claim { invoice } => {
+			let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
+			wallet.finish_lightning_receive(&invoice).await?;
+		},
 	}
 
 	Ok(())
@@ -173,3 +207,4 @@ pub async fn pay_lnaddr(
 
 	Ok(())
 }
+

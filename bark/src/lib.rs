@@ -1552,11 +1552,11 @@ impl Wallet {
 	}
 
 
-	pub async fn finish_lightning_receive(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+	pub async fn finish_lightning_receive(&mut self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
 		let tip = self.chain.tip().await?;
 		let mut srv = self.require_server()?;
 
-		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
+		let payment_hash = ark::lightning::PaymentHash::from(invoice);
 
 		let (keypair, _) = self.derive_store_next_keypair()?;
 

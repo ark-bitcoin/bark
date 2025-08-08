@@ -320,7 +320,7 @@ impl Bark {
 	}
 
 	pub async fn list_lightning_receives(&self) -> Vec<LightningReceive> {
-		let res = self.run(["lightning", "list-invoices"]).await;
+		let res = self.run(["lightning", "invoices"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
