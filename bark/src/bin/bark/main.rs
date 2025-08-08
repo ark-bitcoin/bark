@@ -355,19 +355,14 @@ enum OnchainCommand {
 	#[command(
 		about = "\
 			Send using the on-chain wallet to multiple destinations. \n\
-			Example usage: send-many --address bc1p1... --address bc1p2... --amount 10000sat --amount 20000sat\n\
+			Example usage: send-many --destination bc1p1...:10000sat --destination bc1p2...:20000sat\n\
 			This will send 10,000 sats to bc1p1... and 20,000 sats to bc1p2...",
 	)]
 	SendMany {
-		/// Adds an output to the given address, this can be specified multiple times and requires a
-		/// corresponding --amount parameter
-		#[arg(long = "address", required = true)]
-		addresses: Vec<bitcoin::Address<address::NetworkUnchecked>>,
-
-		/// Sets the amount to send an address, this is applied in the order you supplied the
-		/// addresses.
-		#[arg(long = "amount", required = true)]
-		amounts: Vec<Amount>,
+		/// Adds an output to the given address, this can be specified multiple times.
+		/// The format is address:amount, e.g. bc1p1...:10000
+		#[arg(long = "destination", required = true)]
+		destinations: Vec<String>,
 
 		/// Sends the transaction immediately instead of printing the summary before continuing
 		#[arg(long)]
@@ -580,20 +575,22 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				let output = json::onchain::Send { txid };
 				output_json(&output);
 			},
-			OnchainCommand::SendMany { addresses, amounts, immediate, no_sync } => {
-				if addresses.len() != amounts.len() {
-					bail!("You must provide an equal number of addresses and amounts. You provided {} addresses and {} amounts",
-						addresses.len(),
-						amounts.len(),
-					);
-				}
-				let addresses = addresses
-					.into_iter()
-					.map(|a|
-						a.require_network(net)
-							.map_err(|e| anyhow!("--address parameter was invalid: {}", e))
-					).collect::<Result<Vec<_>, _>>()?;
-				let outputs = addresses.into_iter().zip(amounts.into_iter()).collect::<Vec<_>>();
+			OnchainCommand::SendMany { destinations, immediate, no_sync } => {
+				let outputs = destinations
+					.iter()
+					.map(|dest| -> anyhow::Result<(bitcoin::Address, Amount)> {
+						let parts: Vec<&str> = dest.splitn(2, ':').collect();
+						if parts.len() != 2 {
+							bail!("Invalid destination format: {}. Expected format: address:amount", dest);
+						}
+
+						let addr = bitcoin::Address::from_str(parts[0])?.require_network(net).context("Invalid address")?;
+						let amount = Amount::from_str(parts[1]).context("Invalid Amount")?;
+
+						Ok((addr, amount))
+					})
+					.collect::<Result<Vec<_>, _>>()?;
+
 				info!("Attempting to send the following:");
 				for (address, amount) in &outputs {
 					info!("{} to {}", amount, address);
