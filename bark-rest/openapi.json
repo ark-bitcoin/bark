@@ -2318,6 +2318,28 @@
           {
             "type": "object",
             "required": [
+              "tip",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "tip": {
+                "$ref": "#/components/schemas/u32"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "invalid-local-locktime"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "error",
               "type"
             ],
