@@ -52,7 +52,7 @@ use ark::address::VtxoDelivery;
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::connectors::ConnectorChain;
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
@@ -1482,6 +1482,13 @@ impl Wallet {
 		self.db.store_lightning_receive(payment_hash, preimage, &invoice)?;
 
 		Ok(invoice)
+	}
+
+	pub fn lightning_receive_status(
+		&self,
+		payment: impl Into<PaymentHash>,
+	) -> anyhow::Result<Option<LightningReceive>> {
+		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into())?)
 	}
 
 	pub fn lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {

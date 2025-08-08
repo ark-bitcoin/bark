@@ -64,6 +64,18 @@ impl From<lightning::types::payment::PaymentHash> for PaymentHash {
 	}
 }
 
+impl<'a> From<&'a Bolt11Invoice> for PaymentHash {
+	fn from(i: &'a Bolt11Invoice) -> Self {
+		(*i.payment_hash()).into()
+	}
+}
+
+impl From<Bolt11Invoice> for PaymentHash {
+	fn from(i: Bolt11Invoice) -> Self {
+		(&i).into()
+	}
+}
+
 impl PaymentHash {
 	pub fn from_preimage(preimage: Preimage) -> PaymentHash {
 		sha256::Hash::hash(preimage.as_ref()).into()
