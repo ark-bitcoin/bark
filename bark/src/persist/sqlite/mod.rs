@@ -190,7 +190,7 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Store a lightning receive
-	fn store_lightning_receive(&self, payment_hash: &PaymentHash, preimage: &Preimage, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+	fn store_lightning_receive(&self, payment_hash: PaymentHash, preimage: Preimage, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_lightning_receive(&conn, payment_hash, preimage, invoice)?;
 		Ok(())
@@ -201,14 +201,17 @@ impl BarkPersister for SqliteClient {
 		query::get_paginated_lightning_receives(&conn, pagination)
 	}
 
-	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()> {
+	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::set_preimage_revealed(&conn, payment_hash)?;
 		Ok(())
 	}
 
 	/// Fetch a lightning receive by payment hash
-	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<LightningReceive>> {
+	fn fetch_lightning_receive_by_payment_hash(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<LightningReceive>> {
 		let conn = self.connect()?;
 		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
 	}

@@ -1479,7 +1479,7 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		self.db.store_lightning_receive(&payment_hash, &preimage, invoice.clone())?;
+		self.db.store_lightning_receive(payment_hash, preimage, &invoice)?;
 
 		Ok(invoice)
 	}
@@ -1493,9 +1493,8 @@ impl Wallet {
 
 		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
 
-		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(
-			&payment_hash
-		)?.context("no lightning receive found")?;
+		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
+			.context("no lightning receive found")?;
 
 		let keypair_index = self.db.get_vtxo_key(&vtxo.vtxo)?;
 		let keypair = self.peak_keypair(keypair_index)?;
@@ -1517,7 +1516,7 @@ impl Wallet {
 		};
 
 		info!("Claiming arkoor against payment preimage");
-		self.db.set_preimage_revealed(&lightning_receive.payment_hash)?;
+		self.db.set_preimage_revealed(lightning_receive.payment_hash)?;
 		let cosign_resp = srv.client.claim_lightning_receive(req).await
 			.context("failed to claim bolt11 board")?
 			.into_inner().try_into().context("invalid server cosign response")?;
