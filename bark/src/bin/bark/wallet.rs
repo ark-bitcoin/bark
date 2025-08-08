@@ -125,7 +125,7 @@ async fn try_create_wallet(
 	let mut onchain = OnchainWallet::load_or_create(net, seed, db.clone())?;
 	let wallet = BarkWallet::create_with_onchain(&mnemonic, net, config, db, &onchain).await.context("error creating wallet")?;
 
-	onchain.fullscan(&wallet.chain).await?;
+	onchain.full_scan(&wallet.chain).await?;
 	Ok(())
 }
 

@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::{bitcoincore_rpc, NO_EXPECTED_MEMPOOL_TXIDS};
+use bdk_bitcoind_rpc::bitcoincore_rpc;
 use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bitcoin_ext::bdk::{CpfpError, WalletExt};
@@ -269,8 +269,7 @@ impl OnchainWallet {
 	async fn inner_sync_bitcoind(&mut self, bitcoind: &bitcoincore_rpc::Client, prev_tip: CheckPoint) -> anyhow::Result<()> {
 		debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
 		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-			bitcoind, prev_tip.clone(), prev_tip.height(),
-			NO_EXPECTED_MEMPOOL_TXIDS,
+			bitcoind, prev_tip.clone(), prev_tip.height(), self.unconfirmed_txs()
 		);
 		let mut count = 0;
 		while let Some(em) = emitter.next_block()? {
@@ -286,8 +285,8 @@ impl OnchainWallet {
 		}
 
 		let mempool = emitter.mempool()?;
-		self.inner.apply_evicted_txs(mempool.evicted_ats());
-		self.inner.apply_unconfirmed_txs(mempool.new_txs);
+		self.inner.apply_evicted_txs(mempool.evicted);
+		self.inner.apply_unconfirmed_txs(mempool.update);
 		self.persist()?;
 		debug!("Finished syncing with bitcoind, {}", self.inner.balance());
 
@@ -343,7 +342,7 @@ impl OnchainWallet {
 		self.rebroadcast_txs(chain, now).await
 	}
 
-	pub async fn fullscan(&mut self, chain: &ChainSourceClient) -> anyhow::Result<Amount> {
+	pub async fn full_scan(&mut self, chain: &ChainSourceClient) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 

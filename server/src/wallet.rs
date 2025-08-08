@@ -154,9 +154,8 @@ impl PersistedWallet {
 		let prev_balance = self.balance();
 
 		slog!(WalletSyncStarting, wallet: self.kind.name().into(), block_height: prev_tip.height());
-		let unconfirmed = self.wallet.unconfirmed_txids();
 		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-			bitcoind, prev_tip.clone(), prev_tip.height(), unconfirmed,
+			bitcoind, prev_tip.clone(), prev_tip.height(), self.wallet.unconfirmed_txs(),
 		);
 		while let Some(em) = emitter.next_block()? {
 			self.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
@@ -174,10 +173,10 @@ impl PersistedWallet {
 		if mempool {
 			let mempool = emitter.mempool()?;
 			trace!("Syncing {} new mempool txs and {} evicted mempool txs...",
-				mempool.new_txs.len(), mempool.evicted_txids.len(),
+				mempool.update.len(), mempool.evicted.len(),
 			);
-			self.apply_evicted_txs(mempool.evicted_ats());
-			self.apply_unconfirmed_txs(mempool.new_txs);
+			self.apply_evicted_txs(mempool.evicted);
+			self.apply_unconfirmed_txs(mempool.update);
 		}
 
 		self.persist().await?;
