@@ -9,8 +9,8 @@ use bitcoin_ext::BlockHeight;
 /// Configuration of the Bark wallet.
 #[derive(Debug, Clone)]
 pub struct Config {
-	/// The address of your ASP.
-	pub asp_address: String,
+	/// The address of your server.
+	pub server_address: String,
 
 	/// The address of the Esplora HTTP server to use.
 	///
@@ -52,7 +52,7 @@ pub struct Config {
 impl Default for Config {
 	fn default() -> Config {
 		Config {
-			asp_address: "http://127.0.0.1:3535".to_owned(),
+			server_address: "http://127.0.0.1:3535".to_owned(),
 			esplora_address: None,
 			bitcoind_address: None,
 			bitcoind_cookiefile: None,

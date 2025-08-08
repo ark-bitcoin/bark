@@ -68,7 +68,7 @@ steps:
       HODL_INVOICE_PLUGIN: /hold/target/debug/hold
     commands:
       - git log --oneline | head -n 1
-      - export ASPD_EXEC=$CI_WORKSPACE/target/debug/aspd
+      - export CAPTAIND_EXEC=$CI_WORKSPACE/target/debug/captaind
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration-codecov

@@ -63,9 +63,9 @@ struct Cli {
 
 #[derive(clap::Args)]
 struct ConfigOpts {
-	/// The address of your ASP.
+	/// The address of your Ark server.
 	#[arg(long)]
-	asp: Option<String>,
+	ark: Option<String>,
 
 	/// The address of the Esplora HTTP server to use.
 	///
@@ -113,8 +113,8 @@ struct ConfigOpts {
 
 impl ConfigOpts {
 	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
-		if let Some(url) = self.asp {
-			cfg.asp_address = util::https_default_scheme(url).context("invalid asp url")?;
+		if let Some(url) = self.ark {
+			cfg.server_address = util::https_default_scheme(url).context("invalid Ark server url")?;
 		}
 		if let Some(v) = self.esplora {
 			cfg.esplora_address = match v.is_empty() {
@@ -493,8 +493,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			if let Some(new_cfg) = config {
 				let mut cfg = wallet.config().clone();
 				if !dangerous {
-					if new_cfg.asp.is_some() {
-						bail!("Changing the ASP address can lead to loss of funds. \
+					if new_cfg.ark.is_some() {
+						bail!("Changing the Ark server address can lead to loss of funds. \
 							If you insist, use the --dangerous flag.");
 					}
 				}
@@ -507,7 +507,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::ArkInfo => {
 			if let Some(info) = wallet.ark_info() {
 				output_json(&bark_json::cli::ArkInfo {
-					asp_pubkey: info.asp_pubkey.to_string(),
+					server_pubkey: info.server_pubkey.to_string(),
 					round_interval: info.round_interval,
 					nb_round_nonces: info.nb_round_nonces,
 					vtxo_expiry_delta: info.vtxo_expiry_delta,

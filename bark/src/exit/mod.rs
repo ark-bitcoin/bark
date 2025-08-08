@@ -148,7 +148,7 @@ impl Exit {
 
 	/// Add all vtxos in the current wallet to the exit process.
 	///
-	/// It is recommended to sync with ASP before calling this
+	/// It is recommended to sync with the server before calling this
 	pub async fn start_exit_for_entire_wallet<W: ExitUnilaterally>(
 		&mut self,
 		onchain: &W,

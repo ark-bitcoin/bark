@@ -20,8 +20,8 @@ the bark repository:
 
 ## Manual setup
 
-A good starting point for the dev dependencies for bark and aspd is to look
-at the [CI Dockerfile](./.woodpecker/images/tests/Dockerfile). The dependencies
+A good starting point for the dev dependencies for bark and the server is to
+look at the [CI Dockerfile](./.woodpecker/images/tests/Dockerfile). The dependencies
 for Debian should be listed there.
 
 (Below commands might be outdated, the Dockerfile linked above is the better
@@ -120,17 +120,17 @@ So if you add a database migration you should also update this file.
 
 There is a just command to generate this file `just dump-bark-sql-schema`.
 
-## Aspd database migrations
-Just like for bark, CI is also dumping and comparing the DDL for the aspd database in file `aspd/schema.sql`.
+## Server database migrations
+Just like for bark, CI is also dumping and comparing the DDL for the server database in file `server/schema.sql`.
 So if you add a database migration you should also update this file.
 
-There is an equivalent just command to generate this file `just dump-aspd-sql-schema`.
+There is an equivalent just command to generate this file `just dump-server-sql-schema`.
 
-## Aspd default configuration
-CI is also dumping and comparing the default configuration parameters for the aspd using file `aspd/config.default.toml`.
-So whenever you change or add a configuration of aspd you should change this file accordingly.
+## Server default configuration
+CI is also dumping and comparing the default configuration parameters for the server using file `server/config.default.toml`.
+So whenever you change or add a configuration of the server you should change this file accordingly.
 
-There is a just command to generate this file `just default-aspd-config`.
+There is a just command to generate this file `just default-server-config`.
 
 # Code hygiene
 
@@ -183,7 +183,7 @@ We care about our commit history, both for historic purposes and to aid with rev
 - Group changes into commits that make logical sense, smaller is better than
   bigger.
 - Use descriptive commit messages:
-  - prefix the title line with the subsystem you're changing (bark, aspd, ci,
+  - prefix the title line with the subsystem you're changing (bark, server, ci,
   testing, ...);
   - feel free to use the body to add extra information and motivation.
 - Try to make all your commits individually compile (pass `just check`), or even

@@ -31,13 +31,13 @@ Bark is an implementation of the Ark protocol on bitcoin, led by [Second](https:
 The project consists of:
 
 - The Ark wallet: **bark**
-- The Ark server: **aspd**
+- The Ark server: **captaind**
 - A set of libraries containing all protocol primitives
 
 > **Warning**  
 > This repository contains experimental code. Using it with real bitcoin is reckless and can result in loss of funds.
 >
-> - Updating bark or aspd may corrupt your wallet—we prioritize development velocity over backward compatibility.
+> - Updating bark or captaind may corrupt your wallet—we prioritize development velocity over backward compatibility.
 > - Known bugs and vulnerabilities can still lead to loss of funds.
 
 ## Get started

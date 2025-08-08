@@ -50,13 +50,13 @@ steps:
     environment:
       TEST_POSTGRES_HOST: localhost
     commands:
-      - just default-aspd-config
-      - bash contrib/check-clean-diff.sh aspd/config.default.toml
+      - just default-server-config
+      - bash contrib/check-clean-diff.sh server/config.default.toml
       - just dump-bark-sql-schema
       - bash contrib/check-clean-diff.sh bark/schema.sql
       - service postgresql start
-      - just dump-aspd-sql-schema
-      - bash contrib/check-clean-diff.sh aspd/schema.sql
+      - just dump-server-sql-schema
+      - bash contrib/check-clean-diff.sh server/schema.sql
 
   - name: use-bark-as-dependency
     depends_on: build
@@ -96,7 +96,7 @@ steps:
       RUST_TEST_THREADS: 4
     commands:
       - git log --oneline | head -n 1
-      - export ASPD_EXEC=${CI_WORKSPACE}/target/debug/aspd
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
@@ -113,7 +113,7 @@ steps:
       RUST_TEST_THREADS: 4
     commands:
       - git log --oneline | head -n 1
-      - export ASPD_EXEC=${CI_WORKSPACE}/target/debug/aspd
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
@@ -129,7 +129,7 @@ steps:
       RUST_TEST_THREADS: 4
     commands:
       - git log --oneline | head -n 1
-      - export ASPD_EXEC=${CI_WORKSPACE}/target/debug/aspd
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration

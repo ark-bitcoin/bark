@@ -9,17 +9,17 @@ use bitcoin::Network;
 use log::{info, warn};
 
 use ark::ArkInfo;
-use aspd_rpc::{self as rpc, protos, RequestExt};
+use server_rpc::{self as rpc, protos, RequestExt};
 
 
 /// The minimum protocol version supported by the client.
 ///
-/// For info on protocol versions, see [aspd_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc] module documentation.
 pub const MIN_PROTOCOL_VERSION: u64 = 1;
 
 /// The maximum protocol version supported by the client.
 ///
-/// For info on protocol versions, see [aspd_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc] module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
 
@@ -40,7 +40,7 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 pub struct ServerConnection {
 	/// Protocol version used for rpc protocol.
 	///
-	/// For info on protocol versions, see [aspd_rpc] module documentation.
+	/// For info on protocol versions, see [server_rpc] module documentation.
 	#[allow(unused)]
 	pub pver: u64,
 	pub info: ArkInfo,
@@ -49,21 +49,21 @@ pub struct ServerConnection {
 
 impl ServerConnection {
 	fn create_endpoint(address: &str) -> anyhow::Result<tonic::transport::Endpoint> {
-		let asp_uri = tonic::transport::Uri::from_str(address)
+		let uri = tonic::transport::Uri::from_str(address)
 			.context("failed to parse Ark server as a URI")?;
 
-		let scheme = asp_uri.scheme_str().unwrap_or("");
+		let scheme = uri.scheme_str().unwrap_or("");
 		if scheme != "http" && scheme != "https" {
-			bail!("ASP scheme must be either http or https. Found: {}", scheme);
+			bail!("Ark server scheme must be either http or https. Found: {}", scheme);
 		}
 
-		let mut endpoint = tonic::transport::Channel::builder(asp_uri.clone())
+		let mut endpoint = tonic::transport::Channel::builder(uri.clone())
 			.keep_alive_timeout(Duration::from_secs(600))
 			.timeout(Duration::from_secs(600));
 
 		if scheme == "https" {
-			info!("Connecting to ASP using TLS...");
-			let uri_auth = asp_uri.clone().into_parts().authority
+			info!("Connecting to Ark server using TLS...");
+			let uri_auth = uri.clone().into_parts().authority
 				.context("Ark server URI is missing an authority part")?;
 			let domain = uri_auth.host();
 
@@ -72,12 +72,12 @@ impl ServerConnection {
 				.domain_name(domain);
 			endpoint = endpoint.tls_config(tls_config)?
 		} else {
-			info!("Connecting to ASP without TLS...");
+			info!("Connecting to Ark server without TLS...");
 		};
 		Ok(endpoint)
 	}
 
-	/// Try to perform the handshake with the ASP.
+	/// Try to perform the handshake with the server.
 	pub async fn connect(
 		address: &str,
 		network: Network,

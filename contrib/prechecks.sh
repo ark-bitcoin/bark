@@ -62,16 +62,16 @@ rust_no_whitespace_on_empty_lines() {
 	exit $ok
 }
 
-# Check if there are structure log messages in aspd-logs that are not used.
-unused_aspd_logs() {
+# Check if there are structure log messages in server-logs that are not used.
+unused_server_logs() {
 	ok=0
 
 	# Use a temporary file instead of process substitution
 	TMP_FILE=$(mktemp)
-	grep -E "pub struct " ./aspd-log/src/msgs/* | sed 's/^.*pub struct //' | awk '{print $1}' > "$TMP_FILE"
+	grep -E "pub struct " ./server-log/src/msgs/* | sed 's/^.*pub struct //' | awk '{print $1}' > "$TMP_FILE"
 
 	while read -r log; do
-		if ! grep -r -E "slog.*\\(${log}" ./aspd/src/* > /dev/null 2>&1; then
+		if ! grep -r -E "slog.*\\(${log}" ./server/src/* > /dev/null 2>&1; then
 			echo "UNUSED: '$log'"
 			ok=2
 		fi

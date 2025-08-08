@@ -4,7 +4,7 @@
     <option name="command" value="test --package ark-testing" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
-      <env name="ASPD_EXEC" value="../target/debug/aspd" />
+      <env name="CAPTAIND_EXEC" value="../target/debug/captaind" />
       <env name="BARK_EXEC" value="../target/debug/bark" />
       <env name="CHAIN_SOURCE" value="mempool-electrs" />
     </envs>

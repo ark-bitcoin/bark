@@ -1,0 +1,29 @@
+[package]
+name = "bark-server-rpc"
+version = "0.0.0-alpha"
+license = "CC0-1.0"
+authors = [ "Steven Roose <steven@roose.io>" ]
+edition = "2021"
+repository = "https://codeberg.org/ark-bitcoin/bark"
+
+[lib]
+name = "server_rpc"
+
+[features]
+server = []
+
+[dependencies]
+# OWN
+ark-lib = { path = "../lib" }
+bitcoin.workspace = true
+
+# EXPORTED
+tonic.workspace = true
+
+# INTERNAL
+prost.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+tonic-build.workspace= true

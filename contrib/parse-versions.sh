@@ -7,8 +7,8 @@ if [ -z "$UNPARSED_VERSION" ]; then
 fi
 
 case "$UNPARSED_VERSION" in
-	aspd-*)
-		echo "${UNPARSED_VERSION#aspd-}"
+	server-*)
+		echo "${UNPARSED_VERSION#server-}"
 		;;
 	bark-*)
 		echo "${UNPARSED_VERSION#bark-}"

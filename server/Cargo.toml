@@ -1,0 +1,78 @@
+[package]
+name = "bark-server"
+version = "0.0.0-alpha"
+license = "CC0-1.0"
+authors = ["Steven Roose <steven@roose.io>"]
+edition = "2021"
+repository = "https://codeberg.org/ark-bitcoin/bark"
+
+[lib]
+name = "server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "captaind"
+path = "src/bin/captaind/main.rs"
+
+[build-dependencies]
+tonic-build.workspace = true
+
+[dependencies]
+
+# OWN
+ark-lib = { path = "../lib" }
+bark-cln-rpc = { path = "../cln-rpc" }
+bark-server-log = { path = "../server-log" }
+bark-server-rpc = { path = "../server-rpc", features = ["server"] }
+bark-bitcoin-ext = { path = "../bitcoin-ext" }
+
+# EXPORTED
+bitcoin.workspace = true
+lightning-invoice.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+log.workspace = true
+
+# INTERNAL
+tokio-postgres.workspace = true
+bb8.workspace = true
+bb8-postgres.workspace = true
+postgres-types.workspace = true
+refinery = { version = "0.8.14", default-features = false, features = ["tokio-postgres"] }
+
+lazy_static.workspace = true
+fern.workspace = true
+chrono.workspace = true
+clap.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+rmp-serde.workspace = true
+config.workspace = true
+toml.workspace = true
+humantime.workspace = true
+
+bip39.workspace = true
+bdk_wallet.workspace = true
+bdk_bitcoind_rpc.workspace = true
+
+lightning.workspace = true
+
+tonic = { workspace = true, features = ["tls-native-roots"] }
+tower.workspace = true
+http.workspace = true
+http-body.workspace = true
+parking_lot.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-stream.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-semantic-conventions.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+ark-lib = { path = "../lib", features = [ "test-util" ] }

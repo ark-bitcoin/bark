@@ -146,14 +146,14 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "ark-lib",
- "aspd-log",
- "aspd-rpc",
  "async-trait",
- "bark-aspd",
  "bark-bitcoin-ext",
  "bark-client",
  "bark-cln-rpc",
  "bark-json",
+ "bark-server",
+ "bark-server-log",
+ "bark-server-rpc",
  "bdk_esplora",
  "bip39",
  "bitcoin",
@@ -190,37 +190,6 @@ name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-
-[[package]]
-name = "aspd-log"
-version = "0.0.0"
-dependencies = [
- "ark-lib",
- "bark-bitcoin-ext",
- "bdk_wallet",
- "bitcoin",
- "chrono",
- "humantime",
- "log",
- "opentelemetry",
- "serde",
- "serde_json",
- "tracing",
- "tracing-opentelemetry",
-]
-
-[[package]]
-name = "aspd-rpc"
-version = "0.0.0-alpha"
-dependencies = [
- "ark-lib",
- "bitcoin",
- "prost",
- "thiserror 2.0.12",
- "tokio",
- "tonic",
- "tonic-build",
-]
 
 [[package]]
 name = "async-trait"
@@ -306,58 +275,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bark-aspd"
-version = "0.0.0-alpha"
-dependencies = [
- "anyhow",
- "ark-lib",
- "aspd-log",
- "aspd-rpc",
- "async-trait",
- "bark-bitcoin-ext",
- "bark-cln-rpc",
- "bb8",
- "bb8-postgres",
- "bdk_bitcoind_rpc",
- "bdk_wallet",
- "bip39",
- "bitcoin",
- "chrono",
- "clap",
- "config",
- "fern",
- "futures",
- "http",
- "http-body",
- "humantime",
- "lazy_static",
- "lightning",
- "lightning-invoice 0.32.0",
- "log",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
- "parking_lot",
- "postgres-types",
- "refinery",
- "rmp-serde",
- "serde",
- "serde_json",
- "tokio",
- "tokio-postgres",
- "tokio-stream",
- "tokio-util",
- "toml",
- "tonic",
- "tonic-build",
- "tower",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "bark-bitcoin-ext"
 version = "0.0.0"
 dependencies = [
@@ -379,9 +296,9 @@ version = "0.0.0-alpha"
 dependencies = [
  "anyhow",
  "ark-lib",
- "aspd-rpc",
  "bark-bitcoin-ext",
  "bark-json",
+ "bark-server-rpc",
  "bdk_bitcoind_rpc",
  "bdk_esplora",
  "bdk_wallet",
@@ -429,6 +346,89 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "bark-server"
+version = "0.0.0-alpha"
+dependencies = [
+ "anyhow",
+ "ark-lib",
+ "async-trait",
+ "bark-bitcoin-ext",
+ "bark-cln-rpc",
+ "bark-server-log",
+ "bark-server-rpc",
+ "bb8",
+ "bb8-postgres",
+ "bdk_bitcoind_rpc",
+ "bdk_wallet",
+ "bip39",
+ "bitcoin",
+ "chrono",
+ "clap",
+ "config",
+ "fern",
+ "futures",
+ "http",
+ "http-body",
+ "humantime",
+ "lazy_static",
+ "lightning",
+ "lightning-invoice 0.32.0",
+ "log",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "parking_lot",
+ "postgres-types",
+ "refinery",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tokio-stream",
+ "tokio-util",
+ "toml",
+ "tonic",
+ "tonic-build",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bark-server-log"
+version = "0.0.0"
+dependencies = [
+ "ark-lib",
+ "bark-bitcoin-ext",
+ "bdk_wallet",
+ "bitcoin",
+ "chrono",
+ "humantime",
+ "log",
+ "opentelemetry",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-opentelemetry",
+]
+
+[[package]]
+name = "bark-server-rpc"
+version = "0.0.0-alpha"
+dependencies = [
+ "ark-lib",
+ "bitcoin",
+ "prost",
+ "thiserror 2.0.12",
+ "tokio",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]

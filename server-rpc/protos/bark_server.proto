@@ -1,0 +1,367 @@
+
+syntax = "proto3";
+
+package bark_server;
+
+/// Public ark service for arkd.
+service ArkService {
+	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
+	rpc GetArkInfo(Empty) returns (ArkInfo) {}
+
+	rpc GetFreshRounds(FreshRoundsRequest) returns (FreshRounds) {}
+	rpc GetRound(RoundId) returns (RoundInfo) {}
+
+	// * BOARDING *
+
+	rpc RequestBoardCosign(BoardCosignRequest) returns (BoardCosignResponse) {}
+	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (Empty) {}
+
+	// * OOR PAYMENTS*
+
+	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
+
+    // Empty the arkoor mailbox for certain pubkeys.
+    //
+    // At most 100 pubkeys should be provided.
+	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
+
+	// * LN payments
+
+	rpc StartLightningPayment(LightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
+	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
+	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
+
+	rpc FetchBolt12Invoice(FetchBolt12InvoiceRequest) returns (FetchBolt12InvoiceResponse) {}
+
+	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
+	rpc SubscribeLightningReceive(SubscribeLightningReceiveRequest) returns (SubscribeLightningReceiveResponse) {}
+	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorCosignResponse) {}
+
+	// * ARK ROUND INTERACTIONS *
+
+	// Subscribe to the round events. Immediatelly returns the last event that happened.
+	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
+	rpc SubmitPayment(SubmitPaymentRequest) returns (Empty) {}
+	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (Empty) {}
+	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (Empty) {}
+}
+
+message HandshakeRequest {
+	optional string bark_version = 1;
+}
+
+message HandshakeResponse {
+	uint64 min_protocol_version = 1;
+	uint64 max_protocol_version = 2;
+	// Public Service Announcement, a generalized message from the server to be
+	// displayed to the user.
+	optional string psa = 3;
+}
+
+message ArkInfo {
+	string network = 1;
+	bytes server_pubkey = 2;
+	uint32 round_interval_secs = 3;
+	uint32 nb_round_nonces = 4;
+	uint32 vtxo_exit_delta = 5;
+	uint32 vtxo_expiry_delta = 6;
+	uint32 htlc_expiry_delta = 7;
+	optional uint64 max_vtxo_amount = 8;
+	uint32 max_arkoor_depth = 9;
+}
+
+message FreshRoundsRequest {
+	uint32 start_height = 1;
+}
+
+message FreshRounds {
+	repeated bytes txids = 1;
+}
+
+message RoundId {
+	bytes txid = 1;
+}
+
+message RoundInfo {
+	bytes round_tx = 1;
+	bytes signed_vtxos = 2;
+}
+
+
+// boarding
+
+message BoardCosignRequest {
+	uint64 amount = 1;
+	bytes utxo = 2;
+	uint32 expiry_height = 3;
+	bytes user_pubkey = 4;
+	bytes pub_nonce = 5;
+}
+
+message BoardCosignResponse {
+	bytes pub_nonce = 1;
+	bytes partial_sig = 2;
+}
+
+message BoardVtxoRequest {
+	bytes board_vtxo = 1;
+	bytes board_tx = 2;
+}
+
+
+// arkoor
+
+message VtxoRequest {
+	uint64 amount = 1;
+	bytes policy = 2;
+}
+
+message ArkoorCosignRequest {
+	bytes input_id = 1;
+	repeated VtxoRequest outputs = 2;
+	bytes pub_nonce = 3;
+}
+
+message ArkoorPackageCosignRequest {
+	repeated ArkoorCosignRequest arkoors = 1;
+}
+
+message ArkoorCosignResponse {
+	bytes pub_nonce = 1;
+	bytes partial_sig = 2;
+}
+
+message ArkoorPackageCosignResponse {
+	repeated ArkoorCosignResponse sigs = 1;
+}
+
+message ArkoorVtxo {
+	bytes pubkey = 1;
+	bytes vtxo = 2;
+}
+
+message ArkoorPackage {
+	repeated ArkoorVtxo arkoors = 1;
+}
+
+message ArkoorVtxosRequest {
+	repeated bytes pubkeys = 1;
+}
+
+message ArkoorMailboxPackage {
+	bytes arkoor_package_id = 1;
+	repeated bytes vtxos = 2;
+}
+
+message ArkoorVtxosResponse {
+	repeated ArkoorMailboxPackage packages = 1;
+}
+
+// lightning
+
+message LightningPaymentRequest {
+	string invoice = 1;
+	optional uint64 user_amount_sat = 2;
+	repeated bytes input_vtxo_ids = 3;
+	repeated bytes user_nonces = 4;
+	bytes user_pubkey = 5;
+}
+
+message LightningPaymentDetails {
+	bytes details = 1;
+	bytes pub_nonce = 2;
+	bytes partial_sig = 3;
+}
+
+message SignedLightningPaymentDetails {
+	string invoice = 1;
+	repeated bytes htlc_vtxo_ids = 2;
+	bool wait = 3;
+}
+
+message CheckLightningPaymentRequest {
+	bytes hash = 1;
+	bool wait = 2;
+}
+
+message LightningPaymentResult {
+	string progress_message = 1;
+	PaymentStatus status = 2;
+	bytes payment_hash = 3;
+	optional bytes payment_preimage = 4;
+}
+
+message RevokeLightningPaymentRequest {
+	repeated bytes htlc_vtxo_ids = 1;
+	repeated bytes user_nonces = 2;
+}
+
+message FetchBolt12InvoiceRequest {
+	bytes offer = 1;
+	optional uint64 amount_sat = 2;
+}
+
+message FetchBolt12InvoiceResponse {
+	bytes invoice = 1;
+}
+
+message StartLightningReceiveRequest {
+	bytes payment_hash = 1;
+	uint64 amount_sat = 2;
+}
+
+message StartLightningReceiveResponse {
+	string bolt11 = 1;
+}
+
+message SubscribeLightningReceiveRequest {
+	string bolt11 = 1;
+}
+
+message ClaimLightningReceiveRequest {
+	ArkoorCosignRequest arkoor = 1;
+	bytes payment_preimage = 2;
+}
+
+message SubscribeLightningReceiveResponse {
+	string invoice = 1;
+	uint64 amount_sat = 2;
+}
+
+// round
+
+message RoundStart {
+	uint64 round_seq = 1;
+	uint64 offboard_feerate_sat_vkb = 2;
+}
+
+message RoundAttempt {
+	uint64 round_seq = 1;
+	uint64 attempt_seq = 2;
+	bytes vtxo_ownership_challenge = 3;
+}
+
+message ForfeitNonces {
+	bytes input_vtxo_id = 1;
+	repeated bytes pub_nonces = 2;
+}
+
+message VtxoProposal {
+	uint64 round_seq = 1;
+	bytes vtxos_spec = 2;
+	bytes unsigned_round_tx = 3;
+	repeated bytes vtxos_agg_nonces = 4;
+	bytes connector_pubkey = 5;
+}
+
+message RoundProposal {
+	uint64 round_seq = 1;
+	/// The cosign signatures to plug into the vtxo tree.
+	repeated bytes vtxo_cosign_signatures = 2;
+	repeated ForfeitNonces forfeit_nonces = 3;
+}
+
+message RoundFinished {
+	uint64 round_seq = 1;
+	/// The signed round tx.
+	bytes signed_round_tx = 3;
+}
+
+message RoundEvent {
+	oneof event {
+		RoundStart start = 1;
+		RoundAttempt attempt = 2;
+		VtxoProposal vtxo_proposal = 3;
+		RoundProposal round_proposal = 4;
+		RoundFinished finished = 5;
+	};
+}
+
+message InputVtxo {
+	// vtxo id of input vtxos
+	bytes vtxo_id = 1;
+	bytes ownership_proof = 2;
+}
+
+message SignedVtxoRequest {
+	VtxoRequest vtxo = 1;
+	bytes cosign_pubkey = 2;
+	repeated bytes public_nonces = 3;
+}
+
+message OffboardRequest {
+	// amount in sats
+	uint64 amount = 1;
+	bytes offboard_spk = 2;
+}
+
+message SubmitPaymentRequest {
+	repeated InputVtxo input_vtxos = 2;
+	repeated SignedVtxoRequest vtxo_requests = 3;
+	repeated OffboardRequest offboard_requests = 4;
+}
+
+message ForfeitSignatures {
+	bytes input_vtxo_id = 1;
+	repeated bytes pub_nonces = 2;
+	repeated bytes signatures = 3;
+}
+
+message ForfeitSignaturesRequest {
+	repeated ForfeitSignatures signatures = 1;
+}
+
+message VtxoSignaturesRequest {
+	/// The cosign pubkey these signatures are for.
+	bytes pubkey = 1;
+	repeated bytes signatures = 2;
+}
+
+
+service WalletAdminService {
+	rpc WalletSync(Empty) returns (Empty) {}
+	rpc WalletStatus(Empty) returns (WalletStatusResponse) {}
+}
+
+service RoundAdminService {
+	rpc TriggerRound(Empty) returns (Empty) {}
+}
+
+service LightningAdminService {
+	rpc StartLightningNode(LightningNodeUri) returns (Empty) {}
+	rpc StopLightningNode(LightningNodeUri) returns (Empty) {}
+}
+
+service SweepAdminService {
+	rpc TriggerSweep(Empty) returns (Empty) {}
+}
+
+message WalletStatus {
+	string address = 1;
+	uint64 total_balance = 2;
+	uint64 trusted_pending_balance = 3;
+	uint64 untrusted_pending_balance = 4;
+	uint64 confirmed_balance = 5;
+	repeated string confirmed_utxos = 6;
+	repeated string unconfirmed_utxos = 7;
+}
+
+message WalletStatusResponse {
+	WalletStatus rounds = 1;
+	WalletStatus forfeits = 2;
+}
+
+message LightningNodeUri {
+	string uri = 1;
+}
+
+message Empty {}
+
+/// Primitives
+enum PaymentStatus {
+	PENDING = 0;
+	FAILED = 1;
+	COMPLETE = 2;
+}

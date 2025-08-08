@@ -15,7 +15,7 @@ use crate::serde_utils;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkInfo {
 	/// The Ark server pubkey
-	pub asp_pubkey: String,
+	pub server_pubkey: String,
 	/// The interval between each round
 	#[serde(with = "serde_utils::duration")]
 	pub round_interval: Duration,

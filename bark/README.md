@@ -72,7 +72,7 @@ const DB_FILE: &str = "db.sqlite";
 async fn main() {
   // Configure the wallet
   let config = Config {
-    asp_address: String::from("https://ark.signet.2nd.dev"),
+    server_address: String::from("https://ark.signet.2nd.dev"),
     esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
     ..Default::default()
   };

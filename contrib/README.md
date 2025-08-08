@@ -1,7 +1,7 @@
 # Extra information
 
 ## check-clean-default-config.sh
-This script checks if file `aspd/config.default.toml` is dirty.
+This script checks if file `server/config.default.toml` is dirty.
 When it is dirty it will print the diff + exit code 1.
 
 ## check-commits.sh
@@ -45,7 +45,7 @@ This script automates the process of cherry-picking commits from a feature branc
 This is a helper script for CI so it can verify the version number from the tag.
 It compares this version number with the version number defined in Cargo.toml of the respective project.
 There are 2 tagging options:
-* `aspd-0.0.1` this will check if `0.0.1` is also specified as version in `aspd/Cargo.toml`
+* `captaind-0.0.1` this will check if `0.0.1` is also specified as version in `server/Cargo.toml`
 * `bark-0.0.1` this will check if `0.0.1` is also specified as version in `bark/Cargo.toml`
 
 ## check-codeberg-release.sh
@@ -55,7 +55,7 @@ There are 2 tagging options:
 #### info:
 This is a helper script for CI so it can verify the version number from the tag isn't already used.
 There are 2 tagging options:
-* `aspd-0.0.1` this will check if `0.0.1` is used for a previous aspd or all release
+* `captaind-0.0.1` this will check if `0.0.1` is used for a previous captaind or all release
 * `bark-0.0.1` this will check if `0.0.1` is used for a previous bark or all release
 
 ## generate-index.sh
@@ -72,14 +72,14 @@ that automatically forwards to `bark/struct.Wallet.html`
 
 This is a helper script for CI so it can parse the version number from the tag.
 There are 2 tagging options:
-* `aspd-0.0.1`
+* `captaind-0.0.1`
 * `bark-0.0.1`
 
 This script will return `0.0.1` for all cases.
 
 ## prechecks.sh
 #### Parameters:
-1. "rust_no_spaces_for_indent", "rust_no_whitespace_on_empty_lines" or "unused_aspd_logs"
+1. "rust_no_spaces_for_indent", "rust_no_whitespace_on_empty_lines" or "unused_server_logs"
 
 #### rust_no_spaces_for_indent:
 We don't allow any line that starts with a whitespace.
@@ -87,8 +87,8 @@ Exit code 2 if whitespace is found.
 #### rust_no_whitespace_on_empty_lines:
 We don't allow empty lines to contain whitespace.
 Exit code 2 if an empty line with whitespace is found.
-#### unused_aspd_logs:
-Check if there are structure log messages in aspd-logs that are not used.
+#### unused_server_logs:
+Check if there are structure log messages in server-logs that are not used.
 
 ## ci-run-test.sh
 #### Parameters:

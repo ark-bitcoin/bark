@@ -26,10 +26,10 @@ required-features = ["cli"]
 [dependencies]
 
 # OWN
-ark-lib = { path = "../ark-lib" }
-bark-json = { path = "../bark-json" }
-aspd-rpc = { path = "../aspd-rpc" }
+ark-lib = { path = "../lib" }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
+bark-json = { path = "../bark-json" }
+bark-server-rpc = { path = "../server-rpc" }
 
 # EXPORTED
 bitcoin.workspace = true
@@ -64,5 +64,5 @@ fern = { workspace = true, optional = true }
 home = { version = "=0.5.9", optional = true }
 
 [dev-dependencies]
-ark-lib = { path = "../ark-lib", features = [ "test-util" ] }
+ark-lib = { path = "../lib", features = [ "test-util" ] }
 rand.workspace = true

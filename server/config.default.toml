@@ -1,0 +1,46 @@
+data_dir = "./bark-server"
+network = "regtest"
+vtxo_lifetime = 4320
+vtxo_exit_delta = 12
+htlc_expiry_delta = 6
+max_arkoor_depth = 5
+round_board_confirmations = 12
+round_tx_untrusted_input_confirmations = 2
+round_interval = "10s"
+round_submit_time = "2s"
+round_sign_time = "2s"
+nb_round_nonces = 64
+round_tx_feerate = "2500sat/kwu"
+rpc_rich_errors = true
+txindex_check_interval = "30s"
+forfeit_watcher_min_balance = 10000000
+transaction_rebroadcast_interval = "1m"
+cln_array = []
+cln_reconnect_interval = "10s"
+invoice_check_interval = "3s"
+invoice_recheck_delay = "2s"
+invoice_check_base_delay = "10s"
+invoice_check_max_delay = "10m"
+invoice_poll_interval = "30s"
+htlc_subscription_timeout = "10m"
+
+[vtxo_sweeper]
+sweep_tx_fallback_feerate = "2500sat/kwu"
+round_sweep_interval = "1h"
+sweep_threshold = 1000000
+
+[forfeit_watcher]
+claim_fallback_feerate = "6250sat/kwu"
+wake_interval = "1m"
+
+[rpc]
+public_address = "127.0.0.1:3535"
+admin_address = "127.0.0.1:3536"
+
+[postgres]
+host = "localhost"
+port = 5432
+name = "bark-server-db"
+
+[bitcoind]
+url = "http://127.0.0.1:18443"
