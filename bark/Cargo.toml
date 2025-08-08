@@ -57,6 +57,7 @@ lightning.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+futures.workspace = true
 
 # CLI only
 clap = { workspace = true, optional = true }
