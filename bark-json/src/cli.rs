@@ -1,10 +1,11 @@
 
 use std::time::Duration;
 
-use bitcoin::{Amount, Txid};
+use bitcoin::{Amount, FeeRate, Txid};
 
 use ark::rounds::RoundId;
 use ark::VtxoId;
+use bitcoin_ext::BlockHeight;
 
 use crate::exit::ExitState;
 use crate::exit::error::ExitError;
@@ -39,6 +40,26 @@ pub struct Balance {
 	pub pending_lightning_send: Amount,
 	#[serde(rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_exit: Amount,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Config {
+	/// Ark server address
+	pub ark: String,
+	/// Bitcoin Core RPC address to use for syncing
+	pub bitcoind: Option<String>,
+	/// Cookie to use for RPC authentication
+	pub bitcoind_cookie: Option<String>,
+	/// Username to use for RPC authentication
+	pub bitcoind_user: Option<String>,
+	/// password to use for RPC authentication
+	pub bitcoind_pass: Option<String>,
+	/// The Esplora REST API address to use for syncing
+	pub esplora: Option<String>,
+	/// How many blocks before VTXO expiration before preemptively refreshing them
+	pub vtxo_refresh_expiry_threshold: BlockHeight,
+	#[serde(rename = "fallback_fee_rate_kvb", with = "serde_utils::fee_rate_sats_per_kvb")]
+	pub fallback_fee_rate: Option<FeeRate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
