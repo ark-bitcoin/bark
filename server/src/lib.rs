@@ -6,20 +6,25 @@
 #[macro_use]
 mod error;
 
-mod cln;
-pub(crate) mod flux;
+pub mod config;
 pub mod database;
 pub mod forfeits;
-mod psbtext;
-mod serde_util;
+pub mod secret;
 pub mod sweeps;
-mod rpcserver;
-mod round;
-pub(crate) mod system;
-mod txindex;
-mod telemetry;
 pub mod wallet;
-pub mod config;
+
+pub(crate) mod flux;
+pub(crate) mod system;
+
+mod cln;
+
+mod psbtext;
+mod round;
+mod rpcserver;
+mod serde_util;
+mod telemetry;
+mod txindex;
+
 pub use crate::config::Config;
 
 use std::borrow::Borrow;
