@@ -307,6 +307,7 @@ dependencies = [
  "chrono",
  "clap",
  "fern",
+ "futures",
  "home",
  "humantime",
  "lazy_static",

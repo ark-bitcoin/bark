@@ -44,7 +44,8 @@ use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use lightning::util::ser::Writeable;
 use log::{trace, debug, info, warn, error};
-use tokio_stream::{Stream, StreamExt};
+use futures::StreamExt;
+use tokio_stream::Stream;
 
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
@@ -709,29 +710,48 @@ impl Wallet {
 		let fresh_rounds = srv.client.get_fresh_rounds(req).await?.into_inner();
 		debug!("Received {} new rounds from ark", fresh_rounds.txids.len());
 
-		for txid in fresh_rounds.txids {
-			let txid = Txid::from_slice(&txid).context("invalid txid from Ark server")?;
-			let req = protos::RoundId { txid: txid.to_byte_array().to_vec() };
-			let round = srv.client.get_round(req).await?.into_inner();
+		let results = tokio_stream::iter(fresh_rounds.txids)
+			.map(|txid| {
+				let pubkeys = pubkeys.clone();
+				let mut srv = srv.clone();
 
-			let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
-				.context("invalid signed vtxo tree from Ark server")?
-				.into_cached_tree();
+				async move {
+					let txid = Txid::from_slice(&txid).context("invalid txid from asp")?;
+					let req = protos::RoundId { txid: txid.to_byte_array().to_vec() };
+					let round = srv.client.get_round(req).await?.into_inner();
 
-			for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-				if let VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) = dest.vtxo.policy {
-					if pubkeys.contains(&user_pubkey) {
-						if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-							self.db.register_movement(MovementArgs {
-								kind: MovementKind::Round,
-								spends: &[],
-								receives: &[(&vtxo, VtxoState::Spendable)],
-								recipients: &[],
-								fees: None,
-							})?;
+					let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
+						.context("invalid signed vtxo tree from asp")?
+						.into_cached_tree();
+
+
+				for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
+					if let VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) =
+						dest.vtxo.policy
+					{
+						if pubkeys.contains(&user_pubkey) {
+							if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
+								self.db.register_movement(MovementArgs {
+									kind: MovementKind::Round,
+									spends: &[],
+									receives: &[(&vtxo, VtxoState::Spendable)],
+									recipients: &[],
+									fees: None,
+								})?;
+							}
 						}
 					}
 				}
+				Ok::<_, anyhow::Error>(())
+			}
+		})
+		.buffer_unordered(10)
+		.collect::<Vec<_>>()
+		.await;
+
+		for result in results {
+			if let Err(e) = result {
+				return Err(e).context("failed to sync round");
 			}
 		}
 
