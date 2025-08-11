@@ -220,15 +220,16 @@ impl Wallet {
 		self.chain.require_version()
 	}
 
-	/// Derive and store the keypair directly after currently last revealed one
-	pub fn derive_store_next_keypair(&self) -> anyhow::Result<Keypair> {
+	/// Derive and store the keypair directly after currently last revealed one,
+	/// together with its index.
+	pub fn derive_store_next_keypair(&self) -> anyhow::Result<(Keypair, u32)> {
 		let last_revealed = self.db.get_last_vtxo_key_index()?;
 
 		let index = last_revealed.map(|i| i + 1).unwrap_or(u32::MIN);
 		let keypair = self.vtxo_seed.derive_keypair(index);
 
 		self.db.store_vtxo_key(index, keypair.public_key())?;
-		Ok(keypair)
+		Ok((keypair, index))
 	}
 
 	pub fn peak_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
@@ -246,7 +247,7 @@ impl Wallet {
 	pub fn new_address(&self) -> anyhow::Result<ark::Address> {
 		let ark = &self.require_server()?;
 		let network = self.properties()?.network;
-		let pubkey = self.derive_store_next_keypair()?.public_key();
+		let pubkey = self.derive_store_next_keypair()?.0.public_key();
 
 		if network == bitcoin::Network::Bitcoin {
 			Ok(ark::Address::new(ark.info.server_pubkey, pubkey))
@@ -266,6 +267,22 @@ impl Wallet {
 		} else {
 			Ok(ark::Address::new_testnet(ark.info.server_pubkey, pubkey))
 		}
+	}
+
+	/// Generate a new Ark address and the index of the key used to create it
+	///
+	/// This derives and stores the keypair directly after currently last revealed one.
+	pub fn new_address_with_index(&self) -> anyhow::Result<(ark::Address, u32)> {
+		let ark = &self.require_server()?;
+		let network = self.properties()?.network;
+		let (keypair, index) = self.derive_store_next_keypair()?;
+		let pubkey = keypair.public_key();
+		let addr = if network == bitcoin::Network::Bitcoin {
+			ark::Address::new(ark.info.server_pubkey, pubkey)
+		} else {
+			ark::Address::new_testnet(ark.info.server_pubkey, pubkey)
+		};
+		Ok((addr, index))
 	}
 
 	/// Create new wallet.
@@ -549,7 +566,7 @@ impl Wallet {
 		wallet: &mut W,
 		amount: Amount,
 	) -> anyhow::Result<Board> {
-		let user_keypair = self.derive_store_next_keypair()?;
+		let (user_keypair, _) = self.derive_store_next_keypair()?;
 		self.board(wallet, Some(amount), user_keypair).await
 	}
 
@@ -558,7 +575,7 @@ impl Wallet {
 		&mut self,
 		wallet: &mut W,
 	) -> anyhow::Result<Board> {
-		let user_keypair = self.derive_store_next_keypair()?;
+		let (user_keypair, _) = self.derive_store_next_keypair()?;
 		self.board(wallet, None, user_keypair).await
 	}
 
@@ -921,7 +938,7 @@ impl Wallet {
 
 		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
 
-		let user_keypair = self.derive_store_next_keypair()?;
+		let (user_keypair, _) = self.derive_store_next_keypair()?;
 		let req = VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
 			amount: total_amount,
@@ -1035,7 +1052,7 @@ impl Wallet {
 		amount: Amount,
 	) -> anyhow::Result<ArkoorCreateResult> {
 		let mut srv = self.require_server()?;
-		let change_pubkey = self.derive_store_next_keypair()?.public_key();
+		let change_pubkey = self.derive_store_next_keypair()?.0.public_key();
 
 		let req = VtxoRequest {
 			amount: amount,
@@ -1211,7 +1228,7 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let change_keypair = self.derive_store_next_keypair()?;
+		let (change_keypair, _) = self.derive_store_next_keypair()?;
 
 		let htlc_expiry = current_height + srv.info.htlc_expiry_delta as u32;
 		let pay_req = VtxoRequest {
@@ -1500,7 +1517,7 @@ impl Wallet {
 
 		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
 
-		let keypair = self.derive_store_next_keypair()?;
+		let (keypair, _) = self.derive_store_next_keypair()?;
 
 		let amount = Amount::from_msat_floor(
 			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
@@ -1524,7 +1541,7 @@ impl Wallet {
 			}
 			assert_eq!(inputs.len(), 1);
 			let [input] = inputs.try_into().unwrap();
-			let change_pubkey = self.derive_store_next_keypair()?.public_key();
+			let change_pubkey = self.derive_store_next_keypair()?.0.public_key();
 			let output = VtxoRequest {
 				amount: input.amount(),
 				policy: VtxoPolicy::new_pubkey(change_pubkey),
@@ -1646,7 +1663,7 @@ impl Wallet {
 					None
 				} else {
 					let amount = in_sum - spent_amount;
-					let change_keypair = self.derive_store_next_keypair()?;
+					let (change_keypair, _) = self.derive_store_next_keypair()?;
 					info!("Adding change vtxo for {}", amount);
 					Some(VtxoRequest {
 						amount: amount,
