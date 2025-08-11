@@ -1271,13 +1271,20 @@ impl Wallet {
 				let tx = tx.with_context(|| {
 					format!("input vtxo chain anchor not found: {}", input.chain_anchor().txid)
 				})?;
-				vtxo.validate(&tx).context("invalid htlc vtxo")?;
-				if let Some(ref change) = change_vtxo {
-					change.validate(&tx).context("invalid htlc vtxo")?;
-				}
+				vtxo.validate(&tx).context("invalid lightning htlc vtxo")?;
 			} else {
 				warn!("We couldn't validate the new VTXOs because of chain source error.");
 			}
+		}
+
+		// Validate the change vtxo. It has the same chain anchor as the last input.
+		if let Some(ref change) = change_vtxo {
+			let last_input = inputs.last().context("no inputs provided")?;
+			let tx = self.chain.get_tx(&last_input.chain_anchor().txid).await?;
+			let tx = tx.with_context(|| {
+				format!("input vtxo chain anchor not found: {}", last_input.chain_anchor().txid)
+			})?;
+			change.validate(&tx).context("invalid lightning change vtxo")?;
 		}
 
 		let pending_lightning_state = VtxoState::PendingLightningSend {

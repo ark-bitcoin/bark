@@ -1439,3 +1439,113 @@ async fn run_two_captainds() {
 	let _srv1 = ctx.new_captaind("server1", None).await;
 	let _srv2 = ctx.new_captaind("server2", None).await;
 }
+
+#[tokio::test]
+async fn should_refuse_paying_invoice_not_matching_htlcs() {
+	let ctx = TestContext::new("aspd/should_refuse_paying_invoice_not_matching_htlcs").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	let dummy_invoice = lightningd_1.invoice(None, "dummy_invoice", "A dummy invoice").await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient, String);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn finish_lightning_payment(&mut self, mut req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
+			req.invoice = self.1.to_string();
+			Ok(self.upstream().finish_lightning_payment(req).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd_1.get_public_client().await, dummy_invoice);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	ctx.await_transaction(&txid).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
+	bark_1.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice = lightningd_1.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
+
+	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
+	assert!(err.to_string().contains("htlc payment hash doesn't match invoice"), "err: {err}");
+}
+
+
+#[tokio::test]
+async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
+	let ctx = TestContext::new("aspd/should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	// Start an aspd and link it to our cln installation
+	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+
+	#[derive(Clone)]
+	struct Proxy(aspd::ArkClient);
+	#[tonic::async_trait]
+	impl aspd::proxy::AspdRpcProxy for Proxy {
+		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+
+		async fn finish_lightning_payment(&mut self, mut req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
+			req.htlc_vtxo_ids.pop();
+			Ok(self.upstream().finish_lightning_payment(req).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(aspd_1.get_public_client().await);
+	let proxy = AspdRpcProxyServer::start(proxy).await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	ctx.await_transaction(&txid).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
+	bark_1.board(btc(0.5)).await;
+	bark_1.board(btc(0.6)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice = lightningd_1.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
+
+	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
+	assert!(err.to_string().contains("htlc vtxo amount too low for invoice"), "err: {err}");
+}
