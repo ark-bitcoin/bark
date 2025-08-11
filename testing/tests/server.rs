@@ -1453,13 +1453,13 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	let dummy_invoice = lightningd_1.invoice(None, "dummy_invoice", "A dummy invoice").await;
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient, String);
+	struct Proxy(captaind::ArkClient, String);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn finish_lightning_payment(&mut self, mut req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			req.invoice = self.1.to_string();
@@ -1467,8 +1467,8 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_client().await, dummy_invoice);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await, dummy_invoice);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;
@@ -1495,7 +1495,6 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	assert!(err.to_string().contains("htlc payment hash doesn't match invoice"), "err: {err}");
 }
 
-
 #[tokio::test]
 async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let ctx = TestContext::new("aspd/should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs").await;
@@ -1507,13 +1506,13 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
 
 	// Start an aspd and link it to our cln installation
-	let aspd_1 = ctx.new_aspd_with_funds("aspd-1", Some(&lightningd_2), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	#[derive(Clone)]
-	struct Proxy(aspd::ArkClient);
+	struct Proxy(captaind::ArkClient);
 	#[tonic::async_trait]
-	impl aspd::proxy::AspdRpcProxy for Proxy {
-		fn upstream(&self) -> aspd::ArkClient { self.0.clone() }
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
 		async fn finish_lightning_payment(&mut self, mut req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			req.htlc_vtxo_ids.pop();
@@ -1521,8 +1520,8 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 		}
 	}
 
-	let proxy = Proxy(aspd_1.get_public_client().await);
-	let proxy = AspdRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
 
 	trace!("Funding all lightning-nodes");
 	ctx.fund_lightning(&lightningd_1, btc(10)).await;

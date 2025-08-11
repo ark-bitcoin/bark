@@ -104,8 +104,8 @@ async fn board_bark() {
 async fn board_twice_bark() {
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_twice_bark").await;
-	let aspd = ctx.new_aspd("aspd", None).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &aspd, sat(200_000)).await;
+	let srv = ctx.new_captaind("server", None).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(200_000)).await;
 
 	bark1.board(sat(BOARD_AMOUNT)).await;
 	bark1.board(sat(BOARD_AMOUNT)).await;
