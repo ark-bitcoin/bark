@@ -977,7 +977,7 @@ impl Server {
 			let mut arkoors = self.cosign_oor_package_with_builder(&package).await?;
 			Ok(arkoors.pop().expect("should have one"))
 		} else {
-			bail!("invalid claim input: {:?}", input_vtxo);
+			bail!("invalid claim input: {}", input_vtxo_id);
 		}
 	}
 }
