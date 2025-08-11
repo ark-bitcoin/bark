@@ -386,7 +386,7 @@ impl CollectingPayments {
 				for vtxo_state in v {
 					let vtxo_id = vtxo_state.id;
 					if !vtxo_state.is_spendable() {
-						bail!("vtxo {} is not spendable: {:?}", vtxo_id, vtxo_state)
+						bail!("vtxo {} is not spendable", vtxo_id)
 					}
 
 					ret.push(vtxo_state.vtxo);
