@@ -478,6 +478,14 @@ impl CollectingPayments {
 			return Err(e).context("registration failed");
 		}
 
+		if let Err(e) = srv.check_vtxos_not_exited(&input_vtxos).await {
+			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
+				attempt_seq: self.attempt_seq, error: e.to_string(),
+				duration_since_attempt: self.duration_since_attempt(),
+			);
+			return Err(e).context("registration failed");
+		}
+
 		if let Err(e) = srv.validate_board_inputs(&input_vtxos).await {
 			rslog!(RoundPaymentRegistrationFailed, self,
 				error: e.to_string(),

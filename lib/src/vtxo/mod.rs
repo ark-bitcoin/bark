@@ -622,6 +622,15 @@ impl<'a> VtxoTxIter<'a> {
 			done: false,
 		}
 	}
+
+	pub fn first_exit(mut self) -> Option<Transaction> {
+		let mut current = self.next();
+		while !self.exit {
+			current = self.next();
+		}
+
+		current.map(|c| c.tx)
+	}
 }
 
 impl<'a> Iterator for VtxoTxIter<'a> {

@@ -41,6 +41,8 @@ use ark_testing::daemon::captaind;
 use ark_testing::daemon::captaind::proxy::ArkRpcProxyServer;
 use ark_testing::util::{FutureExt, ReceiverExt};
 
+use ark_testing::exit::complete_exit;
+
 lazy_static::lazy_static! {
 	static ref RANDOM_PK: PublicKey = "02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49".parse().unwrap();
 }
@@ -1896,4 +1898,196 @@ async fn test_cosign_vtxo_tree() {
 	).await.unwrap();
 
 	assert!(db.fetch_ephemeral_tweak(server_cosign_pubkey).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
+	let ctx = TestContext::new("server/should_refuse_oor_input_vtxo_that_is_being_exited").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2", &srv).await;
+
+
+	bark.board(sat(400_000)).await;
+	bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// We created 2 vtxos, exit A so wallet will be able to spend B. But then we tweak the request to try spending A.
+	let [vtxo_a, _vtxo_b] = bark.vtxos().await.try_into().unwrap();
+
+	bark.start_exit_vtxos(&[vtxo_a.id]).await;
+	complete_exit(&ctx, &bark).await;
+
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark.onchain_balance().await, sat(596_429));
+
+	#[derive(Clone)]
+	struct Proxy(captaind::ArkClient, VtxoId);
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
+
+		async fn request_arkoor_package_cosign(&mut self, mut req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			req.arkoors[0].input_id = self.1.to_bytes().to_vec();
+			Ok(self.upstream().request_arkoor_package_cosign(req).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(srv.get_public_rpc().await, vtxo_a.id);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
+
+	bark.set_ark_url(&proxy.address).await;
+
+	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await.unwrap_err();
+	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
+}
+
+#[tokio::test]
+async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
+	let ctx = TestContext::new("server/should_refuse_ln_pay_input_vtxo_that_is_being_exited").await;
+
+	trace!("Start lightningd-1");
+	let lightningd = ctx.new_lightningd("lightningd-1").await;
+
+	let srv = ctx.new_captaind("server", Some(&lightningd)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board(sat(400_000)).await;
+	bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// We created 2 vtxos, exit A so wallet will be able to spend B. But then we tweak the request to try spending A.
+	let [vtxo_a, _vtxo_b] = bark.vtxos().await.try_into().unwrap();
+
+	bark.start_exit_vtxos(&[vtxo_a.id]).await;
+	complete_exit(&ctx, &bark).await;
+
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark.onchain_balance().await, sat(596_429));
+
+	#[derive(Clone)]
+	struct Proxy(captaind::ArkClient, VtxoId);
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
+
+		async fn start_lightning_payment(&mut self, mut req: protos::LightningPaymentRequest)
+			-> Result<protos::ArkoorPackageCosignResponse, tonic::Status>
+		{
+			req.input_vtxo_ids = vec![self.1.to_bytes().to_vec()];
+			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(srv.get_public_rpc().await, vtxo_a.id);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
+
+	bark.set_ark_url(&proxy.address).await;
+
+	let invoice = lightningd.invoice(Some(sat(100_000)), "real invoice", "A real invoice").await;
+
+	let err = bark.try_send_lightning(&invoice, None).await.unwrap_err();
+	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
+}
+
+#[tokio::test]
+async fn should_refuse_round_input_vtxo_that_is_being_exited() {
+	let ctx = TestContext::new("server/should_refuse_round_input_vtxo_that_is_being_exited").await;
+
+	trace!("Start lightningd-1");
+	let lightningd = ctx.new_lightningd("lightningd-1").await;
+
+	let srv = ctx.new_captaind("server", Some(&lightningd)).await;
+
+	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// We created 2 vtxos, exit A so wallet will be able to spend B. But then we tweak the request to try spending A.
+	let [vtxo_a, _vtxo_b] = bark.vtxos().await.try_into().unwrap();
+
+	bark.start_exit_vtxos(&[vtxo_a.id]).await;
+	complete_exit(&ctx, &bark).await;
+
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark.onchain_balance().await, sat(596_429));
+
+	#[derive(Clone)]
+	struct Proxy {
+		pub upstream: captaind::ArkClient,
+		pub wallet: Arc<Wallet>,
+		pub challenge: Arc<Mutex<Option<VtxoOwnershipChallenge>>>,
+		pub vtxo: VtxoInfo
+	}
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
+
+		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+		>, tonic::Status> {
+			let shared = self.challenge.clone();
+			let stream = self.upstream().subscribe_rounds(req).await?.into_inner()
+				.inspect_ok(move |event| {
+					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
+						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+						shared.try_lock().unwrap().replace(challenge);
+					}
+				});
+
+			Ok(Box::new(stream))
+		}
+
+		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			// Spending input boarded with first derivation
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
+
+			let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
+			for r in &req.vtxo_requests {
+				vtxo_requests.push(ark::SignedVtxoRequest {
+					vtxo: r.vtxo.clone().unwrap().try_into().unwrap(),
+					cosign_pubkey: Some(PublicKey::from_slice(&r.cosign_pubkey).unwrap()),
+				});
+			}
+
+			let sig = self.challenge.lock().await.as_ref().unwrap().sign_with(
+				self.vtxo.id,
+				&vtxo_requests,
+				&[],
+				keypair,
+			);
+
+			*req.input_vtxos.get_mut(0).unwrap() = protos::InputVtxo {
+				vtxo_id: self.vtxo.id.to_bytes().to_vec(),
+				ownership_proof: sig.serialize().to_vec(),
+			};
+
+			Ok(self.upstream().submit_payment(req).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy {
+		upstream: srv.get_public_rpc().await,
+		wallet: Arc::new(bark.client().await),
+		challenge: Arc::new(Mutex::new(None)),
+		vtxo: vtxo_a.clone(),
+	};
+	let proxy = ArkRpcProxyServer::start(proxy).await;
+
+	bark.set_ark_url(&proxy.address).await;
+	bark.timeout = Some(Duration::from_millis(10_000));
+
+	let err = bark.try_refresh_all().await.unwrap_err();
+	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
 }

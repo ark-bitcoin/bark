@@ -58,7 +58,7 @@ use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
-use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use server_rpc::protos;
 
@@ -607,6 +607,27 @@ impl Server {
 		Ok(())
 	}
 
+	pub async fn check_vtxos_not_exited(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+		for vtxo in vtxos {
+			// NB: we only care about the first exit tx, because next ones are descendants of it
+			let tx = vtxo.transactions().first_exit().expect("branch should have exit tx");
+			let status = self.bitcoind.tx_status(&tx.compute_txid())?;
+
+			match status {
+				TxStatus::Confirmed(_) => {
+					// TODO: should we mark vtxo as spent here?
+					return badarg!("cannot spend vtxo that is already exited: {}", vtxo.id());
+				},
+				TxStatus::Mempool => {
+					return badarg!("cannot spend vtxo that is being exited: {}", vtxo.id());
+				},
+				TxStatus::NotFound => {},
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Validate all arkoor inputs are not too deep
 	fn validate_arkoor_inputs<V: Borrow<Vtxo>>(
 		&self,
@@ -712,6 +733,8 @@ impl Server {
 			})
 			.collect::<anyhow::Result<Vec<_>>>()?;
 
+		self.check_vtxos_not_exited(&input_vtxos).await?;
+
 		self.validate_arkoor_inputs(&input_vtxos)?;
 		self.validate_board_inputs(&input_vtxos).await
 			.context("invalid board inputs")?;
@@ -737,6 +760,8 @@ impl Server {
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
 		}
+
+		self.check_vtxos_not_exited(&inputs).await?;
 
 		self.validate_arkoor_inputs(&inputs)?;
 		self.validate_board_inputs(&inputs).await.context("invalid board inputs")?;
