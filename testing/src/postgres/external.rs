@@ -1,6 +1,7 @@
 use std::env::{self, VarError};
 
 use tokio_postgres::{Client, Config, NoTls};
+use server::secret::Secret;
 
 use crate::postgres::query::drop_and_create_database;
 use crate::constants::env::TEST_POSTGRES_HOST;
@@ -41,7 +42,7 @@ impl ExternallyManagedPostgres {
 			port: self.port,
 			name: db_name.to_string(),
 			user: self.user.clone(),
-			password: self.password.clone(),
+			password: self.password.as_ref().map(|x| Secret::new(String::from(x))),
 		}
 	}
 

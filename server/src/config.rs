@@ -12,6 +12,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
 use crate::{forfeits, serde_util, sweeps};
+use crate::secret::Secret;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Bitcoind {
@@ -28,7 +29,7 @@ pub struct Bitcoind {
 	/// the password for the bitcoind RPC
 	/// It is mandatory to configure exactly one authentication method
 	/// If a [bitcoind.rpc_user] is provided [bitcoind.rpc_pass] must be provided
-	pub rpc_pass: Option<String>,
+	pub rpc_pass: Option<Secret<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -114,7 +115,7 @@ pub struct Postgres {
 	pub port: u16,
 	pub name: String,
 	pub user: Option<String>,
-	pub password: Option<String>,
+	pub password: Option<Secret<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -345,7 +346,7 @@ impl Config {
 	pub fn bitcoind_auth(&self) -> bdk_bitcoind_rpc::bitcoincore_rpc::Auth {
 		match (&self.bitcoind.rpc_user, &self.bitcoind.rpc_pass) {
 			(Some(user), Some(pass)) => bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(
-				user.into(), pass.into(),
+				user.into(), pass.leak_ref().into(),
 			),
 			(Some(_), None) => panic!("Missing configuration for bitcoind.rpc_pass."),
 			(None, Some(_)) => panic!("Missing configuration for bitcoind.rpc_user."),
@@ -378,7 +379,7 @@ mod test {
 		let bitcoind_url = String::from("http://belson.labs:13444");
 		let bitcoind_cookie = Some(PathBuf::from("/not/hot/dog/but/cookie"));
 		let bitcoind_rpc_user = Some(String::from("erlich"));
-		let bitcoind_rpc_pass = Some(String::from("belson"));
+		let bitcoind_rpc_pass = Some(Secret::new(String::from("belson")));
 
 		let mut cfg = Config::load(None).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();

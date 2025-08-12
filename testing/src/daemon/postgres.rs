@@ -9,6 +9,7 @@ use tokio::process::{Child, Command};
 use tokio_postgres::{Client, Config, NoTls};
 
 use server::config;
+use server::secret::Secret;
 
 use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
@@ -23,7 +24,7 @@ pub fn host_base_config() -> config::Postgres {
 		host: env::var("TEST_POSTGRES_HOST").unwrap_or(String::from("localhost")),
 		port: 5432,
 		user: Some("postgres".into()),
-		password: Some("postgres".into()),
+		password: Some(Secret::new("postgres".into())),
 	}
 }
 

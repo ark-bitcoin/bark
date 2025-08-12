@@ -61,7 +61,7 @@ impl Db {
 			pg_config.user(user);
 		}
 		if let Some(password) = &config.password {
-			pg_config.password(password);
+			pg_config.password(password.leak_ref());
 		}
 
 		pg_config
