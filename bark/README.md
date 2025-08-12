@@ -159,7 +159,7 @@ you can request some sats from our [faucet](https://signet.2nd.dev).
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
   let wallet = get_wallet().await;
-  let vtxo_pubkey = wallet.derive_store_next_keypair()?.public_key();
+  let address: ark::Address = wallet.new_address()?;
   Ok(())
 }
 ```
