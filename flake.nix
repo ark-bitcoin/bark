@@ -224,6 +224,8 @@
 					LIGHTNINGD_PLUGIN_DIR = (if isDarwin then "/plugins" else "${cln-plugins}");
 
 					POSTGRES_BINS = "${postgresql}/bin";
+
+					RUSTDOCS_STDLIB = "${rust}/share/doc/rust/html/std/index.html";
 				};
 			}
 		);
