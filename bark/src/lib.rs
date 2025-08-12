@@ -1806,20 +1806,19 @@ impl Wallet {
 		// ****************************************************************
 
 		debug!("Waiting for a vtxo proposal from the Ark server...");
-		let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces, connector_pubkey) = {
+		let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces) = {
 			match events.next().await.context("events stream broke")?? {
 				RoundEvent::VtxoProposal {
 					round_seq,
 					unsigned_round_tx,
 					vtxos_spec,
 					cosign_agg_nonces,
-					connector_pubkey,
 				} => {
 					if round_seq != round_state.info.round_seq {
 						warn!("Unexpected different round id");
 						return Ok(AttemptResult::WaitNewRound);
 					}
-					(vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey)
+					(vtxos_spec, unsigned_round_tx, cosign_agg_nonces)
 				},
 				RoundEvent::Start(round_info) => {
 					return Ok(AttemptResult::NewRoundStarted(round_info));
@@ -1894,14 +1893,19 @@ impl Wallet {
 		// ****************************************************************
 
 		debug!("Wait for round proposal from Ark server...");
-		let (vtxo_cosign_sigs, forfeit_nonces) = {
+		let (vtxo_cosign_sigs, forfeit_nonces, connector_pubkey) = {
 				match events.next().await.context("events stream broke")?? {
-					RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
+					RoundEvent::RoundProposal {
+						round_seq,
+						cosign_sigs,
+						forfeit_nonces,
+						connector_pubkey,
+					} => {
 						if round_seq != round_state.info.round_seq {
 							warn!("Unexpected different round id");
 							return Ok(AttemptResult::WaitNewRound);
 						}
-						(cosign_sigs, forfeit_nonces)
+						(cosign_sigs, forfeit_nonces, connector_pubkey)
 					},
 					RoundEvent::Start(e) => {
 						return Ok(AttemptResult::NewRoundStarted(e));

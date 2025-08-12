@@ -638,7 +638,6 @@ impl CollectingPayments {
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
-			connector_pubkey: connector_key.public_key(),
 		});
 
 		let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(vtxos_utxo);
@@ -843,6 +842,7 @@ impl SigningVtxoTree {
 			round_seq: self.round_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
+			connector_pubkey: self.connector_key.public_key(),
 		});
 
 		let conns_utxo = OutPoint::new(self.round_txid, ROUND_TX_CONNECTOR_VOUT);

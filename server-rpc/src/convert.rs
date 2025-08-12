@@ -167,7 +167,7 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 					})
 				},
 				ark::rounds::RoundEvent::VtxoProposal {
-					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey,
+					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces
 				} => {
 					protos::round_event::Event::VtxoProposal(protos::VtxoProposal {
 						round_seq: (*round_seq).into(),
@@ -176,10 +176,11 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 						vtxos_agg_nonces: cosign_agg_nonces.into_iter()
 							.map(|n| n.serialize().to_vec())
 							.collect(),
-						connector_pubkey: connector_pubkey.serialize().to_vec(),
 					})
 				},
-				ark::rounds::RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
+				ark::rounds::RoundEvent::RoundProposal {
+					round_seq, cosign_sigs, forfeit_nonces, connector_pubkey,
+				} => {
 					protos::round_event::Event::RoundProposal(protos::RoundProposal {
 						round_seq: (*round_seq).into(),
 						vtxo_cosign_signatures: cosign_sigs.into_iter()
@@ -192,6 +193,7 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 									.collect(),
 							}
 						}).collect(),
+						connector_pubkey: connector_pubkey.serialize().to_vec(),
 					})
 				},
 				ark::rounds::RoundEvent::Finished { round_seq, signed_round_tx } => {
@@ -236,8 +238,6 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					cosign_agg_nonces: m.vtxos_agg_nonces.into_iter().map(|n| {
 						musig::AggregatedNonce::from_bytes(&n)
 					}).collect::<Result<_, _>>()?,
-					connector_pubkey: PublicKey::from_slice(&m.connector_pubkey)
-						.map_err(|_| "invalid connector pubkey")?,
 				}
 			},
 			protos::round_event::Event::RoundProposal(m) => {
@@ -255,6 +255,8 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 						}).collect::<Result<_, _>>()?;
 						Ok((vtxo_id, nonces))
 					}).collect::<Result<_, ConvertError>>()?,
+					connector_pubkey: PublicKey::from_slice(&m.connector_pubkey)
+						.map_err(|_| "invalid connector pubkey")?,
 				}
 			},
 			protos::round_event::Event::Finished(m) => {

@@ -229,12 +229,12 @@ pub enum RoundEvent {
 		unsigned_round_tx: Transaction,
 		vtxos_spec: VtxoTreeSpec,
 		cosign_agg_nonces: Vec<musig::AggregatedNonce>,
-		connector_pubkey: PublicKey,
 	},
 	RoundProposal {
 		round_seq: RoundSeq,
 		cosign_sigs: Vec<schnorr::Signature>,
 		forfeit_nonces: HashMap<VtxoId, Vec<musig::PublicNonce>>,
+		connector_pubkey: PublicKey,
 	},
 	Finished {
 		round_seq: RoundSeq,
@@ -259,16 +259,16 @@ impl fmt::Display for RoundEvent {
 					.field("challenge", &challenge.inner().as_hex())
 					.finish()
 			},
-			Self::VtxoProposal { round_seq, unsigned_round_tx, connector_pubkey, .. } => {
+			Self::VtxoProposal { round_seq, unsigned_round_tx, .. } => {
 				f.debug_struct("VtxoProposal")
 					.field("round_seq", round_seq)
 					.field("unsigned_round_txid", &unsigned_round_tx.compute_txid())
-					.field("connector_pubkey", connector_pubkey)
 					.finish()
 			},
-			Self::RoundProposal { round_seq, .. } => {
+			Self::RoundProposal { round_seq, connector_pubkey, .. } => {
 				f.debug_struct("RoundProposal")
 					.field("round_seq", round_seq)
+					.field("connector_pubkey", &connector_pubkey)
 					.finish()
 			},
 			Self::Finished { round_seq, signed_round_tx } => {
