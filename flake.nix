@@ -51,12 +51,12 @@
 
 				hal = pkgs.rustPlatform.buildRustPackage rec {
 					pname = "hal";
-					version = "0.9.5";
+					version = "0.10.0";
 					src = pkgs.fetchCrate {
 						inherit pname version;
-						sha256 = "sha256-rwVny9i0vFycoeAesy2iP7sA16fECLu1UPbqrOJa1is=";
+						sha256 = "sha256-oRmSDQJJu8v7OzsOrFYTyBJcR7wPJtS6hxkta1qEVl0=";
 					};
-					cargoHash = "sha256-dATviea1btnIVYKKgU1fMtZxKJitp/wXAuoIsxCSgf4=";
+					cargoHash = "sha256-/YCOI+BxscMAu9RgAt1QnivAnPSydkljgR2zWV84tQE=";
 				};
 
 				esploraElectrs = pkgs.rustPlatform.buildRustPackage rec {
