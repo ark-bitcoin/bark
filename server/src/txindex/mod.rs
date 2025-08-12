@@ -147,23 +147,6 @@ impl std::hash::Hash for IndexedTx {
 	}
 }
 
-pub trait TxOrTxid {
-	fn txid(&self) -> Txid;
-}
-
-impl TxOrTxid for Txid {
-	fn txid(&self) -> Txid { *self }
-}
-impl TxOrTxid for Tx {
-	fn txid(&self) -> Txid { self.txid }
-}
-impl TxOrTxid for Transaction {
-	fn txid(&self) -> Txid { self.compute_txid() }
-}
-impl<'a, T: TxOrTxid> TxOrTxid for &'a T {
-	fn txid(&self) -> Txid { (*self).txid() }
-}
-
 /// The handle to the transaction index.
 #[derive(Clone, Debug)]
 struct TxIndexData {

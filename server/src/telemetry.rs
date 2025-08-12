@@ -5,7 +5,7 @@ use bitcoin::Amount;
 use bitcoin_ext::BlockHeight;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 use opentelemetry::{Key, Value};
-use opentelemetry::{global, propagation::Extractor, KeyValue};
+use opentelemetry::{global, KeyValue};
 use opentelemetry::trace::{Span, TracerProvider};
 use opentelemetry_otlp::{Compression, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
@@ -502,23 +502,3 @@ pub trait SpanExt: Span {
 	}
 }
 impl<T: Span> SpanExt for T {}
-
-pub struct MetadataMap<'a>(pub &'a tonic::metadata::MetadataMap);
-
-impl<'a> Extractor for MetadataMap<'a> {
-	/// Get a value for a key from the MetadataMap.  If the value can't be converted to &str, returns None
-	fn get(&self, key: &str) -> Option<&str> {
-		self.0.get(key).and_then(|metadata| metadata.to_str().ok())
-	}
-
-	/// Collect all the keys from the MetadataMap.
-	fn keys(&self) -> Vec<&str> {
-		self.0
-			.keys()
-			.map(|key| match key {
-				tonic::metadata::KeyRef::Ascii(v) => v.as_str(),
-				tonic::metadata::KeyRef::Binary(v) => v.as_str(),
-			})
-			.collect::<Vec<_>>()
-	}
-}
