@@ -20,6 +20,8 @@ use ark::musig::secpm::ffi::MUSIG_SECNONCE_SIZE;
 use ark::rounds::RoundId;
 use ark::tree::signed::SignedVtxoTreeSpec;
 
+use crate::secret::Secret;
+
 use super::ClnNodeId;
 
 #[derive(Debug, Clone)]
@@ -62,7 +64,7 @@ pub struct ForfeitState {
 	pub user_part_sigs: Vec<PartialSignature>,
 	#[serde(with = "serde::pub_nonces")]
 	pub pub_nonces: Vec<PublicNonce>,
-	pub sec_nonces: Vec<DangerousSecretNonce>,
+	pub sec_nonces: Vec<Secret<DangerousSecretNonce>>,
 }
 
 #[derive(Debug)]
@@ -500,7 +502,7 @@ mod test {
 			user_nonces: vec![pubn, pubn],
 			user_part_sigs: vec![part, part],
 			pub_nonces: vec![pubn, pubn],
-			sec_nonces: vec![DangerousSecretNonce::new(secn)],
+			sec_nonces: vec![Secret::new(DangerousSecretNonce::new(secn))],
 		};
 		let encoded = rmp_serde::to_vec_named(&ffs).unwrap();
 		let decoded = rmp_serde::from_slice(&encoded[..]).unwrap();

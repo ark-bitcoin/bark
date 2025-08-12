@@ -62,7 +62,11 @@ fn finalize_forfeit_tx(
 			&ff.user_nonces.get(conn_idx).expect("user nonce index"),
 			&ff.pub_nonces.get(conn_idx).expect("pub nonce index"),
 		]);
-		let sec_nonce = ff.sec_nonces.get(conn_idx).expect("sec nonce index").to_sec_nonce();
+		let sec_nonce = ff.sec_nonces
+			.get(conn_idx)
+			.expect("sec nonce index")
+			.leak_ref()
+			.to_sec_nonce();
 		let (part, sig) = musig::partial_sign(
 			[vtxo.user_pubkey(), vtxo.server_pubkey()],
 			agg_nonce,

@@ -39,6 +39,7 @@ use crate::{database, Server, SECP};
 use crate::database::model::{ForfeitState, DangerousSecretNonce, LightningHtlcSubscriptionStatus};
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
+use crate::secret::Secret;
 use crate::telemetry::{self, SpanExt, ATTRIBUTE_ROUND_ID};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
@@ -1037,7 +1038,7 @@ impl SigningForfeits {
 				user_nonces, user_part_sigs,
 				pub_nonces: self.forfeit_pub_nonces.remove(id).expect("missing vtxo"),
 				sec_nonces: sec_nonces.remove(id).expect("missing vtxo").into_iter()
-					.map(DangerousSecretNonce::new)
+					.map(|x| Secret::new(DangerousSecretNonce::new(x)))
 					.collect(),
 			};
 			(*id, forfeit_state)
