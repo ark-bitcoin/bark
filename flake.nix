@@ -17,7 +17,7 @@
 	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, rust-overlay }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
-				rustVersion = "1.82.0";
+				rustVersion = "1.88.0";
 				bitcoinVersion = "29.0";
 				lightningVersion = "25.02.2";
 				postgresVersion = "16.9";
@@ -189,7 +189,7 @@
 						pkgs.llvmPackages_16.bintools
 						pkgs.llvmPackages_16.llvm
 						pkgs.rustPlatform.bindgenHook
-						rust
+						rust # includes cargo & rust-analyzer
 						pkgs.pkg-config
 						pkgs.protobuf
 						pkgs.sqlite
