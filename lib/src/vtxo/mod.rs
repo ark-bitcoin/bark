@@ -1318,7 +1318,7 @@ pub mod test {
 			}],
 			output: vec![TxOut {
 				value: Amount::from_sat(45_000),
-				script_pubkey: spec.round_tx_script_pubkey(),
+				script_pubkey: spec.funding_tx_script_pubkey(),
 			}],
 		};
 		println!("round tx: {}", serialize_hex(&round_tx));
@@ -1362,7 +1362,7 @@ pub mod test {
 		let server_cosign_sigs = tree.cosign_tree(
 			&cosign_agg_nonces, &server_cosign_key, server_cosign_sec_nonces,
 		);
-		let cosign_sigs = tree.combine_partial_signatures(&cosign_agg_nonces, &part_sigs, server_cosign_sigs).unwrap();
+		let cosign_sigs = tree.combine_partial_signatures(&cosign_agg_nonces, &part_sigs, &server_cosign_sigs).unwrap();
 		tree.verify_cosign_sigs(&cosign_sigs).unwrap();
 		let signed = tree.into_signed_tree(cosign_sigs).into_cached_tree();
 		// we don't need forfeits

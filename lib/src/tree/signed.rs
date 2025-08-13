@@ -86,28 +86,35 @@ impl VtxoTreeSpec {
 		self.vtxos.iter().map(|d| d.vtxo.amount).sum::<Amount>()
 	}
 
+	/// Calculate the cosign taproot at a given node.
 	pub fn cosign_taproot(&self, agg_pk: XOnlyPublicKey) -> taproot::TaprootSpendInfo {
 		cosign_taproot(agg_pk, self.server_pubkey, self.expiry_height)
 	}
 
-	/// The cosign pubkey used on the vtxo output of the round tx.
-	pub fn round_tx_cosign_pubkey(&self) -> XOnlyPublicKey {
+	/// The cosign pubkey used on the vtxo output of the tx funding the tree
+	///
+	/// In Ark rounds this will be the round tx scriptPubkey.
+	pub fn funding_tx_cosign_pubkey(&self) -> XOnlyPublicKey {
 		let keys = self.vtxos.iter()
 			.map(|v| v.cosign_pubkey)
 			.chain(Some(self.server_cosign_pk));
 		musig::combine_keys(keys)
 	}
 
-	/// The scriptPubkey used on the vtxo output of the round tx.
-	pub fn round_tx_script_pubkey(&self) -> ScriptBuf {
-		let agg_pk = self.round_tx_cosign_pubkey();
+	/// The scriptPubkey used on the vtxo output of the tx funding the tree
+	///
+	/// In Ark rounds this will be the round tx scriptPubkey.
+	pub fn funding_tx_script_pubkey(&self) -> ScriptBuf {
+		let agg_pk = self.funding_tx_cosign_pubkey();
 		self.cosign_taproot(agg_pk).script_pubkey()
 	}
 
-	/// The vtxo output of the round tx.
-	pub fn round_tx_txout(&self) -> TxOut {
+	/// The output of the tx funding the tree
+	///
+	/// In Ark rounds this will be the round tx scriptPubkey.
+	pub fn funding_tx_txout(&self) -> TxOut {
 		TxOut {
-			script_pubkey: self.round_tx_script_pubkey(),
+			script_pubkey: self.funding_tx_script_pubkey(),
 			value: self.total_required_value(),
 		}
 	}
@@ -263,7 +270,7 @@ impl UnsignedVtxoTree {
 		let cosign_agg_pks = spec.cosign_agg_pks().collect::<Vec<_>>();
 		let txs = spec.unsigned_transactions(utxo);
 
-		let root_txout = spec.round_tx_txout();
+		let root_txout = spec.funding_tx_txout();
 		let sighashes = tree.iter().map(|node| {
 			let prev = if let Some((parent, sibling_idx)) = tree.parent_idx_of_with_sibling_idx(node.idx()) {
 				assert!(!node.is_root());
@@ -491,7 +498,7 @@ impl UnsignedVtxoTree {
 		&self,
 		cosign_agg_nonces: &[AggregatedNonce],
 		leaf_part_sigs: &HashMap<PublicKey, Vec<PartialSignature>>,
-		server_sigs: Vec<PartialSignature>,
+		server_sigs: &[PartialSignature],
 	) -> Result<Vec<schnorr::Signature>, CosignSignatureError> {
 		// to ease implementation, we're reconstructing the part sigs map with dequeues
 		let mut leaf_part_sigs = leaf_part_sigs.iter()

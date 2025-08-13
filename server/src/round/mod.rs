@@ -615,7 +615,7 @@ impl CollectingPayments {
 			b.current_height(tip);
 			b.unspendable(unspendable);
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
-			b.add_recipient(vtxos_spec.round_tx_script_pubkey(), vtxos_spec.total_required_value());
+			b.add_recipient(vtxos_spec.funding_tx_script_pubkey(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
 			for offb in &self.all_offboards {
 				b.add_recipient(offb.script_pubkey.clone(), offb.amount);
@@ -816,7 +816,7 @@ impl SigningVtxoTree {
 		let cosign_sigs = self.unsigned_vtxo_tree.combine_partial_signatures(
 			&self.cosign_agg_nonces,
 			&self.cosign_part_sigs,
-			srv_cosign_sigs,
+			&srv_cosign_sigs,
 		).expect("failed to combine partial vtxo cosign signatures: should have checked partials");
 		debug_assert_eq!(self.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
