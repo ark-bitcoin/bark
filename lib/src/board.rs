@@ -57,7 +57,7 @@ pub mod state {
 		impl Sealed for super::Preparing {}
 		impl Sealed for super::CanGenerateNonces {}
 		impl Sealed for super::ServerCanCosign {}
-		impl Sealed for super::CanBuild {}
+		impl Sealed for super::CanFinish {}
 	}
 
 	/// A marker trait used as a generic for [super::BoardBuilder].
@@ -77,15 +77,15 @@ pub mod state {
 	impl BuilderState for ServerCanCosign {}
 
 	/// The user is ready to build the VTXO as soon as it has
-	/// a cosign response from the user.
-	pub struct CanBuild;
-	impl BuilderState for CanBuild {}
+	/// a cosign response from the server.
+	pub struct CanFinish;
+	impl BuilderState for CanFinish {}
 
 	/// Trait to capture all states that have sufficient information
 	/// for either party to create signatures.
 	pub trait CanSign: BuilderState {}
 	impl CanSign for ServerCanCosign {}
-	impl CanSign for CanBuild {}
+	impl CanSign for CanFinish {}
 }
 
 /// A request for the server to cosign an board vtxo.
@@ -161,7 +161,7 @@ impl BoardBuilder<state::Preparing> {
 
 impl BoardBuilder<state::CanGenerateNonces> {
 	/// Generate user nonces.
-	pub fn generate_user_nonces(self) -> BoardBuilder<state::CanBuild> {
+	pub fn generate_user_nonces(self) -> BoardBuilder<state::CanFinish> {
 		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
 		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
@@ -270,7 +270,7 @@ impl BoardBuilder<state::ServerCanCosign> {
 	}
 }
 
-impl BoardBuilder<state::CanBuild> {
+impl BoardBuilder<state::CanFinish> {
 	/// Validate the server's partial signature.
 	pub fn verify_cosign_response(&self, server_cosign: &BoardCosignResponse) -> bool {
 		let (sighash, taproot, _txid) = self.exit_tx_sighash_data();
