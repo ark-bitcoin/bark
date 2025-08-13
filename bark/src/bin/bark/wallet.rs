@@ -89,7 +89,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	}
 
 	// Everything that errors after this will wipe the datadir again.
-	if let Err(e) = try_create_wallet(&datadir, net, config, opts.mnemonic).await {
+	if let Err(e) = try_create_wallet(&datadir, net, config, opts.mnemonic, opts.force).await {
 		// Remove the datadir if it exists
 		if datadir.exists() {
 			if let Err(e) = fs::remove_dir_all(datadir).await {
@@ -108,6 +108,7 @@ async fn try_create_wallet(
 	net: Network,
 	config: Config,
 	mnemonic: Option<bip39::Mnemonic>,
+	force: bool,
 ) -> anyhow::Result<()> {
 	info!("Creating new bark Wallet at {}", datadir.display());
 
@@ -123,7 +124,7 @@ async fn try_create_wallet(
 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
 
 	let mut onchain = OnchainWallet::load_or_create(net, seed, db.clone())?;
-	let wallet = BarkWallet::create_with_onchain(&mnemonic, net, config, db, &onchain).await.context("error creating wallet")?;
+	let wallet = BarkWallet::create_with_onchain(&mnemonic, net, config, db, &onchain, force).await.context("error creating wallet")?;
 
 	onchain.full_scan(&wallet.chain).await?;
 	Ok(())

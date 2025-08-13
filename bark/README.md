@@ -93,6 +93,7 @@ async fn main() {
     network,
     config,
     db,
+    false
   ).await.unwrap();
 }
 ```

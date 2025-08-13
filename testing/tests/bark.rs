@@ -84,8 +84,23 @@ async fn bark_create_is_atomic() {
 	// We stop the server
 	// This ensures that clients cannot be created
 	srv.stop().await.unwrap();
-	let _ = ctx.try_new_bark("bark_fails", &srv).await.expect_err("Cannot create bark if server is not available");
+	let err = ctx.try_new_bark("bark_fails", &srv).await.unwrap_err();
+	assert!(err.full_msg().contains("Not connected to a server. If you are sure use the --force flag."));
 	assert!(!std::path::Path::is_dir(ctx.datadir.join("bark_fails").as_path()));
+}
+
+#[tokio::test]
+async fn bark_create_force_flag() {
+	let ctx = TestContext::new("bark/bark_create_force_flag").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	// Stop the server to simulate unavailability
+	srv.stop().await.unwrap();
+
+	// Attempt to create with force_create should succeed
+	let args = &["--force"];
+	let _ = ctx.try_new_bark_with_create_args("bark_succeeds_with_force", &srv, None, args).await.unwrap();
+	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_succeeds_with_force").as_path()));
 }
 
 #[tokio::test]
