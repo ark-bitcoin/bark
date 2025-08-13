@@ -26,6 +26,8 @@ use server_log::{
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
+
+use server::secret::Secret;
 use server_rpc::protos;
 use bark_json::exit::ExitState;
 
@@ -73,7 +75,7 @@ async fn bitcoind_auth_connection() {
 		cfg.bitcoind.url = "".into(); //t set later by test framework
 		cfg.bitcoind.cookie = None;
 		cfg.bitcoind.rpc_user = Some(BITCOINRPC_TEST_USER.to_string());
-		cfg.bitcoind.rpc_pass = Some(BITCOINRPC_TEST_PASSWORD.to_string());
+		cfg.bitcoind.rpc_pass = Some(Secret::new(BITCOINRPC_TEST_PASSWORD.to_string()));
 	}).await;
 	ctx.fund_captaind(&srv, sat(1_000_000)).await;
 
