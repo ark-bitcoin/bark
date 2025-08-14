@@ -12,7 +12,7 @@ use bitcoin::{bip32, Network, Address, FeeRate, Amount};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::WalletExt;
-use bitcoin_ext::rpc::BitcoinRpcExt;
+use bitcoin_ext::rpc::bitcoin_core::BitcoinRpcExt;
 use log::{error, trace};
 
 use crate::{database, telemetry};

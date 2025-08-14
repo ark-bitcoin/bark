@@ -15,7 +15,7 @@ use ark::connectors::{ConnectorChain, ConnectorIter};
 use ark::rounds::RoundId;
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::cpfp::MakeCpfpFees;
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoin_ext::rpc::bitcoin_core::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{KeypairExt, TransactionExt};
 use server_rpc as rpc;
 

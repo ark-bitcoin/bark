@@ -24,7 +24,7 @@ ark-lib = { path = "../lib" }
 bark-cln-rpc = { path = "../cln-rpc" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }
-bark-bitcoin-ext = { path = "../bitcoin-ext" }
+bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false, features = ["bdk", "core_rpc" ] }
 
 # EXPORTED
 bitcoin.workspace = true

@@ -17,8 +17,9 @@ use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt};
-use bitcoin_ext::bdk::EsploraClientExt;
-pub(crate) use bitcoin_ext::rpc::{BitcoinRpcExt, TxStatus};
+pub(crate) use bitcoin_ext::rpc::TxStatus;
+pub(crate) use bitcoin_ext::rpc::bitcoin_core::BitcoinRpcExt;
+pub(crate) use bitcoin_ext::rpc::esplora::EsploraClientExt;
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;

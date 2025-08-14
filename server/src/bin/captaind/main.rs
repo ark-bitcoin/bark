@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use bitcoin::{bip32, Address};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoin_ext::rpc::bitcoin_core::{BitcoinRpcClient, BitcoinRpcExt};
 use clap::Parser;
 use log::{error, info};
 use tonic::transport::Uri;

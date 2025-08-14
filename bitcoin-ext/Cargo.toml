@@ -7,9 +7,11 @@ edition = "2021"
 name = "bitcoin_ext"
 
 [features]
-default = [ "rpc", "bdk" ]
-rpc = [ "bdk_bitcoind_rpc" ]
-bdk = [ "bdk_wallet", "bdk_esplora", "reqwest", "async-trait", "log" ]
+default = ["bdk", "rpc", "core_rpc", "esplora_rpc"]
+bdk = ["bdk_wallet", "log"]
+rpc = []
+core_rpc = ["rpc", "bdk_bitcoind_rpc"]
+esplora_rpc = ["rpc", "bdk_esplora", "async-trait", "reqwest"]
 
 [dependencies]
 # EXPORTED
@@ -24,9 +26,9 @@ log = { workspace = true, optional = true }
 
 # rpc
 bdk_bitcoind_rpc = { version = "0.21.0", optional = true }
-
-# bdk
-bdk_wallet = { version = "2.1.0", optional = true }
 bdk_esplora = { version = "0.22.1", features = [ "std", "async-https-rustls", "tokio" ], default-features = false, optional = true }
 reqwest = { version = "0.12.18", features = [ "rustls-tls" ], default-features = false, optional = true }
 async-trait = { version = "0.1.88", optional = true }
+
+# bdk
+bdk_wallet = { version = "2.1.0", optional = true }
