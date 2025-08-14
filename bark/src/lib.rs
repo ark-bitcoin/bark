@@ -47,9 +47,10 @@ use log::{trace, debug, info, warn, error};
 use futures::StreamExt;
 use tokio_stream::Stream;
 
-use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::address::VtxoDelivery;
 use ark::arkoor::ArkoorPackageBuilder;
+use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::connectors::ConnectorChain;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage};
 use ark::musig::{self, PublicNonce, SecretNonce};
@@ -249,11 +250,11 @@ impl Wallet {
 		let network = self.properties()?.network;
 		let pubkey = self.derive_store_next_keypair()?.0.public_key();
 
-		if network == bitcoin::Network::Bitcoin {
-			Ok(ark::Address::new(ark.info.server_pubkey, pubkey))
-		} else {
-			Ok(ark::Address::new_testnet(ark.info.server_pubkey, pubkey))
-		}
+		Ok(ark::Address::builder()
+			.testnet(network != bitcoin::Network::Bitcoin)
+			.server_pubkey(ark.info.server_pubkey)
+			.pubkey_policy(pubkey)
+			.into_address().unwrap())
 	}
 
 	/// Peak for Ark address at the given key index.
@@ -262,11 +263,11 @@ impl Wallet {
 		let network = self.properties()?.network;
 		let pubkey = self.peak_keypair(index)?.public_key();
 
-		if network == bitcoin::Network::Bitcoin {
-			Ok(ark::Address::new(ark.info.server_pubkey, pubkey))
-		} else {
-			Ok(ark::Address::new_testnet(ark.info.server_pubkey, pubkey))
-		}
+		Ok(ark::Address::builder()
+			.testnet(network != bitcoin::Network::Bitcoin)
+			.server_pubkey(ark.info.server_pubkey)
+			.pubkey_policy(pubkey)
+			.into_address().unwrap())
 	}
 
 	/// Generate a new Ark address and the index of the key used to create it
@@ -1048,7 +1049,7 @@ impl Wallet {
 	/// optional change output.
 	async fn create_arkoor_vtxos(
 		&mut self,
-		destination: PublicKey,
+		destination_policy: VtxoPolicy,
 		amount: Amount,
 	) -> anyhow::Result<ArkoorCreateResult> {
 		let mut srv = self.require_server()?;
@@ -1056,7 +1057,7 @@ impl Wallet {
 
 		let req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: destination }),
+			policy: destination_policy,
 		};
 
 		let inputs = self.select_vtxos_to_cover(
@@ -1102,6 +1103,42 @@ impl Wallet {
 		})
 	}
 
+	/// Validate if we can send arkoor payments to the given address
+	pub fn validate_arkoor_address(&self, address: &ark::Address) -> anyhow::Result<()> {
+		let asp = self.require_server()?;
+
+		if !address.ark_id().is_for_server(asp.info.server_pubkey) {
+			bail!("Ark address is for different server");
+		}
+
+		// Not all policies are supported for sending arkoor
+		match address.policy().policy_type() {
+			VtxoPolicyType::Pubkey => {},
+			VtxoPolicyType::ServerHtlcRecv | VtxoPolicyType::ServerHtlcSend => {
+				bail!("VTXO policy in address cannot be used for arkoor payment: {}",
+					address.policy().policy_type(),
+				);
+			}
+		}
+
+		if address.delivery().is_empty() {
+			bail!("No VTXO delivery mechanism provided in address");
+		}
+		// We first see if we know any of the deliveries, if not, we will log
+		// the unknown onces.
+		// We do this in two parts because we shouldn't log unknown ones if there is one known.
+		if !address.delivery().iter().any(|d| !d.is_unknown()) {
+			for d in address.delivery() {
+				if let VtxoDelivery::Unknown { delivery_type, data } = d {
+					info!("Unknown delivery in address: type={:#x}, data={}",
+						delivery_type, data.as_hex(),
+					);
+				}
+			}
+		}
+
+		Ok(())
+	}
 
 	pub async fn send_arkoor_payment(
 		&mut self,
@@ -1110,19 +1147,17 @@ impl Wallet {
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let mut srv = self.require_server()?;
 
-		if !destination.ark_id().is_for_server(srv.info.server_pubkey) {
-			bail!("Ark address is for different server");
-		}
+		self.validate_arkoor_address(&destination).context("cannot send to address")?;
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let arkoor = self.create_arkoor_vtxos(destination.user_pubkey(), amount).await?;
+		let arkoor = self.create_arkoor_vtxos(destination.policy().clone(), amount).await?;
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-				pubkey: destination.user_pubkey().serialize().to_vec(),
+				pubkey: destination.policy().user_pubkey().serialize().to_vec(),
 				vtxo: v.serialize().to_vec(),
 			}).collect(),
 		};

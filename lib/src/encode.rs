@@ -101,20 +101,55 @@ pub trait ProtocolEncoding: Sized {
 
 /// Utility trait to write some primitive values into our encoding format.
 pub trait WriteExt: io::Write {
+	/// Write an 8-bit unsigned integer in little-endian.
 	fn emit_u8(&mut self, v: u8) -> Result<(), io::Error> {
 		self.write_all(&v.to_le_bytes())
 	}
+
+	/// Write a 16-bit unsigned integer in little-endian.
 	fn emit_u16(&mut self, v: u16) -> Result<(), io::Error> {
 		self.write_all(&v.to_le_bytes())
 	}
+
+	/// Write a 32-bit unsigned integer in little-endian.
 	fn emit_u32(&mut self, v: u32) -> Result<(), io::Error> {
 		self.write_all(&v.to_le_bytes())
 	}
+
+	/// Write a 64-bit unsigned integer in little-endian.
 	fn emit_u64(&mut self, v: u64) -> Result<(), io::Error> {
 		self.write_all(&v.to_le_bytes())
 	}
+
+	/// Write the entire slice to the writer.
 	fn emit_slice(&mut self, slice: &[u8]) -> Result<(), io::Error> {
 		self.write_all(slice)
+	}
+
+	/// Write a value in compact size aka "VarInt" encoding.
+	fn emit_compact_size(&mut self, value: impl Into<u64>) -> Result<usize, io::Error> {
+		let value = value.into();
+		match value {
+			0..=0xFC => {
+				self.emit_u8(value as u8)?;
+				Ok(1)
+			},
+			0xFD..=0xFFFF => {
+				self.emit_u8(0xFD)?;
+				self.emit_u16(value as u16)?;
+				Ok(3)
+			},
+			0x10000..=0xFFFFFFFF => {
+				self.emit_u8(0xFE)?;
+				self.emit_u32(value as u32)?;
+				Ok(5)
+			},
+			_ => {
+				self.emit_u8(0xFF)?;
+				self.emit_u64(value)?;
+				Ok(9)
+			},
+		}
 	}
 }
 
@@ -122,28 +157,68 @@ impl<W: io::Write + ?Sized> WriteExt for W {}
 
 /// Utility trait to read some primitive values into our encoding format.
 pub trait ReadExt: io::Read {
+	/// Read an 8-bit unsigned integer in little-endian.
 	fn read_u8(&mut self) -> Result<u8, io::Error> {
 		let mut buf = [0; 1];
 		self.read_exact(&mut buf[..])?;
 		Ok(u8::from_le_bytes(buf))
 	}
+
+	/// Read a 16-bit unsigned integer in little-endian.
 	fn read_u16(&mut self) -> Result<u16, io::Error> {
 		let mut buf = [0; 2];
 		self.read_exact(&mut buf[..])?;
 		Ok(u16::from_le_bytes(buf))
 	}
+
+	/// Read a 32-bit unsigned integer in little-endian.
 	fn read_u32(&mut self) -> Result<u32, io::Error> {
 		let mut buf = [0; 4];
 		self.read_exact(&mut buf[..])?;
 		Ok(u32::from_le_bytes(buf))
 	}
+
+	/// Read a 64-bit unsigned integer in little-endian.
 	fn read_u64(&mut self) -> Result<u64, io::Error> {
 		let mut buf = [0; 8];
 		self.read_exact(&mut buf[..])?;
 		Ok(u64::from_le_bytes(buf))
 	}
+
+	/// Read from the writer to fill the entire slice.
 	fn read_slice(&mut self, slice: &mut [u8]) -> Result<(), io::Error> {
 		self.read_exact(slice)
+	}
+
+	/// Read a value in compact size aka "VarInt" encoding.
+	fn read_compact_size(&mut self) -> Result<u64, io::Error> {
+		match self.read_u8()? {
+			0xFF => {
+				let x = self.read_u64()?;
+				if x < 0x1_0000_0000 { // I.e., would have fit in a `u32`.
+					Err(io::Error::new(io::ErrorKind::InvalidData, "non-minimal varint"))
+				} else {
+					Ok(x)
+				}
+			},
+			0xFE => {
+				let x = self.read_u32()?;
+				if x < 0x1_0000 { // I.e., would have fit in a `u16`.
+					Err(io::Error::new(io::ErrorKind::InvalidData, "non-minimal varint"))
+				} else {
+					Ok(x as u64)
+				}
+			},
+			0xFD => {
+				let x = self.read_u16()?;
+				if x < 0xFD { // Could have been encoded as a `u8`.
+					Err(io::Error::new(io::ErrorKind::InvalidData, "non-minimal varint"))
+				} else {
+					Ok(x as u64)
+				}
+			},
+			n => Ok(n as u64),
+		}
 	}
 }
 
@@ -152,7 +227,7 @@ impl<R: io::Read + ?Sized> ReadExt for R {}
 
 impl ProtocolEncoding for PublicKey {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
-	    w.emit_slice(&self.serialize())
+		w.emit_slice(&self.serialize())
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
@@ -166,7 +241,7 @@ impl ProtocolEncoding for PublicKey {
 
 impl ProtocolEncoding for schnorr::Signature {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
-	    w.emit_slice(&self.serialize())
+		w.emit_slice(&self.serialize())
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
@@ -202,7 +277,7 @@ impl ProtocolEncoding for Option<schnorr::Signature> {
 
 impl ProtocolEncoding for sha256::Hash {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
-	    w.emit_slice(&self[..])
+		w.emit_slice(&self[..])
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
