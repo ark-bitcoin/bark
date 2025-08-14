@@ -764,6 +764,354 @@ impl CachedSignedVtxoTree {
 	}
 }
 
+pub mod builder {
+	//! This module allows a single party to construct his own signed
+	//! VTXO tree, to then request signatures from the server.
+	//!
+	//! This is not used for rounds, where the tree is created with
+	//! many users at once.
+
+	use std::collections::HashMap;
+	use std::marker::PhantomData;
+
+	use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut};
+	use bitcoin::hashes::Hash;
+	use bitcoin::secp256k1::{Keypair, PublicKey};
+	use bitcoin_ext::BlockHeight;
+
+	use crate::{musig, SignedVtxoRequest, VtxoRequest};
+	use crate::error::IncorrectSigningKeyError;
+
+	use super::{CosignSignatureError, SignedVtxoTreeSpec, UnsignedVtxoTree, VtxoTreeSpec};
+
+	pub mod state {
+		mod sealed {
+			/// Just a trait to seal the BuilderState trait
+			pub trait Sealed {}
+			impl Sealed for super::Preparing {}
+			impl Sealed for super::CanGenerateNonces {}
+			impl Sealed for super::ServerCanCosign {}
+			impl Sealed for super::CanFinish {}
+		}
+
+		/// A marker trait used as a generic for [super::SignedTreeBuilder]
+		pub trait BuilderState: sealed::Sealed {}
+
+		/// The user is preparing the funding tx
+		pub struct Preparing;
+		impl BuilderState for Preparing {}
+
+		/// The UTXO that will be used to fund the tree is known, so the
+		/// user's signing nonces can be generated
+		pub struct CanGenerateNonces;
+		impl BuilderState for CanGenerateNonces {}
+
+		/// All the information for the server to cosign the tree is known
+		pub struct ServerCanCosign;
+		impl BuilderState for ServerCanCosign {}
+
+		/// The user is ready to build the tree as soon as it has
+		/// a cosign response from the server
+		pub struct CanFinish;
+		impl BuilderState for CanFinish {}
+
+		/// Trait to capture all states that have sufficient information
+		/// for either party to create signatures
+		pub trait CanSign: BuilderState {}
+		impl CanSign for ServerCanCosign {}
+		impl CanSign for CanFinish {}
+	}
+
+	/// Just an enum to hold either a tree spec or an unsigned tree
+	enum BuilderTree {
+		Spec(VtxoTreeSpec),
+		Unsigned(UnsignedVtxoTree),
+	}
+
+	impl BuilderTree {
+		fn unsigned_tree(&self) -> Option<&UnsignedVtxoTree> {
+			match self {
+				BuilderTree::Spec(_) => None,
+				BuilderTree::Unsigned(ref t) => Some(t),
+			}
+		}
+		fn into_unsigned_tree(self) -> Option<UnsignedVtxoTree> {
+			match self {
+				BuilderTree::Spec(_) => None,
+				BuilderTree::Unsigned(t) => Some(t),
+			}
+		}
+	}
+
+	/// A builder for a single party to construct a VTXO tree
+	///
+	/// For more information, see the module documentation.
+	pub struct SignedTreeBuilder<S: state::BuilderState> {
+		pub expiry_height: BlockHeight,
+		pub server_pubkey: PublicKey,
+		pub exit_delta: u16,
+		/// The cosign pubkey used to cosign all nodes in the tree
+		pub cosign_pubkey: PublicKey,
+
+		tree: BuilderTree,
+
+		/// users public nonces, leaves to the root
+		user_pub_nonces: Vec<musig::PublicNonce>,
+		/// users secret nonces, leaves to the root
+		/// this field is empty on the server side
+		user_sec_nonces: Option<Vec<musig::SecretNonce>>,
+		_state: PhantomData<S>,
+	}
+
+	impl<T: state::BuilderState> SignedTreeBuilder<T> {
+		fn tree_spec(&self) -> &VtxoTreeSpec {
+			match self.tree {
+				BuilderTree::Spec(ref s) => s,
+				BuilderTree::Unsigned(ref t) => &t.spec,
+			}
+		}
+
+		/// The total value required for the tree to be funded
+		pub fn total_required_value(&self) -> Amount {
+			self.tree_spec().total_required_value()
+		}
+
+		/// The scriptPubkey to send the board funds to
+		pub fn funding_script_pubkey(&self) -> ScriptBuf {
+			self.tree_spec().funding_tx_script_pubkey()
+		}
+
+		/// The TxOut to create in the funding tx
+		pub fn funding_txout(&self) -> TxOut {
+			let spec = self.tree_spec();
+			TxOut {
+				value: spec.total_required_value(),
+				script_pubkey: spec.funding_tx_script_pubkey(),
+			}
+		}
+	}
+
+	impl<T: state::CanSign> SignedTreeBuilder<T> {
+		/// Get the user's public nonces
+		pub fn user_pub_nonces(&self) -> &[musig::PublicNonce] {
+			assert!(!self.user_pub_nonces.is_empty(), "state invariant");
+			&self.user_pub_nonces
+		}
+	}
+
+	impl SignedTreeBuilder<state::Preparing> {
+		/// Construct the spec to be used in [SignedTreeBuilder]
+		pub fn construct_tree_spec(
+			vtxos: impl IntoIterator<Item = VtxoRequest>,
+			cosign_pubkey: PublicKey,
+			expiry_height: BlockHeight,
+			server_pubkey: PublicKey,
+			server_cosign_pubkey: PublicKey,
+			exit_delta: u16,
+		) -> VtxoTreeSpec {
+			let reqs = vtxos.into_iter()
+				.map(|vtxo| SignedVtxoRequest { cosign_pubkey: None, vtxo })
+				.collect::<Vec<_>>();
+			VtxoTreeSpec::new(
+				reqs,
+				server_pubkey,
+				expiry_height,
+				exit_delta,
+				// NB we place server last because then it looks closer like
+				// a regular user-signed tree which Vtxo::validate relies on
+				vec![cosign_pubkey, server_cosign_pubkey],
+			)
+		}
+
+		/// Create a new [SignedTreeBuilder]
+		pub fn new(
+			vtxos: impl IntoIterator<Item = VtxoRequest>,
+			cosign_pubkey: PublicKey,
+			expiry_height: BlockHeight,
+			server_pubkey: PublicKey,
+			server_cosign_pubkey: PublicKey,
+			exit_delta: u16,
+		) -> SignedTreeBuilder<state::Preparing> {
+			let tree = Self::construct_tree_spec(
+				vtxos,
+				cosign_pubkey,
+				expiry_height,
+				server_pubkey,
+				server_cosign_pubkey,
+				exit_delta,
+			);
+
+			SignedTreeBuilder {
+				expiry_height, server_pubkey, exit_delta, cosign_pubkey,
+				tree: BuilderTree::Spec(tree),
+				user_pub_nonces: Vec::new(),
+				user_sec_nonces: None,
+				_state: PhantomData,
+			}
+		}
+
+		/// Set the utxo from which the tree will be created
+		pub fn set_utxo(self, utxo: OutPoint) -> SignedTreeBuilder<state::CanGenerateNonces> {
+			let unsigned_tree = match self.tree {
+				BuilderTree::Spec(s) => s.into_unsigned_tree(utxo),
+				BuilderTree::Unsigned(t) => t, // should not happen
+			};
+			SignedTreeBuilder {
+				tree: BuilderTree::Unsigned(unsigned_tree),
+
+				expiry_height: self.expiry_height,
+				server_pubkey: self.server_pubkey,
+				exit_delta: self.exit_delta,
+				cosign_pubkey: self.cosign_pubkey,
+				user_pub_nonces: self.user_pub_nonces,
+				user_sec_nonces: self.user_sec_nonces,
+				_state: PhantomData,
+			}
+		}
+	}
+
+	impl SignedTreeBuilder<state::CanGenerateNonces> {
+		/// Generate user nonces
+		pub fn generate_user_nonces(
+			self,
+			cosign_key: &Keypair,
+		) -> SignedTreeBuilder<state::CanFinish> {
+			let unsigned_tree = self.tree.unsigned_tree().expect("state invariant");
+
+			let (cosign_sec_nonces, cosign_pub_nonces) = unsigned_tree.sighashes.iter().map(|sh| {
+				musig::nonce_pair_with_msg(cosign_key, &sh.to_byte_array())
+			}).collect::<(Vec<_>, Vec<_>)>();
+
+			SignedTreeBuilder {
+				user_pub_nonces: cosign_pub_nonces,
+				user_sec_nonces: Some(cosign_sec_nonces),
+
+				expiry_height: self.expiry_height,
+				server_pubkey: self.server_pubkey,
+				exit_delta: self.exit_delta,
+				cosign_pubkey: self.cosign_pubkey,
+				tree: self.tree,
+				_state: PhantomData,
+			}
+		}
+	}
+
+	/// Holds the cosignature information of the server
+	#[derive(Debug, Clone)]
+	pub struct SignedTreeCosignResponse {
+		pub pub_nonces: Vec<musig::PublicNonce>,
+		pub partial_signatures: Vec<musig::PartialSignature>,
+	}
+
+	impl SignedTreeBuilder<state::ServerCanCosign> {
+		/// Create a new [SignedTreeBuilder] for the server to cosign
+		pub fn new_for_cosign(
+			vtxos: impl IntoIterator<Item = VtxoRequest>,
+			cosign_pubkey: PublicKey,
+			expiry_height: BlockHeight,
+			server_pubkey: PublicKey,
+			server_cosign_pubkey: PublicKey,
+			exit_delta: u16,
+			utxo: OutPoint,
+			user_pub_nonces: Vec<musig::PublicNonce>,
+		) -> SignedTreeBuilder<state::ServerCanCosign> {
+			let unsigned_tree = SignedTreeBuilder::construct_tree_spec(
+				vtxos,
+				cosign_pubkey,
+				expiry_height,
+				server_pubkey,
+				server_cosign_pubkey,
+				exit_delta,
+			).into_unsigned_tree(utxo);
+
+			SignedTreeBuilder {
+				expiry_height, server_pubkey, exit_delta, cosign_pubkey, user_pub_nonces,
+				tree: BuilderTree::Unsigned(unsigned_tree),
+				user_sec_nonces: None,
+				_state: PhantomData,
+			}
+		}
+
+		/// The server cosigns the tree nodes
+		pub fn server_cosign(&self, server_cosign_key: &Keypair) -> SignedTreeCosignResponse {
+			let unsigned_tree = self.tree.unsigned_tree().expect("state invariant");
+
+			let (sec_nonces, pub_nonces) = unsigned_tree.sighashes.iter().map(|sh| {
+				musig::nonce_pair_with_msg(&server_cosign_key, &sh.to_byte_array())
+			}).collect::<(Vec<_>, Vec<_>)>();
+
+			let agg_nonces = self.user_pub_nonces().iter().zip(&pub_nonces).map(|(u, s)| {
+				musig::AggregatedNonce::new(&*musig::SECP, &[u, s])
+			}).collect::<Vec<_>>();
+
+			let sigs = unsigned_tree.cosign_tree(&agg_nonces, &server_cosign_key, sec_nonces);
+
+			SignedTreeCosignResponse {
+				pub_nonces,
+				partial_signatures: sigs,
+			}
+		}
+	}
+
+	impl SignedTreeBuilder<state::CanFinish> {
+		/// Validate the server's partial signatures
+		pub fn verify_cosign_response(
+			&self,
+			server_cosign: &SignedTreeCosignResponse,
+		) -> Result<(), CosignSignatureError> {
+			let unsigned_tree = self.tree.unsigned_tree().expect("state invariant");
+
+			let agg_nonces = self.user_pub_nonces().iter()
+				.zip(&server_cosign.pub_nonces)
+				.map(|(u, s)| musig::AggregatedNonce::new(&*musig::SECP, &[u, s]))
+				.collect::<Vec<_>>();
+
+			unsigned_tree.verify_global_cosign_partial_sigs(
+				*unsigned_tree.spec.global_cosign_pubkeys.get(1).expect("state invariant"),
+				&agg_nonces,
+				&server_cosign.pub_nonces,
+				&server_cosign.partial_signatures,
+			)
+		}
+
+		pub fn build_tree(
+			self,
+			server_cosign: &SignedTreeCosignResponse,
+			cosign_key: &Keypair,
+		) -> Result<SignedVtxoTreeSpec, IncorrectSigningKeyError> {
+			if cosign_key.public_key() != self.cosign_pubkey {
+				return Err(IncorrectSigningKeyError {
+					required: Some(self.cosign_pubkey),
+					provided: cosign_key.public_key(),
+				});
+			}
+
+			let agg_nonces = self.user_pub_nonces().iter().zip(&server_cosign.pub_nonces).map(|(u, s)| {
+				musig::AggregatedNonce::new(&*musig::SECP, &[u, s])
+			}).collect::<Vec<_>>();
+
+			let unsigned_tree = self.tree.into_unsigned_tree().expect("state invariant");
+			let sec_nonces = self.user_sec_nonces.expect("state invariant");
+			let partial_sigs = unsigned_tree.cosign_tree(&agg_nonces, cosign_key, sec_nonces);
+
+			debug_assert!(unsigned_tree.verify_global_cosign_partial_sigs(
+				self.cosign_pubkey,
+				&agg_nonces,
+				&self.user_pub_nonces,
+				&partial_sigs,
+			).is_ok(), "produced invalid partial signatures");
+
+			let sigs = unsigned_tree.combine_partial_signatures(
+				&agg_nonces,
+				&HashMap::new(),
+				&[&server_cosign.partial_signatures, &partial_sigs],
+			).expect("should work with correct cosign signatures");
+
+			Ok(unsigned_tree.into_signed_tree(sigs))
+		}
+	}
+}
+
 /// The serialization version of [VtxoTreeSpec].
 const VTXO_TREE_SPEC_VERSION: u8 = 0x02;
 
@@ -889,11 +1237,14 @@ mod test {
 
 	use bitcoin::hashes::{siphash24, sha256, Hash, HashEngine};
 	use bitcoin::secp256k1::{self, rand, Keypair};
+	use bitcoin::{absolute, transaction};
 	use rand::SeedableRng;
 
-	use crate::encode::test::json_roundtrip;
-	use crate::encode::{self, test::encoding_roundtrip};
-	use crate::VtxoPolicy;
+	use crate::encode;
+	use crate::encode::test::{encoding_roundtrip, json_roundtrip};
+	use crate::vtxo::{Validation, VtxoPolicy};
+	use crate::tree::signed::builder::SignedTreeBuilder;
+
 	use super::*;
 
 	fn test_tree_amounts(
@@ -1010,6 +1361,70 @@ mod test {
 		let cached = signed.into_cached_tree();
 		for vtxo in cached.all_vtxos() {
 			encoding_roundtrip(&vtxo);
+		}
+	}
+
+	#[test]
+	fn test_tree_builder() {
+		let expiry = 100_000;
+		let exit_delta = 24;
+
+		let vtxo_pubkey = "035e160cd261ac8ffcd2866a5aab2116bc90fbefdb1d739531e121eee612583802".parse().unwrap();
+		let policy = VtxoPolicy::new_pubkey(vtxo_pubkey);
+		let vtxos = (1..50).map(|i| VtxoRequest {
+			amount: Amount::from_sat(1000 * i),
+			policy: policy.clone(),
+		}).collect::<Vec<_>>();
+
+		let user_cosign_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
+		let user_cosign_pubkey = user_cosign_key.public_key();
+		println!("cosign_pubkey: {}", user_cosign_pubkey);
+
+		let server_key = Keypair::from_str("1fb316e653eec61de11c6b794636d230379509389215df1ceb520b65313e5426").unwrap();
+		let server_pubkey = server_key.public_key();
+		println!("server_pubkey: {}", server_pubkey);
+
+		let server_cosign_key = Keypair::from_str("52a506fbae3b725749d2486afd4761841ec685b841c2967e30f24182c4b02eed").unwrap();
+		let server_cosign_pubkey = server_cosign_key.public_key();
+		println!("server_cosign_pubkey: {}", server_cosign_pubkey);
+
+		let builder = SignedTreeBuilder::new(
+			vtxos.iter().cloned(), user_cosign_pubkey, expiry, server_pubkey, server_cosign_pubkey,
+			exit_delta,
+		);
+		assert_eq!(builder.total_required_value(), Amount::from_sat(1_225_000));
+		assert_eq!(builder.funding_script_pubkey().to_hex_string(), "5120ca542aaf6c76c4b4c7822d73d91551ef42482098f3675d915d61782448b2ac5b");
+
+		let funding_tx = Transaction {
+			version: transaction::Version::TWO,
+			lock_time: absolute::LockTime::ZERO,
+			input: vec![],
+			output: vec![builder.funding_txout()],
+		};
+		let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+		assert_eq!(utxo.to_string(), "49b930a56b7eb510813600b54d01e6017cbb41895e137892c0b41e6399779ef7:0");
+		let builder = builder.set_utxo(utxo).generate_user_nonces(&user_cosign_key);
+		let user_pub_nonces = builder.user_pub_nonces().to_vec();
+
+		let cosign = {
+			let builder = SignedTreeBuilder::new_for_cosign(
+				vtxos.iter().cloned(), user_cosign_pubkey, expiry, server_pubkey,
+				server_cosign_pubkey, exit_delta, utxo, user_pub_nonces,
+			);
+			builder.server_cosign(&server_cosign_key)
+		};
+
+		builder.verify_cosign_response(&cosign).unwrap();
+		let tree = builder.build_tree(&cosign, &user_cosign_key).unwrap().into_cached_tree();
+
+		// check that vtxos are valid
+		for vtxo in tree.all_vtxos() {
+			match vtxo.validate(&funding_tx).unwrap() {
+				Validation::Trusted { cosign_pubkey } => {
+					assert_eq!(cosign_pubkey, user_cosign_pubkey);
+				},
+				Validation::Arkoor => panic!("should be trusted"),
+			}
 		}
 	}
 }

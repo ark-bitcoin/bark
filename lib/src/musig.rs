@@ -88,6 +88,19 @@ pub fn nonce_pair(key: &Keypair) -> (SecretNonce, PublicNonce) {
 	)
 }
 
+pub fn nonce_pair_with_msg(key: &Keypair, msg: &[u8; 32]) -> (SecretNonce, PublicNonce) {
+	let kp = keypair_to(key);
+	secpm::musig::new_nonce_pair(
+		&SECP,
+		SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
+		None,
+		Some(kp.secret_key()),
+		kp.public_key(),
+		Some(msg),
+		Some(rand::random()),
+	)
+}
+
 pub fn nonce_agg(pub_nonces: &[&PublicNonce]) -> AggregatedNonce {
 	AggregatedNonce::new(&SECP, pub_nonces)
 }
