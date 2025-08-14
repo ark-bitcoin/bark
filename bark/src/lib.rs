@@ -278,11 +278,11 @@ impl Wallet {
 		let network = self.properties()?.network;
 		let (keypair, index) = self.derive_store_next_keypair()?;
 		let pubkey = keypair.public_key();
-		let addr = if network == bitcoin::Network::Bitcoin {
-			ark::Address::new(ark.info.server_pubkey, pubkey)
-		} else {
-			ark::Address::new_testnet(ark.info.server_pubkey, pubkey)
-		};
+		let addr = ark::Address::builder()
+			.testnet(network != bitcoin::Network::Bitcoin)
+			.server_pubkey(ark.info.server_pubkey)
+			.pubkey_policy(pubkey)
+			.into_address().unwrap();
 		Ok((addr, index))
 	}
 
