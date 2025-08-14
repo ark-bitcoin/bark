@@ -354,20 +354,22 @@ pub struct BoardFundingTxValidationError(String);
 
 #[cfg(test)]
 mod test {
-	use bitcoin::Amount;
+	use std::str::FromStr;
+
+	use bitcoin::{absolute, transaction, Amount};
 
 	use crate::encode::test::encoding_roundtrip;
+	use crate::vtxo::Validation;
 
 	use super::*;
 
 	#[test]
-	fn test_flow_assertions() {
+	fn test_board_builder() {
 		//! Passes through the entire flow so that all assertions
 		//! inside the code are ran at least once.
 
-		let user_key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
-		let server_key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
-		let utxo = "0000000000000000000000000000000000000000000000000000000000000001:1".parse().unwrap();
+		let user_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
+		let server_key = Keypair::from_str("1fb316e653eec61de11c6b794636d230379509389215df1ceb520b65313e5426").unwrap();
 
 		// user
 		let amount = Amount::from_btc(1.5).unwrap();
@@ -376,9 +378,19 @@ mod test {
 		let exit_delta = 24;
 		let builder = BoardBuilder::new(
 			user_key.public_key(), expiry, server_pubkey, exit_delta,
-		)
-			.set_funding_details(amount, utxo)
-			.generate_user_nonces();
+		);
+		let funding_tx = Transaction {
+			version: transaction::Version::TWO,
+			lock_time: absolute::LockTime::ZERO,
+			input: vec![],
+			output: vec![TxOut {
+				value: amount,
+				script_pubkey: builder.funding_script_pubkey(),
+			}],
+		};
+		let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+		assert_eq!(utxo.to_string(), "8c4b87af4ce8456bbd682859959ba64b95d5425d761a367f4f20b8ffccb1bde0:0");
+		let builder = builder.set_funding_details(amount, utxo).generate_user_nonces();
 
 		// server
 		let cosign = {
@@ -393,5 +405,12 @@ mod test {
 		let vtxo = builder.build_vtxo(&cosign, &user_key).unwrap();
 
 		encoding_roundtrip(&vtxo);
+
+		match vtxo.validate(&funding_tx).unwrap() {
+			Validation::Trusted { cosign_pubkey } => {
+				assert_eq!(cosign_pubkey, user_key.public_key());
+			},
+			Validation::Arkoor => panic!("should be trusted"),
+		}
 	}
 }
