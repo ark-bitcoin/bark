@@ -223,8 +223,10 @@ impl Bark {
 			.iter()
 			.map(|s| s.to_string())
 			.collect();
-		command.extend(addresses.into_iter().flat_map(|a| vec!["--address".into(), a.to_string()]));
-		command.extend(amounts.into_iter().flat_map(|a| vec!["--amount".into(), a.to_string()]));
+
+		let destinations = addresses.into_iter().zip(amounts.into_iter())
+			.map(|(a, amt)| format!("{}:{}", a, amt));
+		command.extend(destinations.flat_map(|d| vec!["--destination".into(), d]));
 
 		self.run(command).await;
 	}
@@ -524,3 +526,4 @@ impl Bark {
 		self.try_run_json(args).await.expect("json command failed")
 	}
 }
+
