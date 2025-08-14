@@ -1,6 +1,8 @@
 pub mod sqlite;
 
+#[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
+
 use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
@@ -34,8 +36,12 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialize the BDK wallet and load the full existing ChangeSet.
 	///
 	/// This function must be called before any new changeset is stored.
+
+	#[cfg(feature = "onchain_bdk")]
 	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet>;
 	/// Store the incremental changeset of the BDK wallet.
+
+	#[cfg(feature = "onchain_bdk")]
 	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
 
 	fn write_config(&self, config: &Config) -> anyhow::Result<()>;

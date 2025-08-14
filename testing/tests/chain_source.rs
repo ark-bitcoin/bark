@@ -66,37 +66,37 @@ async fn chain_source_tip() {
 }
 
 #[tokio::test]
-async fn chain_source_block_id() {
-	let (ctx, chain_source) = setup_chain_source("chain_source/block_id").await;
+async fn chain_source_block_ref() {
+	let (ctx, chain_source) = setup_chain_source("chain_source/block_ref").await;
 	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
 
-	chain_source.block_id(1000).await
+	chain_source.block_ref(1000).await
 		.expect_err("Invalid block heights should error");
 
 	// Generating blocks shouldn't change results
-	let start_block_id = chain_source.block_id(start_height).await.unwrap();
+	let start_block_ref = chain_source.block_ref(start_height).await.unwrap();
 	ctx.generate_blocks(10).await;
-	assert_eq!(chain_source.block_id(start_height).await.unwrap(), start_block_id);
+	assert_eq!(chain_source.block_ref(start_height).await.unwrap(), start_block_ref);
 
 	// Ensure each block hash is unique
 	let mut hash_set = HashSet::with_capacity((start_height + 10) as usize);
 	for i in 0..start_height + 10 {
-		let block_id = chain_source.block_id(i).await.unwrap();
-		assert!(hash_set.insert(block_id.hash));
+		let block_ref = chain_source.block_ref(i).await.unwrap();
+		assert!(hash_set.insert(block_ref.hash));
 	}
 
 	// Ensure block IDs can be queried as new blocks are produced
-	chain_source.block_id(start_height + 11).await
-		.expect_err("Block ID should not be valid");
+	chain_source.block_ref(start_height + 11).await
+		.expect_err("Block Ref should not be valid");
 	for i in 0..10 {
 		ctx.generate_blocks(1).await;
-		chain_source.block_id(start_height + 10 + i).await
-			.expect("Block ID should be valid");
+		chain_source.block_ref(start_height + 10 + i).await
+			.expect("Block Ref should be valid");
 	}
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.block_id(start_height).await
+	chain_source.block_ref(start_height).await
 		.expect_err("We shouldn't be able to retrieve data");
 }
 
@@ -104,7 +104,7 @@ async fn chain_source_block_id() {
 async fn chain_source_block() {
 	let (ctx, chain_source) = setup_chain_source("chain_source/block").await;
 	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
-	let start_hash = chain_source.block_id(start_height).await.unwrap().hash;
+	let start_hash = chain_source.block_ref(start_height).await.unwrap().hash;
 
 	// Ensure we can retrieve blocks by hash
 	chain_source.block(&start_hash).await.expect("Hash should be valid");
@@ -119,8 +119,8 @@ async fn chain_source_block() {
 	let mut headers = HashSet::with_capacity(start_height as usize);
 	for i in 0..10 {
 		ctx.generate_blocks(1).await;
-		let id = chain_source.block_id(i).await.expect("Block ID should be valid");
-		match chain_source.block(&id.hash).await.expect("Hash should be valid") {
+		let block_ref = chain_source.block_ref(i).await.expect("Block Ref should be valid");
+		match chain_source.block(&block_ref.hash).await.expect("Hash should be valid") {
 			None => panic!("Hash should not return an empty result"),
 			Some(block) => assert!(headers.insert(block.header)),
 		}

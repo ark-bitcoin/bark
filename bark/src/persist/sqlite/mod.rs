@@ -4,8 +4,10 @@ mod query;
 
 use std::path::PathBuf;
 
-use anyhow::Context;
+#[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
+
+use anyhow::Context;
 use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
@@ -88,11 +90,13 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	#[cfg(feature = "onchain_bdk")]
 	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
 	    let mut conn = self.connect()?;
 		Ok(bdk_wallet::WalletPersister::initialize(&mut conn)?)
 	}
 
+	#[cfg(feature = "onchain_bdk")]
 	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()> {
 	    let mut conn = self.connect()?;
 		bdk_wallet::WalletPersister::persist(&mut conn, changeset)?;
