@@ -199,6 +199,11 @@ impl Bark {
 		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
 	}
 
+	pub async fn inround_balance(&self) -> Amount {
+		let json = self.run(["balance"]).await;
+		serde_json::from_str::<json::Balance>(&json).unwrap().pending_in_round
+	}
+
 	pub async fn get_onchain_address(&self) -> Address {
 		let output = self.run(["onchain", "address"]).await.trim().to_string();
 		let parsed = serde_json::from_str::<json::onchain::Address>(&output).unwrap();

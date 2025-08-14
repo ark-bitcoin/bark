@@ -17,7 +17,7 @@ use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowe
 use server_rpc::{self as rpc, protos};
 
 use ark_testing::{TestContext, btc, sat};
-use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind;
 use ark_testing::util::{AnyhowErrorExt, FutureExt};
 
@@ -162,11 +162,11 @@ async fn list_utxos() {
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark.refresh_all().await;
-	ctx.generate_blocks(1).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let addr = bark.get_onchain_address().await;
 	let _offb = bark.offboard_all(&addr).await;
-	ctx.generate_blocks(1).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let utxos = bark.utxos().await;
 
@@ -191,6 +191,7 @@ async fn list_vtxos() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
 	bark1.board(sat(300_000)).await;
@@ -302,21 +303,24 @@ async fn refresh_all() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
-	bark1.board(sat(800_000)).await;
+	bark1.board(sat(400_000)).await;
 	bark2.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark1.refresh_all().await;
+	bark1.board(sat(400_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// We want bark2 to have a refresh, board, round and oor vtxo
-	let addr1 = bark1.address().await;
-	let addr2 = bark2.address().await;
-	bark2.send_oor(&addr1, sat(20_000)).await; // generates change
-	bark1.refresh_all().await;
-	bark1.send_oor(&addr2, sat(20_000)).await;
+	let pk1 = bark1.address().await;
+	let pk2 = bark2.address().await;
+	bark2.send_oor(&pk1, sat(20_000)).await; // generates change
+	bark1.send_oor(&pk2, sat(20_000)).await;
 	bark2.board(sat(20_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(3, bark2.vtxos().await.len());
 	bark2.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	assert_eq!(1, bark2.vtxos().await.len());
 }
 
@@ -374,6 +378,7 @@ async fn refresh_counterparty() {
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
 	bark1.board(sat(300_000)).await;
@@ -387,6 +392,7 @@ async fn refresh_counterparty() {
 		.partition(|v| v.amount == sat(330_000));
 
 	bark1.refresh_counterparty().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let vtxos = bark1.vtxos().await;
 	// there should still be 3 vtxos
@@ -458,6 +464,8 @@ async fn list_movements() {
 
 	// refresh vtxos
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 3);
 	assert_eq!(movements[0].spends[0].amount, sat(150_000));
@@ -493,6 +501,8 @@ async fn multiple_spends_in_payment() {
 
 	// refresh vtxos
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements[0].spends.len(), 3);
 	assert_eq!(movements[0].spends[0].amount, sat(100_000));
@@ -527,6 +537,7 @@ async fn offboard_all() {
 	assert_eq!(init_balance, sat(830_000));
 
 	bark1.offboard_all(address.clone()).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// We check that all vtxos have been offboarded
 	assert_eq!(Amount::ZERO, bark1.offchain_balance().await);
@@ -577,6 +588,7 @@ async fn offboard_vtxos() {
 	let vtxo_to_offboard = &vtxos[1];
 
 	bark1.offboard_vtxo(vtxo_to_offboard.id, address.clone()).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// We check that only selected vtxo has been touched
 	let updated_vtxos = bark1.vtxos().await
@@ -620,7 +632,7 @@ async fn bark_send_onchain() {
 
 	// board vtxo
 	bark1.send_onchain(&addr, sat(300_000)).await;
-	ctx.generate_blocks(1).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let [change_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
 	assert_eq!(change_vtxo.amount, sat(498_900));
@@ -656,6 +668,7 @@ async fn bark_send_onchain_too_much() {
 
 	// board vtxo
 	let ret = bark1.try_send_onchain(&addr, sat(1_000_000)).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	assert!(ret.unwrap_err().to_string().contains(
 		&format!("Your balance is too low. Needed: {}, available: {}",
@@ -693,7 +706,7 @@ async fn drop_vtxos() {
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
-	ctx.generate_blocks(1).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark1.drop_vtxos().await;
 	let balance = bark1.offchain_balance_no_sync().await;
@@ -825,7 +838,7 @@ async fn recover_mnemonic() {
 	// make sure we have a round and an board vtxo (arkoor doesn't work)
 	bark.refresh_all().await;
 	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(1).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	let onchain = bark.onchain_balance().await;
 	let _offchain = bark.offchain_balance().await;
 

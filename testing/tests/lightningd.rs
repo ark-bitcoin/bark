@@ -3,13 +3,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use bark::lightning_invoice::Bolt11Invoice;
+use ark_testing::constants::ROUND_CONFIRMATIONS;
 use bitcoin::Amount;
 use cln_rpc as rpc;
 
-use log::{error, info, trace};
+use log::{info, trace};
 
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, daemon::captaind, sat, TestContext};
-use ark_testing::util::{AnyhowErrorExt, FutureExt};
+use ark_testing::util::{FutureExt};
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 
 
@@ -323,8 +324,9 @@ async fn bark_refresh_ln_change_vtxo() {
 	assert_eq!(bark_1.offchain_balance().await, btc(3));
 
 	bark_1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos = bark_1.vtxos().await;
-	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
+	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);
 	assert_eq!(vtxos[0].amount, btc(3));
 }
 
@@ -362,8 +364,9 @@ async fn bark_refresh_payment_revocation() {
 	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	bark_1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos = bark_1.vtxos().await;
-	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh");
+	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);
 	assert_eq!(vtxos[0].amount, btc(2));
 }
 
@@ -458,15 +461,20 @@ async fn bark_can_receive_lightning() {
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
 
-	let cloned = bark.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		if let Err(e) = cloned.try_lightning_receive(cloned_invoice_info.invoice).await {
-			error!("bolt11 board error: {}", e.full_msg());
-		}
+		lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
 	});
-	lightningd_1.pay_bolt11(&invoice_info.invoice).wait(30_000).await;
-	res1.await.unwrap();
+
+	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+
+	// Wait for the onboarding round to be deeply enough confirmed
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	// We use that to sync and get onboarded vtxos
+	bark.offchain_balance().await;
+
+	// HTLC settlement on lightning side
+	res1.fast().await.unwrap();
 
 	let vtxos = bark.vtxos().await;
 	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
@@ -508,6 +516,7 @@ async fn bark_can_receive_lightning() {
 #[tokio::test]
 async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 	let ctx = TestContext::new("lightningd/bark_can_pay_an_invoice_generated_by_same_server_user").await;
+	let ctx = Arc::new(ctx);
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -548,11 +557,17 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
+	let cloned_ctx = ctx.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.lightning_receive(cloned_invoice_info.invoice).await
+		cloned.lightning_receive(cloned_invoice_info.invoice).wait(10_000).await;
+		cloned_ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+		cloned.offchain_balance().await;
 	});
 
-	bark_2.send_lightning(invoice_info.invoice, None).await;
+	tokio::spawn(async move {
+		bark_2.send_lightning(invoice_info.invoice, None).await
+	});
+
 	res1.await.unwrap();
 
 	let vtxos = bark_1.vtxos().await;

@@ -17,7 +17,7 @@ use bitcoin_ext::TaprootSpendInfoExt;
 use server_rpc::protos;
 
 use ark_testing::{TestContext, Bark, btc, sat};
-use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind;
 
 async fn complete_exit(ctx: &TestContext, bark: &Bark) {
@@ -86,6 +86,7 @@ async fn simple_exit() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	bark.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	srv.stop().await.unwrap();
 	bark.start_exit_all().await;
@@ -157,6 +158,7 @@ async fn exit_round() {
 		bark7.refresh_all(),
 		bark8.refresh_all(),
 	);
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let bark1_round_vtxo = &bark1.vtxos().await[0];
 	let bark2_round_vtxo = &bark2.vtxos().await[0];
@@ -222,6 +224,7 @@ async fn exit_vtxo() {
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
 	// This ensures bark knows the vtxo exists
@@ -253,6 +256,7 @@ async fn exit_and_send_vtxo() {
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
 	// This ensures bark knows the vtxo exists
