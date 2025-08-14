@@ -345,7 +345,8 @@ enum OnchainCommand {
 		destination: bitcoin::Address<address::NetworkUnchecked>,
 		/// Amount to send
 		///
-		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
+		/// Provided value must match format `<amount> <unit>`, where unit can be any
+		/// amount denomination. Example: `250000 sats`.
 		amount: Amount,
 		/// Skip syncing wallet
 		#[arg(long)]
@@ -355,12 +356,12 @@ enum OnchainCommand {
 	#[command(
 		about = "\
 			Send using the on-chain wallet to multiple destinations. \n\
-			Example usage: send-many --destination bc1p1...:10000sat --destination bc1p2...:20000sat\n\
-			This will send 10,000 sats to bc1p1... and 20,000 sats to bc1p2...",
+			Example usage: send-many --destination bc1pfq...:10000sat --destination bc1pke...:20000sat\n\
+			This will send 10,000 sats to bc1pfq... and 20,000 sats to bc1pke...",
 	)]
 	SendMany {
 		/// Adds an output to the given address, this can be specified multiple times.
-		/// The format is address:amount, e.g. bc1p1...:10000
+		/// The format is address:amount, e.g. bc1pfq...:10000sat
 		#[arg(long = "destination", required = true)]
 		destinations: Vec<String>,
 
@@ -589,14 +590,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				let outputs = destinations
 					.iter()
 					.map(|dest| -> anyhow::Result<(bitcoin::Address, Amount)> {
-						let parts: Vec<&str> = dest.splitn(2, ':').collect();
-						if parts.len() != 2 {
-							bail!("Invalid destination format: {}. Expected format: address:amount", dest);
-						}
-
-						let addr = bitcoin::Address::from_str(parts[0])?.require_network(net).context("Invalid address")?;
-						let amount = Amount::from_str(parts[1]).context("Invalid Amount")?;
-
+						let mut parts = dest.splitn(2, ':');
+						let addr = {
+							let s = parts.next()
+								.context("invalid destination format, expected address:amount")?;
+							bitcoin::Address::from_str(s)?.require_network(net)
+								.with_context(|| format!("invalid address: '{}'", s))?
+						};
+						let amount = {
+							let s = parts.next()
+								.context("invalid destination format, expected address:amount")?;
+							Amount::from_str(s)
+								.with_context(|| format!("invalid amount: '{}'", s))?
+						};
 						Ok((addr, amount))
 					})
 					.collect::<Result<Vec<_>, _>>()?;
