@@ -42,7 +42,7 @@ use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
+use bitcoin::secp256k1::{self, rand, schnorr, Keypair, PublicKey};
 use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, trace, warn, error};
@@ -56,6 +56,7 @@ use ark::board::BoardBuilder;
 use ark::lightning::{Bolt12Invoice, Invoice, PaymentHash, Preimage, Offer};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
+use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
@@ -1066,6 +1067,67 @@ impl Server {
 		let seckey = self.ephemeral_master_key.leak_ref().secret_key()
 			.add_tweak(&tweak).expect("tweak error");
 		Ok(Keypair::from_secret_key(&*SECP, &seckey))
+	}
+
+	pub async fn cosign_vtxo_tree(
+		&self,
+		vtxos: impl IntoIterator<Item = VtxoRequest>,
+		cosign_pubkey: PublicKey,
+		server_cosign_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+		utxo: OutPoint,
+		pub_nonces: Vec<musig::PublicNonce>,
+	) -> anyhow::Result<SignedTreeCosignResponse> {
+		// NB we don't drop yet cuz we need to verify it was our key
+		// in the [Server::register_cosigned_vtxo_tree] step.
+		let cosign_key = self.get_ephemeral_cosign_key(server_cosign_pubkey).await?;
+
+		let builder = SignedTreeBuilder::new_for_cosign(
+			vtxos,
+			cosign_pubkey,
+			expiry_height,
+			self.server_key.leak_ref().public_key(),
+			server_cosign_pubkey,
+			self.config.vtxo_exit_delta,
+			utxo,
+			pub_nonces,
+		);
+		Ok(builder.server_cosign(&cosign_key))
+	}
+
+	/// Register the VTXOs in the signed vtxo tree
+	///
+	/// This should only be called once we trust that the root of the tree
+	/// will confirm.
+	pub async fn register_cosigned_vtxo_tree(
+		&self,
+		vtxos: impl IntoIterator<Item = VtxoRequest>,
+		cosign_pubkey: PublicKey,
+		server_cosign_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+		utxo: OutPoint,
+		signatures: Vec<schnorr::Signature>,
+	) -> anyhow::Result<()> {
+		let tree = SignedTreeBuilder::construct_tree_spec(
+			vtxos,
+			cosign_pubkey,
+			expiry_height,
+			self.server_key.leak_ref().public_key(),
+			server_cosign_pubkey,
+			self.config.vtxo_exit_delta,
+		).into_unsigned_tree(utxo);
+
+		if let Err(pk) = tree.verify_cosign_sigs(&signatures) {
+			bail!("invalid cosign signatures for xonly pk {}", pk);
+		}
+
+		// Now we're done and we can drop the key.
+		let _ = self.drop_ephemeral_cosign_key(server_cosign_pubkey).await?;
+
+		let tree = tree.into_signed_tree(signatures).into_cached_tree();
+		self.db.upsert_vtxos(tree.all_vtxos()).await.context("db error occurred")?;
+
+		Ok(())
 	}
 }
 

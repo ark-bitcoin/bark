@@ -2,12 +2,12 @@
 use std::io::BufRead;
 use std::{io, iter};
 use std::fmt::Write;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bark::Wallet;
 use bitcoin::hex::FromHex;
-use bitcoin::{Amount, Network};
+use bitcoin::{absolute, transaction, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
@@ -21,14 +21,15 @@ use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::rounds::VtxoOwnershipChallenge;
+use ark::tree::signed::builder::SignedTreeBuilder;
+use bark::Wallet;
+use server::secret::Secret;
 use server_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
-
-use server::secret::Secret;
 use server_rpc::protos;
 use bark_json::exit::ExitState;
 
@@ -1823,4 +1824,54 @@ async fn test_ephemeral_keys() {
 	let _ = srv.generate_ephemeral_cosign_key(secs(1)).await.unwrap().public_key();
 	assert!(db.fetch_ephemeral_tweak(pubkey).await.unwrap().is_none());
 	assert!(db.drop_ephemeral_tweak(pubkey).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_cosign_vtxo_tree() {
+	let ctx = TestContext::new("server/test_cosign_vtxo_tree").await;
+	let srv = ctx.new_server_with_cfg("server", None, |_| { }).await;
+	let db = srv.database();
+
+	let expiry = 100_000;
+	let exit_delta = srv.ark_info().vtxo_exit_delta;
+
+	let vtxo_pubkey = "035e160cd261ac8ffcd2866a5aab2116bc90fbefdb1d739531e121eee612583802".parse().unwrap();
+	let policy = VtxoPolicy::new_pubkey(vtxo_pubkey);
+	let vtxos = (1..5).map(|i| VtxoRequest {
+		amount: Amount::from_sat(1000 * i),
+		policy: policy.clone(),
+	}).collect::<Vec<_>>();
+
+	let user_cosign_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
+	let user_cosign_pubkey = user_cosign_key.public_key();
+
+	let server_pubkey = srv.server_pubkey();
+	let server_cosign_pubkey = srv.generate_ephemeral_cosign_key(secs(60)).await.unwrap().public_key();
+
+	let builder = SignedTreeBuilder::new(
+		vtxos.iter().cloned(), user_cosign_pubkey, expiry, server_pubkey, server_cosign_pubkey, exit_delta,
+	);
+
+	let funding_tx = Transaction {
+		version: transaction::Version::TWO,
+		lock_time: absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![builder.funding_txout()],
+	};
+	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+	let builder = builder.set_utxo(utxo).generate_user_nonces(&user_cosign_key);
+	let user_pub_nonces = builder.user_pub_nonces().to_vec();
+
+	let cosign = srv.cosign_vtxo_tree(
+		vtxos.iter().cloned(), user_cosign_pubkey, server_cosign_pubkey, expiry, utxo, user_pub_nonces,
+	).await.unwrap();
+
+	builder.verify_cosign_response(&cosign).unwrap();
+	let tree = builder.build_tree(&cosign, &user_cosign_key).unwrap();
+
+	srv.register_cosigned_vtxo_tree(
+		vtxos.iter().cloned(), user_cosign_pubkey, server_cosign_pubkey, expiry, utxo, tree.cosign_sigs,
+	).await.unwrap();
+
+	assert!(db.fetch_ephemeral_tweak(server_cosign_pubkey).await.unwrap().is_none());
 }
