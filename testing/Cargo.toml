@@ -13,7 +13,7 @@ bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }
 bark-cln-rpc = { path = "../cln-rpc"}
 bark-json = { path = "../bark-json"}
-bark-client = { path = "../bark" } 
+bark-wallet = { path = "../bark" }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
 
 bitcoincore-rpc = "0.19.0"
