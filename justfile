@@ -131,7 +131,7 @@ clean:
 		-p bark-server-log \
 		-p bark-server-rpc \
 		-p bark-bitcoin-ext \
-		-p bark-client \
+		-p bark-wallet \
 		-p bark-json
 
 # run a single clippy lint
@@ -151,6 +151,6 @@ dump-server-sql-schema:
 	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
 
 dump-bark-sql-schema:
-	cargo run -p bark-client --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
+	cargo run -p bark-wallet --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
 	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
 

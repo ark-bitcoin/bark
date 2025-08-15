@@ -1,5 +1,5 @@
 [package]
-name = "bark-client"
+name = "bark-wallet"
 version = "0.0.0-alpha"
 license = "CC0-1.0"
 authors = ["Steven Roose <steven@roose.io>"]

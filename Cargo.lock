@@ -148,12 +148,12 @@ dependencies = [
  "ark-lib",
  "async-trait",
  "bark-bitcoin-ext",
- "bark-client",
  "bark-cln-rpc",
  "bark-json",
  "bark-server",
  "bark-server-log",
  "bark-server-rpc",
+ "bark-wallet",
  "bdk_esplora",
  "bip39",
  "bitcoin",
@@ -291,41 +291,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bark-client"
-version = "0.0.0-alpha"
-dependencies = [
- "anyhow",
- "ark-lib",
- "bark-bitcoin-ext",
- "bark-json",
- "bark-server-rpc",
- "bdk_bitcoind_rpc 0.21.0",
- "bdk_esplora",
- "bdk_wallet",
- "bip39",
- "bitcoin",
- "chrono",
- "clap",
- "fern",
- "futures",
- "home",
- "humantime",
- "lazy_static",
- "lightning",
- "lightning-invoice 0.32.0",
- "lnurl-rs",
- "log",
- "miniscript",
- "rand 0.9.2",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tonic",
-]
-
-[[package]]
 name = "bark-cln-rpc"
 version = "0.0.0"
 dependencies = [
@@ -430,6 +395,41 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "bark-wallet"
+version = "0.0.0-alpha"
+dependencies = [
+ "anyhow",
+ "ark-lib",
+ "bark-bitcoin-ext",
+ "bark-json",
+ "bark-server-rpc",
+ "bdk_bitcoind_rpc 0.21.0",
+ "bdk_esplora",
+ "bdk_wallet",
+ "bip39",
+ "bitcoin",
+ "chrono",
+ "clap",
+ "fern",
+ "futures",
+ "home",
+ "humantime",
+ "lazy_static",
+ "lightning",
+ "lightning-invoice 0.32.0",
+ "lnurl-rs",
+ "log",
+ "miniscript",
+ "rand 0.9.2",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]
