@@ -933,8 +933,8 @@ impl VtxoTreeSignedState {
 		let vtxo_tree = self.vtxo_tree.clone().into_unsigned_tree(vtxos_utxo);
 
 		// Validate the vtxo tree.
-		if let Err(e) = vtxo_tree.verify_cosign_sigs(&vtxo_cosign_sigs) {
-			error!("Received incorrect vtxo cosign signatures from srv: {}", e);
+		if vtxo_tree.verify_cosign_sigs(&vtxo_cosign_sigs).is_err() {
+			error!("Received incorrect vtxo cosign signatures from server");
 			return Err(error_before_forfeit(&wallet.db, self));
 		}
 

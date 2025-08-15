@@ -539,18 +539,18 @@ impl UnsignedVtxoTree {
 	/// Verify the signatures of all the node txs.
 	///
 	/// Signatures expected ordered from leaves to root.
-	pub fn verify_cosign_sigs(&self, signatures: &[schnorr::Signature]) -> Result<(), String> {
-		if signatures.len() != self.tree.nb_nodes() {
-			return Err("invalid number of signatures".into());
-		}
-
-		for (i, node) in self.tree.iter().enumerate() {
-			let sig = &signatures[node.idx()];
+	pub fn verify_cosign_sigs(
+		&self,
+		signatures: &[schnorr::Signature],
+	) -> Result<(), XOnlyPublicKey> {
+		for node in self.tree.iter() {
 			let sighash = self.sighashes[node.idx()];
 			let agg_pk = &self.cosign_agg_pks[node.idx()];
 			let pk = self.spec.cosign_taproot(*agg_pk).output_key().to_x_only_public_key();
-			SECP.verify_schnorr(sig, &sighash.into(), &pk)
-				.map_err(|e| format!("invalid signature on node #{}: {}", i, e))?;
+			let sig = signatures.get(node.idx()).ok_or_else(|| pk)?;
+			if SECP.verify_schnorr(sig, &sighash.into(), &pk).is_err() {
+				return Err(pk);
+			}
 		}
 		Ok(())
 	}

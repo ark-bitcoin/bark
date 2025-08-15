@@ -1363,7 +1363,7 @@ pub mod test {
 			&cosign_agg_nonces, &server_cosign_key, server_cosign_sec_nonces,
 		);
 		let cosign_sigs = tree.combine_partial_signatures(&cosign_agg_nonces, &part_sigs, &server_cosign_sigs).unwrap();
-		tree.verify_cosign_sigs(&cosign_sigs).unwrap();
+		assert!(tree.verify_cosign_sigs(&cosign_sigs).is_ok());
 		let signed = tree.into_signed_tree(cosign_sigs).into_cached_tree();
 		// we don't need forfeits
 		let mut vtxo_iter = signed.all_vtxos();
