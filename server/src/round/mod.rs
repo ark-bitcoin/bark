@@ -25,7 +25,7 @@ use ark::{
 	VtxoRequest,
 };
 use ark::connectors::ConnectorChain;
-use ark::musig::{self, PublicNonce, SecretNonce};
+use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge,
 	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
@@ -37,7 +37,7 @@ use server_rpc::protos;
 
 use crate::{database, Server, SECP};
 use crate::database::ln::LightningHtlcSubscriptionStatus;
-use crate::database::forfeits::{ForfeitState, DangerousSecretNonce};
+use crate::database::forfeits::ForfeitState;
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::secret::Secret;

@@ -1,4 +1,5 @@
 
+use secp256k1_musig::ffi::MUSIG_SECNONCE_SIZE;
 pub use secp256k1_musig as secpm;
 pub use secp256k1_musig::musig::{
 	AggregatedNonce, PublicNonce, PartialSignature, SecretNonce, Session, SessionSecretRand,
@@ -215,5 +216,20 @@ pub mod serde {
 			let b = TryFrom::try_from(&v[..]).map_err(D::Error::custom)?;
 			PartialSignature::from_byte_array(b).map_err(D::Error::custom)
 		}
+	}
+}
+/// A type that actually represents a [SecretNonce] but without the
+/// typesystem defenses for dangerous usage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DangerousSecretNonce(Vec<u8>);
+
+impl DangerousSecretNonce {
+	pub fn new(n: SecretNonce) -> Self {
+		DangerousSecretNonce(n.dangerous_into_bytes().to_vec())
+	}
+
+	pub fn to_sec_nonce(&self) -> SecretNonce {
+		assert_eq!(self.0.len(), MUSIG_SECNONCE_SIZE);
+		SecretNonce::dangerous_from_bytes(TryFrom::try_from(&self.0[..]).expect("right size"))
 	}
 }
