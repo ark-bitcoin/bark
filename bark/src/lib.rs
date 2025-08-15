@@ -52,7 +52,7 @@ use ark::address::VtxoDelivery;
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::connectors::ConnectorChain;
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
@@ -1479,9 +1479,16 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		self.db.store_lightning_receive(&payment_hash, &preimage, invoice.clone())?;
+		self.db.store_lightning_receive(payment_hash, preimage, &invoice)?;
 
 		Ok(invoice)
+	}
+
+	pub fn lightning_receive_status(
+		&self,
+		payment: impl Into<PaymentHash>,
+	) -> anyhow::Result<Option<LightningReceive>> {
+		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into())?)
 	}
 
 	pub fn lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {
@@ -1493,9 +1500,8 @@ impl Wallet {
 
 		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
 
-		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(
-			&payment_hash
-		)?.context("no lightning receive found")?;
+		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
+			.context("no lightning receive found")?;
 
 		let keypair_index = self.db.get_vtxo_key(&vtxo.vtxo)?;
 		let keypair = self.peak_keypair(keypair_index)?;
@@ -1517,7 +1523,7 @@ impl Wallet {
 		};
 
 		info!("Claiming arkoor against payment preimage");
-		self.db.set_preimage_revealed(&lightning_receive.payment_hash)?;
+		self.db.set_preimage_revealed(lightning_receive.payment_hash)?;
 		let cosign_resp = srv.client.claim_lightning_receive(req).await
 			.context("failed to claim bolt11 board")?
 			.into_inner().try_into().context("invalid server cosign response")?;
@@ -1546,11 +1552,11 @@ impl Wallet {
 	}
 
 
-	pub async fn finish_lightning_receive(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+	pub async fn finish_lightning_receive(&mut self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
 		let tip = self.chain.tip().await?;
 		let mut srv = self.require_server()?;
 
-		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
+		let payment_hash = ark::lightning::PaymentHash::from(invoice);
 
 		let (keypair, _) = self.derive_store_next_keypair()?;
 

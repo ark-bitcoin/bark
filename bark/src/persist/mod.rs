@@ -72,13 +72,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
 
 	/// Store a lightning receive
-	fn store_lightning_receive(&self, payment_hash: &PaymentHash, preimage: &Preimage, invoice: Bolt11Invoice) -> anyhow::Result<()>;
+	fn store_lightning_receive(&self, payment_hash: PaymentHash, preimage: Preimage, invoice: &Bolt11Invoice) -> anyhow::Result<()>;
 	/// Returns a paginated list of lightning receives
 	fn get_paginated_lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>>;
 	/// Set preimage disclosed
-	fn set_preimage_revealed(&self, payment_hash: &PaymentHash) -> anyhow::Result<()>;
+	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 	/// Fetch a lightning receive by payment hash
-	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: &PaymentHash) -> anyhow::Result<Option<LightningReceive>>;
+	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningReceive>>;
 
 	/// Store the VTXOs currently being exited
 	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()>;

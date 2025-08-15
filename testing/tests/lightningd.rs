@@ -1,6 +1,8 @@
 
+use std::str::FromStr;
 use std::sync::Arc;
 
+use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::Amount;
 use cln_rpc as rpc;
 
@@ -416,8 +418,8 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 }
 
 #[tokio::test]
-async fn bark_can_board_from_lightning() {
-	let ctx = TestContext::new("lightningd/bark_can_board_from_lightning").await;
+async fn bark_can_receive_lightning() {
+	let ctx = TestContext::new("lightningd/bark_receive_from_lightning").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -453,6 +455,8 @@ async fn bark_can_board_from_lightning() {
 
 	let pay_amount = btc(1);
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
 
 	let cloned = bark.clone();
 	let cloned_invoice_info = invoice_info.clone();
@@ -618,7 +622,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
-	bark_1.try_send_lightning(invoice, None).try_fast().await.expect_err("the payment is held");
+	bark_1.try_send_lightning(invoice, None).try_wait(1000).await.expect_err("the payment is held");
 
 	// htlc expiry is 6 ahead of current block
 	ctx.generate_blocks(8).await;
