@@ -596,7 +596,7 @@ impl CollectingPayments {
 
 		let vtxos_spec = VtxoTreeSpec::new(
 			self.all_outputs.iter().map(|p| p.req.clone()).collect(),
-			srv.server_key.leak_ref().public_key(),
+			srv.server_pubkey,
 			expiry_height,
 			srv.config.vtxo_exit_delta,
 			vec![self.cosign_key.public_key()],

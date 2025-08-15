@@ -151,6 +151,7 @@ pub struct Server {
 	config: Config,
 	db: database::Db,
 	server_key: Secret<Keypair>,
+	server_pubkey: PublicKey, // public key part of former
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
@@ -332,6 +333,7 @@ impl Server {
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
 			db,
+			server_pubkey: server_key.public_key(),
 			server_key: Secret::new(server_key),
 			bitcoind,
 			rtmgr,
@@ -506,7 +508,7 @@ impl Server {
 		let builder = BoardBuilder::new_for_cosign(
 			user_pubkey,
 			expiry_height,
-			self.server_key.leak_ref().public_key(),
+			self.server_pubkey,
 			self.config.vtxo_exit_delta,
 			amount,
 			utxo,
@@ -514,7 +516,7 @@ impl Server {
 		);
 
 		info!("Cosigning board request for utxo {}", utxo);
-		let resp = builder.server_cosign(&self.server_key.leak_ref());
+		let resp = builder.server_cosign(self.server_key.leak_ref());
 
 		slog!(CosignedBoard, utxo, amount);
 
@@ -744,7 +746,7 @@ impl Server {
 
 			//TODO(stevenroose) need to check that the input vtxos are actually marked
 			// as spent for this specific payment
-			if vtxo.server_pubkey() != self.server_key.leak_ref().public_key() {
+			if vtxo.server_pubkey() != self.server_pubkey {
 				return badarg!("invalid server pubkey used");
 			}
 

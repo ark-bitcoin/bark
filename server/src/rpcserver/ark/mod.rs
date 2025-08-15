@@ -70,7 +70,7 @@ impl rpc::server::ArkService for Server {
 
 		let ark_info = ark::ArkInfo {
 			network: self.config.network,
-			server_pubkey: self.server_key.leak_ref().public_key(),
+			server_pubkey: self.server_pubkey,
 			round_interval: self.config.round_interval,
 			nb_round_nonces: self.config.nb_round_nonces,
 			vtxo_exit_delta: self.config.vtxo_exit_delta,
