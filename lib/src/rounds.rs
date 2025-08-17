@@ -10,7 +10,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
 use bitcoin::secp256k1::{self, schnorr, Message};
 
-use crate::{musig, util, Vtxo, VtxoId};
+use crate::{musig, Vtxo, VtxoId, SECP};
 use crate::tree::signed::VtxoTreeSpec;
 
 /// A round tx must have at least vtxo tree and connector chain outputs.
@@ -54,7 +54,7 @@ impl VtxoOwnershipChallenge {
 	}
 
 	pub fn sign_with(&self, vtxo_id: VtxoId, vtxo_keypair: Keypair) -> schnorr::Signature {
-		util::SECP.sign_schnorr(&self.as_signable_message(vtxo_id), &vtxo_keypair)
+		SECP.sign_schnorr(&self.as_signable_message(vtxo_id), &vtxo_keypair)
 	}
 
 	pub fn verify_input_vtxo_sig(
@@ -62,7 +62,7 @@ impl VtxoOwnershipChallenge {
 		vtxo: &Vtxo,
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
-		util::SECP.verify_schnorr(
+		SECP.verify_schnorr(
 			sig,
 			&self.as_signable_message(vtxo.id()),
 			&vtxo.user_pubkey().x_only_public_key().0,

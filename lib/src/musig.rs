@@ -7,8 +7,6 @@ pub use secp256k1_musig::musig::{
 use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey, SecretKey, XOnlyPublicKey};
 use secpm::musig::KeyAggCache;
 
-use crate::util;
-
 lazy_static! {
 	/// Global secp context.
 	pub static ref SECP: secpm::Secp256k1<secpm::All> = secpm::Secp256k1::new();
@@ -35,7 +33,7 @@ pub fn keypair_to(kp: &Keypair) -> secpm::Keypair {
 }
 
 pub fn keypair_from(kp: &secpm::Keypair) -> Keypair {
-	Keypair::from_seckey_slice(&util::SECP, &kp.secret_bytes()).unwrap()
+	Keypair::from_seckey_slice(&crate::SECP, &kp.secret_bytes()).unwrap()
 }
 
 pub fn sig_from(s: secpm::schnorr::Signature) -> schnorr::Signature {

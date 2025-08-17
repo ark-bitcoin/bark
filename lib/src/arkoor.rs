@@ -13,8 +13,7 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use bitcoin_ext::{fee, P2TR_DUST, TAPROOT_KEYSPEND_WEIGHT};
 
 use crate::error::IncorrectSigningKeyError;
-use crate::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use crate::util::{self, verify_partial_sig, SECP};
+use crate::{musig, scripts, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP};
 use crate::vtxo::{GenesisItem, GenesisTransition};
 
 
@@ -98,7 +97,7 @@ pub fn signed_arkoor_tx(
 	outputs: &[TxOut],
 ) -> Transaction {
 	let mut tx = unsigned_arkoor_tx(input, outputs);
-	util::fill_taproot_sigs(&mut tx, &[signature]);
+	scripts::fill_taproot_sigs(&mut tx, &[signature]);
 	tx
 }
 
@@ -198,7 +197,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 		&self,
 		server_cosign: &ArkoorCosignResponse,
 	) -> bool {
-		verify_partial_sig(
+		scripts::verify_partial_sig(
 			self.sighash(),
 			self.input.output_taproot().tap_tweak(),
 			(self.input.server_pubkey(), &server_cosign.pub_nonce),
@@ -249,7 +248,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 		);
 		let final_sig = final_sig.expect("we provided the other sig");
 		debug_assert!(
-			verify_partial_sig(
+			scripts::verify_partial_sig(
 				sighash,
 				taptweak,
 				(self.input.user_pubkey(), &self.user_nonce),
