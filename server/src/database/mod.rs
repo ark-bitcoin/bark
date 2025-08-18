@@ -4,11 +4,10 @@ mod embedded {
 	use refinery::embed_migrations;
 	embed_migrations!("src/database/migrations");
 }
-mod cln;
 mod utils;
 
+pub mod ln;
 pub mod model;
-pub use self::cln::ClnNodeId;
 use self::model::{ForfeitClaimState, ForfeitRoundState};
 
 
