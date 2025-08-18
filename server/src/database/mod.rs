@@ -10,7 +10,8 @@ pub mod forfeits;
 pub mod ln;
 pub mod rounds;
 
-pub mod model;
+mod model;
+pub use model::*;
 
 
 use std::borrow::Borrow;
@@ -34,7 +35,6 @@ use ark::encode::ProtocolEncoding;
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
-use crate::database::model::{PendingSweep, VtxoState};
 use crate::database::forfeits::ForfeitState;
 
 
