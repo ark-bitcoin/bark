@@ -20,8 +20,8 @@ use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use cln_rpc::node_client::NodeClient;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
-use crate::database::{self, ClnNodeId};
-use crate::database::model::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::database;
+use crate::database::ln::{ClnNodeId, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use crate::system::RuntimeManager;
 use crate::telemetry;
 

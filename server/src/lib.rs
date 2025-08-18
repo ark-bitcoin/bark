@@ -62,7 +62,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::cln::ClnManager;
-use crate::database::model::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;

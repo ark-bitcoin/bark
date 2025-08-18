@@ -21,9 +21,9 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
-use crate::cln::ClnNodeStateKind;
 use crate::Config;
-use crate::database::model::LightningPaymentStatus;
+use crate::cln::ClnNodeStateKind;
+use crate::database::ln::LightningPaymentStatus;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
