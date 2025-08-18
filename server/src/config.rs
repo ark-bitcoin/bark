@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
-use crate::{forfeits, serde_util, sweeps};
+use crate::{forfeits, serde_util, sweeps, vtxopool};
 use crate::secret::Secret;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -245,6 +245,9 @@ pub struct Config {
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub forfeit_watcher_min_balance: Amount,
 
+	/// Config for the VtxoPool process
+	pub vtxopool: vtxopool::Config,
+
 	// The interval used to rebroadcast transactions
 	#[serde(with = "serde_util::duration")]
 	pub transaction_rebroadcast_interval: Duration,
@@ -307,6 +310,8 @@ impl Default for Config {
 			forfeit_watcher: Default::default(),
 			forfeit_watcher_min_balance: Amount::from_sat(10_000_000),
 
+			vtxopool: Default::default(),
+
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(60),
 
 			rpc: Rpc {
@@ -353,6 +358,10 @@ impl Config {
 		#[cfg(test)]
 		let env = env.source(custom_env);
 		builder = builder.add_source(env);
+
+		// // because the config crate doesn't deal well with empty lists,
+		// // we have to manually add all lists that are empty
+		builder = builder.set_default("vtxopool.vtxo_targets", Vec::<Value>::new()).unwrap();
 
 		let cln_array = {
 			let env_cfg = builder.clone().build().context("error building config")?;

@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH, Instant};
 use anyhow::Context;
 use bdk_wallet::{SignOptions, Wallet, Balance, KeychainKind};
 use bip39::Mnemonic;
-use bitcoin::{bip32, Network, Address, FeeRate, Amount};
+use bitcoin::{bip32, Address, Amount, FeeRate, Network, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::WalletExt;
@@ -235,14 +235,14 @@ impl PersistedWallet {
 	/// Send money to an address.
 	pub async fn send(
 		&mut self,
-		addr: &Address,
+		script_pubkey: impl Into<ScriptBuf>,
 		amount: Amount,
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Transaction> {
 		let untrusted = self.untrusted_utxos(None);
 		let mut b = self.build_tx();
 		b.unspendable(untrusted);
-		b.add_recipient(addr.script_pubkey(), amount);
+		b.add_recipient(script_pubkey, amount);
 		b.fee_rate(fee_rate);
 		let psbt = b.finish()?;
 		let tx = self.finish_tx(psbt)?;

@@ -536,6 +536,14 @@ impl GenesisTransition {
 			Self::Arkoor { .. } => true,
 		}
 	}
+
+	/// Whether this transition is an out-of-round transition
+	fn is_arkoor(&self) -> bool {
+		match self {
+			Self::Cosigned { .. } => false,
+			Self::Arkoor { .. } => true,
+		}
+	}
 }
 
 /// An item in a VTXO's genesis.
@@ -811,10 +819,7 @@ impl Vtxo {
 	pub fn arkoor_depth(&self) -> u16 {
 		// NB this relies on the invariant that all arkoor transitions
 		// follow the cosign transitions
-		self.genesis.iter().rev().take_while(|item| match item.transition {
-			GenesisTransition::Cosigned { .. } => false,
-			GenesisTransition::Arkoor { .. } => true,
-		}).count() as u16
+		self.genesis.iter().rev().take_while(|item| item.transition.is_arkoor()).count() as u16
 	}
 
 	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.

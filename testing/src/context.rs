@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use log::info;
+use server::vtxopool::VtxoTarget;
 use server::Server;
 use tokio::fs;
 use tonic::transport::Uri;
@@ -20,8 +21,7 @@ use crate::util::{
 	get_bark_chain_source_from_env, test_data_directory, FutureExt, TestContextChainSource,
 };
 use crate::{
-	constants, Captaind, Bitcoind, BitcoindConfig, Bark, BarkConfig, Electrs, ElectrsConfig,
-	Lightningd, LightningdConfig,
+	btc, constants, sat, Bark, BarkConfig, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig, Lightningd, LightningdConfig
 };
 
 pub trait ToArkUrl {
@@ -249,6 +249,18 @@ impl TestContext {
 				wake_interval: Duration::from_millis(1_000),
 			},
 			forfeit_watcher_min_balance: Amount::from_sat(1_000_000),
+			vtxopool: server::vtxopool::Config {
+				vtxo_targets: vec![
+					VtxoTarget { count: 3, amount: sat(10_000) },
+					VtxoTarget { count: 3, amount: btc(1) },
+				],
+				vtxo_target_issue_threshold: 50,
+				vtxo_lifetime: 144 / 2,
+				vtxo_pre_expiry: 12,
+				vtxo_max_arkoor_depth: 3,
+				issue_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(1),
+				issue_interval: Duration::from_secs(3),
+			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty

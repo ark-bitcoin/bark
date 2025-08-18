@@ -9,6 +9,7 @@ pub mod intman;
 pub mod forfeits;
 pub mod ln;
 pub mod rounds;
+pub mod vtxopool;
 
 mod model;
 pub use model::*;

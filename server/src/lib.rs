@@ -13,6 +13,7 @@ pub mod forfeits;
 pub mod secret;
 pub mod sweeps;
 pub mod tip_fetcher;
+pub mod vtxopool;
 pub mod wallet;
 
 pub(crate) mod flux;
@@ -76,6 +77,7 @@ use crate::telemetry::init_telemetry;
 use crate::tip_fetcher::TipFetcher;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
+use crate::vtxopool::VtxoPool;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 lazy_static::lazy_static! {
@@ -173,6 +175,7 @@ pub struct Server {
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
 	cln: ClnManager,
+	vtxopool: VtxoPool,
 }
 
 impl Server {
@@ -359,6 +362,9 @@ impl Server {
 			db.clone(),
 		).await.context("failed to start ClnManager")?;
 
+		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await
+			.context("failed to initiate vtxopool")?;
+
 		let (round_event_tx, _rx) = broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
@@ -385,6 +391,7 @@ impl Server {
 			vtxo_sweeper,
 			forfeits,
 			cln,
+			vtxopool,
 		};
 
 		let srv = Arc::new(srv);
@@ -399,6 +406,9 @@ impl Server {
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", res);
 		});
+
+		// VtxoPool
+		srv.vtxopool.start(srv.clone());
 
 		// RPC
 
@@ -473,7 +483,7 @@ impl Server {
 				let addr = forfeit_wallet.address.assume_checked();
 				let feerate = self.config.round_tx_feerate; //TODO(stevenroose) fix this
 				info!("Sending {amount} to forfeit wallet address {addr}...");
-				let tx = match wallet.send(&addr, amount, feerate).await {
+				let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
 					Ok(tx) => tx,
 					Err(e) => {
 						warn!("Error sending from round to forfeit wallet: {:?}", e);
@@ -1143,6 +1153,8 @@ impl Server {
 
 		// Now we're done and we can drop the key.
 		let _ = self.drop_ephemeral_cosign_key(server_cosign_pubkey).await?;
+
+		//TODO(stevenroose) some sanity check on expiry?
 
 		let tree = tree.into_signed_tree(signatures).into_cached_tree();
 		self.db.upsert_vtxos(tree.all_vtxos()).await.context("db error occurred")?;
