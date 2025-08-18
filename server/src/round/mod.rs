@@ -444,6 +444,16 @@ impl CollectingPayments {
 			}
 		};
 
+
+		let ownership_proof_by_vtxo_id = inputs.iter()
+			.map(|v| (v.vtxo_id, v.ownership_proof)).collect::<HashMap<_,_>>();
+		let v_reqs = vtxo_requests.iter().map(|v| v.req.clone()).collect::<Vec<_>>();
+		for input in &input_vtxos {
+			let sig = ownership_proof_by_vtxo_id.get(&input.id()).expect("all vtxos were found");
+			self.vtxo_ownership_challenge.verify_input_vtxo_sig(input, &v_reqs, &offboards, sig)
+				.context(format!("ownership proof is invalid: vtxo {}, proof: {}", input.id(), sig))?;
+		}
+
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
 			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt_seq: self.attempt_seq, error: e.to_string(),

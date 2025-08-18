@@ -10,7 +10,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
 use bitcoin::secp256k1::{self, schnorr, Message};
 
-use crate::{musig, Vtxo, VtxoId, SECP};
+use crate::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, Vtxo, VtxoId};
 use crate::tree::signed::VtxoTreeSpec;
 
 /// A round tx must have at least vtxo tree and connector chain outputs.
@@ -43,28 +43,41 @@ impl VtxoOwnershipChallenge {
 	/// Combines [VtxoOwnershipChallenge] and [VtxoId] in a signable message
 	///
 	/// Note: because we use [`VtxoId`] in the message, there is no
-	fn as_signable_message(&self, vtxo_id: VtxoId) -> Message {
+	fn as_signable_message(&self, vtxo_id: VtxoId, vtxo_reqs: &[SignedVtxoRequest], offboard_reqs: &[OffboardRequest]) -> Message {
 		let mut engine = sha256::Hash::engine();
 		engine.write_all(Self::CHALENGE_MESSAGE_PREFIX).unwrap();
 		engine.write_all(&self.0).unwrap();
 		engine.write_all(&vtxo_id.to_bytes()).unwrap();
 
+		engine.write_all(&vtxo_reqs.len().to_be_bytes()).unwrap();
+		for req in vtxo_reqs {
+			engine.write_all(&req.vtxo.amount.to_sat().to_be_bytes()).unwrap();
+			req.vtxo.policy.encode(&mut engine).unwrap();
+			req.cosign_pubkey.encode(&mut engine).unwrap();
+		}
+
+		engine.write_all(&offboard_reqs.len().to_be_bytes()).unwrap();
+		for req in offboard_reqs {
+			req.to_txout().encode(&mut engine).unwrap();
+		}
 		let hash = sha256::Hash::from_engine(engine).to_byte_array();
 		Message::from_digest(hash)
 	}
 
-	pub fn sign_with(&self, vtxo_id: VtxoId, vtxo_keypair: Keypair) -> schnorr::Signature {
-		SECP.sign_schnorr(&self.as_signable_message(vtxo_id), &vtxo_keypair)
+	pub fn sign_with(&self, vtxo_id: VtxoId, vtxo_reqs: &[SignedVtxoRequest], offboard_reqs: &[OffboardRequest], vtxo_keypair: Keypair) -> schnorr::Signature {
+		SECP.sign_schnorr(&self.as_signable_message(vtxo_id, vtxo_reqs, offboard_reqs), &vtxo_keypair)
 	}
 
 	pub fn verify_input_vtxo_sig(
 		&self,
 		vtxo: &Vtxo,
+		vtxo_reqs: &[SignedVtxoRequest],
+		offboard_reqs: &[OffboardRequest],
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
 		SECP.verify_schnorr(
 			sig,
-			&self.as_signable_message(vtxo.id()),
+			&self.as_signable_message(vtxo.id(), vtxo_reqs, offboard_reqs),
 			&vtxo.user_pubkey().x_only_public_key().0,
 		)
 	}

@@ -4,6 +4,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bark::Wallet;
 use bitcoin::hex::FromHex;
 use bitcoin::{Amount, Network};
 use bitcoin::hashes::Hash;
@@ -13,11 +14,11 @@ use bitcoin::{ScriptBuf, WPubkeyHash};
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST, P2TR_DUST_SAT};
 use futures::future::join_all;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use log::{error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
-use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy, SECP};
+use ark::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::rounds::VtxoOwnershipChallenge;
 use server_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
@@ -818,7 +819,7 @@ async fn bad_round_input() {
 	}).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
 	bark.board(btc(0.5)).await;
-	let [vtxo] = bark.vtxos().await.try_into().unwrap();
+	let [vtxo] = bark.client().await.vtxos().unwrap().try_into().unwrap();
 
 	let ark_info = srv.ark_info().await;
 	let mut rpc = srv.get_public_rpc().await;
@@ -839,24 +840,21 @@ async fn bad_round_input() {
 	// build some legit params
 	let key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 	let key2 = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+	let vtxo_req = SignedVtxoRequest {
+		vtxo: VtxoRequest {
+			amount: Amount::from_sat(1000),
+			policy: VtxoPolicy::new_pubkey(key.public_key()),
+		},
+		cosign_pubkey: key2.public_key(),
+	};
+	let offb_req = OffboardRequest {
+		amount: Amount::from_sat(1000),
+		script_pubkey: ScriptBuf::new_p2wpkh(&WPubkeyHash::from_byte_array(rand::random())),
+	};
+
 	let input = protos::InputVtxo {
-		vtxo_id: vtxo.id.to_bytes().to_vec(),
-		ownership_proof: challenge.sign_with(vtxo.id, key).serialize().to_vec(),
-	};
-	let vtxo_req = protos::SignedVtxoRequest {
-		vtxo: Some(protos::VtxoRequest {
-			amount: 1000,
-			policy: VtxoPolicy::new_pubkey(key.public_key()).serialize(),
-		}),
-		cosign_pubkey: key2.public_key().serialize().to_vec(),
-		public_nonces: iter::repeat({
-			let (_sec, pb) = musig::nonce_pair(&key);
-			pb.serialize().to_vec()
-		}).take(ark_info.nb_round_nonces as usize).collect(),
-	};
-	let offb_req = protos::OffboardRequest {
-		amount: 1000,
-		offboard_spk: ScriptBuf::new_p2wpkh(&WPubkeyHash::from_byte_array(rand::random())).to_bytes(),
+		vtxo_id: vtxo.id().to_bytes().to_vec(),
+		ownership_proof: challenge.sign_with(vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], key).serialize().to_vec(),
 	};
 
 	// let's fire some bad attempts
@@ -864,14 +862,27 @@ async fn bad_round_input() {
 	info!("no inputs");
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![],
-		vtxo_requests: vec![vtxo_req.clone()],
+		vtxo_requests: vec![protos::SignedVtxoRequest {
+			vtxo: Some(protos::VtxoRequest {
+				amount: vtxo_req.vtxo.amount.to_sat(),
+				policy: vtxo_req.vtxo.policy.serialize(),
+			}),
+			cosign_pubkey: vtxo_req.cosign_pubkey.serialize().to_vec(),
+			public_nonces: iter::repeat({
+				let (_sec, pb) = musig::nonce_pair(&key);
+				pb.serialize().to_vec()
+			}).take(ark_info.nb_round_nonces as usize).collect(),
+		}],
 		offboard_requests: vec![],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![],
 		vtxo_requests: vec![],
-		offboard_requests: vec![offb_req.clone()],
+		offboard_requests: vec![protos::OffboardRequest {
+			amount: offb_req.amount.to_sat(),
+			offboard_spk: offb_req.script_pubkey.to_bytes(),
+		}],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 
@@ -890,11 +901,21 @@ async fn bad_round_input() {
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
 	let fake_input = protos::InputVtxo {
 		vtxo_id: fake_vtxo.to_bytes().to_vec(),
-		ownership_proof: challenge.sign_with(fake_vtxo, key).serialize().to_vec(),
+		ownership_proof: challenge.sign_with(vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], key).serialize().to_vec(),
 	};
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![fake_input],
-		vtxo_requests: vec![vtxo_req.clone()],
+		vtxo_requests: vec![protos::SignedVtxoRequest {
+			vtxo: Some(protos::VtxoRequest {
+				amount: vtxo_req.vtxo.amount.to_sat(),
+				policy: vtxo_req.vtxo.policy.serialize(),
+			}),
+			cosign_pubkey: vtxo_req.cosign_pubkey.serialize().to_vec(),
+			public_nonces: iter::repeat({
+				let (_sec, pb) = musig::nonce_pair(&key);
+				pb.serialize().to_vec()
+			}).take(ark_info.nb_round_nonces as usize).collect(),
+		}],
 		offboard_requests: vec![],
 	}).fast().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::NotFound, "[{}]: {}", err.code(), err.message());
@@ -1109,30 +1130,77 @@ async fn reject_dust_board_cosign() {
 	), "err: {err}");
 }
 
-
 #[tokio::test]
 async fn reject_dust_vtxo_request() {
 	let ctx = TestContext::new("server/reject_dust_vtxo_request").await;
 	let srv = ctx.new_captaind("server", None).await;
 
+	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board_all().await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let bark_client = bark.client().await;
+
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy(captaind::ArkClient, Arc<Wallet>, Arc<Mutex<Option<VtxoOwnershipChallenge>>>);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
+		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+		>, tonic::Status> {
+			let stream = self.upstream().subscribe_rounds(req).await?.into_inner();
+
+			let shared = self.2.clone();
+
+			let s = stream
+				.inspect_ok(move |event| {
+					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
+						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+						shared.try_lock().unwrap().replace(challenge);
+					}
+				});
+
+			Ok(Box::new(s))
+		}
+
+		// Proxy alters the request to make it vtxo request subdust but correctly signed
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			req.vtxo_requests.get_mut(0).unwrap().vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
+			let [input] = req.input_vtxos.clone().try_into().unwrap();
+
+			req.vtxo_requests[0].vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
+
+			let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
+			for r in &req.vtxo_requests {
+				vtxo_requests.push(ark::SignedVtxoRequest {
+					vtxo: r.vtxo.clone().unwrap().try_into().unwrap(),
+					cosign_pubkey: PublicKey::from_slice(&r.cosign_pubkey).unwrap(),
+				});
+			}
+
+			// Spending input boarded with first derivation
+			let keypair = self.1.peak_keypair(0).unwrap();
+
+			let sig = self.2.lock().await.as_ref().unwrap().sign_with(
+				VtxoId::from_slice(&input.vtxo_id).unwrap(),
+				&vtxo_requests,
+				&[],
+				keypair,
+			);
+
+
+			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
+
 			Ok(self.upstream().submit_payment(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(bark_client), Arc::new(Mutex::new(None)));
 	let proxy = ArkRpcProxyServer::start(proxy).await;
-	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
-	bark.board_all().await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.set_ark_url(&proxy.address).await;
 
 	bark.timeout = Some(Duration::from_millis(3_500));
 	let err = bark.try_refresh_all().await.unwrap_err();
@@ -1146,25 +1214,73 @@ async fn reject_dust_offboard_request() {
 	let ctx = TestContext::new("server/reject_dust_offboard_request").await;
 	let srv = ctx.new_captaind("server", None).await;
 
+	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board_all().await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let bark_client = bark.client().await;
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy(captaind::ArkClient, Arc<Wallet>, Arc<Mutex<Option<VtxoOwnershipChallenge>>>);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
+		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+		>, tonic::Status> {
+			let stream = self.upstream().subscribe_rounds(req).await?.into_inner();
+
+			let shared = self.2.clone();
+
+			let s = stream
+				.inspect_ok(move |event| {
+					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
+						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+						shared.try_lock().unwrap().replace(challenge);
+					}
+				});
+
+			Ok(Box::new(s))
+		}
+
+		// Proxy alters the request to make it vtxo request subdust but correctly signed
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+			let [input] = req.input_vtxos.clone().try_into().unwrap();
+
 			req.offboard_requests[0].amount = P2TR_DUST_SAT - 1;
+
+			let mut offboard_requests = Vec::with_capacity(req.offboard_requests.len());
+			for r in &req.offboard_requests {
+				offboard_requests.push(ark::OffboardRequest {
+					script_pubkey: ScriptBuf::from_bytes(r.offboard_spk.clone()),
+					amount: Amount::from_sat(r.amount),
+				});
+			}
+
+			// Spending input boarded with first derivation
+			let keypair = self.1.peak_keypair(0).unwrap();
+
+			let sig = self.2.lock().await.as_ref().unwrap().sign_with(
+				VtxoId::from_slice(&input.vtxo_id).unwrap(),
+				&[],
+				&offboard_requests,
+				keypair,
+			);
+
+
+			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
+
 			Ok(self.upstream().submit_payment(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(bark_client), Arc::new(Mutex::new(None)));
 	let proxy = ArkRpcProxyServer::start(proxy).await;
-	let mut bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-	bark.timeout = Some(Duration::from_millis(10_000));
 
-	bark.board_all().await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.set_ark_url(&proxy.address).await;
+
+	bark.timeout = Some(Duration::from_millis(10_000));
 
 	let addr = bark.get_onchain_address().await;
 	let err = bark.try_offboard_all(&addr).await.unwrap_err();
