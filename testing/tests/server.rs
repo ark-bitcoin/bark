@@ -17,9 +17,8 @@ use futures::{Stream, StreamExt};
 use log::{error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
-use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy};
+use ark::{musig, ProtocolEncoding, VtxoId, VtxoPolicy, SECP};
 use ark::rounds::VtxoOwnershipChallenge;
-use ark::util::SECP;
 use server_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,

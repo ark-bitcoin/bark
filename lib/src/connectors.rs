@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighashType};
 use bitcoin_ext::{fee, KeypairExt, P2TR_DUST};
 
-use crate::util::{self, SECP};
+use crate::SECP;
 
 /// The output index of the connector chain continuation in the connector tx.
 ///
@@ -66,7 +66,7 @@ impl ConnectorChain {
 
 	/// Create the scriptPubkey to create a connector chain using the given publick key.
 	pub fn output_script(pubkey: PublicKey) -> ScriptBuf {
-		ScriptBuf::new_p2tr(&util::SECP, pubkey.x_only_public_key().0, None)
+		ScriptBuf::new_p2tr(&SECP, pubkey.x_only_public_key().0, None)
 	}
 
 	/// Create the address to create a connector chain using the given publick key.
@@ -319,7 +319,7 @@ mod test {
 
 	#[test]
 	fn test_budget() {
-		let key = Keypair::new(&util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+		let key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 		let utxo = OutPoint::new(Txid::all_zeros(), 3);
 
 		let chain = ConnectorChain::new(1, utxo, key.public_key());
@@ -366,7 +366,7 @@ mod test {
 
 	#[test]
 	fn test_signatures() {
-		let key = Keypair::new(&util::SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+		let key = Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng());
 		let utxo = OutPoint::new(Txid::all_zeros(), 3);
 		let spk = ConnectorChain::output_script(key.public_key());
 

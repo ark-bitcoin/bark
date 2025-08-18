@@ -14,7 +14,7 @@ use secp256k1_musig::musig::{AggregatedNonce, PartialSignature, PublicNonce, Sec
 use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt, TransactionExt, TxOutExt};
 
 use crate::error::IncorrectSigningKeyError;
-use crate::{musig, util, SignedVtxoRequest, Vtxo, VtxoPolicy, VtxoRequest};
+use crate::{musig, scripts, SECP, SignedVtxoRequest, Vtxo, VtxoPolicy, VtxoRequest};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::tree::{self, Tree};
 use crate::vtxo::{self, GenesisItem, GenesisTransition};
@@ -26,7 +26,7 @@ pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 /// The expiry clause hidden in the node taproot as only script.
 pub fn expiry_clause(server_pubkey: PublicKey, expiry_height: BlockHeight) -> ScriptBuf {
 	let pk = server_pubkey.x_only_public_key().0;
-	util::timelock_sign(expiry_height, pk)
+	scripts::timelock_sign(expiry_height, pk)
 }
 
 pub fn cosign_taproot(
@@ -36,7 +36,7 @@ pub fn cosign_taproot(
 ) -> taproot::TaprootSpendInfo {
 	taproot::TaprootBuilder::new()
 		.add_leaf(0, expiry_clause(server_pubkey, expiry_height)).unwrap()
-		.finalize(&util::SECP, agg_pk).unwrap()
+		.finalize(&SECP, agg_pk).unwrap()
 }
 
 /// All the information that uniquely specifies a VTXO tree before it has been signed.
@@ -542,7 +542,7 @@ impl UnsignedVtxoTree {
 			let sighash = self.sighashes[node.idx()];
 			let agg_pk = &self.cosign_agg_pks[node.idx()];
 			let pk = self.spec.cosign_taproot(*agg_pk).output_key().to_x_only_public_key();
-			util::SECP.verify_schnorr(sig, &sighash.into(), &pk)
+			SECP.verify_schnorr(sig, &sighash.into(), &pk)
 				.map_err(|e| format!("invalid signature on node #{}: {}", i, e))?;
 		}
 		Ok(())
