@@ -17,8 +17,11 @@ mod system;
 pub use self::system::*;
 
 
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::BlockHash;
 use bitcoin_ext::BlockHeight;
+use chrono::DateTime;
+use chrono::Local;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,4 +30,35 @@ pub struct TipUpdated {
 	pub hash: BlockHash,
 }
 impl_slog!(TipUpdated, Debug, "the chain tip has been updated");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredEphemeralTweak {
+	pub pubkey: PublicKey,
+	pub expires_at: DateTime<Local>,
+}
+impl_slog!(StoredEphemeralTweak, Debug, "stored new ephemeral tweak");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchedEphemeralTweak {
+	pub pubkey: PublicKey,
+}
+impl_slog!(FetchedEphemeralTweak, Debug, "fetched ephemeral tweak");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DroppedEphemeralTweak {
+	pub pubkey: PublicKey,
+}
+impl_slog!(DroppedEphemeralTweak, Info, "dropped ephemeral tweak");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanedEphemeralTweaks {
+	pub nb_tweaks: usize,
+}
+impl_slog!(CleanedEphemeralTweaks, Info, "cleaned expired ephemeral tweaks");
+
+
 

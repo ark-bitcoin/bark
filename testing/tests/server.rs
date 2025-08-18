@@ -32,7 +32,7 @@ use server::secret::Secret;
 use server_rpc::protos;
 use bark_json::exit::ExitState;
 
-use ark_testing::{Captaind, TestContext, btc, sat, Bark};
+use ark_testing::{Captaind, TestContext, btc, sat, secs, Bark};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind;
@@ -1803,3 +1803,24 @@ async fn captaind_config_change(){
 	assert_eq!(new_vtxo[0].exit_delta, 24);
 }
 
+#[tokio::test]
+async fn test_ephemeral_keys() {
+	let ctx = TestContext::new("server/test_ephemeral_keys").await;
+	let srv = ctx.new_server_with_cfg("server", None, |_| { }).await;
+	let db = srv.database();
+
+	let pubkey = srv.generate_ephemeral_cosign_key(secs(60)).await.unwrap().public_key();
+	assert_eq!(srv.get_ephemeral_cosign_key(pubkey).await.unwrap().public_key(), pubkey);
+	assert_eq!(srv.drop_ephemeral_cosign_key(pubkey).await.unwrap().public_key(), pubkey);
+	assert!(db.fetch_ephemeral_tweak(pubkey).await.unwrap().is_none());
+	assert!(db.drop_ephemeral_tweak(pubkey).await.unwrap().is_none());
+
+	// let's expire one
+	let pubkey = srv.generate_ephemeral_cosign_key(secs(1)).await.unwrap().public_key();
+	assert_eq!(srv.get_ephemeral_cosign_key(pubkey).await.unwrap().public_key(), pubkey);
+	tokio::time::sleep(Duration::from_millis(1500)).await;
+	// to trigger the cleanup
+	let _ = srv.generate_ephemeral_cosign_key(secs(1)).await.unwrap().public_key();
+	assert!(db.fetch_ephemeral_tweak(pubkey).await.unwrap().is_none());
+	assert!(db.drop_ephemeral_tweak(pubkey).await.unwrap().is_none());
+}
