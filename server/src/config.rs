@@ -98,7 +98,7 @@ pub struct Rpc {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HodlInvoiceClnPlugin {
-	#[serde(with = "serde_util::uri")]
+	#[serde(with = "serde_util::string")]
 	pub uri: tonic::transport::Uri,
 	pub server_cert_path: PathBuf,
 	pub client_cert_path: PathBuf,
@@ -108,7 +108,7 @@ pub struct HodlInvoiceClnPlugin {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lightningd {
-	#[serde(with = "serde_util::uri")]
+	#[serde(with = "serde_util::string")]
 	pub uri: tonic::transport::Uri,
 	/// Lowest number has the highest priority.
 	pub priority: u8,

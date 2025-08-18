@@ -38,30 +38,123 @@ impl<'de> Deserialize<'de> for Bytes<'de> {
 	}
 }
 
-pub mod uri {
+pub mod string {
+	//! generic way to serialize a type using it's [fmt::Display] and [str::FromStr] impl
+
+	use std::marker::PhantomData;
+
 	use super::*;
 
-	use tonic::transport::Uri;
+	struct RefWrapper<'a, T>(&'a T);
 
-	pub fn serialize<S: Serializer>(a: &Uri, s: S) -> Result<S::Ok, S::Error> {
-		s.collect_str(a)
+	impl<'a, T: fmt::Display> Serialize for RefWrapper<'a, T> {
+		fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+		where
+			S: Serializer,
+		{
+		    serializer.collect_str(&self.0)
+		}
 	}
 
-	pub fn deserialize<'d, D: Deserializer<'d>>(d: D) -> Result<Uri, D::Error> {
-		struct Visitor;
+	struct OwnedWrapper<T>(T);
 
-		impl<'de> serde::de::Visitor<'de> for Visitor {
-			type Value = Uri;
+	impl<'de, T> Deserialize<'de> for OwnedWrapper<T>
+	where
+		T: FromStr,
+		T::Err: fmt::Display,
+	{
+		fn deserialize<D>(d: D) -> Result<Self, D::Error>
+		where
+			D: Deserializer<'de>,
+		{
+			struct Visitor<T>(PhantomData<T>);
 
-			fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-				f.write_str("a URI")
+			impl<'de, T> de::Visitor<'de> for Visitor<T>
+			where
+				T: FromStr,
+				T::Err: fmt::Display,
+			{
+				type Value = OwnedWrapper<T>;
+
+				fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+					f.write_str("a stringable object")
+				}
+
+				fn visit_str<E: de::Error>(self, s: &str) -> Result<Self::Value, E> {
+					Ok(OwnedWrapper(T::from_str(s).map_err(serde::de::Error::custom)?))
+				}
 			}
-
-			fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-				Uri::from_str(v).map_err(E::custom)
-			}
+			d.deserialize_str(Visitor(PhantomData))
 		}
-		d.deserialize_str(Visitor)
+	}
+
+	pub fn serialize<T, S>(v: &T, s: S) -> Result<S::Ok, S::Error>
+	where
+		T: fmt::Display,
+		S: Serializer,
+	{
+		s.collect_str(v)
+	}
+
+	pub fn deserialize<'de, T, D>(d: D) -> Result<T, D::Error>
+	where
+		D: Deserializer<'de>,
+		T: FromStr,
+		T::Err: fmt::Display,
+	{
+		Ok(OwnedWrapper::deserialize(d)?.0)
+	}
+
+	pub mod vec {
+		use std::marker::PhantomData;
+
+		use serde::ser::SerializeSeq;
+
+		use super::*;
+
+		pub fn serialize<T, S>(v: &[T], s: S) -> Result<S::Ok, S::Error>
+		where
+			T: fmt::Display,
+			S: Serializer,
+		{
+			let mut seq = s.serialize_seq(Some(v.len()))?;
+			for i in v {
+				seq.serialize_element(&RefWrapper(i))?;
+			}
+			seq.end()
+		}
+
+		pub fn deserialize<'de, T, D>(d: D) -> Result<Vec<T>, D::Error>
+		where
+			D: Deserializer<'de>,
+			T: FromStr,
+			T::Err: fmt::Display,
+		{
+			struct Visitor<T>(PhantomData<T>);
+
+			impl<'de, T> de::Visitor<'de> for Visitor<T>
+			where
+				T: FromStr,
+				T::Err: fmt::Display,
+			{
+				type Value = Vec<T>;
+
+				fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+					f.write_str("a sequence of stringable objects")
+				}
+
+				fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+				    where
+				        A: de::SeqAccess<'de>, {
+					let mut ret = Vec::with_capacity(seq.size_hint().unwrap_or_default());
+					while let Some(i) = seq.next_element::<OwnedWrapper<T>>()? {
+						ret.push(i.0);
+					}
+					Ok(ret)
+				}
+			}
+			d.deserialize_seq(Visitor(PhantomData))
+		}
 	}
 }
 
@@ -75,8 +168,20 @@ pub mod duration {
 	}
 
 	pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
-		let s = String::deserialize(d)?;
-		humantime::parse_duration(&s).map_err(serde::de::Error::custom)
+		struct Visitor;
+
+		impl<'de> de::Visitor<'de> for Visitor {
+			type Value = Duration;
+
+			fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+				f.write_str("a duration")
+			}
+
+			fn visit_str<E: de::Error>(self, s: &str) -> Result<Self::Value, E> {
+				humantime::parse_duration(s).map_err(serde::de::Error::custom)
+			}
+		}
+		d.deserialize_str(Visitor)
 	}
 }
 
@@ -91,20 +196,32 @@ pub mod fee_rate {
 	}
 
 	pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<FeeRate, D::Error> {
-		let ret = String::deserialize(d)?;
-		if let Some(stripped) = ret.strip_suffix("sat/vb") {
-			if let Ok(number) = stripped.trim().parse::<u64>() {
-				let fr = FeeRate::from_sat_per_vb(number);
-				if fr.is_some() {
-					return Ok(fr.unwrap());
-				}
+		struct Visitor;
+
+		impl<'de> de::Visitor<'de> for Visitor {
+			type Value = FeeRate;
+
+			fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+				f.write_str("a fee rate")
 			}
-		} else if let Some(stripped) = ret.strip_suffix("sat/kwu") {
-			if let Ok(number) = stripped.trim().parse::<u64>() {
-				return Ok(FeeRate::from_sat_per_kwu(number));
+
+			fn visit_str<E: de::Error>(self, s: &str) -> Result<Self::Value, E> {
+				if let Some(stripped) = s.strip_suffix("sat/vb") {
+					if let Ok(number) = stripped.trim().parse::<u64>() {
+						let fr = FeeRate::from_sat_per_vb(number);
+						if fr.is_some() {
+							return Ok(fr.unwrap());
+						}
+					}
+				} else if let Some(stripped) = s.strip_suffix("sat/kwu") {
+					if let Ok(number) = stripped.trim().parse::<u64>() {
+						return Ok(FeeRate::from_sat_per_kwu(number));
+					}
+				}
+
+				Err(serde::de::Error::custom("Failed to parse FeeRate in sat/kwu or sat/vb"))
 			}
 		}
-
-		Err(serde::de::Error::custom("Failed to parse FeeRate in sat/kwu or sat/vb"))
+		d.deserialize_str(Visitor)
 	}
 }
