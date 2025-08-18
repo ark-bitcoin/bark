@@ -13,8 +13,8 @@ use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use log::{debug, error, info, log_enabled, trace, warn};
-use opentelemetry::{global, KeyValue};
-use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
+use opentelemetry::global;
+use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
 use tracing::info_span;
@@ -1026,7 +1026,7 @@ impl SigningForfeits {
 			.start_with_context(&tracer_provider, &parent_context.clone());
 		span.set_int_attr("signed-vtxo-count", self.signed_vtxos.nb_leaves());
 		span.set_int_attr("connectors-count", self.connectors.len());
-		span.set_attribute(KeyValue::new(ATTRIBUTE_ROUND_ID, round_txid.to_string()));
+		span.set_str_attr(ATTRIBUTE_ROUND_ID, round_txid);
 
 		trace!("Storing round result");
 		if log_enabled!(RoundVtxoCreated::LEVEL) {
