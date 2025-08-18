@@ -15,7 +15,7 @@ use ark::rounds::RoundId;
 use ark::tree::signed::CachedSignedVtxoTree;
 
 use crate::database::Db;
-use crate::database::model::ForfeitState;
+use crate::database::forfeits::ForfeitState;
 
 
 impl Db {

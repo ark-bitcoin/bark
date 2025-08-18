@@ -37,7 +37,7 @@ use server_rpc::protos;
 
 use crate::{database, Server, SECP};
 use crate::database::ln::LightningHtlcSubscriptionStatus;
-use crate::database::model::{ForfeitState, DangerousSecretNonce};
+use crate::database::forfeits::{ForfeitState, DangerousSecretNonce};
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::secret::Secret;
