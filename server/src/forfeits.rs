@@ -19,7 +19,8 @@ use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{KeypairExt, TransactionExt};
 
-use crate::database::model::{ForfeitClaimState, ForfeitRoundState, ForfeitState, StoredRound};
+use crate::database::model::{ForfeitClaimState, ForfeitRoundState, ForfeitState};
+use crate::database::rounds::StoredRound;
 use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
 use crate::txindex::{TxIndex, Tx};
