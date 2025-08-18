@@ -3,6 +3,9 @@ set -e
 
 export RUST_BACKTRACE=1
 
+# Use CAPTAIND_CONFIG env var for config path, or default if not set
+CONFIG_PATH="${CAPTAIND_CONFIG:-/root/captaind/captaind.toml}"
+
 mkdir -p /run/postgresql/
 chown -R postgres:postgres /run/postgresql/
 export PATH=/usr/lib/postgresql/16/bin:${PATH}
@@ -22,11 +25,11 @@ sleep 2s
 
 if [ ! -f "/data/captaind/mnemonic" ]; then
   psql -U postgres -c "ALTER USER postgres WITH ENCRYPTED PASSWORD 'postgres';"
-  echo "Creating new config at /data/captaind/"
-  /usr/local/bin/captaind --config /root/captaind/captaind.toml create
+  echo "Creating new config at /data/captaind/ using ${CONFIG_PATH}"
+  /usr/local/bin/captaind --config "${CONFIG_PATH}" create
   sleep 2s
 fi
 
 cat /var/lib/postgresql/log.log
 echo "Booting"
-/usr/local/bin/captaind --config /root/captaind/captaind.toml start
+/usr/local/bin/captaind --config "${CONFIG_PATH}" start
