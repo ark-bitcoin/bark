@@ -1,11 +1,13 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use log::info;
+use server::Server;
 use tokio::fs;
 use tonic::transport::Uri;
 
@@ -309,6 +311,20 @@ impl TestContext {
 		let srv = self.new_captaind(name, lightningd).await;
 		let _txid = self.fund_captaind(&srv, amount).await;
 		srv
+	}
+
+	pub async fn new_server_with_cfg(
+		&self,
+		name: impl AsRef<str>,
+		lightningd: Option<&Lightningd>,
+		mod_cfg: impl FnOnce(&mut server::Config),
+	) -> Arc<Server> {
+		// using context bitcoind because we don't have a place to store the bitcoind
+		let mut cfg = self.captaind_default_cfg(name.as_ref(), self.bitcoind(), lightningd).await;
+		mod_cfg(&mut cfg);
+
+		Server::create(cfg.clone()).await.expect("error creating server");
+		Server::start(cfg).await.expect("error starting server")
 	}
 
 	pub async fn try_new_bark_with_create_args<T: AsRef<str>>(
