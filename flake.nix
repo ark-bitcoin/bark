@@ -17,7 +17,7 @@
 	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, rust-overlay }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
-				rustVersion = "1.82.0";
+				rustVersion = "1.88.0";
 				bitcoinVersion = "29.0";
 				lightningVersion = "25.02.2";
 				postgresVersion = "16.9";
@@ -51,12 +51,12 @@
 
 				hal = pkgs.rustPlatform.buildRustPackage rec {
 					pname = "hal";
-					version = "0.9.5";
+					version = "0.10.0";
 					src = pkgs.fetchCrate {
 						inherit pname version;
-						sha256 = "sha256-rwVny9i0vFycoeAesy2iP7sA16fECLu1UPbqrOJa1is=";
+						sha256 = "sha256-oRmSDQJJu8v7OzsOrFYTyBJcR7wPJtS6hxkta1qEVl0=";
 					};
-					cargoHash = "sha256-dATviea1btnIVYKKgU1fMtZxKJitp/wXAuoIsxCSgf4=";
+					cargoHash = "sha256-/YCOI+BxscMAu9RgAt1QnivAnPSydkljgR2zWV84tQE=";
 				};
 
 				esploraElectrs = pkgs.rustPlatform.buildRustPackage rec {
@@ -189,7 +189,7 @@
 						pkgs.llvmPackages_16.bintools
 						pkgs.llvmPackages_16.llvm
 						pkgs.rustPlatform.bindgenHook
-						rust
+						rust # includes cargo & rust-analyzer
 						pkgs.pkg-config
 						pkgs.protobuf
 						pkgs.sqlite
@@ -224,6 +224,8 @@
 					LIGHTNINGD_PLUGIN_DIR = (if isDarwin then "/plugins" else "${cln-plugins}");
 
 					POSTGRES_BINS = "${postgresql}/bin";
+
+					RUSTDOCS_STDLIB = "${rust}/share/doc/rust/html/std/index.html";
 				};
 			}
 		);

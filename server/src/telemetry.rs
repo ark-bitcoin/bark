@@ -1,12 +1,16 @@
+
+use std::fmt;
 use std::time::Duration;
+
 use bdk_wallet::Balance;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Amount;
 use bitcoin_ext::BlockHeight;
+use opentelemetry::global::BoxedSpan;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 use opentelemetry::{Key, Value};
-use opentelemetry::{global, propagation::Extractor, KeyValue};
-use opentelemetry::trace::{Span, TracerProvider};
+use opentelemetry::{global, KeyValue};
+use opentelemetry::trace::{Span, SpanRef, TracerProvider};
 use opentelemetry_otlp::{Compression, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
@@ -16,9 +20,10 @@ use tokio::sync::OnceCell;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
-use crate::cln::ClnNodeStateKind;
+
 use crate::Config;
-use crate::database::model::LightningPaymentStatus;
+use crate::cln::ClnNodeStateKind;
+use crate::database::ln::LightningPaymentStatus;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
@@ -496,29 +501,27 @@ pub fn drop_grpc_in_progress(attributes: &[KeyValue]) {
 }
 
 /// An extention trait for span tracing.
-pub trait SpanExt: Span {
+pub trait SpanExt {
+	/// internal method used by provided methods
+	fn _set_attribute(&mut self, attribute: KeyValue);
+
 	fn set_int_attr(&mut self, key: impl Into<Key>, int: impl TryInto<i64>) {
-		self.set_attribute(KeyValue::new(key, Value::I64(int.try_into().unwrap_or(-1))));
+		self._set_attribute(KeyValue::new(key, Value::I64(int.try_into().unwrap_or(-1))));
+	}
+
+	fn set_str_attr(&mut self, key: impl Into<Key>, value: impl fmt::Display) {
+		self._set_attribute(KeyValue::new(key, Value::String(value.to_string().into())));
 	}
 }
-impl<T: Span> SpanExt for T {}
 
-pub struct MetadataMap<'a>(pub &'a tonic::metadata::MetadataMap);
-
-impl<'a> Extractor for MetadataMap<'a> {
-	/// Get a value for a key from the MetadataMap.  If the value can't be converted to &str, returns None
-	fn get(&self, key: &str) -> Option<&str> {
-		self.0.get(key).and_then(|metadata| metadata.to_str().ok())
+impl SpanExt for BoxedSpan {
+	fn _set_attribute(&mut self, attribute: KeyValue) {
+	    self.set_attribute(attribute);
 	}
+}
 
-	/// Collect all the keys from the MetadataMap.
-	fn keys(&self) -> Vec<&str> {
-		self.0
-			.keys()
-			.map(|key| match key {
-				tonic::metadata::KeyRef::Ascii(v) => v.as_str(),
-				tonic::metadata::KeyRef::Binary(v) => v.as_str(),
-			})
-			.collect::<Vec<_>>()
+impl<'a> SpanExt for SpanRef<'a> {
+	fn _set_attribute(&mut self, attribute: KeyValue) {
+	    self.set_attribute(attribute);
 	}
 }

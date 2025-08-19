@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::lightning::PaymentHash;
 use bark::persist::LightningReceive;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint};
 use bitcoincore_rpc::Auth;
@@ -223,8 +224,10 @@ impl Bark {
 			.iter()
 			.map(|s| s.to_string())
 			.collect();
-		command.extend(addresses.into_iter().flat_map(|a| vec!["--address".into(), a.to_string()]));
-		command.extend(amounts.into_iter().flat_map(|a| vec!["--amount".into(), a.to_string()]));
+
+		let destinations = addresses.into_iter().zip(amounts.into_iter())
+			.map(|(a, amt)| format!("{}:{}", a, amt));
+		command.extend(destinations.flat_map(|d| vec!["--destination".into(), d]));
 
 		self.run(command).await;
 	}
@@ -318,7 +321,16 @@ impl Bark {
 	}
 
 	pub async fn list_lightning_receives(&self) -> Vec<LightningReceive> {
-		let res = self.run(["lightning", "list-invoices"]).await;
+		let res = self.run(["lightning", "invoices"]).await;
+		serde_json::from_str(&res).expect("json error")
+	}
+
+	pub async fn lightning_receive_status(
+		&self,
+		payment_hash: impl Into<PaymentHash>,
+	) -> Option<LightningReceive> {
+		let hash = payment_hash.into().to_string();
+		let res = self.run(["lightning", "status", &hash]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
@@ -524,3 +536,4 @@ impl Bark {
 		self.try_run_json(args).await.expect("json command failed")
 	}
 }
+

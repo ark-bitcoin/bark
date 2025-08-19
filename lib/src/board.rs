@@ -21,9 +21,8 @@ use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
 
 use crate::error::IncorrectSigningKeyError;
-use crate::{musig, Vtxo, VtxoPolicy};
+use crate::{musig, scripts, Vtxo, VtxoPolicy, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::util::{verify_partial_sig, SECP};
 use crate::vtxo::{self, exit_taproot, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
@@ -275,7 +274,7 @@ impl BoardBuilder<state::CanBuild> {
 	/// Validate the server's partial signature.
 	pub fn verify_cosign_response(&self, server_cosign: &BoardCosignResponse) -> bool {
 		let (sighash, taproot, _txid) = self.exit_tx_sighash_data();
-		verify_partial_sig(
+		scripts::verify_partial_sig(
 			sighash,
 			taproot.tap_tweak(),
 			(self.server_pubkey, &server_cosign.pub_nonce),
@@ -310,7 +309,7 @@ impl BoardBuilder<state::CanBuild> {
 			Some(&[&server_cosign.partial_signature]),
 		);
 		debug_assert!(
-			verify_partial_sig(
+			scripts::verify_partial_sig(
 				sighash,
 				taproot.tap_tweak(),
 				(self.user_pubkey, self.user_pub_nonce()),

@@ -7,11 +7,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context;
-use ark::util::SECP;
 use bitcoin::{sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
 use log::{error, info, warn};
 
-use ark::{Vtxo, VtxoId};
+use ark::{Vtxo, VtxoId, SECP};
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use json::exit::ExitState;

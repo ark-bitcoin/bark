@@ -70,7 +70,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 
 use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt};
 
-use crate::{musig, util};
+use crate::{musig, scripts, SECP};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::lightning::{server_htlc_receive_taproot, server_htlc_send_taproot, PaymentHash};
 use crate::tree::signed::cosign_taproot;
@@ -190,7 +190,7 @@ fn exit_clause(
 	user_pubkey: PublicKey,
 	exit_delta: u16,
 ) -> ScriptBuf {
-	util::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
+	scripts::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
 }
 
 /// Returns taproot spend info for a regular vtxo exit output.
@@ -202,7 +202,7 @@ pub fn exit_taproot(
 	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
 	taproot::TaprootBuilder::new()
 		.add_leaf(0, exit_clause(user_pubkey, exit_delta)).unwrap()
-		.finalize(&util::SECP, combined_pk).unwrap()
+		.finalize(&SECP, combined_pk).unwrap()
 }
 
 /// Create an exit tx.
@@ -439,12 +439,12 @@ impl VtxoPolicy {
 				exit_clause(*user_pubkey, exit_delta)
 			},
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, htlc_expiry, .. }) => {
-				util::delay_timelock_sign(
+				scripts::delay_timelock_sign(
 					2 * exit_delta, *htlc_expiry, user_pubkey.x_only_public_key().0,
 				)
 			},
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, .. }) => {
-				util::hash_delay_sign(
+				scripts::hash_delay_sign(
 					payment_hash.to_sha256_hash(), 2 * exit_delta, user_pubkey.x_only_public_key().0,
 				)
 			},
@@ -1107,8 +1107,7 @@ pub mod test {
 	use crate::board::BoardBuilder;
 	use crate::encode::test::encoding_roundtrip;
 	use crate::tree::signed::VtxoTreeSpec;
-	use crate::util::SECP;
-	use crate::{SignedVtxoRequest, VtxoRequest};
+	use crate::{SECP, SignedVtxoRequest, VtxoRequest};
 
 	use super::*;
 

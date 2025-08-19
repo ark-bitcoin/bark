@@ -47,11 +47,12 @@ use log::{trace, debug, info, warn, error};
 use futures::StreamExt;
 use tokio_stream::Stream;
 
-use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::address::VtxoDelivery;
 use ark::arkoor::ArkoorPackageBuilder;
+use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::connectors::ConnectorChain;
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
@@ -249,11 +250,11 @@ impl Wallet {
 		let network = self.properties()?.network;
 		let pubkey = self.derive_store_next_keypair()?.0.public_key();
 
-		if network == bitcoin::Network::Bitcoin {
-			Ok(ark::Address::new(ark.info.server_pubkey, pubkey))
-		} else {
-			Ok(ark::Address::new_testnet(ark.info.server_pubkey, pubkey))
-		}
+		Ok(ark::Address::builder()
+			.testnet(network != bitcoin::Network::Bitcoin)
+			.server_pubkey(ark.info.server_pubkey)
+			.pubkey_policy(pubkey)
+			.into_address().unwrap())
 	}
 
 	/// Peak for Ark address at the given key index.
@@ -262,11 +263,11 @@ impl Wallet {
 		let network = self.properties()?.network;
 		let pubkey = self.peak_keypair(index)?.public_key();
 
-		if network == bitcoin::Network::Bitcoin {
-			Ok(ark::Address::new(ark.info.server_pubkey, pubkey))
-		} else {
-			Ok(ark::Address::new_testnet(ark.info.server_pubkey, pubkey))
-		}
+		Ok(ark::Address::builder()
+			.testnet(network != bitcoin::Network::Bitcoin)
+			.server_pubkey(ark.info.server_pubkey)
+			.pubkey_policy(pubkey)
+			.into_address().unwrap())
 	}
 
 	/// Generate a new Ark address and the index of the key used to create it
@@ -277,11 +278,11 @@ impl Wallet {
 		let network = self.properties()?.network;
 		let (keypair, index) = self.derive_store_next_keypair()?;
 		let pubkey = keypair.public_key();
-		let addr = if network == bitcoin::Network::Bitcoin {
-			ark::Address::new(ark.info.server_pubkey, pubkey)
-		} else {
-			ark::Address::new_testnet(ark.info.server_pubkey, pubkey)
-		};
+		let addr = ark::Address::builder()
+			.testnet(network != bitcoin::Network::Bitcoin)
+			.server_pubkey(ark.info.server_pubkey)
+			.pubkey_policy(pubkey)
+			.into_address().unwrap();
 		Ok((addr, index))
 	}
 
@@ -1052,7 +1053,7 @@ impl Wallet {
 	/// optional change output.
 	async fn create_arkoor_vtxos(
 		&mut self,
-		destination: PublicKey,
+		destination_policy: VtxoPolicy,
 		amount: Amount,
 	) -> anyhow::Result<ArkoorCreateResult> {
 		let mut srv = self.require_server()?;
@@ -1060,7 +1061,7 @@ impl Wallet {
 
 		let req = VtxoRequest {
 			amount: amount,
-			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: destination }),
+			policy: destination_policy,
 		};
 
 		let inputs = self.select_vtxos_to_cover(
@@ -1106,6 +1107,42 @@ impl Wallet {
 		})
 	}
 
+	/// Validate if we can send arkoor payments to the given address
+	pub fn validate_arkoor_address(&self, address: &ark::Address) -> anyhow::Result<()> {
+		let asp = self.require_server()?;
+
+		if !address.ark_id().is_for_server(asp.info.server_pubkey) {
+			bail!("Ark address is for different server");
+		}
+
+		// Not all policies are supported for sending arkoor
+		match address.policy().policy_type() {
+			VtxoPolicyType::Pubkey => {},
+			VtxoPolicyType::ServerHtlcRecv | VtxoPolicyType::ServerHtlcSend => {
+				bail!("VTXO policy in address cannot be used for arkoor payment: {}",
+					address.policy().policy_type(),
+				);
+			}
+		}
+
+		if address.delivery().is_empty() {
+			bail!("No VTXO delivery mechanism provided in address");
+		}
+		// We first see if we know any of the deliveries, if not, we will log
+		// the unknown onces.
+		// We do this in two parts because we shouldn't log unknown ones if there is one known.
+		if !address.delivery().iter().any(|d| !d.is_unknown()) {
+			for d in address.delivery() {
+				if let VtxoDelivery::Unknown { delivery_type, data } = d {
+					info!("Unknown delivery in address: type={:#x}, data={}",
+						delivery_type, data.as_hex(),
+					);
+				}
+			}
+		}
+
+		Ok(())
+	}
 
 	pub async fn send_arkoor_payment(
 		&mut self,
@@ -1114,19 +1151,17 @@ impl Wallet {
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let mut srv = self.require_server()?;
 
-		if !destination.ark_id().is_for_server(srv.info.server_pubkey) {
-			bail!("Ark address is for different server");
-		}
+		self.validate_arkoor_address(&destination).context("cannot send to address")?;
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let arkoor = self.create_arkoor_vtxos(destination.user_pubkey(), amount).await?;
+		let arkoor = self.create_arkoor_vtxos(destination.policy().clone(), amount).await?;
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-				pubkey: destination.user_pubkey().serialize().to_vec(),
+				pubkey: destination.policy().user_pubkey().serialize().to_vec(),
 				vtxo: v.serialize().to_vec(),
 			}).collect(),
 		};
@@ -1448,9 +1483,16 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		self.db.store_lightning_receive(&payment_hash, &preimage, invoice.clone())?;
+		self.db.store_lightning_receive(payment_hash, preimage, &invoice)?;
 
 		Ok(invoice)
+	}
+
+	pub fn lightning_receive_status(
+		&self,
+		payment: impl Into<PaymentHash>,
+	) -> anyhow::Result<Option<LightningReceive>> {
+		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into())?)
 	}
 
 	pub fn lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {
@@ -1462,9 +1504,8 @@ impl Wallet {
 
 		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
 
-		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(
-			&payment_hash
-		)?.context("no lightning receive found")?;
+		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
+			.context("no lightning receive found")?;
 
 		let keypair_index = self.db.get_vtxo_key(&vtxo.vtxo)?;
 		let keypair = self.peak_keypair(keypair_index)?;
@@ -1486,7 +1527,7 @@ impl Wallet {
 		};
 
 		info!("Claiming arkoor against payment preimage");
-		self.db.set_preimage_revealed(&lightning_receive.payment_hash)?;
+		self.db.set_preimage_revealed(lightning_receive.payment_hash)?;
 		let cosign_resp = srv.client.claim_lightning_receive(req).await
 			.context("failed to claim bolt11 board")?
 			.into_inner().try_into().context("invalid server cosign response")?;
@@ -1515,11 +1556,11 @@ impl Wallet {
 	}
 
 
-	pub async fn finish_lightning_receive(&mut self, invoice: Bolt11Invoice) -> anyhow::Result<()> {
+	pub async fn finish_lightning_receive(&mut self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
 		let tip = self.chain.tip().await?;
 		let mut srv = self.require_server()?;
 
-		let payment_hash = ark::lightning::PaymentHash::from(*invoice.payment_hash());
+		let payment_hash = ark::lightning::PaymentHash::from(invoice);
 
 		let (keypair, _) = self.derive_store_next_keypair()?;
 
@@ -1734,7 +1775,8 @@ impl Wallet {
 				protos::InputVtxo {
 					vtxo_id: vtxo.id().to_bytes().to_vec(),
 					ownership_proof: {
-						let sig = round_state.challenge().sign_with(vtxo.id(), keypair);
+						let sig = round_state.challenge()
+							.sign_with(vtxo.id(), &vtxo_reqs, &participation.offboards, keypair);
 						sig.serialize().to_vec()
 					},
 				}
@@ -2077,6 +2119,7 @@ impl Wallet {
 			};
 
 			info!("Round started");
+			debug!("Started round #{}", round_state.info.round_seq);
 
 			let participation = round_input(&round_state.info)
 				.context("error providing round input")?;

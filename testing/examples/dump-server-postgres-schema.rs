@@ -45,7 +45,7 @@ async fn main() {
 	}
 
 	if db_config.password.is_some() {
-		cmd.env("PGPASSWORD", db_config.password.unwrap());
+		cmd.env("PGPASSWORD", db_config.password.unwrap().leak_ref());
 	}
 
 	let status = cmd

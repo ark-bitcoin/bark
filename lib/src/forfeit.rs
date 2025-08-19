@@ -7,9 +7,8 @@ use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 
 use bitcoin_ext::{fee, P2TR_DUST};
 
-use crate::Vtxo;
+use crate::{Vtxo, SECP};
 use crate::connectors::ConnectorChain;
-use crate::util::SECP;
 
 
 //TODO(stevenroose) fix

@@ -6,20 +6,25 @@
 #[macro_use]
 mod error;
 
-mod cln;
-pub(crate) mod flux;
+pub mod config;
 pub mod database;
 pub mod forfeits;
-mod psbtext;
-mod serde_util;
+pub mod secret;
 pub mod sweeps;
-mod rpcserver;
-mod round;
-pub(crate) mod system;
-mod txindex;
-mod telemetry;
 pub mod wallet;
-pub mod config;
+
+pub(crate) mod flux;
+pub(crate) mod system;
+
+mod cln;
+
+mod psbtext;
+mod round;
+mod rpcserver;
+mod serde_util;
+mod telemetry;
+mod txindex;
+
 pub use crate::config::Config;
 
 use std::borrow::Borrow;
@@ -57,11 +62,12 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::cln::ClnManager;
-use crate::database::model::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
 use crate::round::RoundInput;
+use crate::secret::Secret;
 use crate::system::RuntimeManager;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
@@ -140,7 +146,7 @@ impl RoundHandle {
 pub struct Server {
 	config: Config,
 	db: database::Db,
-	server_key: Keypair,
+	server_key: Secret<Keypair>,
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
@@ -322,7 +328,7 @@ impl Server {
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
 			db,
-			server_key,
+			server_key: Secret::new(server_key),
 			bitcoind,
 			rtmgr,
 			tx_broadcast_handle: tx_nursery.broadcast_handle(),
@@ -486,7 +492,7 @@ impl Server {
 		let builder = BoardBuilder::new_for_cosign(
 			user_pubkey,
 			expiry_height,
-			self.server_key.public_key(),
+			self.server_key.leak_ref().public_key(),
 			self.config.vtxo_exit_delta,
 			amount,
 			utxo,
@@ -494,7 +500,7 @@ impl Server {
 		);
 
 		info!("Cosigning board request for utxo {}", utxo);
-		let resp = builder.server_cosign(&self.server_key);
+		let resp = builder.server_cosign(&self.server_key.leak_ref());
 
 		slog!(CosignedBoard, utxo, amount);
 
@@ -629,7 +635,7 @@ impl Server {
 					.map(|v| v.id()).collect::<Vec<_>>();
 				slog!(ArkoorCosign, input_ids, output_ids);
 				// let's sign the tx
-				Ok(builder.server_cosign(&self.server_key))
+				Ok(builder.server_cosign(&self.server_key.leak_ref()))
 			},
 			Err(e) => Err(e),
 		}
@@ -724,7 +730,7 @@ impl Server {
 
 			//TODO(stevenroose) need to check that the input vtxos are actually marked
 			// as spent for this specific payment
-			if vtxo.server_pubkey() != self.server_key.public_key() {
+			if vtxo.server_pubkey() != self.server_key.leak_ref().public_key() {
 				return badarg!("invalid server pubkey used");
 			}
 

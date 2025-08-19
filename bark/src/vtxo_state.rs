@@ -62,16 +62,16 @@ impl VtxoState {
 		}
 	}
 
-	pub fn as_pending_lightning_send(&self) -> Option<(&Invoice, &Amount)> {
+	pub fn as_pending_lightning_send(&self) -> Option<(&Invoice, Amount)> {
 		match self {
-			VtxoState::PendingLightningSend { invoice, amount } => Some((invoice, amount)),
+			VtxoState::PendingLightningSend { invoice, amount } => Some((invoice, *amount)),
 			_ => None,
 		}
 	}
 
-	pub fn as_pending_lightning_recv(&self) -> Option<&PaymentHash> {
+	pub fn as_pending_lightning_recv(&self) -> Option<PaymentHash> {
 		match self {
-			VtxoState::PendingLightningRecv { payment_hash } => Some(payment_hash),
+			VtxoState::PendingLightningRecv { payment_hash } => Some(*payment_hash),
 			_ => None,
 		}
 	}

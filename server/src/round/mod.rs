@@ -13,8 +13,8 @@ use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use log::{debug, error, info, log_enabled, trace, warn};
-use opentelemetry::{global, KeyValue};
-use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer, TracerProvider};
+use opentelemetry::global;
+use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
 use tracing::info_span;
@@ -36,9 +36,11 @@ use server_log::{LogMsg, RoundVtxoCreated};
 use server_rpc::protos;
 
 use crate::{database, Server, SECP};
-use crate::database::model::{ForfeitState, DangerousSecretNonce, LightningHtlcSubscriptionStatus};
+use crate::database::ln::LightningHtlcSubscriptionStatus;
+use crate::database::forfeits::{ForfeitState, DangerousSecretNonce};
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
+use crate::secret::Secret;
 use crate::telemetry::{self, SpanExt, ATTRIBUTE_ROUND_ID};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
@@ -443,6 +445,16 @@ impl CollectingPayments {
 			}
 		};
 
+
+		let ownership_proof_by_vtxo_id = inputs.iter()
+			.map(|v| (v.vtxo_id, v.ownership_proof)).collect::<HashMap<_,_>>();
+		let v_reqs = vtxo_requests.iter().map(|v| v.req.clone()).collect::<Vec<_>>();
+		for input in &input_vtxos {
+			let sig = ownership_proof_by_vtxo_id.get(&input.id()).expect("all vtxos were found");
+			self.vtxo_ownership_challenge.verify_input_vtxo_sig(input, &v_reqs, &offboards, sig)
+				.context(format!("ownership proof is invalid: vtxo {}, proof: {}", input.id(), sig))?;
+		}
+
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
 			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
 				attempt_seq: self.attempt_seq, error: e.to_string(),
@@ -557,7 +569,7 @@ impl CollectingPayments {
 
 		let vtxos_spec = VtxoTreeSpec::new(
 			self.all_outputs.iter().map(|p| p.req.clone()).collect(),
-			srv.server_key.public_key(),
+			srv.server_key.leak_ref().public_key(),
 			self.cosign_key.public_key(),
 			expiry_height,
 			srv.config.vtxo_exit_delta,
@@ -819,7 +831,7 @@ impl SigningVtxoTree {
 			let mut secs = Vec::with_capacity(self.all_inputs.len());
 			let mut pubs = Vec::with_capacity(self.all_inputs.len());
 			for _ in 0..self.all_inputs.len() {
-				let (s, p) = musig::nonce_pair(&srv.server_key);
+				let (s, p) = musig::nonce_pair(&srv.server_key.leak_ref());
 				secs.push(s);
 				pubs.push(p);
 			}
@@ -1015,7 +1027,7 @@ impl SigningForfeits {
 			.start_with_context(&tracer_provider, &parent_context.clone());
 		span.set_int_attr("signed-vtxo-count", self.signed_vtxos.nb_leaves());
 		span.set_int_attr("connectors-count", self.connectors.len());
-		span.set_attribute(KeyValue::new(ATTRIBUTE_ROUND_ID, round_txid.to_string()));
+		span.set_str_attr(ATTRIBUTE_ROUND_ID, round_txid);
 
 		trace!("Storing round result");
 		if log_enabled!(RoundVtxoCreated::LEVEL) {
@@ -1037,7 +1049,7 @@ impl SigningForfeits {
 				user_nonces, user_part_sigs,
 				pub_nonces: self.forfeit_pub_nonces.remove(id).expect("missing vtxo"),
 				sec_nonces: sec_nonces.remove(id).expect("missing vtxo").into_iter()
-					.map(DangerousSecretNonce::new)
+					.map(|x| Secret::new(DangerousSecretNonce::new(x)))
 					.collect(),
 			};
 			(*id, forfeit_state)

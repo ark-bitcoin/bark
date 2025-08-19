@@ -5,7 +5,7 @@ use bitcoin::{sighash, Amount, OutPoint, Transaction, TxOut};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::TxOutExt;
 
-use crate::util::SECP;
+use crate::SECP;
 use crate::vtxo::{Vtxo, GenesisTransition};
 
 

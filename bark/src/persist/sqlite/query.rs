@@ -457,9 +457,9 @@ pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight
 
 pub fn store_lightning_receive(
 	conn: &Connection,
-	payment_hash: &PaymentHash,
-	preimage: &Preimage,
-	invoice: Bolt11Invoice,
+	payment_hash: PaymentHash,
+	preimage: Preimage,
+	invoice: &Bolt11Invoice,
 ) -> anyhow::Result<()> {
 	let query = "
 		INSERT INTO bark_lightning_receive (payment_hash, preimage, invoice)
@@ -480,7 +480,8 @@ pub fn get_paginated_lightning_receives<'a>(
 	conn: &'a Connection,
 	pagination: Pagination,
 ) -> anyhow::Result<Vec<LightningReceive>> {
-	let query = "SELECT * FROM bark_lightning_receive ORDER BY created_at DESC LIMIT :take OFFSET :skip";
+	let query = "SELECT * FROM bark_lightning_receive \
+		ORDER BY created_at DESC LIMIT :take OFFSET :skip";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query(named_params! {
 		":take": pagination.page_size,
@@ -495,8 +496,9 @@ pub fn get_paginated_lightning_receives<'a>(
 	Ok(result)
 }
 
-pub fn set_preimage_revealed(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<()> {
-	let query = "UPDATE bark_lightning_receive SET preimage_revealed_at = :revealed_at WHERE payment_hash = :payment_hash";
+pub fn set_preimage_revealed(conn: &Connection, payment_hash: PaymentHash) -> anyhow::Result<()> {
+	let query = "UPDATE bark_lightning_receive SET preimage_revealed_at = :revealed_at \
+		WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
 		":payment_hash": payment_hash.to_vec(),
@@ -505,7 +507,10 @@ pub fn set_preimage_revealed(conn: &Connection, payment_hash: &PaymentHash) -> a
 	Ok(())
 }
 
-pub fn fetch_lightning_receive_by_payment_hash(conn: &Connection, payment_hash: &PaymentHash) -> anyhow::Result<Option<LightningReceive>> {
+pub fn fetch_lightning_receive_by_payment_hash(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+) -> anyhow::Result<Option<LightningReceive>> {
 	let query = "SELECT * FROM bark_lightning_receive WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query((payment_hash.as_ref(), ))?;

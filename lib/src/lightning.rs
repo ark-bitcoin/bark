@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 
 use bitcoin_ext::P2TR_DUST;
 
-use crate::ProtocolDecodingError;
-use crate::{musig, util, ProtocolEncoding, encode::{WriteExt, ReadExt}};
-use crate::util::SECP;
+use crate::{scripts, ProtocolDecodingError};
+use crate::{musig, ProtocolEncoding, encode::{WriteExt, ReadExt}};
+use crate::SECP;
 
 const BECH32_BOLT12_INVOICE_HRP: &str = "lni";
 
@@ -64,6 +64,18 @@ impl From<lightning::types::payment::PaymentHash> for PaymentHash {
 	}
 }
 
+impl<'a> From<&'a Bolt11Invoice> for PaymentHash {
+	fn from(i: &'a Bolt11Invoice) -> Self {
+		(*i.payment_hash()).into()
+	}
+}
+
+impl From<Bolt11Invoice> for PaymentHash {
+	fn from(i: Bolt11Invoice) -> Self {
+		(&i).into()
+	}
+}
+
 impl PaymentHash {
 	pub fn from_preimage(preimage: Preimage) -> PaymentHash {
 		sha256::Hash::hash(preimage.as_ref()).into()
@@ -101,10 +113,10 @@ pub fn server_htlc_send_taproot(
 	exit_delta: u16,
 	htlc_expiry: u32,
 ) -> TaprootSpendInfo {
-	let server_branch = util::hash_delay_sign(
+	let server_branch = scripts::hash_delay_sign(
 		payment_hash.to_sha256_hash(), exit_delta, server_pubkey.x_only_public_key().0,
 	);
-	let user_branch = util::delay_timelock_sign(
+	let user_branch = scripts::delay_timelock_sign(
 		2 * exit_delta, htlc_expiry, user_pubkey.x_only_public_key().0,
 	);
 
@@ -140,8 +152,8 @@ pub fn server_htlc_receive_taproot(
 	htlc_expiry: u32,
 ) -> TaprootSpendInfo {
 	let server_branch =
-		util::delay_timelock_sign(exit_delta, htlc_expiry, server_pubkey.x_only_public_key().0);
-	let user_branch = util::hash_delay_sign(
+		scripts::delay_timelock_sign(exit_delta, htlc_expiry, server_pubkey.x_only_public_key().0);
+	let user_branch = scripts::hash_delay_sign(
 		payment_hash.to_sha256_hash(),
 		2 * exit_delta,
 		user_pubkey.x_only_public_key().0,

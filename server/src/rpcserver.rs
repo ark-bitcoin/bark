@@ -19,17 +19,17 @@ use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
+use tonic::async_trait;
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
-use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount};
+use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::rounds::RoundId;
 use server_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
-use tonic::async_trait;
-use ark::lightning::{PaymentHash, Preimage};
+
 use crate::Server;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
 use crate::round::RoundInput;
-use crate::telemetry::{self, RPC_GRPC_STATUS_CODE};
+use crate::telemetry::{self, RPC_GRPC_STATUS_CODE, SpanExt};
 
 
 /// The minimum protocol version supported by the server.
@@ -320,7 +320,7 @@ impl rpc::server::ArkService for Server {
 
 		let ark_info = ark::ArkInfo {
 			network: self.config.network,
-			server_pubkey: self.server_key.public_key(),
+			server_pubkey: self.server_key.leak_ref().public_key(),
 			round_interval: self.config.round_interval,
 			nb_round_nonces: self.config.nb_round_nonces,
 			vtxo_exit_delta: self.config.vtxo_exit_delta,
@@ -1019,9 +1019,9 @@ where
 			.span_builder(rpc_method_details.format_path())
 			.with_kind(SpanKind::Server)
 			.start(&tracer);
-		span.set_attribute(KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system));
-		span.set_attribute(KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service));
-		span.set_attribute(KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method));
+		span.set_str_attr(telemetry::RPC_SYSTEM, rpc_method_details.system);
+		span.set_str_attr(telemetry::RPC_SERVICE, rpc_method_details.service);
+		span.set_str_attr(telemetry::RPC_METHOD, rpc_method_details.method);
 
 		span.add_event(format!("Processing {} request", rpc_method_details.format_path()), vec![]);
 
@@ -1051,7 +1051,7 @@ where
 					rpc_method_details.format_path(), duration, error_string,
 				);
 			} else {
-				span_context.span().set_attribute(KeyValue::new(RPC_GRPC_STATUS_CODE, tonic::Code::Ok as i64));
+				span_context.span().set_int_attr(RPC_GRPC_STATUS_CODE, tonic::Code::Ok as i64);
 
 				trace!("Completed gRPC call: {} in {:?}, status: OK",
 					rpc_method_details.format_path(), duration,
