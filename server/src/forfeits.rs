@@ -6,7 +6,6 @@ use anyhow::Context;
 use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
 use bitcoin::hashes::Hash;
 use bitcoin::key::Keypair;
-
 use log::{error, debug, info, trace, warn};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -14,10 +13,11 @@ use tokio_stream::StreamExt;
 use ark::{musig, Vtxo, VtxoId};
 use ark::connectors::{ConnectorChain, ConnectorIter};
 use ark::rounds::RoundId;
-use server_rpc as rpc;
 use bitcoin_ext::bdk::WalletExt;
+use bitcoin_ext::cpfp::MakeCpfpFees;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{KeypairExt, TransactionExt};
+use server_rpc as rpc;
 
 use crate::database::forfeits::{ForfeitClaimState, ForfeitRoundState, ForfeitState};
 use crate::database::rounds::StoredRound;
@@ -259,15 +259,16 @@ impl ClaimState {
 		connector_tx: Transaction,
 	) -> anyhow::Result<(Tx, Tx)> {
 		//TODO(stevenroose) use fee estimation here once available
-		let feerate = proc.config.claim_fallback_feerate;
-		let psbt = proc.wallet.make_p2a_cpfp(&connector_tx, feerate)
+		let fees = MakeCpfpFees::Effective(proc.config.claim_fallback_feerate);
+		let cpfp = proc.wallet.make_signed_p2a_cpfp(&connector_tx, fees)
 			.context("error making cpfp tx for connector")?;
-		let cpfp = proc.wallet.finish_tx(psbt)?;
+		proc.wallet.commit_tx(&cpfp);
 
 		let txs = proc.broadcaster.broadcast_pkg([connector_tx, cpfp]).await
 			.context("Failed to broadcast pkg with connector and cpfp")?;
 		let [conn, cpfp] = txs.try_into().unwrap();
 		debug!("Broadcasted cpfp tx {} for connector tx {}", cpfp.txid, conn.txid);
+
 		Ok((conn, cpfp))
 	}
 
@@ -447,10 +448,10 @@ impl Process {
 
 			// Let's broadcast the forfeit then finally.
 			//TODO(stevenroose) use fee estimationi here
-			let feerate = self.config.claim_fallback_feerate;
-			let psbt = self.wallet.make_p2a_cpfp(&claim.forfeit_tx.tx, feerate)
+			let fees = MakeCpfpFees::Effective(self.config.claim_fallback_feerate);
+			let cpfp = self.wallet.make_signed_p2a_cpfp(&claim.forfeit_tx.tx, fees)
 				.context("error making cpfp tx for forfeit")?;
-			let cpfp = self.wallet.finish_tx(psbt)?;
+			self.wallet.commit_tx(&cpfp);
 
 			let txs = self.broadcaster.broadcast_pkg([claim.forfeit_tx.tx.clone(), cpfp]).await
 				.context("Failed to broadcast package of connector and cpfp")?;

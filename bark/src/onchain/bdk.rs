@@ -6,22 +6,25 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc;
 use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
-use bitcoin_ext::bdk::{CpfpError, WalletExt};
-use log::{debug, info, warn};
-
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering};
 use bitcoin::{
-	bip32, psbt, Address, Amount, FeeRate, Network, Psbt, Sequence, Transaction, TxOut, Txid
+	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
+	Txid,
 };
+use log::{debug, error, info, trace, warn};
+
+use bitcoin_ext::BlockRef;
+use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
+use bitcoin_ext::cpfp::CpfpError;
 use json::exit::ExitState;
 
-use crate::onchain::chain::InnerChainSourceClient;
 use crate::onchain::{
-	ChainSourceClient, LocalUtxo, GetBalance, GetSpendingTx, GetWalletTx, PreparePsbt,
-	SignPsbt, MakeCpfp, Utxo,
+	ChainSourceClient, LocalUtxo, GetBalance, GetSpendingTx, GetWalletTx, MakeCpfp, MakeCpfpFees,
+	PreparePsbt, SignPsbt, Utxo,
 };
+use crate::onchain::chain::InnerChainSourceClient;
 use crate::exit::vtxo::ExitVtxo;
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
@@ -107,6 +110,16 @@ impl <W: Deref<Target = BdkWallet>> GetWalletTx for W {
 	fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
 		self.deref().get_tx(txid).map(|tx| tx.tx_node.tx)
 	}
+
+	fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>> {
+		match self.deref().get_tx(txid) {
+			Some(tx) => match tx.chain_position {
+				ChainPosition::Confirmed { anchor, .. } => Ok(Some(anchor.block_id.into())),
+				ChainPosition::Unconfirmed { .. } => Ok(None),
+			},
+			None => Err(anyhow!("Tx {} does not exist in the wallet", txid)),
+		}
+	}
 }
 
 impl <W: DerefMut<Target = BdkWallet>> PreparePsbt for W {
@@ -138,9 +151,9 @@ impl <W: DerefMut<Target = BdkWallet>> PreparePsbt for W {
 }
 
 impl <W: Deref<Target = BdkWallet>> GetSpendingTx for W {
-	fn get_spending_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
+	fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>> {
 		for transaction in self.deref().transactions() {
-			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output.txid == txid) {
+			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output == outpoint) {
 				return Some(transaction.tx_node.tx);
 			}
 		}
@@ -148,9 +161,38 @@ impl <W: Deref<Target = BdkWallet>> GetSpendingTx for W {
 	}
 }
 
-impl <W: DerefMut<Target = BdkWallet>> MakeCpfp for W {
-	fn make_p2a_cpfp(&mut self, tx: &Transaction, fee_rate: FeeRate) -> Result<Psbt, CpfpError> {
-		WalletExt::make_p2a_cpfp(self.deref_mut(), tx, fee_rate)
+impl MakeCpfp for BdkWallet {
+	fn make_signed_p2a_cpfp(
+		&mut self,
+		tx: &Transaction,
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpError> {
+		 WalletExt::make_signed_p2a_cpfp(self, tx, fees)
+			 .inspect_err(|e| error!("Error creating signed P2A CPFP: {}", e))
+			 .map_err(|e| match e {
+				 CpfpInternalError::General(s) => CpfpError::InternalError(s),
+				 CpfpInternalError::Create(e) => CpfpError::CreateError(e.to_string()),
+				 CpfpInternalError::Extract(e) => CpfpError::FinalizeError(e.to_string()),
+				 CpfpInternalError::Fee() => CpfpError::InternalError(e.to_string()),
+				 CpfpInternalError::FinalizeError(s) => CpfpError::FinalizeError(s),
+				 CpfpInternalError::InsufficientConfirmedFunds(f) => {
+					 CpfpError::InsufficientConfirmedFunds {
+						 needed: f.needed, available: f.available,
+					 }
+				 },
+				 CpfpInternalError::NoFeeAnchor(txid) => CpfpError::NoFeeAnchor(txid),
+				 CpfpInternalError::Signer(e) => CpfpError::SigningError(e.to_string()),
+			 })
+	}
+
+	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
+		let unix = SystemTime::now().duration_since(UNIX_EPOCH)
+			.map_err(|e| CpfpError::InternalError(
+				format!("Unable to calculate time since UNIX epoch: {}", e.to_string()))
+			)?.as_secs();
+		self.apply_unconfirmed_txs([(tx.clone(), unix)]);
+		trace!("Unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
+		Ok(())
 	}
 }
 
@@ -199,6 +241,22 @@ impl OnchainWallet {
 		};
 
 		Ok(Self { inner: wallet, db })
+	}
+}
+
+impl MakeCpfp for OnchainWallet {
+	fn make_signed_p2a_cpfp(
+		&mut self,
+		tx: &Transaction,
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpError> {
+		MakeCpfp::make_signed_p2a_cpfp(&mut self.inner, tx, fees)
+	}
+
+	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
+		self.inner.store_signed_p2a_cpfp(tx)?;
+		self.persist()
+			.map_err(|e| CpfpError::StoreError(e.to_string()))
 	}
 }
 
@@ -288,7 +346,7 @@ impl OnchainWallet {
 		self.inner.apply_evicted_txs(mempool.evicted);
 		self.inner.apply_unconfirmed_txs(mempool.update);
 		self.persist()?;
-		debug!("Finished syncing with bitcoind, {}", self.inner.balance());
+		debug!("Finished syncing with bitcoind");
 
 		Ok(())
 	}
@@ -319,6 +377,8 @@ impl OnchainWallet {
 
 	pub async fn sync(&mut self, chain: &ChainSourceClient) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
+		debug!("Starting balance: {}", self.inner.balance());
+		trace!("Starting unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		match chain.inner() {
@@ -335,15 +395,18 @@ impl OnchainWallet {
 				let update = client.sync(request, PARALLEL_REQS).await?;
 				self.inner.apply_update(update)?;
 				self.persist()?;
-				debug!("Finished syncing with esplora, {}", self.inner.balance());
+				debug!("Finished syncing with esplora");
 			},
 		}
 
+		debug!("Current balance: {}", self.inner.balance());
+		trace!("Current unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
 		self.rebroadcast_txs(chain, now).await
 	}
 
 	pub async fn full_scan(&mut self, chain: &ChainSourceClient) -> anyhow::Result<Amount> {
 		debug!("Starting wallet sync...");
+		debug!("Starting balance: {}", self.inner.balance());
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		match chain.inner() {
@@ -358,10 +421,11 @@ impl OnchainWallet {
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
 				self.inner.apply_update(update)?;
 				self.persist()?;
-				debug!("Finished scanning with esplora, {}", self.inner.balance());
+				debug!("Finished scanning with esplora");
 			},
 		}
 
+		debug!("Current balance: {}", self.inner.balance());
 		self.rebroadcast_txs(chain, now).await
 	}
 

@@ -448,6 +448,19 @@ impl TestContext {
 		}
 	}
 
+	/// Waits for the given transaction ID to be available in the central bitcoin and electrs, as
+	/// well as each given bitcoin node.
+	pub async fn await_transaction_across_nodes(
+		&self,
+		txid: Txid,
+		nodes: impl IntoIterator<Item = &Bitcoind>,
+	) {
+		self.await_transaction(&txid).await;
+		for bitcoind in nodes {
+			bitcoind.await_transaction(&txid).await;
+		}
+	}
+
 	/// Generated a block using the central bitcoind and ensures that electrs is synced with it
 	pub async fn generate_blocks(&self, block_num: u32) {
 		// Give transactions time to propagate

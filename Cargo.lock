@@ -279,11 +279,12 @@ name = "bark-bitcoin-ext"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "bdk_bitcoind_rpc 0.20.0",
+ "bdk_bitcoind_rpc",
  "bdk_esplora",
  "bdk_wallet",
  "bitcoin",
  "lazy_static",
+ "log",
  "reqwest",
  "serde",
  "serde_json",
@@ -327,7 +328,7 @@ dependencies = [
  "bark-server-rpc",
  "bb8",
  "bb8-postgres",
- "bdk_bitcoind_rpc 0.21.0",
+ "bdk_bitcoind_rpc",
  "bdk_wallet",
  "bip39",
  "bitcoin",
@@ -406,7 +407,7 @@ dependencies = [
  "bark-bitcoin-ext",
  "bark-json",
  "bark-server-rpc",
- "bdk_bitcoind_rpc 0.21.0",
+ "bdk_bitcoind_rpc",
  "bdk_esplora",
  "bdk_wallet",
  "bip39",
@@ -480,17 +481,6 @@ dependencies = [
  "bb8",
  "tokio",
  "tokio-postgres",
-]
-
-[[package]]
-name = "bdk_bitcoind_rpc"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21c422408ac8720da9d9a3048a32f4a3fdd18e6c82b0fa3b620d92b1ef73df52"
-dependencies = [
- "bdk_core",
- "bitcoin",
- "bitcoincore-rpc",
 ]
 
 [[package]]

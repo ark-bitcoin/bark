@@ -2,8 +2,10 @@
 mod chain;
 mod bdk;
 
-pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
+pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
+/// TODO: BDK compilation
 pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
+pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
 
 use std::sync::Arc;
 
@@ -12,8 +14,7 @@ use bitcoin::{
 };
 
 use ark::Vtxo;
-use bitcoin_ext::bdk::CpfpError;
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, BlockRef};
 
 #[derive(Debug, Clone)]
 pub enum Utxo {
@@ -47,7 +48,12 @@ pub trait GetBalance {
 
 /// A trait to support getting a transaction from a wallet.
 pub trait GetWalletTx {
+	/// Retrieve the full wallet transaction for the given txid if any.
 	fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>>;
+
+	/// Retrieve the information about the block, if any, a given wallet transaction was confirmed
+	/// in.
+	fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>>;
 }
 
 /// A trait to support creating funded PSBTs.
@@ -68,11 +74,19 @@ pub trait PreparePsbt {
 }
 
 pub trait GetSpendingTx {
-	fn get_spending_tx(&self, txid: Txid) -> Option<Arc<Transaction>>;
+	/// This should search the wallet and look for any transaction that spends the given outpoint.
+	/// The intent of the function is to only look at spends which happen in the wallet itself.
+	fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>>;
 }
 
 pub trait MakeCpfp {
-	fn make_p2a_cpfp(&mut self, tx: &Transaction, fee_rate: FeeRate) -> Result<Psbt, CpfpError>;
+	fn make_signed_p2a_cpfp(
+		&mut self,
+		tx: &Transaction,
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpError>;
+
+	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;
 }
 
 /// Trait for wallets that can be used to unilaterally exit vtxos

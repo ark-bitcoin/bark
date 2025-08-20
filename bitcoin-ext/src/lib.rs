@@ -5,6 +5,7 @@ pub extern crate bitcoin;
 
 #[path = "bitcoin.rs"]
 mod mbitcoin;
+pub mod cpfp;
 pub mod fee;
 #[cfg(feature = "rpc")]
 pub mod rpc;

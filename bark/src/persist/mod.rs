@@ -3,11 +3,13 @@ pub mod sqlite;
 use bdk_wallet::ChangeSet;
 use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
+use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId};
-use bitcoin_ext::{BlockHeight, BlockRef};
-use lightning_invoice::Bolt11Invoice;
 use ark::lightning::{PaymentHash, Preimage};
+use bitcoin_ext::BlockHeight;
+use json::exit::states::ExitTxOrigin;
+
 use crate::{
 	Config, Movement, MovementArgs, Pagination,
 	WalletProperties,
@@ -91,13 +93,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 		&self,
 		exit_txid: Txid,
 		child_tx: &Transaction,
-		block: Option<BlockRef>,
+		origin: ExitTxOrigin,
 	) -> anyhow::Result<()>;
-	/// Get any stored child transaction for the given exit transaction
+	/// Get any stored child transaction for the given exit transaction.
 	fn get_exit_child_tx(
 		&self,
 		exit_txid: Txid,
-	) -> anyhow::Result<Option<(Transaction, Option<BlockRef>)>>;
+	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>>;
 
 	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight>;
 	fn store_last_ark_sync_height(&self, height: BlockHeight) -> anyhow::Result<()>;

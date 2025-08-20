@@ -3,16 +3,18 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bitcoin::{Amount, BlockHash, FeeRate, Network, Txid};
+use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
-use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 use rusqlite::{self, named_params, Connection, ToSql};
+
+use ark::ProtocolEncoding;
 use ark::lightning::{PaymentHash, Preimage};
-use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::BlockHeight;
 use json::exit::ExitState;
+use json::exit::states::ExitTxOrigin;
 
 use crate::persist::LightningReceive;
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
@@ -22,8 +24,6 @@ use crate::{
 };
 use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementKind};
-use ark::ProtocolEncoding;
-
 use super::convert::{row_to_movement, row_to_lightning_receive};
 
 /// Set read-only properties for the wallet
@@ -565,35 +565,32 @@ pub fn store_exit_child_tx(
 	tx: &rusqlite::Transaction,
 	exit_txid: Txid,
 	child_tx: &bitcoin::Transaction,
-	block: Option<BlockRef>,
+	origin: ExitTxOrigin,
 ) -> anyhow::Result<()> {
 	let query = r"
-		INSERT INTO bark_exit_child_transactions (exit_id, child_tx, block_hash, height)
-		VALUES (?1, ?2, ?3, ?4)
+		INSERT INTO bark_exit_child_transactions (exit_id, child_tx, tx_origin)
+		VALUES (?1, ?2, ?3)
 		ON CONFLICT (exit_id) DO UPDATE
 		SET
 			child_tx = EXCLUDED.child_tx,
-			block_hash = EXCLUDED.block_hash,
-			height = EXCLUDED.height
+			tx_origin = EXCLUDED.tx_origin;
 	";
 
 	let exit_id = exit_txid.to_string();
 	let child_transaction = consensus::serialize(child_tx);
-	let (height, hash) = if let Some(block) = block {
-		(Some(block.height), Some(consensus::serialize(&block.hash)))
-	} else {
-		(None, None)
-	};
-	tx.execute(query, (exit_id, child_transaction, hash, height))?;
+	let origin = serde_json::to_string(&origin)
+		.map_err(|e| anyhow!("ExitTxOrigin {} state can't be serialized: {}", origin, e))?;
+
+	tx.execute(query, (exit_id, child_transaction, origin))?;
 	Ok(())
 }
 
 pub fn get_exit_child_tx(
 	conn: &Connection,
 	exit_txid: Txid,
-) -> anyhow::Result<Option<(bitcoin::Transaction, Option<BlockRef>)>> {
+) -> anyhow::Result<Option<(bitcoin::Transaction, ExitTxOrigin)>> {
 	let query = r"
-			SELECT child_tx, block_hash, height FROM bark_exit_child_transactions where exit_id = ?1;
+			SELECT child_tx, tx_origin FROM bark_exit_child_transactions where exit_id = ?1;
 		";
 	let mut statement = conn.prepare(query)?;
 	let result = statement.query_row([exit_txid.to_string()], |row| {
@@ -602,22 +599,11 @@ pub fn get_exit_child_tx(
 			.map_err(|e| rusqlite::Error::FromSqlConversionFailure(
 				tx_bytes.len(), rusqlite::types::Type::Blob, Box::new(e)
 			))?;
-		let block = {
-			let hash_bytes : Option<Vec<u8>> = row.get(1)?;
-			let height : Option<u32> = row.get(2)?;
-			match (hash_bytes, height) {
-				(Some(bytes), Some(height)) => {
-					let hash = BlockHash::from_slice(&bytes)
-						.map_err(|e| rusqlite::Error::FromSqlConversionFailure(
-							tx_bytes.len(), rusqlite::types::Type::Blob, Box::new(e)
-						))?;
-					Some(BlockRef { hash, height })
-				},
-				(None, None) => None,
-				_ => panic!("Invalid data in database")
-			}
-		};
-		Ok((tx, block))
+		let origin = serde_json::from_str::<ExitTxOrigin>(&row.get::<usize, String>(1)?)
+			.map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+				tx_bytes.len(), rusqlite::types::Type::Blob, Box::new(e)
+			))?;
+		Ok((tx, origin))
 	});
 	match result {
 		Ok(result) => Ok(Some(result)),
@@ -687,6 +673,16 @@ mod test {
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 		let serialised = r#"{"type":"spent","tip_height":134,"txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c","block":{"height":122,"hash":"3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f"}}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
+
+		// Exit child tx origins
+		let serialized = r#"{"type":"wallet","confirmed_in":null}"#;
+		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
+		let serialized = r#"{"type":"wallet","confirmed_in":{"height":134,"hash":"71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}}"#;
+		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
+		let serialized = r#"{"type":"mempool","fee_rate_kwu":25000,"total_fee":27625}"#;
+		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
+		let serialized = r#"{"type":"block","confirmed_in":{"height":134,"hash":"71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}}"#;
+		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 
 		// Vtxo subset
 		let serialised = r#"{"id":"1570ed0ccb55520cc343628ad95e325010983c61655580bfea10e067d98f40af:0","amount_sat":300000}"#;

@@ -1,4 +1,4 @@
-use bitcoin::Txid;
+use bitcoin::{FeeRate, Txid};
 use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
@@ -71,14 +71,15 @@ impl ExitVtxo {
 		tx_manager: &mut ExitTransactionManager,
 		persister: &dyn BarkPersister,
 		onchain: &mut W,
+		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<(), ExitError> {
 		const MAX_ITERATIONS: usize = 100;
 		for _ in 0..MAX_ITERATIONS {
 			let mut context = ProgressContext {
 				vtxo: &self.vtxo,
 				exit_txids: &self.txids,
-				fee_rate: chain_source.fee_rates().await.fast,
 				chain_source: &chain_source,
+				fee_rate: fee_rate_override.unwrap_or(chain_source.fee_rates().await.fast),
 				persister,
 				tx_manager,
 			};

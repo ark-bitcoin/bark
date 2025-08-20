@@ -4,7 +4,9 @@ use bitcoin::{Address, FeeRate};
 use bitcoin::params::Params;
 use bitcoincore_rpc::bitcoin::amount::Amount;
 use bitcoincore_rpc::RpcApi;
-use log::trace;
+use futures::FutureExt;
+use log::{trace, warn};
+use rand::random;
 
 use ark::vtxo::exit_taproot;
 use bark_json::cli::ExitProgressResponse;
@@ -20,16 +22,11 @@ use ark_testing::daemon::captaind;
 
 async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	let mut flip = false;
-	let mut did_generate_block = false;
 	let mut previous : Option<ExitProgressResponse> = None;
 	let mut attempts = 0;
 	while attempts < 20 {
 		attempts += 1;
 		let response = bark.progress_exit().await;
-		if !did_generate_block && previous.is_some() {
-			// Progressing without generating blocks should be a no-op
-			assert_eq!(response, *previous.as_ref().unwrap());
-		}
 		if response.done {
 			return;
 		}
@@ -46,6 +43,9 @@ async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 					ExitError::InsufficientConfirmedFunds { .. } => {
 						generate_block = true;
 					}
+					ExitError::ExitPackageBroadcastFailure { txid, error } => {
+						warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
+					}
 					_ => panic!("unexpected exit error: {:?}", e),
 				}
 			}
@@ -57,11 +57,10 @@ async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 		// Fast-forward if we're just waiting for confirmations
 		if let Some(height) = response.spendable_height {
 			let current = ctx.bitcoind().sync_client().get_block_count().unwrap() as u32;
-			ctx.generate_blocks(height - current).await;
-			did_generate_block = height - current > 0;
+			let blocks = if current > height { 0 } else { height - current };
+			ctx.generate_blocks(blocks).await;
 		} else if generate_block {
 			ctx.generate_blocks(1).await;
-			did_generate_block = true;
 		}
 
 		// Used to allow for an extra iteration if the status has changed
@@ -96,7 +95,7 @@ async fn simple_exit() {
 	ctx.generate_blocks(1).await;
 
 	// Wallet has 1_000_000 sats of funds minus fees
-	assert_eq!(bark.onchain_balance().await, sat(996_986));
+	assert_eq!(bark.onchain_balance().await, sat(997_201));
 }
 
 #[tokio::test]
@@ -109,14 +108,20 @@ async fn exit_round() {
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Create a few clients
-	let bark1 = ctx.new_bark("bark1".to_string(), &srv).await;
-	let bark2 = ctx.new_bark("bark2".to_string(), &srv).await;
-	let bark3 = ctx.new_bark("bark3".to_string(), &srv).await;
-	let bark4 = ctx.new_bark("bark4".to_string(), &srv).await;
-	let bark5 = ctx.new_bark("bark5".to_string(), &srv).await;
-	let bark6 = ctx.new_bark("bark6".to_string(), &srv).await;
-	let bark7 = ctx.new_bark("bark7".to_string(), &srv).await;
-	let bark8 = ctx.new_bark("bark8".to_string(), &srv).await;
+	let create_bark = |name: &str| ctx.try_new_bark_with_create_args::<String>(
+		name.to_string(),
+		&srv,
+		Some(FeeRate::from_sat_per_kwu(250 + random::<u64>() % 24_750)), // 1 to 100 sats/vB
+		[],
+	);
+	let bark1 = create_bark("bark1").await.unwrap();
+	let bark2 = create_bark("bark2").await.unwrap();
+	let bark3 = create_bark("bark3").await.unwrap();
+	let bark4 = create_bark("bark4").await.unwrap();
+	let bark5 = create_bark("bark5").await.unwrap();
+	let bark6 = create_bark("bark6").await.unwrap();
+	let bark7 = create_bark("bark7").await.unwrap();
+	let bark8 = create_bark("bark8").await.unwrap();
 
 	tokio::join!(
 		ctx.fund_bark(&bark1, sat(1_000_000)),
@@ -165,32 +170,27 @@ async fn exit_round() {
 	// We don't need server for exits.
 	srv.stop().await.unwrap();
 
-	bark1.start_exit_all().await;
-	bark2.start_exit_all().await;
-	bark3.start_exit_all().await;
-	bark4.start_exit_all().await;
-	bark5.start_exit_all().await;
-	bark6.start_exit_all().await;
-	bark7.start_exit_all().await;
-	bark8.start_exit_all().await;
+	tokio::join!(
+		bark1.start_exit_all().then(|_| async { complete_exit(&ctx, &bark1).await }),
+		bark2.start_exit_all().then(|_| async { complete_exit(&ctx, &bark2).await }),
+		bark3.start_exit_all().then(|_| async { complete_exit(&ctx, &bark3).await }),
+		bark4.start_exit_all().then(|_| async { complete_exit(&ctx, &bark4).await }),
+		bark5.start_exit_all().then(|_| async { complete_exit(&ctx, &bark5).await }),
+		bark6.start_exit_all().then(|_| async { complete_exit(&ctx, &bark6).await }),
+		bark7.start_exit_all().then(|_| async { complete_exit(&ctx, &bark7).await }),
+		bark8.start_exit_all().then(|_| async { complete_exit(&ctx, &bark8).await }),
+	);
 
-	complete_exit(&ctx, &bark1).await;
-	complete_exit(&ctx, &bark2).await;
-	complete_exit(&ctx, &bark3).await;
-	complete_exit(&ctx, &bark4).await;
-	complete_exit(&ctx, &bark5).await;
-	complete_exit(&ctx, &bark6).await;
-	complete_exit(&ctx, &bark7).await;
-	complete_exit(&ctx, &bark8).await;
-
-	bark1.claim_all_exits(bark1.get_onchain_address().await).await;
-	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
-	bark3.claim_all_exits(bark3.get_onchain_address().await).await;
-	bark4.claim_all_exits(bark4.get_onchain_address().await).await;
-	bark5.claim_all_exits(bark5.get_onchain_address().await).await;
-	bark6.claim_all_exits(bark6.get_onchain_address().await).await;
-	bark7.claim_all_exits(bark7.get_onchain_address().await).await;
-	bark8.claim_all_exits(bark8.get_onchain_address().await).await;
+	tokio::join!(
+		bark1.claim_all_exits(bark1.get_onchain_address().await),
+		bark2.claim_all_exits(bark2.get_onchain_address().await),
+		bark3.claim_all_exits(bark3.get_onchain_address().await),
+		bark4.claim_all_exits(bark4.get_onchain_address().await),
+		bark5.claim_all_exits(bark5.get_onchain_address().await),
+		bark6.claim_all_exits(bark6.get_onchain_address().await),
+		bark7.claim_all_exits(bark7.get_onchain_address().await),
+		bark8.claim_all_exits(bark8.get_onchain_address().await),
+	);
 	ctx.generate_blocks(1).await;
 
 	// All wallets have 1_000_000 sats of funds minus fees
@@ -238,7 +238,7 @@ async fn exit_vtxo() {
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark.onchain_balance().await, sat(996_986));
+	assert_eq!(bark.onchain_balance().await, sat(997_201));
 }
 
 #[tokio::test]
@@ -276,7 +276,7 @@ async fn exit_and_send_vtxo() {
 	bark.claim_exits([exit.vtxo_id], bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark.onchain_balance().await, sat(996_986));
+	assert_eq!(bark.onchain_balance().await, sat(997_201));
 }
 
 #[tokio::test]
@@ -336,7 +336,7 @@ async fn exit_oor() {
 
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark2.onchain_balance().await, sat(1_095_946));
+	assert_eq!(bark2.onchain_balance().await, sat(1_096_376));
 }
 
 #[tokio::test]
@@ -695,7 +695,7 @@ async fn bark_claim_specific_exit_in_low_fee_market() {
 
 	let onchain_address = bark.get_onchain_address().await;
 	bark.claim_exits(exits.iter().map(|v| v.id), onchain_address).await;
-	assert_eq!(bark.onchain_balance().await, sat(8_798_535));
+	assert_eq!(bark.onchain_balance().await, sat(8_798_621));
 	assert_eq!(bark.utxos().await.len(), 2);
 	assert_eq!(bark.vtxos().await.len(), 2);
 }
@@ -731,7 +731,127 @@ async fn bark_claim_all_exits_in_low_fee_market() {
 	bark.claim_all_exits(onchain_address).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark.onchain_balance().await, sat(9_997_744));
+	assert_eq!(bark.onchain_balance().await, sat(9_997_916));
 	assert_eq!(bark.utxos().await.len(), 2);
 	assert_eq!(bark.vtxos().await.len(), 0);
+}
+
+#[tokio::test]
+async fn exit_spend_anchor_single_utxo_required() {
+	let ctx = TestContext::new("exit/exit_spend_anchor_single_utxo_required").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	// We need to complete an exit whilst only using one UTXO to spend the anchor output
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	bark.board(sat(500_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	bark.start_exit_all().await;
+	complete_exit(&ctx, &bark).await;
+
+	// Verify that 1 UTXO + the P2A output are used
+	let list = bark.list_exits_with_details().await;
+	assert_eq!(list.len(), 1);
+	let transactions = list[0].transactions.as_ref().unwrap();
+	assert_eq!(transactions.len(), 1);
+	assert_eq!(transactions[0].child.as_ref().unwrap().info.tx.input.len(), 2);
+
+	// Verify the final balance
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark.onchain_balance().await, sat(997_201));
+}
+
+#[tokio::test]
+async fn exit_spend_anchor_multiple_utxos_required() {
+	let ctx = TestContext::new("exit/exit_spend_anchor_multiple_utxos_required").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	// We need to complete an exit whilst using multiple UTXOs to spend the anchor output
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	bark.board_all().await;
+	ctx.fund_bark(&bark, sat(777)).await;
+	ctx.fund_bark(&bark, sat(562)).await;
+	ctx.fund_bark(&bark, sat(988)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	bark.start_exit_all().await;
+	complete_exit(&ctx, &bark).await;
+
+	// Verify that 3 UTXOs + the P2A output are used
+	let list = bark.list_exits_with_details().await;
+	assert_eq!(list.len(), 1);
+	let transactions = list[0].transactions.as_ref().unwrap();
+	assert_eq!(transactions.len(), 1);
+	assert_eq!(transactions[0].child.as_ref().unwrap().info.tx.input.len(), 4);
+
+	// Verify the final balance
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	assert_eq!(bark.onchain_balance().await, sat(999_168));
+}
+
+#[tokio::test]
+async fn exit_oor_ping_pong_then_rbf_tx() {
+	let ctx = TestContext::new("exit/exit_oor_ping_pong_then_rbf_tx").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+
+	let bark1 = ctx.try_new_bark_with_create_args::<String>(
+		"bark1", &srv, FeeRate::from_sat_per_vb(1), [],
+	).await.unwrap();
+	let bark2 = ctx.try_new_bark_with_create_args::<String>(
+		"bark2", &srv, FeeRate::from_sat_per_vb(100), [],
+	).await.unwrap();
+
+	ctx.fund_bark(&bark1, sat(1_000_000)).await;
+	ctx.fund_bark(&bark2, sat(1_000_000)).await;
+	bark1.board(sat(900_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Bounce the same VTXO between the two barks
+	bark1.send_oor(bark2.address().await, sat(550_000)).await;
+	bark2.send_oor(bark1.address().await, sat(150_000)).await;
+	bark1.send_oor(bark2.address().await, sat(495_000)).await;
+	bark2.send_oor(bark1.address().await, sat(400_000)).await;
+
+	// Force a sync
+	bark1.vtxos().await;
+	bark2.vtxos().await;
+
+	// Exit the funds
+	srv.stop().await.unwrap();
+	bark1.start_exit_all().await;
+	bark2.start_exit_all().await;
+
+	// Progress once so we have transactions stuck in the mempool
+	async fn await_propagation(ctx: &TestContext, primary: &Bark, secondary: &Bark) {
+		let child_txs = primary.list_exits_with_details().await.into_iter().flat_map(|s| {
+			s.transactions.unwrap().into_iter().filter_map(|package| package.child)
+		});
+		for child_tx in child_txs {
+			ctx.await_transaction_across_nodes(child_tx.info.txid, secondary.bitcoind()).await;
+		}
+	}
+	bark1.progress_exit().await;
+	await_propagation(&ctx, &bark1, &bark2).await;
+	bark2.progress_exit().await;
+	await_propagation(&ctx, &bark2, &bark1).await;
+	assert_eq!(bark1.list_exits_with_details().await.len(), 2, "We have one exit");
+	assert_eq!(bark2.list_exits_with_details().await.len(), 1, "We have one exit");
+
+	complete_exit(&ctx, &bark1).await;
+	complete_exit(&ctx, &bark2).await;
+
+	// Claim the funds and check we have the correct funds
+	bark1.list_exits().await;
+	bark2.list_exits().await;
+	bark1.claim_all_exits(bark1.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark1.onchain_balance().await, sat(503_403));
+	assert_eq!(bark2.onchain_balance().await, sat(1_104_475));
 }

@@ -2,8 +2,9 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
-use bitcoin::TxOut;
-use bitcoin::{taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction};
+use bitcoin::{
+	taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, TxOut, Weight,
+};
 use bitcoin::taproot::ControlBlock;
 use bitcoin::secp256k1::{self, Keypair, Secp256k1};
 
@@ -132,6 +133,17 @@ pub trait FeeRateExt: Borrow<FeeRate> {
 		FeeRate::from_sat_per_kvb_ceil(amount_vkb.to_sat())
 	}
 
+	fn from_amount_and_weight_ceil(fee: Amount, weight: Weight) -> Option<FeeRate> {
+		if weight == Weight::ZERO {
+			return None;
+		}
+
+		// Compute the fee rate as amount_sat * 1000 / fee_rate_wu
+		let amount_time_thousand = u64::checked_mul(fee.to_sat(), 1_000)?;
+		let sat_kwu = u64::div_ceil(amount_time_thousand, weight.to_wu());
+		Some(FeeRate::from_sat_per_kwu(sat_kwu))
+	}
+
 	fn from_sat_per_kvb_ceil(sat_kvb: u64) -> FeeRate {
 		// Adding 3 to sat_kvb ensures we always round up when performing integer division.
 		FeeRate::from_sat_per_kwu((sat_kvb + 3) / 4)
@@ -188,6 +200,50 @@ mod test {
 		);
 		assert_eq!(FeeRate::from_amount_per_kvb_ceil(Amount::from_sat(10_125)),
 			FeeRate::from_sat_per_kwu(2_532) // 2531.25 rounded up
+		);
+	}
+
+	#[test]
+	fn fee_rate_from_amount_and_weight() {
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(1_000), Weight::from_wu(0),
+			),
+			None // Divide by zero avoided
+		);
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(u64::MAX / 2), Weight::from_wu(1),
+			),
+			None // Overflow isn't allowed
+		);
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(0), Weight::from_wu(1_000),
+			),
+			Some(FeeRate::ZERO)
+		);
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(500), Weight::from_wu(250)
+			),
+			Some(FeeRate::from_sat_per_kwu(2_000))
+		);
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(100), Weight::from_wu(1000)
+			),
+			Some(FeeRate::from_sat_per_kwu(100))
+		);
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(10_000), Weight::from_wu(327)
+			),
+			Some(FeeRate::from_sat_per_kwu(30_582)) // 30,581.03 rounded up
+		);
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(10_000), Weight::from_wu(256)
+			),
+			Some(FeeRate::from_sat_per_kwu(39_063)) // 39,062.5 rounded up
+		);
+		assert_eq!(FeeRate::from_amount_and_weight_ceil(
+				Amount::from_sat(10_000), Weight::from_wu(2_588)
+			),
+			Some(FeeRate::from_sat_per_kwu(3_864)) // 3,863.98 rounded up
 		);
 	}
 

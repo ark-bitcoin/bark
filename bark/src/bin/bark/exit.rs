@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{address, Address};
+use bitcoin::{address, Address, FeeRate};
 use clap;
 use log::{warn, info};
 
@@ -11,6 +11,7 @@ use ark::VtxoId;
 use bark::Wallet;
 use bark::vtxo_selection::VtxoFilter;
 use bark::onchain::OnchainWallet;
+use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;
 
@@ -85,6 +86,13 @@ pub struct ProgressExitOpts {
 	/// This might take several hours or days.
 	#[arg(long)]
 	wait: bool,
+	/// Sets the desired fee-rate in sats/kvB to use broadcasting exit transactions. Note that due
+	/// to rules imposed by the network with regard to RBF fee bumping, replaced transactions may
+	/// have a slightly higher fee rate than you specify here.
+	///
+	/// Example for 1 sat/vB: --fee-rate 1000
+	#[arg(long)]
+	fee_rate: Option<u64>,
 }
 
 pub async fn execute_exit_command(
@@ -173,9 +181,10 @@ pub async fn progress_exit(
 	wallet: &mut Wallet,
 	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
+	let fee_rate = args.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 	let exit_status = if args.wait {
 		loop {
-			let exit_status = progress_once(wallet, onchain).await?;
+			let exit_status = progress_once(wallet, onchain, fee_rate).await?;
 			if exit_status.done {
 				break exit_status
 			} else {
@@ -184,7 +193,7 @@ pub async fn progress_exit(
 			}
 		}
 	} else {
-		progress_once(wallet, onchain).await?
+		progress_once(wallet, onchain, fee_rate).await?
 	};
 	output_json(&exit_status);
 	Ok(())
@@ -193,6 +202,7 @@ pub async fn progress_exit(
 async fn progress_once(
 	wallet: &mut Wallet,
 	onchain: &mut OnchainWallet,
+	desired_fee_rate: Option<FeeRate>,
 ) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
 	info!("Starting onchain sync");
 	if let Err(error) = onchain.sync(&wallet.chain).await {
@@ -201,7 +211,7 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	let result = wallet.exit.progress_exit(onchain).await
+	let result = wallet.exit.progress_exit(onchain, desired_fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit.has_pending_exits();

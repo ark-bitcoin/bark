@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use bitcoin::Txid;
+use bitcoin::{Amount, FeeRate, Txid};
 
 use bitcoin_ext::{BlockHeight, BlockRef};
 
@@ -20,6 +20,11 @@ pub enum ExitTxStatus {
 	VerifyInputs,
 	AwaitingInputConfirmation { txids: HashSet<Txid> },
 	NeedsSignedPackage,
+	NeedsReplacementPackage {
+		#[serde(rename = "min_fee_rate_kwu")]
+		min_fee_rate: FeeRate,
+		min_fee: Amount,
+	},
 	NeedsBroadcasting { child_txid: Txid, origin: ExitTxOrigin, },
 	BroadcastWithCpfp { child_txid: Txid, origin: ExitTxOrigin, },
 	Confirmed { child_txid: Txid, block: BlockRef, origin: ExitTxOrigin, },
@@ -50,11 +55,27 @@ impl fmt::Display for ExitTxStatus {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ExitTxOrigin {
-	Wallet,
-	Mempool,
-	Block,
+	Wallet { confirmed_in: Option<BlockRef> },
+	Mempool {
+		/// This is the effective fee rate of the transaction (including CPFP ancestors)
+		#[serde(rename = "fee_rate_kwu")]
+		fee_rate: FeeRate,
+		/// This includes the fees of the CPFP ancestors
+		total_fee: Amount,
+	},
+	Block { confirmed_in: BlockRef },
+}
+
+impl ExitTxOrigin {
+	pub fn confirmed_in(&self) -> Option<BlockRef> {
+		match self {
+			ExitTxOrigin::Wallet { confirmed_in } => *confirmed_in,
+			ExitTxOrigin::Mempool { .. } => None,
+			ExitTxOrigin::Block { confirmed_in } => Some(*confirmed_in),
+		}
+	}
 }
 
 impl fmt::Display for ExitTxOrigin {

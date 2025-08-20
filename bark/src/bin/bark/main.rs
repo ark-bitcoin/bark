@@ -436,6 +436,7 @@ fn init_logging(verbose: bool, quiet: bool, datadir: &Path) -> anyhow::Result<()
 			fern::Dispatch::new()
 				.level(log::LevelFilter::Trace)
 				.level_for("bitcoincore_rpc", log::LevelFilter::Trace)
+				.level_for("bitcoin_ext", log::LevelFilter::Trace)
 				.chain(file)
 		} else {
 			fern::Dispatch::new()
@@ -449,6 +450,7 @@ fn init_logging(verbose: bool, quiet: bool, datadir: &Path) -> anyhow::Result<()
 		fern::Dispatch::new()
 			.level(log::LevelFilter::Trace)
 			.level_for("bitcoincore_rpc", log::LevelFilter::Trace)
+			.level_for("bitcoin_ext", log::LevelFilter::Trace)
 	} else if quiet {
 		fern::Dispatch::new()
 	} else {

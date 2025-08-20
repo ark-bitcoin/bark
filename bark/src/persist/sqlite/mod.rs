@@ -8,11 +8,14 @@ use anyhow::Context;
 use bdk_wallet::ChangeSet;
 use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::{BlockHeight, BlockRef};
 use lightning_invoice::Bolt11Invoice;
 use log::debug;
 use rusqlite::{Connection, Transaction};
+
 use ark::lightning::{PaymentHash, Preimage};
+use bitcoin_ext::{BlockHeight};
+use json::exit::states::ExitTxOrigin;
+
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
 	Config, Pagination, Vtxo, VtxoId, VtxoState,
@@ -241,11 +244,11 @@ impl BarkPersister for SqliteClient {
 		&self,
 		exit_txid: Txid,
 		child_tx: &bitcoin::Transaction,
-		block: Option<BlockRef>,
+		origin: ExitTxOrigin,
 	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-		query::store_exit_child_tx(&tx, exit_txid, child_tx, block)?;
+		query::store_exit_child_tx(&tx, exit_txid, child_tx, origin)?;
 		tx.commit()?;
 		Ok(())
 	}
@@ -253,7 +256,7 @@ impl BarkPersister for SqliteClient {
 	fn get_exit_child_tx(
 		&self,
 		exit_txid: Txid,
-	) -> anyhow::Result<Option<(bitcoin::Transaction, Option<BlockRef>)>> {
+	) -> anyhow::Result<Option<(bitcoin::Transaction, ExitTxOrigin)>> {
 		let conn = self.connect()?;
 		query::get_exit_child_tx(&conn, exit_txid)
 	}
