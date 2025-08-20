@@ -251,7 +251,7 @@ impl Exit {
 	///
 	/// - `onchain` is used to build the CPFP transaction package we use to broadcast
 	///   the unilateral exit transaction
-	/// - `fee_rate_override` sets the desired fee-rate in sats/kvB to use broadcasting exit 
+	/// - `fee_rate_override` sets the desired fee-rate in sats/kvB to use broadcasting exit
 	///   transactions. Note that due to rules imposed by the network with regard to RBF fee bumping,
 	///   replaced transactions may have a higher fee rate than you specify here.
 	///
@@ -261,7 +261,7 @@ impl Exit {
 	pub async fn progress_exit<W: ExitUnilaterally>(
 		&mut self,
 		onchain: &mut W,
-		fee_rate_override: Option<FeeRate>, 
+		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
 		self.tx_manager.sync().await?;
 		let mut exit_statuses = Vec::with_capacity(self.exit_vtxos.len());

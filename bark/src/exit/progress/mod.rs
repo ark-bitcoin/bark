@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use bitcoin::{Address, Amount, FeeRate, Transaction, Txid};
 use bitcoin::params::Params;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use tonic::async_trait;
 
 use ark::Vtxo;
@@ -114,7 +114,7 @@ impl<'a> ProgressContext<'a> {
 			}
 		}
 		if txids.is_empty() {
-			info!("All inputs are confirmed for exit tx {}", exit.txid);
+			debug!("All inputs are confirmed for exit tx {}", exit.txid);
 			Ok(ExitTxStatus::NeedsSignedPackage)
 		} else {
 			debug!("Exit tx {} has {} unconfirmed inputs: {:?}", exit.txid, txids.len(), txids);
@@ -169,7 +169,7 @@ impl<'a> ProgressContext<'a> {
 			if current != child_txid {
 				warn!("Exit CPFP tx {} for exit tx {} has been replaced by {}", child_txid, exit.txid, current);
 			}
-			info!("Updating CPFP tx status {} for exit tx {}", current, exit.txid);
+			debug!("Updating CPFP tx status {} for exit tx {}", current, exit.txid);
 			self.get_exit_tx_status(exit).await
 		} else {
 			error!("Exit CPFP tx {} for exit tx {} has disappeared", child_txid, exit.txid);
