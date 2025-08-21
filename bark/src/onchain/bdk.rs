@@ -3,7 +3,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc;
 use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::Wallet as BdkWallet;
@@ -324,7 +323,11 @@ impl OnchainWallet {
 		self.inner.build_tx()
 	}
 
-	async fn inner_sync_bitcoind(&mut self, bitcoind: &bitcoincore_rpc::Client, prev_tip: CheckPoint) -> anyhow::Result<()> {
+	async fn inner_sync_bitcoind(
+		&mut self,
+		bitcoind: &bitcoin_ext::rpc::Client,
+		prev_tip: CheckPoint,
+	) -> anyhow::Result<()> {
 		debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
 		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
 			bitcoind, prev_tip.clone(), prev_tip.height(), self.unconfirmed_txs()

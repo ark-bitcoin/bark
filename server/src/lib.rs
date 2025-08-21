@@ -39,7 +39,6 @@ use std::time::Duration;
 use anyhow::Context;
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use ark::lightning::{Bolt12Invoice, Offer};
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::hashes::Hash;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hex::DisplayHex;
@@ -57,7 +56,7 @@ use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use server_rpc::protos;
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
-use bitcoin_ext::rpc::bitcoin_core::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 

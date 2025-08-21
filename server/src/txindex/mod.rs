@@ -8,11 +8,10 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid};
-use bitcoin_ext::rpc::bitcoin_core::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use chrono::{DateTime, Local};
 use log::{trace, info, warn};
 
@@ -78,12 +77,12 @@ impl TxStatus {
 	}
 }
 
-impl From<bitcoin_ext::rpc::TxStatus> for TxStatus {
-	fn from(value: bitcoin_ext::rpc::TxStatus) -> Self {
+impl From<bitcoin_ext::TxStatus> for TxStatus {
+	fn from(value: bitcoin_ext::TxStatus) -> Self {
 		match value {
-			bitcoin_ext::rpc::TxStatus::Confirmed(block_ref) => TxStatus::ConfirmedIn(block_ref),
-			bitcoin_ext::rpc::TxStatus::Mempool => TxStatus::MempoolSince(chrono::Local::now()),
-			bitcoin_ext::rpc::TxStatus::NotFound => TxStatus::Unseen,
+			bitcoin_ext::TxStatus::Confirmed(block_ref) => TxStatus::ConfirmedIn(block_ref),
+			bitcoin_ext::TxStatus::Mempool => TxStatus::MempoolSince(chrono::Local::now()),
+			bitcoin_ext::TxStatus::NotFound => TxStatus::Unseen,
 		}
 	}
 }

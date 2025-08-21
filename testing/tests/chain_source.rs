@@ -6,8 +6,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256::HashEngine;
 
 use bark::onchain::ChainSourceClient;
-use bitcoin_ext::BlockHeight;
-use bitcoin_ext::rpc::TxStatus;
+use bitcoin_ext::{BlockHeight, TxStatus};
 
 use ark_testing::{sat, Bitcoind, TestContext};
 use ark_testing::util::{get_bark_chain_source_from_env, TestContextChainSource};

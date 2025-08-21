@@ -343,9 +343,9 @@ impl Config {
 		Ok(())
 	}
 
-	pub fn bitcoind_auth(&self) -> bdk_bitcoind_rpc::bitcoincore_rpc::Auth {
+	pub fn bitcoind_auth(&self) -> bitcoin_ext::rpc::Auth {
 		match (&self.bitcoind.rpc_user, &self.bitcoind.rpc_pass) {
-			(Some(user), Some(pass)) => bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(
+			(Some(user), Some(pass)) => bitcoin_ext::rpc::Auth::UserPass(
 				user.into(), pass.leak_ref().into(),
 			),
 			(Some(_), None) => panic!("Missing configuration for bitcoind.rpc_pass."),
@@ -354,7 +354,7 @@ impl Config {
 				let bitcoind_cookie_file = self.bitcoind.cookie.as_ref()
 					.expect("The bitcoind.cookie must be set if username and password aren't provided");
 
-				bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(bitcoind_cookie_file.into())
+				bitcoin_ext::rpc::Auth::CookieFile(bitcoind_cookie_file.into())
 			}
 		}
 	}

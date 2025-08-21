@@ -7,12 +7,12 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Transaction, Txid};
-use bitcoincore_rpc::{Client as BitcoindClient, Auth, RpcApi};
 use log::{debug, info};
 use tokio::process::Command;
 
 use bark::onchain::ChainSource;
 use bitcoin_ext::FeeRateExt;
+use bitcoin_ext::rpc::{self, RpcApi};
 
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
@@ -70,7 +70,7 @@ impl Bitcoind {
 		Daemon::wrap(BitcoindHelper { name, exec, config, state, add_node })
 	}
 
-	pub fn sync_client(&self) -> BitcoindClient {
+	pub fn sync_client(&self) -> rpc::Client {
 		self.inner.sync_client().unwrap()
 	}
 
@@ -82,7 +82,7 @@ impl Bitcoind {
 		self.inner.rpc_url()
 	}
 
-	pub fn auth(&self) -> Auth {
+	pub fn auth(&self) -> rpc::Auth {
 		self.inner.auth()
 	}
 
@@ -180,8 +180,8 @@ impl Bitcoind {
 }
 
 impl BitcoindHelper {
-	pub fn auth(&self) -> Auth {
-			Auth::CookieFile(self.rpc_cookie())
+	pub fn auth(&self) -> rpc::Auth {
+		rpc::Auth::CookieFile(self.rpc_cookie())
 	}
 
 	pub fn rpc_cookie(&self) -> PathBuf {
@@ -204,7 +204,7 @@ impl BitcoindHelper {
 		format!("127.0.0.1:{}", self.state.p2p_port.expect("A P2P port has been assigned."))
 	}
 
-	pub fn sync_client(&self) -> anyhow::Result<BitcoindClient> {
+	pub fn sync_client(&self) -> anyhow::Result<rpc::Client> {
 		let url = self.rpc_url();
 		let auth = self.auth();
 		let (user, pass) = auth.get_user_pass()?;
@@ -212,14 +212,14 @@ impl BitcoindHelper {
 		let timeout_str = std::env::var(BITCOINRPC_TIMEOUT_SECS).unwrap_or_else(|_| String::from("15"));
 		let timeout = std::time::Duration::from_secs(timeout_str.parse::<u64>().expect("BITCOINRPC_TIMEOUT_SECS is not a number"));
 
-		let transport = bitcoincore_rpc::jsonrpc::http::simple_http::Builder::new()
+		let transport = rpc::jsonrpc::http::simple_http::Builder::new()
 			.url(&url).with_context(|| format!("Invalid rpc-url: {}", url))?
 			.auth(user.expect("A user is defined"), pass)
 			.timeout(timeout)
 			.build();
 
-		let jsonrpc = bitcoincore_rpc::jsonrpc::client::Client::with_transport(transport);
-		let client = BitcoindClient::from_jsonrpc(jsonrpc);
+		let jsonrpc = rpc::jsonrpc::client::Client::with_transport(transport);
+		let client = rpc::Client::from_jsonrpc(jsonrpc);
 		Ok(client)
 	}
 

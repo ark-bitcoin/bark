@@ -1,9 +1,7 @@
 
 
-use bitcoin::{Address, FeeRate};
+use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
-use bitcoincore_rpc::bitcoin::amount::Amount;
-use bitcoincore_rpc::RpcApi;
 use futures::FutureExt;
 use log::{trace, warn};
 use rand::random;
@@ -14,6 +12,7 @@ use bark_json::exit::ExitState;
 use bark_json::exit::error::ExitError;
 use bark_json::exit::states::ExitStartState;
 use bitcoin_ext::TaprootSpendInfoExt;
+use bitcoin_ext::rpc::RpcApi;
 use server_rpc::protos;
 
 use ark_testing::{TestContext, Bark, btc, sat};
