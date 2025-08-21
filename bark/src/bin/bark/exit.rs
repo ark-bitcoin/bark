@@ -206,7 +206,7 @@ pub async fn progress_exit(
 async fn progress_once(
 	wallet: &mut Wallet,
 	onchain: &mut OnchainWallet,
-	desired_fee_rate: Option<FeeRate>,
+	fee_rate: Option<FeeRate>,
 ) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
 	info!("Starting onchain sync");
 	if let Err(error) = onchain.sync(&wallet.chain).await {
@@ -215,7 +215,7 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	let result = wallet.exit.progress_exit(onchain, desired_fee_rate).await
+	let result = wallet.exit.progress_exit(onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit.has_pending_exits();

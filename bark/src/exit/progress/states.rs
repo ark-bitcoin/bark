@@ -115,7 +115,9 @@ impl ExitStateProgress for ExitProcessingState {
 		let prev_confirmed = count_confirmed(&self.transactions);
 		let now_confirmed = count_confirmed(&transactions);
 		if now_confirmed == transactions.len() {
-			info!("Exit for VTXO ({}) has been fully confirmed, waiting for funds to become spendable...", ctx.vtxo.id());
+			info!("Exit for VTXO ({}) has been fully confirmed, waiting for funds to become \
+				spendable...", ctx.vtxo.id(),
+			);
 			let conf_block = transactions
 				.iter()
 				.filter_map(|exit| exit.status.confirmed_in())
@@ -132,13 +134,15 @@ impl ExitStateProgress for ExitProcessingState {
 			let prev_broadcast = count_broadcast(&self.transactions);
 			let now_broadcast = count_broadcast(&transactions);
 			if now_broadcast == transactions.len() {
-				info!("Exit for VTXO ({}) has been fully broadcast, waiting for {} transactions to confirm...",
-					ctx.vtxo.id(), now_confirmed,
+				info!("Exit for VTXO ({}) has been fully broadcast, waiting for {} transactions \
+					to confirm...", ctx.vtxo.id(), now_confirmed,
 				);
 			} else if prev_broadcast != now_broadcast {
 				let remaining = transactions.len() - now_broadcast;
 				if prev_broadcast > now_broadcast {
-					warn!("An exit transaction for VTXO ({}) appears to have fallen out of the mempool", ctx.vtxo.id());
+					warn!("An exit transaction for VTXO ({}) appears to have fallen out of the \
+						mempool", ctx.vtxo.id(),
+					);
 				}
 				info!("Exit for VTXO ({}) now has {} broadcast transactions with {} more required.",
 					ctx.vtxo.id(), now_broadcast, remaining,
@@ -162,12 +166,14 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 ) -> anyhow::Result<ExitTxStatus, ExitError> {
 	match &exit.status {
 		ExitTxStatus::VerifyInputs => {
-			info!("Verifying inputs for exit tx {}", exit.txid);
+			debug!("Verifying inputs for exit tx {}", exit.txid);
 			let inputs = ctx.get_unique_inputs(exit.txid).await?;
 			ctx.check_status_from_inputs(exit, &inputs).await
 		},
 		ExitTxStatus::AwaitingInputConfirmation { txids } => {
-			info!("Checking if the {} remaining inputs for exit tx {} have confirmed", txids.len(), exit.txid);
+			debug!("Checking if the {} remaining inputs for exit tx {} have confirmed",
+				txids.len(), exit.txid,
+			);
 			ctx.check_status_from_inputs(exit, &txids).await
 		}
 		ExitTxStatus::NeedsSignedPackage => {
@@ -175,7 +181,7 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 			// already broadcast this transaction
 			let new_status = ctx.get_exit_tx_status(exit).await?;
 			if matches!(new_status, ExitTxStatus::NeedsSignedPackage) {
-				info!("Creating exit package for exit tx {}", exit.txid);
+				debug!("Creating exit package for exit tx {}", exit.txid);
 				let child_tx = {
 					let package = ctx.tx_manager.get_package(exit.txid)?;
 					let guard = package.read().await;
@@ -190,10 +196,10 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 					exit.txid, child_tx, origin,
 				).await?;
 
-				info!("CPFP created with txid {} for exit tx {}", child_txid, exit.txid);
+				debug!("CPFP created with txid {} for exit tx {}", child_txid, exit.txid);
 				Ok(ExitTxStatus::NeedsBroadcasting { child_txid, origin })
 			} else {
-				info!("Exit tx {} has likely been broadcast by another party", exit.txid);
+				debug!("Exit tx {} has likely been broadcast by another party", exit.txid);
 				Ok(new_status)
 			}
 		}
@@ -201,7 +207,10 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 			// Ensure we still need to replace the package
 			match ctx.get_exit_tx_status(exit).await? {
 				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
-					info!("Creating replacement exit package with a fee rate of at least {}sats/kWu and a minimum fee of {} for exit tx {}", min_fee_rate, min_fee, exit.txid);
+					debug!("Creating replacement exit package with a fee rate of at least \
+						{}sats/kWu and a minimum fee of {} for exit tx {}",
+						min_fee_rate, min_fee, exit.txid,
+					);
 					let child_tx = ctx.create_exit_cpfp_tx(
 						&ctx.tx_manager.get_package(exit.txid)?.read().await.exit.tx,
 						onchain,
@@ -214,17 +223,19 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 						exit.txid, child_tx, origin,
 					).await?;
 
-					info!("RBF CPFP created with txid {} for exit tx {}", child_txid, exit.txid);
+					debug!("RBF CPFP created with txid {} for exit tx {}", child_txid, exit.txid);
 					Ok(ExitTxStatus::NeedsBroadcasting { child_txid, origin })
 				},
 				s => {
-					info!("Status has changed for exit tx {}, no longer creating a replacement package", exit.txid);
+					debug!("Status has changed for exit tx {}, no longer creating a replacement \
+						package", exit.txid,
+					);
 					Ok(s)
 				},
 			}
 		},
 		ExitTxStatus::NeedsBroadcasting { child_txid, .. } => {
-			info!("Checking if exit tx {} has been broadcast with CPFP tx {}",
+			debug!("Checking if exit tx {} has been broadcast with CPFP tx {}",
 				exit.txid, child_txid,
 			);
 			let status = ctx.get_exit_child_status(&exit, *child_txid).await?;
@@ -235,12 +246,14 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 							exit.txid, child_txid, new_child_txid,
 						);
 					}
-					info!("Attempting to broadcast exit tx {} with child tx {}", exit.txid, child_txid);
+					debug!("Attempting to broadcast exit tx {} with child tx {}",
+						exit.txid, child_txid,
+					);
 					let package = ctx.tx_manager.get_package(exit.txid)?;
 					let guard = package.read().await;
 					let status = ctx.tx_manager.broadcast_package(&*guard).await?;
 					if matches!(status, TxStatus::Mempool) {
-						info!("Commiting exit CPFP {} to database", new_child_txid);
+						debug!("Commiting exit CPFP {} to database", new_child_txid);
 						let tx = &guard.child.as_ref().expect("child can't be missing").info.tx;
 						onchain.store_signed_p2a_cpfp(tx)
 							.map_err(|e| ExitError::ExitPackageStoreFailure {
@@ -253,7 +266,9 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 					ctx.get_exit_child_status(&exit, new_child_txid).await
 				},
 				_ => {
-					info!("Exit tx {} needed broadcasting but has changed status to: {}", exit.txid, status);
+					debug!("Exit tx {} needed broadcasting but has changed status to: {}",
+						exit.txid, status,
+					);
 					Ok(status)
 				},
 			}
@@ -262,7 +277,7 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 			let new_status = ctx.get_exit_child_status(exit, *child_txid).await?;
 			match new_status {
 				ExitTxStatus::Confirmed { block, .. } => {
-					info!("Exit tx {} confirmed at height {}", exit.txid, block.height);
+					debug!("Exit tx {} confirmed at height {}", exit.txid, block.height);
 				}
 				_ => {}
 			}
@@ -274,7 +289,8 @@ async fn progress_exit_tx<W: ExitUnilaterally>(
 			match &new_status {
 				ExitTxStatus::Confirmed { child_txid: new_txid, block: new_block, .. } => {
 					if new_block != block || new_txid != child_txid {
-						warn!("Exit transaction {} was confirmed with block {} but it has been replaced by {} in block {}",
+						warn!("Exit transaction {} was confirmed with block {} but it has been \
+							replaced by {} in block {}",
 							exit.txid, block.hash, new_txid, new_block.hash
 						);
 					}
@@ -365,11 +381,11 @@ impl ExitStateProgress for ExitSpendableState {
 		if let Some((txid, status)) = result.get(&point) {
 			match status {
 				TxStatus::Confirmed(block) => {
-					info!("Tx {} has successfully spent VTXO {}", txid, ctx.vtxo.id());
+					debug!("Tx {} has successfully spent VTXO {}", txid, ctx.vtxo.id());
 					Ok(ExitState::new_spent(tip, txid.clone(), *block))
 				},
 				TxStatus::Mempool => {
-					info!("Tx {} is attempting to spend VTXO {}", txid, ctx.vtxo.id());
+					debug!("Tx {} is attempting to spend VTXO {}", txid, ctx.vtxo.id());
 					Ok(ExitState::new_spend_in_progress(tip, self.spendable_since, txid.clone()))
 				},
 				TxStatus::NotFound => unreachable!(),
@@ -394,7 +410,7 @@ impl ExitStateProgress for ExitSpendInProgressState {
 		let tip = ctx.tip_height().await?;
 		match ctx.tx_manager.tx_status(self.spending_txid).await? {
 			TxStatus::Confirmed(block) => {
-				info!("Tx {} has successfully spent VTXO {}", self.spending_txid, ctx.vtxo.id());
+				debug!("Tx {} has successfully spent VTXO {}", self.spending_txid, ctx.vtxo.id());
 				Ok(ExitState::new_spent(tip, self.spending_txid, block))
 			},
 			TxStatus::Mempool => {
