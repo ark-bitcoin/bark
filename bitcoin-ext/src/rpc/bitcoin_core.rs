@@ -8,6 +8,7 @@ use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
 use crate::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
+use crate::rpc::TxStatus;
 
 /// Error code for RPC_VERIFY_ALREADY_IN_UTXO_SET.
 const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
@@ -344,27 +345,3 @@ pub trait BitcoinRpcExt: RpcApi {
 }
 
 impl <T: RpcApi> BitcoinRpcExt for T {}
-
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum TxStatus {
-	Confirmed(BlockRef),
-	Mempool,
-	NotFound,
-}
-
-impl TxStatus {
-	pub fn confirmed_height(&self) -> Option<BlockHeight> {
-		match self {
-			TxStatus::Confirmed(block_ref) => Some(block_ref.height),
-			_ => None,
-		}
-	}
-
-	pub fn confirmed_in(&self) -> Option<BlockRef> {
-		match self {
-			TxStatus::Confirmed(block_ref) => Some(*block_ref),
-			_ => None,
-		}
-	}
-}

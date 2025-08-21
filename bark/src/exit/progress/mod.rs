@@ -154,9 +154,8 @@ impl<'a> ProgressContext<'a> {
 	}
 
 	pub async fn get_block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef, ExitError> {
-		self.chain_source.block_id(height).await
+		self.chain_source.block_ref(height).await
 			.map_err(|e| ExitError::BlockRetrievalFailure { height, error: e.to_string() })
-			.map(|id| id.into())
 	}
 
 	pub async fn get_exit_child_status(

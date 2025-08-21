@@ -1,8 +1,7 @@
 
 use std::collections::HashMap;
 
-use bdk_esplora::esplora_client::Amount;
-use bitcoin::{FeeRate, Weight};
+use bitcoin::{Amount, FeeRate, Weight};
 
 use ark::Vtxo;
 

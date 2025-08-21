@@ -11,7 +11,7 @@ use anyhow::Context;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoin_ext::rpc::bitcoin_core::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use chrono::{DateTime, Local};
 use log::{trace, info, warn};

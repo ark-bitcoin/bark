@@ -3,18 +3,19 @@
 #[macro_use] extern crate serde;
 pub extern crate bitcoin;
 
-#[path = "bitcoin.rs"]
-mod mbitcoin;
+#[cfg(feature = "bdk")]
+pub mod bdk;
 pub mod cpfp;
 pub mod fee;
 #[cfg(feature = "rpc")]
 pub mod rpc;
-#[cfg(feature = "bdk")]
-pub mod bdk;
 
 pub use mbitcoin::{
 	AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt, TxOutExt,
 };
+
+#[path = "bitcoin.rs"]
+mod mbitcoin;
 
 use std::fmt;
 

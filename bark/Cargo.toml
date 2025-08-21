@@ -9,10 +9,10 @@ readme = "README.md"
 
 [features]
 default = ["cli", "tls-native-roots"]
-cli = ["clap", "fern", "home"]
+cli = ["clap", "fern", "home", "onchain_bdk"]
+onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
-
 
 [lib]
 name = "bark"
@@ -27,7 +27,9 @@ required-features = ["cli"]
 
 # OWN
 ark-lib = { path = "../lib" }
-bark-bitcoin-ext = { path = "../bitcoin-ext" }
+bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false, features = [
+    "core_rpc", "esplora_rpc", "bdk",
+]}
 bark-json = { path = "../bark-json" }
 bark-server-rpc = { path = "../server-rpc" }
 
@@ -45,19 +47,20 @@ rusqlite =  "0.31.0"
 lazy_static.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
-humantime.workspace = true
 
 bip39.workspace = true
-miniscript.workspace = true
-bdk_wallet = { workspace = true, features = [ "rusqlite" ] }
-bdk_bitcoind_rpc.workspace = true
-bdk_esplora.workspace = true
+bdk_core = { workspace = true }
+bdk_bitcoind_rpc = { workspace = true }
+bdk_esplora = { workspace = true }
 lightning.workspace = true
 
 tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
+
+# Prebuilt BDK Wallet only
+bdk_wallet = { workspace = true, features = [ "rusqlite" ], optional = true }
 
 # CLI only
 clap = { workspace = true, optional = true }

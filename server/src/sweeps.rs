@@ -49,7 +49,7 @@ use bitcoin::{
 	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Sequence, Transaction, TxOut,
 	Txid, Weight,
 };
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoin_ext::rpc::bitcoin_core::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
 use futures::StreamExt;
 use log::{trace, info, warn, error};

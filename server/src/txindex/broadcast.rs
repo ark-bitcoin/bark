@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bitcoin::{Txid, Transaction, Wtxid};
 use bitcoin::consensus::encode::serialize;
 use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bitcoin_ext::rpc::BitcoinRpcClient;
+use bitcoin_ext::rpc::bitcoin_core::BitcoinRpcClient;
 use log::{trace, debug, info, warn};
 use tokio::sync::mpsc;
 

@@ -1,11 +1,13 @@
 
 mod chain;
+#[cfg(feature = "onchain_bdk")]
 mod bdk;
 
 pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
-/// TODO: BDK compilation
-pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
+
+#[cfg(feature = "onchain_bdk")]
+pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 
 use std::sync::Arc;
 
