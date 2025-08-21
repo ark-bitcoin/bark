@@ -25,10 +25,9 @@ use ark::{
 	VtxoRequest,
 };
 use ark::connectors::ConnectorChain;
-use ark::musig::{self, PublicNonce, SecretNonce};
+use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundInfo, VtxoOwnershipChallenge,
-	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
+	RoundAttempt, RoundEvent, RoundInfo, RoundSeq, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT
 };
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use ark::vtxo::ServerHtlcRecvVtxoPolicy;
@@ -37,7 +36,7 @@ use server_rpc::protos;
 
 use crate::{database, Server, SECP};
 use crate::database::ln::LightningHtlcSubscriptionStatus;
-use crate::database::forfeits::{ForfeitState, DangerousSecretNonce};
+use crate::database::forfeits::ForfeitState;
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::secret::Secret;
@@ -143,7 +142,7 @@ pub struct RoundData {
 }
 
 pub struct CollectingPayments {
-	round_seq: usize,
+	round_seq: RoundSeq,
 	attempt_seq: usize,
 	round_data: RoundData,
 
@@ -166,7 +165,7 @@ pub struct CollectingPayments {
 
 impl CollectingPayments {
 	fn new(
-		round_seq: usize,
+		round_seq: RoundSeq,
 		attempt_seq: usize,
 		round_data: RoundData,
 		locked_inputs: OwnedVtxoFluxLock,
@@ -639,7 +638,6 @@ impl CollectingPayments {
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
-			connector_pubkey: connector_key.public_key(),
 		});
 
 		let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(vtxos_utxo);
@@ -687,7 +685,7 @@ impl CollectingPayments {
 }
 
 pub struct SigningVtxoTree {
-	round_seq: usize,
+	round_seq: RoundSeq,
 	attempt_seq: usize,
 	round_data: RoundData,
 	expiry_height: BlockHeight,
@@ -844,6 +842,7 @@ impl SigningVtxoTree {
 			round_seq: self.round_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
+			connector_pubkey: self.connector_key.public_key(),
 		});
 
 		let conns_utxo = OutPoint::new(self.round_txid, ROUND_TX_CONNECTOR_VOUT);
@@ -873,7 +872,7 @@ impl SigningVtxoTree {
 }
 
 pub struct SigningForfeits {
-	round_seq: usize,
+	round_seq: RoundSeq,
 	attempt_seq: usize,
 	round_data: RoundData,
 	expiry_height: BlockHeight,
@@ -1260,7 +1259,7 @@ impl From<RoundError> for RoundResult {
 async fn perform_round(
 	srv: &Arc<Server>,
 	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
-	round_seq: usize,
+	round_seq: RoundSeq,
 ) -> RoundResult {
 	let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
 
@@ -1268,7 +1267,7 @@ async fn perform_round(
 		.span_builder(telemetry::TRACE_RUN_ROUND)
 		.with_kind(SpanKind::Server)
 		.start(&tracer_provider);
-	span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
+	span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
 
 	let parent_context = opentelemetry::Context::current_with_span(span);
 
@@ -1317,7 +1316,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_ATTEMPT)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		// Release all vtxos in flux from previous attempt
@@ -1336,7 +1335,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_submit_time); }
@@ -1352,7 +1351,7 @@ async fn perform_round(
 								srv, inputs, vtxo_requests, offboards,
 							).await.map_err(|e| {
 								debug!("error processing payment: {e}");
-								telemetry::set_round_metrics(round_seq, attempt_seq, round_state.kind());
+								telemetry::set_round_metrics(round_seq.into(), attempt_seq, round_state.kind());
 								e
 							})
 						},
@@ -1383,7 +1382,7 @@ async fn perform_round(
 			round_state = round_state.into_finished(RoundResult::Empty);
 
 			telemetry::set_full_round_metrics(
-				round_seq, attempt_seq, round_state.kind(), Amount::from_sat(0), 0,
+				round_seq.into(), attempt_seq, round_state.kind(), Amount::from_sat(0), 0,
 			);
 
 			return round_state.result().unwrap();
@@ -1416,7 +1415,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		let input_count = round_state.collecting_payments().all_inputs.len();
@@ -1428,7 +1427,7 @@ async fn perform_round(
 				round_state = RoundState::Finished(RoundResult::Err(e));
 
 				telemetry::set_full_round_metrics(
-					round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+					round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
 				);
 
 				round_state.result().unwrap()
@@ -1463,7 +1462,7 @@ async fn perform_round(
 						round_state = round_state.into_finished(RoundResult::Abandoned);
 
 						telemetry::set_full_round_metrics(
-							round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+							round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
 						);
 
 						return round_state.result().unwrap();
@@ -1512,7 +1511,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		round_state = match round_state.progress(&srv).await {
@@ -1521,7 +1520,7 @@ async fn perform_round(
 				round_state = RoundState::Finished(RoundResult::Err(e));
 
 				telemetry::set_full_round_metrics(
-					round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+					round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
 				);
 
 				round_state.result().unwrap()
@@ -1540,7 +1539,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_sign_time); }
@@ -1557,7 +1556,7 @@ async fn perform_round(
 						round_state = round_state.into_finished(RoundResult::Abandoned);
 
 						telemetry::set_full_round_metrics(
-							round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+							round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
 						);
 
 						return round_state.result().unwrap();
@@ -1614,7 +1613,7 @@ async fn perform_round(
 			.span_builder(telemetry::TRACE_RUN_ROUND_FINALIZING)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
 		span.set_int_attr("attempt_seq", attempt_seq);
 
 		round_state = match state.finish(&srv).await {
@@ -1627,7 +1626,7 @@ async fn perform_round(
 		};
 
 		telemetry::set_full_round_metrics(
-			round_seq, attempt_seq, round_state.kind(), input_volume, input_count,
+			round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
 		);
 
 		return round_state.result().unwrap();
@@ -1646,11 +1645,11 @@ pub async fn run_round_coordinator(
 		// we offset by the time of our first release just to slightly reduce
 		// absolute number size
 		let epoch = UNIX_EPOCH + Duration::from_secs(1741015334);
-		SystemTime::now().duration_since(epoch).unwrap().as_secs() as usize
+		RoundSeq::new(SystemTime::now().duration_since(epoch).unwrap().as_secs())
 	};
 
 	loop {
-		round_seq += 1;
+		round_seq.increment();
 		match perform_round(srv, &mut round_input_rx, round_seq).await {
 			RoundResult::Success => {},
 			RoundResult::Empty => {},
@@ -1747,7 +1746,7 @@ mod tests {
 			offboard_feerate: FeeRate::ZERO,
 			max_vtxo_amount: None,
 		};
-		CollectingPayments::new(0, 0, round_data, OwnedVtxoFluxLock::dummy(), None)
+		CollectingPayments::new(0.into(), 0, round_data, OwnedVtxoFluxLock::dummy(), None)
 	}
 
 	#[test]

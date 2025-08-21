@@ -3,28 +3,31 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use ark::musig::{DangerousSecretNonce, SecretNonce};
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
-use rusqlite::{self, named_params, Connection, ToSql};
+use rusqlite::{self, named_params, Connection, ToSql, Transaction};
 
 use ark::ProtocolEncoding;
 use ark::lightning::{PaymentHash, Preimage};
+use ark::rounds::{RoundId, RoundSeq};
 use bitcoin_ext::BlockHeight;
 use json::exit::ExitState;
 use json::exit::states::ExitTxOrigin;
 
-use crate::persist::LightningReceive;
+use crate::persist::sqlite::convert::{row_to_secret_nonces, row_to_round_state};
+use crate::{Config, Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::persist::{LightningReceive, StoredVtxoRequest};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
-use crate::{
-	Config, Pagination, Vtxo, VtxoId, VtxoState,
-	WalletProperties,
-};
 use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementKind};
-use super::convert::{row_to_movement, row_to_lightning_receive};
+use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState, RoundStateKind};
+
+use super::convert::{row_to_lightning_receive, row_to_movement};
 
 /// Set read-only properties for the wallet
 ///
@@ -48,7 +51,7 @@ pub (crate) fn set_properties(
 }
 
 pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<()> {
-	// Store the ftxo
+	// Store the vtxo
 	let query =
 		"INSERT INTO bark_config
 			(id, server_address, esplora_address, bitcoind_address,
@@ -239,6 +242,358 @@ pub fn store_vtxo_with_initial_state(
 	Ok(())
 }
 
+/// Returns the highest attempt for a given round sequence
+pub fn get_round_attempt_by_id(conn: &Connection, round_attempt_id: i64) -> anyhow::Result<Option<RoundState>> {
+	let query = "
+		SELECT id, round_seq, attempt_seq, status, inputs, payment_requests,
+			offboard_requests, round_txid, round_tx, vtxos, cosign_keys,
+			vtxo_forfeited_in_round, vtxo_tree
+		FROM round_view
+		WHERE id = :round_attempt_id";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([round_attempt_id])?;
+
+	if let Some(row) = rows.next()? {
+		Ok(Some(row_to_round_state(row)?))
+	} else {
+		Ok(None)
+	}
+}
+
+/// Return the last round attempt for a given round id
+pub fn get_round_attempt_by_round_txid(
+	conn: &Connection,
+	round_id: RoundId,
+) -> anyhow::Result<Option<RoundState>> {
+	let query = "
+		SELECT id, round_seq, attempt_seq, status, inputs, payment_requests,
+			offboard_requests, round_txid, round_tx, vtxos, cosign_keys,
+			vtxo_forfeited_in_round, vtxo_tree
+		FROM round_view
+		WHERE round_txid = :round_id";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([round_id.to_string()])?;
+
+	if let Some(row) = rows.next()? {
+		Ok(Some(row_to_round_state(row)?))
+	} else {
+		Ok(None)
+	}
+}
+
+pub fn list_pending_rounds(conn: &Connection)
+	-> anyhow::Result<Vec<RoundState>>
+{
+	let pending_rounds = [
+		RoundStateKind::AttemptStarted,
+		RoundStateKind::PaymentSubmitted,
+		RoundStateKind::VtxoTreeSigned,
+		RoundStateKind::ForfeitSigned,
+		RoundStateKind::PendingConfirmation,
+	];
+
+	let query = "
+		SELECT  id, round_seq, attempt_seq, status, inputs, payment_requests,
+			offboard_requests, round_txid, round_tx, vtxos, cosign_keys,
+			vtxo_forfeited_in_round, vtxo_tree
+		FROM round_view
+		WHERE status IN (SELECT atom FROM json_each(?))";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(&[&serde_json::to_string(&pending_rounds)?])?;
+
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		result.push(row_to_round_state(row)?);
+	}
+
+	Ok(result)
+}
+
+pub fn store_new_round_attempt(
+	tx: &Transaction,
+	round_seq: RoundSeq,
+	attempt_seq: usize,
+	participation: RoundParticipation,
+) -> anyhow::Result<AttemptStartedState> {
+	// Store the round
+	let mut statement = tx.prepare("
+		INSERT INTO bark_round_attempt (round_seq, attempt_seq, payment_requests, offboard_requests, status)
+		VALUES (:round_seq, :attempt_seq, :payment_requests, :offboard_requests, :status)
+		RETURNING id;
+	")?;
+
+	let round_attempt_id = statement.query_row(named_params! {
+		":status": RoundStateKind::AttemptStarted.to_string(),
+		":round_seq": round_seq.inner(),
+		":attempt_seq": attempt_seq,
+		":payment_requests": serde_json::to_vec(&participation.outputs)?,
+		":offboard_requests": serde_json::to_vec(&participation.offboards)?,
+	}, |row| row.get::<_, i64>("id"))?;
+
+	// Lock vtxos
+	let mut statement = tx.prepare("
+		UPDATE bark_vtxo
+		SET locked_in_round_attempt_id = :locked_in_round_attempt_id
+		WHERE id = :id"
+	)?;
+	for vtxo in &participation.inputs {
+		statement.execute(named_params! {
+			":locked_in_round_attempt_id": round_attempt_id,
+			":id": vtxo.id().to_string(),
+		})?;
+	}
+
+	Ok(AttemptStartedState { round_attempt_id, round_seq, attempt_seq, participation })
+}
+
+pub fn store_round_state_update(
+	tx: &Transaction,
+	round_state: RoundState,
+	prev_state: RoundState,
+) -> anyhow::Result<RoundState> {
+	let status = round_state.kind();
+	let round_attempt_id = round_state.round_attempt_id();
+
+	match round_state {
+		RoundState::AttemptStarted(_) => {
+			unreachable!("Cannot update to round started state");
+		},
+		RoundState::PaymentSubmitted(state) => {
+			let mut statement = tx.prepare("
+				UPDATE bark_round_attempt
+				SET status = :status, cosign_keys = :cosign_keys
+				WHERE id = :round_attempt_id
+			")?;
+
+			statement.execute(named_params! {
+				":status": status.to_string(),
+				":round_attempt_id": state.round_attempt_id,
+				":cosign_keys": serde_json::to_vec(&state.cosign_keys)?,
+			})?;
+		},
+		RoundState::VtxoTreeSigned(ref state) => {
+			let mut statement = tx.prepare("
+				UPDATE bark_round_attempt
+				SET round_tx = :round_tx, round_txid = :round_txid, status = :status, vtxo_tree = :vtxo_tree
+				WHERE id = :round_attempt_id"
+			)?;
+
+			statement.execute(named_params! {
+				":status": status.to_string(),
+				":round_attempt_id": state.round_attempt_id,
+				":round_txid": state.unsigned_round_tx.compute_txid().to_string(),
+				":round_tx": serialize_hex(&state.unsigned_round_tx),
+				":vtxo_tree": state.vtxo_tree.serialize(),
+			})?;
+		},
+		RoundState::ForfeitSigned(ref state) => {
+			for forfeit in &state.forfeited_vtxos {
+				let mut statement = tx.prepare("
+					INSERT INTO vtxo_forfeited_in_round (round_attempt_id, vtxo_id, double_spend_txid)
+					VALUES (:round_attempt_id, :vtxo_id, :double_spend_txid)
+					ON CONFLICT (round_attempt_id, vtxo_id) DO UPDATE SET
+						double_spend_txid = :double_spend_txid
+				")?;
+
+				statement.execute(named_params! {
+					":round_attempt_id": state.round_attempt_id,
+					":vtxo_id": forfeit.vtxo_id.to_string(),
+					":double_spend_txid": forfeit.double_spend_txid.map(|txid| txid.to_string()),
+				})?;
+			}
+
+			let vtxos = state.vtxos.iter()
+				.map(|v| v.serialize())
+				.collect::<Vec<_>>();
+
+			let mut statement = tx.prepare("
+				UPDATE bark_round_attempt SET
+					vtxos = :vtxos,
+					status = :status
+				WHERE id = :round_attempt_id"
+			)?;
+
+			statement.execute(named_params! {
+				":status": status.to_string(),
+				":round_attempt_id": state.round_attempt_id,
+				":vtxos": serde_json::to_vec(&vtxos)?,
+			})?;
+		},
+		RoundState::PendingConfirmation(ref state) => {
+			let mut statement = tx.prepare("
+				UPDATE bark_round_attempt
+				SET status = :status, round_tx = :round_tx, round_txid = :round_txid
+				WHERE id = :round_attempt_id"
+			)?;
+
+			statement.execute(named_params! {
+				":status": status.to_string(),
+				":round_txid": state.round_tx.compute_txid().to_string(),
+				":round_tx": serialize_hex(&state.round_tx),
+				":round_attempt_id": state.round_attempt_id,
+			})?;
+		},
+		RoundState::RoundConfirmed(ref state) => {
+			let mut statement = tx.prepare("
+				UPDATE bark_round_attempt
+				SET status = :status
+				WHERE id = :round_attempt_id"
+			)?;
+
+			statement.execute(named_params! {
+				":status": status.to_string(),
+				":round_attempt_id": state.round_attempt_id,
+			})?;
+		},
+		RoundState::RoundAbandoned(ref state) => {
+			let mut statement = tx.prepare("
+				UPDATE bark_round_attempt SET status = :status WHERE id = :round_attempt_id"
+			)?;
+
+			statement.execute(named_params! {
+				":status": status.to_string(),
+				":round_attempt_id": state.round_attempt_id,
+			})?;
+
+			unlink_vtxo_from_round(tx, &prev_state)?;
+		},
+		RoundState::RoundCancelled(ref state) => {
+			let mut statement = tx.prepare("
+				UPDATE bark_round_attempt
+				SET status = :status
+				WHERE id = :round_attempt_id"
+			)?;
+
+			statement.execute(named_params! {
+				":status": status.to_string(),
+				":round_attempt_id": state.round_attempt_id,
+			})?;
+
+			for forfeit in &state.forfeited_vtxos {
+				// Mark forfeit links as double spent
+				let mut statement = tx.prepare("
+					UPDATE vtxo_forfeited_in_round
+					SET double_spend_txid = :double_spend_txid
+					WHERE round_attempt_id = :round_attempt_id"
+				)?;
+				statement.execute(named_params! {
+					":round_attempt_id": state.round_attempt_id,
+					":double_spend_txid": forfeit.double_spend_txid.map(|txid| txid.to_string()),
+				})?;
+			}
+
+			unlink_vtxo_from_round(tx, &prev_state)?;
+		},
+	};
+
+	Ok(get_round_attempt_by_id(tx, round_attempt_id)?.expect("we just inserted round"))
+}
+
+pub fn store_secret_nonces(tx: &Transaction, round_attempt_id: i64, secret_nonces: Vec<Vec<SecretNonce>>) -> anyhow::Result<()> {
+	let serialized_nonces = secret_nonces.into_iter()
+		.map(|sec_nonces| {
+			let sec_nonces = sec_nonces.into_iter()
+				.map(DangerousSecretNonce::new).collect::<Vec<_>>();
+			sec_nonces
+		})
+		.collect::<Vec<_>>();
+
+	let mut statement = tx.prepare("
+		UPDATE bark_round_attempt SET secret_nonces = :secret_nonces WHERE id = :round_attempt_id
+	")?;
+
+	statement.execute(named_params! {
+		":round_attempt_id": round_attempt_id,
+		":secret_nonces": serde_json::to_vec(&serialized_nonces)?,
+	})?;
+
+	Ok(())
+}
+
+/// Takes the cosign nonces and keys used for a round and clear them in the database
+///
+/// If we are in PaymentSubmitted state but there is no cosign nonces or
+/// keys, it surely means that we already didn't a musig session but
+/// couldn't progress the round, so we need to abandon the current one and
+/// wait for a new one.
+pub fn take_secret_nonces(tx: &Transaction, round_attempt_id: i64) -> anyhow::Result<Option<Vec<Vec<SecretNonce>>>> {
+	let mut statement = tx.prepare("
+		SELECT secret_nonces, cosign_keys FROM bark_round_attempt WHERE id = :round_attempt_id"
+	)?;
+
+	let mut rows = statement.query(named_params! {
+		":round_attempt_id": round_attempt_id,
+	})?;
+
+	let secret_nonces = rows.next()?
+		.map(|row| row_to_secret_nonces(&row)).transpose()?
+		.flatten();
+
+	let mut statement = tx.prepare("
+		UPDATE bark_round_attempt SET secret_nonces = NULL, cosign_keys = NULL WHERE id = :round_attempt_id"
+	)?;
+	statement.execute(named_params! { ":round_attempt_id": round_attempt_id })?;
+
+	Ok(secret_nonces)
+}
+
+pub fn store_pending_confirmation_round(
+	tx: &Transaction,
+	round_seq: RoundSeq,
+	round_txid: RoundId,
+	round_tx: bitcoin::Transaction,
+	reqs: Vec<StoredVtxoRequest>,
+	vtxos: Vec<Vtxo>,
+) -> anyhow::Result<PendingConfirmationState> {
+	// Store the round
+	let mut statement = tx.prepare("
+		INSERT INTO bark_round_attempt (round_seq, round_txid, payment_requests, offboard_requests, vtxos, status)
+		VALUES (:round_seq, :round_txid, :payment_requests, :offboard_requests, :vtxos, :status)
+		RETURNING id;"
+	)?;
+
+	let round_attempt_id = statement.query_row(named_params! {
+		":round_seq": round_seq.inner(),
+		":round_txid": round_txid.to_string(),
+		":status": RoundStateKind::PendingConfirmation.to_string(),
+		":round_tx": serialize_hex(&round_tx),
+		":payment_requests": serde_json::to_vec(&reqs)?,
+		":offboard_requests": serde_json::to_vec::<Vec<()>>(&vec![])?,
+		":vtxos": serde_json::to_vec(&vtxos.iter().map(|v| v.serialize()).collect::<Vec<_>>())?,
+	}, |row| row.get::<_, i64>("id"))?;
+
+	Ok(get_round_attempt_by_id(tx, round_attempt_id)?.expect("we just inserted round")
+		.into_pending_confirmation().unwrap())
+}
+
+fn unlink_vtxo_from_round(
+	tx: &Transaction,
+	round: &RoundState,
+) -> anyhow::Result<()> {
+	let mut statement = tx.prepare("
+		UPDATE bark_vtxo
+		SET locked_in_round_attempt_id = NULL
+		WHERE id = :id AND locked_in_round_attempt_id = :round_attempt_id"
+	)?;
+
+	if let Some(participation) = round.participation() {
+		for vtxo in &participation.inputs {
+			let nb_updated = statement.execute(named_params! {
+				":round_attempt_id": round.round_attempt_id(),
+				":id": vtxo.id().to_string(),
+			})?;
+
+			match nb_updated {
+				0 => panic!("Corrupted database. No vtxo with id {} found in round {}", vtxo.id(), round.round_attempt_id()),
+				1 => {},
+				_ => panic!("Corrupted database. Found multiple vtxos with the same id"),
+			}
+		}
+	}
+
+	Ok(())
+}
+
 pub fn get_wallet_vtxo_by_id(
 	conn: &Connection,
 	id: VtxoId
@@ -263,7 +618,7 @@ pub fn get_vtxos_by_state(
 	let query = "
 		SELECT raw_vtxo, state
 		FROM vtxo_view
-		WHERE state_kind IN (SELECT atom FROM json_each(?))
+		WHERE state_kind IN (SELECT atom FROM json_each(?)) AND locked_in_round_attempt_id IS NULL
 		ORDER BY expiry_height ASC, amount_sat DESC";
 
 	let mut statement = conn.prepare(query)?;
@@ -283,6 +638,21 @@ pub fn get_vtxos_by_state(
 		};
 
 		result.push(WalletVtxo { vtxo, state });
+	}
+	Ok(result)
+}
+
+pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<Vtxo>> {
+	let query = "SELECT raw_vtxo FROM vtxo_view WHERE locked_in_round_attempt_id IS NOT NULL";
+	let mut statement = conn.prepare(query)?;
+
+	let mut rows = statement.query([])?;
+
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		let raw_vtxo= row.get::<_, Vec<u8>>("raw_vtxo")?;
+		let vtxo = Vtxo::deserialize(&raw_vtxo)?;
+		result.push(vtxo);
 	}
 	Ok(result)
 }
@@ -617,9 +987,12 @@ pub fn get_exit_child_tx(
 #[cfg(test)]
 mod test {
 	use ark::vtxo::test::VTXO_VECTORS;
-	use crate::movement::{MovementRecipient, VtxoSubset};
+
+	use crate::movement::MovementRecipient;
 	use crate::persist::sqlite::test::in_memory;
 	use crate::persist::sqlite::migrations::MigrationContext;
+	use crate::persist::StoredVtxoRequest;
+
 	use super::*;
 
 	#[test]
@@ -655,7 +1028,6 @@ mod test {
 		assert_eq!(state_2, VtxoState::UnregisteredBoard);
 	}
 
-
 	#[test]
 	/// Each struct stored as JSON in the database should have test to check for backwards compatibility
 	/// Parsing can occur either in convert.rs or this file (query.rs)
@@ -684,10 +1056,6 @@ mod test {
 		let serialized = r#"{"type":"block","confirmed_in":{"height":134,"hash":"71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 
-		// Vtxo subset
-		let serialised = r#"{"id":"1570ed0ccb55520cc343628ad95e325010983c61655580bfea10e067d98f40af:0","amount_sat":300000}"#;
-		serde_json::from_str::<VtxoSubset>(serialised).unwrap();
-
 		// Movement recipient
 		let serialised = r#"{"recipient":"03a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount_sat":150000}"#;
 		serde_json::from_str::<MovementRecipient>(serialised).unwrap();
@@ -704,5 +1072,8 @@ mod test {
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#"{"PendingLightningRecv":{"payment_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
+
+		let serialised = r#"{"request_policy":"0003a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount":300000,"state":"Spendable"}"#;
+		serde_json::from_str::<StoredVtxoRequest>(serialised).unwrap();
 	}
 }

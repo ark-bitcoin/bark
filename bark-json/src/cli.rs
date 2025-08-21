@@ -10,7 +10,7 @@ use bitcoin_ext::BlockHeight;
 use crate::exit::ExitState;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
-use crate::primitives::{UtxoInfo, VtxoInfo};
+use crate::primitives::{UtxoInfo, VtxoInfo, RecipientInfo};
 use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -38,6 +38,8 @@ pub struct Balance {
 	pub spendable: Amount,
 	#[serde(rename = "pending_lightning_send_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_lightning_send: Amount,
+	#[serde(rename = "pending_in_round_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub pending_in_round: Amount,
 	#[serde(rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_exit: Amount,
 }
@@ -104,8 +106,24 @@ pub struct Board {
 	/// in this board.
 	///
 	/// Currently, this is always a vector of length 1
-	pub vtxos: Vec<VtxoInfo>,
+	pub vtxos: Vtxos,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Movement {
+	pub id: u32,
+	/// Fees paid for the movement
+	pub fees: Amount,
+	/// wallet's VTXOs spent in this movement
+	pub spends: Vtxos,
+	/// Received VTXOs from this movement
+	pub receives: Vtxos,
+	/// External recipients of the movement
+	pub recipients: Vec<RecipientInfo>,
+	/// Movement date
+	pub created_at: String,
+}
+
 
 pub mod onchain {
 	use super::*;

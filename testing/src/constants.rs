@@ -1,5 +1,6 @@
 
 pub const BOARD_CONFIRMATIONS: u32 = 12;
+pub const ROUND_CONFIRMATIONS: u32 = 6;
 
 pub mod env {
 	pub const TEST_DIRECTORY: &str = "TEST_DIRECTORY";

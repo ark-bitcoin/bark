@@ -1,5 +1,6 @@
 
-use std::iter;
+use std::io::BufRead;
+use std::{io, iter};
 use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +33,7 @@ use server_rpc::protos;
 use bark_json::exit::ExitState;
 
 use ark_testing::{Captaind, TestContext, btc, sat, Bark};
-use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind;
 use ark_testing::daemon::captaind::proxy::ArkRpcProxyServer;
@@ -259,7 +260,7 @@ async fn max_vtxo_amount() {
 	bark1.timeout = None;
 	let address = ctx.bitcoind().get_new_address();
 	bark1.offboard_all(address.clone()).await;
-	ctx.generate_blocks(1).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, Amount::from_sat(999_100));
 }
@@ -394,9 +395,12 @@ async fn restart_server_with_payments() {
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
 	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
@@ -983,7 +987,7 @@ async fn claim_forfeit_connector_chain() {
 	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
 	let mut log_round = srv.subscribe_log::<RoundFinished>().await;
 	assert!(bark.try_refresh_all().await.is_err());
-	assert!(bark.vtxos().await.contains(&vtxo));
+	assert_eq!(bark.inround_balance().await, sat(4_000_000));
 	assert_eq!(log_round.recv().fast().await.unwrap().nb_input_vtxos, 10);
 
 	// start the exit process
@@ -1044,8 +1048,8 @@ async fn claim_forfeit_round_connector() {
 	let [vtxo] = bark.vtxos().await.try_into().expect("1 vtxo");
 	let mut log_round = srv.subscribe_log::<RoundFinished>().await;
 	assert!(bark.try_refresh_all().await.is_err());
-	assert!(bark.vtxos().await.contains(&vtxo));
-	assert_eq!(log_round.recv().try_fast().await.expect("time-out").unwrap().nb_input_vtxos, 1);
+	assert_eq!(bark.inround_balance().await, sat(800_000));
+	assert_eq!(log_round.recv().fast().await.expect("time-out").nb_input_vtxos, 1);
 
 	// start the exit process
 	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>().await;
@@ -1406,11 +1410,14 @@ async fn server_refuse_claim_invoice_not_settled() {
 
 	let cloned = invoice_info.clone();
 	tokio::spawn(async move { lightningd_1.pay_bolt11(cloned.invoice).await; });
-	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
+	bark.lightning_receive(invoice_info.invoice).await;
 
-	assert!(err.to_string().contains(
-		"input vtxo payment hash does not match preimage",
-	), "err: {err}");
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark.offchain_balance().await;
+
+	assert!(io::BufReader::new(std::fs::File::open(bark.command_log_file()).unwrap()).lines().any(|line| {
+		line.unwrap().contains("input vtxo payment hash does not match preimage")
+	}));
 }
 
 #[tokio::test]
@@ -1492,22 +1499,31 @@ async fn server_should_refuse_claim_twice() {
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
-	bark_1.board(btc(2)).await;
+	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
+	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let invoice_info = bark_1.bolt11_invoice(btc(1)).await;
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
-	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
-	let res1 = tokio::spawn(async move { cloned.lightning_receive(cloned_invoice_info.invoice).await });
-	lightningd_1.pay_bolt11(invoice_info.invoice.clone()).wait(10_000).await;
-	res1.await.unwrap();
+	let res1 = tokio::spawn(async move {
+		lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
+	});
 
-	assert_eq!(bark_1.offchain_balance().await, sat(300000000));
+	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+
+	// Wait for the onboarding round to be deeply enough confirmed
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	// We use that to sync and get onboarded vtxos
+	bark.offchain_balance().await;
+
+	// HTLC settlement on lightning side
+	res1.fast().await.unwrap();
+
+	assert_eq!(bark.offchain_balance().await, btc(3));
 
 	// bark should not be able to subscribe to already settled invoice
-	let err = bark_1.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
+	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
 }
 

@@ -807,7 +807,7 @@ impl Vtxo {
 	pub fn server_htlc_out_payment_hash(&self) -> Option<PaymentHash> {
 		match self.policy {
 			VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
-			VtxoPolicy::ServerHtlcRecv { .. } => None,
+			VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
 			VtxoPolicy::Pubkey { .. } => None,
 		}
 	}

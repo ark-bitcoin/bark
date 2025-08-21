@@ -324,7 +324,11 @@ pub mod serde {
 
 	impl<'a, T: ProtocolEncoding> Serialize for SerWrapper<'a, T> {
 		fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-			s.serialize_bytes(&self.0.serialize())
+			if s.is_human_readable() {
+				s.serialize_str(&self.0.serialize_hex())
+			} else {
+				s.serialize_bytes(&self.0.serialize())
+			}
 		}
 	}
 
@@ -332,20 +336,15 @@ pub mod serde {
 
 	impl<'de, T: ProtocolEncoding> Deserialize<'de> for DeWrapper<T> {
 		fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-			struct Visitor<T>(PhantomData<T>);
-
-			impl<'d, T: ProtocolEncoding> de::Visitor<'d> for Visitor<T> {
-				type Value = DeWrapper<T>;
-
-				fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-					f.write_str("an object implementing ProtocolEncoding")
-				}
-
-				fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
-					Ok(DeWrapper(ProtocolEncoding::deserialize(v).map_err(E::custom)?))
-				}
+			if d.is_human_readable() {
+					let s = <&str>::deserialize(d)?;
+					Ok(DeWrapper(ProtocolEncoding::deserialize_hex(s)
+							.map_err(serde::de::Error::custom)?))
+			} else {
+					let s = <&[u8]>::deserialize(d)?;
+					Ok(DeWrapper(ProtocolEncoding::deserialize(s)
+							.map_err(serde::de::Error::custom)?))
 			}
-			d.deserialize_bytes(Visitor(PhantomData))
 		}
 	}
 
@@ -395,6 +394,8 @@ pub mod serde {
 #[cfg(any(test, feature = "test-util"))]
 pub mod test {
 	use bitcoin::hex::DisplayHex;
+	use ::serde::{Deserialize, Serialize};
+	use serde_json;
 
 	use super::*;
 
@@ -410,5 +411,15 @@ pub mod test {
 
 		let re_encoded = decoded.serialize();
 		assert_eq!(encoded.as_hex().to_string(), re_encoded.as_hex().to_string());
+	}
+
+	pub fn json_roundtrip<T>(object: &T)
+	where
+		T: fmt::Debug + PartialEq + Serialize + for<'de> Deserialize<'de>,
+	{
+		let encoded = serde_json::to_string(object).unwrap();
+		let decoded: T = serde_json::from_str(&encoded).unwrap();
+
+		assert_eq!(*object, decoded);
 	}
 }

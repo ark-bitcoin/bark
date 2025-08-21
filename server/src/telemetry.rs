@@ -2,6 +2,7 @@
 use std::fmt;
 use std::time::Duration;
 
+use ark::rounds::RoundSeq;
 use bdk_wallet::Balance;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Amount;
@@ -71,7 +72,7 @@ pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attri
 /// This value is used to limit the cardinality (buckets) of metrics.
 /// i.e. when we use `round_id` then the metric bucket growth would never stop,
 ///   by using `round_id` % `CARDINALITY` we have a fixed amount of metric buckets.
-pub const CARDINALITY: usize = 100;
+pub const CARDINALITY: u64 = 100;
 
 /// The global open-telemetry context to register metrics.
 static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
@@ -292,12 +293,12 @@ pub fn set_block_height(block_height: BlockHeight) {
 	}
 }
 
-pub fn set_round_state(round_seq: usize, state: RoundStateKind) {
+pub fn set_round_state(round_seq: RoundSeq, state: RoundStateKind) {
 	if let Some(m) = TELEMETRY.get() {
 		// Keep only last few digits to limit the cardinality.
-		let short_round_seq = round_seq % CARDINALITY;
+		let short_round_seq = round_seq.inner() % CARDINALITY;
 		// Link round_id with short_round_id.
-		m.round_seq_gauge.record(round_seq as u64, &[
+		m.round_seq_gauge.record(round_seq.inner(), &[
 			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 		]);
 
@@ -316,12 +317,12 @@ pub fn set_round_state(round_seq: usize, state: RoundStateKind) {
 	}
 }
 
-pub fn set_round_metrics(round_seq: usize, attempt: usize, state: RoundStateKind) {
+pub fn set_round_metrics(round_seq: RoundSeq, attempt: usize, state: RoundStateKind) {
 	if let Some(m) = TELEMETRY.get() {
 		set_round_state(round_seq, state.clone());
 
 		// Keep only last few digits to limit the cardinality.
-		let short_round_seq = round_seq % CARDINALITY;
+		let short_round_seq = round_seq.inner() % CARDINALITY;
 
 		m.round_attempt_gauge.record(attempt as u64, &[
 			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
@@ -330,7 +331,7 @@ pub fn set_round_metrics(round_seq: usize, attempt: usize, state: RoundStateKind
 }
 
 pub fn set_full_round_metrics(
-	round_seq: usize,
+	round_seq: RoundSeq,
 	attempt: usize,
 	state: RoundStateKind,
 	volume: Amount,
@@ -340,7 +341,7 @@ pub fn set_full_round_metrics(
 		set_round_metrics(round_seq, attempt, state.clone());
 
 		// Keep only last few digits to limit the cardinality.
-		let short_round_seq = round_seq % CARDINALITY;
+		let short_round_seq = round_seq.inner() % CARDINALITY;
 
 		m.round_volume_gauge.record(volume.to_sat(), &[
 			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),

@@ -26,7 +26,7 @@ pub struct ForfeitState {
 	pub user_part_sigs: Vec<musig::PartialSignature>,
 	#[serde(with = "crate::database::model::serde::pub_nonces")]
 	pub pub_nonces: Vec<musig::PublicNonce>,
-	pub sec_nonces: Vec<Secret<DangerousSecretNonce>>,
+	pub sec_nonces: Vec<Secret<musig::DangerousSecretNonce>>,
 }
 
 #[derive(Debug)]
@@ -88,24 +88,6 @@ impl TryFrom<Row> for ForfeitClaimState<'static> {
 	}
 }
 
-/// A type that actually represents a [SecretNonce] but without the
-/// typesystem defenses for dangerous usage.
-#[derive(PartialEq, Eq, Serialize, Deserialize)]
-pub struct DangerousSecretNonce(Vec<u8>);
-
-impl DangerousSecretNonce {
-	pub fn new(n: musig::SecretNonce) -> Self {
-		DangerousSecretNonce(n.dangerous_into_bytes().to_vec())
-	}
-
-	pub fn to_sec_nonce(&self) -> musig::SecretNonce {
-		assert_eq!(self.0.len(), musig::secpm::ffi::MUSIG_SECNONCE_SIZE);
-		musig::SecretNonce::dangerous_from_bytes(
-			TryFrom::try_from(&self.0[..]).expect("right size"),
-		)
-	}
-}
-
 #[cfg(test)]
 mod test {
 	use super::*;
@@ -131,7 +113,7 @@ mod test {
 			user_nonces: vec![pubn, pubn],
 			user_part_sigs: vec![part, part],
 			pub_nonces: vec![pubn, pubn],
-			sec_nonces: vec![Secret::new(DangerousSecretNonce::new(secn))],
+			sec_nonces: vec![Secret::new(musig::DangerousSecretNonce::new(secn))],
 		};
 		let encoded = rmp_serde::to_vec_named(&ffs).unwrap();
 		let decoded = rmp_serde::from_slice(&encoded[..]).unwrap();

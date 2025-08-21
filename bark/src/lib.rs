@@ -25,48 +25,56 @@ pub use bark_json::cli::{Offboard, Board, SendOnchain};
 mod config;
 mod lnurl;
 mod psbtext;
+mod round;
 
 use std::collections::{HashMap, HashSet};
+
+use core::fmt;
 use std::convert::TryFrom;
-use std::iter;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, FeeRate, Network, OutPoint, Txid};
+use bitcoin::{Amount, FeeRate, Network, OutPoint, Transaction};
 use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
-use bitcoin::params::Params;
-use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
+use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use lnurllib::lightning_address::LightningAddress;
 use lightning_invoice::Bolt11Invoice;
 use lightning::util::ser::Writeable;
 use log::{trace, debug, info, warn, error};
 use futures::StreamExt;
+use serde::ser::StdError;
 use tokio_stream::Stream;
 
-use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
-use ark::connectors::ConnectorChain;
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
-use ark::musig::{self, PublicNonce, SecretNonce};
-use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge,
-	MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
-};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage, PaymentHash};
+use ark::musig;
+use ark::rounds::{RoundEvent, RoundId, RoundInfo, RoundSeq, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
-use server_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos, TryFromBytes};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
+
+use round::{
+	error_before_forfeit,
+	AttemptStartedState,
+	RoundAbandonedState,
+	ProgressResult,
+	RoundState,
+	ToAbandoned,
+};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
-use crate::persist::{BarkPersister, LightningReceive};
+use crate::persist::{BarkPersister, LightningReceive, StoredVtxoRequest};
 use crate::server::ServerConnection;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -86,9 +94,15 @@ pub struct Balance {
 	pub spendable: Amount,
 	/// Coins that are in the process of being sent over Lightning.
 	pub pending_lightning_send: Amount,
+	/// Coins locked in a round.
+	pub pending_in_round: Amount,
 	/// Coins that are in the process of unilaterally exiting the Ark.
 	pub pending_exit: Amount,
 }
+
+// TODO: we set it to 0 for now to avoid breaking UX,
+// but we should implement "pending confirmation" vtxo state and only allow a subset of actions for it
+const ROUND_DEEPLY_CONFIRMED: u32 = 0;
 
 struct ArkoorCreateResult {
 	input: Vec<Vtxo>,
@@ -118,26 +132,97 @@ impl From<Utxo> for UtxoInfo {
 	}
 }
 
+#[derive(Debug, Clone)]
 /// Struct to communicate your specific participation requests for an Ark round.
-struct RoundParticipation {
+pub struct RoundParticipation {
 	inputs: Vec<Vtxo>,
-	outputs: Vec<(VtxoRequest, VtxoState)>,
+	outputs: Vec<StoredVtxoRequest>,
 	offboards: Vec<OffboardRequest>,
 }
 
+/// Unrecoverable errors that can occur during a round attempt. For
+/// recoverable/retryable errors, use `AttemptResult::WaitNewRound` instead.
+///
+/// Errors are categorized based on when they occur in relation to forfeit
+/// signature creation.
 #[derive(Debug)]
+enum AttemptError {
+	/// Occurs before forfeit signatures are created
+	/// and sent to the Ark Server. At this point, input VTXOs are still valid and
+	/// can be safely exited since the Ark Server cannot double spend them via a
+	/// forfeit transaction. The wallet can safely move on to another round.
+	/// Includes a `RoundAbandonedState` to ensure proper round state cleanup.
+	BeforeSigningForfeit(RoundAbandonedState),
+
+	/// Occurs after forfeit signatures are created
+	/// and sent to the Ark Server. This is a critical error since the Ark Server
+	/// now has valid forfeit signatures for the input VTXOs and could broadcast
+	/// them at any time, potentially invalidating those VTXOs. The wallet must
+	/// cancel the round and take precautions against potential VTXO invalidation.
+	AfterSigningForfeit,
+
+	/// Occurs when updating the round state fails.
+	DatabaseError(String),
+
+	/// Occurs when the events stream breaks.
+	StreamError(anyhow::Error),
+}
+
+impl fmt::Display for AttemptError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			AttemptError::BeforeSigningForfeit(abandoned) => {
+				write!(f, "An error occured in round attempt before forfeit signature. Round was abandoned: {:?}", abandoned)
+			},
+			AttemptError::AfterSigningForfeit => {
+				write!(f, "An error occured in round attempt after forfeit signature.")
+			},
+			AttemptError::DatabaseError(msg) => {
+				write!(f, "An error occured while updating the round state: {}", msg)
+			},
+			AttemptError::StreamError(e) => {
+				write!(f, "An error occured while processing the events stream: {}", e)
+			},
+		}
+	}
+}
+
+impl StdError for AttemptError {}
+
+/// Result of a round attempt.
 enum AttemptResult {
-	Success(RoundResult),
-	WaitNewRound,
+	/// A new round was started by the server.
+	///
+	/// Includes the new round info to let caller process it.
 	NewRoundStarted(RoundInfo),
-	NewAttemptStarted,
+
+	/// The attempt could not be completed and the client should wait for
+	/// a new round to be started by the server.
+	WaitNewRound,
+
+	/// A new attempt was started by the server, most probably because one of the participants
+	/// dropped out during the round.
+	///
+	/// Includes the updated round state to let caller process it.
+	NewAttemptStarted((AttemptStartedState, VtxoOwnershipChallenge)),
+
+	/// The attempt was successfully processed and its transaction is now
+	/// pending confirmations. Should be sync regularly to check when movement
+	/// can be settled and new vtxos created.
+	///
+	/// Includes the round result.
+	Success(RoundResult),
 }
 
 #[derive(Debug)]
 struct RoundResult {
 	round_id: RoundId,
-	/// VTXOs created in the round
-	vtxos: Vec<WalletVtxo>,
+}
+
+pub struct OffchainBalance {
+	pub available: Amount,
+	pub pending_in_round: Amount,
+	pub pending_exit: Amount,
 }
 
 /// Read-only properties of the Bark wallet.
@@ -430,10 +515,14 @@ impl Wallet {
 		let pending_lightning_send = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?
 			.iter().map(|v| v.vtxo.amount()).sum();
 
+		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
+			.map(|v| v.amount()).sum();
+
 		let pending_exit = self.exit.pending_total()?;
 
 		Ok(Balance {
 			spendable,
+			pending_in_round,
 			pending_lightning_send,
 			pending_exit,
 		})
@@ -450,14 +539,20 @@ impl Wallet {
 		Ok(self.db.get_paginated_movements(pagination)?)
 	}
 
-	/// Returns all unspent vtxos
+	/// Returns all spendable vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
 		Ok(self.db.get_all_spendable_vtxos()?)
 	}
 
 	/// Returns all unspent vtxos matching the provided predicate
-	pub fn vtxos_with(&self, filter: impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
 		let vtxos = self.vtxos()?;
+		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
+	}
+
+	/// Returns all in-round vtxos matching the provided predicate
+	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+		let vtxos = self.db.get_in_round_vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
@@ -466,7 +561,7 @@ impl Wallet {
 	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
-		Ok(self.vtxos_with(filter)?)
+		Ok(self.vtxos_with(&filter)?)
 	}
 
 	async fn register_all_unregistered_boards(
@@ -713,6 +808,51 @@ impl Wallet {
 	/// Fetch new rounds from the Ark Server and check if one of their VTXOs
 	/// is in the provided set of public keys
 	pub async fn sync_rounds(&self) -> anyhow::Result<()> {
+		let tip = self.chain.tip().await?;
+		self.sync_pending_rounds(tip).await?;
+
+		self.sync_past_rounds().await?;
+		Ok(())
+	}
+
+	async fn sync_pending_rounds(&self, tip: u32) -> anyhow::Result<()> {
+		info!("Syncing pending rounds at tip: {}", tip);
+		let rounds = self.db.list_pending_rounds()?;
+
+		for round in rounds {
+			match round {
+				RoundState::AttemptStarted(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::PaymentSubmitted(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::VtxoTreeSigned(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::ForfeitSigned(state) => {
+					// TODO: later we can try to catch up last event
+					state.progress(None, self).await?;
+				},
+				RoundState::PendingConfirmation(state) => {
+					// TODO: later we can try to catch up last event
+					state.progress(self).await?;
+				},
+				RoundState::RoundConfirmed(_) |
+				RoundState::RoundAbandoned(_) |
+				RoundState::RoundCancelled(_) => {
+					continue;
+				},
+			}
+		}
+
+		Ok(())
+	}
+
+	async fn sync_past_rounds(&self) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
@@ -720,11 +860,10 @@ impl Wallet {
 			self.vtxo_seed.derive_keypair(idx).public_key()
 		}).collect::<HashSet<_>>();
 
-		//TODO(stevenroose) we won't do reorg handling here
 		let current_height = self.chain.tip().await?;
 		let last_sync_height = self.db.get_last_ark_sync_height()?;
 		debug!("Querying ark for rounds since height {}", last_sync_height);
-		let req = protos::FreshRoundsRequest { start_height: last_sync_height };
+		let req = protos::FreshRoundsRequest { start_height: last_sync_height as u32 };
 		let fresh_rounds = srv.client.get_fresh_rounds(req).await?.into_inner();
 		debug!("Received {} new rounds from ark", fresh_rounds.txids.len());
 
@@ -734,34 +873,42 @@ impl Wallet {
 				let mut srv = srv.clone();
 
 				async move {
-					let txid = Txid::from_slice(&txid).context("invalid txid from asp")?;
-					let req = protos::RoundId { txid: txid.to_byte_array().to_vec() };
+					let round_id = RoundId::from_slice(&txid).context("invalid txid from srv")?;
+					if self.db.get_round_attempt_by_round_txid(round_id)?.is_some() {
+						debug!("Skipping round {} because it already exists", round_id);
+						return Ok::<_, anyhow::Error>(());
+					}
+
+					let req = protos::RoundId { txid: round_id.as_round_txid().to_byte_array().to_vec() };
 					let round = srv.client.get_round(req).await?.into_inner();
 
 					let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
-						.context("invalid signed vtxo tree from asp")?
+						.context("invalid signed vtxo tree from srv")?
 						.into_cached_tree();
 
-
-				for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-					if let VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) =
-						dest.vtxo.policy
-					{
-						if pubkeys.contains(&user_pubkey) {
+					let mut reqs = Vec::new();
+					let mut vtxos = vec![];
+					for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
+						if pubkeys.contains(&dest.vtxo.policy.user_pubkey()) {
 							if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-								self.db.register_movement(MovementArgs {
-									kind: MovementKind::Round,
-									spends: &[],
-									receives: &[(&vtxo, VtxoState::Spendable)],
-									recipients: &[],
-									fees: None,
-								})?;
+								reqs.push(StoredVtxoRequest {
+									request_policy: dest.vtxo.policy.clone(),
+									amount: dest.vtxo.amount,
+									state: VtxoState::Spendable,
+								});
+
+								vtxos.push(vtxo);
 							}
 						}
 					}
+
+					let round_tx = Transaction::from_bytes(&round.round_tx)?;
+
+
+					self.db.store_pending_confirmation_round(RoundSeq::new(0), round_id, round_tx, reqs, vtxos)?;
+
+					Ok(())
 				}
-				Ok::<_, anyhow::Error>(())
-			}
 		})
 		.buffer_unordered(10)
 		.collect::<Vec<_>>()
@@ -772,10 +919,6 @@ impl Wallet {
 				return Err(e).context("failed to sync round");
 			}
 		}
-
-		//TODO(stevenroose) we currently actually could accidentally be syncing
-		// a round multiple times because new blocks could have come in since we
-		// took current height
 
 		self.db.store_last_ark_sync_height(current_height)?;
 
@@ -948,7 +1091,7 @@ impl Wallet {
 		let RoundResult { round_id, .. } = self.participate_round(move |_| {
 			Ok(RoundParticipation {
 				inputs: vtxos.to_vec(),
-				outputs: vec![(req.clone(), VtxoState::Spendable)],
+				outputs: vec![StoredVtxoRequest::from_parts(req.clone(), VtxoState::Spendable)],
 				offboards: Vec::new(),
 			})
 		}).await.context("round failed")?;
@@ -977,13 +1120,13 @@ impl Wallet {
 		let fee_rate = self.chain.fee_rates().await.fast;
 
 		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.vtxos_with(RefreshStrategy::must_refresh(self, tip, fee_rate))?;
+		let must_refresh_vtxos = self.vtxos_with(&RefreshStrategy::must_refresh(self, tip, fee_rate))?;
 		if must_refresh_vtxos.is_empty() {
 			return Ok(vec![]);
 		} else {
 			// If we need to do a refresh, we take all the should_refresh vtxo's as well
 			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.vtxos_with(RefreshStrategy::should_refresh(self, tip, fee_rate))?;
+			let should_refresh_vtxos = self.vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
 			Ok(should_refresh_vtxos)
 		}
 	}
@@ -1495,7 +1638,7 @@ impl Wallet {
 		Ok(self.db.get_paginated_lightning_receives(pagination)?)
 	}
 
-	async fn claim_htlc_vtxo(&mut self, vtxo: &WalletVtxo) -> anyhow::Result<()> {
+	async fn claim_htlc_vtxo(&self, vtxo: &WalletVtxo) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
 		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
@@ -1524,8 +1667,7 @@ impl Wallet {
 
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(lightning_receive.payment_hash)?;
-		let cosign_resp = srv.client.claim_lightning_receive(req).await
-			.context("failed to claim bolt11 board")?
+		let cosign_resp = srv.client.claim_lightning_receive(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 
 		ensure!(builder.verify_cosign_response(&[&cosign_resp]),
@@ -1593,27 +1735,21 @@ impl Wallet {
 		let state = VtxoState::PendingLightningRecv { payment_hash };
 
 		let expiry_height = tip + srv.info.htlc_expiry_delta as BlockHeight;
-		let antidos_input_cloned = antidos_input.clone();
-		let antidos_output_cloned = antidos_output.clone();
-		let RoundResult { vtxos, .. } = self.participate_round(move |_| {
+		self.participate_round(move |_| {
 			let htlc_pay_req = VtxoRequest {
 				amount: amount,
 				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
 			};
 
 			Ok(RoundParticipation {
-				inputs: vec![antidos_input_cloned.clone()],
+				inputs: vec![antidos_input.clone()],
 				outputs: vec![
-					(htlc_pay_req, state.clone()),
-					(antidos_output_cloned.clone(), VtxoState::Spendable),
+					StoredVtxoRequest::from_parts(htlc_pay_req, state.clone()),
+					StoredVtxoRequest::from_parts(antidos_output.clone(), VtxoState::Spendable),
 				],
 				offboards: vec![],
 			})
 		}).await.context("round failed")?;
-
-		let [htlc_vtxo, _antidos_output_vtxo] = vtxos.try_into().expect("should have two");
-		assert_eq!(htlc_vtxo.vtxo.policy_type(), VtxoPolicyType::ServerHtlcRecv);
-		self.claim_htlc_vtxo(&htlc_vtxo).await?;
 
 		Ok(())
 	}
@@ -1715,7 +1851,8 @@ impl Wallet {
 
 			Ok(RoundParticipation {
 				inputs: input_vtxos.clone(),
-				outputs: change.into_iter().map(|c| (c, VtxoState::Spendable)).collect(),
+				outputs: change.into_iter()
+					.map(|c| StoredVtxoRequest::from_parts(c, VtxoState::Spendable)).collect(),
 				offboards: vec![offb],
 			})
 		}).await.context("round failed")?;
@@ -1726,346 +1863,69 @@ impl Wallet {
 	async fn new_round_attempt<S: Stream<Item = anyhow::Result<RoundEvent>> + Unpin>(
 		&self,
 		events: &mut S,
-		round_state: &mut RoundState,
+		challenge: VtxoOwnershipChallenge,
+		round_state: AttemptStartedState,
 		participation: &RoundParticipation,
-	) -> anyhow::Result<AttemptResult> {
-		let mut srv = self.require_server()?;
+	) -> Result<AttemptResult, AttemptError> {
+		debug!("New round attempt. round seq: {}, attempt seq: {}, challenge: {}",
+			round_state.round_seq, round_state.attempt_seq, challenge.inner().as_hex());
 
-		assert!(round_state.attempt.is_some());
-
-		// Assign cosign pubkeys to the payment requests.
-		let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
-			.take(participation.outputs.len())
-			.collect::<Vec<_>>();
-		let vtxo_reqs = participation.outputs.iter().zip(cosign_keys.iter()).map(|(req, ck)| {
-			SignedVtxoRequest {
-				vtxo: req.0.clone(),
-				cosign_pubkey: ck.public_key(),
+		let mut srv = match self.require_server() {
+			Ok(srv) => srv,
+			Err(e) => {
+				error!("Cannot get Server connection: {}", e);
+				return Err(error_before_forfeit(&self.db, round_state));
 			}
-		}).collect::<Vec<_>>();
+		};
 
-		// Prepare round participation info.
-		// For each of our requested vtxo output, we need a set of public and secret nonces.
-		let cosign_nonces = cosign_keys.iter()
-			.map(|key| {
-				let mut secs = Vec::with_capacity(srv.info.nb_round_nonces);
-				let mut pubs = Vec::with_capacity(srv.info.nb_round_nonces);
-				for _ in 0..srv.info.nb_round_nonces {
-					let (s, p) = musig::nonce_pair(key);
-					secs.push(s);
-					pubs.push(p);
-				}
-				(secs, pubs)
-			})
-			.take(vtxo_reqs.len())
-			.collect::<Vec<(Vec<SecretNonce>, Vec<PublicNonce>)>>();
+		let mut round_state = RoundState::from(round_state);
+		// We don't have an event at first because this function is already triggered by the attempt start one
+		let mut event = None;
 
-		let res = srv.client.submit_payment(protos::SubmitPaymentRequest {
-			input_vtxos: participation.inputs.iter().map(|vtxo| {
-				let keypair = {
-					let keypair_idx = self.db.get_vtxo_key(vtxo)
-						.expect("owned vtxo key should be in database");
-					self.vtxo_seed.derive_keypair(keypair_idx)
-				};
+		loop {
+			let progress_res =
+				round_state.progress(
+					event,
+					&mut srv,
+					&self,
+					challenge,
+					participation,
+				).await.expect("tried to progress a round state that cannot progress")?;
 
-				protos::InputVtxo {
-					vtxo_id: vtxo.id().to_bytes().to_vec(),
-					ownership_proof: {
-						let sig = round_state.challenge()
-							.sign_with(vtxo.id(), &vtxo_reqs, &participation.offboards, keypair);
-						sig.serialize().to_vec()
-					},
-				}
-			}).collect(),
-			vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
-				protos::SignedVtxoRequest {
-					vtxo: Some(protos::VtxoRequest {
-						amount: r.vtxo.amount.to_sat(),
-						policy: r.vtxo.policy.serialize(),
-					}),
-					cosign_pubkey: r.cosign_pubkey.serialize().to_vec(),
-					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
-				}
-			}).collect(),
-			offboard_requests: participation.offboards.iter().map(|r| {
-				protos::OffboardRequest {
-					amount: r.amount.to_sat(),
-					offboard_spk: r.script_pubkey.to_bytes(),
-				}
-			}).collect(),
-		}).await;
-
-		if let Err(e) = res {
-			warn!("Could not submit payment, trying next round: {}", e);
-			return Ok(AttemptResult::WaitNewRound);
-		}
-
-
-		// ****************************************************************
-		// * Wait for vtxo proposal from the Ark server.
-		// ****************************************************************
-
-		debug!("Waiting for a vtxo proposal from the Ark server...");
-		let (vtxo_tree, unsigned_round_tx, vtxo_cosign_agg_nonces, connector_pubkey) = {
-			match events.next().await.context("events stream broke")?? {
-				RoundEvent::VtxoProposal {
-					round_seq,
-					unsigned_round_tx,
-					vtxos_spec,
-					cosign_agg_nonces,
-					connector_pubkey,
-				} => {
-					if round_seq != round_state.info.round_seq {
-						warn!("Unexpected different round id");
-						return Ok(AttemptResult::WaitNewRound);
+			round_state = match progress_res {
+				ProgressResult::Progress { state} => {
+					if let RoundState::PendingConfirmation(state) = state {
+						return Ok(AttemptResult::Success(RoundResult {
+							round_id: state.round_txid,
+						}));
 					}
-					(vtxos_spec, unsigned_round_tx, cosign_agg_nonces, connector_pubkey)
-				},
-				RoundEvent::Start(round_info) => {
+
+					event = Some(events.next().await.context("event stream broke")
+						.map_err(|e| AttemptError::StreamError(e))?
+						.map_err(|e| AttemptError::StreamError(e))?);
+
+					state
+				}
+				ProgressResult::Wait(state) => {
+					event = Some(events.next().await.context("event stream broke")
+						.map_err(|e| AttemptError::StreamError(e))?
+						.map_err(|e| AttemptError::StreamError(e))?);
+
+					tokio::time::sleep(Duration::from_secs(1)).await;
+
+					state
+				}
+				ProgressResult::WaitNewRound => {
+					return Ok(AttemptResult::WaitNewRound)
+				}
+				ProgressResult::NewRoundStarted(round_info) => {
 					return Ok(AttemptResult::NewRoundStarted(round_info));
-				},
-				RoundEvent::Attempt(e) if round_state.process_attempt(e.clone()) => {
-					return Ok(AttemptResult::NewAttemptStarted)
-				},
-				other => {
-					warn!("Unexpected message, waiting for new round: {:?}", other);
-					return Ok(AttemptResult::WaitNewRound);
 				}
-			}
-		};
-
-		if unsigned_round_tx.output.len() < MIN_ROUND_TX_OUTPUTS {
-			bail!("Ark server sent round tx with less than 2 outputs: {}",
-				bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx),
-			);
-		}
-		let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
-		let conns_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_CONNECTOR_VOUT);
-
-		// Check that the proposal contains our inputs.
-		{
-			let mut my_vtxos = vtxo_reqs.clone();
-			for vtxo_req in vtxo_tree.iter_vtxos() {
-				if let Some(i) = my_vtxos.iter().position(|v| v == vtxo_req) {
-					my_vtxos.swap_remove(i);
-				}
-			}
-			if !my_vtxos.is_empty() {
-				error!("Ark server didn't include all of our vtxos, missing: {:?}", my_vtxos);
-				return Ok(AttemptResult::WaitNewRound)
-			}
-
-			let mut my_offbs = participation.offboards.to_vec();
-			for offb in unsigned_round_tx.output.iter().skip(2) {
-				if let Some(i) = my_offbs.iter().position(|o| o.to_txout() == *offb) {
-					my_offbs.swap_remove(i);
-				}
-			}
-			if !my_offbs.is_empty() {
-				error!("Ark server didn't include all of our offboards, missing: {:?}", my_offbs);
-				return Ok(AttemptResult::WaitNewRound)
-			}
-		}
-
-		// Make vtxo signatures from top to bottom, just like sighashes are returned.
-		let unsigned_vtxos = vtxo_tree.into_unsigned_tree(vtxos_utxo);
-		for ((req, key), (sec, _pub)) in vtxo_reqs.iter().zip(&cosign_keys).zip(cosign_nonces) {
-			let leaf_idx = unsigned_vtxos.spec.leaf_idx_of(&req).expect("req included");
-			let part_sigs = unsigned_vtxos.cosign_branch(
-				&vtxo_cosign_agg_nonces, leaf_idx, key, sec,
-			).context("failed to cosign branch: our request not part of tree")?;
-			info!("Sending {} partial vtxo cosign signatures for pk {}",
-				part_sigs.len(), key.public_key(),
-			);
-			let res = srv.client.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
-				pubkey: key.public_key().serialize().to_vec(),
-				signatures: part_sigs.iter().map(|s| s.serialize().to_vec()).collect(),
-			}).await;
-
-			if let Err(e) = res {
-				warn!("Could not provide vtxo signatures, trying next round: {}", e);
-				return Ok(AttemptResult::WaitNewRound)
-			}
-		}
-
-
-		// ****************************************************************
-		// * Then proceed to get a round proposal and sign forfeits
-		// ****************************************************************
-
-		debug!("Wait for round proposal from Ark server...");
-		let (vtxo_cosign_sigs, forfeit_nonces) = {
-				match events.next().await.context("events stream broke")?? {
-					RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces } => {
-						if round_seq != round_state.info.round_seq {
-							warn!("Unexpected different round id");
-							return Ok(AttemptResult::WaitNewRound);
-						}
-						(cosign_sigs, forfeit_nonces)
-					},
-					RoundEvent::Start(e) => {
-						return Ok(AttemptResult::NewRoundStarted(e));
-					},
-					RoundEvent::Attempt(e) => {
-						if round_state.process_attempt(e) {
-							return Ok(AttemptResult::NewAttemptStarted)
-						} else {
-							return Ok(AttemptResult::WaitNewRound);
-						}
-					},
-					other => {
-						warn!("Unexpected message, waiting for new round: {:?}", other);
-						return Ok(AttemptResult::WaitNewRound);
-					}
+				ProgressResult::NewAttemptStarted((round_state, challenge)) => {
+					return Ok(AttemptResult::NewAttemptStarted((round_state, challenge)));
 				}
 			};
-
-		// Validate the vtxo tree.
-		if let Err(e) = unsigned_vtxos.verify_cosign_sigs(&vtxo_cosign_sigs) {
-			bail!("Received incorrect vtxo cosign signatures from Ark server: {}", e);
 		}
-		let signed_vtxos = unsigned_vtxos
-			.into_signed_tree(vtxo_cosign_sigs)
-			.into_cached_tree();
-
-		// Check that the connector key is correct.
-		let conn_txout = unsigned_round_tx.output.get(ROUND_TX_CONNECTOR_VOUT as usize)
-			.expect("checked before");
-		let expected_conn_txout = ConnectorChain::output(forfeit_nonces.len(), connector_pubkey);
-		if *conn_txout != expected_conn_txout {
-			bail!("round tx from Ark server has unexpected connector output: {:?} (expected {:?})",
-				conn_txout, expected_conn_txout,
-			);
-		}
-
-		// Make forfeit signatures.
-		let connectors = ConnectorChain::new(
-			forfeit_nonces.values().next().unwrap().len(),
-			conns_utxo,
-			connector_pubkey,
-		);
-		let forfeit_sigs = participation.inputs.iter().map(|vtxo| {
-			let vtxo_keypair = {
-				let keypair_idx = self.db.get_vtxo_key(&vtxo)?;
-				self.vtxo_seed.derive_keypair(keypair_idx)
-			};
-
-			let sigs = connectors.connectors().enumerate().map(|(i, (conn, _))| {
-				let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
-					vtxo, conn, connector_pubkey,
-				);
-				let srv_nonce = forfeit_nonces.get(&vtxo.id())
-					.with_context(|| format!("missing Ark server forfeit nonce for {}", vtxo.id()))?
-					.get(i)
-					.context("Ark server didn't provide enough forfeit nonces")?;
-
-				let (nonce, sig) = musig::deterministic_partial_sign(
-					&vtxo_keypair,
-					[srv.info.server_pubkey],
-					&[srv_nonce],
-					sighash.to_byte_array(),
-					Some(vtxo.output_taproot().tap_tweak().to_byte_array()),
-				);
-				Ok((nonce, sig))
-			}).collect::<anyhow::Result<Vec<_>>>()?;
-			Ok((vtxo.id(), sigs))
-		}).collect::<anyhow::Result<HashMap<_, _>>>()?;
-		debug!("Sending {} sets of forfeit signatures for our inputs", forfeit_sigs.len());
-		let res = srv.client.provide_forfeit_signatures(protos::ForfeitSignaturesRequest {
-			signatures: forfeit_sigs.into_iter().map(|(id, sigs)| {
-				protos::ForfeitSignatures {
-					input_vtxo_id: id.to_bytes().to_vec(),
-					pub_nonces: sigs.iter().map(|s| s.0.serialize().to_vec()).collect(),
-					signatures: sigs.iter().map(|s| s.1.serialize().to_vec()).collect(),
-				}
-			}).collect(),
-		}).await;
-
-		if let Err(e) = res {
-			warn!("Could not provide forfeit signatures, trying next round: {}", e);
-			return Ok(AttemptResult::WaitNewRound)
-		}
-
-
-		// ****************************************************************
-		// * Wait for the finishing of the round.
-		// ****************************************************************
-
-		debug!("Waiting for round to finish...");
-		let signed_round_tx = match events.next().await.context("events stream broke")?? {
-			RoundEvent::Finished { round_seq, signed_round_tx } => {
-				if round_seq != round_state.info.round_seq {
-					bail!("Unexpected round ID from round finished event: {} != {}",
-						round_seq, round_state.info.round_seq);
-				}
-				signed_round_tx
-			},
-			RoundEvent::Start(e) => {
-				return Ok(AttemptResult::NewRoundStarted(e));
-			},
-			RoundEvent::Attempt(e) if round_state.process_attempt(e.clone()) => {
-				return Ok(AttemptResult::NewAttemptStarted)
-			},
-			other => {
-				warn!("Unexpected message, waiting for new round: {:?}", other);
-				return Ok(AttemptResult::WaitNewRound);
-			}
-		};
-
-		if signed_round_tx.compute_txid() != unsigned_round_tx.compute_txid() {
-			warn!("Ark server changed the round transaction during the round!");
-			warn!("unsigned tx: {}", bitcoin::consensus::encode::serialize_hex(&unsigned_round_tx));
-			warn!("signed tx: {}", bitcoin::consensus::encode::serialize_hex(&signed_round_tx));
-			//TODO(stevenroose) keep the unsigned tx because it might get broadcast
-			// we have vtxos in it
-			bail!("unsigned and signed round txids don't match");
-		}
-
-		// We also broadcast the tx, just to have it go around faster.
-		info!("Broadcasting round tx {}", signed_round_tx.compute_txid());
-		if let Err(e) = self.chain.broadcast_tx(&signed_round_tx).await {
-			warn!("Couldn't broadcast round tx: {}", e);
-		}
-
-		// Finally we save state after refresh
-		let mut new_vtxos = vec![];
-		for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
-			let req = participation.outputs.iter().find(|(r, _)| r == &req.vtxo);
-			if let Some((_, s)) = req {
-				let vtxo = self.build_vtxo(&signed_vtxos, idx)?.expect("must be in tree");
-
-				info!("New VTXO from round: {} ({}, {})", vtxo.id(), vtxo.amount(), vtxo.policy_type());
-
-				// validate the received vtxos
-				// This is more like a sanity check since we crafted them ourselves.
-				vtxo.validate(&signed_round_tx).context("built invalid vtxo")?;
-
-				new_vtxos.push(WalletVtxo { vtxo, state: s.clone() });
-			}
-		}
-
-		// if there is one offboard req, we register as a spend, else as a refresh
-		// TODO: this is broken in case of multiple offb_reqs, but currently we don't allow that
-
-		let params = Params::new(self.properties().unwrap().network);
-		let sent = participation.offboards.iter().map(|o| {
-			let address = bitcoin::Address::from_script(&o.script_pubkey, &params)?;
-			Ok((address.to_string(), o.amount))
-		}).collect::<anyhow::Result<Vec<_>>>()?;
-
-		self.db.register_movement(MovementArgs {
-			kind: MovementKind::Round,
-			spends: &participation.inputs.iter().collect::<Vec<_>>(),
-			receives: &new_vtxos.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
-			recipients: &sent.iter().map(|(addr, amount)| (addr.as_str(), *amount)).collect::<Vec<_>>(),
-			fees: None
-		}).context("failed to store OOR vtxo")?;
-
-		info!("Round finished");
-		return Ok(AttemptResult::Success(RoundResult {
-			round_id: signed_round_tx.compute_txid().into(),
-			vtxos: new_vtxos,
-		}))
 	}
 
 	/// Participate in a round.
@@ -2099,15 +1959,15 @@ impl Wallet {
 
 		'round: loop {
 			// If we don't have a round info yet, wait for round start.
-			let mut round_state = if let Some(info) = next_round_info.take() {
+			let round_info = if let Some(info) = next_round_info.take() {
 				warn!("Unexpected new round started...");
-				RoundState::new(info)
+				info
 			} else {
 				debug!("Waiting for a new round to start...");
 				loop {
 					match events.next().await.context("events stream broke")?? {
-						RoundEvent::Start(e) => {
-							break RoundState::new(e);
+						RoundEvent::Start(info) => {
+							break info;
 						},
 						_ => trace!("ignoring irrelevant message"),
 					}
@@ -2115,13 +1975,13 @@ impl Wallet {
 			};
 
 			info!("Round started");
-			debug!("Started round #{}", round_state.info.round_seq);
+			debug!("Started round #{}", round_info.round_seq);
 
-			let participation = round_input(&round_state.info)
+			let participation = round_input(&round_info)
 				.context("error providing round input")?;
 
-			if let Some(payreq) = participation.outputs.iter().find(|p| p.0.amount < P2TR_DUST) {
-				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.0.amount);
+			if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
+				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
 			}
 
 			if let Some(offb) = participation.offboards.iter().find(|o| o.amount < P2TR_DUST) {
@@ -2129,9 +1989,12 @@ impl Wallet {
 			}
 
 			// then we expect the first attempt message
-			match events.next().await.context("events stream broke")?? {
-				RoundEvent::Attempt(attempt) if attempt.round_seq == round_state.info.round_seq => {
-					round_state.process_attempt(attempt);
+			let (mut updated, mut challenge)= match events.next().await.context("events stream broke")?? {
+				RoundEvent::Attempt(attempt) if attempt.round_seq == round_info.round_seq => {
+					let round_state = self.db.store_new_round_attempt(
+						round_info.round_seq, attempt.attempt_seq, participation.clone()
+					)?;
+					(round_state, attempt.challenge)
 				},
 				RoundEvent::Start(e) => {
 					next_round_info = Some(e);
@@ -2148,16 +2011,19 @@ impl Wallet {
 			'attempt: loop {
 				let attempt_res = self.new_round_attempt(
 					&mut events,
-					&mut round_state,
+					challenge,
+					updated,
 					&participation,
 				).await?;
 
 				match attempt_res {
-					AttemptResult::NewRoundStarted(round_info) => {
-						next_round_info = Some(round_info);
+					AttemptResult::NewRoundStarted(new_round_info) => {
+						next_round_info = Some(new_round_info);
 						continue 'round;
 					},
-					AttemptResult::NewAttemptStarted => {
+					AttemptResult::NewAttemptStarted((state, new_challenge)) => {
+						updated = state;
+						challenge = new_challenge;
 						continue 'attempt;
 					},
 					AttemptResult::WaitNewRound => {
@@ -2169,38 +2035,5 @@ impl Wallet {
 				}
 			}
 		}
-	}
-}
-
-struct RoundState {
-	info: RoundInfo,
-	attempt: Option<RoundAttempt>,
-}
-
-impl RoundState {
-	/// Create a new [RoundState] from a [RoundEvent::Start].
-	///
-	/// Panics if any other event type is passed.
-	fn new(info: RoundInfo) -> RoundState {
-		RoundState { info, attempt: None }
-	}
-
-	/// Process a new round attempt message.
-	///
-	/// If the attempt event belonged to the same round and we could
-	/// succesfully update, we return true.
-	/// If the attempt belongs to a different round and we have to restart,
-	/// we return false.
-	fn process_attempt(&mut self, attempt: RoundAttempt) -> bool {
-		if attempt.round_seq == self.info.round_seq {
-			self.attempt = Some(attempt);
-			true
-		} else {
-			false
-		}
-	}
-
-	fn challenge(&self) -> VtxoOwnershipChallenge {
-		self.attempt.as_ref().expect("called challenge outside attempt loop").challenge
 	}
 }

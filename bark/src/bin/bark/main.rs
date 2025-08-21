@@ -12,6 +12,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
+use bark::movement::Movement;
 use bitcoin::{address, Amount, FeeRate};
 use clap::Parser;
 use ::lightning::offers::offer::Offer;
@@ -22,7 +23,7 @@ use log::{debug, info, warn};
 use ark::{Vtxo, VtxoId};
 use bark::{Config, Pagination, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
-use bark_json::cli as json;
+use bark_json::{cli as json, primitives};
 use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;
@@ -42,6 +43,20 @@ fn default_datadir() -> String {
 /// The full version string we show in our binary.
 /// (GIT_HASH is set in build.rs)
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+
+fn movement_to_json(movement: &Movement) -> json::Movement {
+	json::Movement {
+		id: movement.id,
+		fees: movement.fees,
+		spends: movement.spends.clone().into_iter().map(|v| v.into()).collect(),
+		receives: movement.receives.clone().into_iter().map(|v| v.into()).collect(),
+		recipients: movement.recipients.iter().map(|r| primitives::RecipientInfo {
+			recipient: r.recipient.clone(),
+			amount: r.amount,
+		}).collect(),
+		created_at: movement.created_at.to_string(),
+	}
+}
 
 #[derive(Parser)]
 #[command(name = "bark", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
@@ -666,6 +681,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let balance = wallet.balance()?;
 			output_json(&json::Balance {
 				spendable: balance.spendable,
+				pending_in_round: balance.pending_in_round,
 				pending_lightning_send: balance.pending_lightning_send,
 				pending_exit: balance.pending_exit,
 			});
@@ -695,7 +711,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
 			};
 
-			let movements = wallet.movements(pagination)?;
+			let movements = wallet.movements(pagination)?.into_iter()
+				.map(|mv| movement_to_json(&mv))
+				.collect::<Vec<_>>();
+
 			output_json(&movements);
 		},
 		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {
@@ -712,7 +731,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
 					let filter = VtxoFilter::new(&wallet).counterparty();
-					wallet.vtxos_with(filter)?
+					wallet.vtxos_with(&filter)?
 				},
 				(None, None, false, true, None) => wallet.vtxos()?,
 				(None, None, false, false, Some(vs)) => {

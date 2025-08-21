@@ -47,3 +47,11 @@ impl From<Vtxo> for VtxoInfo {
 		}
 	}
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct RecipientInfo {
+	/// Can either be a publickey, spk or a bolt11 invoice
+	pub recipient: String,
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount
+}

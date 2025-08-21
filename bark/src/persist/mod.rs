@@ -3,21 +3,48 @@ pub mod sqlite;
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
 
-use bitcoin::{Transaction, Txid};
+use std::fmt::Debug;
+
+use ark::lightning::{PaymentHash, Preimage};
+use ark::musig::SecretNonce;
+use ark::rounds::{RoundId, RoundSeq};
+use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
+use json::exit::states::ExitTxOrigin;
 use lightning_invoice::Bolt11Invoice;
 
-use ark::{Vtxo, VtxoId};
-use ark::lightning::{PaymentHash, Preimage};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use bitcoin_ext::BlockHeight;
-use json::exit::states::ExitTxOrigin;
 
-use crate::{
-	Config, Movement, MovementArgs, Pagination,
-	WalletProperties,
-};
+use crate::{Config, Movement, MovementArgs, Pagination, RoundParticipation, WalletProperties};
+use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
 use crate::exit::vtxo::ExitEntry;
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredVtxoRequest {
+	#[serde(with = "ark::encode::serde")]
+	pub request_policy: VtxoPolicy,
+	pub amount: Amount,
+	pub state: VtxoState
+}
+
+impl StoredVtxoRequest {
+	pub fn from_parts(req: VtxoRequest, state: VtxoState) -> Self {
+		Self {
+			request_policy: req.policy,
+			amount: req.amount,
+			state,
+		}
+	}
+
+	pub fn to_vtxo_request(&self) -> VtxoRequest {
+		VtxoRequest {
+			policy: self.request_policy.clone(),
+			amount: self.amount,
+		}
+	}
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceive {
@@ -60,10 +87,35 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - mark VTXOs in `spends` as spent
 	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
 
+	/// Store a new round with initial state `RoundStarted`
+	fn store_new_round_attempt(&self,
+	    round_seq: RoundSeq,
+		attempt_seq: usize,
+		round_participation: RoundParticipation,
+	) -> anyhow::Result<AttemptStartedState>;
+
+	fn store_pending_confirmation_round(&self, round_seq: RoundSeq, round_txid: RoundId, round_tx: Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
+		-> anyhow::Result<PendingConfirmationState>;
+
+	fn store_round_state(&self, round_state: RoundState, prev_state: RoundState) -> anyhow::Result<RoundState>;
+
+	fn store_secret_nonces(&self, round_attempt_id: i64, secret_nonces: Vec<Vec<SecretNonce>>) -> anyhow::Result<()>;
+	fn take_secret_nonces(&self, round_attempt_id: i64) -> anyhow::Result<Option<Vec<Vec<SecretNonce>>>>;
+
+	/// Get round by its sequence number
+	fn get_round_attempt_by_id(&self, round_attempt_id: i64) -> anyhow::Result<Option<RoundState>>;
+	/// Get round by its id
+	fn get_round_attempt_by_round_txid(&self, round_id: RoundId) -> anyhow::Result<Option<RoundState>>;
+
+	/// List all pending rounds
+	fn list_pending_rounds(&self) -> anyhow::Result<Vec<RoundState>>;
+
 	/// Fetch a VTXO by id in the database
 	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
 	/// Fetch all VTXO's that are in a given state
 	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>>;
+	/// Fetch all VTXO's that are currently used in a round
+	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<Vtxo>>;
 	/// Remove a VTXO from the database
 	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 	/// Check whether a VTXO has been spent already or not

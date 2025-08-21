@@ -10,7 +10,8 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
 use bitcoin::secp256k1::{self, schnorr, Message};
 
-use crate::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, Vtxo, VtxoId};
+use crate::{musig, OffboardRequest, SECP, SignedVtxoRequest, Vtxo, VtxoId};
+use crate::encode::ProtocolEncoding;
 use crate::tree::signed::VtxoTreeSpec;
 
 /// A round tx must have at least vtxo tree and connector chain outputs.
@@ -83,6 +84,48 @@ impl VtxoOwnershipChallenge {
 	}
 }
 
+/// Unique identifier for a round.
+///
+/// It is a simple sequence number.
+///
+/// It is used to identify a round before we have a round tx.
+/// [RoundId] should be used as soon as we have a round tx.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct RoundSeq(u64);
+
+impl RoundSeq {
+	pub const fn new(seq: u64) -> Self {
+		Self(seq)
+	}
+
+	pub fn increment(&mut self) {
+		self.0 += 1;
+	}
+
+	pub fn inner(&self) -> u64 {
+		self.0
+	}
+}
+
+impl From<u64> for RoundSeq {
+	fn from(v: u64) -> Self {
+	    Self::new(v)
+	}
+}
+
+impl From<RoundSeq> for u64 {
+	fn from(v: RoundSeq) -> u64 {
+	    v.0
+	}
+}
+
+impl fmt::Display for RoundSeq {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl fmt::Debug for RoundSeq {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(self, f) }
+}
 
 /// Identifier for a past round.
 ///
@@ -167,13 +210,13 @@ impl<'de> serde::Deserialize<'de> for RoundId {
 
 #[derive(Debug, Clone)]
 pub struct RoundInfo {
-	pub round_seq: usize,
+	pub round_seq: RoundSeq,
 	pub offboard_feerate: FeeRate,
 }
 
 #[derive(Debug, Clone)]
 pub struct RoundAttempt {
-	pub round_seq: usize,
+	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
 	pub challenge: VtxoOwnershipChallenge,
 }
@@ -183,19 +226,19 @@ pub enum RoundEvent {
 	Start(RoundInfo),
 	Attempt(RoundAttempt),
 	VtxoProposal {
-		round_seq: usize,
+		round_seq: RoundSeq,
 		unsigned_round_tx: Transaction,
 		vtxos_spec: VtxoTreeSpec,
 		cosign_agg_nonces: Vec<musig::AggregatedNonce>,
-		connector_pubkey: PublicKey,
 	},
 	RoundProposal {
-		round_seq: usize,
+		round_seq: RoundSeq,
 		cosign_sigs: Vec<schnorr::Signature>,
 		forfeit_nonces: HashMap<VtxoId, Vec<musig::PublicNonce>>,
+		connector_pubkey: PublicKey,
 	},
 	Finished {
-		round_seq: usize,
+		round_seq: RoundSeq,
 		signed_round_tx: Transaction,
 	},
 }
@@ -217,16 +260,16 @@ impl fmt::Display for RoundEvent {
 					.field("challenge", &challenge.inner().as_hex())
 					.finish()
 			},
-			Self::VtxoProposal { round_seq, unsigned_round_tx, connector_pubkey, .. } => {
+			Self::VtxoProposal { round_seq, unsigned_round_tx, .. } => {
 				f.debug_struct("VtxoProposal")
 					.field("round_seq", round_seq)
 					.field("unsigned_round_txid", &unsigned_round_tx.compute_txid())
-					.field("connector_pubkey", connector_pubkey)
 					.finish()
 			},
-			Self::RoundProposal { round_seq, .. } => {
+			Self::RoundProposal { round_seq, connector_pubkey, .. } => {
 				f.debug_struct("RoundProposal")
 					.field("round_seq", round_seq)
+					.field("connector_pubkey", &connector_pubkey)
 					.finish()
 			},
 			Self::Finished { round_seq, signed_round_tx } => {
