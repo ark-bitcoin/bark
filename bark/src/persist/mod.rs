@@ -14,7 +14,6 @@ use json::exit::states::ExitTxOrigin;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use bitcoin_ext::BlockHeight;
 
 use crate::{Config, Movement, MovementArgs, Pagination, RoundParticipation, WalletProperties};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
@@ -159,8 +158,8 @@ pub trait BarkPersister: Send + Sync + 'static {
 		exit_txid: Txid,
 	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>>;
 
-	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight>;
-	fn store_last_ark_sync_height(&self, height: BlockHeight) -> anyhow::Result<()>;
+	fn get_last_synced_round(&self) -> anyhow::Result<Option<RoundId>>;
+	fn store_last_synced_round(&self, round_id: RoundId) -> anyhow::Result<()>;
 
 	fn update_vtxo_state_checked(
 		&self,

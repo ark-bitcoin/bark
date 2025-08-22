@@ -15,7 +15,6 @@ use rusqlite::{self, named_params, Connection, ToSql, Transaction};
 use ark::ProtocolEncoding;
 use ark::lightning::{PaymentHash, Preimage};
 use ark::rounds::{RoundId, RoundSeq};
-use bitcoin_ext::BlockHeight;
 use json::exit::ExitState;
 use json::exit::states::ExitTxOrigin;
 
@@ -798,30 +797,25 @@ pub fn get_last_vtxo_key_index(conn: &Connection) -> anyhow::Result<Option<u32>>
 	}
 }
 
-pub fn store_last_ark_sync_height(
+pub fn store_last_synced_round(
 	conn: &Connection,
-	height: BlockHeight
+	round_id: RoundId,
 ) -> anyhow::Result<()> {
-	let query = "INSERT INTO bark_ark_sync (sync_height) VALUES (?1);";
+	let query = "INSERT INTO bark_synced_round (round_txid) VALUES (?1);";
 	let mut statement = conn.prepare(query)?;
-	statement.execute([height])?;
+	statement.execute([round_id.to_string()])?;
 	Ok(())
 }
 
-pub fn get_last_ark_sync_height(conn: &Connection) -> anyhow::Result<BlockHeight> {
-	// This query orders on id and not on the created_at field
-	// Using creatd_at would be more readable, however, this might break
-	// if two subsequent rows are added in the same millisecond.
-	let query = "SELECT sync_height FROM bark_ark_sync ORDER BY id DESC LIMIT 1";
+pub fn get_last_synced_round(conn: &Connection) -> anyhow::Result<Option<RoundId>> {
+	let query = "SELECT round_txid FROM bark_synced_round ORDER BY id DESC LIMIT 1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query(())?;
 
 	if let Some(row) = rows.next()? {
-		let height_i64 : i64 = row.get(0)?;
-		let height = u32::try_from(height_i64)?;
-		Ok(height)
+		Ok(Some(RoundId::from_str(&row.get::<_, String>(0)?)?))
 	} else {
-		Ok(0)
+		Ok(None)
 	}
 }
 

@@ -1,5 +1,8 @@
 
 mod model;
+use std::str::FromStr;
+use std::time::Duration;
+
 pub use model::*;
 
 use bitcoin::{Transaction, Txid};
@@ -126,16 +129,30 @@ impl Db {
 		)
 	}
 
-	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<RoundId>> {
+	pub async fn get_fresh_round_ids(
+		&self,
+		last_round_id: Option<RoundId>,
+		vtxo_lifetime: Duration,
+	) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
-		let statement = conn.prepare("
-			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry
-			FROM round WHERE expiry > $1
-		").await?;
 
-		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
+		let rows = if let Some(last) = last_round_id {
+			let stmt = conn.prepare("
+				SELECT id FROM round
+				WHERE created_at > (SELECT created_at FROM round WHERE id = $1)
+			").await?;
+			conn.query_raw(&stmt, &[&last.to_string()]).await?
+		} else {
+			let window = vtxo_lifetime + vtxo_lifetime / 2;
+			let stmt = conn.prepare("
+				SELECT id FROM round
+				WHERE created_at >= now() - ($1 * interval '1 second')
+			").await?;
+			conn.query_raw(&stmt, &[&(window.as_secs() as f64)]).await?
+		};
+
 		Ok(rows
-			.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id)
+			.map_ok(|row| RoundId::from_str(row.get("id")).expect("corrupt db"))
 			.try_collect::<Vec<_>>().await?
 		)
 	}

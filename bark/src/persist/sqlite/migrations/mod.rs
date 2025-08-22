@@ -10,6 +10,7 @@ mod m0009_add_movement_kind;
 mod m0010_remove_keychain;
 mod m0011_exit_ancestor_info;
 mod m0012_round;
+mod m0013_round_sync;
 
 use anyhow::Context;
 use log::{trace, debug};
@@ -27,6 +28,7 @@ use m0009_add_movement_kind::Migration0009;
 use m0010_remove_keychain::Migration0010;
 use m0011_exit_ancestor_info::Migration0011;
 use m0012_round::Migration0012;
+use m0013_round_sync::Migration0013;
 
 pub struct MigrationContext {}
 
@@ -56,6 +58,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0010{})?;
 		self.try_migration(conn, &Migration0011{})?;
 		self.try_migration(conn, &Migration0012{})?;
+		self.try_migration(conn, &Migration0013{})?;
 		Ok(())
 	}
 
@@ -212,7 +215,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 12).unwrap();
+		assert_current_version(&conn, 13).unwrap();
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_config").unwrap());

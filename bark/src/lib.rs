@@ -855,60 +855,67 @@ impl Wallet {
 	async fn sync_past_rounds(&self) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
+		let last_synced_round = self.db.get_last_synced_round()?;
+		debug!("Querying ark for rounds since round id {:?}", last_synced_round);
+
+		let fresh_rounds = srv.client.get_fresh_rounds(protos::FreshRoundsRequest {
+			last_round_txid: last_synced_round.map(|r| r.to_string()),
+		}).await?.into_inner().txids.into_iter()
+			.map(|txid| RoundId::from_slice(&txid))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		if fresh_rounds.is_empty() {
+			debug!("No new rounds to sync");
+			return Ok(());
+		}
+
+		debug!("Received {} new rounds from ark", fresh_rounds.len());
+
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
 			self.vtxo_seed.derive_keypair(idx).public_key()
 		}).collect::<HashSet<_>>();
 
-		let current_height = self.chain.tip().await?;
-		let last_sync_height = self.db.get_last_ark_sync_height()?;
-		debug!("Querying ark for rounds since height {}", last_sync_height);
-		let req = protos::FreshRoundsRequest { start_height: last_sync_height as u32 };
-		let fresh_rounds = srv.client.get_fresh_rounds(req).await?.into_inner();
-		debug!("Received {} new rounds from ark", fresh_rounds.txids.len());
+		let results = tokio_stream::iter(&fresh_rounds).map(|round_id| {
+			let pubkeys = pubkeys.clone();
+			let mut srv = srv.clone();
 
-		let results = tokio_stream::iter(fresh_rounds.txids)
-			.map(|txid| {
-				let pubkeys = pubkeys.clone();
-				let mut srv = srv.clone();
+			async move {
+				if self.db.get_round_attempt_by_round_txid(*round_id)?.is_some() {
+					debug!("Skipping round {} because it already exists", round_id);
+					return Ok::<_, anyhow::Error>(());
+				}
 
-				async move {
-					let round_id = RoundId::from_slice(&txid).context("invalid txid from srv")?;
-					if self.db.get_round_attempt_by_round_txid(round_id)?.is_some() {
-						debug!("Skipping round {} because it already exists", round_id);
-						return Ok::<_, anyhow::Error>(());
-					}
+				let req = protos::RoundId { txid: round_id.as_round_txid().to_byte_array().to_vec() };
+				let round = srv.client.get_round(req).await?.into_inner();
 
-					let req = protos::RoundId { txid: round_id.as_round_txid().to_byte_array().to_vec() };
-					let round = srv.client.get_round(req).await?.into_inner();
+				let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
+					.context("invalid signed vtxo tree from srv")?
+					.into_cached_tree();
 
-					let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
-						.context("invalid signed vtxo tree from srv")?
-						.into_cached_tree();
+				let mut reqs = Vec::new();
+				let mut vtxos = vec![];
+				for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
+					if pubkeys.contains(&dest.vtxo.policy.user_pubkey()) {
+						if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
+							reqs.push(StoredVtxoRequest {
+								request_policy: dest.vtxo.policy.clone(),
+								amount: dest.vtxo.amount,
+								state: VtxoState::Spendable,
+							});
 
-					let mut reqs = Vec::new();
-					let mut vtxos = vec![];
-					for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-						if pubkeys.contains(&dest.vtxo.policy.user_pubkey()) {
-							if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-								reqs.push(StoredVtxoRequest {
-									request_policy: dest.vtxo.policy.clone(),
-									amount: dest.vtxo.amount,
-									state: VtxoState::Spendable,
-								});
-
-								vtxos.push(vtxo);
-							}
+							vtxos.push(vtxo);
 						}
 					}
-
-					let round_tx = Transaction::from_bytes(&round.round_tx)?;
-
-
-					self.db.store_pending_confirmation_round(RoundSeq::new(0), round_id, round_tx, reqs, vtxos)?;
-
-					Ok(())
 				}
+
+				let round_tx = Transaction::from_bytes(&round.round_tx)?;
+				self.db.store_pending_confirmation_round(
+					RoundSeq::new(0), *round_id, round_tx, reqs, vtxos,
+				)?;
+
+				Ok(())
+			}
 		})
 		.buffer_unordered(10)
 		.collect::<Vec<_>>()
@@ -920,7 +927,7 @@ impl Wallet {
 			}
 		}
 
-		self.db.store_last_ark_sync_height(current_height)?;
+		self.db.store_last_synced_round(*fresh_rounds.last().unwrap())?;
 
 		Ok(())
 	}

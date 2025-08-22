@@ -8,6 +8,9 @@ service ArkService {
 	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
 	rpc GetArkInfo(Empty) returns (ArkInfo) {}
 
+	// Get new round since the given round id
+	//
+	// If no round given, gives all rounds in the past 1.5 x the VTXO lifetime.
 	rpc GetFreshRounds(FreshRoundsRequest) returns (FreshRounds) {}
 	rpc GetRound(RoundId) returns (RoundInfo) {}
 
@@ -73,7 +76,7 @@ message ArkInfo {
 }
 
 message FreshRoundsRequest {
-	uint32 start_height = 1;
+	optional string last_round_txid = 1;
 }
 
 message FreshRounds {
