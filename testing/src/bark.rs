@@ -144,6 +144,7 @@ impl Bark {
 	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
 		const MNEMONIC_FILE: &str = "mnemonic";
 		const DB_FILE: &str = "db.sqlite";
+		const CONFIG_FILE: &str = "config.toml";
 
 		// read mnemonic file
 		let mnemonic_path = self.config.datadir.join(MNEMONIC_FILE);
@@ -151,9 +152,16 @@ impl Bark {
 			.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
 		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 
+		// Read the config file
+		let config_path = self.config.datadir.join(CONFIG_FILE);
+		let config_str = fs::read_to_string(&config_path).await
+			.with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
+		let config: bark::Config = toml::from_str(&config_str)
+			.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
+
 		let db = bark::SqliteClient::open(self.config.datadir.join(DB_FILE))?;
 
-		Ok(bark::Wallet::open(&mnemonic, Arc::new(db)).await?)
+		Ok(bark::Wallet::open(&mnemonic, Arc::new(db), config).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {

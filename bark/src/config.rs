@@ -7,7 +7,7 @@ use bitcoin_ext::BlockHeight;
 
 
 /// Configuration of the Bark wallet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
 	/// The address of your server.
 	pub server_address: String,

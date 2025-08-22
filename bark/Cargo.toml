@@ -9,7 +9,7 @@ readme = "README.md"
 
 [features]
 default = ["cli", "tls-native-roots"]
-cli = ["clap", "fern", "home", "onchain_bdk"]
+cli = ["clap", "fern", "home", "onchain_bdk", "toml"]
 onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
@@ -66,6 +66,7 @@ bdk_wallet = { workspace = true, features = [ "rusqlite" ], optional = true }
 clap = { workspace = true, optional = true }
 fern = { workspace = true, optional = true }
 home = { version = "=0.5.9", optional = true }
+toml = { workspace = true, optional = true}
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }
