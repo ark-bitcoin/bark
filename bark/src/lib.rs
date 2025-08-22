@@ -601,7 +601,6 @@ impl Wallet {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
 		self.register_all_unregistered_boards(wallet).await?;
-		info!("Performing maintenance refresh");
 		self.maintenance_refresh().await?;
 		self.sync_pending_lightning_vtxos().await?;
 
