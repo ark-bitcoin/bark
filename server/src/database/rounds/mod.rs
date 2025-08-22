@@ -86,7 +86,7 @@ impl Db {
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry
+			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry, created_at
 			FROM round WHERE id = $1;
 		").await?;
 
@@ -115,7 +115,7 @@ impl Db {
 	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry
+			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry, created_at
 			FROM round WHERE expiry <= $1
 		").await?;
 

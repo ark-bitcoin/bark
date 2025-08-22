@@ -190,7 +190,8 @@ CREATE TABLE public.all_round (
     connector_key bytea NOT NULL,
     expiry integer NOT NULL,
     deleted_at timestamp with time zone,
-    seq bigint NOT NULL
+    seq bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -538,7 +539,8 @@ CREATE VIEW public.round AS
     connector_key,
     expiry,
     deleted_at,
-    seq
+    seq,
+    created_at
    FROM public.all_round
   WHERE (deleted_at IS NULL);
 

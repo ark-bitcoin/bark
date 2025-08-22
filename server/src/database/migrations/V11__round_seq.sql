@@ -15,6 +15,8 @@ WHERE a.id = n.id;
 
 ALTER TABLE all_round ALTER COLUMN seq SET NOT NULL;
 
+ALTER TABLE all_round ADD COLUMN created_at TIMESTAMPTZ DEFAULT now() NOT NULL;
+
 
 CREATE VIEW round AS
 SELECT * FROM all_round WHERE deleted_at IS NULL;
