@@ -1,10 +1,10 @@
 
-use std::sync::Arc;
 use std::{env, fmt};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -178,8 +178,21 @@ impl Bark {
 
 	/// Set the bark's server address.
 	pub async fn set_ark_url(&self, srv: &dyn ToArkUrl) {
-		let url = srv.ark_url();
-		self.run(["config", "--dangerous", "--ark", &url]).await;
+		let config_path = self.config().datadir.join("config.toml");
+
+		// Read the config
+		let config_str = fs::read_to_string(&config_path).await.expect("Failed to read config.toml");
+		let mut config: bark::Config = toml::from_str(&config_str).expect("Failed to parse config.toml");
+
+		// modify the config
+		config.server_address = srv.ark_url();
+
+		// Write the config
+		let config_str = toml::to_string_pretty(&config).expect("Failed to serialize toml file");
+		fs::remove_file(&config_path).await.expect("Failed to delete config.toml");
+
+		let mut file = fs::File::create(&config_path).await.expect("Failed to create config.toml");
+		file.write(config_str.as_bytes()).await.expect("Failed to write config to config.toml");
 	}
 
 	pub async fn ark_info(&self) -> json::ArkInfo {

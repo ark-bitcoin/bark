@@ -174,18 +174,12 @@ enum Command {
 	#[command()]
 	Create(CreateOpts),
 
+	#[command()]
+	Config,
+
 	/// Use the built-in onchain wallet
 	#[command(subcommand)]
 	Onchain(OnchainCommand),
-
-	/// Change the configuration of your bark wallet
-	#[command()]
-	Config {
-		#[command(flatten)]
-		config: Option<ConfigOpts>,
-		#[arg(long, default_value_t = false)]
-		dangerous: bool,
-	},
 
 	/// Prints informations related to the Ark Server
 	#[command()]
@@ -503,24 +497,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	match cli.command {
 		Command::Create { .. } => unreachable!(),
-		Command::Config { config, dangerous } => {
-			if let Some(new_cfg) = config {
-				let mut cfg = wallet.config().clone();
-				if !dangerous {
-					if new_cfg.ark.is_some() {
-						bail!("Changing the Ark server address can lead to loss of funds. \
-							If you insist, use the --dangerous flag.");
-					}
-				}
-				new_cfg.merge_into(&mut cfg).context("invalid configuration")?;
-				wallet.set_config(cfg);
-				wallet.persist_config().context("failed to persist config")?;
-			}
+		Command::Config => {
 			let config = wallet.config().clone();
 			output_json(&bark_json::cli::Config {
 				ark: config.server_address,
 				bitcoind: config.bitcoind_address,
-				bitcoind_cookie: config.bitcoind_cookiefile.map(|p| p.display().to_string()),
+				bitcoind_cookie: config.bitcoind_cookiefile.map(|c| c.display().to_string()),
 				bitcoind_user: config.bitcoind_user,
 				bitcoind_pass: config.bitcoind_pass,
 				esplora: config.esplora_address,
