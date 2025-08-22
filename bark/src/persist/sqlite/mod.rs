@@ -21,7 +21,7 @@ use json::exit::states::ExitTxOrigin;
 
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
-	Config, Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties
+	Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties
 };
 use crate::exit::vtxo::ExitEntry;
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
@@ -80,12 +80,11 @@ impl SqliteClient {
 
 
 impl BarkPersister for SqliteClient {
-	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()> {
+	fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
 		query::set_properties(&tx, properties)?;
-		query::set_config(&tx, config)?;
 
 		tx.commit()?;
 		Ok(())
@@ -104,18 +103,9 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn write_config(&self, config: &Config) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::set_config(&conn, config)?;
-		Ok(())
-	}
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
 		let conn = self.connect()?;
 		Ok(query::fetch_properties(&conn)?)
-	}
-	fn read_config(&self) -> anyhow::Result<Option<Config>> {
-		let conn = self.connect()?;
-		Ok(query::fetch_config(&conn)?)
 	}
 
 	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool> {

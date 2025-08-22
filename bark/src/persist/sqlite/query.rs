@@ -1,11 +1,10 @@
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::musig::{DangerousSecretNonce, SecretNonce};
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{Amount, FeeRate, Network, Txid};
+use bitcoin::{Amount, Network, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::secp256k1::PublicKey;
@@ -19,7 +18,7 @@ use json::exit::ExitState;
 use json::exit::states::ExitTxOrigin;
 
 use crate::persist::sqlite::convert::{row_to_secret_nonces, row_to_round_state};
-use crate::{Config, Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::persist::{LightningReceive, StoredVtxoRequest};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::exit::vtxo::ExitEntry;
@@ -49,45 +48,6 @@ pub (crate) fn set_properties(
 	Ok(())
 }
 
-pub (crate) fn set_config(conn: &Connection, config: &Config) -> anyhow::Result<()> {
-	// Store the vtxo
-	let query =
-		"INSERT INTO bark_config
-			(id, server_address, esplora_address, bitcoind_address,
-			bitcoind_cookiefile, bitcoind_user, bitcoind_pass, vtxo_refresh_expiry_threshold,
-			fallback_fee_kwu)
-		VALUES
-			(1, :server_address, :esplora_address, :bitcoind_address,
-			:bitcoind_cookiefile, :bitcoind_user, :bitcoind_pass, :vtxo_refresh_expiry_threshold,
-			:fallback_fee_kwu)
-		ON CONFLICT (id)
-		DO UPDATE SET
-			server_address = :server_address,
-			esplora_address = :esplora_address,
-			bitcoind_address = :bitcoind_address,
-			bitcoind_cookiefile = :bitcoind_cookiefile,
-			bitcoind_user = :bitcoind_user,
-			bitcoind_pass = :bitcoind_pass,
-			vtxo_refresh_expiry_threshold = :vtxo_refresh_expiry_threshold,
-			fallback_fee_kwu = :fallback_fee_kwu
-		";
-	let mut statement = conn.prepare(query)?;
-
-	statement.execute(named_params! {
-		":server_address": config.server_address,
-		":esplora_address": config.esplora_address,
-		":bitcoind_address": config.bitcoind_address,
-		":bitcoind_cookiefile": config.bitcoind_cookiefile
-			.clone().and_then(|f| f.to_str().map(String::from)),
-		":bitcoind_user": config.bitcoind_user,
-		":bitcoind_pass": config.bitcoind_pass,
-		":vtxo_refresh_expiry_threshold": config.vtxo_refresh_expiry_threshold,
-		":fallback_fee_kwu": config.fallback_fee_rate.map(|f| f.to_sat_per_kwu()),
-	})?;
-
-	Ok(())
-}
-
 pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<WalletProperties>> {
 	let query = "SELECT * FROM bark_properties";
 	let mut statement = conn.prepare(query)?;
@@ -101,37 +61,6 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 			WalletProperties {
 				network: Network::from_str(&network).context("invalid network")?,
 				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
-			}
-		))
-	} else {
-		Ok(None)
-	}
-}
-
-pub (crate) fn fetch_config(conn: &Connection) -> anyhow::Result<Option<Config>> {
-	let query = "SELECT * FROM bark_config";
-	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([])?;
-
-	if let Some(row) = rows.next()? {
-		let bitcoind_cookiefile_opt: Option<String> = row.get("bitcoind_cookiefile")?;
-		let bitcoind_cookiefile = if let Some (bitcoind_cookiefile) = bitcoind_cookiefile_opt {
-			Some(PathBuf::try_from(bitcoind_cookiefile)?)
-		} else {
-			None
-		};
-
-		let kwu_fee: Option<u64> = row.get("fallback_fee_kwu")?;
-		Ok(Some(
-			Config {
-				server_address: row.get("server_address")?,
-				esplora_address: row.get("esplora_address")?,
-				bitcoind_address: row.get("bitcoind_address")?,
-				bitcoind_cookiefile,
-				bitcoind_user: row.get("bitcoind_user")?,
-				bitcoind_pass: row.get("bitcoind_pass")?,
-				vtxo_refresh_expiry_threshold: row.get("vtxo_refresh_expiry_threshold")?,
-				fallback_fee_rate: kwu_fee.map(|f| FeeRate::from_sat_per_kwu(f)),
 			}
 		))
 	} else {

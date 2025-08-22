@@ -15,7 +15,7 @@ use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 
-use crate::{Config, Movement, MovementArgs, Pagination, RoundParticipation, WalletProperties};
+use crate::{Movement, MovementArgs, Pagination, RoundParticipation, WalletProperties};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
 use crate::exit::vtxo::ExitEntry;
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -57,7 +57,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialise wallet in the database
 	///
 	/// Will fail after first call
-	fn init_wallet(&self, config: &Config, properties: &WalletProperties) -> anyhow::Result<()>;
+	fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()>;
 
 	/// Initialize the BDK wallet and load the full existing ChangeSet.
 	///
@@ -70,9 +70,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	#[cfg(feature = "onchain_bdk")]
 	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
 
-	fn write_config(&self, config: &Config) -> anyhow::Result<()>;
 	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
-	fn read_config(&self) -> anyhow::Result<Option<Config>>;
 
 	/// Check if given recipient exists in the database
 	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool>;
