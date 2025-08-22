@@ -377,11 +377,18 @@ impl Wallet {
 		network: Network,
 		config: Config,
 		db: Arc<P>,
+		force: bool,
 	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
 		if let Some(existing) = db.read_config()? {
 			trace!("Existing config: {:?}", existing);
 			bail!("cannot overwrite already existing config")
+		}
+
+		if !force{
+			if let Err(_) = ServerConnection::connect(&config.server_address, network).await {
+				bail!("Not connected to a server. If you are sure use the --force flag.");
+			}
 		}
 
 		let wallet_fingerprint = VtxoSeed::new(network, &mnemonic.to_seed("")).fingerprint();
@@ -397,10 +404,6 @@ impl Wallet {
 		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
 		wallet.require_chainsource_version()?;
 
-		if wallet.server.is_none() {
-			bail!("Cannot create bark if the Ark server is not available");
-		}
-
 		Ok(wallet)
 	}
 
@@ -410,8 +413,9 @@ impl Wallet {
 		config: Config,
 		db: Arc<P>,
 		onchain: &W,
+		force: bool,
 	) -> anyhow::Result<Wallet> {
-		let mut wallet = Wallet::create(mnemonic, network, config, db).await?;
+		let mut wallet = Wallet::create(mnemonic, network, config, db, force).await?;
 		wallet.exit.load(onchain).await?;
 		Ok(wallet)
 	}
