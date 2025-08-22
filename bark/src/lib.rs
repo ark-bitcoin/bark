@@ -286,9 +286,9 @@ impl Wallet {
 			})
 		} else if let Some(ref url) = config.bitcoind_address {
 			let auth = if let Some(ref c) = config.bitcoind_cookiefile {
-				bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(c.clone())
+				bitcoin_ext::rpc::Auth::CookieFile(c.clone())
 			} else {
-				bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(
+				bitcoin_ext::rpc::Auth::UserPass(
 					config.bitcoind_user.clone().context("need bitcoind auth config")?,
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
@@ -436,9 +436,9 @@ impl Wallet {
 			}
 		} else if let Some(ref url) = config.bitcoind_address {
 			let auth = if let Some(ref c) = config.bitcoind_cookiefile {
-				bdk_bitcoind_rpc::bitcoincore_rpc::Auth::CookieFile(c.clone())
+				bitcoin_ext::rpc::Auth::CookieFile(c.clone())
 			} else {
-				bdk_bitcoind_rpc::bitcoincore_rpc::Auth::UserPass(
+				bitcoin_ext::rpc::Auth::UserPass(
 					config.bitcoind_user.clone().context("need bitcoind auth config")?,
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)

@@ -3,21 +3,21 @@ use std::iter;
 use std::{collections::HashMap, fmt::{self, Debug}, str::FromStr, sync::Arc};
 
 use anyhow::Context;
-use ark::tree::signed::VtxoTreeSpec;
 use bip39::rand;
 use bitcoin::key::Keypair;
 use bitcoin::params::Params;
 use bitcoin::{Address, OutPoint, Transaction, Txid};
 use bitcoin::hashes::Hash;
-use bitcoin_ext::rpc::TxStatus;
+use bitcoin_ext::TxStatus;
 use log::{debug, error, info, trace, warn};
 use tonic::Code;
 
-use server_rpc::protos;
+use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundEvent, RoundId, RoundInfo, RoundSeq, VtxoOwnershipChallenge, MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
-use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::tree::signed::VtxoTreeSpec;
+use server_rpc::protos;
 
 use crate::movement::{MovementArgs, MovementKind};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};

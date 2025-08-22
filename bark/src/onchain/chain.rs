@@ -4,9 +4,6 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc::json::EstimateMode;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
-use bdk_bitcoind_rpc::{bitcoincore_rpc, BitcoindRpcErrorExt, NO_EXPECTED_MEMPOOL_TXS};
 use bdk_core::{BlockId, CheckPoint};
 use bdk_esplora::esplora_client;
 use bitcoin::constants::genesis_block;
@@ -16,10 +13,9 @@ use bitcoin::{
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
-use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt};
-pub(crate) use bitcoin_ext::rpc::TxStatus;
-pub(crate) use bitcoin_ext::rpc::bitcoin_core::BitcoinRpcExt;
-pub(crate) use bitcoin_ext::rpc::esplora::EsploraClientExt;
+use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt, TxStatus};
+use bitcoin_ext::rpc::{self, BitcoinRpcExt, BitcoinRpcErrorExt, RpcApi};
+use bitcoin_ext::esplora::EsploraClientExt;
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
@@ -32,14 +28,14 @@ const MIN_BITCOIND_VERSION: usize = 290000;
 pub enum ChainSource {
 	Bitcoind {
 		url: String,
-		auth: bitcoincore_rpc::Auth,
+		auth: rpc::Auth,
 	},
 	Esplora {
 		url: String,
 	},
 }
 pub (crate) enum InnerChainSourceClient {
-	Bitcoind(bitcoincore_rpc::Client),
+	Bitcoind(rpc::Client),
 	Esplora(esplora_client::AsyncClient),
 }
 
@@ -100,7 +96,7 @@ impl ChainSourceClient {
 	pub async fn new(chain_source: ChainSource, network: Network, fallback_fee: Option<FeeRate>) -> anyhow::Result<Self> {
 		let inner = match chain_source {
 			ChainSource::Bitcoind { url, auth } => InnerChainSourceClient::Bitcoind(
-				bitcoincore_rpc::Client::new(&url, auth)
+				rpc::Client::new(&url, auth)
 					.context("failed to create bitcoind rpc client")?
 			),
 			ChainSource::Esplora { url } => InnerChainSourceClient::Esplora({
@@ -123,7 +119,9 @@ impl ChainSourceClient {
 		match self.inner() {
 			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				let get_fee_rate = |target| {
-					let fee = bitcoind.estimate_smart_fee(target, Some(EstimateMode::Economical))?;
+					let fee = bitcoind.estimate_smart_fee(
+						target, Some(rpc::json::EstimateMode::Economical),
+					)?;
 					if let Some(fee_rate) = fee.fee_rate {
 						Ok(FeeRate::from_amount_per_kvb_ceil(fee_rate))
 					} else {
@@ -185,7 +183,7 @@ impl ChainSourceClient {
 			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				match bitcoind.get_block(hash) {
 					Ok(b) => Ok(Some(b)),
-					Err(e) if e.is_not_found_error() => Ok(None),
+					Err(e) if e.is_not_found() => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},
@@ -200,7 +198,7 @@ impl ChainSourceClient {
 	pub async fn mempool_ancestor_info(&self, txid: Txid) -> anyhow::Result<MempoolAncestorInfo> {
 		let mut result = MempoolAncestorInfo::new(txid);
 
-		// TODO: Determine if any line of descendant transactions increase the effective fee rate 
+		// TODO: Determine if any line of descendant transactions increase the effective fee rate
 		//		 of the target txid.
 		match self.inner() {
 			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
@@ -275,7 +273,7 @@ impl ChainSourceClient {
 				});
 
 				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, cp.clone(), cp.height(), NO_EXPECTED_MEMPOOL_TXS,
+					bitcoind, cp.clone(), cp.height(), bdk_bitcoind_rpc::NO_EXPECTED_MEMPOOL_TXS,
 				);
 
 				debug!("Scanning blocks for spent outpoints with bitcoind, starting at block height {}...", block_scan_start);
@@ -357,8 +355,8 @@ impl ChainSourceClient {
 			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				match bitcoind.send_raw_transaction(tx) {
 					Ok(_) => Ok(()),
-					Err(bitcoincore_rpc::Error::JsonRpc(
-						bitcoincore_rpc::jsonrpc::Error::Rpc(e))
+					Err(rpc::Error::JsonRpc(
+						rpc::jsonrpc::Error::Rpc(e))
 					) if e.code == TX_ALREADY_IN_CHAIN_ERROR => Ok(()),
 					Err(e) => Err(e.into()),
 				}
@@ -421,7 +419,7 @@ impl ChainSourceClient {
 			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
 				match bitcoind.get_raw_transaction(txid, None) {
 					Ok(tx) => Ok(Some(tx)),
-					Err(e) if e.is_not_found_error() => Ok(None),
+					Err(e) if e.is_not_found() => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},

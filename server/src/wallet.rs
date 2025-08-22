@@ -5,14 +5,13 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
 use anyhow::Context;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bdk_wallet::{SignOptions, Wallet, Balance, KeychainKind};
 use bip39::Mnemonic;
 use bitcoin::{bip32, Network, Address, FeeRate, Amount};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::WalletExt;
-use bitcoin_ext::rpc::bitcoin_core::BitcoinRpcExt;
+use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 use log::{error, trace};
 
 use crate::{database, telemetry};

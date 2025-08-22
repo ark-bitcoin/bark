@@ -28,7 +28,7 @@ required-features = ["cli"]
 # OWN
 ark-lib = { path = "../lib" }
 bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false, features = [
-    "core_rpc", "esplora_rpc", "bdk",
+	"bdk", "esplora", "rpc",
 ]}
 bark-json = { path = "../bark-json" }
 bark-server-rpc = { path = "../server-rpc" }

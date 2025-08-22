@@ -3,10 +3,13 @@
 #[macro_use] extern crate serde;
 pub extern crate bitcoin;
 
-#[cfg(feature = "bdk")]
-pub mod bdk;
 pub mod cpfp;
 pub mod fee;
+
+#[cfg(feature = "bdk")]
+pub mod bdk;
+#[cfg(feature = "esplora")]
+pub mod esplora;
 #[cfg(feature = "rpc")]
 pub mod rpc;
 
@@ -77,3 +80,27 @@ impl From<bdk_wallet::chain::BlockId> for BlockRef {
 		}
 	}
 }
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TxStatus {
+	Confirmed(BlockRef),
+	Mempool,
+	NotFound,
+}
+
+impl TxStatus {
+	pub fn confirmed_height(&self) -> Option<BlockHeight> {
+		match self {
+			TxStatus::Confirmed(block_ref) => Some(block_ref.height),
+			_ => None,
+		}
+	}
+
+	pub fn confirmed_in(&self) -> Option<BlockRef> {
+		match self {
+			TxStatus::Confirmed(block_ref) => Some(*block_ref),
+			_ => None,
+		}
+	}
+}
+

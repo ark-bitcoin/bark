@@ -1,14 +1,16 @@
+
+pub use bdk_bitcoind_rpc::bitcoincore_rpc::{self, json, jsonrpc, Auth, Client, Error, RpcApi};
+
 use std::borrow::Borrow;
 
-use bdk_bitcoind_rpc::bitcoincore_rpc::{jsonrpc, Auth, Client, Error, Result as RpcResult, RpcApi};
+use bdk_bitcoind_rpc::bitcoincore_rpc::Result as RpcResult;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::hex::FromHex;
 use bitcoin::{Address, Amount, Transaction};
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
-use crate::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
-use crate::rpc::TxStatus;
+use crate::{BlockHeight, BlockRef, TxStatus, DEEPLY_CONFIRMED};
 
 /// Error code for RPC_VERIFY_ALREADY_IN_UTXO_SET.
 const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;

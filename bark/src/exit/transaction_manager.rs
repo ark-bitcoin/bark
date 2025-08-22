@@ -6,8 +6,7 @@ use log::{debug, error, info, trace};
 use tokio::sync::RwLock;
 
 use ark::Vtxo;
-use bitcoin_ext::{BlockHeight, TransactionExt, DEEPLY_CONFIRMED};
-use bitcoin_ext::rpc::TxStatus;
+use bitcoin_ext::{BlockHeight, TransactionExt, TxStatus, DEEPLY_CONFIRMED};
 use json::exit::error::ExitError;
 use json::exit::package::{ChildTransactionInfo, ExitTransactionPackage, TransactionInfo};
 use json::exit::states::ExitTxOrigin;
@@ -362,7 +361,7 @@ impl ExitTransactionManager {
 			// been replaced
 			let current_txid = if let Some(child) = guard.child.as_mut() {
 				if matches!(child.origin, ExitTxOrigin::Wallet { .. }) && child.info.txid == *txid {
-					trace!("Updating block confirmation for wallet child tx {}: {:?}", 
+					trace!("Updating block confirmation for wallet child tx {}: {:?}",
 						child.info.txid, status.confirmed_in(),
 					);
 					child.origin = ExitTxOrigin::Wallet { confirmed_in: status.confirmed_in() };

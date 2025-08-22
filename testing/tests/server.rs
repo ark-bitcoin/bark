@@ -13,7 +13,7 @@ use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::{ScriptBuf, WPubkeyHash};
 use bitcoin_ext::{DEEPLY_CONFIRMED, P2TR_DUST, P2TR_DUST_SAT};
-use bitcoin_ext::rpc::bitcoin_core::BitcoinRpcExt;
+use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::{error, info, trace};
@@ -1069,9 +1069,10 @@ async fn claim_forfeit_round_connector() {
 	// and then wait for it to confirm
 	info!("Waiting for tx {} to confirm", txid);
 	async {
+		let rpc = ctx.bitcoind().sync_client();
 		loop {
 			ctx.generate_blocks(1).await;
-			if let Some(tx) = ctx.bitcoind().sync_client().custom_get_raw_transaction_info(&txid, None).unwrap() {
+			if let Some(tx) = rpc.custom_get_raw_transaction_info(&txid, None).unwrap() {
 				trace!("Tx {} has confirmations: {:?}", txid, tx.confirmations);
 				if tx.confirmations.unwrap_or(0) > 0 {
 					break;

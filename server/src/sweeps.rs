@@ -42,15 +42,14 @@ use std::time::Duration;
 use anyhow::Context;
 use ark::tree::signed::cosign_taproot;
 use ark::vtxo::VtxoSpec;
-use bdk_bitcoind_rpc::bitcoincore_rpc::RpcApi;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
 	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Sequence, Transaction, TxOut,
 	Txid, Weight,
 };
-use bitcoin_ext::rpc::bitcoin_core::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use futures::StreamExt;
 use log::{trace, info, warn, error};
 use tokio::sync::mpsc;

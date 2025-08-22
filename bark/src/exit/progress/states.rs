@@ -1,8 +1,7 @@
 use log::{debug, error, info, trace, warn};
 use tonic::async_trait;
 
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
-use bitcoin_ext::rpc::TxStatus;
+use bitcoin_ext::{BlockHeight, TxStatus, P2TR_DUST};
 use json::exit::error::ExitError;
 use json::exit::ExitState;
 use json::exit::states::{

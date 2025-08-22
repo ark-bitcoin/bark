@@ -9,9 +9,8 @@ use log::{debug, error, warn};
 use tonic::async_trait;
 
 use ark::Vtxo;
-use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
-use bitcoin_ext::rpc::TxStatus;
 use json::exit::error::ExitError;
 use json::exit::ExitState;
 use json::exit::states::{ExitTx, ExitTxOrigin, ExitTxStatus};
