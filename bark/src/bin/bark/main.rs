@@ -69,7 +69,7 @@ struct Cli {
 	quiet: bool,
 
 	/// The datadir of the bark wallet
-	#[arg(long, global = true, default_value_t = default_datadir())]
+	#[arg(long, env = "BARK_DATADIR", global = true, default_value_t = default_datadir())]
 	datadir: String,
 
 	#[command(subcommand)]
@@ -481,6 +481,7 @@ fn init_logging(verbose: bool, quiet: bool, datadir: &Path) -> anyhow::Result<()
 
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
+	debug!("Using bark datadir at {}", datadir.display());
 
 	if let Err(e) = init_logging(cli.verbose, cli.quiet, &datadir) {
 		eprintln!("Error setting up logging: {}", e);
