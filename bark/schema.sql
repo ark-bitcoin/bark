@@ -31,18 +31,6 @@ CREATE VIEW most_recent_vtxo_state
 			FROM most_recent JOIN bark_vtxo_state as vs
 				ON vs.id = most_recent.id
 /* most_recent_vtxo_state(id,last_updated_at,vtxo_id,state_kind,state) */;
-CREATE TABLE bark_config (
-				id TEXT PRIMARY KEY,
-				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-
-				server_address TEXT NOT NULL,
-				esplora_address ,
-				bitcoind_address ,
-				bitcoind_cookiefile ,
-				bitcoind_user ,
-				bitcoind_pass ,
-				vtxo_refresh_expiry_threshold INTEGER NOT NULL
-			, fallback_fee_kwu INTEGER);
 CREATE TABLE bark_properties (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
