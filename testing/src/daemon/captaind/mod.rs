@@ -104,6 +104,33 @@ impl Captaind {
 		Daemon::wrap(helper)
 	}
 
+	pub async fn get_custom_command(&self, args: &[&str]) -> anyhow::Result<Command> {
+		self.inner.get_custom_command(args).await
+	}
+
+	pub async fn integration_cmd(&self, args: &[&str]) -> String {
+		let mut full_args = Vec::with_capacity(args.len() + 1);
+		full_args.push("integration");
+		full_args.extend_from_slice(args);
+		let output = self.get_custom_command(full_args.as_slice()).await.unwrap().output().await
+			.expect("Failed to spawn process and capture output");
+
+		let stdout = String::from_utf8(output.stdout).expect("stdout is valid utf-8");
+		trace!("captaind command '{:?}' stdout: {}", args, stdout);
+
+		let stderr = String::from_utf8(output.stderr).expect("stderr is valid utf-8");
+		trace!("captaind command '{:?}' stderr: {}", args, stderr);
+		// Filter out lines that start with '['
+		let filtered_stdout = stdout
+			.lines()
+			.filter(|line| !line.trim_start().starts_with('['))
+			.collect::<Vec<_>>();
+		let last_line_stdout = filtered_stdout[filtered_stdout.len() - 1];
+		trace!("captaind command '{:?}' stdout-filtered: {}", args, last_line_stdout);
+
+		last_line_stdout.to_string()
+	}
+
 	pub fn ark_url(&self) -> String {
 		self.inner.ark_url()
 	}
@@ -203,7 +230,7 @@ impl DaemonHelper for CaptaindHelper {
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		let config_file = self.datadir().join(CAPTAIND_CONFIG_FILE);
+		let config_file = self.get_config_file().await;
 
 		let mut cmd = Captaind::base_cmd();
 		let args = vec![
@@ -303,6 +330,20 @@ impl DaemonHelper for CaptaindHelper {
 }
 
 impl CaptaindHelper {
+	async fn get_custom_command(&self, args: &[&str]) -> anyhow::Result<Command> {
+		let config_file = self.get_config_file().await;
+
+		let mut cmd = Captaind::base_cmd();
+		let mut new_args = args.to_vec();
+		new_args.push("--config");
+		new_args.push(config_file.to_str().unwrap());
+
+		trace!("base_cmd={:?}; args={:?}", cmd, new_args);
+		cmd.args(new_args);
+
+		Ok(cmd)
+	}
+
 	async fn try_is_ready(&self) -> anyhow::Result<()> {
 		let mut public = ArkClient::connect(self.ark_url()).await.context("public rpc")?;
 		let req = protos::HandshakeRequest { bark_version: None };
@@ -323,6 +364,10 @@ impl CaptaindHelper {
 		}
 	}
 
+	async fn get_config_file(&self) -> PathBuf {
+		self.datadir().join(CAPTAIND_CONFIG_FILE)
+	}
+
 	pub fn ark_url(&self) -> String {
 		format!("http://{}", self.cfg.rpc.public_address)
 	}
@@ -332,7 +377,7 @@ impl CaptaindHelper {
 	}
 
 	async fn create(&self) -> anyhow::Result<()> {
-		let config_file = self.datadir().join(CAPTAIND_CONFIG_FILE);
+		let config_file = self.get_config_file().await;
 
 		let mut cmd = Captaind::base_cmd();
 		let args = vec![
