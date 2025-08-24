@@ -23,7 +23,7 @@ tonic-build.workspace = true
 ark-lib = { path = "../lib" }
 bark-cln-rpc = { path = "../cln-rpc" }
 bark-server-log = { path = "../server-log" }
-bark-server-rpc = { path = "../server-rpc", features = ["server"] }
+bark-server-rpc = { path = "../server-rpc", features = ["server", "intman-server"] }
 bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false, features = ["bdk", "rpc" ] }
 
 # EXPORTED

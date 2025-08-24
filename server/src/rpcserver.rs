@@ -3,10 +3,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
-use std::time::{Duration, Instant};
-use std::pin::Pin;
-use std::future::Future;
-
+use std::time::Duration;
 use bip39::rand::Rng;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Transaction};
 use bitcoin::hashes::Hash;
@@ -15,21 +12,53 @@ use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use bitcoin_ext::AmountExt;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, info, warn};
-use opentelemetry::{global, Context, KeyValue};
-use opentelemetry::trace::{get_active_span, Span, SpanKind, TraceContextExt, Tracer};
+use opentelemetry::KeyValue;
+use opentelemetry::trace::get_active_span;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tonic::async_trait;
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
-use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
+use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount};
 use ark::rounds::RoundId;
 use server_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
-
+use ark::lightning::{PaymentHash, Preimage};
 use crate::Server;
 use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
+use crate::grpcserver::middleware;
+use crate::grpcserver::middleware::{
+	RpcMethodDetails,
+	RPC_SERVICE_ADMIN_START_LIGHTNING_NODE,
+	RPC_SERVICE_ADMIN_STOP_LIGHTNING_NODE,
+	RPC_SERVICE_ADMIN_TRIGGER_ROUND,
+	RPC_SERVICE_ADMIN_TRIGGER_SWEEP,
+	RPC_SERVICE_ADMIN_WALLET_STATUS,
+	RPC_SERVICE_ADMIN_WALLET_SYNC,
+	RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE,
+	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
+	RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE,
+	RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_GET_ARK_INFO,
+	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
+	RPC_SERVICE_ARK_GET_ROUND,
+	RPC_SERVICE_ARK_HANDSHAKE,
+	RPC_SERVICE_ARK_LAST_ROUND_EVENT,
+	RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX,
+	RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES,
+	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
+	RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS,
+	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
+	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
+	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE,
+	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
+	RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE,
+	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
+};
 use crate::round::RoundInput;
-use crate::telemetry::{self, RPC_GRPC_STATUS_CODE, SpanExt};
+use crate::telemetry;
 
 
 /// The minimum protocol version supported by the server.
@@ -46,7 +75,7 @@ pub const MAX_PROTOCOL_VERSION: u64 = 1;
 ///
 /// We keep this static because it's hard to propagate the config
 /// into all error conversions.
-static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
+pub(crate) static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
 
 macro_rules! badarg {
 	($($arg:tt)*) => { return $crate::error::badarg!($($arg)*).to_status(); };
@@ -90,7 +119,7 @@ impl ToStatus for anyhow::Error {
 }
 
 /// A trait to easily convert some generic [Result]s into [tonic] [Result].
-trait ToStatusResult<T> {
+pub trait ToStatusResult<T> {
 	/// Convert the error into a tonic error.
 	fn to_status(self) -> Result<T, tonic::Status>;
 }
@@ -150,83 +179,6 @@ where
 }
 
 
-const RPC_SYSTEM_HTTP: &'static str = "http";
-const RPC_SYSTEM_GRPC: &'static str = "grpc";
-
-const RPC_UNKNOWN: &'static str = "Unknown";
-
-const RPC_SERVICES: [&str; 2] = [RPC_SERVICE_ARK, RPC_SERVICE_ADMIN];
-
-const RPC_SERVICE_ARK: &'static str = "ArkService";
-
-const RPC_SERVICE_ARK_HANDSHAKE: &'static str = "handshake";
-const RPC_SERVICE_ARK_GET_ARK_INFO: &'static str = "get_ark_info";
-const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
-const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
-const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
-const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_vtxos";
-const RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN: &'static str = "request_arkoor_package_cosign";
-const RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX: &'static str = "post_arkoor_package_mailbox";
-const RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX: &'static str = "empty_arkoor_mailbox";
-const RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT: &'static str = "start_lightning_payment";
-const RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT: &'static str = "finish_lightning_payment";
-const RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT: &'static str = "check_lightning_payment";
-const RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT: &'static str = "revoke_lightning_payment";
-const RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE: &'static str = "fetch_bolt12_invoice";
-const RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE: &'static str = "start_lightning_receive";
-const RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE: &'static str = "subscribe_lightning_receive";
-const RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE: &'static str = "claim_lightning_receive";
-const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
-const RPC_SERVICE_ARK_LAST_ROUND_EVENT: &'static str = "last_round_event";
-const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
-const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
-const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
-
-const RPC_SERVICE_ARK_METHODS: [&str; 22] = [
-	RPC_SERVICE_ARK_HANDSHAKE,
-	RPC_SERVICE_ARK_GET_ARK_INFO,
-	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
-	RPC_SERVICE_ARK_GET_ROUND,
-	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
-	RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS,
-	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
-	RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX,
-	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
-	RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE,
-	RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE,
-	RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE,
-	RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE,
-	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
-	RPC_SERVICE_ARK_LAST_ROUND_EVENT,
-	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
-	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
-	RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES,
-];
-
-const RPC_SERVICE_ADMIN: &'static str = "AdminService";
-
-const RPC_SERVICE_ADMIN_WALLET_SYNC: &'static str = "wallet_sync";
-const RPC_SERVICE_ADMIN_WALLET_STATUS: &'static str = "wallet_status";
-const RPC_SERVICE_ADMIN_TRIGGER_ROUND: &'static str = "trigger_round";
-const RPC_SERVICE_ADMIN_TRIGGER_SWEEP: &'static str = "trigger_sweep";
-const RPC_SERVICE_ADMIN_START_LIGHTNING_NODE: &'static str = "start_lightning_node";
-const RPC_SERVICE_ADMIN_STOP_LIGHTNING_NODE: &'static str = "stop_lightning_node";
-const RPC_SERVICE_ADMIN_STOP: &'static str = "stop";
-
-const RPC_SERVICE_ADMIN_METHODS: [&str; 7] = [
-	RPC_SERVICE_ADMIN_WALLET_SYNC,
-	RPC_SERVICE_ADMIN_WALLET_STATUS,
-	RPC_SERVICE_ADMIN_TRIGGER_ROUND,
-	RPC_SERVICE_ADMIN_TRIGGER_SWEEP,
-	RPC_SERVICE_ADMIN_START_LIGHTNING_NODE,
-	RPC_SERVICE_ADMIN_STOP_LIGHTNING_NODE,
-	RPC_SERVICE_ADMIN_STOP,
-];
-
 
 #[async_trait]
 trait ReceiverExt {
@@ -245,35 +197,6 @@ impl ReceiverExt for oneshot::Receiver<anyhow::Error> {
 		}
 
 		Ok(())
-	}
-}
-
-#[derive(Clone, Debug)]
-pub struct RpcMethodDetails {
-	system: &'static str,
-	service: &'static str,
-	method: &'static str,
-}
-
-impl RpcMethodDetails {
-	fn grpc_ark(method: &'static str) -> RpcMethodDetails {
-		RpcMethodDetails {
-			system: RPC_SYSTEM_GRPC,
-			service: RPC_SERVICE_ARK,
-			method,
-		}
-	}
-
-	fn grpc_admin(method: &'static str) -> RpcMethodDetails {
-		RpcMethodDetails {
-			system: RPC_SYSTEM_GRPC,
-			service: RPC_SERVICE_ADMIN,
-			method,
-		}
-	}
-
-	pub fn format_path(&self) -> String {
-		format!("{}://{}/{}", self.system, self.service, self.method)
 	}
 }
 
@@ -968,182 +891,6 @@ impl rpc::server::SweepAdminService for Server {
 	}
 }
 
-
-#[derive(Clone)]
-struct TelemetryMetricsService<S> {
-	inner: S,
-}
-
-impl<S> TelemetryMetricsService<S> {
-	fn new(inner: S) -> TelemetryMetricsService<S> {
-		TelemetryMetricsService { inner }
-	}
-}
-
-impl<S, B> tower::Service<http::Request<B>> for TelemetryMetricsService<S>
-where
-	S: tower::Service<http::Request<B>> + Send + 'static,
-	S::Future: Send + 'static,
-	S::Error: std::fmt::Debug,
-	B: http_body::Body + Send + 'static,
-	B::Error: Into<tonic::codegen::StdError> + Send + 'static,
-{
-	type Response = S::Response;
-	type Error = S::Error;
-	type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-	fn poll_ready(
-		&mut self,
-		cx: &mut std::task::Context<'_>,
-	) -> std::task::Poll<Result<(), Self::Error>> {
-		self.inner.poll_ready(cx)
-	}
-
-	fn call(&mut self, req: http::Request<B>) -> Self::Future {
-		let uri = req.uri();
-		let is_grpc = req.headers().get("content-type")
-			.map_or(false, |ct| ct == "application/grpc");
-
-		let mut rpc_method_details = RpcMethodDetails {
-			system: RPC_SYSTEM_HTTP,
-			service: RPC_UNKNOWN,
-			method: RPC_UNKNOWN,
-		};
-
-		if is_grpc {
-			rpc_method_details.system = RPC_SYSTEM_GRPC;
-			if let Some((service, method)) = extract_service_method(&uri) {
-				rpc_method_details.service = service;
-				rpc_method_details.method = method;
-			}
-
-			// log protocol version used by user
-			if let Some(hv) = req.headers().get("grpc-pver") {
-				if let Ok(s) = hv.to_str() {
-					if let Ok(pver) = u64::from_str(s) {
-						telemetry::count_protocol_version(pver);
-					}
-				}
-			}
-		}
-
-		let attributes = [
-			KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
-			KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
-			KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
-		];
-		telemetry::add_grpc_in_progress(&attributes);
-
-		let tracer = global::tracer(telemetry::TRACER_CAPTAIND);
-		let mut span = tracer
-			.span_builder(rpc_method_details.format_path())
-			.with_kind(SpanKind::Server)
-			.start(&tracer);
-		span.set_str_attr(telemetry::RPC_SYSTEM, rpc_method_details.system);
-		span.set_str_attr(telemetry::RPC_SERVICE, rpc_method_details.service);
-		span.set_str_attr(telemetry::RPC_METHOD, rpc_method_details.method);
-
-		span.add_event(format!("Processing {} request", rpc_method_details.format_path()), vec![]);
-
-		let span_context = Context::current_with_span(span);
-
-		let start_time = Instant::now();
-		let future = self.inner.call(req);
-		Box::pin(async move {
-			let res = future.await;
-
-			let duration = start_time.elapsed();
-
-			telemetry::record_grpc_latency(duration, &attributes);
-			telemetry::drop_grpc_in_progress(&attributes);
-
-			if let Err(ref status) = res {
-				let error_string = format!("{:?}", status);
-
-				telemetry::add_grpc_error(&[
-					KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
-					KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
-					KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
-					KeyValue::new(telemetry::ATTRIBUTE_ERROR, error_string.clone()),
-				]);
-
-				trace!("Completed gRPC call: {} in {:?}, status: {}",
-					rpc_method_details.format_path(), duration, error_string,
-				);
-			} else {
-				span_context.span().set_int_attr(RPC_GRPC_STATUS_CODE, tonic::Code::Ok as i64);
-
-				trace!("Completed gRPC call: {} in {:?}, status: OK",
-					rpc_method_details.format_path(), duration,
-				);
-			}
-
-			res
-		})
-	}
-}
-
-#[derive(Clone)]
-struct TelemetryMetricsLayer;
-
-impl<S> tower::Layer<S> for TelemetryMetricsLayer {
-	type Service = TelemetryMetricsService<S>;
-
-	fn layer(&self, inner: S) -> Self::Service {
-		TelemetryMetricsService::new(inner)
-	}
-}
-
-fn pascal_to_snake(s: &str) -> String {
-	let mut snake_case = String::new();
-
-	for (i, c) in s.chars().enumerate() {
-		if c.is_uppercase() {
-			if i != 0 {
-				snake_case.push('_');
-			}
-			snake_case.push(c.to_ascii_lowercase());
-		} else {
-			snake_case.push(c);
-		}
-	}
-
-	snake_case
-}
-
-fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'static str)> {
-	// Find the last '/' in the URL
-	let path = url.path();
-	if let Some(last_slash_idx) = path.rfind('/') {
-		let method = &path[last_slash_idx + 1..];
-		let method_snake = pascal_to_snake(method);
-		trace!("Extracting service method: {}", method_snake);
-		let method_snake_ref: &str = &method_snake;
-
-		// Find the last '.' before the method part
-		let before_method = &path[..last_slash_idx];
-		if let Some(dot_idx) = before_method.rfind('.') {
-			let service = &before_method[dot_idx + 1..];
-			trace!("Extracting service: {}", service);
-
-			let service_ref = RPC_SERVICES
-				.iter()
-				.find(|&&m| m == service)
-				.copied()?;
-
-			let method_ref = RPC_SERVICE_ARK_METHODS
-				.iter()
-				.chain(RPC_SERVICE_ADMIN_METHODS.iter())
-				.find(|&&m| m == method_snake_ref)
-				.copied()?;
-
-			return Some((service_ref, method_ref));
-		}
-	}
-
-	None
-}
-
 /// Run the public gRPC endpoint.
 pub async fn run_public_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	RPC_RICH_ERRORS.store(srv.config.rpc_rich_errors, atomic::Ordering::Relaxed);
@@ -1158,7 +905,7 @@ pub async fn run_public_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 
 	if srv.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
-			.layer(TelemetryMetricsLayer)
+			.layer(middleware::TelemetryMetricsLayer)
 			.add_routes(routes)
 			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 	} else {
@@ -1189,7 +936,7 @@ pub async fn run_admin_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 
 	if srv.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
-			.layer(TelemetryMetricsLayer)
+			.layer(middleware::TelemetryMetricsLayer)
 			.add_routes(routes)
 			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 	} else {
