@@ -39,6 +39,122 @@ CREATE TYPE public.lightning_payment_status AS ENUM (
 
 
 --
+-- Name: token_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.token_status AS ENUM (
+    'unused',
+    'used',
+    'abused',
+    'disabled'
+);
+
+
+--
+-- Name: token_type; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.token_type AS ENUM (
+    'single-use-board'
+);
+
+
+--
+-- Name: integration_api_key_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.integration_api_key_update_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO integration_api_key_history (
+        integration_api_key_id, name, api_key, filters, integration_id, expires_at,
+        created_at, updated_at, deleted_at
+    ) VALUES (
+        OLD.integration_api_key_id, OLD.name, OLD.api_key, OLD.filters, OLD.integration_id, OLD.expires_at,
+        OLD.created_at, OLD.updated_at, OLD.deleted_at
+    );
+
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
+
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: integration_token_config_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.integration_token_config_update_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO integration_token_config_history (
+        integration_token_config_id, type, maximum_open_tokens, active_seconds,
+        integration_id,
+        created_at, updated_at, deleted_at
+    ) VALUES (
+        OLD.integration_token_config_id, OLD.type, OLD.maximum_open_tokens, OLD.active_seconds,
+        OLD.integration_id,
+        OLD.created_at, OLD.updated_at, OLD.deleted_at
+    );
+
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
+
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: integration_token_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.integration_token_update_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO integration_token_history (
+        integration_token_id, token, type, status, filters, integration_id,
+        expires_at,
+        created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
+    ) VALUES (
+        OLD.integration_token_id, OLD.token, OLD.type, OLD.status, OLD.filters, OLD.integration_id,
+        OLD.expires_at,
+        OLD.created_at, OLD.created_by_api_key_id, OLD.updated_at, OLD.updated_by_api_key_id
+    );
+
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
+
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
+
+    IF NEW.created_by_api_key_id <> OLD.created_by_api_key_id THEN
+        RAISE EXCEPTION 'created_by_api_key_id cannot be updated';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: lightning_htlc_subscription_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -303,6 +419,201 @@ CREATE SEQUENCE public.forfeits_wallet_changeset_id_seq
 --
 
 ALTER SEQUENCE public.forfeits_wallet_changeset_id_seq OWNED BY public.forfeits_wallet_changeset.id;
+
+
+--
+-- Name: integration; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration (
+    integration_id bigint NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone
+);
+
+
+--
+-- Name: integration_api_key; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_api_key (
+    integration_api_key_id bigint NOT NULL,
+    name text NOT NULL,
+    api_key text NOT NULL,
+    filters text,
+    integration_id bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone
+);
+
+
+--
+-- Name: integration_api_key_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_api_key_history (
+    integration_api_key_id bigint NOT NULL,
+    name text NOT NULL,
+    api_key text NOT NULL,
+    filters text,
+    integration_id bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
+);
+
+
+--
+-- Name: integration_api_key_integration_api_key_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.integration_api_key_integration_api_key_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: integration_api_key_integration_api_key_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.integration_api_key_integration_api_key_id_seq OWNED BY public.integration_api_key.integration_api_key_id;
+
+
+--
+-- Name: integration_integration_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.integration_integration_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: integration_integration_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.integration_integration_id_seq OWNED BY public.integration.integration_id;
+
+
+--
+-- Name: integration_token; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_token (
+    integration_token_id bigint NOT NULL,
+    token text NOT NULL,
+    type public.token_type NOT NULL,
+    status public.token_status NOT NULL,
+    filters text,
+    integration_id bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    created_by_api_key_id bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    updated_by_api_key_id bigint NOT NULL
+);
+
+
+--
+-- Name: integration_token_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_token_config (
+    integration_token_config_id bigint NOT NULL,
+    type public.token_type NOT NULL,
+    maximum_open_tokens integer NOT NULL,
+    active_seconds integer NOT NULL,
+    integration_id bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone
+);
+
+
+--
+-- Name: integration_token_config_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_token_config_history (
+    integration_token_config_id bigint NOT NULL,
+    type public.token_type NOT NULL,
+    maximum_open_tokens integer NOT NULL,
+    active_seconds integer NOT NULL,
+    integration_id bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
+);
+
+
+--
+-- Name: integration_token_config_integration_token_config_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.integration_token_config_integration_token_config_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: integration_token_config_integration_token_config_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.integration_token_config_integration_token_config_id_seq OWNED BY public.integration_token_config.integration_token_config_id;
+
+
+--
+-- Name: integration_token_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_token_history (
+    integration_token_id bigint NOT NULL,
+    token text NOT NULL,
+    type public.token_type NOT NULL,
+    status public.token_status NOT NULL,
+    filters text,
+    integration_id bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    created_by_api_key_id bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    updated_by_api_key_id bigint NOT NULL,
+    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
+);
+
+
+--
+-- Name: integration_token_integration_token_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.integration_token_integration_token_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: integration_token_integration_token_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.integration_token_integration_token_id_seq OWNED BY public.integration_token.integration_token_id;
 
 
 --
@@ -601,6 +912,34 @@ ALTER TABLE ONLY public.forfeits_wallet_changeset ALTER COLUMN id SET DEFAULT ne
 
 
 --
+-- Name: integration integration_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration ALTER COLUMN integration_id SET DEFAULT nextval('public.integration_integration_id_seq'::regclass);
+
+
+--
+-- Name: integration_api_key integration_api_key_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_api_key ALTER COLUMN integration_api_key_id SET DEFAULT nextval('public.integration_api_key_integration_api_key_id_seq'::regclass);
+
+
+--
+-- Name: integration_token integration_token_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token ALTER COLUMN integration_token_id SET DEFAULT nextval('public.integration_token_integration_token_id_seq'::regclass);
+
+
+--
+-- Name: integration_token_config integration_token_config_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token_config ALTER COLUMN integration_token_config_id SET DEFAULT nextval('public.integration_token_config_integration_token_config_id_seq'::regclass);
+
+
+--
 -- Name: lightning_htlc_subscription lightning_htlc_subscription_id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -708,6 +1047,38 @@ ALTER TABLE ONLY public.forfeits_wallet_changeset
 
 
 --
+-- Name: integration_api_key integration_api_key_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_api_key
+    ADD CONSTRAINT integration_api_key_pkey PRIMARY KEY (integration_api_key_id);
+
+
+--
+-- Name: integration integration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration
+    ADD CONSTRAINT integration_pkey PRIMARY KEY (integration_id);
+
+
+--
+-- Name: integration_token_config integration_token_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token_config
+    ADD CONSTRAINT integration_token_config_pkey PRIMARY KEY (integration_token_config_id);
+
+
+--
+-- Name: integration_token integration_token_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token
+    ADD CONSTRAINT integration_token_pkey PRIMARY KEY (integration_token_id);
+
+
+--
 -- Name: lightning_htlc_subscription lightning_htlc_subscription_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -793,6 +1164,55 @@ CREATE INDEX all_vtxo_board_swept_expiry_ix ON public.all_vtxo USING btree (boar
 
 
 --
+-- Name: integration_api_key_api_key_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX integration_api_key_api_key_uix ON public.integration_api_key USING btree (api_key);
+
+
+--
+-- Name: integration_api_key_name_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX integration_api_key_name_uix ON public.integration_api_key USING btree (integration_id, name);
+
+
+--
+-- Name: integration_name_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX integration_name_uix ON public.integration USING btree (name);
+
+
+--
+-- Name: integration_token_config_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX integration_token_config_uix ON public.integration_token_config USING btree (type, integration_id);
+
+
+--
+-- Name: integration_token_status_expires_at_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX integration_token_status_expires_at_ix ON public.integration_token USING btree (status, expires_at);
+
+
+--
+-- Name: integration_token_token_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX integration_token_token_uix ON public.integration_token USING btree (token);
+
+
+--
+-- Name: integration_token_type_status_integration_expires_at_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX integration_token_type_status_integration_expires_at_ix ON public.integration_token USING btree (type, status, integration_id, expires_at);
+
+
+--
 -- Name: lightning_htlc_subscription_status_ix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -828,6 +1248,27 @@ CREATE UNIQUE INDEX lightning_payment_hash_uix ON public.lightning_invoice USING
 
 
 --
+-- Name: integration_api_key integration_api_key_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER integration_api_key_update BEFORE UPDATE ON public.integration_api_key FOR EACH ROW EXECUTE FUNCTION public.integration_api_key_update_trigger();
+
+
+--
+-- Name: integration_token_config integration_token_config_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER integration_token_config_update BEFORE UPDATE ON public.integration_token_config FOR EACH ROW EXECUTE FUNCTION public.integration_token_config_update_trigger();
+
+
+--
+-- Name: integration_token integration_token_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER integration_token_update BEFORE UPDATE ON public.integration_token FOR EACH ROW EXECUTE FUNCTION public.integration_token_update_trigger();
+
+
+--
 -- Name: lightning_htlc_subscription lightning_htlc_subscription_update; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -853,6 +1294,86 @@ CREATE TRIGGER lightning_node_update BEFORE UPDATE ON public.lightning_node FOR 
 --
 
 CREATE TRIGGER lightning_payment_attempt_update BEFORE UPDATE ON public.lightning_payment_attempt FOR EACH ROW EXECUTE FUNCTION public.lightning_payment_attempt_update_trigger();
+
+
+--
+-- Name: integration_api_key_history integration_api_key_history_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_api_key_history
+    ADD CONSTRAINT integration_api_key_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+
+
+--
+-- Name: integration_api_key integration_api_key_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_api_key
+    ADD CONSTRAINT integration_api_key_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+
+
+--
+-- Name: integration_token_config_history integration_token_config_history_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token_config_history
+    ADD CONSTRAINT integration_token_config_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+
+
+--
+-- Name: integration_token_config integration_token_config_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token_config
+    ADD CONSTRAINT integration_token_config_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+
+
+--
+-- Name: integration_token integration_token_created_by_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token
+    ADD CONSTRAINT integration_token_created_by_api_key_id_fkey FOREIGN KEY (created_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
+
+
+--
+-- Name: integration_token_history integration_token_history_created_by_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token_history
+    ADD CONSTRAINT integration_token_history_created_by_api_key_id_fkey FOREIGN KEY (created_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
+
+
+--
+-- Name: integration_token_history integration_token_history_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token_history
+    ADD CONSTRAINT integration_token_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+
+
+--
+-- Name: integration_token_history integration_token_history_updated_by_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token_history
+    ADD CONSTRAINT integration_token_history_updated_by_api_key_id_fkey FOREIGN KEY (updated_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
+
+
+--
+-- Name: integration_token integration_token_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token
+    ADD CONSTRAINT integration_token_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+
+
+--
+-- Name: integration_token integration_token_updated_by_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_token
+    ADD CONSTRAINT integration_token_updated_by_api_key_id_fkey FOREIGN KEY (updated_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
 
 
 --
