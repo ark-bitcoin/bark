@@ -337,8 +337,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("payment_hash", req.hash.as_hex().to_string()),
 		]);
 
-		let payment_hash = PaymentHash::try_from(req.hash)
-			.expect("payment hash must be 32 bytes");
+		let payment_hash = PaymentHash::from_bytes(req.hash)?;
 		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
@@ -413,8 +412,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("amount_sats", format!("{:?}", req.amount_sat)),
 		]);
 
-		let payment_hash = PaymentHash::try_from(req.payment_hash)
-			.expect("payment hash must be 32 bytes");
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
 
 		let resp = self.start_lightning_receive(payment_hash, amount).await.to_status()?;
@@ -466,8 +464,7 @@ impl rpc::server::ArkService for Server {
 
 		let user_nonce = musig::PublicNonce::from_bytes(&arkoor.pub_nonce)?;
 
-		let payment_preimage: Preimage = req.payment_preimage.as_slice()
-			.try_into().badarg("invalid preimage, not 32 bytes")?;
+		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
 
 		let cosign_resp = self.claim_bolt11_htlc(
 			input_id,

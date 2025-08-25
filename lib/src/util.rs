@@ -105,6 +105,11 @@ macro_rules! impl_byte_newtype {
 				self.0
 			}
 
+			/// Convert from byte array.
+			pub fn from_byte_array(bytes: [u8; $n]) -> Self {
+				Self(bytes)
+			}
+
 			/// Create from byte slice.
 			pub fn from_slice(slice: &[u8]) -> Result<Self, std::array::TryFromSliceError> {
 				Self::try_from(slice)
