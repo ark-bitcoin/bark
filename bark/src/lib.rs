@@ -873,18 +873,19 @@ impl Wallet {
 		}
 
 		debug!("Received {} new rounds from ark", fresh_rounds.len());
+		let last_round = fresh_rounds.last().unwrap().clone();
 
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
 			self.vtxo_seed.derive_keypair(idx).public_key()
 		}).collect::<HashSet<_>>();
 
-		let results = tokio_stream::iter(&fresh_rounds).map(|round_id| {
+		let results = tokio_stream::iter(fresh_rounds).map(|round_id| {
 			let pubkeys = pubkeys.clone();
 			let mut srv = srv.clone();
 
 			async move {
-				if self.db.get_round_attempt_by_round_txid(*round_id)?.is_some() {
+				if self.db.get_round_attempt_by_round_txid(round_id)?.is_some() {
 					debug!("Skipping round {} because it already exists", round_id);
 					return Ok::<_, anyhow::Error>(());
 				}
@@ -914,7 +915,7 @@ impl Wallet {
 
 				let round_tx = Transaction::from_bytes(&round.round_tx)?;
 				self.db.store_pending_confirmation_round(
-					RoundSeq::new(0), *round_id, round_tx, reqs, vtxos,
+					RoundSeq::new(0), round_id, round_tx, reqs, vtxos,
 				)?;
 
 				Ok(())
@@ -930,7 +931,7 @@ impl Wallet {
 			}
 		}
 
-		self.db.store_last_synced_round(*fresh_rounds.last().unwrap())?;
+		self.db.store_last_synced_round(last_round)?;
 
 		Ok(())
 	}
