@@ -58,7 +58,7 @@ bdk_bitcoind_rpc.workspace = true
 
 lightning.workspace = true
 
-tonic = { workspace = true, features = ["tls-native-roots"] }
+tonic = { workspace = true, features = ["tls-ring"] }
 tower.workspace = true
 http.workspace = true
 http-body.workspace = true
