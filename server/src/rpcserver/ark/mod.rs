@@ -8,7 +8,6 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use bitcoin_ext::AmountExt;
-use lightning_invoice::Bolt11Invoice;
 use log::info;
 use opentelemetry::KeyValue;
 use tokio::sync::oneshot;
@@ -427,15 +426,12 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
-		let invoice = &req.bolt11;
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("bolt11", format!("{:?}", invoice)),
+			KeyValue::new("payment_hash", payment_hash.to_string()),
 		]);
 
-		let invoice = Bolt11Invoice::from_str(invoice).badarg("invalid invoice")?;
-
-		let update = self.subscribe_lightning_receive(invoice).await.to_status()?;
-
+		let update = self.subscribe_lightning_receive(payment_hash).await.to_status()?;
 		Ok(tonic::Response::new(update))
 	}
 

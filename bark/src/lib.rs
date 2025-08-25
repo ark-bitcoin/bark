@@ -1541,7 +1541,7 @@ impl Wallet {
 		);
 
 		let req = protos::SubscribeLightningReceiveRequest {
-			bolt11: invoice.to_string(),
+			payment_hash: invoice.payment_hash().to_byte_array().to_vec(),
 		};
 
 		info!("Waiting payment...");
