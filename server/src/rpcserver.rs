@@ -3,7 +3,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::pin::Pin;
 use std::future::Future;
 
@@ -340,10 +340,15 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		add_tracing_attributes(vec![
-			KeyValue::new("start_height", format!("{:?}", req.start_height)),
+			KeyValue::new("last_round_txid", req.last_round_txid.clone().unwrap_or_default()),
 		]);
 
-		let ids = self.db.get_fresh_round_ids(req.start_height).await
+		let txid = match req.last_round_txid {
+			Some(t) => Some(RoundId::from_str(&t).badarg("invalid last_round_txid")?),
+			None => None,
+		};
+		let lifetime = Duration::from_secs(10 * 60 * self.config.vtxo_lifetime as u64);
+		let ids = self.db.get_fresh_round_ids(txid, lifetime).await
 			.context("db error")?;
 
 		let response = protos::FreshRounds {

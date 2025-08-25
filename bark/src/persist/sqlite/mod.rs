@@ -17,7 +17,6 @@ use rusqlite::{Connection, Transaction};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
-use bitcoin_ext::{BlockHeight};
 use json::exit::states::ExitTxOrigin;
 
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
@@ -334,14 +333,14 @@ impl BarkPersister for SqliteClient {
 		query::get_exit_child_tx(&conn, exit_txid)
 	}
 
-	fn get_last_ark_sync_height(&self) -> anyhow::Result<BlockHeight> {
+	fn get_last_synced_round(&self) -> anyhow::Result<Option<RoundId>> {
 		let conn = self.connect()?;
-		query::get_last_ark_sync_height(&conn)
+		query::get_last_synced_round(&conn)
 	}
 
-	fn store_last_ark_sync_height(&self, height: BlockHeight) -> anyhow::Result<()> {
+	fn store_last_synced_round(&self, round_id: RoundId) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_last_ark_sync_height(&conn, height)
+		query::store_last_synced_round(&conn, round_id)
 	}
 
 	fn update_vtxo_state_checked(

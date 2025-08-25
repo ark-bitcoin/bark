@@ -189,7 +189,9 @@ CREATE TABLE public.all_round (
     nb_input_vtxos integer NOT NULL,
     connector_key bytea NOT NULL,
     expiry integer NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    seq bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -536,7 +538,9 @@ CREATE VIEW public.round AS
     nb_input_vtxos,
     connector_key,
     expiry,
-    deleted_at
+    deleted_at,
+    seq,
+    created_at
    FROM public.all_round
   WHERE (deleted_at IS NULL);
 

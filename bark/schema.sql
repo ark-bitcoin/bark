@@ -18,11 +18,6 @@ CREATE TABLE bark_vtxo_state (
 				state_kind TEXT NOT NULL,
 				state BLOB NOT NULL
 			);
-CREATE TABLE bark_ark_sync (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				sync_height INTEGER,
-				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-			);
 CREATE VIEW most_recent_vtxo_state
 				(id, last_updated_at, vtxo_id, state_kind, state)
 			AS
@@ -176,3 +171,8 @@ CREATE VIEW round_view
 				) AS vtxo_forfeited_in_round
 			FROM bark_round_attempt as r
 /* round_view(id,round_seq,attempt_seq,status,round_txid,round_tx,payment_requests,offboard_requests,cosign_keys,secret_nonces,vtxos,vtxo_tree,updated_at,inputs,vtxo_forfeited_in_round) */;
+CREATE TABLE bark_synced_round (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				round_txid TEXT,
+				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+			);

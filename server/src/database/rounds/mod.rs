@@ -1,5 +1,8 @@
 
 mod model;
+use std::str::FromStr;
+use std::time::Duration;
+
 pub use model::*;
 
 use bitcoin::{Transaction, Txid};
@@ -11,7 +14,7 @@ use tokio_postgres::types::Type;
 
 use ark::VtxoId;
 use ark::encode::ProtocolEncoding;
-use ark::rounds::RoundId;
+use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::CachedSignedVtxoTree;
 
 use crate::database::Db;
@@ -21,6 +24,7 @@ use crate::database::forfeits::ForfeitState;
 impl Db {
 	pub async fn finish_round(
 		&self,
+		round_seq: RoundSeq,
 		round_tx: &Transaction,
 		vtxos: &CachedSignedVtxoTree,
 		connector_key: &SecretKey,
@@ -33,14 +37,15 @@ impl Db {
 
 		// First, store the round itself.
 		let statement = tx.prepare_typed("
-			INSERT INTO round (id, tx, signed_tree, nb_input_vtxos, connector_key, expiry)
-			VALUES ($1, $2, $3, $4, $5, $6);
-		", &[Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4]).await?;
+			INSERT INTO round (id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry)
+			VALUES ($1, $2, $3, $4, $5, $6, $7);
+		", &[Type::TEXT, Type::BYTEA, Type::INT8, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4]).await?;
 		tx.execute(
 			&statement,
 			&[
 				&round_id.to_string(),
 				&serialize(&round_tx),
+				&(round_seq.inner() as i64),
 				&vtxos.spec.serialize(),
 				&(forfeit_vtxos.len() as i32),
 				&connector_key.secret_bytes().to_vec(),
@@ -50,7 +55,8 @@ impl Db {
 
 		// Then mark inputs as forfeited.
 		let statement = tx.prepare_typed("
-			UPDATE vtxo SET forfeit_state = $2, forfeit_round_id = $3 WHERE id = $1 AND spendable = true;
+			UPDATE vtxo SET forfeit_state = $2, forfeit_round_id = $3
+			WHERE id = $1 AND spendable = true;
 		", &[Type::TEXT, Type::BYTEA, Type::TEXT]).await?;
 		for (id, forfeit_state) in forfeit_vtxos {
 			let state_bytes = rmp_serde::to_vec_named(&forfeit_state)
@@ -83,7 +89,7 @@ impl Db {
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry, created_at
 			FROM round WHERE id = $1;
 		").await?;
 
@@ -112,22 +118,42 @@ impl Db {
 	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
+			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry, created_at
 			FROM round WHERE expiry <= $1
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
-		Ok(rows.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id).try_collect::<Vec<_>>().await?)
+		Ok(rows
+			.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id)
+			.try_collect::<Vec<_>>().await?
+		)
 	}
 
-	pub async fn get_fresh_round_ids(&self, height: u32) -> anyhow::Result<Vec<RoundId>> {
+	pub async fn get_fresh_round_ids(
+		&self,
+		last_round_id: Option<RoundId>,
+		vtxo_lifetime: Duration,
+	) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
-		let statement = conn.prepare("
-			SELECT id, tx, signed_tree, nb_input_vtxos, connector_key, expiry
-			FROM round WHERE expiry > $1
-		").await?;
 
-		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
-		Ok(rows.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id).try_collect::<Vec<_>>().await?)
+		let rows = if let Some(last) = last_round_id {
+			let stmt = conn.prepare("
+				SELECT id FROM round
+				WHERE created_at > (SELECT created_at FROM round WHERE id = $1)
+			").await?;
+			conn.query_raw(&stmt, &[&last.to_string()]).await?
+		} else {
+			let window = vtxo_lifetime + vtxo_lifetime / 2;
+			let stmt = conn.prepare("
+				SELECT id FROM round
+				WHERE created_at >= now() - ($1 * interval '1 second')
+			").await?;
+			conn.query_raw(&stmt, &[&(window.as_secs() as f64)]).await?
+		};
+
+		Ok(rows
+			.map_ok(|row| RoundId::from_str(row.get("id")).expect("corrupt db"))
+			.try_collect::<Vec<_>>().await?
+		)
 	}
 }
