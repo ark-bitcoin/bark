@@ -356,18 +356,16 @@ impl CollectingPayments {
 	) -> anyhow::Result<()> {
 		for req in reqs {
 			if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = req.req.vtxo.policy {
+				// TODO: check if a non-expired htlc vtxo with same payment_hash exists and bail if so
+
 				let status = LightningHtlcSubscriptionStatus::Accepted;
 				let htlc = db.get_htlc_subscription_by_payment_hash(payment_hash, status).await?;
 
-				// TODO: check if a non-expired htlc vtxo with same payment_hash exists and bail if so
-
-				if htlc.is_some() {
-					continue;
+				if htlc.is_none() {
+					return not_found!([payment_hash],
+						"Cannot find accepted htlc for provided payment hash",
+					);
 				}
-
-				return not_found!([payment_hash],
-					"Cannot find accepted htlc for provided payment hash",
-				);
 			}
 		}
 

@@ -259,22 +259,30 @@ impl ClnManager {
 		}
 	}
 
-	pub async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+	pub async fn generate_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		amount: Amount,
+	) -> anyhow::Result<Bolt11Invoice> {
 		let (tx, rx) = oneshot::channel();
 		self.invoice_gen_tx.send(((payment_hash, amount), tx)).context("invoice channel broken")?;
 		rx.await.context("invoice return channel broken")
 	}
 
-	pub async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<anyhow::Result<()>> {
+	pub async fn settle_invoice(
+		&self,
+		subscription_id: i64,
+		preimage: Preimage,
+	) -> anyhow::Result<anyhow::Result<()>> {
 		let payment_hash = preimage.compute_payment_hash();
 
 		// If an open payment attempt exists for the payment hash, it's a server self-payment
 		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
-		let payment_attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
-		if let Some(payment_attempt) = payment_attempt {
+		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
+		if let Some(attempt) = attempt {
 			let status = LightningPaymentStatus::Succeeded;
 			self.db.verify_and_update_invoice(
-				&payment_hash, &payment_attempt, status, None, None, Some(preimage),
+				&payment_hash, &attempt, status, None, None, Some(preimage),
 			).await?;
 			return Ok(Ok(()));
 		}

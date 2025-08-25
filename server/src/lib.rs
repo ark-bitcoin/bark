@@ -958,9 +958,11 @@ impl Server {
 		self.cosign_oor_package_with_builder(&package).await
 	}
 
-	async fn start_lightning_receive(&self, payment_hash: PaymentHash, amount: Amount)
-		-> anyhow::Result<protos::StartLightningReceiveResponse>
-	{
+	async fn start_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		amount: Amount,
+	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
 		let subscriptions = self.db.get_htlc_subscriptions_by_payment_hash(payment_hash).await?;
@@ -981,7 +983,9 @@ impl Server {
 
 		if let Some(created) = subscriptions_by_status.get(&LightningHtlcSubscriptionStatus::Created) {
 			if let Some(subscription) = created.first() {
-				trace!("Found existing created subscription, returning invoice: {}", subscription.invoice.to_string());
+				trace!("Found existing created subscription, returning invoice: {}",
+					subscription.invoice.to_string(),
+				);
 				return Ok(protos::StartLightningReceiveResponse {
 					bolt11: subscription.invoice.to_string()
 				})
@@ -989,30 +993,29 @@ impl Server {
 		}
 
 		let invoice = self.cln.generate_invoice(payment_hash, amount).await?;
-		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}", payment_hash, amount, invoice.to_string());
+		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
+			payment_hash, amount, invoice.to_string(),
+		);
 
 		Ok(protos::StartLightningReceiveResponse {
 			bolt11: invoice.to_string()
 		})
 	}
 
-	async fn subscribe_lightning_receive(&self, invoice: Bolt11Invoice)
-		-> anyhow::Result<protos::SubscribeLightningReceiveResponse>
-	{
-		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash().as_byte_array());
+	async fn subscribe_lightning_receive(
+		&self,
+		invoice: Bolt11Invoice,
+	) -> anyhow::Result<protos::SubscribeLightningReceiveResponse> {
+		let payment_hash = PaymentHash::from(*invoice.payment_hash().as_byte_array());
 		let status = LightningHtlcSubscriptionStatus::Settled;
-		let settled = self.db.get_htlc_subscription_by_payment_hash(
-			invoice_payment_hash, status,
-		).await?;
+		let settled = self.db.get_htlc_subscription_by_payment_hash(payment_hash, status).await?;
 		if settled.is_some() {
 			bail!("invoice already settled");
 		}
 
 		let htlc = loop {
 			let status = LightningHtlcSubscriptionStatus::Accepted;
-			let htlc = self.db
-				.get_htlc_subscription_by_payment_hash(invoice_payment_hash, status)
-				.await?;
+			let htlc = self.db.get_htlc_subscription_by_payment_hash(payment_hash, status).await?;
 
 			if let Some(htlc) = htlc {
 				break htlc;

@@ -360,10 +360,10 @@ impl<'a> From<&'a ArkoorBuilder<'_, VtxoRequest>> for protos::ArkoorCosignReques
 	}
 }
 
-impl TryInto<Vec<ArkoorCosignResponse>> for protos::ArkoorPackageCosignResponse {
+impl TryFrom<protos::ArkoorPackageCosignResponse> for Vec<ArkoorCosignResponse> {
 	type Error = ConvertError;
-	fn try_into(self) -> Result<Vec<ArkoorCosignResponse>, Self::Error> {
-		Ok(self.sigs.into_iter().map(|i| i.try_into()).collect::<Result<_, _>>()?)
+	fn try_from(v: protos::ArkoorPackageCosignResponse) -> Result<Self, Self::Error> {
+		Ok(v.sigs.into_iter().map(|i| i.try_into()).collect::<Result<_, _>>()?)
 	}
 }
 
