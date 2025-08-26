@@ -435,6 +435,30 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(sub.into()))
 	}
 
+	async fn prepare_lightning_receive_claim(
+		&self,
+		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>
+	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE);
+		let req = req.into_inner();
+
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
+		crate::rpcserver::add_tracing_attributes(vec![
+			KeyValue::new("payment_hash", payment_hash.to_string()),
+		]);
+
+		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
+
+		let (sub, htlcs) = self.prepare_lightning_claim(
+			payment_hash, user_pubkey,
+		).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {
+			receive: Some(sub.into()),
+			htlc_vtxos: htlcs.into_iter().map(|v| v.serialize()).collect(),
+		}))
+	}
+
 	async fn claim_lightning_receive(
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>

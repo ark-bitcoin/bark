@@ -29,17 +29,20 @@ service ArkService {
     // At most 100 pubkeys should be provided.
 	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
 
-	// * LN payments
+	// * SEND LN payments
 
 	rpc StartLightningPayment(LightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
 
+	// * RECEIVE LN payments
+
 	rpc FetchBolt12Invoice(FetchBolt12InvoiceRequest) returns (FetchBolt12InvoiceResponse) {}
 
 	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
 	rpc SubscribeLightningReceive(SubscribeLightningReceiveRequest) returns (SubscribeLightningReceiveResponse) {}
+	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorCosignResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
@@ -222,6 +225,16 @@ message StartLightningReceiveResponse {
 
 message SubscribeLightningReceiveRequest {
 	bytes payment_hash = 1;
+}
+
+message PrepareLightningReceiveClaimRequest {
+	bytes payment_hash = 1;
+	bytes user_pubkey = 2;
+}
+
+message PrepareLightningReceiveClaimResponse {
+	SubscribeLightningReceiveResponse receive = 1;
+	repeated bytes htlc_vtxos = 2;
 }
 
 message ClaimLightningReceiveRequest {
