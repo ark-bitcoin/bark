@@ -462,34 +462,26 @@ impl rpc::server::ArkService for Server {
 	async fn claim_lightning_receive(
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
-		let arkoor = req.arkoor.badarg("missing arkoor")?;
-
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("payment", arkoor.input_id.as_hex().to_string()),
-			KeyValue::new("pub_nonce", arkoor.pub_nonce.as_hex().to_string()),
-			KeyValue::new("payment_preimage", req.payment_preimage.as_hex().to_string()),
+			KeyValue::new("payment_hash", payment_hash.to_string()),
 		]);
-
-		let input_id = VtxoId::from_bytes(&arkoor.input_id)?;
-
-		let output = arkoor.outputs.first().badarg("missing output")?;
-		let pay_req = VtxoRequest {
-			amount: Amount::from_sat(output.amount),
-			policy: VtxoPolicy::from_bytes(&output.policy)?,
-		};
-
-		let user_nonce = musig::PublicNonce::from_bytes(&arkoor.pub_nonce)?;
 
 		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
 
-		let cosign_resp = self.claim_bolt11_htlc(
-			input_id,
-			pay_req,
-			user_nonce,
+		let vtxo_policy = VtxoPolicy::from_bytes(req.vtxo_policy)?;
+		let user_nonces = req.user_pub_nonces.iter()
+			.map(musig::PublicNonce::from_bytes)
+			.collect::<Result<Vec<_>, _>>()?;
+
+		let cosign_resp = self.claim_lightning_receive(
+			payment_hash,
+			vtxo_policy,
+			user_nonces,
 			payment_preimage,
 		).await.to_status()?;
 

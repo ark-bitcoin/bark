@@ -1378,17 +1378,6 @@ impl PendingConfirmationState {
 					error!("Failed to store VTXOs received in round: {}", e);
 				}
 
-				for vtxo in vtxos {
-					match vtxo.vtxo.policy() {
-						VtxoPolicy::ServerHtlcRecv { .. } => {
-							if let Err(e) = wallet.claim_htlc_vtxo(&vtxo).await {
-								error!("Failed to claim offchain onboard: {}", e);
-							}
-						},
-						_ => {}
-					}
-				}
-
 				return Ok(ProgressResult::Progress { state });
 			}
 		}

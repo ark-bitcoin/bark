@@ -37,6 +37,7 @@ use anyhow::{bail, Context};
 use bip39::Mnemonic;
 use bitcoin::{Amount, FeeRate, Network, OutPoint, ScriptBuf, Transaction};
 use bitcoin::bip32::{self, Fingerprint};
+use bitcoin::consensus::deserialize;
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -55,7 +56,7 @@ use ark::musig;
 use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
-use server_rpc::{self as rpc, protos, TryFromBytes};
+use server_rpc::{self as rpc, protos};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
@@ -771,7 +772,7 @@ impl Wallet {
 					}
 				}
 
-				let round_tx = Transaction::from_bytes(&round.funding_tx)?;
+				let round_tx = deserialize::<Transaction>(&round.funding_tx)?;
 				self.db.store_pending_confirmation_round(round_id, round_tx, reqs, vtxos)?;
 
 				Ok(())
@@ -1473,52 +1474,59 @@ impl Wallet {
 		Ok(self.db.get_paginated_lightning_receives(pagination)?)
 	}
 
-	async fn claim_htlc_vtxo(&self, vtxo: &WalletVtxo) -> anyhow::Result<()> {
+	async fn claim_htlc_vtxos(
+		&self,
+		payment_hash: PaymentHash,
+		vtxos: &[WalletVtxo],
+	) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
-
-		let payment_hash = vtxo.state.as_pending_lightning_recv().context("vtxo is not pending lightning recv")?;
 
 		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
 			.context("no lightning receive found")?;
+		assert_eq!(payment_hash, lightning_receive.payment_preimage.compute_payment_hash(),
+			"we have an incorrect preimage in our db for a ln payment",
+		);
 
-		let keypair = self.get_vtxo_key(&vtxo.vtxo)?;
-		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+		let (keypairs, sec_nonces, pub_nonces) = vtxos.iter().map(|v| {
+			let keypair = self.get_vtxo_key(&v.vtxo)?;
+			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
+			Ok((keypair, sec_nonce, pub_nonce))
+		}).collect::<anyhow::Result<(Vec<_>, Vec<_>, Vec<_>)>>()?;
 
 		// Claiming arkoor against preimage
+		let (claim_keypair, _) = self.derive_store_next_keypair()?;
+		let receive_policy = VtxoPolicy::new_pubkey(claim_keypair.public_key());
+
 		let pay_req = VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(keypair.public_key()),
-			amount: vtxo.vtxo.amount(),
+			policy: receive_policy.clone(),
+			amount: vtxos.iter().map(|v| v.vtxo.amount()).sum(),
 		};
-
-		let inputs = [vtxo.vtxo.clone()];
-		let pubs = [pub_nonce];
-		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, pay_req, None)?;
-
-		let req = protos::ClaimLightningReceiveRequest {
-			arkoor: Some(builder.arkoors.first().unwrap().into()),
-			payment_preimage: lightning_receive.payment_preimage.to_vec(),
-		};
+		let inputs = vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+		let builder = ArkoorPackageBuilder::new(inputs.iter().copied(), &pub_nonces, pay_req, None)?;
 
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(lightning_receive.payment_hash)?;
-		let cosign_resp = srv.client.claim_lightning_receive(req).await?
-			.into_inner().try_into().context("invalid server cosign response")?;
+		let cosign_resp: Vec<_> = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
+			payment_hash: payment_hash.to_byte_array().to_vec(),
+			payment_preimage: lightning_receive.payment_preimage.to_vec(),
+			vtxo_policy: receive_policy.serialize(),
+			user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		}).await?.into_inner().try_into().context("invalid cosign response")?;
 
-		ensure!(builder.verify_cosign_response(&[&cosign_resp]),
+		ensure!(builder.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
 		);
 
-		let (outputs, _) = builder.build_vtxos(
-			&[cosign_resp],
-			&[keypair],
-			vec![sec_nonce],
-		)?;
+		let (outputs, change) = builder.build_vtxos(&cosign_resp, &keypairs, sec_nonces)?;
+		if change.is_some() {
+			bail!("shouldn't have change VTXO, this is a bug");
+		}
 		let [output_vtxo] = outputs.try_into().expect("had exactly one request");
 
-		info!("Got an arkoor from lightning! {}", output_vtxo.id());
+		info!("Got an arkoor from lightning: {}", output_vtxo.id());
 		self.db.register_movement(MovementArgs {
 			kind: MovementKind::LightningReceive,
-			spends: &[&vtxo.vtxo],
+			spends: &inputs,
 			receives: &[(&output_vtxo, VtxoState::Spendable)],
 			recipients: &[],
 			fees: None,
@@ -1527,63 +1535,100 @@ impl Wallet {
 		Ok(())
 	}
 
-
 	pub async fn finish_lightning_receive(&mut self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
-		let tip = self.chain.tip().await?;
 		let mut srv = self.require_server()?;
 
+		info!("Waiting for payment...");
 		let payment_hash = ark::lightning::PaymentHash::from(invoice);
+		let sub = srv.client.subscribe_lightning_receive(protos::SubscribeLightningReceiveRequest {
+			payment_hash: payment_hash.to_byte_array().to_vec(),
+		}).await?.into_inner();
+
+		let status = protos::LightningReceiveStatus::try_from(sub.status)
+			.with_context(|| format!("unknown payment status: {}", sub.status))?;
+		match status {
+			// this is the good case
+			protos::LightningReceiveStatus::Accepted
+				| protos::LightningReceiveStatus::HtlcsReady => {},
+			protos::LightningReceiveStatus::Created => bail!("sender didn't initiate payment yet"),
+			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
+			protos::LightningReceiveStatus::Cancelled => bail!("payment was canceled"),
+		}
+
+		// if we are in state htlcs-ready, let's see if we have already stored the HTLC VTXOs
+		if status == protos::LightningReceiveStatus::HtlcsReady {
+			ensure!(!sub.htlc_vtxos.is_empty(), "server didn't provide any HTLC VTXOs");
+			let mut all_found = true;
+			let mut vtxos = Vec::with_capacity(sub.htlc_vtxos.len());
+			for v in &sub.htlc_vtxos {
+				let id = VtxoId::from_slice(v)?;
+				let vtxo = match self.db.get_wallet_vtxo(id)? {
+					Some(v) => v,
+					None => {
+						all_found = false;
+						break;
+					},
+				};
+
+				match vtxo.state {
+					VtxoState::PendingLightningRecv { payment_hash: h } => {
+						if h != payment_hash {
+							bail!("server sent lightning receive HTLC VTXO with \
+								wrong payment hash: {}", vtxo.vtxo.id(),
+							);
+						}
+					},
+					ref s => bail!("server sent incorrect lightning receive \
+						HTLC VTXO: {}, state={:?}", vtxo.vtxo.id(), s,
+					),
+				}
+
+				vtxos.push(vtxo);
+			}
+			if all_found {
+				return self.claim_htlc_vtxos(payment_hash, &vtxos).await;
+			}
+			// else we continue below
+		}
 
 		let (keypair, _) = self.derive_store_next_keypair()?;
+		let res = srv.client.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
+			payment_hash: payment_hash.to_vec(),
+			user_pubkey: keypair.public_key().serialize().to_vec(),
+		}).await.context("error preparing lightning receive claim")?.into_inner();
+		let vtxos = res.htlc_vtxos.into_iter()
+			.map(|b| Vtxo::deserialize(&b))
+			.collect::<Result<Vec<_>, _>>()
+			.context("invalid htlc vtxos from server")?;
 
-		let amount = Amount::from_msat_floor(
-			invoice.amount_milli_satoshis().context("invoice must have amount specified")?
-		);
-
-		let req = protos::SubscribeLightningReceiveRequest {
-			payment_hash: invoice.payment_hash().to_byte_array().to_vec(),
-		};
-
-		info!("Waiting payment...");
-		srv.client.subscribe_lightning_receive(req).await?.into_inner();
-		info!("Lightning payment arrived!");
-
-		// In order to onboard we need to show an input.
-		// (this is so that it can be slashed if we bail on the round)
-		// We create an output with the same value.
-		let (antidos_input, antidos_output) = {
-			let inputs = self.select_vtxos_to_cover(Amount::ONE_SAT, None)?;
-			if inputs.is_empty() {
-				bail!("Need to have existing VTXOs in order to receive lightning");
+		// sanity check the vtxos
+		for vtxo in &vtxos {
+			if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
+				if p.payment_hash != payment_hash {
+					bail!("invalid payment hash on HTLC VTXOs received from server: {}", p.payment_hash);
+				}
+				if p.user_pubkey != keypair.public_key() {
+					bail!("invalid pubkey on HTLC VTXOs received from server: {}", p.user_pubkey);
+				}
+				//TODO(stevenroose) check the expiry height?
+			} else {
+				bail!("invalid HTLC VTXO policy: {:?}", vtxo.policy());
 			}
-			assert_eq!(inputs.len(), 1);
-			let [input] = inputs.try_into().unwrap();
-			let change_pubkey = self.derive_store_next_keypair()?.0.public_key();
-			let output = VtxoRequest {
-				amount: input.amount(),
-				policy: VtxoPolicy::new_pubkey(change_pubkey),
-			};
-			(input, output)
-		};
+		}
 
-		let state = VtxoState::PendingLightningRecv { payment_hash };
+		let vtxo_state = VtxoState::PendingLightningRecv { payment_hash };
+		self.db.register_movement(MovementArgs {
+			kind: MovementKind::LightningReceive,
+			spends: &[],
+			receives: &vtxos.iter().map(|v| (v, vtxo_state.clone())).collect::<Vec<_>>(),
+			recipients: &[],
+			fees: None,
+		})?;
 
-		let expiry_height = tip + srv.info.htlc_expiry_delta as BlockHeight;
-		let htlc_pay_req = VtxoRequest {
-			amount: amount,
-			policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
-		};
-		let participation = DesiredRoundParticipation::Funded(RoundParticipation {
-			inputs: vec![antidos_input.clone()],
-			outputs: vec![
-				StoredVtxoRequest::from_parts(htlc_pay_req, state.clone()),
-				StoredVtxoRequest::from_parts(antidos_output.clone(), VtxoState::Spendable),
-			],
-			offboards: vec![],
-		});
-		self.participate_round(participation).await.context("round failed")?;
-
-		Ok(())
+		let wallet_vtxos = vtxos.iter()
+			.map(|v| Ok(self.db.get_wallet_vtxo(v.id())?.expect("missing VTXO we just put")))
+			.collect::<anyhow::Result<Vec<_>>>()?;
+		self.claim_htlc_vtxos(payment_hash, &wallet_vtxos).await
 	}
 
 	/// Send to a lightning address.

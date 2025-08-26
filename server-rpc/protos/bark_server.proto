@@ -24,9 +24,9 @@ service ArkService {
 	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
 
-    // Empty the arkoor mailbox for certain pubkeys.
-    //
-    // At most 100 pubkeys should be provided.
+	// Empty the arkoor mailbox for certain pubkeys.
+	//
+	// At most 100 pubkeys should be provided.
 	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
 
 	// * SEND LN payments
@@ -43,7 +43,7 @@ service ArkService {
 	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
 	rpc SubscribeLightningReceive(SubscribeLightningReceiveRequest) returns (SubscribeLightningReceiveResponse) {}
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
-	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorCosignResponse) {}
+	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * ARK ROUND INTERACTIONS *
 
@@ -238,8 +238,10 @@ message PrepareLightningReceiveClaimResponse {
 }
 
 message ClaimLightningReceiveRequest {
-	ArkoorCosignRequest arkoor = 1;
+	bytes payment_hash = 1;
 	bytes payment_preimage = 2;
+	bytes vtxo_policy = 3;
+	repeated bytes user_pub_nonces = 4;
 }
 
 enum LightningReceiveStatus {

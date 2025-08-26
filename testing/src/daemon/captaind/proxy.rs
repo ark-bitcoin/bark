@@ -88,7 +88,7 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().prepare_lightning_receive_claim(req).await?.into_inner())
 	}
 
-	async fn claim_lightning_receive(&mut self, req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+	async fn claim_lightning_receive(&mut self, req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 		Ok(self.upstream().claim_lightning_receive(req).await?.into_inner())
 	}
 
@@ -285,7 +285,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 
 	async fn claim_lightning_receive(
 		&self, req: tonic::Request<protos::ClaimLightningReceiveRequest>,
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::claim_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 

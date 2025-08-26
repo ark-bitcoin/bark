@@ -57,7 +57,6 @@ use ark::lightning::{Bolt12Invoice, Invoice, PaymentHash, Preimage, Offer};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
-use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use server_rpc::protos;
@@ -1039,7 +1038,7 @@ impl Server {
 		user_pubkey: PublicKey,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo>)> {
 		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
-			.context("no pending payment with this payment hash")?;
+			.not_found([payment_hash], "no pending payment with this payment hash")?;
 		// first check whether we're in the right state to do this
 		match sub.status {
 			LightningHtlcSubscriptionStatus::Accepted => {}, // we continue
@@ -1050,9 +1049,15 @@ impl Server {
 					.collect();
 				return Ok((sub, vtxos));
 			},
-			LightningHtlcSubscriptionStatus::Cancelled => bail!("payment cancelled"),
-			LightningHtlcSubscriptionStatus::Settled => bail!("payment already settled"),
-			LightningHtlcSubscriptionStatus::Created => bail!("payment not yet initiated by sender"),
+			LightningHtlcSubscriptionStatus::Cancelled => {
+				return badarg!("payment cancelled");
+			},
+			LightningHtlcSubscriptionStatus::Settled => {
+				return badarg!("payment already settled");
+			},
+			LightningHtlcSubscriptionStatus::Created => {
+				return badarg!("payment not yet initiated by sender");
+			},
 		}
 
 		let vtxos = {
@@ -1075,41 +1080,42 @@ impl Server {
 		Ok((sub, vtxos))
 	}
 
-	async fn claim_bolt11_htlc(
+	async fn claim_lightning_receive(
 		&self,
-		input_vtxo_id: VtxoId,
-		vtxo_req: VtxoRequest,
-		user_nonce: musig::PublicNonce,
+		payment_hash: PaymentHash,
+		vtxo_policy: VtxoPolicy,
+		user_nonces: Vec<musig::PublicNonce>,
 		payment_preimage: Preimage,
-	) -> anyhow::Result<ArkoorCosignResponse> {
-		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await
-			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
-
-		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
-			if *payment_hash != payment_preimage.compute_payment_hash() {
-				bail!("input VTXO payment hash does not match preimage");
-			}
-
-			let sub = self.db.get_htlc_subscription_by_payment_hash(*payment_hash).await?
-				.context("no HTLC subscription found")?;
-			if sub.status != LightningHtlcSubscriptionStatus::Accepted {
-				bail!("HTLC subscription with unexpected status: {}", sub.status);
-			}
-
-			self.cln.settle_invoice(
-				sub.id,
-				payment_preimage,
-			).await?.context("could not settle invoice")?;
-
-			let input = [input_vtxo.vtxo];
-			let pubs = vec![user_nonce];
-			let package = ArkoorPackageBuilder::new(&input, &pubs, vtxo_req, None)?;
-
-			let mut arkoors = self.cosign_oor_package_with_builder(&package).await?;
-			Ok(arkoors.pop().expect("should have one"))
-		} else {
-			bail!("invalid claim input: {}", input_vtxo_id);
+	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		if payment_hash != payment_preimage.compute_payment_hash() {
+			return badarg!("preimage doesn't match payment hash");
 		}
+
+		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
+			.not_found([payment_hash], "no pending payment with this payment hash")?;
+
+		if sub.status != LightningHtlcSubscriptionStatus::HtlcsReady {
+			return badarg!("payment status in incorrect state: {}", sub.status);
+		}
+		if sub.htlc_vtxos.is_empty() {
+			error!("htlc subscription in status htlcs-ready without htlcs: {}", payment_hash);
+			bail!("internal error: no HTLC VTXOs found");
+		}
+
+		let htlc_vtxos = self.db.get_vtxos_by_id(&sub.htlc_vtxos).await?;
+
+		let vtxo_req = VtxoRequest {
+			amount: sub.amount(),
+			policy: vtxo_policy,
+		};
+		let input = htlc_vtxos.iter().map(|v| &v.vtxo);
+		let package = ArkoorPackageBuilder::new(input, &user_nonces, vtxo_req, None)
+			.badarg("incorrect VTXO request data")?;
+
+		self.cln.settle_invoice(sub.id, payment_preimage).await?
+			.context("could not settle invoice")?;
+
+		Ok(self.cosign_oor_package_with_builder(&package).await?)
 	}
 
 	pub async fn generate_ephemeral_cosign_key(

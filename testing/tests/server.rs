@@ -1485,7 +1485,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
-		async fn claim_lightning_receive(&mut self, mut req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorCosignResponse, tonic::Status> {
+		async fn claim_lightning_receive(&mut self, mut req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.payment_preimage = vec![1; 32];
 			Ok(self.upstream().claim_lightning_receive(req).await?.into_inner())
 		}
