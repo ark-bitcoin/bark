@@ -431,8 +431,8 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("payment_hash", payment_hash.to_string()),
 		]);
 
-		let update = self.subscribe_lightning_receive(payment_hash).await.to_status()?;
-		Ok(tonic::Response::new(update))
+		let sub = self.subscribe_lightning_receive(payment_hash).await.to_status()?;
+		Ok(tonic::Response::new(sub.into()))
 	}
 
 	async fn claim_lightning_receive(

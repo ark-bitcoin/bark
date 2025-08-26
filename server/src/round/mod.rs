@@ -358,12 +358,15 @@ impl CollectingPayments {
 			if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = req.req.vtxo.policy {
 				// TODO: check if a non-expired htlc vtxo with same payment_hash exists and bail if so
 
-				let status = LightningHtlcSubscriptionStatus::Accepted;
-				let htlc = db.get_htlc_subscription_by_payment_hash(payment_hash, status).await?;
-
-				if htlc.is_none() {
+				if let Some(sub) = db.get_htlc_subscription_by_payment_hash(payment_hash).await? {
+					if sub.status != LightningHtlcSubscriptionStatus::Accepted {
+						return not_found!([payment_hash],
+							"pending payment for invoicie is in incorrect state: {}", sub.status,
+						);
+					}
+				} else {
 					return not_found!([payment_hash],
-						"Cannot find accepted htlc for provided payment hash",
+						"Cannot find payment for provided payment hash",
 					);
 				}
 			}

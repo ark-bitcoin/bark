@@ -229,9 +229,21 @@ message ClaimLightningReceiveRequest {
 	bytes payment_preimage = 2;
 }
 
+enum LightningReceiveStatus {
+	// We have created the invoice and are awaiting the sender to start the process
+	CREATED = 0;
+	// The sender has setup the payment route and it's ready to go
+	ACCEPTED = 1;
+	// The HTLCs have been executed and the payment was settled
+	SETTLED = 2;
+	// The payment was canceled before being executed
+	CANCELLED = 3;
+}
+
 message SubscribeLightningReceiveResponse {
 	string invoice = 1;
 	uint64 amount_sat = 2;
+	LightningReceiveStatus status = 3;
 }
 
 // round

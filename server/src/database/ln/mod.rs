@@ -516,6 +516,7 @@ impl Db {
 		Ok(())
 	}
 
+	/// Retrieve all htlc subscriptions created in the given node
 	pub async fn get_created_lightning_htlc_subscriptions(
 		&self,
 		node_id: ClnNodeId,
@@ -523,14 +524,14 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
-				subscription.status, subscription.created_at, subscription.updated_at,
+			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
+				sub.status, sub.created_at, sub.updated_at,
 				invoice.invoice
-			FROM lightning_htlc_subscription subscription
+			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.id
+				sub.lightning_invoice_id = invoice.id
 			WHERE status = $1 AND lightning_node_id = $2
-			ORDER BY created_at DESC;
+			ORDER BY sub.created_at DESC;
 		").await?;
 
 		let status_started = LightningHtlcSubscriptionStatus::Created;
@@ -541,7 +542,7 @@ impl Db {
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
 	}
 
-	/// Retrieves all htlc subscriptions for the provided payment hash.
+	/// Retrieves all htlc subscriptions for the provided payment hash
 	pub async fn get_htlc_subscriptions_by_payment_hash(
 		&self,
 		payment_hash: PaymentHash,
@@ -549,14 +550,14 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
-				subscription.status, subscription.created_at, subscription.updated_at,
+			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
+				sub.status, sub.created_at, sub.updated_at,
 				invoice.invoice
-			FROM lightning_htlc_subscription subscription
+			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.id
+				sub.lightning_invoice_id = invoice.id
 			WHERE invoice.payment_hash = $1
-			ORDER BY created_at DESC;
+			ORDER BY sub.created_at DESC;
 		").await?;
 
 		let rows = conn.query(
@@ -566,36 +567,36 @@ impl Db {
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
 	}
 
+	/// Retrieve the latest htlc subscriptions for the provided payment hash
 	pub async fn get_htlc_subscription_by_payment_hash(
 		&self,
 		payment_hash: PaymentHash,
-		status: LightningHtlcSubscriptionStatus,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
-				subscription.status, subscription.created_at, subscription.updated_at,
-				invoice.invoice
-			FROM lightning_htlc_subscription subscription
+			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
+				sub.status, sub.created_at, sub.updated_at,
+				invoice.invoice,
+				COALESCE(array_agg(vtxo.vtxo_id::text), ARRAY[]::text[]) AS htlc_vtxos
+			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.id
-			WHERE invoice.payment_hash = $1 AND subscription.status = $2
-			ORDER BY created_at DESC;
+				sub.lightning_invoice_id = invoice.id
+			LEFT JOIN vtxo ON vtxo.lightning_htlc_subscription_id = sub.id
+			WHERE invoice.payment_hash = $1
+			GROUP BY
+				sub.id,
+				sub.lightning_invoice_id,
+				sub.lightning_node_id,
+				sub.status,
+				sub.created_at,
+				sub.updated_at,
+				invoice.invoice
+			ORDER BY sub.created_at DESC
+			LIMIT 1;
 		").await?;
 
-		let rows = conn.query(
-			&stmt, &[&payment_hash.to_vec(), &status]
-		).await?;
-
-		if rows.is_empty() {
-			return Ok(None);
-		}
-
-		if rows.len() > 1 {
-			warn!("Multiple htlc subscriptions with status {} for payment hash: {}", status, payment_hash);
-		}
-
+		let rows = conn.query(&stmt, &[&payment_hash.to_vec()]).await?;
 		if let Some(row) = rows.get(0) {
 			Ok(Some(row.try_into()?))
 		} else {
@@ -610,13 +611,13 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
-				subscription.status, subscription.created_at, subscription.updated_at,
+			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
+				sub.status, sub.created_at, sub.updated_at,
 				invoice.invoice
-			FROM lightning_htlc_subscription subscription
+			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.id
-			WHERE subscription.id = $1
+				sub.lightning_invoice_id = invoice.id
+			WHERE sub.id = $1
 			ORDER BY created_at DESC;
 		").await?;
 

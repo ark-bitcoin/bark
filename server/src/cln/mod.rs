@@ -697,13 +697,12 @@ impl ClnManagerProcess {
 
 		// If there is an existing subscription, it's a server self-payment
 		// so we can directly mark it as accepted, then skip cln payment
-		let subscription = self.db.get_htlc_subscription_by_payment_hash(
-			invoice.payment_hash(),
-			LightningHtlcSubscriptionStatus::Created,
-		).await?;
-		if let Some(subscription) = subscription {
-			self.cancel_invoice(subscription, LightningHtlcSubscriptionStatus::Accepted).await?;
-			return Ok(());
+		let sub = self.db.get_htlc_subscription_by_payment_hash(invoice.payment_hash()).await?;
+		if let Some(sub) = sub {
+			if sub.status == LightningHtlcSubscriptionStatus::Created {
+				self.cancel_invoice(sub, LightningHtlcSubscriptionStatus::Accepted).await?;
+				return Ok(());
+			}
 		}
 
 		// Call pay over GRPC
