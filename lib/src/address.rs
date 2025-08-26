@@ -168,6 +168,11 @@ impl Address {
 		self.ark_id
 	}
 
+	/// Check whether this [Address] matches the given server pubkey
+	pub fn is_for_server(&self, server_pubkey: PublicKey) -> bool {
+		self.ark_id().is_for_server(server_pubkey)
+	}
+
 	/// The VTXO policy the user wants to be paid in
 	pub fn policy(&self) -> &VtxoPolicy {
 		&self.policy
