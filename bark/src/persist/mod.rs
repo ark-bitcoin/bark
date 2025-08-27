@@ -93,7 +93,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 		round_participation: RoundParticipation,
 	) -> anyhow::Result<AttemptStartedState>;
 
-	fn store_pending_confirmation_round(&self, round_seq: RoundSeq, round_txid: RoundId, round_tx: Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
+	fn store_pending_confirmation_round(&self, round_txid: RoundId, round_tx: Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
 		-> anyhow::Result<PendingConfirmationState>;
 
 	fn store_round_state(&self, round_state: RoundState, prev_state: RoundState) -> anyhow::Result<RoundState>;
