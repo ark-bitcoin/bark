@@ -50,6 +50,7 @@ steps:
     environment:
       TEST_POSTGRES_HOST: localhost
     commands:
+      - nix --extra-experimental-features nix-command --extra-experimental-features flakes develop .#default
       - just default-server-config
       - bash contrib/check-clean-diff.sh server/config.default.toml
       - just dump-bark-sql-schema
