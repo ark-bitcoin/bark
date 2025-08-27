@@ -25,8 +25,6 @@ pub struct VtxoInfo {
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	pub policy_type: VtxoPolicyType,
-	/// The offchain UTXO.
-	pub utxo: OutPoint,
 	pub user_pubkey: PublicKey,
 	pub server_pubkey: PublicKey,
 	pub expiry_height: u32,
@@ -39,7 +37,6 @@ impl From<Vtxo> for VtxoInfo {
 			id: v.id(),
 			amount: v.amount(),
 			policy_type: v.policy().policy_type(),
-			utxo: v.point(),
 			user_pubkey: v.user_pubkey(),
 			server_pubkey: v.server_pubkey(),
 			expiry_height: v.expiry_height(),
