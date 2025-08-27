@@ -798,28 +798,6 @@ pub fn get_last_vtxo_key_index(conn: &Connection) -> anyhow::Result<Option<u32>>
 	}
 }
 
-pub fn store_last_synced_round(
-	conn: &Connection,
-	round_id: RoundId,
-) -> anyhow::Result<()> {
-	let query = "INSERT INTO bark_synced_round (round_txid) VALUES (?1);";
-	let mut statement = conn.prepare(query)?;
-	statement.execute([round_id.to_string()])?;
-	Ok(())
-}
-
-pub fn get_last_synced_round(conn: &Connection) -> anyhow::Result<Option<RoundId>> {
-	let query = "SELECT round_txid FROM bark_synced_round ORDER BY id DESC LIMIT 1";
-	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query(())?;
-
-	if let Some(row) = rows.next()? {
-		Ok(Some(RoundId::from_str(&row.get::<_, String>(0)?)?))
-	} else {
-		Ok(None)
-	}
-}
-
 pub fn store_lightning_receive(
 	conn: &Connection,
 	payment_hash: PaymentHash,

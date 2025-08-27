@@ -333,16 +333,6 @@ impl BarkPersister for SqliteClient {
 		query::get_exit_child_tx(&conn, exit_txid)
 	}
 
-	fn get_last_synced_round(&self) -> anyhow::Result<Option<RoundId>> {
-		let conn = self.connect()?;
-		query::get_last_synced_round(&conn)
-	}
-
-	fn store_last_synced_round(&self, round_id: RoundId) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::store_last_synced_round(&conn, round_id)
-	}
-
 	fn update_vtxo_state_checked(
 		&self,
 		vtxo_id: VtxoId,

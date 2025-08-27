@@ -629,12 +629,12 @@ impl Wallet {
 			warn!("Error updating fee rates: {}", e);
 		}
 
-		if let Err(e) = self.sync_rounds().await {
-			error!("Error in round sync: {}", e);
-		}
 		if let Err(e) = self.sync_oors().await {
 			error!("Error in arkoor sync: {}", e);
 		}
+
+		let tip = self.chain.tip().await?;
+		self.sync_pending_rounds(tip).await?;
 
 		Ok(())
 	}
@@ -808,16 +808,6 @@ impl Wallet {
 		Ok(!self.db.check_vtxo_key_exists(&vtxo.user_pubkey())?)
 	}
 
-	/// Fetch new rounds from the Ark Server and check if one of their VTXOs
-	/// is in the provided set of public keys
-	pub async fn sync_rounds(&self) -> anyhow::Result<()> {
-		let tip = self.chain.tip().await?;
-		self.sync_pending_rounds(tip).await?;
-
-		self.sync_past_rounds().await?;
-		Ok(())
-	}
-
 	async fn sync_pending_rounds(&self, tip: u32) -> anyhow::Result<()> {
 		info!("Syncing pending rounds at tip: {}", tip);
 		let rounds = self.db.list_pending_rounds()?;
@@ -855,14 +845,14 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn sync_past_rounds(&self) -> anyhow::Result<()> {
+	/// Sync all past rounds
+	///
+	/// Intended for recovery after data loss.
+	pub async fn sync_past_rounds(&self) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
-		let last_synced_round = self.db.get_last_synced_round()?;
-		debug!("Querying ark for rounds since round id {:?}", last_synced_round);
-
 		let fresh_rounds = srv.client.get_fresh_rounds(protos::FreshRoundsRequest {
-			last_round_txid: last_synced_round.map(|r| r.to_string()),
+			last_round_txid: None,
 		}).await?.into_inner().txids.into_iter()
 			.map(|txid| RoundId::from_slice(&txid))
 			.collect::<Result<Vec<_>, _>>()?;
@@ -873,7 +863,6 @@ impl Wallet {
 		}
 
 		debug!("Received {} new rounds from ark", fresh_rounds.len());
-		let last_round = fresh_rounds.last().unwrap().clone();
 
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
@@ -931,8 +920,6 @@ impl Wallet {
 				return Err(e).context("failed to sync round");
 			}
 		}
-
-		self.db.store_last_synced_round(last_round)?;
 
 		Ok(())
 	}

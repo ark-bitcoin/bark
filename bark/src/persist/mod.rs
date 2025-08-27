@@ -158,9 +158,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 		exit_txid: Txid,
 	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>>;
 
-	fn get_last_synced_round(&self) -> anyhow::Result<Option<RoundId>>;
-	fn store_last_synced_round(&self, round_id: RoundId) -> anyhow::Result<()>;
-
 	fn update_vtxo_state_checked(
 		&self,
 		vtxo_id: VtxoId,
