@@ -58,6 +58,7 @@ pub const ATTRIBUTE_BARK_VERSION: &str = "bark_version";
 pub const ATTRIBUTE_PROTOCOL_VERSION: &str = "protocol_version";
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
 pub const ATTRIBUTE_ROUND_SEQ: &str = "round_seq";
+pub const ATTRIBUTE_ATTEMPT_SEQ: &str = "attempt_seq";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 
 pub const SERVICE_NAME: &str = opentelemetry_semantic_conventions::attribute::SERVICE_NAME;
@@ -96,8 +97,10 @@ struct Metrics {
 	round_seq_gauge: Gauge<u64>,
 	round_state_gauge: Gauge<u64>,
 	round_attempt_gauge: Gauge<u64>,
-	round_volume_gauge: Gauge<u64>,
-	round_vtxo_count_gauge: Gauge<u64>,
+	round_input_volume_gauge: Gauge<u64>,
+	round_input_count_gauge: Gauge<u64>,
+	round_output_count_gauge: Gauge<u64>,
+	round_offboard_count_gauge: Gauge<u64>,
 	pending_expired_operation_gauge: Gauge<u64>,
 	pending_sweeper_gauge: Gauge<u64>,
 	pending_forfeit_gauge: Gauge<u64>,
@@ -191,8 +194,10 @@ impl Metrics {
 		let round_seq_gauge = meter.u64_gauge("round_seq_gauge").build();
 		let round_state_gauge = meter.u64_gauge("round_state_gauge").build();
 		let round_attempt_gauge = meter.u64_gauge("round_attempt_gauge").build();
-		let round_volume_gauge = meter.u64_gauge("round_volume_gauge").build();
-		let round_vtxo_count_gauge = meter.u64_gauge("round_vtxo_count_gauge").build();
+		let round_input_volume_gauge = meter.u64_gauge("round_input_volume_gauge").build();
+		let round_input_count_gauge = meter.u64_gauge("round_input_count_gauge").build();
+		let round_output_count_gauge = meter.u64_gauge("round_output_count_gauge").build();
+		let round_offboard_count_gauge = meter.u64_gauge("round_offboard_count_gauge").build();
 		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
 		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
 		let pending_forfeit_gauge = meter.u64_gauge("pending_forfeit_gauge").build();
@@ -222,8 +227,10 @@ impl Metrics {
 			round_seq_gauge,
 			round_state_gauge,
 			round_attempt_gauge,
-			round_volume_gauge,
-			round_vtxo_count_gauge,
+			round_input_volume_gauge,
+			round_input_count_gauge,
+			round_output_count_gauge,
+			round_offboard_count_gauge,
 			pending_expired_operation_gauge,
 			pending_sweeper_gauge,
 			pending_forfeit_gauge,
@@ -334,8 +341,10 @@ pub fn set_full_round_metrics(
 	round_seq: RoundSeq,
 	attempt: usize,
 	state: RoundStateKind,
-	volume: Amount,
-	vtxo_count: usize,
+	input_volume: Amount,
+	input_count: usize,
+	output_count: usize,
+	offboard_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
 		set_round_metrics(round_seq, attempt, state.clone());
@@ -343,10 +352,16 @@ pub fn set_full_round_metrics(
 		// Keep only last few digits to limit the cardinality.
 		let short_round_seq = round_seq.inner() % CARDINALITY;
 
-		m.round_volume_gauge.record(volume.to_sat(), &[
+		m.round_input_volume_gauge.record(input_volume.to_sat(), &[
 			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 		]);
-		m.round_vtxo_count_gauge.record(vtxo_count as u64, &[
+		m.round_input_count_gauge.record(input_count as u64, &[
+			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
+		]);
+		m.round_output_count_gauge.record(output_count as u64, &[
+			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
+		]);
+		m.round_offboard_count_gauge.record(offboard_count as u64, &[
 			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 		]);
 	}

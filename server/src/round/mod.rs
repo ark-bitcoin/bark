@@ -1024,8 +1024,8 @@ impl SigningForfeits {
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
 			.start_with_context(&tracer_provider, &parent_context.clone());
-		span.set_int_attr("signed-vtxo-count", self.signed_vtxos.nb_leaves());
-		span.set_int_attr("connectors-count", self.connectors.len());
+		span.set_int_attr("signed_vtxo_count", self.signed_vtxos.nb_leaves());
+		span.set_int_attr("connectors_count", self.connectors.len());
 		span.set_str_attr(ATTRIBUTE_ROUND_ID, round_txid);
 
 		trace!("Storing round result");
@@ -1299,6 +1299,12 @@ async fn perform_round(
 		max_vtxo_amount: srv.config.max_vtxo_amount,
 		offboard_feerate,
 	};
+
+	let mut input_volume = Amount::from_sat(0);
+	let mut input_count = 0;
+	let mut output_count = 0;
+	let mut offboard_count = 0;
+
 	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
 		round_seq, 0, round_data, srv.vtxos_in_flux.empty_lock().into_owned(), None,
 	));
@@ -1318,7 +1324,7 @@ async fn perform_round(
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr("attempt_seq", attempt_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
 
 		// Release all vtxos in flux from previous attempt
 		let state = round_state.collecting_payments();
@@ -1337,7 +1343,7 @@ async fn perform_round(
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr("attempt_seq", attempt_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_submit_time); }
 		'receive: loop {
@@ -1383,7 +1389,8 @@ async fn perform_round(
 			round_state = round_state.into_finished(RoundResult::Empty);
 
 			telemetry::set_full_round_metrics(
-				round_seq.into(), attempt_seq, round_state.kind(), Amount::from_sat(0), 0,
+				round_seq.into(), attempt_seq, round_state.kind(),
+				input_volume, input_count, output_count, offboard_count,
 			);
 
 			return round_state.result().unwrap();
@@ -1395,14 +1402,21 @@ async fn perform_round(
 			duration: receive_payment_duration, max_round_submit_time: srv.config.round_submit_time,
 		);
 
+		input_count = round_state.collecting_payments().all_inputs.len();
+		output_count = round_state.collecting_payments().all_outputs.len();
+		offboard_count = round_state.collecting_payments().all_offboards.len();
+		input_volume = round_state.collecting_payments().total_input_amount();
+
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_POPULATED)
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr("attempt_seq", attempt_seq);
-		span.set_int_attr("input-count", round_state.collecting_payments().all_inputs.len());
-		span.set_int_attr("output-count", round_state.collecting_payments().all_outputs.len());
-		span.set_int_attr("offboard-count", round_state.collecting_payments().all_offboards.len());
+		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
+		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
+		span.set_int_attr("input_volume", input_volume.to_sat());
+		span.set_int_attr("input_count", input_count);
+		span.set_int_attr("output_count", output_count);
+		span.set_int_attr("offboard_count", offboard_count);
 
 		// ****************************************************************
 		// * Vtxo tree construction and signing
@@ -1417,10 +1431,8 @@ async fn perform_round(
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr("attempt_seq", attempt_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
 
-		let input_count = round_state.collecting_payments().all_inputs.len();
-		let input_volume = round_state.collecting_payments().total_input_amount();
 
 		round_state = match round_state.progress(srv).await {
 			Ok(s) => s,
@@ -1428,7 +1440,8 @@ async fn perform_round(
 				round_state = RoundState::Finished(RoundResult::Err(e));
 
 				telemetry::set_full_round_metrics(
-					round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
+					round_seq.into(), attempt_seq, round_state.kind(),
+					input_volume, input_count, output_count, offboard_count,
 				);
 
 				round_state.result().unwrap()
@@ -1463,7 +1476,8 @@ async fn perform_round(
 						round_state = round_state.into_finished(RoundResult::Abandoned);
 
 						telemetry::set_full_round_metrics(
-							round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
+							round_seq.into(), attempt_seq, round_state.kind(),
+							input_volume, input_count, output_count, offboard_count,
 						);
 
 						return round_state.result().unwrap();
@@ -1513,7 +1527,7 @@ async fn perform_round(
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr("attempt_seq", attempt_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
 
 		round_state = match round_state.progress(&srv).await {
 			Ok(s) => s,
@@ -1521,7 +1535,8 @@ async fn perform_round(
 				round_state = RoundState::Finished(RoundResult::Err(e));
 
 				telemetry::set_full_round_metrics(
-					round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
+					round_seq.into(), attempt_seq, round_state.kind(),
+					input_volume, input_count, output_count, offboard_count,
 				);
 
 				round_state.result().unwrap()
@@ -1541,7 +1556,7 @@ async fn perform_round(
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr("attempt_seq", attempt_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_sign_time); }
 
@@ -1557,7 +1572,8 @@ async fn perform_round(
 						round_state = round_state.into_finished(RoundResult::Abandoned);
 
 						telemetry::set_full_round_metrics(
-							round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
+							round_seq.into(), attempt_seq, round_state.kind(),
+							input_volume, input_count, output_count, offboard_count,
 						);
 
 						return round_state.result().unwrap();
@@ -1615,7 +1631,7 @@ async fn perform_round(
 			.with_kind(SpanKind::Internal)
 			.start_with_context(&tracer_provider, &parent_context);
 		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr("attempt_seq", attempt_seq);
+		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
 
 		round_state = match state.finish(&srv).await {
 			Ok(()) => {
@@ -1627,7 +1643,8 @@ async fn perform_round(
 		};
 
 		telemetry::set_full_round_metrics(
-			round_seq.into(), attempt_seq, round_state.kind(), input_volume, input_count,
+			round_seq.into(), attempt_seq, round_state.kind(),
+			input_volume, input_count, output_count, offboard_count,
 		);
 
 		return round_state.result().unwrap();
