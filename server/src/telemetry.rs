@@ -18,6 +18,7 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tokio::sync::OnceCell;
+use tokio::time::Instant;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
@@ -33,16 +34,6 @@ pub const TRACER_CAPTAIND: &str = "captaind";
 pub const TRACE_RUN_ROUND: &str = "round";
 pub const TRACE_RUN_ROUND_EMPTY: &str = "round_empty";
 pub const TRACE_RUN_ROUND_POPULATED: &str = "round_populated";
-pub const TRACE_RUN_ROUND_ATTEMPT: &str = "round_attempt";
-pub const TRACE_RUN_ROUND_RECEIVE_PAYMENTS: &str = "round_receive_payments";
-pub const TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL: &str = "round_send_vtxo_proposal";
-pub const TRACE_RUN_ROUND_RECEIVE_VTXO_SIGNATURES: &str = "round_receive_vtxo_signatures";
-pub const TRACE_RUN_ROUND_COMBINE_VTXO_SIGNATURES: &str = "round_combine_vtxo_signatures";
-pub const TRACE_RUN_ROUND_CONSTRUCT_VTXO_TREE: &str = "round_construct_vtxo_tree";
-pub const TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL: &str = "round_send_round_proposal";
-pub const TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES: &str = "round_receiving_forfeit_signatures";
-pub const TRACE_RUN_ROUND_FINALIZING: &str = "round_final_stage";
-pub const TRACE_RUN_ROUND_PERSIST: &str = "round_persist";
 
 pub const METER_CAPTAIND: &str = "captaind";
 
@@ -59,7 +50,75 @@ pub const ATTRIBUTE_PROTOCOL_VERSION: &str = "protocol_version";
 pub const ATTRIBUTE_ROUND_ID: &str = "round_id";
 pub const ATTRIBUTE_ROUND_SEQ: &str = "round_seq";
 pub const ATTRIBUTE_ATTEMPT_SEQ: &str = "attempt_seq";
+pub const ATTRIBUTE_ROUND_STEP: &str = "round_step";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
+
+pub enum RoundStep {
+	Attempt(Instant),
+	ReceivePayments(Instant),
+	SendVtxoProposal(Instant),
+	ReceiveVtxoSignatures(Instant),
+	CombineVtxoSignatures(Instant),
+	ConstructVtxoTree(Instant),
+	SendRoundProposal(Instant),
+	ReceiveForfeitSignatures(Instant),
+	SignOnChainTransaction(Instant),
+	FinalStage(Instant),
+	Persist(Instant),
+}
+
+impl RoundStep {
+
+	// When changing this also change `get_all`
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			RoundStep::Attempt(_) => "round_attempt",
+			RoundStep::ReceivePayments(_) => "round_receive_payments",
+			RoundStep::SendVtxoProposal(_) => "round_send_vtxo_proposal",
+			RoundStep::ReceiveVtxoSignatures(_) => "round_receive_vtxo_signatures",
+			RoundStep::CombineVtxoSignatures(_) => "round_combine_vtxo_signatures",
+			RoundStep::ConstructVtxoTree(_) => "round_construct_vtxo_tree",
+			RoundStep::SendRoundProposal(_) => "round_send_round_proposal",
+			RoundStep::ReceiveForfeitSignatures(_) => "round_receive_forfeit_signatures",
+			RoundStep::SignOnChainTransaction(_) => "round_sign_on_chain_transaction",
+			RoundStep::FinalStage(_) => "round_finalize_stage",
+			RoundStep::Persist(_) => "round_persist",
+		}
+	}
+
+	pub fn duration(&self) -> Duration {
+		match self {
+			RoundStep::Attempt(t) => Instant::now().duration_since(*t),
+			RoundStep::ReceivePayments(t) => Instant::now().duration_since(*t),
+			RoundStep::SendVtxoProposal(t) => Instant::now().duration_since(*t),
+			RoundStep::ReceiveVtxoSignatures(t) => Instant::now().duration_since(*t),
+			RoundStep::CombineVtxoSignatures(t) => Instant::now().duration_since(*t),
+			RoundStep::ConstructVtxoTree(t) => Instant::now().duration_since(*t),
+			RoundStep::SendRoundProposal(t) => Instant::now().duration_since(*t),
+			RoundStep::ReceiveForfeitSignatures(t) => Instant::now().duration_since(*t),
+			RoundStep::SignOnChainTransaction(t) => Instant::now().duration_since(*t),
+			RoundStep::FinalStage(t) => Instant::now().duration_since(*t),
+			RoundStep::Persist(t) => Instant::now().duration_since(*t),
+		}
+	}
+
+	// When changing this also change `as_str`
+	pub fn get_all() -> &'static [&'static str] {
+		&[
+			"round_attempt",
+			"round_receive_payments",
+			"round_send_vtxo_proposal",
+			"round_receive_vtxo_signatures",
+			"round_combine_vtxo_signatures",
+			"round_construct_vtxo_tree",
+			"round_send_round_proposal",
+			"round_receive_forfeit_signatures",
+			"round_sign_on_chain_transaction",
+			"round_finalize_stage",
+			"round_persist",
+		]
+	}
+}
 
 pub const SERVICE_NAME: &str = opentelemetry_semantic_conventions::attribute::SERVICE_NAME;
 pub const SERVICE_VERSION: &str = opentelemetry_semantic_conventions::attribute::SERVICE_VERSION;
@@ -69,11 +128,6 @@ pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_
 /// The [numeric status code](https://github.com/grpc/grpc/blob/v1.33.2/doc/statuscodes.md)
 /// of the gRPC request.
 pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;
-
-/// This value is used to limit the cardinality (buckets) of metrics.
-/// i.e. when we use `round_id` then the metric bucket growth would never stop,
-///   by using `round_id` % `CARDINALITY` we have a fixed amount of metric buckets.
-pub const CARDINALITY: u64 = 100;
 
 /// The global open-telemetry context to register metrics.
 static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
@@ -96,6 +150,7 @@ struct Metrics {
 	block_height_gauge: Gauge<u64>,
 	round_seq_gauge: Gauge<u64>,
 	round_state_gauge: Gauge<u64>,
+	round_step_duration_gauge: Gauge<u64>,
 	round_attempt_gauge: Gauge<u64>,
 	round_input_volume_gauge: Gauge<u64>,
 	round_input_count_gauge: Gauge<u64>,
@@ -193,6 +248,7 @@ impl Metrics {
 		let block_height_gauge = meter.u64_gauge("block_gauge").build();
 		let round_seq_gauge = meter.u64_gauge("round_seq_gauge").build();
 		let round_state_gauge = meter.u64_gauge("round_state_gauge").build();
+		let round_step_duration_gauge = meter.u64_gauge("round_step_duration_gauge").build();
 		let round_attempt_gauge = meter.u64_gauge("round_attempt_gauge").build();
 		let round_input_volume_gauge = meter.u64_gauge("round_input_volume_gauge").build();
 		let round_input_count_gauge = meter.u64_gauge("round_input_count_gauge").build();
@@ -226,6 +282,7 @@ impl Metrics {
 			block_height_gauge,
 			round_seq_gauge,
 			round_state_gauge,
+			round_step_duration_gauge,
 			round_attempt_gauge,
 			round_input_volume_gauge,
 			round_input_count_gauge,
@@ -300,15 +357,38 @@ pub fn set_block_height(block_height: BlockHeight) {
 	}
 }
 
-pub fn set_round_state(round_seq: RoundSeq, state: RoundStateKind) {
+// Initialize a new round and clear out the old data.
+pub fn set_round_seq(round_seq: RoundSeq) {
 	if let Some(m) = TELEMETRY.get() {
-		// Keep only last few digits to limit the cardinality.
-		let short_round_seq = round_seq.inner() % CARDINALITY;
-		// Link round_id with short_round_id.
-		m.round_seq_gauge.record(round_seq.inner(), &[
-			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
-		]);
+		m.round_seq_gauge.record(round_seq.inner(), &[]);
+		m.round_attempt_gauge.record(0, &[]);
+		m.round_input_volume_gauge.record(0, &[]);
+		m.round_input_count_gauge.record(0, &[]);
+		m.round_output_count_gauge.record(0, &[]);
+		m.round_offboard_count_gauge.record(0, &[]);
 
+		for s in RoundStep::get_all() {
+			m.round_step_duration_gauge.record(0, &[
+				KeyValue::new(ATTRIBUTE_ROUND_STEP, *s),
+			]);
+		}
+
+		for s in RoundStateKind::get_all() {
+			m.round_state_gauge.record(0, &[
+				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
+			]);
+		}
+	}
+}
+
+pub fn set_round_attempt(attempt: usize) {
+	if let Some(m) = TELEMETRY.get() {
+		m.round_attempt_gauge.record(attempt as u64, &[]);
+	}
+}
+
+pub fn set_round_state(state: RoundStateKind) {
+	if let Some(m) = TELEMETRY.get() {
 		for s in RoundStateKind::get_all() {
 			let value = if *s == state {
 				1
@@ -317,53 +397,31 @@ pub fn set_round_state(round_seq: RoundSeq, state: RoundStateKind) {
 			};
 
 			m.round_state_gauge.record(value, &[
-				KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
 				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
 			]);
 		}
 	}
 }
 
-pub fn set_round_metrics(round_seq: RoundSeq, attempt: usize, state: RoundStateKind) {
+pub fn set_round_step_duration(round_step: RoundStep) {
 	if let Some(m) = TELEMETRY.get() {
-		set_round_state(round_seq, state.clone());
-
-		// Keep only last few digits to limit the cardinality.
-		let short_round_seq = round_seq.inner() % CARDINALITY;
-
-		m.round_attempt_gauge.record(attempt as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
+		m.round_step_duration_gauge.record(round_step.duration().as_millis() as u64, &[
+			KeyValue::new(ATTRIBUTE_ROUND_STEP, round_step.as_str()),
 		]);
 	}
 }
 
-pub fn set_full_round_metrics(
-	round_seq: RoundSeq,
-	attempt: usize,
-	state: RoundStateKind,
+pub fn set_round_metrics(
 	input_volume: Amount,
 	input_count: usize,
 	output_count: usize,
 	offboard_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
-		set_round_metrics(round_seq, attempt, state.clone());
-
-		// Keep only last few digits to limit the cardinality.
-		let short_round_seq = round_seq.inner() % CARDINALITY;
-
-		m.round_input_volume_gauge.record(input_volume.to_sat(), &[
-			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
-		]);
-		m.round_input_count_gauge.record(input_count as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
-		]);
-		m.round_output_count_gauge.record(output_count as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
-		]);
-		m.round_offboard_count_gauge.record(offboard_count as u64, &[
-			KeyValue::new(ATTRIBUTE_ROUND_SEQ, short_round_seq.to_string()),
-		]);
+		m.round_input_volume_gauge.record(input_volume.to_sat(), &[]);
+		m.round_input_count_gauge.record(input_count as u64, &[]);
+		m.round_output_count_gauge.record(output_count as u64, &[]);
+		m.round_offboard_count_gauge.record(offboard_count as u64, &[]);
 	}
 }
 

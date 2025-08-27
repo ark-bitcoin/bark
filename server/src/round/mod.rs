@@ -14,6 +14,7 @@ use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use bitcoin_ext::bdk::WalletExt;
 use log::{debug, error, info, log_enabled, trace, warn};
 use opentelemetry::global;
+use opentelemetry::global::BoxedTracer;
 use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer, TracerProvider};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
 use tokio::time::Instant;
@@ -34,13 +35,13 @@ use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use server_log::{LogMsg, RoundVtxoCreated};
 use server_rpc::protos;
 
-use crate::{database, Server, SECP};
+use crate::{database, telemetry, Server, SECP};
 use crate::database::ln::LightningHtlcSubscriptionStatus;
 use crate::database::forfeits::ForfeitState;
 use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::secret::Secret;
-use crate::telemetry::{self, SpanExt, ATTRIBUTE_ROUND_ID};
+use crate::telemetry::SpanExt;
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
 #[derive(Debug)]
@@ -518,9 +519,8 @@ impl CollectingPayments {
 
 		let parent_context = opentelemetry::Context::current();
 
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_CONSTRUCT_VTXO_TREE)
-			.start_with_context(&tracer_provider, &parent_context.clone());
+		let round_step = telemetry::RoundStep::ConstructVtxoTree(Instant::now());
+		let mut span = trace_round_step(self.round_seq, &tracer_provider, &parent_context, self.attempt_seq, &round_step);
 		span.set_int_attr("expiry_height", expiry_height);
 		span.set_int_attr("block_height", tip);
 
@@ -780,15 +780,11 @@ impl SigningVtxoTree {
 
 	fn progress(self, srv: &Server) -> SigningForfeits {
 		// Combine the vtxo signatures.
-		let combine_signatures_start = Instant::now();
+		let round_step = telemetry::RoundStep::CombineVtxoSignatures(Instant::now());
 
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
-
 		let parent_context = opentelemetry::Context::current();
-
-		let _span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_COMBINE_VTXO_SIGNATURES)
-			.start_with_context(&tracer_provider, &parent_context.clone());
+		let _span = trace_round_step(self.round_seq, &tracer_provider, &parent_context, self.attempt_seq, &round_step);
 
 		let srv_cosign_sigs = self.unsigned_vtxo_tree.cosign_tree(
 			&self.cosign_agg_nonces,
@@ -814,8 +810,9 @@ impl SigningVtxoTree {
 			.into_cached_tree();
 		slog!(CreatedSignedVtxoTree, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
 			nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(),
-			duration: Instant::now().duration_since(combine_signatures_start),
+			duration: round_step.duration(),
 		);
+		telemetry::set_round_step_duration(round_step);
 
 		// ****************************************************************
 		// * Broadcast signed vtxo tree and gather forfeit signatures
@@ -988,7 +985,7 @@ impl SigningForfeits {
 		srv: &Server,
 	) -> Result<(), RoundError> {
 		// Sign the on-chain tx.
-		let sign_start = Instant::now();
+		let round_step = telemetry::RoundStep::SignOnChainTransaction(Instant::now());
 		let signed_round_tx = match self.wallet_lock.finish_tx(self.round_tx_psbt) {
 			Ok(tx) => tx,
 			Err(e) => return Err(RoundError::Recoverable(e.context("round tx signing error"))),
@@ -1009,7 +1006,7 @@ impl SigningForfeits {
 
 		slog!(BroadcastedFinalizedRoundTransaction, round_seq: self.round_seq,
 			attempt_seq: self.attempt_seq, txid: round_txid,
-			signing_time: Instant::now().duration_since(sign_start),
+			signing_time: round_step.duration(),
 		);
 
 		// Send out the finished round to users.
@@ -1019,14 +1016,13 @@ impl SigningForfeits {
 			signed_round_tx: signed_round_tx.tx.clone(),
 		});
 
+		let round_step = telemetry::RoundStep::Persist(Instant::now());
 		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
 		let parent_context = opentelemetry::Context::current();
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_PERSIST)
-			.start_with_context(&tracer_provider, &parent_context.clone());
+		let mut span = trace_round_step(self.round_seq, &tracer_provider, &parent_context, self.attempt_seq, &round_step);
 		span.set_int_attr("signed_vtxo_count", self.signed_vtxos.nb_leaves());
 		span.set_int_attr("connectors_count", self.connectors.len());
-		span.set_str_attr(ATTRIBUTE_ROUND_ID, round_txid);
+		span.set_str_attr(telemetry::ATTRIBUTE_ROUND_ID, round_txid);
 
 		trace!("Storing round result");
 		if log_enabled!(RoundVtxoCreated::LEVEL) {
@@ -1279,6 +1275,7 @@ async fn perform_round(
 	let _guard = tracing_span.enter();
 
 	slog!(RoundStarted, round_seq);
+	telemetry::set_round_seq(round_seq);
 
 	// Start new round, announce.
 	let offboard_feerate = srv.config.round_tx_feerate;
@@ -1300,31 +1297,24 @@ async fn perform_round(
 		offboard_feerate,
 	};
 
-	let mut input_volume = Amount::from_sat(0);
-	let mut input_count = 0;
-	let mut output_count = 0;
-	let mut offboard_count = 0;
-
 	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
 		round_seq, 0, round_data, srv.vtxos_in_flux.empty_lock().into_owned(), None,
 	));
+	telemetry::set_round_state(round_state.kind());
 
 	// In this loop we will try to finish the round and make new attempts.
 	'attempt: loop {
 		let attempt_seq = round_state.collecting_payments().attempt_seq;
 		slog!(AttemptingRound, round_seq, attempt_seq);
+		telemetry::set_round_attempt(attempt_seq);
 
 		if let Err(e) = srv.rounds_wallet.lock().await.sync(&srv.bitcoind, false).await
 		{
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}
 
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_ATTEMPT)
-			.with_kind(SpanKind::Internal)
-			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
+		let mut round_step = telemetry::RoundStep::Attempt(Instant::now());
+		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		// Release all vtxos in flux from previous attempt
 		let state = round_state.collecting_payments();
@@ -1335,15 +1325,10 @@ async fn perform_round(
 			attempt_seq,
 			challenge: state.vtxo_ownership_challenge
 		}));
-		// Start receiving payments.
-		let receive_payments_start = Instant::now();
 
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_PAYMENTS)
-			.with_kind(SpanKind::Internal)
-			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
+		// Start receiving payments.
+		round_step = telemetry::RoundStep::ReceivePayments(Instant::now());
+		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_submit_time); }
 		'receive: loop {
@@ -1358,7 +1343,7 @@ async fn perform_round(
 								srv, inputs, vtxo_requests, offboards,
 							).await.map_err(|e| {
 								debug!("error processing payment: {e}");
-								telemetry::set_round_metrics(round_seq.into(), attempt_seq, round_state.kind());
+								telemetry::set_round_state(round_state.kind());
 								e
 							})
 						},
@@ -1377,10 +1362,12 @@ async fn perform_round(
 			}
 		}
 		if !round_state.collecting_payments().have_payments() {
-			let _span = tracer_provider
+			let mut span = tracer_provider
 				.span_builder(telemetry::TRACE_RUN_ROUND_EMPTY)
 				.with_kind(SpanKind::Internal)
 				.start_with_context(&tracer_provider, &parent_context);
+			span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
+			span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
 
 			slog!(NoRoundPayments, round_seq, attempt_seq,
 				max_round_submit_time: srv.config.round_submit_time,
@@ -1388,24 +1375,26 @@ async fn perform_round(
 
 			round_state = round_state.into_finished(RoundResult::Empty);
 
-			telemetry::set_full_round_metrics(
-				round_seq.into(), attempt_seq, round_state.kind(),
-				input_volume, input_count, output_count, offboard_count,
-			);
+			telemetry::set_round_state(round_state.kind());
 
 			return round_state.result().unwrap();
 		}
-		let receive_payment_duration = Instant::now().duration_since(receive_payments_start);
-		slog!(ReceivedRoundPayments, round_seq, attempt_seq,
-			nb_inputs: round_state.collecting_payments().all_inputs.len(),
-			nb_outputs: round_state.collecting_payments().all_outputs.len(),
-			duration: receive_payment_duration, max_round_submit_time: srv.config.round_submit_time,
-		);
 
-		input_count = round_state.collecting_payments().all_inputs.len();
-		output_count = round_state.collecting_payments().all_outputs.len();
-		offboard_count = round_state.collecting_payments().all_offboards.len();
-		input_volume = round_state.collecting_payments().total_input_amount();
+		let input_volume = round_state.collecting_payments().total_input_amount();
+		let input_count = round_state.collecting_payments().all_inputs.len();
+		let output_count = round_state.collecting_payments().all_outputs.len();
+		let offboard_count = round_state.collecting_payments().all_offboards.len();
+
+		slog!(ReceivedRoundPayments, round_seq, attempt_seq,
+			duration: round_step.duration(),
+			max_round_submit_time: srv.config.round_submit_time,
+			input_volume,
+			input_count,
+			output_count,
+			offboard_count,
+		);
+		telemetry::set_round_step_duration(round_step);
+		telemetry::set_round_metrics(input_volume, input_count, output_count, offboard_count);
 
 		let mut span = tracer_provider
 			.span_builder(telemetry::TRACE_RUN_ROUND_POPULATED)
@@ -1418,47 +1407,36 @@ async fn perform_round(
 		span.set_int_attr("output_count", output_count);
 		span.set_int_attr("offboard_count", offboard_count);
 
+
 		// ****************************************************************
 		// * Vtxo tree construction and signing
 		// *
 		// * - We will always store vtxo tx data from top to bottom,
 		// *   meaning from the root tx down to the leaves.
 		// ****************************************************************
-		let send_vtxo_proposal_start = Instant::now();
-
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_VTXO_PROPOSAL)
-			.with_kind(SpanKind::Internal)
-			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
-
+		round_step = telemetry::RoundStep::SendVtxoProposal(Instant::now());
+		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		round_state = match round_state.progress(srv).await {
 			Ok(s) => s,
 			Err(e) => return {
 				round_state = RoundState::Finished(RoundResult::Err(e));
 
-				telemetry::set_full_round_metrics(
-					round_seq.into(), attempt_seq, round_state.kind(),
-					input_volume, input_count, output_count, offboard_count,
-				);
+				telemetry::set_round_state(round_state.kind());
 
 				round_state.result().unwrap()
 			},
 		};
-		// Wait for signatures from users.
+
 		slog!(AwaitingRoundSignatures, round_seq, attempt_seq,
 			max_round_sign_time: srv.config.round_sign_time,
-			duration_since_sending: Instant::now().duration_since(send_vtxo_proposal_start),
+			duration_since_sending: round_step.duration(),
 		);
+		telemetry::set_round_step_duration(round_step);
 
-		let vtxo_signatures_receive_start = Instant::now();
-
-		let _span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVE_VTXO_SIGNATURES)
-			.with_kind(SpanKind::Internal)
-			.start_with_context(&tracer_provider, &parent_context);
+		// Wait for signatures from users.
+		round_step = telemetry::RoundStep::ReceiveVtxoSignatures(Instant::now());
+		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_sign_time); }
 		'receive: loop {
@@ -1475,10 +1453,7 @@ async fn perform_round(
 					if need_new_round {
 						round_state = round_state.into_finished(RoundResult::Abandoned);
 
-						telemetry::set_full_round_metrics(
-							round_seq.into(), attempt_seq, round_state.kind(),
-							input_volume, input_count, output_count, offboard_count,
-						);
+						telemetry::set_round_state(round_state.kind());
 
 						return round_state.result().unwrap();
 					}
@@ -1515,48 +1490,36 @@ async fn perform_round(
 				}
 			}
 		}
+
 		slog!(ReceivedRoundVtxoSignatures, round_seq, attempt_seq,
-			duration: Instant::now().duration_since(vtxo_signatures_receive_start),
+			duration: round_step.duration(),
 			max_round_sign_time: srv.config.round_sign_time,
 		);
+		telemetry::set_round_step_duration(round_step);
 
-		let send_round_proposal_start = Instant::now();
-
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_SEND_ROUND_PROPOSAL)
-			.with_kind(SpanKind::Internal)
-			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
+		let round_step = telemetry::RoundStep::SendRoundProposal(Instant::now());
+		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		round_state = match round_state.progress(&srv).await {
 			Ok(s) => s,
 			Err(e) => return {
 				round_state = RoundState::Finished(RoundResult::Err(e));
 
-				telemetry::set_full_round_metrics(
-					round_seq.into(), attempt_seq, round_state.kind(),
-					input_volume, input_count, output_count, offboard_count,
-				);
+				telemetry::set_round_state(round_state.kind());
 
 				round_state.result().unwrap()
 			},
 		};
 
-		// Wait for signatures from users.
 		slog!(AwaitingRoundForfeits, round_seq, attempt_seq,
 			max_round_sign_time: srv.config.round_sign_time,
-			duration_since_sending: Instant::now().duration_since(send_round_proposal_start),
+			duration_since_sending: round_step.duration(),
 		);
+		telemetry::set_round_step_duration(round_step);
 
-		let receive_forfeit_signatures_start = Instant::now();
-
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_RECEIVING_FORFEIT_SIGNATURES)
-			.with_kind(SpanKind::Internal)
-			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
+		// Wait for signatures from users.
+		let round_step = telemetry::RoundStep::ReceiveForfeitSignatures(Instant::now());
+		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_sign_time); }
 
@@ -1571,10 +1534,7 @@ async fn perform_round(
 					if need_new_round {
 						round_state = round_state.into_finished(RoundResult::Abandoned);
 
-						telemetry::set_full_round_metrics(
-							round_seq.into(), attempt_seq, round_state.kind(),
-							input_volume, input_count, output_count, offboard_count,
-						);
+						telemetry::set_round_state(round_state.kind());
 
 						return round_state.result().unwrap();
 					}
@@ -1614,8 +1574,9 @@ async fn perform_round(
 		slog!(ReceivedRoundForfeits, round_seq, attempt_seq,
 			max_round_sign_time: srv.config.round_sign_time,
 			nb_forfeits: round_state.signing_forfeits().forfeit_part_sigs.len(),
-			duration: Instant::now().duration_since(receive_forfeit_signatures_start),
+			duration: round_step.duration(),
 		);
+		telemetry::set_round_step_duration(round_step);
 
 		let state = round_state.into_signing_forfeits();
 		if let Some(missing) = state.check_forfeits() {
@@ -1626,12 +1587,8 @@ async fn perform_round(
 		// ****************************************************************
 		// * Finish the round
 		// ****************************************************************
-		let mut span = tracer_provider
-			.span_builder(telemetry::TRACE_RUN_ROUND_FINALIZING)
-			.with_kind(SpanKind::Internal)
-			.start_with_context(&tracer_provider, &parent_context);
-		span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
-		span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
+		let round_step = telemetry::RoundStep::FinalStage(Instant::now());
+		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		round_state = match state.finish(&srv).await {
 			Ok(()) => {
@@ -1642,13 +1599,28 @@ async fn perform_round(
 			},
 		};
 
-		telemetry::set_full_round_metrics(
-			round_seq.into(), attempt_seq, round_state.kind(),
-			input_volume, input_count, output_count, offboard_count,
-		);
+		telemetry::set_round_step_duration(round_step);
+		telemetry::set_round_state(round_state.kind());
 
 		return round_state.result().unwrap();
 	}
+}
+
+fn trace_round_step(
+	round_seq: RoundSeq,
+	tracer_provider: &BoxedTracer,
+	parent_context: &opentelemetry::context::Context,
+	attempt_seq: usize,
+	round_step: &telemetry::RoundStep,
+) -> <BoxedTracer as Tracer>::Span {
+	let mut span = tracer_provider
+		.span_builder(round_step.as_str())
+		.with_kind(SpanKind::Internal)
+		.start_with_context(tracer_provider, &parent_context);
+	span.set_int_attr(telemetry::ATTRIBUTE_ROUND_SEQ, round_seq.inner());
+	span.set_int_attr(telemetry::ATTRIBUTE_ATTEMPT_SEQ, attempt_seq);
+
+	span
 }
 
 /// This method is called from a tokio thread so it can be long-lasting.

@@ -137,8 +137,10 @@ impl_slog!(NoRoundPayments, Info, "Nothing to do this round, sitting it out...")
 pub struct ReceivedRoundPayments {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
-	pub nb_inputs: usize,
-	pub nb_outputs: usize,
+	pub input_volume: Amount,
+	pub input_count: usize,
+	pub output_count: usize,
+	pub offboard_count: usize,
 	#[serde(with = "crate::serde_utils::duration")]
 	pub duration: Duration,
 	#[serde(with = "crate::serde_utils::duration")]
