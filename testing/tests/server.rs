@@ -383,6 +383,16 @@ async fn restart_funded_server() {
 }
 
 #[tokio::test]
+async fn restart_custom_cfg_server() {
+	let ctx = TestContext::new("server/restart_custom_cfg_server").await;
+	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.vtxo_exit_delta = 24;
+	}).await;
+	srv.stop().await.unwrap();
+	srv.start().await.unwrap();
+}
+
+#[tokio::test]
 async fn restart_server_with_payments() {
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
 	let mut srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
@@ -1686,3 +1696,54 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains("htlc vtxo amount too low for invoice"), "err: {err}");
 }
+
+#[tokio::test]
+async fn aspd_config_change(){
+	let ctx = TestContext::new("aspd_config_change").await;
+	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.vtxo_exit_delta = 12;
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	let bark1 = ctx.new_bark("bark1", &srv).await;
+	let bark2 = ctx.new_bark("bark2", &srv).await;
+	ctx.fund_bark(&bark1, sat(1_000_000)).await;
+	ctx.fund_bark(&bark2, sat(1_000_000)).await;
+
+	bark2.board(sat(800_000)).await;
+	bark1.board(sat(200_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
+	srv.stop().await.unwrap();
+
+	srv.config_mut().vtxo_exit_delta = 24;
+
+	srv.start().await.unwrap();
+
+	bark1.set_ark_url(&srv).await;
+	bark2.set_ark_url(&srv).await;
+
+	// old vtxos still have the same exit_delta
+
+	let vtxos1 = bark1.vtxos().await;
+	let vtxos2 = bark2.vtxos().await;
+	assert_eq!(vtxos1[0].exit_delta, 12);
+	assert_eq!(vtxos2[0].exit_delta, 12);
+	assert_eq!(srv.config().vtxo_exit_delta, 24);
+
+	// transactions still work
+
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
+	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
+
+	assert_eq!(bark1.offchain_balance().await, sat(180_000));
+	assert_eq!(bark2.offchain_balance().await, sat(820_000));
+
+	// new vtxo should have new exit_delta
+	let new_vtxo = bark1.vtxos().await;
+	assert_eq!(new_vtxo[0].exit_delta, 24);
+}
+
