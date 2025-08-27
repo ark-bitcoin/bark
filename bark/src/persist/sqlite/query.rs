@@ -546,13 +546,14 @@ pub fn store_pending_confirmation_round(
 ) -> anyhow::Result<PendingConfirmationState> {
 	// Store the round
 	let mut statement = tx.prepare("
-		INSERT INTO bark_round_attempt (round_seq, round_txid, payment_requests, offboard_requests, vtxos, status)
-		VALUES (:round_seq, :round_txid, :payment_requests, :offboard_requests, :vtxos, :status)
+		INSERT INTO bark_round_attempt (round_seq, attempt_seq, round_tx, round_txid, payment_requests, offboard_requests, vtxos, status)
+		VALUES (:round_seq, :attempt_seq, :round_tx, :round_txid, :payment_requests, :offboard_requests, :vtxos, :status)
 		RETURNING id;"
 	)?;
 
 	let round_attempt_id = statement.query_row(named_params! {
 		":round_seq": round_seq.inner(),
+		":attempt_seq": 0,
 		":round_txid": round_txid.to_string(),
 		":status": RoundStateKind::PendingConfirmation.to_string(),
 		":round_tx": serialize_hex(&round_tx),
