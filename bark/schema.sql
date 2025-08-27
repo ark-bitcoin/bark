@@ -103,23 +103,6 @@ CREATE TABLE bark_exit_child_transactions (
 				child_tx BLOB NOT NULL,
 				tx_origin TEXT NOT NULL
 			);
-CREATE TABLE bark_round_attempt (
-				id INTEGER PRIMARY KEY,
-				round_seq INTEGER NOT NULL,
-				attempt_seq INTEGER NOT NULL,
-				status TEXT NOT NULL,
-				round_txid TEXT UNIQUE,
-				round_tx TEXT,
-				payment_requests BLOB NOT NULL,
-				offboard_requests BLOB NOT NULL,
-				cosign_keys BLOB,
-				secret_nonces BLOB,
-				vtxos BLOB,
-				vtxo_tree BLOB,
-				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-				updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-				UNIQUE(round_seq, attempt_seq)
-			);
 CREATE TABLE vtxo_forfeited_in_round (
 				id INTEGER PRIMARY KEY,
 				double_spend_txid TEXT,
@@ -142,6 +125,23 @@ CREATE VIEW vtxo_view
 			JOIN most_recent_vtxo_state as vs
 				ON v.id = vs.vtxo_id
 /* vtxo_view(id,expiry_height,amount_sat,raw_vtxo,created_at,locked_in_round_attempt_id,state,state_kind,last_updated_at) */;
+CREATE TABLE IF NOT EXISTS "bark_round_attempt" (
+				id INTEGER PRIMARY KEY,
+				round_seq INTEGER,
+				attempt_seq INTEGER,
+				status TEXT NOT NULL,
+				round_txid TEXT UNIQUE,
+				round_tx TEXT,
+				payment_requests BLOB NOT NULL,
+				offboard_requests BLOB NOT NULL,
+				cosign_keys BLOB,
+				secret_nonces BLOB,
+				vtxos BLOB,
+				vtxo_tree BLOB,
+				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+				updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+				UNIQUE(round_seq, attempt_seq)
+			);
 CREATE VIEW round_view
 			AS SELECT
 				r.id,

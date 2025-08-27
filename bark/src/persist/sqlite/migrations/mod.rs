@@ -12,6 +12,7 @@ mod m0011_exit_ancestor_info;
 mod m0012_round;
 mod m0013_round_sync;
 mod m0014_drop_past_round_sync;
+mod m0015_optional_round_seq;
 
 use anyhow::Context;
 use log::{trace, debug};
@@ -31,6 +32,7 @@ use m0011_exit_ancestor_info::Migration0011;
 use m0012_round::Migration0012;
 use m0013_round_sync::Migration0013;
 use m0014_drop_past_round_sync::Migration0014;
+use m0015_optional_round_seq::Migration0015;
 
 pub struct MigrationContext {}
 
@@ -62,6 +64,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0012{})?;
 		self.try_migration(conn, &Migration0013{})?;
 		self.try_migration(conn, &Migration0014{})?;
+		self.try_migration(conn, &Migration0015{})?;
 		Ok(())
 	}
 
@@ -218,7 +221,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 14).unwrap();
+		assert_current_version(&conn, 15).unwrap();
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_config").unwrap());

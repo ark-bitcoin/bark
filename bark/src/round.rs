@@ -348,8 +348,8 @@ impl From<RoundCancelledState> for RoundState {
 
 pub struct RoundContext {
 	pub round_attempt_id: i64,
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
+	pub round_seq: Option<RoundSeq>,
+	pub attempt_seq: Option<usize>,
 	pub participation: RoundParticipation,
 }
 
@@ -376,7 +376,7 @@ pub trait StartNewAttempt: Sized + GetRoundContext + Into<RoundState> {
 		}), self.into())?;
 
 		Ok(db.store_new_round_attempt(
-			round_context.round_seq,
+			round_context.round_seq.expect("round seq should be present"),
 			attempt_seq,
 			round_context.participation.clone())?)
 	}
@@ -437,8 +437,8 @@ impl GetRoundContext for AttemptStartedState {
 	fn round_context(&self) -> RoundContext {
 		RoundContext {
 			round_attempt_id: self.round_attempt_id,
-			round_seq: self.round_seq,
-			attempt_seq: self.attempt_seq,
+			round_seq: Some(self.round_seq),
+			attempt_seq: Some(self.attempt_seq),
 			participation: self.participation.clone(),
 		}
 	}
@@ -585,8 +585,8 @@ impl GetRoundContext for PaymentSubmittedState {
 	fn round_context(&self) -> RoundContext {
 		RoundContext {
 			round_attempt_id: self.round_attempt_id,
-			round_seq: self.round_seq,
-			attempt_seq: self.attempt_seq,
+			round_seq: Some(self.round_seq),
+			attempt_seq: Some(self.attempt_seq),
 			participation: self.participation.clone(),
 		}
 	}
@@ -763,8 +763,8 @@ impl GetRoundContext for VtxoTreeSignedState {
 	fn round_context(&self) -> RoundContext {
 		RoundContext {
 			round_attempt_id: self.round_attempt_id,
-			round_seq: self.round_seq,
-			attempt_seq: self.attempt_seq,
+			round_seq: Some(self.round_seq),
+			attempt_seq: Some(self.attempt_seq),
 			participation: self.participation.clone(),
 		}
 	}
@@ -981,8 +981,8 @@ impl GetRoundContext for ForfeitSignedState {
 	fn round_context(&self) -> RoundContext {
 		RoundContext {
 			round_attempt_id: self.round_attempt_id,
-			round_seq: self.round_seq,
-			attempt_seq: self.attempt_seq,
+			round_seq: Some(self.round_seq),
+			attempt_seq: Some(self.attempt_seq),
 			participation: self.participation.clone(),
 		}
 	}
@@ -1013,8 +1013,8 @@ impl ForfeitSignedState {
 		debug_assert_eq!(self.round_txid, RoundId::from(round_tx.compute_txid()));
 		let state = PendingConfirmationState {
 			round_attempt_id: self.round_attempt_id,
-			round_seq: self.round_seq,
-			attempt_seq: self.attempt_seq,
+			round_seq: Some(self.round_seq),
+			attempt_seq: Some(self.attempt_seq),
 			participation: self.participation.clone(),
 			forfeited_vtxos: self.forfeited_vtxos.clone(),
 			round_txid: self.round_txid,
@@ -1055,7 +1055,7 @@ impl ForfeitSignedState {
 
 				return Ok(ProgressResult::Progress { state: state.into() });
 			} else {
-				trace!("Round {} for which forfeit were signed is still not confirmed nor cancelled.", round_context.round_seq);
+				trace!("Round {} for which forfeit were signed is still not confirmed nor cancelled.", round_context.round_attempt_id);
 			}
 		}
 
@@ -1131,8 +1131,8 @@ impl ForfeitSignedState {
 #[derive(Debug)]
 pub struct PendingConfirmationState {
 	pub round_attempt_id: i64,
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
+	pub round_seq: Option<RoundSeq>,
+	pub attempt_seq: Option<usize>,
 	pub participation: RoundParticipation,
 	pub round_tx: Transaction,
 	pub round_txid: RoundId,
@@ -1254,7 +1254,7 @@ impl PendingConfirmationState {
 		}
 
 		if let Ok(Some(txid)) = check_round_cancelled(&self, tip, &wallet.chain).await {
-			info!("Round {} has been cancelled after broadcast", self.round_seq);
+			info!("Round {} has been cancelled after broadcast", self.round_attempt_id);
 			let state = self.to_cancelled_state(&wallet.db, txid)
 				.map_err(|e| {
 					error!("DB error when trying to transition round to RoundCancelledState. {}", e);
@@ -1283,8 +1283,8 @@ impl PendingConfirmationState {
 #[derive(Debug)]
 pub struct RoundConfirmedState {
 	pub round_attempt_id: i64,
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
+	pub round_seq: Option<RoundSeq>,
+	pub attempt_seq: Option<usize>,
 	pub round_tx: Transaction,
 	pub round_txid: RoundId,
 }
@@ -1305,8 +1305,8 @@ pub struct RoundAbandonedState {
 #[derive(Debug)]
 pub struct RoundCancelledState {
 	pub round_attempt_id: i64,
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
+	pub round_seq: Option<RoundSeq>,
+	pub attempt_seq: Option<usize>,
 	pub round_txid: RoundId,
 	pub forfeited_vtxos: Vec<VtxoForfeitedInRound>,
 }
