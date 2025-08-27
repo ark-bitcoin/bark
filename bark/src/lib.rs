@@ -914,8 +914,9 @@ impl Wallet {
 				}
 
 				let round_tx = Transaction::from_bytes(&round.round_tx)?;
+				let round_seq = RoundSeq::new(round.round_seq);
 				self.db.store_pending_confirmation_round(
-					RoundSeq::new(0), round_id, round_tx, reqs, vtxos,
+					round_seq, round_id, round_tx, reqs, vtxos,
 				)?;
 
 				Ok(())
