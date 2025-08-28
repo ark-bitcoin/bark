@@ -197,7 +197,8 @@ impl BitcoindHelper {
 	}
 
 	pub fn rpc_url(&self) -> String {
-		format!("http://127.0.0.1:{}", self.state.rpc_port.expect("A port has been picked. Is bitcoind running?"))
+		format!("http://127.0.0.1:{}", self.state.rpc_port
+			.expect("A port has been picked. Is bitcoind running?"))
 	}
 
 	pub fn p2p_url(&self) -> String {
@@ -209,8 +210,12 @@ impl BitcoindHelper {
 		let auth = self.auth();
 		let (user, pass) = auth.get_user_pass()?;
 
-		let timeout_str = std::env::var(BITCOINRPC_TIMEOUT_SECS).unwrap_or_else(|_| String::from("15"));
-		let timeout = std::time::Duration::from_secs(timeout_str.parse::<u64>().expect("BITCOINRPC_TIMEOUT_SECS is not a number"));
+		let timeout_str = std::env::var(BITCOINRPC_TIMEOUT_SECS)
+			.unwrap_or_else(|_| String::from("15"));
+		let timeout = Duration::from_secs(
+			timeout_str.parse::<u64>()
+				.expect("BITCOINRPC_TIMEOUT_SECS is not a number"),
+		);
 
 		let transport = rpc::jsonrpc::http::simple_http::Builder::new()
 			.url(&url).with_context(|| format!("Invalid rpc-url: {}", url))?
