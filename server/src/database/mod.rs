@@ -84,7 +84,9 @@ impl Db {
 		let config = Self::config(database, postgres_config);
 
 		let manager = PostgresConnectionManager::new(config, NoTls);
-		Ok(Pool::builder().build(manager).await?)
+		Ok(Pool::builder()
+			.error_sink(Box::new(PoolErrorSink))
+			.build(manager).await?)
 	}
 
 	async fn check_database_emptiness(conn: &Client) -> anyhow::Result<()> {
@@ -515,6 +517,21 @@ fn wallet_table(kind: WalletKind) -> &'static str {
 	match kind {
 		WalletKind::Rounds => "wallet_changeset",
 		WalletKind::Forfeits => "forfeits_wallet_changeset",
+	}
+}
+
+#[derive(Debug)]
+struct PoolErrorSink;
+
+impl bb8::ErrorSink<tokio_postgres::Error> for PoolErrorSink {
+	fn sink(&self, error: tokio_postgres::Error) {
+		slog!(PostgresPoolError, err: error.to_string(),
+			code: error.code().map(|c| c.code().to_owned()),
+		);
+	}
+
+	fn boxed_clone(&self) -> Box<dyn bb8::ErrorSink<tokio_postgres::Error>> {
+		Box::new(PoolErrorSink)
 	}
 }
 
