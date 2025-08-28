@@ -35,7 +35,6 @@ use ark::encode::ProtocolEncoding;
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
-use crate::database::forfeits::ForfeitState;
 
 
 const DEFAULT_DATABASE: &str = "postgres";
@@ -265,23 +264,17 @@ impl Db {
 	/// Fetch all vtxos that have been forfeited.
 	pub async fn fetch_all_forfeited_vtxos(
 		&self,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Vtxo, ForfeitState)>> + '_> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
 		let conn = self.pool.get().await?;
-		let statement = conn.prepare("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept \
-			FROM vtxo WHERE forfeit_state IS NOT NULL
+		let stmt = conn.prepare("
+			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL
 		").await?;
 
 		let params: Vec<String> = vec![];
-		let rows = conn.query_raw(&statement, params).await?;
-		Ok(rows.try_filter_map(|row| async {
-			let vtxo = VtxoState::try_from(row).expect("corrupt db");
-			if let Some(state) = vtxo.forfeit_state {
-				Ok(Some((vtxo.vtxo, state)))
-			} else {
-				Ok(None)
-			}
-		}).err_into())
+		Ok(conn.query_raw(&stmt, params).await?
+			.err_into()
+			.map_ok(|row| Vtxo::deserialize(row.get("vtxo")).expect("corrupt db: vtxo"))
+		)
 	}
 
 	/// Returns [None] if all the ids were not previously marked as signed
