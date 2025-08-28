@@ -340,18 +340,6 @@ impl TxIndex {
 		Ok(batch)
 	}
 
-	pub async fn status_of(&self, txid: Txid) -> anyhow::Result<Option<TxStatus>> {
-		match self.data.status_of(&txid).await {
-			Some(status) => Ok(Some(status)),
-			None => {
-				match self.database_to_index(txid).await? {
-					Some(tx) => Ok(Some(tx.status())),
-					None => Ok(None),
-				}
-			}
-		}
-	}
-
 	pub async fn get_or_insert(
 		&self,
 		txid: Txid,
