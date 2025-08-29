@@ -44,6 +44,19 @@ use crate::secret::Secret;
 use crate::telemetry::SpanExt;
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
+
+#[macro_export]
+macro_rules! rslog {
+	($struct:ident, $state:ident, $( $args:tt )*) => {
+		slog!($struct,
+			round_seq: $state.round_seq,
+			attempt_seq: $state.attempt_seq,
+			$( $args )*
+		);
+	};
+	($struct:ident, $state:ident) => { rslog!($struct, $state, ); };
+}
+
 #[derive(Debug)]
 pub enum RoundInput {
 	RegisterPayment {
@@ -276,16 +289,12 @@ impl CollectingPayments {
 	) -> anyhow::Result<()> {
 		for out in outputs {
 			if out.nonces.len() != self.round_data.nb_vtxo_nonces {
-				slog!(RoundUserBadNbNonces, round_seq: self.round_seq,
-					attempt_seq: self.attempt_seq, nb_cosign_nonces: out.nonces.len(),
-				);
+				rslog!(RoundUserBadNbNonces, self, nb_cosign_nonces: out.nonces.len());
 				bail!("incorrect number of cosign nonces per set");
 			}
 
 			if self.inputs_per_cosigner.contains_key(&out.req.cosign_pubkey) {
-				slog!(RoundUserDuplicateCosignPubkey, round_seq: self.round_seq,
-					attempt_seq: self.attempt_seq, cosign_pubkey: out.req.cosign_pubkey,
-				);
+				rslog!(RoundUserDuplicateCosignPubkey, self, cosign_pubkey: out.req.cosign_pubkey);
 				bail!("duplicate cosign key {}", out.req.cosign_pubkey);
 			}
 		}
@@ -293,9 +302,7 @@ impl CollectingPayments {
 		if let Some(max) = self.round_data.max_vtxo_amount {
 			for out in outputs {
 				if out.req.vtxo.amount > max {
-					slog!(RoundUserBadOutputAmount, round_seq: self.round_seq,
-						attempt_seq: self.attempt_seq, amount: out.req.vtxo.amount,
-					);
+					rslog!(RoundUserBadOutputAmount, self, amount: out.req.vtxo.amount);
 					return badarg!("output exceeds maximum vtxo amount of {max}");
 				}
 			}
@@ -310,15 +317,11 @@ impl CollectingPayments {
 		let mut unique_inputs = HashSet::with_capacity(inputs.len());
 		for input in inputs {
 			if !unique_inputs.insert(input) {
-				slog!(RoundUserVtxoDuplicateInput, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-					vtxo: input.vtxo_id,
-				);
+				rslog!(RoundUserVtxoDuplicateInput, self, vtxo: input.vtxo_id);
 				bail!("user provided duplicate inputs");
 			}
 			if self.all_inputs.contains_key(&input.vtxo_id) {
-				slog!(RoundUserVtxoAlreadyRegistered, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-					vtxo: input.vtxo_id,
-				);
+				rslog!(RoundUserVtxoAlreadyRegistered, self, vtxo: input.vtxo_id);
 				bail!("vtxo {} already registered", input.vtxo_id);
 			}
 		}
@@ -326,9 +329,7 @@ impl CollectingPayments {
 		if let Some(ref allowed) = self.allowed_inputs {
 			// This means we're not trying first time and we filter inputs.
 			if let Some(bad) = inputs.iter().find(|i| !allowed.contains(&i.vtxo_id)) {
-				slog!(RoundUserVtxoNotAllowed, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-					vtxo: bad.vtxo_id,
-				);
+				rslog!(RoundUserVtxoNotAllowed, self, vtxo: bad.vtxo_id);
 				bail!("input vtxo {} has been banned for this round", bad.vtxo_id);
 			}
 		}
@@ -398,8 +399,9 @@ impl CollectingPayments {
 			Err(e) => {
 				if let Some(nf) = e.downcast_ref::<NotFound>() {
 					for id in nf.identifiers() {
-						slog!(RoundUserVtxoUnknown, round_seq: self.round_seq,
-							vtxo: Some(VtxoId::from_str(id).expect("should be a valid vtxoid")));
+						rslog!(RoundUserVtxoUnknown, self,
+							vtxo: Some(VtxoId::from_str(id).expect("should be a valid vtxoid")),
+						);
 					}
 				}
 				Err(e)
@@ -424,7 +426,7 @@ impl CollectingPayments {
 		let lock = match srv.vtxos_in_flux.lock(&input_ids) {
 			Ok(l) => l,
 			Err(id) => {
-				slog!(RoundUserVtxoInFlux, round_seq: self.round_seq, attempt_seq: self.attempt_seq, vtxo: id);
+				rslog!(RoundUserVtxoInFlux, self, vtxo: id);
 				bail!("vtxo {id} already in flux");
 			},
 		};
@@ -436,7 +438,7 @@ impl CollectingPayments {
 			Ok(i) => i,
 			Err(e) => {
 				let ret = if let Some(id) = e.downcast_ref::<VtxoId>().cloned() {
-					slog!(RoundUserVtxoUnknown, round_seq: self.round_seq, vtxo: Some(id));
+					rslog!(RoundUserVtxoUnknown, self, vtxo: Some(id));
 					Err(e).not_found([id], "input vtxo does not exist")
 				} else {
 					Err(e)
@@ -456,16 +458,12 @@ impl CollectingPayments {
 		}
 
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
-			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
-				attempt_seq: self.attempt_seq, error: e.to_string(),
-			);
+			rslog!(RoundPaymentRegistrationFailed, self, error: e.to_string());
 			return Err(e).context("registration failed");
 		}
 
 		if let Err(e) = srv.validate_board_inputs(&input_vtxos).await {
-			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
-				attempt_seq: self.attempt_seq, error: e.to_string(),
-			);
+			rslog!(RoundPaymentRegistrationFailed, self, error: e.to_string());
 			return Err(e).context("registration failed");
 		}
 
@@ -482,8 +480,8 @@ impl CollectingPayments {
 		vtxo_requests: Vec<VtxoParticipant>,
 		offboards: Vec<OffboardRequest>,
 	) {
-		slog!(RoundPaymentRegistered, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			nb_inputs: inputs.len(), nb_outputs: vtxo_requests.len(), nb_offboards: offboards.len(),
+		rslog!(RoundPaymentRegistered, self, nb_inputs: inputs.len(),
+			nb_outputs: vtxo_requests.len(), nb_offboards: offboards.len(),
 		);
 
 		// If we're adding inputs for the first time, also add them to locked_inputs.
@@ -504,8 +502,8 @@ impl CollectingPayments {
 
 		// Check whether our round is full.
 		if self.all_outputs.len() == self.round_data.max_output_vtxos {
-			slog!(FullRound, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-				nb_outputs: self.all_outputs.len(), max_output_vtxos: self.round_data.max_output_vtxos,
+			rslog!(FullRound, self, nb_outputs: self.all_outputs.len(),
+				max_output_vtxos: self.round_data.max_output_vtxos,
 			);
 			self.proceed = true;
 		}
@@ -524,8 +522,8 @@ impl CollectingPayments {
 		span.set_int_attr("expiry_height", expiry_height);
 		span.set_int_attr("block_height", tip);
 
-		slog!(ConstructingRoundVtxoTree, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			tip_block_height: tip, vtxo_expiry_block_height: expiry_height,
+		rslog!(ConstructingRoundVtxoTree, self, tip_block_height: tip,
+			vtxo_expiry_block_height: expiry_height,
 		);
 
 		// Since it's possible in testing that we only have to do offboards,
@@ -732,9 +730,7 @@ impl SigningVtxoTree {
 				bail!("pubkey is not part of cosigner group");
 			},
 		};
-		slog!(RoundVtxoSignaturesRegistered, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			nb_vtxo_signatures: signatures.len(), cosigner: pubkey,
-		);
+		rslog!(RoundVtxoSignaturesRegistered, self, nb_vtxo_signatures: signatures.len(), cosigner: pubkey);
 
 		let res = self.unsigned_vtxo_tree.verify_branch_cosign_partial_sigs(
 			&self.cosign_agg_nonces,
@@ -761,9 +757,7 @@ impl SigningVtxoTree {
 		for (pk, vtxos) in self.inputs_per_cosigner.iter() {
 			if !self.cosign_part_sigs.contains_key(pk) {
 				// Disallow all inputs by this cosigner.
-				slog!(DroppingLateVtxoSignatureVtxos, round_seq: self.round_seq,
-					attempt_seq: self.attempt_seq, disallowed_vtxos: vtxos.clone(),
-				);
+				rslog!(DroppingLateVtxoSignatureVtxos, self, disallowed_vtxos: vtxos.clone());
 				for id in vtxos {
 					allowed_inputs.remove(id);
 				}
@@ -808,8 +802,7 @@ impl SigningVtxoTree {
 		let signed_vtxos = self.unsigned_vtxo_tree
 			.into_signed_tree(cosign_sigs)
 			.into_cached_tree();
-		slog!(CreatedSignedVtxoTree, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(),
+		rslog!(CreatedSignedVtxoTree, self, nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(),
 			duration: round_step.duration(),
 		);
 		telemetry::set_round_step_duration(round_step);
@@ -900,8 +893,8 @@ impl SigningForfeits {
 		&mut self,
 		signatures: Vec<(VtxoId, Vec<musig::PublicNonce>, Vec<musig::PartialSignature>)>,
 	) -> anyhow::Result<()> {
-		slog!(ReceivedForfeitSignatures, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			nb_forfeits: signatures.len(), vtxo_ids: signatures.iter().map(|v| v.0).collect::<Vec<_>>(),
+		rslog!(ReceivedForfeitSignatures, self, nb_forfeits: signatures.len(),
+			vtxo_ids: signatures.iter().map(|v| v.0).collect::<Vec<_>>(),
 		);
 
 		for (id, nonces, sigs) in signatures {
@@ -918,9 +911,7 @@ impl SigningForfeits {
 					Err(e) => debug!("Invalid forfeit sigs for {}: {}", id, e),
 				}
 			} else {
-				slog!(UnknownForfeitSignature, round_seq: self.round_seq,
-					attempt_seq: self.attempt_seq, vtxo_id: id,
-				);
+				rslog!(UnknownForfeitSignature, self, vtxo_id: id);
 			}
 		}
 
@@ -934,9 +925,7 @@ impl SigningForfeits {
 	fn restart_missing_forfeits(self, missing: Option<HashSet<VtxoId>>) -> CollectingPayments {
 		let allowed_inputs = if let Some(missing) = missing {
 			for input in &missing {
-				slog!(MissingForfeits, round_seq: self.round_seq,
-					attempt_seq: self.attempt_seq, input: *input,
-				);
+				rslog!(MissingForfeits, self, input: *input);
 			}
 
 			self.all_inputs.keys().copied()
@@ -945,16 +934,14 @@ impl SigningForfeits {
 		} else {
 			self.all_inputs.keys().copied().filter(|v| {
 				if !self.forfeit_part_sigs.contains_key(v) {
-					slog!(MissingForfeits, round_seq: self.round_seq,
-						attempt_seq: self.attempt_seq, input: *v,
-					);
+					rslog!(MissingForfeits, self, input: *v);
 					false
 				} else {
 					true
 				}
 			}).collect()
 		};
-		slog!(RestartMissingForfeits, round_seq: self.round_seq, attempt_seq: self.attempt_seq);
+		rslog!(RestartMissingForfeits, self);
 		CollectingPayments::new(
 			self.round_seq,
 			self.attempt_seq + 1,
@@ -1004,8 +991,7 @@ impl SigningForfeits {
 
 		let round_txid = signed_round_tx.txid;
 
-		slog!(BroadcastedFinalizedRoundTransaction, round_seq: self.round_seq,
-			attempt_seq: self.attempt_seq, txid: round_txid,
+		rslog!(BroadcastedFinalizedRoundTransaction, self, txid: round_txid,
 			signing_time: round_step.duration(),
 		);
 
@@ -1027,16 +1013,12 @@ impl SigningForfeits {
 		trace!("Storing round result");
 		if log_enabled!(RoundVtxoCreated::LEVEL) {
 			for vtxo in self.signed_vtxos.all_vtxos() {
-				slog!(RoundVtxoCreated, round_seq: self.round_seq, vtxo_id: vtxo.id(),
-					vtxo_type: vtxo.policy().policy_type(),
-				);
+				rslog!(RoundVtxoCreated, self, vtxo_id: vtxo.id(), vtxo_type: vtxo.policy().policy_type());
 			}
 		}
 		let mut sec_nonces = self.forfeit_sec_nonces.take().unwrap();
 		let forfeit_vtxos = self.all_inputs.iter().map(|(id, vtxo)| {
-			slog!(StoringForfeitVtxo, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-				out_point: vtxo.point(),
-			);
+			rslog!(StoringForfeitVtxo, self, out_point: vtxo.point());
 			let (user_nonces, user_part_sigs) = self.forfeit_part_sigs.remove(id)
 				.expect("missing part sigs");
 			let forfeit_state = ForfeitState {
@@ -1057,7 +1039,7 @@ impl SigningForfeits {
 			forfeit_vtxos,
 		).await;
 		if let Err(e) = result {
-			slog!(FatalStoringRound, round_seq: self.round_seq, error: format!("{:?}", e),
+			rslog!(FatalStoringRound, self, error: format!("{:?}", e),
 				signed_tx: serialize(&signed_round_tx.tx),
 				vtxo_tree: self.signed_vtxos.spec.serialize(),
 				connector_key: self.connector_key.secret_key(),
@@ -1068,8 +1050,7 @@ impl SigningForfeits {
 		srv.forfeits.register_forfeits(self.all_inputs.keys().copied().collect())
 			.expect("forfeit watcher shut down");
 
-		slog!(RoundFinished, round_seq: self.round_seq, attempt_seq: self.attempt_seq,
-			txid: round_txid, vtxo_expiry_block_height: self.expiry_height,
+		rslog!(RoundFinished, self, txid: round_txid, vtxo_expiry_block_height: self.expiry_height,
 			duration: Instant::now().duration_since(self.attempt_start),
 			nb_input_vtxos: self.all_inputs.len(),
 		);
@@ -1125,7 +1106,7 @@ enum RoundState {
 }
 
 impl RoundState {
-	fn kind(&self, ) -> RoundStateKind {
+	fn kind(&self) -> RoundStateKind {
 		match &self {
 			Self::CollectingPayments(_) => RoundStateKind::CollectingPayments,
 			Self::SigningVtxoTree(_) => RoundStateKind::SigningVtxoTree,
