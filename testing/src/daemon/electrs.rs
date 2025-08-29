@@ -24,8 +24,8 @@ pub enum ElectrsType {
 impl fmt::Debug for ElectrsType {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			ElectrsType::Esplora => write!(f, "esplora-electrs"),
-			ElectrsType::Mempool => write!(f, "mempool-electrs"),
+			ElectrsType::Esplora => write!(f, "esplora"),
+			ElectrsType::Mempool => write!(f, "mempool"),
 		}
 	}
 }

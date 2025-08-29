@@ -91,7 +91,7 @@ steps:
     volumes:
       - /data:/host/data
     environment:
-      CHAIN_SOURCE: esplora-electrs
+      CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 4
@@ -108,7 +108,7 @@ steps:
     volumes:
       - /data:/host/data
     environment:
-      CHAIN_SOURCE: mempool-electrs
+      CHAIN_SOURCE: mempool
       TEST_DIRECTORY: ./test/mempool
       TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 4
