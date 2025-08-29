@@ -4,7 +4,6 @@ mod embedded {
 	use refinery::embed_migrations;
 	embed_migrations!("src/database/migrations");
 }
-mod utils;
 
 pub mod forfeits;
 pub mod ln;
@@ -35,7 +34,6 @@ use ark::encode::ProtocolEncoding;
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
-use crate::database::forfeits::ForfeitState;
 
 
 const DEFAULT_DATABASE: &str = "postgres";
@@ -85,7 +83,9 @@ impl Db {
 		let config = Self::config(database, postgres_config);
 
 		let manager = PostgresConnectionManager::new(config, NoTls);
-		Ok(Pool::builder().build(manager).await?)
+		Ok(Pool::builder()
+			.error_sink(Box::new(PoolErrorSink))
+			.build(manager).await?)
 	}
 
 	async fn check_database_emptiness(conn: &Client) -> anyhow::Result<()> {
@@ -195,16 +195,15 @@ impl Db {
 
 		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept FROM vtxo \
+			SELECT vtxo FROM vtxo \
 			WHERE expiry <= $1 AND board_swept = false
 		", &[Type::INT4]).await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
 
-		//TODO(stevenroose) this is very inefficient but I suspect this code
-		// will be deprecated soon
 		Ok(rows.map_err(anyhow::Error::from).try_filter_map(|row| async {
-			let vtxo = VtxoState::try_from(row).expect("corrupt db").vtxo;
+			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
+			drop(row); // borrowck acts weird here
 			if !self.is_round_tx(vtxo.chain_anchor().txid).await? {
 				Ok(Some(vtxo))
 			} else {
@@ -265,23 +264,17 @@ impl Db {
 	/// Fetch all vtxos that have been forfeited.
 	pub async fn fetch_all_forfeited_vtxos(
 		&self,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Vtxo, ForfeitState)>> + '_> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
 		let conn = self.pool.get().await?;
-		let statement = conn.prepare("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept \
-			FROM vtxo WHERE forfeit_state IS NOT NULL
+		let stmt = conn.prepare("
+			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL
 		").await?;
 
 		let params: Vec<String> = vec![];
-		let rows = conn.query_raw(&statement, params).await?;
-		Ok(rows.try_filter_map(|row| async {
-			let vtxo = VtxoState::try_from(row).expect("corrupt db");
-			if let Some(state) = vtxo.forfeit_state {
-				Ok(Some((vtxo.vtxo, state)))
-			} else {
-				Ok(None)
-			}
-		}).err_into())
+		Ok(conn.query_raw(&stmt, params).await?
+			.err_into()
+			.map_ok(|row| Vtxo::deserialize(row.get("vtxo")).expect("corrupt db: vtxo"))
+		)
 	}
 
 	/// Returns [None] if all the ids were not previously marked as signed
@@ -522,6 +515,21 @@ fn wallet_table(kind: WalletKind) -> &'static str {
 	match kind {
 		WalletKind::Rounds => "wallet_changeset",
 		WalletKind::Forfeits => "forfeits_wallet_changeset",
+	}
+}
+
+#[derive(Debug)]
+struct PoolErrorSink;
+
+impl bb8::ErrorSink<tokio_postgres::Error> for PoolErrorSink {
+	fn sink(&self, error: tokio_postgres::Error) {
+		slog!(PostgresPoolError, err: error.to_string(),
+			code: error.code().map(|c| c.code().to_owned()),
+		);
+	}
+
+	fn boxed_clone(&self) -> Box<dyn bb8::ErrorSink<tokio_postgres::Error>> {
+		Box::new(PoolErrorSink)
 	}
 }
 

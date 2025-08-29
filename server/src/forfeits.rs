@@ -620,7 +620,7 @@ impl ForfeitWatcher {
 		let mut forfeited_vtxos = Box::pin(db.fetch_all_forfeited_vtxos().await
 			.context("db: failed to fetch forfeited vtxos")?);
 		while let Some(res) = forfeited_vtxos.next().await {
-			let (vtxo, _) = res.context("db: error fetching forfeited vtxo")?;
+			let vtxo = res.context("db: error fetching forfeited vtxo")?;
 			proc.register_vtxo(&vtxo).await
 				.context("bitcoind: failed to register forfeited vtxo")?;
 		}

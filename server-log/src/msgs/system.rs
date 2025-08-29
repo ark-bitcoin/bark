@@ -23,3 +23,11 @@ pub struct CriticalWorkerStopped {
 	pub name: String,
 }
 impl_slog!(CriticalWorkerStopped, Error, "a critical worker stopped unexpectedly");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostgresPoolError {
+	pub err: String,
+	pub code: Option<String>,
+}
+impl_slog!(PostgresPoolError, Error, "a bb8 postgresql pool error");
