@@ -1580,7 +1580,7 @@ async fn run_two_captainds() {
 
 #[tokio::test]
 async fn should_refuse_paying_invoice_not_matching_htlcs() {
-	let ctx = TestContext::new("aspd/should_refuse_paying_invoice_not_matching_htlcs").await;
+	let ctx = TestContext::new("server/should_refuse_paying_invoice_not_matching_htlcs").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -1590,7 +1590,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 	let dummy_invoice = lightningd_1.invoice(None, "dummy_invoice", "A dummy invoice").await;
 
-	// Start an aspd and link it to our cln installation
+	// Start a server and link it to our cln installation
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	#[derive(Clone)]
@@ -1635,7 +1635,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 #[tokio::test]
 async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
-	let ctx = TestContext::new("aspd/should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs").await;
+	let ctx = TestContext::new("server/should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -1643,7 +1643,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
 
-	// Start an aspd and link it to our cln installation
+	// Start a server and link it to our cln installation
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
 
 	#[derive(Clone)]
