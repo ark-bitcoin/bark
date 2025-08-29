@@ -345,7 +345,7 @@ impl Bark {
 		Ok(())
 	}
 
-	pub async fn lightning_receive(&self, invoice: String) -> () {
+	pub async fn lightning_receive(&self, invoice: String) {
 		self.try_lightning_receive(invoice).await.unwrap();
 	}
 

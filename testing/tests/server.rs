@@ -1,6 +1,5 @@
 
-use std::io::BufRead;
-use std::{io, iter};
+use std::iter;
 use std::fmt::Write;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -1503,14 +1502,8 @@ async fn server_refuse_claim_invoice_not_settled() {
 
 	let cloned = invoice_info.clone();
 	tokio::spawn(async move { lightningd_1.pay_bolt11(cloned.invoice).await; });
-	bark.lightning_receive(invoice_info.invoice).await;
-
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-	bark.offchain_balance().await;
-
-	assert!(io::BufReader::new(std::fs::File::open(bark.command_log_file()).unwrap()).lines().any(|line| {
-		line.unwrap().contains("input vtxo payment hash does not match preimage")
-	}));
+	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("bad user input: preimage doesn't match payment hash"), "err: {err}");
 }
 
 #[tokio::test]
