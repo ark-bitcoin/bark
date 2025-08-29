@@ -195,16 +195,15 @@ impl Db {
 
 		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept FROM vtxo \
+			SELECT vtxo FROM vtxo \
 			WHERE expiry <= $1 AND board_swept = false
 		", &[Type::INT4]).await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
 
-		//TODO(stevenroose) this is very inefficient but I suspect this code
-		// will be deprecated soon
 		Ok(rows.map_err(anyhow::Error::from).try_filter_map(|row| async {
-			let vtxo = VtxoState::try_from(row).expect("corrupt db").vtxo;
+			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
+			drop(row); // borrowck acts weird here
 			if !self.is_round_tx(vtxo.chain_anchor().txid).await? {
 				Ok(Some(vtxo))
 			} else {
