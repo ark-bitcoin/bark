@@ -4,7 +4,6 @@ mod embedded {
 	use refinery::embed_migrations;
 	embed_migrations!("src/database/migrations");
 }
-mod utils;
 
 pub mod forfeits;
 pub mod ln;
