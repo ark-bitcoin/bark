@@ -58,7 +58,10 @@ pub trait DaemonHelper {
 	async fn prepare(&self) -> anyhow::Result<()>;
 
 	/// A hook to run right after daemon succesfully started.
-	async fn post_start(&mut self) -> anyhow::Result<()> {
+	async fn post_start(
+		&mut self,
+		_log_handler_tx: &mpsc::Sender<Box<dyn LogHandler>>,
+	) -> anyhow::Result<()> {
 		Ok(())
 	}
 
@@ -116,7 +119,7 @@ impl<T> Daemon<T>
 
 		match res {
 			Ok(()) => {
-				if let Err(e) = self.inner.post_start().await {
+				if let Err(e) = self.inner.post_start(self.log_handler_tx.as_ref().unwrap()).await {
 					*self.daemon_state.get_mut() = DaemonState::Error;
 					bail!("post_start hook failed for '{}': {}", e, self.name);
 				}
