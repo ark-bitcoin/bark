@@ -163,7 +163,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 
 	lightningd_1.wait_for_gossip(1).await;
 
-	// Start an aspd and link it to our cln installation
+	// Start a server and link it to our cln installation
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_1), btc(10)).await;
 
 	// Start a bark and create a VTXO
