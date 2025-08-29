@@ -468,7 +468,7 @@ impl Bark {
 		let count = self.counter.fetch_add(1, Ordering::Relaxed);
 		let folder = self.config.datadir.join("cmd").join(format!("{:03}", count));
 		fs::create_dir_all(&folder).await?;
-		fs::write(folder.join("cmd"), &command_str).await?;
+		fs::write(folder.join("cmd.log"), &command_str).await?;
 		let mut command_log = self.command_log.lock().await;
 		command_log.write_all(
 			format!("\n\n\nCOMMAND: {}\n", command_str).as_bytes()
