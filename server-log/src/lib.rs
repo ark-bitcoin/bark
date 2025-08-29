@@ -140,14 +140,6 @@ impl<'a> ParsedRecord<'a> {
 		}
 	}
 
-	pub fn trace_id<T: LogMsg>(&self) -> Option<TraceId> {
-		if let Some(ref kv) = self.kv {
-			kv.trace_id
-		} else {
-			None
-		}
-	}
-
 	/// Try to parse the log message into the given structured log type.
 	pub fn try_as<T: LogMsg>(&self) -> Result<T, RecordParseError> {
 		if !self.is::<T>() {
@@ -156,6 +148,14 @@ impl<'a> ParsedRecord<'a> {
 
 		Ok(serde_json::from_str(self.kv.as_ref().map(|v| v.data.get()).unwrap_or(""))
 			.map_err(RecordParseError::Json)?)
+	}
+
+	pub fn trace_id<T: LogMsg>(&self) -> Option<TraceId> {
+		if let Some(ref kv) = self.kv {
+			kv.trace_id
+		} else {
+			None
+		}
 	}
 }
 

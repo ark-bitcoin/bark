@@ -11,8 +11,9 @@ use anyhow::Context;
 use bitcoin::{Network, Amount};
 use bitcoin::address::{Address, NetworkUnchecked};
 use log::{info, trace};
+use parking_lot::Mutex;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{self, mpsc, Mutex};
+use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
 use server_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
@@ -144,8 +145,8 @@ impl Captaind {
 	pub async fn trigger_round(&self) {
 		let start = Instant::now();
 		let minimum_wait = tokio::time::sleep(Duration::from_millis(500));
-		let mut l1 = self.subscribe_log::<TipUpdated>().await;
-		let mut l2 = self.subscribe_log::<TxIndexUpdateFinished>().await;
+		let mut l1 = self.subscribe_log::<TipUpdated>();
+		let mut l2 = self.subscribe_log::<TxIndexUpdateFinished>();
 		self.bitcoind().generate(1).await;
 		let _ = tokio::join!(l1.recv(), l2.recv(), minimum_wait);
 		trace!("Waited {} ms before starting round", start.elapsed().as_millis());
@@ -156,19 +157,19 @@ impl Captaind {
 		self.get_sweep_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
 	}
 
-	pub async fn add_slog_handler<L: SlogHandler + Send + Sync + 'static>(&self, handler: L) {
-		self.inner.slog_handlers.lock().await.push(Box::new(handler));
+	pub fn add_slog_handler<L: SlogHandler + Send + Sync + 'static>(&self, handler: L) {
+		self.inner.slog_handlers.lock().push(Box::new(handler));
 	}
 
 	/// Subscribe to all structured logs of the given type.
-	pub async fn subscribe_log<L: LogMsg>(&self) -> mpsc::UnboundedReceiver<L> {
+	pub fn subscribe_log<L: LogMsg>(&self) -> mpsc::UnboundedReceiver<L> {
 		let (tx, rx) = sync::mpsc::unbounded_channel();
 		self.add_slog_handler(move |log: &ParsedRecord| {
-			if log.is::<L>() {
-				return tx.send(log.try_as().expect("invalid slog data")).is_err();
+			if let Ok(msg) = log.try_as() {
+				return tx.send(msg).is_err();
 			}
 			false
-		}).await;
+		});
 		rx
 	}
 
@@ -176,14 +177,13 @@ impl Captaind {
 	pub async fn wait_for_log<L: LogMsg>(&self) -> L {
 		let (tx, mut rx) = sync::mpsc::channel(1);
 		self.add_slog_handler(move |log: &ParsedRecord| {
-			if log.is::<L>() {
-				let msg = log.try_as().expect("invalid slog data");
+			if let Ok(msg) = log.try_as() {
 				// if channel already closed, user is no longer interested
 				let _ = tx.try_send(msg);
 				return true;
 			}
 			false
-		}).await;
+		});
 		rx.recv().await.expect("log wait channel closed")
 	}
 }
@@ -273,7 +273,7 @@ impl DaemonHelper for CaptaindHelper {
 					Some(line) => {
 						let log = serde_json::from_str::<ParsedRecord>(&line)
 							.expect("error parsing slog line");
-						for handler in handlers.lock().await.iter_mut() {
+						for handler in handlers.lock().iter_mut() {
 							handler.process_slog(&log);
 						}
 					},

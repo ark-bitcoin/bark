@@ -95,7 +95,7 @@ async fn round_started_log_can_be_captured() {
 	let ctx = TestContext::new("server/capture_log").await;
 	let srv = ctx.new_captaind("server", None).await;
 
-	let mut log_stream = srv.subscribe_log::<server_log::RoundStarted>().await;
+	let mut log_stream = srv.subscribe_log::<server_log::RoundStarted>();
 	while let Some(l) = log_stream.recv().await {
 		info!("Captured log: Round started at {}", l.round_seq);
 		break;
@@ -146,7 +146,7 @@ async fn cant_spend_untrusted() {
 	ctx.bitcoind().fund_addr(addr, btc(10)).await;
 	assert_eq!(srv.wallet_status().await.total().to_sat(), 0);
 
-	let mut log_round_err = srv.subscribe_log::<RoundError>().await;
+	let mut log_round_err = srv.subscribe_log::<RoundError>();
 
 	// Set a time-out on the bark command for the refresh --all
 	// The command is expected to time-out
@@ -283,11 +283,11 @@ async fn sweep_vtxos() {
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, sat(500_000)).await);
 
 	// subscribe to a few log messages
-	let mut log_not_sweeping = srv.subscribe_log::<NotSweeping>().await;
-	let mut log_sweeping = srv.subscribe_log::<SweepBroadcast>().await;
-	let mut log_board_done = srv.subscribe_log::<BoardFullySwept>().await;
-	let mut log_round_done = srv.subscribe_log::<RoundFullySwept>().await;
-	let mut log_sweeps = srv.subscribe_log::<SweepingOutput>().await;
+	let mut log_not_sweeping = srv.subscribe_log::<NotSweeping>();
+	let mut log_sweeping = srv.subscribe_log::<SweepBroadcast>();
+	let mut log_board_done = srv.subscribe_log::<BoardFullySwept>();
+	let mut log_round_done = srv.subscribe_log::<RoundFullySwept>();
+	let mut log_sweeps = srv.subscribe_log::<SweepingOutput>();
 
 	// we board one vtxo and then a few blocks later another
 	bark.board(sat(75_000)).await;
@@ -353,7 +353,7 @@ async fn sweep_vtxos() {
 
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
 	srv.wait_for_log::<TxIndexUpdateFinished>().await;
-	let mut log_stats = srv.subscribe_log::<SweeperStats>().await;
+	let mut log_stats = srv.subscribe_log::<SweeperStats>();
 	srv.trigger_sweep().await;
 
 	// and eventually the round should be finished
@@ -580,7 +580,7 @@ async fn double_spend_round() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let mut l = srv.subscribe_log::<RoundUserVtxoAlreadyRegistered>().await;
+	let mut l = srv.subscribe_log::<RoundUserVtxoAlreadyRegistered>();
 	bark.refresh_all().await;
 	l.recv().wait(2500).await;
 }
@@ -674,7 +674,7 @@ async fn spend_unregistered_board() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let mut l = srv.subscribe_log::<RoundUserVtxoUnknown>().await;
+	let mut l = srv.subscribe_log::<RoundUserVtxoUnknown>();
 	tokio::spawn(async move {
 		let _ = bark.refresh_all().await;
 		// we don't care that that call fails
@@ -691,7 +691,7 @@ async fn spend_unconfirmed_board_round() {
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
 
-	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>();
 	tokio::spawn(async move {
 		let _ = bark.refresh_all().await;
 		// we don't care that that call fails
@@ -709,7 +709,7 @@ async fn spend_unconfirmed_board_oor() {
 	let bark2 = ctx.new_bark("bark2".to_string(), &srv).await;
 	bark1.board(sat(800_000)).await;
 
-	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>();
 	tokio::spawn(async move {
 		let _ = bark1.send_oor(bark2.address().await, sat(400_000)).await;
 		// we don't care that that call fails
@@ -806,7 +806,7 @@ async fn spend_unconfirmed_board_lightning() {
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	bark1.board(sat(800_000)).await;
 
-	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>().await;
+	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>();
 	tokio::spawn(async move {
 		let _ = bark1.send_lightning(invoice, Some(sat(400_000))).await;
 		// we don't care that that call fails
@@ -985,19 +985,19 @@ async fn claim_forfeit_connector_chain() {
 
 	// we do a refresh, but make it seem to the client that it failed
 	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
-	let mut log_round = srv.subscribe_log::<RoundFinished>().await;
+	let mut log_round = srv.subscribe_log::<RoundFinished>();
 	assert!(bark.try_refresh_all().await.is_err());
 	assert_eq!(bark.inround_balance().await, sat(4_000_000));
 	assert_eq!(log_round.recv().fast().await.unwrap().nb_input_vtxos, 10);
 
 	// start the exit process
-	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>().await;
+	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
 	bark.start_exit_vtxos([vtxo.id]).await;
 	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
-	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>().await;
+	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>();
 	ctx.generate_blocks(1).await;
 	let msg = log_confirmed.recv().await.unwrap();
 	assert_eq!(msg.vtxo, vtxo.id);
@@ -1005,7 +1005,7 @@ async fn claim_forfeit_connector_chain() {
 	ctx.generate_blocks(1).await;
 
 	// wait for connector txs to confirm and watcher to broadcast ff tx
-	let mut log_broadcast = srv.subscribe_log::<ForfeitBroadcasted>().await;
+	let mut log_broadcast = srv.subscribe_log::<ForfeitBroadcasted>();
 	let txid = async {
 		loop {
 			ctx.generate_blocks(1).await;
@@ -1046,20 +1046,20 @@ async fn claim_forfeit_round_connector() {
 
 	// we do a refresh, but make it seem to the client that it failed
 	let [vtxo] = bark.vtxos().await.try_into().expect("1 vtxo");
-	let mut log_round = srv.subscribe_log::<RoundFinished>().await;
+	let mut log_round = srv.subscribe_log::<RoundFinished>();
 	assert!(bark.try_refresh_all().await.is_err());
 	assert_eq!(bark.inround_balance().await, sat(800_000));
 	assert_eq!(log_round.recv().fast().await.expect("time-out").nb_input_vtxos, 1);
 
 	// start the exit process
-	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>().await;
+	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
 	bark.start_exit_vtxos([vtxo.id]).await;
 	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
 	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
-	let mut log_forfeit_broadcasted = srv.subscribe_log::<ForfeitBroadcasted>().await;
-	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>().await;
+	let mut log_forfeit_broadcasted = srv.subscribe_log::<ForfeitBroadcasted>();
+	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>();
 	ctx.generate_blocks(1).await;
 	assert_eq!(log_confirmed.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
