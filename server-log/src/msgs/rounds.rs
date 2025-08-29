@@ -71,6 +71,7 @@ impl_slog!(RoundUserVtxoInFlux, Trace, "user attempted to submit vtxo already in
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoUnknown {
 	pub round_seq: RoundSeq,
+	pub attempt_seq: usize,
 	pub vtxo: Option<VtxoId>,
 }
 impl_slog!(RoundUserVtxoUnknown, Trace, "user attempted to spend unknown vtxo");
@@ -312,6 +313,7 @@ impl_slog!(StoringForfeitVtxo, Trace, "Storing forfeit vtxo for outpoint");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundVtxoCreated {
 	pub round_seq: RoundSeq,
+	pub attempt_seq: usize,
 	pub vtxo_id: VtxoId,
 	pub vtxo_type: VtxoPolicyType,
 }
@@ -345,6 +347,7 @@ impl_slog!(RoundSyncError, Warn, "onchain wallet sync failed during round");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FatalStoringRound {
 	pub round_seq: RoundSeq,
+	pub attempt_seq: usize,
 	pub error: String,
 	#[serde(with = "crate::serde_utils::hex")]
 	pub signed_tx: Vec<u8>,
