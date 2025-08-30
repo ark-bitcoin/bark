@@ -1,18 +1,22 @@
 
 use std::iter;
+use std::time::Duration;
 use std::{collections::HashMap, fmt::{self, Debug}, str::FromStr, sync::Arc};
 
 use anyhow::Context;
 use bip39::rand;
+use bitcoin::hex::DisplayHex;
 use bitcoin::key::Keypair;
 use bitcoin::params::Params;
 use bitcoin::{Address, OutPoint, Transaction, Txid};
 use bitcoin::hashes::Hash;
-use bitcoin_ext::TxStatus;
+use bitcoin_ext::{TxStatus, P2TR_DUST};
+use futures::Stream;
 use log::{debug, error, info, trace, warn};
+use tokio_stream::StreamExt;
 use tonic::Code;
 
-use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundEvent, RoundId, RoundInfo, RoundSeq, VtxoOwnershipChallenge, MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
@@ -22,10 +26,98 @@ use server_rpc::protos;
 use crate::movement::{MovementArgs, MovementKind};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, WalletVtxo};
-use crate::{RoundParticipation, ROUND_DEEPLY_CONFIRMED, SECP};
+use crate::{ROUND_DEEPLY_CONFIRMED, SECP};
 use crate::onchain::ChainSourceClient;
-use crate::persist::BarkPersister;
-use crate::{AttemptError, ServerConnection, Wallet};
+use crate::persist::{BarkPersister, StoredVtxoRequest};
+use crate::{ServerConnection, Wallet};
+
+
+#[derive(Debug, Clone)]
+/// Struct to communicate your specific participation requests for an Ark round.
+pub struct RoundParticipation {
+	pub inputs: Vec<Vtxo>,
+	pub outputs: Vec<StoredVtxoRequest>,
+	pub offboards: Vec<OffboardRequest>,
+}
+
+/// Unrecoverable errors that can occur during a round attempt. For
+/// recoverable/retryable errors, use `AttemptResult::WaitNewRound` instead.
+///
+/// Errors are categorized based on when they occur in relation to forfeit
+/// signature creation.
+#[derive(Debug)]
+pub(crate) enum AttemptError {
+	/// Occurs before forfeit signatures are created
+	/// and sent to the Ark Server. At this point, input VTXOs are still valid and
+	/// can be safely exited since the Ark Server cannot double spend them via a
+	/// forfeit transaction. The wallet can safely move on to another round.
+	/// Includes a `RoundAbandonedState` to ensure proper round state cleanup.
+	BeforeSigningForfeit(RoundAbandonedState),
+
+	/// Occurs after forfeit signatures are created
+	/// and sent to the Ark Server. This is a critical error since the Ark Server
+	/// now has valid forfeit signatures for the input VTXOs and could broadcast
+	/// them at any time, potentially invalidating those VTXOs. The wallet must
+	/// cancel the round and take precautions against potential VTXO invalidation.
+	AfterSigningForfeit,
+
+	/// Occurs when updating the round state fails.
+	DatabaseError(String),
+
+	/// Occurs when the events stream breaks.
+	StreamError(anyhow::Error),
+}
+
+impl fmt::Display for AttemptError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			AttemptError::BeforeSigningForfeit(abandoned) => {
+				write!(f, "An error occured in round attempt before forfeit signature. Round was abandoned: {:?}", abandoned)
+			},
+			AttemptError::AfterSigningForfeit => {
+				write!(f, "An error occured in round attempt after forfeit signature.")
+			},
+			AttemptError::DatabaseError(msg) => {
+				write!(f, "An error occured while updating the round state: {}", msg)
+			},
+			AttemptError::StreamError(e) => {
+				write!(f, "An error occured while processing the events stream: {}", e)
+			},
+		}
+	}
+}
+
+impl std::error::Error for AttemptError {}
+
+/// Result of a round attempt.
+enum AttemptResult {
+	/// A new round was started by the server.
+	///
+	/// Includes the new round info to let caller process it.
+	NewRoundStarted(RoundInfo),
+
+	/// The attempt could not be completed and the client should wait for
+	/// a new round to be started by the server.
+	WaitNewRound,
+
+	/// A new attempt was started by the server, most probably because one of the participants
+	/// dropped out during the round.
+	///
+	/// Includes the updated round state to let caller process it.
+	NewAttemptStarted((AttemptStartedState, VtxoOwnershipChallenge)),
+
+	/// The attempt was successfully processed and its transaction is now
+	/// pending confirmations. Should be sync regularly to check when movement
+	/// can be settled and new vtxos created.
+	///
+	/// Includes the round result.
+	Success(RoundResult),
+}
+
+#[derive(Debug)]
+pub struct RoundResult {
+	pub round_id: RoundId,
+}
 
 pub(crate) enum ProgressResult<S: Into<RoundState>> {
 	Progress { state: S },
@@ -1309,4 +1401,220 @@ pub struct RoundCancelledState {
 	pub attempt_seq: Option<usize>,
 	pub round_txid: RoundId,
 	pub forfeited_vtxos: Vec<VtxoForfeitedInRound>,
+}
+
+impl Wallet {
+	async fn new_round_attempt<S: Stream<Item = anyhow::Result<RoundEvent>> + Unpin>(
+		&self,
+		events: &mut S,
+		challenge: VtxoOwnershipChallenge,
+		round_state: AttemptStartedState,
+		participation: &RoundParticipation,
+	) -> Result<AttemptResult, AttemptError> {
+		debug!("New round attempt. round seq: {}, attempt seq: {}, challenge: {}",
+			round_state.round_seq, round_state.attempt_seq, challenge.inner().as_hex());
+
+		let mut srv = match self.require_server() {
+			Ok(srv) => srv,
+			Err(e) => {
+				error!("Cannot get Server connection: {}", e);
+				return Err(error_before_forfeit(&self.db, round_state));
+			}
+		};
+
+		let mut round_state = RoundState::from(round_state);
+		// We don't have an event at first because this function is already triggered by the attempt start one
+		let mut event = None;
+
+		loop {
+			let progress_res =
+				round_state.progress(
+					event,
+					&mut srv,
+					&self,
+					challenge,
+					participation,
+				).await.expect("tried to progress a round state that cannot progress")?;
+
+			round_state = match progress_res {
+				ProgressResult::Progress { state} => {
+					if let RoundState::PendingConfirmation(state) = state {
+						return Ok(AttemptResult::Success(RoundResult {
+							round_id: state.round_txid,
+						}));
+					}
+
+					event = Some(events.next().await.context("event stream broke")
+						.map_err(|e| AttemptError::StreamError(e))?
+						.map_err(|e| AttemptError::StreamError(e))?);
+
+					state
+				}
+				ProgressResult::Wait(state) => {
+					event = Some(events.next().await.context("event stream broke")
+						.map_err(|e| AttemptError::StreamError(e))?
+						.map_err(|e| AttemptError::StreamError(e))?);
+
+					tokio::time::sleep(Duration::from_secs(1)).await;
+
+					state
+				}
+				ProgressResult::WaitNewRound => {
+					return Ok(AttemptResult::WaitNewRound)
+				}
+				ProgressResult::NewRoundStarted(round_info) => {
+					return Ok(AttemptResult::NewRoundStarted(round_info));
+				}
+				ProgressResult::NewAttemptStarted((round_state, challenge)) => {
+					return Ok(AttemptResult::NewAttemptStarted((round_state, challenge)));
+				}
+			};
+		}
+	}
+
+	/// Participate in a round.
+	///
+	/// NB Instead of taking the input and output data as arguments, we take a closure that is
+	/// called to get these values. This is so because for offboards, the fee rate used for the
+	/// offboards is only announced in the beginning of the round and can change between round
+	/// attempts. Lateron this will also be useful so we can randomize destinations between failed
+	/// round attempts for better privacy.
+	pub(crate) async fn participate_round(
+		&self,
+		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<RoundParticipation>,
+	) -> anyhow::Result<RoundResult> {
+		let mut srv = self.require_server()?;
+
+		info!("Waiting for a round start...");
+		let mut events = srv.client.subscribe_rounds(protos::Empty {}).await?.into_inner()
+			.map(|m| {
+				let m = m.context("received error on event stream")?;
+				let e = RoundEvent::try_from(m).context("error converting rpc round event")?;
+				trace!("Received round event: {}", e);
+				Ok::<_, anyhow::Error>(e)
+			});
+
+		// We keep this Option with the latest round info.
+		// It allows us to conveniently restart when something unexpected happens:
+		// - when a new attempt starts, we update the info and restart
+		// - when a new round starts, we set it to the new round info and restart
+		// - when the server misbehaves, we set it to None and restart
+		let mut next_round_info = None;
+
+		'round: loop {
+			// If we don't have a round info yet, wait for round start.
+			let round_info = if let Some(info) = next_round_info.take() {
+				warn!("Unexpected new round started...");
+				info
+			} else {
+				debug!("Waiting for a new round to start...");
+				loop {
+					match events.next().await.context("events stream broke")?? {
+						RoundEvent::Start(info) => {
+							break info;
+						},
+						_ => trace!("ignoring irrelevant message"),
+					}
+				}
+			};
+
+			info!("Round started");
+			debug!("Started round #{}", round_info.round_seq);
+
+			let participation = round_input(&round_info)
+				.context("error providing round input")?;
+
+			if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
+				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
+			}
+
+			if let Some(offb) = participation.offboards.iter().find(|o| o.amount < P2TR_DUST) {
+				bail!("Offboard amount must be at least {}, requested {}", P2TR_DUST, offb.amount);
+			}
+
+			// then we expect the first attempt message
+			let (mut updated, mut challenge)= match events.next().await.context("events stream broke")?? {
+				RoundEvent::Attempt(attempt) if attempt.round_seq == round_info.round_seq => {
+					let round_state = self.db.store_new_round_attempt(
+						round_info.round_seq, attempt.attempt_seq, participation.clone()
+					)?;
+					(round_state, attempt.challenge)
+				},
+				RoundEvent::Start(e) => {
+					next_round_info = Some(e);
+					continue 'round;
+				},
+				//TODO(stevenroose) make this robust
+				other => panic!("Unexpected message: {:?}", other),
+			};
+
+			debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
+				participation.inputs.len(), participation.outputs.len(), participation.outputs.len(),
+			);
+
+			'attempt: loop {
+				let attempt_res = self.new_round_attempt(
+					&mut events,
+					challenge,
+					updated,
+					&participation,
+				).await?;
+
+				match attempt_res {
+					AttemptResult::NewRoundStarted(new_round_info) => {
+						next_round_info = Some(new_round_info);
+						continue 'round;
+					},
+					AttemptResult::NewAttemptStarted((state, new_challenge)) => {
+						updated = state;
+						challenge = new_challenge;
+						continue 'attempt;
+					},
+					AttemptResult::WaitNewRound => {
+						continue 'round;
+					},
+					AttemptResult::Success(round_result) => {
+						return Ok(round_result)
+					}
+				}
+			}
+		}
+	}
+
+	pub(crate) async fn sync_pending_rounds(&self, tip: u32) -> anyhow::Result<()> {
+		info!("Syncing pending rounds at tip: {}", tip);
+		let rounds = self.db.list_pending_rounds()?;
+
+		for round in rounds {
+			match round {
+				RoundState::AttemptStarted(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::PaymentSubmitted(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::VtxoTreeSigned(state) => {
+					// TODO: later we can try to catch up last event
+					state.to_abandoned_state(&self.db)?;
+				},
+				RoundState::ForfeitSigned(state) => {
+					// TODO: later we can try to catch up last event
+					state.progress(None, self).await?;
+				},
+				RoundState::PendingConfirmation(state) => {
+					// TODO: later we can try to catch up last event
+					state.progress(self).await?;
+				},
+				RoundState::RoundConfirmed(_) |
+				RoundState::RoundAbandoned(_) |
+				RoundState::RoundCancelled(_) => {
+					continue;
+				},
+			}
+		}
+
+		Ok(())
+	}
 }
