@@ -46,6 +46,7 @@ service ArkService {
 
 	// Subscribe to the round events. Immediatelly returns the last event that happened.
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
+	rpc LastRoundEvent(Empty) returns (RoundEvent) {}
 	rpc SubmitPayment(SubmitPaymentRequest) returns (Empty) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (Empty) {}
 	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (Empty) {}

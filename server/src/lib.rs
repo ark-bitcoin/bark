@@ -130,6 +130,10 @@ impl RoundHandle {
 		let first = guard.clone();
 		RoundEventStream { first, events }
 	}
+
+	pub fn last_event(&self) -> Option<Arc<RoundEvent>> {
+		self.last_round_event.lock().clone()
+	}
 }
 
 impl RoundHandle {
