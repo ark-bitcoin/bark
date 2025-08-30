@@ -22,7 +22,8 @@ CREATE TYPE public.lightning_htlc_subscription_status AS ENUM (
     'created',
     'accepted',
     'settled',
-    'cancelled'
+    'cancelled',
+    'htlcs-ready'
 );
 
 
@@ -890,7 +891,8 @@ CREATE TABLE public.vtxo (
     forfeit_round_id bigint,
     board_swept_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    lightning_htlc_subscription_id bigint
 );
 
 
@@ -1447,6 +1449,13 @@ CREATE UNIQUE INDEX vtxo_vtxo_id_uix ON public.vtxo USING btree (vtxo_id);
 
 
 --
+-- Name: vtxos_ln_htlc_sub_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxos_ln_htlc_sub_ix ON public.vtxo USING btree (lightning_htlc_subscription_id, vtxo_id);
+
+
+--
 -- Name: wallet_changeset_kind_ix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1635,6 +1644,14 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 
 ALTER TABLE ONLY public.vtxo
     ADD CONSTRAINT vtxo_forfeit_round_id_fkey FOREIGN KEY (forfeit_round_id) REFERENCES public.round(id);
+
+
+--
+-- Name: vtxo vtxo_lightning_htlc_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo
+    ADD CONSTRAINT vtxo_lightning_htlc_subscription_id_fkey FOREIGN KEY (lightning_htlc_subscription_id) REFERENCES public.lightning_htlc_subscription(id);
 
 
 --

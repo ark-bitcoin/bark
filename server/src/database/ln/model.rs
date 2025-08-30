@@ -11,6 +11,7 @@ use postgres_types::{FromSql, ToSql};
 use server_rpc::protos;
 use tokio_postgres::Row;
 
+use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 
 use super::ClnNodeId;
@@ -141,6 +142,9 @@ pub enum LightningHtlcSubscriptionStatus {
 	/// The sender has setup a route of HTLCs towards our node that matches this invoice
 	#[postgres(name = "accepted")]
 	Accepted,
+	/// We created HTLCs for the user and are waiting for him to reveal the preimage
+	#[postgres(name = "htlcs-ready")]
+	HtlcsReady,
 	/// The invoice preimage was revealed and the invoice was settled
 	#[postgres(name = "settled")]
 	Settled,
@@ -157,6 +161,7 @@ impl fmt::Display for LightningHtlcSubscriptionStatus {
 		match self {
 			LightningHtlcSubscriptionStatus::Created => f.write_str("created"),
 			LightningHtlcSubscriptionStatus::Accepted => f.write_str("accepted"),
+			LightningHtlcSubscriptionStatus::HtlcsReady => f.write_str("htlcs-ready"),
 			LightningHtlcSubscriptionStatus::Settled => f.write_str("settled"),
 			LightningHtlcSubscriptionStatus::Cancelled => f.write_str("cancelled"),
 		}
@@ -168,6 +173,7 @@ impl From<LightningHtlcSubscriptionStatus> for protos::LightningReceiveStatus {
 	    match v {
 			LightningHtlcSubscriptionStatus::Created => Self::Created,
 			LightningHtlcSubscriptionStatus::Accepted => Self::Accepted,
+			LightningHtlcSubscriptionStatus::HtlcsReady => Self::HtlcsReady,
 			LightningHtlcSubscriptionStatus::Settled => Self::Settled,
 			LightningHtlcSubscriptionStatus::Cancelled => Self::Cancelled,
 		}
@@ -183,6 +189,8 @@ pub struct LightningHtlcSubscription {
 	pub status: LightningHtlcSubscriptionStatus,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
+	/// NB this field is not always provided by all queries
+	pub htlc_vtxos: Vec<VtxoId>,
 }
 
 impl LightningHtlcSubscription {
@@ -207,6 +215,13 @@ impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
 			status: row.get("status"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
+			htlc_vtxos: if let Some(raw) = row.try_get::<_, Vec<&str>>("htlc_vtxos").ok() {
+				raw.into_iter()
+					.map(|s| s.parse::<VtxoId>())
+					.collect::<Result<Vec<_>, _>>()?
+			} else {
+				vec![]
+			},
 		})
 	}
 }

@@ -234,16 +234,20 @@ enum LightningReceiveStatus {
 	CREATED = 0;
 	// The sender has setup the payment route and it's ready to go
 	ACCEPTED = 1;
+	// The Ark HTLC is created and ready to be executed with the preimage
+	HTLCS_READY = 2;
 	// The HTLCs have been executed and the payment was settled
-	SETTLED = 2;
+	SETTLED = 3;
 	// The payment was canceled before being executed
-	CANCELLED = 3;
+	CANCELLED = 4;
 }
 
 message SubscribeLightningReceiveResponse {
 	string invoice = 1;
 	uint64 amount_sat = 2;
 	LightningReceiveStatus status = 3;
+	// Empty until the status is HTLCS_READY or SETTLED
+	repeated bytes htlc_vtxos = 4;
 }
 
 // round

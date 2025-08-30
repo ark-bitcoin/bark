@@ -9,6 +9,7 @@ use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, warn};
 
+use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
@@ -516,7 +517,54 @@ impl Db {
 		Ok(())
 	}
 
+	/// Update the lightning receive with the HTLC VTXOs allocated
+	///
+	/// Sets the status to "htlcs-ready".
+	/// Adds the HTLCs to the database.
+	/// Errors if the subscription was not currently in state "accepted".
+	pub async fn update_lightning_htlc_subscription_with_htlcs(
+		&self,
+		htlc_subscription_id: i64,
+		htlcs: impl IntoIterator<Item = VtxoId>,
+	) -> anyhow::Result<()> {
+		let mut conn = self.pool.get().await?;
+		let tx = conn.transaction().await?;
+
+		let stmt = tx.prepare("
+			UPDATE lightning_htlc_subscription
+				SET status = 'htlcs-ready'::lightning_htlc_subscription_status,
+					updated_at = NOW()
+				WHERE id = $1
+					AND status = 'accepted'::lightning_htlc_subscription_status
+				RETURNING id;
+		").await?;
+		let count = tx.execute(&stmt, &[&htlc_subscription_id]).await
+			.context("UPDATE lightning_htlc_subscription")?;
+		if count == 0 {
+			bail!("error updating lightning receive with htlcs, probably not in status accepted");
+		}
+
+		let stmt = tx.prepare("
+			UPDATE vtxo
+				SET lightning_htlc_subscription_id = $1, updated_at = NOW()
+			WHERE vtxo_id = ANY($2)
+				AND lightning_htlc_subscription_id IS NULL;
+		").await?;
+
+		let ids = htlcs.into_iter().map(|v| v.to_string()).collect::<Vec<_>>();
+		let count = tx.execute(&stmt, &[&htlc_subscription_id, &ids]).await
+			.context("UPDATE vtxo")?;
+		if count != ids.len() as u64 {
+			bail!("error updating lightning receive with htlcs, probably not in status accepted");
+		}
+
+		tx.commit().await?;
+		Ok(())
+	}
+
 	/// Retrieve all htlc subscriptions created in the given node
+	///
+	/// This method DOES NOT fetch the htlc vtxos for the subscription.
 	pub async fn get_created_lightning_htlc_subscriptions(
 		&self,
 		node_id: ClnNodeId,
@@ -543,6 +591,8 @@ impl Db {
 	}
 
 	/// Retrieves all htlc subscriptions for the provided payment hash
+	///
+	/// This method DOES NOT retrieve the htlc vtxos for the subscriptions.
 	pub async fn get_htlc_subscriptions_by_payment_hash(
 		&self,
 		payment_hash: PaymentHash,
@@ -568,6 +618,8 @@ impl Db {
 	}
 
 	/// Retrieve the latest htlc subscriptions for the provided payment hash
+	///
+	/// This method DOES retrieve the htlc vtxos for the subscriptions.
 	pub async fn get_htlc_subscription_by_payment_hash(
 		&self,
 		payment_hash: PaymentHash,

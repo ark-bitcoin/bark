@@ -1033,6 +1033,48 @@ impl Server {
 		Ok(sub)
 	}
 
+	async fn prepare_lightning_claim(
+		&self,
+		payment_hash: PaymentHash,
+		user_pubkey: PublicKey,
+	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo>)> {
+		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
+			.context("no pending payment with this payment hash")?;
+		// first check whether we're in the right state to do this
+		match sub.status {
+			LightningHtlcSubscriptionStatus::Accepted => {}, // we continue
+			LightningHtlcSubscriptionStatus::HtlcsReady => {
+				// we already did this, let's fetch the vtxos and return them
+				let vtxos = self.db.get_vtxos_by_id(&sub.htlc_vtxos).await?.into_iter()
+					.map(|v| v.vtxo)
+					.collect();
+				return Ok((sub, vtxos));
+			},
+			LightningHtlcSubscriptionStatus::Cancelled => bail!("payment cancelled"),
+			LightningHtlcSubscriptionStatus::Settled => bail!("payment already settled"),
+			LightningHtlcSubscriptionStatus::Created => bail!("payment not yet initiated by sender"),
+		}
+
+		let vtxos = {
+			let expiry = self.chain_tip().height + self.config.htlc_expiry_delta as BlockHeight;
+			let request = VtxoRequest {
+				amount: sub.amount(),
+				policy: VtxoPolicy::new_server_htlc_recv(user_pubkey, payment_hash, expiry),
+			};
+			self.vtxopool.send_arkoor(self, request).await.context("vtxopool error")?
+		};
+
+		self.db.update_lightning_htlc_subscription_with_htlcs(
+			sub.id,
+			vtxos.iter().map(|v| v.id()),
+		).await.context("failed to store htlcs for ln receive")?;
+
+		sub.status = LightningHtlcSubscriptionStatus::HtlcsReady;
+		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
+
+		Ok((sub, vtxos))
+	}
+
 	async fn claim_bolt11_htlc(
 		&self,
 		input_vtxo_id: VtxoId,
