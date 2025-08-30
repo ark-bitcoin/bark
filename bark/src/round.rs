@@ -9,7 +9,7 @@ use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::hex::DisplayHex;
 use bitcoin::key::Keypair;
 use bitcoin::params::Params;
-use bitcoin::{Address, OutPoint, Transaction, Txid};
+use bitcoin::{Address, Amount, FeeRate, OutPoint, ScriptBuf, Transaction, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin_ext::{TxStatus, P2TR_DUST};
 use futures::Stream;
@@ -36,7 +36,24 @@ use crate::persist::{BarkPersister, StoredVtxoRequest};
 use crate::{ServerConnection, Wallet};
 
 
-/// Struct to communicate your specific participation requests for an Ark round.
+/// Struct to communicate your desired round participation for an Ark round
+#[derive(Debug, Clone)]
+pub enum DesiredRoundParticipation {
+	/// Inputs are provided, ready to go
+	Funded(RoundParticipation),
+	/// Making an offboard of specific vtxos
+	Offboard {
+		vtxos: Vec<Vtxo>,
+		destination: ScriptBuf,
+	},
+	/// Attempting to deliver an onchain payment
+	OnchainPayment {
+		destination: ScriptBuf,
+		amount: Amount,
+	},
+}
+
+/// Struct to communicate your specific participation for an Ark round.
 #[derive(Debug, Clone)]
 pub struct RoundParticipation {
 	pub inputs: Vec<Vtxo>,
@@ -1439,6 +1456,73 @@ pub struct RoundCancelledState {
 }
 
 impl Wallet {
+	fn fund_round(
+		&self,
+		desired: &DesiredRoundParticipation,
+		offboard_feerate: FeeRate,
+	) -> anyhow::Result<RoundParticipation> {
+		match desired {
+			DesiredRoundParticipation::Funded(p) => Ok(p.clone()),
+			DesiredRoundParticipation::Offboard { vtxos, destination } => {
+				let fee = OffboardRequest::calculate_fee(&destination, offboard_feerate)
+					.expect("bdk created invalid scriptPubkey");
+
+				let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
+				if fee > vtxo_sum {
+					bail!("offboarded amount is lower than fees. Need {fee}, got: {vtxo_sum}");
+				}
+
+				let offb = OffboardRequest {
+					amount: vtxo_sum - fee,
+					script_pubkey: destination.clone(),
+				};
+
+				Ok(RoundParticipation {
+					inputs: vtxos.clone(),
+					outputs: Vec::new(),
+					offboards: vec![offb],
+				})
+			},
+			DesiredRoundParticipation::OnchainPayment { destination, amount } => {
+				let offb = OffboardRequest {
+					script_pubkey: destination.clone(),
+					amount: *amount,
+				};
+
+				let spent_amount = offb.amount + offb.fee(offboard_feerate)?;
+				let input_vtxos = self.select_vtxos_to_cover(spent_amount, None)?;
+
+				let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
+				let change = {
+					if in_sum < offb.amount {
+						// unreachable, because we checked for enough balance above
+						bail!("Balance too low");
+					} else if in_sum <= spent_amount + P2TR_DUST {
+						info!("No change, emptying wallet.");
+						None
+					} else {
+						let change_amount = in_sum - spent_amount;
+						let (change_keypair, _) = self.derive_store_next_keypair()?;
+						info!("Adding change vtxo for {}", change_amount);
+						Some(VtxoRequest {
+							amount: change_amount,
+							policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
+						})
+					}
+				};
+
+				Ok(RoundParticipation {
+					inputs: input_vtxos.clone(),
+					outputs: change.into_iter()
+						.map(|c| StoredVtxoRequest::from_parts(c, VtxoState::Spendable)).collect(),
+					offboards: vec![offb],
+				})
+			},
+		}
+	}
+
 	async fn new_round_attempt<S: Stream<Item = anyhow::Result<RoundEvent>> + Unpin>(
 		&self,
 		events: &mut S,
@@ -1516,7 +1600,7 @@ impl Wallet {
 	/// round attempts for better privacy.
 	pub(crate) async fn participate_round(
 		&self,
-		mut round_input: impl FnMut(&RoundInfo) -> anyhow::Result<RoundParticipation>,
+		participation: DesiredRoundParticipation,
 	) -> anyhow::Result<RoundResult> {
 		let mut srv = self.require_server()?;
 
@@ -1556,8 +1640,8 @@ impl Wallet {
 			info!("Round started");
 			debug!("Started round #{}", round_info.round_seq);
 
-			let participation = round_input(&round_info)
-				.context("error providing round input")?;
+			let participation = self.fund_round(&participation, round_info.offboard_feerate)
+				.context("failed to fund round")?;
 
 			if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
 				bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);

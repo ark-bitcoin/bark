@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, FeeRate, Network, OutPoint, Transaction};
+use bitcoin::{Amount, FeeRate, Network, OutPoint, ScriptBuf, Transaction};
 use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
@@ -58,7 +58,7 @@ use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
-use round::{RoundParticipation, RoundResult};
+use round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
@@ -868,33 +868,15 @@ impl Wallet {
 	async fn offboard(
 		&mut self,
 		vtxos: Vec<Vtxo>,
-		address: bitcoin::Address,
+		destination: ScriptBuf,
 	) -> anyhow::Result<Offboard> {
 		if vtxos.is_empty() {
 			bail!("no VTXO to offboard");
 		}
 
-		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
-		let RoundResult { round_id, .. } = self.participate_round(move |round| {
-			let fee = OffboardRequest::calculate_fee(&address.script_pubkey(), round.offboard_feerate)
-				.expect("bdk created invalid scriptPubkey");
-
-			if fee > vtxo_sum {
-				bail!("offboarded amount is lower than fees. Need {fee}, got: {vtxo_sum}");
-			}
-
-			let offb = OffboardRequest {
-				amount: vtxo_sum - fee,
-				script_pubkey: address.script_pubkey(),
-			};
-
-			Ok(RoundParticipation {
-				inputs: vtxos.clone(),
-				outputs: Vec::new(),
-				offboards: vec![offb],
-			})
-		}).await.context("round failed")?;
+		let participation = DesiredRoundParticipation::Offboard { vtxos, destination };
+		let RoundResult { round_id, .. } = self.participate_round(participation).await
+			.context("round failed")?;
 
 		Ok(Offboard { round: round_id })
 	}
@@ -903,7 +885,7 @@ impl Wallet {
 	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
 		let input_vtxos = self.db.get_all_spendable_vtxos()?;
 
-		Ok(self.offboard(input_vtxos, address).await?)
+		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
 	/// Offboard vtxos selection to a given address
@@ -920,7 +902,7 @@ impl Wallet {
 				})
 				.collect::<anyhow::Result<_>>()?;
 
-		Ok(self.offboard(input_vtxos, address).await?)
+		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
 	/// This will refresh all provided VTXO Ids.
@@ -949,13 +931,13 @@ impl Wallet {
 			amount: total_amount,
 		};
 
-		let RoundResult { round_id, .. } = self.participate_round(move |_| {
-			Ok(RoundParticipation {
-				inputs: vtxos.to_vec(),
-				outputs: vec![StoredVtxoRequest::from_parts(req.clone(), VtxoState::Spendable)],
-				offboards: Vec::new(),
-			})
-		}).await.context("round failed")?;
+		let participation = DesiredRoundParticipation::Funded(RoundParticipation {
+			inputs: vtxos.to_vec(),
+			outputs: vec![StoredVtxoRequest::from_parts(req.clone(), VtxoState::Spendable)],
+			offboards: Vec::new(),
+		});
+		let RoundResult { round_id, .. } = self.participate_round(participation).await
+			.context("round failed")?;
 
 		Ok(Some(round_id))
 	}
@@ -1596,21 +1578,19 @@ impl Wallet {
 		let state = VtxoState::PendingLightningRecv { payment_hash };
 
 		let expiry_height = tip + srv.info.htlc_expiry_delta as BlockHeight;
-		self.participate_round(move |_| {
-			let htlc_pay_req = VtxoRequest {
-				amount: amount,
-				policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
-			};
-
-			Ok(RoundParticipation {
-				inputs: vec![antidos_input.clone()],
-				outputs: vec![
-					StoredVtxoRequest::from_parts(htlc_pay_req, state.clone()),
-					StoredVtxoRequest::from_parts(antidos_output.clone(), VtxoState::Spendable),
-				],
-				offboards: vec![],
-			})
-		}).await.context("round failed")?;
+		let htlc_pay_req = VtxoRequest {
+			amount: amount,
+			policy: VtxoPolicy::new_server_htlc_recv(keypair.public_key(), payment_hash, expiry_height),
+		};
+		let participation = DesiredRoundParticipation::Funded(RoundParticipation {
+			inputs: vec![antidos_input.clone()],
+			outputs: vec![
+				StoredVtxoRequest::from_parts(htlc_pay_req, state.clone()),
+				StoredVtxoRequest::from_parts(antidos_output.clone(), VtxoState::Spendable),
+			],
+			offboards: vec![],
+		});
+		self.participate_round(participation).await.context("round failed")?;
 
 		Ok(())
 	}
@@ -1681,42 +1661,12 @@ impl Wallet {
 			bail!("Your balance is too low. Needed: {}, available: {}", amount + early_fees, balance);
 		}
 
-		let RoundResult { round_id, .. } = self.participate_round(|round| {
-			let offb = OffboardRequest {
-				script_pubkey: addr.script_pubkey(),
-				amount: amount,
-			};
-
-			let spent_amount = offb.amount + offb.fee(round.offboard_feerate)?;
-			let input_vtxos = self.select_vtxos_to_cover(spent_amount, None)?;
-
-			let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
-			let change = {
-				if in_sum < offb.amount {
-					// unreachable, because we checked for enough balance above
-					bail!("Balance too low");
-				} else if in_sum <= spent_amount + P2TR_DUST {
-					info!("No change, emptying wallet.");
-					None
-				} else {
-					let amount = in_sum - spent_amount;
-					let (change_keypair, _) = self.derive_store_next_keypair()?;
-					info!("Adding change vtxo for {}", amount);
-					Some(VtxoRequest {
-						amount: amount,
-						policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
-					})
-				}
-			};
-
-			Ok(RoundParticipation {
-				inputs: input_vtxos.clone(),
-				outputs: change.into_iter()
-					.map(|c| StoredVtxoRequest::from_parts(c, VtxoState::Spendable)).collect(),
-				offboards: vec![offb],
-			})
-		}).await.context("round failed")?;
+		let participation = DesiredRoundParticipation::OnchainPayment {
+			destination: addr.script_pubkey(),
+			amount: amount,
+		};
+		let RoundResult { round_id, .. } = self.participate_round(participation).await
+			.context("round failed")?;
 
 		Ok(SendOnchain { round: round_id })
 	}
