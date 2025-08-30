@@ -88,9 +88,8 @@ message RoundId {
 }
 
 message RoundInfo {
-	uint64 round_seq = 1;
-	bytes round_tx = 2;
-	bytes signed_vtxos = 3;
+	bytes round_tx = 1;
+	bytes signed_vtxos = 2;
 }
 
 

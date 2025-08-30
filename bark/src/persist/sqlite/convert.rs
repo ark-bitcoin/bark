@@ -132,9 +132,9 @@ pub (crate) fn row_to_secret_nonces(row: &Row<'_>) -> anyhow::Result<Option<Vec<
 	}
 }
 
-fn row_to_attempt_seq(row: &Row<'_>) -> anyhow::Result<usize> {
-	let attempt_seq = row.need::<_, i64>("attempt_seq")?;
-	Ok(attempt_seq as usize)
+fn row_to_attempt_seq(row: &Row<'_>) -> anyhow::Result<Option<usize>> {
+	let attempt_seq = row.get::<_, Option<i64>>("attempt_seq")?;
+	Ok(attempt_seq.map(|v| v as usize))
 }
 
 fn row_to_round_txid(row: &Row<'_>) -> anyhow::Result<(Transaction, RoundId)> {
@@ -152,15 +152,20 @@ fn row_to_vtxo_forfeited_in_round(row: &Row<'_>) -> anyhow::Result<Vec<VtxoForfe
 
 pub (crate) fn row_to_round_state(row: &Row<'_>) -> anyhow::Result<RoundState> {
 	let round_attempt_id = row.need::<_, i64>("id")?;
-	let round_seq = RoundSeq::new(TryFrom::try_from(row.need::<_, i64>("round_seq")?)?);
+
+	let round_seq = match row.get::<_, Option<i64>>("round_seq")? {
+		Some(round_seq) => Some(RoundSeq::new(TryFrom::try_from(round_seq)?)),
+		None => None,
+	};
+
 	let status = RoundStateKind::from_str(&row.need::<_, String>("status")?)?;
 
 	match status {
 		RoundStateKind::AttemptStarted => {
 			Ok(RoundState::AttemptStarted(AttemptStartedState {
 				round_attempt_id,
-				round_seq,
-				attempt_seq: row_to_attempt_seq(row)?,
+				round_seq: round_seq.expect("round_seq should be present during round"),
+				attempt_seq: row_to_attempt_seq(row)?.expect("attempt_seq should be present during round"),
 				participation: row_to_participation(row)?,
 			}))
 		},
@@ -169,9 +174,9 @@ pub (crate) fn row_to_round_state(row: &Row<'_>) -> anyhow::Result<RoundState> {
 			let cosign_keys = serde_json::from_slice(&row.need::<_, Vec<u8>>("cosign_keys")?)?;
 			Ok(RoundState::PaymentSubmitted(PaymentSubmittedState {
 				round_attempt_id,
-				round_seq,
+				round_seq: round_seq.expect("round_seq should be present during round"),
+				attempt_seq: row_to_attempt_seq(row)?.expect("attempt_seq should be present during round"),
 				participation,
-				attempt_seq: row_to_attempt_seq(row)?,
 				cosign_keys,
 			}))
 		},
@@ -181,10 +186,10 @@ pub (crate) fn row_to_round_state(row: &Row<'_>) -> anyhow::Result<RoundState> {
 			let vtxo_tree = VtxoTreeSpec::deserialize(&row.need::<_, Vec<u8>>("vtxo_tree")?)?;
 			Ok(RoundState::VtxoTreeSigned(VtxoTreeSignedState {
 				round_attempt_id,
-				round_seq,
+				round_seq: round_seq.expect("round_seq should be present during round"),
+				attempt_seq: row_to_attempt_seq(row)?.expect("attempt_seq should be present during round"),
 				participation,
 				round_txid,
-				attempt_seq: row_to_attempt_seq(row)?,
 				unsigned_round_tx,
 				vtxo_tree,
 			}))
@@ -200,9 +205,9 @@ pub (crate) fn row_to_round_state(row: &Row<'_>) -> anyhow::Result<RoundState> {
 
 			Ok(RoundState::ForfeitSigned(ForfeitSignedState {
 				round_attempt_id,
-				round_seq,
+				round_seq: round_seq.expect("round_seq should be present during round"),
+				attempt_seq: row_to_attempt_seq(row)?.expect("attempt_seq should be present during round"),
 				participation: row_to_participation(row)?,
-				attempt_seq: row_to_attempt_seq(row)?,
 				vtxos,
 				round_txid,
 				unsigned_round_tx,

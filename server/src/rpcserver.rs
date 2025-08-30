@@ -374,7 +374,6 @@ impl rpc::server::ArkService for Server {
 			.not_found([id], "round with txid {} not found")?;
 
 		let response = protos::RoundInfo {
-			round_seq: ret.seq.inner(),
 			round_tx: bitcoin::consensus::serialize(&ret.tx),
 			signed_vtxos: ret.signed_tree.serialize(),
 		};

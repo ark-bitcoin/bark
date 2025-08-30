@@ -56,7 +56,7 @@ use ark::arkoor::ArkoorPackageBuilder;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage, PaymentHash};
 use ark::musig;
-use ark::rounds::{RoundEvent, RoundId, RoundInfo, RoundSeq, VtxoOwnershipChallenge};
+use ark::rounds::{RoundEvent, RoundId, RoundInfo, VtxoOwnershipChallenge};
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
 use server_rpc::{self as rpc, protos, TryFromBytes};
@@ -903,10 +903,7 @@ impl Wallet {
 				}
 
 				let round_tx = Transaction::from_bytes(&round.round_tx)?;
-				let round_seq = RoundSeq::new(round.round_seq);
-				self.db.store_pending_confirmation_round(
-					round_seq, round_id, round_tx, reqs, vtxos,
-				)?;
+				self.db.store_pending_confirmation_round(round_id, round_tx, reqs, vtxos)?;
 
 				Ok(())
 			}

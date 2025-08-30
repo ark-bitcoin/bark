@@ -162,13 +162,13 @@ impl BarkPersister for SqliteClient {
 		Ok(round)
 	}
 
-	fn store_pending_confirmation_round(&self, round_seq: RoundSeq, round_txid: RoundId, round_tx: bitcoin::Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
+	fn store_pending_confirmation_round(&self, round_txid: RoundId, round_tx: bitcoin::Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
 		-> anyhow::Result<PendingConfirmationState>
 	{
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		let round = query::store_pending_confirmation_round(
-			&tx, round_seq, round_txid, round_tx, reqs, vtxos)?;
+			&tx, round_txid, round_tx, reqs, vtxos)?;
 		tx.commit()?;
 		Ok(round)
 	}
