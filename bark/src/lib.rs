@@ -1442,7 +1442,7 @@ impl Wallet {
 		let mut srv = self.require_server()?;
 
 		let preimage = Preimage::random();
-		let payment_hash = ark::lightning::PaymentHash::from_preimage(preimage);
+		let payment_hash = preimage.compute_payment_hash();
 		info!("Start bolt11 board with preimage / payment hash: {} / {}",
 			preimage.as_hex(), payment_hash.as_hex());
 

@@ -39,6 +39,11 @@ impl Preimage {
 	pub fn random() -> Preimage {
 		Preimage(rand::random())
 	}
+
+	/// Hashes the preimage into the payment hash
+	pub fn compute_payment_hash(&self) -> PaymentHash {
+		sha256::Hash::hash(self.as_ref()).into()
+	}
 }
 
 /// The hash of a [Preimage], used to identify HTLC-based payments.
@@ -54,7 +59,7 @@ impl From<sha256::Hash> for PaymentHash {
 
 impl From<Preimage> for PaymentHash {
 	fn from(preimage: Preimage) -> Self {
-		PaymentHash::from_preimage(preimage)
+		preimage.compute_payment_hash()
 	}
 }
 
@@ -77,10 +82,6 @@ impl From<Bolt11Invoice> for PaymentHash {
 }
 
 impl PaymentHash {
-	pub fn from_preimage(preimage: Preimage) -> PaymentHash {
-		sha256::Hash::hash(preimage.as_ref()).into()
-	}
-
 	/// Converts this PaymentHash into a `bitcoin::hashes::sha256::Hash`.
 	pub fn to_sha256_hash(&self) -> bitcoin::hashes::sha256::Hash {
 		bitcoin::hashes::sha256::Hash::from_slice(&self.0)

@@ -266,7 +266,7 @@ impl ClnManager {
 	}
 
 	pub async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<anyhow::Result<()>> {
-		let payment_hash = PaymentHash::from_preimage(preimage);
+		let payment_hash = preimage.compute_payment_hash();
 
 		// If an open payment attempt exists for the payment hash, it's a server self-payment
 		// so we can mark it as succeeded with preimage, then skip hold invoice settlement

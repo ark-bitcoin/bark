@@ -1041,7 +1041,7 @@ impl Server {
 			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
 
 		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
-			if *payment_hash != PaymentHash::from_preimage(payment_preimage) {
+			if *payment_hash != payment_preimage.compute_payment_hash() {
 				bail!("input vtxo payment hash does not match preimage");
 			}
 
