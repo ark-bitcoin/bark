@@ -19,9 +19,8 @@ pub mod wallet;
 pub(crate) mod flux;
 pub(crate) mod system;
 
-mod cln;
 mod intman;
-
+mod ln;
 mod psbtext;
 mod round;
 mod serde_util;
@@ -61,7 +60,7 @@ use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, TxStatus, P2
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
 use server_rpc::protos;
 
-use crate::cln::ClnManager;
+use crate::ln::cln::ClnManager;
 use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };

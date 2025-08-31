@@ -59,14 +59,13 @@ use cln_rpc::node_client::NodeClient;
 
 use crate::error::{AnyhowErrorExt, ContextExt};
 use crate::system::RuntimeManager;
-use crate::cln::node::ClnNodeMonitor;
 use crate::config::{self, Config};
 use crate::database;
 use crate::database::ln::{
 	ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentAttempt,
 	LightningPaymentStatus,
 };
-use self::node::ClnNodeMonitorConfig;
+use self::node::{ClnNodeMonitor, ClnNodeMonitorConfig};
 use crate::telemetry;
 
 type ClnGrpcClient = NodeClient<Channel>;
