@@ -820,8 +820,8 @@ async fn second_round_attempt() {
 	bark1.send_oor(bark2.address().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
-	let mut log_missing_forfeits = srv.subscribe_log::<MissingForfeits>().await;
-	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>().await;
+	let mut log_missing_forfeits = srv.subscribe_log::<MissingForfeits>();
+	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
 	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
