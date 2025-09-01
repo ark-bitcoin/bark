@@ -177,11 +177,12 @@ const RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE: &'static str = "start_lightning_r
 const RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE: &'static str = "subscribe_lightning_receive";
 const RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE: &'static str = "claim_lightning_receive";
 const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
+const RPC_SERVICE_ARK_LAST_ROUND_EVENT: &'static str = "last_round_event";
 const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
 const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
 
-const RPC_SERVICE_ARK_METHODS: [&str; 21] = [
+const RPC_SERVICE_ARK_METHODS: [&str; 22] = [
 	RPC_SERVICE_ARK_HANDSHAKE,
 	RPC_SERVICE_ARK_GET_ARK_INFO,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
@@ -200,6 +201,7 @@ const RPC_SERVICE_ARK_METHODS: [&str; 21] = [
 	RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE,
 	RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE,
 	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
+	RPC_SERVICE_ARK_LAST_ROUND_EVENT,
 	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
 	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
 	RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES,
@@ -754,6 +756,19 @@ impl rpc::server::ArkService for Server {
 
 		let stream = self.rounds.events();
 		Ok(tonic::Response::new(Box::new(stream.map(|e| Ok(e.as_ref().into())))))
+	}
+
+	async fn last_round_event(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::RoundEvent>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(RPC_SERVICE_ARK_LAST_ROUND_EVENT);
+
+		if let Some(event) = self.rounds.last_event() {
+			Ok(tonic::Response::new(event.as_ref().into()))
+		} else {
+			not_found!([""], "no round event yet");
+		}
 	}
 
 	async fn submit_payment(

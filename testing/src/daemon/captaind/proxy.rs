@@ -94,6 +94,10 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(Box::new(self.upstream().subscribe_rounds(req).await?.into_inner()))
 	}
 
+	async fn last_round_event(&mut self, req: protos::Empty) -> Result<protos::RoundEvent, tonic::Status> {
+		Ok(self.upstream().last_round_event(req).await?.into_inner())
+	}
+
 	async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
 		Ok(self.upstream().submit_payment(req).await?.into_inner())
 	}
@@ -283,6 +287,12 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::subscribe_rounds(&mut self.0.clone(), req.into_inner()).await?))
+	}
+
+	async fn last_round_event(
+		&self, req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::RoundEvent>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::last_round_event(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn submit_payment(
