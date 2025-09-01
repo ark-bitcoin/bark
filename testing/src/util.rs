@@ -22,9 +22,9 @@ pub enum TestContextChainSource {
 impl TestContextChainSource {
 	pub fn as_str(&self) -> &'static str {
 		match self {
-			TestContextChainSource::BitcoinCore => "bitcoin-core",
-			TestContextChainSource::ElectrsRest(ElectrsType::Esplora) => "esplora-electrs",
-			TestContextChainSource::ElectrsRest(ElectrsType::Mempool) => "mempool-electrs",
+			TestContextChainSource::BitcoinCore => "bitcoind",
+			TestContextChainSource::ElectrsRest(ElectrsType::Esplora) => "esplora",
+			TestContextChainSource::ElectrsRest(ElectrsType::Mempool) => "mempool",
 		}
 	}
 }
@@ -32,9 +32,9 @@ impl TestContextChainSource {
 impl From<String> for TestContextChainSource {
 	fn from(s: String) -> Self {
 		match s.as_str() {
-			"bitcoin-core" => TestContextChainSource::BitcoinCore,
-			"esplora-electrs" => TestContextChainSource::ElectrsRest(ElectrsType::Esplora),
-			"mempool-electrs" => TestContextChainSource::ElectrsRest(ElectrsType::Mempool),
+			"bitcoind" => TestContextChainSource::BitcoinCore,
+			"esplora" => TestContextChainSource::ElectrsRest(ElectrsType::Esplora),
+			"mempool" => TestContextChainSource::ElectrsRest(ElectrsType::Mempool),
 			_ => panic!("invalid chain source {}", s),
 		}
 	}
