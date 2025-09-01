@@ -179,6 +179,7 @@ impl TestContext {
 	async fn captaind_default_cfg(
 		&self,
 		name: impl AsRef<str>,
+		bitcoind: &Bitcoind,
 		lightningd: Option<&Lightningd>,
 	) -> Config {
 		let name = name.as_ref();
@@ -254,9 +255,8 @@ impl TestContext {
 				admin_address: None,
 			},
 			bitcoind: config::Bitcoind {
-				// these will be overwritten on start, but can't be empty
-				url: "".into(),
-				cookie: None,
+				url: bitcoind.rpc_url(),
+				cookie: Some(bitcoind.rpc_cookie()),
 				rpc_user: None,
 				rpc_pass: None,
 			},
@@ -279,16 +279,8 @@ impl TestContext {
 		mod_cfg: impl FnOnce(&mut server::Config),
 	) -> Captaind {
 		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-		let mut cfg = self.captaind_default_cfg(name.as_ref(), lightningd).await;
+		let mut cfg = self.captaind_default_cfg(name.as_ref(), &bitcoind, lightningd).await;
 		mod_cfg(&mut cfg);
-
-		assert_eq!("", cfg.bitcoind.url, "bitcoind url already set");
-		cfg.bitcoind.url = bitcoind.rpc_url();
-
-		// We allow some tests to set custom bitcoind auth
-		if cfg.bitcoind.cookie.is_none() && cfg.bitcoind.rpc_user.is_none() {
-			cfg.bitcoind.cookie = Some(bitcoind.rpc_cookie());
-		}
 
 		let mut ret = Captaind::new(name, bitcoind, cfg);
 		ret.start().await.unwrap();

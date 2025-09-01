@@ -307,8 +307,8 @@ impl Config {
 			}
 		};
 
-		let cfg = builder.build().context("error building config")?;
-		let mut cfg: Config = cfg.try_deserialize().context("error parsing config")?;
+		let raw_cfg = builder.build().context("error building config")?;
+		let mut cfg = raw_cfg.try_deserialize::<Config>().context("error parsing config")?;
 		// merge the json parsed cln_array
 		cfg.cln_array.extend(cln_array);
 
@@ -373,6 +373,17 @@ mod test {
 	use std::str::FromStr;
 	use tonic::transport::Uri;
 	use super::*;
+
+	#[test]
+	fn parse_validate_default_config_file() {
+		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/config.default.toml"));
+		let mut cfg = Config::load(Some(&path)).expect("error loading config");
+
+		// some configs are mandatory but can't be set in defaults
+		cfg.bitcoind.cookie = Some(".cookie".into());
+
+		cfg.validate().expect("error validating default config");
+	}
 
 	#[test]
 	fn validate_bitcoind_config() {
@@ -442,8 +453,8 @@ mod test {
 		assert_eq!(lncfg.client_key_path, PathBuf::from(client_key_path));
 	}
 
-	#[test]
 	// ignoring this test because concurrency with environment variables is causing problems.
+	#[test]
 	fn cln_config_from_env_vars() {
 		let uri = "http://belson.labs:12345";
 		let server_cert_path = "/hooli/http_public/certs/server.crt";

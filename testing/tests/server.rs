@@ -73,7 +73,6 @@ async fn bitcoind_auth_connection() {
 	let ctx = TestContext::new("server/bitcoind_auth_connection").await;
 
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.bitcoind.url = "".into(); //t set later by test framework
 		cfg.bitcoind.cookie = None;
 		cfg.bitcoind.rpc_user = Some(BITCOINRPC_TEST_USER.to_string());
 		cfg.bitcoind.rpc_pass = Some(Secret::new(BITCOINRPC_TEST_PASSWORD.to_string()));
@@ -217,8 +216,10 @@ async fn restart_key_stability() {
 	srv.stop().await.unwrap();
 
 	let mut new_cfg = srv.config().clone();
-	new_cfg.bitcoind.url = String::new();
+	// reiniting the daemon should not call the create command if the datadir exists
 	let srv = ctx.new_captaind_with_cfg("server", None, move |cfg| {
+		// adapt the old config only to the new bitcoind
+		new_cfg.bitcoind = cfg.bitcoind.clone();
 		*cfg = new_cfg;
 	}).await;
 	let server_key2 = srv.ark_info().await.server_pubkey;
