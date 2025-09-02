@@ -184,17 +184,6 @@ impl TxIndexData {
 		ret
 	}
 
-	/// Quick getter for the status of a tx by txid.
-	///
-	/// Returns [None] for a tx not in the index.
-	async fn status_of(&self, txid: &Txid) -> Option<TxStatus> {
-		if let Some(tx) = self.get(txid).await {
-			Some(tx.status())
-		} else {
-			None
-		}
-	}
-
 	/// Get a tx from the index or insert when not present.
 	async fn get_or_insert(
 		&self,
