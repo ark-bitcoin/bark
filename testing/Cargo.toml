@@ -22,6 +22,7 @@ regex = "1.10.5"
 libc = "0.2"
 which = "6.0.1"
 nix = { version = "0.29", features = [ "signal" ] }
+uuid = { version = "1.17.0", features = ["v4"] }
 
 anyhow.workspace = true
 lazy_static.workspace = true

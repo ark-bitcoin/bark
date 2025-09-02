@@ -24,7 +24,7 @@ mod rpcserver;
 mod serde_util;
 mod telemetry;
 mod txindex;
-
+pub mod filters;
 pub use crate::config::Config;
 
 use std::borrow::Borrow;

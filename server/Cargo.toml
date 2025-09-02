@@ -39,6 +39,9 @@ bb8.workspace = true
 bb8-postgres.workspace = true
 postgres-types.workspace = true
 refinery = { version = "0.8.14", default-features = false, features = ["tokio-postgres"] }
+uuid = { version = "1.17.0", features = ["v4"] }
+ipnet = "2.11.0"
+trust-dns-resolver = { version = "0.23", default-features = false, features = ["tokio-runtime"] }
 
 lazy_static.workspace = true
 fern.workspace = true
@@ -60,6 +63,7 @@ lightning.workspace = true
 
 tonic = { workspace = true, features = ["tls-ring"] }
 tower.workspace = true
+hyper.workspace = true
 http.workspace = true
 http-body.workspace = true
 parking_lot.workspace = true
