@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::{atomic, Arc};
 use log::{error, info};
 use server_rpc::intman_protos;
-use crate::grpcserver::middleware::{
+use crate::rpcserver::middleware::{
 	RpcMethodDetails,
 	RPC_SERVICE_INTEGRATION_GET_TOKENS,
 	RPC_SERVICE_INTEGRATION_GET_TOKEN_INFO,
@@ -136,7 +136,7 @@ impl server_rpc::intman_server::IntegrationService for Server {
 
 
 /// Run the public gRPC endpoint.
-pub async fn run_integration_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
+pub async fn run_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
 	crate::rpcserver::RPC_RICH_ERRORS.store(server.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 
 	let _worker = server.rtmgr.spawn_critical("IntegrationRpcServer");
@@ -147,8 +147,8 @@ pub async fn run_integration_rpc_server(server: Arc<Server>) -> anyhow::Result<(
 
 	if server.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()
-			.layer(crate::grpcserver::middleware::TelemetryMetricsLayer)
-			.layer(crate::grpcserver::middleware::RemoteAddrLayer)
+			.layer(crate::rpcserver::middleware::TelemetryMetricsLayer)
+			.layer(crate::rpcserver::middleware::RemoteAddrLayer)
 			.add_service(integration_server)
 			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
@@ -158,7 +158,7 @@ pub async fn run_integration_rpc_server(server: Arc<Server>) -> anyhow::Result<(
 			})?;
 	} else {
 		tonic::transport::Server::builder()
-			.layer(crate::grpcserver::middleware::RemoteAddrLayer)
+			.layer(crate::rpcserver::middleware::RemoteAddrLayer)
 			.add_service(integration_server)
 			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
 			.map_err(|e| {
