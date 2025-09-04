@@ -77,6 +77,10 @@ impl Captaind {
 		&self.inner.cfg
 	}
 
+	pub fn config_mut(&mut self) -> &mut Config {
+		&mut self.inner.cfg
+	}
+
 	/// Gracefully shutdown bitcoind associated with this server.
 	pub async fn shutdown_bitcoind(&self) {
 		self.inner.bitcoind.stop().await.expect("error stopping bitcoind");
