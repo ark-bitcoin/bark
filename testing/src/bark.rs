@@ -1,10 +1,10 @@
 
-use std::sync::Arc;
 use std::{env, fmt};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -144,6 +144,7 @@ impl Bark {
 	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
 		const MNEMONIC_FILE: &str = "mnemonic";
 		const DB_FILE: &str = "db.sqlite";
+		const CONFIG_FILE: &str = "config.toml";
 
 		// read mnemonic file
 		let mnemonic_path = self.config.datadir.join(MNEMONIC_FILE);
@@ -151,9 +152,16 @@ impl Bark {
 			.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
 		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 
+		// Read the config file
+		let config_path = self.config.datadir.join(CONFIG_FILE);
+		let config_str = fs::read_to_string(&config_path).await
+			.with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
+		let config: bark::Config = toml::from_str(&config_str)
+			.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
+
 		let db = bark::SqliteClient::open(self.config.datadir.join(DB_FILE))?;
 
-		Ok(bark::Wallet::open(&mnemonic, Arc::new(db)).await?)
+		Ok(bark::Wallet::open(&mnemonic, Arc::new(db), config).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {
@@ -170,8 +178,21 @@ impl Bark {
 
 	/// Set the bark's server address.
 	pub async fn set_ark_url(&self, srv: &dyn ToArkUrl) {
-		let url = srv.ark_url();
-		self.run(["config", "--dangerous", "--ark", &url]).await;
+		let config_path = self.config().datadir.join("config.toml");
+
+		// Read the config
+		let config_str = fs::read_to_string(&config_path).await.expect("Failed to read config.toml");
+		let mut config: bark::Config = toml::from_str(&config_str).expect("Failed to parse config.toml");
+
+		// modify the config
+		config.server_address = srv.ark_url();
+
+		// Write the config
+		let config_str = toml::to_string_pretty(&config).expect("Failed to serialize toml file");
+		fs::remove_file(&config_path).await.expect("Failed to delete config.toml");
+
+		let mut file = fs::File::create(&config_path).await.expect("Failed to create config.toml");
+		file.write(config_str.as_bytes()).await.expect("Failed to write config to config.toml");
 	}
 
 	pub async fn ark_info(&self) -> json::ArkInfo {

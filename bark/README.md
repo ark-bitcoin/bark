@@ -119,11 +119,16 @@ const DB_FILE: &str = "db.sqlite";
 #[tokio::main]
 async fn main() {
   let datadir = PathBuf::from("./bark");
+  let config = Config {
+    server_address: String::from("https://ark.signet.2nd.dev"),
+    esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
+    ..Default::default()
+  };
 
   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-  let wallet = Wallet::open(&mnemonic, db).await.unwrap();
+  let wallet = Wallet::open(&mnemonic, db, config).await.unwrap();
 }
 ```
 
@@ -142,18 +147,19 @@ you can request some sats from our [faucet](https://signet.2nd.dev).
 #
 # use tokio::fs;
 #
-# use bark::{Wallet, SqliteClient};
+# use bark::{Config, Wallet, SqliteClient};
 #
 # const MNEMONIC_FILE : &str = "mnemonic";
 # const DB_FILE: &str = "db.sqlite";
 #
 # async fn get_wallet() -> Wallet {
 #   let datadir = PathBuf::from("./bark");
+#   let config = Config::default();
 #
 #   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-#   Wallet::open(&mnemonic, db).await.unwrap()
+#   Wallet::open(&mnemonic, db, config).await.unwrap()
 # }
 #
 
@@ -181,7 +187,7 @@ The snippet below shows how you can inspect your [ark::Vtxo]s.
 #
 # use tokio::fs;
 #
-# use bark::{Wallet, SqliteClient};
+# use bark::{Config, Wallet, SqliteClient};
 #
 # const MNEMONIC_FILE : &str = "mnemonic";
 # const DB_FILE: &str = "db.sqlite";
@@ -192,7 +198,10 @@ The snippet below shows how you can inspect your [ark::Vtxo]s.
 #   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-#   Wallet::open(&mnemonic, db).await.unwrap()
+#
+#   let config = Config::default();
+#
+#   Wallet::open(&mnemonic, db, config).await.unwrap()
 # }
 #
 
@@ -232,7 +241,7 @@ default that selects all [ark::Vtxo]s that must be refreshed.
 #
 # use tokio::fs;
 #
-# use bark::{Wallet, SqliteClient};
+# use bark::{Config, Wallet, SqliteClient};
 #
 # const MNEMONIC_FILE : &str = "mnemonic";
 # const DB_FILE: &str = "db.sqlite";
@@ -243,7 +252,10 @@ default that selects all [ark::Vtxo]s that must be refreshed.
 #   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-#   Wallet::open(&mnemonic, db).await.unwrap()
+#
+#   let config = Config::default();
+#
+#   Wallet::open(&mnemonic, db, config).await.unwrap()
 # }
 #
 use bark::vtxo_selection::RefreshStrategy;

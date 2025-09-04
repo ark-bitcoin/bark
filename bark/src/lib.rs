@@ -178,9 +178,7 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	pub fn chain_source<P: BarkPersister>(db: Arc<P>) -> anyhow::Result<onchain::ChainSource> {
-		let config = db.read_config()?.context("Wallet is not initialised")?;
-
+	pub fn chain_source<P: BarkPersister>(config: &Config) -> anyhow::Result<onchain::ChainSource> {
 		// create on-chain wallet
 		if let Some(ref url) = config.esplora_address {
 			Ok(onchain::ChainSource::Esplora {
@@ -282,7 +280,7 @@ impl Wallet {
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
-		if let Some(existing) = db.read_config()? {
+		if let Some(existing) = db.read_properties()? {
 			trace!("Existing config: {:?}", existing);
 			bail!("cannot overwrite already existing config")
 		}
@@ -300,10 +298,10 @@ impl Wallet {
 		};
 
 		// write the config to db
-		db.init_wallet(&config, &properties).context("cannot init wallet in the database")?;
+		db.init_wallet(&properties).context("cannot init wallet in the database")?;
 
 		// from then on we can open the wallet
-		let wallet = Wallet::open(&mnemonic, db).await.context("failed to open wallet")?;
+		let wallet = Wallet::open(&mnemonic, db, config).await.context("failed to open wallet")?;
 		wallet.require_chainsource_version()?;
 
 		Ok(wallet)
@@ -323,10 +321,12 @@ impl Wallet {
 	}
 
 	/// Open existing wallet.
-	pub async fn open<P: BarkPersister>(mnemonic: &Mnemonic, db: Arc<P>) -> anyhow::Result<Wallet> {
-		let config = db.read_config()?.context("Wallet is not initialised")?;
+	pub async fn open<P: BarkPersister>(
+		mnemonic: &Mnemonic,
+		db: Arc<P>,
+		config: Config,
+	) -> anyhow::Result<Wallet> {
 		let properties = db.read_properties()?.context("Wallet is not initialised")?;
-		trace!("Config: {:?}", config);
 
 		let seed = mnemonic.to_seed("");
 		let vtxo_seed = VtxoSeed::new(properties.network, &seed);
@@ -376,8 +376,9 @@ impl Wallet {
 		mnemonic: &Mnemonic,
 		db: Arc<P>,
 		onchain: &W,
+		cfg: Config,
 	) -> anyhow::Result<Wallet> {
-		let mut wallet = Wallet::open(mnemonic, db).await?;
+		let mut wallet = Wallet::open(mnemonic, db, cfg).await?;
 		wallet.exit.load(onchain).await?;
 		Ok(wallet)
 	}
@@ -389,17 +390,6 @@ impl Wallet {
 	pub fn properties(&self) -> anyhow::Result<WalletProperties> {
 		let properties = self.db.read_properties()?.context("Wallet is not initialised")?;
 		Ok(properties)
-	}
-
-	/// Change the config of this wallet.
-	///
-	/// In order for these changes to be persistent, call [Wallet::persist_config].
-	pub fn set_config(&mut self, config: Config) {
-		self.config = config;
-	}
-
-	pub fn persist_config(&self) -> anyhow::Result<()> {
-		self.db.write_config(&self.config)
 	}
 
 	fn require_server(&self) -> anyhow::Result<ServerConnection> {
