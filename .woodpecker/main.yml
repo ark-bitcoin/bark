@@ -16,8 +16,7 @@ clone:
 steps:
   - name: push-github-mirror
     when:
-      - event: push
-        branch: master
+      - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://codeberg.org/ark-bitcoin/bark"'
     failure: ignore
     image: appleboy/drone-git-push@sha256:b7fbe3c66653f36d5898ccaf142be65274dc18ba260783b3a99ccc3098eed7b2
     settings:
