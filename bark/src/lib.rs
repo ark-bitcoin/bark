@@ -1921,7 +1921,7 @@ impl Wallet {
 	/// * The invoice must contain an explicit amount specified in milli-satoshis.
 	/// * The HTLC expiry height is calculated by adding the servers' HTLC expiry delta to the
 	///   current chain tip.
-	pub async fn finish_lightning_receive(&mut self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
+	pub async fn finish_lightning_receive(&self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
 		info!("Waiting for payment...");
@@ -2015,6 +2015,18 @@ impl Wallet {
 			.map(|v| Ok(self.db.get_wallet_vtxo(v.id())?.expect("missing VTXO we just put")))
 			.collect::<anyhow::Result<Vec<_>>>()?;
 		self.claim_htlc_vtxos(payment_hash, &wallet_vtxos).await
+	}
+
+	/// Finish and claim all open Lightning invoices
+	pub async fn claim_all_open_invoices(&self) -> anyhow::Result<()> {
+		// Asynchronously attempts to claim all pending receive by converting the list into a stream
+		tokio_stream::iter(self.pending_lightning_receives()?).for_each_concurrent(3, |receive| async move {
+			if let Err(e) = self.finish_lightning_receive(&receive.invoice).await {
+				error!("Error claiming invoice: {}", e);
+			}
+		}).await;
+
+		Ok(())
 	}
 
 	/// Same as [Wallet::send_lightning_payment] but instead it pays a [LightningAddress].

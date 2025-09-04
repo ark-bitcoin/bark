@@ -64,8 +64,8 @@ pub enum LightningCommand {
 	/// claim the receipt of an invoice
 	#[command()]
 	Claim {
-		/// The invoice to claim
-		invoice: String,
+		/// If `Some`, the invoice to claim; else claim all invoices
+		invoice: Option<String>,
 	},
 }
 
@@ -125,8 +125,13 @@ pub async fn execute_lightning_command(
 			output_json(&receives);
 		},
 		LightningCommand::Claim { invoice } => {
-			let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
-			wallet.finish_lightning_receive(&invoice).await?;
+			if let Some(invoice) = invoice {
+				let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
+				wallet.finish_lightning_receive(&invoice).await?;
+			} else {
+				info!("no invoice provided, trying to claim all open invoices");
+				wallet.claim_all_open_invoices().await?;
+			}
 		},
 	}
 
