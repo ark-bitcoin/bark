@@ -1825,6 +1825,10 @@ impl Wallet {
 		Ok(self.db.get_paginated_lightning_receives(pagination)?)
 	}
 
+	pub fn pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+		Ok(self.db.get_pending_lightning_receives()?)
+	}
+
 	async fn claim_htlc_vtxos(
 		&self,
 		payment_hash: PaymentHash,
