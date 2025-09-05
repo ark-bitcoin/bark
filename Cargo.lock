@@ -422,7 +422,7 @@ dependencies = [
  "bitcoin",
  "chrono",
  "clap",
- "fern",
+ "env_logger",
  "futures",
  "home",
  "lazy_static",

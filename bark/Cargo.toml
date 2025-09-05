@@ -9,7 +9,7 @@ readme = "README.md"
 
 [features]
 default = ["cli", "tls-native-roots"]
-cli = ["clap", "fern", "home", "onchain_bdk", "toml"]
+cli = ["clap", "env_logger", "home", "onchain_bdk", "toml"]
 onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
@@ -64,7 +64,7 @@ bdk_wallet = { workspace = true, features = [ "rusqlite" ], optional = true }
 
 # CLI only
 clap = { workspace = true, optional = true }
-fern = { workspace = true, optional = true }
+env_logger = { workspace = true, optional = true }
 home = { version = "=0.5.9", optional = true }
 toml = { workspace = true, optional = true}
 
