@@ -233,9 +233,11 @@ impl Captaind {
 
 	/// Subscribe to all structured logs of the given type.
 	pub fn subscribe_log<L: LogMsg>(&self) -> mpsc::UnboundedReceiver<L> {
+		info!("Subscribing to {} logs", L::LOGID);
 		let (tx, rx) = sync::mpsc::unbounded_channel();
 		self.add_slog_handler(move |log: &ParsedRecord| {
 			if let Ok(msg) = log.try_as() {
+				info!("Captured {} log", L::LOGID);
 				return tx.send(msg).is_err();
 			}
 			false
@@ -245,6 +247,7 @@ impl Captaind {
 
 	/// Wait for the first occurrence of the given log message type and return it.
 	pub async fn wait_for_log<L: LogMsg>(&self) -> L {
+		info!("Waiting for log {}", L::LOGID);
 		let (tx, mut rx) = sync::mpsc::channel(1);
 		self.add_slog_handler(move |log: &ParsedRecord| {
 			if let Ok(msg) = log.try_as() {
@@ -254,7 +257,9 @@ impl Captaind {
 			}
 			false
 		});
-		rx.recv().await.expect("log wait channel closed")
+		let ret = rx.recv().await.expect("log wait channel closed");
+		info!("Got {} log!", L::LOGID);
+		ret
 	}
 }
 

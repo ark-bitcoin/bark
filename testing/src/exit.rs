@@ -1,12 +1,14 @@
-use bark_json::{cli::ExitProgressResponse, exit::error::ExitError};
+
 use bitcoincore_rpc::RpcApi;
 use log::warn;
+
+use bark_json::exit::error::ExitError;
 
 use crate::{Bark, TestContext};
 
 pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	let mut flip = false;
-	let mut previous : Option<ExitProgressResponse> = None;
+	let mut previous = None;
 	let mut attempts = 0;
 	while attempts < 20 {
 		attempts += 1;
@@ -48,7 +50,7 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 		}
 
 		// Used to allow for an extra iteration if the status has changed
-		if let Some(previous) = &previous {
+		if let Some(ref previous) = previous {
 			if response != *previous {
 				attempts -= 1;
 			}

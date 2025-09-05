@@ -51,7 +51,7 @@ alias int := test-integration
 
 # run all integration tests without logging and without early failure.
 test-integration-all: build docker-pull
-	RUST_LOG=0 cargo test --package ark-testing --no-fail-fast
+	TEST_LOG=off cargo test --package ark-testing --no-fail-fast
 alias int-all := test-integration-all
 
 test-integration-codecov TEST="": build-codecov docker-pull
@@ -64,7 +64,7 @@ alias int-esplora := test-integration-esplora
 
 # run all integration tests without logging and without early failure.
 test-integration-esplora-all: build docker-pull
-	RUST_LOG=0 CHAIN_SOURCE=esplora cargo test --package ark-testing --no-fail-fast
+	TEST_LOG=off CHAIN_SOURCE=esplora cargo test --package ark-testing --no-fail-fast
 alias int-esplora-all := test-integration-esplora-all
 
 test-integration-esplora-codecov TEST="": build-codecov docker-pull
@@ -77,7 +77,7 @@ alias int-mempool := test-integration-mempool
 
 # run all integration tests without logging and without early failure.
 test-integration-mempool-all: build docker-pull
-	RUST_LOG=0 CHAIN_SOURCE=mempool cargo test --package ark-testing --no-fail-fast
+	TEST_LOG=off CHAIN_SOURCE=mempool cargo test --package ark-testing --no-fail-fast
 alias int-mempool-all := test-integration-mempool-all
 
 test-integration-mempool-codecov TEST="": build-codecov docker-pull
