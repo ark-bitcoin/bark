@@ -1699,8 +1699,8 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 }
 
 #[tokio::test]
-async fn aspd_config_change(){
-	let ctx = TestContext::new("aspd_config_change").await;
+async fn captaind_config_change(){
+	let ctx = TestContext::new("server/captaind_config_change").await;
 	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.vtxo_exit_delta = 12;
 	}).await;
