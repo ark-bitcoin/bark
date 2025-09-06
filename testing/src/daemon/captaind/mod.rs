@@ -2,7 +2,6 @@ pub mod proxy;
 
 use std::{env, fs};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -12,14 +11,14 @@ use bitcoin::{Network, Amount};
 use bitcoin::address::{Address, NetworkUnchecked};
 use log::{info, trace};
 use parking_lot::Mutex;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
-use server_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished, SLOG_FILENAME};
+use server_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
+use crate::daemon::LogHandler;
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::CAPTAIND_EXEC;
 use crate::util::{resolve_path, AnyhowErrorExt};
@@ -35,14 +34,14 @@ pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport
 pub const CAPTAIND_CONFIG_FILE: &str = "config.toml";
 
 
-pub trait SlogHandler {
+pub trait SlogHandler: Send + Sync + 'static {
 	/// Process a log line. Return true when you're done.
 	fn process_slog(&mut self, log: &ParsedRecord) -> bool;
 }
 
 impl<F> SlogHandler for F
 where
-	F: FnMut(&ParsedRecord) -> bool,
+	F: FnMut(&ParsedRecord) -> bool + Send + Sync + 'static,
 {
 	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
 		self(log)
@@ -65,7 +64,7 @@ pub struct CaptaindHelper {
 	name: String,
 	cfg: Config,
 	bitcoind: Bitcoind,
-	slog_handlers: Arc<Mutex<Vec<Box<dyn SlogHandler + Send + Sync + 'static>>>>,
+	slog_handler_tx: Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
 }
 
 impl Captaind {
@@ -98,7 +97,7 @@ impl Captaind {
 			name: name.as_ref().to_string(),
 			cfg,
 			bitcoind,
-			slog_handlers: Arc::new(Mutex::new(Vec::new())),
+			slog_handler_tx: Mutex::new(None),
 		};
 
 		Daemon::wrap(helper)
@@ -188,8 +187,48 @@ impl Captaind {
 		self.get_sweep_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
 	}
 
-	pub fn add_slog_handler<L: SlogHandler + Send + Sync + 'static>(&self, handler: L) {
-		self.inner.slog_handlers.lock().push(Box::new(handler));
+	pub fn add_slog_handler<L: SlogHandler>(&self, handler: L) {
+		let mut handler_tx_guard = self.inner.slog_handler_tx.lock();
+
+		if let Some(ref tx) = *handler_tx_guard {
+			tx.try_send(Box::new(handler)).expect("too many slog handlers pending");
+		} else {
+			/// This handler will forward the raw stdout log lines into
+			/// the slog handlers after parsing
+			struct Handler {
+				handlers: Vec<Box<dyn SlogHandler>>,
+				hadler_rx: mpsc::Receiver<Box<dyn SlogHandler>>,
+			}
+
+			impl LogHandler for Handler {
+				fn process_log(&mut self, line: &str) -> bool {
+					loop {
+						match self.hadler_rx.try_recv() {
+							Ok(h) => self.handlers.push(h),
+							Err(mpsc::error::TryRecvError::Empty) => break,
+							Err(mpsc::error::TryRecvError::Disconnected) => return true,
+						}
+					}
+
+					if !self.handlers.is_empty() {
+						let log = serde_json::from_str::<ParsedRecord>(&line)
+							.expect("error parsing slog line");
+						if log.is_slog() {
+							self.handlers.retain_mut(|h| !h.process_slog(&log));
+						}
+					}
+
+					false
+				}
+			}
+
+			let (tx, rx) = mpsc::channel(8);
+			self.add_stdout_handler(Handler {
+				handlers: vec![Box::new(handler)],
+				hadler_rx: rx,
+			});
+			*handler_tx_guard = Some(tx);
+		}
 	}
 
 	/// Subscribe to all structured logs of the given type.
@@ -291,33 +330,6 @@ impl DaemonHelper for CaptaindHelper {
 	}
 
 	async fn post_start(&mut self) -> anyhow::Result<()> {
-		// setup slog handling
-		let log_dir = match self.cfg.log_dir {
-			Some(ref d) => d,
-			None => return Ok(()),
-		};
-		let file = tokio::fs::File::open(log_dir.join(SLOG_FILENAME)).await
-			.expect("failed to open log file");
-
-		let buf_reader = BufReader::new(file);
-		let mut lines = buf_reader.lines();
-		let handlers = self.slog_handlers.clone();
-		let _ = tokio::spawn(async move {
-			loop {
-				match lines.next_line().await.expect("I/O error on log file handle") {
-					Some(line) => {
-						let log = serde_json::from_str::<ParsedRecord>(&line)
-							.expect("error parsing slog line");
-						for handler in handlers.lock().iter_mut() {
-							handler.process_slog(&log);
-						}
-					},
-					None => {
-						tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-					},
-				}
-			}
-		});
 		Ok(())
 	}
 

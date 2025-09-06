@@ -221,7 +221,6 @@ impl TestContext {
 		// to force us to evaluate every value in test context.
 		Config {
 			data_dir: data_dir.clone(),
-			log_dir: Some(data_dir),
 			network: Network::Regtest,
 			vtxo_lifetime: 144,
 			vtxo_exit_delta: 12,

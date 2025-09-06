@@ -6,7 +6,6 @@ pub mod postgres;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -16,7 +15,7 @@ use nix::unistd::Pid;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Command, Child};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::constants::env::DAEMON_INIT_TIMEOUT_MILLIS;
 use crate::util::{FutureExt, wait_for_completion};
@@ -36,14 +35,14 @@ pub enum DaemonState {
 	Error
 }
 
-pub trait LogHandler {
+pub trait LogHandler: Send + Sync + 'static {
 	/// Process a log line. Return true when you're done.
 	fn process_log(&mut self, line: &str) -> bool;
 }
 
 impl<F> LogHandler for F
 where
-	F: FnMut(&str) -> bool,
+	F: FnMut(&str) -> bool + Send + Sync + 'static,
 {
 	fn process_log(&mut self, line: &str) -> bool {
 		self(line)
@@ -74,7 +73,7 @@ pub struct Daemon<T>
 	inner: T,
 	daemon_state: Mutex<DaemonState>,
 	child: Mutex<Option<Child>>,
-	stdout_handlers: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>,
+	log_handler_tx: Option<mpsc::Sender<Box<dyn LogHandler>>>,
 }
 
 impl<T> Daemon<T>
@@ -86,7 +85,7 @@ impl<T> Daemon<T>
 			inner: inner,
 			daemon_state: Mutex::new(DaemonState::Init),
 			child: Mutex::new(None),
-			stdout_handlers: Arc::new(Mutex::new(vec![])),
+			log_handler_tx: None,
 		}
 	}
 
@@ -151,10 +150,9 @@ impl<T> Daemon<T>
 		let mut child = cmd.spawn()?;
 
 		// Read the log-file for stdout
-		let (path, handlers) = (stdout_path.clone(), self.stdout_handlers.clone());
-		let _jh = tokio::spawn(async move {
-			process_log_file(path, handlers).await
-		});
+		let (log_hander_tx, log_handler_rx) = mpsc::channel(8);
+		let _jh = tokio::spawn(process_log_file(stdout_path.clone(), log_handler_rx));
+		self.log_handler_tx = Some(log_hander_tx);
 
 		// Wait for initialization
 		let init_timeout = std::env::var(DAEMON_INIT_TIMEOUT_MILLIS)
@@ -220,9 +218,10 @@ impl<T> Daemon<T>
 		Ok(())
 	}
 
-	pub async fn add_stdout_handler<L: LogHandler + Send + Sync + 'static>(&self, log_handler: L) {
-		let mut handlers = self.stdout_handlers.lock().await;
-		handlers.push(Box::new(log_handler));
+	pub fn add_stdout_handler<L: LogHandler>(&self, log_handler: L) {
+		self.log_handler_tx.as_ref().expect("not started yet")
+			.try_send(Box::new(log_handler))
+			.expect("too many log handlers pending");
 	}
 }
 
@@ -246,22 +245,26 @@ impl<T> Drop for Daemon<T>
 
 async fn process_log_file<P: AsRef<Path>>(
 	filename: P,
-	handlers: Arc<Mutex<Vec<Box<dyn LogHandler + Send + Sync + 'static>>>>
-) -> ! {
+	mut log_handler_rx: mpsc::Receiver<Box<dyn LogHandler>>,
+) {
 	let file = tokio::fs::File::open(filename).await.expect("failed to open log file");
-	let buf_reader = BufReader::new(file);
-	let mut lines = buf_reader.lines();
+	let mut reader = BufReader::new(file);
 
+	let mut handlers = Vec::new();
+	let mut line = String::new();
 	loop {
-		match lines.next_line().await.expect("I/O error on log file handle") {
-			Some(line) => {
-				for handler in handlers.lock().await.iter_mut() {
-					handler.process_log(&line);
-				}
-			},
-			None => {
-				tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-			},
+		loop {
+			match log_handler_rx.try_recv() {
+				Ok(h) => handlers.push(h),
+				Err(mpsc::error::TryRecvError::Empty) => break,
+				Err(mpsc::error::TryRecvError::Disconnected) => return,
+			}
+		}
+
+		line.clear();
+		match reader.read_line(&mut line).await.expect("I/O error on log file handle") {
+			0 => tokio::time::sleep(Duration::from_millis(100)).await,
+			_ => handlers.retain_mut(|h| !h.process_log(&line)),
 		}
 	}
 }

@@ -44,7 +44,7 @@ ipnet = "2.11.0"
 trust-dns-resolver = { version = "0.23", default-features = false, features = ["tokio-runtime"] }
 
 lazy_static.workspace = true
-fern.workspace = true
+env_logger.workspace = true
 chrono.workspace = true
 clap.workspace = true
 futures.workspace = true
