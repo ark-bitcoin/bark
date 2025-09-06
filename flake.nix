@@ -191,8 +191,10 @@
 				};
 				slogCommands = [
 					(slogJq "slmod"  ''select((.module | split("::") | index($arg)) != null)'')
+					(slogJq "sls"    ''select(.kv != null)'')
 					(slogJq "slwarn" ''select(.level == "WARN" or .level == "ERROR")'')
 					(slogJq "slinfo" ''select(.level == "INFO" or .level == "WARN" or .level == "ERROR")'')
+					(slogJq "sldebug" ''select(.level == "DEBUG" or .level == "INFO" or .level == "WARN" or .level == "ERROR")'')
 					(pkgs.writeShellApplication {
 						name = "slf"; # pretty format
 						text = '' exec jq -r '
