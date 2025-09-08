@@ -1,7 +1,11 @@
 use chrono::{DateTime, Local};
+
 use ark::integration::{TokenStatus, TokenType};
+
 use crate::database::Db;
-use crate::database::intman::model::{EncodedFilters, EncodedFiltersExt, Integration, IntegrationApiKey, IntegrationToken, IntegrationTokenConfig};
+use crate::database::intman::model::{
+	EncodedFilters, Integration, IntegrationApiKey, IntegrationToken, IntegrationTokenConfig,
+};
 use crate::filters;
 
 pub mod model;
@@ -83,7 +87,7 @@ impl Db {
 		&self,
 		name: &str,
 		api_key: uuid::Uuid,
-		filters: filters::Filters,
+		filters: &filters::Filters,
 		integration_id: i64,
 		expires_at: DateTime<Local>,
 	) -> anyhow::Result<IntegrationApiKey> {
@@ -99,17 +103,17 @@ impl Db {
 		").await?;
 
 		let api_key = api_key.to_string();
-		let filters = EncodedFilters::from_filters(&filters);
+		let filters = EncodedFilters::from(filters);
 
 		let row = conn.query_one(&statement, &[
 			&name,
 			&api_key,
-			&filters,
+			&filters.encode(),
 			&integration_id,
 			&expires_at,
 		]).await?;
 
-		Ok(IntegrationApiKey::from(row))
+		Ok(IntegrationApiKey::try_from(row)?)
 	}
 
 	pub async fn get_integration_api_key_by_api_key(
@@ -129,7 +133,7 @@ impl Db {
 			&api_key.to_string(),
 		]).await?;
 
-		Ok(row.map(IntegrationApiKey::from))
+		Ok(row.map(IntegrationApiKey::try_from).transpose()?)
 	}
 
 	pub async fn get_integration_api_key_by_name(
@@ -152,13 +156,13 @@ impl Db {
 			&api_key_name,
 		]).await?;
 
-		Ok(row.map(IntegrationApiKey::from))
+		Ok(row.map(IntegrationApiKey::try_from).transpose()?)
 	}
 
 	pub async fn update_integration_api_key(
 		&self,
 		old_integration_api_key: IntegrationApiKey,
-		new_filters: filters::Filters,
+		new_filters: &filters::Filters,
 	) -> anyhow::Result<IntegrationApiKey> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
@@ -170,15 +174,15 @@ impl Db {
 				created_at, updated_at, deleted_at
 		").await?;
 
-		let filters = EncodedFilters::from_filters(&new_filters);
+		let filters = EncodedFilters::from(new_filters);
 
 		let row = conn.query_one(&statement, &[
-			&filters,
+			&filters.encode(),
 			&old_integration_api_key.integration_api_key_id,
 			&old_integration_api_key.updated_at,
 		]).await?;
 
-		Ok(IntegrationApiKey::from(row))
+		Ok(IntegrationApiKey::try_from(row)?)
 	}
 
 	pub async fn delete_integration_api_key(
@@ -201,7 +205,7 @@ impl Db {
 			&old_updated_at,
 		]).await?;
 
-		Ok(IntegrationApiKey::from(row))
+		Ok(IntegrationApiKey::try_from(row)?)
 	}
 
 	pub async fn store_integration_token_config(
@@ -333,7 +337,7 @@ impl Db {
 			&token,
 		]).await?;
 
-		Ok(row.map(IntegrationToken::from))
+		Ok(row.map(IntegrationToken::try_from).transpose()?)
 	}
 
 	pub async fn count_open_integration_tokens(
@@ -369,7 +373,7 @@ impl Db {
 		token_type: TokenType,
 		status: TokenStatus,
 		expiry_time: DateTime<Local>,
-		filters: filters::Filters,
+		filters: &filters::Filters,
 		integration_id: i64,
 		api_key_id: i64,
 	) -> anyhow::Result<IntegrationToken> {
@@ -385,19 +389,19 @@ impl Db {
 		").await?;
 		let token_type = token_type.to_string();
 		let token_status = status.to_string();
-		let filters = EncodedFilters::from_filters(&filters);
+		let filters = EncodedFilters::from(filters);
 
 		let row = conn.query_one(&statement, &[
 			&token_string,
 			&token_type,
 			&token_status,
-			&filters,
+			&filters.encode(),
 			&expiry_time,
 			&integration_id,
 			&api_key_id,
 		]).await?;
 
-		Ok(IntegrationToken::from(row))
+		Ok(IntegrationToken::try_from(row)?)
 	}
 
 	pub async fn update_integration_token(
@@ -405,7 +409,7 @@ impl Db {
 		old_integration_token: IntegrationToken,
 		updated_by_api_key_id: i64,
 		new_status: TokenStatus,
-		new_filters: filters::Filters,
+		new_filters: &filters::Filters,
 	) -> anyhow::Result<IntegrationToken> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
@@ -418,16 +422,16 @@ impl Db {
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
 		").await?;
 		let status = new_status.to_string();
-		let filters = EncodedFilters::from_filters(&new_filters);
+		let filters = EncodedFilters::from(new_filters);
 
 		let row = conn.query_one(&statement, &[
 			&status,
-			&filters,
+			&filters.encode(),
 			&updated_by_api_key_id,
 			&old_integration_token.integration_token_id,
 			&old_integration_token.updated_at,
 		]).await?;
 
-		Ok(IntegrationToken::from(row))
+		Ok(IntegrationToken::try_from(row)?)
 	}
 }

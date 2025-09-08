@@ -1,12 +1,15 @@
 
 use std::net::SocketAddr;
+
 use chrono::Local;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
+
 use ark::integration::{TokenStatus, TokenType};
-use crate::database::intman::model::{EncodedFiltersExt, Integration, IntegrationApiKey, IntegrationToken};
-use crate::filters::Filters;
+
 use crate::Server;
+use crate::database::intman::model::{Integration, IntegrationApiKey, IntegrationToken};
+use crate::filters::Filters;
 
 impl Server {
 	pub async fn get_integration_tokens(
@@ -45,7 +48,7 @@ impl Server {
 				token_type,
 				TokenStatus::Unused,
 				token_expiry_time,
-				filters,
+				&filters,
 				integration.integration_id,
 				integration_api_key.integration_api_key_id,
 			).await?;
@@ -107,7 +110,7 @@ impl Server {
 			integration_token.clone(),
 			integration_api_key.integration_api_key_id,
 			status,
-			integration_token.filters.to_filters(),
+			&integration_token.filters,
 		).await?)
 	}
 
@@ -134,7 +137,7 @@ impl Server {
 							return badarg!("Integration linked with API key is deleted");
 						}
 
-						let Some(_filters) = &integration_api_key.filters else {
+						if integration_api_key.filters.is_empty() {
 							return Ok((integration, integration_api_key.clone()));
 						};
 
@@ -149,8 +152,7 @@ impl Server {
 							ResolverOpts::default(),
 						);
 
-						let filters = integration_api_key.filters.to_filters();
-						if !filters.allowed(&resolver, &client_address).await {
+						if !integration_api_key.filters.allowed(&resolver, &client_address).await {
 							return badarg!("Client's address is not allowed");
 						}
 

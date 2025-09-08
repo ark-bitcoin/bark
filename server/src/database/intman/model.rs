@@ -1,32 +1,41 @@
 
+use anyhow::Context;
 use chrono::{DateTime, Local};
-use serde_json::to_string_pretty;
 use tokio_postgres::Row;
 use ark::integration::{TokenStatus, TokenType};
 
-use crate::filters;
+use crate::filters::Filters;
 
-pub type EncodedFilters = Option<String>;
-
-// Define a trait for the functionality
-pub trait EncodedFiltersExt {
-	fn to_filters(&self) -> filters::Filters;
-	fn from_filters(filters: &filters::Filters) -> EncodedFilters;
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub(super) struct EncodedFilters {
+	#[serde(default)]
+	ip: Vec<String>,
+	#[serde(default)]
+	dns: Vec<String>,
 }
 
-impl EncodedFiltersExt for EncodedFilters {
-	fn to_filters(&self) -> filters::Filters {
-		self.as_ref()
-			.and_then(|s| serde_json::from_str(s).ok())
-			.unwrap_or_else(filters::Filters::new)
+impl EncodedFilters {
+	pub fn encode(&self) -> String {
+		serde_json::to_string(self).expect("serializer shouldn't fail")
 	}
 
-	fn from_filters(filters: &filters::Filters) -> EncodedFilters {
-		if filters.is_empty() {
-			None
-		} else {
-			to_string_pretty(filters).ok()
+	pub fn decode(encoded: &str) -> Result<Self, serde_json::Error> {
+		serde_json::from_str(encoded)
+	}
+}
+
+impl From<&Filters> for EncodedFilters {
+	fn from(v: &Filters) -> Self {
+		EncodedFilters {
+			ip: v.ip().to_vec(),
+			dns: v.dns().to_vec(),
 		}
+	}
+}
+
+impl From<EncodedFilters> for Filters {
+	fn from(v: EncodedFilters) -> Self {
+		Filters::init(v.ip, v.dns)
 	}
 }
 
@@ -54,7 +63,7 @@ pub struct IntegrationApiKey {
 	pub integration_api_key_id: i64,
 	pub name: String,
 	pub api_key: uuid::Uuid,
-	pub filters: EncodedFilters,
+	pub filters: Filters,
 	pub integration_id: i64,
 	pub created_at: DateTime<Local>,
 	pub expires_at: DateTime<Local>,
@@ -68,19 +77,22 @@ impl IntegrationApiKey {
 	}
 }
 
-impl From<Row> for IntegrationApiKey {
-	fn from(row: Row) -> Self {
-		IntegrationApiKey {
+impl TryFrom<Row> for IntegrationApiKey {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> anyhow::Result<Self> {
+		Ok(IntegrationApiKey {
 			integration_api_key_id: row.get("integration_api_key_id"),
 			name: row.get("name"),
-			api_key: uuid::Uuid::try_from(row.get::<_, &str>("api_key")).unwrap(),
-			filters: row.get("filters"),
+			api_key: uuid::Uuid::try_from(row.get::<_, &str>("api_key")).expect("invalid UUID"),
+			filters: EncodedFilters::decode(row.get::<_, &str>("filters"))
+				.context("failed to decode fitlers")?.into(),
 			integration_id: row.get("integration_id"),
 			created_at: row.get("created_at"),
 			expires_at: row.get("expires_at"),
 			updated_at: row.get("updated_at"),
 			deleted_at: row.get("deleted_at"),
-		}
+		})
 	}
 }
 
@@ -117,7 +129,7 @@ pub struct IntegrationToken {
 	pub token: String,
 	pub token_type: TokenType,
 	pub status: TokenStatus,
-	pub filters: EncodedFilters,
+	pub filters: Filters,
 	pub integration_id: i64,
 	pub created_at: DateTime<Local>,
 	pub created_by_api_key_id: i64,
@@ -136,21 +148,26 @@ impl IntegrationToken {
 	}
 }
 
-impl From<Row> for IntegrationToken {
-	fn from(row: Row) -> Self {
-		IntegrationToken {
+impl TryFrom<Row> for IntegrationToken {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> anyhow::Result<Self> {
+		Ok(IntegrationToken {
 			integration_token_id: row.get("integration_token_id"),
 			token: row.get("token"),
-			token_type: row.get::<_, &str>("type").parse::<TokenType>().unwrap(),
-			status: row.get::<_, &str>("status").parse::<TokenStatus>().unwrap(),
-			filters: row.get("filters"),
+			token_type: row.get::<_, &str>("type").parse::<TokenType>()
+				.context("unknown TokenType")?,
+			status: row.get::<_, &str>("status").parse::<TokenStatus>()
+				.context("unknown TokenStatus")?,
+			filters: EncodedFilters::decode(row.get::<_, &str>("filters"))
+				.context("failed to decode fitlers")?.into(),
 			integration_id: row.get("integration_id"),
 			created_at: row.get("created_at"),
 			created_by_api_key_id: row.get("created_by_api_key_id"),
 			expires_at: row.get("expires_at"),
 			updated_at: row.get("updated_at"),
 			updated_by_api_key_id: row.get("updated_by_api_key_id"),
-		}
+		})
 	}
 }
 
@@ -163,48 +180,48 @@ mod test {
 	#[test]
 	fn test_encoded_filters() {
 		let f = Filters::new();
-		let ef = EncodedFilters::from_filters(&f);
-		assert_eq!(ef, None);
+		let ef = EncodedFilters::from(&f);
+		assert_eq!(ef.encode(), "{\"ip\":[],\"dns\":[]}");
 
 		let f = Filters::init(
 			vec!["127.0.0.1".to_string(), "10.0.0.1/8".to_string()],
 			vec![],
 		);
-		let ef = EncodedFilters::from_filters(&f);
-		assert_eq!(ef.unwrap(), "{\n  \"ip\": [\n    \"127.0.0.1\",\n    \"10.0.0.1/8\"\n  ],\n  \"dns\": []\n}");
+		let ef = EncodedFilters::from(&f);
+		assert_eq!(ef.encode(), "{\"ip\":[\"127.0.0.1\",\"10.0.0.1/8\"],\"dns\":[]}");
 
 		let f = Filters::init(
 			vec![],
 			vec!["localhost".to_string(), "host".to_string()],
 		);
-		let ef = EncodedFilters::from_filters(&f);
-		assert_eq!(ef.unwrap(), "{\n  \"ip\": [],\n  \"dns\": [\n    \"localhost\",\n    \"host\"\n  ]\n}");
+		let ef = EncodedFilters::from(&f);
+		assert_eq!(ef.encode(), "{\"ip\":[],\"dns\":[\"localhost\",\"host\"]}");
 
 		let f = Filters::init(
 			vec!["127.0.0.1".to_string(), "10.0.0.1/8".to_string()],
 			vec!["localhost".to_string(), "host".to_string()],
 		);
-		let ef = EncodedFilters::from_filters(&f);
-		assert_eq!(ef.unwrap(), "{\n  \"ip\": [\n    \"127.0.0.1\",\n    \"10.0.0.1/8\"\n  ],\n  \"dns\": [\n    \"localhost\",\n    \"host\"\n  ]\n}");
+		let ef = EncodedFilters::from(&f);
+		assert_eq!(ef.encode(), "{\"ip\":[\"127.0.0.1\",\"10.0.0.1/8\"],\"dns\":[\"localhost\",\"host\"]}");
 
-		let ef: EncodedFilters = None;
-		let f = EncodedFilters::to_filters(&ef);
+		let ef = EncodedFilters::decode("{}").unwrap();
+		let f = Filters::from(ef);
 		assert_eq!(f.is_empty(), true);
 
-		let ef: EncodedFilters = Some("{\"ip\":[\"127.0.0.1\",\"10.0.0.1/8\"]}".to_string());
-		let f = EncodedFilters::to_filters(&ef);
+		let ef = EncodedFilters::decode("{\"ip\":[\"127.0.0.1\",\"10.0.0.1/8\"]}").unwrap();
+		let f = Filters::from(ef);
 		assert_eq!(f.is_empty(), false);
 		assert_eq!(f.ip(), vec!["127.0.0.1".to_string(), "10.0.0.1/8".to_string()]);
 		assert_eq!(f.dns().is_empty(), true);
 
-		let ef: EncodedFilters = Some("{\"dns\":[\"localhost\",\"host\"]}".to_string());
-		let f = EncodedFilters::to_filters(&ef);
+		let ef = EncodedFilters::decode("{\"dns\":[\"localhost\",\"host\"]}").unwrap();
+		let f = Filters::from(ef);
 		assert_eq!(f.is_empty(), false);
 		assert_eq!(f.ip().is_empty(), true);
 		assert_eq!(f.dns(), vec!["localhost".to_string(), "host".to_string()]);
 
-		let ef: EncodedFilters = Some("{\"ip\":[\"127.0.0.1\",\"10.0.0.1/8\"],\"dns\":[\"localhost\",\"host\"]}".to_string());
-		let f = EncodedFilters::to_filters(&ef);
+		let ef = EncodedFilters::decode("{\"ip\":[\"127.0.0.1\",\"10.0.0.1/8\"],\"dns\":[\"localhost\",\"host\"]}").unwrap();
+		let f = Filters::from(ef);
 		assert_eq!(f.is_empty(), false);
 		assert_eq!(f.ip(), vec!["127.0.0.1".to_string(), "10.0.0.1/8".to_string()]);
 		assert_eq!(f.dns(), vec!["localhost".to_string(), "host".to_string()]);
