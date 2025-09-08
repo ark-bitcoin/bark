@@ -1,3 +1,38 @@
+//! Round State Machine
+//!
+//! This module defines the lifecycle of an Ark round as a strongly typed state machine. Each phase
+//! of the round is represented by a distinct struct with appropriate data, wrapped in the
+//! [RoundState] enum. This design makes transitions explicit and helps ensure only valid
+//! operations are performed at each step.
+//!
+//! ## States
+//!
+//! The [RoundState] enum enumerates all phases a round can take:
+//!
+//! - [RoundState::AttemptStarted] → initial attempt context
+//! - [RoundState::PaymentSubmitted] → a payment has been submitted
+//! - [RoundState::VtxoTreeSigned] → VTXO tree signatures collected
+//! - [RoundState::ForfeitSigned] → forfeits recorded
+//! - [RoundState::PendingConfirmation] → transaction waiting for onchain confirmation
+//! - [RoundState::RoundConfirmed] → round successfully confirmed onchain
+//! - [RoundState::RoundAbandoned] → round was intentionally abandoned
+//! - [RoundState::RoundCancelled] → round canceled after failures
+//!
+//! A lightweight [RoundStateKind] enum is also provided for quick discriminant checks or
+//! serialization.
+//!
+//! ## Traits
+//!
+//! The module defines traits representing *capabilities* available in certain
+//! states:
+//!
+//! - [GetRoundContext] — access round identifiers and participation
+//! - [GetRoundTx] — access to the round transaction / txid
+//! - [GetForfeitedVtxos] — access to forfeited VTXOs where applicable
+//! - [StartNewAttempt] — derive a new [RoundState::AttemptStarted] state
+//! - [ToCancelled] — transition to a canceled state
+//! - [ToAbandoned] — transition to an abandoned state
+//!
 
 use std::iter;
 use std::time::Duration;
@@ -112,7 +147,7 @@ impl fmt::Display for AttemptError {
 impl std::error::Error for AttemptError {}
 
 /// Result of a round attempt.
-enum AttemptResult {
+pub enum AttemptResult {
 	/// A new round was started by the server.
 	///
 	/// Includes the new round info to let caller process it.
@@ -196,6 +231,13 @@ const ROUND_CONFIRMED: &'static str = "RoundConfirmed";
 const ROUND_ABANDONNED: &'static str = "RoundAbandonned";
 const ROUND_CANCELLED: &'static str = "RoundCancelled";
 
+/// Represents the type of round state.
+///
+/// This type is a compact, string-friendly discriminator for [`RoundState`].
+/// It is useful for serialization, logging, UIs, and matching without
+/// carrying the full state payload around.
+///
+/// See [`RoundState`] for the rich, data-carrying states
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum RoundStateKind {
 	/// see [AttemptStartedState]
@@ -217,6 +259,10 @@ pub enum RoundStateKind {
 }
 
 impl RoundStateKind {
+	/// Returns the canonical stable string for this kind.
+	///
+	/// The returned value is intended for persistence and interoperability.
+	/// Use [`RoundStateKind::from_str`] to parse it back.
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			Self::AttemptStarted => ATTEMPT_STARTED,
@@ -240,6 +286,7 @@ impl fmt::Display for RoundStateKind {
 impl FromStr for RoundStateKind {
 	type Err = anyhow::Error;
 
+	/// Formats the kind as its canonical string (same as [`RoundStateKind::as_str`]).
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s {
 			ATTEMPT_STARTED => Ok(RoundStateKind::AttemptStarted),
@@ -255,6 +302,16 @@ impl FromStr for RoundStateKind {
 	}
 }
 
+/// Full, data-carrying state of a round attempt.
+///
+/// A round transitions through these states as it progresses with the
+/// coordinator and the blockchain. Each variant carries the specific data
+/// associated with that phase.
+///
+/// Use:
+/// - [`RoundState::kind`] to get the lightweight discriminator.
+/// - `into_*` helpers to downcast into a concrete variant.
+/// - [`From`] impls to upcast concrete states into `RoundState`.
 pub enum RoundState {
 	/// see [AttemptStartedState]
 	AttemptStarted(AttemptStartedState),
@@ -276,6 +333,7 @@ pub enum RoundState {
 }
 
 impl RoundState {
+	/// Returns the lightweight discriminator for this state.
 	pub fn kind(&self) -> RoundStateKind {
 		match &self {
 			Self::AttemptStarted(_) => RoundStateKind::AttemptStarted,
@@ -289,6 +347,7 @@ impl RoundState {
 		}
 	}
 
+	/// Returns the unique identifier of this round attempt.
 	pub fn round_attempt_id(&self) -> i64 {
 		match self {
 			RoundState::AttemptStarted(state) => state.round_attempt_id,
@@ -302,6 +361,10 @@ impl RoundState {
 		}
 	}
 
+	/// Returns the round participation context, if available for this state.
+	///
+	/// Not all states retain full participation details; `None` indicates the information is not
+	/// applicable or no longer carried by this variant.
 	pub fn participation(&self) -> Option<&RoundParticipation> {
 		match &self {
 			RoundState::AttemptStarted(state) => Some(&state.participation),
@@ -319,7 +382,7 @@ impl RoundState {
 	///
 	/// If the round state cannot progress, returns [None].
 	///
-	/// If the round state can progress, it will perform progress and return progress result.
+	/// If the round state can progress, it will perform progress and return the progress result.
 	pub async fn progress(self,
 		event: Option<RoundEvent>,
 		srv: &mut ServerConnection,
@@ -361,6 +424,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [AttemptStartedState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_attempt_started(self) -> Option<AttemptStartedState> {
 		match self {
 			RoundState::AttemptStarted(state) => Some(state),
@@ -368,6 +434,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [PaymentSubmittedState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_payment_submitted(self) -> Option<PaymentSubmittedState> {
 		match self {
 			RoundState::PaymentSubmitted(state) => Some(state),
@@ -375,6 +444,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [VtxoTreeSignedState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_vtxo_tree_signed(self) -> Option<VtxoTreeSignedState> {
 		match self {
 			RoundState::VtxoTreeSigned(state) => Some(state),
@@ -382,6 +454,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [ForfeitSignedState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_forfeit_signed(self) -> Option<ForfeitSignedState> {
 		match self {
 			RoundState::ForfeitSigned(state) => Some(state),
@@ -389,6 +464,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [PendingConfirmationState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_pending_confirmation(self) -> Option<PendingConfirmationState> {
 		match self {
 			RoundState::PendingConfirmation(state) => Some(state),
@@ -396,6 +474,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [RoundConfirmedState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_round_confirmed(self) -> Option<RoundConfirmedState> {
 		match self {
 			RoundState::RoundConfirmed(state) => Some(state),
@@ -403,6 +484,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [RoundAbandonedState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_round_abandoned(self) -> Option<RoundAbandonedState> {
 		match self {
 			RoundState::RoundAbandoned(state) => Some(state),
@@ -410,6 +494,9 @@ impl RoundState {
 		}
 	}
 
+	/// Converts this state into [RoundCancelledState] if it matches that variant.
+	///
+	/// Returns `None` if the current variant is different.
 	pub fn into_round_cancelled(self) -> Option<RoundCancelledState> {
 		match self {
 			RoundState::RoundCancelled(state) => Some(state),
@@ -530,7 +617,7 @@ pub trait ToAbandoned: Sized + GetRoundContext + Into<RoundState> {
 ///
 /// Can transition to states:
 /// - [PaymentSubmittedState]: when payment submission step is over
-/// - [AbandonedState]: when client decides to leave the current round
+/// - [RoundAbandonedState]: when client decides to leave the current round
 #[derive(Debug)]
 pub struct AttemptStartedState {
 	pub round_attempt_id: i64,
@@ -554,7 +641,7 @@ impl GetRoundContext for AttemptStartedState {
 
 /// Should be called when an error occurs before forfeiting.
 ///
-/// This will transition the round to the [Abandoned] state.
+/// This will transition the round to the [RoundAbandonedState] state.
 pub  fn error_before_forfeit<Rst: ToAbandoned>(
 	db: &Arc<dyn BarkPersister>,
 	round_state: Rst,
@@ -682,7 +769,7 @@ impl AttemptStartedState {
 /// Can transition to states:
 /// - [AttemptStartedState]: when a new round attempt is started
 /// - [VtxoTreeSignedState]: when payment submission step is over
-/// - [AbandonedState]: when client decides to leave the current round
+/// - [RoundAbandonedState]: when client decides to leave the current round
 #[derive(Debug)]
 pub struct PaymentSubmittedState {
 	pub round_attempt_id: i64,
@@ -861,9 +948,9 @@ impl PaymentSubmittedState {
 /// - [AttemptStartedState]: when new round attempt is started (most probably
 /// VTXO signatures submission step is over and some participant failed to
 ///provide them in time
-/// - [ForfeitSignedSlate]: when VTXO signatures submission step is
+/// - [ForfeitSignedState]: when VTXO signatures submission step is
 /// over and all participants submitted
-/// - [AbandonedState]: when client decides to leave the current round
+/// - [RoundAbandonedState]: when client decides to leave the current round
 #[derive(Debug)]
 pub struct VtxoTreeSignedState {
 	pub round_attempt_id: i64,
@@ -1081,7 +1168,7 @@ pub struct VtxoForfeitedInRound {
 /// - [AttemptStartedState]: when new round attempt is started (most probably
 /// forfeit signatures submission step is over and some participant failed to
 /// provide them in time
-/// - [RoundPendingConfirmationState]: when VTXO signatures submission step is
+/// - [PendingConfirmationState]: when VTXO signatures submission step is
 /// over and all participants submitted
 /// - [RoundCancelledState]: when the Ark Server decided to invalidate a round,
 /// makes input VTXOs valid again
