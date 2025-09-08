@@ -1,3 +1,13 @@
+//! SQLite persistence backend for Bark.
+//!
+//! This module provides a concrete implementation of the `BarkPersister` trait
+//! backed by a local SQLite database. It encapsulates schema creation and
+//! migrations, typed query helpers, and conversions between in-memory models
+//! and their stored representations. Operations are performed using explicit
+//! connections and transactions to ensure atomic updates across related tables,
+//! covering wallet properties, movements, vtxos and their states, round
+//! lifecycle data, Lightning receives, exit tracking, and sync metadata.
+
 mod convert;
 mod migrations;
 mod query;
@@ -28,6 +38,8 @@ use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::persist::BarkPersister;
 use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
 
+/// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
+/// [PathBuf].
 #[derive(Clone)]
 pub struct SqliteClient {
 	connection_string: PathBuf,
