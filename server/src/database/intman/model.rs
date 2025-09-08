@@ -6,7 +6,7 @@ use ark::integration::{TokenStatus, TokenType};
 
 use crate::filters::Filters;
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub(super) struct EncodedFilters {
 	#[serde(default)]
 	ip: Vec<String>,
@@ -85,8 +85,11 @@ impl TryFrom<Row> for IntegrationApiKey {
 			integration_api_key_id: row.get("integration_api_key_id"),
 			name: row.get("name"),
 			api_key: uuid::Uuid::try_from(row.get::<_, &str>("api_key")).expect("invalid UUID"),
-			filters: EncodedFilters::decode(row.get::<_, &str>("filters"))
-				.context("failed to decode fitlers")?.into(),
+			filters: row.get::<_, Option<&str>>("filters")
+				.map(EncodedFilters::decode)
+				.transpose().context("failed to decode fitlers")?
+				.unwrap_or_default()
+				.into(),
 			integration_id: row.get("integration_id"),
 			created_at: row.get("created_at"),
 			expires_at: row.get("expires_at"),
@@ -159,8 +162,11 @@ impl TryFrom<Row> for IntegrationToken {
 				.context("unknown TokenType")?,
 			status: row.get::<_, &str>("status").parse::<TokenStatus>()
 				.context("unknown TokenStatus")?,
-			filters: EncodedFilters::decode(row.get::<_, &str>("filters"))
-				.context("failed to decode fitlers")?.into(),
+			filters: row.get::<_, Option<&str>>("filters")
+				.map(EncodedFilters::decode)
+				.transpose().context("failed to decode fitlers")?
+				.unwrap_or_default()
+				.into(),
 			integration_id: row.get("integration_id"),
 			created_at: row.get("created_at"),
 			created_by_api_key_id: row.get("created_by_api_key_id"),
