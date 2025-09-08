@@ -46,19 +46,19 @@ pub struct VtxoTreeSpec {
 	pub expiry_height: BlockHeight,
 	pub server_pubkey: PublicKey,
 	pub exit_delta: u16,
-	pub server_cosign_pk: PublicKey,
+	pub global_cosign_pubkeys: Vec<PublicKey>,
 }
 
 impl VtxoTreeSpec {
 	pub fn new(
 		vtxos: Vec<SignedVtxoRequest>,
 		server_pubkey: PublicKey,
-		server_cosign_pk: PublicKey,
 		expiry_height: BlockHeight,
 		exit_delta: u16,
+		global_cosign_pubkeys: Vec<PublicKey>,
 	) -> VtxoTreeSpec {
 		assert_ne!(vtxos.len(), 0);
-		VtxoTreeSpec { vtxos, server_pubkey, server_cosign_pk, expiry_height, exit_delta }
+		VtxoTreeSpec { vtxos, server_pubkey, expiry_height, exit_delta, global_cosign_pubkeys }
 	}
 
 	pub fn nb_leaves(&self) -> usize {
@@ -96,8 +96,8 @@ impl VtxoTreeSpec {
 	/// In Ark rounds this will be the round tx scriptPubkey.
 	pub fn funding_tx_cosign_pubkey(&self) -> XOnlyPublicKey {
 		let keys = self.vtxos.iter()
-			.map(|v| v.cosign_pubkey)
-			.chain(Some(self.server_cosign_pk));
+			.filter_map(|v| v.cosign_pubkey)
+			.chain(self.global_cosign_pubkeys.iter().copied());
 		musig::combine_keys(keys)
 	}
 
@@ -156,7 +156,8 @@ impl VtxoTreeSpec {
 	{
 		Tree::new(self.nb_leaves()).into_iter().map(|node| {
 			musig::combine_keys(
-				node.leaves().map(|i| self.vtxos[i].cosign_pubkey).chain([self.server_cosign_pk])
+				node.leaves().filter_map(|i| self.vtxos[i].cosign_pubkey)
+					.chain(self.global_cosign_pubkeys.iter().copied())
 			)
 		})
 	}
@@ -213,18 +214,27 @@ impl VtxoTreeSpec {
 	pub fn calculate_cosign_agg_nonces(
 		&self,
 		leaf_cosign_nonces: &HashMap<PublicKey, Vec<PublicNonce>>,
-		server_cosign_nonces: &[PublicNonce],
-	) -> Vec<AggregatedNonce> {
-		let tree = Tree::new(self.nb_leaves());
+		global_signer_cosign_nonces: &[impl AsRef<[PublicNonce]>],
+	) -> Result<Vec<AggregatedNonce>, String> {
+		if global_signer_cosign_nonces.len() != self.global_cosign_pubkeys.len() {
+			return Err("missing global signer nonces".into());
+		}
 
-		tree.iter().zip(server_cosign_nonces).map(|(node, srv)| {
-			let nonces = node.leaves().map(|i| self.vtxos[i].cosign_pubkey).map(|pk| {
-				leaf_cosign_nonces.get(&pk).expect("nonces are complete")
+		Tree::new(self.nb_leaves()).iter().enumerate().map(|(idx, node)| {
+			let mut nonces = Vec::new();
+			for pk in node.leaves().filter_map(|i| self.vtxos[i].cosign_pubkey) {
+				nonces.push(leaf_cosign_nonces.get(&pk)
+					.ok_or_else(|| format!("missing nonces for leaf pk {}", pk))?
 					// note that we skip some nonces for some leaves that are at the edges
 					// and skip some levels
-					.get(node.level()).expect("sufficient nonces provided")
-			}).chain(Some(srv)).collect::<Vec<_>>();
-			musig::nonce_agg(&nonces)
+					.get(node.level())
+					.ok_or_else(|| format!("not enough nonces for leaf_pk {}", pk))?
+				);
+			}
+			for glob in global_signer_cosign_nonces {
+				nonces.push(glob.as_ref().get(idx).ok_or("not enough global cosign nonces")?);
+			}
+			Ok(musig::nonce_agg(&nonces))
 		}).collect()
 	}
 
@@ -317,7 +327,7 @@ impl UnsignedVtxoTree {
 		cosign_sec_nonces: Vec<SecretNonce>,
 	) -> Result<Vec<PartialSignature>, IncorrectSigningKeyError> {
 		let req = self.spec.vtxos.get(leaf_idx).expect("leaf idx out of bounds");
-		if cosign_key.public_key() != req.cosign_pubkey {
+		if Some(cosign_key.public_key()) != req.cosign_pubkey {
 			return Err(IncorrectSigningKeyError {
 				required: req.cosign_pubkey,
 				provided: cosign_key.public_key(),
@@ -338,8 +348,8 @@ impl UnsignedVtxoTree {
 				}
 			};
 
-			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
-				.chain(Some(self.spec.server_cosign_pk));
+			let cosign_pubkeys = node.leaves().filter_map(|i| self.spec.vtxos[i].cosign_pubkey)
+				.chain(self.spec.global_cosign_pubkeys.iter().copied());
 			let sighash = self.sighashes[node.idx()];
 
 			let agg_pk = self.cosign_agg_pks[node.idx()];
@@ -373,8 +383,8 @@ impl UnsignedVtxoTree {
 		assert_eq!(cosign_sec_nonces.len(), self.nb_nodes());
 
 		self.tree.iter().zip(cosign_sec_nonces.into_iter()).map(|(node, sec_nonce)| {
-			let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
-				.chain([self.spec.server_cosign_pk]);
+			let cosign_pubkeys = node.leaves().filter_map(|i| self.spec.vtxos[i].cosign_pubkey)
+				.chain(self.spec.global_cosign_pubkeys.iter().copied());
 			let sighash = self.sighashes[node.idx()];
 
 			let agg_pk = self.cosign_agg_pks[node.idx()];
@@ -400,8 +410,8 @@ impl UnsignedVtxoTree {
 		part_sig: PartialSignature,
 		pub_nonce: PublicNonce,
 	) -> Result<(), CosignSignatureError> {
-		let cosign_pubkeys = node.leaves().map(|i| self.spec.vtxos[i].cosign_pubkey)
-			.chain(Some(self.spec.server_cosign_pk));
+		let cosign_pubkeys = node.leaves().filter_map(|i| self.spec.vtxos[i].cosign_pubkey)
+			.chain(self.spec.global_cosign_pubkeys.iter().copied());
 		let sighash = self.sighashes[node.idx()];
 
 		let taptweak = self.spec.cosign_taproot(self.cosign_agg_pks[node.idx()]).tap_tweak();
@@ -437,6 +447,7 @@ impl UnsignedVtxoTree {
 	) -> Result<(), String> {
 		assert_eq!(cosign_agg_nonces.len(), self.nb_nodes());
 
+		let cosign_pubkey = request.cosign_pubkey.ok_or("no cosign pubkey for request")?;
 		let leaf_idx = self.spec.leaf_idx_of(request).ok_or("request not in tree")?;
 		// quickly check if the number of sigs is sane
 		match self.tree.iter_branch(leaf_idx).count().cmp(&cosign_part_sigs.len()) {
@@ -456,7 +467,7 @@ impl UnsignedVtxoTree {
 			};
 			self.verify_node_cosign_partial_sig(
 				node,
-				request.cosign_pubkey,
+				cosign_pubkey,
 				cosign_agg_nonces,
 				part_sigs_iter.next().ok_or("not enough sigs")?.clone(),
 				*pub_nonce,
@@ -469,7 +480,7 @@ impl UnsignedVtxoTree {
 	/// Verify the partial cosign signatures for all nodes.
 	///
 	/// Nonces and partial signatures expected ordered from leaves to root.
-	pub fn verify_all_cosign_partial_sigs(
+	pub fn verify_global_cosign_partial_sigs(
 		&self,
 		pk: PublicKey,
 		agg_nonces: &[AggregatedNonce],
@@ -498,32 +509,43 @@ impl UnsignedVtxoTree {
 		&self,
 		cosign_agg_nonces: &[AggregatedNonce],
 		leaf_part_sigs: &HashMap<PublicKey, Vec<PartialSignature>>,
-		server_sigs: &[PartialSignature],
+		global_signer_part_sigs: &[impl AsRef<[PartialSignature]>],
 	) -> Result<Vec<schnorr::Signature>, CosignSignatureError> {
 		// to ease implementation, we're reconstructing the part sigs map with dequeues
 		let mut leaf_part_sigs = leaf_part_sigs.iter()
 			.map(|(pk, sigs)| (pk, sigs.iter().collect()))
 			.collect::<HashMap<_, VecDeque<_>>>();
 
-		if server_sigs.len() != self.nb_nodes() {
-			return Err(CosignSignatureError::MissingSignature { pk: self.spec.server_cosign_pk });
+		if global_signer_part_sigs.len() != self.spec.global_cosign_pubkeys.len() {
+			return Err(CosignSignatureError::Invalid(
+				"invalid nb of global cosigner partial signatures",
+			));
+		}
+		for (pk, sigs) in self.spec.global_cosign_pubkeys.iter().zip(global_signer_part_sigs) {
+			if sigs.as_ref().len() != self.nb_nodes() {
+				return Err(CosignSignatureError::MissingSignature { pk: *pk });
+			}
 		}
 
 		let max_level = self.tree.root().level();
-		self.tree.iter().zip(server_sigs.into_iter()).map(|(node, server_sig)| {
+		self.tree.iter().enumerate().map(|(idx, node)| {
 			let mut cosign_pks = Vec::with_capacity(max_level + 1);
 			let mut part_sigs = Vec::with_capacity(max_level + 1);
 			for leaf in node.leaves() {
-				let cosign_pk = self.spec.vtxos[leaf].cosign_pubkey;
-				let part_sig = leaf_part_sigs.get_mut(&cosign_pk)
-					.ok_or(CosignSignatureError::missing_sig(cosign_pk))?
-					.pop_front()
-					.ok_or(CosignSignatureError::missing_sig(cosign_pk))?;
-				cosign_pks.push(cosign_pk);
-				part_sigs.push(part_sig);
+				if let Some(cosign_pk) = self.spec.vtxos[leaf].cosign_pubkey {
+					let part_sig = leaf_part_sigs.get_mut(&cosign_pk)
+						.ok_or(CosignSignatureError::missing_sig(cosign_pk))?
+						.pop_front()
+						.ok_or(CosignSignatureError::missing_sig(cosign_pk))?;
+					cosign_pks.push(cosign_pk);
+					part_sigs.push(part_sig);
+				}
 			}
-			cosign_pks.push(self.spec.server_cosign_pk);
-			part_sigs.push(&server_sig);
+			// add global signers
+			cosign_pks.extend(&self.spec.global_cosign_pubkeys);
+			for sigs in global_signer_part_sigs {
+				part_sigs.push(sigs.as_ref().get(idx).expect("checked before"));
+			}
 
 			let agg_pk = self.cosign_agg_pks[node.idx()];
 			Ok(musig::combine_partial_signatures(
@@ -579,6 +601,8 @@ pub enum CosignSignatureError {
 	InvalidSignature { pk: PublicKey },
 	#[error("not enough nonces")]
 	NotEnoughNonces,
+	#[error("invalid cosign signatures: {0}")]
+	Invalid(&'static str),
 }
 
 impl fmt::Debug for CosignSignatureError {
@@ -691,8 +715,8 @@ impl CachedSignedVtxoTree {
 			let tree = Tree::new(self.spec.spec.nb_leaves());
 			for node in tree.iter_branch(leaf_idx) {
 				let transition = GenesisTransition::Cosigned {
-					pubkeys: node.leaves().map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
-						.chain([self.spec.spec.server_cosign_pk])
+					pubkeys: node.leaves().filter_map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
+						.chain(self.spec.spec.global_cosign_pubkeys.iter().copied())
 						.collect(),
 					signature: self.spec.cosign_sigs.get(node.idx()).cloned()
 						.expect("enough sigs for all nodes"),
@@ -741,7 +765,7 @@ impl CachedSignedVtxoTree {
 }
 
 /// The serialization version of [VtxoTreeSpec].
-const VTXO_TREE_SPEC_VERSION: u8 = 0x01;
+const VTXO_TREE_SPEC_VERSION: u8 = 0x02;
 
 impl ProtocolEncoding for VtxoTreeSpec {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
@@ -749,39 +773,77 @@ impl ProtocolEncoding for VtxoTreeSpec {
 		w.emit_u32(self.expiry_height)?;
 		self.server_pubkey.encode(w)?;
 		w.emit_u16(self.exit_delta)?;
-		self.server_cosign_pk.encode(w)?;
+		w.emit_compact_size(self.global_cosign_pubkeys.len() as u64)?;
+		for pk in &self.global_cosign_pubkeys {
+			pk.encode(w)?;
+		}
 
-		w.emit_u32(self.vtxos.len() as u32)?;
+		w.emit_compact_size(self.vtxos.len() as u64)?;
 		for vtxo in &self.vtxos {
 			vtxo.vtxo.policy.encode(w)?;
 			w.emit_u64(vtxo.vtxo.amount.to_sat())?;
-			vtxo.cosign_pubkey.encode(w)?;
+			if let Some(pk) = vtxo.cosign_pubkey {
+				pk.encode(w)?;
+			} else {
+				w.emit_u8(0)?;
+			}
 		}
 		Ok(())
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, crate::encode::ProtocolDecodingError> {
 		let version = r.read_u8()?;
+
+		// be compatible with old version
+		if version == 0x01 {
+			let expiry_height = r.read_u32()?;
+			let server_pubkey = PublicKey::decode(r)?;
+			let exit_delta = r.read_u16()?;
+			let server_cosign_pk = PublicKey::decode(r)?;
+
+			let nb_vtxos = r.read_u32()?;
+			let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
+			for _ in 0..nb_vtxos {
+				let output = VtxoPolicy::decode(r)?;
+				let amount = Amount::from_sat(r.read_u64()?);
+				let cosign_pk = PublicKey::decode(r)?;
+				vtxos.push(SignedVtxoRequest {
+					vtxo: VtxoRequest { policy: output, amount },
+					cosign_pubkey: Some(cosign_pk),
+				});
+			}
+
+			return Ok(VtxoTreeSpec {
+				vtxos, expiry_height, server_pubkey, exit_delta,
+				global_cosign_pubkeys: vec![server_cosign_pk],
+			});
+		}
+
 		if version != VTXO_TREE_SPEC_VERSION {
 			return Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid VtxoTreeSpec encoding version byte: {version:#x}",
 			)));
 		}
+
 		let expiry_height = r.read_u32()?;
 		let server_pubkey = PublicKey::decode(r)?;
 		let exit_delta = r.read_u16()?;
-		let server_cosign_pk = PublicKey::decode(r)?;
+		let nb_global_signers = r.read_compact_size()?;
+		let mut global_cosign_pubkeys = Vec::with_capacity(nb_global_signers as usize);
+		for _ in 0..nb_global_signers {
+			global_cosign_pubkeys.push(PublicKey::decode(r)?);
+		}
 
-		let nb_vtxos = r.read_u32()?;
+		let nb_vtxos = r.read_compact_size()?;
 		let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
 		for _ in 0..nb_vtxos {
 			let output = VtxoPolicy::decode(r)?;
 			let amount = Amount::from_sat(r.read_u64()?);
-			let cosign_pk = PublicKey::decode(r)?;
-			vtxos.push(SignedVtxoRequest { vtxo: VtxoRequest { policy: output, amount }, cosign_pubkey: cosign_pk });
+			let cosign_pubkey = Option::<PublicKey>::decode(r)?;
+			vtxos.push(SignedVtxoRequest { vtxo: VtxoRequest { policy: output, amount }, cosign_pubkey });
 		}
 
-		Ok(VtxoTreeSpec { vtxos, expiry_height, server_pubkey, exit_delta, server_cosign_pk })
+		Ok(VtxoTreeSpec { vtxos, expiry_height, server_pubkey, exit_delta, global_cosign_pubkeys })
 	}
 }
 
@@ -884,7 +946,7 @@ mod test {
 						amount: self.amount,
 						policy: VtxoPolicy::new_pubkey(self.key.public_key()),
 					},
-					cosign_pubkey: self.cosign_key.public_key(),
+					cosign_pubkey: Some(self.cosign_key.public_key()),
 				}
 			}
 		}
@@ -900,9 +962,9 @@ mod test {
 		let spec = VtxoTreeSpec::new(
 			reqs.iter().map(|r| r.to_vtxo()).collect(),
 			server_key.public_key(),
-			server_cosign_key.public_key(),
 			101_000,
 			2016,
+			vec![server_cosign_key.public_key()],
 		);
 		assert_eq!(spec.nb_leaves(), nb_leaves);
 		assert_eq!(spec.total_required_value().to_sat(), 2700000);

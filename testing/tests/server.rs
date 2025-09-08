@@ -915,7 +915,7 @@ async fn bad_round_input() {
 			amount: Amount::from_sat(1000),
 			policy: VtxoPolicy::new_pubkey(key.public_key()),
 		},
-		cosign_pubkey: key2.public_key(),
+		cosign_pubkey: Some(key2.public_key()),
 	};
 	let offb_req = OffboardRequest {
 		amount: Amount::from_sat(1000),
@@ -1247,7 +1247,7 @@ async fn reject_dust_vtxo_request() {
 			for r in &req.vtxo_requests {
 				vtxo_requests.push(ark::SignedVtxoRequest {
 					vtxo: r.vtxo.clone().unwrap().try_into().unwrap(),
-					cosign_pubkey: PublicKey::from_slice(&r.cosign_pubkey).unwrap(),
+					cosign_pubkey: Some(PublicKey::from_slice(&r.cosign_pubkey).unwrap()),
 				});
 			}
 

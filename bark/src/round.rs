@@ -582,7 +582,7 @@ impl AttemptStartedState {
 			.take(participation.outputs.len())
 			.collect::<Vec<_>>();
 		let vtxo_reqs = participation.outputs.iter().zip(cosign_keys.iter()).map(|(p, ck)| {
-			SignedVtxoRequest { vtxo: p.to_vtxo_request(), cosign_pubkey: ck.public_key() }
+			SignedVtxoRequest { vtxo: p.to_vtxo_request(), cosign_pubkey: Some(ck.public_key()) }
 		}).collect::<Vec<_>>();
 
 		// Prepare round participation info.
@@ -629,7 +629,7 @@ impl AttemptStartedState {
 						amount: r.vtxo.amount.to_sat(),
 						policy: r.vtxo.policy.serialize(),
 					}),
-					cosign_pubkey: r.cosign_pubkey.serialize().to_vec(),
+					cosign_pubkey: r.cosign_pubkey.expect("just set").serialize().to_vec(),
 					public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
 				}
 			}).collect(),
@@ -762,7 +762,7 @@ impl PaymentSubmittedState {
 					amount: r.amount,
 					policy: r.request_policy.clone(),
 				},
-				cosign_pubkey: k.public_key(),
+				cosign_pubkey: Some(k.public_key()),
 			})
 			.collect::<Vec<_>>();
 

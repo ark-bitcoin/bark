@@ -226,7 +226,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 	) -> Result<Vec<Vtxo>, IncorrectSigningKeyError> {
 		if user_key.public_key() != self.input.user_pubkey() {
 			return Err(IncorrectSigningKeyError {
-				required: self.input.user_pubkey(),
+				required: Some(self.input.user_pubkey()),
 				provided: user_key.public_key(),
 			});
 		}

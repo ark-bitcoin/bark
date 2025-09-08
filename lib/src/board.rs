@@ -291,7 +291,7 @@ impl BoardBuilder<state::CanFinish> {
 	) -> Result<Vtxo, IncorrectSigningKeyError> {
 		if user_key.public_key() != self.user_pubkey {
 			return Err(IncorrectSigningKeyError {
-				required: self.user_pubkey,
+				required: Some(self.user_pubkey),
 				provided: user_key.public_key(),
 			});
 		}

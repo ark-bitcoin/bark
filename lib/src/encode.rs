@@ -239,6 +239,29 @@ impl ProtocolEncoding for PublicKey {
 	}
 }
 
+impl ProtocolEncoding for Option<PublicKey> {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		if let Some(pk) = self {
+			w.emit_slice(&pk.serialize())
+		} else {
+			w.emit_u8(0)
+		}
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let first = r.read_u8()?;
+		if first == 0 {
+			Ok(None)
+		} else {
+			let mut pk = [first; secp256k1::constants::PUBLIC_KEY_SIZE];
+			r.read_slice(&mut pk[1..])?;
+			Ok(Some(PublicKey::from_slice(&pk).map_err(|e| {
+				ProtocolDecodingError::invalid_err(e, "invalid public key")
+			})?))
+		}
+	}
+}
+
 impl ProtocolEncoding for schnorr::Signature {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		w.emit_slice(&self.serialize())

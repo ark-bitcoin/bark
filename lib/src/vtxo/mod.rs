@@ -1256,7 +1256,7 @@ pub mod test {
 				amount: Amount::from_sat(10_000),
 				policy: VtxoPolicy::new_pubkey(round1_user_key.public_key()),
 			},
-			cosign_pubkey: round1_cosign_key.public_key(),
+			cosign_pubkey: Some(round1_cosign_key.public_key()),
 		};
 		let round1_nonces = iter::repeat_with(|| musig::nonce_pair(&round1_cosign_key)).take(5).collect::<Vec<_>>();
 
@@ -1273,7 +1273,7 @@ pub mod test {
 					expiry_height - 2000,
 				),
 			},
-			cosign_pubkey: round2_cosign_key.public_key(),
+			cosign_pubkey: Some(round2_cosign_key.public_key()),
 		};
 		let round2_nonces = iter::repeat_with(|| musig::nonce_pair(&round2_cosign_key)).take(5).collect::<Vec<_>>();
 
@@ -1294,7 +1294,7 @@ pub mod test {
 					amount: Amount::from_sat(5_000),
 					policy: VtxoPolicy::new_pubkey(user_key.public_key()),
 				},
-				cosign_pubkey: cosign_key.public_key(),
+				cosign_pubkey: Some(cosign_key.public_key()),
 			});
 			other_nonces.push(iter::repeat_with(|| musig::nonce_pair(&cosign_key)).take(5).collect::<Vec<_>>());
 		}
@@ -1303,9 +1303,9 @@ pub mod test {
 		let spec = VtxoTreeSpec::new(
 			[&round1_req, &round2_req].into_iter().chain(other_reqs.iter()).cloned().collect(),
 			server_pubkey.public_key(),
-			server_cosign_key.public_key(),
 			expiry_height,
 			exit_delta,
+			vec![server_cosign_key.public_key()],
 		);
 		let round_tx = Transaction {
 			version: Version::TWO,
@@ -1327,14 +1327,14 @@ pub mod test {
 			map.insert(round1_cosign_key.public_key(), round1_nonces.iter().map(|n| n.1).collect::<Vec<_>>());
 			map.insert(round2_cosign_key.public_key(), round2_nonces.iter().map(|n| n.1).collect::<Vec<_>>());
 			for (req, nonces) in other_reqs.iter().zip(other_nonces.iter()) {
-				map.insert(req.cosign_pubkey, nonces.iter().map(|n| n.1).collect::<Vec<_>>());
+				map.insert(req.cosign_pubkey.unwrap(), nonces.iter().map(|n| n.1).collect::<Vec<_>>());
 			}
 			map
 		};
 		let (server_cosign_sec_nonces, server_cosign_pub_nonces) = iter::repeat_with(|| {
 			musig::nonce_pair(&server_cosign_key)
 		}).take(spec.nb_nodes()).unzip::<_, _, Vec<_>, Vec<_>>();
-		let cosign_agg_nonces = spec.calculate_cosign_agg_nonces(&all_nonces, &server_cosign_pub_nonces);
+		let cosign_agg_nonces = spec.calculate_cosign_agg_nonces(&all_nonces, &[&server_cosign_pub_nonces]).unwrap();
 		let root_point = OutPoint::new(round_tx.compute_txid(), 0);
 		let tree = spec.into_unsigned_tree(root_point);
 		let part_sigs = {
@@ -1352,7 +1352,7 @@ pub mod test {
 				let cosign_key = Keypair::from_seckey_slice(
 					&SECP, &sha256::Hash::hash(others[i].as_bytes())[..],
 				).unwrap();
-				map.insert(req.cosign_pubkey, {
+				map.insert(req.cosign_pubkey.unwrap(), {
 					let secs = nonces.into_iter().map(|(s, _)| s).collect();
 					tree.cosign_branch(&cosign_agg_nonces, 2 + i, &cosign_key, secs).unwrap()
 				});
@@ -1362,7 +1362,7 @@ pub mod test {
 		let server_cosign_sigs = tree.cosign_tree(
 			&cosign_agg_nonces, &server_cosign_key, server_cosign_sec_nonces,
 		);
-		let cosign_sigs = tree.combine_partial_signatures(&cosign_agg_nonces, &part_sigs, &server_cosign_sigs).unwrap();
+		let cosign_sigs = tree.combine_partial_signatures(&cosign_agg_nonces, &part_sigs, &[&server_cosign_sigs]).unwrap();
 		assert!(tree.verify_cosign_sigs(&cosign_sigs).is_ok());
 		let signed = tree.into_signed_tree(cosign_sigs).into_cached_tree();
 		// we don't need forfeits
