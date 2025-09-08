@@ -156,7 +156,7 @@ pub struct WalletProperties {
 }
 
 /// Struct representing an extended private key derived from a
-/// wallet's seed, used to derived child VTXO keypairs
+/// wallet's seed, used to derive child VTXO keypairs
 ///
 /// The VTXO seed is derived by applying a hardened derivation
 /// step at index 350 from the wallet's seed.
@@ -441,7 +441,7 @@ impl Wallet {
 		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
 			.map(|v| v.amount()).sum();
 
-		let pending_exit = self.exit.pending_total()?;
+		let pending_exit = self.exit.pending_total();
 
 		let pending_board = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?
 			.into_iter().map(|vtxo| vtxo.vtxo.amount()).sum();
@@ -1500,7 +1500,11 @@ impl Wallet {
 					.map(|v| v.vtxo.spec().expiry_height).min().unwrap();
 				if tip > min_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
 					warn!("Some VTXO is about to expire soon, marking to exit");
-					self.exit.mark_vtxos_for_exit(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>())?;
+					let vtxos = htlc_vtxos
+						.iter()
+						.map(|v| v.vtxo.clone())
+						.collect::<Vec<_>>();
+					self.exit.mark_vtxos_for_exit(&vtxos);
 				}
 			}
 		}

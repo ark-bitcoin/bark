@@ -1,3 +1,112 @@
+//! Unilateral exit management
+//!
+//! This module coordinates unilateral exits of VTXOs back to on-chain bitcoin without
+//! requiring any third-party cooperation. It tracks which VTXOs should be exited, prepares
+//! and signs the required transactions, and drives the process forward until the funds are
+//! confirmed and claimable.
+//!
+//! What this module provides
+//! - Discovery, tracking, and persistence of the exit state for VTXOs.
+//! - Initiation of exits for the entire wallet or a selected set of VTXOs.
+//! - Periodic progress of exits (broadcasting, fee-bumping, and state updates).
+//! - APIs to inspect the current exit status, history, and related transactions.
+//! - Construction and signing of a final claim (drain) transaction once exits become claimable.
+//!
+//! When to use this module
+//! - Whenever VTXOs must be unilaterally moved on-chain, e.g., during counterparty unavailability,
+//!   or when the counterparty turns malicious.
+//!
+//! When not to use this module
+//! - If the server is cooperative. You can always offboard or pay onchain in a way that is much
+//!   cheaper and faster.
+//!
+//! Core types
+//! - [Exit]: High-level coordinator for the exit workflow. It persists state and advances
+//!   unilateral exits until they are claimable.
+//! - [ExitVtxo]: A VTXO marked for, and progressing through, unilateral exit. Each instance exposes
+//!   its current state and related metadata.
+//!
+//! Typical lifecycle
+//! 1) Choose what to exit
+//!    - Mark individual VTXOs for exit with [Exit::start_exit_for_vtxos], or exit everything with
+//!      [Exit::start_exit_for_entire_wallet].
+//! 2) Drive progress
+//!    - Periodically call [Exit::progress_exits] to advance the exit process. This will create or
+//!      update transactions, adjust fees for existing transactions, and refresh the status of each
+//!      unilateral exit until it has been confirmed and subsequentially spent onchain.
+//!    - [Exit::sync_exit] can be used to re-sync state with the blockchain and mempool without
+//!      taking progress actions.
+//! 3) Inspect status
+//!    - Use [Exit::get_exit_status] for detailed per-VTXO status (optionally including
+//!      history and transactions).
+//!    - Use [Exit::get_exit_vtxos] or [Exit::list_claimable] to browse tracked exits and locate
+//!      those that are fully confirmed onchain.
+//! 4) Claim the exited funds (optional)
+//!    - Once your transaction is confirmed onchain the funds are fully yours. However, recovery
+//!      from seed is not supported. By claiming your VTXO you move them to your onchain wallet.
+//!    - Once claimable, construct a PSBT to drain them with [Exit::drain_exits].
+//!    - Alternatively, you can use [Exit::sign_exit_claim_inputs] to sign the inputs of a given
+//!      PSBT if any are the outputs of a claimable unilateral exit.
+//!
+//! Fees rates
+//! - Suitable fee rates will be calculated based on the current network conditions, however, if you
+//!   wish to override this, you can do so by providing your own [FeeRate] in [Exit::progress_exits]
+//!   and [Exit::drain_exits]
+//!
+//! Error handling and persistence
+//! - The coordinator surfaces operational errors via [anyhow::Result] and domain-specific errors
+//!   via [ExitError] where appropriate. Persistent state is kept via the configured persister and
+//!   refreshed against the current chain view provided by the chain source client.
+//!
+//! Minimal example (high-level):
+//! ```no_run
+//! # use std::sync::Arc;
+//! # use std::str::FromStr;
+//! # use std::path::PathBuf;
+//! #
+//! # use bitcoin::Network;
+//! # use tokio::fs;
+//! #
+//! # use bark::{Config, Wallet, SqliteClient};
+//! # use bark::onchain::OnchainWallet;
+//! #
+//! # async fn get_wallets() -> (Wallet, OnchainWallet) {
+//! #   let datadir = PathBuf::from("./bark");
+//! #   let config = Config::default();
+//! #   let db = Arc::new(SqliteClient::open(datadir.join("db.sqlite")).unwrap());
+//! #   let mnemonic_str = fs::read_to_string(datadir.join("mnemonic")).await.unwrap();
+//! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
+//! #   let bark_wallet = Wallet::open(&mnemonic, db.clone(), config).await.unwrap();
+//! #   let seed = mnemonic.to_seed("");
+//! #   let onchain_wallet = OnchainWallet::load_or_create(Network::Regtest, seed, db).unwrap();
+//! #   (bark_wallet, onchain_wallet)
+//! # }
+//! #
+//! # #[tokio::main]
+//! # async fn main() -> anyhow::Result<()> {
+//! let (mut bark_wallet, mut onchain_wallet) = get_wallets().await;
+//!
+//! // Mark all VTXOs for exit.
+//! bark_wallet.exit.start_exit_for_entire_wallet(&onchain_wallet).await?;
+//!
+//! // Transactions will be broadcast and require confirmations so keep periodically calling this.
+//! bark_wallet.exit.progress_exits(&mut onchain_wallet, None).await?;
+//!
+//! // Once all VTXOs are claimable, construct a PSBT to drain them.
+//! let drain_to = bitcoin::Address::from_str("bc1p...")?.assume_checked();
+//! let drain_psbt = bark_wallet.exit.drain_exits(
+//!   &bark_wallet.exit.list_claimable(),
+//!   &bark_wallet,
+//!   drain_to,
+//!   None,
+//! ).await?;
+//!
+//! // Next you should broadcast the PSBT, once it's confirmed the unilateral exit is complete.
+//! // broadcast_psbt(drain_psbt).await?;
+//! #   Ok(())
+//! # }
+//! ```
+
 pub(crate) mod progress;
 pub(crate) mod transaction_manager;
 
@@ -10,7 +119,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context;
-use bitcoin::{sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+use bitcoin::{
+	sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+};
 use log::{error, info, warn};
 
 use ark::{Vtxo, VtxoId, SECP};
@@ -27,7 +138,7 @@ use crate::psbtext::PsbtInputExt;
 use crate::vtxo_state::VtxoStateKind;
 use crate::Wallet;
 
-/// Handle the process of ongoing VTXO exits
+/// Handles the process of ongoing VTXO exits.
 pub struct Exit {
 	tx_manager: ExitTransactionManager,
 	persister: Arc<dyn BarkPersister>,
@@ -73,6 +184,12 @@ impl Exit {
 		Ok(())
 	}
 
+	/// Returns the unilateral exit status for a given VTXO, if any.
+	///
+	/// - vtxo_id: The ID of the VTXO to check.
+	/// - include_history: Whether to include the full state machine history of the exit
+	/// - include_transactions: Whether to include the full set of transactions related to the exit.
+	/// Errors if status retrieval fails.
 	pub async fn get_exit_status(
 		&self,
 		vtxo_id: VtxoId,
@@ -105,21 +222,24 @@ impl Exit {
 		}
 	}
 
+	/// Returns a reference to the tracked [ExitVtxo] if it exists.
 	pub fn get_exit_vtxo(&self, vtxo_id: VtxoId) -> Option<&ExitVtxo> {
 		self.exit_vtxos.iter().find(|ev| ev.id() == vtxo_id)
 	}
 
+	/// Returns all known unilateral exits in this wallet.
 	pub fn get_exit_vtxos(&self) -> &Vec<ExitVtxo> {
 		&self.exit_vtxos
 	}
 
+	/// True if there are any unilateral exits which have been started but are not yet claimable.
 	pub fn has_pending_exits(&self) -> bool {
 		self.exit_vtxos.iter().any(|ev| ev.state().is_pending())
 	}
 
 	/// Returns the total amount of all VTXOs requiring more txs to be confirmed
-	pub fn pending_total(&self) -> anyhow::Result<Amount> {
-		let amount = self.exit_vtxos
+	pub fn pending_total(&self) -> Amount {
+		self.exit_vtxos
 			.iter()
 			.filter_map(|ev| {
 				if ev.state().is_pending() {
@@ -127,9 +247,7 @@ impl Exit {
 				} else {
 					None
 				}
-			}).sum();
-
-		Ok(amount)
+			}).sum()
 	}
 
 	/// Returns the earliest block height at which all tracked exits will be claimable
@@ -147,9 +265,12 @@ impl Exit {
 		highest_claimable_height
 	}
 
-	/// Add all vtxos in the current wallet to the exit process.
+	/// Starts the unilateral exit process for the entire wallet (all eligible VTXOs).
 	///
-	/// It is recommended to sync with the server before calling this
+	/// It does not block until completion, you must use [Exit::progress_exits] to advance each exit.
+	///
+	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
+	/// doing this.
 	pub async fn start_exit_for_entire_wallet<W: ExitUnilaterally>(
 		&mut self,
 		onchain: &W,
@@ -163,22 +284,32 @@ impl Exit {
 		Ok(())
 	}
 
-	/// Mark a list of vtxos for exit and start the exit process.
+	/// Starts the unilateral exit process for the given VTXOs.
+	///
+	/// It does not block until completion, you must use [Exit::progress_exits] to advance each exit.
+	///
+	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
+	/// doing this.
 	pub async fn start_exit_for_vtxos<W: ExitUnilaterally>(
 		&mut self,
 		vtxos: &[Vtxo],
 		onchain: &W,
 	) -> anyhow::Result<()> {
-		self.mark_vtxos_for_exit(vtxos)?;
+		self.mark_vtxos_for_exit(vtxos);
 		self.start_vtxo_exits(onchain).await?;
 		Ok(())
 	}
 
-	/// Mark a vtxo for exit.
+	/// Lists the IDs of VTXOs marked for unilateral exit.
+	pub fn list_vtxos_to_exit(&self) -> Vec<VtxoId> {
+		self.vtxos_to_exit.iter().cloned().collect()
+	}
+
+	/// Mark a vtxo for unilateral exit.
 	///
-	/// This is used as a buffer to mark vtxos for exit without having to provide an onchain wallet.
-	/// The actual exit process is started by `start_vtxo_exits`.
-	pub fn mark_vtxos_for_exit(&mut self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	/// This is a lower level primitive used as a buffer to mark vtxos for exit without having to
+	/// provide an onchain wallet. The actual exit process is started with [Exit::start_vtxo_exits].
+	pub fn mark_vtxos_for_exit(&mut self, vtxos: &[Vtxo]) -> () {
 		for vtxo in vtxos {
 			if self.exit_vtxos.iter().any(|ev| ev.id() == vtxo.id()) {
 				warn!("VTXO {} is already in the exit process", vtxo.id());
@@ -186,24 +317,12 @@ impl Exit {
 			}
 			self.vtxos_to_exit.insert(vtxo.id());
 		}
-
-		Ok(())
 	}
 
-	pub fn list_vtxos_to_exit(&self) -> Vec<VtxoId> {
-		self.vtxos_to_exit.iter().cloned().collect()
-	}
-
-	async fn maybe_start_exit_for_vtxos(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
-		if !self.vtxos_to_exit.is_empty() {
-			self.start_vtxo_exits(onchain).await?;
-		}
-
-		Ok(())
-	}
-
-	/// Add marked vtxos to the exit process.
-	pub (crate) async fn start_vtxo_exits(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
+	/// Starts the unilateral exit process for any VTXOs marked for exit.
+	///
+	/// This is a lower level primitive to be used in conjunction with [Exit::mark_vtxos_for_exit].
+	pub async fn start_vtxo_exits(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
 		let tip = self.chain_source.tip().await?;
 		if self.vtxos_to_exit.is_empty() {
 			warn!("There are VTXOs to exit!");
@@ -238,6 +357,14 @@ impl Exit {
 		Ok(())
 	}
 
+	async fn maybe_start_exit_for_vtxos(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
+		if !self.vtxos_to_exit.is_empty() {
+			self.start_vtxo_exits(onchain).await?;
+		}
+
+		Ok(())
+	}
+
 
 	/// Reset exit to an empty state. Should be called when dropping VTXOs
 	///
@@ -250,6 +377,8 @@ impl Exit {
 		Ok(())
 	}
 
+	/// Returns a list of per-VTXO progress statuses if any changes occurred, or None if there was nothing to do.
+	///
 	/// Iterates over each registered VTXO and attempts to progress their unilateral exit
 	///
 	/// ### Arguments
@@ -262,8 +391,8 @@ impl Exit {
 	///
 	/// ### Return
 	///
-	/// The exit status of each VTXO being exited that has not yet been spent
-	pub async fn progress_exit<W: ExitUnilaterally>(
+	/// The exit status of each VTXO being exited which has also not yet been spent
+	pub async fn progress_exits<W: ExitUnilaterally>(
 		&mut self,
 		onchain: &mut W,
 		fee_rate_override: Option<FeeRate>,
@@ -303,10 +432,9 @@ impl Exit {
 		Ok(Some(exit_statuses))
 	}
 
-	/// For use when syncing.
-	/// This progresses any unilateral exit in a state that needs updating on sync such as a
-	/// spendable exit may have been spent on-chain.
-	pub (crate) async fn sync_exit<W: ExitUnilaterally>(
+	/// For use when syncing. This progresses any unilateral exit in a state that needs updating
+	/// such as a when claimable exit may have been spent onchain.
+	pub async fn sync_exit<W: ExitUnilaterally>(
 		&mut self,
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
@@ -336,7 +464,7 @@ impl Exit {
 	/// [`crate::onchain::TxBuilderExt::add_exit_claim_inputs`] has been used
 	///
 	/// Note: This doesn't mark the exit output as spent, it's up to the caller to
-	/// do that or it will be done once the transaction is seen in the network
+	/// do that, or it will be done once the transaction is seen in the network
 	pub fn sign_exit_claim_inputs(&self, psbt: &mut Psbt, wallet: &Wallet) -> anyhow::Result<()> {
 		let prevouts = psbt.inputs.iter()
 			.map(|i| i.witness_utxo.clone().unwrap())
@@ -374,13 +502,20 @@ impl Exit {
 		Ok(())
 	}
 
-	/// Prepare and sign a PSBT to drain the given VTXOs to the provided address
-	pub fn drain_exits<'a>(
+	/// Builds a PSBT that drains the provided claimable unilateral exits to the given address.
+	///
+	/// - `inputs`: Claimable unilateral exits.
+	/// - `wallet`: The bark wallet containing the keys needed to spend the unilateral exits.
+	/// - `address`: Destination address for the claim.
+	/// - `fee_rate_override`: Optional fee rate to use.
+	///
+	/// Returns a PSBT ready to be broadcast.
+	pub async fn drain_exits<'a>(
 		&self,
 		inputs: &[&ExitVtxo],
 		wallet: &Wallet,
 		address: Address,
-		fee_rate: FeeRate,
+		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Psbt, ExitError> {
 		if inputs.is_empty() {
 			return Err(ExitError::ClaimMissingInputs);
@@ -428,6 +563,8 @@ impl Exit {
 			Ok(psbt)
 		};
 		let fee_amount = {
+			let fee_rate = fee_rate_override
+				.unwrap_or(self.chain_source.fee_rates().await.regular);
 			fee_rate * create_psbt(tx.clone())?
 				.extract_tx()
 				.map_err(|e| ExitError::InternalError {

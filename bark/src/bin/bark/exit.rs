@@ -215,7 +215,7 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	let result = wallet.exit.progress_exit(onchain, fee_rate).await
+	let result = wallet.exit.progress_exits(onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit.has_pending_exits();
@@ -265,8 +265,7 @@ pub async fn claim_exits(
 		(Some(_), true) => bail!("Cannot specify both --vtxo and --all"),
 	};
 
-	let fee_rate = wallet.chain.fee_rates().await.regular;
-	let psbt = wallet.exit.drain_exits(&vtxos, &wallet, address, fee_rate)?;
+	let psbt = wallet.exit.drain_exits(&vtxos, &wallet, address, None).await?;
 	let tx = psbt.extract_tx()?;
 	wallet.chain.broadcast_tx(&tx).await?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
