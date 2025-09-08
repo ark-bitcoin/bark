@@ -24,13 +24,27 @@ const FEE_RATE_TARGET_CONF_SLOW: u16 = 6;
 const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
 const MIN_BITCOIND_VERSION: usize = 290000;
 
+/// Configuration for the onchain data source.
+///
+/// [ChainSource] selects which backend to use for blockchain data and transaction broadcasting:
+/// - Bitcoind: uses a Bitcoin Core node via JSON-RPC
+/// - Esplora: uses the HTTP API endpoint of [esplora-electrs](https://github.com/Blockstream/electrs)
+///
+/// Typical usage is to construct a ChainSource from configuration and pass it to
+/// [ChainSourceClient::new] along with the expected [Network].
+///
+/// Notes:
+/// - For [ChainSource::Bitcoind], authentication must be provided (cookie file or user/pass).
 #[derive(Clone, Debug)]
 pub enum ChainSource {
 	Bitcoind {
+		/// RPC URL of the Bitcoin Core node (e.g. <http://127.0.0.1:8332>).
 		url: String,
+		/// Authentication method for JSON-RPC (cookie file or user/pass).
 		auth: rpc::Auth,
 	},
 	Esplora {
+		/// Base URL of the esplora-electrs instance (e.g. <https://esplora.signet.2nd.dev>).
 		url: String,
 	},
 }
@@ -61,6 +75,37 @@ impl InnerChainSourceClient {
 	}
 }
 
+/// Client for interacting with the configured on-chain backend.
+///
+/// [ChainSourceClient] abstracts over multiple backends using [ChainSource] to provide:
+/// - Chain queries (tip, block headers/blocks, transaction status and fetching)
+/// - Mempool-related utilities (ancestor fee/weight, spending lookups)
+/// - Broadcasting single transactions or packages (RBF/CPFP workflows)
+/// - Fee estimation and caching with optional fallback values
+///
+/// Behavior notes:
+/// - [ChainSourceClient::update_fee_rates] refreshes internal fee estimates; if backend estimates
+///   fail and a fallback fee is provided, it will be used for all tiers.
+/// - [ChainSourceClient::fee_rates] returns the last cached [FeeRates].
+///
+/// Examples:
+///
+/// ```rust
+/// # async fn func() {
+/// use bark::onchain::{ChainSource, ChainSourceClient};
+/// use bdk_bitcoind_rpc::bitcoincore_rpc::Auth;
+/// use bitcoin::{FeeRate, Network};
+///
+/// let chain_source = ChainSource::Bitcoind {
+///     url: "http://localhost:8332".into(),
+///     auth: Auth::UserPass("user".into(), "password".into()),
+/// };
+/// let network = Network::Bitcoin;
+/// let fallback_fee = FeeRate::from_sat_per_vb(5);
+///
+/// let instance = ChainSourceClient::new(chain_source, network, fallback_fee).await.unwrap();
+/// # }
+/// ```
 pub struct ChainSourceClient {
 	inner: InnerChainSourceClient,
 	network: Network,
@@ -86,14 +131,48 @@ impl ChainSourceClient {
 		&self.inner
 	}
 
+	/// Gets a cached copy of the calculated network [FeeRates]
 	pub async fn fee_rates(&self) -> FeeRates {
 		self.fee_rates.read().await.clone()
 	}
 
+	/// Gets the network that the [ChainSourceClient] was validated against.
 	pub fn network(&self) -> Network {
 		self.network
 	}
 
+	/// Creates a new instance of the object with the specified chain source, network, and optional
+	/// fallback fee rate.
+	///
+	/// This function initializes the internal chain source client based on the provided `chain_source`:
+	/// - If `chain_source` is of type [ChainSource::Bitcoind], it creates a Bitcoin Core RPC client
+	///   using the provided URL and authentication parameters.
+	/// - If `chain_source` is of type [ChainSource::Esplora], it creates an Esplora client with the
+	///   given URL.
+	///
+	/// Both clients are initialized asynchronously, and any errors encountered during their
+	/// creation will be returned as part of the [anyhow::Result].
+	///
+	/// Additionally, the function performs a network consistency check to ensure the specified
+	/// network (e.g., `mainnet` or `signet`) matches the network configuration of the initialized
+	/// chain source client.
+	///
+	/// The `fallback_fee` parameter is optional. If provided, it is used as the default fee rate
+	/// for transactions. If not specified, the `FeeRate::BROADCAST_MIN` is used as the default fee
+	/// rate.
+	///
+	/// # Arguments
+	///
+	/// * `chain_source` - Specifies the backend to use for blockchain data.
+	/// * `network` - The Bitcoin network to operate on (e.g., `mainnet`, `testnet`, `regtest`).
+	/// * `fallback_fee` - An optional fallback fee rate to use for transaction fee estimation. If
+	///   not provided, a default fee rate of [FeeRate::BROADCAST_MIN] will be used.
+	///
+	/// # Returns
+	///
+	/// * `Ok(Self)` - If the object is successfully created with all necessary configurations.
+	/// * `Err(anyhow::Error)` - If there is an error in initializing the chain source client or
+	///   verifying the network.
 	pub async fn new(chain_source: ChainSource, network: Network, fallback_fee: Option<FeeRate>) -> anyhow::Result<Self> {
 		let inner = match chain_source {
 			ChainSource::Bitcoind { url, auth } => InnerChainSourceClient::Bitcoind(
@@ -491,10 +570,14 @@ impl ChainSourceClient {
 	}
 }
 
+/// The [FeeRates] struct represents the fee rates for transactions categorized by speed or urgency.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FeeRates {
+	/// The fee for fast transactions (higher cost, lower time delay).
 	pub fast: FeeRate,
+	/// The fee for standard-priority transactions.
 	pub regular: FeeRate,
+	/// The fee for slower transactions (lower cost, higher time delay).
 	pub slow: FeeRate,
 }
 

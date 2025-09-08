@@ -184,12 +184,12 @@ pub trait WalletExt: BorrowMut<Wallet> {
 				spend_weight = tx_weight;
 				fee_needed = match fees {
 					MakeCpfpFees::Effective(fr) => total_weight * fr,
-					MakeCpfpFees::Rbf { min_effective_fee_rate, package_fee } => {
+					MakeCpfpFees::Rbf { min_effective_fee_rate, current_package_fee } => {
 						// RBF requires that you spend at least the total fee of every
 						// unconfirmed ancestor and the transaction you want to replace,
 						// then you must add mintxrelayfee * package_vbytes on top.
 						let min_tx_relay_fee = FeeRate::from_sat_per_vb(1).unwrap();
-						let min_package_fee = package_fee +
+						let min_package_fee = current_package_fee +
 							p2a_weight * min_tx_relay_fee +
 							tx_weight * min_tx_relay_fee;
 

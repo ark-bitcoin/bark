@@ -124,6 +124,7 @@ pub struct ExitTransactionStatus {
 	pub transactions: Option<Vec<ExitTransactionPackage>>,
 }
 
+/// Describes a completed transition of funds from onchain to offchain.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Board {
 	/// The [Txid] of the funding-transaction.
@@ -194,9 +195,11 @@ pub mod onchain {
 	}
 }
 
+/// Describes a completed transition of funds from offchain to onchain collaboratively with the
+/// Ark server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offboard {
-	/// The [RoundId] of the round in which the offboard occured
+	/// The [RoundId] of the round in which the offboard occurred
 	pub round: RoundId,
 }
 
@@ -211,9 +214,10 @@ pub struct Refresh {
 	pub round: Option<RoundId>,
 }
 
+/// The result of participating in a round to send offchain funds to an onchain address.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SendOnchain {
-	/// The [RoundId] of the round in which the send occured
+	/// The [RoundId] of the round in which the onchain transaction occurred
 	pub round: RoundId,
 	// TODO: List the [OutPoint] and [Amount] here
 }

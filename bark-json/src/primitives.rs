@@ -10,13 +10,26 @@ pub struct InvoiceInfo {
 	pub invoice: String,
 }
 
+/// Struct representing information about an Unspent Transaction Output (UTXO).
+///
+/// This structure provides details about a UTXO, which includes the outpoint (transaction ID and
+/// index), the associated amount in satoshis, and the block height at which the transaction was
+/// confirmed (if available).
+///
+/// # Serde Behavior
+///
+/// * The `amount` field is serialized and deserialized with a custom function from the `bitcoin`
+///   crate that ensures the value is interpreted as satoshis with the name `amount_sat`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UtxoInfo {
+	/// Contains the reference to the specific transaction output via transaction ID and index.
 	pub outpoint: OutPoint,
+	/// The value of the UTXO in satoshis.
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
-	pub confirmation_height: Option<u32>
-
+	/// An optional field that specifies the block height at which the transaction was confirmed. If
+	/// the transaction is unconfirmed, this value will be `None`.
+	pub confirmation_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
