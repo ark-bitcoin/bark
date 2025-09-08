@@ -29,44 +29,39 @@
 
 pub extern crate tonic;
 
-mod bark_server; // generated
 mod convert;
 use std::borrow::BorrowMut;
 
 pub use convert::{ConvertError, TryFromBytes};
 
 pub mod protos {
-	pub use crate::bark_server::*;
-}
-pub use crate::bark_server::ark_service_client::ArkServiceClient;
-
-mod intman; // generated
-
-pub mod intman_protos {
-	pub use crate::intman::*;
-}
-pub use crate::intman::integration_service_client::IntegrationServiceClient;
-
-#[cfg(feature = "intman-server")]
-pub mod intman_server {
-	pub use crate::intman::integration_service_server::{IntegrationService, IntegrationServiceServer};
+	pub mod bark_server; // generated
+	pub use bark_server::*;
+	pub mod intman; // generated
 }
 
+pub use crate::protos::bark_server::ark_service_client::ArkServiceClient;
 
 pub mod admin {
-	pub use crate::bark_server::wallet_admin_service_client::WalletAdminServiceClient;
-	pub use crate::bark_server::round_admin_service_client::RoundAdminServiceClient;
-	pub use crate::bark_server::lightning_admin_service_client::LightningAdminServiceClient;
-	pub use crate::bark_server::sweep_admin_service_client::SweepAdminServiceClient;
+	pub use crate::protos::bark_server::wallet_admin_service_client::WalletAdminServiceClient;
+	pub use crate::protos::bark_server::round_admin_service_client::RoundAdminServiceClient;
+	pub use crate::protos::bark_server::lightning_admin_service_client::LightningAdminServiceClient;
+	pub use crate::protos::bark_server::sweep_admin_service_client::SweepAdminServiceClient;
+}
+
+#[cfg(feature = "intman")]
+pub mod intman {
+	pub use crate::protos::intman::integration_service_client::IntegrationServiceClient;
 }
 
 #[cfg(feature = "server")]
 pub mod server {
-	pub use crate::bark_server::ark_service_server::{ArkService, ArkServiceServer};
-	pub use crate::bark_server::wallet_admin_service_server::{WalletAdminService, WalletAdminServiceServer};
-	pub use crate::bark_server::round_admin_service_server::{RoundAdminService, RoundAdminServiceServer};
-	pub use crate::bark_server::lightning_admin_service_server::{LightningAdminService, LightningAdminServiceServer};
-	pub use crate::bark_server::sweep_admin_service_server::{SweepAdminService, SweepAdminServiceServer};
+	pub use crate::protos::bark_server::ark_service_server::{ArkService, ArkServiceServer};
+	pub use crate::protos::bark_server::wallet_admin_service_server::{WalletAdminService, WalletAdminServiceServer};
+	pub use crate::protos::bark_server::round_admin_service_server::{RoundAdminService, RoundAdminServiceServer};
+	pub use crate::protos::bark_server::lightning_admin_service_server::{LightningAdminService, LightningAdminServiceServer};
+	pub use crate::protos::bark_server::sweep_admin_service_server::{SweepAdminService, SweepAdminServiceServer};
+	pub use crate::protos::intman::integration_service_server::{IntegrationService, IntegrationServiceServer};
 }
 
 use std::str::FromStr;
