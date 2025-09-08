@@ -13,7 +13,6 @@ use tonic::transport::Uri;
 
 use ark::integration::{TokenStatus, TokenType};
 use server::{Server, Config, filters};
-use server::database::intman::model::EncodedFiltersExt;
 use server_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use server_rpc::{self as rpc, protos};
 
@@ -347,7 +346,11 @@ async fn inner_main() -> anyhow::Result<()> {
 						.context("Invalid value for <EXPIRY>")?;
 					let expiry = Local::now() + chrono::Duration::seconds(expiry_duration.as_secs() as i64);
 					let integration_api_key = db.store_integration_api_key(
-						api_key_name.as_str(), api_key, db_filters, integration.integration_id, expiry
+						api_key_name.as_str(),
+						api_key,
+						&db_filters,
+						integration.integration_id,
+						expiry,
 					).await?;
 					println!("API Key: {}", integration_api_key.api_key.to_string())
 				}
@@ -368,7 +371,10 @@ async fn inner_main() -> anyhow::Result<()> {
 						db.get_integration_api_key_by_name(integration_name.as_str(), api_key_name.as_str()).await?
 							.expect("invalid API Key");
 
-					let integration_api_key = db.update_integration_api_key(integration_api_key, filters).await?;
+					let integration_api_key = db.update_integration_api_key(
+						integration_api_key,
+						&filters,
+					).await?;
 					println!("{}", integration_api_key.integration_api_key_id);
 				}
 				IntegrationCommand::ConfigureTokenType {
@@ -412,7 +418,7 @@ async fn inner_main() -> anyhow::Result<()> {
 						token_type,
 						TokenStatus::Unused,
 						expiry_time,
-						db_filters,
+						&db_filters,
 						integration.integration_id,
 						integration_api_key.integration_api_key_id,
 					).await?;
@@ -438,7 +444,7 @@ async fn inner_main() -> anyhow::Result<()> {
 						integration_token.clone(),
 						integration_api_key.integration_api_key_id,
 						status,
-						integration_token.filters.to_filters(),
+						&integration_token.filters,
 					).await?;
 					println!("{}", integration_token.integration_token_id);
 				}
@@ -463,7 +469,7 @@ async fn inner_main() -> anyhow::Result<()> {
 						integration_token.clone(),
 						integration_api_key.integration_api_key_id,
 						integration_token.status,
-						filters,
+						&filters,
 					).await?;
 					println!("{}", integration_token.integration_token_id);
 				}

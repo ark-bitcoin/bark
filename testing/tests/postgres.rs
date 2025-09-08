@@ -128,7 +128,7 @@ async fn integration() {
 	let integration_api_key_second = db.store_integration_api_key(
 		"second_api_key",
 		api_key.clone(),
-		filters::Filters::new(),
+		&filters::Filters::new(),
 		integration_second.integration_id,
 		Local::now(),
 	).await.unwrap();
@@ -138,7 +138,7 @@ async fn integration() {
 		.expect("Second's integration API key not found in database");
 	assert_ne!(integration_api_key_second.integration_api_key_id, 0);
 	assert_eq!(integration_api_key_second.deleted_at, None);
-	assert_eq!(integration_api_key_second.filters, None);
+	assert!(integration_api_key_second.filters.is_empty());
 
 	let integration_api_key_second = db.get_integration_api_key_by_name(
 		integration_second.name.as_str(), integration_api_key_second.name.as_str(),
@@ -146,13 +146,13 @@ async fn integration() {
 		.expect("Second's integration API key not found in database");
 	assert_ne!(integration_api_key_second.integration_api_key_id, 0);
 	assert_eq!(integration_api_key_second.deleted_at, None);
-	assert_eq!(integration_api_key_second.filters, None);
+	assert!(integration_api_key_second.filters.is_empty());
 
 	let integration_api_key_second = db.update_integration_api_key(
 		integration_api_key_second,
-		Filters::init(vec!["127.0.0.1".to_string()], vec!["localhost".to_string()]),
+		&Filters::init(vec!["127.0.0.1".to_string()], vec!["localhost".to_string()]),
 	).await.unwrap();
-	assert_ne!(integration_api_key_second.filters, None);
+	assert!(!integration_api_key_second.filters.is_empty());
 
 	let integration_api_key_second = db.delete_integration_api_key(
 		integration_api_key_second.integration_api_key_id,
@@ -161,7 +161,7 @@ async fn integration() {
 	assert_ne!(integration_api_key_second.deleted_at, None);
 
 	let integration_api_key_third = db.store_integration_api_key(
-		"third_api_key", uuid::Uuid::new_v4(), filters::Filters::new(), integration_third.integration_id, Local::now()
+		"third_api_key", uuid::Uuid::new_v4(), &filters::Filters::new(), integration_third.integration_id, Local::now()
 	).await.unwrap();
 	assert_ne!(integration_api_key_third.integration_id, 0);
 
@@ -194,7 +194,7 @@ async fn integration() {
 	let tomorrow = Local::now() + chrono::Duration::days(1);
 	let integration_token_third = db.store_integration_token(
 		token.as_str(), TokenType::SingleUseBoard, TokenStatus::Unused, tomorrow,
-		filters::Filters::new(),
+		&filters::Filters::new(),
 		integration_third.integration_id, integration_api_key_third.integration_api_key_id,
 	).await.unwrap();
 	assert_ne!(integration_token_third.integration_token_id, 0);
@@ -210,14 +210,14 @@ async fn integration() {
 		integration_token_third,
 		integration_api_key_second.integration_api_key_id,
 		TokenStatus::Used,
-		Filters::init(
+		&Filters::init(
 			Vec::from(&["127.0.0.1".to_string()]),
 			Vec::from(&["localhost".to_string()]),
 		),
 	).await.unwrap();
 	assert_eq!(integration_token_third.integration_id, integration_third.integration_id);
 	assert_ne!(integration_token_third.status, TokenStatus::Unused);
-	assert_ne!(integration_token_third.filters, None);
+	assert!(!integration_token_third.filters.is_empty());
 
 	let count = db.count_open_integration_tokens(integration_third.integration_id, TokenType::SingleUseBoard).await.unwrap();
 	assert_eq!(count, 0);

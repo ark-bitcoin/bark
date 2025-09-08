@@ -1,7 +1,11 @@
+
 use std::net::SocketAddr;
 use std::sync::{atomic, Arc};
+
 use log::{error, info};
-use server_rpc::intman_protos;
+
+use server_rpc::protos;
+
 use crate::rpcserver::middleware::{
 	RpcMethodDetails,
 	RPC_SERVICE_INTEGRATION_GET_TOKENS,
@@ -12,11 +16,11 @@ use crate::rpcserver::ToStatusResult;
 use crate::Server;
 
 #[tonic::async_trait]
-impl server_rpc::intman_server::IntegrationService for Server {
+impl server_rpc::server::IntegrationService for Server {
 	async fn get_tokens(
 		&self,
-		req: tonic::Request<intman_protos::TokensRequest>,
-	) -> Result<tonic::Response<intman_protos::Tokens>, tonic::Status> {
+		req: tonic::Request<protos::intman::TokensRequest>,
+	) -> Result<tonic::Response<protos::intman::Tokens>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_intman(RPC_SERVICE_INTEGRATION_GET_TOKENS);
 		let client_address =
 			if let Some(remote_addr) = req.extensions().get::<SocketAddr>().cloned() {
@@ -34,12 +38,12 @@ impl server_rpc::intman_server::IntegrationService for Server {
 		).await.to_status()?;
 
 		// going to assume we aren't creating expired tokens.
-		let tokens_response = intman_protos::Tokens {
+		let tokens_response = protos::intman::Tokens {
 			tokens: tokens.into_iter().map(|t| {
 				let expires_at = t.expires_at.timestamp() as u64;
-				let token_type: intman_protos::TokenType = t.token_type.into();
-				let status: intman_protos::TokenStatus = t.status.into();
-				intman_protos::TokenInfo {
+				let token_type: protos::intman::TokenType = t.token_type.into();
+				let status: protos::intman::TokenStatus = t.status.into();
+				protos::intman::TokenInfo {
 					token: t.token,
 					r#type: token_type.into(),
 					status: status.into(),
@@ -54,8 +58,8 @@ impl server_rpc::intman_server::IntegrationService for Server {
 
 	async fn get_token_info(
 		&self,
-		req: tonic::Request<intman_protos::TokenInfoRequest>,
-	) -> Result<tonic::Response<intman_protos::TokenInfo>, tonic::Status> {
+		req: tonic::Request<protos::intman::TokenInfoRequest>,
+	) -> Result<tonic::Response<protos::intman::TokenInfo>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_intman(RPC_SERVICE_INTEGRATION_GET_TOKEN_INFO);
 		let client_address =
 			if let Some(remote_addr) = req.extensions().get::<SocketAddr>().cloned() {
@@ -72,14 +76,14 @@ impl server_rpc::intman_server::IntegrationService for Server {
 			.await.to_status()?;
 
 		let status = if token.is_expired() {
-			intman_protos::TokenStatus::Expired
+			protos::intman::TokenStatus::Expired
 		} else {
 			token.status.into()
 		};
-		let token_type: intman_protos::TokenType = token.token_type.into();
+		let token_type: protos::intman::TokenType = token.token_type.into();
 		let expires_at = token.expires_at.timestamp() as u64;
 
-		let token_response = intman_protos::TokenInfo {
+		let token_response = protos::intman::TokenInfo {
 			token: token.token,
 			r#type: token_type.into(),
 			status: status.into(),
@@ -92,8 +96,8 @@ impl server_rpc::intman_server::IntegrationService for Server {
 
 	async fn update_token(
 		&self,
-		req: tonic::Request<intman_protos::UpdateTokenRequest>,
-	) -> Result<tonic::Response<intman_protos::TokenInfo>, tonic::Status> {
+		req: tonic::Request<protos::intman::UpdateTokenRequest>,
+	) -> Result<tonic::Response<protos::intman::TokenInfo>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_intman(RPC_SERVICE_INTEGRATION_UPDATE_TOKEN);
 		let client_address =
 			if let Some(remote_addr) = req.extensions().get::<SocketAddr>().cloned() {
@@ -115,14 +119,14 @@ impl server_rpc::intman_server::IntegrationService for Server {
 			.await.to_status()?;
 
 		let status = if token.is_expired() {
-			intman_protos::TokenStatus::Expired
+			protos::intman::TokenStatus::Expired
 		} else {
 			token.status.into()
 		};
-		let token_type: intman_protos::TokenType = token.token_type.into();
+		let token_type: protos::intman::TokenType = token.token_type.into();
 		let expires_at = token.expires_at.timestamp() as u64;
 
-		let token_response = intman_protos::TokenInfo {
+		let token_response = protos::intman::TokenInfo {
 			token: token.token,
 			r#type: token_type.into(),
 			status: status.into(),
@@ -143,7 +147,7 @@ pub async fn run_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
 
 	let addr = server.config.rpc.integration_address.expect("shouldn't call this method otherwise");
 	info!("Starting integration gRPC service on address {}", addr);
-	let integration_server = server_rpc::intman_server::IntegrationServiceServer::from_arc(server.clone());
+	let integration_server = server_rpc::server::IntegrationServiceServer::from_arc(server.clone());
 
 	if server.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()

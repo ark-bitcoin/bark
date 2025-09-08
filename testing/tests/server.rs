@@ -71,7 +71,7 @@ async fn check_captaind_version() {
 #[tokio::test]
 async fn integration() {
 	let ctx = TestContext::new("server/integration").await;
-	let mut srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	// Add integration "third".
 	let stdout = srv.integration_cmd(&["add", "third"]).await;
