@@ -38,6 +38,8 @@ pub struct Rpc {
 	pub public_address: SocketAddr,
 	/// The socket to bind to for the private admin gRPC.
 	pub admin_address: Option<SocketAddr>,
+	/// The socket to bind to for the integrations gRPC.
+	pub integration_address: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -242,6 +244,7 @@ impl Default for Config {
 			rpc: Rpc {
 				public_address: "127.0.0.1:3535".parse().unwrap(),
 				admin_address: Some("127.0.0.1:3536".parse().unwrap()),
+				integration_address: Some("127.0.0.1:3537".parse().unwrap()),
 			},
 			bitcoind: Bitcoind {
 				url: "http://127.0.0.1:18443".into(),

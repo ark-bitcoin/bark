@@ -69,6 +69,61 @@ async fn check_captaind_version() {
 }
 
 #[tokio::test]
+async fn integration() {
+	let ctx = TestContext::new("server/integration").await;
+	let mut srv = ctx.new_captaind("server", None).await;
+
+	// Add integration "third".
+	let stdout = srv.integration_cmd(&["add", "third"]).await;
+	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
+	assert_ne!(number, 0);
+
+	// Generate integration API key for "third" with 1 open token count and a 1-hour activity.
+	let stdout = srv.integration_cmd(&["generate-api-key", "third", "third_api_key", "1h"]).await;
+	let mut parts = stdout.split(' ');
+	let response = parts.next().unwrap().trim();
+	assert_eq!(response, "API");
+	let api_key = parts.last().unwrap().trim();
+
+	// Disable integration API Key for "third".
+	let stdout = srv.integration_cmd(&["disable-api-key", "third", "third_api_key"]).await;
+	let mut parts = stdout.split(' ');
+	assert_eq!(parts.next().unwrap(), "Deleted");
+
+	// Add integration API Key filters for "third".
+	let stdout = srv.integration_cmd(&["update-api-key-filters", "third", "third_api_key", "--ip", "127.0.0.1", "--dns", "localhost"]).await;
+	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
+	assert_ne!(number, 0);
+
+	// Add integration `single-use-board` token configuration for "third" with 1 open token count and a 60 seconds activity.
+	let stdout = srv.integration_cmd(&["configure-token-type", "third", "single-use-board", "1", "60"]).await;
+	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
+	assert_ne!(number, 0);
+
+	// Generate integration token of type single-use-board for "third" with a 60 seconds activity.
+	let stdout = srv.integration_cmd(&["generate-token", "third", api_key, "single-use-board"]).await;
+	let mut parts = stdout.split(' ');
+	assert_eq!(parts.next().unwrap(), "Token:");
+	let token = parts.next().unwrap().trim();
+	trace!("Token: {}", token);
+
+	// Add integration token filters for "third".
+	let stdout = srv.integration_cmd(&["update-token-filters", "third", api_key, token, "--ip", "127.0.0.1", "--dns", "localhost"]).await;
+	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
+	assert_ne!(number, 0);
+
+	// Update integration token status for "third".
+	let stdout = srv.integration_cmd(&["update-token-status", "third", api_key, token, "abused"]).await;
+	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
+	assert_ne!(number, 0);
+
+	// Remove integration "third".
+	let stdout = srv.integration_cmd(&["remove", "third"]).await;
+	let mut parts = stdout.split(' ');
+	assert_eq!(parts.next().unwrap(), "Deleted");
+}
+
+#[tokio::test]
 async fn bitcoind_auth_connection() {
 	let ctx = TestContext::new("server/bitcoind_auth_connection").await;
 

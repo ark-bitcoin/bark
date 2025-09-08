@@ -55,7 +55,6 @@ pub trait DaemonHelper {
 	fn name(&self) -> &str;
 	fn datadir(&self) -> PathBuf;
 	async fn get_command(&self) -> anyhow::Result<Command>;
-
 	async fn make_reservations(&mut self) -> anyhow::Result<()>;
 	async fn prepare(&self) -> anyhow::Result<()>;
 

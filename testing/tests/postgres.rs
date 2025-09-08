@@ -2,10 +2,13 @@ use std::str::FromStr;
 use ark::{lightning::Invoice, vtxo::test::VTXO_VECTORS};
 use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::secp256k1::PublicKey;
+use chrono::Local;
+use ark::integration::{TokenStatus, TokenType};
 use ark_testing::TestContext;
 use server::database::Db;
-
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
+use server::filters;
+use server::filters::Filters;
 
 #[tokio::test]
 async fn upsert_vtxo() {
@@ -92,4 +95,130 @@ async fn duplicated_lightning_invoice() {
 		&stmt, &[&invoice.to_string(), &&invoice.payment_hash().to_vec()[..]],
 	).await.unwrap_err();
 	assert!(err.to_string().contains("duplicate key value violates unique constraint \"lightning_invoice_payment_hash_key\""), "err: {}", err);
+}
+
+#[tokio::test]
+async fn integration() {
+	let mut ctx = TestContext::new_minimal("postgresd/integration").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let integration_second = db.store_integration("second").await.unwrap();
+	assert_ne!(integration_second.integration_id, 0);
+
+	let integration_second = db.get_integration_by_name("second").await.unwrap()
+		.expect("Second's integration not found in database");
+	assert_ne!(integration_second.integration_id, 0);
+
+	let integration_second = db.get_integration_by_id(integration_second.integration_id).await.unwrap()
+		.expect("Second's integration not found in database");
+	assert_ne!(integration_second.integration_id, 0);
+	assert_eq!(integration_second.deleted_at, None);
+
+	let integration_second = db.delete_integration(integration_second.integration_id).await.unwrap();
+	assert_ne!(integration_second.deleted_at, None);
+
+	let integration_third = db.store_integration("third").await.unwrap();
+	assert_ne!(integration_third.integration_id, 0);
+
+	let api_key = uuid::Uuid::new_v4();
+	let integration_api_key_second = db.store_integration_api_key(
+		"second_api_key",
+		api_key.clone(),
+		filters::Filters::new(),
+		integration_second.integration_id,
+		Local::now(),
+	).await.unwrap();
+	assert_ne!(integration_api_key_second.integration_api_key_id, 0);
+
+	let integration_api_key_second = db.get_integration_api_key_by_api_key(api_key).await.unwrap()
+		.expect("Second's integration API key not found in database");
+	assert_ne!(integration_api_key_second.integration_api_key_id, 0);
+	assert_eq!(integration_api_key_second.deleted_at, None);
+	assert_eq!(integration_api_key_second.filters, None);
+
+	let integration_api_key_second = db.get_integration_api_key_by_name(
+		integration_second.name.as_str(), integration_api_key_second.name.as_str(),
+	).await.unwrap()
+		.expect("Second's integration API key not found in database");
+	assert_ne!(integration_api_key_second.integration_api_key_id, 0);
+	assert_eq!(integration_api_key_second.deleted_at, None);
+	assert_eq!(integration_api_key_second.filters, None);
+
+	let integration_api_key_second = db.update_integration_api_key(
+		integration_api_key_second,
+		Filters::init(vec!["127.0.0.1".to_string()], vec!["localhost".to_string()]),
+	).await.unwrap();
+	assert_ne!(integration_api_key_second.filters, None);
+
+	let integration_api_key_second = db.delete_integration_api_key(
+		integration_api_key_second.integration_api_key_id,
+		integration_api_key_second.updated_at,
+	).await.unwrap();
+	assert_ne!(integration_api_key_second.deleted_at, None);
+
+	let integration_api_key_third = db.store_integration_api_key(
+		"third_api_key", uuid::Uuid::new_v4(), filters::Filters::new(), integration_third.integration_id, Local::now()
+	).await.unwrap();
+	assert_ne!(integration_api_key_third.integration_id, 0);
+
+	let integration_token_config_second = db.store_integration_token_config(
+		TokenType::SingleUseBoard,
+		1,
+		2,
+		integration_second.integration_id,
+	)
+		.await.unwrap();
+	assert_ne!(integration_token_config_second.integration_token_config_id, 0);
+	assert_eq!(integration_token_config_second.maximum_open_tokens, 1);
+	assert_eq!(integration_token_config_second.active_seconds, 2);
+	assert_eq!(integration_token_config_second.integration_id, integration_second.integration_id);
+	let integration_token_config_second = db.update_integration_token_config(
+		integration_token_config_second,
+		10,
+		11,
+	).await.unwrap();
+	assert_eq!(integration_token_config_second.maximum_open_tokens, 10);
+	assert_eq!(integration_token_config_second.active_seconds, 11);
+
+	let integration_token_config_second = db.delete_integration_token_config(
+		integration_token_config_second.integration_token_config_id,
+		integration_token_config_second.updated_at,
+	).await.unwrap();
+	assert_ne!(integration_token_config_second.deleted_at, None);
+
+	let token = uuid::Uuid::new_v4().to_string();
+	let tomorrow = Local::now() + chrono::Duration::days(1);
+	let integration_token_third = db.store_integration_token(
+		token.as_str(), TokenType::SingleUseBoard, TokenStatus::Unused, tomorrow,
+		filters::Filters::new(),
+		integration_third.integration_id, integration_api_key_third.integration_api_key_id,
+	).await.unwrap();
+	assert_ne!(integration_token_third.integration_token_id, 0);
+
+	let integration_token_third = db.get_integration_token(token.as_str()).await.unwrap()
+		.expect("Token is not found in database");
+	assert_eq!(integration_token_third.integration_id, integration_third.integration_id);
+
+	let count = db.count_open_integration_tokens(integration_third.integration_id, TokenType::SingleUseBoard).await.unwrap();
+	assert_eq!(count, 1);
+
+	let integration_token_third = db.update_integration_token(
+		integration_token_third,
+		integration_api_key_second.integration_api_key_id,
+		TokenStatus::Used,
+		Filters::init(
+			Vec::from(&["127.0.0.1".to_string()]),
+			Vec::from(&["localhost".to_string()]),
+		),
+	).await.unwrap();
+	assert_eq!(integration_token_third.integration_id, integration_third.integration_id);
+	assert_ne!(integration_token_third.status, TokenStatus::Unused);
+	assert_ne!(integration_token_third.filters, None);
+
+	let count = db.count_open_integration_tokens(integration_third.integration_id, TokenType::SingleUseBoard).await.unwrap();
+	assert_eq!(count, 0);
 }

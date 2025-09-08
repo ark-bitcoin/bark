@@ -18,6 +18,7 @@ pub mod board;
 pub mod rounds;
 pub mod tree;
 pub mod vtxo;
+pub mod integration;
 
 pub use crate::address::Address;
 pub use crate::encode::{ProtocolEncoding, WriteExt, ReadExt, ProtocolDecodingError};

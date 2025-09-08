@@ -11,6 +11,7 @@ name = "server_rpc"
 
 [features]
 server = []
+intman-server = []
 
 [dependencies]
 # OWN

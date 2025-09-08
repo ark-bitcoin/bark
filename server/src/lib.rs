@@ -8,6 +8,7 @@ mod error;
 
 pub mod config;
 pub mod database;
+pub mod rpcserver;
 pub mod forfeits;
 pub mod secret;
 pub mod sweeps;
@@ -17,13 +18,14 @@ pub(crate) mod flux;
 pub(crate) mod system;
 
 mod cln;
+mod intman;
 
 mod psbtext;
 mod round;
-mod rpcserver;
 mod serde_util;
 mod telemetry;
 mod txindex;
+pub mod filters;
 
 pub use crate::config::Config;
 
@@ -47,7 +49,6 @@ use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, trace, warn, error};
 use tokio::sync::{broadcast, mpsc, oneshot};
-
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
@@ -346,7 +347,11 @@ impl Server {
 
 		let srv2 = srv.clone();
 		tokio::spawn(async move {
-			let res = round::run_round_coordinator(&srv2, round_input_rx, round_trigger_rx)
+			let res = round::run_round_coordinator(
+				&srv2,
+				round_input_rx,
+				round_trigger_rx,
+			)
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", res);
 		});
@@ -355,7 +360,7 @@ impl Server {
 
 		let srv2 = srv.clone();
 		tokio::spawn(async move {
-			let res = rpcserver::run_public_rpc_server(srv2)
+			let res = rpcserver::ark::run_rpc_server(srv2)
 				.await.context("error running public gRPC server");
 			info!("RPC server exited with {:?}", res);
 		});
@@ -363,9 +368,18 @@ impl Server {
 		if cfg.rpc.admin_address.is_some() {
 			let srv2 = srv.clone();
 			tokio::spawn(async move {
-				let res = rpcserver::run_admin_rpc_server(srv2)
+				let res = rpcserver::admin::run_rpc_server(srv2)
 					.await.context("error running admin gRPC server");
 				info!("Admin RPC server exited with {:?}", res);
+			});
+		}
+
+		if cfg.rpc.integration_address.is_some() {
+			let srv2 = srv.clone();
+			tokio::spawn(async move {
+				let res = rpcserver::intman::run_rpc_server(srv2)
+					.await.context("error running integration gRPC server");
+				info!("Integration RPC server exited with {:?}", res);
 			});
 		}
 
@@ -990,7 +1004,6 @@ impl Server {
 		}
 	}
 }
-
 
 async fn run_tip_fetcher(srv: Arc<Server>) {
 	let _worker = srv.rtmgr.spawn_critical("TipFetcher");

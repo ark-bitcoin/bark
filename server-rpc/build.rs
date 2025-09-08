@@ -11,4 +11,17 @@ fn main() {
 
 	println!("cargo:rerun-if-changed=src/bark_server.rs");
 	println!("cargo:rerun-if-changed=protos/bark_server.proto");
+
+	let protos = &["./protos/intman.proto"];
+
+	tonic_build::configure()
+		.build_server(cfg!(feature = "intman-server"))
+		.build_client(true)
+		.out_dir("./src/")
+		.protoc_arg("--experimental_allow_proto3_optional")
+		.compile_protos(protos, &[] as &[&str])
+		.expect("failed to compile intman protos");
+
+	println!("cargo:rerun-if-changed=src/intman.rs");
+	println!("cargo:rerun-if-changed=protos/intman.proto");
 }

@@ -36,6 +36,7 @@ wake_interval = "1m"
 [rpc]
 public_address = "127.0.0.1:3535"
 admin_address = "127.0.0.1:3536"
+integration_address = "127.0.0.1:3537"
 
 [postgres]
 host = "localhost"

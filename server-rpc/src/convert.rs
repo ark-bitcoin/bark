@@ -395,3 +395,46 @@ impl TryFrom<protos::BoardCosignResponse> for BoardCosignResponse {
 		})
 	}
 }
+
+
+use crate::intman_protos;
+
+impl From<ark::integration::TokenType> for intman_protos::TokenType {
+	fn from(value: ark::integration::TokenType) -> Self {
+		match value {
+			ark::integration::TokenType::SingleUseBoard => intman_protos::TokenType::SingleUseBoard,
+		}
+	}
+}
+
+impl From<intman_protos::TokenType> for ark::integration::TokenType {
+	fn from(value: intman_protos::TokenType) -> Self {
+		match value {
+			intman_protos::TokenType::SingleUseBoard => ark::integration::TokenType::SingleUseBoard,
+		}
+	}
+}
+
+impl From<intman_protos::TokenStatus> for ark::integration::TokenStatus {
+	fn from(value: intman_protos::TokenStatus) -> Self {
+		match value {
+			intman_protos::TokenStatus::Unused => ark::integration::TokenStatus::Unused,
+			intman_protos::TokenStatus::Used => ark::integration::TokenStatus::Used,
+			intman_protos::TokenStatus::Abused => ark::integration::TokenStatus::Abused,
+			intman_protos::TokenStatus::Disabled => ark::integration::TokenStatus::Disabled,
+			// Setting to `Unused` since this status is an alias for `Unused` + expired.
+			intman_protos::TokenStatus::Expired => ark::integration::TokenStatus::Unused,
+		}
+	}
+}
+
+impl From<ark::integration::TokenStatus> for intman_protos::TokenStatus {
+	fn from(value: ark::integration::TokenStatus) -> Self {
+		match value {
+			ark::integration::TokenStatus::Unused => intman_protos::TokenStatus::Unused,
+			ark::integration::TokenStatus::Used => intman_protos::TokenStatus::Used,
+			ark::integration::TokenStatus::Abused => intman_protos::TokenStatus::Abused,
+			ark::integration::TokenStatus::Disabled => intman_protos::TokenStatus::Disabled,
+		}
+	}
+}

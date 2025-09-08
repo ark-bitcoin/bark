@@ -253,6 +253,7 @@ impl TestContext {
 				// these will be overwritten on start, but can't be empty
 				public_address: SocketAddr::from_str("127.0.0.1:3535").unwrap(),
 				admin_address: None,
+				integration_address: None,
 			},
 			bitcoind: config::Bitcoind {
 				url: bitcoind.rpc_url(),

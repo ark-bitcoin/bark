@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package intman;
+
+enum TokenType {
+	// This token can be used in a board. It can only be used once.
+	SINGLE_USE_BOARD = 0;
+}
+
+enum TokenStatus {
+	// The token has not been used.
+	UNUSED = 0;
+	// The token has been used at least once.
+	USED = 1;
+	// This token has been confirmed as incorrectly used.
+	ABUSED = 2;
+	// The token has been disabled.
+	DISABLED = 3;
+	// This status doesn't actually exist but is a replacement for:
+	//   1. (state = UNUSED) && (expires_at < NOW)
+	//   2. (state = UNUSED) && (expires_after_round >= last_round_seq)
+	EXPIRED = 4;
+}
+
+// Public integration manager service.
+service IntegrationService {
+	// Obtain one or more tokens. When your request falls outside of you quota,
+	// then the maximum allowed will be generated.
+	rpc GetTokens(TokensRequest) returns (Tokens) {}
+	// Obtain information about a certain token.
+	rpc GetTokenInfo(TokenInfoRequest) returns (TokenInfo) {}
+	// Update the status of a token.
+	rpc UpdateToken(UpdateTokenRequest) returns (TokenInfo) {}
+}
+
+message TokensRequest {
+	// The API key that was provided to the integrator to use this service in the form of a UUID.
+	string api_key = 1;
+	// The type of token you want to generate.
+	TokenType type = 2;
+	// The amount of tokens you want (when omitted only 1 will be generated).
+	optional uint32 count = 3;
+}
+
+message Tokens {
+	// A list of tokens.
+	repeated TokenInfo tokens = 1;
+}
+
+message TokenInfoRequest {
+	// The API key that was provided to the integrator to use this service in the form of a UUID.
+	string api_key = 1;
+	// The token you want the information for.
+	string token = 2;
+}
+
+message TokenInfo {
+	// The actual token.
+	string token = 1;
+	// The type of token.
+	TokenType type = 2;
+	// The status of the token.
+	TokenStatus status = 3;
+	// Since when this token has this status.
+	uint64 since = 4;
+	// When the token will expire (Epoch/UNIX time).
+	uint64 expires_at = 5;
+}
+
+message UpdateTokenRequest {
+	// The API key that was provided to the integrator to use this service in the form of a UUID.
+	string api_key = 1;
+	// The token you want to update.
+	string token = 2;
+	// The status you want the token to have.
+	TokenStatus status = 3;
+}

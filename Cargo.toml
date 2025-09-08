@@ -32,6 +32,7 @@ serde = { version = "1.0.219" }
 tonic = { version = "0.13.1", features = [ "tls-webpki-roots", "gzip" ] }
 tonic-build = "0.13.1"
 tower = "0.5.2"
+hyper = "1.6.0"
 http = "1.2.0"
 http-body = "1.0.1"
 #

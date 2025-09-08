@@ -40,6 +40,19 @@ pub mod protos {
 }
 pub use crate::bark_server::ark_service_client::ArkServiceClient;
 
+mod intman; // generated
+
+pub mod intman_protos {
+	pub use crate::intman::*;
+}
+pub use crate::intman::integration_service_client::IntegrationServiceClient;
+
+#[cfg(feature = "intman-server")]
+pub mod intman_server {
+	pub use crate::intman::integration_service_server::{IntegrationService, IntegrationServiceServer};
+}
+
+
 pub mod admin {
 	pub use crate::bark_server::wallet_admin_service_client::WalletAdminServiceClient;
 	pub use crate::bark_server::round_admin_service_client::RoundAdminServiceClient;
