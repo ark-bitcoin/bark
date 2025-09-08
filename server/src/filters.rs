@@ -27,12 +27,12 @@ impl Filters {
 		Filters { ip, dns }
 	}
 
-	pub(crate) fn dns(&self) -> Vec<String> {
-		self.dns.clone()
+	pub fn dns(&self) -> &[String] {
+		&self.dns
 	}
 
-	pub(crate) fn ip(&self) -> Vec<String> {
-		self.ip.clone()
+	pub fn ip(&self) -> &[String] {
+		&self.ip
 	}
 
 	pub fn is_empty(&self) -> bool {
