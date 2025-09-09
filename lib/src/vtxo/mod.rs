@@ -793,6 +793,11 @@ impl Vtxo {
 		self.exit_delta
 	}
 
+	/// Returns the total exit depth (including OOR depth) of the vtxo.
+	pub fn exit_depth(&self) -> u16 {
+		self.genesis.len() as u16
+	}
+
 	/// Returns the OOR depth of the vtxo.
 	pub fn arkoor_depth(&self) -> u16 {
 		// NB this relies on the invariant that all arkoor transitions
@@ -1446,5 +1451,20 @@ pub mod test {
 		assert_eq!(vtxos.arkoor_htlc_out_vtxo.arkoor_depth(), 1);
 		assert_eq!(vtxos.arkoor2_vtxo.arkoor_depth(), 2);
 		assert_eq!(vtxos.arkoor3_vtxo.arkoor_depth(), 1);
+	}
+
+	#[test]
+	fn exit_depth() {
+		let vtxos = &*VTXO_VECTORS;
+		// board
+		assert_eq!(vtxos.board_vtxo.exit_depth(), 1 /* cosign */);
+
+		// round
+		assert_eq!(vtxos.round1_vtxo.exit_depth(), 3 /* cosign */);
+
+		// arkoor
+		assert_eq!(vtxos.arkoor_htlc_out_vtxo.exit_depth(), 1 /* cosign */ + 1 /* arkoor */);
+		assert_eq!(vtxos.arkoor2_vtxo.exit_depth(), 1 /* cosign */ + 2 /* arkoor */);
+		assert_eq!(vtxos.arkoor3_vtxo.exit_depth(), 3 /* cosign */ + 1 /* arkoor */);
 	}
 }

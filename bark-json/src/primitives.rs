@@ -30,6 +30,8 @@ pub struct VtxoInfo {
 	pub expiry_height: u32,
 	pub exit_delta: u16,
 	pub chain_anchor: OutPoint,
+	pub exit_depth: u16,
+	pub arkoor_depth: u16,
 }
 
 impl From<Vtxo> for VtxoInfo {
@@ -42,7 +44,9 @@ impl From<Vtxo> for VtxoInfo {
 			server_pubkey: v.server_pubkey(),
 			expiry_height: v.expiry_height(),
 			exit_delta: v.exit_delta(),
-			chain_anchor: v.chain_anchor()
+			chain_anchor: v.chain_anchor(),
+			exit_depth: v.exit_depth(),
+			arkoor_depth: v.arkoor_depth(),
 		}
 	}
 }
