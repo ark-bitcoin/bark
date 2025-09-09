@@ -1324,7 +1324,6 @@ async fn perform_round(
 								srv, inputs, vtxo_requests, offboards,
 							).await.map_err(|e| {
 								debug!("error processing payment: {e}");
-								telemetry::set_round_state(round_state.kind());
 								e
 							})
 						},
