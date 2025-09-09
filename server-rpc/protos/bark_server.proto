@@ -89,7 +89,7 @@ message RoundId {
 }
 
 message RoundInfo {
-	bytes round_tx = 1;
+	bytes funding_tx = 1;
 	bytes signed_vtxos = 2;
 }
 
