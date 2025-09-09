@@ -2,8 +2,7 @@ when:
   - event: pull_request
   - event: manual
   - event: tag
-  - event: push
-    branch: master
+  - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://codeberg.org/ark-bitcoin/bark"'
 
 clone:
   - name: clone
