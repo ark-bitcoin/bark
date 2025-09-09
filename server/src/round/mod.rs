@@ -10,6 +10,7 @@ use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
+use chrono::Local;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use bitcoin_ext::bdk::WalletExt;
 use log::{debug, error, info, log_enabled, trace, warn};
@@ -211,6 +212,10 @@ impl CollectingPayments {
 		self.attempt_seq == 0
 	}
 
+	fn duration_since_attempt(&self) -> Duration {
+		Instant::now().duration_since(self.attempt_start)
+	}
+
 	/// Returns whether there are no valid inputs left in the round
 	/// and we need to start a new round.
 	fn need_new_round(&self) -> bool {
@@ -401,6 +406,7 @@ impl CollectingPayments {
 					for id in nf.identifiers() {
 						rslog!(RoundUserVtxoUnknown, self,
 							vtxo: Some(VtxoId::from_str(id).expect("should be a valid vtxoid")),
+							duration_since_attempt: self.duration_since_attempt(),
 						);
 					}
 				}
@@ -426,7 +432,10 @@ impl CollectingPayments {
 		let lock = match srv.vtxos_in_flux.lock(&input_ids) {
 			Ok(l) => l,
 			Err(id) => {
-				rslog!(RoundUserVtxoInFlux, self, vtxo: id);
+				rslog!(RoundUserVtxoInFlux, self,
+					vtxo: id,
+					duration_since_attempt: self.duration_since_attempt(),
+				);
 				bail!("vtxo {id} already in flux");
 			},
 		};
@@ -438,7 +447,10 @@ impl CollectingPayments {
 			Ok(i) => i,
 			Err(e) => {
 				let ret = if let Some(id) = e.downcast_ref::<VtxoId>().cloned() {
-					rslog!(RoundUserVtxoUnknown, self, vtxo: Some(id));
+					rslog!(RoundUserVtxoUnknown, self,
+						vtxo: Some(id),
+						duration_since_attempt: self.duration_since_attempt(),
+					);
 					Err(e).not_found([id], "input vtxo does not exist")
 				} else {
 					Err(e)
@@ -458,12 +470,18 @@ impl CollectingPayments {
 		}
 
 		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
-			rslog!(RoundPaymentRegistrationFailed, self, error: e.to_string());
+			rslog!(RoundPaymentRegistrationFailed, self,
+				error: e.to_string(),
+				duration_since_attempt: self.duration_since_attempt(),
+			);
 			return Err(e).context("registration failed");
 		}
 
 		if let Err(e) = srv.validate_board_inputs(&input_vtxos).await {
-			rslog!(RoundPaymentRegistrationFailed, self, error: e.to_string());
+			rslog!(RoundPaymentRegistrationFailed, self,
+				error: e.to_string(),
+				duration_since_attempt: self.duration_since_attempt(),
+			);
 			return Err(e).context("registration failed");
 		}
 
@@ -480,8 +498,11 @@ impl CollectingPayments {
 		vtxo_requests: Vec<VtxoParticipant>,
 		offboards: Vec<OffboardRequest>,
 	) {
-		rslog!(RoundPaymentRegistered, self, nb_inputs: inputs.len(),
-			nb_outputs: vtxo_requests.len(), nb_offboards: offboards.len(),
+		rslog!(RoundPaymentRegistered, self,
+			nb_inputs: inputs.len(),
+			nb_outputs: vtxo_requests.len(),
+			nb_offboards: offboards.len(),
+			duration_since_attempt: self.duration_since_attempt(),
 		);
 
 		// If we're adding inputs for the first time, also add them to locked_inputs.
@@ -502,8 +523,10 @@ impl CollectingPayments {
 
 		// Check whether our round is full.
 		if self.all_outputs.len() == self.round_data.max_output_vtxos {
-			rslog!(FullRound, self, nb_outputs: self.all_outputs.len(),
+			rslog!(FullRound, self,
+				nb_outputs: self.all_outputs.len(),
 				max_output_vtxos: self.round_data.max_output_vtxos,
+				duration_since_attempt: self.duration_since_attempt(),
 			);
 			self.proceed = true;
 		}

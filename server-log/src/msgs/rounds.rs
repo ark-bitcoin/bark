@@ -33,6 +33,7 @@ pub struct RoundPaymentRegistrationFailed {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
 	pub error: String,
+	pub duration_since_attempt: Duration,
 }
 impl_slog!(RoundPaymentRegistrationFailed, Trace, "Participant failed to register a payment");
 
@@ -65,6 +66,7 @@ pub struct RoundUserVtxoInFlux {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
 	pub vtxo: VtxoId,
+	pub duration_since_attempt: Duration,
 }
 impl_slog!(RoundUserVtxoInFlux, Trace, "user attempted to submit vtxo already in flux to round");
 
@@ -73,6 +75,7 @@ pub struct RoundUserVtxoUnknown {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
 	pub vtxo: Option<VtxoId>,
+	pub duration_since_attempt: Duration,
 }
 impl_slog!(RoundUserVtxoUnknown, Trace, "user attempted to spend unknown vtxo");
 
@@ -113,6 +116,7 @@ pub struct RoundPaymentRegistered {
 	pub nb_inputs: usize,
 	pub nb_outputs: usize,
 	pub nb_offboards: usize,
+	pub duration_since_attempt: Duration,
 }
 impl_slog!(RoundPaymentRegistered, Trace, "Registered payment from a participant");
 
@@ -122,6 +126,7 @@ pub struct FullRound {
 	pub attempt_seq: usize,
 	pub nb_outputs: usize,
 	pub max_output_vtxos: usize,
+	pub duration_since_attempt: Duration,
 }
 impl_slog!(FullRound, Warn, "Round is full, no longer adding payments");
 
