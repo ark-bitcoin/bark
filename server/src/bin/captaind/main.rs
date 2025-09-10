@@ -211,10 +211,9 @@ async fn main() {
 	}));
 
 	if let Err(e) = inner_main().await {
-		println!("An error occurred: {}", e);
-		// maybe hide second print behind a verbose flag
-		println!("");
-		println!("{:?}", e);
+		eprintln!("An error occurred: {}", e);
+		eprintln!("");
+		eprintln!("{:?}", e);
 		process::exit(1);
 	}
 }
