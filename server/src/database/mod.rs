@@ -428,11 +428,10 @@ impl Db {
 		let bytes = rmp_serde::to_vec_named(c).expect("serde serialization");
 
 		let conn = self.pool.get().await?;
-		let table = wallet_table(wallet);
-		let statement = conn.prepare_typed(&format!("
-			INSERT INTO {table} (content) VALUES ($1);
-		"), &[Type::BYTEA]).await?;
-		conn.execute(&statement, &[&bytes]).await?;
+		let statement = conn.prepare_typed("
+			INSERT INTO wallet_changeset (content, kind, created_at) VALUES ($1, $2::TEXT::wallet_kind, NOW());
+		", &[Type::BYTEA, Type::TEXT]).await?;
+		conn.execute(&statement, &[&bytes, &wallet.name()]).await?;
 
 		Ok(())
 	}
@@ -442,11 +441,13 @@ impl Db {
 		wallet: WalletKind,
 	) -> anyhow::Result<Option<ChangeSet>> {
 		let conn = self.pool.get().await?;
-		let table = wallet_table(wallet);
-		let statement = conn.prepare(&format!("
-			SELECT content FROM {table}
-		")).await?;
-		let rows = conn.query(&statement, &[]).await?;
+		let statement = conn.prepare("
+			SELECT content
+			FROM wallet_changeset
+			WHERE kind = $1::TEXT::wallet_kind
+			ORDER BY id ASC;
+		").await?;
+		let rows = conn.query(&statement, &[&wallet.name()]).await?;
 
 		let mut ret = Option::<ChangeSet>::None;
 		for row in rows {
@@ -594,13 +595,6 @@ impl Db {
 		let nb_tweaks = conn.execute(&stmt, &[]).await.context("cleaning ephemeral tweaks")?;
 		slog!(CleanedEphemeralTweaks, nb_tweaks: nb_tweaks as usize);
 		Ok(())
-	}
-}
-
-fn wallet_table(kind: WalletKind) -> &'static str {
-	match kind {
-		WalletKind::Rounds => "wallet_changeset",
-		WalletKind::Forfeits => "forfeits_wallet_changeset",
 	}
 }
 
