@@ -21,6 +21,8 @@ impl_slog!(RoundStarted, Info, "Round started");
 pub struct AttemptingRound {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
+	#[serde(with = "crate::serde_utils::hex")]
+	pub challenge: Vec<u8>,
 }
 impl_slog!(AttemptingRound, Debug, "Attempting to complete a round");
 

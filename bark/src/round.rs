@@ -1663,10 +1663,6 @@ impl Wallet {
 				other => panic!("Unexpected message: {:?}", other),
 			};
 
-			debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
-				participation.inputs.len(), participation.outputs.len(), participation.outputs.len(),
-			);
-
 			'attempt: loop {
 				let attempt_res = self.new_round_attempt(
 					&mut events,
