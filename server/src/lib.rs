@@ -174,7 +174,7 @@ impl Server {
 			bail!("Found an existing mnemonic file in datadir, the server is probably already initialized!");
 		}
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
+		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
 			.context("failed to create bitcoind rpc client")?;
 		// Check if our bitcoind is on the expected network.
 		let chain_info = bitcoind.get_blockchain_info()?;
@@ -238,7 +238,7 @@ impl Server {
 			.await
 			.context("failed to connect to db")?;
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
+		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
 			.context("failed to create bitcoind rpc client")?;
 		// Check if our bitcoind is on the expected network.
 		let chain_info = bitcoind.get_blockchain_info()?;

@@ -298,7 +298,7 @@ async fn inner_main() -> anyhow::Result<()> {
 		}
 		Command::Drain { address } => {
 			let db = server::database::Db::connect(&cfg.postgres).await?;
-			let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())?;
+			let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 
 			let seed = server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
 			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();

@@ -32,6 +32,57 @@ pub struct Bitcoind {
 	pub rpc_pass: Option<Secret<String>>,
 }
 
+impl Default for Bitcoind {
+	fn default() -> Self {
+	    Bitcoind {
+			url: "http://127.0.0.1:18443".into(),
+			cookie: None,
+			rpc_user: None,
+			rpc_pass: None,
+		}
+	}
+}
+
+impl Bitcoind {
+	/// Validate the bitcoind config, mostly checking auth
+	pub fn validate(&self) -> anyhow::Result<()> {
+		let with_user_pass = match (&self.rpc_user, &self.rpc_pass) {
+			(Some(_), None) => bail!("Missing configuration bitcoind.rpc_pass. \
+				This is required if bitcoind.rpc_user is provided"),
+			(None, Some(_)) => bail!("Missing configuration bitcoind.rpc_user. \
+				This is required if bitcoind.rpc_pass is provided"),
+			(None, None) => false,
+			(Some(_),Some(_)) => true,
+		};
+
+		if !with_user_pass && self.cookie.is_none() {
+			bail!("Configuring authentication to bitcoind is mandatory. \
+				Specify either bitcoind.cookie or (bitcoind.rpc_user and bitcoind.rpc_pass).")
+		} else if with_user_pass && self.cookie.is_some() {
+			bail!("Invalid configuration for authentication to bitcoind. Use either \
+				bitcoind.cookie or (bitcoind.rpc_user and bitcoind.rpc_pass) but not both.")
+		}
+
+		Ok(())
+	}
+
+	pub fn auth(&self) -> bitcoin_ext::rpc::Auth {
+		match (&self.rpc_user, &self.rpc_pass) {
+			(Some(user), Some(pass)) => bitcoin_ext::rpc::Auth::UserPass(
+				user.into(), pass.leak_ref().into(),
+			),
+			(Some(_), None) => panic!("Missing configuration for bitcoind.rpc_pass."),
+			(None, Some(_)) => panic!("Missing configuration for bitcoind.rpc_user."),
+			(None, None) => {
+				let bitcoind_cookie_file = self.cookie.as_ref()
+					.expect("The bitcoind.cookie must be set if username and password aren't provided");
+
+				bitcoin_ext::rpc::Auth::CookieFile(bitcoind_cookie_file.into())
+			}
+		}
+	}
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Rpc {
 	/// The socket to bind to for the public Ark gRPC.
@@ -118,6 +169,18 @@ pub struct Postgres {
 	pub name: String,
 	pub user: Option<String>,
 	pub password: Option<Secret<String>>,
+}
+
+impl Default for Postgres {
+	fn default() -> Self {
+	    Postgres {
+			host: String::from("localhost"),
+			port: 5432,
+			name: String::from("bark-server-db"),
+			user: None,
+			password: None
+		}
+	}
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -246,19 +309,8 @@ impl Default for Config {
 				admin_address: Some("127.0.0.1:3536".parse().unwrap()),
 				integration_address: Some("127.0.0.1:3537".parse().unwrap()),
 			},
-			bitcoind: Bitcoind {
-				url: "http://127.0.0.1:18443".into(),
-				cookie: None,
-				rpc_user: None,
-				rpc_pass: None,
-			},
-			postgres: Postgres {
-				host: String::from("localhost"),
-				port: 5432,
-				name: String::from("bark-server-db"),
-				user: None,
-				password: None
-			},
+			bitcoind: Bitcoind::default(),
+			postgres: Postgres::default(),
 			cln_array: Vec::new(),
 			cln_reconnect_interval: Duration::from_secs(10),
 			invoice_check_interval: Duration::from_secs(3),
@@ -326,40 +378,8 @@ impl Config {
 	///
 	/// It also checks if all required configurations are available
 	pub fn validate(&self) -> anyhow::Result<()> {
-		let with_user_pass = match (&self.bitcoind.rpc_user, &self.bitcoind.rpc_pass) {
-			(Some(_), None) => bail!("Missing configuration bitcoind.rpc_pass. \
-				This is required if bitcoind.rpc_user is provided"),
-			(None, Some(_)) => bail!("Missing configuration bitcoind.rpc_user. \
-				This is required if bitcoind.rpc_pass is provided"),
-			(None, None) => false,
-			(Some(_),Some(_)) => true,
-		};
-
-		if !with_user_pass && self.bitcoind.cookie.is_none() {
-			bail!("Configuring authentication to bitcoind is mandatory. \
-				Specify either bitcoind.cookie or (bitcoind.rpc_user and bitcoind.rpc_pass).")
-		} else if with_user_pass && self.bitcoind.cookie.is_some() {
-			bail!("Invalid configuration for authentication to bitcoind. Use either \
-				bitcoind.cookie or (bitcoind.rpc_user and bitcoind.rpc_pass) but not both.")
-		}
-
+		self.bitcoind.validate()?;
 		Ok(())
-	}
-
-	pub fn bitcoind_auth(&self) -> bitcoin_ext::rpc::Auth {
-		match (&self.bitcoind.rpc_user, &self.bitcoind.rpc_pass) {
-			(Some(user), Some(pass)) => bitcoin_ext::rpc::Auth::UserPass(
-				user.into(), pass.leak_ref().into(),
-			),
-			(Some(_), None) => panic!("Missing configuration for bitcoind.rpc_pass."),
-			(None, Some(_)) => panic!("Missing configuration for bitcoind.rpc_user."),
-			(None, None) => {
-				let bitcoind_cookie_file = self.bitcoind.cookie.as_ref()
-					.expect("The bitcoind.cookie must be set if username and password aren't provided");
-
-				bitcoin_ext::rpc::Auth::CookieFile(bitcoind_cookie_file.into())
-			}
-		}
 	}
 
 	/// Write the config into the writer.
