@@ -63,7 +63,7 @@ use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
 
 use crate::txindex::{self, TxIndex};
-use crate::txindex::broadcast::TxBroadcastHandle;
+use crate::txindex::broadcast::TxNursery;
 
 use crate::wallet::BdkWalletExt;
 use crate::{database, serde_util, telemetry, SECP};
@@ -554,7 +554,7 @@ struct Process {
 	bitcoind: BitcoinRpcClient,
 	db: database::Db,
 	txindex: TxIndex,
-	tx_broadcaster: TxBroadcastHandle,
+	tx_nursery: TxNursery,
 	wallet: bdk_wallet::Wallet,
 	server_key: Keypair,
 	drain_address: Address,
@@ -580,7 +580,7 @@ impl Process {
 		self.db.store_pending_sweep(&txid, &tx).await
 			.with_context(|| format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
 
-		let tx = self.tx_broadcaster.broadcast_tx(tx).await
+		let tx = self.tx_nursery.broadcast_tx(tx).await
 			.context("Failed to broadcast sweeping transaction")?;
 
 		self.store_pending(tx);
@@ -816,7 +816,7 @@ impl VtxoSweeper {
 		bitcoind: BitcoinRpcClient,
 		db: database::Db,
 		txindex: TxIndex,
-		tx_broadcaster: TxBroadcastHandle,
+		tx_nursery: TxNursery,
 		server_key: Keypair,
 		drain_address: Address,
 	) -> anyhow::Result<Self> {
@@ -838,13 +838,13 @@ impl VtxoSweeper {
 			.context("error fetching pending sweeps")?;
 
 		let mut proc = Process {
-			config, bitcoind, db, txindex, wallet, server_key, drain_address, tx_broadcaster,
+			config, bitcoind, db, txindex, wallet, server_key, drain_address, tx_nursery,
 			pending_txs: HashMap::with_capacity(raw_pending.len()),
 			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
 		};
 
 		for (_txid, raw_tx) in raw_pending {
-			let tx = proc.tx_broadcaster.broadcast_tx(raw_tx).await
+			let tx = proc.tx_nursery.broadcast_tx(raw_tx).await
 					.context("Failed to broadcast sweeping tx")?;
 			proc.store_pending(tx);
 		}

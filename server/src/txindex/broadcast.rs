@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use bitcoin::{Txid, Transaction, Wtxid};
 use bitcoin::consensus::encode::serialize;
@@ -10,12 +11,30 @@ use crate::system::RuntimeManager;
 use crate::txindex::{Tx, TxIndex};
 
 #[derive(Clone)]
-pub struct TxBroadcastHandle {
+pub struct TxNursery {
 	sender: mpsc::UnboundedSender<Vec<Txid>>,
 	txindex: TxIndex,
 }
 
-impl TxBroadcastHandle {
+impl TxNursery {
+	pub fn start(
+		rtmgr: RuntimeManager,
+		txindex: TxIndex,
+		bitcoind: BitcoinRpcClient,
+		interval: Duration,
+	) -> TxNursery {
+		let (sender, receiver) = mpsc::unbounded_channel();
+
+		let ret = TxNursery {
+			sender: sender,
+			txindex: txindex.clone(),
+		};
+
+		let proc = Process { txindex, receiver, bitcoind, interval, broadcast: vec![] };
+		tokio::spawn(proc.run(rtmgr));
+
+		ret
+	}
 	/// Adds the transaction to TxIndex and ensures
 	/// it will be broadcast
 	pub async fn broadcast_tx(&self, tx: Transaction) -> anyhow::Result<Tx> {
@@ -45,39 +64,18 @@ impl TxBroadcastHandle {
 	}
 }
 
-pub struct TxNursery {
+struct Process {
 	txindex: TxIndex,
 	bitcoind: BitcoinRpcClient,
-	sender: mpsc::UnboundedSender<Vec<Txid>>,
 	receiver: mpsc::UnboundedReceiver<Vec<Txid>>,
 	broadcast: Vec<Vec<Txid>>,
-	rtmgr: RuntimeManager,
 	interval: std::time::Duration,
 }
 
-impl TxNursery {
+impl Process {
+	async fn run(mut self, rtmgr: RuntimeManager) {
+		let _worker = rtmgr.spawn_critical("TxNursery");
 
-	pub fn new(
-		rtmgr: RuntimeManager,
-		txindex: TxIndex,
-		bitcoind: BitcoinRpcClient,
-		interval: std::time::Duration,
-	) -> Self {
-		let (sender, receiver) = mpsc::unbounded_channel();
-		Self {
-			rtmgr, txindex, sender, receiver, bitcoind, interval,
-			broadcast: vec![],
-		}
-	}
-
-	pub fn broadcast_handle(&self) -> TxBroadcastHandle {
-		TxBroadcastHandle {
-			sender: self.sender.clone(),
-			txindex: self.txindex.clone(),
-		}
-	}
-
-	pub async fn run(mut self) -> anyhow::Result<()> {
 		let mut interval = tokio::time::interval(self.interval);
 		interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -85,7 +83,7 @@ impl TxNursery {
 			tokio::select! {
 				msg = self.receiver.recv() => {
 					match msg {
-						Some(pkg) => {self.broadcast(&pkg).await;}
+						Some(pkg) => { self.broadcast(&pkg).await; }
 						None => {}
 					}
 				},
@@ -93,9 +91,9 @@ impl TxNursery {
 					trace!("Starting to rebroadcast all transactions");
 					self.rebroadcast().await;
 				},
-				_ = self.rtmgr.shutdown_signal() => {
+				_ = rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting rebroadcast loop...");
-					return Ok(())
+					return;
 				}
 			}
 		}

@@ -71,7 +71,7 @@ use crate::secret::Secret;
 use crate::system::RuntimeManager;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
-use crate::txindex::broadcast::{TxNursery, TxBroadcastHandle};
+use crate::txindex::broadcast::TxNursery;
 use crate::sweeps::VtxoSweeper;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
@@ -157,7 +157,7 @@ pub struct Server {
 	chain_tip: parking_lot::Mutex<BlockRef>,
 
 	rtmgr: RuntimeManager,
-	tx_broadcast_handle: TxBroadcastHandle,
+	tx_nursery: TxNursery,
 	vtxo_sweeper: VtxoSweeper,
 	rounds: RoundHandle,
 	forfeits: ForfeitWatcher,
@@ -276,7 +276,7 @@ impl Server {
 			db.clone(),
 		);
 
-		let tx_nursery = TxNursery::new(
+		let tx_nursery = TxNursery::start(
 			rtmgr.clone(),
 			txindex.clone(),
 			bitcoind.clone(),
@@ -290,7 +290,7 @@ impl Server {
 			bitcoind.clone(),
 			db.clone(),
 			txindex.clone(),
-			tx_nursery.broadcast_handle(),
+			tx_nursery.clone(),
 			server_key.clone(),
 			rounds_wallet.reveal_next_address(
 				bdk_wallet::KeychainKind::External,
@@ -304,7 +304,7 @@ impl Server {
 			bitcoind.clone(),
 			db.clone(),
 			txindex.clone(),
-			tx_nursery.broadcast_handle(),
+			tx_nursery.clone(),
 			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 				.expect("can't error"),
 			server_key.clone(),
@@ -335,7 +335,7 @@ impl Server {
 			server_key: Secret::new(server_key),
 			bitcoind,
 			rtmgr,
-			tx_broadcast_handle: tx_nursery.broadcast_handle(),
+			tx_nursery: tx_nursery.clone(),
 			vtxo_sweeper,
 			forfeits,
 			cln,
@@ -382,13 +382,6 @@ impl Server {
 				info!("Integration RPC server exited with {:?}", res);
 			});
 		}
-
-		// Broadcast manager
-		tokio::spawn(async move {
-			let res = tx_nursery.run()
-				.await.context("Error from TransactionBroadcastManager");
-			info!("TransactionBroadcastManager exited with {:?}", res);
-		});
 
 		Ok(srv)
 	}
@@ -445,7 +438,7 @@ impl Server {
 				};
 				drop(wallet);
 
-				let tx = self.tx_broadcast_handle.broadcast_tx(tx).await
+				let tx = self.tx_nursery.broadcast_tx(tx).await
 					.context("Failed to broadcast transaction")?;
 
 				// wait until it's actually broadcast
