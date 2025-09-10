@@ -642,7 +642,7 @@ impl Process {
 		let tip = self.bitcoind.get_block_count()? as BlockHeight;
 
 		let mut expired_rounds = Vec::new();
-		for id in self.db.get_expired_rounds(tip).await? {
+		for id in self.db.get_expired_round_ids(tip).await? {
 			let round = self.db.get_round(id).await?.expect("db has round");
 			expired_rounds.push(ExpiredRound::new(id, round));
 		}

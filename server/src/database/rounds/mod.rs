@@ -115,16 +115,15 @@ impl Db {
 	}
 
 	/// Get all round IDs of rounds that expired before or on `height`.
-	pub async fn get_expired_rounds(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
+	pub async fn get_expired_round_ids(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry, created_at
-			FROM round WHERE expiry <= $1
+			SELECT id FROM round WHERE expiry <= $1;
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
 		Ok(rows
-			.map_ok(|row| StoredRound::try_from(row).expect("corrupt db").id)
+			.map_ok(|row| RoundId::from_str(row.get("id")).expect("corrupt db"))
 			.try_collect::<Vec<_>>().await?
 		)
 	}
