@@ -569,10 +569,13 @@ pub fn get_vtxos_by_state(
 }
 
 pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<Vtxo>> {
-	let query = "SELECT raw_vtxo FROM vtxo_view WHERE locked_in_round_attempt_id IS NOT NULL";
-	let mut statement = conn.prepare(query)?;
+	let query = "
+		SELECT raw_vtxo
+		FROM vtxo_view
+		WHERE locked_in_round_attempt_id IS NOT NULL AND state_kind = ?1";
 
-	let mut rows = statement.query([])?;
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([VtxoStateKind::Spendable.as_str()])?;
 
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
