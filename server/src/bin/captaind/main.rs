@@ -1,7 +1,10 @@
 
-use std::process;
-use std::io::Write;
+#[path = "../common/mod.rs"]
+mod common;
+
+
 use std::path::PathBuf;
+use std::process;
 use std::str::FromStr;
 
 use anyhow::{bail, Context};
@@ -205,12 +208,7 @@ pub struct Filters {
 
 #[tokio::main]
 async fn main() {
-	// Set a custom panic hook to make sure we print stack traces
-	// when one of our background processes panic.
-	std::panic::set_hook(Box::new(|panic_info| {
-		let backtrace = std::backtrace::Backtrace::force_capture();
-		eprintln!("Panic occurred: {}\n\nBacktrace:\n{}", panic_info, backtrace);
-	}));
+	common::set_panic_hook();
 
 	if let Err(e) = inner_main().await {
 		eprintln!("An error occurred: {}", e);
@@ -218,24 +216,6 @@ async fn main() {
 		eprintln!("{:?}", e);
 		process::exit(1);
 	}
-}
-
-fn init_logging() {
-	let env = env_logger::Env::new().filter("CAPTAIND_LOG");
-
-	env_logger::Builder::new()
-		.filter_level(log::LevelFilter::Trace)
-		.filter_module("rustls", log::LevelFilter::Warn)
-		.filter_module("bitcoincore_rpc", log::LevelFilter::Warn)
-		.filter_module("tokio_postgres", log::LevelFilter::Info)
-		.parse_env(env)
-		.format(|mut out, rec| {
-			let ts = chrono::Local::now();
-			server_log::encode_record(&mut out, ts, rec)?;
-			out.write_all(&[b'\n'])
-		})
-		.target(env_logger::Target::Stdout)
-		.init();
 }
 
 async fn inner_main() -> anyhow::Result<()> {
@@ -248,7 +228,7 @@ async fn inner_main() -> anyhow::Result<()> {
 	let cfg = Config::load(cli.config.as_ref().map(|p| p.as_path()))?;
 	cfg.validate().expect("invalid configuration");
 
-	init_logging();
+	common::init_logging();
 	info!("Running with config: {:#?}", cfg);
 
 	match cli.command {
