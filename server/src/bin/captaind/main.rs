@@ -40,11 +40,6 @@ struct Cli {
 	command: Command,
 }
 
-/// Command-line arguments structure for drain
-#[derive(Parser, Debug)]
-pub struct DrainArgs {
-}
-
 #[derive(clap::Subcommand)]
 enum Command {
 	/// Create and configure the server
