@@ -154,7 +154,7 @@ pub struct Server {
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
-	chain_tip: parking_lot::Mutex<BlockRef>,
+	chain_tip: Arc<parking_lot::Mutex<BlockRef>>,
 
 	rtmgr: RuntimeManager,
 	tx_nursery: TxNursery,
@@ -322,7 +322,7 @@ impl Server {
 
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
-			chain_tip: parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
+			chain_tip: Arc::new(parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?)),
 			rounds: RoundHandle {
 				round_event_tx,
 				last_round_event: parking_lot::Mutex::new(None),
@@ -343,7 +343,11 @@ impl Server {
 
 		let srv = Arc::new(srv);
 
-		tokio::spawn(run_tip_fetcher(srv.clone()));
+		tokio::spawn(run_tip_fetcher(
+			srv.rtmgr.clone(),
+			srv.bitcoind.clone(),
+			srv.chain_tip.clone(),
+		));
 
 		let srv2 = srv.clone();
 		tokio::spawn(async move {
@@ -998,22 +1002,26 @@ impl Server {
 	}
 }
 
-async fn run_tip_fetcher(srv: Arc<Server>) {
-	let _worker = srv.rtmgr.spawn_critical("TipFetcher");
+pub(crate) async fn run_tip_fetcher(
+	rtmgr: RuntimeManager,
+	bitcoind: BitcoinRpcClient,
+	chain_tip: Arc<parking_lot::Mutex<BlockRef>>,
+) {
+	let _worker = rtmgr.spawn_critical("TipFetcher");
 
 	loop {
 		tokio::select! {
 			// Periodic interval for chain tip fetch
 			() = tokio::time::sleep(Duration::from_secs(1)) => {},
-			_ = srv.rtmgr.shutdown_signal() => {
+			_ = rtmgr.shutdown_signal() => {
 				info!("Shutdown signal received. Exiting fetch_tip loop...");
 				break;
 			}
 		}
 
-		match srv.bitcoind.tip() {
+		match bitcoind.tip() {
 			Ok(t) => {
-				let mut lock = srv.chain_tip.lock();
+				let mut lock = chain_tip.lock();
 				if t != *lock {
 					*lock = t;
 					telemetry::set_block_height(t.height);
