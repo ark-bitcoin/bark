@@ -10,7 +10,6 @@ use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
-use chrono::Local;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use bitcoin_ext::bdk::WalletExt;
 use log::{debug, error, info, log_enabled, trace, warn};
