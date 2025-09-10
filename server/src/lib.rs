@@ -67,7 +67,6 @@ use crate::round::RoundInput;
 use crate::secret::Secret;
 use crate::sweeps::VtxoSweeper;
 use crate::system::RuntimeManager;
-use crate::telemetry::init_telemetry;
 use crate::tip_fetcher::TipFetcher;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
@@ -299,7 +298,17 @@ impl Server {
 			Keypair::from_secret_key(&SECP, &xpriv.private_key)
 		};
 
-		init_telemetry(&cfg, server_key.public_key());
+		if let Some(ref endpoint) = cfg.otel_collector_endpoint {
+			telemetry::init_telemetry::<telemetry::Captaind>(
+				endpoint,
+				cfg.otel_tracing_sampler,
+				cfg.network,
+				cfg.round_interval,
+				cfg.max_vtxo_amount,
+				server_key.public_key(),
+			);
+		}
+
 		// *******************
 		// * START PROCESSES *
 		// *******************

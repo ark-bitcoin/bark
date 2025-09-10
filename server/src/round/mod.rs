@@ -41,7 +41,7 @@ use crate::database::forfeits::ForfeitState;
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::secret::Secret;
-use crate::telemetry::SpanExt;
+use crate::telemetry::{MetricsService, SpanExt};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
 
@@ -538,7 +538,7 @@ impl CollectingPayments {
 		let tip = srv.chain_tip().height;
 		let expiry_height = tip + srv.config.vtxo_lifetime as BlockHeight;
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::Captaind::TRACER);
 
 		let parent_context = opentelemetry::Context::current();
 
@@ -809,7 +809,7 @@ impl SigningVtxoTree {
 		// Combine the vtxo signatures.
 		let round_step = telemetry::RoundStep::CombineVtxoSignatures(Instant::now());
 
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::Captaind::TRACER);
 		let parent_context = opentelemetry::Context::current();
 		let _span = trace_round_step(self.round_seq, &tracer_provider, &parent_context, self.attempt_seq, &round_step);
 
@@ -1036,7 +1036,7 @@ impl SigningForfeits {
 		});
 
 		let round_step = telemetry::RoundStep::Persist(Instant::now());
-		let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
+		let tracer_provider = global::tracer_provider().tracer(telemetry::Captaind::TRACER);
 		let parent_context = opentelemetry::Context::current();
 		let mut span = trace_round_step(self.round_seq, &tracer_provider, &parent_context, self.attempt_seq, &round_step);
 		span.set_int_attr("signed_vtxo_count", self.signed_vtxos.nb_leaves());
@@ -1272,7 +1272,7 @@ async fn perform_round(
 	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_seq: RoundSeq,
 ) -> RoundResult {
-	let tracer_provider = global::tracer_provider().tracer(telemetry::TRACER_CAPTAIND);
+	let tracer_provider = global::tracer_provider().tracer(telemetry::Captaind::TRACER);
 
 	let mut span = tracer_provider
 		.span_builder(telemetry::TRACE_RUN_ROUND)

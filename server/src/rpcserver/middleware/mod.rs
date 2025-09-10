@@ -8,7 +8,7 @@ use opentelemetry::{global, Context, KeyValue};
 use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer};
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
-use crate::telemetry;
+use crate::telemetry::{self, MetricsService};
 use crate::telemetry::SpanExt;
 
 const RPC_SYSTEM_HTTP: &'static str = "http";
@@ -255,7 +255,8 @@ where
 		];
 		telemetry::add_grpc_in_progress(&attributes);
 
-		let tracer = global::tracer(telemetry::TRACER_CAPTAIND);
+		// NB currently only captains uses
+		let tracer = global::tracer(telemetry::Captaind::TRACER);
 		let mut span = tracer
 			.span_builder(rpc_method_details.format_path())
 			.with_kind(SpanKind::Server)
