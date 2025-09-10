@@ -64,6 +64,15 @@ impl MetricsService for Captaind {
 	const METER: &str = "captaind";
 }
 
+/// [MetricsService] for watchmand
+pub struct Watchmand;
+
+impl MetricsService for Watchmand {
+	const NAME: &str = "watchmand";
+	const TRACER: &str = "watchmand";
+	const METER: &str = "watchmand";
+}
+
 pub enum RoundStep {
 	Attempt(Instant),
 	ReceivePayments(Instant),

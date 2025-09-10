@@ -404,6 +404,118 @@ impl Config {
 	}
 }
 
+pub mod watchman {
+	use bitcoin::{address::NetworkUnchecked, Address};
+
+	use super::*;
+
+	#[derive(Debug, Clone, Deserialize, Serialize)]
+	pub struct Config {
+		pub data_dir: PathBuf,
+		pub network: bitcoin::Network,
+
+		/// The interval at which the txindex checks tx statuses.
+		#[serde(with = "serde_util::duration")]
+		pub txindex_check_interval: Duration,
+
+		pub otel_collector_endpoint: Option<String>,
+		/// <=0 -> Tracing always disabled,
+		/// 0.5 -> Tracing enabled 50% of the time, and
+		/// >=1 -> Tracing always active.
+		pub otel_tracing_sampler: Option<f64>,
+
+		/// Config for the VtxoSweeper process.
+		pub vtxo_sweeper: sweeps::Config,
+		/// Config for the ForfeitWatcher process.
+		pub forfeit_watcher: forfeits::Config,
+
+		// The interval used to rebroadcast transactions
+		#[serde(with = "serde_util::duration")]
+		pub transaction_rebroadcast_interval: Duration,
+
+		pub postgres: Postgres,
+
+		pub bitcoind: Bitcoind,
+
+		pub sweep_address: Option<Address<NetworkUnchecked>>, // no default
+	}
+
+	impl Default for Config {
+		fn default() -> Self {
+			Config {
+				data_dir: "./bark-server-watchmand".into(),
+				network: bitcoin::Network::Regtest,
+
+				txindex_check_interval: Duration::from_secs(30),
+
+				otel_collector_endpoint: None,
+				otel_tracing_sampler: None,
+				vtxo_sweeper: Default::default(),
+				forfeit_watcher: Default::default(),
+
+				transaction_rebroadcast_interval: std::time::Duration::from_secs(60),
+
+				bitcoind: Bitcoind::default(),
+				postgres: Postgres::default(),
+
+				sweep_address: None,
+			}
+		}
+	}
+
+	impl Config {
+		fn load_with_custom_env(
+			config_file: Option<&Path>,
+			#[cfg(test)]
+			custom_env: Option<std::collections::HashMap<String, String>>,
+		) -> anyhow::Result<Self> {
+			let default = config::Config::try_from(&Self::default())
+				.expect("default config failed to deconstruct");
+
+			// We'll add three layers of config:
+			// - the defaults defined in Config's Default impl
+			// - the config file passed in this function, if any
+			// - environment variables (prefixed with `WATCHMAND__`)
+
+			let mut builder = config::Config::builder()
+				.add_source(default);
+			if let Some(file) = config_file {
+				builder = builder.add_source(File::from(file));
+			}
+
+			let env = Environment::with_prefix("WATCHMAND")
+				.separator("__");
+			#[cfg(test)]
+			let env = env.source(custom_env);
+			builder = builder.add_source(env);
+
+			let raw_cfg = builder.build().context("error building config")?;
+			let cfg = raw_cfg.try_deserialize::<Config>().context("error parsing config")?;
+
+			Ok(cfg)
+		}
+
+		pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
+			Self::load_with_custom_env(config_file, #[cfg(test)] None)
+		}
+
+		/// Verifies if the specified configuration is valid
+		///
+		/// It also checks if all required configurations are available
+		pub fn validate(&self) -> anyhow::Result<()> {
+			self.bitcoind.validate()?;
+			Ok(())
+		}
+
+		/// Write the config into the writer.
+		pub fn write_into(&self, writer: &mut dyn io::Write) -> anyhow::Result<()> {
+			let s = toml::to_string_pretty(self).expect("config serialization error");
+			writer.write_all(&s.as_bytes()).context("error writing config to writer")?;
+			Ok(())
+		}
+	}
+}
+
 #[cfg(test)]
 mod test {
 	use std::collections::HashMap;

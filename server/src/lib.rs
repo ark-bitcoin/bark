@@ -16,6 +16,7 @@ pub mod sweeps;
 pub mod tip_fetcher;
 pub mod vtxopool;
 pub mod wallet;
+pub mod watchman;
 
 pub(crate) mod flux;
 pub(crate) mod system;
