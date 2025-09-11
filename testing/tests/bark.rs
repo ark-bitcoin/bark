@@ -337,6 +337,7 @@ async fn refresh_all() {
 	bark2.refresh_all().await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	assert_eq!(1, bark2.vtxos().await.len());
+	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
 #[tokio::test]
@@ -416,6 +417,7 @@ async fn refresh_counterparty() {
 	assert!(!vtxos.iter().any(|v| v.id == arkoor_vtxo.first().unwrap().id));
 	// others should remain untouched
 	assert!(others.iter().all(|o| vtxos.iter().any(|v| v.id == o.id)));
+	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
 #[tokio::test]
@@ -572,6 +574,7 @@ async fn offboard_all() {
 	ctx.generate_blocks(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, init_balance - OFFBOARD_FEES);
+	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
 #[tokio::test]
@@ -630,6 +633,7 @@ async fn offboard_vtxos() {
 	ctx.generate_blocks(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, vtxo_to_offboard.amount - OFFBOARD_FEES);
+	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
 #[tokio::test]
@@ -666,6 +670,7 @@ async fn bark_send_onchain() {
 	// We check that provided address received the coins
 	ctx.generate_blocks(1).await;
 	assert_eq!(bark2.onchain_balance().await, sat(300_000));
+	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
 #[tokio::test]
