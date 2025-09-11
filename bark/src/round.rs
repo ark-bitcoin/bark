@@ -608,11 +608,8 @@ impl AttemptStartedState {
 
 		let res = srv.client.submit_payment(protos::SubmitPaymentRequest {
 			input_vtxos: participation.inputs.iter().map(|vtxo| {
-				let keypair = {
-					let keypair_idx = wallet.db.get_vtxo_key(&vtxo)
-						.expect("owned vtxo key should be in database");
-					wallet.vtxo_seed.derive_keypair(keypair_idx)
-				};
+				let keypair = wallet.get_vtxo_key(&vtxo)
+					.expect("owned vtxo key should be in database");
 
 				protos::InputVtxo {
 					vtxo_id: vtxo.id().to_bytes().to_vec(),
@@ -965,8 +962,7 @@ impl VtxoTreeSignedState {
 
 		let mut forfeited_vtxos = vec![];
 		let forfeit_sigs_res = self.participation.inputs.iter().map(|vtxo| {
-			let keypair_idx = wallet.db.get_vtxo_key(vtxo)?;
-			let key = wallet.vtxo_seed.derive_keypair(keypair_idx);
+			let keypair = wallet.get_vtxo_key(&vtxo)?;
 
 			let sigs = connectors.connectors().enumerate().map(|(i, (conn, _))| {
 				let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
@@ -978,7 +974,7 @@ impl VtxoTreeSignedState {
 					.context("srv didn't provide enough forfeit nonces")?;
 
 				let (nonce, sig) = musig::deterministic_partial_sign(
-					&key,
+					&keypair,
 					[srv.info.server_pubkey],
 					&[srv_nonce],
 					sighash.to_byte_array(),

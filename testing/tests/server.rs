@@ -23,6 +23,8 @@ use ark::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, Vtx
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bark::Wallet;
+use bark_json::VtxoInfo;
+use bark_json::exit::ExitState;
 use server::secret::Secret;
 use server_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
@@ -31,7 +33,6 @@ use server_log::{
 	ForfeitBroadcasted, RoundError
 };
 use server_rpc::protos;
-use bark_json::exit::ExitState;
 
 use ark_testing::{Captaind, TestContext, btc, sat, secs, Bark};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
@@ -1214,18 +1215,25 @@ async fn reject_dust_vtxo_request() {
 
 	let bark_client = bark.client().await;
 
+	let [vtxo] = bark.vtxos().await.try_into().unwrap();
+
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient, Arc<Wallet>, Arc<Mutex<Option<VtxoOwnershipChallenge>>>);
+	struct Proxy {
+		pub upstream: captaind::ArkClient,
+		pub vtxo: VtxoInfo,
+		pub wallet: Arc<Wallet>,
+		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
+	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
+		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
 
 		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
 			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 		>, tonic::Status> {
 			let stream = self.upstream().subscribe_rounds(req).await?.into_inner();
 
-			let shared = self.2.clone();
+			let shared = self.challenge.clone();
 
 			let s = stream
 				.inspect_ok(move |event| {
@@ -1240,8 +1248,6 @@ async fn reject_dust_vtxo_request() {
 
 		// Proxy alters the request to make it vtxo request subdust but correctly signed
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			let [input] = req.input_vtxos.clone().try_into().unwrap();
-
 			req.vtxo_requests[0].vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
 
 			let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
@@ -1253,10 +1259,10 @@ async fn reject_dust_vtxo_request() {
 			}
 
 			// Spending input boarded with first derivation
-			let keypair = self.1.peak_keypair(0).unwrap();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
 
-			let sig = self.2.lock().await.as_ref().unwrap().sign_with(
-				VtxoId::from_slice(&input.vtxo_id).unwrap(),
+			let sig = self.challenge.lock().await.as_ref().unwrap().sign_with(
+				self.vtxo.id,
 				&vtxo_requests,
 				&[],
 				keypair,
@@ -1269,7 +1275,12 @@ async fn reject_dust_vtxo_request() {
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(bark_client), Arc::new(Mutex::new(None)));
+	let proxy = Proxy {
+		upstream: srv.get_public_rpc().await,
+		vtxo: vtxo.clone(),
+		wallet: Arc::new(bark_client),
+		challenge: Arc::new(Mutex::new(None)),
+	};
 	let proxy = ArkRpcProxyServer::start(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
@@ -1292,18 +1303,26 @@ async fn reject_dust_offboard_request() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let bark_client = bark.client().await;
+
+	let [vtxo] = bark.vtxos().await.try_into().unwrap();
+
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient, Arc<Wallet>, Arc<Mutex<Option<VtxoOwnershipChallenge>>>);
+	struct Proxy {
+		pub upstream: captaind::ArkClient,
+		pub vtxo: VtxoInfo,
+		pub wallet: Arc<Wallet>,
+		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
+	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
+		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
 
 		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
 			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 		>, tonic::Status> {
 			let stream = self.upstream().subscribe_rounds(req).await?.into_inner();
 
-			let shared = self.2.clone();
+			let shared = self.challenge.clone();
 
 			let s = stream
 				.inspect_ok(move |event| {
@@ -1318,8 +1337,6 @@ async fn reject_dust_offboard_request() {
 
 		// Proxy alters the request to make it vtxo request subdust but correctly signed
 		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			let [input] = req.input_vtxos.clone().try_into().unwrap();
-
 			req.offboard_requests[0].amount = P2TR_DUST_SAT - 1;
 
 			let mut offboard_requests = Vec::with_capacity(req.offboard_requests.len());
@@ -1331,10 +1348,10 @@ async fn reject_dust_offboard_request() {
 			}
 
 			// Spending input boarded with first derivation
-			let keypair = self.1.peak_keypair(0).unwrap();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
 
-			let sig = self.2.lock().await.as_ref().unwrap().sign_with(
-				VtxoId::from_slice(&input.vtxo_id).unwrap(),
+			let sig = self.challenge.lock().await.as_ref().unwrap().sign_with(
+				self.vtxo.id,
 				&[],
 				&offboard_requests,
 				keypair,
@@ -1347,7 +1364,12 @@ async fn reject_dust_offboard_request() {
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(bark_client), Arc::new(Mutex::new(None)));
+	let proxy = Proxy {
+		upstream: srv.get_public_rpc().await,
+		vtxo: vtxo.clone(),
+		wallet: Arc::new(bark_client),
+		challenge: Arc::new(Mutex::new(None)),
+	};
 	let proxy = ArkRpcProxyServer::start(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;

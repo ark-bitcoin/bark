@@ -122,11 +122,9 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
 	/// Get last revealed index
 	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>>;
-	/// Get index of vtxo key
-	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<u32>;
 	/// Checks if provided public key exists in the database,
 	/// meaning that it is owned by the wallet
-	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool>;
+	fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>>;
 
 	/// Store a lightning receive
 	fn store_lightning_receive(&self, payment_hash: PaymentHash, preimage: Preimage, invoice: &Bolt11Invoice) -> anyhow::Result<()>;

@@ -220,11 +220,25 @@ impl Wallet {
 
 	pub fn peak_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
 		let keypair = self.vtxo_seed.derive_keypair(index);
-		if self.db.check_vtxo_key_exists(&keypair.public_key())? {
+		if self.db.get_public_key_idx(&keypair.public_key())?.is_some() {
 			Ok(keypair)
 		} else {
 			bail!("VTXO key {} does not exist, please derive it first", index)
 		}
+	}
+
+	pub fn pubkey_keypair(&self, public_key: &PublicKey) -> anyhow::Result<Option<(u32, Keypair)>> {
+		if let Some(index) = self.db.get_public_key_idx(&public_key)? {
+			Ok(Some((index, self.vtxo_seed.derive_keypair(index))))
+		} else {
+			Ok(None)
+		}
+	}
+
+	pub fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<Keypair> {
+		let idx = self.db.get_public_key_idx(&vtxo.user_pubkey())?
+			.context("VTXO key not found")?;
+		Ok(self.vtxo_seed.derive_keypair(idx))
 	}
 
 	/// Generate a new Ark address.
@@ -693,11 +707,11 @@ impl Wallet {
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
 	fn has_counterparty_risk(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
 		for past_pk in vtxo.past_arkoor_pubkeys() {
-			if !self.db.check_vtxo_key_exists(&past_pk)? {
+			if !self.db.get_public_key_idx(&past_pk)?.is_some() {
 				return Ok(true);
 			}
 		}
-		Ok(!self.db.check_vtxo_key_exists(&vtxo.user_pubkey())?)
+		Ok(!self.db.get_public_key_idx(&vtxo.user_pubkey())?.is_some())
 	}
 
 	/// Sync all past rounds
@@ -1044,11 +1058,7 @@ impl Wallet {
 		let mut pubs = Vec::with_capacity(inputs.len());
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
-			let keypair = {
-				let keypair_idx = self.db.get_vtxo_key(&input)?;
-				self.vtxo_seed.derive_keypair(keypair_idx)
-			};
-
+			let keypair = self.get_vtxo_key(&input)?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -1163,11 +1173,7 @@ impl Wallet {
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
 		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
 		for input in htlc_vtxos.into_iter() {
-			let keypair = {
-				let keypair_idx = self.db.get_vtxo_key(&input)?;
-				self.vtxo_seed.derive_keypair(keypair_idx)
-			};
-
+			let keypair = self.get_vtxo_key(&input)?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -1260,11 +1266,7 @@ impl Wallet {
 		let mut pubs = Vec::with_capacity(inputs.len());
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
-			let keypair = {
-				let keypair_idx = self.db.get_vtxo_key(&input)?;
-				self.vtxo_seed.derive_keypair(keypair_idx)
-			};
-
+			let keypair = self.get_vtxo_key(&input)?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -1479,8 +1481,7 @@ impl Wallet {
 		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
 			.context("no lightning receive found")?;
 
-		let keypair_index = self.db.get_vtxo_key(&vtxo.vtxo)?;
-		let keypair = self.peak_keypair(keypair_index)?;
+		let keypair = self.get_vtxo_key(&vtxo.vtxo)?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 
 		// Claiming arkoor against preimage
