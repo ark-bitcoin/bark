@@ -64,9 +64,9 @@ impl ProgressStep {
 				}
 			},
 			ExitState::AwaitingDelta(_) => ProgressStep::Done,
-			ExitState::Spendable(_) => ProgressStep::Done,
-			ExitState::SpendInProgress(_) => ProgressStep::Done,
-			ExitState::Spent(_) => ProgressStep::Done,
+			ExitState::Claimable(_) => ProgressStep::Done,
+			ExitState::ClaimInProgress(_) => ProgressStep::Done,
+			ExitState::Claimed(_) => ProgressStep::Done,
 		}
 	}
 }

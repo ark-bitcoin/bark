@@ -51,7 +51,7 @@ lazy_static::lazy_static! {
 async fn progress_exit_to_broadcast(bark: &Bark) {
 	let progress_result = bark.progress_exit().await;
 	assert_eq!(false, progress_result.done);
-	assert_eq!(None, progress_result.spendable_height);
+	assert_eq!(None, progress_result.claimable_height);
 	for exit in progress_result.exits {
 		assert_eq!(exit.error, None);
 		if matches!(exit.state, ExitState::Processing(..)) {

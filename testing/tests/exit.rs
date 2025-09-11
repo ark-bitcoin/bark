@@ -218,7 +218,7 @@ async fn exit_and_send_vtxo() {
 	assert_eq!(exits.len(), 1, "We have one exit");
 	let exit = &exits[0];
 
-	assert!(matches!(exit.state, ExitState::Spendable(_)), "Exit should be spendable");
+	assert!(matches!(exit.state, ExitState::Claimable(_)), "Exit should be spendable");
 
 	bark.claim_exits([exit.vtxo_id], bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;

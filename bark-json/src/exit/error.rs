@@ -82,7 +82,7 @@ pub enum ExitError {
 	TransactionRetrievalFailure { txid: Txid, error: String },
 
 	#[error("VTXO Not Spendable Error: Attempted to claim a VTXO which is not in a spendable state: {vtxo}")]
-	VtxoNotSpendable { vtxo: VtxoId },
+	VtxoNotClaimable { vtxo: VtxoId },
 
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },

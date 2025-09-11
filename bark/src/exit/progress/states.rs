@@ -5,8 +5,8 @@ use bitcoin_ext::{BlockHeight, TxStatus, P2TR_DUST};
 use json::exit::error::ExitError;
 use json::exit::ExitState;
 use json::exit::states::{
-	ExitAwaitingDeltaState, ExitProcessingState, ExitSpendInProgressState, ExitSpendableState,
-	ExitSpentState, ExitStartState, ExitTx, ExitTxOrigin, ExitTxStatus,
+	ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
+	ExitClaimedState, ExitStartState, ExitTx, ExitTxOrigin, ExitTxStatus,
 };
 
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
@@ -25,9 +25,9 @@ impl ExitStateProgress for ExitState {
 			ExitState::Start(s) => s.progress(ctx, onchain).await,
 			ExitState::Processing(s) => s.progress(ctx, onchain).await,
 			ExitState::AwaitingDelta(s) => s.progress(ctx, onchain).await,
-			ExitState::Spendable(s) => s.progress(ctx, onchain).await,
-			ExitState::SpendInProgress(s) => s.progress(ctx, onchain).await,
-			ExitState::Spent(s) => s.progress(ctx, onchain).await,
+			ExitState::Claimable(s) => s.progress(ctx, onchain).await,
+			ExitState::ClaimInProgress(s) => s.progress(ctx, onchain).await,
+			ExitState::Claimed(s) => s.progress(ctx, onchain).await,
 		}
 	}
 }
@@ -325,13 +325,13 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 		}
 
 		// Inform the user of any progress
-		if tip >= self.spendable_height {
+		if tip >= self.claimable_height {
 			info!("Exit for VTXO ({}) is spendable!", ctx.vtxo.id());
-			let spendable_block = ctx.get_block_ref(self.spendable_height).await?;
-			Ok(ExitState::new_spendable(tip, spendable_block, None))
+			let spendable_block = ctx.get_block_ref(self.claimable_height).await?;
+			Ok(ExitState::new_claimable(tip, spendable_block, None))
 		} else {
 			info!("Waiting for {} more confirmations until exit for VTXO ({}) is spendable...",
-				self.spendable_height - tip, ctx.vtxo.id(),
+				self.claimable_height - tip, ctx.vtxo.id(),
 			);
 			Ok(self.into())
 		}
@@ -339,7 +339,7 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 }
 
 #[async_trait]
-impl ExitStateProgress for ExitSpendableState {
+impl ExitStateProgress for ExitClaimableState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
@@ -348,9 +348,9 @@ impl ExitStateProgress for ExitSpendableState {
 		let tip = ctx.tip_height().await?;
 
 		// We should verify the current block hasn't been reorganized.
-		let spendable_block = ctx.get_block_ref(self.spendable_since.height).await?;
-		if spendable_block.hash != self.spendable_since.hash {
-			return Ok(ExitState::new_spendable(tip, spendable_block, None));
+		let spendable_block = ctx.get_block_ref(self.claimable_since.height).await?;
+		if spendable_block.hash != self.claimable_since.hash {
+			return Ok(ExitState::new_claimable(tip, spendable_block, None));
 		}
 
 		// We can avoid scanning the whole chain provided there hasn't been a re-org
@@ -359,10 +359,10 @@ impl ExitStateProgress for ExitSpendableState {
 			if ctx.get_block_ref(block.height).await?.hash == block.hash {
 				block.height
 			} else {
-				self.spendable_since.height
+				self.claimable_since.height
 			}
 		} else {
-			self.spendable_since.height
+			self.claimable_since.height
 		};
 
 		// Check if the VTXO exit has been spent
@@ -380,12 +380,12 @@ impl ExitStateProgress for ExitSpendableState {
 		if let Some((txid, status)) = result.get(&point) {
 			match status {
 				TxStatus::Confirmed(block) => {
-					debug!("Tx {} has successfully spent VTXO {}", txid, ctx.vtxo.id());
-					Ok(ExitState::new_spent(tip, txid.clone(), *block))
+					debug!("Tx {} has successfully claimed VTXO {}", txid, ctx.vtxo.id());
+					Ok(ExitState::new_claimed(tip, txid.clone(), *block))
 				},
 				TxStatus::Mempool => {
-					debug!("Tx {} is attempting to spend VTXO {}", txid, ctx.vtxo.id());
-					Ok(ExitState::new_spend_in_progress(tip, self.spendable_since, txid.clone()))
+					debug!("Tx {} is attempting to claim VTXO {}", txid, ctx.vtxo.id());
+					Ok(ExitState::new_claim_in_progress(tip, self.claimable_since, txid.clone()))
 				},
 				TxStatus::NotFound => unreachable!(),
 			}
@@ -393,13 +393,13 @@ impl ExitStateProgress for ExitSpendableState {
 			// Make sure the wallet is aware of the exit
 			debug!("VTXO is still spendable: {}", ctx.vtxo.id());
 			let tip_block = Some(ctx.get_block_ref(tip).await?);
-			Ok(ExitState::new_spendable(tip, self.spendable_since, tip_block))
+			Ok(ExitState::new_claimable(tip, self.claimable_since, tip_block))
 		}
 	}
 }
 
 #[async_trait]
-impl ExitStateProgress for ExitSpendInProgressState {
+impl ExitStateProgress for ExitClaimInProgressState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
@@ -407,27 +407,27 @@ impl ExitStateProgress for ExitSpendInProgressState {
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		// Wait for confirmation of the spending transaction
 		let tip = ctx.tip_height().await?;
-		match ctx.tx_manager.tx_status(self.spending_txid).await? {
+		match ctx.tx_manager.tx_status(self.claim_txid).await? {
 			TxStatus::Confirmed(block) => {
-				debug!("Tx {} has successfully spent VTXO {}", self.spending_txid, ctx.vtxo.id());
-				Ok(ExitState::new_spent(tip, self.spending_txid, block))
+				debug!("Tx {} has successfully spent VTXO {}", self.claim_txid, ctx.vtxo.id());
+				Ok(ExitState::new_claimed(tip, self.claim_txid, block))
 			},
 			TxStatus::Mempool => {
-				trace!("Still waiting for TX {} to be confirmed", self.spending_txid);
+				trace!("Still waiting for TX {} to be confirmed", self.claim_txid);
 				Ok(self.into())
 			},
 			TxStatus::NotFound => {
 				warn!("TX {} has dropped from the mempool, VTXO {} is spendable again",
-					self.spending_txid, ctx.vtxo.id(),
+					self.claim_txid, ctx.vtxo.id(),
 				);
-				Ok(ExitState::new_spendable(tip, self.spendable_since, None))
+				Ok(ExitState::new_claimable(tip, self.claimable_since, None))
 			},
 		}
 	}
 }
 
 #[async_trait]
-impl ExitStateProgress for ExitSpentState {
+impl ExitStateProgress for ExitClaimedState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,

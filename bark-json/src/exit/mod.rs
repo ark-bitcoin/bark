@@ -7,8 +7,8 @@ use bitcoin::Txid;
 use bitcoin_ext::{BlockHeight, BlockRef};
 
 use crate::exit::states::{
-	ExitAwaitingDeltaState, ExitProcessingState, ExitSpendInProgressState, ExitSpendableState,
-	ExitSpentState, ExitStartState, ExitTx, ExitTxStatus
+	ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
+	ExitClaimedState, ExitStartState, ExitTx, ExitTxStatus
 };
 
 /// A utility type to wrap ExitState children so they can be easily serialized. This also helps with
@@ -19,9 +19,9 @@ pub enum ExitState {
 	Start(ExitStartState),
 	Processing(ExitProcessingState),
 	AwaitingDelta(ExitAwaitingDeltaState),
-	Spendable(ExitSpendableState),
-	SpendInProgress(ExitSpendInProgressState),
-	Spent(ExitSpentState),
+	Claimable(ExitClaimableState),
+	ClaimInProgress(ExitClaimInProgressState),
+	Claimed(ExitClaimedState),
 }
 
 impl ExitState {
@@ -51,42 +51,42 @@ impl ExitState {
 	pub fn new_awaiting_delta(
 		tip: BlockHeight,
 		confirmed_block: BlockRef,
-		spendable_height: BlockHeight
+		claimable_height: BlockHeight
 	) -> Self {
-		assert!(spendable_height >= confirmed_block.height);
+		assert!(claimable_height >= confirmed_block.height);
 		ExitState::AwaitingDelta(ExitAwaitingDeltaState {
 			tip_height: tip,
 			confirmed_block,
-			spendable_height,
+			claimable_height,
 		})
 	}
 
-	pub fn new_spendable(
+	pub fn new_claimable(
 		tip: BlockHeight,
-		spendable_since: BlockRef,
+		claimable_since: BlockRef,
 		last_scanned_block: Option<BlockRef>
 	) -> Self {
-		ExitState::Spendable(ExitSpendableState {
+		ExitState::Claimable(ExitClaimableState {
 			tip_height: tip,
-			spendable_since,
+			claimable_since,
 			last_scanned_block,
 		})
 	}
 
-	pub fn new_spend_in_progress(
+	pub fn new_claim_in_progress(
 		tip: BlockHeight,
-		spendable_since: BlockRef,
-		spending_txid: Txid
+		claimable_since: BlockRef,
+		claim_txid: Txid
 	) -> Self {
-		ExitState::SpendInProgress(ExitSpendInProgressState {
+		ExitState::ClaimInProgress(ExitClaimInProgressState {
 			tip_height: tip,
-			spendable_since,
-			spending_txid,
+			claimable_since,
+			claim_txid,
 		})
 	}
 
-	pub fn new_spent(tip: BlockHeight, txid: Txid, block: BlockRef) -> Self {
-		ExitState::Spent(ExitSpentState {
+	pub fn new_claimed(tip: BlockHeight, txid: Txid, block: BlockRef) -> Self {
+		ExitState::Claimed(ExitClaimedState {
 			tip_height: tip,
 			txid,
 			block,
@@ -112,7 +112,7 @@ impl ExitState {
 				})
 			},
 			ExitState::AwaitingDelta(_) => true,
-			ExitState::SpendInProgress(_) => true,
+			ExitState::ClaimInProgress(_) => true,
 			_ => false,
 		}
 	}
@@ -129,17 +129,17 @@ impl ExitState {
 				_ => false,
 			}),
 			ExitState::AwaitingDelta(_) => true,
-			ExitState::Spendable(_) => true,
-			ExitState::SpendInProgress(_) => true,
+			ExitState::Claimable(_) => true,
+			ExitState::ClaimInProgress(_) => true,
 			_ => false,
 		}
 	}
 
-	pub fn spendable_height(&self) -> Option<BlockHeight> {
+	pub fn claimable_height(&self) -> Option<BlockHeight> {
 		match self {
-			ExitState::AwaitingDelta(s) => Some(s.spendable_height),
-			ExitState::Spendable(s) => Some(s.spendable_since.height),
-			ExitState::SpendInProgress(s) => Some(s.spendable_since.height),
+			ExitState::AwaitingDelta(s) => Some(s.claimable_height),
+			ExitState::Claimable(s) => Some(s.claimable_since.height),
+			ExitState::ClaimInProgress(s) => Some(s.claimable_since.height),
 			_ => None,
 		}
 	}

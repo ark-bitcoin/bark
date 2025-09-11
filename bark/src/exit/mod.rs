@@ -132,21 +132,19 @@ impl Exit {
 		Ok(amount)
 	}
 
-	/// The height at which all exits will be spendable.
-	///
-	/// If None, some VTXOs require more transactions to be broadcast
-	pub async fn all_spendable_at_height(&self) -> Option<BlockHeight> {
-		let mut highest_spendable_height = None;
+	/// Returns the earliest block height at which all tracked exits will be claimable
+	pub async fn all_claimable_at_height(&self) -> Option<BlockHeight> {
+		let mut highest_claimable_height = None;
 		for exit in &self.exit_vtxos {
-			if matches!(exit.state(), ExitState::Spent(..)) {
+			if matches!(exit.state(), ExitState::Claimed(..)) {
 				continue;
 			}
-			match exit.state().spendable_height() {
-				Some(h) => highest_spendable_height = cmp::max(highest_spendable_height, Some(h)),
+			match exit.state().claimable_height() {
+				Some(h) => highest_claimable_height = cmp::max(highest_claimable_height, Some(h)),
 				None => return None,
 			}
 		}
-		highest_spendable_height
+		highest_claimable_height
 	}
 
 	/// Add all vtxos in the current wallet to the exit process.
@@ -294,7 +292,7 @@ impl Exit {
 					Some(e)
 				}
 			};
-			if !matches!(ev.state(), ExitState::Spent(..)) {
+			if !matches!(ev.state(), ExitState::Claimed(..)) {
 				exit_statuses.push(ExitProgressStatus {
 					vtxo_id: ev.id(),
 					state: ev.state().clone(),
@@ -327,9 +325,9 @@ impl Exit {
 		Ok(())
 	}
 
-	/// List all exits that are spendable
-	pub fn list_spendable(&self) -> Vec<&ExitVtxo> {
-		self.exit_vtxos.iter().filter(|ev| ev.is_spendable()).collect()
+	/// Lists all exits that are claimable
+	pub fn list_claimable(&self) -> Vec<&ExitVtxo> {
+		self.exit_vtxos.iter().filter(|ev| ev.is_claimable()).collect()
 	}
 
 	/// Sign any inputs of the PSBT that is an exit claim input
@@ -347,7 +345,7 @@ impl Exit {
 		let prevouts = sighash::Prevouts::All(&prevouts);
 		let mut shc = sighash::SighashCache::new(&psbt.unsigned_tx);
 
-		let spendable = self.list_spendable()
+		let claimable = self.list_claimable()
 			.into_iter()
 			.map(|v| (v.vtxo().id(), v))
 			.collect::<HashMap<_, _>>();
@@ -357,7 +355,7 @@ impl Exit {
 			let vtxo = input.get_exit_claim_input();
 
 			if let Some(vtxo) = vtxo {
-				let exit_vtxo = *spendable.get(&vtxo.id()).context("vtxo is not exited yet")?;
+				let exit_vtxo = *claimable.get(&vtxo.id()).context("vtxo is not exited yet")?;
 
 				let keypair = wallet.get_vtxo_key(&vtxo)?;
 
@@ -391,8 +389,8 @@ impl Exit {
 			let mut output_amount = Amount::ZERO;
 			let mut tx_ins = Vec::with_capacity(inputs.len());
 			for input in inputs {
-				if !matches!(input.state(), ExitState::Spendable(..)) {
-					return Err(ExitError::VtxoNotSpendable { vtxo: input.id() });
+				if !matches!(input.state(), ExitState::Claimable(..)) {
+					return Err(ExitError::VtxoNotClaimable { vtxo: input.id() });
 				}
 				output_amount += input.vtxo().amount();
 				tx_ins.push(TxIn {

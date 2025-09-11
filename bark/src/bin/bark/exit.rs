@@ -219,9 +219,9 @@ async fn progress_once(
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit.has_pending_exits();
-	let spendable_height = wallet.exit.all_spendable_at_height().await;
+	let claimable_height = wallet.exit.all_claimable_at_height().await;
 	let exits = result.unwrap_or_default();
-	Ok(bark_json::cli::ExitProgressResponse { done, spendable_height, exits, })
+	Ok(bark_json::cli::ExitProgressResponse { done, claimable_height, exits, })
 }
 
 pub async fn claim_exits(
@@ -252,7 +252,7 @@ pub async fn claim_exits(
 			let mut vtxo_ids = vtxo_ids.iter().map(|s| {
 				VtxoId::from_str(s).with_context(|| format!("invalid vtxo id: {}", s))
 			}).collect::<anyhow::Result<HashSet<_>>>()?;
-			let vtxos = wallet.exit.list_spendable().into_iter()
+			let vtxos = wallet.exit.list_claimable().into_iter()
 				.filter(|v| vtxo_ids.remove(&v.id()))
 				.collect::<Vec<_>>();
 			for id in vtxo_ids {
@@ -260,7 +260,7 @@ pub async fn claim_exits(
 			}
 			vtxos
 		},
-		(None, true) => wallet.exit.list_spendable(),
+		(None, true) => wallet.exit.list_claimable(),
 		(None, false) => bail!("Either --vtxo or --all must be specified"),
 		(Some(_), true) => bail!("Cannot specify both --vtxo and --all"),
 	};

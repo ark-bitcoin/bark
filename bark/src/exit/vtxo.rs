@@ -50,6 +50,7 @@ impl ExitVtxo {
 		&self.vtxo
 	}
 
+	/// Returns the state of the unilateral exit.
 	pub fn state(&self) -> &ExitState {
 		&self.state
 	}
@@ -62,8 +63,9 @@ impl ExitVtxo {
 		&self.txids
 	}
 
-	pub fn is_spendable(&self) -> bool {
-		matches!(self.state, ExitState::Spendable(..))
+	/// True if the exit is currently [ExitState::Spendable] and can be claimed/spent.
+	pub fn is_claimable(&self) -> bool {
+		matches!(self.state, ExitState::Claimable(..))
 	}
 
 	pub async fn progress<W: ExitUnilaterally>(

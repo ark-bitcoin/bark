@@ -99,7 +99,7 @@ pub struct ExitProgressResponse {
 	/// Whether all transactions have been confirmed
 	pub done: bool,
 	/// Block height at which all exit outputs will be spendable
-	pub spendable_height: Option<u32>,
+	pub claimable_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
