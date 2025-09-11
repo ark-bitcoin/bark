@@ -17,7 +17,7 @@ impl Db {
 	) -> anyhow::Result<Integration> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			INSERT INTO integration (name, created_at) VALUES ($1, CURRENT_TIMESTAMP)
+			INSERT INTO integration (name, created_at) VALUES ($1, NOW())
 			RETURNING id, name, created_at, deleted_at
 		").await?;
 
@@ -96,7 +96,7 @@ impl Db {
 			INSERT INTO integration_api_key (
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
 			RETURNING id,
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at, deleted_at
@@ -221,7 +221,7 @@ impl Db {
 				type, maximum_open_tokens, active_seconds, integration_id,
 				created_at, updated_at
 			) VALUES ($1::TEXT::token_type, $2, $3, $4,
-				CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+				NOW(), NOW())
 			RETURNING id,
 				type::TEXT, maximum_open_tokens, active_seconds,
 				integration_id,
@@ -382,7 +382,7 @@ impl Db {
 			INSERT INTO integration_token (
 				token, type, status, filters, expires_at, integration_id,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
-			) VALUES ($1, $2::TEXT::token_type, $3::TEXT::token_status, $4, $5, $6, CURRENT_TIMESTAMP, $7, CURRENT_TIMESTAMP, $7)
+			) VALUES ($1, $2::TEXT::token_type, $3::TEXT::token_status, $4, $5, $6, NOW(), $7, NOW(), $7)
 			RETURNING id,
 				token, type::TEXT, status::TEXT, filters, expires_at, integration_id,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id

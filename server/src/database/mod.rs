@@ -326,13 +326,14 @@ impl Db {
 	pub async fn store_oor(&self, pubkey: PublicKey, arkoor_package_id: &[u8; 32], vtxo: Vtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			INSERT INTO arkoor_mailbox (id, pubkey, arkoor_package_id, vtxo) VALUES ($1, $2, $3, $4);
+			INSERT INTO arkoor_mailbox (public_key, vtxo_id, vtxo, arkoor_package_id, created_at)
+			VALUES ($1, $2, $3, $4, NOW());
 		").await?;
 		conn.execute(&statement, &[
-			&vtxo.id().to_string(),
 			&pubkey.serialize().to_vec(),
-			&arkoor_package_id.to_vec(),
+			&vtxo.id().to_string(),
 			&vtxo.serialize(),
+			&arkoor_package_id.to_vec(),
 		]).await?;
 
 		Ok(())
@@ -344,7 +345,9 @@ impl Db {
 	) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo>>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT vtxo, arkoor_package_id FROM arkoor_mailbox WHERE pubkey = ANY($1)
+			SELECT vtxo, arkoor_package_id
+			FROM arkoor_mailbox
+			WHERE public_key=ANY($1) AND processed_at IS NULL
 		").await?;
 
 		let serialized_pubkeys = pubkeys.iter()
@@ -362,7 +365,7 @@ impl Db {
 		}
 
 		let statement = conn.prepare("
-			UPDATE arkoor_mailbox SET deleted_at = NOW() WHERE pubkey = ANY($1);
+			UPDATE arkoor_mailbox SET processed_at=NOW() WHERE public_key=ANY($1);
 		").await?;
 		let result = conn.execute(&statement, &[&serialized_pubkeys]).await?;
 		assert_eq!(result, rows.len() as u64);
