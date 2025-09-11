@@ -381,7 +381,7 @@ impl Db {
 	pub async fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare_typed("
-			INSERT INTO pending_sweep (txid, tx) VALUES ($1, $2);
+			INSERT INTO sweep (tx_id, tx, created_at) VALUES ($1, $2, NOW());
 		", &[Type::TEXT, Type::BYTEA]).await?;
 		conn.execute(
 			&statement,
@@ -391,12 +391,24 @@ impl Db {
 		Ok(())
 	}
 
-	/// Drop the pending sweep tx by txid.
-	pub async fn drop_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
+	/// Confirm the pending sweep tx by txid.
+	pub async fn confirm_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
-			UPDATE pending_sweep SET deleted_at = NOW() WHERE txid = $1;
+			UPDATE sweep SET confirmed_at = NOW() WHERE tx_id = $1;
+		").await?;
+		conn.execute(&statement, &[&txid.to_string()]).await?;
+
+		Ok(())
+	}
+
+	/// Abandon the pending sweep tx by txid.
+	pub async fn abandon_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
+		let conn = self.pool.get().await?;
+
+		let statement = conn.prepare("
+			UPDATE sweep SET abandoned_at = NOW() WHERE tx_id = $1;
 		").await?;
 		conn.execute(&statement, &[&txid.to_string()]).await?;
 
@@ -407,7 +419,9 @@ impl Db {
 	pub async fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT txid, tx FROM pending_sweep
+			SELECT tx_id, tx
+			FROM sweep
+			WHERE confirmed_at IS NULL AND abandoned_at IS NULL
 		").await?;
 
 		let rows = conn.query(&statement, &[]).await?;

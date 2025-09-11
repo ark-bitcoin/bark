@@ -725,18 +725,20 @@ impl Process {
 			if let Some(block) = tx.status().confirmed_in() {
 				if tip.height - block.height >= 2 * DEEPLY_CONFIRMED {
 					slog!(SweepTxFullyConfirmed, txid: *txid);
+					self.db.confirm_pending_sweep(txid).await?;
 				} else {
 					slog!(SweepTxAbandoned, txid: *txid,
 						tx: bitcoin::consensus::encode::serialize_hex(&tx.tx),
 					);
+					self.db.abandon_pending_sweep(txid).await?;
 				}
 			} else {
 				slog!(SweepTxAbandoned, txid: *txid,
 					tx: bitcoin::consensus::encode::serialize_hex(&tx.tx),
 				);
+				self.db.abandon_pending_sweep(txid).await?;
 			}
 
-			self.db.drop_pending_sweep(txid).await?;
 			to_remove.insert(*txid);
 		}
 		for txid in to_remove {

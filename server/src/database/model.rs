@@ -77,7 +77,7 @@ impl TryFrom<Row> for PendingSweep {
 	type Error = anyhow::Error;
 
 	fn try_from(value: Row) -> Result<Self, Self::Error> {
-		let txid = Txid::from_str(&value.get::<_, String>("txid"))?;
+		let txid = Txid::from_str(&value.get::<_, String>("tx_id"))?;
 		let tx = deserialize::<Transaction>(value.get("tx"))?;
 		debug_assert_eq!(tx.compute_txid(), txid);
 
