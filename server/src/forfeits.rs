@@ -24,7 +24,7 @@ use crate::database::rounds::StoredRound;
 use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
 use crate::txindex::{TxIndex, Tx};
-use crate::txindex::broadcast::TxBroadcastHandle;
+use crate::txindex::broadcast::TxNursery;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
 use crate::{serde_util, SECP, database, telemetry};
 
@@ -264,7 +264,7 @@ impl ClaimState {
 			.context("error making cpfp tx for connector")?;
 		proc.wallet.commit_tx(&cpfp);
 
-		let txs = proc.broadcaster.broadcast_pkg([connector_tx, cpfp]).await
+		let txs = proc.tx_nursery.broadcast_pkg([connector_tx, cpfp]).await
 			.context("Failed to broadcast pkg with connector and cpfp")?;
 		let [conn, cpfp] = txs.try_into().unwrap();
 		debug!("Broadcasted cpfp tx {} for connector tx {}", cpfp.txid, conn.txid);
@@ -302,7 +302,7 @@ struct Process {
 	config: Config,
 	db: database::Db,
 	txindex: TxIndex,
-	broadcaster: TxBroadcastHandle,
+	tx_nursery: TxNursery,
 	bitcoind: BitcoinRpcClient,
 	wallet: PersistedWallet,
 	server_key: Keypair,
@@ -453,7 +453,7 @@ impl Process {
 				.context("error making cpfp tx for forfeit")?;
 			self.wallet.commit_tx(&cpfp);
 
-			let txs = self.broadcaster.broadcast_pkg([claim.forfeit_tx.tx.clone(), cpfp]).await
+			let txs = self.tx_nursery.broadcast_pkg([claim.forfeit_tx.tx.clone(), cpfp]).await
 				.context("Failed to broadcast package of connector and cpfp")?;
 			let [forfeit, cpfp] = txs.try_into().unwrap();
 			debug!("Broadcasted cpfp tx {} for forfeit tx {}", cpfp.txid, forfeit.txid);
@@ -593,7 +593,7 @@ impl ForfeitWatcher {
 		bitcoind: BitcoinRpcClient,
 		db: database::Db,
 		txindex: TxIndex,
-		broadcaster: TxBroadcastHandle,
+		tx_nursery: TxNursery,
 		wallet_xpriv: bip32::Xpriv,
 		server_key: Keypair,
 	) -> anyhow::Result<Self> {
@@ -607,7 +607,7 @@ impl ForfeitWatcher {
 		).await.context("error loading ForfeitWatcher wallet")?;
 
 		let mut proc = Process {
-			config, db: db.clone(), txindex, bitcoind, wallet, server_key, broadcaster,
+			config, db: db.clone(), txindex, bitcoind, wallet, server_key, tx_nursery,
 			exit_txs: Vec::new(),
 			rounds: HashMap::new(),
 			claims: Vec::new(),

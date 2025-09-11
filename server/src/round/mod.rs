@@ -1008,7 +1008,7 @@ impl SigningForfeits {
 		}
 
 		drop(self.wallet_lock); // we no longer need the lock
-		let signed_round_tx = srv.tx_broadcast_handle.broadcast_tx(signed_round_tx).await
+		let signed_round_tx = srv.tx_nursery.broadcast_tx(signed_round_tx).await
 			.map_err(|err| RoundError::Fatal(err.context("failed to broadcast round")))?;
 
 		let round_txid = signed_round_tx.txid;

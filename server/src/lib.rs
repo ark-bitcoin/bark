@@ -71,7 +71,7 @@ use crate::secret::Secret;
 use crate::system::RuntimeManager;
 use crate::telemetry::init_telemetry;
 use crate::txindex::TxIndex;
-use crate::txindex::broadcast::{TxNursery, TxBroadcastHandle};
+use crate::txindex::broadcast::TxNursery;
 use crate::sweeps::VtxoSweeper;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
@@ -154,10 +154,10 @@ pub struct Server {
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
-	chain_tip: parking_lot::Mutex<BlockRef>,
+	chain_tip: Arc<parking_lot::Mutex<BlockRef>>,
 
 	rtmgr: RuntimeManager,
-	tx_broadcast_handle: TxBroadcastHandle,
+	tx_nursery: TxNursery,
 	vtxo_sweeper: VtxoSweeper,
 	rounds: RoundHandle,
 	forfeits: ForfeitWatcher,
@@ -174,7 +174,7 @@ impl Server {
 			bail!("Found an existing mnemonic file in datadir, the server is probably already initialized!");
 		}
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
+		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
 			.context("failed to create bitcoind rpc client")?;
 		// Check if our bitcoind is on the expected network.
 		let chain_info = bitcoind.get_blockchain_info()?;
@@ -238,7 +238,7 @@ impl Server {
 			.await
 			.context("failed to connect to db")?;
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind_auth())
+		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
 			.context("failed to create bitcoind rpc client")?;
 		// Check if our bitcoind is on the expected network.
 		let chain_info = bitcoind.get_blockchain_info()?;
@@ -276,7 +276,7 @@ impl Server {
 			db.clone(),
 		);
 
-		let tx_nursery = TxNursery::new(
+		let tx_nursery = TxNursery::start(
 			rtmgr.clone(),
 			txindex.clone(),
 			bitcoind.clone(),
@@ -290,7 +290,7 @@ impl Server {
 			bitcoind.clone(),
 			db.clone(),
 			txindex.clone(),
-			tx_nursery.broadcast_handle(),
+			tx_nursery.clone(),
 			server_key.clone(),
 			rounds_wallet.reveal_next_address(
 				bdk_wallet::KeychainKind::External,
@@ -304,7 +304,7 @@ impl Server {
 			bitcoind.clone(),
 			db.clone(),
 			txindex.clone(),
-			tx_nursery.broadcast_handle(),
+			tx_nursery.clone(),
 			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 				.expect("can't error"),
 			server_key.clone(),
@@ -322,7 +322,7 @@ impl Server {
 
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
-			chain_tip: parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?),
+			chain_tip: Arc::new(parking_lot::Mutex::new(bitcoind.tip().context("failed to fetch tip")?)),
 			rounds: RoundHandle {
 				round_event_tx,
 				last_round_event: parking_lot::Mutex::new(None),
@@ -335,7 +335,7 @@ impl Server {
 			server_key: Secret::new(server_key),
 			bitcoind,
 			rtmgr,
-			tx_broadcast_handle: tx_nursery.broadcast_handle(),
+			tx_nursery: tx_nursery.clone(),
 			vtxo_sweeper,
 			forfeits,
 			cln,
@@ -343,7 +343,11 @@ impl Server {
 
 		let srv = Arc::new(srv);
 
-		tokio::spawn(run_tip_fetcher(srv.clone()));
+		tokio::spawn(run_tip_fetcher(
+			srv.rtmgr.clone(),
+			srv.bitcoind.clone(),
+			srv.chain_tip.clone(),
+		));
 
 		let srv2 = srv.clone();
 		tokio::spawn(async move {
@@ -382,13 +386,6 @@ impl Server {
 				info!("Integration RPC server exited with {:?}", res);
 			});
 		}
-
-		// Broadcast manager
-		tokio::spawn(async move {
-			let res = tx_nursery.run()
-				.await.context("Error from TransactionBroadcastManager");
-			info!("TransactionBroadcastManager exited with {:?}", res);
-		});
 
 		Ok(srv)
 	}
@@ -445,7 +442,7 @@ impl Server {
 				};
 				drop(wallet);
 
-				let tx = self.tx_broadcast_handle.broadcast_tx(tx).await
+				let tx = self.tx_nursery.broadcast_tx(tx).await
 					.context("Failed to broadcast transaction")?;
 
 				// wait until it's actually broadcast
@@ -1005,22 +1002,26 @@ impl Server {
 	}
 }
 
-async fn run_tip_fetcher(srv: Arc<Server>) {
-	let _worker = srv.rtmgr.spawn_critical("TipFetcher");
+pub(crate) async fn run_tip_fetcher(
+	rtmgr: RuntimeManager,
+	bitcoind: BitcoinRpcClient,
+	chain_tip: Arc<parking_lot::Mutex<BlockRef>>,
+) {
+	let _worker = rtmgr.spawn_critical("TipFetcher");
 
 	loop {
 		tokio::select! {
 			// Periodic interval for chain tip fetch
 			() = tokio::time::sleep(Duration::from_secs(1)) => {},
-			_ = srv.rtmgr.shutdown_signal() => {
+			_ = rtmgr.shutdown_signal() => {
 				info!("Shutdown signal received. Exiting fetch_tip loop...");
 				break;
 			}
 		}
 
-		match srv.bitcoind.tip() {
+		match bitcoind.tip() {
 			Ok(t) => {
-				let mut lock = srv.chain_tip.lock();
+				let mut lock = chain_tip.lock();
 				if t != *lock {
 					*lock = t;
 					telemetry::set_block_height(t.height);
