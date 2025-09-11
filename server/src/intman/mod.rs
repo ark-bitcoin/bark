@@ -22,8 +22,8 @@ impl Server {
 		let integration_api_key = self.db.get_integration_api_key_by_api_key(api_key).await?;
 		let (integration, integration_api_key) =
 			self.verify_integration_api_key(client_address, &integration_api_key).await?;
-		let open_count = self.db.count_open_integration_tokens(integration.integration_id, token_type).await?;
-		let integration_token_config = self.db.get_integration_token_config(token_type, integration.integration_id)
+		let open_count = self.db.count_open_integration_tokens(integration.id, token_type).await?;
+		let integration_token_config = self.db.get_integration_token_config(token_type, integration.id)
 			.await?.expect("no integration token configuration found");
 		if integration_token_config.maximum_open_tokens <= open_count {
 			bail!("Maximum tokens reached")
@@ -49,8 +49,8 @@ impl Server {
 				TokenStatus::Unused,
 				token_expiry_time,
 				&filters,
-				integration.integration_id,
-				integration_api_key.integration_api_key_id,
+				integration.id,
+				integration_api_key.id,
 			).await?;
 			result.push(inserted);
 		}
@@ -108,7 +108,7 @@ impl Server {
 
 		Ok(self.db.update_integration_token(
 			integration_token.clone(),
-			integration_api_key.integration_api_key_id,
+			integration_api_key.id,
 			status,
 			&integration_token.filters,
 		).await?)
@@ -171,7 +171,7 @@ impl Server {
 		match integration_token {
 			None => badarg!("Token cannot be found"),
 			Some(integration_token) => {
-				if integration_token.integration_id != integration.integration_id {
+				if integration_token.integration_id != integration.id {
 					// TODO DEACTIVATE API_KEY??? Abuse???
 					return badarg!("Token doesn't match the provided integration");
 				}

@@ -737,7 +737,7 @@ impl ClnManagerProcess {
 				min_cltv_expiry: None,
 			}).await?;
 
-			self.db.store_lightning_htlc_subscription(node.id, existing.lightning_invoice_id).await?;
+			self.db.store_lightning_htlc_subscription(node.id, existing.id).await?;
 			return Ok(existing.invoice.into_bolt11().expect("invoice is not bolt11"))
 		}
 
@@ -798,7 +798,7 @@ impl ClnManagerProcess {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
-		self.db.store_lightning_htlc_subscription_status(subscription.lightning_htlc_subscription_id, status).await?;
+		self.db.store_lightning_htlc_subscription_status(subscription.id, status).await?;
 		Ok(())
 	}
 
@@ -1030,7 +1030,7 @@ impl database::Db {
 			return Ok(false);
 		}
 
-		if li.lightning_invoice_id != attempt.lightning_invoice_id {
+		if li.id != attempt.lightning_invoice_id {
 			error!("Lightning invoice update for {payment_hash}: Skipped update because of \
 				incorrect payment hash matching.");
 			return Ok(false);

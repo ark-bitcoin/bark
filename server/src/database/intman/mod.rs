@@ -18,7 +18,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			INSERT INTO integration (name, created_at) VALUES ($1, CURRENT_TIMESTAMP)
-			RETURNING integration_id, name, created_at, deleted_at
+			RETURNING id, name, created_at, deleted_at
 		").await?;
 
 		let row = conn.query_one(&statement, &[
@@ -30,18 +30,18 @@ impl Db {
 
 	pub async fn delete_integration(
 		&self,
-		integration_id: i64,
+		id: i64,
 	) -> anyhow::Result<Integration> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration
 			SET deleted_at=NOW()
-			WHERE integration_id=$1
-			RETURNING integration_id, name, created_at, deleted_at
+			WHERE id=$1
+			RETURNING id, name, created_at, deleted_at
 		").await?;
 
 		let row = conn.query_one(&statement, &[
-			&integration_id,
+			&id,
 		]).await?;
 
 		Ok(Integration::from(row))
@@ -53,7 +53,7 @@ impl Db {
 	) -> anyhow::Result<Option<Integration>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT integration_id, name, created_at, deleted_at
+			SELECT id, name, created_at, deleted_at
 			FROM integration
 			WHERE name=$1
 		").await?;
@@ -67,17 +67,17 @@ impl Db {
 
 	pub async fn get_integration_by_id(
 		&self,
-		integration_id: i64,
+		id: i64,
 	) -> anyhow::Result<Option<Integration>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT integration_id, name, created_at, deleted_at
+			SELECT id, name, created_at, deleted_at
 			FROM integration
-			WHERE integration_id=$1
+			WHERE id=$1
 		").await?;
 
 		let row = conn.query_opt(&statement, &[
-			&integration_id,
+			&id,
 		]).await?;
 
 		Ok(row.map(Integration::from))
@@ -97,7 +97,7 @@ impl Db {
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at
 			) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-			RETURNING integration_api_key_id,
+			RETURNING id,
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at, deleted_at
 		").await?;
@@ -122,7 +122,7 @@ impl Db {
 	) -> anyhow::Result<Option<IntegrationApiKey>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT integration_api_key_id,
+			SELECT id,
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at, deleted_at
 			FROM integration_api_key
@@ -143,11 +143,11 @@ impl Db {
 	) -> anyhow::Result<Option<IntegrationApiKey>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT iak.integration_api_key_id,
+			SELECT iak.id,
 				iak.name, iak.api_key, iak.filters, iak.integration_id, iak.expires_at,
 				iak.created_at, iak.updated_at, iak.deleted_at
 			FROM integration_api_key AS iak
-			JOIN integration AS i ON i.integration_id=iak.integration_id
+			JOIN integration AS i ON i.id=iak.integration_id
 			WHERE i.name=$1 AND iak.name=$2
 		").await?;
 
@@ -168,8 +168,8 @@ impl Db {
 		let statement = conn.prepare("
 			UPDATE integration_api_key
 			SET filters=$1, updated_at=NOW()
-			WHERE integration_api_key_id=$2 AND updated_at=$3
-			RETURNING integration_api_key_id,
+			WHERE id=$2 AND updated_at=$3
+			RETURNING id,
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at, deleted_at
 		").await?;
@@ -178,7 +178,7 @@ impl Db {
 
 		let row = conn.query_one(&statement, &[
 			&filters.encode(),
-			&old_integration_api_key.integration_api_key_id,
+			&old_integration_api_key.id,
 			&old_integration_api_key.updated_at,
 		]).await?;
 
@@ -187,21 +187,21 @@ impl Db {
 
 	pub async fn delete_integration_api_key(
 		&self,
-		integration_api_key_id: i64,
+		id: i64,
 		old_updated_at: DateTime<Local>,
 	) -> anyhow::Result<IntegrationApiKey> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration_api_key
 			SET deleted_at=NOW(), updated_at=NOW()
-			WHERE integration_api_key_id=$1 AND updated_at=$2
-			RETURNING integration_api_key_id,
+			WHERE id=$1 AND updated_at=$2
+			RETURNING id,
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at, deleted_at
 		").await?;
 
 		let row = conn.query_one(&statement, &[
-			&integration_api_key_id,
+			&id,
 			&old_updated_at,
 		]).await?;
 
@@ -222,7 +222,7 @@ impl Db {
 				created_at, updated_at
 			) VALUES ($1::TEXT::token_type, $2, $3, $4,
 				CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-			RETURNING integration_token_config_id,
+			RETURNING id,
 				type::TEXT, maximum_open_tokens, active_seconds,
 				integration_id,
 				created_at, updated_at, deleted_at
@@ -249,7 +249,7 @@ impl Db {
 	) -> anyhow::Result<Option<IntegrationTokenConfig>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT integration_token_config_id,
+			SELECT id,
 				type::TEXT, maximum_open_tokens, active_seconds,
 				integration_id,
 				created_at, updated_at, deleted_at
@@ -276,8 +276,8 @@ impl Db {
 		let statement = conn.prepare("
 			UPDATE integration_token_config
 			SET maximum_open_tokens=$1, active_seconds=$2, updated_at=NOW()
-			WHERE integration_token_config_id=$3 AND updated_at=$4
-			RETURNING integration_token_config_id,
+			WHERE id=$3 AND updated_at=$4
+			RETURNING id,
 				type::TEXT, maximum_open_tokens, active_seconds,
 				integration_id,
 				created_at, updated_at, deleted_at
@@ -289,7 +289,7 @@ impl Db {
 		let row = conn.query_one(&statement, &[
 			&maximum_open_tokens,
 			&active_seconds,
-			&old_integration_token_config.integration_token_config_id,
+			&old_integration_token_config.id,
 			&old_integration_token_config.updated_at,
 		]).await?;
 
@@ -298,22 +298,22 @@ impl Db {
 
 	pub async fn delete_integration_token_config(
 		&self,
-		integration_token_config_id: i64,
+		id: i64,
 		old_updated_at: DateTime<Local>,
 	) -> anyhow::Result<IntegrationTokenConfig> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration_token_config
 			SET deleted_at=NOW(), updated_at=NOW()
-			WHERE integration_token_config_id=$1 AND updated_at=$2
-			RETURNING integration_token_config_id,
+			WHERE id=$1 AND updated_at=$2
+			RETURNING id,
 				type::TEXT, maximum_open_tokens, active_seconds,
 				integration_id,
 				created_at, updated_at, deleted_at
 		").await?;
 
 		let row = conn.query_one(&statement, &[
-			&integration_token_config_id,
+			&id,
 			&old_updated_at,
 		]).await?;
 
@@ -326,7 +326,7 @@ impl Db {
 	) -> anyhow::Result<Option<IntegrationToken>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT integration_token_id, token, type::TEXT, status::TEXT, filters,
+			SELECT id, token, type::TEXT, status::TEXT, filters,
 				integration_id, expires_at,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
 			FROM integration_token
@@ -383,7 +383,7 @@ impl Db {
 				token, type, status, filters, expires_at, integration_id,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
 			) VALUES ($1, $2::TEXT::token_type, $3::TEXT::token_status, $4, $5, $6, CURRENT_TIMESTAMP, $7, CURRENT_TIMESTAMP, $7)
-			RETURNING integration_token_id,
+			RETURNING id,
 				token, type::TEXT, status::TEXT, filters, expires_at, integration_id,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
 		").await?;
@@ -416,8 +416,8 @@ impl Db {
 			UPDATE integration_token
 			SET status=$1::TEXT::token_status, filters=$2,
 				updated_at=NOW(), updated_by_api_key_id=$3
-			WHERE integration_token_id=$4 AND updated_at=$5
-			RETURNING integration_token_id, token, type::TEXT, status::TEXT, filters,
+			WHERE id=$4 AND updated_at=$5
+			RETURNING id, token, type::TEXT, status::TEXT, filters,
 				integration_id, expires_at,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
 		").await?;
@@ -428,7 +428,7 @@ impl Db {
 			&status,
 			&filters.encode(),
 			&updated_by_api_key_id,
-			&old_integration_token.integration_token_id,
+			&old_integration_token.id,
 			&old_integration_token.updated_at,
 		]).await?;
 
