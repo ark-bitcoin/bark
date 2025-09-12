@@ -106,20 +106,23 @@ DEFAULT_DOCS_PATH := "bark/struct.Wallet.html"
 
 # Generate rustdoc documentation for all crates and dependencies
 [unix]
-rustdocs:
+rustdocs ARG="":
 	mkdir -p {{RUSTDOCSDIR}}
-	cargo doc --target-dir {{RUSTDOCSDIR}} --locked --all --lib --examples --document-private-items
+	cargo doc --target-dir {{RUSTDOCSDIR}} --locked --all --lib --examples {{ARG}}
 	echo "Open Rust docs at file://{{RUSTDOCSDIR}}/doc/{{DEFAULT_DOCS_PATH}}"
 
 [windows]
-rustdocs:
+rustdocs ARG="":
 	set shell := ["cmd.exe"]
 	# Repetitive because I'm currently unable to create a named variable
 	# sed is converting C:\path\to\justfile_folder into /c/path/to/justfile_folder
 	mkdir -p $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
-	cargo doc --locked --all --lib --examples --document-private-items --keep-going \
+	cargo doc --locked --all --lib --examples --keep-going {{ARG}} \
 		--target-dir $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
 	echo "Open Rust docs at file://$(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs/doc/{{DEFAULT_DOCS_PATH}}"
+
+rustdocs-internal: 
+	@just rustdocs --document-private-items
 
 
 # cleans most of our crates, doesn't clean grpc gens, they are sometimes slow to build
