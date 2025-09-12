@@ -69,6 +69,7 @@ use crate::wallet::BdkWalletExt;
 use crate::{database, serde_util, telemetry, SECP};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
 	#[serde(with = "serde_util::fee_rate")]
 	pub sweep_tx_fallback_feerate: FeeRate,
