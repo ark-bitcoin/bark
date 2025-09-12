@@ -82,7 +82,7 @@ pub struct SignedVtxoRequest {
 	pub vtxo: VtxoRequest,
 	/// The public key used by the client to cosign the transaction tree
 	/// The client SHOULD forget this key after signing it
-	pub cosign_pubkey: PublicKey,
+	pub cosign_pubkey: Option<PublicKey>,
 }
 
 

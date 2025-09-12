@@ -163,7 +163,7 @@ impl<'a> RoundSweepInput<'a> {
 	}
 
 	fn psbt(&self) -> psbt::Input {
-		let round_cosign_pk = self.round.round.signed_tree.spec.round_tx_cosign_pubkey();
+		let round_cosign_pk = self.round.round.signed_tree.spec.funding_tx_cosign_pubkey();
 		let taproot = self.round.round.signed_tree.spec.cosign_taproot(round_cosign_pk);
 		let mut ret = psbt::Input{
 			witness_utxo: Some(self.utxo.clone()),
@@ -359,7 +359,7 @@ impl<'a> SweepBuilder<'a> {
 			} else {
 				trace!("Sweeping round tx vtxo output {}", point);
 				let utxo = round.round.tx.output[0].clone();
-				let agg_pk = round.round.signed_tree.spec.round_tx_cosign_pubkey();
+				let agg_pk = round.round.signed_tree.spec.funding_tx_cosign_pubkey();
 				self.add_vtxo_output(round, point, utxo, agg_pk);
 				return Ok(None);
 			}

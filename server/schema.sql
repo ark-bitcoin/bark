@@ -368,6 +368,38 @@ ALTER TABLE public.bitcoin_transaction ALTER COLUMN id ADD GENERATED ALWAYS AS I
 
 
 --
+-- Name: ephemeral_tweak; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ephemeral_tweak (
+    id bigint NOT NULL,
+    pubkey text NOT NULL,
+    tweak bytea NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: ephemeral_tweak_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ephemeral_tweak_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ephemeral_tweak_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ephemeral_tweak_id_seq OWNED BY public.ephemeral_tweak.id;
+
+
+--
 -- Name: forfeits_claim_state; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -905,6 +937,13 @@ ALTER SEQUENCE public.wallet_changeset_id_seq OWNED BY public.wallet_changeset.i
 
 
 --
+-- Name: ephemeral_tweak id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ephemeral_tweak ALTER COLUMN id SET DEFAULT nextval('public.ephemeral_tweak_id_seq'::regclass);
+
+
+--
 -- Name: forfeits_wallet_changeset id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1020,6 +1059,22 @@ ALTER TABLE ONLY public.bitcoin_transaction
 
 ALTER TABLE ONLY public.bitcoin_transaction
     ADD CONSTRAINT bitcoin_transaction_txid_key UNIQUE (txid);
+
+
+--
+-- Name: ephemeral_tweak ephemeral_tweak_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ephemeral_tweak
+    ADD CONSTRAINT ephemeral_tweak_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ephemeral_tweak ephemeral_tweak_pubkey_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ephemeral_tweak
+    ADD CONSTRAINT ephemeral_tweak_pubkey_key UNIQUE (pubkey);
 
 
 --

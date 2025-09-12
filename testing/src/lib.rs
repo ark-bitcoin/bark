@@ -23,6 +23,7 @@ pub use bark::{Bark, BarkConfig};
 
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 use bitcoin::Amount;
 
@@ -67,4 +68,9 @@ pub const fn sat(sats: u64) -> Amount {
 pub fn btc(btc: impl fmt::Display) -> Amount {
 	Amount::from_str(&format!("{} btc", btc))
 		.expect(&format!("invalid btc amount: {}", btc))
+}
+
+/// Shorthand for Duration in seconds.
+pub fn secs(seconds: u64) -> Duration {
+	Duration::from_secs(seconds)
 }

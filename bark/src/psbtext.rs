@@ -58,7 +58,7 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 
 		if vtxo_key.public_key() != claim.user_pubkey() {
 			return Err(IncorrectSigningKeyError {
-				required: claim.user_pubkey(),
+				required: Some(claim.user_pubkey()),
 				provided: vtxo_key.public_key(),
 			});
 		}

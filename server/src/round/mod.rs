@@ -135,8 +135,8 @@ impl TryFrom<protos::SignedVtxoRequest> for VtxoParticipant {
 					policy: VtxoPolicy::deserialize(&vtxo.policy)
 						.badarg("invalid VtxoPolicy")?,
 				},
-				cosign_pubkey: PublicKey::from_slice(&v.cosign_pubkey)
-					.badarg("malformed cosign pubkey")?,
+				cosign_pubkey: Some(PublicKey::from_slice(&v.cosign_pubkey)
+					.badarg("malformed cosign pubkey")?),
 			},
 			nonces: v.public_nonces.into_iter().map(|n| {
 				TryFrom::try_from(&n[..]).ok()
@@ -297,9 +297,11 @@ impl CollectingPayments {
 				bail!("incorrect number of cosign nonces per set");
 			}
 
-			if self.inputs_per_cosigner.contains_key(&out.req.cosign_pubkey) {
-				rslog!(RoundUserDuplicateCosignPubkey, self, cosign_pubkey: out.req.cosign_pubkey);
-				bail!("duplicate cosign key {}", out.req.cosign_pubkey);
+			if let Some(cosign_pk) = out.req.cosign_pubkey {
+				if self.inputs_per_cosigner.contains_key(&cosign_pk) {
+					rslog!(RoundUserDuplicateCosignPubkey, self, cosign_pubkey: cosign_pk);
+					bail!("duplicate cosign key {}", cosign_pk);
+				}
 			}
 		}
 
@@ -514,7 +516,12 @@ impl CollectingPayments {
 
 		self.inputs_per_cosigner.reserve(vtxo_requests.len());
 		for req in &vtxo_requests {
-			assert!(self.inputs_per_cosigner.insert(req.req.cosign_pubkey, input_ids.clone()).is_none());
+			if let Some(cosign_pk) = req.req.cosign_pubkey {
+				assert!(
+					self.inputs_per_cosigner.insert(cosign_pk, input_ids.clone()).is_none(),
+					"should be checked before",
+				);
+			}
 		}
 		self.all_outputs.extend(vtxo_requests);
 
@@ -575,7 +582,8 @@ impl CollectingPayments {
 					policy: VtxoPolicy::new_pubkey(*UNSPENDABLE),
 					amount: P2WSH_DUST,
 				},
-				cosign_pubkey: cosign_key.public_key(),
+				//TODO(stevenroose) try remove
+				cosign_pubkey: Some(cosign_key.public_key()),
 			};
 			self.all_outputs.push(VtxoParticipant {
 				req: req.clone(),
@@ -588,10 +596,10 @@ impl CollectingPayments {
 
 		let vtxos_spec = VtxoTreeSpec::new(
 			self.all_outputs.iter().map(|p| p.req.clone()).collect(),
-			srv.server_key.leak_ref().public_key(),
-			self.cosign_key.public_key(),
+			srv.server_pubkey,
 			expiry_height,
 			srv.config.vtxo_exit_delta,
+			vec![self.cosign_key.public_key()],
 		);
 		//TODO(stevenroose) this is inefficient, improve this with direct getter
 		let nb_nodes = vtxos_spec.nb_nodes();
@@ -615,7 +623,7 @@ impl CollectingPayments {
 			b.current_height(tip);
 			b.unspendable(unspendable);
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
-			b.add_recipient(vtxos_spec.round_tx_script_pubkey(), vtxos_spec.total_required_value());
+			b.add_recipient(vtxos_spec.funding_tx_script_pubkey(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
 			for offb in &self.all_offboards {
 				b.add_recipient(offb.script_pubkey.clone(), offb.amount);
@@ -645,12 +653,19 @@ impl CollectingPayments {
 			}
 			(secs, pubs)
 		};
-		let user_cosign_nonces = self.all_outputs.into_iter().map(|req| {
-			(req.req.cosign_pubkey, req.nonces)
-		}).collect::<HashMap<_, _>>();
-		let cosign_agg_nonces = vtxos_spec.calculate_cosign_agg_nonces(
-			&user_cosign_nonces, &cosign_pub_nonces,
+		let user_cosign_nonces = self.all_outputs.into_iter()
+			.filter(|r| r.req.cosign_pubkey.is_some())
+			.map(|r| (r.req.cosign_pubkey.unwrap(), r.nonces))
+			.collect::<HashMap<_, _>>();
+		let res = vtxos_spec.calculate_cosign_agg_nonces(
+			&user_cosign_nonces, &[&cosign_pub_nonces],
 		);
+		let cosign_agg_nonces = match res {
+			Ok(n) => n,
+			Err(e) => return Err(RoundError::Recoverable(anyhow!(
+				"error calculating cosign agg nonces: {}", e,
+			))),
+		};
 
 		// Send out vtxo proposal to signers.
 		srv.rounds.broadcast_event(RoundEvent::VtxoProposal {
@@ -745,7 +760,7 @@ impl SigningVtxoTree {
 			bail!("duplicate signatures for pubkey");
 		}
 
-		let req = match self.unsigned_vtxo_tree.spec.vtxos.iter().find(|v| v.cosign_pubkey == pubkey) {
+		let req = match self.unsigned_vtxo_tree.spec.vtxos.iter().find(|v| v.cosign_pubkey == Some(pubkey)) {
 			Some(r) => r,
 			None => {
 				trace!("Received signatures from non-signer: {}", pubkey);
@@ -757,7 +772,7 @@ impl SigningVtxoTree {
 		let res = self.unsigned_vtxo_tree.verify_branch_cosign_partial_sigs(
 			&self.cosign_agg_nonces,
 			req,
-			&self.user_cosign_nonces.get(&req.cosign_pubkey).expect("vtxo part of round"),
+			&self.user_cosign_nonces.get(&pubkey).expect("vtxo part of round"),
 			&signatures,
 		);
 		if let Err(e) = res {
@@ -807,7 +822,7 @@ impl SigningVtxoTree {
 			&self.cosign_key,
 			self.cosign_sec_nonces,
 		);
-		debug_assert_eq!(self.unsigned_vtxo_tree.verify_all_cosign_partial_sigs(
+		debug_assert_eq!(self.unsigned_vtxo_tree.verify_global_cosign_partial_sigs(
 			self.cosign_key.public_key(),
 			&self.cosign_agg_nonces,
 			&self.cosign_pub_nonces,
@@ -816,7 +831,7 @@ impl SigningVtxoTree {
 		let cosign_sigs = self.unsigned_vtxo_tree.combine_partial_signatures(
 			&self.cosign_agg_nonces,
 			&self.cosign_part_sigs,
-			srv_cosign_sigs,
+			&[&srv_cosign_sigs],
 		).expect("failed to combine partial vtxo cosign signatures: should have checked partials");
 		debug_assert_eq!(self.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
@@ -1725,7 +1740,7 @@ mod tests {
 					policy: VtxoPolicy::new_pubkey(generate_pubkey()),
 					amount: Amount::from_sat(amount),
 				},
-				cosign_pubkey: generate_pubkey(),
+				cosign_pubkey: Some(generate_pubkey()),
 			},
 			nonces: nonces,
 		}
@@ -1762,7 +1777,7 @@ mod tests {
 		assert_eq!(state.all_outputs.len(), 1);
 		assert_eq!(state.all_offboards.len(), 0);
 		assert_eq!(state.inputs_per_cosigner.len(), 1);
-		assert_eq!(1, state.inputs_per_cosigner.get(&outputs[0].req.cosign_pubkey).unwrap().len());
+		assert_eq!(1, state.inputs_per_cosigner.get(&outputs[0].req.cosign_pubkey.unwrap()).unwrap().len());
 	}
 
 	#[test]
@@ -1914,8 +1929,8 @@ mod tests {
 		assert_eq!(state.all_inputs.len(), 2);
 		assert_eq!(state.all_outputs.len(), 4);
 		assert_eq!(state.inputs_per_cosigner.len(), 4);
-		assert!(state.inputs_per_cosigner.contains_key(&outputs1[0].req.cosign_pubkey));
-		assert!(state.inputs_per_cosigner.contains_key(&outputs2[0].req.cosign_pubkey));
+		assert!(state.inputs_per_cosigner.contains_key(&outputs1[0].req.cosign_pubkey.unwrap()));
+		assert!(state.inputs_per_cosigner.contains_key(&outputs2[0].req.cosign_pubkey.unwrap()));
 		assert!(state.proceed, "Proceed should be set after second registration");
 	}
 }

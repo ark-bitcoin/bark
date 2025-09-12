@@ -39,27 +39,28 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::vtxo::ServerHtlcRecvVtxoPolicy;
-use ark::lightning::{Bolt12Invoice, Offer};
 use bitcoin::hashes::Hash;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use bitcoin::secp256k1::{self, rand, schnorr, Keypair, PublicKey};
 use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
 use log::{info, trace, warn, error};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tokio_stream::wrappers::BroadcastStream;
+
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
-use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::lightning::{Bolt12Invoice, Invoice, PaymentHash, Preimage, Offer};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
-use server_rpc::protos;
+use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
+use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
-use tokio_stream::wrappers::BroadcastStream;
+use server_rpc::protos;
 
 use crate::cln::ClnManager;
 use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
@@ -82,6 +83,9 @@ lazy_static::lazy_static! {
 
 /// The HD keypath to use for the server key.
 const SERVER_KEY_PATH: &str = "m/2'/0'";
+
+/// The HD keypath used to generate ephemeral keys
+const EPHEMERAL_KEY_PATH: &str = "m/30'";
 
 
 /// Return type for the round event RPC stream.
@@ -151,6 +155,9 @@ pub struct Server {
 	config: Config,
 	db: database::Db,
 	server_key: Secret<Keypair>,
+	server_pubkey: PublicKey, // public key part of former
+	/// The keypair used to generate ephemeral keys using tweaks
+	ephemeral_master_key: Secret<Keypair>,
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
@@ -216,6 +223,28 @@ impl Server {
 		Ok(())
 	}
 
+	pub fn server_pubkey(&self) -> PublicKey {
+		self.server_pubkey
+	}
+
+	pub fn ark_info(&self) -> ark::ArkInfo {
+		ark::ArkInfo {
+			network: self.config.network,
+			server_pubkey: self.server_pubkey,
+			round_interval: self.config.round_interval,
+			nb_round_nonces: self.config.nb_round_nonces,
+			vtxo_exit_delta: self.config.vtxo_exit_delta,
+			vtxo_expiry_delta: self.config.vtxo_lifetime,
+			htlc_expiry_delta: self.config.htlc_expiry_delta,
+			max_vtxo_amount: self.config.max_vtxo_amount,
+			max_arkoor_depth: self.config.max_arkoor_depth,
+		}
+	}
+
+	pub fn database(&self) -> &database::Db {
+		&self.db
+	}
+
 	pub async fn open_round_wallet(
 		cfg: &Config,
 		db: database::Db,
@@ -255,9 +284,17 @@ impl Server {
 		let mut rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
 			.await.context("error loading wallet")?;
 
-		let server_key_path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
-		let server_key_xpriv = master_xpriv.derive_priv(&SECP, &server_key_path).unwrap();
-		let server_key = Keypair::from_secret_key(&SECP, &server_key_xpriv.private_key);
+		let server_key = {
+			let path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
+			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
+			Keypair::from_secret_key(&SECP, &xpriv.private_key)
+		};
+
+		let ephemeral_master_key = {
+			let path = bip32::DerivationPath::from_str(EPHEMERAL_KEY_PATH).unwrap();
+			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
+			Keypair::from_secret_key(&SECP, &xpriv.private_key)
+		};
 
 		init_telemetry(&cfg, server_key.public_key());
 		// *******************
@@ -332,7 +369,9 @@ impl Server {
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
 			db,
+			server_pubkey: server_key.public_key(),
 			server_key: Secret::new(server_key),
+			ephemeral_master_key: Secret::new(ephemeral_master_key),
 			bitcoind,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
@@ -506,7 +545,7 @@ impl Server {
 		let builder = BoardBuilder::new_for_cosign(
 			user_pubkey,
 			expiry_height,
-			self.server_key.leak_ref().public_key(),
+			self.server_pubkey,
 			self.config.vtxo_exit_delta,
 			amount,
 			utxo,
@@ -514,7 +553,7 @@ impl Server {
 		);
 
 		info!("Cosigning board request for utxo {}", utxo);
-		let resp = builder.server_cosign(&self.server_key.leak_ref());
+		let resp = builder.server_cosign(self.server_key.leak_ref());
 
 		slog!(CosignedBoard, utxo, amount);
 
@@ -744,7 +783,7 @@ impl Server {
 
 			//TODO(stevenroose) need to check that the input vtxos are actually marked
 			// as spent for this specific payment
-			if vtxo.server_pubkey() != self.server_key.leak_ref().public_key() {
+			if vtxo.server_pubkey() != self.server_pubkey {
 				return badarg!("invalid server pubkey used");
 			}
 
@@ -999,6 +1038,96 @@ impl Server {
 		} else {
 			bail!("invalid claim input: {}", input_vtxo_id);
 		}
+	}
+
+	pub async fn generate_ephemeral_cosign_key(
+		&self,
+		lifetime: Duration,
+	) -> anyhow::Result<Keypair> {
+		let secret = rand::random::<[u8; 32]>();
+		let tweak = secp256k1::Scalar::from_be_bytes(secret).expect("very improbable");
+		let seckey = self.ephemeral_master_key.leak_ref().secret_key()
+			.add_tweak(&tweak).expect("tweak error");
+		let key = Keypair::from_secret_key(&*SECP, &seckey);
+		self.db.store_ephemeral_tweak(key.public_key(), tweak, lifetime).await?;
+		Ok(key)
+	}
+
+	pub async fn get_ephemeral_cosign_key(&self, pubkey: PublicKey) -> anyhow::Result<Keypair> {
+		let tweak = self.db.fetch_ephemeral_tweak(pubkey).await?
+			.context("ephemeral pubkey unknown")?;
+		let seckey = self.ephemeral_master_key.leak_ref().secret_key()
+			.add_tweak(&tweak).expect("tweak error");
+		Ok(Keypair::from_secret_key(&*SECP, &seckey))
+	}
+
+	pub async fn drop_ephemeral_cosign_key(&self, pubkey: PublicKey) -> anyhow::Result<Keypair> {
+		let tweak = self.db.drop_ephemeral_tweak(pubkey).await?
+			.context("ephemeral pubkey unknown")?;
+		let seckey = self.ephemeral_master_key.leak_ref().secret_key()
+			.add_tweak(&tweak).expect("tweak error");
+		Ok(Keypair::from_secret_key(&*SECP, &seckey))
+	}
+
+	pub async fn cosign_vtxo_tree(
+		&self,
+		vtxos: impl IntoIterator<Item = VtxoRequest>,
+		cosign_pubkey: PublicKey,
+		server_cosign_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+		utxo: OutPoint,
+		pub_nonces: Vec<musig::PublicNonce>,
+	) -> anyhow::Result<SignedTreeCosignResponse> {
+		// NB we don't drop yet cuz we need to verify it was our key
+		// in the [Server::register_cosigned_vtxo_tree] step.
+		let cosign_key = self.get_ephemeral_cosign_key(server_cosign_pubkey).await?;
+
+		let builder = SignedTreeBuilder::new_for_cosign(
+			vtxos,
+			cosign_pubkey,
+			expiry_height,
+			self.server_key.leak_ref().public_key(),
+			server_cosign_pubkey,
+			self.config.vtxo_exit_delta,
+			utxo,
+			pub_nonces,
+		);
+		Ok(builder.server_cosign(&cosign_key))
+	}
+
+	/// Register the VTXOs in the signed vtxo tree
+	///
+	/// This should only be called once we trust that the root of the tree
+	/// will confirm.
+	pub async fn register_cosigned_vtxo_tree(
+		&self,
+		vtxos: impl IntoIterator<Item = VtxoRequest>,
+		cosign_pubkey: PublicKey,
+		server_cosign_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+		utxo: OutPoint,
+		signatures: Vec<schnorr::Signature>,
+	) -> anyhow::Result<()> {
+		let tree = SignedTreeBuilder::construct_tree_spec(
+			vtxos,
+			cosign_pubkey,
+			expiry_height,
+			self.server_key.leak_ref().public_key(),
+			server_cosign_pubkey,
+			self.config.vtxo_exit_delta,
+		).into_unsigned_tree(utxo);
+
+		if let Err(pk) = tree.verify_cosign_sigs(&signatures) {
+			bail!("invalid cosign signatures for xonly pk {}", pk);
+		}
+
+		// Now we're done and we can drop the key.
+		let _ = self.drop_ephemeral_cosign_key(server_cosign_pubkey).await?;
+
+		let tree = tree.into_signed_tree(signatures).into_cached_tree();
+		self.db.upsert_vtxos(tree.all_vtxos()).await.context("db error occurred")?;
+
+		Ok(())
 	}
 }
 

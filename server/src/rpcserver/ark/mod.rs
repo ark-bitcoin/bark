@@ -68,18 +68,7 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_GET_ARK_INFO);
 
-		let ark_info = ark::ArkInfo {
-			network: self.config.network,
-			server_pubkey: self.server_key.leak_ref().public_key(),
-			round_interval: self.config.round_interval,
-			nb_round_nonces: self.config.nb_round_nonces,
-			vtxo_exit_delta: self.config.vtxo_exit_delta,
-			vtxo_expiry_delta: self.config.vtxo_lifetime,
-			htlc_expiry_delta: self.config.htlc_expiry_delta,
-			max_vtxo_amount: self.config.max_vtxo_amount,
-			max_arkoor_depth: self.config.max_arkoor_depth,
-		};
-		Ok(tonic::Response::new(ark_info.into()))
+		Ok(tonic::Response::new(self.ark_info().into()))
 	}
 
 	async fn get_fresh_rounds(

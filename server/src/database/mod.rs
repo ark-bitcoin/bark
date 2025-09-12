@@ -16,23 +16,26 @@ pub use model::*;
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::Context;
-use ark::arkoor::ArkoorPackageBuilder;
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{self, PublicKey};
 use bitcoin_ext::BlockHeight;
+use chrono::Local;
 use futures::{Stream, TryStreamExt, StreamExt};
 use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
-use log::info;
+use log::{info, warn};
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::arkoor::ArkoorPackageBuilder;
 use ark::encode::ProtocolEncoding;
 
+use crate::error::AnyhowErrorExt;
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
 
@@ -509,6 +512,88 @@ impl Db {
 			},
 			None => Ok(None)
 		}
+	}
+
+	// ********************
+	// * ephemeral tweaks *
+	// ********************
+
+	pub async fn store_ephemeral_tweak(
+		&self,
+		pubkey: PublicKey,
+		tweak: secp256k1::Scalar,
+		lifetime: Duration,
+	) -> anyhow::Result<()> {
+		if let Err(e) = self.clean_expired_ephemeral_tweaks().await {
+			warn!("Error while trying to clean up expired ephemeral tweaks: {}", e.full_msg());
+		}
+
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare("
+			INSERT INTO ephemeral_tweak (pubkey, tweak, created_at, expires_at)
+			VALUES ($1, $2, NOW(), $3)
+		").await?;
+
+		let expires_at = Local::now() + lifetime;
+		let _ = conn.execute(&stmt, &[
+			&pubkey.to_string(),
+			&&tweak.to_be_bytes()[..],
+			&expires_at,
+		]).await.context("inserting ephemeral tweak")?;
+
+		slog!(StoredEphemeralTweak, pubkey, expires_at);
+		Ok(())
+	}
+
+	pub async fn fetch_ephemeral_tweak(
+		&self,
+		pubkey: PublicKey,
+	) -> anyhow::Result<Option<secp256k1::Scalar>> {
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare(
+			"SELECT tweak FROM ephemeral_tweak WHERE pubkey = $1 LIMIT 1",
+		).await?;
+		let res = conn.query_opt(&stmt, &[&pubkey.to_string()]).await
+			.context("fetching ephemeral tweak")?;
+
+		Ok(res.map(|row| {
+			let bytes = <[u8; 32]>::try_from(row.get::<_, &[u8]>(0)).expect("corrupt db");
+			let ret = secp256k1::Scalar::from_be_bytes(bytes).expect("stored previously");
+			slog!(FetchedEphemeralTweak, pubkey);
+			ret
+		}))
+	}
+
+	pub async fn drop_ephemeral_tweak(
+		&self,
+		pubkey: PublicKey,
+	) -> anyhow::Result<Option<secp256k1::Scalar>> {
+		let conn = self.pool.get().await?;
+
+		let stmt = conn.prepare(
+			"DELETE FROM ephemeral_tweak WHERE pubkey = $1 RETURNING tweak",
+		).await?;
+		let res = conn.query_opt(&stmt, &[&pubkey.to_string()]).await
+			.context("fetching ephemeral tweak")?;
+
+		Ok(res.map(|row| {
+			let bytes = <[u8; 32]>::try_from(row.get::<_, &[u8]>(0)).expect("corrupt db");
+			let ret = secp256k1::Scalar::from_be_bytes(bytes).expect("stored previously");
+			slog!(DroppedEphemeralTweak, pubkey);
+			ret
+		}))
+	}
+
+	pub async fn clean_expired_ephemeral_tweaks(&self) -> anyhow::Result<()> {
+		let conn = self.pool.get().await?;
+		let stmt = conn.prepare(
+			"DELETE FROM ephemeral_tweak WHERE expires_at < NOW()",
+		).await?;
+		let nb_tweaks = conn.execute(&stmt, &[]).await.context("cleaning ephemeral tweaks")?;
+		slog!(CleanedEphemeralTweaks, nb_tweaks: nb_tweaks as usize);
+		Ok(())
 	}
 }
 
