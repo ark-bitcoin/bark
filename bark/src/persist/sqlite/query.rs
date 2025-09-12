@@ -692,27 +692,17 @@ pub fn store_vtxo_key(
 	Ok(())
 }
 
-pub fn get_vtxo_key(conn: &Connection, vtxo: &Vtxo) -> anyhow::Result<Option<u32>> {
+pub fn get_public_key_idx(conn: &Connection, public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
 	let query = "SELECT idx FROM bark_vtxo_key WHERE public_key = (?1)";
-	let pk = vtxo.user_pubkey().to_string();
 
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query((pk, ))?;
+	let mut rows = statement.query((public_key.to_string(), ))?;
 
 	if let Some(row) = rows.next()? {
 		Ok(Some(u32::try_from(row.get::<_, i64>("idx")?)?))
 	} else {
 		Ok(None)
 	}
-}
-
-pub fn check_vtxo_key_exists(conn: &Connection, public_key: &PublicKey) -> anyhow::Result<bool> {
-	let query = "SELECT idx FROM bark_vtxo_key WHERE public_key = (?1)";
-
-	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query((public_key.to_string(), ))?;
-
-	Ok(rows.next()?.is_some())
 }
 
 pub fn get_last_vtxo_key_index(conn: &Connection) -> anyhow::Result<Option<u32>> {

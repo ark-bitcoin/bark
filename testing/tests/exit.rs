@@ -1,77 +1,21 @@
 
 
+use ark_testing::exit::complete_exit;
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
 use futures::FutureExt;
-use log::{trace, warn};
+use log::trace;
 use rand::random;
 
 use ark::vtxo::exit_taproot;
-use bark_json::cli::ExitProgressResponse;
 use bark_json::exit::ExitState;
-use bark_json::exit::error::ExitError;
 use bark_json::exit::states::ExitStartState;
 use bitcoin_ext::TaprootSpendInfoExt;
-use bitcoin_ext::rpc::RpcApi;
 use server_rpc::protos;
 
-use ark_testing::{TestContext, Bark, btc, sat};
+use ark_testing::{btc, sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind;
-
-async fn complete_exit(ctx: &TestContext, bark: &Bark) {
-	let mut flip = false;
-	let mut previous : Option<ExitProgressResponse> = None;
-	let mut attempts = 0;
-	while attempts < 20 {
-		attempts += 1;
-		let response = bark.progress_exit().await;
-		if response.done {
-			return;
-		}
-
-		// Ideally, we would flip-flop between generating and not generating blocks unless we're
-		// explicitly waiting for one
-		let mut generate_block = flip;
-		flip = !flip;
-
-		// Panic early if an unexpected error occurs
-		for exit in &response.exits {
-			if let Some(e) = &exit.error {
-				match e {
-					ExitError::InsufficientConfirmedFunds { .. } => {
-						generate_block = true;
-					}
-					ExitError::ExitPackageBroadcastFailure { txid, error } => {
-						warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
-					}
-					_ => panic!("unexpected exit error: {:?}", e),
-				}
-			}
-		}
-		if response.exits.iter().any(|t| t.state.requires_confirmations()) {
-			generate_block = true;
-		}
-
-		// Fast-forward if we're just waiting for confirmations
-		if let Some(height) = response.spendable_height {
-			let current = ctx.bitcoind().sync_client().get_block_count().unwrap() as u32;
-			let blocks = if current > height { 0 } else { height - current };
-			ctx.generate_blocks(blocks).await;
-		} else if generate_block {
-			ctx.generate_blocks(1).await;
-		}
-
-		// Used to allow for an extra iteration if the status has changed
-		if let Some(previous) = &previous {
-			if response != *previous {
-				attempts -= 1;
-			}
-		}
-		previous = Some(response);
-	}
-	panic!("failed to finish unilateral exit of bark {}", bark.name());
-}
 
 #[tokio::test]
 async fn simple_exit() {
@@ -348,8 +292,10 @@ async fn double_exit_call() {
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let bark3 = ctx.new_bark_with_funds("bark3", &srv, sat(1_000_000)).await;
 
-	bark2.board(sat(800_000)).await;
+	bark2.board(sat(500_000)).await;
+	bark3.board(sat(500_000)).await;
 
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
@@ -360,9 +306,8 @@ async fn double_exit_call() {
 	bark1.board(sat(300_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// oor vtxo
+	// oor vtxo. change will be ~170 000 sats
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
-
 
 	let vtxos = bark1.vtxos().await;
 
@@ -389,7 +334,7 @@ async fn double_exit_call() {
 	assert_eq!(bark1.vtxos().await.len(), 0, "all vtxos should be marked as spent");
 
 	// create a new vtxo to exit
-	bark2.send_oor(bark1.address().await, sat(145_000)).await;
+	bark3.send_oor(bark1.address().await, sat(145_000)).await;
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(vtxos.len(), 1);
 	let vtxo = vtxos.first().unwrap();

@@ -244,14 +244,9 @@ impl BarkPersister for SqliteClient {
 		query::get_last_vtxo_key_index(&conn)
 	}
 
-	fn check_vtxo_key_exists(&self, public_key: &PublicKey) -> anyhow::Result<bool> {
+	fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
 		let conn = self.connect()?;
-		query::check_vtxo_key_exists(&conn, public_key)
-	}
-
-	fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<u32> {
-		let conn = self.connect()?;
-		query::get_vtxo_key(&conn, vtxo)?.context("vtxo not found in the db")
+		query::get_public_key_idx(&conn, public_key)
 	}
 
 	/// Store a lightning receive

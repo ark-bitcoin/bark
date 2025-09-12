@@ -478,6 +478,14 @@ impl CollectingPayments {
 			return Err(e).context("registration failed");
 		}
 
+		if let Err(e) = srv.check_vtxos_not_exited(&input_vtxos).await {
+			slog!(RoundPaymentRegistrationFailed, round_seq: self.round_seq,
+				attempt_seq: self.attempt_seq, error: e.to_string(),
+				duration_since_attempt: self.duration_since_attempt(),
+			);
+			return Err(e).context("registration failed");
+		}
+
 		if let Err(e) = srv.validate_board_inputs(&input_vtxos).await {
 			rslog!(RoundPaymentRegistrationFailed, self,
 				error: e.to_string(),
@@ -1322,8 +1330,11 @@ async fn perform_round(
 
 	// In this loop we will try to finish the round and make new attempts.
 	'attempt: loop {
-		let attempt_seq = round_state.collecting_payments().attempt_seq;
-		slog!(AttemptingRound, round_seq, attempt_seq);
+		let state = round_state.collecting_payments();
+		let attempt_seq = state.attempt_seq;
+		let challenge = state.vtxo_ownership_challenge.inner().to_vec();
+
+		rslog!(AttemptingRound, state, challenge);
 		telemetry::set_round_attempt(attempt_seq);
 
 		if let Err(e) = srv.rounds_wallet.lock().await.sync(&srv.bitcoind, false).await
@@ -1335,7 +1346,6 @@ async fn perform_round(
 		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);
 
 		// Release all vtxos in flux from previous attempt
-		let state = round_state.collecting_payments();
 		state.locked_inputs.release_all();
 
 		srv.rounds.broadcast_event(RoundEvent::Attempt(RoundAttempt {
