@@ -174,6 +174,7 @@ enum Command {
 	#[command()]
 	Create(CreateOpts),
 
+	/// Print the configuration of your bark wallet
 	#[command()]
 	Config,
 
@@ -181,7 +182,7 @@ enum Command {
 	#[command(subcommand)]
 	Onchain(OnchainCommand),
 
-	/// Prints informations related to the Ark Server
+	/// Prints information related to the Ark Server
 	#[command()]
 	ArkInfo,
 

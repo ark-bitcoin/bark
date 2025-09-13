@@ -32,15 +32,18 @@ pub struct CreateOpts {
 	#[arg(long)]
 	force: bool,
 
-	/// Use regtest network.
-	#[arg(long)]
-	regtest: bool,
-	/// Use signet network.
-	#[arg(long)]
-	signet: bool,
 	/// Use bitcoin mainnet
 	#[arg(long)]
-	bitcoin: bool,
+	mainnet: bool,
+	/// Use regtest network
+	#[arg(long)]
+	regtest: bool,
+	/// Use the official signet network
+	#[arg(long)]
+	signet: bool,
+	/// Use mutinynet
+	#[arg(long)]
+	mutinynet: bool,
 
 	/// Recover a wallet with an existing mnemonic.
 	/// This currently only works for on-chain funds.
@@ -58,11 +61,12 @@ pub struct CreateOpts {
 pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<()> {
 	debug!("Creating wallet in {}", datadir.display());
 
-	let net = match (opts.bitcoin, opts.signet, opts.regtest) {
-		(true, false, false) => Network::Bitcoin,
-		(false, true, false) => Network::Signet,
-		(false, false, true) => Network::Regtest,
-		_ => bail!("A network must be specified. Use either --signet, --regtest or --bitcoin"),
+	let net = match (opts.mainnet, opts.signet, opts.regtest, opts.mutinynet) {
+		(true,  false, false, false) => Network::Bitcoin,
+		(false, true,  false, false) => Network::Signet,
+		(false, false, true,  false) => Network::Regtest,
+		(false, false, false, true ) => Network::Signet, // mutinynet piggy-backs on Signet params
+		_ => bail!("Specify exactly one of --mainnet, --signet, --regtest or --mutinynet"),
 	};
 
 	let mut config = Config {
@@ -70,6 +74,13 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		server_address: opts.config.ark.clone().context("Ark server address missing, use --ark")?,
 		..Default::default()
 	};
+
+	// Fallback to MutinyNet community Esplora
+	// Only do it when the user did *not* specify either --esplora or --bitcoind.
+	if opts.mutinynet && opts.config.esplora.is_none() && opts.config.bitcoind.is_none() {
+		config.esplora_address = Some("https://mutinynet.com/api".to_owned());
+	}
+
 	opts.config.merge_into(&mut config).context("invalid configuration")?;
 
 	// check if dir doesn't exists, then create it
