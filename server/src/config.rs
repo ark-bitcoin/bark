@@ -15,6 +15,7 @@ use crate::{forfeits, serde_util, sweeps};
 use crate::secret::Secret;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Bitcoind {
 	/// the URL of the bitcoind RPC (mandatory)
 	pub url: String,
@@ -84,6 +85,7 @@ impl Bitcoind {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rpc {
 	/// The socket to bind to for the public Ark gRPC.
 	pub public_address: SocketAddr,
@@ -94,6 +96,7 @@ pub struct Rpc {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct HodlInvoiceClnPlugin {
 	#[serde(with = "serde_util::uri")]
 	pub uri: tonic::transport::Uri,
@@ -103,6 +106,7 @@ pub struct HodlInvoiceClnPlugin {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Lightningd {
 	#[serde(with = "serde_util::uri")]
 	pub uri: tonic::transport::Uri,
@@ -163,6 +167,7 @@ impl Lightningd {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Postgres {
 	pub host: String,
 	pub port: u16,
@@ -184,6 +189,7 @@ impl Default for Postgres {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
 	pub data_dir: PathBuf,
 	/// Directory to place structured log files.

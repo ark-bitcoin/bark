@@ -29,6 +29,7 @@ use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
 use crate::{serde_util, SECP, database, telemetry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
 	/// The fallback feerate for txs claiming forfeited vtxos.
 	#[serde(with = "serde_util::fee_rate")]
