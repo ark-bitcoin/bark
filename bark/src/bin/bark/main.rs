@@ -62,10 +62,10 @@ fn movement_to_json(movement: &Movement) -> json::Movement {
 #[command(name = "bark", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
 struct Cli {
 	/// Enable verbose logging
-	#[arg(long, short = 'v', global = true)]
+	#[arg(long, short = 'v', env = "BARK_VERBOSE", global = true)]
 	verbose: bool,
 	/// Disable all terminal logging
-	#[arg(long, short = 'q', global = true)]
+	#[arg(long, short = 'q', env = "BARK_QUIET", global = true)]
 	quiet: bool,
 
 	/// The datadir of the bark wallet
