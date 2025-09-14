@@ -666,14 +666,14 @@ impl Server {
 					if confs < self.config.round_board_confirmations {
 						slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: confs);
 						return badarg!("input board vtxo tx not deeply confirmed (has {confs} confs, \
-							but requires {})", self.config.round_board_confirmations,
+							but requires {}): {}", self.config.round_board_confirmations, vtxo.id(),
 						);
 					}
 				},
 				Ok(None) => {
 					slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: 0);
 					return badarg!("input board vtxo tx was not found, \
-						requires {} confs)", self.config.round_board_confirmations,
+						(requires {} confs): {}", self.config.round_board_confirmations, vtxo.id(),
 					);
 				},
 				Err(e) => bail!("error getting raw tx for board vtxo: {e}"),
