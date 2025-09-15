@@ -9,4 +9,4 @@ CREATE TABLE ephemeral_tweak (
 	tweak BYTEA NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	expires_at TIMESTAMP WITH TIME ZONE NOT NULL
-)
+);

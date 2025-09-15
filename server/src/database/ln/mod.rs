@@ -24,17 +24,17 @@ impl Db {
 
 	pub async fn register_lightning_node(
 		&self,
-		public_key: &PublicKey,
+		pubkey: &PublicKey,
 	) -> anyhow::Result<(ClnNodeId, DateTime<Local>)> {
 		let conn = self.pool.get().await?;
 
 		let select_stmt = conn.prepare("
 			SELECT id, updated_at
 			FROM lightning_node
-			WHERE public_key = $1;
+			WHERE pubkey = $1;
 		").await?;
 
-		let pubkey = public_key.serialize();
+		let pubkey = pubkey.serialize();
 		let rows = conn.query(&select_stmt, &[&&pubkey[..]]).await?;
 		if let Some(row) = rows.get(0) {
 			let id = row.get("id");
@@ -44,7 +44,7 @@ impl Db {
 
 		let insert_stmt = conn.prepare("
 			INSERT INTO lightning_node (
-				public_key,
+				pubkey,
 				payment_created_index,
 				payment_updated_index,
 				created_at,
@@ -105,13 +105,13 @@ impl Db {
 		let statement = match kind {
 			ListsendpaysIndex::Created => conn.prepare("
 				UPDATE lightning_node
-				SET payment_created_index=$2, updated_at=NOW()
+				SET payment_created_index = $2, updated_at = NOW()
 				WHERE id = $1
 				RETURNING updated_at;
 			").await?,
 			ListsendpaysIndex::Updated => conn.prepare("
 				UPDATE lightning_node
-				SET payment_updated_index=$2, updated_at=NOW()
+				SET payment_updated_index = $2, updated_at = NOW()
 				WHERE id = $1
 				RETURNING updated_at;
 			").await?,

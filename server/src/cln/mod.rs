@@ -311,7 +311,7 @@ impl ClnManager {
 #[derive(Debug)]
 pub struct ClnNodeOnlineState {
 	id: ClnNodeId,
-	public_key: PublicKey,
+	pubkey: PublicKey,
 	rpc: ClnGrpcClient,
 	hodl_rpc: Option<HoldClient<Channel>>,
 	// option so we can take() when marking as down
@@ -447,10 +447,10 @@ impl ClnNodeInfo {
 			return Err(anyhow::Error::msg(msg.clone()).context(ClnNodeState::invalid(msg)));
 		}
 
-		let public_key = PublicKey::from_slice(&info.id.to_vec())
+		let pubkey = PublicKey::from_slice(&info.id.to_vec())
 			.context(ClnNodeState::invalid("malformed pubkey"))?;
 
-		let (id, _) = db.register_lightning_node(&public_key).await?;
+		let (id, _) = db.register_lightning_node(&pubkey).await?;
 
 		info!("Succesfully connected to cln node with uri {}", self.uri);
 		let monitor = ClnNodeMonitor::start(
@@ -464,10 +464,10 @@ impl ClnNodeInfo {
 			monitor_config.clone(),
 		).await.context("failed to start ClnNodeMonitor")?;
 
-		let online = ClnNodeOnlineState { id, public_key, rpc, hodl_rpc, monitor: Some(monitor) };
+		let online = ClnNodeOnlineState { id, pubkey, rpc, hodl_rpc, monitor: Some(monitor) };
 		let new_state = ClnNodeState::Online(online);
 		telemetry::set_lightning_node_state(
-			self.uri.clone(), Some(id), Some(public_key), new_state.kind(),
+			self.uri.clone(), Some(id), Some(pubkey), new_state.kind(),
 		);
 		self.set_state(new_state);
 
@@ -538,7 +538,7 @@ impl ClnManagerProcess {
 							Ok(Err(e)) => {
 								let new_state = ClnNodeState::error(format!("{:?}", e));
 								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
 								);
 								node.set_state(new_state)
 							},
@@ -546,7 +546,7 @@ impl ClnManagerProcess {
 								error!("ClnNodeMonitor for {uri} unexpectedly exited without error");
 								let new_state = ClnNodeState::Offline;
 								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
 								);
 								node.set_state(new_state);
 							},
@@ -557,7 +557,7 @@ impl ClnManagerProcess {
 								}
 								let new_state = ClnNodeState::error(e);
 								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.public_key), new_state.kind(),
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
 								);
 								node.set_state(new_state);
 							},

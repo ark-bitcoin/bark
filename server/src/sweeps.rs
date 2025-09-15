@@ -359,7 +359,7 @@ impl<'a> SweepBuilder<'a> {
 				return Ok(Some(h));
 			} else {
 				trace!("Sweeping round tx vtxo output {}", point);
-				let utxo = round.round.tx.output[0].clone();
+				let utxo = round.round.funding_tx.output[0].clone();
 				let agg_pk = round.round.signed_tree.spec.funding_tx_cosign_pubkey();
 				self.add_vtxo_output(round, point, utxo, agg_pk);
 				return Ok(None);
@@ -421,7 +421,7 @@ impl<'a> SweepBuilder<'a> {
 		let round_point = OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT);
 		let mut conn_txs = round.connectors.iter_unsigned_txs();
 
-		let mut last = (round_point, round.round.tx.output[ROUND_TX_CONNECTOR_VOUT as usize].clone());
+		let mut last = (round_point, round.round.funding_tx.output[ROUND_TX_CONNECTOR_VOUT as usize].clone());
 		let mut ret = Some(0);
 		loop {
 			let tx = match conn_txs.next() {
@@ -633,7 +633,7 @@ impl Process {
 			}
 		}
 
-		if let Err(e) = self.db.remove_round(round.id).await {
+		if let Err(e) = self.db.mark_round_swept(round.id).await {
 			error!("Failed to remove round from db after successful sweeping: {}", e);
 		}
 	}

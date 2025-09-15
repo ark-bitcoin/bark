@@ -97,7 +97,7 @@ CREATE INDEX sweep_tx_id_pending_ix ON sweep (txid, (abandoned_at IS NULL), (con
 
 CREATE TABLE arkoor_mailbox (
     id BIGSERIAL PRIMARY KEY,
-    public_key BYTEA NOT NULL,
+    pubkey BYTEA NOT NULL,
     vtxo_id BIGINT NOT NULL REFERENCES vtxo(id),
     vtxo BYTEA NOT NULL,
     arkoor_package_id BYTEA NOT NULL,
@@ -105,7 +105,7 @@ CREATE TABLE arkoor_mailbox (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
-CREATE INDEX arkoor_mailbox_public_key_ix ON arkoor_mailbox (public_key, (processed_at IS NULL));
+CREATE INDEX arkoor_mailbox_pubkey_ix ON arkoor_mailbox (pubkey, (processed_at IS NULL));
 
 DROP TABLE forfeits_claim_state;
 -- CREATE TABLE forfeits_claim_state (
@@ -142,38 +142,33 @@ CREATE INDEX wallet_changeset_kind_ix ON wallet_changeset (kind);
 
 ALTER TABLE integration RENAME COLUMN integration_id TO id;
 
-DROP TRIGGER integration_api_key_update;
-DROP FUNCTION integration_api_key_update_trigger;
+DROP FUNCTION integration_api_key_update_trigger CASCADE;
 ALTER TABLE integration_api_key RENAME COLUMN integration_api_key_id TO id;
 ALTER TABLE integration_api_key_history RENAME COLUMN integration_api_key_id TO id;
 
-DROP TRIGGER integration_token_config_update;
-DROP FUNCTION integration_token_config_update_trigger;
+DROP FUNCTION integration_token_config_update_trigger CASCADE;
 ALTER TABLE integration_token RENAME COLUMN integration_token_id TO id;
 ALTER TABLE integration_token_history RENAME COLUMN integration_token_id TO id;
 
-DROP TRIGGER integration_token_update;
-DROP FUNCTION integration_token_update_trigger;
+DROP FUNCTION integration_token_update_trigger CASCADE;
 ALTER TABLE integration_token_config RENAME COLUMN integration_token_config_id TO id;
 ALTER TABLE integration_token_config_history RENAME COLUMN integration_token_config_id TO id;
 
-DROP TRIGGER lightning_htlc_subscription_update;
-DROP FUNCTION lightning_htlc_subscription_update_trigger;
+DROP FUNCTION lightning_htlc_subscription_update_trigger CASCADE;
 ALTER TABLE lightning_htlc_subscription RENAME COLUMN lightning_htlc_subscription_id TO id;
 ALTER TABLE lightning_htlc_subscription_history RENAME COLUMN lightning_htlc_subscription_id TO id;
 
-DROP TRIGGER lightning_invoice_update;
-DROP FUNCTION lightning_invoice_update_trigger;
+DROP FUNCTION lightning_invoice_update_trigger CASCADE;
 ALTER TABLE lightning_invoice RENAME COLUMN lightning_invoice_id TO id;
 ALTER TABLE lightning_invoice_history RENAME COLUMN lightning_invoice_id TO id;
 
-DROP TRIGGER lightning_node_update;
-DROP FUNCTION lightning_node_update_trigger;
+DROP FUNCTION lightning_node_update_trigger CASCADE;
 ALTER TABLE lightning_node RENAME COLUMN lightning_node_id TO id;
+ALTER TABLE lightning_node RENAME COLUMN public_key TO pubkey;
 ALTER TABLE lightning_node_history RENAME COLUMN lightning_node_id TO id;
+ALTER TABLE lightning_node_history RENAME COLUMN public_key TO pubkey;
 
-DROP TRIGGER lightning_payment_attempt_update;
-DROP FUNCTION lightning_payment_attempt_update_trigger;
+DROP FUNCTION lightning_payment_attempt_update_trigger CASCADE;
 ALTER TABLE lightning_payment_attempt RENAME COLUMN lightning_payment_attempt_id TO id;
 ALTER TABLE lightning_payment_attempt_history RENAME COLUMN lightning_payment_attempt_id TO id;
 
@@ -218,7 +213,7 @@ BEGIN
         OLD.id, OLD.type, OLD.maximum_open_tokens, OLD.active_seconds,
         OLD.integration_id,
         OLD.created_at, OLD.updated_at, OLD.deleted_at
-        );
+    );
 
     IF NEW.updated_at = OLD.updated_at THEN
         RAISE EXCEPTION 'updated_at must be updated';
@@ -306,11 +301,11 @@ CREATE OR REPLACE FUNCTION lightning_invoice_update_trigger()
     RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO lightning_invoice_history (
-        id, invoice, payment_hash, final_amount_msat, preimage, payment_status,
+        id, invoice, payment_hash, final_amount_msat, preimage,
         created_at, updated_at
     ) VALUES (
         OLD.id, OLD.invoice, OLD.payment_hash, OLD.final_amount_msat, OLD.preimage,
-        OLD.payment_status, OLD.created_at, OLD.updated_at
+        OLD.created_at, OLD.updated_at
     );
 
     IF NEW.updated_at = OLD.updated_at THEN
@@ -335,10 +330,10 @@ CREATE OR REPLACE FUNCTION lightning_node_update_trigger()
   RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO lightning_node_history (
-        id, public_key, payment_created_index, payment_updated_index,
+        id, pubkey, payment_created_index, payment_updated_index,
         created_at, updated_at
     ) VALUES (
-        OLD.id, OLD.public_key, OLD.payment_created_index, OLD.payment_updated_index,
+        OLD.id, OLD.pubkey, OLD.payment_created_index, OLD.payment_updated_index,
         OLD.created_at, OLD.updated_at
     );
 

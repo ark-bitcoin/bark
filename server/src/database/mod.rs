@@ -148,25 +148,25 @@ impl Db {
 	{
 		// Store all vtxos created in this round.
 		let statement = client.prepare_typed("
-			INSERT INTO vtxo (id, vtxo, expiry) VALUES (
-				UNNEST($1), UNNEST($2), UNNEST($3))
+			INSERT INTO vtxo (vtxo_id, vtxo, expiry, created_at, updated_at) VALUES (
+				UNNEST($1), UNNEST($2), UNNEST($3), NOW(), NOW())
 			ON CONFLICT DO NOTHING
 		", &[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
 
 		let vtxos = vtxos.into_iter();
-		let mut ids = Vec::with_capacity(vtxos.size_hint().0);
+		let mut vtxo_ids = Vec::with_capacity(vtxos.size_hint().0);
 		let mut data = Vec::with_capacity(vtxos.size_hint().0);
 		let mut expiry = Vec::with_capacity(vtxos.size_hint().0);
 		for vtxo in vtxos {
 			let vtxo = vtxo.borrow();
-			ids.push(vtxo.id().to_string());
+			vtxo_ids.push(vtxo.id().to_string());
 			data.push(vtxo.serialize());
 			expiry.push(vtxo.expiry_height() as i32);
 		}
 
 		client.execute(
 			&statement,
-			&[&ids, &data, &expiry]
+			&[&vtxo_ids, &data, &expiry]
 		).await?;
 
 		Ok(())
@@ -199,8 +199,9 @@ impl Db {
 
 		// TODO: maybe store kind in a column to filter board at the db level
 		let statement = conn.prepare_typed("
-			SELECT vtxo FROM vtxo \
-			WHERE expiry <= $1 AND board_swept = false
+			SELECT vtxo
+			FROM vtxo
+			WHERE expiry <= $1 AND board_swept_at IS NULL
 		", &[Type::INT4]).await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
@@ -220,7 +221,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
-			UPDATE vtxo SET board_swept = true WHERE id = $1;
+			UPDATE vtxo SET board_swept_at = NOW(), updated_at = NOW() WHERE vtxo_id = $1;
 		").await?;
 
 		conn.execute(&statement, &[&vtxo.id().to_string()]).await?;
@@ -233,9 +234,10 @@ impl Db {
 		where T : GenericClient + Sized
 	{
 		let statement = client.prepare_typed("
-			SELECT id, vtxo, expiry, oor_spent, forfeit_state, forfeit_round_id, board_swept
+			SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id, board_swept_at,
+			created_at, updated_at
 			FROM vtxo
-			WHERE id = any($1);
+			WHERE vtxo_id = ANY($1);
 		", &[Type::TEXT_ARRAY]).await?;
 
 		let id_str = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
@@ -271,7 +273,7 @@ impl Db {
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
 		let conn = self.pool.get().await?;
 		let stmt = conn.prepare("
-			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL
+			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL AND board_swept_at IS NULL;
 		").await?;
 
 		let params: Vec<String> = vec![];
@@ -300,16 +302,16 @@ impl Db {
 				.expect("spending tx should be present").compute_txid();
 
 			let statement = tx.prepare_typed("
-				UPDATE vtxo SET oor_spent = $2 WHERE id = $1;
-			", &[Type::TEXT, Type::BYTEA]).await?;
+				UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW() WHERE vtxo_id = $1;
+			", &[Type::TEXT, Type::TEXT]).await?;
 
 			let vtxos = Self::get_vtxos_by_id_with_client(&tx, &[input.id()]).await?;
 			for vtxo_state in vtxos {
 				if !vtxo_state.is_spendable() {
-					return Ok(Some(vtxo_state.id));
+					return Ok(Some(vtxo_state.vtxo_id));
 				}
 
-				tx.execute(&statement, &[&vtxo_state.id.to_string(), &serialize(&txid)]).await?;
+				tx.execute(&statement, &[&vtxo_state.vtxo_id.to_string(), &txid.to_string()]).await?;
 			}
 		}
 
@@ -326,15 +328,18 @@ impl Db {
 	pub async fn store_oor(&self, pubkey: PublicKey, arkoor_package_id: &[u8; 32], vtxo: Vtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			INSERT INTO arkoor_mailbox (public_key, vtxo_id, vtxo, arkoor_package_id, created_at)
-			VALUES ($1, $2, $3, $4, NOW());
+			INSERT INTO arkoor_mailbox (pubkey, vtxo_id, vtxo, arkoor_package_id, created_at)
+			SELECT $1, id, $2, $3, NOW()
+			FROM vtxo
+			WHERE vtxo_id = $4;
 		").await?;
-		conn.execute(&statement, &[
+		let rows_affected = conn.execute(&statement, &[
 			&pubkey.serialize().to_vec(),
-			&vtxo.id().to_string(),
 			&vtxo.serialize(),
 			&arkoor_package_id.to_vec(),
+			&vtxo.id().to_string(),
 		]).await?;
+		assert_eq!(rows_affected, 1);
 
 		Ok(())
 	}
@@ -347,7 +352,7 @@ impl Db {
 		let statement = conn.prepare("
 			SELECT vtxo, arkoor_package_id
 			FROM arkoor_mailbox
-			WHERE public_key=ANY($1) AND processed_at IS NULL
+			WHERE pubkey = ANY($1) AND processed_at IS NULL;
 		").await?;
 
 		let serialized_pubkeys = pubkeys.iter()
@@ -365,7 +370,7 @@ impl Db {
 		}
 
 		let statement = conn.prepare("
-			UPDATE arkoor_mailbox SET processed_at=NOW() WHERE public_key=ANY($1);
+			UPDATE arkoor_mailbox SET processed_at = NOW() WHERE pubkey = ANY($1) AND processed_at IS NULL;
 		").await?;
 		let result = conn.execute(&statement, &[&serialized_pubkeys]).await?;
 		assert_eq!(result, rows.len() as u64);
@@ -381,7 +386,7 @@ impl Db {
 	pub async fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare_typed("
-			INSERT INTO sweep (tx_id, tx, created_at) VALUES ($1, $2, NOW());
+			INSERT INTO sweep (txid, tx, created_at) VALUES ($1, $2, NOW());
 		", &[Type::TEXT, Type::BYTEA]).await?;
 		conn.execute(
 			&statement,
@@ -396,7 +401,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
-			UPDATE sweep SET confirmed_at = NOW() WHERE tx_id = $1;
+			UPDATE sweep SET confirmed_at = NOW() WHERE txid = $1 AND confirmed_at IS NULL;;
 		").await?;
 		conn.execute(&statement, &[&txid.to_string()]).await?;
 
@@ -408,7 +413,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
-			UPDATE sweep SET abandoned_at = NOW() WHERE tx_id = $1;
+			UPDATE sweep SET abandoned_at = NOW() WHERE txid = $1 AND abandoned_at IS NULL;;
 		").await?;
 		conn.execute(&statement, &[&txid.to_string()]).await?;
 
@@ -419,7 +424,7 @@ impl Db {
 	pub async fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT tx_id, tx
+			SELECT txid, tx
 			FROM sweep
 			WHERE confirmed_at IS NULL AND abandoned_at IS NULL
 		").await?;
@@ -429,7 +434,7 @@ impl Db {
 		let pending_sweeps = rows
 			.into_iter()
 			.map(|row| -> anyhow::Result<(Txid, Transaction)> {
-				let sweep = PendingSweep::try_from(row).expect("corrupt db");
+				let sweep = Sweep::try_from(row).expect("corrupt db");
 				Ok((sweep.txid, sweep.tx))
 			})
 			.collect::<Result<HashMap<Txid, Transaction>, _>>()?;

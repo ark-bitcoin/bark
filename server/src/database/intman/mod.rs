@@ -35,8 +35,8 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration
-			SET deleted_at=NOW()
-			WHERE id=$1
+			SET deleted_at = NOW()
+			WHERE id = $1
 			RETURNING id, name, created_at, deleted_at
 		").await?;
 
@@ -55,7 +55,7 @@ impl Db {
 		let statement = conn.prepare("
 			SELECT id, name, created_at, deleted_at
 			FROM integration
-			WHERE name=$1
+			WHERE name = $1
 		").await?;
 
 		let row = conn.query_opt(&statement, &[
@@ -73,7 +73,7 @@ impl Db {
 		let statement = conn.prepare("
 			SELECT id, name, created_at, deleted_at
 			FROM integration
-			WHERE id=$1
+			WHERE id = $1
 		").await?;
 
 		let row = conn.query_opt(&statement, &[
@@ -147,8 +147,8 @@ impl Db {
 				iak.name, iak.api_key, iak.filters, iak.integration_id, iak.expires_at,
 				iak.created_at, iak.updated_at, iak.deleted_at
 			FROM integration_api_key AS iak
-			JOIN integration AS i ON i.id=iak.integration_id
-			WHERE i.name=$1 AND iak.name=$2
+			JOIN integration AS i ON i.id = iak.integration_id
+			WHERE i.name = $1 AND iak.name = $2
 		").await?;
 
 		let row = conn.query_opt(&statement, &[
@@ -167,8 +167,8 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration_api_key
-			SET filters=$1, updated_at=NOW()
-			WHERE id=$2 AND updated_at=$3
+			SET filters = $1, updated_at = NOW()
+			WHERE id = $2 AND updated_at = $3
 			RETURNING id,
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at, deleted_at
@@ -193,8 +193,8 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration_api_key
-			SET deleted_at=NOW(), updated_at=NOW()
-			WHERE id=$1 AND updated_at=$2
+			SET deleted_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND updated_at = $2
 			RETURNING id,
 				name, api_key, filters, integration_id, expires_at,
 				created_at, updated_at, deleted_at
@@ -254,7 +254,7 @@ impl Db {
 				integration_id,
 				created_at, updated_at, deleted_at
 			FROM integration_token_config
-			WHERE integration_id=$1 AND type=$2::TEXT::token_type
+			WHERE integration_id = $1 AND type = $2::TEXT::token_type
 		").await?;
 
 		let token_type = token_type.to_string();
@@ -275,8 +275,8 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration_token_config
-			SET maximum_open_tokens=$1, active_seconds=$2, updated_at=NOW()
-			WHERE id=$3 AND updated_at=$4
+			SET maximum_open_tokens = $1, active_seconds = $2, updated_at = NOW()
+			WHERE id = $3 AND updated_at = $4
 			RETURNING id,
 				type::TEXT, maximum_open_tokens, active_seconds,
 				integration_id,
@@ -304,8 +304,8 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration_token_config
-			SET deleted_at=NOW(), updated_at=NOW()
-			WHERE id=$1 AND updated_at=$2
+			SET deleted_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND updated_at = $2
 			RETURNING id,
 				type::TEXT, maximum_open_tokens, active_seconds,
 				integration_id,
@@ -330,7 +330,7 @@ impl Db {
 				integration_id, expires_at,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
 			FROM integration_token
-			WHERE token=$1
+			WHERE token = $1
 		").await?;
 
 		let row = conn.query_opt(&statement, &[
@@ -349,11 +349,11 @@ impl Db {
 		let statement = conn.prepare("
 			SELECT COUNT(*) AS open_count
 			FROM integration_token it
-			WHERE it.status=$1::TEXT::token_status AND
-				it.type=$2::TEXT::token_type AND
-				it.integration_id=$3 AND
+			WHERE it.status = $1::TEXT::token_status AND
+				it.type = $2::TEXT::token_type AND
+				it.integration_id = $3 AND
 				it.expires_at IS NOT NULL AND
-				it.expires_at>NOW()
+				it.expires_at > NOW()
 		").await?;
 		let unused = TokenStatus::Unused.to_string();
 		let token_type = token_type.to_string();
@@ -414,9 +414,9 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			UPDATE integration_token
-			SET status=$1::TEXT::token_status, filters=$2,
-				updated_at=NOW(), updated_by_api_key_id=$3
-			WHERE id=$4 AND updated_at=$5
+			SET status = $1::TEXT::token_status, filters = $2,
+				updated_at = NOW(), updated_by_api_key_id = $3
+			WHERE id = $4 AND updated_at = $5
 			RETURNING id, token, type::TEXT, status::TEXT, filters,
 				integration_id, expires_at,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id

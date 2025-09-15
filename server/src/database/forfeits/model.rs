@@ -42,8 +42,8 @@ impl TryFrom<Row> for ForfeitRoundState {
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
 		Ok(ForfeitRoundState {
-			round_id: RoundId::from_str(&row.get::<_, &str>("id"))
-				.context("bad round_id stored in forfeit state")?,
+			round_id: RoundId::from_str(&row.get::<_, &str>("funding_txid"))
+				.context("bad funding_txid stored in forfeit state")?,
 			nb_input_vtxos: row.get("nb_input_vtxos"),
 			nb_connectors_used: row.get("nb_connectors_used"),
 			connector_key: SecretKey::from_slice(&row.get::<_, &[u8]>("connector_key"))

@@ -19,7 +19,7 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{KeypairExt, TransactionExt};
 use server_rpc as rpc;
 
-use crate::database::forfeits::{ForfeitClaimState, ForfeitRoundState, ForfeitState};
+use crate::database::forfeits::ForfeitState;
 use crate::database::rounds::StoredRound;
 use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
@@ -133,13 +133,13 @@ impl RoundState {
 	fn new_from_round(round: &StoredRound) -> RoundState {
 		let connector_key = Keypair::from_secret_key(&SECP, &round.connector_key);
 		RoundState {
-			id: round.id,
+			id: round.funding_txid,
 			nb_input_vtxos: round.nb_input_vtxos as u32,
 			nb_connectors_used: 0,
 			connectors: {
 				let chain = ConnectorChain::new(
 					round.nb_input_vtxos,
-					OutPoint::new(round.id.as_round_txid(), 1),
+					OutPoint::new(round.funding_txid.as_round_txid(), 1),
 					connector_key.public_key(),
 				);
 				chain.connectors_signed(&connector_key).unwrap().into_owned()

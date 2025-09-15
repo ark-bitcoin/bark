@@ -60,6 +60,16 @@ CREATE TYPE public.token_type AS ENUM (
 
 
 --
+-- Name: wallet_kind; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.wallet_kind AS ENUM (
+    'rounds',
+    'forfeits'
+);
+
+
+--
 -- Name: integration_api_key_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -68,10 +78,10 @@ CREATE FUNCTION public.integration_api_key_update_trigger() RETURNS trigger
     AS $$
 BEGIN
     INSERT INTO integration_api_key_history (
-        integration_api_key_id, name, api_key, filters, integration_id, expires_at,
+        id, name, api_key, filters, integration_id, expires_at,
         created_at, updated_at, deleted_at
     ) VALUES (
-        OLD.integration_api_key_id, OLD.name, OLD.api_key, OLD.filters, OLD.integration_id, OLD.expires_at,
+        OLD.id, OLD.name, OLD.api_key, OLD.filters, OLD.integration_id, OLD.expires_at,
         OLD.created_at, OLD.updated_at, OLD.deleted_at
     );
 
@@ -97,11 +107,11 @@ CREATE FUNCTION public.integration_token_config_update_trigger() RETURNS trigger
     AS $$
 BEGIN
     INSERT INTO integration_token_config_history (
-        integration_token_config_id, type, maximum_open_tokens, active_seconds,
+        id, type, maximum_open_tokens, active_seconds,
         integration_id,
         created_at, updated_at, deleted_at
     ) VALUES (
-        OLD.integration_token_config_id, OLD.type, OLD.maximum_open_tokens, OLD.active_seconds,
+        OLD.id, OLD.type, OLD.maximum_open_tokens, OLD.active_seconds,
         OLD.integration_id,
         OLD.created_at, OLD.updated_at, OLD.deleted_at
     );
@@ -128,11 +138,11 @@ CREATE FUNCTION public.integration_token_update_trigger() RETURNS trigger
     AS $$
 BEGIN
     INSERT INTO integration_token_history (
-        integration_token_id, token, type, status, filters, integration_id,
+        id, token, type, status, filters, integration_id,
         expires_at,
         created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
     ) VALUES (
-        OLD.integration_token_id, OLD.token, OLD.type, OLD.status, OLD.filters, OLD.integration_id,
+        OLD.id, OLD.token, OLD.type, OLD.status, OLD.filters, OLD.integration_id,
         OLD.expires_at,
         OLD.created_at, OLD.created_by_api_key_id, OLD.updated_at, OLD.updated_by_api_key_id
     );
@@ -162,23 +172,23 @@ CREATE FUNCTION public.lightning_htlc_subscription_update_trigger() RETURNS trig
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  INSERT INTO lightning_htlc_subscription_history (
-    lightning_htlc_subscription_id, lightning_invoice_id, lightning_node_id,
-	status, created_at, updated_at
-  ) VALUES (
-    OLD.lightning_htlc_subscription_id, OLD.lightning_invoice_id, OLD.lightning_node_id,
-	OLD.status, OLD.created_at, OLD.updated_at
-  );
+    INSERT INTO lightning_htlc_subscription_history (
+        id, lightning_invoice_id, lightning_node_id,
+        status, created_at, updated_at
+    ) VALUES (
+        OLD.id, OLD.lightning_invoice_id, OLD.lightning_node_id,
+        OLD.status, OLD.created_at, OLD.updated_at
+    );
 
-  IF NEW.updated_at = OLD.updated_at THEN
-    RAISE EXCEPTION 'updated_at must be updated';
-  END IF;
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
 
-  IF NEW.created_at <> OLD.created_at THEN
-    RAISE EXCEPTION 'created_at cannot be updated';
-  END IF;
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
 
-  RETURN NEW;
+    RETURN NEW;
 END;
 $$;
 
@@ -191,23 +201,23 @@ CREATE FUNCTION public.lightning_invoice_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  INSERT INTO lightning_invoice_history (
-    lightning_invoice_id, invoice, payment_hash, final_amount_msat, preimage,
-    created_at, updated_at
-  ) VALUES (
-    OLD.lightning_invoice_id, OLD.invoice, OLD.payment_hash, OLD.final_amount_msat, OLD.preimage,
-	OLD.created_at, OLD.updated_at
-  );
+    INSERT INTO lightning_invoice_history (
+        id, invoice, payment_hash, final_amount_msat, preimage,
+        created_at, updated_at
+    ) VALUES (
+        OLD.id, OLD.invoice, OLD.payment_hash, OLD.final_amount_msat, OLD.preimage,
+        OLD.created_at, OLD.updated_at
+    );
 
-  IF NEW.updated_at = OLD.updated_at THEN
-    RAISE EXCEPTION 'updated_at must be updated';
-  END IF;
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
 
-  IF NEW.created_at <> OLD.created_at THEN
-    RAISE EXCEPTION 'created_at cannot be updated';
-  END IF;
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
 
-  RETURN NEW;
+    RETURN NEW;
 END;
 $$;
 
@@ -220,23 +230,23 @@ CREATE FUNCTION public.lightning_node_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  INSERT INTO lightning_node_history (
-    lightning_node_id, public_key, payment_created_index, payment_updated_index,
-    created_at, updated_at
-  ) VALUES (
-    OLD.lightning_node_id, OLD.public_key, OLD.payment_created_index, OLD.payment_updated_index,
-    OLD.created_at, OLD.updated_at
-  );
+    INSERT INTO lightning_node_history (
+        id, pubkey, payment_created_index, payment_updated_index,
+        created_at, updated_at
+    ) VALUES (
+        OLD.id, OLD.pubkey, OLD.payment_created_index, OLD.payment_updated_index,
+        OLD.created_at, OLD.updated_at
+    );
 
-  IF NEW.updated_at = OLD.updated_at THEN
-    RAISE EXCEPTION 'updated_at must be updated';
-  END IF;
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
 
-  IF NEW.created_at <> OLD.created_at THEN
-    RAISE EXCEPTION 'created_at cannot be updated';
-  END IF;
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
 
-  RETURN NEW;
+    RETURN NEW;
 END;
 $$;
 
@@ -249,96 +259,88 @@ CREATE FUNCTION public.lightning_payment_attempt_update_trigger() RETURNS trigge
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  INSERT INTO lightning_payment_attempt_history (
-    lightning_payment_attempt_id, lightning_invoice_id, lightning_node_id, amount_msat,
-	status, error, created_at, updated_at
-  ) VALUES (
-    OLD.lightning_payment_attempt_id, OLD.lightning_invoice_id, OLD.lightning_node_id, 
-	OLD.amount_msat, OLD.status, OLD.error, OLD.created_at, OLD.updated_at
-  );
+    INSERT INTO lightning_payment_attempt_history (
+        id, lightning_invoice_id, lightning_node_id, amount_msat,
+        status, error, created_at, updated_at
+    ) VALUES (
+        OLD.id, OLD.lightning_invoice_id, OLD.lightning_node_id,
+        OLD.amount_msat, OLD.status, OLD.error, OLD.created_at, OLD.updated_at
+    );
 
-  IF NEW.updated_at = OLD.updated_at THEN
-    RAISE EXCEPTION 'updated_at must be updated';
-  END IF;
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
 
-  IF NEW.created_at <> OLD.created_at THEN
-    RAISE EXCEPTION 'created_at cannot be updated';
-  END IF;
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
 
-  RETURN NEW;
+    RETURN NEW;
 END;
 $$;
 
 
 --
--- Name: all_arkoor_mailbox; Type: TABLE; Schema: public; Owner: -
+-- Name: vtxo_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE TABLE public.all_arkoor_mailbox (
-    id text NOT NULL,
+CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO vtxo_history (
+        id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id, board_swept_at,
+        created_at, updated_at
+    ) VALUES (
+        OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.forfeit_state, OLD.forfeit_round_id, OLD.board_swept_at,
+        OLD.created_at, OLD.updated_at
+    );
+
+    IF NEW.updated_at = OLD.updated_at THEN
+        RAISE EXCEPTION 'updated_at must be updated';
+    END IF;
+
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'created_at cannot be updated';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: arkoor_mailbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.arkoor_mailbox (
+    id bigint NOT NULL,
     pubkey bytea NOT NULL,
+    vtxo_id bigint NOT NULL,
     vtxo bytea NOT NULL,
-    deleted_at timestamp with time zone,
-    arkoor_package_id bytea NOT NULL
+    arkoor_package_id bytea NOT NULL,
+    processed_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL
 );
 
 
 --
--- Name: all_pending_sweep; Type: TABLE; Schema: public; Owner: -
+-- Name: arkoor_mailbox_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.all_pending_sweep (
-    txid text NOT NULL,
-    tx bytea NOT NULL,
-    deleted_at timestamp with time zone
-);
-
-
---
--- Name: all_round; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.all_round (
-    id text NOT NULL,
-    tx bytea NOT NULL,
-    signed_tree bytea NOT NULL,
-    nb_input_vtxos integer NOT NULL,
-    connector_key bytea NOT NULL,
-    expiry integer NOT NULL,
-    deleted_at timestamp with time zone,
-    seq bigint NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
+CREATE SEQUENCE public.arkoor_mailbox_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
 
 
 --
--- Name: all_vtxo; Type: TABLE; Schema: public; Owner: -
+-- Name: arkoor_mailbox_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-CREATE TABLE public.all_vtxo (
-    id text NOT NULL,
-    vtxo bytea NOT NULL,
-    expiry integer NOT NULL,
-    oor_spent bytea,
-    deleted_at timestamp with time zone,
-    board_swept boolean DEFAULT false NOT NULL,
-    forfeit_state bytea,
-    forfeit_round_id text
-);
-
-
---
--- Name: arkoor_mailbox; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.arkoor_mailbox AS
- SELECT id,
-    pubkey,
-    vtxo,
-    deleted_at,
-    arkoor_package_id
-   FROM public.all_arkoor_mailbox
-  WHERE (deleted_at IS NULL);
+ALTER SEQUENCE public.arkoor_mailbox_id_seq OWNED BY public.arkoor_mailbox.id;
 
 
 --
@@ -400,65 +402,11 @@ ALTER SEQUENCE public.ephemeral_tweak_id_seq OWNED BY public.ephemeral_tweak.id;
 
 
 --
--- Name: forfeits_claim_state; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.forfeits_claim_state (
-    vtxo_id text NOT NULL,
-    connector_tx bytea,
-    connector_cpfp bytea,
-    connector_point bytea NOT NULL,
-    forfeit_tx bytea NOT NULL,
-    forfeit_cpfp bytea
-);
-
-
---
--- Name: forfeits_round_state; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.forfeits_round_state (
-    round_id text NOT NULL,
-    nb_connectors_used integer NOT NULL
-);
-
-
---
--- Name: forfeits_wallet_changeset; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.forfeits_wallet_changeset (
-    id integer NOT NULL,
-    content bytea
-);
-
-
---
--- Name: forfeits_wallet_changeset_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.forfeits_wallet_changeset_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: forfeits_wallet_changeset_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.forfeits_wallet_changeset_id_seq OWNED BY public.forfeits_wallet_changeset.id;
-
-
---
 -- Name: integration; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.integration (
-    integration_id bigint NOT NULL,
+    id bigint NOT NULL,
     name text NOT NULL,
     created_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone
@@ -470,7 +418,7 @@ CREATE TABLE public.integration (
 --
 
 CREATE TABLE public.integration_api_key (
-    integration_api_key_id bigint NOT NULL,
+    id bigint NOT NULL,
     name text NOT NULL,
     api_key text NOT NULL,
     filters text,
@@ -487,7 +435,7 @@ CREATE TABLE public.integration_api_key (
 --
 
 CREATE TABLE public.integration_api_key_history (
-    integration_api_key_id bigint NOT NULL,
+    id bigint NOT NULL,
     name text NOT NULL,
     api_key text NOT NULL,
     filters text,
@@ -516,7 +464,7 @@ CREATE SEQUENCE public.integration_api_key_integration_api_key_id_seq
 -- Name: integration_api_key_integration_api_key_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.integration_api_key_integration_api_key_id_seq OWNED BY public.integration_api_key.integration_api_key_id;
+ALTER SEQUENCE public.integration_api_key_integration_api_key_id_seq OWNED BY public.integration_api_key.id;
 
 
 --
@@ -535,7 +483,7 @@ CREATE SEQUENCE public.integration_integration_id_seq
 -- Name: integration_integration_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.integration_integration_id_seq OWNED BY public.integration.integration_id;
+ALTER SEQUENCE public.integration_integration_id_seq OWNED BY public.integration.id;
 
 
 --
@@ -543,7 +491,7 @@ ALTER SEQUENCE public.integration_integration_id_seq OWNED BY public.integration
 --
 
 CREATE TABLE public.integration_token (
-    integration_token_id bigint NOT NULL,
+    id bigint NOT NULL,
     token text NOT NULL,
     type public.token_type NOT NULL,
     status public.token_status NOT NULL,
@@ -562,7 +510,7 @@ CREATE TABLE public.integration_token (
 --
 
 CREATE TABLE public.integration_token_config (
-    integration_token_config_id bigint NOT NULL,
+    id bigint NOT NULL,
     type public.token_type NOT NULL,
     maximum_open_tokens integer NOT NULL,
     active_seconds integer NOT NULL,
@@ -578,7 +526,7 @@ CREATE TABLE public.integration_token_config (
 --
 
 CREATE TABLE public.integration_token_config_history (
-    integration_token_config_id bigint NOT NULL,
+    id bigint NOT NULL,
     type public.token_type NOT NULL,
     maximum_open_tokens integer NOT NULL,
     active_seconds integer NOT NULL,
@@ -606,7 +554,7 @@ CREATE SEQUENCE public.integration_token_config_integration_token_config_id_seq
 -- Name: integration_token_config_integration_token_config_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.integration_token_config_integration_token_config_id_seq OWNED BY public.integration_token_config.integration_token_config_id;
+ALTER SEQUENCE public.integration_token_config_integration_token_config_id_seq OWNED BY public.integration_token_config.id;
 
 
 --
@@ -614,7 +562,7 @@ ALTER SEQUENCE public.integration_token_config_integration_token_config_id_seq O
 --
 
 CREATE TABLE public.integration_token_history (
-    integration_token_id bigint NOT NULL,
+    id bigint NOT NULL,
     token text NOT NULL,
     type public.token_type NOT NULL,
     status public.token_status NOT NULL,
@@ -645,7 +593,7 @@ CREATE SEQUENCE public.integration_token_integration_token_id_seq
 -- Name: integration_token_integration_token_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.integration_token_integration_token_id_seq OWNED BY public.integration_token.integration_token_id;
+ALTER SEQUENCE public.integration_token_integration_token_id_seq OWNED BY public.integration_token.id;
 
 
 --
@@ -653,7 +601,7 @@ ALTER SEQUENCE public.integration_token_integration_token_id_seq OWNED BY public
 --
 
 CREATE TABLE public.lightning_htlc_subscription (
-    lightning_htlc_subscription_id bigint NOT NULL,
+    id bigint NOT NULL,
     lightning_invoice_id bigint NOT NULL,
     lightning_node_id bigint NOT NULL,
     status public.lightning_htlc_subscription_status NOT NULL,
@@ -667,7 +615,7 @@ CREATE TABLE public.lightning_htlc_subscription (
 --
 
 CREATE TABLE public.lightning_htlc_subscription_history (
-    lightning_htlc_subscription_id bigint NOT NULL,
+    id bigint NOT NULL,
     lightning_invoice_id bigint NOT NULL,
     lightning_node_id bigint NOT NULL,
     status public.lightning_htlc_subscription_status NOT NULL,
@@ -693,7 +641,7 @@ CREATE SEQUENCE public.lightning_htlc_subscription_lightning_htlc_subscription_i
 -- Name: lightning_htlc_subscription_lightning_htlc_subscription_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.lightning_htlc_subscription_lightning_htlc_subscription_id_seq OWNED BY public.lightning_htlc_subscription.lightning_htlc_subscription_id;
+ALTER SEQUENCE public.lightning_htlc_subscription_lightning_htlc_subscription_id_seq OWNED BY public.lightning_htlc_subscription.id;
 
 
 --
@@ -701,7 +649,7 @@ ALTER SEQUENCE public.lightning_htlc_subscription_lightning_htlc_subscription_id
 --
 
 CREATE TABLE public.lightning_invoice (
-    lightning_invoice_id bigint NOT NULL,
+    id bigint NOT NULL,
     invoice text NOT NULL,
     payment_hash bytea NOT NULL,
     final_amount_msat bigint,
@@ -716,7 +664,7 @@ CREATE TABLE public.lightning_invoice (
 --
 
 CREATE TABLE public.lightning_invoice_history (
-    lightning_invoice_id bigint NOT NULL,
+    id bigint NOT NULL,
     invoice text NOT NULL,
     payment_hash bytea NOT NULL,
     final_amount_msat bigint,
@@ -743,7 +691,7 @@ CREATE SEQUENCE public.lightning_invoice_lightning_invoice_id_seq
 -- Name: lightning_invoice_lightning_invoice_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.lightning_invoice_lightning_invoice_id_seq OWNED BY public.lightning_invoice.lightning_invoice_id;
+ALTER SEQUENCE public.lightning_invoice_lightning_invoice_id_seq OWNED BY public.lightning_invoice.id;
 
 
 --
@@ -751,8 +699,8 @@ ALTER SEQUENCE public.lightning_invoice_lightning_invoice_id_seq OWNED BY public
 --
 
 CREATE TABLE public.lightning_node (
-    lightning_node_id bigint NOT NULL,
-    public_key bytea NOT NULL,
+    id bigint NOT NULL,
+    pubkey bytea NOT NULL,
     payment_created_index bigint NOT NULL,
     payment_updated_index bigint NOT NULL,
     created_at timestamp with time zone NOT NULL,
@@ -765,8 +713,8 @@ CREATE TABLE public.lightning_node (
 --
 
 CREATE TABLE public.lightning_node_history (
-    lightning_node_id bigint NOT NULL,
-    public_key bytea NOT NULL,
+    id bigint NOT NULL,
+    pubkey bytea NOT NULL,
     payment_created_index bigint NOT NULL,
     payment_updated_index bigint NOT NULL,
     created_at timestamp with time zone NOT NULL,
@@ -791,7 +739,7 @@ CREATE SEQUENCE public.lightning_node_lightning_node_id_seq
 -- Name: lightning_node_lightning_node_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.lightning_node_lightning_node_id_seq OWNED BY public.lightning_node.lightning_node_id;
+ALTER SEQUENCE public.lightning_node_lightning_node_id_seq OWNED BY public.lightning_node.id;
 
 
 --
@@ -799,7 +747,7 @@ ALTER SEQUENCE public.lightning_node_lightning_node_id_seq OWNED BY public.light
 --
 
 CREATE TABLE public.lightning_payment_attempt (
-    lightning_payment_attempt_id bigint NOT NULL,
+    id bigint NOT NULL,
     lightning_invoice_id bigint NOT NULL,
     lightning_node_id bigint NOT NULL,
     amount_msat bigint NOT NULL,
@@ -815,7 +763,7 @@ CREATE TABLE public.lightning_payment_attempt (
 --
 
 CREATE TABLE public.lightning_payment_attempt_history (
-    lightning_payment_attempt_id bigint NOT NULL,
+    id bigint NOT NULL,
     lightning_invoice_id bigint NOT NULL,
     lightning_node_id bigint NOT NULL,
     amount_msat bigint NOT NULL,
@@ -843,19 +791,7 @@ CREATE SEQUENCE public.lightning_payment_attempt_lightning_payment_attempt_id_se
 -- Name: lightning_payment_attempt_lightning_payment_attempt_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.lightning_payment_attempt_lightning_payment_attempt_id_seq OWNED BY public.lightning_payment_attempt.lightning_payment_attempt_id;
-
-
---
--- Name: pending_sweep; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.pending_sweep AS
- SELECT txid,
-    tx,
-    deleted_at
-   FROM public.all_pending_sweep
-  WHERE (deleted_at IS NULL);
+ALTER SEQUENCE public.lightning_payment_attempt_lightning_payment_attempt_id_seq OWNED BY public.lightning_payment_attempt.id;
 
 
 --
@@ -871,39 +807,129 @@ CREATE TABLE public.refinery_schema_history (
 
 
 --
--- Name: round; Type: VIEW; Schema: public; Owner: -
+-- Name: round; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE VIEW public.round AS
- SELECT id,
-    tx,
-    signed_tree,
-    nb_input_vtxos,
-    connector_key,
-    expiry,
-    deleted_at,
-    seq,
-    created_at
-   FROM public.all_round
-  WHERE (deleted_at IS NULL);
+CREATE TABLE public.round (
+    id bigint NOT NULL,
+    seq bigint NOT NULL,
+    funding_txid text NOT NULL,
+    funding_tx bytea NOT NULL,
+    signed_tree bytea NOT NULL,
+    nb_input_vtxos integer NOT NULL,
+    connector_key bytea NOT NULL,
+    expiry integer NOT NULL,
+    swept_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL
+);
 
 
 --
--- Name: vtxo; Type: VIEW; Schema: public; Owner: -
+-- Name: round_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE VIEW public.vtxo AS
- SELECT id,
-    vtxo,
-    expiry,
-    oor_spent,
-    deleted_at,
-    board_swept,
-    forfeit_state,
-    forfeit_round_id,
-    ((oor_spent IS NULL) AND (forfeit_state IS NULL)) AS spendable
-   FROM public.all_vtxo
-  WHERE (deleted_at IS NULL);
+CREATE SEQUENCE public.round_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: round_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.round_id_seq OWNED BY public.round.id;
+
+
+--
+-- Name: sweep; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sweep (
+    id bigint NOT NULL,
+    txid text NOT NULL,
+    tx bytea NOT NULL,
+    confirmed_at timestamp with time zone,
+    abandoned_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: sweep_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sweep_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sweep_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sweep_id_seq OWNED BY public.sweep.id;
+
+
+--
+-- Name: vtxo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vtxo (
+    id bigint NOT NULL,
+    vtxo_id text NOT NULL,
+    vtxo bytea NOT NULL,
+    expiry integer NOT NULL,
+    oor_spent_txid text,
+    forfeit_state bytea,
+    forfeit_round_id bigint,
+    board_swept_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: vtxo_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vtxo_history (
+    id bigint NOT NULL,
+    vtxo_id text NOT NULL,
+    vtxo bytea NOT NULL,
+    expiry integer NOT NULL,
+    oor_spent_txid text,
+    forfeit_state bytea,
+    forfeit_round_id bigint,
+    board_swept_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
+);
+
+
+--
+-- Name: vtxo_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.vtxo_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vtxo_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.vtxo_id_seq OWNED BY public.vtxo.id;
 
 
 --
@@ -911,8 +937,10 @@ CREATE VIEW public.vtxo AS
 --
 
 CREATE TABLE public.wallet_changeset (
-    id integer NOT NULL,
-    content bytea
+    id bigint NOT NULL,
+    kind public.wallet_kind NOT NULL,
+    content bytea,
+    created_at timestamp with time zone NOT NULL
 );
 
 
@@ -921,7 +949,6 @@ CREATE TABLE public.wallet_changeset (
 --
 
 CREATE SEQUENCE public.wallet_changeset_id_seq
-    AS integer
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -937,6 +964,13 @@ ALTER SEQUENCE public.wallet_changeset_id_seq OWNED BY public.wallet_changeset.i
 
 
 --
+-- Name: arkoor_mailbox id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.arkoor_mailbox ALTER COLUMN id SET DEFAULT nextval('public.arkoor_mailbox_id_seq'::regclass);
+
+
+--
 -- Name: ephemeral_tweak id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -944,66 +978,80 @@ ALTER TABLE ONLY public.ephemeral_tweak ALTER COLUMN id SET DEFAULT nextval('pub
 
 
 --
--- Name: forfeits_wallet_changeset id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: integration id; Type: DEFAULT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.forfeits_wallet_changeset ALTER COLUMN id SET DEFAULT nextval('public.forfeits_wallet_changeset_id_seq'::regclass);
-
-
---
--- Name: integration integration_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.integration ALTER COLUMN integration_id SET DEFAULT nextval('public.integration_integration_id_seq'::regclass);
+ALTER TABLE ONLY public.integration ALTER COLUMN id SET DEFAULT nextval('public.integration_integration_id_seq'::regclass);
 
 
 --
--- Name: integration_api_key integration_api_key_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: integration_api_key id; Type: DEFAULT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.integration_api_key ALTER COLUMN integration_api_key_id SET DEFAULT nextval('public.integration_api_key_integration_api_key_id_seq'::regclass);
-
-
---
--- Name: integration_token integration_token_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.integration_token ALTER COLUMN integration_token_id SET DEFAULT nextval('public.integration_token_integration_token_id_seq'::regclass);
+ALTER TABLE ONLY public.integration_api_key ALTER COLUMN id SET DEFAULT nextval('public.integration_api_key_integration_api_key_id_seq'::regclass);
 
 
 --
--- Name: integration_token_config integration_token_config_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: integration_token id; Type: DEFAULT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.integration_token_config ALTER COLUMN integration_token_config_id SET DEFAULT nextval('public.integration_token_config_integration_token_config_id_seq'::regclass);
-
-
---
--- Name: lightning_htlc_subscription lightning_htlc_subscription_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.lightning_htlc_subscription ALTER COLUMN lightning_htlc_subscription_id SET DEFAULT nextval('public.lightning_htlc_subscription_lightning_htlc_subscription_id_seq'::regclass);
+ALTER TABLE ONLY public.integration_token ALTER COLUMN id SET DEFAULT nextval('public.integration_token_integration_token_id_seq'::regclass);
 
 
 --
--- Name: lightning_invoice lightning_invoice_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: integration_token_config id; Type: DEFAULT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.lightning_invoice ALTER COLUMN lightning_invoice_id SET DEFAULT nextval('public.lightning_invoice_lightning_invoice_id_seq'::regclass);
-
-
---
--- Name: lightning_node lightning_node_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.lightning_node ALTER COLUMN lightning_node_id SET DEFAULT nextval('public.lightning_node_lightning_node_id_seq'::regclass);
+ALTER TABLE ONLY public.integration_token_config ALTER COLUMN id SET DEFAULT nextval('public.integration_token_config_integration_token_config_id_seq'::regclass);
 
 
 --
--- Name: lightning_payment_attempt lightning_payment_attempt_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: lightning_htlc_subscription id; Type: DEFAULT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.lightning_payment_attempt ALTER COLUMN lightning_payment_attempt_id SET DEFAULT nextval('public.lightning_payment_attempt_lightning_payment_attempt_id_seq'::regclass);
+ALTER TABLE ONLY public.lightning_htlc_subscription ALTER COLUMN id SET DEFAULT nextval('public.lightning_htlc_subscription_lightning_htlc_subscription_id_seq'::regclass);
+
+
+--
+-- Name: lightning_invoice id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_invoice ALTER COLUMN id SET DEFAULT nextval('public.lightning_invoice_lightning_invoice_id_seq'::regclass);
+
+
+--
+-- Name: lightning_node id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_node ALTER COLUMN id SET DEFAULT nextval('public.lightning_node_lightning_node_id_seq'::regclass);
+
+
+--
+-- Name: lightning_payment_attempt id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_payment_attempt ALTER COLUMN id SET DEFAULT nextval('public.lightning_payment_attempt_lightning_payment_attempt_id_seq'::regclass);
+
+
+--
+-- Name: round id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round ALTER COLUMN id SET DEFAULT nextval('public.round_id_seq'::regclass);
+
+
+--
+-- Name: sweep id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sweep ALTER COLUMN id SET DEFAULT nextval('public.sweep_id_seq'::regclass);
+
+
+--
+-- Name: vtxo id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo ALTER COLUMN id SET DEFAULT nextval('public.vtxo_id_seq'::regclass);
 
 
 --
@@ -1014,35 +1062,11 @@ ALTER TABLE ONLY public.wallet_changeset ALTER COLUMN id SET DEFAULT nextval('pu
 
 
 --
--- Name: all_arkoor_mailbox all_arkoor_mailbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: arkoor_mailbox arkoor_mailbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.all_arkoor_mailbox
-    ADD CONSTRAINT all_arkoor_mailbox_pkey PRIMARY KEY (id);
-
-
---
--- Name: all_pending_sweep all_pending_sweep_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.all_pending_sweep
-    ADD CONSTRAINT all_pending_sweep_pkey PRIMARY KEY (txid);
-
-
---
--- Name: all_round all_round_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.all_round
-    ADD CONSTRAINT all_round_pkey PRIMARY KEY (id);
-
-
---
--- Name: all_vtxo all_vtxo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.all_vtxo
-    ADD CONSTRAINT all_vtxo_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.arkoor_mailbox
+    ADD CONSTRAINT arkoor_mailbox_pkey PRIMARY KEY (id);
 
 
 --
@@ -1078,35 +1102,11 @@ ALTER TABLE ONLY public.ephemeral_tweak
 
 
 --
--- Name: forfeits_claim_state forfeits_claim_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.forfeits_claim_state
-    ADD CONSTRAINT forfeits_claim_state_pkey PRIMARY KEY (vtxo_id);
-
-
---
--- Name: forfeits_round_state forfeits_round_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.forfeits_round_state
-    ADD CONSTRAINT forfeits_round_state_pkey PRIMARY KEY (round_id);
-
-
---
--- Name: forfeits_wallet_changeset forfeits_wallet_changeset_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.forfeits_wallet_changeset
-    ADD CONSTRAINT forfeits_wallet_changeset_pkey PRIMARY KEY (id);
-
-
---
 -- Name: integration_api_key integration_api_key_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.integration_api_key
-    ADD CONSTRAINT integration_api_key_pkey PRIMARY KEY (integration_api_key_id);
+    ADD CONSTRAINT integration_api_key_pkey PRIMARY KEY (id);
 
 
 --
@@ -1114,7 +1114,7 @@ ALTER TABLE ONLY public.integration_api_key
 --
 
 ALTER TABLE ONLY public.integration
-    ADD CONSTRAINT integration_pkey PRIMARY KEY (integration_id);
+    ADD CONSTRAINT integration_pkey PRIMARY KEY (id);
 
 
 --
@@ -1122,7 +1122,7 @@ ALTER TABLE ONLY public.integration
 --
 
 ALTER TABLE ONLY public.integration_token_config
-    ADD CONSTRAINT integration_token_config_pkey PRIMARY KEY (integration_token_config_id);
+    ADD CONSTRAINT integration_token_config_pkey PRIMARY KEY (id);
 
 
 --
@@ -1130,7 +1130,7 @@ ALTER TABLE ONLY public.integration_token_config
 --
 
 ALTER TABLE ONLY public.integration_token
-    ADD CONSTRAINT integration_token_pkey PRIMARY KEY (integration_token_id);
+    ADD CONSTRAINT integration_token_pkey PRIMARY KEY (id);
 
 
 --
@@ -1138,7 +1138,7 @@ ALTER TABLE ONLY public.integration_token
 --
 
 ALTER TABLE ONLY public.lightning_htlc_subscription
-    ADD CONSTRAINT lightning_htlc_subscription_pkey PRIMARY KEY (lightning_htlc_subscription_id);
+    ADD CONSTRAINT lightning_htlc_subscription_pkey PRIMARY KEY (id);
 
 
 --
@@ -1154,7 +1154,7 @@ ALTER TABLE ONLY public.lightning_invoice
 --
 
 ALTER TABLE ONLY public.lightning_invoice
-    ADD CONSTRAINT lightning_invoice_pkey PRIMARY KEY (lightning_invoice_id);
+    ADD CONSTRAINT lightning_invoice_pkey PRIMARY KEY (id);
 
 
 --
@@ -1170,7 +1170,7 @@ ALTER TABLE ONLY public.lightning_invoice
 --
 
 ALTER TABLE ONLY public.lightning_node
-    ADD CONSTRAINT lightning_node_pkey PRIMARY KEY (lightning_node_id);
+    ADD CONSTRAINT lightning_node_pkey PRIMARY KEY (id);
 
 
 --
@@ -1178,7 +1178,7 @@ ALTER TABLE ONLY public.lightning_node
 --
 
 ALTER TABLE ONLY public.lightning_payment_attempt
-    ADD CONSTRAINT lightning_payment_attempt_pkey PRIMARY KEY (lightning_payment_attempt_id);
+    ADD CONSTRAINT lightning_payment_attempt_pkey PRIMARY KEY (id);
 
 
 --
@@ -1190,6 +1190,30 @@ ALTER TABLE ONLY public.refinery_schema_history
 
 
 --
+-- Name: round round_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round
+    ADD CONSTRAINT round_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sweep sweep_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sweep
+    ADD CONSTRAINT sweep_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vtxo vtxo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo
+    ADD CONSTRAINT vtxo_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: wallet_changeset wallet_changeset_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1198,24 +1222,10 @@ ALTER TABLE ONLY public.wallet_changeset
 
 
 --
--- Name: all_arkoor_mailbox_pubkey_ix; Type: INDEX; Schema: public; Owner: -
+-- Name: arkoor_mailbox_pubkey_ix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX all_arkoor_mailbox_pubkey_ix ON public.all_arkoor_mailbox USING btree (pubkey) WHERE (deleted_at IS NULL);
-
-
---
--- Name: all_round_expiry_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX all_round_expiry_ix ON public.all_round USING btree (expiry) WHERE (deleted_at IS NULL);
-
-
---
--- Name: all_vtxo_board_swept_expiry_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX all_vtxo_board_swept_expiry_ix ON public.all_vtxo USING btree (board_swept, expiry) WHERE (deleted_at IS NULL);
+CREATE INDEX arkoor_mailbox_pubkey_ix ON public.arkoor_mailbox USING btree (pubkey, ((processed_at IS NULL)));
 
 
 --
@@ -1278,14 +1288,14 @@ CREATE INDEX lightning_htlc_subscription_status_ix ON public.lightning_htlc_subs
 -- Name: lightning_invoice_invoice_uix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX lightning_invoice_invoice_uix ON public.lightning_invoice USING btree (invoice) INCLUDE (lightning_invoice_id);
+CREATE UNIQUE INDEX lightning_invoice_invoice_uix ON public.lightning_invoice USING btree (invoice) INCLUDE (id);
 
 
 --
 -- Name: lightning_node_public_key_uix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX lightning_node_public_key_uix ON public.lightning_node USING btree (public_key);
+CREATE UNIQUE INDEX lightning_node_public_key_uix ON public.lightning_node USING btree (pubkey);
 
 
 --
@@ -1299,7 +1309,56 @@ CREATE INDEX lightning_payment_attempt_status_ix ON public.lightning_payment_att
 -- Name: lightning_payment_hash_uix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX lightning_payment_hash_uix ON public.lightning_invoice USING btree (payment_hash) INCLUDE (lightning_invoice_id);
+CREATE UNIQUE INDEX lightning_payment_hash_uix ON public.lightning_invoice USING btree (payment_hash) INCLUDE (id);
+
+
+--
+-- Name: round_expiry_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_expiry_ix ON public.round USING btree (expiry, ((swept_at IS NULL)), funding_txid);
+
+
+--
+-- Name: round_tx_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_tx_id_ix ON public.round USING btree (funding_txid, ((swept_at IS NULL)));
+
+
+--
+-- Name: sweep_tx_id_pending_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sweep_tx_id_pending_ix ON public.sweep USING btree (txid, ((abandoned_at IS NULL)), ((confirmed_at IS NULL)));
+
+
+--
+-- Name: vtxo_board_not_swept_expiry_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_board_not_swept_expiry_ix ON public.vtxo USING btree (((board_swept_at IS NULL)), expiry, vtxo_id);
+
+
+--
+-- Name: vtxo_has_forfeit_state_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_has_forfeit_state_ix ON public.vtxo USING btree (((forfeit_state IS NOT NULL)), vtxo_id);
+
+
+--
+-- Name: vtxo_spendable_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((forfeit_state IS NULL)), vtxo_id);
+
+
+--
+-- Name: wallet_changeset_kind_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wallet_changeset_kind_ix ON public.wallet_changeset USING btree (kind);
 
 
 --
@@ -1352,11 +1411,26 @@ CREATE TRIGGER lightning_payment_attempt_update BEFORE UPDATE ON public.lightnin
 
 
 --
+-- Name: vtxo vtxo_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER vtxo_update BEFORE UPDATE ON public.vtxo FOR EACH ROW EXECUTE FUNCTION public.vtxo_update_trigger();
+
+
+--
+-- Name: arkoor_mailbox arkoor_mailbox_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.arkoor_mailbox
+    ADD CONSTRAINT arkoor_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(id);
+
+
+--
 -- Name: integration_api_key_history integration_api_key_history_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.integration_api_key_history
-    ADD CONSTRAINT integration_api_key_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+    ADD CONSTRAINT integration_api_key_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(id);
 
 
 --
@@ -1364,7 +1438,7 @@ ALTER TABLE ONLY public.integration_api_key_history
 --
 
 ALTER TABLE ONLY public.integration_api_key
-    ADD CONSTRAINT integration_api_key_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+    ADD CONSTRAINT integration_api_key_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(id);
 
 
 --
@@ -1372,7 +1446,7 @@ ALTER TABLE ONLY public.integration_api_key
 --
 
 ALTER TABLE ONLY public.integration_token_config_history
-    ADD CONSTRAINT integration_token_config_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+    ADD CONSTRAINT integration_token_config_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(id);
 
 
 --
@@ -1380,7 +1454,7 @@ ALTER TABLE ONLY public.integration_token_config_history
 --
 
 ALTER TABLE ONLY public.integration_token_config
-    ADD CONSTRAINT integration_token_config_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+    ADD CONSTRAINT integration_token_config_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(id);
 
 
 --
@@ -1388,7 +1462,7 @@ ALTER TABLE ONLY public.integration_token_config
 --
 
 ALTER TABLE ONLY public.integration_token
-    ADD CONSTRAINT integration_token_created_by_api_key_id_fkey FOREIGN KEY (created_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
+    ADD CONSTRAINT integration_token_created_by_api_key_id_fkey FOREIGN KEY (created_by_api_key_id) REFERENCES public.integration_api_key(id);
 
 
 --
@@ -1396,7 +1470,7 @@ ALTER TABLE ONLY public.integration_token
 --
 
 ALTER TABLE ONLY public.integration_token_history
-    ADD CONSTRAINT integration_token_history_created_by_api_key_id_fkey FOREIGN KEY (created_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
+    ADD CONSTRAINT integration_token_history_created_by_api_key_id_fkey FOREIGN KEY (created_by_api_key_id) REFERENCES public.integration_api_key(id);
 
 
 --
@@ -1404,7 +1478,7 @@ ALTER TABLE ONLY public.integration_token_history
 --
 
 ALTER TABLE ONLY public.integration_token_history
-    ADD CONSTRAINT integration_token_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+    ADD CONSTRAINT integration_token_history_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(id);
 
 
 --
@@ -1412,7 +1486,7 @@ ALTER TABLE ONLY public.integration_token_history
 --
 
 ALTER TABLE ONLY public.integration_token_history
-    ADD CONSTRAINT integration_token_history_updated_by_api_key_id_fkey FOREIGN KEY (updated_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
+    ADD CONSTRAINT integration_token_history_updated_by_api_key_id_fkey FOREIGN KEY (updated_by_api_key_id) REFERENCES public.integration_api_key(id);
 
 
 --
@@ -1420,7 +1494,7 @@ ALTER TABLE ONLY public.integration_token_history
 --
 
 ALTER TABLE ONLY public.integration_token
-    ADD CONSTRAINT integration_token_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(integration_id);
+    ADD CONSTRAINT integration_token_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.integration(id);
 
 
 --
@@ -1428,7 +1502,7 @@ ALTER TABLE ONLY public.integration_token
 --
 
 ALTER TABLE ONLY public.integration_token
-    ADD CONSTRAINT integration_token_updated_by_api_key_id_fkey FOREIGN KEY (updated_by_api_key_id) REFERENCES public.integration_api_key(integration_api_key_id);
+    ADD CONSTRAINT integration_token_updated_by_api_key_id_fkey FOREIGN KEY (updated_by_api_key_id) REFERENCES public.integration_api_key(id);
 
 
 --
@@ -1436,7 +1510,7 @@ ALTER TABLE ONLY public.integration_token
 --
 
 ALTER TABLE ONLY public.lightning_htlc_subscription
-    ADD CONSTRAINT lightning_htlc_subscription_lightning_invoice_id_fkey FOREIGN KEY (lightning_invoice_id) REFERENCES public.lightning_invoice(lightning_invoice_id);
+    ADD CONSTRAINT lightning_htlc_subscription_lightning_invoice_id_fkey FOREIGN KEY (lightning_invoice_id) REFERENCES public.lightning_invoice(id);
 
 
 --
@@ -1444,7 +1518,7 @@ ALTER TABLE ONLY public.lightning_htlc_subscription
 --
 
 ALTER TABLE ONLY public.lightning_htlc_subscription
-    ADD CONSTRAINT lightning_htlc_subscription_lightning_node_id_fkey FOREIGN KEY (lightning_node_id) REFERENCES public.lightning_node(lightning_node_id);
+    ADD CONSTRAINT lightning_htlc_subscription_lightning_node_id_fkey FOREIGN KEY (lightning_node_id) REFERENCES public.lightning_node(id);
 
 
 --
@@ -1452,7 +1526,7 @@ ALTER TABLE ONLY public.lightning_htlc_subscription
 --
 
 ALTER TABLE ONLY public.lightning_payment_attempt
-    ADD CONSTRAINT lightning_payment_attempt_lightning_invoice_id_fkey FOREIGN KEY (lightning_invoice_id) REFERENCES public.lightning_invoice(lightning_invoice_id);
+    ADD CONSTRAINT lightning_payment_attempt_lightning_invoice_id_fkey FOREIGN KEY (lightning_invoice_id) REFERENCES public.lightning_invoice(id);
 
 
 --
@@ -1460,7 +1534,15 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 --
 
 ALTER TABLE ONLY public.lightning_payment_attempt
-    ADD CONSTRAINT lightning_payment_attempt_lightning_node_id_fkey FOREIGN KEY (lightning_node_id) REFERENCES public.lightning_node(lightning_node_id);
+    ADD CONSTRAINT lightning_payment_attempt_lightning_node_id_fkey FOREIGN KEY (lightning_node_id) REFERENCES public.lightning_node(id);
+
+
+--
+-- Name: vtxo vtxo_forfeit_round_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo
+    ADD CONSTRAINT vtxo_forfeit_round_id_fkey FOREIGN KEY (forfeit_round_id) REFERENCES public.round(id);
 
 
 --
