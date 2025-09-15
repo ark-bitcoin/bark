@@ -230,7 +230,7 @@ impl TestContext {
 			round_sign_time: Duration::from_millis(2500),
 			nb_round_nonces: 64,
 			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
-			round_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
+			required_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
 			round_tx_untrusted_input_confirmations: 1,
 			max_vtxo_amount: None,
 			max_arkoor_depth: 5,

@@ -234,6 +234,7 @@ impl Server {
 			htlc_expiry_delta: self.config.htlc_expiry_delta,
 			max_vtxo_amount: self.config.max_vtxo_amount,
 			max_arkoor_depth: self.config.max_arkoor_depth,
+			required_board_confirmations: self.config.required_board_confirmations,
 		}
 	}
 
@@ -666,17 +667,17 @@ impl Server {
 			match self.bitcoind.custom_get_raw_transaction_info(&txid, None) {
 				Ok(Some(tx)) => {
 					let confs = tx.confirmations.unwrap_or(0) as usize;
-					if confs < self.config.round_board_confirmations {
+					if confs < self.config.required_board_confirmations {
 						slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: confs);
 						return badarg!("input board vtxo tx not deeply confirmed (has {confs} confs, \
-							but requires {}): {}", self.config.round_board_confirmations, vtxo.id(),
+							but requires {}): {}", self.config.required_board_confirmations, vtxo.id(),
 						);
 					}
 				},
 				Ok(None) => {
 					slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: 0);
 					return badarg!("input board vtxo tx was not found, \
-						(requires {} confs): {}", self.config.round_board_confirmations, vtxo.id(),
+						(requires {} confs): {}", self.config.required_board_confirmations, vtxo.id(),
 					);
 				},
 				Err(e) => bail!("error getting raw tx for board vtxo: {e}"),
