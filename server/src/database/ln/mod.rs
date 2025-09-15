@@ -24,38 +24,38 @@ impl Db {
 
 	pub async fn register_lightning_node(
 		&self,
-		public_key: &PublicKey,
+		pubkey: &PublicKey,
 	) -> anyhow::Result<(ClnNodeId, DateTime<Local>)> {
 		let conn = self.pool.get().await?;
 
 		let select_stmt = conn.prepare("
-			SELECT lightning_node_id, updated_at
+			SELECT id, updated_at
 			FROM lightning_node
-			WHERE public_key = $1;
+			WHERE pubkey = $1;
 		").await?;
 
-		let pubkey = public_key.serialize();
+		let pubkey = pubkey.serialize();
 		let rows = conn.query(&select_stmt, &[&&pubkey[..]]).await?;
 		if let Some(row) = rows.get(0) {
-			let id = row.get("lightning_node_id");
+			let id = row.get("id");
 			let updated_at = row.get("updated_at");
 			return Ok((id, updated_at));
 		}
 
 		let insert_stmt = conn.prepare("
 			INSERT INTO lightning_node (
-				public_key,
+				pubkey,
 				payment_created_index,
 				payment_updated_index,
 				created_at,
 				updated_at
 			) VALUES ($1, 0, 0, NOW(), NOW())
-			RETURNING lightning_node_id, updated_at;
+			RETURNING id, updated_at;
 		").await?;
 
 		let rows = conn.query(&insert_stmt, &[&&pubkey[..]]).await?;
 		if let Some(row) = rows.get(0) {
-			let id = row.get("lightning_node_id");
+			let id = row.get("id");
 			let updated_at = row.get("updated_at");
 
 			return Ok((id, updated_at));
@@ -74,7 +74,7 @@ impl Db {
 		let statement = conn.prepare("
 			SELECT payment_created_index, payment_updated_index
 			FROM lightning_node
-			WHERE lightning_node_id = $1;
+			WHERE id = $1;
 		").await?;
 		let rows = conn.query(&statement, &[&node_id]).await?;
 
@@ -105,14 +105,14 @@ impl Db {
 		let statement = match kind {
 			ListsendpaysIndex::Created => conn.prepare("
 				UPDATE lightning_node
-				SET payment_created_index=$2, updated_at=NOW()
-				WHERE lightning_node_id = $1
+				SET payment_created_index = $2, updated_at = NOW()
+				WHERE id = $1
 				RETURNING updated_at;
 			").await?,
 			ListsendpaysIndex::Updated => conn.prepare("
 				UPDATE lightning_node
-				SET payment_updated_index=$2, updated_at=NOW()
-				WHERE lightning_node_id = $1
+				SET payment_updated_index = $2, updated_at = NOW()
+				WHERE id = $1
 				RETURNING updated_at;
 			").await?,
 		};
@@ -128,7 +128,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT lightning_payment_attempt_id,
+			SELECT id,
 				lightning_invoice_id, lightning_node_id, amount_msat, status, error,
 				created_at, updated_at, (
 					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = lightning_payment_attempt.lightning_invoice_id)
@@ -154,14 +154,14 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT attempt.lightning_payment_attempt_id,
+			SELECT attempt.id,
 				attempt.lightning_invoice_id, attempt.lightning_node_id, attempt.amount_msat,
 				attempt.status, attempt.error, attempt.created_at, attempt.updated_at, (
 					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = attempt.lightning_invoice_id)
 				) as is_self_payment
 			FROM lightning_invoice invoice
 			JOIN lightning_payment_attempt attempt ON
-				invoice.lightning_invoice_id = attempt.lightning_invoice_id
+				invoice.id = attempt.lightning_invoice_id
 			WHERE invoice.payment_hash = $1 AND
 				attempt.status != $2 AND attempt.status != $3
 			ORDER BY attempt.created_at DESC;
@@ -202,14 +202,14 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		let select_stmt = tx.prepare("
-			SELECT lightning_invoice_id FROM lightning_invoice WHERE payment_hash = $1
+			SELECT id FROM lightning_invoice WHERE payment_hash = $1
 		").await?;
 
 		let payment_hash = invoice.payment_hash();
 		let existing = tx.query_opt(&select_stmt, &[&&payment_hash.to_vec()[..]]).await?;
 
 		let lightning_invoice_id = if let Some(row) = existing {
-			row.get("lightning_invoice_id")
+			row.get("id")
 		} else {
 			let stmt = tx.prepare("
 				INSERT INTO lightning_invoice (
@@ -218,14 +218,14 @@ impl Db {
 					created_at,
 					updated_at
 				) VALUES ($1, $2, NOW(), NOW())
-				RETURNING lightning_invoice_id;
+				RETURNING id;
 			").await?;
 
 			let row = tx.query_one(
 				&stmt, &[&invoice.to_string(), &&payment_hash.to_vec()[..]],
 			).await?;
 
-			row.get("lightning_invoice_id")
+			row.get("id")
 		};
 
 		self.store_lightning_payment_attempt(
@@ -256,7 +256,7 @@ impl Db {
 				created_at,
 				updated_at
 			) VALUES ($1, $2, $3, $4, NOW(), NOW())
-			RETURNING lightning_payment_attempt_id, updated_at;
+			RETURNING id, updated_at;
 		").await?;
 
 		let row = tx
@@ -265,7 +265,7 @@ impl Db {
 				&[&lightning_invoice_id, &node_id, &(amount_msat as i64), &requested_status],
 			).await?;
 
-		let payment_attempt_id = row.get("lightning_payment_attempt_id");
+		let payment_attempt_id = row.get("id");
 		let updated_at = row.get("updated_at");
 
 		trace!("Stored lightning payment attempts {} with time {:#?}.",
@@ -291,13 +291,13 @@ impl Db {
 				SET status = $3,
 					error = $4,
 					updated_at = NOW()
-				WHERE lightning_payment_attempt_id = $1 AND updated_at = $2
+				WHERE id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
 			conn.query_one(
 				&stmt,
 				&[
-					&old_payment_attempt.lightning_payment_attempt_id,
+					&old_payment_attempt.id,
 					&old_payment_attempt.updated_at,
 					&new_status,
 					&error
@@ -308,13 +308,13 @@ impl Db {
 				UPDATE lightning_payment_attempt
 				SET status = $3,
 					updated_at = NOW()
-				WHERE lightning_payment_attempt_id = $1 AND updated_at = $2
+				WHERE id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
 			conn.query_one(
 				&stmt,
 				&[
-					&old_payment_attempt.lightning_payment_attempt_id,
+					&old_payment_attempt.id,
 					&old_payment_attempt.updated_at,
 					&new_status
 				]
@@ -337,13 +337,13 @@ impl Db {
 			SET preimage = $3,
 				final_amount_msat = $4,
 				updated_at = NOW()
-			WHERE lightning_invoice_id = $1 AND updated_at = $2
+			WHERE id = $1 AND updated_at = $2
 			RETURNING updated_at;
 		").await?;
 
 		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
 		let row = conn.query_opt(&stmt, &[
-			&old_lightning_invoice.lightning_invoice_id,
+			&old_lightning_invoice.id,
 			&old_lightning_invoice.updated_at,
 			&new_preimage.as_ref().map(|p| &p.as_ref()[..]),
 			&final_amount_msat,
@@ -356,16 +356,16 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let row = conn.query_one("
-			SELECT DISTINCT ON (invoice.lightning_invoice_id)
+			SELECT DISTINCT ON (invoice.id)
 				invoice.*, attempt.status
 			FROM (
 				SELECT *
 				FROM lightning_invoice
-				WHERE lightning_invoice_id = $1
+				WHERE id = $1
 			) invoice
 			LEFT JOIN lightning_payment_attempt attempt
-			ON invoice.lightning_invoice_id = attempt.lightning_invoice_id
-			ORDER BY invoice.lightning_invoice_id, attempt.created_at DESC;",
+			ON invoice.id = attempt.lightning_invoice_id
+			ORDER BY invoice.id, attempt.created_at DESC;",
 			&[&id],
 		).await.context("Failed to fetch lightning invoice by id")?;
 
@@ -379,7 +379,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let res = conn.query_opt("
-			SELECT DISTINCT ON (invoice.lightning_invoice_id)
+			SELECT DISTINCT ON (invoice.id)
 				invoice.*, attempt.status
 			FROM (
 				SELECT *
@@ -387,8 +387,8 @@ impl Db {
 				WHERE payment_hash = $1
 			) invoice
 			LEFT JOIN lightning_payment_attempt attempt
-			ON invoice.lightning_invoice_id = attempt.lightning_invoice_id
-			ORDER BY invoice.lightning_invoice_id, attempt.created_at DESC;",
+			ON invoice.id = attempt.lightning_invoice_id
+			ORDER BY invoice.id, attempt.created_at DESC;",
 			&[&payment_hash.to_vec()],
 		).await.context("error fetching lightning invoice by payment_hash")?;
 
@@ -409,7 +409,7 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		let select_stmt = tx.prepare("
-			SELECT lightning_invoice_id
+			SELECT id
 			FROM lightning_invoice
 			WHERE payment_hash = $1
 		").await?;
@@ -418,7 +418,7 @@ impl Db {
 		let existing = tx.query_opt(&select_stmt, &[&&payment_hash[..]]).await?;
 
 		let lightning_invoice_id = if let Some(row) = existing {
-			row.get("lightning_invoice_id")
+			row.get("id")
 		} else {
 			let stmt = tx.prepare("
 				INSERT INTO lightning_invoice (
@@ -428,14 +428,14 @@ impl Db {
 					created_at,
 					updated_at
 				) VALUES ($1, $2, $3, NOW(), NOW())
-				RETURNING lightning_invoice_id;
+				RETURNING id;
 			").await?;
 
 			let row = tx.query_one(
 				&stmt, &[&invoice.to_string(), &&payment_hash[..], &(amount_msat as i64)],
 			).await?;
 
-			row.get("lightning_invoice_id")
+			row.get("id")
 		};
 
 		self.inner_store_lightning_htlc_subscription(&tx, lightning_invoice_id, node_id,).await?;
@@ -468,7 +468,7 @@ impl Db {
 				created_at,
 				updated_at
 			) VALUES ($1, $2, $3, NOW(), NOW())
-			RETURNING lightning_htlc_subscription_id, updated_at;
+			RETURNING id, updated_at;
 		").await?;
 
 		let row = conn
@@ -477,15 +477,15 @@ impl Db {
 				&[&lightning_invoice_id, &node_id, &requested_status],
 			).await?;
 
-		let lightning_htlc_subscription_id = row.get("lightning_htlc_subscription_id");
+		let id = row.get("id");
 		let updated_at = row.get("updated_at");
 
 		trace!("Stored htlc subscription {} with time {:#?}.",
-			lightning_htlc_subscription_id,
+			id,
 			updated_at,
 		);
 
-		Ok((lightning_htlc_subscription_id, updated_at))
+		Ok((id, updated_at))
 	}
 
 	pub async fn store_lightning_htlc_subscription(
@@ -500,7 +500,7 @@ impl Db {
 
 	pub async fn store_lightning_htlc_subscription_status(
 		&self,
-		htlc_subscription_id: i64,
+		id: i64,
 		status: LightningHtlcSubscriptionStatus,
 	) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
@@ -508,10 +508,10 @@ impl Db {
 		let stmt = conn.prepare("
 			UPDATE lightning_htlc_subscription
 			SET status = $2, updated_at = NOW()
-			WHERE lightning_htlc_subscription_id = $1
+			WHERE id = $1
 		").await?;
 
-		conn.execute(&stmt, &[&htlc_subscription_id, &status]).await?;
+		conn.execute(&stmt, &[&id, &status]).await?;
 
 		Ok(())
 	}
@@ -523,12 +523,12 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
 				subscription.status, subscription.created_at, subscription.updated_at,
 				invoice.invoice
 			FROM lightning_htlc_subscription subscription
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.lightning_invoice_id
+				subscription.lightning_invoice_id = invoice.id
 			WHERE status = $1 AND lightning_node_id = $2
 			ORDER BY created_at DESC;
 		").await?;
@@ -549,12 +549,12 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
 				subscription.status, subscription.created_at, subscription.updated_at,
 				invoice.invoice
 			FROM lightning_htlc_subscription subscription
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.lightning_invoice_id
+				subscription.lightning_invoice_id = invoice.id
 			WHERE invoice.payment_hash = $1
 			ORDER BY created_at DESC;
 		").await?;
@@ -574,12 +574,12 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
 				subscription.status, subscription.created_at, subscription.updated_at,
 				invoice.invoice
 			FROM lightning_htlc_subscription subscription
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.lightning_invoice_id
+				subscription.lightning_invoice_id = invoice.id
 			WHERE invoice.payment_hash = $1 AND subscription.status = $2
 			ORDER BY created_at DESC;
 		").await?;
@@ -610,13 +610,13 @@ impl Db {
 		let conn = self.pool.get().await?;
 
 		let stmt = conn.prepare("
-			SELECT subscription.lightning_htlc_subscription_id, subscription.lightning_invoice_id, subscription.lightning_node_id,
+			SELECT subscription.id, subscription.lightning_invoice_id, subscription.lightning_node_id,
 				subscription.status, subscription.created_at, subscription.updated_at,
 				invoice.invoice
 			FROM lightning_htlc_subscription subscription
 			JOIN lightning_invoice invoice ON
-				subscription.lightning_invoice_id = invoice.lightning_invoice_id
-			WHERE subscription.lightning_htlc_subscription_id = $1
+				subscription.lightning_invoice_id = invoice.id
+			WHERE subscription.id = $1
 			ORDER BY created_at DESC;
 		").await?;
 

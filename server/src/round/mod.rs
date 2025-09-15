@@ -1733,8 +1733,8 @@ mod tests {
 
 	fn generate_pubkey() -> PublicKey {
 		let secp = Secp256k1::new();
-		let (_secret_key, public_key) = secp.generate_keypair(&mut rand::thread_rng());
-		public_key
+		let (_secret_key, pubkey) = secp.generate_keypair(&mut rand::thread_rng());
+		pubkey
 	}
 
 	fn create_exit_participant(amount: u64, data: &RoundData) -> VtxoParticipant {

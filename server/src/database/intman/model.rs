@@ -41,7 +41,7 @@ impl From<EncodedFilters> for Filters {
 
 #[derive(Debug, Clone)]
 pub struct Integration {
-	pub integration_id: i64,
+	pub id: i64,
 	pub name: String,
 	pub created_at: DateTime<Local>,
 	pub deleted_at: Option<DateTime<Local>>,
@@ -50,7 +50,7 @@ pub struct Integration {
 impl From<Row> for Integration {
 	fn from(row: Row) -> Self {
 		Integration {
-			integration_id: row.get("integration_id"),
+			id: row.get("id"),
 			name: row.get("name"),
 			created_at: row.get("created_at"),
 			deleted_at: row.get("deleted_at"),
@@ -60,7 +60,7 @@ impl From<Row> for Integration {
 
 #[derive(Debug, Clone)]
 pub struct IntegrationApiKey {
-	pub integration_api_key_id: i64,
+	pub id: i64,
 	pub name: String,
 	pub api_key: uuid::Uuid,
 	pub filters: Filters,
@@ -82,7 +82,7 @@ impl TryFrom<Row> for IntegrationApiKey {
 
 	fn try_from(row: Row) -> anyhow::Result<Self> {
 		Ok(IntegrationApiKey {
-			integration_api_key_id: row.get("integration_api_key_id"),
+			id: row.get("id"),
 			name: row.get("name"),
 			api_key: uuid::Uuid::try_from(row.get::<_, &str>("api_key")).expect("invalid UUID"),
 			filters: row.get::<_, Option<&str>>("filters")
@@ -101,7 +101,7 @@ impl TryFrom<Row> for IntegrationApiKey {
 
 #[derive(Debug, Clone)]
 pub struct IntegrationTokenConfig {
-	pub integration_token_config_id: i64,
+	pub id: i64,
 	pub token_type: TokenType,
 	pub maximum_open_tokens: u32,
 	pub active_seconds: u32,
@@ -114,7 +114,7 @@ pub struct IntegrationTokenConfig {
 impl From<Row> for IntegrationTokenConfig {
 	fn from(row: Row) -> Self {
 		IntegrationTokenConfig {
-			integration_token_config_id: row.get("integration_token_config_id"),
+			id: row.get("id"),
 			token_type: row.get::<_, &str>("type").parse::<TokenType>().unwrap(),
 			maximum_open_tokens: u32::try_from(row.get::<_, i32>("maximum_open_tokens")).unwrap(),
 			active_seconds: row.get::<_, i32>("active_seconds") as u32,
@@ -128,7 +128,7 @@ impl From<Row> for IntegrationTokenConfig {
 
 #[derive(Debug, Clone)]
 pub struct IntegrationToken {
-	pub integration_token_id: i64,
+	pub id: i64,
 	pub token: String,
 	pub token_type: TokenType,
 	pub status: TokenStatus,
@@ -156,7 +156,7 @@ impl TryFrom<Row> for IntegrationToken {
 
 	fn try_from(row: Row) -> anyhow::Result<Self> {
 		Ok(IntegrationToken {
-			integration_token_id: row.get("integration_token_id"),
+			id: row.get("id"),
 			token: row.get("token"),
 			token_type: row.get::<_, &str>("type").parse::<TokenType>()
 				.context("unknown TokenType")?,

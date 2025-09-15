@@ -43,7 +43,7 @@ pub const ATTRIBUTE_ERROR: &str = "error";
 pub const ATTRIBUTE_TYPE: &str = "type";
 pub const ATTRIBUTE_KIND: &str = "kind";
 pub const ATTRIBUTE_URI: &str = "uri";
-pub const ATTRIBUTE_PUBLIC_KEY: &str = "public_key";
+pub const ATTRIBUTE_PUBKEY: &str = "pubkey";
 pub const ATTRIBUTE_SERVER_VERSION: &str = "server_version";
 pub const ATTRIBUTE_BARK_VERSION: &str = "bark_version";
 pub const ATTRIBUTE_PROTOCOL_VERSION: &str = "protocol_version";
@@ -135,9 +135,9 @@ static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
 /// Initialize open-telemetry.
 ///
 /// MUST be called (only once) before registering or updating metrics.
-pub fn init_telemetry(config: &Config, public_key: PublicKey) {
+pub fn init_telemetry(config: &Config, pubkey: PublicKey) {
 	if config.otel_collector_endpoint.is_some() {
-		TELEMETRY.set(Metrics::init(config, public_key)).expect("Telemetry already initialized");
+		TELEMETRY.set(Metrics::init(config, pubkey)).expect("Telemetry already initialized");
 	}
 }
 
@@ -172,7 +172,7 @@ struct Metrics {
 }
 
 impl Metrics {
-	fn init(config: &Config, public_key: PublicKey) -> Self {
+	fn init(config: &Config, pubkey: PublicKey) -> Self {
 		let endpoint = config.otel_collector_endpoint.as_ref().unwrap();
 
 		global::set_text_map_propagator(TraceContextPropagator::new());
@@ -187,7 +187,7 @@ impl Metrics {
 		let resource = Resource::builder()
 			.with_attribute(KeyValue::new(SERVICE_NAME, "captaind"))
 			.with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
-			.with_attribute(KeyValue::new("captaind.public_key", public_key.to_string()))
+			.with_attribute(KeyValue::new("captaind.pubkey", pubkey.to_string()))
 			.with_attribute(KeyValue::new("captaind.network", config.network.to_string()))
 			.with_attribute(KeyValue::new("captaind.round_interval", config.round_interval.as_secs().to_string()))
 			.with_attribute(KeyValue::new("captaind.maximum_vtxo_amount",
@@ -484,11 +484,11 @@ pub fn set_forfeit_metrics(
 pub fn set_lightning_node_state(
 	lightning_node_uri: tonic::transport::Uri,
 	lightning_node_id: Option<i64>,
-	public_key: Option<PublicKey>,
+	pubkey: Option<PublicKey>,
 	state: ClnNodeStateKind,
 ) {
-	let public_key_string = match public_key {
-		Some(public_key) => public_key.to_string(),
+	let pubkey_string = match pubkey {
+		Some(pubkey) => pubkey.to_string(),
 		None => "".to_string(),
 	};
 
@@ -503,7 +503,7 @@ pub fn set_lightning_node_state(
 			m.lightning_node_gauge.record(value, &[
 				KeyValue::new(ATTRIBUTE_URI, lightning_node_uri.to_string()),
 				KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.unwrap_or(0).to_string()),
-				KeyValue::new(ATTRIBUTE_PUBLIC_KEY, public_key_string.clone()),
+				KeyValue::new(ATTRIBUTE_PUBKEY, pubkey_string.clone()),
 				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
 			]);
 		}
@@ -512,7 +512,7 @@ pub fn set_lightning_node_state(
 			m.lightning_node_boot_counter.add(1, &[
 				KeyValue::new(ATTRIBUTE_URI, lightning_node_uri.to_string()),
 				KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.unwrap_or(0).to_string()),
-				KeyValue::new(ATTRIBUTE_PUBLIC_KEY, public_key_string),
+				KeyValue::new(ATTRIBUTE_PUBKEY, pubkey_string),
 			]);
 		}
 	}

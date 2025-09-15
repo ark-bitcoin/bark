@@ -62,7 +62,7 @@ impl fmt::Display for LightningPaymentStatus {
 
 #[derive(Debug, Clone)]
 pub struct LightningInvoice {
-	pub lightning_invoice_id: i64,
+	pub id: i64,
 	pub invoice: Invoice,
 	pub payment_hash: PaymentHash,
 	pub final_amount_msat: Option<u64>,
@@ -77,7 +77,7 @@ impl TryFrom<Row> for LightningInvoice {
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
 		Ok(LightningInvoice {
-			lightning_invoice_id: row.get("lightning_invoice_id"),
+			id: row.get("id"),
 			invoice: Invoice::from_str(row.get("invoice"))
 				.context("error decoding invoice from db")?,
 			payment_hash: PaymentHash::try_from(row.get::<_, &[u8]>("payment_hash"))
@@ -95,7 +95,7 @@ impl TryFrom<Row> for LightningInvoice {
 
 #[derive(Debug, Clone)]
 pub struct LightningPaymentAttempt {
-	pub lightning_payment_attempt_id: i64,
+	pub id: i64,
 	pub lightning_invoice_id: i64,
 	pub lightning_node_id: ClnNodeId,
 	pub amount_msat: u64,
@@ -109,7 +109,7 @@ pub struct LightningPaymentAttempt {
 impl From<Row> for LightningPaymentAttempt {
 	fn from(row: Row) -> Self {
 		LightningPaymentAttempt {
-			lightning_payment_attempt_id: row.get("lightning_payment_attempt_id"),
+			id: row.get("id"),
 			lightning_invoice_id: row.get("lightning_invoice_id"),
 			lightning_node_id: row.get("lightning_node_id"),
 			amount_msat: row.get::<_, i64>("amount_msat") as u64,
@@ -162,7 +162,7 @@ impl fmt::Display for LightningHtlcSubscriptionStatus {
 
 #[derive(Debug, Clone)]
 pub struct LightningHtlcSubscription {
-	pub lightning_htlc_subscription_id: i64,
+	pub id: i64,
 	pub lightning_invoice_id: i64,
 	pub lightning_node_id: ClnNodeId,
 	pub invoice: Bolt11Invoice,
@@ -178,7 +178,7 @@ impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
 		let invoice = Bolt11Invoice::from_str(row.get("invoice"))?;
 
 		Ok(LightningHtlcSubscription {
-			lightning_htlc_subscription_id: row.get("lightning_htlc_subscription_id"),
+			id: row.get("id"),
 			lightning_invoice_id: row.get("lightning_invoice_id"),
 			lightning_node_id: row.get("lightning_node_id"),
 			invoice: invoice,

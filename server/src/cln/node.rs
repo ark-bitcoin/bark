@@ -283,7 +283,7 @@ impl ClnNodeMonitorProcess {
 
 			let invoice = self.db.get_lightning_invoice_by_id(attempt.lightning_invoice_id).await?;
 			debug!("Lightning invoice ({}): with payment hash {} is being verified.",
-				invoice.lightning_invoice_id, invoice.payment_hash,
+				invoice.id, invoice.payment_hash,
 			);
 
 			let mut updated = false;
@@ -306,13 +306,13 @@ impl ClnNodeMonitorProcess {
 					LightningPaymentStatus::Succeeded => {
 						error!("Lightning invoice ({}): Payment attempt flagged succeeded \
 							when it cannot be found in CLN for payment hash {}",
-							invoice.lightning_invoice_id, invoice.payment_hash,
+							invoice.id, invoice.payment_hash,
 						);
 					},
 					LightningPaymentStatus::Failed => {
 						error!("Lightning invoice ({}): Payment attempt flagged failed \
 							when it cannot be found in CLN for payment hash {}",
-							invoice.lightning_invoice_id, invoice.payment_hash,
+							invoice.id, invoice.payment_hash,
 						)
 					},
 					LightningPaymentStatus::Requested
@@ -344,7 +344,7 @@ impl ClnNodeMonitorProcess {
 						if latest.preimage.is_none() {
 							error!("Lightning invoice ({}): Payment completed but no preimage \
 								specified for payment hash {}",
-								invoice.lightning_invoice_id, invoice.payment_hash,
+								invoice.id, invoice.payment_hash,
 							);
 							LightningPaymentStatus::Submitted
 						} else {
@@ -365,7 +365,7 @@ impl ClnNodeMonitorProcess {
 					if attempt.status.is_final() {
 						error!("Lightning invoice ({}): payment attempt flagged {} when it \
 							actually {} for payment hash {}",
-							invoice.lightning_invoice_id, attempt.status, desired_status,
+							invoice.id, attempt.status, desired_status,
 							invoice.payment_hash,
 						);
 					} else {
@@ -385,13 +385,13 @@ impl ClnNodeMonitorProcess {
 
 			if updated {
 				trace!("Lightning invoice ({}): status updated for payment hash {}.",
-					invoice.lightning_invoice_id, invoice.payment_hash,
+					invoice.id, invoice.payment_hash,
 				);
 
 				self.payment_update_tx.send(invoice.payment_hash)?;
 			}
 
-			self.update_next_invoice_check(invoice.lightning_invoice_id);
+			self.update_next_invoice_check(invoice.id);
 		}
 
 		self.invoice_next_check_at.retain(|_, &mut (_, datetime)| datetime > Local::now());
@@ -425,7 +425,7 @@ impl ClnNodeMonitorProcess {
 			let payment_hash = htlc_subscription.invoice.payment_hash();
 
 			debug!("Lightning htlc subscription ({}) is being verified.",
-				htlc_subscription.lightning_htlc_subscription_id,
+				htlc_subscription.id,
 			);
 
 			let req = hold::ListRequest {
@@ -436,17 +436,17 @@ impl ClnNodeMonitorProcess {
 
 			if res.invoices.is_empty() {
 				warn!("Lightning htlc subscription ({}) is not found on plugin.",
-					htlc_subscription.lightning_htlc_subscription_id,
+					htlc_subscription.id,
 				);
 			}
 
 			if res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32) {
 					debug!("Lightning htlc subscription ({}) was accepted.",
-						htlc_subscription.lightning_htlc_subscription_id,
+						htlc_subscription.id,
 					);
 
 					self.db.store_lightning_htlc_subscription_status(
-						htlc_subscription.lightning_htlc_subscription_id,
+						htlc_subscription.id,
 						LightningHtlcSubscriptionStatus::Accepted,
 					).await?;
 
@@ -455,7 +455,7 @@ impl ClnNodeMonitorProcess {
 
 			if htlc_subscription.created_at < Local::now() - self.config.htlc_subscription_timeout {
 				info!("Lightning htlc subscription ({}) timed out.",
-					htlc_subscription.lightning_htlc_subscription_id,
+					htlc_subscription.id,
 				);
 
 				hodl_client.cancel(hold::CancelRequest {
@@ -463,7 +463,7 @@ impl ClnNodeMonitorProcess {
 				}).await?;
 
 				self.db.store_lightning_htlc_subscription_status(
-					htlc_subscription.lightning_htlc_subscription_id,
+					htlc_subscription.id,
 					LightningHtlcSubscriptionStatus::Cancelled,
 				).await?;
 			}

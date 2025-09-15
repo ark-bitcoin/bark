@@ -30,41 +30,44 @@ impl Db {
 		connector_key: &SecretKey,
 		forfeit_vtxos: Vec<(VtxoId, ForfeitState)>,
 	) -> anyhow::Result<()> {
-		let round_id = round_tx.compute_txid();
+		let round_txid = round_tx.compute_txid();
 
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
 		// First, store the round itself.
 		let statement = tx.prepare_typed("
-			INSERT INTO round (id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry)
-			VALUES ($1, $2, $3, $4, $5, $6, $7);
-		", &[Type::TEXT, Type::BYTEA, Type::INT8, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4]).await?;
-		tx.execute(
+			INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos, connector_key, expiry, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+			RETURNING id;
+		", &[Type::INT8, Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4]).await?;
+		let row = tx.query_one(
 			&statement,
 			&[
-				&round_id.to_string(),
-				&serialize(&round_tx),
 				&(round_seq.inner() as i64),
+				&round_txid.to_string(),
+				&serialize(&round_tx),
 				&vtxos.spec.serialize(),
 				&(forfeit_vtxos.len() as i32),
 				&connector_key.secret_bytes().to_vec(),
 				&(vtxos.spec.spec.expiry_height as i32)
 			]
 		).await?;
+		let round_id = row.get::<_, i64>("id");
 
 		// Then mark inputs as forfeited.
 		let statement = tx.prepare_typed("
-			UPDATE vtxo SET forfeit_state = $2, forfeit_round_id = $3
-			WHERE id = $1 AND spendable = true;
-		", &[Type::TEXT, Type::BYTEA, Type::TEXT]).await?;
+			UPDATE vtxo
+			SET forfeit_state = $2, forfeit_round_id = $3, updated_at = NOW()
+			WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND forfeit_state IS NULL;
+		", &[Type::TEXT, Type::BYTEA, Type::INT8]).await?;
 		for (id, forfeit_state) in forfeit_vtxos {
 			let state_bytes = rmp_serde::to_vec_named(&forfeit_state)
 				.expect("serde serialization");
 			let rows_affected = tx.execute(&statement, &[
 				&id.to_string(),
 				&state_bytes,
-				&round_id.to_string(),
+				&round_id,
 			]).await?;
 			if rows_affected == 0 {
 				bail!("tried to mark unspendable vtxo as forfeited: {}", id);
@@ -80,7 +83,7 @@ impl Db {
 
 	pub async fn is_round_tx(&self, txid: Txid) -> anyhow::Result<bool> {
 		let conn = self.pool.get().await?;
-		let statement = conn.prepare("SELECT 1 FROM round WHERE id = $1 LIMIT 1;").await?;
+		let statement = conn.prepare("SELECT 1 FROM round WHERE funding_txid = $1 LIMIT 1;").await?;
 
 		let rows = conn.query(&statement, &[&txid.to_string()]).await?;
 		Ok(!rows.is_empty())
@@ -89,8 +92,9 @@ impl Db {
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, tx, seq, signed_tree, nb_input_vtxos, connector_key, expiry, created_at
-			FROM round WHERE id = $1;
+			SELECT id, seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos, connector_key, expiry, swept_at, created_at
+			FROM round
+			WHERE funding_txid = $1;
 		").await?;
 
 		let rows = conn.query(&statement, &[&id.to_string()]).await?;
@@ -102,11 +106,11 @@ impl Db {
 		Ok(round)
 	}
 
-	pub async fn remove_round(&self, id: RoundId) -> anyhow::Result<()> {
+	pub async fn mark_round_swept(&self, id: RoundId) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
 		let statement = conn.prepare("
-			UPDATE round SET deleted_at = NOW() WHERE id = $1;
+			UPDATE round SET swept_at = NOW(), updated_at = NOW() WHERE funding_txid = $1;
 		").await?;
 
 		conn.execute(&statement, &[&id.to_string()]).await?;
@@ -114,16 +118,16 @@ impl Db {
 		Ok(())
 	}
 
-	/// Get all round IDs of rounds that expired before or on `height`.
+	/// Get all round IDs of rounds that expired before or on `height` and that have not been swept.
 	pub async fn get_expired_round_ids(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id FROM round WHERE expiry <= $1;
+			SELECT funding_txid FROM round WHERE expiry <= $1 AND swept_at IS NULL;
 		").await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
 		Ok(rows
-			.map_ok(|row| RoundId::from_str(row.get("id")).expect("corrupt db"))
+			.map_ok(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
 			.try_collect::<Vec<_>>().await?
 		)
 	}
@@ -137,21 +141,23 @@ impl Db {
 
 		let rows = if let Some(last) = last_round_id {
 			let stmt = conn.prepare("
-				SELECT id FROM round
-				WHERE created_at > (SELECT created_at FROM round WHERE id = $1)
+				SELECT funding_txid
+				FROM round
+				WHERE created_at > (SELECT created_at FROM round WHERE funding_txid = $1)
 			").await?;
 			conn.query_raw(&stmt, &[&last.to_string()]).await?
 		} else {
 			let window = vtxo_lifetime + vtxo_lifetime / 2;
 			let stmt = conn.prepare("
-				SELECT id FROM round
-				WHERE created_at >= now() - ($1 * interval '1 second')
+				SELECT funding_txid
+				FROM round
+				WHERE created_at >= NOW() - ($1 * interval '1 second')
 			").await?;
 			conn.query_raw(&stmt, &[&(window.as_secs() as f64)]).await?
 		};
 
 		Ok(rows
-			.map_ok(|row| RoundId::from_str(row.get("id")).expect("corrupt db"))
+			.map_ok(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
 			.try_collect::<Vec<_>>().await?
 		)
 	}

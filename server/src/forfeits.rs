@@ -19,7 +19,7 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{KeypairExt, TransactionExt};
 use server_rpc as rpc;
 
-use crate::database::forfeits::{ForfeitClaimState, ForfeitRoundState, ForfeitState};
+use crate::database::forfeits::ForfeitState;
 use crate::database::rounds::StoredRound;
 use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
@@ -130,39 +130,16 @@ struct RoundState {
 }
 
 impl RoundState {
-	fn new_from_db(state: ForfeitRoundState) -> RoundState {
-		let connector_key = Keypair::from_secret_key(&SECP, &state.connector_key);
-		RoundState {
-			id: state.round_id,
-			nb_input_vtxos: state.nb_input_vtxos,
-			nb_connectors_used: state.nb_connectors_used,
-			connectors: {
-				let chain = ConnectorChain::new(
-					state.nb_input_vtxos as usize,
-					OutPoint::new(state.round_id.as_round_txid(), 1),
-					connector_key.public_key(),
-				);
-				let mut iter = chain.connectors_signed(&connector_key).unwrap().into_owned();
-				if state.nb_connectors_used > 0 {
-					assert!(state.nb_connectors_used <= state.nb_input_vtxos);
-					let _ = iter.nth(state.nb_connectors_used as usize - 1);
-				}
-				iter
-			},
-			connector_key,
-		}
-	}
-
 	fn new_from_round(round: &StoredRound) -> RoundState {
 		let connector_key = Keypair::from_secret_key(&SECP, &round.connector_key);
 		RoundState {
-			id: round.id,
+			id: round.funding_txid,
 			nb_input_vtxos: round.nb_input_vtxos as u32,
 			nb_connectors_used: 0,
 			connectors: {
 				let chain = ConnectorChain::new(
 					round.nb_input_vtxos,
-					OutPoint::new(round.id.as_round_txid(), 1),
+					OutPoint::new(round.funding_txid.as_round_txid(), 1),
 					connector_key.public_key(),
 				);
 				chain.connectors_signed(&connector_key).unwrap().into_owned()
@@ -232,26 +209,6 @@ pub struct ClaimState {
 }
 
 impl ClaimState {
-	async fn new_from_db(txindex: &TxIndex, state: ForfeitClaimState<'_>) -> anyhow::Result<ClaimState> {
-		Ok(ClaimState {
-			vtxo: state.vtxo,
-			connector_tx: match state.connector_tx {
-				Some(tx) => Some(txindex.register(tx.into_owned()).await?),
-				None => None,
-			},
-			_connector_cpfp: match state.connector_cpfp {
-				Some(tx) => Some(txindex.register(tx.into_owned()).await?),
-				None => None,
-			},
-			connector: state.connector,
-			forfeit_tx: txindex.register(state.forfeit_tx.into_owned()).await?,
-			forfeit_cpfp: match state.forfeit_cpfp {
-				Some(tx) => Some(txindex.register(tx.into_owned()).await?),
-				None => None,
-			},
-		})
-	}
-
 	/// Start broadcasting the connector.
 	///
 	/// Returns the pair of connector tx and cpfp tx.
@@ -324,17 +281,11 @@ struct Process {
 
 impl Process {
 	async fn load_state_from_db(&mut self) -> anyhow::Result<()> {
-		let rounds = self.db.get_forfeits_round_states().await?;
-		self.rounds = HashMap::with_capacity(rounds.len());
-		for round in rounds {
-			self.rounds.insert(round.round_id, RoundState::new_from_db(round));
-		}
+		// TODO fetch round states from database
+		self.rounds = HashMap::with_capacity(0);
 
-		let claims = self.db.get_forfeits_claim_states().await?;
-		self.claims = Vec::with_capacity(claims.len());
-		for claim in claims {
-			self.claims.push(ClaimState::new_from_db(&self.txindex, claim).await?);
-		}
+		// TODO fetch claim states from database
+		self.claims = Vec::with_capacity(0);
 
 		Ok(())
 	}

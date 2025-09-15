@@ -15,13 +15,15 @@ use ark::tree::signed::SignedVtxoTreeSpec;
 
 #[derive(Debug, Clone)]
 pub struct StoredRound {
-	pub id: RoundId,
-	pub tx: Transaction,
+	pub id: i64,
 	pub seq: RoundSeq,
+	pub funding_txid: RoundId,
+	pub funding_tx: Transaction,
 	pub signed_tree: SignedVtxoTreeSpec,
 	pub nb_input_vtxos: usize,
 	pub connector_key: SecretKey,
 	pub expiry_height: BlockHeight,
+	pub swept_at: Option<DateTime<Local>>,
 	pub created_at: DateTime<Local>,
 }
 
@@ -29,17 +31,20 @@ impl TryFrom<Row> for StoredRound {
 	type Error = anyhow::Error;
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
-		let id = RoundId::from_str(&row.get::<_, &str>("id"))?;
-		let tx = deserialize::<Transaction>(row.get("tx"))?;
-		debug_assert_eq!(tx.compute_txid(), id.as_round_txid());
+		let funding_txid = RoundId::from_str(&row.get::<_, &str>("funding_txid"))?;
+		let funding_tx = deserialize::<Transaction>(row.get("funding_tx"))?;
+		debug_assert_eq!(funding_tx.compute_txid(), funding_txid.as_round_txid());
 
 		Ok(Self {
-			id, tx,
+			id: row.get("id"),
+			funding_txid,
+			funding_tx,
 			seq: RoundSeq::new(row.get::<_, i64>("seq") as u64),
 			signed_tree: SignedVtxoTreeSpec::deserialize(row.get("signed_tree"))?,
 			nb_input_vtxos: usize::try_from(row.get::<_, i32>("nb_input_vtxos"))?,
 			connector_key: SecretKey::from_slice(row.get("connector_key"))?,
 			expiry_height: row.get::<_, i32>("expiry") as BlockHeight,
+			swept_at: row.get("swept_at"),
 			created_at: row.get("created_at"),
 		})
 	}

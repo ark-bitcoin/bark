@@ -1051,7 +1051,7 @@ impl Server {
 				.context("no htlc subscription found")?;
 
 			self.cln.settle_invoice(
-				htlc_subscription.lightning_htlc_subscription_id,
+				htlc_subscription.id,
 				payment_preimage,
 			).await?.context("could not settle invoice")?;
 

@@ -319,14 +319,14 @@ async fn inner_main() -> anyhow::Result<()> {
 					integration_name,
 				} => {
 					let integration = db.store_integration(integration_name.as_str()).await?;
-					println!("{}", integration.integration_id);
+					println!("{}", integration.id);
 				}
 				IntegrationCommand::Remove {
 					integration_name,
 				} => {
 					let mut integration = db.get_integration_by_name(integration_name.as_str()).await?.expect("no such integration");
 					integration.deleted_at = Some(Local::now());
-					let _ = db.delete_integration(integration.integration_id).await?;
+					let _ = db.delete_integration(integration.id).await?;
 					println!("Deleted {}", integration_name);
 				}
 				IntegrationCommand::GenerateApiKey {
@@ -343,7 +343,7 @@ async fn inner_main() -> anyhow::Result<()> {
 						api_key_name.as_str(),
 						api_key,
 						&db_filters,
-						integration.integration_id,
+						integration.id,
 						expiry,
 					).await?;
 					println!("API Key: {}", integration_api_key.api_key.to_string())
@@ -354,7 +354,7 @@ async fn inner_main() -> anyhow::Result<()> {
 					let integration_api_key =
 						db.get_integration_api_key_by_name(integration_name.as_str(), api_key_name.as_str()).await?
 							.expect("invalid API Key");
-					db.delete_integration_api_key(integration_api_key.integration_api_key_id, integration_api_key.updated_at).await?;
+					db.delete_integration_api_key(integration_api_key.id, integration_api_key.updated_at).await?;
 					println!("Deleted {}", api_key_name);
 				}
 				IntegrationCommand::UpdateApiKeyFilters {
@@ -369,14 +369,14 @@ async fn inner_main() -> anyhow::Result<()> {
 						integration_api_key,
 						&filters,
 					).await?;
-					println!("{}", integration_api_key.integration_api_key_id);
+					println!("{}", integration_api_key.id);
 				}
 				IntegrationCommand::ConfigureTokenType {
 					integration_name, token_type, maximum_open_tokens, active_seconds,
 				} => {
 					let integration = db.get_integration_by_name(integration_name.as_str()).await?
 						.expect("Invalid integration name");
-					let existing_config = db.get_integration_token_config(token_type, integration.integration_id).await?;
+					let existing_config = db.get_integration_token_config(token_type, integration.id).await?;
 					let integration_token_config = if let Some(existing_config) = existing_config {
 						db.update_integration_token_config(
 							existing_config,
@@ -388,10 +388,10 @@ async fn inner_main() -> anyhow::Result<()> {
 							token_type,
 							maximum_open_tokens,
 							active_seconds,
-							integration.integration_id,
+							integration.id,
 						).await?
 					};
-					println!("{}", integration_token_config.integration_token_config_id);
+					println!("{}", integration_token_config.id);
 				}
 				IntegrationCommand::GenerateToken {
 					integration_name, integration_api_key, token_type, filters,
@@ -400,7 +400,7 @@ async fn inner_main() -> anyhow::Result<()> {
 					let token = uuid::Uuid::new_v4().to_string();
 					let integration = db.get_integration_by_name(integration_name.as_str()).await?
 						.expect("Invalid integration name");
-					let integration_token_config = db.get_integration_token_config(token_type, integration.integration_id).await?
+					let integration_token_config = db.get_integration_token_config(token_type, integration.id).await?
 						.expect("no token configuration found");
 					let integration_api_key = db.get_integration_api_key_by_api_key(integration_api_key).await?
 						.expect("invalid API Key");
@@ -413,8 +413,8 @@ async fn inner_main() -> anyhow::Result<()> {
 						TokenStatus::Unused,
 						expiry_time,
 						&db_filters,
-						integration.integration_id,
-						integration_api_key.integration_api_key_id,
+						integration.id,
+						integration_api_key.id,
 					).await?;
 					println!("Token: {}", integration_token.token);
 				}
@@ -427,7 +427,7 @@ async fn inner_main() -> anyhow::Result<()> {
 						db.get_integration_token(token.as_str()).await?
 							.expect("invalid Token");
 
-					if integration.integration_id != integration_token.integration_id {
+					if integration.id != integration_token.integration_id {
 						bail!("integration doesn't match token");
 					}
 
@@ -436,11 +436,11 @@ async fn inner_main() -> anyhow::Result<()> {
 
 					let integration_token = db.update_integration_token(
 						integration_token.clone(),
-						integration_api_key.integration_api_key_id,
+						integration_api_key.id,
 						status,
 						&integration_token.filters,
 					).await?;
-					println!("{}", integration_token.integration_token_id);
+					println!("{}", integration_token.id);
 				}
 				IntegrationCommand::UpdateTokenFilters {
 					integration_name, integration_api_key, token, filters,
@@ -452,7 +452,7 @@ async fn inner_main() -> anyhow::Result<()> {
 						db.get_integration_token(token.as_str()).await?
 							.expect("invalid Token");
 
-					if integration.integration_id != integration_token.integration_id {
+					if integration.id != integration_token.integration_id {
 						bail!("integration doesn't match token");
 					}
 
@@ -461,11 +461,11 @@ async fn inner_main() -> anyhow::Result<()> {
 
 					let integration_token = db.update_integration_token(
 						integration_token.clone(),
-						integration_api_key.integration_api_key_id,
+						integration_api_key.id,
 						integration_token.status,
 						&filters,
 					).await?;
-					println!("{}", integration_token.integration_token_id);
+					println!("{}", integration_token.id);
 				}
 			}
 		}
