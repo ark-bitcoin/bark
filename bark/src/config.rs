@@ -7,12 +7,32 @@ use bitcoin_ext::BlockHeight;
 
 
 /// Configuration of the Bark wallet.
+///
+/// - [Config::esplora_address] or [Config::bitcoind_address] must be provided.
+/// - If you use [Config::bitcoind_address], you must also provide:
+///   - [Config::bitcoind_cookiefile] or
+///   - [Config::bitcoind_user] and [Config::bitcoind_pass]
+/// - Other optional fields can be omitted.
+///
+/// # Example
+/// Configure the wallet using defaults, then override endpoints for public signet:
+///
+/// ```rust
+/// use bark::Config;
+///
+/// let cfg = Config {
+///   server_address: "https://ark.signet.2nd.dev".into(),
+///   esplora_address: Some("https://esplora.signet.2nd.dev".into()),
+///   ..Config::default()
+/// };
+/// // cfg now has all other fields from the default configuration
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-	/// The address of your server.
+	/// The address of your ark server.
 	pub server_address: String,
 
-	/// The address of the Esplora HTTP server to use.
+	/// The address of the Esplora HTTP REST server to use.
 	///
 	/// Either this or the `bitcoind_address` field has to be provided.
 	pub esplora_address: Option<String>,
@@ -20,6 +40,7 @@ pub struct Config {
 	/// The address of the bitcoind RPC server to use.
 	///
 	/// Either this or the `esplora_address` field has to be provided.
+	/// Either `bitcoind_cookiefile` or `bitcoind_user` and `bitcoind_pass` has to be provided.
 	pub bitcoind_address: Option<String>,
 
 	/// The path to the bitcoind rpc cookie file.
