@@ -233,9 +233,9 @@ pub struct Config {
 	pub handshake_psa: Option<String>,
 
 	pub otel_collector_endpoint: Option<String>,
-	/// <=0 -> Tracing always disabled,
+	/// <= 0 -> Tracing always disabled,
 	/// 0.5 -> Tracing enabled 50% of the time, and
-	/// >=1 -> Tracing always active.
+	/// \>= 1 -> Tracing always active.
 	pub otel_tracing_sampler: Option<f64>,
 
 	/// Config for the VtxoSweeper process.
