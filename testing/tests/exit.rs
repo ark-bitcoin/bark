@@ -523,7 +523,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.offchain_balance().await;
 
 	// Should start an exit
-	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 248 }));
+	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 239 }));
 	complete_exit(&ctx, &bark_1).await;
 
 	// TODO: Drain exit outputs then check balance in onchain wallet

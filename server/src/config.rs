@@ -287,7 +287,7 @@ impl Default for Config {
 
 			max_vtxo_amount: None,
 			max_arkoor_depth: 5,
-			round_board_confirmations: 12,
+			round_board_confirmations: 3,
 			round_tx_untrusted_input_confirmations: 2,
 
 			round_interval: Duration::from_secs(10),
