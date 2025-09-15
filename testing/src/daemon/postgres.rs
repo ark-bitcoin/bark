@@ -1,11 +1,10 @@
 use std::env;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
 
 use log::{debug, error, trace};
 use tokio::fs;
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio_postgres::{Client, Config, NoTls};
 
 use server::config;
@@ -191,21 +190,6 @@ impl DaemonHelper for PostgresHelper {
 				return Ok(());
 			}
 			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-		}
-	}
-
-	fn prepare_kill(&mut self, child: &mut Child) {
-		let pid = child.id().expect("child without pid");
-		let pid = nix::unistd::Pid::from_raw(pid as i32);
-		nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM)
-			.expect("error sending SIGTERM to postgres");
-
-		let start = Instant::now();
-		while start.elapsed() < Duration::from_secs(5) {
-			std::thread::sleep(Duration::from_millis(500));
-			if child.try_wait().is_ok() {
-				break;
-			}
 		}
 	}
 }
