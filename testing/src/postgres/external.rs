@@ -3,7 +3,7 @@ use std::env::{self, VarError};
 use tokio_postgres::{Client, Config, NoTls};
 use server::secret::Secret;
 
-use crate::postgres::query::drop_and_create_database;
+use crate::postgres::query::{drop_and_create_database, enable_verbose_logging};
 use crate::constants::env::TEST_POSTGRES_HOST;
 
 /// The hostname of the external postgres database
@@ -40,6 +40,7 @@ impl ExternallyManagedPostgres {
 	pub async fn request_database(&self, db_name: &str) -> server::config::Postgres {
 		let client = self.global_client().await;
 		drop_and_create_database(&client, db_name).await;
+		enable_verbose_logging(&client).await;
 		server::config::Postgres {
 			host: self.host.clone(),
 			port: self.port,
