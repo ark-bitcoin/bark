@@ -38,7 +38,7 @@ impl Db {
 		&self,
 		vtxo: &PoolVtxo,
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let stmt = conn.prepare_typed(
 			"INSERT INTO vtxo_pool (vtxo_id, expiry_height, amount, depth) \
 				VALUES ( $1, $2, $3, $4 )",
@@ -58,7 +58,7 @@ impl Db {
 		&self,
 		vtxos: impl IntoIterator<Item = &'a PoolVtxo>,
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let stmt = conn.prepare_typed(
 			"INSERT INTO vtxo_pool (vtxo_id, expiry_height, amount, depth) \
 				VALUES ( UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4) )",
@@ -77,7 +77,7 @@ impl Db {
 		&self,
 		ids: impl IntoIterator<Item = VtxoId>,
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let stmt = conn.prepare_typed(
 			"UPDATE vtxo_pool SET spent_at = NOW() WHERE vtxo_id = ANY($1)",
 			&[Type::TEXT_ARRAY],
@@ -91,7 +91,7 @@ impl Db {
 	pub async fn load_vtxopool(
 		&self,
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<PoolVtxo>> + '_> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		// fetch without keys
 		let stmt = conn.prepare(
 			"SELECT vtxo_id, expiry_height, amount, depth FROM vtxo_pool WHERE spent_at IS NULL",

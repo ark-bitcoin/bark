@@ -12,17 +12,19 @@ pub mod rounds;
 pub mod vtxopool;
 
 mod model;
+
 pub use model::*;
 
 
 use std::task;
+use std::backtrace::Backtrace;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::Context;
-use bb8::{ManageConnection, Pool};
+use bb8::{ManageConnection, Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
@@ -42,6 +44,7 @@ use bitcoin_ext::BlockHeight;
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
+use crate::telemetry;
 
 
 /// Can be used as function argument when there are no query_raw arguments
@@ -56,7 +59,7 @@ pub struct Db {
 
 impl Db {
 	async fn run_migrations(&self) -> anyhow::Result<()> {
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		embedded::migrations::runner().run_async::<Client>(&mut conn).await?;
 		info!("All migrations got successfully run");
 		Ok(())
@@ -147,6 +150,22 @@ impl Db {
 		Self::connect(config).await
 	}
 
+	pub async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
+		telemetry::set_postgres_connection_pool_metrics(self.pool.state());
+		match self.pool.get().await {
+			Ok(conn) => {
+				Ok(conn)
+			},
+			Err(e) => {
+				slog!(PostgresConnectionPoolConnectionFailure,
+					err: e.to_string(),
+					backtrace: Backtrace::capture().to_string(),
+				);
+				Err(e.into())
+			}
+		}
+	}
+
 	/**
 	 * VTXOs
 	*/
@@ -161,7 +180,7 @@ impl Db {
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		query::upsert_vtxos(&tx, vtxos).await?;
@@ -172,7 +191,7 @@ impl Db {
 
 	/// Upsert a board into the database
 	pub async fn upsert_board(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 		query::upsert_vtxos(&tx, [vtxo]).await?;
 		query::upsert_board(&tx, vtxo.id(), vtxo.expiry_height()).await?;
@@ -187,19 +206,19 @@ impl Db {
 		&self,
 		height: BlockHeight,
 	) -> anyhow::Result<Vec<Board>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		query::get_sweepable_boards(&*conn, height).await
 	}
 
 	pub async fn mark_board_swept(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		query::mark_board_swept(&*conn, vtxo.id()).await
 			.context("Failed to mark board as swept")?;
 		Ok(())
 	}
 
 	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		query::get_vtxos_by_id(&*conn, ids).await
 	}
 
@@ -207,7 +226,7 @@ impl Db {
 	pub async fn fetch_all_forfeited_vtxos(
 		&self,
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		//TODO(stevenroose) this query is wrong
 		let stmt = conn.prepare("
 			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL;
@@ -225,7 +244,7 @@ impl Db {
 		&self,
 		rounds: &[RoundId],
 	) -> anyhow::Result<Vec<VtxoState>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let stmt = conn.prepare_typed("
 			SELECT v.id, v.vtxo_id, v.vtxo, v.expiry, v.oor_spent_txid, v.forfeit_state, v.forfeit_round_id,
 				v.created_at, v.updated_at
@@ -249,7 +268,7 @@ impl Db {
 		&self,
 		builder: &ArkoorPackageBuilder<'_, VtxoRequest>,
 	) -> anyhow::Result<Option<VtxoId>> {
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		let new_vtxos = builder.new_vtxos().into_iter().flatten().collect::<Vec<_>>();
@@ -288,7 +307,7 @@ impl Db {
 		arkoor_package_id: &[u8; 32],
 		vtxo: Vtxo,
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			INSERT INTO arkoor_mailbox (pubkey, vtxo_id, vtxo, arkoor_package_id, created_at)
 			SELECT $1, id, $2, $3, NOW()
@@ -310,7 +329,7 @@ impl Db {
 		&self,
 		pubkeys: &[PublicKey],
 	) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo>>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT vtxo, arkoor_package_id
 			FROM arkoor_mailbox
@@ -347,7 +366,7 @@ impl Db {
 
 	/// Add the pending sweep tx.
 	pub async fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare_typed("
 			INSERT INTO sweep (txid, tx, created_at) VALUES ($1, $2, NOW());
 		", &[Type::TEXT, Type::BYTEA]).await?;
@@ -361,10 +380,10 @@ impl Db {
 
 	/// Confirm the pending sweep tx by txid.
 	pub async fn confirm_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let statement = conn.prepare("
-			UPDATE sweep SET confirmed_at = NOW() WHERE txid = $1 AND confirmed_at IS NULL;;
+			UPDATE sweep SET confirmed_at = NOW() WHERE txid = $1 AND confirmed_at IS NULL;
 		").await?;
 		conn.execute(&statement, &[&txid.to_string()]).await?;
 
@@ -373,10 +392,10 @@ impl Db {
 
 	/// Abandon the pending sweep tx by txid.
 	pub async fn abandon_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let statement = conn.prepare("
-			UPDATE sweep SET abandoned_at = NOW() WHERE txid = $1 AND abandoned_at IS NULL;;
+			UPDATE sweep SET abandoned_at = NOW() WHERE txid = $1 AND abandoned_at IS NULL;
 		").await?;
 		conn.execute(&statement, &[&txid.to_string()]).await?;
 
@@ -385,7 +404,7 @@ impl Db {
 
 	/// Fetch all pending sweep txs.
 	pub async fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT txid, tx
 			FROM sweep
@@ -412,7 +431,7 @@ impl Db {
 	pub async fn store_changeset(&self, wallet: WalletKind, c: &ChangeSet) -> anyhow::Result<()> {
 		let bytes = rmp_serde::to_vec_named(c).expect("serde serialization");
 
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare_typed("
 			INSERT INTO wallet_changeset (content, kind, created_at)
 			VALUES ($1, $2::TEXT::wallet_kind, NOW());
@@ -426,7 +445,7 @@ impl Db {
 		&self,
 		wallet: WalletKind,
 	) -> anyhow::Result<Option<ChangeSet>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT content
 			FROM wallet_changeset
@@ -462,7 +481,7 @@ impl Db {
 		txid: Txid,
 		tx: &Transaction
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare_typed(
 			"INSERT INTO bitcoin_transaction
 				(txid, tx, created_at)
@@ -485,7 +504,7 @@ impl Db {
 		&self,
 		txid: Txid,
 	) -> anyhow::Result<Option<Transaction>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare(
 			"SELECT tx FROM bitcoin_transaction WHERE txid = $1",
 		).await?;
@@ -515,7 +534,7 @@ impl Db {
 			warn!("Error while trying to clean up expired ephemeral tweaks: {:#}", e);
 		}
 
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			INSERT INTO ephemeral_tweak (pubkey, tweak, created_at, expires_at)
@@ -537,7 +556,7 @@ impl Db {
 		&self,
 		pubkey: PublicKey,
 	) -> anyhow::Result<Option<secp256k1::Scalar>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare(
 			"SELECT tweak FROM ephemeral_tweak WHERE pubkey = $1 LIMIT 1",
@@ -557,7 +576,7 @@ impl Db {
 		&self,
 		pubkey: PublicKey,
 	) -> anyhow::Result<Option<secp256k1::Scalar>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare(
 			"DELETE FROM ephemeral_tweak WHERE pubkey = $1 RETURNING tweak",
@@ -574,7 +593,7 @@ impl Db {
 	}
 
 	pub async fn clean_expired_ephemeral_tweaks(&self) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let stmt = conn.prepare(
 			"DELETE FROM ephemeral_tweak WHERE expires_at < NOW()",
 		).await?;

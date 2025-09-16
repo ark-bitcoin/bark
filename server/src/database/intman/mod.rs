@@ -15,7 +15,7 @@ impl Db {
 		&self,
 		name: &str,
 	) -> anyhow::Result<Integration> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			INSERT INTO integration (name, created_at) VALUES ($1, NOW())
 			RETURNING id, name, created_at, deleted_at
@@ -32,7 +32,7 @@ impl Db {
 		&self,
 		id: i64,
 	) -> anyhow::Result<Integration> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			UPDATE integration
 			SET deleted_at = NOW()
@@ -51,7 +51,7 @@ impl Db {
 		&self,
 		name: &str,
 	) -> anyhow::Result<Option<Integration>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT id, name, created_at, deleted_at
 			FROM integration
@@ -69,7 +69,7 @@ impl Db {
 		&self,
 		id: i64,
 	) -> anyhow::Result<Option<Integration>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT id, name, created_at, deleted_at
 			FROM integration
@@ -91,7 +91,7 @@ impl Db {
 		integration_id: i64,
 		expires_at: DateTime<Local>,
 	) -> anyhow::Result<IntegrationApiKey> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			INSERT INTO integration_api_key (
 				name, api_key, filters, integration_id, expires_at,
@@ -120,7 +120,7 @@ impl Db {
 		&self,
 		api_key: uuid::Uuid,
 	) -> anyhow::Result<Option<IntegrationApiKey>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT id,
 				name, api_key, filters, integration_id, expires_at,
@@ -141,7 +141,7 @@ impl Db {
 		integration_name: &str,
 		api_key_name: &str,
 	) -> anyhow::Result<Option<IntegrationApiKey>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT iak.id,
 				iak.name, iak.api_key, iak.filters, iak.integration_id, iak.expires_at,
@@ -164,7 +164,7 @@ impl Db {
 		old_integration_api_key: IntegrationApiKey,
 		new_filters: &filters::Filters,
 	) -> anyhow::Result<IntegrationApiKey> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			UPDATE integration_api_key
 			SET filters = $1, updated_at = NOW()
@@ -190,7 +190,7 @@ impl Db {
 		id: i64,
 		old_updated_at: DateTime<Local>,
 	) -> anyhow::Result<IntegrationApiKey> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			UPDATE integration_api_key
 			SET deleted_at = NOW(), updated_at = NOW()
@@ -215,7 +215,7 @@ impl Db {
 		active_seconds: u32,
 		integration_id: i64,
 	) -> anyhow::Result<IntegrationTokenConfig> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			INSERT INTO integration_token_config (
 				type, maximum_open_tokens, active_seconds, integration_id,
@@ -247,7 +247,7 @@ impl Db {
 		token_type: TokenType,
 		integration_id: i64,
 	) -> anyhow::Result<Option<IntegrationTokenConfig>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT id,
 				type::TEXT, maximum_open_tokens, active_seconds,
@@ -272,7 +272,7 @@ impl Db {
 		new_maximum_open_tokens: u32,
 		new_active_seconds: u32,
 	) -> anyhow::Result<IntegrationTokenConfig> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			UPDATE integration_token_config
 			SET maximum_open_tokens = $1, active_seconds = $2, updated_at = NOW()
@@ -301,7 +301,7 @@ impl Db {
 		id: i64,
 		old_updated_at: DateTime<Local>,
 	) -> anyhow::Result<IntegrationTokenConfig> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			UPDATE integration_token_config
 			SET deleted_at = NOW(), updated_at = NOW()
@@ -324,7 +324,7 @@ impl Db {
 		&self,
 		token: &str,
 	) -> anyhow::Result<Option<IntegrationToken>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT id, token, type::TEXT, status::TEXT, filters,
 				integration_id, expires_at,
@@ -345,7 +345,7 @@ impl Db {
 		integration_id: i64,
 		token_type: TokenType,
 	) -> anyhow::Result<u32> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT COUNT(*) AS open_count
 			FROM integration_token it
@@ -377,7 +377,7 @@ impl Db {
 		integration_id: i64,
 		api_key_id: i64,
 	) -> anyhow::Result<IntegrationToken> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			INSERT INTO integration_token (
 				token, type, status, filters, expires_at, integration_id,
@@ -413,7 +413,7 @@ impl Db {
 		new_status: TokenStatus,
 		new_filters: &filters::Filters,
 	) -> anyhow::Result<IntegrationToken> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			UPDATE integration_token
 			SET status = $1::TEXT::token_status, filters = $2,

@@ -195,6 +195,17 @@ struct Metrics {
 	grpc_latency_histogram: Histogram<u64>,
 	grpc_request_counter: Counter<u64>,
 	grpc_error_counter: Counter<u64>,
+	postgres_connections: Gauge<u64>,
+	postgres_idle_connections: Gauge<u64>,
+	postgres_connections_created: Gauge<u64>,
+	postgres_connections_closed_broken: Gauge<u64>,
+	postgres_connections_closed_idle_timeout: Gauge<u64>,
+	postgres_connections_closed_invalid: Gauge<u64>,
+	postgres_connections_closed_max_lifetime: Gauge<u64>,
+	postgres_get_direct: Gauge<u64>,
+	postgres_get_timed_out: Gauge<u64>,
+	postgres_get_waited: Gauge<u64>,
+	postgres_get_wait_time: Gauge<u64>,
 }
 
 impl Metrics {
@@ -306,6 +317,18 @@ impl Metrics {
 		let grpc_latency_histogram = meter.u64_histogram("grpc_request_duration_ms").build();
 		let grpc_request_counter = meter.u64_counter("grpc_requests_total").build();
 		let grpc_error_counter = meter.u64_counter("grpc_errors_total").build();
+		// postgres metrics
+		let postgres_connections = meter.u64_gauge("postgres_connections").build();
+		let postgres_idle_connections = meter.u64_gauge("postgres_idle_connections").build();
+		let postgres_connections_created = meter.u64_gauge("postgres_connections_created").build();
+		let postgres_connections_closed_broken = meter.u64_gauge("postgres_connections_closed_broken").build();
+		let postgres_connections_closed_idle_timeout = meter.u64_gauge("postgres_connections_closed_idle_timeout").build();
+		let postgres_connections_closed_invalid = meter.u64_gauge("postgres_connections_closed_invalid").build();
+		let postgres_connections_closed_max_lifetime = meter.u64_gauge("postgres_connections_closed_max_lifetime").build();
+		let postgres_get_direct = meter.u64_gauge("postgres_get_direct").build();
+		let postgres_get_timed_out = meter.u64_gauge("postgres_get_timed_out").build();
+		let postgres_get_waited = meter.u64_gauge("postgres_get_waited").build();
+		let postgres_get_wait_time = meter.u64_gauge("postgres_get_wait_time").build();
 
 		// log the current server version
 		meter.u64_counter("server_version_counter").build().add(
@@ -339,6 +362,17 @@ impl Metrics {
 			grpc_latency_histogram,
 			grpc_request_counter,
 			grpc_error_counter,
+			postgres_connections,
+			postgres_idle_connections,
+			postgres_connections_created,
+			postgres_connections_closed_broken,
+			postgres_connections_closed_idle_timeout,
+			postgres_connections_closed_invalid,
+			postgres_connections_closed_max_lifetime,
+			postgres_get_direct,
+			postgres_get_timed_out,
+			postgres_get_waited,
+			postgres_get_wait_time,
 		}
 	}
 }
@@ -609,6 +643,25 @@ pub fn add_grpc_error(attributes: &[KeyValue]) {
 pub fn drop_grpc_in_progress(attributes: &[KeyValue]) {
 	if let Some(m) = TELEMETRY.get() {
 		m.grpc_in_progress_counter.add(-1, attributes);
+	}
+}
+
+pub fn set_postgres_connection_pool_metrics(state: bb8::State) {
+	if let Some(m) = TELEMETRY.get() {
+		let connections = state.connections;
+		let idle_connections = state.idle_connections;
+		m.postgres_connections.record(connections as u64, &[]);
+		m.postgres_idle_connections.record(idle_connections as u64, &[]);
+		let stats = state.statistics;
+		m.postgres_connections_created.record(stats.connections_created, &[]);
+		m.postgres_connections_closed_broken.record(stats.connections_closed_broken, &[]);
+		m.postgres_connections_closed_idle_timeout.record(stats.connections_closed_idle_timeout, &[]);
+		m.postgres_connections_closed_invalid.record(stats.connections_closed_invalid, &[]);
+		m.postgres_connections_closed_max_lifetime.record(stats.connections_closed_max_lifetime, &[]);
+		m.postgres_get_direct.record(stats.get_direct, &[]);
+		m.postgres_get_timed_out.record(stats.get_timed_out, &[]);
+		m.postgres_get_waited.record(stats.get_waited, &[]);
+		m.postgres_get_wait_time.record(stats.get_wait_time.as_millis() as u64, &[]);
 	}
 }
 

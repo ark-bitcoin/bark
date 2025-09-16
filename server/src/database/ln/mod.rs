@@ -28,7 +28,7 @@ impl Db {
 		&self,
 		pubkey: &PublicKey,
 	) -> anyhow::Result<(ClnNodeId, DateTime<Local>)> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let select_stmt = conn.prepare("
 			SELECT id, updated_at
@@ -72,7 +72,7 @@ impl Db {
 		&self,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<Option<LightningIndexes>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT payment_created_index, payment_updated_index
 			FROM lightning_node
@@ -103,7 +103,7 @@ impl Db {
 		kind: ListsendpaysIndex,
 		index: u64,
 	) -> anyhow::Result<DateTime<Local>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = match kind {
 			ListsendpaysIndex::Created => conn.prepare("
 				UPDATE lightning_node
@@ -127,7 +127,7 @@ impl Db {
 		&self,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<Vec<LightningPaymentAttempt>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			SELECT id,
@@ -155,7 +155,7 @@ impl Db {
 		&self,
 		payment_hash: &PaymentHash,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			SELECT attempt.id,
@@ -204,7 +204,7 @@ impl Db {
 		invoice: &Invoice,
 		amount_msat: u64,
 	) -> anyhow::Result<()> {
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		let select_stmt = tx.prepare("
@@ -288,7 +288,7 @@ impl Db {
 		new_status: LightningPaymentStatus,
 		new_payment_error: Option<&str>,
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await.unwrap();
+		let conn = self.get_conn().await?;
 
 		// We want to preserve any previous error message in case we don't have a new one.
 		if let Some(error) = new_payment_error {
@@ -336,7 +336,7 @@ impl Db {
 		new_final_amount_msat: Option<u64>,
 		new_preimage: Option<Preimage>,
 	) -> anyhow::Result<Option<DateTime<Local>>> {
-		let conn = self.pool.get().await.unwrap();
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			UPDATE lightning_invoice
@@ -359,7 +359,7 @@ impl Db {
 	}
 
 	pub async fn get_lightning_invoice_by_id(&self, id: i64) -> anyhow::Result<LightningInvoice> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let row = conn.query_one("
 			SELECT DISTINCT ON (invoice.id)
@@ -382,7 +382,7 @@ impl Db {
 		&self,
 		payment_hash: &PaymentHash,
 	) -> anyhow::Result<Option<LightningInvoice>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let res = conn.query_opt("
 			SELECT DISTINCT ON (invoice.id)
@@ -411,7 +411,7 @@ impl Db {
 		invoice: &Bolt11Invoice,
 		amount_msat: u64,
 	) -> anyhow::Result<()> {
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		let select_stmt = tx.prepare("
@@ -503,7 +503,7 @@ impl Db {
 		node_id: ClnNodeId,
 		lightning_invoice_id: i64,
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		self.inner_store_lightning_htlc_subscription(conn, lightning_invoice_id, node_id,).await?;
 		Ok(())
 	}
@@ -520,7 +520,7 @@ impl Db {
 		status: LightningHtlcSubscriptionStatus,
 		lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		if let Some(lowest_incoming_htlc_expiry) = lowest_incoming_htlc_expiry {
 			let stmt = conn.prepare("
@@ -553,7 +553,7 @@ impl Db {
 		htlc_subscription_id: i64,
 		htlcs: impl IntoIterator<Item = VtxoId>,
 	) -> anyhow::Result<()> {
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		let stmt = tx.prepare("
@@ -595,7 +595,7 @@ impl Db {
 		&self,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
@@ -623,7 +623,7 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
@@ -650,7 +650,7 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
@@ -686,7 +686,7 @@ impl Db {
 		&self,
 		htlc_subscription_id: i64,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
