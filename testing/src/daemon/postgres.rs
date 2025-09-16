@@ -25,6 +25,7 @@ pub fn host_base_config() -> config::Postgres {
 		port: 5432,
 		user: Some("postgres".into()),
 		password: Some(Secret::new("postgres".into())),
+		max_connections: 10,
 	}
 }
 
@@ -90,6 +91,7 @@ impl PostgresHelper {
 			port: self.port(),
 			user: None,
 			password: None,
+			max_connections: 10,
 		}
 	}
 

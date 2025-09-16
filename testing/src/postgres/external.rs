@@ -21,6 +21,7 @@ pub struct ExternallyManagedPostgres {
 	name: String,
 	user: Option<String>,
 	password: Option<String>,
+	max_connections: u32,
 }
 
 impl ExternallyManagedPostgres {
@@ -31,6 +32,7 @@ impl ExternallyManagedPostgres {
 			name: String::from("postgres"),
 			user: Some(String::from("postgres")),
 			password: Some(String::from("postgres")),
+			max_connections: 10,
 		}
 	}
 
@@ -43,6 +45,7 @@ impl ExternallyManagedPostgres {
 			name: db_name.to_string(),
 			user: self.user.clone(),
 			password: self.password.as_ref().map(|x| Secret::new(String::from(x))),
+			max_connections: self.max_connections,
 		}
 	}
 
