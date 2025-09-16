@@ -125,10 +125,11 @@ impl Db {
 			SELECT funding_txid FROM round WHERE expiry <= $1 AND swept_at IS NULL;
 		").await?;
 
-		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
+		let rows = conn.query(&statement, &[&(height as i32)]).await?;
 		Ok(rows
-			.map_ok(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
-			.try_collect::<Vec<_>>().await?
+			.into_iter()
+			.map(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
+			.collect::<Vec<_>>()
 		)
 	}
 
@@ -145,7 +146,7 @@ impl Db {
 				FROM round
 				WHERE created_at > (SELECT created_at FROM round WHERE funding_txid = $1)
 			").await?;
-			conn.query_raw(&stmt, &[&last.to_string()]).await?
+			conn.query(&stmt, &[&last.to_string()]).await?
 		} else {
 			let window = vtxo_lifetime + vtxo_lifetime / 2;
 			let stmt = conn.prepare("
@@ -153,12 +154,13 @@ impl Db {
 				FROM round
 				WHERE created_at >= NOW() - ($1 * interval '1 second')
 			").await?;
-			conn.query_raw(&stmt, &[&(window.as_secs() as f64)]).await?
+			conn.query(&stmt, &[&(window.as_secs() as f64)]).await?
 		};
 
 		Ok(rows
-			.map_ok(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
-			.try_collect::<Vec<_>>().await?
+			.into_iter()
+			.map(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
+			.collect::<Vec<_>>()
 		)
 	}
 }
