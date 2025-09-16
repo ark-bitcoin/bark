@@ -174,6 +174,7 @@ pub struct Postgres {
 	pub name: String,
 	pub user: Option<String>,
 	pub password: Option<Secret<String>>,
+	pub max_connections: u32,
 }
 
 impl Default for Postgres {
@@ -183,7 +184,8 @@ impl Default for Postgres {
 			port: 5432,
 			name: String::from("bark-server-db"),
 			user: None,
-			password: None
+			password: None,
+			max_connections: 10,
 		}
 	}
 }

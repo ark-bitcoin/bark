@@ -88,6 +88,7 @@ impl Db {
 
 		let manager = PostgresConnectionManager::new(config, NoTls);
 		Ok(Pool::builder()
+			.max_size(postgres_config.max_connections)
 			.error_sink(Box::new(PoolErrorSink))
 			.build(manager).await?)
 	}
