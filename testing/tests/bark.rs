@@ -833,8 +833,9 @@ async fn second_round_attempt() {
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	let _ = srv.wallet_status().await;
+	let mut log_restart_missing_forfeits = srv.subscribe_log::<RestartMissingForfeits>();
 	srv.trigger_round().await;
-	srv.wait_for_log::<RestartMissingForfeits>().await;
+	log_restart_missing_forfeits.recv().await.unwrap();
 	res1.await.unwrap();
 	// check that bark2 was kicked
 	assert_eq!(log_missing_forfeits.recv().fast().await.unwrap().input, bark2_vtxo);
