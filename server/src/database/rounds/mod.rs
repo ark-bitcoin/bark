@@ -9,7 +9,6 @@ use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
 use bitcoin::secp256k1::SecretKey;
 use bitcoin_ext::BlockHeight;
-use futures::TryStreamExt;
 use tokio_postgres::types::Type;
 
 use ark::VtxoId;
