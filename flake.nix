@@ -18,7 +18,7 @@
 		flake-utils.lib.eachDefaultSystem (system:
 			let
 				rustVersion = "1.88.0";
-				bitcoinVersion = "29.0";
+				bitcoinVersion = "29.1";
 				lightningVersion = "25.02.2";
 				postgresVersion = "16.9";
 				esploraElectrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
@@ -44,7 +44,7 @@
 					version = bitcoinVersion;
 					src = pkgs.fetchurl {
 						urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
-						sha256 = "sha256-iCx4LDSjvy6s0frlzcWLNbhpiDUS8Zf31tyPGV3s/ao=";
+						sha256 = "sha256-Bn9iSuJzsNhaFVT/18CYkjNRpkcgTmcDTfbMHfrPoGs=";
 					};
 					doCheck = false;
 				});
