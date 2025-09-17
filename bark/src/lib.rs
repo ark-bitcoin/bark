@@ -13,7 +13,6 @@ pub mod exit;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
-pub mod server;
 pub mod vtxo_state;
 pub mod vtxo_selection;
 
@@ -26,6 +25,7 @@ mod config;
 mod lnurl;
 mod psbtext;
 mod round;
+mod server;
 
 use std::collections::{HashMap, HashSet};
 

@@ -25,24 +25,6 @@
 //!   that the selected Bitcoin [Network] matches the wallet and to learn
 //!   server-side parameters that drive client behavior.
 //!
-//! Typical usage
-//! ```rust
-//! # async fn demo() -> anyhow::Result<()> {
-//! use bitcoin::Network;
-//! use bark::server::ServerConnection;
-//!
-//! // Connect to a remote Ark server with version negotiation and TLS if needed.
-//! let conn = ServerConnection::connect("https://ark.signet.2nd.dev", Network::Signet).await?;
-//!
-//! // Access negotiated protocol version and server configuration.
-//! let _pver = conn.pver;
-//! let info = &conn.info;
-//!
-//! // Use the gRPC client for subsequent RPCs.
-//! let mut client = conn.client.clone();
-//! // client.some_rpc(...).await?;
-//! # Ok(()) }
-//! ```
 
 use std::cmp;
 use std::convert::TryFrom;
