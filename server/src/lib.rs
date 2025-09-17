@@ -58,10 +58,11 @@ use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
-use crate::ln::cln::ClnManager;
+use crate::bitcoind::BitcoinRpcClientExt;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
+use crate::ln::cln::ClnManager;
 use crate::round::RoundInput;
 use crate::secret::Secret;
 use crate::sweeps::VtxoSweeper;
@@ -267,6 +268,10 @@ impl Server {
 
 		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
 			.context("failed to create bitcoind rpc client")?;
+		bitcoind.require_network(cfg.network)?;
+		bitcoind.require_version()?;
+		bitcoind.require_txindex()?;
+
 		// Check if our bitcoind is on the expected network.
 		let chain_info = bitcoind.get_blockchain_info()?;
 		if chain_info.chain != cfg.network {
