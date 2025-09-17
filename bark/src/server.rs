@@ -1,3 +1,48 @@
+//! Client-side Ark server connector.
+//!
+//! This module provides a managed, version-aware gRPC connection between a
+//! Bark client and a paired Ark server. Its responsibilities are:
+//! - Negotiating and enforcing a compatible wire protocol version via a
+//!   handshake.
+//! - Establishing a gRPC channel (optionally with TLS) with sensible timeouts
+//!   and keepalives.
+//! - Injecting the negotiated protocol version into every RPC call so the
+//!   server can route/validate requests correctly.
+//! - Fetching and exposing the server's runtime configuration ([ArkInfo]) so
+//!   the client can adapt its behavior (e.g., network, round cadence, limits).
+//!
+//! Overview
+//! - Version negotiation: The client first calls the server's handshake RPC,
+//!   which returns the supported protocol version range. The client checks its
+//!   own supported range ([MIN_PROTOCOL_VERSION]..=[MAX_PROTOCOL_VERSION]) and
+//!   picks the highest mutually supported version.
+//! - Metadata propagation: After negotiation, all subsequent RPCs carry the
+//!   selected protocol version in the request metadata using a gRPC
+//!   interceptor.
+//! - TLS: If the server URI is HTTPS, a TLS configuration with the configured
+//!   crate roots is set up; otherwise the connection proceeds in cleartext.
+//! - Server info: Once connected, the client retrieves [ArkInfo] to validate
+//!   that the selected Bitcoin [Network] matches the wallet and to learn
+//!   server-side parameters that drive client behavior.
+//!
+//! Typical usage
+//! ```rust
+//! # async fn demo() -> anyhow::Result<()> {
+//! use bitcoin::Network;
+//! use bark::server::ServerConnection;
+//!
+//! // Connect to a remote Ark server with version negotiation and TLS if needed.
+//! let conn = ServerConnection::connect("https://ark.signet.2nd.dev", Network::Signet).await?;
+//!
+//! // Access negotiated protocol version and server configuration.
+//! let _pver = conn.pver;
+//! let info = &conn.info;
+//!
+//! // Use the gRPC client for subsequent RPCs.
+//! let mut client = conn.client.clone();
+//! // client.some_rpc(...).await?;
+//! # Ok(()) }
+//! ```
 
 use std::cmp;
 use std::convert::TryFrom;
@@ -22,8 +67,11 @@ pub const MIN_PROTOCOL_VERSION: u64 = 1;
 /// For info on protocol versions, see [server_rpc] module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
-
-/// A gRPC interceptor that places the protocol version in the metadata header.
+/// A gRPC interceptor that attaches the negotiated protocol version to each request.
+///
+/// After the handshake determines the mutually supported protocol version, this
+/// interceptor injects it into the outgoing request metadata so the server can
+/// process calls according to the agreed wire format and semantics.
 struct ProtocolVersionInterceptor {
 	pver: u64,
 }
@@ -36,6 +84,11 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 }
 
 /// A managed connection to the Ark server.
+///
+/// This type encapsulates:
+/// - `pver`: The negotiated protocol version for the current session.
+/// - `info`: The server's [ArkInfo] configuration snapshot retrieved at connection time.
+/// - `client`: A ready-to-use gRPC client bound to the same channel used for the handshake.
 #[derive(Clone)]
 pub struct ServerConnection {
 	/// Protocol version used for rpc protocol.
@@ -43,11 +96,18 @@ pub struct ServerConnection {
 	/// For info on protocol versions, see [server_rpc] module documentation.
 	#[allow(unused)]
 	pub pver: u64,
+	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
+	/// The gRPC client to call Ark RPCs.
 	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
 }
 
 impl ServerConnection {
+	/// Build a tonic endpoint from a server address, configuring timeouts and TLS if required.
+	///
+	/// - Supports `http` and `https` URIs. Any other scheme results in an error.
+	/// - Uses a 10-minute keep-alive and overall request timeout to accommodate long-running RPCs.
+	/// - When `https` is used, the crate-configured root CAs are enabled and the SNI domain is set.
 	fn create_endpoint(address: &str) -> anyhow::Result<tonic::transport::Endpoint> {
 		let uri = tonic::transport::Uri::from_str(address)
 			.context("failed to parse Ark server as a URI")?;
@@ -77,7 +137,23 @@ impl ServerConnection {
 		Ok(endpoint)
 	}
 
-	/// Try to perform the handshake with the server.
+	/// Establish a connection to an Ark server and perform protocol negotiation.
+	///
+	/// Steps performed:
+	/// 1. Build and connect a gRPC channel to `address` (with TLS for https).
+	/// 2. Perform the handshake RPC, sending the Bark client version.
+	/// 3. Validate the server's supported protocol range against
+	///    [MIN_PROTOCOL_VERSION]..=[MAX_PROTOCOL_VERSION] and select a version.
+	/// 4. Create a client with a protocol-version interceptor to tag future calls.
+	/// 5. Fetch [ArkInfo] and verify it matches the provided Bitcoin [Network].
+	///
+	/// Returns a [ServerConnection] with:
+	/// - the negotiated protocol version,
+	/// - the server's configuration snapshot,
+	/// - and a gRPC client bound to the established channel.
+	///
+	/// Errors if the server cannot be reached, handshake fails, protocol versions
+	/// are incompatible, or the server's network does not match `network`.
 	pub async fn connect(
 		address: &str,
 		network: Network,
