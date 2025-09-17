@@ -401,86 +401,126 @@ enum OnchainCommand {
 	},
 }
 
-fn init_logging(verbose: bool, quiet: bool, datadir: &Path) -> anyhow::Result<()> {
-	if verbose && quiet {
-		bail!("Can't set both --verbose and --quiet");
+/// Simple logger that splits into two logger
+struct SplitLogger {
+	log1: env_logger::Logger,
+	log2: env_logger::Logger,
+}
+
+impl SplitLogger {
+	fn init(log1: env_logger::Logger, log2: env_logger::Logger) {
+		log::set_boxed_logger(Box::new(SplitLogger {
+			log1: log1,
+			log2: log2,
+		})).expect("error initializing split logger");
+	}
+}
+
+impl log::Log for SplitLogger {
+	fn enabled(&self, m: &log::Metadata) -> bool {
+	    self.log1.enabled(m) || self.log2.enabled(m)
 	}
 
-	let colors = fern::colors::ColoredLevelConfig::default();
+	fn flush(&self) {
+	    self.log1.flush();
+		self.log2.flush();
+	}
 
-	let dispatch = fern::Dispatch::new()
-		.level_for("rusqlite", log::LevelFilter::Warn)
-		.level_for("rustls", log::LevelFilter::Warn)
-		.level_for("reqwest", log::LevelFilter::Warn)
-		.format(move |out, msg, rec| {
-			let now = chrono::Local::now();
-			let stamp = now.format("%Y-%m-%d %H:%M:%S.%3f");
-			let lvl = colors.color(rec.level());
-			if verbose {
-				let module = rec.module_path().expect("no module");
-				if module.starts_with("bark") {
-					let file = rec.file().expect("our macro provides file");
-					let file = file.split("bark/src/").last().unwrap();
-					let line = rec.line().expect("our macro provides line");
-					out.finish(format_args!(
-						"[{stamp} {lvl: >5} {module} {file}:{line}] {msg}",
-					))
-				} else {
-					out.finish(format_args!(
-						"[{stamp} {lvl: >5} {module}] {msg}",
-					))
-				}
-			} else {
-				out.finish(format_args!(
-					"[{stamp} {lvl: >5}] {msg}",
-				))
-			}
+	fn log(&self, rec: &log::Record) {
+		self.log1.log(rec);
+		self.log2.log(rec);
+	}
+}
+
+fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
+	if verbose && quiet {
+		println!("Can't set both --verbose and --quiet");
+		process::exit(1);
+	}
+
+	let env = env_logger::Env::new().filter("BARK_LOG");
+
+	// Builder has no clone and we don't want to repeat this
+	fn base() -> env_logger::Builder {
+		let mut builder = env_logger::Builder::new();
+		builder
+			.filter_module("rusqlite", log::LevelFilter::Warn)
+			.filter_module("rustls", log::LevelFilter::Warn)
+			.filter_module("reqwest", log::LevelFilter::Warn);
+		builder
+	}
+
+	let terminal = if !quiet {
+		let mut logger = base();
+
+		// We first set the default and then let the env_logger
+		// env overwrite it.
+		logger.filter_level(if verbose {
+			log::LevelFilter::Trace
+		} else {
+			log::LevelFilter::Info
 		});
 
-	// one dispatch for the debug.log file
-	let logfile = if datadir.exists() {
-		if let Ok(mut file) = fern::log_file(datadir.join("debug.log")) {
-			// try write a newline into the file to separate commands
-			let _ = file.write_all("\n\n".as_bytes());
-			fern::Dispatch::new()
-				.level(log::LevelFilter::Trace)
-				.level_for("bitcoincore_rpc", log::LevelFilter::Trace)
-				.level_for("bitcoin_ext", log::LevelFilter::Trace)
-				.chain(file)
-		} else {
-			fern::Dispatch::new()
-		}
+		logger.parse_env(env)
+			.format(move |out, rec| {
+				let now = chrono::Local::now();
+				let ts = now.format("%Y-%m-%d %H:%M:%S.%3f");
+				let lvl = rec.level();
+				let msg = rec.args();
+				if verbose {
+					let module = rec.module_path().expect("no module");
+					if module.starts_with("bark") {
+						let file = rec.file().expect("our macro provides file");
+						let file = file.split("bark/src/").last().unwrap();
+						let line = rec.line().expect("our macro provides line");
+						writeln!(out, "[{ts} {lvl: >5} {module} {file}:{line}] {msg}")
+					} else {
+						writeln!(out, "[{ts} {lvl: >5} {module}] {msg}")
+					}
+				} else {
+					writeln!(out, "[{ts} {lvl: >5}] {msg}")
+				}
+			})
+			.target(env_logger::Target::Stderr);
+		Some(logger)
 	} else {
-		fern::Dispatch::new()
+		None
 	};
 
-	// then also one for terminal output
-	let terminal = if verbose {
-		fern::Dispatch::new()
-			.level(log::LevelFilter::Trace)
-			.level_for("bitcoincore_rpc", log::LevelFilter::Trace)
-			.level_for("bitcoin_ext", log::LevelFilter::Trace)
-	} else if quiet {
-		fern::Dispatch::new()
+	let logfile = if datadir.exists() {
+		let path = datadir.join("debug.log");
+		if let Ok(mut file) = std::fs::File::options().append(true).open(path) {
+			// try write a newline into the file to separate commands
+			let _ = file.write_all("\n\n".as_bytes());
+			let mut logger = base();
+			logger
+				.filter_level(log::LevelFilter::Trace)
+				.format_timestamp_millis()
+				.format_module_path(true)
+				.format_file(true)
+				.format_line_number(true)
+				.target(env_logger::Target::Pipe(Box::new(file)));
+			Some(logger)
+		} else {
+			None
+		}
 	} else {
-		fern::Dispatch::new()
-			.level(log::LevelFilter::Info)
-			.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
-	}.chain(std::io::stderr());
+		None
+	};
 
-	dispatch.chain(logfile).chain(terminal).apply()
-		.context("error applying logging configuration")?;
-	Ok(())
+	match (terminal, logfile) {
+		(Some(mut l1), Some(mut l2)) => SplitLogger::init(l1.build(), l2.build()),
+		(Some(mut l), None) => l.init(),
+		(None, Some(mut l)) => l.init(),
+		(None, None) => {},
+	}
 }
 
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 	debug!("Using bark datadir at {}", datadir.display());
 
-	if let Err(e) = init_logging(cli.verbose, cli.quiet, &datadir) {
-		eprintln!("Error setting up logging: {}", e);
-		process::exit(1);
-	}
+	init_logging(cli.verbose, cli.quiet, &datadir);
 
 	// Handle create command differently.
 	if let Command::Create ( create_opts ) = cli.command {

@@ -33,11 +33,10 @@ bitcoin.workspace = true
 bip39.workspace = true
 bdk_esplora.workspace = true
 log.workspace = true
-fern.workspace = true
+env_logger.workspace = true
 chrono.workspace = true
 rand.workspace = true
-tokio.workspace = true
-tokio.features = [ "process" ]
+tokio = { workspace = true, features = [ "process" ] }
 tokio-stream.workspace = true
 tonic.workspace = true
 futures.workspace = true

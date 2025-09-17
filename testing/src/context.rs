@@ -55,7 +55,7 @@ pub struct TestContext {
 
 impl TestContext {
 	pub async fn new_minimal(test_name: impl AsRef<str>) -> Self {
-		crate::util::init_logging().expect("Logging can be initialized");
+		crate::util::init_logging();
 
 		let test_name = test_name.as_ref().to_owned();
 		let datadir = test_data_directory().await.join(&test_name);
@@ -221,7 +221,6 @@ impl TestContext {
 		// to force us to evaluate every value in test context.
 		Config {
 			data_dir: data_dir.clone(),
-			log_dir: Some(data_dir),
 			network: Network::Regtest,
 			vtxo_lifetime: 144,
 			vtxo_exit_delta: 12,

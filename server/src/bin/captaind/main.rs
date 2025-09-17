@@ -1,19 +1,21 @@
 
-use std::path::{Path, PathBuf};
 use std::process;
+use std::io::Write;
+use std::path::PathBuf;
 use std::str::FromStr;
+
 use anyhow::{bail, Context};
 use bitcoin::{bip32, Address};
 use chrono::Local;
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use clap::{Args, Parser};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 
 use ark::integration::{TokenStatus, TokenType};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+
 use server::{Server, Config, filters};
-use server_log::{RecordSerializeWrapper, SLOG_FILENAME};
 use server_rpc::{self as rpc, protos};
 
 /// Defaults to our default port on localhost.
@@ -218,57 +220,22 @@ async fn main() {
 	}
 }
 
-fn init_logging(slog_dir: Option<&Path>) {
-	//TODO(stevenroose) add filename and line number when verbose logging
-	let mut dispatch = fern::Dispatch::new()
-		.level(log::LevelFilter::Trace)
-		.level_for("rustls", log::LevelFilter::Warn)
-		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
-		.level_for("tokio_postgres", log::LevelFilter::Info)
-		// regular logging dispatch
-		.chain(fern::Dispatch::new()
-			.format(|out, msg, rec| {
-				let now = chrono::Local::now();
-				let stamp = now.to_rfc3339();
-				let kv = if rec.key_values().count() > 0 {
-					let mut buf = Vec::new();
-					buf.extend(" -- ".as_bytes());
-					serde_json::to_writer(&mut buf, &server_log::SourceSerializeWrapper(rec.key_values())).unwrap();
-					String::from_utf8(buf).unwrap()
-				} else {
-					String::new()
-				};
-				out.finish(format_args!(
-					"[{} {: >5} {}] {}{}",
-					stamp, rec.level(), rec.module_path().unwrap_or(""), msg, kv,
-				))
-			})
-			.chain(std::io::stdout())
-		);
+fn init_logging() {
+	let env = env_logger::Env::new().filter("CAPTAIND_LOG");
 
-	if let Some(dir) = slog_dir {
-		// structured logging dispatch
-		let slog_file = fern::log_file(dir.join(SLOG_FILENAME)).expect("failed to open log file");
-		dispatch = dispatch.chain(fern::Dispatch::new()
-			.filter(|m| m.target() == server_log::SLOG_TARGET)
-			.format(|out, _msg, rec| {
-				#[derive(serde::Serialize)]
-				struct Rec<'a> {
-					timestamp: chrono::DateTime<chrono::Local>,
-					#[serde(flatten)]
-					rec: RecordSerializeWrapper<'a>,
-				}
-				let rec = Rec {
-					timestamp: chrono::Local::now(),
-					rec: RecordSerializeWrapper(rec),
-				};
-				out.finish(format_args!("{}", serde_json::to_string(&rec).unwrap()));
-			})
-			.chain(slog_file)
-		);
-	}
-
-	dispatch.apply().expect("error setting up logging");
+	env_logger::Builder::new()
+		.filter_level(log::LevelFilter::Trace)
+		.filter_module("rustls", log::LevelFilter::Warn)
+		.filter_module("bitcoincore_rpc", log::LevelFilter::Warn)
+		.filter_module("tokio_postgres", log::LevelFilter::Info)
+		.parse_env(env)
+		.format(|mut out, rec| {
+			let ts = chrono::Local::now();
+			server_log::encode_record(&mut out, ts, rec)?;
+			out.write_all(&[b'\n'])
+		})
+		.target(env_logger::Target::Stdout)
+		.init();
 }
 
 async fn inner_main() -> anyhow::Result<()> {
@@ -281,7 +248,7 @@ async fn inner_main() -> anyhow::Result<()> {
 	let cfg = Config::load(cli.config.as_ref().map(|p| p.as_path()))?;
 	cfg.validate().expect("invalid configuration");
 
-	init_logging(cfg.log_dir.as_ref().map(|p| p.as_path()));
+	init_logging();
 	info!("Running with config: {:#?}", cfg);
 
 	match cli.command {
@@ -475,21 +442,15 @@ async fn inner_main() -> anyhow::Result<()> {
 }
 
 fn init_logging_rpc() {
-	let colors = fern::colors::ColoredLevelConfig::default();
-	fern::Dispatch::new()
-		.level(log::LevelFilter::Trace)
-		.level_for("rustls", log::LevelFilter::Warn)
-		.level_for("bitcoincore_rpc", log::LevelFilter::Warn)
-		.format(move |out, msg, rec| {
-			let now = chrono::Local::now();
-			// only time, not date
-			let stamp = now.format("%H:%M:%S.%3f");
-			out.finish(format_args!(
-				"[{} {: >5}] {}", stamp, colors.color(rec.level()), msg,
-			))
-		})
-		.chain(std::io::stderr())
-		.apply().expect("error setting up logging");
+	let env = env_logger::Env::new().filter("CAPTAIND_LOG");
+	env_logger::Builder::new()
+		.filter_level(log::LevelFilter::Trace)
+		.filter_module("rustls", log::LevelFilter::Warn)
+		.filter_module("bitcoincore_rpc", log::LevelFilter::Warn)
+		.parse_env(env)
+		.format_timestamp_millis()
+		.target(env_logger::Target::Stdout)
+		.init();
 }
 
 async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {

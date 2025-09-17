@@ -194,8 +194,6 @@ impl Default for Postgres {
 #[serde(deny_unknown_fields)]
 pub struct Config {
 	pub data_dir: PathBuf,
-	/// Directory to place structured log files.
-	pub log_dir: Option<PathBuf>,
 	pub network: bitcoin::Network,
 	/// The number of blocks after which a VTXO expires, by default 6*24*30 so that
 	/// a VTXO can live for up to 30 days.
@@ -281,7 +279,6 @@ impl Default for Config {
 	fn default() -> Self {
 		Config {
 			data_dir: "./bark-server".into(),
-			log_dir: None,
 			network: bitcoin::Network::Regtest,
 			vtxo_lifetime: 6 * 24 * 30,
 			vtxo_exit_delta: 2 * 6,

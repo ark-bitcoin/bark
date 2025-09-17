@@ -781,6 +781,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 			ctx.await_transaction_across_nodes(child_tx.info.txid, secondary.bitcoind()).await;
 		}
 	}
+
 	bark1.progress_exit().await;
 	await_propagation(&ctx, &bark1, &bark2).await;
 	bark2.progress_exit().await;

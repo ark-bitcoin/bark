@@ -9,7 +9,8 @@ mod serde_utils;
 pub use crate::msgs::*;
 pub use opentelemetry::trace::TraceId;
 
-use std::fmt;
+use std::borrow::Cow;
+use std::{fmt, io};
 use opentelemetry::trace::TraceContextExt;
 use serde::de::{Deserialize, DeserializeOwned};
 use serde::ser::{Serialize, Serializer, SerializeMap};
@@ -21,8 +22,6 @@ pub const SLOG_TARGET: &str = "bark-server-slog";
 pub const LOGID_FIELD: &str = "slog_id";
 pub const TRACEID_FIELD: &str = "slog_trace_id";
 pub const DATA_FIELD: &str = "slog_data";
-
-pub const SLOG_FILENAME: &str = "structured.log";
 
 /// Retrieves the current trace ID from OpenTelemetry
 pub fn get_trace_id() -> Option<TraceId> {
@@ -119,18 +118,23 @@ where
 
 #[derive(Debug, Deserialize)]
 pub struct ParsedRecord<'a> {
-	#[serde(rename = "message")]
-	pub msg: &'a str,
+	pub timestamp: chrono::DateTime<chrono::Local>,
+	// NB needs to be Cow to handle built-in escaping of newlines if any
+	pub message: Cow<'a, str>,
 	pub level: log::Level,
-	pub target: &'a str,
 	pub module: Option<&'a str>,
 	pub file: Option<&'a str>,
 	pub line: Option<u32>,
-	#[serde(deserialize_with = "deserialize_kv")]
+	#[serde(default, deserialize_with = "deserialize_kv")]
 	pub kv: Option<ParsedRecordKv<'a>>,
 }
 
 impl<'a> ParsedRecord<'a> {
+	/// Whether this is a structured log message
+	pub fn is_slog(&self) -> bool {
+		self.kv.is_some()
+	}
+
 	/// Check whether this log message if of the given structure log type.
 	pub fn is<T: LogMsg>(&self) -> bool {
 		if let Some(ref kv) = self.kv {
@@ -159,6 +163,29 @@ impl<'a> ParsedRecord<'a> {
 	}
 }
 
+/// Encode the record compatible with [ParsedRecord].
+pub fn encode_record<'a>(
+	out: impl io::Write,
+	timestamp: chrono::DateTime<chrono::Local>,
+	record: &'a log::Record<'a>,
+) -> Result<(), io::Error> {
+	#[derive(serde::Serialize)]
+	struct Rec<'a> {
+		timestamp: chrono::DateTime<chrono::Local>,
+		#[serde(flatten)]
+		rec: RecordSerializeWrapper<'a>,
+	}
+
+	let rec = Rec {
+		timestamp: timestamp,
+		rec: RecordSerializeWrapper(record),
+	};
+
+	serde_json::to_writer(out, &rec)?;
+	Ok(())
+}
+
+
 /// A wrapper around a [log::kv::Source] that implements [serde::Serialize].
 pub struct SourceSerializeWrapper<'a>(pub &'a dyn log::kv::Source);
 
@@ -186,14 +213,13 @@ impl<'a> Serialize for SourceSerializeWrapper<'a> {
 }
 
 /// A wrapper around a [log::Record] that implements [serde::Serialize].
-pub struct RecordSerializeWrapper<'a>(pub &'a log::Record<'a>);
+struct RecordSerializeWrapper<'a>(pub &'a log::Record<'a>);
 
 impl<'a> Serialize for RecordSerializeWrapper<'a> {
 	fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
 		let mut m = s.serialize_map(None)?;
 		m.serialize_entry("message", self.0.args())?;
 		m.serialize_entry("level", &self.0.level())?;
-		m.serialize_entry("target", self.0.target())?;
 		if let Some(module) = self.0.module_path() {
 			m.serialize_entry("module", module)?;
 		}
@@ -210,6 +236,25 @@ impl<'a> Serialize for RecordSerializeWrapper<'a> {
 		m.end()
 	}
 }
+
+/// Extension trait for [log::kv::Source]
+pub trait KvSourceExt: log::kv::Source {
+	fn is_empty(&self) -> bool {
+		// Visitor that throws an error to swiftly indicate the source is not empty.
+		struct Visitor;
+
+		impl<'kvs> log::kv::VisitSource<'kvs> for Visitor {
+			fn visit_pair(
+				&mut self, _: log::kv::Key<'kvs>, _: log::kv::Value<'kvs>,
+			) -> Result<(), log::kv::Error> {
+				Err(log::kv::Error::msg(""))
+			}
+		}
+
+		self.visit(&mut Visitor).is_ok()
+	}
+}
+impl<T: log::kv::Source> KvSourceExt for T {}
 
 #[cfg(test)]
 mod test {
@@ -235,7 +280,11 @@ mod test {
 			.line(Some(35))
 			.key_values(&kv)
 			.build();
-		let json = serde_json::to_string(&RecordSerializeWrapper(&record)).unwrap();
+		let json = {
+			let mut buf = Vec::new();
+			encode_record(&mut buf, chrono::Local::now(), &record).unwrap();
+			String::from_utf8(buf).unwrap()
+		};
 
 		let parsed = serde_json::from_str::<ParsedRecord>(&json).unwrap();
 		assert!(parsed.is::<TestLog>());
@@ -248,8 +297,8 @@ mod test {
 	fn json_parse() {
 		// Check that we can parse messages with extra values.
 		let json = serde_json::to_string(&serde_json::json!({
+			"timestamp": "2025-09-01T17:06:57.586378832+01:00",
 			"message": "test",
-			"target": SLOG_TARGET,
 			"level": "info",
 			"file": "test.rs",
 			"line": 35,
@@ -267,9 +316,9 @@ mod test {
 		assert_eq!(trace_id, Some(TraceId::from_hex("abababababababababababababababab").unwrap()));
 
 		// Check that deserialization works if trace_id is missing
-				let json = serde_json::to_string(&serde_json::json!({
+		let json = serde_json::to_string(&serde_json::json!({
+			"timestamp": "2025-09-01T17:06:57.586378832+01:00",
 			"message": "test",
-			"target": SLOG_TARGET,
 			"level": "info",
 			"file": "test.rs",
 			"line": 35,
@@ -287,8 +336,8 @@ mod test {
 
 		// And without slog stuff
 		let json = serde_json::to_string(&serde_json::json!({
+			"timestamp": "2025-09-01T17:06:57.586378832+01:00",
 			"message": "test",
-			"target": "random",
 			"level": "info",
 			"file": "test.rs",
 			"line": 35,
@@ -300,5 +349,14 @@ mod test {
 		assert!(!parsed.is::<TestLog>());
 		let trace_id = parsed.trace_id::<TestLog>();
 		assert_eq!(trace_id, None);
+	}
+
+	#[test]
+	fn source_is_empty() {
+		let source = &[("a", 1)] as &[_];
+		assert!(!KvSourceExt::is_empty(&source));
+
+		let source = None::<(&str, i32)>;
+		assert!(KvSourceExt::is_empty(&source));
 	}
 }

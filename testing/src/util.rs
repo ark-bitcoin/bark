@@ -1,7 +1,6 @@
 
 use std::env;
 use std::borrow::Borrow;
-use std::fmt::Write;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -40,42 +39,35 @@ impl From<String> for TestContextChainSource {
 	}
 }
 
-pub fn init_logging() -> anyhow::Result<()> {
-	match env::var("RUST_LOG") {
-		Ok(v) if v == "0" => return Ok(()),
-		_ => {},
-	}
+pub fn init_logging() {
+	use std::io::Write;
 
-	// We ignore the output
-	// An error is returned if the logger is initiated twice
-	// Note, that every test tries to initiate the logger
-	let _ = fern::Dispatch::new()
-		.level(log::LevelFilter::Trace)
-		.level_for("rustls", log::LevelFilter::Off)
-		.level_for("tonic", log::LevelFilter::Off)
-		.level_for("tokio_postgres", log::LevelFilter::Off)
-		.format(|out, msg, rec| {
+	// every test calls this, so we ignore the error it throws on the
+	// all calls after the first
+	let _ = env_logger::Builder::new()
+		.filter_level(log::LevelFilter::Trace)
+		.filter_module("rustls", log::LevelFilter::Off)
+		.filter_module("tonic", log::LevelFilter::Off)
+		.filter_module("tokio_postgres", log::LevelFilter::Off)
+		.parse_env(env_logger::Env::new().filter("TEST_LOG"))
+		.format(|out, rec| {
 			let now = chrono::Local::now();
-			let stamp = now.format("%H:%M:%S.%3f");
+			let ts = now.format("%H:%M:%S.%3f");
 			let lvl = rec.level();
 			let module = rec.module_path().expect("no module");
+			let msg = rec.args();
 			if module.starts_with("ark_testing") {
 				let module = module.strip_prefix("ark_").unwrap();
 				let file = rec.file().expect("log record without file");
-				let file = file.split("ark-testing/src/").last().unwrap();
+				let file = file.split("testing/src/").last().unwrap();
 				let line = rec.line().expect("log record without line");
-				out.finish(format_args!(
-					"[{stamp} {lvl: >5} {module} {file}:{line}] {msg}",
-				))
+				writeln!(out, "[{ts} {lvl: >5} {module} {file}:{line}] {msg}")
 			} else {
-				out.finish(format_args!(
-					"[{stamp} {lvl: >5} {module}] {msg}",
-				))
+				writeln!(out, "[{ts} {lvl: >5} {module}] {msg}")
 			}
 		})
-		.chain(std::io::stdout())
-		.apply();
-	Ok(())
+		.target(env_logger::Target::Stdout)
+		.try_init();
 }
 
 /// Resolves the directory when it is a relative path, and
@@ -226,6 +218,8 @@ impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
 
 pub trait AnyhowErrorExt: Borrow<anyhow::Error> {
 	fn full_msg(&self) -> String {
+		use std::fmt::Write;
+
 		let mut ret = String::new();
 		for (i, e) in self.borrow().chain().enumerate() {
 			if i == 0 {
