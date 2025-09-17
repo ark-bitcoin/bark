@@ -1230,6 +1230,13 @@ CREATE INDEX arkoor_mailbox_pubkey_ix ON public.arkoor_mailbox USING btree (pubk
 
 
 --
+-- Name: arkoor_mailbox_vtxo_id_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX arkoor_mailbox_vtxo_id_uix ON public.arkoor_mailbox USING btree (vtxo_id);
+
+
+--
 -- Name: integration_api_key_api_key_uix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1321,17 +1328,24 @@ CREATE INDEX round_expiry_ix ON public.round USING btree (expiry, ((swept_at IS 
 
 
 --
--- Name: round_tx_id_ix; Type: INDEX; Schema: public; Owner: -
+-- Name: round_funding_tx_id_uix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX round_tx_id_ix ON public.round USING btree (funding_txid, ((swept_at IS NULL)));
+CREATE UNIQUE INDEX round_funding_tx_id_uix ON public.round USING btree (funding_txid) INCLUDE (swept_at);
 
 
 --
--- Name: sweep_tx_id_pending_ix; Type: INDEX; Schema: public; Owner: -
+-- Name: round_seq_uix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sweep_tx_id_pending_ix ON public.sweep USING btree (txid, ((abandoned_at IS NULL)), ((confirmed_at IS NULL)));
+CREATE UNIQUE INDEX round_seq_uix ON public.round USING btree (seq);
+
+
+--
+-- Name: sweep_txid_pending_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) INCLUDE (abandoned_at, confirmed_at);
 
 
 --
@@ -1353,6 +1367,13 @@ CREATE INDEX vtxo_has_forfeit_state_ix ON public.vtxo USING btree (((forfeit_sta
 --
 
 CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((forfeit_state IS NULL)), vtxo_id);
+
+
+--
+-- Name: vtxo_vtxo_id_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX vtxo_vtxo_id_uix ON public.vtxo USING btree (vtxo_id);
 
 
 --
