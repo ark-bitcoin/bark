@@ -64,7 +64,6 @@ pub trait DaemonHelper {
 	}
 
 	async fn wait_for_init(&self) -> anyhow::Result<()>;
-	fn prepare_kill(&mut self, _child: &mut Child) {}
 }
 
 pub struct Daemon<T>
@@ -211,9 +210,21 @@ impl<T> Daemon<T>
 			signal::kill(pid, signal::Signal::SIGTERM).expect("sending SIGTERM failed");
 		}
 
-		child.wait().try_wait(30_000).await
-			.expect("waiting for daemon to shutdown timed out")
-			.expect("error waiting for daemon to shutdown");
+		match child.wait().try_wait(30_000).await {
+			Ok(Ok(s)) => if s.success() {
+				info!("Daemon {} succesfully shut down gracefully", self.name);
+			} else {
+				warn!("Daemon {} shut down with exit status {}", self.name, s);
+			},
+			Ok(Err(e)) => error!("Error sending TERM signal to daemon {}: {}", self.name, e),
+			Err(_) => warn!("Shutting down daemon {} timed out", self.name),
+		}
+
+		// In case that failed, we send a SIGKILL
+		if let Some(pid) = child.id() {
+			let pid = nix::unistd::Pid::from_raw(pid as i32);
+			signal::kill(pid, signal::Signal::SIGKILL).expect("sending SIGKILL failed");
+		}
 
 		info!("Stopped {}", self.name);
 		*state_lock = DaemonState::Stopped;
@@ -231,9 +242,6 @@ impl<T> Drop for Daemon<T>
 {
 	fn drop(&mut self) {
 		if let Some(child) = self.child.get_mut() {
-			self.inner.prepare_kill(child);
-
-			// Then just sigkill.
 			if let Some(pid) = child.id() {
 				let pid = nix::unistd::Pid::from_raw(pid as i32);
 				nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL)
