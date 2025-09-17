@@ -6,6 +6,7 @@
 #[macro_use]
 mod error;
 
+mod bitcoind;
 pub mod config;
 pub mod database;
 pub mod rpcserver;
