@@ -1,5 +1,5 @@
 
-pub const BOARD_CONFIRMATIONS: u32 = 12;
+pub const BOARD_CONFIRMATIONS: u32 = 3;
 pub const ROUND_CONFIRMATIONS: u32 = 6;
 
 pub mod env {
