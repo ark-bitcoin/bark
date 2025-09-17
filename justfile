@@ -151,6 +151,8 @@ dump-server-sql-schema:
 	# Use sed to remove lines that are hard to reproduce across different systems
 	sed -i '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
 	sed -i '/^-- Dumped from .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
+	sed -i '/^\\restrict.*$/d' {{SERVER_SQL_SCHEMA_PATH}}
+	sed -i '/^\\unrestrict.*$/d' {{SERVER_SQL_SCHEMA_PATH}}
 	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
 
 dump-bark-sql-schema:
