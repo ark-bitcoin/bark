@@ -335,9 +335,15 @@ impl Bark {
 		self.try_send_lightning(destination, amount).await.unwrap();
 	}
 
+	pub async fn try_bolt11_invoice(&self, amount: Amount) -> anyhow::Result<InvoiceInfo> {
+		let res = self.try_run([
+			"lightning", "invoice", &amount.to_string(), "--verbose"
+		]).await?;
+		Ok(serde_json::from_str(&res).expect("json error"))
+	}
+
 	pub async fn bolt11_invoice(&self, amount: Amount) -> InvoiceInfo {
-		let res = self.run(["lightning", "invoice", &amount.to_string(), "--verbose"]).await;
-		serde_json::from_str(&res).expect("json error")
+		self.try_bolt11_invoice(amount).await.expect("bolt11 invoice command failed")
 	}
 
 	pub async fn try_lightning_receive(&self, invoice: String) -> anyhow::Result<()> {

@@ -241,6 +241,16 @@ impl Server {
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
+		if amount < P2TR_DUST {
+			return badarg!("Requested amount must be at least {}", P2TR_DUST);
+		}
+
+		if let Some(max) = self.config.max_vtxo_amount {
+			if amount > max {
+				return badarg!("Requested amount exceeds limit of {}", max);
+			}
+		}
+
 		let subscriptions = self.db.get_htlc_subscriptions_by_payment_hash(payment_hash).await?;
 
 		let subscriptions_by_status = subscriptions.iter()
