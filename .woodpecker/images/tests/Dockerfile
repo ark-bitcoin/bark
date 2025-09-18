@@ -60,12 +60,14 @@ RUN bash -c '\
 
 RUN echo "clone bark" && \
 	cd /root && \
-	git clone -b mempool-in-ci https://codeberg.org/ark-bitcoin/bark.git
+	git clone -b master https://codeberg.org/ark-bitcoin/bark.git
 
 RUN echo "build nix devShell" && \
 	. /etc/profile.d/nix.sh && \
 	nix --extra-experimental-features 'nix-command flakes' develop /root/bark#default --command bash -c "\
 		echo Flake devShell ready"
+RUN echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+RUN cat /etc/nix/nix.conf
 
 RUN service postgresql start && \
 	sudo -u postgres psql -c "ALTER USER ${POSTGRES_USER} WITH PASSWORD '${POSTGRES_PASSWORD}';" && \
@@ -74,7 +76,7 @@ RUN service postgresql start && \
 RUN echo "build bark" && \
 	. /etc/profile.d/nix.sh && \
 	cd /root/bark && \
-	nix --extra-experimental-features 'nix-command flakes' develop /root/bark#default --command bash -c "\
+	nix develop /root/bark#default --command bash -c "\
 		cargo build --workspace && \
 		cargo llvm-cov --workspace --exclude ark-testing --html && \
 		cargo install --locked --path bark && \

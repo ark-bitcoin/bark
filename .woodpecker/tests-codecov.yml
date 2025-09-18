@@ -32,7 +32,7 @@ steps:
     commands:
       - git log --oneline | head -n 1
       - >
-        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+        nix develop .#default --command bash -c "
           cargo llvm-cov --workspace --exclude ark-testing --no-report
         "
 
@@ -46,12 +46,12 @@ steps:
     commands:
       - git log --oneline | head -n 1
       - >
-        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+        nix develop .#default --command bash -c "
           cargo version &&
           RUSTFLAGS=\"-C instrument-coverage\" LLVM_PROFILE_FILE=\"your-binary-%p-%m.profraw\" cargo build --workspace
         "
 
-  - name: test-integration-btc29.0
+  - name: test-integration-btc29.1
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: build
@@ -75,7 +75,7 @@ steps:
   - name: code-coverage
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
-    depends_on: test-integration-btc29.0
+    depends_on: test-integration-btc29.1
     image: registry.2nd.dev/build:21
     volumes:
       - /data:/host/data
