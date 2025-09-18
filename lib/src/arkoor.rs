@@ -334,13 +334,21 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 		for (idx, input) in inputs.into_iter().enumerate() {
 			let user_nonce = user_nonces.get(idx).ok_or(ArkoorPackageError::InvalidUserNoncesLength)?;
 
-			let (output_amount, change) = if remaining_amount >= input.amount() {
-				(input.amount(), None)
+			let change_amount = input.amount().checked_sub(remaining_amount);
+			let (output_amount, change) = if let Some(change_amount) = change_amount {
+				// NB: If change amount is less than the dust amount, we don't add any change output
+				let change = if change_amount < P2TR_DUST {
+					None
+				} else {
+					Some(VtxoRequest {
+						amount: change_amount,
+						policy: VtxoPolicy::new_pubkey(change_pubkey.ok_or(ArkoorPackageError::MissingChangePk)?),
+					})
+				};
+
+				(remaining_amount, change)
 			} else {
-				(remaining_amount, Some(VtxoRequest {
-					amount: input.amount() - remaining_amount,
-					policy: VtxoPolicy::new_pubkey(change_pubkey.ok_or(ArkoorPackageError::MissingChangePk)?),
-				}))
+				(input.amount(), None)
 			};
 
 			let output = VtxoRequest {
