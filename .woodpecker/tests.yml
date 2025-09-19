@@ -20,16 +20,6 @@ steps:
       - just check-commits
       - git log --oneline | head -n 1
 
-  - name: test-unit
-    depends_on: check-commits
-    image: registry.2nd.dev/build:21
-    commands:
-      - git log --oneline | head -n 1
-      - >
-        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
-          cargo test --workspace --exclude ark-testing
-        "
-
   - name: build
     depends_on: check-commits
     image: registry.2nd.dev/build:21
@@ -38,44 +28,75 @@ steps:
     commands:
       - git log --oneline | head -n 1
       - >
-        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+        nix develop .#default --command bash -c "
           cargo version &&
-          cargo build --workspace
+          cargo build --workspace &&
+          mkdir -p target-static target-deps target-unit target-libs &&
+          (cp -r target target-static) &
+          (cp -r target target-deps) &
+          (cp -r target target-unit) &
+          (cp -r target target-libs) &
+          wait
         "
 
-  - name: generated-static-files
+  - name: test-unit
     depends_on: build
     image: registry.2nd.dev/build:21
     environment:
-      TEST_POSTGRES_HOST: localhost
+      CARGO_TARGET_DIR: ./target-unit
     commands:
-      - nix --extra-experimental-features nix-command --extra-experimental-features flakes develop .#default
-      - just default-server-config
-      - bash contrib/check-clean-diff.sh server/config.default.toml
-      - just dump-bark-sql-schema
+      - git log --oneline | head -n 1
+      - >
+        nix develop .#default --command bash -c "
+          cargo test --workspace --exclude ark-testing
+        "
+
+  - name: compare-static-files
+    depends_on: build
+    image: registry.2nd.dev/build:21
+    environment:
+      CARGO_TARGET_DIR: ./target-static
+    commands:
+      - >
+        nix develop .#default --command bash -c "
+          chmod 777 -R .
+          cargo build -p ark-testing --example dump-server-postgres-schema
+          cargo run -p bark-wallet --example dump-sqlite-schema  > bark/schema.sql
+          cargo run -p bark-server --example dump-default-config > server/config.default.toml
+          sudo -E -u postgres ./target/debug/examples/dump-server-postgres-schema > server/schema.sql
+          sed -i '/^-- Dumped by .*$/d'   server/schema.sql
+          sed -i '/^-- Dumped from .*$/d' server/schema.sql
+          chmod 644 bark/schema.sql
+          chmod 644 server/config.default.toml
+          chmod 644 server/schema.sql
+        "
       - bash contrib/check-clean-diff.sh bark/schema.sql
-      - service postgresql start
-      - just dump-server-sql-schema
+      - bash contrib/check-clean-diff.sh server/config.default.toml
       - bash contrib/check-clean-diff.sh server/schema.sql
 
   - name: use-bark-as-dependency
     depends_on: build
     image: registry.2nd.dev/build:21
+    environment:
+      CARGO_TARGET_DIR: ./target-deps
     commands:
       - >
-        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+        nix develop .#default --command bash -c "
           cargo init barktest &&
           cd barktest &&
           cargo add bark-wallet &&
-          cargo update && cargo build
+          cargo update &&
+          cargo build
         "
 
   - name: bark-as-libs
     depends_on: build
     image: registry.2nd.dev/build:21
+    environment:
+      CARGO_TARGET_DIR: ./target-libs
     commands:
       - >
-        nix --extra-experimental-features 'nix-command flakes' develop .#default --command bash -c "
+        nix develop .#default --command bash -c "
           cargo build -p bark-wallet      --no-default-features --features=\"\" &&
           cargo build -p bark-bitcoin-ext --no-default-features --features=\"\" &&
           cargo build -p ark-lib          --no-default-features --features=\"\"
@@ -118,7 +139,7 @@ steps:
       - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
 
-  - name: test-integration-btc29.0
+  - name: test-integration-btc29.1
     depends_on: build
     image: registry.2nd.dev/build:21
     volumes:
