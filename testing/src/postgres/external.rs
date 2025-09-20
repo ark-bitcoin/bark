@@ -9,7 +9,8 @@ use crate::constants::env::TEST_POSTGRES_HOST;
 /// The hostname of the external postgres database
 pub fn postgres_host() -> Option<String> {
 	match env::var(TEST_POSTGRES_HOST) {
-		Ok(host) => Some(host),
+		Ok(h) if h.is_empty() => None,
+		Ok(h) => Some(h),
 		Err(VarError::NotPresent) => None,
 		Err(VarError::NotUnicode(_)) => panic!("{} is not unicode", TEST_POSTGRES_HOST),
 	}
