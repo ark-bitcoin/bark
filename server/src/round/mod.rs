@@ -1080,10 +1080,6 @@ impl SigningForfeits {
 			);
 			return Err(RoundError::Fatal(e));
 		}
-		if let Some(ref forfeits) = srv.forfeits {
-			forfeits.register_forfeits(self.all_inputs.keys().copied().collect())
-				.expect("forfeit watcher shut down");
-		}
 
 		rslog!(RoundFinished, self, txid: round_txid, vtxo_expiry_block_height: self.expiry_height,
 			duration: Instant::now().duration_since(self.attempt_start),

@@ -174,4 +174,12 @@ impl Db {
 			.collect::<Vec<_>>()
 		)
 	}
+
+	pub async fn get_last_round_id(&self) -> anyhow::Result<Option<RoundId>> {
+		let conn = self.pool.get().await?;
+		let stmt = conn.prepare("SELECT funding_txid FROM round ORDER BY id DESC LIMIT 1").await?;
+		Ok(conn.query_opt(&stmt, &[]).await?.map(|r|
+			RoundId::from_str(&r.get::<_, &str>("funding_txid")).expect("corrupt db: funding txid")
+		))
+	}
 }
