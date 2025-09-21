@@ -3,6 +3,7 @@ use std::{time::Duration, borrow::Cow};
 
 use bdk_wallet::Balance;
 use bitcoin::Txid;
+use bitcoin::address::{Address, NetworkUnchecked};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +43,7 @@ pub struct WalletSyncComplete {
 	pub previous_block_height: u32,
 	#[serde(with = "crate::serde_utils::duration")]
 	pub sync_time: Duration,
+	pub next_address: Address<NetworkUnchecked>,
 }
 impl_slog!(WalletSyncComplete, Debug, "Wallet synced to latest block");
 

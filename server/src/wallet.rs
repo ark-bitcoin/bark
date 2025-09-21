@@ -5,16 +5,18 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
 use anyhow::Context;
-use bdk_wallet::{SignOptions, Wallet, Balance, KeychainKind};
+use bdk_wallet::{Balance, SignOptions, Wallet};
 use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
-use bitcoin_ext::BlockRef;
-use bitcoin_ext::bdk::WalletExt;
-use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 use log::{error, trace};
 
+use bitcoin_ext::BlockRef;
+use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
+use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
+
 use crate::{database, telemetry};
+
 
 /// The location of the mnemonic file in server's datadir.
 pub const MNEMONIC_FILE: &str = "mnemonic";
@@ -108,7 +110,7 @@ impl PersistedWallet {
 		let desc = format!("tr({}/0/*)", xpriv);
 		let mut wallet = if let Some(changeset) = init {
 			bdk_wallet::Wallet::load()
-				.descriptor(bdk_wallet::KeychainKind::External, Some(desc))
+				.descriptor(KEYCHAIN, Some(desc))
 				.check_network(network)
 				.extract_keys()
 				.load_wallet_no_persist(changeset)
@@ -196,6 +198,7 @@ impl PersistedWallet {
 		let checkpoint = self.latest_checkpoint();
 		slog!(WalletSyncComplete, wallet: self.kind.name().into(), sync_time: start_time.elapsed(),
 			new_block_height: checkpoint.height(), previous_block_height: prev_tip.height(),
+			next_address: self.peek_next_address().address.into_unchecked(),
 		);
 
 		let balance = self.balance();
@@ -217,7 +220,7 @@ impl PersistedWallet {
 	pub fn status(&mut self) -> server_rpc::WalletStatus {
 		// NB we decide not to persist the address reveal to make this call
 		// infallible even without database.
-		let address = self.reveal_next_address(KeychainKind::External).address;
+		let address = self.reveal_next_address(KEYCHAIN).address;
 		let (confirmed, unconfirmed) = self.list_unspent()
 			.partition::<Vec<_>, _>(|u| u.chain_position.is_confirmed());
 		let balance = self.balance();

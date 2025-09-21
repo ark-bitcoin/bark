@@ -2,7 +2,7 @@
 use std::borrow::BorrowMut;
 use std::sync::Arc;
 
-use bdk_wallet::{SignOptions, TxBuilder, Wallet};
+use bdk_wallet::{AddressInfo, SignOptions, TxBuilder, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
@@ -15,6 +15,10 @@ use log::{debug, trace};
 use crate::{BlockHeight, TransactionExt};
 use crate::cpfp::MakeCpfpFees;
 use crate::fee::FEE_ANCHOR_SPEND_WEIGHT;
+
+/// The [bdk_wallet::KeychainKind] that is always used, because we only use a single keychain.
+pub const KEYCHAIN: bdk_wallet::KeychainKind = bdk_wallet::KeychainKind::External;
+
 
 /// An extension trait for [TxBuilder].
 pub trait TxBuilderExt<'a, A>: BorrowMut<TxBuilder<'a, A>> {
@@ -56,6 +60,11 @@ pub enum CpfpInternalError {
 
 /// An extension trait for [Wallet].
 pub trait WalletExt: BorrowMut<Wallet> {
+	/// Peek into the next address.
+	fn peek_next_address(&self) -> AddressInfo {
+		self.borrow().peek_address(KEYCHAIN, self.borrow().next_derivation_index(KEYCHAIN))
+	}
+
 	/// Returns an iterator for each unconfirmed transaction in the wallet.
 	fn unconfirmed_txids(&self) -> impl Iterator<Item = Txid> {
 		self.borrow().transactions().filter_map(|tx| {
@@ -138,7 +147,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		let extra_fee_needed = p2a_weight * fees.effective();
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
-		let change_addr = wallet.reveal_next_address(bdk_wallet::KeychainKind::Internal);
+		let change_addr = wallet.reveal_next_address(KEYCHAIN);
 
 		// We will loop, constructing the transaction and signing it until we exceed the effective
 		// fee rate and meet any minimum fee requirements
