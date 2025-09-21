@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{fmt, fs, io};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -7,12 +7,102 @@ use anyhow::Context;
 use bitcoin::{Amount, FeeRate};
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 use config::{Environment, File, Value};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
 use crate::{forfeits, serde_util, sweeps, vtxopool};
 use crate::secret::Secret;
+
+
+/// Wraps another config struct but adds an enabled boolean
+pub enum OptionalService<T> {
+	Enabled(T),
+	Disabled,
+}
+
+impl<T> OptionalService<T> {
+	pub fn enabled(&self) -> Option<&T> {
+		match self {
+			Self::Enabled(c) => Some(c),
+			Self::Disabled => None,
+		}
+	}
+
+	pub fn enabled_mut(&mut self) -> Option<&mut T> {
+		match self {
+			Self::Enabled(c) => Some(c),
+			Self::Disabled => None,
+		}
+	}
+}
+
+impl<T> From<T> for OptionalService<T> {
+	fn from(cfg: T) -> Self {
+	    Self::Enabled(cfg)
+	}
+}
+
+impl<T: Default> Default for OptionalService<T> {
+	fn default() -> Self {
+	    OptionalService::Enabled(Default::default())
+	}
+}
+
+impl<T: Clone> Clone for OptionalService<T> {
+	fn clone(&self) -> Self {
+	    match self {
+			Self::Enabled(c) => Self::Enabled(c.clone()),
+			Self::Disabled => Self::Disabled,
+		}
+	}
+}
+
+impl<T: fmt::Debug> fmt::Debug for OptionalService<T> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    match self {
+			Self::Enabled(c) => fmt::Debug::fmt(c, f),
+			Self::Disabled => write!(f, "Disabled"),
+		}
+	}
+}
+
+impl<T: serde::Serialize> serde::Serialize for OptionalService<T> {
+	fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+		#[derive(Serialize)]
+	    struct C<T> {
+			enabled: bool,
+			#[serde(flatten)]
+			config: Option<T>,
+		}
+
+		let c = match self {
+			Self::Enabled(c) => C { enabled: true, config: Some(c) },
+			Self::Disabled => C { enabled: false, config: None },
+		};
+
+		serde::Serialize::serialize(&c, s)
+	}
+}
+
+impl<'de, T: Default + serde::Deserialize<'de>> serde::Deserialize<'de> for OptionalService<T> {
+	fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+		#[derive(Deserialize)]
+	    struct C<T> {
+			enabled: bool,
+			#[serde(flatten)]
+			config: Option<T>,
+		}
+
+		let c = C::<T>::deserialize(d)?;
+		if c.enabled {
+			Ok(Self::Enabled(c.config.unwrap_or_default()))
+		} else {
+			Ok(Self::Disabled)
+		}
+	}
+}
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -239,9 +329,10 @@ pub struct Config {
 	pub otel_tracing_sampler: Option<f64>,
 
 	/// Config for the VtxoSweeper process.
-	pub vtxo_sweeper: sweeps::Config,
+	pub vtxo_sweeper: OptionalService<sweeps::Config>,
+
 	/// Config for the ForfeitWatcher process.
-	pub forfeit_watcher: forfeits::Config,
+	pub forfeit_watcher: OptionalService<forfeits::Config>,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub forfeit_watcher_min_balance: Amount,
 

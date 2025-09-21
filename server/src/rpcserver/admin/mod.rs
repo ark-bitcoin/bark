@@ -29,14 +29,18 @@ impl rpc::server::WalletAdminService for Server {
 			Ok(self.rounds_wallet.lock().await.status())
 		};
 		let forfeits = async {
-			self.forfeits.wallet_status().await
+			if let Some(ref fw) = self.forfeits {
+				Some(fw.wallet_status().await).transpose()
+			} else {
+				Ok(None)
+			}
 		};
 
 		let (rounds, forfeits) = tokio::try_join!(rounds, forfeits).to_status()?;
 
 		Ok(tonic::Response::new(protos::WalletStatusResponse {
 			rounds: Some(rounds.into()),
-			forfeits: Some(forfeits.into()),
+			forfeits: forfeits.map(|f| f.into()),
 		}))
 	}
 }
@@ -93,9 +97,13 @@ impl rpc::server::SweepAdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_admin(RPC_SERVICE_ADMIN_TRIGGER_SWEEP);
-		self.vtxo_sweeper.trigger_sweep()
-			.context("VtxoSweeper down")?;
-		Ok(tonic::Response::new(protos::Empty{}))
+
+		if let Some(ref vs) = self.vtxo_sweeper {
+			vs.trigger_sweep().context("VtxoSweeper down")?;
+			Ok(tonic::Response::new(protos::Empty{}))
+		} else {
+			Err(tonic::Status::unavailable("VtxoSweeper disabled"))
+		}
 	}
 }
 
