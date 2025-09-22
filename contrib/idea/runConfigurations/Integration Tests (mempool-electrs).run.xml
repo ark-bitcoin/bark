@@ -6,7 +6,7 @@
     <envs>
       <env name="CAPTAIND_EXEC" value="../target/debug/captaind" />
       <env name="BARK_EXEC" value="../target/debug/bark" />
-      <env name="CHAIN_SOURCE" value="mempool-electrs" />
+      <env name="CHAIN_SOURCE" value="mempool" />
     </envs>
     <option name="emulateTerminal" value="true" />
     <option name="channel" value="DEFAULT" />
