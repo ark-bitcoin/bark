@@ -88,6 +88,8 @@ pub struct Balance {
 	pub pending_in_round: Amount,
 	/// Coins that are in the process of unilaterally exiting the Ark.
 	pub pending_exit: Amount,
+	/// Coins that are pending sufficient confirmations from board transactions.
+	pub pending_board: Amount,
 }
 
 // TODO: we set it to 0 for now to avoid breaking UX,
@@ -431,11 +433,15 @@ impl Wallet {
 
 		let pending_exit = self.exit.pending_total()?;
 
+		let pending_board = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?
+			.into_iter().map(|vtxo| vtxo.vtxo.amount()).sum();
+
 		Ok(Balance {
 			spendable,
 			pending_in_round,
 			pending_lightning_send,
 			pending_exit,
+			pending_board,
 		})
 	}
 
@@ -475,25 +481,35 @@ impl Wallet {
 		Ok(self.vtxos_with(&filter)?)
 	}
 
-	async fn register_all_unregistered_boards(
+	async fn register_all_confirmed_boards(
 		&self,
 		wallet: &mut impl GetWalletTx,
 	) -> anyhow::Result<()> {
+		let ark_info = self.require_server()?.info;
+		let current_height = self.chain.tip().await?;
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
+		let mut registered_boards = 0;
 
 		if unregistered_boards.is_empty() {
 			return Ok(());
 		}
 
-		trace!("Re-attempt registration of {} boards", unregistered_boards.len());
+		trace!("Attempting registration of sufficiently confirmed boards");
+
 		for board in unregistered_boards {
-			if let Err(e) = self.register_board(wallet, board.vtxo.id()).await {
-				warn!("Failed to register board {}: {}", board.vtxo.id(), e);
-			} else {
-				info!("Registered board {}", board.vtxo.id());
+			if let Some(confirmed_at) = self.chain.tx_confirmed(&board.vtxo.chain_anchor().txid).await? {
+				if current_height + 1 >= confirmed_at + (ark_info.required_board_confirmations as u32) {
+					if let Err(e) = self.register_board(wallet, board.vtxo.id()).await {
+						warn!("Failed to register board {}: {}", board.vtxo.id(), e);
+					} else {
+						info!("Registered board {}", board.vtxo.id());
+						registered_boards += 1;
+					}
+				}
 			}
 		};
 
+		info!("Registered {registered_boards} sufficiently confirmed boards");
 		Ok(())
 	}
 
@@ -511,7 +527,7 @@ impl Wallet {
 	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
-		self.register_all_unregistered_boards(wallet).await?;
+		self.register_all_confirmed_boards(wallet).await?;
 		self.maintenance_refresh().await?;
 		self.sync_pending_lightning_vtxos().await?;
 
@@ -651,9 +667,11 @@ impl Wallet {
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.chain.broadcast_tx(&tx).await?;
 
-		let res = self.register_board(wallet, vtxo.id()).await;
-		info!("Board successful");
-		res
+		info!("Board broadcasted");
+		Ok(Board {
+			funding_txid: tx.compute_txid(),
+			vtxos: vec![vtxo.into()],
+		})
 	}
 
 	/// Registers a board to the Ark server

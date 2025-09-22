@@ -707,6 +707,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				pending_in_round: balance.pending_in_round,
 				pending_lightning_send: balance.pending_lightning_send,
 				pending_exit: balance.pending_exit,
+				pending_board: balance.pending_board,
 			});
 		},
 		Command::Vtxos { no_sync } => {

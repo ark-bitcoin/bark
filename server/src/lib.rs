@@ -40,7 +40,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
+use bitcoin::{bip32, Address, Amount, OutPoint};
 use bitcoin::secp256k1::{self, rand, schnorr, Keypair, PublicKey};
 use futures::Stream;
 use log::{info, trace, warn};
@@ -55,7 +55,7 @@ use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::ln::cln::ClnManager;
 use crate::error::ContextExt;
@@ -564,42 +564,28 @@ impl Server {
 		Ok(resp)
 	}
 
-	/// Registers a board
+	/// Registers a board vtxo in the database
 	///
-	/// It will broadcast the funding_transaction if it is unseen and
-	/// wil regisert the vtxo in the databse
-	pub async fn register_board(&self, vtxo: Vtxo, tx: Transaction) -> anyhow::Result<()> {
+	/// Errors if the board vtxo is not sufficiently confirmed.
+	pub async fn register_board(&self, vtxo: Vtxo) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate board vtxo
 
-		// Since the user might have just created and broadcast this tx very recently,
-		// it's very likely that we won't have it in our mempool yet.
-		// We will first check if we have it, if not, try to broadcast it.
+		// All boards must be sufficiently confirmed before we will register them.
 		match self.bitcoind.custom_get_raw_transaction_info(&vtxo.chain_anchor().txid, None) {
 			Ok(Some(txinfo)) => {
-				let conf = txinfo.confirmations.unwrap_or(0);
-				trace!("Board tx {} has {} confirmations", vtxo.chain_anchor().txid, conf);
-			},
-			Ok(None) => {
-				// First check if the tx is actually standard and inputs are unspent.
-				let ret = self.bitcoind.test_mempool_accept(&[&tx])?
-					.into_iter().next().expect("we submitted one");
-				// NB if the only reject reason is that tx is already in mempool, then we can continue
-				if !ret.allowed && ret.reject_reason.iter().any(|s| s != "txn-already-in-mempool") {
-					return badarg!("Tx not allowed in mempool: {}",
-						ret.reject_reason.as_ref().map(|s| s.as_str()).unwrap_or("unknown"),
+				let confs = txinfo.confirmations.unwrap_or(0) as usize;
+				if confs < self.config.required_board_confirmations {
+					slog!(UnconfirmedBoardRegisterAttempt, vtxo: vtxo.id(), confirmations: confs);
+					return badarg!("board vtxo tx not sufficiently confirmed (has {confs} confs, \
+						but requires {}): {}", self.config.required_board_confirmations, vtxo.id(),
 					);
 				}
-
-				// Then broadcast to our own mempool and peers.
-				if let Err(e) = self.bitcoind.broadcast_tx(&tx) {
-					if !e.is_already_in_mempool() {
-						return badarg!("board tx not accepted in mempool");
-					}
-				}
-				trace!("We submitted board tx with txid {} to mempool", vtxo.chain_anchor().txid);
 			},
+			Ok(None) => return badarg!("board transaction not found"),
 			Err(e) => bail!("error fetching tx info for board tx: {e}"),
 		}
+
+		trace!("Board tx {} is sufficiently confirmed, registering board", vtxo.chain_anchor().txid);
 
 		// Accepted, let's register
 		self.db.upsert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
@@ -641,46 +627,6 @@ impl Server {
 			if input.borrow().arkoor_depth() >= self.config.max_arkoor_depth {
 				return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
 					self.config.max_arkoor_depth, input.borrow().id());
-			}
-		}
-
-		Ok(())
-	}
-
-	/// Validate all board inputs are deeply confirmed
-	async fn validate_board_inputs<V: Borrow<Vtxo>>(
-		&self,
-		inputs: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()> {
-		// TODO(stevenroose) cache this check
-		for vtxo in inputs {
-			let vtxo = vtxo.borrow();
-			if vtxo.is_arkoor() {
-				continue;
-			}
-
-			let txid = vtxo.chain_anchor().txid;
-			if self.db.is_round_tx(txid).await? {
-				continue;
-			}
-
-			match self.bitcoind.custom_get_raw_transaction_info(&txid, None) {
-				Ok(Some(tx)) => {
-					let confs = tx.confirmations.unwrap_or(0) as usize;
-					if confs < self.config.required_board_confirmations {
-						slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: confs);
-						return badarg!("input board vtxo tx not deeply confirmed (has {confs} confs, \
-							but requires {}): {}", self.config.required_board_confirmations, vtxo.id(),
-						);
-					}
-				},
-				Ok(None) => {
-					slog!(UnconfirmedBoardSpendAttempt, vtxo: vtxo.id(), confirmations: 0);
-					return badarg!("input board vtxo tx was not found, \
-						(requires {} confs): {}", self.config.required_board_confirmations, vtxo.id(),
-					);
-				},
-				Err(e) => bail!("error getting raw tx for board vtxo: {e}"),
 			}
 		}
 
@@ -740,8 +686,6 @@ impl Server {
 		self.check_vtxos_not_exited(&input_vtxos).await?;
 
 		self.validate_arkoor_inputs(&input_vtxos)?;
-		self.validate_board_inputs(&input_vtxos).await
-			.context("invalid board inputs")?;
 
 		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
 			.badarg("error creating arkoor package")?;

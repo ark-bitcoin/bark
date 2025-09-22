@@ -487,14 +487,6 @@ impl CollectingPayments {
 			return Err(e).context("registration failed");
 		}
 
-		if let Err(e) = srv.validate_board_inputs(&input_vtxos).await {
-			rslog!(RoundPaymentRegistrationFailed, self,
-				error: e.to_string(),
-				duration_since_attempt: self.duration_since_attempt(),
-			);
-			return Err(e).context("registration failed");
-		}
-
 		// Finally we are done
 		self.register_payment(lock, input_vtxos, vtxo_requests, offboards);
 

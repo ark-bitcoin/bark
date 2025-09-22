@@ -42,6 +42,8 @@ pub struct Balance {
 	pub pending_in_round: Amount,
 	#[serde(rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_exit: Amount,
+	#[serde(rename = "pending_board_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub pending_board: Amount,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

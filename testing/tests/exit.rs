@@ -439,6 +439,9 @@ async fn exit_revoked_lightning_payment() {
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
@@ -693,6 +696,9 @@ async fn exit_spend_anchor_single_utxo_required() {
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 	bark.board(sat(500_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark.offchain_balance().await;
 
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
@@ -723,6 +729,9 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 	ctx.fund_bark(&bark, sat(562)).await;
 	ctx.fund_bark(&bark, sat(988)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark.offchain_balance().await;
 
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;

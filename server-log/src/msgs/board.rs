@@ -22,8 +22,8 @@ impl_slog!(RegisteredBoard, Trace, "registered board vtxo");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnconfirmedBoardSpendAttempt {
+pub struct UnconfirmedBoardRegisterAttempt {
 	pub vtxo: VtxoId,
 	pub confirmations: usize,
 }
-impl_slog!(UnconfirmedBoardSpendAttempt, Trace, "user attempted to spend board vtxo not deeply confirmed");
+impl_slog!(UnconfirmedBoardRegisterAttempt, Trace, "user attempted to register a board not sufficiently confirmed");

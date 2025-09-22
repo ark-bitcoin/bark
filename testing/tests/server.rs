@@ -28,7 +28,7 @@ use server::secret::Secret;
 use server_log::{
 	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
-	UnconfirmedBoardSpendAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
+	UnconfirmedBoardRegisterAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
 use server_rpc::protos;
@@ -355,6 +355,9 @@ async fn sweep_vtxos() {
 	ctx.generate_blocks(board_height_difference).await;
 	bark.board(sat(75_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 
 	// before either expires not sweeping yet because nothing available
 	srv.wait_for_log::<TxIndexUpdateFinished>().await;
@@ -399,8 +402,21 @@ async fn sweep_vtxos() {
 
 	// then after a while, we should sweep the connectors,
 	// but they don't make the surplus threshold, so we add another board
-	bark.board(sat(102_000)).await;
+	let board = bark.board(sat(102_000)).await;
 	ctx.generate_blocks(DEEPLY_CONFIRMED).await;
+
+	// We need to now register this board without triggering bark maintenance.
+	let bark_client = bark.client().await;
+
+	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
+	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
+
+	let mut rpc = srv.get_public_rpc().await;
+	let request = protos::BoardVtxoRequest {
+		board_vtxo: vtxo.vtxo.serialize(),
+		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
+	};
+	rpc.register_board_vtxo(request).await.unwrap();
 
 	srv.wait_for_log::<TxIndexUpdateFinished>().await;
 	srv.trigger_sweep().await;
@@ -753,41 +769,6 @@ async fn spend_unregistered_board() {
 }
 
 #[tokio::test]
-async fn spend_unconfirmed_board_round() {
-	let ctx = TestContext::new("server/spend_unconfirmed_board_round").await;
-
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
-	bark.board(sat(800_000)).await;
-
-	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>();
-	tokio::spawn(async move {
-		let _ = bark.refresh_all().await;
-		// we don't care that that call fails
-	});
-	l.recv().wait(2500).await;
-}
-
-#[tokio::test]
-async fn spend_unconfirmed_board_oor() {
-	let ctx = TestContext::new("server/spend_unconfirmed_board_oor").await;
-
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2".to_string(), &srv).await;
-	bark1.board(sat(800_000)).await;
-
-	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>();
-	tokio::spawn(async move {
-		let _ = bark1.send_oor(bark2.address().await, sat(400_000)).await;
-		// we don't care that that call fails
-	});
-	l.recv().wait(2500).await;
-}
-
-#[tokio::test]
 async fn reject_revocation_on_successful_lightning_payment() {
 	let ctx = TestContext::new("server/reject_revocation_on_successful_lightning_payment").await;
 
@@ -863,28 +844,6 @@ async fn reject_revocation_on_successful_lightning_payment() {
 }
 
 #[tokio::test]
-async fn spend_unconfirmed_board_lightning() {
-	let ctx = TestContext::new("server/spend_unconfirmed_board_lightning").await;
-
-	// Start a lightning node to generate an invoice, we won't perform any payment so no need for others
-	trace!("Start lightningd-1");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let invoice = lightningd_1.invoice(None, "a testing invoice", "my description").await;
-
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
-	bark1.board(sat(800_000)).await;
-
-	let mut l = srv.subscribe_log::<UnconfirmedBoardSpendAttempt>();
-	tokio::spawn(async move {
-		let _ = bark1.send_lightning(invoice, Some(sat(400_000))).await;
-		// we don't care that that call fails
-	});
-	l.recv().wait(2500).await;
-}
-
-#[tokio::test]
 async fn bad_round_input() {
 	let ctx = TestContext::new("server/bad_round_input").await;
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
@@ -893,6 +852,10 @@ async fn bad_round_input() {
 	}).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
 	bark.board(btc(0.5)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 	let [vtxo] = bark.client().await.vtxos().unwrap().try_into().unwrap();
 
 	let ark_info = srv.ark_info().await;
@@ -1160,6 +1123,7 @@ async fn register_board_is_idempotent() {
 
 	ctx.fund_bark(&bark_wallet, bitcoin::Amount::from_sat(50_000)).await;
 	let board = bark_wallet.board_all().await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let bark_client = bark_wallet.client().await;
 
@@ -1176,6 +1140,59 @@ async fn register_board_is_idempotent() {
 	for _ in 0..5 {
 		rpc.register_board_vtxo(request.clone()).await.unwrap();
 	}
+}
+
+#[tokio::test]
+async fn register_unconfirmed_board() {
+	let ctx = TestContext::new("server/register_unconfirmed_board").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(2_000_000)).await;
+
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	let unconfirmed_board = bark.board(sat(800_000)).await;
+
+	let bark_client = bark.client().await;
+
+	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0].id).unwrap();
+	let funding_tx = ctx.bitcoind().await_transaction(&unconfirmed_board.funding_txid).await;
+
+	let unconfirmed_board_request = protos::BoardVtxoRequest {
+		board_vtxo: vtxo.vtxo.serialize(),
+		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
+	};
+
+	#[derive(Clone)]
+	struct Proxy {
+		pub upstream: captaind::ArkClient,
+		pub unconfirmed_board_request: protos::BoardVtxoRequest,
+	}
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
+
+		async fn register_board_vtxo(&mut self, _req: protos::BoardVtxoRequest) -> Result<protos::Empty, tonic::Status> {
+			Ok(self.upstream().register_board_vtxo(self.unconfirmed_board_request.clone()).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy {
+		upstream: srv.get_public_rpc().await,
+		unconfirmed_board_request,
+	};
+	let proxy = ArkRpcProxyServer::start(proxy).await;
+
+	bark.set_ark_url(&proxy.address).await;
+
+	let mut l = srv.subscribe_log::<UnconfirmedBoardRegisterAttempt>();
+	tokio::spawn(async move {
+		// Triggers maintenance under the hood
+		// Needed to register and transition confirmed boards to `Spendable`
+		bark.offchain_balance().await;
+		// we don't care that that call fails
+	});
+	l.recv().wait(2500).await;
 }
 
 #[tokio::test]
@@ -1214,6 +1231,9 @@ async fn reject_dust_vtxo_request() {
 
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 
 	let bark_client = bark.client().await;
 
@@ -1303,6 +1323,9 @@ async fn reject_dust_offboard_request() {
 
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 
 	let bark_client = bark.client().await;
 
@@ -1406,6 +1429,9 @@ async fn reject_dust_arkoor_cosign() {
 
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 
@@ -1440,6 +1466,9 @@ async fn reject_dust_bolt11_payment() {
 
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
 	let err = bark.try_send_lightning(invoice, Some(sat(100_000))).await.unwrap_err();
@@ -1497,6 +1526,9 @@ async fn server_refuse_claim_invoice_not_settled() {
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(3)).await);
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
@@ -1588,6 +1620,9 @@ async fn server_should_refuse_claim_twice() {
 	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark.offchain_balance().await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
@@ -1711,6 +1746,9 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
 	bark_1.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark_1.offchain_balance().await;
 
 	let invoice = lightningd_1.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
@@ -1765,6 +1803,9 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	bark_1.board(btc(0.5)).await;
 	bark_1.board(btc(0.6)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`
+	bark_1.offchain_balance().await;
 
 	let invoice = lightningd_1.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
