@@ -60,7 +60,7 @@ impl TxStatus {
 
 	fn update_mempool(&mut self, time: DateTime<Local>) {
 		match self {
-			TxStatus::MempoolSince(ref prev) => {
+			TxStatus::MempoolSince(prev) => {
 				*self = TxStatus::MempoolSince(cmp::min(*prev, time));
 			}
 			TxStatus::Unseen => *self = TxStatus::MempoolSince(time),

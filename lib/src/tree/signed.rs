@@ -832,7 +832,7 @@ pub mod builder {
 		fn unsigned_tree(&self) -> Option<&UnsignedVtxoTree> {
 			match self {
 				BuilderTree::Spec(_) => None,
-				BuilderTree::Unsigned(ref t) => Some(t),
+				BuilderTree::Unsigned(t) => Some(t),
 			}
 		}
 		fn into_unsigned_tree(self) -> Option<UnsignedVtxoTree> {

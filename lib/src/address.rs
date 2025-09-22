@@ -86,7 +86,7 @@ impl VtxoDelivery {
 			Self::ServerBuiltin => {
 				w.emit_u8(DELIVERY_BUILTIN)?;
 			},
-			Self::Unknown { delivery_type, ref data } => {
+			Self::Unknown { delivery_type, data } => {
 				w.emit_u8(*delivery_type)?;
 				w.emit_slice(data)?;
 			},

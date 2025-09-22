@@ -385,11 +385,11 @@ impl OnchainWallet {
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		match chain.inner() {
-			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
+			InnerChainSourceClient::Bitcoind(bitcoind) => {
 				let prev_tip = self.inner.latest_checkpoint();
 				self.inner_sync_bitcoind(bitcoind, prev_tip).await?;
 			},
-			InnerChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(client) => {
 				debug!("Syncing with esplora...");
 				let request = self.inner.start_sync_with_revealed_spks()
 					.outpoints(self.list_unspent().iter().map(|o| o.outpoint).collect::<Vec<_>>())
@@ -413,12 +413,12 @@ impl OnchainWallet {
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		match chain.inner() {
-			InnerChainSourceClient::Bitcoind(ref bitcoind) => {
+			InnerChainSourceClient::Bitcoind(bitcoind) => {
 				let prev_tip = self.inner.local_chain().get(GENESIS_HEIGHT)
 					.expect("missing genesis checkpoint");
 				self.inner_sync_bitcoind(bitcoind, prev_tip).await?;
 			},
-			InnerChainSourceClient::Esplora(ref client) => {
+			InnerChainSourceClient::Esplora(client) => {
 				debug!("Starting full scan with esplora...");
 				let request = self.inner.start_full_scan();
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;

@@ -135,7 +135,7 @@ fn determine_cosign_pubkey<'a>(
 	// The last Cosigned transition should have only two pubkey: user and server.
 	// This holds for rounds and for board (where it's the only cosigned transition).
 	let last_cosign_pubkeys = transitions.rev().find_map(|t| match t {
-		GenesisTransition::Cosigned { ref pubkeys, .. } => Some(pubkeys),
+		GenesisTransition::Cosigned { pubkeys, .. } => Some(pubkeys),
 		GenesisTransition::Arkoor { .. } => None,
 	}).unwrap();
 	if last_cosign_pubkeys.len() != 2 {

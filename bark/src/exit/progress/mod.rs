@@ -43,7 +43,7 @@ impl ProgressStep {
 	pub fn from_exit_state(state: &ExitState) -> ProgressStep {
 		match state {
 			ExitState::Start(_) => ProgressStep::Continue,
-			ExitState::Processing(ref s) => {
+			ExitState::Processing(s) => {
 				let should_continue = s.transactions.iter().any(|tx| {
 					match &tx.status {
 						ExitTxStatus::VerifyInputs => true,

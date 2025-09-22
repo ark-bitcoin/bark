@@ -101,7 +101,7 @@ pub trait TaprootSpendInfoExt: Borrow<taproot::TaprootSpendInfo> {
 		let s = self.borrow();
 		s.script_map().keys().map(|pair| {
 			let cb = s.control_block(pair).unwrap();
-			let (ref script, leaf_version) = pair;
+			let (script, leaf_version) = pair;
 			(cb, (script.clone(), *leaf_version))
 		}).collect()
 	}
