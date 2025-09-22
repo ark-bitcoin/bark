@@ -23,10 +23,10 @@ use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
 	Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties
 };
-use crate::exit::vtxo::ExitEntry;
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::persist::{BarkPersister, LightningReceive, StoredVtxoRequest};
+use crate::persist::BarkPersister;
+use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
 
 #[derive(Clone)]
 pub struct SqliteClient {
@@ -281,7 +281,7 @@ impl BarkPersister for SqliteClient {
 		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
 	}
 
-	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()> {
+	fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		query::store_exit_vtxo_entry(&tx, exit)?;
@@ -297,7 +297,7 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<ExitEntry>> {
+	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
 		let conn = self.connect()?;
 		query::get_exit_vtxo_entries(&conn)
 	}

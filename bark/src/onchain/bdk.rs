@@ -20,12 +20,12 @@ use bitcoin_ext::cpfp::CpfpError;
 use bitcoin_ext::rpc::RpcApi;
 use json::exit::ExitState;
 
+use crate::exit::ExitVtxo;
 use crate::onchain::{
 	ChainSourceClient, LocalUtxo, GetBalance, GetSpendingTx, GetWalletTx, MakeCpfp, MakeCpfpFees,
 	PreparePsbt, SignPsbt, Utxo,
 };
 use crate::onchain::chain::InnerChainSourceClient;
-use crate::exit::vtxo::ExitVtxo;
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
 

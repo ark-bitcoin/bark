@@ -30,12 +30,10 @@ use server_rpc::{protos, ServerConnection};
 use crate::movement::{MovementArgs, MovementKind};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, WalletVtxo};
-use crate::{ROUND_DEEPLY_CONFIRMED, SECP};
+use crate::{ROUND_DEEPLY_CONFIRMED, SECP, Wallet};
 use crate::onchain::ChainSourceClient;
-use crate::persist::{BarkPersister, StoredVtxoRequest};
-
-use crate::Wallet;
-
+use crate::persist::BarkPersister;
+use crate::persist::models::StoredVtxoRequest;
 
 /// Struct to communicate your desired round participation for an Ark round
 #[derive(Debug, Clone)]

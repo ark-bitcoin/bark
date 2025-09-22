@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::lightning::PaymentHash;
-use bark::persist::LightningReceive;
 use bitcoin::{Address, Amount, FeeRate, Network, OutPoint};
 use bitcoincore_rpc::Auth;
 use log::{trace, info, error};
@@ -21,6 +20,7 @@ use tokio::sync::Mutex;
 
 use bark_json::InvoiceInfo;
 use bark::onchain::ChainSource;
+use bark::persist::models::LightningReceive;
 use bark::UtxoInfo;
 pub use bark_json::cli as json;
 use bitcoin_ext::FeeRateExt;

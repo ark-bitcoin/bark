@@ -16,7 +16,7 @@ use ark::{ProtocolEncoding, Vtxo};
 use ark::rounds::{RoundId, RoundSeq};
 
 use crate::movement::{Movement, MovementKind, MovementRecipient};
-use crate::persist::LightningReceive;
+use crate::persist::models::LightningReceive;
 use crate::round::{
 	AttemptStartedState,
 	VtxoForfeitedInRound,

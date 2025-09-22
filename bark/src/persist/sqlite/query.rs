@@ -19,10 +19,9 @@ use json::exit::states::ExitTxOrigin;
 
 use crate::persist::sqlite::convert::{row_to_secret_nonces, row_to_round_state};
 use crate::{Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties};
-use crate::persist::{LightningReceive, StoredVtxoRequest};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
-use crate::exit::vtxo::ExitEntry;
 use crate::movement::{Movement, MovementKind};
+use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState, RoundStateKind};
 
 use super::convert::{row_to_lightning_receive, row_to_movement};
@@ -780,7 +779,7 @@ pub fn fetch_lightning_receive_by_payment_hash(
 	Ok(rows.next()?.map(|row| row_to_lightning_receive(&row)).transpose()?)
 }
 
-pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &ExitEntry) -> anyhow::Result<()> {
+pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &StoredExit) -> anyhow::Result<()> {
 	let query = r"
 		INSERT INTO bark_exit_states (vtxo_id, state, history)
 		VALUES (?1, ?2, ?3)
@@ -808,7 +807,7 @@ pub fn remove_exit_vtxo_entry(tx: &rusqlite::Transaction, id: &VtxoId) -> anyhow
 	Ok(())
 }
 
-pub fn get_exit_vtxo_entries(conn: &Connection) -> anyhow::Result<Vec<ExitEntry>> {
+pub fn get_exit_vtxo_entries(conn: &Connection) -> anyhow::Result<Vec<StoredExit>> {
 	let mut statement = conn.prepare("SELECT vtxo_id, state, history FROM bark_exit_states;")?;
 	let mut rows = statement.query([])?;
 	let mut result = Vec::new();
@@ -817,7 +816,7 @@ pub fn get_exit_vtxo_entries(conn: &Connection) -> anyhow::Result<Vec<ExitEntry>
 		let state = serde_json::from_str::<ExitState>(&row.get::<usize, String>(1)?)?;
 		let history = serde_json::from_str::<Vec<ExitState>>(&row.get::<usize, String>(2)?)?;
 
-		result.push(ExitEntry { vtxo_id, state, history });
+		result.push(StoredExit { vtxo_id, state, history });
 	}
 
 	Ok(result)
