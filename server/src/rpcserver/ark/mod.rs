@@ -211,7 +211,7 @@ impl rpc::server::ArkService for Server {
 		]);
 
 
-		let arkoor_package_id = rand::thread_rng().gen::<[u8; 32]>();
+		let arkoor_package_id = rand::thread_rng().r#gen::<[u8; 32]>();
 
 		for arkoor in req.arkoors {
 			let pubkey = PublicKey::from_bytes(&arkoor.pubkey)?;
