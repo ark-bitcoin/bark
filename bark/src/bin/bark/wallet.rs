@@ -75,6 +75,12 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		..Default::default()
 	};
 
+	// Fallback to our default signet backend
+	// Only do it when the user did *not* specify either --esplora or --bitcoind.
+	if opts.signet && opts.config.esplora.is_none() && opts.config.bitcoind.is_none() {
+		config.esplora_address = Some("https://esplora.signet.2nd.dev/".to_owned());
+	}
+
 	// Fallback to MutinyNet community Esplora
 	// Only do it when the user did *not* specify either --esplora or --bitcoind.
 	if opts.mutinynet && opts.config.esplora.is_none() && opts.config.bitcoind.is_none() {
