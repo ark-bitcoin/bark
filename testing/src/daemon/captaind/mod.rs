@@ -22,7 +22,7 @@ pub use server::config::{self, Config};
 use crate::{secs, Bitcoind, Daemon, DaemonHelper};
 use crate::daemon::LogHandler;
 use crate::constants::env::CAPTAIND_EXEC;
-use crate::util::{resolve_path, AnyhowErrorExt};
+use crate::util::resolve_path;
 
 pub type Captaind = Daemon<CaptaindHelper>;
 
@@ -369,7 +369,7 @@ impl CaptaindHelper {
 
 	async fn is_ready(&self) -> bool {
 		if let Err(e) = self.try_is_ready().await {
-			trace!("Error from is_ready: {}", e.full_msg());
+			trace!("Error from is_ready: {:#}", e);
 			false
 		} else {
 			true
