@@ -59,14 +59,13 @@ use cln_rpc::node_client::NodeClient;
 
 use crate::error::{AnyhowErrorExt, ContextExt};
 use crate::system::RuntimeManager;
-use crate::cln::node::ClnNodeMonitor;
 use crate::config::{self, Config};
 use crate::database;
 use crate::database::ln::{
 	ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentAttempt,
 	LightningPaymentStatus,
 };
-use self::node::ClnNodeMonitorConfig;
+use self::node::{ClnNodeMonitor, ClnNodeMonitorConfig};
 use crate::telemetry;
 
 type ClnGrpcClient = NodeClient<Channel>;
@@ -259,22 +258,30 @@ impl ClnManager {
 		}
 	}
 
-	pub async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+	pub async fn generate_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		amount: Amount,
+	) -> anyhow::Result<Bolt11Invoice> {
 		let (tx, rx) = oneshot::channel();
 		self.invoice_gen_tx.send(((payment_hash, amount), tx)).context("invoice channel broken")?;
 		rx.await.context("invoice return channel broken")
 	}
 
-	pub async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<anyhow::Result<()>> {
-		let payment_hash = PaymentHash::from_preimage(preimage);
+	pub async fn settle_invoice(
+		&self,
+		subscription_id: i64,
+		preimage: Preimage,
+	) -> anyhow::Result<anyhow::Result<()>> {
+		let payment_hash = preimage.compute_payment_hash();
 
 		// If an open payment attempt exists for the payment hash, it's a server self-payment
 		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
-		let payment_attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
-		if let Some(payment_attempt) = payment_attempt {
+		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
+		if let Some(attempt) = attempt {
 			let status = LightningPaymentStatus::Succeeded;
 			self.db.verify_and_update_invoice(
-				&payment_hash, &payment_attempt, status, None, None, Some(preimage),
+				&payment_hash, &attempt, status, None, None, Some(preimage),
 			).await?;
 			return Ok(Ok(()));
 		}
@@ -689,13 +696,12 @@ impl ClnManagerProcess {
 
 		// If there is an existing subscription, it's a server self-payment
 		// so we can directly mark it as accepted, then skip cln payment
-		let subscription = self.db.get_htlc_subscription_by_payment_hash(
-			invoice.payment_hash(),
-			LightningHtlcSubscriptionStatus::Created,
-		).await?;
-		if let Some(subscription) = subscription {
-			self.cancel_invoice(subscription, LightningHtlcSubscriptionStatus::Accepted).await?;
-			return Ok(());
+		let sub = self.db.get_htlc_subscription_by_payment_hash(invoice.payment_hash()).await?;
+		if let Some(sub) = sub {
+			if sub.status == LightningHtlcSubscriptionStatus::Created {
+				self.cancel_invoice(sub, LightningHtlcSubscriptionStatus::Accepted).await?;
+				return Ok(());
+			}
 		}
 
 		// Call pay over GRPC

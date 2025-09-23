@@ -13,14 +13,14 @@ pub mod forfeits;
 pub mod secret;
 pub mod sweeps;
 pub mod tip_fetcher;
+pub mod vtxopool;
 pub mod wallet;
 
 pub(crate) mod flux;
 pub(crate) mod system;
 
-mod cln;
 mod intman;
-
+mod ln;
 mod psbtext;
 mod round;
 mod serde_util;
@@ -31,7 +31,7 @@ pub mod filters;
 pub use crate::config::Config;
 
 use std::borrow::Borrow;
-use std::collections::{HashSet, HashMap};
+use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -40,42 +40,36 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::hashes::Hash;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
-use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, rand, schnorr, Keypair, PublicKey};
 use futures::Stream;
-use lightning_invoice::Bolt11Invoice;
-use log::{info, trace, warn, error};
+use log::{info, trace, warn};
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
-use ark::lightning::{Bolt12Invoice, Invoice, PaymentHash, Preimage, Offer};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
-use ark::vtxo::ServerHtlcRecvVtxoPolicy;
-use bitcoin_ext::{AmountExt, BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcErrorExt, BitcoinRpcExt, RpcApi};
-use server_rpc::protos;
 
-use crate::cln::ClnManager;
-use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::ln::cln::ClnManager;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
 use crate::round::RoundInput;
 use crate::secret::Secret;
+use crate::sweeps::VtxoSweeper;
 use crate::system::RuntimeManager;
 use crate::telemetry::init_telemetry;
 use crate::tip_fetcher::TipFetcher;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
-use crate::sweeps::VtxoSweeper;
+use crate::vtxopool::VtxoPool;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 lazy_static::lazy_static! {
@@ -173,6 +167,7 @@ pub struct Server {
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
 	cln: ClnManager,
+	vtxopool: VtxoPool,
 }
 
 impl Server {
@@ -359,6 +354,9 @@ impl Server {
 			db.clone(),
 		).await.context("failed to start ClnManager")?;
 
+		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await
+			.context("failed to initiate vtxopool")?;
+
 		let (round_event_tx, _rx) = broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
@@ -385,6 +383,7 @@ impl Server {
 			vtxo_sweeper,
 			forfeits,
 			cln,
+			vtxopool,
 		};
 
 		let srv = Arc::new(srv);
@@ -399,6 +398,9 @@ impl Server {
 				.await.context("error from round scheduler");
 			info!("Round coordinator exited with {:?}", res);
 		});
+
+		// VtxoPool
+		srv.vtxopool.start(srv.clone());
 
 		// RPC
 
@@ -473,7 +475,7 @@ impl Server {
 				let addr = forfeit_wallet.address.assume_checked();
 				let feerate = self.config.round_tx_feerate; //TODO(stevenroose) fix this
 				info!("Sending {amount} to forfeit wallet address {addr}...");
-				let tx = match wallet.send(&addr, amount, feerate).await {
+				let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
 					Ok(tx) => tx,
 					Err(e) => {
 						warn!("Error sending from round to forfeit wallet: {:?}", e);
@@ -746,326 +748,6 @@ impl Server {
 		self.cosign_oor_package_with_builder(&builder).await
 	}
 
-
-	// lightning
-
-	pub async fn start_lightning_payment(
-		&self,
-		invoice: Invoice,
-		amount: Amount,
-		user_pubkey: PublicKey,
-		inputs: Vec<Vtxo>,
-		user_nonces: Vec<musig::PublicNonce>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let invoice_payment_hash = invoice.payment_hash();
-		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
-			return badarg!("payment already in progress for this invoice");
-		}
-
-		self.check_vtxos_not_exited(&inputs).await?;
-
-		self.validate_arkoor_inputs(&inputs)?;
-		self.validate_board_inputs(&inputs).await.context("invalid board inputs")?;
-
-		//TODO(stevenroose) check that vtxos are valid
-
-		let expiry = {
-			//TODO(stevenroose) this is kinda fragile when a block happens after
-			// the user did the same calculation
-			let tip = self.bitcoind.get_block_count()? as BlockHeight;
-			tip + self.config.htlc_expiry_delta as BlockHeight
-		};
-
-		let pay_req = VtxoRequest {
-			amount: amount,
-			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry),
-		};
-
-		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
-			.badarg("error creating arkoor package")?;
-
-		self.cosign_oor_package_with_builder(&package).await
-	}
-
-	/// Try to finish the lightning payment that was previously started.
-	async fn finish_lightning_payment(
-		&self,
-		invoice: Invoice,
-		htlc_vtxo_ids: Vec<VtxoId>,
-		wait: bool,
-	) -> anyhow::Result<protos::LightningPaymentResult> {
-		//TODO(stevenroose) validate vtxo generally (based on input)
-		let invoice_payment_hash = invoice.payment_hash();
-
-		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
-
-		let mut vtxos = vec![];
-		for htlc_vtxo in htlc_vtxos {
-			if !htlc_vtxo.is_spendable() {
-				return badarg!("input vtxo is already spent");
-			}
-
-			let vtxo = htlc_vtxo.vtxo.clone();
-
-			//TODO(stevenroose) need to check that the input vtxos are actually marked
-			// as spent for this specific payment
-			if vtxo.server_pubkey() != self.server_pubkey {
-				return badarg!("invalid server pubkey used");
-			}
-
-			let payment_hash = vtxo.server_htlc_out_payment_hash()
-				.context("vtxo provided is not an outgoing htlc vtxo")?;
-			if payment_hash != invoice_payment_hash {
-				return badarg!("htlc payment hash doesn't match invoice");
-			}
-
-			//TODO(stevenroose) no fee is charged here now
-			if vtxo.amount() < P2TR_DUST {
-				return badarg!("htlc vtxo amount is below dust threshold");
-			}
-
-			vtxos.push(vtxo);
-		}
-
-		let mut htlc_vtxo_sum = Amount::ZERO;
-		for htlc_vtxo in vtxos {
-			let payment_hash = htlc_vtxo.server_htlc_out_payment_hash()
-				.context("vtxo provided is not an outgoing htlc vtxo")?;
-			if payment_hash != invoice_payment_hash {
-				return badarg!("htlc payment hash doesn't match invoice");
-			}
-			htlc_vtxo_sum += htlc_vtxo.amount();
-		}
-
-		if let Some(amount) = invoice.amount_milli_satoshis() {
-			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
-				return badarg!("htlc vtxo amount too low for invoice");
-				// any remainder we just keep, can later become fee
-			}
-		}
-
-		// Spawn a task that performs the payment
-		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, wait).await;
-
-		Self::process_lightning_pay_response(invoice_payment_hash, res)
-	}
-
-	async fn check_lightning_payment(
-		&self,
-		payment_hash: PaymentHash,
-		wait: bool,
-	) -> anyhow::Result<protos::LightningPaymentResult> {
-		let res = self.cln.check_bolt11(&payment_hash, wait).await;
-
-		Self::process_lightning_pay_response(payment_hash, res)
-	}
-
-	fn process_lightning_pay_response(
-		payment_hash: PaymentHash,
-		res: anyhow::Result<Preimage>,
-	) -> anyhow::Result<protos::LightningPaymentResult> {
-		match res {
-			Ok(preimage) => {
-				Ok(protos::LightningPaymentResult {
-					progress_message: "Payment completed".to_string(),
-					status: protos::PaymentStatus::Complete.into(),
-					payment_hash: payment_hash.to_vec(),
-					payment_preimage: Some(preimage.to_vec())
-				})
-			},
-			Err(e) => {
-				let status = e.downcast_ref::<LightningPaymentStatus>();
-				if let Some(LightningPaymentStatus::Failed) = status {
-					Ok(protos::LightningPaymentResult {
-						progress_message: format!("Payment failed: {}", e),
-						status: protos::PaymentStatus::Failed.into(),
-						payment_hash: payment_hash.to_vec(),
-						payment_preimage: None
-					})
-				} else {
-					Ok(protos::LightningPaymentResult {
-						progress_message: format!("Error during payment: {:?}", e),
-						status: protos::PaymentStatus::Failed.into(),
-						payment_hash: payment_hash.to_vec(),
-						payment_preimage: None
-					})
-				}
-			},
-		}
-	}
-
-	async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount) -> anyhow::Result<Bolt12Invoice> {
-		let invoice = self.cln.fetch_bolt12_invoice(offer, amount).await?;
-		Ok(invoice)
-	}
-
-	async fn revoke_bolt11_payment(
-		&self,
-		htlc_vtxo_ids: Vec<VtxoId>,
-		user_nonces: Vec<musig::PublicNonce>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let tip = self.bitcoind.get_block_count()? as BlockHeight;
-		let db = self.db.clone();
-
-		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
-
-		let first = htlc_vtxos.first().badarg("vtxo is empty")?.vtxo.spec();
-		let first_policy = first.policy.as_server_htlc_send().context("vtxo is not outgoing htlc vtxo")?;
-
-		let mut vtxos = vec![];
-		for htlc_vtxo in htlc_vtxos {
-			let spec = htlc_vtxo.vtxo.spec();
-			let policy = spec.policy.as_server_htlc_send()
-				.context("vtxo is not outgoing htcl vtxo")?;
-
-			if policy != first_policy {
-				return badarg!("all revoked htlc vtxos must have same policy");
-			}
-
-			vtxos.push(htlc_vtxo.vtxo);
-		}
-
-		let invoice = db.get_lightning_invoice_by_payment_hash(&first_policy.payment_hash).await?;
-
-		// If payment not found but input vtxos are found, we can allow revoke
-		if let Some(invoice) = invoice {
-			match invoice.last_attempt_status {
-				Some(status) if status == LightningPaymentStatus::Failed => {},
-				Some(status) if status == LightningPaymentStatus::Succeeded => {
-					if let Some(preimage) = invoice.preimage {
-						return badarg!("This lightning payment has completed. preimage: {}",
-							preimage.as_hex());
-					} else {
-						error!("This lightning payment has completed, but no preimage found. Accepting revocation");
-					}
-				},
-				_ if tip > first_policy.htlc_expiry => {
-					// Check one last time to see if it completed
-					if let Ok(preimage) = self.cln.check_bolt11(&invoice.payment_hash, false).await {
-						return badarg!("This lightning payment has completed. preimage: {}",
-							preimage.as_hex());
-					}
-				},
-				_ => return badarg!("This lightning payment is not eligible for revocation yet")
-			}
-		}
-
-		let pay_req = VtxoRequest {
-			amount: vtxos.iter().map(|v| v.amount()).sum(),
-			policy: VtxoPolicy::new_pubkey(vtxos.first().unwrap().user_pubkey()),
-		};
-		let package = ArkoorPackageBuilder::new(&vtxos, &user_nonces, pay_req, None)?;
-		self.cosign_oor_package_with_builder(&package).await
-	}
-
-	async fn start_lightning_receive(&self, payment_hash: PaymentHash, amount: Amount)
-		-> anyhow::Result<protos::StartLightningReceiveResponse>
-	{
-		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
-
-		let subscriptions = self.db.get_htlc_subscriptions_by_payment_hash(payment_hash).await?;
-
-		let subscriptions_by_status = subscriptions.iter()
-			.fold::<HashMap<_, Vec<_>>, _>(HashMap::new(), |mut acc, sub| {
-				acc.entry(sub.status).or_default().push(sub);
-				acc
-			});
-
-		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::Settled) {
-			bail!("invoice already settled");
-		}
-
-		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::Accepted) {
-			bail!("invoice already accepted");
-		}
-
-		if let Some(created) = subscriptions_by_status.get(&LightningHtlcSubscriptionStatus::Created) {
-			if let Some(subscription) = created.first() {
-				trace!("Found existing created subscription, returning invoice: {}", subscription.invoice.to_string());
-				return Ok(protos::StartLightningReceiveResponse {
-					bolt11: subscription.invoice.to_string()
-				})
-			}
-		}
-
-		let invoice = self.cln.generate_invoice(payment_hash, amount).await?;
-		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}", payment_hash, amount, invoice.to_string());
-
-		Ok(protos::StartLightningReceiveResponse {
-			bolt11: invoice.to_string()
-		})
-	}
-
-	async fn subscribe_lightning_receive(&self, invoice: Bolt11Invoice)
-		-> anyhow::Result<protos::SubscribeLightningReceiveResponse>
-	{
-		let invoice_payment_hash = PaymentHash::from(*invoice.payment_hash().as_byte_array());
-		let status = LightningHtlcSubscriptionStatus::Settled;
-		let settled = self.db.get_htlc_subscription_by_payment_hash(
-			invoice_payment_hash, status,
-		).await?;
-		if settled.is_some() {
-			bail!("invoice already settled");
-		}
-
-		let htlc = loop {
-			let status = LightningHtlcSubscriptionStatus::Accepted;
-			let htlc = self.db
-				.get_htlc_subscription_by_payment_hash(invoice_payment_hash, status)
-				.await?;
-
-			if let Some(htlc) = htlc {
-				break htlc;
-			}
-
-			tokio::time::sleep(self.config.invoice_check_interval).await;
-		};
-
-		let amount = Amount::from_msat_floor(htlc.invoice.amount_milli_satoshis()
-			.expect("invoice generated by us should have amount"));
-
-		Ok(protos::SubscribeLightningReceiveResponse {
-			invoice: invoice.to_string(),
-			amount_sat: amount.to_sat(),
-		})
-	}
-
-	async fn claim_bolt11_htlc(
-		&self,
-		input_vtxo_id: VtxoId,
-		vtxo_req: VtxoRequest,
-		user_nonce: musig::PublicNonce,
-		payment_preimage: Preimage,
-	) -> anyhow::Result<ArkoorCosignResponse> {
-		let [input_vtxo] = self.db.get_vtxos_by_id(&[input_vtxo_id]).await
-			.context("claim bolt11 input vtxo fetch error")?.try_into().unwrap();
-
-		if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = input_vtxo.vtxo.policy() {
-			if *payment_hash != PaymentHash::from_preimage(payment_preimage) {
-				bail!("input vtxo payment hash does not match preimage");
-			}
-
-			let status = LightningHtlcSubscriptionStatus::Accepted;
-			let htlc_subscription = self.db
-				.get_htlc_subscription_by_payment_hash(*payment_hash, status).await?
-				.context("no htlc subscription found")?;
-
-			self.cln.settle_invoice(
-				htlc_subscription.id,
-				payment_preimage,
-			).await?.context("could not settle invoice")?;
-
-			let input = [input_vtxo.vtxo];
-			let pubs = vec![user_nonce];
-			let package = ArkoorPackageBuilder::new(&input, &pubs, vtxo_req, None)?;
-
-			let mut arkoors = self.cosign_oor_package_with_builder(&package).await?;
-			Ok(arkoors.pop().expect("should have one"))
-		} else {
-			bail!("invalid claim input: {}", input_vtxo_id);
-		}
-	}
-
 	pub async fn generate_ephemeral_cosign_key(
 		&self,
 		lifetime: Duration,
@@ -1149,6 +831,8 @@ impl Server {
 
 		// Now we're done and we can drop the key.
 		let _ = self.drop_ephemeral_cosign_key(server_cosign_pubkey).await?;
+
+		//TODO(stevenroose) some sanity check on expiry?
 
 		let tree = tree.into_signed_tree(signatures).into_cached_tree();
 		self.db.upsert_vtxos(tree.all_vtxos()).await.context("db error occurred")?;

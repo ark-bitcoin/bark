@@ -323,7 +323,7 @@ impl TxIndex {
 			}
 
 			// TODO: Optimize the expensive case
-			batch[i]  = self.database_to_index(txid.clone()).await?;
+			batch[i]  = self.database_to_index(*txid).await?;
 		}
 
 		Ok(batch)

@@ -2,7 +2,8 @@
 pub mod admin;
 pub mod ark;
 pub mod intman;
-pub mod middleware;
+mod middleware;
+mod convert;
 
 
 use std::fmt;

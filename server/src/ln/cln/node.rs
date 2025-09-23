@@ -429,9 +429,10 @@ impl ClnNodeMonitorProcess {
 			);
 
 			let req = hold::ListRequest {
-				constraint: Some(hold::list_request::Constraint::PaymentHash(payment_hash.to_byte_array().to_vec())),
+				constraint: Some(hold::list_request::Constraint::PaymentHash(
+					payment_hash.to_byte_array().to_vec(),
+				)),
 			};
-
 			let res = hodl_client.list(req).await?.into_inner();
 
 			if res.invoices.is_empty() {

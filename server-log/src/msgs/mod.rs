@@ -11,10 +11,12 @@ mod sweeps;
 pub use self::sweeps::*;
 mod txindex;
 pub use self::txindex::*;
-mod wallet;
-pub use self::wallet::*;
 mod system;
 pub use self::system::*;
+mod vtxopool;
+pub use self::vtxopool::*;
+mod wallet;
+pub use self::wallet::*;
 
 
 use bitcoin::secp256k1::PublicKey;

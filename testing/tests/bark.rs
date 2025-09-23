@@ -412,7 +412,7 @@ async fn refresh_counterparty() {
 
 	let vtxos = bark1.vtxos().await;
 	// there should still be 3 vtxos
-	assert_eq!(3, vtxos.len());
+	assert_eq!(3, vtxos.len(), "vtxos: {:?}", vtxos);
 	// received oor vtxo should be refreshed
 	assert!(!vtxos.iter().any(|v| v.id == arkoor_vtxo.first().unwrap().id));
 	// others should remain untouched
@@ -600,7 +600,7 @@ async fn offboard_vtxos() {
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
 	let vtxos = bark1.vtxos().await;
-	assert_eq!(3, vtxos.len());
+	assert_eq!(3, vtxos.len(), "vtxos: {:?}", vtxos);
 
 	let address = ctx.bitcoind().get_new_address();
 	let vtxo_to_offboard = &vtxos[1];

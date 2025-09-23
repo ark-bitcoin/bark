@@ -113,15 +113,6 @@ impl VtxoState {
 			_ => None,
 		}
 	}
-
-	/// If the VTXO is [VtxoStateKind::PendingLightningRecv], returns the associated [PaymentHash].
-	/// Otherwise returns `None`.
-	pub fn as_pending_lightning_recv(&self) -> Option<PaymentHash> {
-		match self {
-			VtxoState::PendingLightningRecv { payment_hash } => Some(*payment_hash),
-			_ => None,
-		}
-	}
 }
 
 /// A wallet-owned [Vtxo] paired with its current tracked state.

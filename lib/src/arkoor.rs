@@ -322,16 +322,16 @@ pub enum ArkoorPackageError {
 
 impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 	pub fn new(
-		inputs: &'a [Vtxo],
+		inputs: impl IntoIterator<Item = &'a Vtxo>,
 		user_nonces: &'a [musig::PublicNonce],
 		vtxo_request: VtxoRequest,
-		change: Option<PublicKey>,
+		change_pubkey: Option<PublicKey>,
 	) -> Result<Self, ArkoorPackageError> {
 		let mut remaining_amount = vtxo_request.amount;
 		let mut arkoors = vec![];
 		let mut spending_tx_by_input = HashMap::new();
 
-		for (idx, input) in inputs.iter().enumerate() {
+		for (idx, input) in inputs.into_iter().enumerate() {
 			let user_nonce = user_nonces.get(idx).ok_or(ArkoorPackageError::InvalidUserNoncesLength)?;
 
 			let (output_amount, change) = if remaining_amount >= input.amount() {
@@ -339,7 +339,7 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 			} else {
 				(remaining_amount, Some(VtxoRequest {
 					amount: input.amount() - remaining_amount,
-					policy: VtxoPolicy::new_pubkey(change.ok_or(ArkoorPackageError::MissingChangePk)?),
+					policy: VtxoPolicy::new_pubkey(change_pubkey.ok_or(ArkoorPackageError::MissingChangePk)?),
 				}))
 			};
 
@@ -397,7 +397,6 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 			spending_tx_by_input.insert(arkoor.input.id(), arkoor.unsigned_transaction());
 		}
 
-
 		Ok(Self {
 			arkoors,
 			spending_tx_by_input,
@@ -412,25 +411,20 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 		self.spending_tx_by_input.get(&input_id)
 	}
 
-	pub fn build_vtxos(
+	pub fn build_vtxos<'b>(
 		self,
-		sigs: &[ArkoorCosignResponse],
-		keypairs: &[Keypair],
-		sec_nonces: Vec<musig::SecretNonce>,
+		sigs: impl IntoIterator<Item = &'a ArkoorCosignResponse>,
+		keypairs: impl IntoIterator<Item = &'a Keypair>,
+		sec_nonces: impl IntoIterator<Item = musig::SecretNonce>,
 	) -> Result<(Vec<Vtxo>, Option<Vtxo>), ArkoorPackageError> {
 		let mut sent_vtxos = vec![];
 		let mut change_vtxo = None;
 
-		for (idx, (arkoor, sec_nonce)) in self.arkoors
-			.into_iter().zip(sec_nonces).enumerate()
-		{
-			let cosign = sigs.get(idx).ok_or(ArkoorPackageError::InvalidLength)?;
+		let expected_len = self.arkoors.len();
 
-			let vtxos = arkoor.build_vtxos(
-				sec_nonce,
-				&keypairs[idx],
-				&cosign,
-			)?;
+		let iter = self.arkoors.into_iter().zip(sigs).zip(keypairs).zip(sec_nonces);
+		for (((arkoor, cosign), keypair), sec_nonce) in iter {
+			let vtxos = arkoor.build_vtxos(sec_nonce, keypair, cosign)?;
 
 			// The first one is of the recipient, we will post it to their mailbox.
 			let mut vtxo_iter = vtxos.into_iter();
@@ -440,6 +434,10 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 			if let Some(vtxo) = vtxo_iter.next() {
 				assert!(change_vtxo.replace(vtxo).is_none(), "change vtxo already set");
 			}
+		}
+
+		if sent_vtxos.len() != expected_len {
+			return Err(ArkoorPackageError::InvalidLength);
 		}
 
 		Ok((sent_vtxos, change_vtxo))

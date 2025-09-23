@@ -8,7 +8,6 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use bitcoin_ext::AmountExt;
-use lightning_invoice::Bolt11Invoice;
 use log::info;
 use opentelemetry::KeyValue;
 use tokio::sync::oneshot;
@@ -337,8 +336,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("payment_hash", req.hash.as_hex().to_string()),
 		]);
 
-		let payment_hash = PaymentHash::try_from(req.hash)
-			.expect("payment hash must be 32 bytes");
+		let payment_hash = PaymentHash::from_bytes(req.hash)?;
 		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
@@ -413,8 +411,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("amount_sats", format!("{:?}", req.amount_sat)),
 		]);
 
-		let payment_hash = PaymentHash::try_from(req.payment_hash)
-			.expect("payment hash must be 32 bytes");
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
 
 		let resp = self.start_lightning_receive(payment_hash, amount).await.to_status()?;
@@ -429,50 +426,62 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
-		let invoice = &req.bolt11;
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("bolt11", format!("{:?}", invoice)),
+			KeyValue::new("payment_hash", payment_hash.to_string()),
 		]);
 
-		let invoice = Bolt11Invoice::from_str(invoice).badarg("invalid invoice")?;
+		let sub = self.subscribe_lightning_receive(payment_hash).await.to_status()?;
+		Ok(tonic::Response::new(sub.into()))
+	}
 
-		let update = self.subscribe_lightning_receive(invoice).await.to_status()?;
+	async fn prepare_lightning_receive_claim(
+		&self,
+		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>
+	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE);
+		let req = req.into_inner();
 
-		Ok(tonic::Response::new(update))
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
+		crate::rpcserver::add_tracing_attributes(vec![
+			KeyValue::new("payment_hash", payment_hash.to_string()),
+		]);
+
+		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
+
+		let (sub, htlcs) = self.prepare_lightning_claim(
+			payment_hash, user_pubkey,
+		).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {
+			receive: Some(sub.into()),
+			htlc_vtxos: htlcs.into_iter().map(|v| v.serialize()).collect(),
+		}))
 	}
 
 	async fn claim_lightning_receive(
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>
-	) -> Result<tonic::Response<protos::ArkoorCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
-		let arkoor = req.arkoor.badarg("missing arkoor")?;
-
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("payment", arkoor.input_id.as_hex().to_string()),
-			KeyValue::new("pub_nonce", arkoor.pub_nonce.as_hex().to_string()),
-			KeyValue::new("payment_preimage", req.payment_preimage.as_hex().to_string()),
+			KeyValue::new("payment_hash", payment_hash.to_string()),
 		]);
 
-		let input_id = VtxoId::from_bytes(&arkoor.input_id)?;
+		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
 
-		let output = arkoor.outputs.first().badarg("missing output")?;
-		let pay_req = VtxoRequest {
-			amount: Amount::from_sat(output.amount),
-			policy: VtxoPolicy::from_bytes(&output.policy)?,
-		};
+		let vtxo_policy = VtxoPolicy::from_bytes(req.vtxo_policy)?;
+		let user_nonces = req.user_pub_nonces.iter()
+			.map(musig::PublicNonce::from_bytes)
+			.collect::<Result<Vec<_>, _>>()?;
 
-		let user_nonce = musig::PublicNonce::from_bytes(&arkoor.pub_nonce)?;
-
-		let payment_preimage: Preimage = req.payment_preimage.as_slice()
-			.try_into().badarg("invalid preimage, not 32 bytes")?;
-
-		let cosign_resp = self.claim_bolt11_htlc(
-			input_id,
-			pay_req,
-			user_nonce,
+		let cosign_resp = self.claim_lightning_receive(
+			payment_hash,
+			vtxo_policy,
+			user_nonces,
 			payment_preimage,
 		).await.to_status()?;
 

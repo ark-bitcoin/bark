@@ -22,7 +22,8 @@ CREATE TYPE public.lightning_htlc_subscription_status AS ENUM (
     'created',
     'accepted',
     'settled',
-    'cancelled'
+    'cancelled',
+    'htlcs-ready'
 );
 
 
@@ -890,7 +891,8 @@ CREATE TABLE public.vtxo (
     forfeit_round_id bigint,
     board_swept_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    lightning_htlc_subscription_id bigint
 );
 
 
@@ -930,6 +932,40 @@ CREATE SEQUENCE public.vtxo_id_seq
 --
 
 ALTER SEQUENCE public.vtxo_id_seq OWNED BY public.vtxo.id;
+
+
+--
+-- Name: vtxo_pool; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vtxo_pool (
+    id bigint NOT NULL,
+    vtxo_id text,
+    expiry_height integer NOT NULL,
+    amount bigint NOT NULL,
+    depth smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    spent_at timestamp with time zone
+);
+
+
+--
+-- Name: vtxo_pool_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.vtxo_pool_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vtxo_pool_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.vtxo_pool_id_seq OWNED BY public.vtxo_pool.id;
 
 
 --
@@ -1052,6 +1088,13 @@ ALTER TABLE ONLY public.sweep ALTER COLUMN id SET DEFAULT nextval('public.sweep_
 --
 
 ALTER TABLE ONLY public.vtxo ALTER COLUMN id SET DEFAULT nextval('public.vtxo_id_seq'::regclass);
+
+
+--
+-- Name: vtxo_pool id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_pool ALTER COLUMN id SET DEFAULT nextval('public.vtxo_pool_id_seq'::regclass);
 
 
 --
@@ -1214,6 +1257,22 @@ ALTER TABLE ONLY public.vtxo
 
 
 --
+-- Name: vtxo_pool vtxo_pool_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_pool
+    ADD CONSTRAINT vtxo_pool_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vtxo_pool vtxo_pool_vtxo_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_pool
+    ADD CONSTRAINT vtxo_pool_vtxo_unique UNIQUE (vtxo_id);
+
+
+--
 -- Name: wallet_changeset wallet_changeset_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1362,6 +1421,20 @@ CREATE INDEX vtxo_has_forfeit_state_ix ON public.vtxo USING btree (((forfeit_sta
 
 
 --
+-- Name: vtxo_pool_spent_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_pool_spent_ix ON public.vtxo_pool USING btree (((spent_at IS NULL)));
+
+
+--
+-- Name: vtxo_pool_vtxo_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_pool_vtxo_id_ix ON public.vtxo_pool USING btree (vtxo_id);
+
+
+--
 -- Name: vtxo_spendable_ix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1373,6 +1446,13 @@ CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS N
 --
 
 CREATE UNIQUE INDEX vtxo_vtxo_id_uix ON public.vtxo USING btree (vtxo_id);
+
+
+--
+-- Name: vtxos_ln_htlc_sub_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxos_ln_htlc_sub_ix ON public.vtxo USING btree (lightning_htlc_subscription_id, vtxo_id);
 
 
 --
@@ -1564,6 +1644,22 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 
 ALTER TABLE ONLY public.vtxo
     ADD CONSTRAINT vtxo_forfeit_round_id_fkey FOREIGN KEY (forfeit_round_id) REFERENCES public.round(id);
+
+
+--
+-- Name: vtxo vtxo_lightning_htlc_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo
+    ADD CONSTRAINT vtxo_lightning_htlc_subscription_id_fkey FOREIGN KEY (lightning_htlc_subscription_id) REFERENCES public.lightning_htlc_subscription(id);
+
+
+--
+-- Name: vtxo_pool vtxo_pool_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_pool
+    ADD CONSTRAINT vtxo_pool_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --

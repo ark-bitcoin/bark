@@ -9,6 +9,7 @@ use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
+use ark::lightning::{PaymentHash, Preimage};
 use ark::rounds::{RoundId, VtxoOwnershipChallenge};
 use ark::tree::signed::VtxoTreeSpec;
 
@@ -42,6 +43,24 @@ macro_rules! impl_try_from_byte_array {
 	($ty:path, $exp:expr) => {
 		impl TryFromBytes for $ty {
 			fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
+				#[allow(unused)]
+				use bitcoin::hashes::Hash;
+
+				let array = TryFrom::try_from(b.as_ref())
+					.map_err(|_| concat!("invalid ", $exp))?;
+				Ok(<$ty>::from_byte_array(array))
+			}
+		}
+	};
+}
+impl_try_from_byte_array!(PaymentHash, "lightning payment hash");
+impl_try_from_byte_array!(Preimage, "lightning payment preimage");
+impl_try_from_byte_array!(sha256::Hash, "SHA-256 hash");
+
+macro_rules! impl_try_from_byte_array_result {
+	($ty:path, $exp:expr) => {
+		impl TryFromBytes for $ty {
+			fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
 				Ok(TryFrom::try_from(b.as_ref()).ok()
 					.and_then(|b| <$ty>::from_byte_array(b).ok())
 					.ok_or(concat!("invalid ", $exp))?)
@@ -49,9 +68,9 @@ macro_rules! impl_try_from_byte_array {
 		}
 	};
 }
-impl_try_from_byte_array!(musig::PublicNonce, "public musig nonce");
-impl_try_from_byte_array!(musig::PartialSignature, "partial musig signature");
-impl_try_from_byte_array!(musig::AggregatedNonce, "aggregated musig nonce");
+impl_try_from_byte_array_result!(musig::PublicNonce, "public musig nonce");
+impl_try_from_byte_array_result!(musig::PartialSignature, "partial musig signature");
+impl_try_from_byte_array_result!(musig::AggregatedNonce, "aggregated musig nonce");
 
 macro_rules! impl_try_from_byte_slice {
 	($ty:path, $exp:expr) => {
@@ -65,7 +84,6 @@ macro_rules! impl_try_from_byte_slice {
 		}
 	};
 }
-impl_try_from_byte_slice!(sha256::Hash, "SHA-256 hash");
 impl_try_from_byte_slice!(PublicKey, "public key");
 impl_try_from_byte_slice!(schnorr::Signature, "Schnorr signature");
 impl_try_from_byte_slice!(VtxoId, "VTXO ID");
@@ -360,10 +378,10 @@ impl<'a> From<&'a ArkoorBuilder<'_, VtxoRequest>> for protos::ArkoorCosignReques
 	}
 }
 
-impl TryInto<Vec<ArkoorCosignResponse>> for protos::ArkoorPackageCosignResponse {
+impl TryFrom<protos::ArkoorPackageCosignResponse> for Vec<ArkoorCosignResponse> {
 	type Error = ConvertError;
-	fn try_into(self) -> Result<Vec<ArkoorCosignResponse>, Self::Error> {
-		Ok(self.sigs.into_iter().map(|i| i.try_into()).collect::<Result<_, _>>()?)
+	fn try_from(v: protos::ArkoorPackageCosignResponse) -> Result<Self, Self::Error> {
+		Ok(v.sigs.into_iter().map(|i| i.try_into()).collect::<Result<_, _>>()?)
 	}
 }
 
@@ -395,7 +413,6 @@ impl TryFrom<protos::BoardCosignResponse> for BoardCosignResponse {
 		})
 	}
 }
-
 
 impl From<ark::integration::TokenType> for protos::intman::TokenType {
 	fn from(value: ark::integration::TokenType) -> Self {
@@ -434,5 +451,24 @@ impl From<ark::integration::TokenStatus> for protos::intman::TokenStatus {
 			ark::integration::TokenStatus::Abused => protos::intman::TokenStatus::Abused,
 			ark::integration::TokenStatus::Disabled => protos::intman::TokenStatus::Disabled,
 		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use std::str::FromStr;
+	use bitcoin::hex::FromHex;
+	use super::*;
+
+	#[test]
+	fn test_preimage_bytes() {
+		let h = "ef2cb05d04819ddb2b9d960c7e0e295ea48ffb429712dc8f30aa48dfcc20c97e";
+		let b = Vec::<u8>::from_hex(h).unwrap();
+
+		let preimage = Preimage::from_str(h).unwrap();
+		assert_eq!(preimage, Preimage::from_bytes(&b).unwrap());
+		assert_eq!(preimage, Preimage::from_slice(&b).unwrap());
+		assert_eq!(preimage, Preimage::from_slice(&preimage.to_vec()).unwrap());
+		assert_eq!(preimage, Preimage::from_bytes(&preimage.to_vec()).unwrap());
 	}
 }

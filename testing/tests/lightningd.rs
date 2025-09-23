@@ -422,7 +422,7 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 
 #[tokio::test]
 async fn bark_can_receive_lightning() {
-	let ctx = TestContext::new("lightningd/bark_receive_from_lightning").await;
+	let ctx = TestContext::new("lightningd/bark_can_receive_lightning").await;
 
 	// Start a three lightning nodes
 	// And connect them in a line.
@@ -466,6 +466,8 @@ async fn bark_can_receive_lightning() {
 		lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
+	srv.wait_for_vtxopool().await;
+
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
 
 	// Wait for the onboarding round to be deeply enough confirmed
@@ -490,10 +492,9 @@ async fn bark_can_receive_lightning() {
 	);
 
 	assert!(
-		ln_round_mvt.spends[0].amount == board_amount &&
+		ln_round_mvt.spends.is_empty() &&
 		ln_round_mvt.fees == Amount::ZERO &&
 		ln_round_mvt.receives[0].amount == pay_amount &&
-		ln_round_mvt.receives[1].amount == board_amount &&
 		ln_round_mvt.recipients.is_empty()
 	);
 
@@ -554,6 +555,8 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 
 	let pay_amount = btc(1);
 	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
+
+	srv.wait_for_vtxopool().await;
 
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();

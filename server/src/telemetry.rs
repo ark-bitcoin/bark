@@ -24,7 +24,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
 use crate::Config;
-use crate::cln::ClnNodeStateKind;
+use crate::ln::cln::ClnNodeStateKind;
 use crate::database::ln::LightningPaymentStatus;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;

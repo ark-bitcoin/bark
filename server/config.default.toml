@@ -33,6 +33,15 @@ sweep_threshold = 1000000
 claim_fallback_feerate = "6250sat/kwu"
 wake_interval = "1m"
 
+[vtxopool]
+vtxo_targets = []
+vtxo_target_issue_threshold = 80
+vtxo_lifetime = 432
+vtxo_pre_expiry = 144
+vtxo_max_arkoor_depth = 3
+issue_tx_fallback_feerate = "250sat/kwu"
+issue_interval = "1m"
+
 [rpc]
 public_address = "127.0.0.1:3535"
 admin_address = "127.0.0.1:3536"

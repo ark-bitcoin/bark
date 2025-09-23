@@ -1,5 +1,6 @@
 pub mod proxy;
 
+use std::sync::Arc;
 use std::{env, fs};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -14,12 +15,12 @@ use parking_lot::Mutex;
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
-use server_log::{LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
+use server_log::{FinishedPoolIssuance, LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
+use crate::{secs, Bitcoind, Daemon, DaemonHelper};
 use crate::daemon::LogHandler;
-use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::CAPTAIND_EXEC;
 use crate::util::{resolve_path, AnyhowErrorExt};
 
@@ -60,11 +61,27 @@ impl WalletStatuses {
 	}
 }
 
+#[derive(Debug, Default)]
+pub struct State {
+	vtxopool_ready: bool,
+}
+
+impl SlogHandler for Arc<parking_lot::Mutex<State>> {
+	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
+	    if log.is::<FinishedPoolIssuance>() {
+			self.lock().vtxopool_ready = true;
+		}
+
+		false
+	}
+}
+
 pub struct CaptaindHelper {
 	name: String,
 	cfg: Config,
 	bitcoind: Bitcoind,
 	slog_handler_tx: Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
+	state: Arc<parking_lot::Mutex<State>>,
 }
 
 impl Captaind {
@@ -98,6 +115,7 @@ impl Captaind {
 			cfg,
 			bitcoind,
 			slog_handler_tx: Mutex::new(None),
+			state: Arc::new(parking_lot::Mutex::new(State::default())),
 		};
 
 		Daemon::wrap(helper)
@@ -188,47 +206,8 @@ impl Captaind {
 	}
 
 	pub fn add_slog_handler<L: SlogHandler>(&self, handler: L) {
-		let mut handler_tx_guard = self.inner.slog_handler_tx.lock();
-
-		if let Some(ref tx) = *handler_tx_guard {
-			tx.try_send(Box::new(handler)).expect("too many slog handlers pending");
-		} else {
-			/// This handler will forward the raw stdout log lines into
-			/// the slog handlers after parsing
-			struct Handler {
-				handlers: Vec<Box<dyn SlogHandler>>,
-				hadler_rx: mpsc::Receiver<Box<dyn SlogHandler>>,
-			}
-
-			impl LogHandler for Handler {
-				fn process_log(&mut self, line: &str) -> bool {
-					loop {
-						match self.hadler_rx.try_recv() {
-							Ok(h) => self.handlers.push(h),
-							Err(mpsc::error::TryRecvError::Empty) => break,
-							Err(mpsc::error::TryRecvError::Disconnected) => return true,
-						}
-					}
-
-					if !self.handlers.is_empty() {
-						let log = serde_json::from_str::<ParsedRecord>(&line)
-							.expect("error parsing slog line");
-						if log.is_slog() {
-							self.handlers.retain_mut(|h| !h.process_slog(&log));
-						}
-					}
-
-					false
-				}
-			}
-
-			let (tx, rx) = mpsc::channel(8);
-			self.add_stdout_handler(Handler {
-				handlers: vec![Box::new(handler)],
-				hadler_rx: rx,
-			});
-			*handler_tx_guard = Some(tx);
-		}
+		self.inner.slog_handler_tx.lock().as_ref().expect("not started yet")
+			.try_send(Box::new(handler)).expect("too many slog handlers pending");
 	}
 
 	/// Subscribe to all structured logs of the given type.
@@ -260,6 +239,18 @@ impl Captaind {
 		let ret = rx.recv().await.expect("log wait channel closed");
 		info!("Got {} log!", L::LOGID);
 		ret
+	}
+
+	/// Wait until the vtxopool is ready
+	pub async fn wait_for_vtxopool(&self) {
+		info!("Waiting for VtxoPool...");
+		loop {
+			if self.inner.state.lock().vtxopool_ready {
+				info!("VtxoPool ready");
+				return;
+			}
+			tokio::time::sleep(secs(1)).await;
+		}
 	}
 }
 
@@ -334,14 +325,18 @@ impl DaemonHelper for CaptaindHelper {
 		Ok(())
 	}
 
-	async fn post_start(&mut self) -> anyhow::Result<()> {
-		Ok(())
-	}
-
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
 		while !self.is_ready().await {
 			tokio::time::sleep(Duration::from_millis(100)).await;
 		}
+		Ok(())
+	}
+
+	async fn post_start(
+		&mut self,
+		log_handler_tx: &mpsc::Sender<Box<dyn LogHandler>>,
+	) -> anyhow::Result<()> {
+		log_handler_tx.send(self.init_slog_handler()).await.unwrap();
 		Ok(())
 	}
 }
@@ -415,5 +410,44 @@ impl CaptaindHelper {
 		} else {
 			bail!("Failed to create captaind '{}'", self.name);
 		}
+	}
+
+	/// Initialize the [LogHandler] that will drive slog handlers
+	fn init_slog_handler(&mut self) -> Box<dyn LogHandler> {
+		/// This handler will forward the raw stdout log lines into
+		/// the slog handlers after parsing
+		struct Handler {
+			handlers: Vec<Box<dyn SlogHandler>>,
+			hadler_rx: mpsc::Receiver<Box<dyn SlogHandler>>,
+		}
+
+		impl LogHandler for Handler {
+			fn process_log(&mut self, line: &str) -> bool {
+				loop {
+					match self.hadler_rx.try_recv() {
+						Ok(h) => self.handlers.push(h),
+						Err(mpsc::error::TryRecvError::Empty) => break,
+						Err(mpsc::error::TryRecvError::Disconnected) => return true,
+					}
+				}
+
+				if !self.handlers.is_empty() {
+					let log = serde_json::from_str::<ParsedRecord>(&line)
+						.expect("error parsing slog line");
+					if log.is_slog() {
+						self.handlers.retain_mut(|h| !h.process_slog(&log));
+					}
+				}
+
+				false
+			}
+		}
+
+		let (tx, rx) = mpsc::channel(8);
+		*self.slog_handler_tx.lock() = Some(tx);
+		Box::new(Handler {
+			handlers: vec![Box::new(self.state.clone())],
+			hadler_rx: rx,
+		})
 	}
 }
