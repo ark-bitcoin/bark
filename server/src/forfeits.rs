@@ -21,7 +21,6 @@ use server_rpc as rpc;
 
 use crate::database::forfeits::ForfeitState;
 use crate::database::rounds::StoredRound;
-use crate::error::AnyhowErrorExt;
 use crate::system::RuntimeManager;
 use crate::txindex::{TxIndex, Tx};
 use crate::txindex::broadcast::TxNursery;
@@ -482,13 +481,13 @@ impl Process {
 								new_forfeits.swap_remove(idx);
 							},
 							Err(e) => {
-								warn!("Error fetching newly forfeited vtxo from the db: {}", e);
+								warn!("Error fetching newly forfeited vtxo from the db: {:#}", e);
 								idx+=1;
 							}
 						}
 					},
 					Err(e)  => {
-						warn!("Error fetching newly forfeited vtxo from the db: {}", e);
+						warn!("Error fetching newly forfeited vtxo from the db: {:#}", e);
 						idx+=1;
 					}
 				}
@@ -496,17 +495,17 @@ impl Process {
 
 			// Sync our wallet
 			if let Err(e) = self.wallet.sync(&self.bitcoind, true).await {
-				error!("Error syncing ForfeitWatcher wallet: {:?}", e);
+				error!("Error syncing ForfeitWatcher wallet: {:#}", e);
 			}
 
 			// Then check if any have been broadcasted.
 			if let Err(e) = self.detect_forfeit_confirms().await {
-				error!("Error while performing forfeit watcher checks: {}", e);
+				error!("Error while performing forfeit watcher checks: {:#}", e);
 			}
 
 			// Then finally make progress on all pending claims.
 			if let Err(e) = self.progress_pending_claims().await {
-				error!("Error trying to progress forfeit claims: {}", e.full_msg());
+				error!("Error trying to progress forfeit claims: {:#}", e);
 			}
 
 			let pending_claim_volume = self.claims.iter().map(|s|

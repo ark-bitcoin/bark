@@ -1,25 +1,8 @@
 
-use std::fmt::{self, Write};
-use std::borrow::Borrow;
+use std::fmt;
 use std::error::Error as StdError;
 
 use anyhow::Context;
-
-
-pub trait AnyhowErrorExt: Borrow<anyhow::Error> {
-	fn full_msg(&self) -> String {
-		let mut ret = String::new();
-		for (i, e) in self.borrow().chain().enumerate() {
-			if i == 0 {
-				write!(ret, "{}", e).expect("write to buf");
-			} else {
-				write!(ret, ": {}", e).expect("write to buf");
-			}
-		}
-		ret
-	}
-}
-impl AnyhowErrorExt for anyhow::Error {}
 
 
 /// An error type to add context to anyhow to indicate any form
@@ -203,6 +186,7 @@ mod test {
 		let b = e.downcast_ref::<BadArgument>().unwrap();
 		assert_eq!(format!("{}", b), "bad user input: badarg2_context");
 		assert_eq!(format!("{:?}", b), "bad user input: badarg2_context");
+		assert_eq!(format!("{:#}", b), "bad user input: badarg2_context");
 
 		let r: anyhow::Result<()> = badarg!("badarg")
 			.context("inner_context")

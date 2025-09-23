@@ -38,7 +38,7 @@ use server_rpc::protos;
 use crate::{database, telemetry, Server, SECP};
 use crate::database::ln::LightningHtlcSubscriptionStatus;
 use crate::database::forfeits::ForfeitState;
-use crate::error::{AnyhowErrorExt, ContextExt, NotFound};
+use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::secret::Secret;
 use crate::telemetry::SpanExt;
@@ -1676,7 +1676,7 @@ pub async fn run_round_coordinator(
 			// Internal error, retry immediatelly.
 			RoundResult::Err(RoundError::Recoverable(e)) => {
 				error!("Full round error stack trace: {:?}", e);
-				slog!(RoundError, round_seq, error: format!("{}", e.full_msg()));
+				slog!(RoundError, round_seq, error: format!("{:#}", e));
 				continue;
 			},
 			// Fatal error, halt operations.

@@ -18,7 +18,6 @@ use ark::arkoor::ArkoorPackageBuilder;
 use ark::tree::signed::builder::SignedTreeBuilder;
 
 use crate::database::vtxopool::PoolVtxo;
-use crate::error::AnyhowErrorExt;
 use crate::wallet::BdkWalletExt;
 use crate::{database, Server, SECP};
 
@@ -282,7 +281,7 @@ impl VtxoPool {
 			};
 			if let Err(e) = srv.db.store_vtxopool_vtxo(&new).await {
 				// don't abort for this
-				warn!("Failed to store change from a vtxopool spend: {}", e.full_msg());
+				warn!("Failed to store change from a vtxopool spend: {:#}", e);
 			} else {
 				self.data.lock().insert_vtxos(&[new]);
 				slog!(ChangePoolVtxo, vtxo: ch.id(), amount: ch.amount(), depth: ch.arkoor_depth());
@@ -384,7 +383,7 @@ impl Process {
 
 		let mut wallet = self.srv.rounds_wallet.lock().await;
 		if let Err(e) = wallet.sync(&self.srv.bitcoind, false).await {
-			warn!("Wallet sync error before funding vtxo pool issuance tx: {}", e.full_msg());
+			warn!("Wallet sync error before funding vtxo pool issuance tx: {:#}", e);
 		}
 		let funding_psbt = {
 			let untrusted = wallet.untrusted_utxos(None);
@@ -512,7 +511,7 @@ impl Process {
 			}
 
 			if let Err(e) = self.check_maybe_issue_vtxos().await {
-				warn!("Error from VTXO pool: {}", e.full_msg());
+				warn!("Error from VTXO pool: {:#}", e);
 			}
 
 			timer.reset();
