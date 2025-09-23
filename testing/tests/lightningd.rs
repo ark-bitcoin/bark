@@ -529,9 +529,7 @@ async fn bark_can_receive_lightning() {
 
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
 
-	// Wait for the onboarding round to be deeply enough confirmed
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-	// We use that to sync and get onboarded vtxos
+	// trigger a maintenance to claim the lightning receive
 	bark.offchain_balance().await;
 
 	// HTLC settlement on lightning side
