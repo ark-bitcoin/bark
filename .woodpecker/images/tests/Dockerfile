@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV RUST_BACKTRACE=1 \
 	DEBIAN_FRONTEND=noninteractive \
-	RUSTUP_TOOLCHAIN_VERSION=1.82 \
+	RUSTUP_TOOLCHAIN_VERSION=1.88 \
 	MACOS_SDK_VERSION=15.4 \
 	MACOS_DARWIN_VERSION=24.4 \
 	PATH=/root/.cargo/bin:/usr/lib/postgresql/16/bin:${PATH} \
