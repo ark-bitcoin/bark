@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -16,6 +17,7 @@ use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::{error, info, trace};
+use server::vtxopool::VtxoTarget;
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest};
@@ -2198,4 +2200,70 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 
 	let err = bark.try_bolt11_invoice(sat(30_000)).await.unwrap_err();
 	assert!(err.to_string().contains(format!("Requested amount exceeds limit of 0.01000000 BTC").as_str()), "err: {err}");
+}
+
+#[tokio::test]
+async fn server_can_use_multi_input_from_vtxo_pool() {
+	let ctx = TestContext::new("server/server_can_use_multi_input_from_vtxo_pool").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightningd_2), |cfg| {
+		cfg.vtxopool.vtxo_targets = vec![
+			VtxoTarget { count: 5, amount: sat(100_000) },
+		];
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	let board_amount = btc(2);
+	bark.board(board_amount).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let pay_amount = sat(200_000);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
+
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move {
+		lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
+	});
+
+	srv.wait_for_vtxopool().await;
+
+	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+
+	// Wait for the onboarding round to be deeply enough confirmed
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	// We use that to sync and get onboarded vtxos
+	let balance = bark.offchain_balance().await;
+
+	// HTLC settlement on lightning side
+	res1.fast().await.unwrap();
+
+	assert_eq!(balance, pay_amount + board_amount);
 }
