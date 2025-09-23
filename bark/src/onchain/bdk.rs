@@ -14,9 +14,10 @@ use bitcoin::{
 };
 use log::{debug, error, info, trace, warn};
 
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
+use bitcoin_ext::rpc::RpcApi;
 use json::exit::ExitState;
 
 use crate::onchain::{
@@ -407,17 +408,27 @@ impl OnchainWallet {
 		self.rebroadcast_txs(chain, now).await
 	}
 
-	pub async fn full_scan(&mut self, chain: &ChainSourceClient) -> anyhow::Result<Amount> {
-		debug!("Starting wallet sync...");
+	pub async fn initial_wallet_scan(
+		&mut self,
+		chain: &ChainSourceClient,
+		start_height: Option<BlockHeight>,
+	) -> anyhow::Result<Amount> {
+		info!("Starting initial wallet sync...");
 		debug!("Starting balance: {}", self.inner.balance());
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		match chain.inner() {
 			InnerChainSourceClient::Bitcoind(bitcoind) => {
-				let prev_tip = self.inner.local_chain().get(GENESIS_HEIGHT)
-					.expect("missing genesis checkpoint");
-				self.inner_sync_bitcoind(bitcoind, prev_tip).await?;
+				// Make sure we include the given start_height in the scan
+				let mut height = start_height.unwrap_or(GENESIS_HEIGHT);
+				if height > 0 {
+					height -= 1
+				}
+				let block_hash = bitcoind.get_block_hash(height as u64)?;
+				self.inner.set_checkpoint(height, block_hash);
+				self.inner_sync_bitcoind(bitcoind, self.inner.latest_checkpoint()).await?;
 			},
+			// Esplora can't do a full scan from a given block height, so we can ignore start_height
 			InnerChainSourceClient::Esplora(client) => {
 				debug!("Starting full scan with esplora...");
 				let request = self.inner.start_full_scan();

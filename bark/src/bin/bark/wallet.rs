@@ -81,9 +81,15 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		}
 	}
 
+	// A mnemonic implies that the user wishes to recover an existing wallet.
 	if opts.mnemonic.is_some() {
 		if opts.birthday_height.is_none() {
-			bail!("You need to set the --birthday-height field when recovering from mnemonic.");
+			// Only Bitcoin Core requires a birthday height to avoid syncing the entire chain.
+			if config.bitcoind_address.is_some() {
+				bail!("You need to set the --birthday-height field when recovering from mnemonic.");
+			}
+		} else if config.esplora_address.is_some() {
+			warn!("The given --birthday-height will be ignored because you're using Esplora.");
 		}
 		warn!("Recovering from mnemonic currently only supports recovering on-chain funds!");
 	} else {
@@ -93,7 +99,10 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	}
 
 	// Everything that errors after this will wipe the datadir again.
-	if let Err(e) = try_create_wallet(&datadir, net, config, opts.mnemonic, opts.force).await {
+	let result = try_create_wallet(
+		&datadir, net, config, opts.mnemonic, opts.birthday_height, opts.force,
+	).await;
+	if let Err(e) = result {
 		// Remove the datadir if it exists
 		if datadir.exists() {
 			if let Err(e) = fs::remove_dir_all(datadir).await {
@@ -112,6 +121,7 @@ async fn try_create_wallet(
 	net: Network,
 	config: Config,
 	mnemonic: Option<bip39::Mnemonic>,
+	birthday_height: Option<BlockHeight>,
 	force: bool,
 ) -> anyhow::Result<()> {
 	info!("Creating new bark Wallet at {}", datadir.display());
@@ -119,6 +129,7 @@ async fn try_create_wallet(
 	fs::create_dir_all(datadir).await.context("can't create dir")?;
 
 	// generate seed
+	let is_new_wallet = mnemonic.is_none();
 	let mnemonic = mnemonic.unwrap_or_else(|| bip39::Mnemonic::generate(12).expect("12 is valid"));
 	let seed = mnemonic.to_seed("");
 	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
@@ -138,7 +149,13 @@ async fn try_create_wallet(
 	let mut onchain = OnchainWallet::load_or_create(net, seed, db.clone())?;
 	let wallet = BarkWallet::create_with_onchain(&mnemonic, net, config, db, &onchain, force).await.context("error creating wallet")?;
 
-	onchain.full_scan(&wallet.chain).await?;
+	// Skip initial block sync if we generated a new wallet.
+	let birthday_height = if is_new_wallet {
+		Some(wallet.chain.tip().await?)
+	} else {
+		birthday_height
+	};
+	onchain.initial_wallet_scan(&wallet.chain, birthday_height).await?;
 	Ok(())
 }
 
