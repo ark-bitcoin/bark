@@ -90,7 +90,6 @@ const EPHEMERAL_KEY_PATH: &str = "m/30'";
 ///
 /// It contains a first item that is yielded first and then it refers to the stream.
 pub struct RoundEventStream {
-	first: Option<Arc<RoundEvent>>,
 	events: BroadcastStream<Arc<RoundEvent>>,
 }
 
@@ -101,10 +100,6 @@ impl Stream for RoundEventStream {
 		mut self: Pin<&mut Self>,
 		cx: &mut std::task::Context,
 	) -> Poll<Option<Self::Item>> {
-		if let Some(e) = self.first.take() {
-			return Poll::Ready(Some(e));
-		}
-
 		loop {
 			match Pin::new(&mut self.events).poll_next(cx) {
 				// We lagged behind, we continue which will give us new messages
@@ -128,10 +123,8 @@ impl RoundHandle {
 	pub fn events(&self) -> RoundEventStream {
 		// If we keep the lock just as long as we create a new receiver,
 		// we will never miss any messages.
-		let guard = self.last_round_event.lock();
 		let events = BroadcastStream::new(self.round_event_tx.subscribe());
-		let first = guard.clone();
-		RoundEventStream { first, events }
+		RoundEventStream { events }
 	}
 
 	pub fn last_event(&self) -> Option<Arc<RoundEvent>> {
@@ -240,6 +233,7 @@ impl Server {
 			required_board_confirmations: self.config.required_board_confirmations,
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
 			min_board_amount: self.config.min_board_amount,
+			offboard_feerate: self.config.round_tx_feerate,
 		}
 	}
 

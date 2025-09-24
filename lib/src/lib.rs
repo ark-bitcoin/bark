@@ -74,6 +74,9 @@ pub struct ArkInfo {
 	pub max_user_invoice_cltv_delta: u16,
 	/// Minimum amount for a board the server will cosign
 	pub min_board_amount: Amount,
+
+	//TODO(stevenroose) move elsewhere eith other temp fields
+	pub offboard_feerate: FeeRate,
 }
 
 /// Input of a round
@@ -113,6 +116,7 @@ pub struct InvalidOffboardRequestError(&'static str);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct OffboardRequest {
+	#[serde(with = "bitcoin_ext::serde::encodable")]
 	pub script_pubkey: ScriptBuf,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,

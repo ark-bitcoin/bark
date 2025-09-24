@@ -27,7 +27,8 @@ use ark::{
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundFinished, RoundInfo, RoundProposal, RoundSeq, VtxoOwnershipChallenge, VtxoProposal, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT
+	RoundAttempt, RoundEvent, RoundFinished, RoundProposal, RoundSeq, VtxoOwnershipChallenge,
+	VtxoProposal, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use server_log::{LogMsg, RoundVtxoCreated};
@@ -1284,12 +1285,7 @@ async fn perform_round(
 	slog!(RoundStarted, round_seq);
 	telemetry::set_round_seq(round_seq);
 
-	// Start new round, announce.
 	let offboard_feerate = srv.config.round_tx_feerate;
-	srv.rounds.broadcast_event(RoundEvent::Start(RoundInfo {
-		round_seq,
-		offboard_feerate,
-	}));
 
 	// Allocate this data once per round so that we can keep them
 	// Perhaps we could even keep allocations between all rounds, but time
@@ -1311,17 +1307,16 @@ async fn perform_round(
 
 	// In this loop we will try to finish the round and make new attempts.
 	'attempt: loop {
+		if let Err(e) = srv.rounds_wallet.lock().await.sync(&srv.bitcoind, false).await {
+			slog!(RoundSyncError, error: format!("{:?}", e));
+		}
+
 		let state = round_state.collecting_payments();
 		let attempt_seq = state.attempt_seq;
 		let challenge = state.vtxo_ownership_challenge.inner().to_vec();
 
 		rslog!(AttemptingRound, state, challenge);
 		telemetry::set_round_attempt(attempt_seq);
-
-		if let Err(e) = srv.rounds_wallet.lock().await.sync(&srv.bitcoind, false).await
-		{
-			slog!(RoundSyncError, error: format!("{:?}", e));
-		}
 
 		let mut round_step = telemetry::RoundStep::Attempt(Instant::now());
 		let _span = trace_round_step(round_seq, &tracer_provider, &parent_context, attempt_seq, &round_step);

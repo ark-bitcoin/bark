@@ -227,11 +227,11 @@ impl Captaind {
 
 	/// Subscribe to all structured logs of the given type.
 	pub fn subscribe_log<L: LogMsg>(&self) -> mpsc::UnboundedReceiver<L> {
-		info!("Subscribing to {} logs", L::LOGID);
+		trace!("Subscribing to {} logs", L::LOGID);
 		let (tx, rx) = sync::mpsc::unbounded_channel();
 		self.add_slog_handler(move |log: &ParsedRecord| {
 			if let Ok(msg) = log.try_as() {
-				info!("Captured {} log", L::LOGID);
+				trace!("Captured {} log", L::LOGID);
 				return tx.send(msg).is_err();
 			}
 			false

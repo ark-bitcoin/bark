@@ -12,9 +12,6 @@ mod convert;
 mod migrations;
 mod query;
 
-#[cfg(feature = "onchain_bdk")]
-use bdk_wallet::ChangeSet;
-use bitcoin_ext::BlockDelta;
 
 use std::path::PathBuf;
 
@@ -26,16 +23,15 @@ use log::debug;
 use rusqlite::{Connection, Transaction};
 
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use ark::musig::SecretNonce;
-use ark::rounds::{RoundId, RoundSeq};
+use bitcoin_ext::BlockDelta;
 
-use crate::exit::models::ExitTxOrigin;
-use crate::vtxo_state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
-use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
+use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::persist::BarkPersister;
-use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
+use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
+use crate::round::{RoundState, UnconfirmedRound};
+use crate::vtxo_state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
 
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
 /// [PathBuf].
@@ -101,13 +97,13 @@ impl BarkPersister for SqliteClient {
 	}
 
 	#[cfg(feature = "onchain_bdk")]
-	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
+	fn initialize_bdk_wallet(&self) -> anyhow::Result<bdk_wallet::ChangeSet> {
 	    let mut conn = self.connect()?;
 		Ok(bdk_wallet::WalletPersister::initialize(&mut conn)?)
 	}
 
 	#[cfg(feature = "onchain_bdk")]
-	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()> {
+	fn store_bdk_wallet_changeset(&self, changeset: &bdk_wallet::ChangeSet) -> anyhow::Result<()> {
 	    let mut conn = self.connect()?;
 		bdk_wallet::WalletPersister::persist(&mut conn, changeset)?;
 		Ok(())
@@ -172,65 +168,52 @@ impl BarkPersister for SqliteClient {
 		query::get_all_pending_boards(&conn)
 	}
 
-	fn store_new_round_attempt(&self, round_seq: RoundSeq, attempt_seq: usize, round_participation: RoundParticipation)
-		-> anyhow::Result<AttemptStartedState>
-	{
+	fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-		let round = query::store_new_round_attempt(
-			&tx, round_seq, attempt_seq, round_participation)?;
+		for vtxo in round_state.participation().inputs.iter() {
+			query::update_vtxo_state_checked(
+				&*tx,
+				vtxo.id(),
+				VtxoState::Locked,
+				&[VtxoStateKind::Spendable],
+			)?;
+		}
+		let id = query::store_round_state(&tx, round_state)?;
 		tx.commit()?;
-		Ok(round)
+		Ok(id)
 	}
 
-	fn store_pending_confirmation_round(&self, round_txid: RoundId, round_tx: bitcoin::Transaction, reqs: Vec<StoredVtxoRequest>, vtxos: Vec<Vtxo>)
-		-> anyhow::Result<PendingConfirmationState>
-	{
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		let round = query::store_pending_confirmation_round(
-			&tx, round_txid, round_tx, reqs, vtxos)?;
-		tx.commit()?;
-		Ok(round)
-	}
-
-	fn list_pending_rounds(&self) -> anyhow::Result<Vec<RoundState>> {
+	fn update_round_state(&self, state: &StoredRoundState) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::list_pending_rounds(&conn)
-	}
-
-	fn store_round_state(&self, round_state: RoundState, prev_state: RoundState) -> anyhow::Result<RoundState> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		let state = query::store_round_state_update(&tx, round_state, prev_state)?;
-		tx.commit()?;
-		Ok(state)
-	}
-
-	fn store_secret_nonces(&self, round_attempt_id: i64, secret_nonces: Vec<Vec<SecretNonce>>) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		query::store_secret_nonces(&tx, round_attempt_id, secret_nonces)?;
-		tx.commit()?;
+		query::update_round_state(&conn, state)?;
 		Ok(())
 	}
 
-	fn take_secret_nonces(&self, round_attempt_id: i64) -> anyhow::Result<Option<Vec<Vec<SecretNonce>>>> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		let secret_nonces = query::take_secret_nonces(&tx, round_attempt_id)?;
-		tx.commit()?;
-		Ok(secret_nonces)
+	fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_round_state(&conn, round_state.id)?;
+		Ok(())
 	}
 
-	fn get_round_attempt_by_id(&self, round_attempt_id: i64) -> anyhow::Result<Option<RoundState>> {
+	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
 		let conn = self.connect()?;
-		query::get_round_attempt_by_id(&conn, round_attempt_id)
+		query::load_round_states(&conn)
 	}
 
-	fn get_round_attempt_by_round_txid(&self, round_id: RoundId) -> anyhow::Result<Option<RoundState>> {
+	fn store_recovered_round(&self, round: &UnconfirmedRound) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::get_round_attempt_by_round_txid(&conn, round_id)
+		query::store_recovered_past_round(&conn, round)
+	}
+
+	fn remove_recovered_round(&self, funding_txid: Txid) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_recovered_past_round(&conn, funding_txid)
+	}
+
+	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>> {
+		let conn = self.connect()?;
+		query::load_recovered_past_rounds(&conn)
 	}
 
 	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
@@ -247,12 +230,6 @@ impl BarkPersister for SqliteClient {
 	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxos_by_state(&conn, state)
-	}
-
-	/// Fetch all VTXO's that are currently used in a round
-	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let conn = self.connect()?;
-		query::get_in_round_vtxos(&conn)
 	}
 
 	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {

@@ -249,6 +249,10 @@ impl ChainSource {
 		}
 	}
 
+	pub async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
+		self.block_ref(self.tip().await?).await
+	}
+
 	pub async fn block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef> {
 		match self.inner() {
 			ChainSourceClient::Bitcoind(bitcoind) => {

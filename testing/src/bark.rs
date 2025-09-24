@@ -21,7 +21,7 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
 use bark::onchain::ChainSourceSpec;
-use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
+use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::FeeRateExt;
 
@@ -457,11 +457,11 @@ impl Bark {
 		self.run(["refresh", "--counterparty"]).await;
 	}
 
-	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::Offboard> {
+	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<RoundStatus> {
 		self.try_run_json(["offboard", "--all", "--address", &address.to_string()]).await
 	}
 
-	pub async fn offboard_all(&self, address: impl fmt::Display) -> json::Offboard {
+	pub async fn offboard_all(&self, address: impl fmt::Display) -> RoundStatus {
 		self.try_offboard_all(address).await.expect("offboard --all command failed")
 	}
 
@@ -469,7 +469,7 @@ impl Bark {
 		&self,
 		vtxo: impl fmt::Display,
 		address: impl fmt::Display,
-	) -> json::Offboard {
+	) -> RoundStatus {
 		self.run_json([
 			"offboard", "--vtxo", &vtxo.to_string(), "--address", &address.to_string(),
 		]).await

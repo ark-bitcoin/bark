@@ -5,7 +5,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -16,17 +15,21 @@ use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
-use log::{error, info, trace};
-use server::vtxopool::VtxoTarget;
+use log::{debug, error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
-use ark::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{
+	musig, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest,
+	SECP,
+};
+use bark::lightning_invoice::Bolt11Invoice;
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bark::Wallet;
 use bark_json::WalletVtxoInfo;
 use bark_json::exit::ExitState;
 use server::secret::Secret;
+use server::vtxopool::VtxoTarget;
 use server_log::{
 	RoundFinished, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, TxIndexUpdateFinished,
@@ -213,9 +216,11 @@ async fn cant_spend_untrusted() {
 
 	// we will launch bark to try refresh, it will produce an error log at first,
 	// then we'll confirm the server's money and then bark should succeed by retrying
+
 	let bark_clone = bark.clone();
 	let attempt_handle = tokio::spawn(async move {
-		bark_clone.try_refresh_all().await.unwrap_err();
+		let err = bark_clone.try_refresh_all().await.unwrap_err();
+		debug!("First refresh failed: {:#}", err);
 	});
 
 	// this will at first produce an error

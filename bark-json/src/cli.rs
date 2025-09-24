@@ -6,7 +6,6 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Address, Amount, FeeRate, Txid, Wtxid, address};
 
 use ark::lightning::{PaymentHash, Preimage};
-use ark::rounds::RoundId;
 use ark::VtxoId;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 #[cfg(feature = "utoipa")]
@@ -53,6 +52,8 @@ pub struct ArkInfo {
 	pub max_user_invoice_cltv_delta: u16,
 	/// Minimum amount for a board the server will cosign
 	pub min_board_amount: Amount,
+	/// offboard feerate in sat per kvb
+	pub offboard_feerate_sat_per_kvb: u64,
 }
 
 impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
@@ -72,6 +73,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			required_board_confirmations: v.required_board_confirmations,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta,
 			min_board_amount: v.min_board_amount,
+			offboard_feerate_sat_per_kvb: v.offboard_feerate.to_sat_per_kwu() * 4,
 		}
 	}
 }
@@ -238,7 +240,6 @@ pub struct Movement {
 	pub created_at: String,
 }
 
-
 pub mod onchain {
 	use super::*;
 
@@ -289,34 +290,51 @@ pub mod onchain {
 	}
 }
 
-/// Describes a completed transition of funds from offchain to onchain collaboratively with the
-/// Ark server.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "lowercase")]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct Offboard {
-	/// The [RoundId] of the round in which the offboard occurred
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub round: RoundId,
-	// TODO: List the [OutPoint] and [Amount] here
+pub enum RoundStatus {
+	/// The round was successful and is fully confirmed
+	Confirmed {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		funding_txid: Txid,
+	},
+	/// Round successful but not fully confirmed
+	Unconfirmed {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		funding_txid: Txid,
+	},
+	/// We have unsigned funding transactions that might confirm
+	Pending {
+		#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+		unsigned_funding_txids: Vec<Txid>,
+	},
+	/// The round failed
+	Failed {
+		error: String,
+	},
 }
 
-impl From<bark::Offboard> for Offboard {
-	fn from(v: bark::Offboard) -> Self {
-		Offboard { round: v.round }
+impl RoundStatus {
+	/// Whether this is the final state and it won't change anymore
+	pub fn is_final(&self) -> bool {
+		match self {
+			Self::Confirmed { .. } => true,
+			Self::Unconfirmed { .. } => false,
+			Self::Pending { .. } => false,
+			Self::Failed { .. } => true,
+		}
 	}
-}
 
-/// The output of the `bark refresh` command
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct Refresh {
-	/// A boolean indicated if the command participated
-	/// in a round. If no [ark::Vtxo] was refreshed this variable
-	/// will be set to [false] and otherwise [true]
-	pub participate_round: bool,
-	/// The [RoundId] of the round if the client participated in a round
-	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
-	pub round: Option<RoundId>,
+	/// Whether it looks like the round succeeded
+	pub fn is_success(&self) -> bool {
+		match self {
+			Self::Confirmed { .. } => true,
+			Self::Unconfirmed { .. } => true,
+			Self::Pending { .. } => false,
+			Self::Failed { .. } => false,
+		}
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -506,6 +524,7 @@ mod test {
 				required_board_confirmations: j.required_board_confirmations,
 				max_user_invoice_cltv_delta: j.max_user_invoice_cltv_delta,
 				min_board_amount: j.min_board_amount,
+				offboard_feerate: FeeRate::from_sat_per_kwu(j.offboard_feerate_sat_per_kvb / 4)
 			}
 		}
 	}
