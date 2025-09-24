@@ -16,7 +16,7 @@ mod m0015_optional_round_seq;
 mod m0016_config;
 
 use anyhow::Context;
-use log::{trace, debug};
+use log::debug;
 use rusqlite::{Connection, Transaction};
 
 use m0001_initial_version::Migration0001;
@@ -103,16 +103,13 @@ impl MigrationContext {
 			debug!("Performing migration {}", migration.summary());
 			migration.do_migration(&tx)?;
 			self.update_version(&tx, migration.to_version())?;
-		}
-		else if current_version < from_version {
+		} else if current_version < from_version {
 			bail!("Failed to perform migration. Database is at {} for migration {}",
 				current_version,
 				migration.summary()
 			);
 		}
-		else {
-			trace!("Skipping migration {}. Nothing to be done", migration.summary());
-		};
+
 		tx.commit().context("Failed to commit transaction")?;
 		Ok(())
 	}
