@@ -287,6 +287,22 @@ async fn send_simple_arkoor() {
 }
 
 #[tokio::test]
+async fn send_full_arkoor() {
+	let ctx = TestContext::new("bark/send_full_arkoor").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(90_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(5_000)).await;
+	bark1.board(sat(80_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let addr2 = bark2.address().await;
+	bark1.send_oor(addr2, sat(80_000)).await;
+
+	assert_eq!(0, bark1.offchain_balance().await.to_sat());
+	assert_eq!(80_000, bark2.offchain_balance().await.to_sat());
+}
+
+#[tokio::test]
 async fn send_arkoor_package() {
 	let ctx = TestContext::new("bark/send_arkoor_package").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
@@ -355,29 +371,6 @@ async fn bark_rejects_sending_subdust_oor() {
 	let res = bark1.try_send_oor(&bark2.address().await, subdust_amount, true).await;
 
 	assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
-	assert_eq!(bark1.offchain_balance().await, board_amount);
-}
-
-#[tokio::test]
-async fn bark_rejects_creating_arkoor_subdust_change() {
-	let ctx = TestContext::new("bark/bark_rejects_creating_arkoor_subdust_change").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
-
-	let board_amount = sat(800_000);
-	bark1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	let sent_amount = board_amount - sat(P2TR_DUST_SAT - 1);
-	let err = bark1.try_send_oor(&bark2.address().await, sent_amount, true).await.unwrap_err();
-
-	assert!(err.to_string().contains(&format!(
-		"An error occurred: Insufficient money available. Needed {} but {} is available",
-		// sent amount (799_671) + change (330)
-		sat(800_001),
-		board_amount,
-	)), "err: {err}");
 	assert_eq!(bark1.offchain_balance().await, board_amount);
 }
 
@@ -1020,7 +1013,7 @@ async fn bark_does_not_spend_too_deep_arkoors() {
 
 	let err = bark1.try_send_oor(&addr, sat(100_000), false).await.unwrap_err();
 	assert!(err.to_string().contains(
-		"Insufficient money available. Needed 0.00100330 BTC but 0 BTC is available",
+		"Insufficient money available. Needed 0.00100000 BTC but 0 BTC is available",
 	), "err: {err}");
 }
 

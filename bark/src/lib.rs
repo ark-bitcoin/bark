@@ -1052,7 +1052,7 @@ impl Wallet {
 		};
 
 		let inputs = self.select_vtxos_to_cover(
-			req.amount + P2TR_DUST, Some(srv.info.max_arkoor_depth),
+			req.amount, Some(srv.info.max_arkoor_depth),
 		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
@@ -1259,8 +1259,7 @@ impl Wallet {
 		};
 
 		let inputs = self.select_vtxos_to_cover(
-			pay_req.amount + P2TR_DUST,
-			Some(srv.info.max_arkoor_depth),
+			pay_req.amount, Some(srv.info.max_arkoor_depth),
 		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());

@@ -787,7 +787,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark2.progress_exit().await;
 	await_propagation(&ctx, &bark2, &bark1).await;
 	assert_eq!(bark1.list_exits_with_details().await.len(), 2, "We have one exit");
-	assert_eq!(bark2.list_exits_with_details().await.len(), 1, "We have one exit");
+	assert_eq!(bark2.list_exits_with_details().await.len(), 2, "We have one exit");
 
 	complete_exit(&ctx, &bark1).await;
 	complete_exit(&ctx, &bark2).await;
@@ -802,5 +802,5 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	ctx.generate_blocks(1).await;
 
 	assert_eq!(bark1.onchain_balance().await, sat(503_403));
-	assert_eq!(bark2.onchain_balance().await, sat(1_104_475));
+	assert_eq!(bark2.onchain_balance().await, sat(1_419_300));
 }
