@@ -1,4 +1,4 @@
-
+use std::cmp::PartialEq;
 use std::fmt;
 use std::time::Duration;
 
@@ -6,6 +6,7 @@ use ark::rounds::RoundSeq;
 use bdk_wallet::Balance;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, Network};
+use bitcoin::hex::DisplayHex;
 use bitcoin_ext::BlockHeight;
 use opentelemetry::global::BoxedSpan;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
@@ -29,7 +30,6 @@ use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
 pub const TRACE_RUN_ROUND: &str = "round";
-pub const TRACE_RUN_ROUND_EMPTY: &str = "round_empty";
 pub const TRACE_RUN_ROUND_POPULATED: &str = "round_populated";
 
 pub const ATTRIBUTE_WORKER: &str = "worker";
@@ -59,83 +59,151 @@ pub trait MetricsService {
 pub struct Captaind;
 
 impl MetricsService for Captaind {
-	const NAME: &str = "captaind";
-	const TRACER: &str = "captaind";
-	const METER: &str = "captaind";
+	const NAME: &'static str = "captaind";
+	const TRACER: &'static str = "captaind";
+	const METER: &'static str = "captaind";
 }
 
 /// [MetricsService] for watchmand
 pub struct Watchmand;
 
 impl MetricsService for Watchmand {
-	const NAME: &str = "watchmand";
-	const TRACER: &str = "watchmand";
-	const METER: &str = "watchmand";
+	const NAME: &'static str = "watchmand";
+	const TRACER: &'static str = "watchmand";
+	const METER: &'static str = "watchmand";
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RoundStep {
-	Attempt(Instant),
-	ReceivePayments(Instant),
-	SendVtxoProposal(Instant),
-	ReceiveVtxoSignatures(Instant),
-	CombineVtxoSignatures(Instant),
-	ConstructVtxoTree(Instant),
-	SendRoundProposal(Instant),
-	ReceiveForfeitSignatures(Instant),
-	SignOnChainTransaction(Instant),
-	FinalStage(Instant),
-	Persist(Instant),
+	AttemptInitiation,
+	ReceivePayments,
+	ConstructVtxoTree,
+	SendingVtxoProposal,
+	ReceiveVtxoSignatures,
+	ConstructRoundProposal,
+	CombineVtxoSignatures,
+	ReceiveForfeitSignatures,
+	FinalStage,
+	SignOnChainTransaction,
+	Persist,
+}
+
+#[derive(Clone, Copy)]
+pub struct TimedRoundStep {
+	round_seq: RoundSeq,
+	attempt_seq: usize,
+	step: RoundStep,
+	instant: Instant,
 }
 
 impl RoundStep {
+	pub fn with_instant(self, round_seq: RoundSeq, attempt_seq: usize) -> TimedRoundStep {
+		TimedRoundStep {
+			round_seq,
+			attempt_seq,
+			step: self,
+			instant: Instant::now(),
+		}
+	}
+
 	// When changing this also change `get_all`
+
 	pub fn as_str(&self) -> &'static str {
 		match self {
-			RoundStep::Attempt(_) => "round_attempt",
-			RoundStep::ReceivePayments(_) => "round_receive_payments",
-			RoundStep::SendVtxoProposal(_) => "round_send_vtxo_proposal",
-			RoundStep::ReceiveVtxoSignatures(_) => "round_receive_vtxo_signatures",
-			RoundStep::CombineVtxoSignatures(_) => "round_combine_vtxo_signatures",
-			RoundStep::ConstructVtxoTree(_) => "round_construct_vtxo_tree",
-			RoundStep::SendRoundProposal(_) => "round_send_round_proposal",
-			RoundStep::ReceiveForfeitSignatures(_) => "round_receive_forfeit_signatures",
-			RoundStep::SignOnChainTransaction(_) => "round_sign_on_chain_transaction",
-			RoundStep::FinalStage(_) => "round_finalize_stage",
-			RoundStep::Persist(_) => "round_persist",
+			RoundStep::AttemptInitiation => "round_attempt",
+			RoundStep::ReceivePayments => "round_receive_payments",
+			RoundStep::SendingVtxoProposal => "round_sending_vtxo_proposal",
+			RoundStep::ReceiveVtxoSignatures => "round_receive_vtxo_signatures",
+			RoundStep::CombineVtxoSignatures => "round_combine_vtxo_signatures",
+			RoundStep::ConstructVtxoTree => "round_construct_vtxo_tree",
+			RoundStep::ConstructRoundProposal => "round_construct_round_proposal",
+			RoundStep::ReceiveForfeitSignatures => "round_receive_forfeit_signatures",
+			RoundStep::SignOnChainTransaction => "round_sign_on_chain_transaction",
+			RoundStep::FinalStage => "round_finalize_stage",
+			RoundStep::Persist => "round_persist",
 		}
+	}
+
+	pub fn get_all() -> &'static [RoundStep] {
+		&[
+			RoundStep::AttemptInitiation,
+			RoundStep::ReceivePayments,
+			RoundStep::SendingVtxoProposal,
+			RoundStep::ReceiveVtxoSignatures,
+			RoundStep::CombineVtxoSignatures,
+			RoundStep::ConstructVtxoTree,
+			RoundStep::ConstructRoundProposal,
+			RoundStep::ReceiveForfeitSignatures,
+			RoundStep::SignOnChainTransaction,
+			RoundStep::FinalStage,
+			RoundStep::Persist,
+		]
+	}
+}
+
+impl TimedRoundStep {
+	pub fn round_seq(&self) -> RoundSeq {
+		self.round_seq
+	}
+
+	pub fn attempt_seq(&self) -> usize {
+		self.attempt_seq
 	}
 
 	pub fn duration(&self) -> Duration {
-		match self {
-			RoundStep::Attempt(t) => Instant::now().duration_since(*t),
-			RoundStep::ReceivePayments(t) => Instant::now().duration_since(*t),
-			RoundStep::SendVtxoProposal(t) => Instant::now().duration_since(*t),
-			RoundStep::ReceiveVtxoSignatures(t) => Instant::now().duration_since(*t),
-			RoundStep::CombineVtxoSignatures(t) => Instant::now().duration_since(*t),
-			RoundStep::ConstructVtxoTree(t) => Instant::now().duration_since(*t),
-			RoundStep::SendRoundProposal(t) => Instant::now().duration_since(*t),
-			RoundStep::ReceiveForfeitSignatures(t) => Instant::now().duration_since(*t),
-			RoundStep::SignOnChainTransaction(t) => Instant::now().duration_since(*t),
-			RoundStep::FinalStage(t) => Instant::now().duration_since(*t),
-			RoundStep::Persist(t) => Instant::now().duration_since(*t),
-		}
+		Instant::now().duration_since(self.instant)
 	}
 
-	// When changing this also change `as_str`
-	pub fn get_all() -> &'static [&'static str] {
-		&[
-			"round_attempt",
-			"round_receive_payments",
-			"round_send_vtxo_proposal",
-			"round_receive_vtxo_signatures",
-			"round_combine_vtxo_signatures",
-			"round_construct_vtxo_tree",
-			"round_send_round_proposal",
-			"round_receive_forfeit_signatures",
-			"round_sign_on_chain_transaction",
-			"round_finalize_stage",
-			"round_persist",
-		]
+	pub fn as_str(&self) -> &'static str {
+		self.step.as_str()
+	}
+
+	pub fn proceed(&self, round_step: RoundStep) -> TimedRoundStep {
+		let old_round_step = self.step;
+		let new_timed_round_step = match old_round_step {
+			RoundStep::AttemptInitiation => {
+				RoundStep::ReceivePayments.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::ReceivePayments => {
+				RoundStep::ConstructVtxoTree.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::ConstructVtxoTree => {
+				RoundStep::SendingVtxoProposal.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::SendingVtxoProposal => {
+				RoundStep::ReceiveVtxoSignatures.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::ReceiveVtxoSignatures => {
+				RoundStep::ConstructRoundProposal.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::ConstructRoundProposal => {
+				RoundStep::CombineVtxoSignatures.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::CombineVtxoSignatures => {
+				RoundStep::ReceiveForfeitSignatures.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::ReceiveForfeitSignatures => {
+				RoundStep::FinalStage.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::FinalStage => {
+				RoundStep::SignOnChainTransaction.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::SignOnChainTransaction => {
+				RoundStep::Persist.with_instant(self.round_seq, self.attempt_seq)
+			}
+			RoundStep::Persist => {
+				panic!("Cannot proceed to next step")
+			}
+		};
+
+		if new_timed_round_step.step != round_step {
+			let new_round_step = new_timed_round_step.step;
+			panic!("Proceeding to next step is not allowed from: {:?} to {:?} but expected: {:?}",
+				old_round_step, new_round_step, round_step,
+			)
+		}
+
+		new_timed_round_step
 	}
 }
 
@@ -441,7 +509,7 @@ pub fn set_round_seq(round_seq: RoundSeq) {
 
 		for s in RoundStep::get_all() {
 			m.round_step_duration_gauge.record(0, &[
-				KeyValue::new(ATTRIBUTE_ROUND_STEP, *s),
+				KeyValue::new(ATTRIBUTE_ROUND_STEP, s.as_str()),
 			]);
 		}
 
@@ -475,7 +543,7 @@ pub fn set_round_state(state: RoundStateKind) {
 	}
 }
 
-pub fn set_round_step_duration(round_step: RoundStep) {
+pub fn set_round_step_duration(round_step: TimedRoundStep) {
 	if let Some(m) = TELEMETRY.get() {
 		m.round_step_duration_gauge.record(round_step.duration().as_millis() as u64, &[
 			KeyValue::new(ATTRIBUTE_ROUND_STEP, round_step.as_str()),
@@ -676,6 +744,11 @@ pub trait SpanExt {
 
 	fn set_str_attr(&mut self, key: impl Into<Key>, value: impl fmt::Display) {
 		self._set_attribute(KeyValue::new(key, Value::String(value.to_string().into())));
+	}
+
+	/// Sets a byte array attribute as a hexadecimal string.
+	fn set_bytes_attr(&mut self, key: impl Into<Key>, bytes: &[u8]) {
+		self._set_attribute(KeyValue::new(key, Value::String(bytes.as_hex().to_string().into())));
 	}
 }
 

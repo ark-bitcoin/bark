@@ -53,6 +53,22 @@ pub mod duration {
 	}
 }
 
+pub mod duration_millis {
+	use super::*;
+
+	use std::time::Duration;
+	use serde::{Serializer, Deserializer};
+
+	pub fn serialize<S: Serializer>(duration: &Duration, s: S) -> Result<S::Ok, S::Error> {
+		s.serialize_u64(duration.as_millis() as u64)
+	}
+
+	pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+		let millis = u64::deserialize(d)?;
+		Ok(Duration::from_millis(millis))
+	}
+}
+
 pub mod trace_id {
 	use super::*;
 	use crate::TraceId;

@@ -41,7 +41,7 @@ pub struct WalletSyncComplete {
 	pub wallet: Cow<'static, str>,
 	pub new_block_height: u32,
 	pub previous_block_height: u32,
-	#[serde(with = "crate::serde_utils::duration")]
+	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub sync_time: Duration,
 	pub next_address: Address<NetworkUnchecked>,
 }
