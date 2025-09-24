@@ -243,6 +243,18 @@ pub enum RoundEvent {
 	},
 }
 
+impl RoundEvent {
+	pub fn round_seq(&self) -> RoundSeq {
+		match self {
+			Self::Start(i) => i.round_seq,
+			Self::Attempt(a) => a.round_seq,
+			Self::VtxoProposal { round_seq, .. } => *round_seq,
+			Self::RoundProposal { round_seq, .. } => *round_seq,
+			Self::Finished { round_seq, .. } => *round_seq,
+		}
+	}
+}
+
 /// A more concise way to display [RoundEvent].
 impl fmt::Display for RoundEvent {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
