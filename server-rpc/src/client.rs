@@ -31,12 +31,12 @@ use std::convert::TryFrom;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{bail, Context};
 use bitcoin::Network;
 use log::{info, warn};
 
 use ark::ArkInfo;
-use server_rpc::{self as rpc, protos, RequestExt};
+
+use crate::{protos, ArkServiceClient, ConvertError, RequestExt};
 
 
 /// The minimum protocol version supported by the client.
@@ -48,6 +48,40 @@ pub const MIN_PROTOCOL_VERSION: u64 = 1;
 ///
 /// For info on protocol versions, see [server_rpc] module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
+
+#[derive(Debug, thiserror::Error)]
+#[error("failed to create gRPC endpoint: {msg}")]
+pub enum CreateEndpointError {
+	#[error("failed to parse Ark server as a URI")]
+	InvalidUri(#[from] http::uri::InvalidUri),
+	#[error("Ark server scheme must be either http or https. Found: {0}")]
+	InvalidScheme(String),
+	#[error("Ark server URI is missing an authority part")]
+	MissingAuthority,
+	#[error("TLS config error: {0}")]
+	TlsConfig(#[from] tonic::transport::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("failed to connect to Ark server: {msg}")]
+pub enum ConnectError {
+	#[error(transparent)]
+	CreateEndpoint(#[from] CreateEndpointError),
+	#[error(transparent)]
+	Connect(#[from] tonic::transport::Error),
+	#[error("handshake request failed: {0}")]
+	Handshake(String),
+	#[error("version mismatch. Client max is: {client_max}, server min is: {server_min}")]
+	ProtocolVersionMismatchClientTooOld { client_max: u64, server_min: u64 },
+	#[error("version mismatch. Client min is: {client_min}, server max is: {server_max}")]
+	ProtocolVersionMismatchServerTooOld { client_min: u64, server_max: u64 },
+	#[error("error getting ark info: {0}")]
+	GetArkInfo(#[from] tonic::Status),
+	#[error("invalid ark info from ark server: {0}")]
+	InvalidArkInfo(#[from] ConvertError),
+	#[error("network mismatch. Expected: {expected}, Got: {got}")]
+	NetworkMismatch { expected: Network, got: Network },
+}
 
 /// A gRPC interceptor that attaches the negotiated protocol version to each request.
 ///
@@ -81,7 +115,7 @@ pub struct ServerConnection {
 	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
 	/// The gRPC client to call Ark RPCs.
-	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
+	pub client: ArkServiceClient<tonic::transport::Channel>,
 }
 
 impl ServerConnection {
@@ -90,13 +124,12 @@ impl ServerConnection {
 	/// - Supports `http` and `https` URIs. Any other scheme results in an error.
 	/// - Uses a 10-minute keep-alive and overall request timeout to accommodate long-running RPCs.
 	/// - When `https` is used, the crate-configured root CAs are enabled and the SNI domain is set.
-	fn create_endpoint(address: &str) -> anyhow::Result<tonic::transport::Endpoint> {
-		let uri = tonic::transport::Uri::from_str(address)
-			.context("failed to parse Ark server as a URI")?;
+	fn create_endpoint(address: &str) -> Result<tonic::transport::Endpoint, CreateEndpointError> {
+		let uri = tonic::transport::Uri::from_str(address)?;
 
 		let scheme = uri.scheme_str().unwrap_or("");
 		if scheme != "http" && scheme != "https" {
-			bail!("Ark server scheme must be either http or https. Found: {}", scheme);
+			return Err(CreateEndpointError::InvalidScheme(scheme.to_string()));
 		}
 
 		let mut endpoint = tonic::transport::Channel::builder(uri.clone())
@@ -106,13 +139,13 @@ impl ServerConnection {
 		if scheme == "https" {
 			info!("Connecting to Ark server using TLS...");
 			let uri_auth = uri.clone().into_parts().authority
-				.context("Ark server URI is missing an authority part")?;
+				.ok_or(CreateEndpointError::MissingAuthority)?;
 			let domain = uri_auth.host();
 
 			let tls_config = tonic::transport::ClientTlsConfig::new()
 				.with_enabled_roots()
 				.domain_name(domain);
-			endpoint = endpoint.tls_config(tls_config)?
+			endpoint = endpoint.tls_config(tls_config)?;
 		} else {
 			info!("Connecting to Ark server without TLS...");
 		};
@@ -139,25 +172,29 @@ impl ServerConnection {
 	pub async fn connect(
 		address: &str,
 		network: Network,
-	) -> anyhow::Result<ServerConnection> {
+	) -> Result<ServerConnection, ConnectError> {
 		let endpoint = ServerConnection::create_endpoint(address)?;
-		let channel = endpoint.connect().await
-			.context("couldn't connect to Ark server")?;
+		let channel = endpoint.connect().await?;
 
-		let mut handshake_client = rpc::ArkServiceClient::new(channel.clone());
+		let mut handshake_client = ArkServiceClient::new(channel.clone());
 		let handshake = handshake_client.handshake(protos::HandshakeRequest {
 			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
-		}).await.context("handshake request failed")?.into_inner();
+		}).await.map_err(|e| ConnectError::Handshake(e.to_string()))?.into_inner();
+
 
 		if let Some(ref msg) = handshake.psa {
 			warn!("Message from Ark server: \"{}\"", msg);
 		}
 
 		if MAX_PROTOCOL_VERSION < handshake.min_protocol_version {
-			bail!("protocol version handshake failed: client version too old");
+			return Err(ConnectError::ProtocolVersionMismatchClientTooOld {
+				client_max: MAX_PROTOCOL_VERSION, server_min: handshake.min_protocol_version
+			});
 		}
 		if MIN_PROTOCOL_VERSION > handshake.max_protocol_version {
-			bail!("protocol version handshake failed: server version too old");
+			return Err(ConnectError::ProtocolVersionMismatchServerTooOld {
+				client_min: MIN_PROTOCOL_VERSION, server_max: handshake.max_protocol_version
+			});
 		}
 
 		let pver = cmp::min(MAX_PROTOCOL_VERSION, handshake.max_protocol_version);
@@ -165,14 +202,14 @@ impl ServerConnection {
 		assert!((handshake.min_protocol_version..=handshake.max_protocol_version).contains(&pver));
 
 		let interceptor = ProtocolVersionInterceptor { pver };
-		let mut client = rpc::ArkServiceClient::with_interceptor(channel, interceptor);
+		let mut client = ArkServiceClient::with_interceptor(channel, interceptor);
 
 		let res = client.get_ark_info(protos::Empty {}).await
-			.context("error getting ark info")?;
+			.map_err(ConnectError::GetArkInfo)?;
 		let info = ArkInfo::try_from(res.into_inner())
-			.context("invalid ark info from ark server")?;
+			.map_err(ConnectError::InvalidArkInfo)?;
 		if network != info.network {
-			bail!("Ark server is for net {} while we are on net {}", info.network, network);
+			return Err(ConnectError::NetworkMismatch { expected: network, got: info.network });
 		}
 
 		Ok(ServerConnection { pver, info, client: handshake_client })

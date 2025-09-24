@@ -34,12 +34,14 @@ use std::borrow::BorrowMut;
 
 pub use convert::{ConvertError, TryFromBytes};
 
+pub mod client;
 pub mod protos {
 	pub mod bark_server; // generated
 	pub use bark_server::*;
 	pub mod intman; // generated
 }
 
+pub use client::ServerConnection;
 pub use crate::protos::bark_server::ark_service_client::ArkServiceClient;
 
 pub mod admin {

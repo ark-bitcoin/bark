@@ -25,7 +25,6 @@ mod config;
 mod lnurl;
 mod psbtext;
 mod round;
-mod server;
 
 use std::collections::{HashMap, HashSet};
 
@@ -56,7 +55,7 @@ use ark::musig;
 use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
-use server_rpc::{self as rpc, protos};
+use server_rpc::{self as rpc, protos, ServerConnection};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
@@ -65,7 +64,6 @@ use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::{BarkPersister, LightningReceive, StoredVtxoRequest};
-use crate::server::ServerConnection;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 use crate::vtxo_selection::RefreshStrategy;

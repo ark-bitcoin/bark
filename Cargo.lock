@@ -398,6 +398,8 @@ version = "0.0.0-alpha"
 dependencies = [
  "ark-lib",
  "bitcoin",
+ "http",
+ "log",
  "prost",
  "thiserror 2.0.15",
  "tokio",
