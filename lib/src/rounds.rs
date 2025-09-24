@@ -227,18 +227,21 @@ pub enum RoundEvent {
 	Attempt(RoundAttempt),
 	VtxoProposal {
 		round_seq: RoundSeq,
+		attempt_seq: usize,
 		unsigned_round_tx: Transaction,
 		vtxos_spec: VtxoTreeSpec,
 		cosign_agg_nonces: Vec<musig::AggregatedNonce>,
 	},
 	RoundProposal {
 		round_seq: RoundSeq,
+		attempt_seq: usize,
 		cosign_sigs: Vec<schnorr::Signature>,
 		forfeit_nonces: HashMap<VtxoId, Vec<musig::PublicNonce>>,
 		connector_pubkey: PublicKey,
 	},
 	Finished {
 		round_seq: RoundSeq,
+		attempt_seq: usize,
 		signed_round_tx: Transaction,
 	},
 }
@@ -272,21 +275,24 @@ impl fmt::Display for RoundEvent {
 					.field("challenge", &challenge.inner().as_hex())
 					.finish()
 			},
-			Self::VtxoProposal { round_seq, unsigned_round_tx, .. } => {
+			Self::VtxoProposal { round_seq, attempt_seq, unsigned_round_tx, .. } => {
 				f.debug_struct("VtxoProposal")
 					.field("round_seq", round_seq)
+					.field("attempt_seq", attempt_seq)
 					.field("unsigned_round_txid", &unsigned_round_tx.compute_txid())
 					.finish()
 			},
-			Self::RoundProposal { round_seq, connector_pubkey, .. } => {
+			Self::RoundProposal { round_seq, attempt_seq, connector_pubkey, .. } => {
 				f.debug_struct("RoundProposal")
 					.field("round_seq", round_seq)
+					.field("attempt_seq", attempt_seq)
 					.field("connector_pubkey", &connector_pubkey)
 					.finish()
 			},
-			Self::Finished { round_seq, signed_round_tx } => {
+			Self::Finished { round_seq, attempt_seq, signed_round_tx } => {
 				f.debug_struct("Finished")
 					.field("round_seq", round_seq)
+					.field("attempt_seq", attempt_seq)
 					.field("signed_round_txid", &signed_round_tx.compute_txid())
 					.finish()
 			},

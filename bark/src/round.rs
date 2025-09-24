@@ -807,6 +807,7 @@ impl PaymentSubmittedState {
 					unsigned_round_tx,
 					vtxos_spec,
 					cosign_agg_nonces,
+					..
 				} => {
 					if round_seq != self.round_seq {
 						warn!("Unexpected different round id");
@@ -985,7 +986,7 @@ impl VtxoTreeSignedState {
 	{
 		let (vtxo_cosign_sigs, forfeit_nonces, connector_pubkey) = {
 			match event {
-				RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces, connector_pubkey } => {
+				RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces, connector_pubkey, .. } => {
 					if round_seq != self.round_seq {
 						warn!("Unexpected different round id");
 						return Ok(ProgressResult::WaitNewRound);
@@ -1280,7 +1281,7 @@ impl ForfeitSignedState {
 		}
 
 		let signed_round_tx = match event {
-			Some(RoundEvent::Finished { round_seq, signed_round_tx }) => {
+			Some(RoundEvent::Finished { round_seq, signed_round_tx, .. }) => {
 				if round_seq != self.round_seq {
 					error!("Unexpected round ID from round finished event: {} != {}",
 						round_seq, self.round_seq);

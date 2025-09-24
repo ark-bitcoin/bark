@@ -649,6 +649,7 @@ impl CollectingPayments {
 		// Send out vtxo proposal to signers.
 		srv.rounds.broadcast_event(RoundEvent::VtxoProposal {
 			round_seq: self.round_seq,
+			attempt_seq: self.attempt_seq,
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
@@ -850,6 +851,7 @@ impl SigningVtxoTree {
 		// Send out round proposal to signers.
 		srv.rounds.broadcast_event(RoundEvent::RoundProposal {
 			round_seq: self.round_seq,
+			attempt_seq: self.attempt_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
 			connector_pubkey: self.connector_key.public_key(),
@@ -1023,6 +1025,7 @@ impl SigningForfeits {
 		trace!("Sending out finish event.");
 		srv.rounds.broadcast_event(RoundEvent::Finished {
 			round_seq: self.round_seq,
+			attempt_seq: self.attempt_seq,
 			signed_round_tx: signed_round_tx.tx.clone(),
 		});
 
