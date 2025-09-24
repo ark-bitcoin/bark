@@ -1006,7 +1006,7 @@ impl Wallet {
 	/// Returns an error if amount cannot be reached
 	///
 	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
-	fn select_vtxos_to_cover(&self, amount: Amount, max_depth: Option<u16>) -> anyhow::Result<Vec<Vtxo>> {
+	fn select_vtxos_to_cover(&self, amount: Amount, max_depth: Option<u16>, current_height: Option<BlockHeight>) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.db.get_all_spendable_vtxos()?;
 
 		// Iterate over all rows until the required amount is reached
@@ -1016,6 +1016,15 @@ impl Wallet {
 			if let Some(max_depth) = max_depth {
 				if input.arkoor_depth() >= max_depth {
 					warn!("VTXO {} reached max depth of {}, skipping it. Please refresh your VTXO.", input.id(), max_depth);
+					continue;
+				}
+			}
+
+			// Check if vtxo is soon-to-expire for arkoor payments
+			if let Some(height) = current_height {
+				if input.expiry_height() < height.saturating_add(self.config.vtxo_refresh_expiry_threshold) {
+					warn!("VTXO {} is expiring soon (expires at {}, current height {}), skipping for arkoor payment",
+						input.id(), input.expiry_height(), height);
 					continue;
 				}
 			}
@@ -1051,8 +1060,11 @@ impl Wallet {
 			policy: destination_policy,
 		};
 
+		// Get current height for expiry checking
+		let current_height = self.chain.tip().await.ok();
+
 		let inputs = self.select_vtxos_to_cover(
-			req.amount, Some(srv.info.max_arkoor_depth),
+			req.amount, Some(srv.info.max_arkoor_depth), current_height,
 		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
@@ -1259,7 +1271,7 @@ impl Wallet {
 		};
 
 		let inputs = self.select_vtxos_to_cover(
-			pay_req.amount, Some(srv.info.max_arkoor_depth),
+			pay_req.amount, Some(srv.info.max_arkoor_depth), None,
 		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
