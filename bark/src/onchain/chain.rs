@@ -266,7 +266,7 @@ impl ChainSourceClient {
 		match self.inner() {
 			InnerChainSourceClient::Bitcoind(bitcoind) => {
 				// We must offset the height to account for the fact we iterate using next_block()
-				let start = if block_scan_start == 0 { 0 } else { block_scan_start - 1 };
+				let start = block_scan_start.saturating_sub(1);
 				let block_ref = self.block_ref(start).await?;
 				let cp = CheckPoint::new(BlockId {
 					height: block_ref.height,
