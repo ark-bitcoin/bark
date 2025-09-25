@@ -1550,13 +1550,13 @@ impl Wallet {
 		if change.is_some() {
 			bail!("shouldn't have change VTXO, this is a bug");
 		}
-		let [output_vtxo] = outputs.try_into().expect("had exactly one request");
 
-		info!("Got an arkoor from lightning: {}", output_vtxo.id());
+		info!("Got arkoors from lightning: {}",
+			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", "));
 		self.db.register_movement(MovementArgs {
 			kind: MovementKind::LightningReceive,
 			spends: &inputs,
-			receives: &[(&output_vtxo, VtxoState::Spendable)],
+			receives: &outputs.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
 			recipients: &[],
 			fees: None,
 		})?;
