@@ -2,14 +2,14 @@
 use std::str::FromStr;
 
 use bitcoin::Amount;
-use bitcoin_ext::BlockHeight;
 use futures::{Stream, TryStreamExt};
 use postgres_types::Type;
 use tokio_postgres::Row;
 
 use ark::VtxoId;
+use bitcoin_ext::BlockHeight;
 
-use crate::database::Db;
+use crate::database::{Db, NOARG};
 
 pub struct PoolVtxo {
 	pub vtxo: VtxoId,
@@ -96,7 +96,7 @@ impl Db {
 			"SELECT vtxo_id, expiry_height, amount, depth FROM vtxo_pool WHERE spent_at IS NULL",
 		).await?;
 
-		Ok(conn.query_raw(&stmt, &Vec::<String>::new()).await?
+		Ok(conn.query_raw(&stmt, NOARG).await?
 			.err_into::<anyhow::Error>()
 			.and_then(|row| async { PoolVtxo::try_from(row) })
 		)

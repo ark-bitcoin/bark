@@ -35,11 +35,14 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		// First, store the round itself.
-		let statement = tx.prepare_typed("
-			INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos, connector_key, expiry, created_at)
+		let statement = tx.prepare_typed(
+			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos,
+				connector_key, expiry, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 			RETURNING id;
-		", &[Type::INT8, Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4]).await?;
+			",
+			&[Type::INT8, Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4],
+		).await?;
 		let row = tx.query_one(
 			&statement,
 			&[
@@ -91,7 +94,8 @@ impl Db {
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
-			SELECT id, seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos, connector_key, expiry, swept_at, created_at
+			SELECT id, seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos, connector_key,
+				expiry, swept_at, created_at
 			FROM round
 			WHERE funding_txid = $1;
 		").await?;
@@ -117,7 +121,8 @@ impl Db {
 		Ok(())
 	}
 
-	/// Get all round IDs of rounds that expired before or on `height` and that have not been swept.
+	/// Get all round IDs of rounds that expired before or on `height`
+	/// and that have not been swept
 	pub async fn get_expired_round_ids(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
