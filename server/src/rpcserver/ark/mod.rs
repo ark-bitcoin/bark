@@ -86,7 +86,7 @@ impl rpc::server::ArkService for Server {
 			None => None,
 		};
 		let lifetime = Duration::from_secs(10 * 60 * self.config.vtxo_lifetime as u64);
-		let ids = self.db.get_fresh_round_ids(txid, lifetime).await
+		let ids = self.db.get_fresh_round_ids(txid, Some(lifetime)).await
 			.context("db error")?;
 
 		let response = protos::FreshRounds {

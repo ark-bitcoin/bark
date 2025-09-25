@@ -287,6 +287,7 @@ impl Db {
 		&self,
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
 		let conn = self.pool.get().await?;
+		//TODO(stevenroose) this query is wrong
 		let stmt = conn.prepare("
 			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL AND board_swept_at IS NULL;
 		").await?;
