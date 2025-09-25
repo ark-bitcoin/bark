@@ -34,6 +34,7 @@ pub enum ChainSource {
 		url: String,
 	},
 }
+
 pub (crate) enum InnerChainSourceClient {
 	Bitcoind(rpc::Client),
 	Esplora(esplora_client::AsyncClient),
