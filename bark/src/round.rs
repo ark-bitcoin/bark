@@ -1476,7 +1476,7 @@ impl Wallet {
 				};
 
 				let spent_amount = offb.amount + offb.fee(offboard_feerate)?;
-				let input_vtxos = self.select_vtxos_to_cover(spent_amount, None)?;
+				let input_vtxos = self.select_vtxos_to_cover(spent_amount, None, None)?;
 
 				let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
