@@ -335,8 +335,26 @@ impl_bitcoin_encode!(bitcoin::TxOut);
 
 
 pub mod serde {
-	//! TODO(stevenroose) make hex-compatible
+	//! Module that helps to encode [ProtocolEncoding] objects with serde.
+	//!
+	//! By default, the objects will be encoded as bytes for regular serializers,
+	//! and as hex for human-readable serializers.
+	//!
+	//! Can be used as follows:
+	//! ```no_run
+	//! # use ark::Vtxo;
+	//! # use serde::{Serialize, Deserialize};
+	//! #[derive(Serialize, Deserialize)]
+	//! struct SomeStruct {
+	//! 	#[serde(with = "ark::encode::serde")]
+	//! 	single: Vtxo,
+	//! 	#[serde(with = "ark::encode::serde::vec")]
+	//! 	multiple: Vec<Vtxo>,
+	//! }
+	//! ```
+
 	use std::fmt;
+	use std::borrow::Cow;
 	use std::marker::PhantomData;
 
 	use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
@@ -360,12 +378,12 @@ pub mod serde {
 	impl<'de, T: ProtocolEncoding> Deserialize<'de> for DeWrapper<T> {
 		fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
 			if d.is_human_readable() {
-					let s = <&str>::deserialize(d)?;
-					Ok(DeWrapper(ProtocolEncoding::deserialize_hex(s)
+					let s = <Cow<'de, str>>::deserialize(d)?;
+					Ok(DeWrapper(ProtocolEncoding::deserialize_hex(s.as_ref())
 							.map_err(serde::de::Error::custom)?))
 			} else {
-					let s = <&[u8]>::deserialize(d)?;
-					Ok(DeWrapper(ProtocolEncoding::deserialize(s)
+					let b = <Cow<'de, [u8]>>::deserialize(d)?;
+					Ok(DeWrapper(ProtocolEncoding::deserialize(b.as_ref())
 							.map_err(serde::de::Error::custom)?))
 			}
 		}
