@@ -41,7 +41,6 @@ impl Server {
 		self.check_vtxos_not_exited(&inputs).await?;
 
 		self.validate_arkoor_inputs(&inputs)?;
-		self.validate_board_inputs(&inputs).await.context("invalid board inputs")?;
 
 		//TODO(stevenroose) check that vtxos are valid
 

@@ -21,6 +21,7 @@ use crate::exit::vtxo::{ExitEntry, ExitVtxo};
 use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
+use crate::vtxo_state::VtxoStateKind;
 use crate::Wallet;
 
 /// Handle the process of ongoing VTXO exits
@@ -152,7 +153,10 @@ impl Exit {
 		&mut self,
 		onchain: &W,
 	) -> anyhow::Result<()> {
-		let vtxos = self.persister.get_all_spendable_vtxos()?;
+		let vtxos: Vec<Vtxo> = self.persister.get_vtxos_by_state(&[
+			VtxoStateKind::UnregisteredBoard,
+			VtxoStateKind::Spendable
+		])?.into_iter().map(|v| v.vtxo).collect();
 		self.start_exit_for_vtxos(&vtxos, onchain).await?;
 
 		Ok(())

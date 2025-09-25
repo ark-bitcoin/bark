@@ -207,7 +207,7 @@ pub struct Config {
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.
-	pub round_board_confirmations: usize,
+	pub required_board_confirmations: usize,
 	/// Number of confirmations untrusted inputs of the round tx need to have.
 	pub round_tx_untrusted_input_confirmations: usize,
 
@@ -289,7 +289,7 @@ impl Default for Config {
 
 			max_vtxo_amount: None,
 			max_arkoor_depth: 5,
-			round_board_confirmations: 3,
+			required_board_confirmations: 3,
 			round_tx_untrusted_input_confirmations: 2,
 
 			round_interval: Duration::from_secs(10),

@@ -112,6 +112,9 @@ async fn bark_pay_ln_succeeds() {
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	{
 		// Create a payable invoice
@@ -176,6 +179,9 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	bark_1.refresh_all().await;
 	bark_1.board(btc(1)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_2.offchain_balance().await;
 	bark_2.send_oor(bark_1.address().await, btc(1)).await;
 
 	let expected_balance = btc(3);
@@ -218,6 +224,9 @@ async fn bark_pay_invoice_twice() {
 
 	bark_1.board(btc(5)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
@@ -404,6 +413,9 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	{
 		// Invoice with amount
@@ -454,6 +466,9 @@ async fn bark_can_send_full_balance_on_lightning() {
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	let invoice = lightningd_2.invoice(Some(board_amount), "test_payment2", "A test payment").await;
 	bark_1.send_lightning(invoice, None).await;
@@ -496,6 +511,9 @@ async fn bark_can_receive_lightning() {
 	let board_amount = btc(2);
 	bark.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark.offchain_balance().await;
 
 	let pay_amount = btc(1);
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
@@ -593,6 +611,10 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 	bark_1.board(board_amount).await;
 	bark_2.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
+	bark_2.offchain_balance().await;
 
 	let pay_amount = btc(1);
 	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
@@ -674,6 +696,9 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
@@ -738,6 +763,9 @@ async fn bark_pay_ln_offer() {
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	// Pay invoice with no amount specified
 	{
@@ -791,6 +819,9 @@ async fn bark_pay_twice_ln_offer() {
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark_1.offchain_balance().await;
 
 	let offer = lightningd_2.offer(None, Some("A test payment")).await;
 

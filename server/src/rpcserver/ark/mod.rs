@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic;
 use std::time::Duration;
 use bip39::rand::Rng;
-use bitcoin::{Amount, OutPoint, ScriptBuf, Transaction};
+use bitcoin::{Amount, OutPoint, ScriptBuf};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
@@ -162,8 +162,7 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let vtxo = Vtxo::from_bytes(&req.board_vtxo)?;
-		let board_tx = Transaction::from_bytes(&req.board_tx)?;
-		self.register_board(vtxo, board_tx).await.to_status()?;
+		self.register_board(vtxo).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::Empty {}))
 	}

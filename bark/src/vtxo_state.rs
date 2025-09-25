@@ -37,6 +37,7 @@ pub enum VtxoStateKind {
 	/// The [Vtxo] is available and can be selected as an input for a new offboard/round.
 	Spendable,
 	/// The [Vtxo] was produced by a board but is not yet registered/acknowledged by the server.
+	/// The board may also not have sufficient confirmations, in which case it cannot be registered yet.
 	UnregisteredBoard,
 	/// The [Vtxo] has been consumed and is no longer part of the wallet's balance.
 	Spent,
@@ -70,7 +71,8 @@ pub enum VtxoState {
 	Spendable,
 	/// The [Vtxo] has been consumed.
 	Spent,
-	/// The [Vtxo] exists locally but is not yet registered/acknowledged by the server.
+	/// The [Vtxo] was produced by a board but is not yet registered/acknowledged by the server.
+	/// The board may also not have sufficient confirmations, in which case it cannot be registered yet.
 	UnregisteredBoard,
 	/// The current [Vtxo] is locked in an outgoing Lightning HTLC pending settlement.
 	///
