@@ -553,15 +553,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::ArkInfo => {
 			if let Some(info) = wallet.ark_info() {
-				output_json(&bark_json::cli::ArkInfo {
-					server_pubkey: info.server_pubkey.to_string(),
-					round_interval: info.round_interval,
-					nb_round_nonces: info.nb_round_nonces,
-					vtxo_expiry_delta: info.vtxo_expiry_delta,
-					vtxo_exit_delta: info.vtxo_exit_delta,
-					max_vtxo_amount: info.max_vtxo_amount,
-					max_arkoor_depth: info.max_arkoor_depth,
-				});
+				output_json(&bark_json::cli::ArkInfo::from(info));
 			} else {
 				warn!("Could not connect with Ark server.")
 			}

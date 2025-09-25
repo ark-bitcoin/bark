@@ -1,6 +1,8 @@
 
+use std::borrow::Borrow;
 use std::time::Duration;
 
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, FeeRate, Txid};
 
 use ark::rounds::RoundId;
@@ -15,21 +17,45 @@ use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkInfo {
+	/// the network the server operates on
+	pub network: bitcoin::Network,
 	/// The Ark server pubkey
-	pub server_pubkey: String,
+	pub server_pubkey: PublicKey,
 	/// The interval between each round
 	#[serde(with = "serde_utils::duration")]
 	pub round_interval: Duration,
 	/// Number of nonces per round
 	pub nb_round_nonces: usize,
-	/// Expiration delta of the VTXO
-	pub vtxo_expiry_delta: u16,
 	/// Delta between exit confirmation and coins becoming spendable
 	pub vtxo_exit_delta: u16,
+	/// Expiration delta of the VTXO
+	pub vtxo_expiry_delta: u16,
+	/// delta between in-Ark HTLC expiry and LN HTLC expiry
+	pub htlc_expiry_delta: u16,
 	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
+	/// number of confirmations required to register a board vtxo
+	pub required_board_confirmations: usize,
+}
+
+impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
+	fn from(v: T) -> Self {
+		let v = v.borrow();
+	    ArkInfo {
+			network: v.network,
+			server_pubkey: v.server_pubkey,
+			round_interval: v.round_interval,
+			nb_round_nonces: v.nb_round_nonces,
+			vtxo_exit_delta: v.vtxo_exit_delta,
+			vtxo_expiry_delta: v.vtxo_expiry_delta,
+			htlc_expiry_delta: v.htlc_expiry_delta,
+			max_vtxo_amount: v.max_vtxo_amount,
+			max_arkoor_depth: v.max_arkoor_depth,
+			required_board_confirmations: v.required_board_confirmations,
+		}
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -193,3 +219,30 @@ pub struct SendOnchain {
 }
 
 pub type Vtxos = Vec<VtxoInfo>;
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn ark_info_fields() {
+		//! the purpose of this test is to fail if we add a field to
+		//! ark::ArkInfo but we forgot to add it to the ArkInfo here
+
+		#[allow(unused)]
+		fn convert(j: ArkInfo) -> ark::ArkInfo {
+			ark::ArkInfo {
+				network: j.network,
+				server_pubkey: j.server_pubkey,
+				round_interval: j.round_interval,
+				nb_round_nonces: j.nb_round_nonces,
+				vtxo_exit_delta: j.vtxo_exit_delta,
+				vtxo_expiry_delta: j.vtxo_expiry_delta,
+				htlc_expiry_delta: j.htlc_expiry_delta,
+				max_vtxo_amount: j.max_vtxo_amount,
+				max_arkoor_depth: j.max_arkoor_depth,
+				required_board_confirmations: j.required_board_confirmations,
+			}
+		}
+	}
+}
