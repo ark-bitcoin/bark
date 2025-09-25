@@ -386,20 +386,17 @@ impl CollectingPayments {
 		srv: &Server,
 		inputs: &[VtxoIdInput],
 	) -> anyhow::Result<Vec<Vtxo>> {
-		let mut ret  = Vec::with_capacity(inputs.len());
-
 		let ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 
+		let mut ret  = Vec::with_capacity(inputs.len());
 		match srv.db.get_vtxos_by_id(&ids).await {
-			Ok(v) => {
+			Ok(vtxos) => {
 				// Check if the input vtxos exist, unspent and owned by user.
-				for vtxo_state in v {
-					let vtxo_id = vtxo_state.id;
-					if !vtxo_state.is_spendable() {
-						bail!("vtxo {} is not spendable", vtxo_id)
+				for v in vtxos {
+					if !v.is_spendable() {
+						bail!("vtxo {} is not spendable", v.vtxo_id)
 					}
-
-					ret.push(vtxo_state.vtxo);
+					ret.push(v.vtxo);
 				}
 				Ok(ret)
 			},
