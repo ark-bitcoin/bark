@@ -134,6 +134,7 @@ impl Data {
 	}
 
 	/// Tally the total number of vtxos in the pool
+	#[cfg(any(debug_assertions, test))]
 	fn len(&self) -> usize {
 		let mut len = 0;
 		for (_, map) in &self.pool {
