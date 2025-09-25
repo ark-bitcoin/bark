@@ -1617,7 +1617,7 @@ impl Wallet {
 						RoundEvent::Start(info) => {
 							break info;
 						},
-						_ => trace!("ignoring irrelevant message"),
+						e => trace!("ignoring irrelevant event: {}", e),
 					}
 				}
 			};
