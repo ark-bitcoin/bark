@@ -19,7 +19,9 @@ use server_rpc::{self as rpc, protos};
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind;
-use ark_testing::util::{FutureExt, ToAltString};
+use ark_testing::util::{
+	get_bark_chain_source_from_env, FutureExt, TestContextChainSource, ToAltString,
+};
 
 const OFFBOARD_FEES: Amount = sat(900);
 
@@ -913,16 +915,30 @@ async fn recover_mnemonic() {
 	let mnemonic = fs::read_to_string(bark.config().datadir.join(MNEMONIC_FILE)).await.unwrap();
 	let _ = bip39::Mnemonic::parse(&mnemonic).expect("invalid mnemonic?");
 
-	// first check we need birthday
+	// first ensure we need to set a birthday for bitcoin core
 	let args = &["--mnemonic", &mnemonic];
-	// it's not easy to get a grip of what the actual error was
-	let err = ctx.try_new_bark_with_create_args("bark_recovered", &srv, None, args).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"You need to set the --birthday-height field when recovering from mnemonic.",
-	));
+	let result = ctx.try_new_bark_with_create_args("bark_recovered_no_birthday", &srv, None, args).await;
+	match get_bark_chain_source_from_env() {
+		TestContextChainSource::BitcoinCore => {
+			// it's not easy to get a grip of what the actual error was
+			assert!(result.expect_err("--birthday-height should be required").to_string().contains(
+				"You need to set the --birthday-height field when recovering from mnemonic.",
+			));
+		}
+		_ => {
+			let balance = result
+				.expect("mnemonic should work without birthday")
+				.onchain_balance()
+				.await;
+			assert_eq!(onchain, balance);
+		}
+	}
 
+	// Now check that specifying a birthday height always succeeds
 	let args = &["--mnemonic", &mnemonic, "--birthday-height", "0"];
-	let recovered = ctx.try_new_bark_with_create_args("bark_recovered", &srv, None, args).await.unwrap();
+	let recovered = ctx.try_new_bark_with_create_args("bark_recovered_with_birthday", &srv, None, args)
+		.await
+		.expect("mnemonic + birthday should work");
 	assert_eq!(onchain, recovered.onchain_balance().await);
 	//TODO(stevenroose) implement offchain recovery
 	// assert_eq!(offchain, recovered.offchain_balance().await);
