@@ -163,6 +163,7 @@ impl Data {
 			!c.is_empty()
 		});
 
+		#[cfg(debug_assertions)]
 		debug_assert_eq!(before, self.len());
 	}
 
