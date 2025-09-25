@@ -2085,3 +2085,76 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	let err = bark.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
 }
+
+
+#[tokio::test]
+async fn should_refuse_subdust_lightning_receive_request() {
+	let ctx = TestContext::new("server/should_refuse_subdust_lightning_receive_request").await;
+
+	trace!("Start lightningd-1");
+	let lightningd = ctx.new_lightningd("lightningd-1").await;
+
+	let srv = ctx.new_captaind("server", Some(&lightningd)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	#[derive(Clone)]
+	struct Proxy(captaind::ArkClient);
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
+
+		async fn start_lightning_receive(&self, mut req: protos::StartLightningReceiveRequest) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
+			req.amount_sat = P2TR_DUST_SAT - 1;
+			Ok(self.upstream().start_lightning_receive(req).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
+
+	bark.set_ark_url(&proxy.address).await;
+
+	let err = bark.try_bolt11_invoice(sat(30_000)).await.unwrap_err();
+	assert!(err.to_string().contains(format!("Requested amount must be at least 0.00000330 BTC").as_str()), "err: {err}");
+}
+
+#[tokio::test]
+async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
+	let ctx = TestContext::new("server/should_refuse_over_max_vtxo_amount_lightning_receive_request").await;
+
+	trace!("Start lightningd-1");
+	let lightningd = ctx.new_lightningd("lightningd-1").await;
+
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightningd), |cfg| {
+		cfg.max_vtxo_amount = Some(sat(1_000_000));
+	}).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	#[derive(Clone)]
+	struct Proxy(captaind::ArkClient);
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
+
+		async fn start_lightning_receive(&self, mut req: protos::StartLightningReceiveRequest) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
+			req.amount_sat = 1_000_001;
+			Ok(self.upstream().start_lightning_receive(req).await?.into_inner())
+		}
+	}
+
+	let proxy = Proxy(srv.get_public_rpc().await);
+	let proxy = ArkRpcProxyServer::start(proxy).await;
+
+	bark.set_ark_url(&proxy.address).await;
+
+	let err = bark.try_bolt11_invoice(sat(30_000)).await.unwrap_err();
+	assert!(err.to_string().contains(format!("Requested amount exceeds limit of 0.01000000 BTC").as_str()), "err: {err}");
+}
