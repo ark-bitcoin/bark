@@ -57,7 +57,7 @@ use tonic::transport::{Channel, Uri};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use cln_rpc::node_client::NodeClient;
 
-use crate::error::{AnyhowErrorExt, ContextExt};
+use crate::error::ContextExt;
 use crate::system::RuntimeManager;
 use crate::config::{self, Config};
 use crate::database;
@@ -586,7 +586,7 @@ impl ClnManagerProcess {
 							self.node_by_id.insert(id, node.uri.clone());
 						},
 						Err(e) => {
-							trace!("Failed to connect to CLN node at {}: {}", uri, e.full_msg());
+							trace!("Failed to connect to CLN node at {}: {:#}", uri, e);
 							if let Ok(state) = e.downcast::<ClnNodeState>() {
 								telemetry::set_lightning_node_state(
 									uri.clone(), None, None, state.kind(),

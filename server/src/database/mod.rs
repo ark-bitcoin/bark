@@ -36,7 +36,6 @@ use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::encode::ProtocolEncoding;
 
-use crate::error::AnyhowErrorExt;
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
 
@@ -550,7 +549,7 @@ impl Db {
 		lifetime: Duration,
 	) -> anyhow::Result<()> {
 		if let Err(e) = self.clean_expired_ephemeral_tweaks().await {
-			warn!("Error while trying to clean up expired ephemeral tweaks: {}", e.full_msg());
+			warn!("Error while trying to clean up expired ephemeral tweaks: {:#}", e);
 		}
 
 		let conn = self.pool.get().await?;

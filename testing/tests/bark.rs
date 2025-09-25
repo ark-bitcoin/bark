@@ -19,7 +19,7 @@ use server_rpc::{self as rpc, protos};
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind;
-use ark_testing::util::{AnyhowErrorExt, FutureExt};
+use ark_testing::util::{FutureExt, ToAltString};
 
 const OFFBOARD_FEES: Amount = sat(900);
 
@@ -85,7 +85,7 @@ async fn bark_create_is_atomic() {
 	// This ensures that clients cannot be created
 	srv.stop().await.unwrap();
 	let err = ctx.try_new_bark("bark_fails", &srv).await.unwrap_err();
-	assert!(err.full_msg().contains("Not connected to a server. If you are sure use the --force flag."));
+	assert!(err.to_alt_string().contains("Not connected to a server. If you are sure use the --force flag."));
 	assert!(!std::path::Path::is_dir(ctx.datadir.join("bark_fails").as_path()));
 }
 
@@ -1032,6 +1032,6 @@ async fn test_ark_address_other_ark() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let addr1 = bark1.address().await;
-	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().full_msg();
+	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().to_alt_string();
 	assert!(err.contains("Ark address is for different server"), "err: {err}");
 }

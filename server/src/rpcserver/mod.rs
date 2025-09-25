@@ -15,7 +15,7 @@ use tokio::sync::oneshot;
 use tonic::async_trait;
 
 use server_rpc::RequestExt;
-use crate::error::{AnyhowErrorExt, BadArgument, NotFound};
+use crate::error::{BadArgument, NotFound};
 
 
 /// The minimum protocol version supported by the server.
@@ -47,17 +47,17 @@ impl ToStatus for anyhow::Error {
 
 		// NB it's important that not found goes first as a bad argument could
 		// have been added afterward
-		trace!("RPC ERROR: {}", self.full_msg());
+		trace!("RPC ERROR: {:#}", self);
 		if let Some(nf) = self.downcast_ref::<NotFound>() {
 			let mut metadata = tonic::metadata::MetadataMap::new();
 			let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");
 			metadata.insert("identifiers", ids);
-			tonic::Status::with_metadata(tonic::Code::NotFound, self.full_msg(), metadata)
+			tonic::Status::with_metadata(tonic::Code::NotFound, format!("{:#}", self), metadata)
 		} else if let Some(_) = self.downcast_ref::<BadArgument>() {
-			tonic::Status::invalid_argument(self.full_msg())
+			tonic::Status::invalid_argument(format!("{:#}", self))
 		} else {
 			if RPC_RICH_ERRORS.load(atomic::Ordering::Relaxed) {
-				tonic::Status::internal(self.full_msg())
+				tonic::Status::internal(format!("{:#}", self))
 			} else {
 				tonic::Status::internal("internal error")
 			}

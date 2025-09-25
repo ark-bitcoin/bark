@@ -1,6 +1,5 @@
 
-use std::env;
-use std::borrow::Borrow;
+use std::{env, fmt};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -216,19 +215,10 @@ impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
 	}
 }
 
-pub trait AnyhowErrorExt: Borrow<anyhow::Error> {
-	fn full_msg(&self) -> String {
-		use std::fmt::Write;
-
-		let mut ret = String::new();
-		for (i, e) in self.borrow().chain().enumerate() {
-			if i == 0 {
-				write!(ret, "{}", e).expect("write to buf");
-			} else {
-				write!(ret, ": {}", e).expect("write to buf");
-			}
-		}
-		ret
+/// Trait similar to [ToString] that returns the alt string
+pub trait ToAltString: fmt::Display {
+	fn to_alt_string(&self) -> String {
+		format!("{:#}", self)
 	}
 }
-impl AnyhowErrorExt for anyhow::Error {}
+impl<T: fmt::Display> ToAltString for T {}
