@@ -1,5 +1,6 @@
 #[macro_use] extern crate anyhow;
 
+mod dev;
 mod exit;
 mod lightning;
 mod util;
@@ -329,10 +330,9 @@ enum Command {
 	#[command(subcommand)]
 	Lightning(lightning::LightningCommand),
 
-
-	/// Dev command to drop the vtxo database
-	#[command(hide = true)]
-	DropVtxos,
+	/// developer commands
+	#[command(subcommand)]
+	Dev(dev::DevCommand),
 }
 
 #[derive(clap::Subcommand)]
@@ -524,20 +524,21 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	init_logging(cli.verbose, cli.quiet, &datadir);
 
 	// Handle create command differently.
-	if let Command::Create ( create_opts ) = cli.command {
-		create_wallet(&datadir, create_opts).await?;
+	if let Command::Create(opts) = cli.command {
+		create_wallet(&datadir, opts).await?;
 		return Ok(())
 	}
 
-	let (mut wallet, mut onchain) = open_wallet(&datadir).await.context("error opening wallet")?;
-	if let Err(e) = wallet.require_chainsource_version() {
-		warn!("{}", e);
+	if let Command::Dev(cmd) = cli.command {
+		return dev::execute_dev_command(cmd, datadir).await;
 	}
+
+	let (mut wallet, mut onchain) = open_wallet(&datadir).await.context("error opening wallet")?;
 
 	let net = wallet.properties()?.network;
 
 	match cli.command {
-		Command::Create { .. } => unreachable!(),
+		Command::Create { .. } | Command::Dev(_) => unreachable!("handled earlier"),
 		Command::Config => {
 			let config = wallet.config().clone();
 			output_json(&bark_json::cli::Config {
@@ -893,11 +894,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Lightning(cmd) => {
 			lightning::execute_lightning_command(cmd, &mut wallet).await?;
-		}
-		// dev commands
-		Command::DropVtxos => {
-			wallet.drop_vtxos().await?;
-			info!("Dropped all vtxos");
 		},
 	}
 	Ok(())
