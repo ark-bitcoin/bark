@@ -420,10 +420,7 @@ impl OnchainWallet {
 		match chain.inner() {
 			InnerChainSourceClient::Bitcoind(bitcoind) => {
 				// Make sure we include the given start_height in the scan
-				let mut height = start_height.unwrap_or(GENESIS_HEIGHT);
-				if height > 0 {
-					height -= 1
-				}
+				let height = start_height.unwrap_or(GENESIS_HEIGHT).saturating_sub(1);
 				let block_hash = bitcoind.get_block_hash(height as u64)?;
 				self.inner.set_checkpoint(height, block_hash);
 				self.inner_sync_bitcoind(bitcoind, self.inner.latest_checkpoint()).await?;
