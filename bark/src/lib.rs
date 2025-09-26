@@ -473,6 +473,18 @@ impl Wallet {
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
+	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
+	/// when a board is created and when it becomes spendable.
+	///
+	/// See [ArkInfo::required_board_confirmations] and [Wallet::register_all_confirmed_boards].
+	pub fn pending_board_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+		let boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?
+			.into_iter()
+			.map(|r| r.vtxo)
+			.collect();
+		Ok(boards)
+	}
+
 	/// Returns all vtxos that will expire within
 	/// `threshold_blocks` blocks
 	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
@@ -481,7 +493,10 @@ impl Wallet {
 		Ok(self.vtxos_with(&filter)?)
 	}
 
-	async fn register_all_confirmed_boards(
+	/// Attempts to register all pendings boards with the Ark server. A board transaction must have
+	/// sufficient confirmations before it will be registered. For more details see
+	/// [ArkInfo::required_board_confirmations].
+	pub async fn register_all_confirmed_boards(
 		&self,
 		wallet: &mut impl GetWalletTx,
 	) -> anyhow::Result<()> {
