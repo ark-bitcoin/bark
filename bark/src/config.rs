@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use bitcoin::{FeeRate, Network};
 
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 
 
 /// Configuration of the Bark wallet.
@@ -63,6 +63,17 @@ pub struct Config {
 	/// Default value: 288 (48 hrs)
 	pub vtxo_refresh_expiry_threshold: BlockHeight,
 
+	/// An upper limit of the number of blocks we expect to need to
+	/// safely exit the vtxos.
+	///
+	/// Default value: 12
+	pub vtxo_exit_margin: BlockDelta,
+
+	/// The number of blocks to claim a HTLC-recv VTXO.
+	///
+	/// Default value: 18
+	pub htlc_recv_claim_delta: BlockDelta,
+
 	/// A fallback fee rate to use in sat/kWu when we fail to retrieve a fee rate from the
 	/// configured bitcoind/esplora connection.
 	///
@@ -83,6 +94,8 @@ impl Config {
 			bitcoind_user: None,
 			bitcoind_pass: None,
 			vtxo_refresh_expiry_threshold: 144,
+			vtxo_exit_margin: 12,
+			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: None,
 		};
 
