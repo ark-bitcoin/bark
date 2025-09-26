@@ -28,7 +28,7 @@ pub fn https_default_scheme(url: String) -> anyhow::Result<String> {
 }
 
 /// Writes a [`Serializable`] value to stdout
-pub fn output_json<T>(value: &T) -> ()
+pub fn output_json<T>(value: &T)
 where
 	T: ?Sized + Serialize,
 {
