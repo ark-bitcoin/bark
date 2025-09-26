@@ -79,7 +79,7 @@ impl Default for Config {
 			bitcoind_cookiefile: None,
 			bitcoind_user: None,
 			bitcoind_pass: None,
-			vtxo_refresh_expiry_threshold: 288,
+			vtxo_refresh_expiry_threshold: 144,
 			fallback_fee_rate: None,
 		}
 	}
