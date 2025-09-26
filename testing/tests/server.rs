@@ -2242,6 +2242,9 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 	let board_amount = btc(2);
 	bark.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	// Needed to register and transition confirmed boards to `Spendable`.
+	bark.offchain_balance().await;
 
 	let pay_amount = sat(200_000);
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
