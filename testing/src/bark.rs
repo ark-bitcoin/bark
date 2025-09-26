@@ -1,4 +1,6 @@
 
+pub use bark_json::cli as json;
+
 use std::{env, fmt};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -9,7 +11,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ark::lightning::PaymentHash;
-use bitcoin::{Address, Amount, FeeRate, Network, OutPoint};
+use bitcoin::{Address, Amount, FeeRate, Network};
 use bitcoincore_rpc::Auth;
 use log::{trace, info, error};
 use serde_json;
@@ -22,7 +24,6 @@ use bark_json::InvoiceInfo;
 use bark::onchain::ChainSource;
 use bark::persist::models::LightningReceive;
 use bark::UtxoInfo;
-pub use bark_json::cli as json;
 use bitcoin_ext::FeeRateExt;
 
 use crate::constants::BOARD_CONFIRMATIONS;
@@ -206,9 +207,9 @@ impl Bark {
 		balance.total
 	}
 
-	pub async fn onchain_utxos(&self) -> Vec<OutPoint> {
-		self.run(["onchain", "utxos"]).await.lines().map(FromStr::from_str)
-			.collect::<Result<_, _>>().unwrap()
+	pub async fn onchain_utxos(&self) -> json::onchain::Utxos {
+		let output = self.run(["onchain", "utxos"]).await;
+		serde_json::from_str::<json::onchain::Utxos>(&output).unwrap()
 	}
 
 	pub async fn offchain_balance(&self) -> Amount {
