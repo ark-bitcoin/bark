@@ -60,12 +60,17 @@ pub struct ArkInfo {
 	pub vtxo_expiry_delta: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
 	pub htlc_send_expiry_delta: BlockDelta,
+	/// The number of blocks to keep between Lightning and Ark HTLCs expiries
+	pub htlc_expiry_delta: BlockDelta,
 	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
 	/// The number of confirmations required to register a board vtxo
 	pub required_board_confirmations: usize,
+	/// Maximum CLTV delta server will allow clients to request an
+	/// invoice generation with.
+	pub max_user_invoice_cltv_delta: u16,
 }
 
 /// Input of a round

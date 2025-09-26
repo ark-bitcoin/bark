@@ -126,9 +126,11 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			vtxo_exit_delta: v.vtxo_exit_delta as u32,
 			vtxo_expiry_delta: v.vtxo_expiry_delta as u32,
 			htlc_send_expiry_delta: v.htlc_send_expiry_delta as u32,
+			htlc_expiry_delta: v.htlc_expiry_delta as u32,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| v.to_sat()),
 			max_arkoor_depth: v.max_arkoor_depth as u32,
 			required_board_confirmations: v.required_board_confirmations as u32,
+			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 		}
 	}
 }
@@ -148,9 +150,13 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid vtxo expiry delta")?,
 			htlc_send_expiry_delta: v.htlc_send_expiry_delta.try_into()
 				.map_err(|_| "invalid htlc send expiry delta")?,
+			htlc_expiry_delta: v.htlc_expiry_delta.try_into()
+				.map_err(|_| "invalid htlc expiry delta")?,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| Amount::from_sat(v)),
 			max_arkoor_depth: v.max_arkoor_depth as u16,
 			required_board_confirmations: v.required_board_confirmations as usize,
+			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta.try_into()
+				.map_err(|_| "invalid max user invoice cltv delta")?,
 		})
 	}
 }

@@ -346,7 +346,16 @@ pub struct Config {
 	/// Default is `min_final_cltv_expiry_delta + n_hops * cltv_expiry_delta`
 	/// where _n_hops_ is an upper bound on the expected number of hops a lightning
 	/// route usually takes and other vars are lightning defaults: _18 + 6*40 = 258_
+	///
+	/// Note: it is added to [Config::htlc_expiry_delta] to provide `maxdelay` in
+	/// xpay call.
 	pub htlc_send_expiry_delta: BlockDelta,
+	/// Maximum CLTV delta server will allow clients to request an
+	/// invoice generation with.
+	///
+	/// Note: it is added to [Config::htlc_expiry_delta]
+	/// to set the actual invoice's min final cltv expiry delta.
+	pub max_user_invoice_cltv_delta: BlockDelta,
 	/// The delay after which an htlc subscription made for a
 	/// generated invoice will be cancelled if not settled yet.
 	#[serde(with = "serde_util::duration")]
