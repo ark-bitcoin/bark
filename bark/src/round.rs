@@ -25,7 +25,7 @@ use ark::rounds::{
 	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::VtxoTreeSpec;
-use server_rpc::protos;
+use server_rpc::{protos, ServerConnection};
 
 use crate::movement::{MovementArgs, MovementKind};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
@@ -33,7 +33,8 @@ use crate::vtxo_state::{VtxoState, WalletVtxo};
 use crate::{ROUND_DEEPLY_CONFIRMED, SECP};
 use crate::onchain::ChainSourceClient;
 use crate::persist::{BarkPersister, StoredVtxoRequest};
-use crate::{ServerConnection, Wallet};
+
+use crate::Wallet;
 
 
 /// Struct to communicate your desired round participation for an Ark round
