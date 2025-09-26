@@ -58,7 +58,7 @@ use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy, VtxoPolicyKind};
 use server_rpc::{self as rpc, protos, ServerConnection, TryFromBytes};
-use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
@@ -71,6 +71,10 @@ use crate::vtxo_state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
+
+/// Leniency delta to allow claim when blocks were mined between htlc
+/// receive and claim preparation
+const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -1896,6 +1900,24 @@ impl Wallet {
 	/// Create, store and return a [Bolt11Invoice] for offchain boarding
 	pub async fn bolt11_invoice(&self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let mut srv = self.require_server()?;
+		let config = self.config();
+
+		// User needs to enfore the following delta:
+		// - vtxo exit delta + htlc expiry delta (to give him time to exit the vtxo before htlc expires)
+		// - vtxo exit margin (to give him time to exit the vtxo before htlc expires)
+		// - htlc recv claim delta (to give him time to claim the htlc before it expires)
+		let requested_min_cltv_delta = srv.info.vtxo_exit_delta +
+			srv.info.htlc_expiry_delta +
+			config.vtxo_exit_margin +
+			config.htlc_recv_claim_delta +
+			LIGHTNING_PREPARE_CLAIM_DELTA;
+
+		if requested_min_cltv_delta > srv.info.max_user_invoice_cltv_delta {
+			bail!("HTLC CLTV delta ({}) is greater than Server's max HTLC recv CLTV delta: {}",
+				requested_min_cltv_delta,
+				srv.info.max_user_invoice_cltv_delta,
+			);
+		}
 
 		let preimage = Preimage::random();
 		let payment_hash = preimage.compute_payment_hash();
@@ -1905,6 +1927,7 @@ impl Wallet {
 		let req = protos::StartLightningReceiveRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_sat: amount.to_sat(),
+			min_cltv_delta: requested_min_cltv_delta as u32,
 		};
 
 		let resp = srv.client.start_lightning_receive(req).await?.into_inner();

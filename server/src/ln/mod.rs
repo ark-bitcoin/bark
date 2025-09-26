@@ -15,7 +15,7 @@ use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, Preimage};
 use server_rpc::protos;
-use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
 use bitcoin_ext::rpc::RpcApi;
 
 use crate::database::ln::{
@@ -256,8 +256,15 @@ impl Server {
 		&self,
 		payment_hash: PaymentHash,
 		amount: Amount,
+		min_cltv_delta: BlockDelta,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
+
+		if min_cltv_delta > self.config.max_user_invoice_cltv_delta {
+			bail!("Requested min HTLC CLTV delta is greater than max HTLC recv CLTV delta: requested: {}, max: {}",
+				min_cltv_delta, self.config.max_user_invoice_cltv_delta,
+			);
+		}
 
 		if amount < P2TR_DUST {
 			return badarg!("Requested amount must be at least {}", P2TR_DUST);

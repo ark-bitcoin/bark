@@ -8,6 +8,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use bitcoin_ext::AmountExt;
+use bitcoin_ext::BlockDelta;
 use log::info;
 use opentelemetry::KeyValue;
 use tokio::sync::oneshot;
@@ -412,7 +413,11 @@ impl rpc::server::ArkService for Server {
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
 
-		let resp = self.start_lightning_receive(payment_hash, amount).await.to_status()?;
+		let resp = self.start_lightning_receive(
+			payment_hash,
+			amount,
+			req.min_cltv_delta as BlockDelta
+		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
 	}
