@@ -62,9 +62,9 @@ steps:
       - >
         nix develop .#default --command bash -c "
           chmod 777 -R .
-          cargo build -p ark-testing --example dump-server-postgres-schema
-          cargo run -p bark-wallet --example dump-sqlite-schema  > bark/schema.sql
-          cargo run -p bark-server --example dump-default-config > server/config.default.toml
+          cargo run   --example dump-sqlite-schema  > bark/schema.sql
+          cargo run   --example dump-default-config > server/config.default.toml
+          cargo build --example dump-server-postgres-schema
           sudo -E -u postgres ./target/debug/examples/dump-server-postgres-schema > server/schema.sql
           sed -i '/^-- Dumped by .*$/d'   server/schema.sql
           sed -i '/^-- Dumped from .*$/d' server/schema.sql
