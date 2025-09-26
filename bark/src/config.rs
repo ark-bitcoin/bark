@@ -1,7 +1,7 @@
 
 use std::path::PathBuf;
 
-use bitcoin::FeeRate;
+use bitcoin::{FeeRate, Network};
 
 use bitcoin_ext::BlockHeight;
 
@@ -68,6 +68,20 @@ pub struct Config {
 	///
 	/// Example for 1 sat/vB: --fallback-fee-rate 250
 	pub fallback_fee_rate: Option<FeeRate>,
+}
+
+impl Config {
+	/// A network-dependent default config that sets some useful defaults
+	///
+	/// The [Default::default] provides a sane default for mainnet
+	pub fn network_default(network: Network) -> Self {
+		let mut ret = Self::default();
+		if network != Network::Bitcoin {
+			ret.vtxo_refresh_expiry_threshold = 12;
+			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
+		}
+		ret
+	}
 }
 
 impl Default for Config {
