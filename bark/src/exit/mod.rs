@@ -20,7 +20,7 @@ use json::exit::ExitState;
 use json::exit::error::ExitError;
 
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::{ChainSourceClient, ExitUnilaterally};
+use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
@@ -31,7 +31,7 @@ use crate::Wallet;
 pub struct Exit {
 	tx_manager: ExitTransactionManager,
 	persister: Arc<dyn BarkPersister>,
-	chain_source: Arc<ChainSourceClient>,
+	chain_source: Arc<ChainSource>,
 
 	vtxos_to_exit: HashSet<VtxoId>,
 	exit_vtxos: Vec<ExitVtxo>,
@@ -40,7 +40,7 @@ pub struct Exit {
 impl Exit {
 	pub (crate) async fn new(
 		persister: Arc<dyn BarkPersister>,
-		chain_source: Arc<ChainSourceClient>,
+		chain_source: Arc<ChainSource>,
 	) -> anyhow::Result<Exit> {
 		let tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
 

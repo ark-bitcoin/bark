@@ -25,7 +25,7 @@ mod chain;
 mod bdk;
 
 pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
-pub use crate::onchain::chain::{ChainSource, ChainSourceClient, FeeRates};
+pub use crate::onchain::chain::{ChainSourceSpec, ChainSource, ChainSourceClient, FeeRates};
 
 /// BDK-backed onchain wallet implementation.
 ///

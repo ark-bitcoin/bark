@@ -10,7 +10,7 @@ use bitcoin::{Address, Amount, FeeRate, Network, Transaction, Txid};
 use log::{debug, info};
 use tokio::process::Command;
 
-use bark::onchain::ChainSource;
+use bark::onchain::ChainSourceSpec;
 use bitcoin_ext::FeeRateExt;
 use bitcoin_ext::rpc::{self, RpcApi};
 
@@ -86,8 +86,8 @@ impl Bitcoind {
 		self.inner.auth()
 	}
 
-	pub fn chain_source(&self) -> ChainSource {
-		ChainSource::Bitcoind { url: self.rpc_url(), auth: self.auth() }
+	pub fn chain_source(&self) -> ChainSourceSpec {
+		ChainSourceSpec::Bitcoind { url: self.rpc_url(), auth: self.auth() }
 	}
 
 	pub fn rpc_port(&self) -> u16 {

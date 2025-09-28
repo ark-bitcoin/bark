@@ -27,13 +27,13 @@ use ark::rounds::{
 use ark::tree::signed::VtxoTreeSpec;
 use server_rpc::{protos, ServerConnection};
 
+use crate::persist::models::StoredVtxoRequest;
+use crate::{ROUND_DEEPLY_CONFIRMED, SECP, Wallet};
 use crate::movement::{MovementArgs, MovementKind};
+use crate::onchain::ChainSource;
+use crate::persist::BarkPersister;
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, WalletVtxo};
-use crate::{ROUND_DEEPLY_CONFIRMED, SECP, Wallet};
-use crate::onchain::ChainSourceClient;
-use crate::persist::BarkPersister;
-use crate::persist::models::StoredVtxoRequest;
 
 /// Struct to communicate your desired round participation for an Ark round
 #[derive(Debug, Clone)]
@@ -164,7 +164,7 @@ impl<S: Into<RoundState>> ProgressResult<S> {
 async fn check_round_cancelled<T: ToCancelled>(
 	round: &T,
 	tip: u32,
-	chain: &ChainSourceClient,
+	chain: &ChainSource,
 ) -> anyhow::Result<Option<Txid>> {
 	// If any of the round inputs were spent deeply enough, the round tx is not
 	// valid anymore and we can safely consider the round cancelled

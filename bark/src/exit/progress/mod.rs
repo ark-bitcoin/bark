@@ -16,7 +16,7 @@ use json::exit::ExitState;
 use json::exit::states::{ExitTx, ExitTxOrigin, ExitTxStatus};
 
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::{ChainSourceClient, ExitUnilaterally};
+use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
@@ -88,7 +88,7 @@ impl From<ExitError> for ExitProgressError {
 pub(crate) struct ProgressContext<'a> {
 	pub vtxo: &'a Vtxo,
 	pub exit_txids: &'a Vec<Txid>,
-	pub chain_source: &'a ChainSourceClient,
+	pub chain_source: &'a ChainSource,
 	pub fee_rate: FeeRate,
 	pub persister: &'a dyn BarkPersister,
 	pub tx_manager: &'a mut ExitTransactionManager,
