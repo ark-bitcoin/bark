@@ -384,7 +384,11 @@ impl Server {
 			amount: sub.amount(),
 			policy: vtxo_policy,
 		};
-		let input = htlc_vtxos.iter().map(|v| &v.vtxo);
+		let input = {
+			let mut ret = htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+			ret.sort_by_key(|v| v.id());
+			ret
+		};
 		let package = ArkoorPackageBuilder::new(input, &user_nonces, vtxo_req, None)
 			.badarg("incorrect VTXO request data")?;
 
