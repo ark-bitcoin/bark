@@ -36,6 +36,7 @@ steps:
           cargo install --locked --path server
         "
 
+
   - name: compare-static-files
     depends_on: check-commits
     image: registry.2nd.dev/build:23

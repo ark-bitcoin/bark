@@ -88,8 +88,9 @@ test: test-unit test-integration test-integration-esplora test-integration-mempo
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
 
-release-captaind:
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path server/Cargo.toml
+release-server:
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --locked \
+		--manifest-path server/Cargo.toml --target x86_64-unknown-linux-gnu
 
 release-bark:
 	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml
