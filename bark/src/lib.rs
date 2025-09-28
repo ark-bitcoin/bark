@@ -1529,8 +1529,15 @@ impl Wallet {
 			"we have an incorrect preimage in our db for a ln payment",
 		);
 
-		let (keypairs, sec_nonces, pub_nonces) = vtxos.iter().map(|v| {
-			let keypair = self.get_vtxo_key(&v.vtxo)?;
+		// order inputs by vtxoid before we generate nonces
+		let inputs = {
+			let mut ret = vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+			ret.sort_by_key(|v| v.id());
+			ret
+		};
+
+		let (keypairs, sec_nonces, pub_nonces) = inputs.iter().map(|v| {
+			let keypair = self.get_vtxo_key(v)?;
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 			Ok((keypair, sec_nonce, pub_nonce))
 		}).collect::<anyhow::Result<(Vec<_>, Vec<_>, Vec<_>)>>()?;
@@ -1543,7 +1550,9 @@ impl Wallet {
 			policy: receive_policy.clone(),
 			amount: vtxos.iter().map(|v| v.vtxo.amount()).sum(),
 		};
-		let inputs = vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+		trace!("ln arkoor builder params: inputs: {:?}; user_nonces: {:?}; req: {:?}",
+			inputs.iter().map(|v| v.id()).collect::<Vec<_>>(), pub_nonces, pay_req,
+		);
 		let builder = ArkoorPackageBuilder::new(inputs.iter().copied(), &pub_nonces, pay_req, None)?;
 
 		info!("Claiming arkoor against payment preimage");
