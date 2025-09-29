@@ -1008,6 +1008,22 @@ impl Wallet {
 		}
 	}
 
+	/// Returns the block height at which the first VTXO will expire
+	pub fn get_first_expiring_vtxo_blockheight(
+		&self,
+	) -> anyhow::Result<Option<BlockHeight>> {
+		Ok(self.vtxos()?.iter().map(|v| v.expiry_height()).min())
+	}
+
+	/// Returns the next block height at which we have a VTXO that we
+	/// want to refresh
+	pub fn get_next_required_refresh_blockheight(
+		&self,
+	) -> anyhow::Result<Option<BlockHeight>> {
+		let first_expiry = self.get_first_expiring_vtxo_blockheight()?;
+		Ok(first_expiry.map(|h| h.saturating_sub(self.config.vtxo_refresh_expiry_threshold)))
+	}
+
 	async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
 		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
 
