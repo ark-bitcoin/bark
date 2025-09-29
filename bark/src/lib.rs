@@ -179,21 +179,162 @@ impl VtxoSeed {
 	}
 }
 
+/// The central entry point for using this library as an Ark wallet.
+///
+/// Overview
+/// - Wallet encapsulates the complete Ark client implementation:
+///   - address generation (Ark addresses/keys)
+///     - [Wallet::new_address],
+///     - [Wallet::new_address_with_index],
+///     - [Wallet::peak_address],
+///     - [Wallet::validate_arkoor_address]
+///   - boarding onchain funds into Ark from an onchain wallet (see [onchain::OnchainWallet])
+///     - [Wallet::board_amount],
+///     - [Wallet::board_all]
+///   - offboarding Ark funds to move them back onchain
+///     - [Wallet::offboard_vtxos],
+///     - [Wallet::offboard_all]
+///   - sending and receiving Ark payments (including to BOLT11/BOLT12 invoices)
+///     - [Wallet::send_arkoor_payment],
+///     - [Wallet::send_round_onchain_payment],
+///     - [Wallet::send_lightning_payment],
+///     - [Wallet::send_lnaddr],
+///     - [Wallet::pay_offer]
+///   - tracking, selecting, and refreshing VTXOs
+///     - [Wallet::vtxos],
+///     - [Wallet::vtxos_with],
+///     - [Wallet::refresh_vtxos]
+///   - syncing with the Ark server, unilateral exits and performing general maintenance
+///     - [Wallet::maintenance]: Syncs everything offchain-related and refreshes VTXOs where
+///       necessary,
+///     - [Wallet::maintenance_with_onchain]: The same as [Wallet::maintenance] but also syncs the
+///       onchain wallet and unilateral exits,
+///     - [Wallet::maintenance_refresh]: Refreshes VTXOs where necessary without syncing anything,
+///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
+///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
+///     - [Wallet::sync_pending_lightning_vtxos]: Updates the status of pending lightning payments,
+///     - [Wallet::register_all_confirmed_boards]: Registers boards which are available for use
+///       in offchain payments
+///
+/// Key capabilities
+/// - Address management:
+///   - derive and peek deterministic Ark addresses and their indices
+/// - Funds lifecycle:
+///   - board funds from an external onchain wallet onto the Ark
+///   - send out-of-round Ark payments (arkoor)
+///   - offboard funds to onchain addresses
+///   - manage HTLCs and Lightning receives/sends
+/// - VTXO management:
+///   - query spendable and pending VTXOs
+///   - refresh expiring or risky VTXOs
+///   - compute balance broken down by spendable/pending states
+/// - Synchronization and maintenance:
+///   - sync against the Ark server and the onchain source
+///   - reconcile pending rounds, exits, and offchain state
+///   - periodic maintenance helpers (e.g., auto-register boards, refresh policies)
+///
+/// Construction and persistence
+/// - A [Wallet] is opened or created using a mnemonic and a backend implementing [BarkPersister].
+///   - [Wallet::create],
+///   - [Wallet::open]
+/// - Creation allows the use of an optional onchain wallet for boarding and [Exit] functionality.
+///   It also initializes any internal state and connects to the [onchain::ChainSource]. See
+///   [onchain::OnchainWallet] for an implementation of an onchain wallet using BDK.
+///   - [Wallet::create_with_onchain],
+///   - [Wallet::open_with_onchain]
+///
+/// Example
+/// ```
+/// # async fn demo() -> anyhow::Result<()> {
+/// # use std::sync::Arc;
+/// # use bark::{Config, SqliteClient, Wallet};
+/// # use bark::onchain::OnchainWallet;
+/// # use bark::persist::BarkPersister;
+/// # use bark::persist::sqlite::helpers::in_memory_db;
+/// # use bip39::Mnemonic;
+/// # use bitcoin::Network;
+/// # let (db_path, _) = in_memory_db();
+/// let network = Network::Signet;
+/// let mnemonic = Mnemonic::asdfadsfasfda()?;
+/// let cfg = Config {
+///   server_address: String::from("https://ark.signet.2nd.dev"),
+///   esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
+///   ..Default::default()
+/// };
+///
+/// // You can either use the included SQLite implementation or create your own.
+/// let persister = SqliteClient::open(db_path).await?;
+/// let db: Arc<dyn BarkPersister> = Arc::new(persister);
+///
+/// // Load or create an onchain wallet if needed
+/// let onchain_wallet = OnchainWallet::load_or_create(network, mnemonic.to_seed(""), db.clone())?;
+///
+/// // Create or open the Ark wallet
+/// let mut wallet = Wallet::create_with_onchain(
+/// 	&mnemonic,
+/// 	network,
+/// 	cfg.clone(),
+/// 	db,
+/// 	&onchain_wallet,
+/// 	false,
+/// ).await?;
+/// // let mut wallet = Wallet::create(&mnemonic, network, cfg.clone(), db.clone(), false).await?;
+/// // let mut wallet = Wallet::open(&mnemonic, db.clone(), cfg.clone()).await?;
+/// // let mut wallet = Wallet::open_with_onchain(
+/// //    &mnemonic, network, cfg.clone(), db.clone(), &onchain_wallet
+/// // ).await?;
+///
+/// // There are two main ways to update the wallet, the primary is to use one of the maintenance
+/// // commands which will sync everything, refresh VTXOs and reconcile pending lightning payments.
+/// wallet.maintenance().await?;
+/// wallet.maintenance_with_onchain(&mut onchain_wallet).await?;
+///
+/// // Alternatively, you can use the fine-grained sync commands to sync individual parts of the
+/// // wallet state and use `maintenance_refresh` where necessary to refresh VTXOs.
+/// wallet.sync().await?;
+/// wallet.sync_pending_lightning_vtxos().await?;
+/// wallet.register_all_confirmed_boards(&mut onchain_wallet).await?;
+/// wallet.sync_exits(&mut onchain_wallet).await?;
+/// wallet.maintenance_refresh().await?;
+///
+/// // Generate a new Ark address to receive funds via arkoor
+/// let addr = wallet.new_address()?;
+///
+/// // Query balance and VTXOs
+/// let balance = wallet.balance()?;
+/// let vtxos = wallet.vtxos()?;
+///
+/// // Progress any unilateral exits, make sure to sync first
+/// wallet.exit.progress_exit(&mut onchain_wallet, None).await?;
+///
+/// # Ok(())
+/// # }
+/// ```
 pub struct Wallet {
 	/// The chain source the wallet is connected to
 	pub chain: Arc<ChainSource>,
+
+	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
 	pub exit: Exit,
 
+	/// Active runtime configuration for networking, fees, policies and thresholds.
 	config: Config,
+
+	/// Persistence backend for wallet state (keys metadata, VTXOs, movements, round state, etc.).
 	db: Arc<dyn BarkPersister>,
+
+	/// Deterministic seed material used to derive VTXO ownership keypairs and addresses.
 	vtxo_seed: VtxoSeed,
+
+	/// Optional live connection to an Ark server for round participation and synchronization.
 	server: Option<ServerConnection>,
 
 }
 
 impl Wallet {
+	/// Creates a [onchain::ChainSource] instance to communicate with an onchain backend from the
+	/// given [Config].
 	pub fn chain_source<P: BarkPersister>(config: &Config) -> anyhow::Result<onchain::ChainSourceSpec> {
-		// create on-chain wallet
 		if let Some(ref url) = config.esplora_address {
 			Ok(onchain::ChainSourceSpec::Esplora {
 				url: url.clone(),
@@ -209,13 +350,16 @@ impl Wallet {
 			};
 			Ok(onchain::ChainSourceSpec::Bitcoind {
 				url: url.clone(),
-				auth: auth,
+				auth,
 			})
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		}
 	}
 
+	/// Verifies that the bark [Wallet] can be used with the configured [onchain::ChainSource]. More
+	/// specifically, if the [onchain::ChainSource] connects to Bitcoin Core it must be a high
+	/// enough version to support ephemeral anchors.
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
 		self.chain.require_version()
 	}
@@ -232,6 +376,19 @@ impl Wallet {
 		Ok((keypair, index))
 	}
 
+	/// Retrieves a keypair based on the provided index and checks if the corresponding public key
+	/// exists in the [Vtxo] database.
+	///
+	/// # Arguments
+	///
+	/// * `index` - The index used to derive a keypair.
+	///
+	/// # Returns
+	///
+	/// * `Ok(Keypair)` - If the keypair is successfully derived and its public key exists in the
+	///   database.
+	/// * `Err(anyhow::Error)` - If the public key does not exist in the database or if an error
+	///   occurs during the database query.
 	pub fn peak_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
 		let keypair = self.vtxo_seed.derive_keypair(index);
 		if self.db.get_public_key_idx(&keypair.public_key())?.is_some() {
@@ -241,6 +398,18 @@ impl Wallet {
 		}
 	}
 
+
+	/// Retrieves the [Keypair] for a provided [PublicKey]
+	///
+	/// # Arguments
+	///
+	/// * `public_key` - The public key for which the keypair must be found
+	///
+	/// # Returns
+	/// * `Ok(Some(u32, Keypair))` - If the pubkey is found, the derivation-index and keypair are
+	///                              returned
+	/// * `Ok(None)` - If the pubkey cannot be found in the database
+	/// * `Err(anyhow::Error)` - If an error occurred related to the database query
 	pub fn pubkey_keypair(&self, public_key: &PublicKey) -> anyhow::Result<Option<(u32, Keypair)>> {
 		if let Some(index) = self.db.get_public_key_idx(&public_key)? {
 			Ok(Some((index, self.vtxo_seed.derive_keypair(index))))
@@ -249,15 +418,23 @@ impl Wallet {
 		}
 	}
 
+	/// Retrieves the [Keypair] for a provided [Vtxo]
+	///
+	/// # Arguments
+	///
+	/// * `vtxo` - The vtxo for which the key must be found
+	///
+	/// # Returns
+	/// * `Ok(Some(Keypair))` - If the pubkey is found, the keypair is returned
+	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
+	///   in the database or a database error occurred.
 	pub fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<Keypair> {
 		let idx = self.db.get_public_key_idx(&vtxo.user_pubkey())?
 			.context("VTXO key not found")?;
 		Ok(self.vtxo_seed.derive_keypair(idx))
 	}
 
-	/// Generate a new Ark address.
-	///
-	/// This derives and stores the keypair directly after currently last revealed one
+	/// Generate a new [ark::Address].
 	pub fn new_address(&self) -> anyhow::Result<ark::Address> {
 		let ark = &self.require_server()?;
 		let network = self.properties()?.network;
@@ -270,20 +447,22 @@ impl Wallet {
 			.into_address().unwrap())
 	}
 
-	/// Peak for Ark address at the given key index.
+	/// Peak for an [ark::Address] at the given key index.
+	///
+	/// May return an error if the address at the given index has not been derived yet.
 	pub fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
 		let ark = &self.require_server()?;
 		let network = self.properties()?.network;
 		let pubkey = self.peak_keypair(index)?.public_key();
 
 		Ok(ark::Address::builder()
-			.testnet(network != bitcoin::Network::Bitcoin)
+			.testnet(network != Network::Bitcoin)
 			.server_pubkey(ark.info.server_pubkey)
 			.pubkey_policy(pubkey)
 			.into_address().unwrap())
 	}
 
-	/// Generate a new Ark address and the index of the key used to create it
+	/// Generate a new [ark::Address] and returns the index of the key used to create it.
 	///
 	/// This derives and stores the keypair directly after currently last revealed one.
 	pub fn new_address_with_index(&self) -> anyhow::Result<(ark::Address, u32)> {
@@ -295,11 +474,15 @@ impl Wallet {
 			.testnet(network != bitcoin::Network::Bitcoin)
 			.server_pubkey(ark.info.server_pubkey)
 			.pubkey_policy(pubkey)
-			.into_address().unwrap();
+			.into_address()?;
 		Ok((addr, index))
 	}
 
-	/// Create new wallet.
+	/// Create a new wallet without an optional onchain backend. This will restrict features such as
+	/// boarding and unilateral exit.
+	///
+	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
+	/// cannot be established, it will not overwrite a wallet which has already been created.
 	pub async fn create<P: BarkPersister>(
 		mnemonic: &Mnemonic,
 		network: Network,
@@ -313,7 +496,7 @@ impl Wallet {
 			bail!("cannot overwrite already existing config")
 		}
 
-		if !force{
+		if !force {
 			if let Err(_) = ServerConnection::connect(&config.server_address, network).await {
 				bail!("Not connected to a server. If you are sure use the --force flag.");
 			}
@@ -335,6 +518,13 @@ impl Wallet {
 		Ok(wallet)
 	}
 
+	/// Create a new wallet with an onchain backend. This enables full Ark functionality. A default
+	/// implementation of an onchain wallet when the `onchain_bdk` feature is enabled. See
+	/// [onchain::OnchainWallet] for more details. Alternatively, implement [ExitUnilaterally] if
+	/// you have your own onchain wallet implementation.
+	///
+	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
+	/// cannot be established, it will not overwrite a wallet which has already been created.
 	pub async fn create_with_onchain<P: BarkPersister, W: ExitUnilaterally>(
 		mnemonic: &Mnemonic,
 		network: Network,
@@ -348,7 +538,7 @@ impl Wallet {
 		Ok(wallet)
 	}
 
-	/// Open existing wallet.
+	/// Loads the bark wallet from the given database ensuring the fingerprint remains consistent.
 	pub async fn open<P: BarkPersister>(
 		mnemonic: &Mnemonic,
 		db: Arc<P>,
@@ -363,7 +553,6 @@ impl Wallet {
 			bail!("incorrect mnemonic")
 		}
 
-		// create on-chain wallet
 		let chain_source = if let Some(ref url) = config.esplora_address {
 			onchain::ChainSourceSpec::Esplora {
 				url: url.clone(),
@@ -387,7 +576,7 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let srv = match ServerConnection::connect(&config.server_address, properties.network).await {
+		let server = match ServerConnection::connect(&config.server_address, properties.network).await {
 			Ok(s) => Some(s),
 			Err(e) => {
 				warn!("Ark server handshake failed: {}", e);
@@ -397,9 +586,11 @@ impl Wallet {
 
 		let exit = Exit::new(db.clone(), chain.clone()).await?;
 
-		Ok(Wallet { config, db, vtxo_seed, exit, server: srv, chain })
+		Ok(Wallet { config, db, vtxo_seed, exit, server, chain })
 	}
 
+	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
+	/// wallet.
 	pub async fn open_with_onchain<P: BarkPersister, W: ExitUnilaterally>(
 		mnemonic: &Mnemonic,
 		db: Arc<P>,
@@ -411,10 +602,12 @@ impl Wallet {
 		Ok(wallet)
 	}
 
+	/// Returns the config used to create/load the bark [Wallet].
 	pub fn config(&self) -> &Config {
 		&self.config
 	}
 
+	/// Retrieves the [WalletProperties] of the current bark [Wallet].
 	pub fn properties(&self) -> anyhow::Result<WalletProperties> {
 		let properties = self.db.read_properties()?.context("Wallet is not initialised")?;
 		Ok(properties)
@@ -424,12 +617,12 @@ impl Wallet {
 		self.server.clone().context("You should be connected to Ark server to perform this action")
 	}
 
-	/// Return ArkInfo fetched on last handshake
+	/// Return [ArkInfo] fetched on last handshake with the Ark server
 	pub fn ark_info(&self) -> Option<&ArkInfo> {
 		self.server.as_ref().map(|a| &a.info)
 	}
 
-	/// Return the balance of the wallet.
+	/// Return the [Balance] of the wallet.
 	///
 	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> anyhow::Result<Balance> {
@@ -458,6 +651,7 @@ impl Wallet {
 		})
 	}
 
+	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.
 	pub fn get_vtxo_by_id(&self, vtxo_id: VtxoId) -> anyhow::Result<WalletVtxo> {
 		let vtxo = self.db.get_wallet_vtxo(vtxo_id)
 			.with_context(|| format!("Error when querying vtxo {} in database", vtxo_id))?
@@ -465,6 +659,7 @@ impl Wallet {
 		Ok(vtxo)
 	}
 
+	/// Fetches all wallet fund movements with the given [Pagination] parameters.
 	pub fn movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
 		Ok(self.db.get_paginated_movements(pagination)?)
 	}
@@ -496,7 +691,7 @@ impl Wallet {
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
-	/// Returns all in-round vtxos matching the provided predicate
+	/// Returns all in-round VTXOs matching the provided predicate
 	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.db.get_in_round_vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
@@ -514,8 +709,7 @@ impl Wallet {
 		Ok(boards)
 	}
 
-	/// Returns all vtxos that will expire within
-	/// `threshold_blocks` blocks
+	/// Returns all vtxos that will expire within `threshold` blocks
 	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<WalletVtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
@@ -527,7 +721,7 @@ impl Wallet {
 	/// [ArkInfo::required_board_confirmations].
 	pub async fn register_all_confirmed_boards(
 		&self,
-		wallet: &mut impl GetWalletTx,
+		onchain: &mut impl GetWalletTx,
 	) -> anyhow::Result<()> {
 		let ark_info = self.require_server()?.info;
 		let current_height = self.chain.tip().await?;
@@ -543,7 +737,7 @@ impl Wallet {
 		for board in unregistered_boards {
 			if let Some(confirmed_at) = self.chain.tx_confirmed(&board.vtxo.chain_anchor().txid).await? {
 				if current_height + 1 >= confirmed_at + (ark_info.required_board_confirmations as u32) {
-					if let Err(e) = self.register_board(wallet, board.vtxo.id()).await {
+					if let Err(e) = self.register_board(onchain, board.vtxo.id()).await {
 						warn!("Failed to register board {}: {}", board.vtxo.id(), e);
 					} else {
 						info!("Registered board {}", board.vtxo.id());
@@ -592,7 +786,8 @@ impl Wallet {
 	}
 
 	/// Performs a refresh of all VTXOs that are due to be refreshed, if any. This will include any
-	/// expired VTXOs or those which are uneconomical to exit due to onchain network conditions.
+	/// VTXOs within the expiry threshold ([Config::vtxo_refresh_expiry_threshold]) or those which
+	/// are uneconomical to exit due to onchain network conditions.
 	///
 	/// Returns a [RoundId] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
@@ -606,16 +801,12 @@ impl Wallet {
 		self.refresh_vtxos(vtxos).await
 	}
 
-	/// Sync status of unilateral exits.
-	pub async fn sync_exits<W: ExitUnilaterally>(
-		&mut self,
-		onchain: &mut W,
-	) -> anyhow::Result<()> {
-		self.exit.sync_exit(onchain).await?;
-		Ok(())
-	}
-
-	/// Sync offchain wallet and update onchain fees
+	/// Sync offchain wallet and update onchain fees. This is a much more lightweight alternative
+	/// to [Wallet::maintenance] as it will not refresh VTXOs.
+	///
+	/// Note:
+	///   - [Wallet::sync_exits] will not be called
+	///   - [Wallet::sync_pending_lightning_vtxos] will not be called
 	pub async fn sync(&mut self) -> anyhow::Result<()> {
 		// NB: order matters here, if syncing call fails, we still want to update the fee rates
 		if let Err(e) = self.chain.update_fee_rates(self.config.fallback_fee_rate).await {
@@ -632,13 +823,50 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Drop a specific vtxo from the database
+	/// Sync the transaction status of unilateral exits. This will not progress the unilateral exits
+	/// in any way, it will merely check the transaction status of each transaction as well as check
+	/// whether any exits have become claimable or have been claimed.
+	pub async fn sync_exits<W: ExitUnilaterally>(
+		&mut self,
+		onchain: &mut W,
+	) -> anyhow::Result<()> {
+		self.exit.sync_exit(onchain).await?;
+		Ok(())
+	}
+
+	/// Syncs pending lightning payments, verifying whether the payment status has changed and
+	/// creating a revocation VTXO if necessary.
+	pub async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
+		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
+
+		if vtxos.is_empty() {
+			return Ok(());
+		}
+
+		info!("Syncing {} pending lightning vtxos", vtxos.len());
+
+		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
+		for vtxo in vtxos {
+			let invoice = vtxo.state.as_pending_lightning_send().unwrap();
+			htlc_vtxos_by_payment_hash.entry(invoice.0.payment_hash()).or_default().push(vtxo);
+		}
+
+		for (_, vtxos) in htlc_vtxos_by_payment_hash {
+			self.check_lightning_payment(&vtxos).await?;
+		}
+
+		Ok(())
+	}
+
+	/// Drop a specific [Vtxo] from the database. This is destructive and will result in a loss of
+	/// funds.
 	pub async fn drop_vtxo(&mut self, vtxo_id: VtxoId) -> anyhow::Result<()> {
 		warn!("Drop vtxo {} from the database", vtxo_id);
 		self.db.remove_vtxo(vtxo_id)?;
 		Ok(())
 	}
 
+	/// Drop all VTXOs from the database. This is destructive and will result in a loss of funds.
 	//TODO(stevenroose) improve the way we expose dangerous methods
 	pub async fn drop_vtxos(&mut self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
@@ -650,25 +878,25 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Board a VTXO with the given amount.
+	/// Board a [Vtxo] with the given amount.
 	///
-	/// NB we will spend a little more on-chain to cover fees.
+	/// NB we will spend a little more onchain to cover fees.
 	pub async fn board_amount<W: PreparePsbt + SignPsbt + GetWalletTx>(
 		&mut self,
-		wallet: &mut W,
+		onchain: &mut W,
 		amount: Amount,
 	) -> anyhow::Result<Board> {
 		let (user_keypair, _) = self.derive_store_next_keypair()?;
-		self.board(wallet, Some(amount), user_keypair).await
+		self.board(onchain, Some(amount), user_keypair).await
 	}
 
-	/// Board a VTXO with all the funds in your on-chain wallet.
+	/// Board a [Vtxo] with all the funds in your onchain wallet.
 	pub async fn board_all<W: PreparePsbt + SignPsbt + GetWalletTx>(
 		&mut self,
-		wallet: &mut W,
+		onchain: &mut W,
 	) -> anyhow::Result<Board> {
 		let (user_keypair, _) = self.derive_store_next_keypair()?;
-		self.board(wallet, None, user_keypair).await
+		self.board(onchain, None, user_keypair).await
 	}
 
 	async fn board<W: PreparePsbt + SignPsbt + GetWalletTx>(
@@ -890,9 +1118,8 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Sync with the Ark and look for out-of-round received VTXOs
-	/// by public key
-	pub async fn sync_arkoor_for_pubkeys(
+	/// Sync with the Ark server and look for out-of-round received VTXOs by public key.
+	async fn sync_arkoor_for_pubkeys(
 		&self,
 		public_keys: &[PublicKey],
 	) -> anyhow::Result<()> {
@@ -974,7 +1201,7 @@ impl Wallet {
 		Ok(Offboard { round: round_id })
 	}
 
-	/// Offboard all vtxos to a given address
+	/// Offboard all VTXOs to a given [bitcoin::Address].
 	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
 		let input_vtxos = self.spendable_vtxos()?.into_iter()
 			.map(|v| v.vtxo).collect();
@@ -982,7 +1209,7 @@ impl Wallet {
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
-	/// Offboard vtxos selection to a given address
+	/// Offboard the given VTXOs to a given [bitcoin::Address].
 	pub async fn offboard_vtxos(
 		&mut self,
 		vtxos: Vec<VtxoId>,
@@ -999,7 +1226,8 @@ impl Wallet {
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
-	/// This will refresh all provided VTXO Ids.
+	/// This will refresh all provided VTXOs. Note that attempting to refresh a board VTXO which
+	/// has not yet confirmed will result in an error.
 	///
 	/// Returns the [RoundId] of the round if a successful refresh occurred.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
@@ -1069,28 +1297,6 @@ impl Wallet {
 	) -> anyhow::Result<Option<BlockHeight>> {
 		let first_expiry = self.get_first_expiring_vtxo_blockheight()?;
 		Ok(first_expiry.map(|h| h.saturating_sub(self.config.vtxo_refresh_expiry_threshold)))
-	}
-
-	async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
-		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
-
-		if vtxos.is_empty() {
-			return Ok(());
-		}
-
-		info!("Syncing {} pending lightning vtxos", vtxos.len());
-
-		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
-		for vtxo in vtxos {
-			let invoice = vtxo.state.as_pending_lightning_send().unwrap();
-			htlc_vtxos_by_payment_hash.entry(invoice.0.payment_hash()).or_default().push(vtxo);
-		}
-
-		for (_, vtxos) in htlc_vtxos_by_payment_hash {
-			self.check_lightning_payment(&vtxos).await?;
-		}
-
-		Ok(())
 	}
 
 	/// Select several vtxos to cover the provided amount
@@ -1194,7 +1400,9 @@ impl Wallet {
 		})
 	}
 
-	/// Validate if we can send arkoor payments to the given address
+	/// Validate if we can send arkoor payments to the given [ark::Address], for example an error
+	/// will be returned if the given [ark::Address] belongs to a different server (see
+	/// [ark::address::ArkId]).
 	pub fn validate_arkoor_address(&self, address: &ark::Address) -> anyhow::Result<()> {
 		let asp = self.require_server()?;
 
@@ -1231,6 +1439,15 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Makes an out-of-round payment to the given [ark::Address]. This does not require waiting for
+	/// a round, so it should be relatively instantaneous.
+	///
+	/// If the [Wallet] doesn't contain a VTXO larger than the given [Amount], multiple payments
+	/// will be chained together, resulting in the recipient receiving multiple VTXOs.
+	///
+	/// Note that a change [Vtxo] may be created as a result of this call. With each payment these
+	/// will become more uneconomical to unilaterally exit, so you should eventually refresh them
+	/// with [Wallet::refresh_vtxos] or periodically call [Wallet::maintenance_refresh].
 	pub async fn send_arkoor_payment(
 		&mut self,
 		destination: &ark::Address,
@@ -1319,6 +1536,8 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment so the same
+	/// [Wallet::send_arkoor_payment] rules apply.
 	pub async fn send_lightning_payment(
 		&mut self,
 		invoice: Invoice,
@@ -1463,6 +1682,32 @@ impl Wallet {
 		}
 	}
 
+	/// Checks the status of a lightning payment associated with a set of VTXOs, processes the
+	/// payment result and optionally takes appropriate actions based on the payment outcome.
+	///
+	/// # Arguments
+	///
+	/// * `htlc_vtxos` - Slice of [WalletVtxo] objects that represent HTLC outputs involved in the
+	///                  payment.
+	///
+	/// # Returns
+	///
+	/// Returns `Ok(Some(Preimage))` if the payment is successfully completed and a preimage is
+	/// received.
+	/// Returns `Ok(None)` for payments still pending, failed payments or if necessary revocation
+	/// or exit processing occurs.
+	/// Returns an `Err` if an error occurs during the process.
+	///
+	/// # Behavior
+	///
+	/// - Validates that all HTLC VTXOs share the same invoice, amount and policy.
+	/// - Sends a request to the lightning payment server to check the payment status.
+	/// - Depending on the payment status:
+	///   - **Failed**: Revokes the associated VTXOs.
+	///   - **Pending**: Checks if the HTLC has expired based on the tip height. If expired, revokes
+	///     the VTXOs.
+	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement in the
+	///     database and returns
 	pub async fn check_lightning_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
 		let mut srv = self.require_server()?;
 		let tip = self.chain.tip().await?;
@@ -1475,7 +1720,7 @@ impl Wallet {
 					.context("VTXO is not an HTLC send")?;
 				let this_parts = (invoice, amount, policy);
 				if parts.get_or_insert_with(|| this_parts) != &this_parts {
-					bail!("All lightning htlc should have the same invoice, amount, and policy");
+					bail!("All lightning htlc should have the same invoice, amount and policy");
 				}
 			}
 		}
@@ -1541,7 +1786,7 @@ impl Wallet {
 		Ok(None)
 	}
 
-	/// Create, store and return a bolt11 invoice for offchain boarding
+	/// Create, store and return a [Bolt11Invoice] for offchain boarding
 	pub async fn bolt11_invoice(&mut self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let mut srv = self.require_server()?;
 
@@ -1566,6 +1811,7 @@ impl Wallet {
 		Ok(invoice)
 	}
 
+	/// Fetches the status of a lightning receive for the given [PaymentHash].
 	pub fn lightning_receive_status(
 		&self,
 		payment: impl Into<PaymentHash>,
@@ -1573,6 +1819,7 @@ impl Wallet {
 		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into())?)
 	}
 
+	/// Fetches the status of all lightning receives with the given [Pagination] parameters.
 	pub fn lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {
 		Ok(self.db.get_paginated_lightning_receives(pagination)?)
 	}
@@ -1647,6 +1894,28 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Attempts to receive a payment from the given [Bolt11Invoice].
+	///
+	/// This function finalizes the receipt of a Lightning payment and prepares the payment for use
+	/// in the user's wallet. It performs several key actions including verifying the invoice,
+	/// subscribing to the payment and preparing an HTLC output for the received payment.
+	///
+	/// # Arguments
+	///
+	/// * `invoice` - The [Bolt11Invoice] which was previously generated using
+	///   [Wallet::bolt11_invoice].
+	///
+	/// # Returns
+	///
+	/// Returns an `anyhow::Result<()>`, which is:
+	/// * `Ok(())` if the process completes successfully.
+	/// * `Err` if an error occurs at any stage of the operation.
+	///
+	/// # Remarks
+	///
+	/// * The invoice must contain an explicit amount specified in milli-satoshis.
+	/// * The HTLC expiry height is calculated by adding the servers' HTLC expiry delta to the
+	///   current chain tip.
 	pub async fn finish_lightning_receive(&mut self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
@@ -1743,9 +2012,7 @@ impl Wallet {
 		self.claim_htlc_vtxos(payment_hash, &wallet_vtxos).await
 	}
 
-	/// Send to a lightning address.
-	///
-	/// Returns the invoice paid and the preimage.
+	/// Same as [Wallet::send_lightning_payment] but instead it pays a [LightningAddress].
 	pub async fn send_lnaddr(
 		&mut self,
 		addr: &LightningAddress,
@@ -1760,6 +2027,7 @@ impl Wallet {
 		Ok((invoice, preimage))
 	}
 
+	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
 	pub async fn pay_offer(
 		&mut self,
 		offer: Offer,
@@ -1790,9 +2058,8 @@ impl Wallet {
 		Ok((invoice, preimage))
 	}
 
-	/// Send to an onchain address in an Ark round.
-	///
-	/// It is advised to sync your wallet before calling this method.
+	/// Sends the given [Amount] to an onchain [bitcoin::Address]. This is an in-round operation
+	/// which may take a long time to perform.
 	pub async fn send_round_onchain_payment(
 		&mut self,
 		addr: bitcoin::Address,

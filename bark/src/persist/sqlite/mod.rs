@@ -346,26 +346,22 @@ impl BarkPersister for SqliteClient {
 	}
 }
 
-#[cfg(test)]
-pub mod test {
+#[cfg(any(test, doctest, doc))]
+pub mod helpers {
+	use std::path::PathBuf;
 	use std::str::FromStr;
 
-	use bdk_wallet::chain::DescriptorExt;
-	use bitcoin::bip32;
-	use rand::{distr, Rng};
+	use rusqlite::Connection;
 
-	use ark::vtxo::test::VTXO_VECTORS;
-
-	use super::*;
-
-
-	/// Creates an in-memory sqlite connection
+	/// Creates an in-memory sqlite connection.
 	///
 	/// It returns a [PathBuf] and a [Connection].
 	/// The user should ensure the [Connection] isn't dropped
 	/// until the test completes. If all connections are dropped during
 	/// the test the entire database might be cleared.
-	pub fn in_memory() -> (PathBuf, Connection) {
+	#[cfg(feature = "rand")]
+	pub fn in_memory_db() -> (PathBuf, Connection) {
+		use rand::{distr, Rng};
 
 		// All tests run in the same process and share the same
 		// cache. To ensure that each call to `in_memory` results
@@ -382,6 +378,19 @@ pub mod test {
 		let conn = Connection::open(pathbuf.clone()).unwrap();
 		(pathbuf.clone(), conn)
 	}
+}
+
+#[cfg(test)]
+mod test {
+
+	use bdk_wallet::chain::DescriptorExt;
+	use bitcoin::bip32;
+
+	use ark::vtxo::test::VTXO_VECTORS;
+
+	use crate::persist::sqlite::helpers::in_memory_db;
+
+	use super::*;
 
 	#[test]
 	fn test_add_and_retreive_vtxos() {
@@ -391,7 +400,7 @@ pub mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let (cs, conn) = in_memory();
+		let (cs, conn) = in_memory_db();
 		let db = SqliteClient::open(cs).unwrap();
 
 		db.register_movement(MovementArgs {
@@ -457,7 +466,7 @@ pub mod test {
 
 	#[test]
 	fn test_create_wallet_then_load() {
-		let (connection_string, conn) = in_memory();
+		let (connection_string, conn) = in_memory_db();
 
 		let db = SqliteClient::open(connection_string).unwrap();
 		let network = bitcoin::Network::Testnet;
