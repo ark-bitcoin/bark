@@ -382,7 +382,9 @@ impl Db {
 			INSERT INTO integration_token (
 				token, type, status, filters, expires_at, integration_id,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id
-			) VALUES ($1, $2::TEXT::token_type, $3::TEXT::token_status, $4, $5, $6, NOW(), $7, NOW(), $7)
+			) VALUES (
+				$1, $2::TEXT::token_type, $3::TEXT::token_status, $4, $5, $6, NOW(), $7, NOW(), $7
+			)
 			RETURNING id,
 				token, type::TEXT, status::TEXT, filters, expires_at, integration_id,
 				created_at, created_by_api_key_id, updated_at, updated_by_api_key_id

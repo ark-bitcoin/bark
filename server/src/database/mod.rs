@@ -26,19 +26,23 @@ use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
-use bitcoin_ext::BlockHeight;
 use chrono::Local;
 use futures::{Stream, TryStreamExt, StreamExt};
-use tokio_postgres::{types::Type, Client, GenericClient, NoTls};
+use tokio_postgres::{Client, GenericClient, NoTls};
+use tokio_postgres::types::Type;
 use log::{info, warn};
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::encode::ProtocolEncoding;
+use bitcoin_ext::BlockHeight;
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
 
+
+/// Can be used as function argument when there are no query_raw arguments
+const NOARG: &[&bool] = &[];
 
 const DEFAULT_DATABASE: &str = "postgres";
 
@@ -83,7 +87,10 @@ impl Db {
 		Ok(client)
 	}
 
-	async fn pool_connect(database: &str, postgres_config: &PostgresConfig) -> anyhow::Result<Pool<PostgresConnectionManager<NoTls>>> {
+	async fn pool_connect(
+		database: &str,
+		postgres_config: &PostgresConfig,
+	) -> anyhow::Result<Pool<PostgresConnectionManager<NoTls>>> {
 		let config = Self::config(database, postgres_config);
 
 		let manager = PostgresConnectionManager::new(config, NoTls);
@@ -230,13 +237,17 @@ impl Db {
 		Ok(())
 	}
 
-	/// Get vtxos by id and ensure the order of the returned vtxos matches the order of the provided ids.
-	async fn get_vtxos_by_id_with_client<T>(client: &T, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>>
+	/// Get vtxos by id and ensure the order of the returned vtxos matches
+	/// the order of the provided ids
+	async fn get_vtxos_by_id_with_client<T>(
+		client: &T,
+		ids: &[VtxoId],
+	) -> anyhow::Result<Vec<VtxoState>>
 		where T : GenericClient + Sized
 	{
 		let statement = client.prepare_typed("
-			SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id, board_swept_at,
-			created_at, updated_at
+			SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
+				board_swept_at, created_at, updated_at
 			FROM vtxo
 			WHERE vtxo_id = ANY($1);
 		", &[Type::TEXT_ARRAY]).await?;
@@ -277,8 +288,7 @@ impl Db {
 			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL AND board_swept_at IS NULL;
 		").await?;
 
-		let params: Vec<String> = vec![];
-		Ok(conn.query_raw(&stmt, params).await?
+		Ok(conn.query_raw(&stmt, NOARG).await?
 			.err_into()
 			.map_ok(|row| Vtxo::deserialize(row.get("vtxo")).expect("corrupt db: vtxo"))
 		)
@@ -307,12 +317,12 @@ impl Db {
 			", &[Type::TEXT, Type::TEXT]).await?;
 
 			let vtxos = Self::get_vtxos_by_id_with_client(&tx, &[input.id()]).await?;
-			for vtxo_state in vtxos {
-				if !vtxo_state.is_spendable() {
-					return Ok(Some(vtxo_state.vtxo_id));
+			for vtxo in vtxos {
+				if !vtxo.is_spendable() {
+					return Ok(Some(vtxo.vtxo_id));
 				}
 
-				tx.execute(&statement, &[&vtxo_state.vtxo_id.to_string(), &txid.to_string()]).await?;
+				tx.execute(&statement, &[&vtxo.vtxo_id.to_string(), &txid.to_string()]).await?;
 			}
 		}
 
@@ -326,7 +336,12 @@ impl Db {
 	 * Arkoors
 	*/
 
-	pub async fn store_oor(&self, pubkey: PublicKey, arkoor_package_id: &[u8; 32], vtxo: Vtxo) -> anyhow::Result<()> {
+	pub async fn store_oor(
+		&self,
+		pubkey: PublicKey,
+		arkoor_package_id: &[u8; 32],
+		vtxo: Vtxo,
+	) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare("
 			INSERT INTO arkoor_mailbox (pubkey, vtxo_id, vtxo, arkoor_package_id, created_at)
@@ -371,7 +386,8 @@ impl Db {
 		}
 
 		let statement = conn.prepare("
-			UPDATE arkoor_mailbox SET processed_at = NOW() WHERE pubkey = ANY($1) AND processed_at IS NULL;
+			UPDATE arkoor_mailbox SET processed_at = NOW()
+			WHERE pubkey = ANY($1) AND processed_at IS NULL;
 		").await?;
 		let result = conn.execute(&statement, &[&serialized_pubkeys]).await?;
 		assert_eq!(result, rows.len() as u64);
@@ -452,7 +468,8 @@ impl Db {
 
 		let conn = self.pool.get().await?;
 		let statement = conn.prepare_typed("
-			INSERT INTO wallet_changeset (content, kind, created_at) VALUES ($1, $2::TEXT::wallet_kind, NOW());
+			INSERT INTO wallet_changeset (content, kind, created_at)
+			VALUES ($1, $2::TEXT::wallet_kind, NOW());
 		", &[Type::BYTEA, Type::TEXT]).await?;
 		conn.execute(&statement, &[&bytes, &wallet.name()]).await?;
 

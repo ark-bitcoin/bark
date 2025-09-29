@@ -132,7 +132,9 @@ impl Db {
 			SELECT id,
 				lightning_invoice_id, lightning_node_id, amount_msat, status, error,
 				created_at, updated_at, (
-					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = lightning_payment_attempt.lightning_invoice_id)
+					EXISTS(SELECT 1 FROM lightning_htlc_subscription
+						WHERE lightning_invoice_id = lightning_payment_attempt.lightning_invoice_id
+					)
 				) as is_self_payment
 			FROM lightning_payment_attempt
 			WHERE status != $1 AND status != $2 AND lightning_node_id = $3
@@ -158,7 +160,9 @@ impl Db {
 			SELECT attempt.id,
 				attempt.lightning_invoice_id, attempt.lightning_node_id, attempt.amount_msat,
 				attempt.status, attempt.error, attempt.created_at, attempt.updated_at, (
-					EXISTS(SELECT 1 FROM lightning_htlc_subscription WHERE lightning_invoice_id = attempt.lightning_invoice_id)
+					EXISTS(SELECT 1 FROM lightning_htlc_subscription
+						WHERE lightning_invoice_id = attempt.lightning_invoice_id
+					)
 				) as is_self_payment
 			FROM lightning_invoice invoice
 			JOIN lightning_payment_attempt attempt ON
