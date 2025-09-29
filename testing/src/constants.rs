@@ -1,6 +1,8 @@
+use std::time::Duration;
 
 pub const BOARD_CONFIRMATIONS: u32 = 3;
 pub const ROUND_CONFIRMATIONS: u32 = 6;
+pub const TX_PROPAGATION_SLEEP_TIME: Duration = Duration::from_millis(1000);
 
 pub mod env {
 	pub const TEST_DIRECTORY: &str = "TEST_DIRECTORY";
@@ -19,7 +21,12 @@ pub mod env {
 	pub const CHAIN_SOURCE: &str = "CHAIN_SOURCE";
 	// If a daemon isn't initialized in DAEMON_INIT_TIMEOUT_MILLIS
 	// the test will fail
-	pub const DAEMON_INIT_TIMEOUT_MILLIS: &str = "DAEMON_INIT_TIMEOUT";
+	pub const DAEMON_INIT_TIMEOUT_MILLIS: &str = "DAEMON_INIT_TIMEOUT_MILLIS";
+	// If a bark command doesn't return in BARK_COMMAND_TIMEOUT_MILLIS
+	// the test will fail
+	pub const BARK_COMMAND_TIMEOUT_MILLIS: &str = "BARK_COMMAND_TIMEOUT_MILLIS";
+	// The maximum time to wait for a transaction to be propagated to a node, in milliseconds.
+	pub const TX_PROPAGATION_TIMEOUT_MILLIS: &str = "TX_PROPAGATION_TIMEOUT_MILLIS";
 	/// The env var to reach postgres binaries folder
 	pub const POSTGRES_BINS: &str = "POSTGRES_BINS";
 	/// Remove the directory once a test is successful

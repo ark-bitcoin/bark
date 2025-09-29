@@ -9,7 +9,7 @@ use log::error;
 use tokio::fs;
 use tokio::process::Child;
 
-use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY};
+use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY, TX_PROPAGATION_TIMEOUT_MILLIS};
 use crate::daemon::electrs::ElectrsType;
 
 pub enum TestContextChainSource {
@@ -147,6 +147,15 @@ pub fn get_bark_chain_source_from_env() -> TestContextChainSource {
 		TestContextChainSource::from(cs)
 	} else {
 		TestContextChainSource::BitcoinCore
+	}
+}
+
+pub fn get_tx_propagation_timeout_millis() -> u64 {
+	if let Ok(timeout) = env::var(TX_PROPAGATION_TIMEOUT_MILLIS) {
+		timeout.parse::<u64>()
+			.expect(&format!("{} should be in milliseconds", TX_PROPAGATION_TIMEOUT_MILLIS))
+	} else {
+		30_000
 	}
 }
 

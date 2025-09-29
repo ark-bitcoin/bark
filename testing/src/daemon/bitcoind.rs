@@ -16,8 +16,9 @@ use bitcoin_ext::rpc::{self, RpcApi};
 
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
+use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::{Daemon, DaemonHelper};
-use crate::util::{FutureExt, resolve_path};
+use crate::util::{FutureExt, resolve_path, get_tx_propagation_timeout_millis};
 
 #[derive(Clone)]
 pub struct BitcoindHelper {
@@ -140,11 +141,12 @@ impl Bitcoind {
 	pub async fn await_transaction(&self, txid: Txid) -> Transaction {
 		let client = self.sync_client();
 		let start = Instant::now();
-		while Instant::now().duration_since(start).as_millis() < 30_000 {
+		let timeout = get_tx_propagation_timeout_millis();
+		while Instant::now().duration_since(start).as_millis() < timeout as u128 {
 			if let Ok(result) = client.get_raw_transaction(&txid, None) {
 				return result;
 			} else {
-				tokio::time::sleep(Duration::from_millis(200)).await;
+				tokio::time::sleep(TX_PROPAGATION_SLEEP_TIME).await;
 			}
 		}
 		panic!("Failed to get raw transaction: {}", txid);

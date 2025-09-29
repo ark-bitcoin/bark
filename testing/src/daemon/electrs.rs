@@ -1,6 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use bdk_esplora::esplora_client::{AsyncClient, Builder};
 use bitcoin::{Network, Transaction, Txid};
@@ -12,8 +12,9 @@ use bark::onchain::ChainSourceSpec;
 
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use crate::constants::env::{ESPLORA_ELECTRS_EXEC, MEMPOOL_ELECTRS_EXEC};
+use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::{Daemon, DaemonHelper};
-use crate::util::resolve_path;
+use crate::util::{get_tx_propagation_timeout_millis, resolve_path};
 
 #[derive(Clone, Copy)]
 pub enum ElectrsType {
@@ -98,11 +99,12 @@ impl Electrs {
 	pub async fn await_transaction(&self, txid: Txid) -> Transaction {
 		let client = self.async_client();
 		let start = Instant::now();
-		while Instant::now().duration_since(start).as_millis() < 30_000 {
+		let timeout = get_tx_propagation_timeout_millis();
+		while Instant::now().duration_since(start).as_millis() < timeout as u128 {
 			if let Ok(Some(result)) = client.get_tx(&txid).await {
 				return result;
 			} else {
-				tokio::time::sleep(Duration::from_millis(200)).await;
+				tokio::time::sleep(TX_PROPAGATION_SLEEP_TIME).await;
 			}
 		}
 		panic!("Failed to get raw transaction: {}", txid);

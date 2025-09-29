@@ -29,7 +29,7 @@ use bitcoin_ext::FeeRateExt;
 use crate::constants::BOARD_CONFIRMATIONS;
 use crate::{Bitcoind, TestContext};
 use crate::context::ToArkUrl;
-use crate::constants::env::BARK_EXEC;
+use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC};
 use crate::util::resolve_path;
 
 const COMMAND_LOG_FILE: &str = "commands.log";
@@ -532,10 +532,18 @@ impl Bark {
 
 		let mut child = command.spawn()?;
 
-		let exit_result = tokio::time::timeout(
-			self.timeout.unwrap_or(DEFAULT_CMD_TIMEOUT),
-			child.wait(),
-		).await;
+		// The priority is the bark instances' timeout, the env timeout then the default timeout
+		let timeout = self.timeout.unwrap_or_else(|| {
+			if let Ok(millis) = env::var(BARK_COMMAND_TIMEOUT_MILLIS) {
+				let millis = millis.parse()
+					.expect(&format!("{} is not in milliseconds", BARK_COMMAND_TIMEOUT_MILLIS));
+				Duration::from_millis(millis)
+			} else {
+				DEFAULT_CMD_TIMEOUT
+			}
+		});
+		let exit_result = tokio::time::timeout(timeout, child.wait()).await;
+
 		// on timeout, kill the child
 		if exit_result.is_err() {
 			error!("bark command timed out");
