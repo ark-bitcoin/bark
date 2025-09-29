@@ -72,7 +72,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	let mut config = Config {
 		// required args
 		server_address: opts.config.ark.clone().context("Ark server address missing, use --ark")?,
-		..Default::default()
+		..Config::network_default(net)
 	};
 
 	// Fallback to our default signet backend
