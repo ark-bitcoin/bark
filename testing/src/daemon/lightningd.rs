@@ -45,7 +45,8 @@ impl Lightningd {
 				"--network", &config.network,
 				"--grpc-port", &grpc_port.to_string(),
 				"--bitcoin-datadir=/data/.bitcoin",
-				"--lightning-dir=/data/.lightning"
+				"--lightning-dir=/data/.lightning",
+				"--rpc-file=/tmp/lightning-rpc",
 			]);
 			Ok(cmd)
 		} else if lightningd_exec.is_some() {
