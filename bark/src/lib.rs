@@ -559,27 +559,51 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Performs maintenance tasks on the wallet
+	/// Performs maintenance tasks on the offchain wallet.
 	///
-	/// This tasks include onchain-sync, off-chain sync,
-	/// registering board with the server.
-	///
-	/// This tasks will only include anything that has to wait
-	/// for a round. The maintenance call cannot be used to
-	/// refresh VTXOs.
-	pub async fn maintenance<W: PreparePsbt + SignPsbt + ExitUnilaterally>(
-		&mut self,
-		wallet: &mut W,
-	) -> anyhow::Result<()> {
+	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
+	/// payments and refreshing VTXOs if necessary.
+	pub async fn maintenance(&mut self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
-		self.register_all_confirmed_boards(wallet).await?;
+		self.maintenance_refresh().await?;
+		self.sync_pending_lightning_vtxos().await?;
+		Ok(())
+	}
+
+	/// Performs maintenance tasks on the onchain and offchain wallet.
+	///
+	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
+	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
+	/// refreshing VTXOs if necessary.
+	pub async fn maintenance_with_onchain<W: PreparePsbt + SignPsbt + ExitUnilaterally>(
+		&mut self,
+		onchain: &mut W,
+	) -> anyhow::Result<()> {
+		info!("Starting wallet maintenance with onchain wallet");
+		self.sync().await?;
+		self.register_all_confirmed_boards(onchain).await?;
 		self.maintenance_refresh().await?;
 		self.sync_pending_lightning_vtxos().await?;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
-		self.sync_exits(wallet).await?;
+		self.sync_exits(onchain).await?;
 		Ok(())
+	}
+
+	/// Performs a refresh of all VTXOs that are due to be refreshed, if any. This will include any
+	/// expired VTXOs or those which are uneconomical to exit due to onchain network conditions.
+	///
+	/// Returns a [RoundId] if a refresh occurs.
+	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
+		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
+			.map(|v| v.vtxo).collect::<Vec<_>>();
+		if vtxos.len() == 0 {
+			return Ok(None);
+		}
+
+		info!("Performing maintenance refresh");
+		self.refresh_vtxos(vtxos).await
 	}
 
 	/// Sync status of unilateral exits.
@@ -1010,18 +1034,6 @@ impl Wallet {
 			.context("round failed")?;
 
 		Ok(Some(round_id))
-	}
-
-	/// Performs a refresh of all VTXOs that are due to be refreshed, if any.
-	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.vtxo).collect::<Vec<_>>();
-		if vtxos.len() == 0 {
-			return Ok(None);
-		}
-
-		info!("Performing maintenance refresh");
-		self.refresh_vtxos(vtxos).await
 	}
 
 	/// This will find all VTXOs that meets must-refresh criteria.
