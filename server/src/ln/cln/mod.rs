@@ -82,7 +82,7 @@ pub struct ClnManager {
 	payment_tx: mpsc::UnboundedSender<(Invoice, Option<Amount>, BlockHeight)>,
 
 	/// This channel sends invoice generation requests to the process.
-	invoice_gen_tx: mpsc::UnboundedSender<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
+	invoice_gen_tx: mpsc::UnboundedSender<((PaymentHash, Amount, BlockDelta), oneshot::Sender<Bolt11Invoice>)>,
 
 	/// This channel sends invoice settle requests to the process.
 	invoice_settle_tx: mpsc::UnboundedSender<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
@@ -268,9 +268,10 @@ impl ClnManager {
 		&self,
 		payment_hash: PaymentHash,
 		amount: Amount,
+		cltv_delta: BlockDelta,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let (tx, rx) = oneshot::channel();
-		self.invoice_gen_tx.send(((payment_hash, amount), tx)).context("invoice channel broken")?;
+		self.invoice_gen_tx.send(((payment_hash, amount, cltv_delta), tx)).context("invoice channel broken")?;
 		rx.await.context("invoice return channel broken")
 	}
 
@@ -510,7 +511,7 @@ struct ClnManagerProcess {
 
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
 	payment_rx: mpsc::UnboundedReceiver<(Invoice, Option<Amount>, BlockHeight)>,
-	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
+	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount, BlockDelta), oneshot::Sender<Bolt11Invoice>)>,
 	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
 	bolt12_rx: mpsc::UnboundedReceiver<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
 
@@ -767,7 +768,7 @@ impl ClnManagerProcess {
 	///
 	/// Caller is responsible for checking if there is an existing opened
 	/// subscription in the db and act accordingly.
-	async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+	async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount, cltv_delta: BlockDelta) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.get_hodl_active_node().context("no active hodl-compatible cln node")?;
 		let mut hold_client = node.hodl_rpc.clone().expect("active node not hodl enabled");
 
@@ -786,8 +787,8 @@ impl ClnManagerProcess {
 		let res = hold_client.invoice(hold::InvoiceRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
+			min_final_cltv_expiry: Some(cltv_delta as u64),
 			expiry: None,
-			min_final_cltv_expiry: None,
 			routing_hints: vec![],
 			description: None,
 		}).await?.into_inner();
@@ -906,9 +907,9 @@ impl ClnManagerProcess {
 					break;
 				},
 
-				msg = self.invoice_gen_rx.recv() => if let Some(((payment_hash, amount), sender)) = msg {
+				msg = self.invoice_gen_rx.recv() => if let Some(((payment_hash, amount, cltv_delta), sender)) = msg {
 					trace!("Invoice generation received: payment_hash={:?}", payment_hash);
-					match self.generate_invoice(payment_hash, amount).await {
+					match self.generate_invoice(payment_hash, amount, cltv_delta).await {
 						Ok(invoice) => {
 							trace!("Invoice generation successful: payment_hash={:?}", payment_hash);
 							sender.send(invoice).unwrap();

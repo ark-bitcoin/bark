@@ -303,7 +303,11 @@ impl Server {
 			}
 		}
 
-		let invoice = self.cln.generate_invoice(payment_hash, amount).await?;
+		// NB: we had user's requested cltv delta with the delta configured
+		// between last lightning htlc and htlc-recv vtxo one
+		let ln_cltv_delta = min_cltv_delta + self.config.htlc_expiry_delta;
+
+		let invoice = self.cln.generate_invoice(payment_hash, amount, ln_cltv_delta).await?;
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
 			payment_hash, amount, invoice.to_string(),
 		);
