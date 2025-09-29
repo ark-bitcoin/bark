@@ -110,11 +110,7 @@ async fn bark_pay_ln_succeeds() {
 	let board_amount = btc(5);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
-	bark_1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	{
 		// Create a payable invoice
@@ -179,9 +175,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	bark_1.refresh_all().await;
 	bark_1.board(btc(1)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_2.offchain_balance().await;
+	bark_2.maintain().await;
 	bark_2.send_oor(bark_1.address().await, btc(1)).await;
 
 	let expected_balance = btc(3);
@@ -222,11 +216,7 @@ async fn bark_pay_invoice_twice() {
 	// Start a bark and create a VTXO
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
 
-	bark_1.board(btc(5)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, btc(5)).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
@@ -411,11 +401,7 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 	let board_amount = btc(5);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
-	bark_1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	{
 		// Invoice with amount
@@ -464,11 +450,7 @@ async fn bark_can_send_full_balance_on_lightning() {
 	let board_amount = btc(1);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
-	bark_1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let invoice = lightningd_2.invoice(Some(board_amount), "test_payment2", "A test payment").await;
 	bark_1.send_lightning(invoice, None).await;
@@ -509,11 +491,7 @@ async fn bark_can_receive_lightning() {
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
 	let board_amount = btc(2);
-	bark.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark.offchain_balance().await;
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let pay_amount = btc(1);
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
@@ -530,7 +508,7 @@ async fn bark_can_receive_lightning() {
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
 
 	// trigger a maintenance to claim the lightning receive
-	bark.offchain_balance().await;
+	bark.maintain().await;
 
 	// HTLC settlement on lightning side
 	res1.fast().await.unwrap();
@@ -609,10 +587,8 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 	bark_1.board(board_amount).await;
 	bark_2.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
-	bark_2.offchain_balance().await;
+	bark_1.maintain().await;
+	bark_2.maintain().await;
 
 	let pay_amount = btc(1);
 	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
@@ -692,11 +668,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
 
 	// Board funds into the Ark
-	bark_1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
@@ -708,9 +680,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	// htlc expiry is 6 ahead of current block
 	ctx.generate_blocks(8).await;
-
-	// Triggers maintenance under the hood
-	bark_1.offchain_balance().await;
+	bark_1.maintain().await;
 
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
@@ -759,11 +729,7 @@ async fn bark_pay_ln_offer() {
 	let board_amount = btc(5);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
-	bark_1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	// Pay invoice with no amount specified
 	{
@@ -815,11 +781,7 @@ async fn bark_pay_twice_ln_offer() {
 	let board_amount = btc(5);
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
-	bark_1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let offer = lightningd_2.offer(None, Some("A test payment")).await;
 

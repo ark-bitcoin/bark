@@ -333,6 +333,13 @@ enum Command {
 	/// developer commands
 	#[command(subcommand)]
 	Dev(dev::DevCommand),
+
+	/// Run wallet maintenence
+	///
+	/// This includes onchain sync, offchain sync, registering boards with the server,
+	/// syncing Lightning VTXOs, syncing exits, and refreshing soon-to-expire VTXOs
+	#[command()]
+	Maintain,
 }
 
 #[derive(clap::Subcommand)]
@@ -894,6 +901,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Lightning(cmd) => {
 			lightning::execute_lightning_command(cmd, &mut wallet).await?;
+		},
+		Command::Maintain => {
+			wallet.maintenance(&mut onchain).await?;
 		},
 	}
 	Ok(())

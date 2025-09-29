@@ -165,11 +165,7 @@ async fn bark_rejects_boarding_subdust_amount() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 
 	let board_amount = sat(P2TR_DUST_SAT - 1);
-	let res =bark1.try_board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	let res = bark1.try_board(board_amount).await;
 
 	// This is taken care by BDK
 	assert!(res.unwrap_err().to_string().contains(&format!("Output below the dust limit: 0")));
@@ -284,11 +280,8 @@ async fn send_simple_arkoor() {
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(90_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(5_000)).await;
-	bark1.board(sat(80_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(80_000)).await;
 
 	let addr2 = bark2.address().await;
 	bark1.send_oor(addr2, sat(20_000)).await;
@@ -323,9 +316,7 @@ async fn send_arkoor_package() {
 	bark1.board(sat(20_000)).await;
 	bark1.board(sat(20_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.maintain().await;
 
 	let addr2 = bark2.address().await;
 	bark1.send_oor(addr2, sat(50_000)).await;
@@ -352,11 +343,7 @@ async fn refresh_all() {
 	bark2.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
-	bark1.board(sat(400_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
 
 	// We want bark2 to have a refresh, board, round and oor vtxo
 	let pk1 = bark1.address().await;
@@ -381,11 +368,7 @@ async fn bark_rejects_sending_subdust_oor() {
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
 	let board_amount = sat(800_000);
-	bark1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let subdust_amount = sat(P2TR_DUST_SAT - 1);
 	let res = bark1.try_send_oor(&bark2.address().await, subdust_amount, true).await;
@@ -448,11 +431,7 @@ async fn compute_balance() {
 	bark1.refresh_all().await;
 
 	// board vtxo
-	bark1.board(sat(300_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
@@ -479,10 +458,8 @@ async fn list_movements() {
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(300_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
-	bark2.offchain_balance().await;
+	bark1.maintain().await;
+	bark2.maintain().await;
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 1);
 	assert_eq!(movements[0].spends.len(), 0);
@@ -562,11 +539,7 @@ async fn offboard_all() {
 
 	// refresh and board more
 	bark1.refresh_all().await;
-	bark1.board(sat(300_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 
 	// oor vtxo
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
@@ -666,11 +639,7 @@ async fn bark_send_onchain() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 
-	bark1.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	let [sent_vtxos] = bark1.vtxos().await.try_into().expect("should have one vtxo");
 	let addr = bark2.get_onchain_address().await;
@@ -732,11 +701,7 @@ async fn bark_rejects_offboarding_subdust_amount() {
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 
 	let board_amount = sat(800_000);
-	bark1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let addr = bark2.get_onchain_address().await;
 
@@ -860,11 +825,7 @@ async fn second_round_attempt() {
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
-	bark1.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
 	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
@@ -1076,12 +1037,7 @@ async fn bark_does_not_spend_too_deep_arkoors() {
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
-	bark1.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark1.offchain_balance().await;
-
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	let addr = bark2.address().await;
 	bark1.send_oor(&addr, sat(100_000)).await;
@@ -1109,9 +1065,7 @@ async fn test_ark_address_other_ark() {
 	bark1.board(sat(800_000)).await;
 	bark2.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark2.offchain_balance().await;
+	bark2.maintain().await;
 
 	let addr1 = bark1.address().await;
 	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().to_alt_string();
