@@ -143,11 +143,11 @@ clippy LINT:
 
 
 default-server-config:
-	cargo run -p bark-server --example dump-default-config > {{DEFAULT_SERVER_CONFIG_PATH}}
+	cargo run --example dump-default-config > {{DEFAULT_SERVER_CONFIG_PATH}}
 	echo "Default server config file written to {{DEFAULT_SERVER_CONFIG_PATH}}"
 
 dump-server-sql-schema:
-	cargo run -p ark-testing --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
+	cargo run --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
 	# Use sed to remove lines that are hard to reproduce across different systems
 	sed -i '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
 	sed -i '/^-- Dumped from .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
@@ -156,6 +156,9 @@ dump-server-sql-schema:
 	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
 
 dump-bark-sql-schema:
-	cargo run -p bark-wallet --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
+	cargo run --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
 	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
+
+generate-static-files: default-server-config dump-server-sql-schema dump-bark-sql-schema
+
 
