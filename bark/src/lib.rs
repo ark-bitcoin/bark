@@ -989,12 +989,10 @@ impl Wallet {
 		self.refresh_vtxos(vtxos).await
 	}
 
-	/// This will find any VTXO that meets must-refresh criteria.
+	/// This will find all VTXOs that meets must-refresh criteria.
 	/// Then, if there are some VTXOs to refresh, it will
 	/// also add those that meet should-refresh criteria.
-	///
-	/// Returns a list of Vtxo's
-	async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
 		let tip = self.chain.tip().await?;
 		let fee_rate = self.chain.fee_rates().await.fast;
 
