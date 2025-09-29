@@ -989,12 +989,10 @@ impl Wallet {
 		self.refresh_vtxos(vtxos).await
 	}
 
-	/// This will find any VTXO that meets must-refresh criteria.
+	/// This will find all VTXOs that meets must-refresh criteria.
 	/// Then, if there are some VTXOs to refresh, it will
 	/// also add those that meet should-refresh criteria.
-	///
-	/// Returns a list of Vtxo's
-	async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
 		let tip = self.chain.tip().await?;
 		let fee_rate = self.chain.fee_rates().await.fast;
 
@@ -1008,6 +1006,22 @@ impl Wallet {
 			let should_refresh_vtxos = self.vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
 			Ok(should_refresh_vtxos)
 		}
+	}
+
+	/// Returns the block height at which the first VTXO will expire
+	pub fn get_first_expiring_vtxo_blockheight(
+		&self,
+	) -> anyhow::Result<Option<BlockHeight>> {
+		Ok(self.vtxos()?.iter().map(|v| v.expiry_height()).min())
+	}
+
+	/// Returns the next block height at which we have a VTXO that we
+	/// want to refresh
+	pub fn get_next_required_refresh_blockheight(
+		&self,
+	) -> anyhow::Result<Option<BlockHeight>> {
+		let first_expiry = self.get_first_expiring_vtxo_blockheight()?;
+		Ok(first_expiry.map(|h| h.saturating_sub(self.config.vtxo_refresh_expiry_threshold)))
 	}
 
 	async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
