@@ -1,57 +1,23 @@
+pub mod models;
 pub mod sqlite;
 
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
 
-use std::fmt::Debug;
-
 use ark::lightning::{PaymentHash, Preimage};
 use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
-use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use json::exit::states::ExitTxOrigin;
 use lightning_invoice::Bolt11Invoice;
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{Vtxo, VtxoId};
 
 use crate::{Movement, MovementArgs, Pagination, RoundParticipation, WalletProperties};
+use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
-use crate::exit::vtxo::ExitEntry;
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredVtxoRequest {
-	#[serde(with = "ark::encode::serde")]
-	pub request_policy: VtxoPolicy,
-	pub amount: Amount,
-	pub state: VtxoState
-}
-
-impl StoredVtxoRequest {
-	pub fn from_parts(req: VtxoRequest, state: VtxoState) -> Self {
-		Self {
-			request_policy: req.policy,
-			amount: req.amount,
-			state,
-		}
-	}
-
-	pub fn to_vtxo_request(&self) -> VtxoRequest {
-		VtxoRequest {
-			policy: self.request_policy.clone(),
-			amount: self.amount,
-		}
-	}
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LightningReceive {
-	pub payment_hash: PaymentHash,
-	pub payment_preimage: Preimage,
-	pub invoice: Bolt11Invoice,
-	pub preimage_revealed_at: Option<u64>,
-}
 
 pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialise wallet in the database
@@ -141,11 +107,11 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningReceive>>;
 
 	/// Store the VTXOs currently being exited
-	fn store_exit_vtxo_entry(&self, exit: &ExitEntry) -> anyhow::Result<()>;
+	fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()>;
 	/// Removes the given VTXO from the database
 	fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()>;
 	/// Gets the VTXOs currently being exited
-	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<ExitEntry>>;
+	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>>;
 	/// Stores the given child transaction for future retrieval
 	fn store_exit_child_tx(
 		&self,

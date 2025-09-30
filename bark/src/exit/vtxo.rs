@@ -9,6 +9,7 @@ use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
+use crate::persist::models::StoredExit;
 
 pub struct ExitVtxo {
 	vtxo: Vtxo,
@@ -122,25 +123,9 @@ impl ExitVtxo {
 	}
 
 	fn persist(&self, persister: &dyn BarkPersister) -> anyhow::Result<(), ExitError> {
-		persister.store_exit_vtxo_entry(&ExitEntry::new(self))
+		persister.store_exit_vtxo_entry(&StoredExit::new(self))
 			.map_err(|e| ExitError::DatabaseVtxoStoreFailure {
 				vtxo_id: self.id(), error: e.to_string(),
 			})
-	}
-}
-
-pub struct ExitEntry {
-	pub vtxo_id: VtxoId,
-	pub state: ExitState,
-	pub history: Vec<ExitState>,
-}
-
-impl ExitEntry {
-	pub fn new(exit: &ExitVtxo) -> Self {
-		Self {
-			vtxo_id: exit.id(),
-			state: exit.state().clone(),
-			history: exit.history().clone(),
-		}
 	}
 }

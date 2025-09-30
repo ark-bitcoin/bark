@@ -1,6 +1,9 @@
 pub(crate) mod progress;
 pub(crate) mod transaction_manager;
-pub mod vtxo;
+
+pub use vtxo::ExitVtxo;
+
+mod vtxo;
 
 use std::cmp;
 use std::collections::{HashMap, HashSet};
@@ -17,9 +20,9 @@ use json::exit::ExitState;
 use json::exit::error::ExitError;
 
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::exit::vtxo::{ExitEntry, ExitVtxo};
 use crate::onchain::{ChainSourceClient, ExitUnilaterally};
 use crate::persist::BarkPersister;
+use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
 use crate::vtxo_state::VtxoStateKind;
 use crate::Wallet;
@@ -227,7 +230,7 @@ impl Exit {
 				// that we then store in the database, and we can gradually proceed on.
 				let txids = self.tx_manager.track_vtxo_exits(&vtxo, onchain).await?;
 				let exit = ExitVtxo::new(vtxo.clone(), txids, tip);
-				self.persister.store_exit_vtxo_entry(&ExitEntry::new(&exit))?;
+				self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit))?;
 				self.exit_vtxos.push(exit);
 			}
 
