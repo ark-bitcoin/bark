@@ -615,8 +615,8 @@ mod test {
 	use super::*;
 
 	#[test]
-	fn parse_validate_default_config_file() {
-		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/config.default.toml"));
+	fn parse_validate_default_captaind_config_file() {
+		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/captaind.default.toml"));
 		let mut cfg = Config::load(Some(&path)).expect("error loading config");
 
 		// some configs are mandatory but can't be set in defaults
