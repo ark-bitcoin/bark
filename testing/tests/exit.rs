@@ -437,11 +437,7 @@ async fn exit_revoked_lightning_payment() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	// Board funds into the Ark
-	bark_1.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark_1.offchain_balance().await;
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
@@ -521,9 +517,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	// vtxo expiry is 144, so exit should be triggered after 120 blocks
 	ctx.generate_blocks(130).await;
-
-	// Triggers maintenance under the hood
-	bark_1.offchain_balance().await;
+	bark_1.maintain().await;
 
 	// Should start an exit
 	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 239 }));
@@ -606,9 +600,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	// vtxo expiry is 144, so exit should be triggered after 120 blocks
 	ctx.generate_blocks(130).await;
-
-	// Triggers maintenance under the hood
-	bark_1.offchain_balance().await;
+	bark_1.maintain().await;
 	complete_exit(&ctx, &bark_1).await;
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
@@ -694,11 +686,7 @@ async fn exit_spend_anchor_single_utxo_required() {
 
 	// We need to complete an exit whilst only using one UTXO to spend the anchor output
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
-	bark.board(sat(500_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark.offchain_balance().await;
+	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
 
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;
@@ -729,9 +717,7 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 	ctx.fund_bark(&bark, sat(562)).await;
 	ctx.fund_bark(&bark, sat(988)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark.offchain_balance().await;
+	bark.maintain().await;
 
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;

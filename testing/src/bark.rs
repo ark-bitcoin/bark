@@ -25,7 +25,8 @@ use bark::UtxoInfo;
 pub use bark_json::cli as json;
 use bitcoin_ext::FeeRateExt;
 
-use crate::Bitcoind;
+use crate::constants::BOARD_CONFIRMATIONS;
+use crate::{Bitcoind, TestContext};
 use crate::context::ToArkUrl;
 use crate::constants::env::BARK_EXEC;
 use crate::util::resolve_path;
@@ -390,6 +391,22 @@ impl Bark {
 	pub async fn try_board_all(&self) -> anyhow::Result<json::Board> {
 		info!("{}: Boarding all on-chain funds", self.name);
 		self.try_run_json(["board", "--all"]).await
+	}
+
+	pub async fn maintain(&self) {
+		self.run(["maintain"]).await;
+	}
+
+	pub async fn board_and_confirm_and_register(&self, ctx: &TestContext, amount: Amount) {
+		self.board(amount).await;
+		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+		self.maintain().await;
+	}
+
+	pub async fn board_all_and_confirm_and_register(&self, ctx: &TestContext) {
+		self.board_all().await;
+		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+		self.maintain().await;
 	}
 
 	pub async fn try_refresh_all(&self) -> anyhow::Result<()> {
