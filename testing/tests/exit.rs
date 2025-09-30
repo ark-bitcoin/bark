@@ -755,7 +755,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	// Bounce the same VTXO between the two barks
 	bark1.send_oor(bark2.address().await, sat(550_000)).await;
 	bark2.send_oor(bark1.address().await, sat(150_000)).await;
-	bark1.send_oor(bark2.address().await, sat(495_000)).await;
+	bark1.send_oor(bark2.address().await, sat(500_000)).await;
 	bark2.send_oor(bark1.address().await, sat(400_000)).await;
 
 	// Force a sync
@@ -781,8 +781,8 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	await_propagation(&ctx, &bark1, &bark2).await;
 	bark2.progress_exit().await;
 	await_propagation(&ctx, &bark2, &bark1).await;
-	assert_eq!(bark1.list_exits_with_details().await.len(), 2, "We have one exit");
-	assert_eq!(bark2.list_exits_with_details().await.len(), 2, "We have one exit");
+	assert_eq!(bark1.list_exits_with_details().await.len(), 1, "We should have one exit");
+	assert_eq!(bark2.list_exits_with_details().await.len(), 2, "We have two exits");
 
 	complete_exit(&ctx, &bark1).await;
 	complete_exit(&ctx, &bark2).await;
@@ -796,6 +796,8 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark1.onchain_balance().await, sat(503_403));
-	assert_eq!(bark2.onchain_balance().await, sat(1_419_300));
+	assert_eq!(bark1.onchain_balance().await, sat(498_799));
+	assert_eq!(bark1.onchain_utxos().await.len(), 2, "We should have board change and a claim UTXO");
+	assert_eq!(bark2.onchain_balance().await, sat(1_396_675));
+	assert_eq!(bark2.onchain_utxos().await.len(), 2, "We should have the funding and a claim UTXO");
 }
