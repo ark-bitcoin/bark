@@ -19,15 +19,27 @@ pub enum CpfpError {
 	StoreError(String),
 }
 
-/// Indicates how fees should be handled by when creating a CPFP
+/// Indicates how fees should be handled by when creating a CPFP [bitcoin::Transaction].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MakeCpfpFees {
-	/// Create a normal transaction with the given effective fee rate
+	/// Create a normal transaction with the given effective fee rate. If the new transaction spends
+	/// a P2A (Pay-to-Anchor) output, then this represents the effective fee rate of the package as
+	/// a whole, not just the child transaction.
 	Effective(FeeRate),
-	/// The transaction should be RBF compliant by meeting the given fee standards. The minimum fee
-	/// does NOT include the RBF relay premium; it represents the total fees paid by the current
-	/// transaction we seek to replace.
-	Rbf { min_effective_fee_rate: FeeRate, package_fee: Amount },
+	/// The intent is to replace a transaction already in the mempool so certain fee standards must
+	/// be met.
+	///
+	/// See [BIP125](https://github.com/bitcoin/bips/blob/master/bip-0125.mediawiki#implementation-details)
+	/// for more details.
+	Rbf {
+		/// This represents the effective fee rate of the current transaction/package in the
+		/// mempool. This must be exceeded by a new transaction. This also does not include bumping
+		/// fees.
+		min_effective_fee_rate: FeeRate,
+		/// The current fee paid by the transaction/package to be replaced in the mempool. This must
+		/// be exceeded by the new transaction.
+		current_package_fee: Amount,
+	},
 }
 
 impl MakeCpfpFees {

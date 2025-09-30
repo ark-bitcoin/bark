@@ -101,8 +101,14 @@ struct ArkoorCreateResult {
 	change: Option<Vtxo>,
 }
 
+/// Represents the structure for pagination settings, including the current page index
+/// and the number of items per page.
 pub struct Pagination {
+	/// The current page index (0-based). This indicates which page of data is being requested or
+	/// displayed. For example, a `page_index` of `0` refers to the first page.
 	pub page_index: u16,
+	/// The number of items to be displayed per page. This determines how many data items are
+	/// retrieved or shown for the current page index.
 	pub page_size: u16,
 }
 
@@ -123,9 +129,15 @@ impl From<Utxo> for UtxoInfo {
 	}
 }
 
+/// Represents an offchain balance structure consisting of available funds, pending amounts in
+/// unconfirmed rounds, and pending exits.
 pub struct OffchainBalance {
+	/// Funds currently available for use. This reflects the spendable balance.
 	pub available: Amount,
+	/// Funds that are pending in unconfirmed operational rounds.
 	pub pending_in_round: Amount,
+	/// Funds being unilaterally exited. These may require more onchain confirmations to become
+	/// available onchain.
 	pub pending_exit: Amount,
 }
 
@@ -165,7 +177,6 @@ impl VtxoSeed {
 		self.0.derive_priv(&SECP, &[idx.into()]).unwrap().to_keypair(&SECP)
 	}
 }
-
 
 pub struct Wallet {
 	/// The chain source the wallet is connected to

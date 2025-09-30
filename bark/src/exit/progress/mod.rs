@@ -134,7 +134,7 @@ impl<'a> ProgressContext<'a> {
 				} else {
 					min_fee_rate
 				},
-				package_fee: min_fee,
+				current_package_fee: min_fee,
 			}
 		} else {
 			MakeCpfpFees::Effective(self.fee_rate)
