@@ -654,7 +654,7 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.created_at, sub.updated_at,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
 				invoice.invoice,
 				COALESCE(array_agg(vtxo.vtxo_id::text), ARRAY[]::text[]) AS htlc_vtxos
 			FROM lightning_htlc_subscription sub

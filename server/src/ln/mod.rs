@@ -347,6 +347,7 @@ impl Server {
 		&self,
 		payment_hash: PaymentHash,
 		user_pubkey: PublicKey,
+		htlc_recv_expiry: BlockHeight,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo>)> {
 		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -372,7 +373,26 @@ impl Server {
 		}
 
 		let vtxos = {
-			let expiry = self.chain_tip().height + self.config.htlc_send_expiry_delta as BlockHeight;
+			// We compare requested htlc expiry height with the lowest LN HTLC expiry height
+			// If the difference is lower than the configured delta, we refuse the request.
+			let expiry = match sub.lowest_incoming_htlc_expiry {
+				Some(lowest_incoming_htlc_expiry) => {
+					let max_htlc_recv_expiry = lowest_incoming_htlc_expiry + self.config.htlc_expiry_delta as BlockHeight;
+					if htlc_recv_expiry > max_htlc_recv_expiry {
+						return badarg!("Requested HTLC recv expiry is too high. Requested {}. Max {}",
+							htlc_recv_expiry,
+							max_htlc_recv_expiry,
+						);
+					}
+
+					htlc_recv_expiry
+				},
+				None => {
+					error!("An accepted invoice has no lowest HTLC expiry. subscription id: {}", sub.id);
+					bail!("Cannot prepare claim: invoice subscription has no lowest HTLC expiry set");
+				},
+			};
+
 			let request = VtxoRequest {
 				amount: sub.amount(),
 				policy: VtxoPolicy::new_server_htlc_recv(

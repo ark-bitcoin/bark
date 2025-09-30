@@ -2103,6 +2103,7 @@ impl Wallet {
 		wait: bool,
 	) -> anyhow::Result<LightningReceive> {
 		let mut srv = self.require_server()?;
+		let current_height = self.chain.tip().await?;
 
 		let mut lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
 			.context("no lightning receive found")?;
@@ -2138,10 +2139,13 @@ impl Wallet {
 			return Ok(lightning_receive)
 		}
 
+		let htlc_recv_expiry = current_height + lightning_receive.htlc_recv_cltv_delta as BlockHeight;
+
 		let (keypair, _) = self.derive_store_next_keypair()?;
 		let req = protos::PrepareLightningReceiveClaimRequest {
 			payment_hash: lightning_receive.payment_hash.to_vec(),
 			user_pubkey: keypair.public_key().serialize().to_vec(),
+			htlc_recv_expiry: htlc_recv_expiry,
 		};
 		let res = srv.client.prepare_lightning_receive_claim(req).await
 			.context("error preparing lightning receive claim")?.into_inner();
@@ -2161,7 +2165,9 @@ impl Wallet {
 				if p.user_pubkey != keypair.public_key() {
 					bail!("invalid pubkey on HTLC VTXOs received from server: {}", p.user_pubkey);
 				}
-				//TODO(stevenroose) check the expiry height?
+				if p.htlc_expiry < htlc_recv_expiry {
+					bail!("HTLC VTXO expiry height is less than requested: Requested {}, received {}", htlc_recv_expiry, p.htlc_expiry);
+				}
 			} else {
 				bail!("invalid HTLC VTXO policy: {:?}", vtxo.policy());
 			}

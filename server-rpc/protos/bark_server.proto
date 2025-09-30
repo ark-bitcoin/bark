@@ -233,6 +233,7 @@ message CheckLightningReceiveRequest {
 message PrepareLightningReceiveClaimRequest {
 	bytes payment_hash = 1;
 	bytes user_pubkey = 2;
+	uint32 htlc_recv_expiry = 3;
 }
 
 message PrepareLightningReceiveClaimResponse {

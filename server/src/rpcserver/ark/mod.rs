@@ -8,7 +8,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use bitcoin_ext::AmountExt;
-use bitcoin_ext::BlockDelta;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use log::info;
 use opentelemetry::KeyValue;
 use tokio::sync::oneshot;
@@ -451,9 +451,10 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
+		let htlc_recv_expiry = req.htlc_recv_expiry as BlockHeight;
 
 		let (sub, htlcs) = self.prepare_lightning_claim(
-			payment_hash, user_pubkey,
+			payment_hash, user_pubkey, htlc_recv_expiry,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {
