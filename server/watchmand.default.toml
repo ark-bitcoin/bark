@@ -1,0 +1,22 @@
+data_dir = "./bark-server-watchmand"
+network = "regtest"
+txindex_check_interval = "30s"
+transaction_rebroadcast_interval = "1m"
+
+[vtxo_sweeper]
+sweep_tx_fallback_feerate = "2500sat/kwu"
+round_sweep_interval = "1h"
+sweep_threshold = 1000000
+
+[forfeit_watcher]
+claim_fallback_feerate = "6250sat/kwu"
+wake_interval = "1m"
+
+[postgres]
+host = "localhost"
+port = 5432
+name = "bark-server-db"
+max_connections = 10
+
+[bitcoind]
+url = "http://127.0.0.1:18443"

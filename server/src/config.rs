@@ -626,6 +626,17 @@ mod test {
 	}
 
 	#[test]
+	fn parse_validate_default_watchmand_config_file() {
+		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/watchmand.default.toml"));
+		let mut cfg = watchman::Config::load(Some(&path)).expect("error loading config");
+
+		// some configs are mandatory but can't be set in defaults
+		cfg.bitcoind.cookie = Some(".cookie".into());
+
+		cfg.validate().expect("error validating default config");
+	}
+
+	#[test]
 	fn validate_bitcoind_config() {
 		let bitcoind_url = String::from("http://belson.labs:13444");
 		let bitcoind_cookie = Some(PathBuf::from("/not/hot/dog/but/cookie"));

@@ -5,6 +5,7 @@ export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
 DEFAULT_CAPTAIND_CONFIG_PATH := "server/captaind.default.toml"
+DEFAULT_WATCHMAND_CONFIG_PATH := "server/watchmand.default.toml"
 SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 
@@ -146,6 +147,8 @@ clippy LINT:
 default-server-config:
 	cargo run --example dump-default-captaind-config > {{DEFAULT_CAPTAIND_CONFIG_PATH}}
 	echo "Default captaind config file written to {{DEFAULT_CAPTAIND_CONFIG_PATH}}"
+	cargo run --example dump-default-watchmand-config > {{DEFAULT_WATCHMAND_CONFIG_PATH}}
+	echo "Default captaind config file written to {{DEFAULT_WATCHMAND_CONFIG_PATH}}"
 
 dump-server-sql-schema:
 	cargo run --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}

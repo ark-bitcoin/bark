@@ -43,19 +43,22 @@ steps:
     commands:
       - >
         nix develop .#default --command bash -c "
-          cargo run --example dump-sqlite-schema           > bark/schema.sql
-          cargo run --example dump-default-captaind-config > server/config.default.toml
-          cargo run --example dump-server-postgres-schema  > server/schema.sql
+          cargo run --example dump-sqlite-schema            > bark/schema.sql
+          cargo run --example dump-default-captaind-config  > server/config.default.toml
+          cargo run --example dump-default-watchmand-config > server/watchmand.default.toml
+          cargo run --example dump-server-postgres-schema   > server/schema.sql
           sed -i '/^-- Dumped by .*$/d'   server/schema.sql
           sed -i '/^-- Dumped from .*$/d' server/schema.sql
           sed -i '/^.restrict.*$/d'       server/schema.sql
           sed -i '/^.unrestrict.*$/d'     server/schema.sql
           chmod 644 bark/schema.sql
           chmod 644 server/captaind.default.toml
+          chmod 644 server/watchmand.default.toml
           chmod 644 server/schema.sql
         "
       - bash contrib/check-clean-diff.sh bark/schema.sql
       - bash contrib/check-clean-diff.sh server/captaind.default.toml
+      - bash contrib/check-clean-diff.sh server/watchmand.default.toml
       - bash contrib/check-clean-diff.sh server/schema.sql
 
   - name: test-unit
