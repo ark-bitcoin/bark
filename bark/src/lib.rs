@@ -534,7 +534,9 @@ impl Wallet {
 			}
 		};
 
-		info!("Registered {registered_boards} sufficiently confirmed boards");
+		if registered_boards > 0 {
+			info!("Registered {registered_boards} sufficiently confirmed boards");
+		}
 		Ok(())
 	}
 
