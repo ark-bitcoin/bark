@@ -149,10 +149,10 @@ default-server-config:
 dump-server-sql-schema:
 	cargo run --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
 	# Use sed to remove lines that are hard to reproduce across different systems
-	sed -i '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
-	sed -i '/^-- Dumped from .*$/d' {{SERVER_SQL_SCHEMA_PATH}}
-	sed -i '/^\\restrict.*$/d' {{SERVER_SQL_SCHEMA_PATH}}
-	sed -i '/^\\unrestrict.*$/d' {{SERVER_SQL_SCHEMA_PATH}}
+	sed '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}} \
+	  | sed '/^-- Dumped from .*$/d' \
+	  | sed '/^\\restrict.*$/d' \
+	  | sed '/^\\unrestrict.*$/d' > {{SERVER_SQL_SCHEMA_PATH}}.tmp && mv {{SERVER_SQL_SCHEMA_PATH}}.tmp {{SERVER_SQL_SCHEMA_PATH}}
 	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
 
 dump-bark-sql-schema:
