@@ -3,7 +3,7 @@ use std::fs;
 fn main() {
 	fs::create_dir_all("./src/protos").expect("error creating src/protos dir");
 
-	tonic_build::configure()
+	tonic_prost_build::configure()
 		.build_server(cfg!(feature = "server"))
 		.build_client(true)
 		.out_dir("./src/protos/")

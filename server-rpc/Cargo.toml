@@ -25,8 +25,9 @@ tonic.workspace = true
 log.workspace = true
 http.workspace = true
 prost.workspace = true
+tonic-prost.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 
 [build-dependencies]
-tonic-build.workspace= true
+tonic-prost-build.workspace= true
