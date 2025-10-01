@@ -6,7 +6,7 @@ mod lightning;
 mod util;
 mod wallet;
 
-use std::{env, process};
+use std::{cmp, env, process};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -417,10 +417,12 @@ struct SplitLogger {
 
 impl SplitLogger {
 	fn init(log1: env_logger::Logger, log2: env_logger::Logger) {
+		let max_level = cmp::max(log1.filter(), log2.filter());
 		log::set_boxed_logger(Box::new(SplitLogger {
 			log1: log1,
 			log2: log2,
 		})).expect("error initializing split logger");
+		log::set_max_level(max_level);
 	}
 }
 
@@ -497,20 +499,24 @@ fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 
 	let logfile = if datadir.exists() {
 		let path = datadir.join("debug.log");
-		if let Ok(mut file) = std::fs::File::options().append(true).open(path) {
-			// try write a newline into the file to separate commands
-			let _ = file.write_all("\n\n".as_bytes());
-			let mut logger = base();
-			logger
-				.filter_level(log::LevelFilter::Trace)
-				.format_timestamp_millis()
-				.format_module_path(true)
-				.format_file(true)
-				.format_line_number(true)
-				.target(env_logger::Target::Pipe(Box::new(file)));
-			Some(logger)
-		} else {
-			None
+		match std::fs::File::options().create(true).append(true).open(path) {
+			Ok(mut file) => {
+				// try write a newline into the file to separate commands
+				let _ = file.write_all("\n\n".as_bytes());
+				let mut logger = base();
+				logger
+					.filter_level(log::LevelFilter::Trace)
+					.format_timestamp_millis()
+					.format_module_path(true)
+					.format_file(true)
+					.format_line_number(true)
+					.target(env_logger::Target::Pipe(Box::new(file)));
+				Some(logger)
+			},
+			Err(e) => {
+				eprintln!("Failed to open debug.log file: {:#}", e);
+				None
+			},
 		}
 	} else {
 		None
