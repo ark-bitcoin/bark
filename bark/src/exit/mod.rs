@@ -87,18 +87,14 @@ impl Exit {
 					for txid in exit.txids() {
 						vec.push(self.tx_manager.get_package(*txid)?.read().await.clone());
 					}
-					Some(vec)
+					vec
 				} else {
-					None
+					vec![]
 				};
 				Ok(Some(ExitTransactionStatus {
 					vtxo_id: exit.id(),
 					state: exit.state().clone(),
-					history: if include_history && !exit.history().is_empty() {
-						Some(exit.history().clone())
-					} else {
-						None
-					},
+					history: if include_history { Some(exit.history().clone()) } else { None },
 					transactions,
 				}))
 			},

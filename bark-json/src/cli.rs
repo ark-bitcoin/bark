@@ -109,6 +109,7 @@ pub struct ExitProgressStatus {
 	/// The current state of the exit transaction
 	pub state: ExitState,
 	/// Any error that occurred during the exit process
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub error: Option<ExitError>,
 }
 
@@ -119,9 +120,11 @@ pub struct ExitTransactionStatus {
 	/// The current state of the exit transaction
 	pub state: ExitState,
 	/// The history of each state the exit transaction has gone through
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub history: Option<Vec<ExitState>>,
 	/// Each exit transaction package required for the unilateral exit
-	pub transactions: Option<Vec<ExitTransactionPackage>>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub transactions: Vec<ExitTransactionPackage>,
 }
 
 /// Describes a completed transition of funds from onchain to offchain.
