@@ -1285,7 +1285,8 @@ async fn perform_round(
 	let parent_context = opentelemetry::Context::current_with_span(span);
 
 	let tracing_span = info_span!(telemetry::TRACE_RUN_ROUND);
-	tracing_span.set_parent(parent_context.clone());
+	let _ = tracing_span.set_parent(parent_context.clone())
+		.map_err(|e| error!("error setting tracing span ctx parent: {}", e));
 
 	// this is to make sure slog has access to the span information.
 	let _guard = tracing_span.enter();

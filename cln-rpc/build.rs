@@ -1,5 +1,5 @@
 fn main() {
-	tonic_build::configure()
+	tonic_prost_build::configure()
 		.build_client(true)
 		.out_dir("src/")
 		.protoc_arg("--experimental_allow_proto3_optional")
@@ -9,7 +9,7 @@ fn main() {
 	println!("cargo:rerun-if-changed=src/cln.rs");
 	println!("cargo:rerun-if-changed=protos/node.proto");
 
-	tonic_build::configure()
+	tonic_prost_build::configure()
 		.build_client(true)
 		.out_dir("src/plugins/")
 		.protoc_arg("--experimental_allow_proto3_optional")
