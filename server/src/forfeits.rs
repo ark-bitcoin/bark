@@ -85,13 +85,11 @@ fn finalize_forfeit_tx(
 				vtxo.output_taproot().tap_tweak().to_byte_array(),
 			);
 			let session = musig::Session::new(
-				&musig::SECP,
 				&key_agg,
 				agg_nonce,
 				&sighash.to_byte_array(),
 			);
 			session.partial_verify(
-				&musig::SECP,
 				&key_agg,
 				&part,
 				ff.pub_nonces.get(conn_idx).expect("pub nonce index"),

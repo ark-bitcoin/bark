@@ -99,13 +99,11 @@ fn validate_forfeit_sigs(
 		let agg_nonce = musig::nonce_agg(&[&user_nonce, &server_nonce]);
 
 		let session = musig::Session::new(
-			&musig::SECP,
 			&key_agg,
 			agg_nonce,
 			&sighash.to_byte_array(),
 		);
 		let success = session.partial_verify(
-			&musig::SECP,
 			&key_agg,
 			part_sig,
 			user_nonce,
