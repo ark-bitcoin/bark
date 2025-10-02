@@ -327,7 +327,7 @@ enum Command {
 	Exit(exit::ExitCommand),
 
 	/// Perform any lightning-related command
-	#[command(subcommand)]
+	#[command(subcommand, visible_alias = "ln")]
 	Lightning(lightning::LightningCommand),
 
 	/// developer commands
