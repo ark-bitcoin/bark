@@ -362,6 +362,15 @@ impl Bark {
 		self.try_lightning_receive(invoice).await.unwrap();
 	}
 
+	pub async fn try_lightning_receive_all(&self) -> anyhow::Result<()> {
+		self.try_run(["lightning", "claim", "--verbose"]).await?;
+		Ok(())
+	}
+
+	pub async fn lightning_receive_all(&self) {
+		self.try_lightning_receive_all().await.unwrap();
+	}
+
 	pub async fn list_lightning_receives(&self) -> Vec<LightningReceive> {
 		let res = self.run(["lightning", "invoices"]).await;
 		serde_json::from_str(&res).expect("json error")
