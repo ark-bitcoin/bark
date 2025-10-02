@@ -433,19 +433,21 @@ impl Wallet {
 	///
 	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> anyhow::Result<Balance> {
-		let spendable = self.db.get_all_spendable_vtxos()?.iter()
-			.map(|v| v.amount()).sum();
+		let vtxos = self.vtxos()?;
 
-		let pending_lightning_send = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?
-			.iter().map(|v| v.vtxo.amount()).sum();
+		let spendable = VtxoStateKind::Spendable.filter(vtxos.clone())?
+			.iter().map(|v| v.amount()).sum::<Amount>();
+
+		let pending_lightning_send = VtxoStateKind::PendingLightningSend.filter(vtxos.clone())?
+			.iter().map(|v| v.amount()).sum::<Amount>();
+
+		let pending_board = VtxoStateKind::UnregisteredBoard.filter(vtxos.clone())?
+			.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
 			.map(|v| v.amount()).sum();
 
 		let pending_exit = self.exit.pending_total()?;
-
-		let pending_board = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?
-			.into_iter().map(|vtxo| vtxo.vtxo.amount()).sum();
 
 		Ok(Balance {
 			spendable,
@@ -465,6 +467,22 @@ impl Wallet {
 
 	pub fn movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
 		Ok(self.db.get_paginated_movements(pagination)?)
+	}
+
+	/// Returns all not spent vtxos
+	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(self.db.get_vtxos_by_state(&[
+			VtxoStateKind::Spendable,
+			VtxoStateKind::UnregisteredBoard,
+			VtxoStateKind::PendingLightningSend,
+			VtxoStateKind::PendingLightningRecv,
+		])?)
+	}
+
+	/// Returns all vtxos matching the provided predicate
+	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
+		let vtxos = self.vtxos()?;
+		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
 	/// Returns all spendable vtxos

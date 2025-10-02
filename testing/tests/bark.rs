@@ -112,7 +112,12 @@ async fn board_bark() {
 	let srv = ctx.new_captaind("server", None).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(100_000)).await;
 
-	bark1.board(sat(BOARD_AMOUNT)).await;
+	let board = bark1.board(sat(BOARD_AMOUNT)).await;
+
+	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
+	assert_eq!(board.vtxos[0].id, vtxo.id);
+	assert_eq!(vtxo.state, "UnregisteredBoard");
+
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(sat(BOARD_AMOUNT), bark1.offchain_balance().await);
@@ -125,8 +130,15 @@ async fn board_twice_bark() {
 	let srv = ctx.new_captaind("server", None).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(200_000)).await;
 
-	bark1.board(sat(BOARD_AMOUNT)).await;
-	bark1.board(sat(BOARD_AMOUNT)).await;
+	let board_a = bark1.board(sat(BOARD_AMOUNT)).await;
+	let board_b = bark1.board(sat(BOARD_AMOUNT)).await;
+
+	let vtxos = bark1.vtxos().await;
+	assert_eq!(vtxos.len(), 2, "should have 2 board vtxos");
+	assert!(vtxos.iter().any(|v| v.id == board_a.vtxos[0].id));
+	assert!(vtxos.iter().any(|v| v.id == board_b.vtxos[0].id));
+	assert!(vtxos.iter().all(|v| v.state == "UnregisteredBoard"));
+
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(sat(BOARD_AMOUNT) * 2, bark1.offchain_balance().await);
@@ -143,14 +155,18 @@ async fn board_all_bark() {
 	ctx.fund_bark(&bark1, sat(100_000)).await;
 	assert_eq!(bark1.onchain_balance().await, sat(100_000));
 
-	let board_txid = bark1.board_all().await.funding_txid;
+	let board = bark1.board_all().await;
+	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
+	assert_eq!(board.vtxos[0].id, vtxo.id);
+	assert_eq!(vtxo.state, "UnregisteredBoard");
+
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// Check that we emptied our on-chain balance
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the boarding tx's output value is the same as our off-chain balance
-	let board_tx = ctx.bitcoind().await_transaction(&board_txid).await;
+	let board_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
 	assert_eq!(
 		bark1.offchain_balance().await,
 		board_tx.output.last().unwrap().value,

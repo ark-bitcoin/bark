@@ -13,7 +13,7 @@ use crate::exit::ExitState;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
 use crate::primitives::{UtxoInfo, VtxoInfo, RecipientInfo};
-use crate::serde_utils;
+use crate::{serde_utils, WalletVtxoInfo};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkInfo {
@@ -226,6 +226,7 @@ pub struct SendOnchain {
 }
 
 pub type Vtxos = Vec<VtxoInfo>;
+pub type WalletVtxos = Vec<WalletVtxoInfo>;
 
 #[cfg(test)]
 mod test {

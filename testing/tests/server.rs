@@ -24,7 +24,7 @@ use ark::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, Vtx
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bark::Wallet;
-use bark_json::VtxoInfo;
+use bark_json::WalletVtxoInfo;
 use bark_json::exit::ExitState;
 use server::secret::Secret;
 use server_log::{
@@ -1230,7 +1230,7 @@ async fn reject_dust_vtxo_request() {
 	#[derive(Clone)]
 	struct Proxy {
 		pub upstream: captaind::ArkClient,
-		pub vtxo: VtxoInfo,
+		pub vtxo: WalletVtxoInfo,
 		pub wallet: Arc<Wallet>,
 		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
 	}
@@ -1318,7 +1318,7 @@ async fn reject_dust_offboard_request() {
 	#[derive(Clone)]
 	struct Proxy {
 		pub upstream: captaind::ArkClient,
-		pub vtxo: VtxoInfo,
+		pub vtxo: WalletVtxoInfo,
 		pub wallet: Arc<Wallet>,
 		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
 	}
@@ -2025,7 +2025,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 		pub upstream: captaind::ArkClient,
 		pub wallet: Arc<Wallet>,
 		pub challenge: Arc<Mutex<Option<VtxoOwnershipChallenge>>>,
-		pub vtxo: VtxoInfo
+		pub vtxo: WalletVtxoInfo
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {

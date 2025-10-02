@@ -733,7 +733,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 
-			let vtxos = wallet.spendable_vtxos()?.into_iter()
+			let vtxos = wallet.vtxos()?.into_iter()
 				.map(|v| wallet_vtxo_to_json(&v)).collect::<Vec<_>>();
 
 			output_json(&vtxos);
