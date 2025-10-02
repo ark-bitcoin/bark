@@ -480,15 +480,4 @@ pub trait BarkPersister: Send + Sync + 'static {
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
-
-	/// Convenience: Fetch all currently spendable VTXOs.
-	///
-	/// Returns:
-	/// - `Ok(Vec<WalletVtxo>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the underlying query fails.
-	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(self.get_vtxos_by_state(&[VtxoStateKind::Spendable])?)
-	}
 }

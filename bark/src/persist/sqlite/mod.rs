@@ -418,7 +418,7 @@ pub mod test {
 		assert!(db.get_wallet_vtxo(vtxo_3.id()).expect("No error").is_none());
 
 		// Verify that we have two entries in the database
-		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_1));
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
@@ -435,7 +435,7 @@ pub mod test {
 			fees: None
 		}).unwrap();
 
-		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
@@ -447,7 +447,7 @@ pub mod test {
 			fees: None,
 		}).unwrap();
 
-		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_3));

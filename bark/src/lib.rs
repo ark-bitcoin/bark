@@ -487,7 +487,7 @@ impl Wallet {
 
 	/// Returns all spendable vtxos
 	pub fn spendable_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(self.db.get_all_spendable_vtxos()?)
+		Ok(self.vtxos_with(&VtxoStateKind::Spendable)?)
 	}
 
 	/// Returns all spendable vtxos matching the provided predicate
@@ -618,7 +618,7 @@ impl Wallet {
 	//TODO(stevenroose) improve the way we expose dangerous methods
 	pub async fn drop_vtxos(&mut self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
-		for vtxo in self.db.get_all_spendable_vtxos()? {
+		for vtxo in self.vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
 
@@ -952,7 +952,7 @@ impl Wallet {
 
 	/// Offboard all vtxos to a given address
 	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
-		let input_vtxos = self.db.get_all_spendable_vtxos()?.into_iter()
+		let input_vtxos = self.spendable_vtxos()?.into_iter()
 			.map(|v| v.vtxo).collect();
 
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
@@ -1087,7 +1087,7 @@ impl Wallet {
 	///
 	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
 	fn select_vtxos_to_cover(&self, amount: Amount, max_depth: Option<u16>, current_height: Option<BlockHeight>) -> anyhow::Result<Vec<Vtxo>> {
-		let inputs = self.db.get_all_spendable_vtxos()?;
+		let inputs = self.spendable_vtxos()?;
 
 		// Iterate over all rows until the required amount is reached
 		let mut result = Vec::new();
