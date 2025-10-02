@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bark::movement::Movement;
+use bark::vtxo_state::WalletVtxo;
 use bitcoin::{address, Amount, FeeRate};
 use clap::Parser;
 use ::lightning::offers::offer::Offer;
@@ -44,6 +45,13 @@ fn default_datadir() -> String {
 /// The full version string we show in our binary.
 /// (GIT_HASH is set in build.rs)
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+
+fn wallet_vtxo_to_json(vtxo: &WalletVtxo) -> primitives::WalletVtxoInfo {
+	primitives::WalletVtxoInfo {
+		vtxo: vtxo.vtxo.clone().into(),
+		state: vtxo.state.as_kind().as_str().to_string(),
+	}
+}
 
 fn movement_to_json(movement: &Movement) -> json::Movement {
 	json::Movement {
