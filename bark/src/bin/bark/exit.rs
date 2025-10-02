@@ -174,7 +174,8 @@ pub async fn start_exit(
 		let inround = wallet.inround_vtxos_with(&filter)
 			.context("Error parsing vtxos")?;
 
-		let vtxos = spendable.into_iter().chain(inround).collect::<Vec<_>>();
+		let vtxos = spendable.into_iter().chain(inround)
+			.map(|v| v.vtxo).collect::<Vec<_>>();
 
 		wallet.exit.start_exit_for_vtxos(&vtxos, onchain).await
 	}

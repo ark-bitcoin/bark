@@ -304,7 +304,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<Vtxo>>;
+	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>>;
 
 	/// Remove a [Vtxo] by ID.
 	///
@@ -484,11 +484,11 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Convenience: Fetch all currently spendable VTXOs.
 	///
 	/// Returns:
-	/// - `Ok(Vec<Vtxo>)` possibly empty.
+	/// - `Ok(Vec<WalletVtxo>)` possibly empty.
 	///
 	/// Errors:
 	/// - Returns an error if the underlying query fails.
-	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
-		Ok(self.get_vtxos_by_state(&[VtxoStateKind::Spendable])?.into_iter().map(|vtxo| vtxo.vtxo).collect())
+	fn get_all_spendable_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(self.get_vtxos_by_state(&[VtxoStateKind::Spendable])?)
 	}
 }

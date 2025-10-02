@@ -18,6 +18,7 @@ pub mod vtxo_selection;
 
 pub use self::config::Config;
 pub use self::persist::sqlite::SqliteClient;
+pub use self::vtxo_state::WalletVtxo;
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
@@ -66,7 +67,7 @@ use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWallet
 use crate::persist::BarkPersister;
 use crate::persist::models::{LightningReceive, StoredVtxoRequest};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
-use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo_state::{VtxoState, VtxoStateKind};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
@@ -467,18 +468,18 @@ impl Wallet {
 	}
 
 	/// Returns all spendable vtxos
-	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(self.db.get_all_spendable_vtxos()?)
 	}
 
 	/// Returns all unspent vtxos matching the provided predicate
-	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
 	/// Returns all in-round vtxos matching the provided predicate
-	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.db.get_in_round_vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
@@ -497,7 +498,7 @@ impl Wallet {
 
 	/// Returns all vtxos that will expire within
 	/// `threshold_blocks` blocks
-	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<WalletVtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
 		Ok(self.vtxos_with(&filter)?)
@@ -933,7 +934,8 @@ impl Wallet {
 
 	/// Offboard all vtxos to a given address
 	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
-		let input_vtxos = self.db.get_all_spendable_vtxos()?;
+		let input_vtxos = self.db.get_all_spendable_vtxos()?.into_iter()
+			.map(|v| v.vtxo).collect();
 
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
@@ -994,7 +996,8 @@ impl Wallet {
 
 	/// Performs a refresh of all VTXOs that are due to be refreshed, if any.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?;
+		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
+			.map(|v| v.vtxo).collect::<Vec<_>>();
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
@@ -1006,7 +1009,7 @@ impl Wallet {
 	/// This will find all VTXOs that meets must-refresh criteria.
 	/// Then, if there are some VTXOs to refresh, it will
 	/// also add those that meet should-refresh criteria.
-	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let tip = self.chain.tip().await?;
 		let fee_rate = self.chain.fee_rates().await.fast;
 
@@ -1089,7 +1092,7 @@ impl Wallet {
 			}
 
 			total_amount += input.amount();
-			result.push(input);
+			result.push(input.vtxo);
 
 			if total_amount >= amount {
 				return Ok(result)

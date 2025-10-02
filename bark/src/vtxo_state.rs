@@ -18,6 +18,8 @@
 //! [WalletVtxo] pairs a concrete [Vtxo] with its current [VtxoState], providing the primary
 //! representation used by persistence and higher-level wallet logic.
 
+use std::ops::Deref;
+
 use bitcoin::Amount;
 
 use ark::Vtxo;
@@ -124,6 +126,14 @@ pub struct WalletVtxo {
 	pub vtxo: Vtxo,
 	/// The current tracked state for [WalletVtxo::vtxo].
 	pub state: VtxoState,
+}
+
+impl Deref for WalletVtxo {
+	type Target = Vtxo;
+
+	fn deref(&self) -> &Vtxo {
+		&self.vtxo
+	}
 }
 
 #[cfg(test)]

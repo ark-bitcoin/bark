@@ -567,9 +567,9 @@ pub fn get_vtxos_by_state(
 	Ok(result)
 }
 
-pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<Vtxo>> {
+pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> {
 	let query = "
-		SELECT raw_vtxo
+		SELECT raw_vtxo, state
 		FROM vtxo_view
 		WHERE locked_in_round_attempt_id IS NOT NULL AND state_kind = ?1";
 
@@ -580,7 +580,13 @@ pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<Vtxo>> {
 	while let Some(row) = rows.next()? {
 		let raw_vtxo= row.get::<_, Vec<u8>>("raw_vtxo")?;
 		let vtxo = Vtxo::deserialize(&raw_vtxo)?;
-		result.push(vtxo);
+
+		let state = {
+			let raw_state : Vec<u8> = row.get("state")?;
+			serde_json::from_slice::<VtxoState>(&raw_state)?
+		};
+
+		result.push(WalletVtxo { vtxo, state });
 	}
 	Ok(result)
 }

@@ -213,7 +213,7 @@ async fn main() -> anyhow::Result<()> {
   // Make sure your app is synced before inspecting the wallet
   wallet.sync().await.unwrap();
 
-  let vtxos: Vec<ark::Vtxo> = wallet.vtxos().unwrap();
+  let vtxos: Vec<bark::WalletVtxo> = wallet.vtxos().unwrap();
   Ok(())
 }
 ```
@@ -269,7 +269,8 @@ async fn main() -> anyhow::Result<()> {
   let fee_rate = wallet.chain.fee_rates().await.fast;
   let strategy = RefreshStrategy::must_refresh(&wallet, tip, fee_rate);
 
-  let vtxos = wallet.vtxos_with(&strategy)?;
+  let vtxos = wallet.vtxos_with(&strategy)?
+    .into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
   wallet.refresh_vtxos(vtxos).await?;
   Ok(())
 }
