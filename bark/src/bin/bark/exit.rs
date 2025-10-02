@@ -169,7 +169,7 @@ pub async fn start_exit(
 	} else {
 		let filter = VtxoFilter::new(wallet).include_many(args.vtxos);
 
-		let spendable = wallet.vtxos_with(&filter)
+		let spendable = wallet.spendable_vtxos_with(&filter)
 			.context("Error parsing vtxos")?;
 		let inround = wallet.inround_vtxos_with(&filter)
 			.context("Error parsing vtxos")?;

@@ -733,7 +733,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 
-			let vtxos = wallet.vtxos()?.into_iter()
+			let vtxos = wallet.spendable_vtxos()?.into_iter()
 				.map(|v| wallet_vtxo_to_json(&v)).collect::<Vec<_>>();
 
 			output_json(&vtxos);
@@ -771,9 +771,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
 					let filter = VtxoFilter::new(&wallet).counterparty();
-					wallet.vtxos_with(&filter)?
+					wallet.spendable_vtxos_with(&filter)?
 				},
-				(None, None, false, true, None) => wallet.vtxos()?,
+				(None, None, false, true, None) => wallet.spendable_vtxos()?,
 				(None, None, false, false, Some(vs)) => {
 					let vtxos = vs.iter()
 						.map(|s| {

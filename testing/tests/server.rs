@@ -850,7 +850,7 @@ async fn bad_round_input() {
 	}).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
 	bark.board_and_confirm_and_register(&ctx, btc(0.5)).await;
-	let [vtxo] = bark.client().await.vtxos().unwrap().try_into().unwrap();
+	let [vtxo] = bark.client().await.spendable_vtxos().unwrap().try_into().unwrap();
 
 	let ark_info = srv.ark_info().await;
 	let mut rpc = srv.get_public_rpc().await;

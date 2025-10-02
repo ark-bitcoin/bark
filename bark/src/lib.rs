@@ -468,13 +468,13 @@ impl Wallet {
 	}
 
 	/// Returns all spendable vtxos
-	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+	pub fn spendable_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(self.db.get_all_spendable_vtxos()?)
 	}
 
-	/// Returns all unspent vtxos matching the provided predicate
-	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.vtxos()?;
+	/// Returns all spendable vtxos matching the provided predicate
+	pub fn spendable_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
+		let vtxos = self.spendable_vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
@@ -501,7 +501,7 @@ impl Wallet {
 	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<WalletVtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
-		Ok(self.vtxos_with(&filter)?)
+		Ok(self.spendable_vtxos_with(&filter)?)
 	}
 
 	/// Attempts to register all pendings boards with the Ark server. A board transaction must have
@@ -1014,13 +1014,13 @@ impl Wallet {
 		let fee_rate = self.chain.fee_rates().await.fast;
 
 		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.vtxos_with(&RefreshStrategy::must_refresh(self, tip, fee_rate))?;
+		let must_refresh_vtxos = self.spendable_vtxos_with(&RefreshStrategy::must_refresh(self, tip, fee_rate))?;
 		if must_refresh_vtxos.is_empty() {
 			return Ok(vec![]);
 		} else {
 			// If we need to do a refresh, we take all the should_refresh vtxo's as well
 			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
+			let should_refresh_vtxos = self.spendable_vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
 			Ok(should_refresh_vtxos)
 		}
 	}
@@ -1029,7 +1029,7 @@ impl Wallet {
 	pub fn get_first_expiring_vtxo_blockheight(
 		&self,
 	) -> anyhow::Result<Option<BlockHeight>> {
-		Ok(self.vtxos()?.iter().map(|v| v.expiry_height()).min())
+		Ok(self.spendable_vtxos()?.iter().map(|v| v.expiry_height()).min())
 	}
 
 	/// Returns the next block height at which we have a VTXO that we

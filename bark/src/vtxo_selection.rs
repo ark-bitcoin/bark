@@ -128,7 +128,7 @@ impl<'a> VtxoFilter<'a> {
 	/// let filter = VtxoFilter::new(wallet)
 	///     .expires_before(tip + 144) // expiring within ~1 day
 	///     .counterparty();           // or with counterparty risk
-	/// let filtered = wallet.vtxos_with(&filter)?;
+	/// let filtered = wallet.spendable_vtxos_with(&filter)?;
 	/// # Ok(filtered) }
 	/// ```
 	pub fn new(wallet: &'a Wallet) -> VtxoFilter<'a> {
@@ -178,7 +178,7 @@ impl<'a> VtxoFilter<'a> {
 	/// let h: BlockHeight = 10_000;
 	/// let filter = VtxoFilter::new(wallet)
 	///     .expires_before(h);
-	/// let filtered = wallet.vtxos_with(&filter)?;
+	/// let filtered = wallet.spendable_vtxos_with(&filter)?;
 	/// # Ok(filtered) }
 	/// ```
 	pub fn expires_before(mut self, expires_before: BlockHeight) -> Self {
