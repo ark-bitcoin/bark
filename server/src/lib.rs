@@ -348,7 +348,7 @@ impl Server {
 			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 				.expect("can't error"),
 			server_key.clone(),
-		).await.context("failed to start VtxoSweeper")?;
+		).await.context("failed to start ForfeitWatcher")?;
 
 		let tip_fetcher = TipFetcher::start(
 			rtmgr.clone(),
