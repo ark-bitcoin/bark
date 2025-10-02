@@ -262,7 +262,7 @@ impl VtxoPool {
 		let builder = ArkoorPackageBuilder::new(
 			vtxos.iter().map(|v| &v.vtxo),
 			&pub_nonces,
-			req,
+			req.clone(),
 			Some(change_key.public_key()),
 		).context("arkoor builder error")?;
 
@@ -273,6 +273,10 @@ impl VtxoPool {
 
 		srv.db.mark_vtxopool_vtxos_spent(ret.iter().map(|v| v.id())).await
 			.context("failed to mark vtxopool vtxos as spent")?;
+
+		for vtxo in &ret {
+			slog!(SpentPoolVtxo, vtxo: vtxo.id(), amount: vtxo.amount(), request: req.clone());
+		}
 
 		if let Some(ch) = change.filter(|c| c.arkoor_depth() <= self.config.vtxo_max_arkoor_depth) {
 			let new = PoolVtxo {

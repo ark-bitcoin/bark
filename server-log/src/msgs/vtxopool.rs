@@ -1,7 +1,17 @@
 
 use bitcoin::{Amount, Txid};
 
-use ark::VtxoId;
+use ark::{VtxoId, VtxoRequest};
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpentPoolVtxo {
+	pub vtxo: VtxoId,
+	/// The amount of the spent VTXO
+	pub amount: Amount,
+	pub request: VtxoRequest,
+}
+impl_slog!(SpentPoolVtxo, Debug, "a VTXO pool vtxo was spent");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,7 +20,7 @@ pub struct ChangePoolVtxo {
 	pub amount: Amount,
 	pub depth: u16,
 }
-impl_slog!(ChangePoolVtxo, Info, "we created a change VTXO from the VTXO pool");
+impl_slog!(ChangePoolVtxo, Debug, "we created a change VTXO from the VTXO pool");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
