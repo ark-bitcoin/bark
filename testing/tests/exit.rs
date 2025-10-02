@@ -694,7 +694,7 @@ async fn exit_spend_anchor_single_utxo_required() {
 	// Verify that 1 UTXO + the P2A output are used
 	let list = bark.list_exits_with_details().await;
 	assert_eq!(list.len(), 1);
-	let transactions = list[0].transactions.as_ref().unwrap();
+	let transactions = &list[0].transactions;
 	assert_eq!(transactions.len(), 1);
 	assert_eq!(transactions[0].child.as_ref().unwrap().info.tx.input.len(), 2);
 
@@ -725,7 +725,7 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 	// Verify that 3 UTXOs + the P2A output are used
 	let list = bark.list_exits_with_details().await;
 	assert_eq!(list.len(), 1);
-	let transactions = list[0].transactions.as_ref().unwrap();
+	let transactions = &list[0].transactions;
 	assert_eq!(transactions.len(), 1);
 	assert_eq!(transactions[0].child.as_ref().unwrap().info.tx.input.len(), 4);
 
@@ -770,7 +770,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	// Progress once so we have transactions stuck in the mempool
 	async fn await_propagation(ctx: &TestContext, primary: &Bark, secondary: &Bark) {
 		let child_txs = primary.list_exits_with_details().await.into_iter().flat_map(|s| {
-			s.transactions.unwrap().into_iter().filter_map(|package| package.child)
+			s.transactions.into_iter().filter_map(|package| package.child)
 		});
 		for child_tx in child_txs {
 			ctx.await_transaction_across_nodes(child_tx.info.txid, secondary.bitcoind()).await;
