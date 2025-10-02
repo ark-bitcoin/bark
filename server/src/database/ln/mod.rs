@@ -11,6 +11,7 @@ use log::{trace, warn};
 
 use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use bitcoin_ext::BlockHeight;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
 use crate::database::Db;
@@ -493,6 +494,10 @@ impl Db {
 		Ok((id, updated_at))
 	}
 
+	/// Stores a htlc subscription for lightning receive in the database
+	///
+	/// - id: A unique identifier for the subscription
+	/// - status: A status for the subscription
 	pub async fn store_lightning_htlc_subscription(
 		&self,
 		node_id: ClnNodeId,
@@ -503,20 +508,37 @@ impl Db {
 		Ok(())
 	}
 
+	/// Stores a htlc subscription for lightning receive in the database
+	///
+	/// - id: A unique identifier for the subscription
+	/// - status: A status for the subscription
+	/// - lowest_incoming_htlc_expiry: The lowest height of all incoming
+	/// htlc's. This is about HTLC's that the server receives from the network
 	pub async fn store_lightning_htlc_subscription_status(
 		&self,
 		id: i64,
 		status: LightningHtlcSubscriptionStatus,
+		lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
 
-		let stmt = conn.prepare("
-			UPDATE lightning_htlc_subscription
-			SET status = $2, updated_at = NOW()
-			WHERE id = $1
-		").await?;
+		if let Some(lowest_incoming_htlc_expiry) = lowest_incoming_htlc_expiry {
+			let stmt = conn.prepare("
+				UPDATE lightning_htlc_subscription
+				SET status = $2, lowest_incoming_htlc_expiry = $3, updated_at = NOW()
+				WHERE id = $1
+			").await?;
 
-		conn.execute(&stmt, &[&id, &status]).await?;
+			conn.execute(&stmt, &[&id, &status, &(lowest_incoming_htlc_expiry as i64)]).await?;
+		} else {
+			let stmt = conn.prepare("
+				UPDATE lightning_htlc_subscription
+				SET status = $2, updated_at = NOW()
+				WHERE id = $1
+			").await?;
+
+			conn.execute(&stmt, &[&id, &status]).await?;
+		}
 
 		Ok(())
 	}
@@ -577,7 +599,7 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.created_at, sub.updated_at,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
 				invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
@@ -605,7 +627,7 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.created_at, sub.updated_at,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
 				invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
@@ -668,7 +690,7 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.created_at, sub.updated_at,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
 				invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON

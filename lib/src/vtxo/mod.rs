@@ -353,6 +353,11 @@ impl VtxoPolicy {
 		Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
 	}
 
+	/// Creates a new htlc from server to client
+	/// - user_pubkey: A public key owned by the client
+	/// - payment_hash: The payment hash, the client can claim the HTLC
+	/// by revealing the corresponding pre-image
+	/// - htlc_expiry: An absolute blockheight at which the HTLC expires
 	pub fn new_server_htlc_recv(user_pubkey: PublicKey, payment_hash: PaymentHash, htlc_expiry: BlockHeight) -> Self {
 		Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
 	}

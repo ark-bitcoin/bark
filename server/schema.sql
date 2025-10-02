@@ -642,7 +642,8 @@ CREATE TABLE public.lightning_htlc_subscription (
     lightning_node_id bigint NOT NULL,
     status public.lightning_htlc_subscription_status NOT NULL,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    lowest_incoming_htlc_expiry bigint
 );
 
 

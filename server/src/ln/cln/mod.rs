@@ -726,6 +726,7 @@ impl ClnManagerProcess {
 				self.db.store_lightning_htlc_subscription_status(
 					sub.id,
 					LightningHtlcSubscriptionStatus::Accepted,
+					Some(htlc_send_expiry_height),
 				).await?;
 
 				self.cancel_invoice(sub).await?;
@@ -817,7 +818,7 @@ impl ClnManagerProcess {
 		}).await?;
 
 		self.db.store_lightning_htlc_subscription_status(
-			subscription_id, LightningHtlcSubscriptionStatus::Settled).await?;
+			subscription_id, LightningHtlcSubscriptionStatus::Settled, None).await?;
 
 		Ok(())
 	}
