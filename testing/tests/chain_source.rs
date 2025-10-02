@@ -5,13 +5,13 @@ use bitcoin::{BlockHash, Network, OutPoint, ScriptBuf};
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256::HashEngine;
 
-use bark::onchain::ChainSourceClient;
+use bark::onchain::ChainSource;
 use bitcoin_ext::{BlockHeight, TxStatus};
 
 use ark_testing::{sat, Bitcoind, TestContext};
 use ark_testing::util::{get_bark_chain_source_from_env, TestContextChainSource};
 
-async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSourceClient) {
+async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSource) {
 	let mut ctx = TestContext::new_minimal(name).await;
 	ctx.init_central_bitcoind().await;
 	ctx.init_central_electrs().await;
@@ -24,7 +24,7 @@ async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSourceC
 			ctx.electrs.as_ref().expect("electrs is not started").chain_source()
 		}
 	};
-	(ctx, ChainSourceClient::new(chain_source, Network::Regtest, None).await
+	(ctx, ChainSource::new(chain_source, Network::Regtest, None).await
 		.expect("failed to create chain source client"))
 }
 

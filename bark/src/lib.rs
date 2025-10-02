@@ -62,7 +62,7 @@ use round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::onchain::{ChainSourceClient, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
+use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
 use crate::persist::models::{LightningReceive, StoredVtxoRequest};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
@@ -180,7 +180,7 @@ impl VtxoSeed {
 
 pub struct Wallet {
 	/// The chain source the wallet is connected to
-	pub chain: Arc<ChainSourceClient>,
+	pub chain: Arc<ChainSource>,
 	pub exit: Exit,
 
 	config: Config,
@@ -191,10 +191,10 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	pub fn chain_source<P: BarkPersister>(config: &Config) -> anyhow::Result<onchain::ChainSource> {
+	pub fn chain_source<P: BarkPersister>(config: &Config) -> anyhow::Result<onchain::ChainSourceSpec> {
 		// create on-chain wallet
 		if let Some(ref url) = config.esplora_address {
-			Ok(onchain::ChainSource::Esplora {
+			Ok(onchain::ChainSourceSpec::Esplora {
 				url: url.clone(),
 			})
 		} else if let Some(ref url) = config.bitcoind_address {
@@ -206,7 +206,7 @@ impl Wallet {
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
 			};
-			Ok(onchain::ChainSource::Bitcoind {
+			Ok(onchain::ChainSourceSpec::Bitcoind {
 				url: url.clone(),
 				auth: auth,
 			})
@@ -364,7 +364,7 @@ impl Wallet {
 
 		// create on-chain wallet
 		let chain_source = if let Some(ref url) = config.esplora_address {
-			onchain::ChainSource::Esplora {
+			onchain::ChainSourceSpec::Esplora {
 				url: url.clone(),
 			}
 		} else if let Some(ref url) = config.bitcoind_address {
@@ -376,12 +376,12 @@ impl Wallet {
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
 			};
-			onchain::ChainSource::Bitcoind { url: url.clone(), auth }
+			onchain::ChainSourceSpec::Bitcoind { url: url.clone(), auth }
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
-		let chain_source_client = ChainSourceClient::new(
+		let chain_source_client = ChainSource::new(
 			chain_source, properties.network, config.fallback_fee_rate,
 		).await?;
 		let chain = Arc::new(chain_source_client);

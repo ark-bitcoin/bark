@@ -7,7 +7,7 @@ use json::exit::error::ExitError;
 
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::{ChainSourceClient, ExitUnilaterally};
+use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 
@@ -68,7 +68,7 @@ impl ExitVtxo {
 
 	pub async fn progress<W: ExitUnilaterally>(
 		&mut self,
-		chain_source: &ChainSourceClient,
+		chain_source: &ChainSource,
 		tx_manager: &mut ExitTransactionManager,
 		persister: &dyn BarkPersister,
 		onchain: &mut W,

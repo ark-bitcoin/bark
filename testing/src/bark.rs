@@ -21,7 +21,7 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
 use bark_json::InvoiceInfo;
-use bark::onchain::ChainSource;
+use bark::onchain::ChainSourceSpec;
 use bark::persist::models::LightningReceive;
 use bark::UtxoInfo;
 use bitcoin_ext::FeeRateExt;
@@ -40,7 +40,7 @@ pub struct BarkConfig {
 	pub datadir: PathBuf,
 	pub ark_url: String,
 	pub network: Network,
-	pub chain_source: ChainSource,
+	pub chain_source: ChainSourceSpec,
 	pub fallback_fee: FeeRate,
 	pub extra_create_args: Vec<String>,
 }
@@ -93,7 +93,7 @@ impl Bark {
 
 		// Configure barks' chain source
 		match &cfg.chain_source {
-			ChainSource::Bitcoind { url, auth } => {
+			ChainSourceSpec::Bitcoind { url, auth } => {
 				cmd.args(["--bitcoind", &url]);
 				match auth {
 					Auth::None => panic!("Missing credentials for bitcoind"),
@@ -108,7 +108,7 @@ impl Bark {
 					}
 				}
 			}
-			ChainSource::Esplora { url } => {
+			ChainSourceSpec::Esplora { url } => {
 				cmd.args(["--esplora", &url]);
 			}
 		}
