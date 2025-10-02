@@ -66,7 +66,7 @@ use bitcoin_ext::BlockHeight;
 use ark::VtxoId;
 use log::warn;
 
-use crate::{exit::progress::util::estimate_exit_cost, Wallet, WalletVtxo};
+use crate::{exit::progress::util::estimate_exit_cost, vtxo_state::VtxoStateKind, Wallet, WalletVtxo};
 
 /// Trait needed to be implemented to filter wallet VTXOs.
 ///
@@ -384,5 +384,11 @@ impl FilterVtxos for RefreshStrategy<'_> {
 				}).collect::<Vec<_>>())
 			},
 		}
+	}
+}
+
+impl FilterVtxos for VtxoStateKind {
+	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(vtxos.into_iter().filter(|vtxo| vtxo.state.as_kind() == *self).collect::<Vec<_>>())
 	}
 }
