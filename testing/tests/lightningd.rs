@@ -1,6 +1,7 @@
 
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bark::lightning_invoice::Bolt11Invoice;
 use ark_testing::constants::ROUND_CONFIRMATIONS;
@@ -605,7 +606,9 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 	});
 
 	tokio::spawn(async move {
-		bark_2.send_lightning(invoice_info.invoice, None).await
+		// Payment settlement should not take more than receiver invoice check interval
+		let max_delay = srv.config().invoice_check_interval.as_millis() + 1_000;
+		bark_2.send_lightning(invoice_info.invoice, None).wait(max_delay as u64).await;
 	});
 
 	res1.await.unwrap();

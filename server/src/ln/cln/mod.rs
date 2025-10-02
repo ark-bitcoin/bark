@@ -283,6 +283,13 @@ impl ClnManager {
 			self.db.verify_and_update_invoice(
 				&payment_hash, &attempt, status, None, None, Some(preimage),
 			).await?;
+
+			// NB: in case of intra-ark lightning payments, we need to notify the subscriber
+			// that the payment has been succeeded, otherwise it will wait until next timeout
+			// to get the confirmation, since no notification will ever come from CLN hook
+			self.payment_update_tx.send(payment_hash)
+				.context("payment update channel broken")?;
+
 			return Ok(Ok(()));
 		}
 
@@ -290,6 +297,7 @@ impl ClnManager {
 		self.invoice_settle_tx
 			.send(((subscription_id, preimage.to_owned()), tx))
 			.context("invoice settle channel broken")?;
+
 		rx.await.context("invoice settle return channel broken")
 	}
 
