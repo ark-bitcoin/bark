@@ -687,3 +687,65 @@ async fn bark_pay_twice_ln_offer() {
 	assert_eq!(balance.spendable, btc(2));
 	assert_eq!(balance.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
 }
+
+#[tokio::test]
+async fn bark_sends_on_lightning_after_receiving_from_lightning() {
+	let ctx = TestContext::new("lightningd/bark_sends_on_lightning_after_receiving_from_lightning").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = Arc::new(ctx.new_lightningd("lightningd-1").await);
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+
+	let pay_amount = btc(1);
+	let invoice_recv_info = bark.bolt11_invoice(pay_amount).await;
+	let invoice_recv = Bolt11Invoice::from_str(&invoice_recv_info.invoice).unwrap();
+	let _ = bark.lightning_receive_status(&invoice_recv).await.unwrap();
+
+	let cloned_invoice_info = invoice_recv_info.clone();
+	let cloned_lightningd_1 = lightningd_1.clone();
+	let res1 = tokio::spawn(async move {
+		cloned_lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
+	});
+
+	srv.wait_for_vtxopool().await;
+
+	bark.lightning_receive(invoice_recv_info.invoice.clone()).wait(10_000).await;
+
+	// trigger a maintenance to claim the lightning receive
+	bark.maintain().await;
+
+	// HTLC settlement on lightning side
+	res1.ready().await.unwrap();
+
+	assert_eq!(bark.spendable_balance().await, pay_amount);
+
+	let invoice_send = lightningd_1.invoice(Some(sat(500_000)), "test_payment", "A test payment").await;
+	bark.send_lightning(invoice_send, None).await;
+
+	assert_eq!(bark.spendable_balance().await, pay_amount - sat(500_000));
+}
