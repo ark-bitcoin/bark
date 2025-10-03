@@ -1,7 +1,6 @@
 
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use bark::lightning_invoice::Bolt11Invoice;
 use ark_testing::constants::ROUND_CONFIRMATIONS;

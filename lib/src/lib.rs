@@ -71,9 +71,10 @@ pub struct VtxoIdInput {
 }
 
 /// Request for the creation of an vtxo.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct VtxoRequest {
 	pub amount: Amount,
+	#[serde(with = "crate::encode::serde")]
 	pub policy: VtxoPolicy,
 }
 
