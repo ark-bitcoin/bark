@@ -1450,7 +1450,7 @@ impl PendingConfirmationState {
 
 				let register_res = wallet.db.register_movement(MovementArgs {
 					kind: MovementKind::Round,
-					spends: &inputs.iter().collect::<Vec<_>>(),
+					spends: &inputs.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
 					receives: &vtxos.iter()
 						.map(|v| (&v.vtxo, v.state.clone()))
 						.collect::<Vec<_>>(),

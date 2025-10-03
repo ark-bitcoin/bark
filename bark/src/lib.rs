@@ -18,6 +18,7 @@ pub mod vtxo_selection;
 
 pub use self::config::Config;
 pub use self::persist::sqlite::SqliteClient;
+pub use self::vtxo_state::WalletVtxo;
 pub use bark_json::primitives::UtxoInfo;
 pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
@@ -66,7 +67,7 @@ use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWallet
 use crate::persist::BarkPersister;
 use crate::persist::models::{LightningReceive, StoredVtxoRequest};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
-use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo_state::{VtxoState, VtxoStateKind};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
@@ -432,19 +433,21 @@ impl Wallet {
 	///
 	/// Make sure you sync before calling this method.
 	pub fn balance(&self) -> anyhow::Result<Balance> {
-		let spendable = self.db.get_all_spendable_vtxos()?.iter()
-			.map(|v| v.amount()).sum();
+		let vtxos = self.vtxos()?;
 
-		let pending_lightning_send = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?
-			.iter().map(|v| v.vtxo.amount()).sum();
+		let spendable = VtxoStateKind::Spendable.filter(vtxos.clone())?
+			.iter().map(|v| v.amount()).sum::<Amount>();
+
+		let pending_lightning_send = VtxoStateKind::PendingLightningSend.filter(vtxos.clone())?
+			.iter().map(|v| v.amount()).sum::<Amount>();
+
+		let pending_board = VtxoStateKind::UnregisteredBoard.filter(vtxos.clone())?
+			.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
 			.map(|v| v.amount()).sum();
 
 		let pending_exit = self.exit.pending_total()?;
-
-		let pending_board = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?
-			.into_iter().map(|vtxo| vtxo.vtxo.amount()).sum();
 
 		Ok(Balance {
 			spendable,
@@ -466,19 +469,35 @@ impl Wallet {
 		Ok(self.db.get_paginated_movements(pagination)?)
 	}
 
-	/// Returns all spendable vtxos
-	pub fn vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
-		Ok(self.db.get_all_spendable_vtxos()?)
+	/// Returns all not spent vtxos
+	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(self.db.get_vtxos_by_state(&[
+			VtxoStateKind::Spendable,
+			VtxoStateKind::UnregisteredBoard,
+			VtxoStateKind::PendingLightningSend,
+			VtxoStateKind::PendingLightningRecv,
+		])?)
 	}
 
-	/// Returns all unspent vtxos matching the provided predicate
-	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+	/// Returns all vtxos matching the provided predicate
+	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
 
+	/// Returns all spendable vtxos
+	pub fn spendable_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(self.vtxos_with(&VtxoStateKind::Spendable)?)
+	}
+
+	/// Returns all spendable vtxos matching the provided predicate
+	pub fn spendable_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
+		let vtxos = self.spendable_vtxos()?;
+		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
+	}
+
 	/// Returns all in-round vtxos matching the provided predicate
-	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.db.get_in_round_vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
@@ -497,10 +516,10 @@ impl Wallet {
 
 	/// Returns all vtxos that will expire within
 	/// `threshold_blocks` blocks
-	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<WalletVtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
-		Ok(self.vtxos_with(&filter)?)
+		Ok(self.spendable_vtxos_with(&filter)?)
 	}
 
 	/// Attempts to register all pendings boards with the Ark server. A board transaction must have
@@ -599,7 +618,7 @@ impl Wallet {
 	//TODO(stevenroose) improve the way we expose dangerous methods
 	pub async fn drop_vtxos(&mut self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
-		for vtxo in self.db.get_all_spendable_vtxos()? {
+		for vtxo in self.vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
 
@@ -933,7 +952,8 @@ impl Wallet {
 
 	/// Offboard all vtxos to a given address
 	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
-		let input_vtxos = self.db.get_all_spendable_vtxos()?;
+		let input_vtxos = self.spendable_vtxos()?.into_iter()
+			.map(|v| v.vtxo).collect();
 
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
@@ -994,7 +1014,8 @@ impl Wallet {
 
 	/// Performs a refresh of all VTXOs that are due to be refreshed, if any.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?;
+		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
+			.map(|v| v.vtxo).collect::<Vec<_>>();
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
@@ -1006,18 +1027,18 @@ impl Wallet {
 	/// This will find all VTXOs that meets must-refresh criteria.
 	/// Then, if there are some VTXOs to refresh, it will
 	/// also add those that meet should-refresh criteria.
-	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<Vtxo>> {
+	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let tip = self.chain.tip().await?;
 		let fee_rate = self.chain.fee_rates().await.fast;
 
 		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.vtxos_with(&RefreshStrategy::must_refresh(self, tip, fee_rate))?;
+		let must_refresh_vtxos = self.spendable_vtxos_with(&RefreshStrategy::must_refresh(self, tip, fee_rate))?;
 		if must_refresh_vtxos.is_empty() {
 			return Ok(vec![]);
 		} else {
 			// If we need to do a refresh, we take all the should_refresh vtxo's as well
 			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
+			let should_refresh_vtxos = self.spendable_vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
 			Ok(should_refresh_vtxos)
 		}
 	}
@@ -1026,7 +1047,7 @@ impl Wallet {
 	pub fn get_first_expiring_vtxo_blockheight(
 		&self,
 	) -> anyhow::Result<Option<BlockHeight>> {
-		Ok(self.vtxos()?.iter().map(|v| v.expiry_height()).min())
+		Ok(self.spendable_vtxos()?.iter().map(|v| v.expiry_height()).min())
 	}
 
 	/// Returns the next block height at which we have a VTXO that we
@@ -1066,7 +1087,7 @@ impl Wallet {
 	///
 	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
 	fn select_vtxos_to_cover(&self, amount: Amount, max_depth: Option<u16>, current_height: Option<BlockHeight>) -> anyhow::Result<Vec<Vtxo>> {
-		let inputs = self.db.get_all_spendable_vtxos()?;
+		let inputs = self.spendable_vtxos()?;
 
 		// Iterate over all rows until the required amount is reached
 		let mut result = Vec::new();
@@ -1089,7 +1110,7 @@ impl Wallet {
 			}
 
 			total_amount += input.amount();
-			result.push(input);
+			result.push(input.vtxo);
 
 			if total_amount >= amount {
 				return Ok(result)

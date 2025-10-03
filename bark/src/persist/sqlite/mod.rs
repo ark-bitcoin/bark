@@ -231,7 +231,7 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Fetch all VTXO's that are currently used in a round
-	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_in_round_vtxos(&conn)
 	}
@@ -418,11 +418,11 @@ pub mod test {
 		assert!(db.get_wallet_vtxo(vtxo_3.id()).expect("No error").is_none());
 
 		// Verify that we have two entries in the database
-		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);
-		assert!(vtxos.contains(&vtxo_1));
-		assert!(vtxos.contains(&vtxo_2));
-		assert!(!vtxos.contains(&vtxo_3));
+		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_1));
+		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
+		assert!(!vtxos.iter().any(|v| v.vtxo == *vtxo_3));
 
 		// Verify that we can mark a vtxo as spent
 		db.register_movement(MovementArgs {
@@ -435,7 +435,7 @@ pub mod test {
 			fees: None
 		}).unwrap();
 
-		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
@@ -447,10 +447,10 @@ pub mod test {
 			fees: None,
 		}).unwrap();
 
-		let vtxos = db.get_all_spendable_vtxos().unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);
-		assert!(vtxos.contains(&vtxo_2));
-		assert!(vtxos.contains(&vtxo_3));
+		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
+		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_3));
 
 		conn.close().unwrap();
 	}

@@ -273,12 +273,12 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn vtxos(&self) -> json::Vtxos {
+	pub async fn vtxos(&self) -> json::WalletVtxos {
 		let res = self.run(["vtxos"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn vtxos_no_sync(&self) -> json::Vtxos {
+	pub async fn vtxos_no_sync(&self) -> json::WalletVtxos {
 		let res = self.run(["vtxos", "--no-sync"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}

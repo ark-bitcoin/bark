@@ -178,7 +178,7 @@ in a bitcoin wallet. They just haven't been confirmed on chain (yet).
 However, the user remains in full control of the funds and can perform
 a unilateral exit at any time.
 
-The snippet below shows how you can inspect your [ark::Vtxo]s.
+The snippet below shows how you can inspect your [bark::WalletVtxo]s.
 
 ```no_run
 # use std::sync::Arc;
@@ -187,7 +187,7 @@ The snippet below shows how you can inspect your [ark::Vtxo]s.
 #
 # use tokio::fs;
 #
-# use bark::{Config, Wallet, SqliteClient};
+# use bark::{Config, SqliteClient, Wallet};
 #
 # const MNEMONIC_FILE : &str = "mnemonic";
 # const DB_FILE: &str = "db.sqlite";
@@ -213,7 +213,7 @@ async fn main() -> anyhow::Result<()> {
   // Make sure your app is synced before inspecting the wallet
   wallet.sync().await.unwrap();
 
-  let vtxos: Vec<ark::Vtxo> = wallet.vtxos().unwrap();
+  let vtxos: Vec<bark::WalletVtxo> = wallet.vtxos().unwrap();
   Ok(())
 }
 ```
@@ -269,7 +269,8 @@ async fn main() -> anyhow::Result<()> {
   let fee_rate = wallet.chain.fee_rates().await.fast;
   let strategy = RefreshStrategy::must_refresh(&wallet, tip, fee_rate);
 
-  let vtxos = wallet.vtxos_with(&strategy)?;
+  let vtxos = wallet.spendable_vtxos_with(&strategy)?
+    .into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
   wallet.refresh_vtxos(vtxos).await?;
   Ok(())
 }

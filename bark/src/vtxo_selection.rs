@@ -17,14 +17,14 @@
 //! ```rust
 //! use anyhow::Result;
 //! use bitcoin::Amount;
-//! use ark::Vtxo;
+//! use bark::WalletVtxo;
 //! use bark::vtxo_selection::FilterVtxos;
 //!
-//! fn is_large(v: &Vtxo) -> Result<bool> {
+//! fn is_large(v: &WalletVtxo) -> Result<bool> {
 //!     Ok(v.amount() >= Amount::from_sat(50_000))
 //! }
 //!
-//! # fn demo(mut vtxos: Vec<Vtxo>) -> Result<Vec<Vtxo>> {
+//! # fn demo(mut vtxos: Vec<WalletVtxo>) -> Result<Vec<WalletVtxo>> {
 //! let selected = FilterVtxos::filter(&is_large, vtxos)?;
 //! # Ok(selected) }
 //! ```
@@ -34,7 +34,7 @@
 //! use bitcoin_ext::BlockHeight;
 //! use bark::vtxo_selection::{FilterVtxos, VtxoFilter};
 //!
-//! # fn example(wallet: &bark::Wallet, vtxos: Vec<ark::Vtxo>) -> anyhow::Result<Vec<ark::Vtxo>> {
+//! # fn example(wallet: &bark::Wallet, vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 //! let tip: BlockHeight = 1_000;
 //! let filter = VtxoFilter::new(wallet)
 //!     .expires_before(tip + 144) // expiring within ~1 day
@@ -46,9 +46,9 @@
 //! Notes on semantics
 //! - Include/exclude precedence: an ID in `include` always matches; an ID in `exclude` never
 //!   matches. These take precedence over other criteria.
-//! - Criteria are OR'ed together: a [Vtxo] matches if any enabled criterion matches (after applying
+//! - Criteria are OR'ed together: a [WalletVtxo] matches if any enabled criterion matches (after applying
 //!   include/exclude).
-//! - “Counterparty risk” is wallet-defined and indicates a [Vtxo] may be invalidated by another
+//! - “Counterparty risk” is wallet-defined and indicates a [WalletVtxo] may be invalidated by another
 //!   party; see [VtxoFilter::counterparty].
 //!
 //! See also:
@@ -63,28 +63,27 @@ use anyhow::Context;
 use bitcoin::FeeRate;
 use bitcoin_ext::BlockHeight;
 
-use ark::{Vtxo, VtxoId};
+use ark::VtxoId;
 use log::warn;
 
-use crate::{exit::progress::util::estimate_exit_cost, Wallet};
+use crate::{exit::progress::util::estimate_exit_cost, vtxo_state::VtxoStateKind, Wallet, WalletVtxo};
 
 /// Trait needed to be implemented to filter wallet VTXOs.
 ///
 /// See [`Wallet::vtxos_with`]. For easy filtering, see [VtxoFilter].
 ///
-/// This trait is also implemented for `Fn(&Vtxo) -> anyhow::Result<bool>`.
+/// This trait is also implemented for `Fn(&WalletVtxo) -> anyhow::Result<bool>`.
 pub trait FilterVtxos {
-	fn filter(&self, vtxos: Vec<Vtxo>) -> anyhow::Result<Vec<Vtxo>>;
+	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>>;
 }
 
 impl<F> FilterVtxos for F
 where
-	F: Fn(&Vtxo) -> anyhow::Result<bool>,
+	F: Fn(&WalletVtxo) -> anyhow::Result<bool>,
 {
-	fn filter(&self, mut vtxos: Vec<Vtxo>) -> anyhow::Result<Vec<Vtxo>> {
+	fn filter(&self, mut vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
 		for i in (0..vtxos.len()).rev() {
-			let vtxo = &vtxos[i];
-			if !self(&vtxo)? {
+			if !self(&vtxos[i])? {
 				vtxos.swap_remove(i);
 			}
 		}
@@ -121,7 +120,7 @@ impl<'a> VtxoFilter<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<ark::Vtxo>> {
+	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo_selection::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
@@ -129,7 +128,7 @@ impl<'a> VtxoFilter<'a> {
 	/// let filter = VtxoFilter::new(wallet)
 	///     .expires_before(tip + 144) // expiring within ~1 day
 	///     .counterparty();           // or with counterparty risk
-	/// let filtered = wallet.vtxos_with(&filter)?;
+	/// let filtered = wallet.spendable_vtxos_with(&filter)?;
 	/// # Ok(filtered) }
 	/// ```
 	pub fn new(wallet: &'a Wallet) -> VtxoFilter<'a> {
@@ -142,7 +141,7 @@ impl<'a> VtxoFilter<'a> {
 		}
 	}
 
-	fn matches(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
+	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		let id = vtxo.id();
 
 		// First do explicit includes and excludes.
@@ -172,14 +171,14 @@ impl<'a> VtxoFilter<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<ark::Vtxo>> {
+	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo_selection::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
 	/// let h: BlockHeight = 10_000;
 	/// let filter = VtxoFilter::new(wallet)
 	///     .expires_before(h);
-	/// let filtered = wallet.vtxos_with(&filter)?;
+	/// let filtered = wallet.spendable_vtxos_with(&filter)?;
 	/// # Ok(filtered) }
 	/// ```
 	pub fn expires_before(mut self, expires_before: BlockHeight) -> Self {
@@ -222,10 +221,9 @@ impl<'a> VtxoFilter<'a> {
 }
 
 impl FilterVtxos for VtxoFilter<'_> {
-	fn filter(&self, mut vtxos: Vec<Vtxo>) -> anyhow::Result<Vec<Vtxo>> {
+	fn filter(&self, mut vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
 		for i in (0..vtxos.len()).rev() {
-			let vtxo = &vtxos[i];
-			if !self.matches(&vtxo)? {
+			if !self.matches(&vtxos[i])? {
 				vtxos.swap_remove(i);
 			}
 		}
@@ -261,7 +259,7 @@ pub struct RefreshStrategy<'a> {
 impl<'a> RefreshStrategy<'a> {
 	/// Builds a strategy that matches VTXOs that must be refreshed immediately.
 	///
-	/// A [Vtxo] is selected when at least one of the following strict conditions holds:
+	/// A [WalletVtxo] is selected when at least one of the following strict conditions holds:
 	/// - It reached or exceeded the maximum allowed out-of-round (OOR) depth (if configured by the
 	///   Ark server info in the wallet).
 	/// - It is within `vtxo_refresh_expiry_threshold` blocks of expiry at `tip`.
@@ -278,7 +276,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet, vtxos: Vec<ark::Vtxo>) -> anyhow::Result<Vec<ark::Vtxo>> {
+	/// # fn demo(wallet: &bark::Wallet, vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo_selection::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
@@ -300,7 +298,7 @@ impl<'a> RefreshStrategy<'a> {
 
 	/// Builds a strategy that matches VTXOs that should be refreshed soon (opportunistic).
 	///
-	/// A [Vtxo] is selected when at least one of the following softer conditions holds:
+	/// A [WalletVtxo] is selected when at least one of the following softer conditions holds:
 	/// - It is at or beyond a soft OOR depth threshold (typically one less than the maximum, if
 	///   configured by the Ark server info in the wallet).
 	/// - It is within a softer expiry window (e.g., `vtxo_refresh_expiry_threshold + 28` blocks)
@@ -319,7 +317,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet, vtxos: Vec<ark::Vtxo>) -> anyhow::Result<Vec<ark::Vtxo>> {
+	/// # fn demo(wallet: &bark::Wallet, vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo_selection::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
@@ -341,7 +339,7 @@ impl<'a> RefreshStrategy<'a> {
 }
 
 impl FilterVtxos for RefreshStrategy<'_> {
-	fn filter(&self, vtxos: Vec<Vtxo>) -> anyhow::Result<Vec<Vtxo>> {
+	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
 		match self.inner {
 			InnerRefreshStrategy::MustRefresh => {
 				Ok(vtxos.into_iter().filter(|vtxo| {
@@ -377,7 +375,7 @@ impl FilterVtxos for RefreshStrategy<'_> {
 					}
 
 					let fr = self.fee_rate;
-					if vtxo.amount() < estimate_exit_cost(&[vtxo.clone()], fr) {
+					if vtxo.amount() < estimate_exit_cost(&[vtxo.vtxo.clone()], fr) {
 						warn!("VTXO {} is uneconomical to exit, should be refreshed on next opportunity", vtxo.id());
 						return true;
 					}
@@ -386,5 +384,11 @@ impl FilterVtxos for RefreshStrategy<'_> {
 				}).collect::<Vec<_>>())
 			},
 		}
+	}
+}
+
+impl FilterVtxos for VtxoStateKind {
+	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(vtxos.into_iter().filter(|vtxo| vtxo.state.as_kind() == *self).collect::<Vec<_>>())
 	}
 }

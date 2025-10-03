@@ -1,4 +1,6 @@
 
+use std::ops::Deref;
+
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 
@@ -32,6 +34,7 @@ pub struct UtxoInfo {
 	pub confirmation_height: Option<u32>,
 }
 
+/// Struct representing information about a VTXO.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VtxoInfo {
 	pub id: VtxoId,
@@ -61,6 +64,22 @@ impl From<Vtxo> for VtxoInfo {
 			exit_depth: v.exit_depth(),
 			arkoor_depth: v.arkoor_depth(),
 		}
+	}
+}
+
+/// Same as [VtxoInfo], but with the current VTXO state.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct WalletVtxoInfo {
+	#[serde(flatten)]
+	pub vtxo: VtxoInfo,
+	pub state: String,
+}
+
+impl Deref for WalletVtxoInfo {
+	type Target = VtxoInfo;
+
+	fn deref(&self) -> &Self::Target {
+		&self.vtxo
 	}
 }
 

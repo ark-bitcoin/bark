@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bark::movement::Movement;
+use bark::vtxo_state::WalletVtxo;
 use bitcoin::{address, Amount, FeeRate};
 use clap::Parser;
 use ::lightning::offers::offer::Offer;
@@ -21,7 +22,7 @@ use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 
-use ark::{Vtxo, VtxoId};
+use ark::VtxoId;
 use bark::{Config, Pagination, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::{cli as json, primitives};
@@ -44,6 +45,13 @@ fn default_datadir() -> String {
 /// The full version string we show in our binary.
 /// (GIT_HASH is set in build.rs)
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+
+fn wallet_vtxo_to_json(vtxo: &WalletVtxo) -> primitives::WalletVtxoInfo {
+	primitives::WalletVtxoInfo {
+		vtxo: vtxo.vtxo.clone().into(),
+		state: vtxo.state.as_kind().as_str().to_string(),
+	}
+}
 
 fn movement_to_json(movement: &Movement) -> json::Movement {
 	json::Movement {
@@ -725,8 +733,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 
-			let res = wallet.vtxos()?;
-			let vtxos : json::Vtxos = res.into_iter().map(|v| v.into()).collect();
+			let vtxos = wallet.vtxos()?.into_iter()
+				.map(|v| wallet_vtxo_to_json(&v)).collect::<Vec<_>>();
+
 			output_json(&vtxos);
 		},
 		Command::Movements { page_index, page_size, no_sync } => {
@@ -762,22 +771,24 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
 					let filter = VtxoFilter::new(&wallet).counterparty();
-					wallet.vtxos_with(&filter)?
+					wallet.spendable_vtxos_with(&filter)?
 				},
-				(None, None, false, true, None) => wallet.vtxos()?,
+				(None, None, false, true, None) => wallet.spendable_vtxos()?,
 				(None, None, false, false, Some(vs)) => {
 					let vtxos = vs.iter()
 						.map(|s| {
 							let id = VtxoId::from_str(s)?;
-							Ok(wallet.get_vtxo_by_id(id)?.vtxo)
+							Ok(wallet.get_vtxo_by_id(id)?)
 						})
-						.collect::<anyhow::Result<Vec<Vtxo>>>()
+						.collect::<anyhow::Result<Vec<_>>>()
 						.with_context(|| "Invalid vtxo_id")?;
 
 					vtxos
 				}
 				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
 			};
+
+			let vtxos = vtxos.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
 			info!("Refreshing {} vtxos...", vtxos.len());
 			let round_id = wallet.refresh_vtxos(vtxos).await?;
