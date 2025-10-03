@@ -186,9 +186,10 @@ pub trait FutureExt: Future {
 		self.try_wait(500)
 	}
 
-	/// Add a short timeout.
+	/// Awaits a future for a short period. Using this assumes that the future is already complete, 
+	/// so if the operation times out, we panic because a test is likely failing unexpectedly.
 	#[track_caller]
-	async fn fast(self) -> Self::Output where Self: Sized {
+	async fn ready(self) -> Self::Output where Self: Sized {
 		match self.try_fast().await {
 			Ok(v) => v,
 			Err(_) => {

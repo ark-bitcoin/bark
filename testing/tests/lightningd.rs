@@ -511,7 +511,7 @@ async fn bark_can_receive_lightning() {
 	bark.maintain().await;
 
 	// HTLC settlement on lightning side
-	res1.fast().await.unwrap();
+	res1.ready().await.unwrap();
 
 	let vtxos = bark.vtxos().await;
 	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");

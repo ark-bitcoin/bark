@@ -863,8 +863,8 @@ async fn second_round_attempt() {
 	log_restart_missing_forfeits.recv().await.unwrap();
 	res1.await.unwrap();
 	// check that bark2 was kicked
-	assert_eq!(log_missing_forfeits.recv().fast().await.unwrap().input, bark2_vtxo);
-	assert_eq!(log_not_allowed.recv().fast().await.unwrap().vtxo, bark2_vtxo);
+	assert_eq!(log_missing_forfeits.recv().ready().await.unwrap().input, bark2_vtxo);
+	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
 
 	// bark2 is kicked out of the first round, so we need to start another one
 	ctx.generate_blocks(1).await;
