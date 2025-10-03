@@ -598,11 +598,8 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
-	let cloned_ctx = ctx.clone();
 	let res1 = tokio::spawn(async move {
 		cloned.lightning_receive(cloned_invoice_info.invoice).wait(10_000).await;
-		cloned_ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-		cloned.offchain_balance().await;
 	});
 
 	tokio::spawn(async move {
