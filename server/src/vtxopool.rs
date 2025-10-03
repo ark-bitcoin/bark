@@ -34,7 +34,7 @@ pub struct VtxoTarget {
 
 impl fmt::Display for VtxoTarget {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	    write!(f, "{}:{}", self.amount, self.count)
+		write!(f, "{}:{}", self.amount, self.count)
 	}
 }
 
@@ -75,7 +75,7 @@ pub struct Config {
 
 impl Default for Config {
 	fn default() -> Self {
-	    Self {
+		Self {
 			vtxo_targets: Vec::new(),
 			vtxo_target_issue_threshold: 80,
 			vtxo_lifetime: 144 * 3,

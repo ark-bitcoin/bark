@@ -13,22 +13,25 @@ pub mod vtxopool;
 
 mod model;
 pub use model::*;
+use tokio_stream::StreamExt;
 
 
+use std::task;
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::Context;
-use bb8::Pool;
+use bb8::{ManageConnection, Pool};
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
-use futures::{Stream, TryStreamExt, StreamExt};
-use tokio_postgres::{Client, GenericClient, NoTls};
+use futures::{Stream, TryStreamExt};
+use tokio_postgres::{Client, GenericClient, NoTls, RowStream};
 use tokio_postgres::types::Type;
 use log::{info, warn};
 
@@ -114,7 +117,7 @@ impl Db {
 		Ok(())
 	}
 
-	pub async fn connect(config: &PostgresConfig)  -> anyhow::Result<Self> {
+	pub async fn connect(config: &PostgresConfig) -> anyhow::Result<Self> {
 		let pool = Self::pool_connect(&config.name, config).await?;
 
 		let db = Db { pool };
@@ -213,8 +216,8 @@ impl Db {
 		", &[Type::INT4]).await?;
 
 		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
-
-		Ok(rows.map_err(anyhow::Error::from).try_filter_map(|row| async {
+		let stream = OwnedRowStream::new(conn, rows);
+		Ok(stream.map_err(anyhow::Error::from).try_filter_map(|row| async {
 			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
 			drop(row); // borrowck acts weird here
 			if !self.is_round_tx(vtxo.chain_anchor().txid).await? {
@@ -288,10 +291,12 @@ impl Db {
 			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL AND board_swept_at IS NULL;
 		").await?;
 
-		Ok(conn.query_raw(&stmt, NOARG).await?
-			.err_into()
-			.map_ok(|row| Vtxo::deserialize(row.get("vtxo")).expect("corrupt db: vtxo"))
-		)
+		let raw = conn.query_raw(&stmt, NOARG).await?;
+		let stream = OwnedRowStream::new(conn, raw);
+
+		Ok(stream.err_into().map_ok(
+			|row| Vtxo::deserialize(row.get("vtxo")).expect("corrupt db: vtxo")
+		))
 	}
 
 	/// Returns [None] if all the ids were not previously marked as signed
@@ -635,6 +640,39 @@ impl Db {
 		let nb_tweaks = conn.execute(&stmt, &[]).await.context("cleaning ephemeral tweaks")?;
 		slog!(CleanedEphemeralTweaks, nb_tweaks: nb_tweaks as usize);
 		Ok(())
+	}
+}
+
+/// A wrapper around [RowStream] that bundles the connection along with it
+#[pin_project::pin_project]
+pub(crate) struct OwnedRowStream<'a, M: bb8::ManageConnection> {
+	/// We carry this to keep the connection alive as long as the stream
+	_conn: bb8::PooledConnection<'a, M>,
+	#[pin]
+	inner: RowStream,
+}
+
+impl<'a, M: bb8::ManageConnection> OwnedRowStream<'a, M> {
+	fn new(
+		conn: bb8::PooledConnection<'a, M>,
+		row_stream: RowStream,
+	) -> OwnedRowStream<'a, M> {
+		OwnedRowStream {
+			_conn: conn,
+			inner: row_stream,
+		}
+	}
+}
+
+impl<'a, M> Stream for OwnedRowStream<'a, M>
+where
+	M: ManageConnection,
+	<M as ManageConnection>::Connection: Unpin,
+{
+	type Item = <RowStream as Stream>::Item;
+
+	fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> task::Poll<Option<Self::Item>> {
+		self.project().inner.as_mut().poll_next(cx)
 	}
 }
 
