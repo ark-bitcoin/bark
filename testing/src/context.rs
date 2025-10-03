@@ -459,7 +459,7 @@ impl TestContext {
 	}
 
 	/// Waits for the given transaction ID to be available in both the central bitcoind and electrs
-	pub async fn await_transaction(&self, txid: &Txid) {
+	pub async fn await_transaction(&self, txid: Txid) {
 		if let Some(bitcoind) = &self.bitcoind {
 			bitcoind.await_transaction(txid).await;
 		}
@@ -475,9 +475,9 @@ impl TestContext {
 		txid: Txid,
 		nodes: impl IntoIterator<Item = &Bitcoind>,
 	) {
-		self.await_transaction(&txid).await;
+		self.await_transaction(txid).await;
 		for bitcoind in nodes {
-			bitcoind.await_transaction(&txid).await;
+			bitcoind.await_transaction(txid).await;
 		}
 	}
 

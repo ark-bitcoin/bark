@@ -137,7 +137,7 @@ impl Bitcoind {
 		self.sync_client().generate_to_address(block_num as u64, &*RANDOM_ADDR).unwrap();
 	}
 
-	pub async fn await_transaction(&self, txid: &Txid) -> Transaction {
+	pub async fn await_transaction(&self, txid: Txid) -> Transaction {
 		let client = self.sync_client();
 		let start = Instant::now();
 		while Instant::now().duration_since(start).as_millis() < 30_000 {

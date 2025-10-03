@@ -407,7 +407,7 @@ async fn sweep_vtxos() {
 	let bark_client = bark.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
+	let funding_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 
 	let mut rpc = srv.get_public_rpc().await;
 	let request = protos::BoardVtxoRequest {
@@ -812,7 +812,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -1122,7 +1122,7 @@ async fn register_board_is_idempotent() {
 	let bark_client = bark_wallet.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
+	let funding_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 
 	// We will now call the register_board a few times
 	let mut rpc = srv.get_public_rpc().await;
@@ -1150,7 +1150,7 @@ async fn register_unconfirmed_board() {
 	let bark_client = bark.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(&unconfirmed_board.funding_txid).await;
+	let funding_tx = ctx.bitcoind().await_transaction(unconfirmed_board.funding_txid).await;
 
 	let unconfirmed_board_request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
@@ -1705,7 +1705,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -1757,7 +1757,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;

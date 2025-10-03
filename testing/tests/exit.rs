@@ -380,7 +380,7 @@ async fn exit_bolt11_change() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;

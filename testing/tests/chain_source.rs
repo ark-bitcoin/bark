@@ -195,7 +195,7 @@ async fn chain_source_txs_spending_inputs() {
 		bitcoinds[4].fund_addr(&ctx_address, sat(900_000)).await,
 	]);
 	for txid in &unconfirmed_txids {
-		ctx.await_transaction(txid).await;
+		ctx.await_transaction(*txid).await;
 	}
 
 	// We should have a mixture of confirmed and unconfirmed transactions
@@ -239,7 +239,7 @@ async fn chain_source_get_tx() {
 	// Ensure pending transactions are returned
 	let test_address = test_bitcoind.get_new_address();
 	let pending = ctx.bitcoind().fund_addr(&test_address, sat(1_000_000)).await;
-	ctx.await_transaction(&pending).await;
+	ctx.await_transaction(pending).await;
 	let pending_result = chain_source.get_tx(&pending).await
 		.expect("Unconfirmed transactions are valid");
 	assert!(matches!(pending_result, Some(_)));
@@ -275,7 +275,7 @@ async fn chain_source_tx_confirmed() {
 	// Ensure pending transactions are returned
 	let test_address = test_bitcoind.get_new_address();
 	let pending = ctx.bitcoind().fund_addr(&test_address, sat(1_000_000)).await;
-	ctx.await_transaction(&pending).await;
+	ctx.await_transaction(pending).await;
 	let pending_result = chain_source.tx_confirmed(&pending).await
 		.expect("Unconfirmed transactions are valid");
 	assert!(matches!(pending_result, None));
@@ -308,7 +308,7 @@ async fn chain_source_tx_status() {
 	// Ensure pending transactions are returned
 	let test_address = test_bitcoind.get_new_address();
 	let pending = ctx.bitcoind().fund_addr(&test_address, sat(1_000_000)).await;
-	ctx.await_transaction(&pending).await;
+	ctx.await_transaction(pending).await;
 	let pending_result = chain_source.tx_status(&pending).await
 		.expect("Unconfirmed transactions are valid");
 	assert!(matches!(pending_result, TxStatus::Mempool));
@@ -342,7 +342,7 @@ async fn chain_source_txout_value() {
 		let address = test_bitcoind.get_new_address();
 		let script = ScriptBuf::from(address.clone());
 		let txid = ctx.bitcoind().fund_addr(address, amounts[i]).await;
-		ctx.await_transaction(&txid).await;
+		ctx.await_transaction(txid).await;
 
 		let tx = chain_source.get_tx(&txid).await.unwrap()
 			.expect("Transaction should exist");
