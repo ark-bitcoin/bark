@@ -887,7 +887,7 @@ impl Vtxo {
 	}
 
 	/// Iterator that constructs all the exit txs for this [Vtxo].
-	pub fn transactions(&self) -> VtxoTxIter {
+	pub fn transactions(&self) -> VtxoTxIter<'_> {
 		VtxoTxIter::new(self)
 	}
 

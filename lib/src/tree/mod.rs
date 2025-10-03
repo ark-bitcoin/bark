@@ -153,7 +153,7 @@ impl Tree {
 	}
 
 	/// Iterate over all nodes, starting with the leaves, towards the root.
-	pub fn iter(&self) -> std::slice::Iter<Node> {
+	pub fn iter(&self) -> std::slice::Iter<'_, Node> {
 		self.nodes.iter()
 	}
 
@@ -164,7 +164,7 @@ impl Tree {
 
 	/// Iterate nodes over a branch starting at the leaf
 	/// with index `leaf_idx` ending in the root.
-	pub fn iter_branch(&self, leaf_idx: usize) -> BranchIter {
+	pub fn iter_branch(&self, leaf_idx: usize) -> BranchIter<'_> {
 		assert!(leaf_idx < self.nodes.len());
 		BranchIter {
 			tree: &self,

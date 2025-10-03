@@ -148,7 +148,7 @@ impl ConnectorChain {
 	pub fn iter_signed_txs(
 		&self,
 		sign_key: &Keypair,
-	) -> Result<ConnectorTxIter, InvalidSigningKeyError> {
+	) -> Result<ConnectorTxIter<'_>, InvalidSigningKeyError> {
 		if self.spk == ConnectorChain::output_script(sign_key.public_key()) {
 			Ok(ConnectorTxIter {
 				chain: Cow::Borrowed(self),
@@ -162,7 +162,7 @@ impl ConnectorChain {
 	}
 
 	/// Iterator over the transactions in this chain.
-	pub fn iter_unsigned_txs(&self) -> ConnectorTxIter {
+	pub fn iter_unsigned_txs(&self) -> ConnectorTxIter<'_> {
 		ConnectorTxIter {
 			chain: Cow::Borrowed(self),
 			sign_key: None,
@@ -172,7 +172,7 @@ impl ConnectorChain {
 	}
 
 	/// Iterator over the connector outpoints and unsigned txs in this chain.
-	pub fn connectors(&self) -> ConnectorIter {
+	pub fn connectors(&self) -> ConnectorIter<'_> {
 		ConnectorIter {
 			txs: self.iter_unsigned_txs(),
 			maybe_last: Some((self.utxo, None)),
@@ -185,7 +185,7 @@ impl ConnectorChain {
 	pub fn connectors_signed(
 		&self,
 		sign_key: &Keypair,
-	) -> Result<ConnectorIter, InvalidSigningKeyError> {
+	) -> Result<ConnectorIter<'_>, InvalidSigningKeyError> {
 		Ok(ConnectorIter {
 			txs: self.iter_signed_txs(sign_key)?,
 			maybe_last: Some((self.utxo, None)),
