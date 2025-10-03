@@ -18,11 +18,11 @@ pub fn xonly_from(pk: secpm::XOnlyPublicKey) -> XOnlyPublicKey {
 }
 
 pub fn pubkey_to(pk: PublicKey) -> secpm::PublicKey {
-	secpm::PublicKey::from_slice(&pk.serialize()).unwrap()
+	secpm::PublicKey::from_slice(&pk.serialize_uncompressed()).unwrap()
 }
 
 pub fn pubkey_from(pk: secpm::PublicKey) -> PublicKey {
-	PublicKey::from_slice(&pk.serialize()).unwrap()
+	PublicKey::from_slice(&pk.serialize_uncompressed()).unwrap()
 }
 
 pub fn seckey_to(sk: SecretKey) -> secpm::SecretKey {
