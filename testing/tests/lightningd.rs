@@ -393,9 +393,6 @@ async fn bark_can_receive_lightning() {
 
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
 
-	// trigger a maintenance to claim the lightning receive
-	bark.maintain().await;
-
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
 
@@ -735,9 +732,6 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning() {
 	srv.wait_for_vtxopool().await;
 
 	bark.lightning_receive(invoice_recv_info.invoice.clone()).wait(10_000).await;
-
-	// trigger a maintenance to claim the lightning receive
-	bark.maintain().await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
