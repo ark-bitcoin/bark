@@ -38,6 +38,9 @@ pub enum LightningCommand {
 	#[command()]
 	Invoice {
 		amount: Amount,
+		/// Wait for the incoming payment to settle
+		#[arg(long)]
+		wait: bool,
 	},
 	/// get the status of an invoice
 	#[command()]
@@ -92,9 +95,12 @@ pub async fn execute_lightning_command(
 				bail!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address");
 			}
 		},
-		LightningCommand::Invoice { amount } => {
+		LightningCommand::Invoice { amount, wait } => {
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
+			if wait {
+				wallet.finish_lightning_receive(&invoice).await?;
+			}
 		},
 		LightningCommand::Status { filter, preimage } => {
 			let payment_hash = match (filter, preimage) {
