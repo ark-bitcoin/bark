@@ -9,7 +9,8 @@ use tokio_postgres::Row;
 use ark::VtxoId;
 use bitcoin_ext::BlockHeight;
 
-use crate::database::{Db, NOARG};
+use crate::database::{Db, OwnedRowStream, NOARG};
+
 
 pub struct PoolVtxo {
 	pub vtxo: VtxoId,
@@ -96,9 +97,10 @@ impl Db {
 			"SELECT vtxo_id, expiry_height, amount, depth FROM vtxo_pool WHERE spent_at IS NULL",
 		).await?;
 
-		Ok(conn.query_raw(&stmt, NOARG).await?
-			.err_into::<anyhow::Error>()
-			.and_then(|row| async { PoolVtxo::try_from(row) })
-		)
+		let rows = conn.query_raw(&stmt, NOARG).await?;
+		let stream = OwnedRowStream::new(conn, rows);
+		Ok(stream.err_into::<anyhow::Error>().and_then(
+			|row| futures::future::ready(PoolVtxo::try_from(row))
+		))
 	}
 }
