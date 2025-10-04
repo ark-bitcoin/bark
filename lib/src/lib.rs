@@ -267,9 +267,9 @@ pub mod scripts {
 		let agg_nonce = musig::nonce_agg(&[&signer.1, &other.1]);
 		let agg_pk = musig::tweaked_key_agg([signer.0, other.0], tweak.to_byte_array()).0;
 
-		let session = musig::Session::new(&musig::SECP, &agg_pk, agg_nonce, &sighash.to_byte_array());
+		let session = musig::Session::new(&agg_pk, agg_nonce, &sighash.to_byte_array());
 		session.partial_verify(
-			&musig::SECP, &agg_pk, partial_signature, signer.1, musig::pubkey_to(signer.0),
+			&agg_pk, partial_signature, signer.1, musig::pubkey_to(signer.0),
 		)
 	}
 }

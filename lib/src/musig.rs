@@ -18,19 +18,19 @@ pub fn xonly_from(pk: secpm::XOnlyPublicKey) -> XOnlyPublicKey {
 }
 
 pub fn pubkey_to(pk: PublicKey) -> secpm::PublicKey {
-	secpm::PublicKey::from_slice(&pk.serialize()).unwrap()
+	secpm::PublicKey::from_slice(&pk.serialize_uncompressed()).unwrap()
 }
 
 pub fn pubkey_from(pk: secpm::PublicKey) -> PublicKey {
-	PublicKey::from_slice(&pk.serialize()).unwrap()
+	PublicKey::from_slice(&pk.serialize_uncompressed()).unwrap()
 }
 
 pub fn seckey_to(sk: SecretKey) -> secpm::SecretKey {
-	secpm::SecretKey::from_byte_array(sk.secret_bytes()).unwrap()
+	secpm::SecretKey::from_secret_bytes(sk.secret_bytes()).unwrap()
 }
 
 pub fn keypair_to(kp: &Keypair) -> secpm::Keypair {
-	secpm::Keypair::from_seckey_byte_array(&SECP, kp.secret_bytes()).unwrap()
+	secpm::Keypair::from_seckey_byte_array(kp.secret_bytes()).unwrap()
 }
 
 pub fn keypair_from(kp: &secpm::Keypair) -> Keypair {
@@ -48,7 +48,7 @@ pub fn key_agg<'a>(keys: impl IntoIterator<Item = PublicKey>) -> KeyAggCache {
 	let mut keys = keys.into_iter().map(|k| pubkey_to(k)).collect::<Vec<_>>();
 	keys.sort_by_key(|k| k.serialize());
 	let keys = keys.iter().collect::<Vec<_>>(); //TODO(stevenroose) remove when musig pr merged
-	KeyAggCache::new(&SECP, &keys)
+	KeyAggCache::new(&keys)
 }
 
 /// Returns the key agg cache with the tweak applied and the resulting pubkey
@@ -62,9 +62,9 @@ pub fn tweaked_key_agg<'a>(
 	let mut keys = keys.into_iter().map(|k| pubkey_to(k)).collect::<Vec<_>>();
 	keys.sort_by_key(|k| k.serialize());
 	let keys = keys.iter().collect::<Vec<_>>(); //TODO(stevenroose) remove when musig pr merged
-	let mut ret = KeyAggCache::new(&SECP, &keys);
+	let mut ret = KeyAggCache::new(&keys);
 	let tweak_scalar = secpm::Scalar::from_be_bytes(tweak).unwrap();
-	let pk = ret.pubkey_xonly_tweak_add(&SECP, &tweak_scalar).unwrap();
+	let pk = ret.pubkey_xonly_tweak_add(&tweak_scalar).unwrap();
 	(ret, pubkey_from(pk))
 }
 
@@ -78,7 +78,6 @@ pub fn combine_keys(keys: impl IntoIterator<Item = PublicKey>) -> XOnlyPublicKey
 pub fn nonce_pair(key: &Keypair) -> (SecretNonce, PublicNonce) {
 	let kp = keypair_to(key);
 	secpm::musig::new_nonce_pair(
-		&SECP,
 		SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
 		None,
 		Some(kp.secret_key()),
@@ -91,7 +90,6 @@ pub fn nonce_pair(key: &Keypair) -> (SecretNonce, PublicNonce) {
 pub fn nonce_pair_with_msg(key: &Keypair, msg: &[u8; 32]) -> (SecretNonce, PublicNonce) {
 	let kp = keypair_to(key);
 	secpm::musig::new_nonce_pair(
-		&SECP,
 		SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
 		None,
 		Some(kp.secret_key()),
@@ -102,7 +100,7 @@ pub fn nonce_pair_with_msg(key: &Keypair, msg: &[u8; 32]) -> (SecretNonce, Publi
 }
 
 pub fn nonce_agg(pub_nonces: &[&PublicNonce]) -> AggregatedNonce {
-	AggregatedNonce::new(&SECP, pub_nonces)
+	AggregatedNonce::new(pub_nonces)
 }
 
 pub fn combine_partial_signatures(
@@ -118,7 +116,7 @@ pub fn combine_partial_signatures(
 		key_agg(pubkeys)
 	};
 
-	let session = Session::new(&SECP, &agg, agg_nonce, &sighash);
+	let session = Session::new(&agg, agg_nonce, &sighash);
 	sig_from(session.partial_sig_agg(&sigs).assume_valid())
 }
 
@@ -137,8 +135,8 @@ pub fn partial_sign(
 		key_agg(pubkeys)
 	};
 
-	let session = Session::new(&SECP, &agg, agg_nonce, &sighash);
-	let my_sig = session.partial_sign(&SECP, sec_nonce, &keypair_to(&key), &agg);
+	let session = Session::new(&agg, agg_nonce, &sighash);
+	let my_sig = session.partial_sign(sec_nonce, &keypair_to(&key), &agg);
 	let final_sig = if let Some(others) = other_sigs {
 		let mut sigs = Vec::with_capacity(others.len() + 1);
 		sigs.extend_from_slice(others);
@@ -169,7 +167,6 @@ pub fn deterministic_partial_sign(
 	};
 
 	let (sec_nonce, pub_nonce) = secpm::musig::new_nonce_pair(
-		&SECP,
 		SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
 		Some(&agg),
 		Some(seckey_to(my_key.secret_key())),
@@ -179,9 +176,9 @@ pub fn deterministic_partial_sign(
 	);
 
 	let nonces = their_nonces.into_iter().map(|n| *n).chain(Some(&pub_nonce)).collect::<Vec<_>>();
-	let agg_nonce = AggregatedNonce::new(&SECP, &nonces);
-	let session = Session::new(&SECP, &agg, agg_nonce, &msg);
-	let sig = session.partial_sign(&SECP, sec_nonce, &keypair_to(my_key), &agg);
+	let agg_nonce = AggregatedNonce::new(&nonces);
+	let session = Session::new(&agg, agg_nonce, &msg);
+	let sig = session.partial_sign(sec_nonce, &keypair_to(my_key), &agg);
 	(pub_nonce, sig)
 }
 

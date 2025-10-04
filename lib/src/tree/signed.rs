@@ -417,19 +417,12 @@ impl UnsignedVtxoTree {
 		let taptweak = self.spec.cosign_taproot(self.cosign_agg_pks[node.idx()]).tap_tweak();
 		let key_agg = musig::tweaked_key_agg(cosign_pubkeys, taptweak.to_byte_array()).0;
 		let session = musig::Session::new(
-			&musig::SECP,
 			&key_agg,
 			*agg_nonces.get(node.idx()).ok_or(CosignSignatureError::NotEnoughNonces)?,
 			&sighash.to_byte_array(),
 		);
-		let success = session.partial_verify(
-			&musig::SECP,
-			&key_agg,
-			&part_sig,
-			&pub_nonce,
-			musig::pubkey_to(pk),
-		);
-		if !success {
+		let ok = session.partial_verify(&key_agg, &part_sig, &pub_nonce, musig::pubkey_to(pk));
+		if !ok {
 			return Err(CosignSignatureError::invalid_sig(pk));
 		}
 		Ok(())
@@ -1040,9 +1033,9 @@ pub mod builder {
 				musig::nonce_pair_with_msg(&server_cosign_key, &sh.to_byte_array())
 			}).collect::<(Vec<_>, Vec<_>)>();
 
-			let agg_nonces = self.user_pub_nonces().iter().zip(&pub_nonces).map(|(u, s)| {
-				musig::AggregatedNonce::new(&*musig::SECP, &[u, s])
-			}).collect::<Vec<_>>();
+			let agg_nonces = self.user_pub_nonces().iter().zip(&pub_nonces)
+				.map(|(u, s)| musig::AggregatedNonce::new(&[u, s]))
+				.collect::<Vec<_>>();
 
 			let sigs = unsigned_tree.cosign_tree(&agg_nonces, &server_cosign_key, sec_nonces);
 
@@ -1063,7 +1056,7 @@ pub mod builder {
 
 			let agg_nonces = self.user_pub_nonces().iter()
 				.zip(&server_cosign.pub_nonces)
-				.map(|(u, s)| musig::AggregatedNonce::new(&*musig::SECP, &[u, s]))
+				.map(|(u, s)| musig::AggregatedNonce::new(&[u, s]))
 				.collect::<Vec<_>>();
 
 			unsigned_tree.verify_global_cosign_partial_sigs(
@@ -1086,9 +1079,9 @@ pub mod builder {
 				});
 			}
 
-			let agg_nonces = self.user_pub_nonces().iter().zip(&server_cosign.pub_nonces).map(|(u, s)| {
-				musig::AggregatedNonce::new(&*musig::SECP, &[u, s])
-			}).collect::<Vec<_>>();
+			let agg_nonces = self.user_pub_nonces().iter().zip(&server_cosign.pub_nonces)
+				.map(|(u, s)| musig::AggregatedNonce::new(&[u, s]))
+				.collect::<Vec<_>>();
 
 			let unsigned_tree = self.tree.into_unsigned_tree().expect("state invariant");
 			let sec_nonces = self.user_sec_nonces.expect("state invariant");

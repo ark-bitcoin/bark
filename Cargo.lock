@@ -129,7 +129,7 @@ dependencies = [
  "lightning",
  "lightning-invoice",
  "rand 0.9.2",
- "secp256k1 0.31.1",
+ "secp256k1-preview-xg2904r5rj",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -592,7 +592,7 @@ dependencies = [
  "bitcoin_hashes 0.14.0",
  "hex-conservative 0.2.1",
  "hex_lit",
- "secp256k1 0.29.1",
+ "secp256k1",
  "serde",
 ]
 
@@ -2985,18 +2985,18 @@ checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
  "bitcoin_hashes 0.14.0",
  "rand 0.8.5",
- "secp256k1-sys 0.10.1",
+ "secp256k1-sys",
  "serde",
 ]
 
 [[package]]
-name = "secp256k1"
-version = "0.31.1"
-source = "git+https://github.com/rust-bitcoin/rust-secp256k1.git?rev=72822e16b1433337baceb0abb5134cc24a062adb#72822e16b1433337baceb0abb5134cc24a062adb"
+name = "secp256k1-preview-xg2904r5rj"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a163ded11c1cb31197a6829e39f442c283ed8374d11bea8106bebbdb1e8c9ba"
 dependencies = [
- "bitcoin_hashes 0.14.0",
  "rand 0.9.2",
- "secp256k1-sys 0.11.0",
+ "secp256k1-sys-preview-xg2904r5rj",
  "serde",
 ]
 
@@ -3010,9 +3010,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "secp256k1-sys"
-version = "0.11.0"
-source = "git+https://github.com/rust-bitcoin/rust-secp256k1.git?rev=72822e16b1433337baceb0abb5134cc24a062adb#72822e16b1433337baceb0abb5134cc24a062adb"
+name = "secp256k1-sys-preview-xg2904r5rj"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7795930a0de44bc53e035633cdd4b7c4c9b46d48f2c9b695a7ce06e675596721"
 dependencies = [
  "cc",
 ]

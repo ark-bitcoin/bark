@@ -183,7 +183,6 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		);
 		//TODO(stevenroose) consider trying to move this to musig module
 		let (sec_nonce, pub_nonce) = agg.nonce_gen(
-			&musig::SECP,
 			musig::SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
 			musig::pubkey_to(self.user_pubkey),
 			&reveal_sighash.to_byte_array(),
