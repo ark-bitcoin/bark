@@ -461,7 +461,8 @@ impl Lightningd {
 			recurrence_paywindow: None,
 			recurrence_limit: None,
 			single_use: None,
-			recurrence_start_any_period: None,
+			proportional_amount: None,
+			optional_recurrence: None,
 		}).await.unwrap().into_inner().bolt12
 	}
 

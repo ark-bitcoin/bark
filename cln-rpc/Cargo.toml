@@ -1,6 +1,6 @@
 [package]
 name = "bark-cln-rpc"
-version = "0.0.0"
+version = "0.1.0+cln.25.09-hold.0.3.2.patched"
 edition = "2024"
 
 [lib]

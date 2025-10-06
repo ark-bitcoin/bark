@@ -94,6 +94,7 @@ message Htlc {
   uint64 channel_id = 4;
   uint64 msat = 5;
   uint64 created_at = 6;
+  optional uint64 cltv_expiry = 7;
 }
 
 message Invoice {
