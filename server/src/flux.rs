@@ -28,7 +28,7 @@ impl VtxosInFlux {
 	}
 
 	/// Create a new [VtxoFluxLock] without any vtxos locked.
-	pub fn empty_lock(&self) -> VtxoFluxLock {
+	pub fn empty_lock(&self) -> VtxoFluxLock<'_> {
 		VtxoFluxLock {
 			inner: VtxoFluxLockInner {
 				flux: self,
@@ -43,7 +43,7 @@ impl VtxosInFlux {
 	pub fn lock<V>(
 		&self,
 		ids: impl IntoIterator<Item = V> + Clone,
-	) -> Result<VtxoFluxLock, VtxoId>
+	) -> Result<VtxoFluxLock<'_>, VtxoId>
 	where
 		V: Borrow<VtxoId>,
 	{
