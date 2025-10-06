@@ -16,17 +16,18 @@ steps:
   - name: check-commits
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
+      - sudo chown -R nixuser:nixbld /woodpecker
       - git log --oneline | head -n 1
-      - just check-commits
+      - nix develop .#default --command bash -c "just check-commits"
       - git log --oneline | head -n 1
 
   - name: test-unit
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: check-commits
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     environment:
       RUST_TEST_THREADS: 1
     commands:
@@ -40,7 +41,7 @@ steps:
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: check-commits
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     environment:
       RUST_TEST_THREADS: 1
     commands:
@@ -55,32 +56,30 @@ steps:
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: build
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
     environment:
       BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
       LIGHTNINGD_EXEC: /lightning/25.02.2/bin/lightningd
       TEST_DIRECTORY: ./test/btc29-codecov
-      TEST_POSTGRES_HOST: localhost
       RUST_TEST_THREADS: 1
       HODL_INVOICE_PLUGIN: /hold/target/debug/hold
     commands:
       - git log --oneline | head -n 1
       - export CAPTAIND_EXEC=$CI_WORKSPACE/target/debug/captaind
       - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
-      - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration-codecov
 
   - name: code-coverage
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: test-integration-btc29.1
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
     commands:
-      - just codecov-report
+      - nix develop .#default --command bash -c "just codecov-report"
       - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
       - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
       - echo "Coverage -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"

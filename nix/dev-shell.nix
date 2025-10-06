@@ -1,8 +1,7 @@
 { pkgs, masterPkgs, lib, rustToolchain, rustBuildToolchain }:
 let
 	bitcoinVersion = "29.1";
-	lightningVersion = "25.02.2";
-	postgresVersion = "16.9";
+	lightningVersion = "25.09";
 	esploraElectrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 	mempoolElectrsRevision = "v3.2.0";
 
@@ -80,7 +79,7 @@ let
 		version = lightningVersion;
 		src = pkgs.fetchurl {
 			url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-			hash = "sha256-2wp9o1paWJWfxIvm9BDnsKX3GDUXKaPkpB89cwb6Oj8=";
+			hash = "sha256-qX9EZHuDtEcYCU8YOMbHTo3JDAAJ8nc6N7F/+AAEpn4=";
 		};
 		makeFlags = [ "VERSION=v${lightningVersion}" ];
 		preInstall = ''
@@ -227,7 +226,7 @@ in pkgs.mkShell {
 
 	LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 	RUSTDOCS_STDLIB = "${rustToolchain.rust-docs}/share/doc/rust/html/std/index.html";
-	LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.gcc.cc.lib ];
+	LD_LIBRARY_PATH = "${pkgs.gcc.cc.lib}/lib:${pkgs.sqlite}/lib:${pkgs.postgresql.lib}/lib:${pkgs.lib.makeLibraryPath [ pkgs.gcc.cc.lib pkgs.sqlite pkgs.postgresql.lib ]}";
 
 	POSTGRES_BINS = "${postgresql}/bin";
 	BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
