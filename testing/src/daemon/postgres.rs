@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use log::{debug, error, trace};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio_postgres::{Client, Config, NoTls};
 
@@ -158,7 +159,10 @@ impl DaemonHelper for PostgresHelper {
 		fs::create_dir_all(&self.pgdata()).await.expect("failed to create pgdata dir");
 
 		let output = Command::new(Postgres::initdb())
-			.args(["-D", &self.pgdata().display().to_string()])
+			.args(["-D", &self.pgdata().display().to_string(),
+				"--encoding=UTF8",
+				"--locale=C.UTF-8",
+			])
 			.output()
 			.await
 			.expect("cannot init postgres");
@@ -169,6 +173,15 @@ impl DaemonHelper for PostgresHelper {
 			error!("stderr: {}", stderr);
 			bail!("Failed to init postgres db: {:?}", output);
 		}
+
+		let conf_path = self.pgdata().join("postgresql.conf");
+		let shared_buffers = "\n# Custom shared memory settings\nshared_buffers = 256MB\n";
+		fs::OpenOptions::new()
+			.append(true)
+			.open(&conf_path)
+			.await?
+			.write_all(shared_buffers.as_bytes())
+			.await?;
 
 		Ok(())
 	}

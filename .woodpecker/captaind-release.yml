@@ -14,8 +14,9 @@ steps:
     when:
       - event: tag
         ref: refs/tags/server-*
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
+      - sudo chown -R nixuser:nixbld /woodpecker
       - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
       - cat VERSION
 
@@ -24,7 +25,7 @@ steps:
       - event: tag
         ref: refs/tags/server-*
     depends_on: parse-versions
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
     commands:
@@ -95,7 +96,7 @@ steps:
       - event: tag
         ref: refs/tags/server-*
     depends_on: build-captaind
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
       - cat VERSION
       - cd ./target

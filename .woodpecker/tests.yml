@@ -14,15 +14,16 @@ clone:
 
 steps:
   - name: check-commits
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
+      - sudo chown -R nixuser:nixbld /woodpecker
       - git log --oneline | head -n 1
-      - just check-commits
+      - nix develop .#default --command bash -c "just check-commits"
       - git log --oneline | head -n 1
 
   - name: build
     depends_on: check-commits
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
     commands:
@@ -37,17 +38,17 @@ steps:
 
   - name: compare-static-files
     depends_on: check-commits
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
       - >
         nix develop .#default --command bash -c "
-          chmod 777 -R .
-          cargo run   --example dump-sqlite-schema  > bark/schema.sql
-          cargo run   --example dump-default-config > server/config.default.toml
-          cargo build --example dump-server-postgres-schema
-          sudo -E -u postgres ./target/debug/examples/dump-server-postgres-schema > server/schema.sql
+          cargo run --example dump-sqlite-schema          > bark/schema.sql
+          cargo run --example dump-default-config         > server/config.default.toml
+          cargo run --example dump-server-postgres-schema > server/schema.sql
           sed -i '/^-- Dumped by .*$/d'   server/schema.sql
           sed -i '/^-- Dumped from .*$/d' server/schema.sql
+          sed -i '/^.restrict.*$/d'       server/schema.sql
+          sed -i '/^.unrestrict.*$/d'     server/schema.sql
           chmod 644 bark/schema.sql
           chmod 644 server/config.default.toml
           chmod 644 server/schema.sql
@@ -58,7 +59,7 @@ steps:
 
   - name: test-unit
     depends_on: build
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
       - git log --oneline | head -n 1
       - >
@@ -67,8 +68,8 @@ steps:
         "
 
   - name: use-bark-as-dependency
-    depends_on: build
-    image: registry.2nd.dev/build:21
+    depends_on: test-unit
+    image: registry.2nd.dev/build:23
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -80,8 +81,8 @@ steps:
         "
 
   - name: bark-as-libs
-    depends_on: build
-    image: registry.2nd.dev/build:21
+    depends_on: test-unit
+    image: registry.2nd.dev/build:23
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -94,53 +95,53 @@ steps:
     when:
       - event: push
         branch: master
-    depends_on: build
-    image: registry.2nd.dev/build:21
+    depends_on: bark-as-libs
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
+      - tmpfs:/dev/shm:rw
     environment:
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
-      TEST_POSTGRES_HOST: localhost
-      RUST_TEST_THREADS: 4
+      RUST_TEST_THREADS: 2
+    privileged: true
     commands:
       - git log --oneline | head -n 1
       - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
-      - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
 
   - name: test-integration-mempool
-    depends_on: build
-    image: registry.2nd.dev/build:21
+    depends_on: bark-as-libs
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
+      - tmpfs:/dev/shm:rw
     environment:
       CHAIN_SOURCE: mempool
       TEST_DIRECTORY: ./test/mempool
-      TEST_POSTGRES_HOST: localhost
-      RUST_TEST_THREADS: 4
+      RUST_TEST_THREADS: 2
+    privileged: true
     commands:
       - git log --oneline | head -n 1
       - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
-      - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
 
   - name: test-integration-btc29.1
-    depends_on: build
-    image: registry.2nd.dev/build:21
+    depends_on: bark-as-libs
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
+      - tmpfs:/dev/shm:rw
     environment:
       TEST_DIRECTORY: ./test/btc29
-      TEST_POSTGRES_HOST: localhost
-      RUST_TEST_THREADS: 4
+      RUST_TEST_THREADS: 2
+    privileged: true
     commands:
       - git log --oneline | head -n 1
       - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
-      - service postgresql start
       - bash ./contrib/ci-run-test.sh test-integration
 
 depends_on:

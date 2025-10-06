@@ -14,10 +14,11 @@ clone:
 
 steps:
   - name: tar-and-print-test-data
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
     commands:
+      - sudo chown -R nixuser:nixbld /woodpecker
       - tar -czf "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
       - mv "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
       - echo "Test data tar.gz     -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
@@ -26,7 +27,7 @@ steps:
   - name: tar-and-print-codecov-data
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
     commands:
@@ -39,11 +40,11 @@ steps:
     when:
       - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://codeberg.org/ark-bitcoin/bark"'
     failure: ignore
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     volumes:
       - /data:/host/data
     commands:
-      - just rustdocs
+      - nix develop .#default --command bash -c "just rustdocs"
       - cp -r rustdocs /host/data/
       - bash contrib/generate-index.sh /host/data/rustdocs/doc
       - echo "rustdocs -> https://rustdocs.2nd.dev/master/"
@@ -51,14 +52,14 @@ steps:
   - name: check-versions
     when:
       - event: tag
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
       - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
 
   - name: check-codeberg-release
     when:
       - event: tag
-    image: registry.2nd.dev/build:21
+    image: registry.2nd.dev/build:23
     commands:
       - bash ./contrib/check-codeberg-release.sh "${CI_COMMIT_TAG}"
 
