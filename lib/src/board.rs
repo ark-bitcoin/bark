@@ -358,7 +358,7 @@ mod test {
 	use bitcoin::{absolute, transaction, Amount};
 
 	use crate::encode::test::encoding_roundtrip;
-	use crate::vtxo::Validation;
+	use crate::vtxo::ValidationResult;
 
 	use super::*;
 
@@ -405,11 +405,6 @@ mod test {
 
 		encoding_roundtrip(&vtxo);
 
-		match vtxo.validate(&funding_tx).unwrap() {
-			Validation::Trusted { cosign_pubkey } => {
-				assert_eq!(cosign_pubkey, user_key.public_key());
-			},
-			Validation::Arkoor => panic!("should be trusted"),
-		}
+		assert_eq!(vtxo.validate(&funding_tx).unwrap(), ValidationResult::Cosigned);
 	}
 }

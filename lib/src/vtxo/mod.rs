@@ -55,7 +55,7 @@
 
 
 mod validation;
-pub use self::validation::{Validation, VtxoValidationError};
+pub use self::validation::{ValidationResult, VtxoValidationError};
 
 use std::collections::HashSet;
 use std::iter::FusedIterator;
@@ -952,7 +952,7 @@ impl Vtxo {
 	pub fn validate(
 		&self,
 		chain_anchor_tx: &Transaction,
-	) -> Result<Validation, VtxoValidationError> {
+	) -> Result<ValidationResult, VtxoValidationError> {
 		self::validation::validate(&self, chain_anchor_tx)
 	}
 }

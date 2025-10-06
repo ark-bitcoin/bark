@@ -2,11 +2,11 @@
 use std::borrow::Cow;
 
 use bitcoin::{sighash, Amount, OutPoint, Transaction, TxOut};
-use bitcoin::secp256k1::PublicKey;
+
 use bitcoin_ext::TxOutExt;
 
 use crate::SECP;
-use crate::vtxo::{Vtxo, GenesisTransition};
+use crate::vtxo::{GenesisTransition, Vtxo, VtxoPolicyType};
 
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -18,15 +18,8 @@ pub enum VtxoValidationError {
 	IncorrectChainAnchor {
 		expected: TxOut,
 	},
-	#[error("Cosigned genesis transitions don't have a common pubkey (idx={genesis_item_idx}): \
-		cosign_pubkey={cosign_pubkey}")]
-	InconsistentCosignPubkeys {
-		/// Our determined cosign pubkey.
-		/// (This is the pubkey that we found on the last Cosigned item.)
-		cosign_pubkey: PublicKey,
-		/// The index of the genesis item that is missing our determined cosign pubkey.
-		genesis_item_idx: usize,
-	},
+	#[error("Cosigned genesis transitions don't have any common pubkeys")]
+	InconsistentCosignPubkeys,
 	#[error("error verifying one of the genesis transitions (idx={genesis_item_idx}): {error}")]
 	GenesisTransition {
 		error: &'static str,
@@ -38,6 +31,11 @@ pub enum VtxoValidationError {
 		genesis_item_idx: usize,
 		other_output_idx: usize,
 	},
+	#[error("invalid arkoor policy of type {policy}: {msg}")]
+	InvalidArkoorPolicy {
+		policy: VtxoPolicyType,
+		msg: &'static str,
+	}
 }
 
 impl VtxoValidationError {
@@ -47,11 +45,17 @@ impl VtxoValidationError {
 	}
 }
 
-pub enum Validation {
-	Trusted {
-		cosign_pubkey: PublicKey,
-	},
-	Arkoor,
+/// Result of VTXO validation
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ValidationResult {
+	/// The VTXO is safe as long as one of the given cosign pubkeys
+	/// is trusted to not create a double spend.
+	Cosigned,
+	/// The VTXO is safe as long as
+	/// - one of the cosign pubkeys does not create a double spend, and
+	/// - none of the arkoor pubkeys colludes with the server to create a
+	///   double spend.
+	CosignedArkoor,
 }
 
 
@@ -126,30 +130,12 @@ fn check_transitions_cosigned_then_arkoor<'a>(
 	Ok(())
 }
 
-/// The last Cosigned transition should have only two pubkey: user and server.
-/// This holds for rounds and for board (where it's the only cosigned transition).
-#[inline]
-fn determine_cosign_pubkey<'a>(
-	transitions: impl Iterator<Item = &'a GenesisTransition> + DoubleEndedIterator,
-) -> Result<PublicKey, VtxoValidationError> {
-	// The last Cosigned transition should have only two pubkey: user and server.
-	// This holds for rounds and for board (where it's the only cosigned transition).
-	let last_cosign_pubkeys = transitions.rev().find_map(|t| match t {
-		GenesisTransition::Cosigned { pubkeys, .. } => Some(pubkeys),
-		GenesisTransition::Arkoor { .. } => None,
-	}).unwrap();
-	if last_cosign_pubkeys.len() != 2 {
-		return Err(VtxoValidationError::Invalid("invalid last cosign genesis"));
-	}
-	Ok(last_cosign_pubkeys.first().copied().expect("have more than one transition"))
-}
-
 /// Validate that the [Vtxo] is valid and can be constructed from its
 /// chain anchor.
 pub fn validate(
 	vtxo: &Vtxo,
 	chain_anchor_tx: &Transaction,
-) -> Result<Validation, VtxoValidationError> {
+) -> Result<ValidationResult, VtxoValidationError> {
 	// We start by validating the chain anchor output.
 	let anchor_txout = chain_anchor_tx.output.get(vtxo.chain_anchor().vout as usize)
 		.ok_or(VtxoValidationError::Invalid("chain anchor vout out of range"))?;
@@ -173,18 +159,26 @@ pub fn validate(
 	}
 	check_transitions_cosigned_then_arkoor(transitions.clone())?;
 
-	let cosign_pubkey = determine_cosign_pubkey(transitions.clone())?;
+	let cosign_pubkeys = vtxo.round_cosign_pubkeys();
+	if cosign_pubkeys.is_empty() {
+		return Err(VtxoValidationError::InconsistentCosignPubkeys);
+	}
 
+	let mut has_arkoor = false;
 	let mut prev = (Cow::Borrowed(chain_anchor_tx), vtxo.chain_anchor().vout as usize, onchain_amount);
 	for (idx, item) in vtxo.genesis.iter().enumerate() {
-		// We need to check that for all Cosigned transitions, the cosign pubkey is included.
-		if let GenesisTransition::Cosigned { ref pubkeys, .. } = item.transition {
-			if !pubkeys.contains(&cosign_pubkey) {
-				return Err(VtxoValidationError::InconsistentCosignPubkeys {
-					cosign_pubkey: cosign_pubkey,
-					genesis_item_idx: idx,
-				});
-			}
+		// transition-dependent validation
+		match &item.transition {
+			GenesisTransition::Cosigned { .. } => {},
+			GenesisTransition::Arkoor { policy, .. } => {
+				has_arkoor = true;
+				if policy.arkoor_pubkey().is_none() {
+					return Err(VtxoValidationError::InvalidArkoorPolicy {
+						policy: policy.policy_type(),
+						msg: "arkoor transition without arkoor pubkey",
+					});
+				}
+			},
 		}
 
 		// All outputs have to be standard otherwise we can't relay.
@@ -202,11 +196,7 @@ pub fn validate(
 		prev = (Cow::Owned(next_tx), item.output_idx as usize, next_amount);
 	}
 
-	Ok(if transitions.clone().all(|t| matches!(t, GenesisTransition::Cosigned { .. })) {
-		Validation::Trusted { cosign_pubkey }
-	} else {
-		Validation::Arkoor
-	})
+	Ok(if has_arkoor { ValidationResult::CosignedArkoor } else { ValidationResult::Cosigned })
 }
 
 #[cfg(test)]
