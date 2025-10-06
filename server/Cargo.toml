@@ -1,6 +1,6 @@
 [package]
 name = "bark-server"
-version = "0.0.0-alpha"
+version = "0.1.0-beta.1"
 license = "CC0-1.0"
 authors = ["Steven Roose <steven@roose.io>"]
 edition = "2024"
