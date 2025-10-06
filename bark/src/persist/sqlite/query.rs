@@ -885,14 +885,14 @@ pub fn get_exit_child_tx(
 mod test {
 	use ark::vtxo::test::VTXO_VECTORS;
 
-	use crate::persist::sqlite::test::in_memory;
+	use crate::persist::sqlite::helpers::in_memory_db;
 	use crate::persist::sqlite::migrations::MigrationContext;
 
 	use super::*;
 
 	#[test]
 	fn test_update_vtxo_state() {
-		let (_, mut conn) = in_memory();
+		let (_, mut conn) = in_memory_db();
 		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
 
 		let tx = conn.transaction().unwrap();

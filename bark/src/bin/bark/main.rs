@@ -711,7 +711,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = wallet.maintenance(&mut onchain).await {
+				if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -728,7 +728,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Vtxos { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = wallet.maintenance(&mut onchain).await {
+				if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -760,7 +760,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = wallet.maintenance(&mut onchain).await {
+				if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -828,7 +828,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = wallet.maintenance(&mut onchain).await {
+					if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
@@ -856,7 +856,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = wallet.maintenance(&mut onchain).await {
+					if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
@@ -892,7 +892,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = wallet.maintenance(&mut onchain).await {
+					if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
 						warn!("Sync error: {}", e)
 					}
 				}
@@ -920,7 +920,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			lightning::execute_lightning_command(cmd, &mut wallet).await?;
 		},
 		Command::Maintain => {
-			wallet.maintenance(&mut onchain).await?;
+			wallet.maintenance_with_onchain(&mut onchain).await?;
 		},
 	}
 	Ok(())
