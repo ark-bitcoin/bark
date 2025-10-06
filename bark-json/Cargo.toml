@@ -1,6 +1,6 @@
 [package]
 name = "bark-json"
-version = "0.0.0"
+version = "0.1.0-beta.1" # lock to bark-wallet version
 license = "CC0-1.0"
 authors = ["Steven Roose <steven@roose.io>"]
 description = "JSON definitions for the bark APIs"
