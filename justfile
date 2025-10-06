@@ -4,7 +4,8 @@ JUSTFILE_DIR := justfile_directory()
 export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
-DEFAULT_SERVER_CONFIG_PATH := "server/config.default.toml"
+DEFAULT_CAPTAIND_CONFIG_PATH := "server/captaind.default.toml"
+DEFAULT_WATCHMAND_CONFIG_PATH := "server/watchmand.default.toml"
 SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 
@@ -88,8 +89,9 @@ test: test-unit test-integration test-integration-esplora test-integration-mempo
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
 
-release-captaind:
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path server/Cargo.toml
+release-server:
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --locked \
+		--manifest-path server/Cargo.toml --target x86_64-unknown-linux-gnu
 
 release-bark:
 	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml
@@ -143,8 +145,10 @@ clippy LINT:
 
 
 default-server-config:
-	cargo run --example dump-default-config > {{DEFAULT_SERVER_CONFIG_PATH}}
-	echo "Default server config file written to {{DEFAULT_SERVER_CONFIG_PATH}}"
+	cargo run --example dump-default-captaind-config > {{DEFAULT_CAPTAIND_CONFIG_PATH}}
+	echo "Default captaind config file written to {{DEFAULT_CAPTAIND_CONFIG_PATH}}"
+	cargo run --example dump-default-watchmand-config > {{DEFAULT_WATCHMAND_CONFIG_PATH}}
+	echo "Default captaind config file written to {{DEFAULT_WATCHMAND_CONFIG_PATH}}"
 
 dump-server-sql-schema:
 	cargo run --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}

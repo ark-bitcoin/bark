@@ -137,10 +137,13 @@ impl Db {
 		)
 	}
 
+	/// Get all new rounds since either a given round or within a lifetime window
+	///
+	/// Returned round ids are ordered chronologically.
 	pub async fn get_fresh_round_ids(
 		&self,
 		last_round_id: Option<RoundId>,
-		vtxo_lifetime: Duration,
+		vtxo_lifetime: Option<Duration>,
 	) -> anyhow::Result<Vec<RoundId>> {
 		let conn = self.pool.get().await?;
 
@@ -149,16 +152,20 @@ impl Db {
 				SELECT funding_txid
 				FROM round
 				WHERE created_at > (SELECT created_at FROM round WHERE funding_txid = $1)
+				ORDER BY id
 			").await?;
 			conn.query(&stmt, &[&last.to_string()]).await?
-		} else {
-			let window = vtxo_lifetime + vtxo_lifetime / 2;
+		} else if let Some(lifetime) = vtxo_lifetime {
+			let window = lifetime + lifetime / 2;
 			let stmt = conn.prepare("
 				SELECT funding_txid
 				FROM round
 				WHERE created_at >= NOW() - ($1 * interval '1 second')
+				ORDER BY id
 			").await?;
 			conn.query(&stmt, &[&(window.as_secs() as f64)]).await?
+		} else {
+			bail!("need to provide either last_round_id or vtxo_lifetime argument");
 		};
 
 		Ok(rows
@@ -166,5 +173,13 @@ impl Db {
 			.map(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
 			.collect::<Vec<_>>()
 		)
+	}
+
+	pub async fn get_last_round_id(&self) -> anyhow::Result<Option<RoundId>> {
+		let conn = self.pool.get().await?;
+		let stmt = conn.prepare("SELECT funding_txid FROM round ORDER BY id DESC LIMIT 1").await?;
+		Ok(conn.query_opt(&stmt, &[]).await?.map(|r|
+			RoundId::from_str(&r.get::<_, &str>("funding_txid")).expect("corrupt db: funding txid")
+		))
 	}
 }

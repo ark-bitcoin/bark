@@ -339,7 +339,7 @@ async fn sweep_vtxos() {
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_millis(500000000);
 		cfg.vtxo_lifetime = vtxo_lifetime;
-		cfg.vtxo_sweeper.sweep_threshold = sat(100_000);
+		cfg.vtxo_sweeper.enabled_mut().unwrap().sweep_threshold = sat(100_000);
 	}).await;
 	ctx.fund_captaind(&srv, sat(1_000_000)).await;
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, sat(500_000)).await);

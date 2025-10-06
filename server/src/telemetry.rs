@@ -5,7 +5,7 @@ use std::time::Duration;
 use ark::rounds::RoundSeq;
 use bdk_wallet::Balance;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::Amount;
+use bitcoin::{Amount, Network};
 use bitcoin_ext::BlockHeight;
 use opentelemetry::global::BoxedSpan;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
@@ -23,19 +23,14 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
-use crate::Config;
-use crate::ln::cln::ClnNodeStateKind;
 use crate::database::ln::LightningPaymentStatus;
+use crate::ln::cln::ClnNodeStateKind;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
-
-pub const TRACER_CAPTAIND: &str = "captaind";
 
 pub const TRACE_RUN_ROUND: &str = "round";
 pub const TRACE_RUN_ROUND_EMPTY: &str = "round_empty";
 pub const TRACE_RUN_ROUND_POPULATED: &str = "round_populated";
-
-pub const METER_CAPTAIND: &str = "captaind";
 
 pub const ATTRIBUTE_WORKER: &str = "worker";
 pub const ATTRIBUTE_STATUS: &str = "status";
@@ -53,6 +48,31 @@ pub const ATTRIBUTE_ATTEMPT_SEQ: &str = "attempt_seq";
 pub const ATTRIBUTE_ROUND_STEP: &str = "round_step";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 
+
+pub trait MetricsService {
+	const NAME: &'static str;
+	const TRACER: &'static str;
+	const METER: &'static str;
+}
+
+/// [MetricsService] for captaind
+pub struct Captaind;
+
+impl MetricsService for Captaind {
+	const NAME: &str = "captaind";
+	const TRACER: &str = "captaind";
+	const METER: &str = "captaind";
+}
+
+/// [MetricsService] for watchmand
+pub struct Watchmand;
+
+impl MetricsService for Watchmand {
+	const NAME: &str = "watchmand";
+	const TRACER: &str = "watchmand";
+	const METER: &str = "watchmand";
+}
+
 pub enum RoundStep {
 	Attempt(Instant),
 	ReceivePayments(Instant),
@@ -68,7 +88,6 @@ pub enum RoundStep {
 }
 
 impl RoundStep {
-
 	// When changing this also change `get_all`
 	pub fn as_str(&self) -> &'static str {
 		match self {
@@ -135,10 +154,17 @@ static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
 /// Initialize open-telemetry.
 ///
 /// MUST be called (only once) before registering or updating metrics.
-pub fn init_telemetry(config: &Config, pubkey: PublicKey) {
-	if config.otel_collector_endpoint.is_some() {
-		TELEMETRY.set(Metrics::init(config, pubkey)).expect("Telemetry already initialized");
-	}
+pub fn init_telemetry<S: MetricsService>(
+	endpoint: &str,
+	tracing_sampler: Option<f64>,
+	network: Network,
+	round_interval: Duration,
+	max_vtxo_amount: Option<Amount>,
+	server_pubkey: PublicKey,
+) {
+	TELEMETRY.set(Metrics::init::<S>(
+		endpoint, tracing_sampler, network, round_interval, max_vtxo_amount, server_pubkey,
+	)).expect("Telemetry already initialized");
 }
 
 #[derive(Debug)]
@@ -172,34 +198,46 @@ struct Metrics {
 }
 
 impl Metrics {
-	fn init(config: &Config, pubkey: PublicKey) -> Self {
-		let endpoint = config.otel_collector_endpoint.as_ref().unwrap();
-
+	fn init<S: MetricsService>(
+		endpoint: &str,
+		tracing_sampler: Option<f64>,
+		network: Network,
+		round_interval: Duration,
+		max_vtxo_amount: Option<Amount>,
+		server_pubkey: PublicKey,
+	) -> Self {
 		global::set_text_map_propagator(TraceContextPropagator::new());
 
 		let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
 			.with_tonic()
-			.with_endpoint(endpoint.clone())
+			.with_endpoint(endpoint)
 			.with_timeout(Duration::from_secs(10))
 			.with_compression(Compression::Gzip)
 			.build().unwrap();
 
 		let resource = Resource::builder()
-			.with_attribute(KeyValue::new(SERVICE_NAME, "captaind"))
+			.with_attribute(KeyValue::new(SERVICE_NAME, S::NAME))
 			.with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
-			.with_attribute(KeyValue::new("captaind.pubkey", pubkey.to_string()))
-			.with_attribute(KeyValue::new("captaind.network", config.network.to_string()))
-			.with_attribute(KeyValue::new("captaind.round_interval", config.round_interval.as_secs().to_string()))
-			.with_attribute(KeyValue::new("captaind.maximum_vtxo_amount",
-				config.max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
+			.with_attribute(KeyValue::new(
+				format!("{}.pubkey", S::NAME),
+				server_pubkey.to_string(),
+			))
+			.with_attribute(KeyValue::new(
+				format!("{}.network", S::NAME),
+				network.to_string(),
+			))
+			.with_attribute(KeyValue::new(
+				format!("{}.round_interval", S::NAME),
+				round_interval.as_secs().to_string(),
+			))
+			.with_attribute(KeyValue::new(
+				format!("{}.maximum_vtxo_amount", S::NAME),
+				max_vtxo_amount.unwrap_or_else(|| Amount::ZERO).to_string(),
 			))
 			.build();
 
-		let tracer_sampler = if let Some(sampler) = config.otel_tracing_sampler {
-			Sampler::TraceIdRatioBased(sampler)
-		} else {
-			Sampler::AlwaysOff
-		};
+		let tracer_sampler = tracing_sampler.map(Sampler::TraceIdRatioBased)
+			.unwrap_or(Sampler::AlwaysOff);
 
 		let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
 			.with_batch_exporter(trace_exporter)
@@ -210,7 +248,7 @@ impl Metrics {
 			.with_resource(resource.clone())
 			.build();
 
-		let captaind_tracer = tracer_provider.tracer(TRACER_CAPTAIND);
+		let captaind_tracer = tracer_provider.tracer(S::TRACER);
 
 		global::set_tracer_provider(tracer_provider);
 
@@ -240,7 +278,7 @@ impl Metrics {
 			.build();
 		global::set_meter_provider(provider);
 
-		let meter = global::meter_provider().meter(METER_CAPTAIND);
+		let meter = global::meter_provider().meter(S::METER);
 		let spawn_counter = meter.i64_up_down_counter("spawn_counter").build();
 		let bark_version_counter = meter.u64_counter("bark_version_counter").build();
 		let protocol_version_counter = meter.u64_counter("protocol_version_counter").build();

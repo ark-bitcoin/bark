@@ -6,7 +6,7 @@ use anyhow::Context;
 use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
 use bitcoin::hashes::Hash;
 use bitcoin::key::Keypair;
-use log::{error, debug, info, trace, warn};
+use log::{error, debug, info, trace};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 
@@ -271,6 +271,7 @@ struct Process {
 	///
 	/// We lazily fill this when needed.
 	rounds: HashMap<RoundId, RoundState>,
+	last_checked_round_id: Option<RoundId>,
 
 	/// Ongoing claims.
 	claims: Vec<ClaimState>,
@@ -284,6 +285,50 @@ impl Process {
 		// TODO fetch claim states from database
 		self.claims = Vec::with_capacity(0);
 
+		self.last_checked_round_id = self.db.get_last_round_id().await?;
+		info!("Last round ID on startup: {:?}", self.last_checked_round_id);
+
+		Ok(())
+	}
+
+	async fn load_new_forfeits(&mut self) -> anyhow::Result<()> {
+		let last_id = if let Some(id) = self.last_checked_round_id {
+			id
+		} else {
+			// edge case on first run
+			if let Some(id) = self.db.get_last_round_id().await? {
+				info!("Found first round ID: {}", id);
+
+				// Since the later code only checks rounds *after* this one, we sync
+				// this one separately first
+				let new_vtxos = self.db.fetch_vtxos_forfeited_in(&[id]).await?;
+				trace!("Registering {} new forfeited vtxos", new_vtxos.len());
+				for vtxo in new_vtxos {
+					trace!("Registering forfeited vtxo {}", vtxo.id);
+					self.register_vtxo(&vtxo.vtxo).await?;
+				}
+
+				self.last_checked_round_id = Some(id);
+				id
+			} else {
+				return Ok(());
+			}
+		};
+
+		trace!("Asking for fresh rounds since {}", last_id);
+		let new_rounds = self.db.get_fresh_round_ids(Some(last_id), None).await?;
+		if new_rounds.is_empty() {
+			return Ok(());
+		}
+
+		let new_vtxos = self.db.fetch_vtxos_forfeited_in(&new_rounds).await?;
+		trace!("Registering {} new forfeited vtxos", new_vtxos.len());
+		for vtxo in new_vtxos {
+			trace!("Registering forfeited vtxo {}", vtxo.id);
+			self.register_vtxo(&vtxo.vtxo).await?;
+		}
+
+		self.last_checked_round_id = Some(*new_rounds.last().expect("checked not empty"));
 		Ok(())
 	}
 
@@ -433,22 +478,14 @@ impl Process {
 	) {
 		let _worker = rtmgr.spawn_critical("ForfeitWatcher");
 
-		// We keep these locally so that we can retry registering them
-		// if we encounter a db error.
-		let mut new_forfeits = Vec::<VtxoId>::new();
-
 		info!("Starting forfeit watcher");
 		let mut interval = tokio::time::interval(self.config.wake_interval);
 		interval.reset();
 		loop {
 			tokio::select! {
-				// Periodic interval for sweeping
 				_ = interval.tick() => {},
 				Some(ctrl) = ctrl_rx.recv() => {
 					match ctrl {
-						Ctrl::RegisterForfeits(forfeits) => {
-							new_forfeits.extend(forfeits);
-						},
 						Ctrl::WalletSync(resp) => {
 							let _ = self.wallet.sync(&self.bitcoind, true).await;
 							let _ = resp.send(());
@@ -466,29 +503,9 @@ impl Process {
 			}
 			trace!("Forfeit watcher waking up...");
 
-
-			// If we have received new forfeited vtxos from a round, register them.
-			let mut idx = 0;
-			while idx < new_forfeits.len() {
-				match self.db.get_vtxos_by_id(&[new_forfeits[idx]]).await {
-					Ok(vtxos) => {
-						match self.register_vtxo(&vtxos[0].vtxo).await {
-							Ok(()) => {
-								// No need to increment idx
-								// We have removed the current entry and start again
-								new_forfeits.swap_remove(idx);
-							},
-							Err(e) => {
-								warn!("Error fetching newly forfeited vtxo from the db: {:#}", e);
-								idx+=1;
-							}
-						}
-					},
-					Err(e)  => {
-						warn!("Error fetching newly forfeited vtxo from the db: {:#}", e);
-						idx+=1;
-					}
-				}
+			// Fetch newly forfeited vtxos
+			if let Err(e) = self.load_new_forfeits().await {
+				error!("Error loading new forfeits: {:#}", e);
 			}
 
 			// Sync our wallet
@@ -507,7 +524,9 @@ impl Process {
 			}
 
 			let pending_claim_volume = self.claims.iter().map(|s|
-				s.clone().forfeit_cpfp.map(|t| t.tx.output_value()).unwrap_or_else(|| s.forfeit_tx.tx.output_value())
+				s.forfeit_cpfp.as_ref()
+					.map(|t| t.tx.output_value())
+					.unwrap_or_else(|| s.forfeit_tx.tx.output_value())
 			).sum::<Amount>().to_sat();
 
 			telemetry::set_forfeit_metrics(
@@ -525,7 +544,6 @@ impl Process {
 }
 
 enum Ctrl {
-	RegisterForfeits(Vec<VtxoId>),
 	WalletSync(oneshot::Sender<()>),
 	WalletStatus(oneshot::Sender<rpc::WalletStatus>),
 }
@@ -560,6 +578,7 @@ impl ForfeitWatcher {
 			exit_txs: Vec::new(),
 			rounds: HashMap::new(),
 			claims: Vec::new(),
+			last_checked_round_id: None,
 		};
 
 		// Fetch state from db.
@@ -591,10 +610,5 @@ impl ForfeitWatcher {
 		let (resp_tx, resp_rx) = oneshot::channel();
 		self.ctrl_tx.send(Ctrl::WalletStatus(resp_tx)).context("process down")?;
 		Ok(resp_rx.await.context("no response")?)
-	}
-
-	pub fn register_forfeits(&self, new_forfeits: Vec<VtxoId>) -> anyhow::Result<()> {
-		self.ctrl_tx.send(Ctrl::RegisterForfeits(new_forfeits)).context("process down")?;
-		Ok(())
 	}
 }

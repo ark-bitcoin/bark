@@ -25,11 +25,13 @@ invoice_poll_interval = "30s"
 htlc_subscription_timeout = "10m"
 
 [vtxo_sweeper]
+enabled = true
 sweep_tx_fallback_feerate = "2500sat/kwu"
 round_sweep_interval = "1h"
 sweep_threshold = 1000000
 
 [forfeit_watcher]
+enabled = true
 claim_fallback_feerate = "6250sat/kwu"
 wake_interval = "1m"
 

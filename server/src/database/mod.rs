@@ -38,6 +38,7 @@ use log::{info, warn};
 use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::encode::ProtocolEncoding;
+use ark::rounds::RoundId;
 use bitcoin_ext::BlockHeight;
 
 use crate::wallet::WalletKind;
@@ -287,6 +288,7 @@ impl Db {
 		&self,
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
 		let conn = self.pool.get().await?;
+		//TODO(stevenroose) this query is wrong
 		let stmt = conn.prepare("
 			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL AND board_swept_at IS NULL;
 		").await?;
@@ -297,6 +299,25 @@ impl Db {
 		Ok(stream.err_into().map_ok(
 			|row| Vtxo::deserialize(row.get("vtxo")).expect("corrupt db: vtxo")
 		))
+	}
+
+	pub async fn fetch_vtxos_forfeited_in(
+		&self,
+		rounds: &[RoundId],
+	) -> anyhow::Result<Vec<VtxoState>> {
+		let conn = self.pool.get().await?;
+		let stmt = conn.prepare_typed("
+			SELECT v.id, v.vtxo_id, v.vtxo, v.expiry, v.oor_spent_txid, v.forfeit_state, v.forfeit_round_id,
+				v.board_swept_at, v.created_at, v.updated_at
+			FROM vtxo AS v
+				JOIN round ON round.id = v.forfeit_round_id
+			WHERE round.funding_txid = ANY($1);
+		", &[Type::TEXT_ARRAY]).await?;
+
+		let ids = rounds.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+		conn.query(&stmt, &[&ids]).await?.into_iter()
+			.map(|row| VtxoState::try_from(row))
+			.collect()
 	}
 
 	/// Returns [None] if all the ids were not previously marked as signed
