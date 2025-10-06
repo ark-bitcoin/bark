@@ -226,7 +226,7 @@ in pkgs.mkShell {
 
 	LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 	RUSTDOCS_STDLIB = "${rustToolchain.rust-docs}/share/doc/rust/html/std/index.html";
-	LD_LIBRARY_PATH = "${pkgs.gcc.cc.lib}/lib:${pkgs.sqlite}/lib:${pkgs.postgresql.lib}/lib:${pkgs.lib.makeLibraryPath [ pkgs.gcc.cc.lib pkgs.sqlite pkgs.postgresql.lib ]}";
+	LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.gcc.cc.lib pkgs.sqlite pkgs.postgresql.lib ];
 
 	POSTGRES_BINS = "${postgresql}/bin";
 	BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
