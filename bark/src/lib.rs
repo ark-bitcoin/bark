@@ -245,6 +245,7 @@ impl VtxoSeed {
 ///
 /// Example
 /// ```
+/// # #[cfg(any(test, doc))]
 /// # async fn demo() -> anyhow::Result<()> {
 /// # use std::sync::Arc;
 /// # use bark::{Config, SqliteClient, Wallet};
@@ -255,7 +256,7 @@ impl VtxoSeed {
 /// # use bitcoin::Network;
 /// # let (db_path, _) = in_memory_db();
 /// let network = Network::Signet;
-/// let mnemonic = Mnemonic::asdfadsfasfda()?;
+/// let mnemonic = Mnemonic::generate(12)?;
 /// let cfg = Config {
 ///   server_address: String::from("https://ark.signet.2nd.dev"),
 ///   esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
