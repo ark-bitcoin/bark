@@ -346,7 +346,7 @@ impl BarkPersister for SqliteClient {
 	}
 }
 
-#[cfg(any(test, doctest, doc))]
+#[cfg(any(test, doc))]
 pub mod helpers {
 	use std::path::PathBuf;
 	use std::str::FromStr;
@@ -359,7 +359,7 @@ pub mod helpers {
 	/// The user should ensure the [Connection] isn't dropped
 	/// until the test completes. If all connections are dropped during
 	/// the test the entire database might be cleared.
-	#[cfg(feature = "rand")]
+	#[cfg(any(test, feature = "rand"))]
 	pub fn in_memory_db() -> (PathBuf, Connection) {
 		use rand::{distr, Rng};
 
