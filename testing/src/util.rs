@@ -9,7 +9,7 @@ use log::error;
 use tokio::fs;
 use tokio::process::Child;
 
-use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY};
+use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY, TX_PROPAGATION_TIMEOUT_MILLIS};
 use crate::daemon::electrs::ElectrsType;
 
 pub enum TestContextChainSource {
@@ -150,6 +150,15 @@ pub fn get_bark_chain_source_from_env() -> TestContextChainSource {
 	}
 }
 
+pub fn get_tx_propagation_timeout_millis() -> u64 {
+	if let Ok(timeout) = env::var(TX_PROPAGATION_TIMEOUT_MILLIS) {
+		timeout.parse::<u64>()
+			.expect(&format!("{} should be in milliseconds", TX_PROPAGATION_TIMEOUT_MILLIS))
+	} else {
+		30_000
+	}
+}
+
 /// Extension trait for futures.
 #[async_trait]
 pub trait FutureExt: Future {
@@ -177,9 +186,10 @@ pub trait FutureExt: Future {
 		self.try_wait(500)
 	}
 
-	/// Add a short timeout.
+	/// Awaits a future for a short period. Using this assumes that the future is already complete, 
+	/// so if the operation times out, we panic because a test is likely failing unexpectedly.
 	#[track_caller]
-	async fn fast(self) -> Self::Output where Self: Sized {
+	async fn ready(self) -> Self::Output where Self: Sized {
 		match self.try_fast().await {
 			Ok(v) => v,
 			Err(_) => {

@@ -97,7 +97,7 @@ async fn bark_pay_ln_succeeds() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -157,7 +157,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -205,7 +205,7 @@ async fn bark_pay_invoice_twice() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -298,7 +298,7 @@ async fn bark_refresh_ln_change_vtxo() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -388,7 +388,7 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -437,7 +437,7 @@ async fn bark_can_send_full_balance_on_lightning() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -511,7 +511,7 @@ async fn bark_can_receive_lightning() {
 	bark.maintain().await;
 
 	// HTLC settlement on lightning side
-	res1.fast().await.unwrap();
+	res1.ready().await.unwrap();
 
 	let vtxos = bark.vtxos().await;
 	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");

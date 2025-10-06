@@ -64,6 +64,8 @@ steps:
       LIGHTNINGD_EXEC: /lightning/25.02.2/bin/lightningd
       TEST_DIRECTORY: ./test/btc29-codecov
       RUST_TEST_THREADS: 1
+      BARK_COMMAND_TIMEOUT_MILLIS: 120000
+      TX_PROPAGATION_TIMEOUT: 30000
       HODL_INVOICE_PLUGIN: /hold/target/debug/hold
     commands:
       - git log --oneline | head -n 1

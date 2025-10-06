@@ -1,6 +1,5 @@
+use std::iter;
 
-
-use ark_testing::exit::complete_exit;
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
 use futures::FutureExt;
@@ -16,6 +15,7 @@ use server_rpc::protos;
 use ark_testing::{btc, sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind;
+use ark_testing::exit::complete_exit;
 
 #[tokio::test]
 async fn simple_exit() {
@@ -380,7 +380,7 @@ async fn exit_bolt11_change() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -772,9 +772,10 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 		let child_txs = primary.list_exits_with_details().await.into_iter().flat_map(|s| {
 			s.transactions.into_iter().filter_map(|package| package.child)
 		});
-		for child_tx in child_txs {
-			ctx.await_transaction_across_nodes(child_tx.info.txid, secondary.bitcoind()).await;
-		}
+		ctx.await_transactions_across_nodes(
+			child_txs.into_iter().map(|child_tx| child_tx.info.txid),
+			iter::once(secondary).filter_map(|b| b.bitcoind()),
+		).await;
 	}
 
 	bark1.progress_exit().await;

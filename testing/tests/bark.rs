@@ -166,7 +166,7 @@ async fn board_all_bark() {
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the boarding tx's output value is the same as our off-chain balance
-	let board_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
+	let board_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 	assert_eq!(
 		bark1.offchain_balance().await,
 		board_tx.output.last().unwrap().value,
@@ -863,8 +863,8 @@ async fn second_round_attempt() {
 	log_restart_missing_forfeits.recv().await.unwrap();
 	res1.await.unwrap();
 	// check that bark2 was kicked
-	assert_eq!(log_missing_forfeits.recv().fast().await.unwrap().input, bark2_vtxo);
-	assert_eq!(log_not_allowed.recv().fast().await.unwrap().vtxo, bark2_vtxo);
+	assert_eq!(log_missing_forfeits.recv().ready().await.unwrap().input, bark2_vtxo);
+	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
 
 	// bark2 is kicked out of the first round, so we need to start another one
 	ctx.generate_blocks(1).await;

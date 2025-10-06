@@ -407,7 +407,7 @@ async fn sweep_vtxos() {
 	let bark_client = bark.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
+	let funding_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 
 	let mut rpc = srv.get_public_rpc().await;
 	let request = protos::BoardVtxoRequest {
@@ -435,7 +435,7 @@ async fn sweep_vtxos() {
 	info!("board done signal received");
 	log_round_done.recv().wait(10_000).await.unwrap();
 	info!("Round done signal received");
-	let stats = log_stats.recv().fast().await.unwrap();
+	let stats = log_stats.recv().ready().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);
 	assert_eq!(1_242_122, srv.wallet_status().await.total().to_sat());
 }
@@ -812,7 +812,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -905,7 +905,7 @@ async fn bad_round_input() {
 			}).take(ark_info.nb_round_nonces as usize).collect(),
 		}],
 		offboard_requests: vec![],
-	}).fast().await.unwrap_err();
+	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![],
@@ -914,7 +914,7 @@ async fn bad_round_input() {
 			amount: offb_req.amount.to_sat(),
 			offboard_spk: offb_req.script_pubkey.to_bytes(),
 		}],
-	}).fast().await.unwrap_err();
+	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 
 	info!("no outputs");
@@ -922,7 +922,7 @@ async fn bad_round_input() {
 		input_vtxos: vec![input.clone()],
 		vtxo_requests: vec![],
 		offboard_requests: vec![],
-	}).fast().await.unwrap_err();
+	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 	assert!(err.message().contains("invalid request: zero outputs and zero offboards"),
 		"[{}]: {}", err.code(), err.message(),
@@ -948,7 +948,7 @@ async fn bad_round_input() {
 			}).take(ark_info.nb_round_nonces as usize).collect(),
 		}],
 		offboard_requests: vec![],
-	}).fast().await.unwrap_err();
+	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::NotFound, "[{}]: {}", err.code(), err.message());
 	assert_eq!(err.metadata().get("identifiers").unwrap().to_str().unwrap(), fake_vtxo.to_string());
 
@@ -960,7 +960,7 @@ async fn bad_round_input() {
 			amount: 1000,
 			offboard_spk: vec![0x00],
 		}],
-	}).fast().await.unwrap_err();
+	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 	assert!(err.message().contains("non-standard"), "err: {}", err.message());
 
@@ -972,7 +972,7 @@ async fn bad_round_input() {
 			amount: 1000,
 			offboard_spk: ScriptBuf::new_op_return(<&PushBytes>::try_from(&[1u8; 84][..]).unwrap()).to_bytes(),
 		}],
-	}).fast().await.unwrap_err();
+	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 	assert!(err.message().contains("non-standard"), "err: {}", err.message());
 }
@@ -1015,7 +1015,7 @@ async fn claim_forfeit_connector_chain() {
 	let mut log_round = srv.subscribe_log::<RoundFinished>();
 	assert!(bark.try_refresh_all().await.is_err());
 	assert_eq!(bark.inround_balance().await, sat(4_000_000));
-	assert_eq!(log_round.recv().fast().await.unwrap().nb_input_vtxos, 10);
+	assert_eq!(log_round.recv().ready().await.unwrap().nb_input_vtxos, 10);
 
 	// start the exit process
 	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
@@ -1076,7 +1076,7 @@ async fn claim_forfeit_round_connector() {
 	let mut log_round = srv.subscribe_log::<RoundFinished>();
 	assert!(bark.try_refresh_all().await.is_err());
 	assert_eq!(bark.inround_balance().await, sat(800_000));
-	assert_eq!(log_round.recv().fast().await.expect("time-out").nb_input_vtxos, 1);
+	assert_eq!(log_round.recv().ready().await.expect("time-out").nb_input_vtxos, 1);
 
 	// start the exit process
 	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
@@ -1122,7 +1122,7 @@ async fn register_board_is_idempotent() {
 	let bark_client = bark_wallet.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(&board.funding_txid).await;
+	let funding_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 
 	// We will now call the register_board a few times
 	let mut rpc = srv.get_public_rpc().await;
@@ -1150,7 +1150,7 @@ async fn register_unconfirmed_board() {
 	let bark_client = bark.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(&unconfirmed_board.funding_txid).await;
+	let funding_tx = ctx.bitcoind().await_transaction(unconfirmed_board.funding_txid).await;
 
 	let unconfirmed_board_request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
@@ -1607,7 +1607,7 @@ async fn server_should_refuse_claim_twice() {
 	bark.offchain_balance().await;
 
 	// HTLC settlement on lightning side
-	res1.fast().await.unwrap();
+	res1.ready().await.unwrap();
 
 	assert_eq!(bark.offchain_balance().await, btc(3));
 
@@ -1705,7 +1705,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -1757,7 +1757,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	lightningd_1.connect(&lightningd_2).await;
 	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
 
-	ctx.await_transaction(&txid).await;
+	ctx.await_transaction(txid).await;
 	ctx.generate_blocks(6).await;
 
 	lightningd_1.wait_for_gossip(1).await;
@@ -2226,7 +2226,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 	let balance = bark.offchain_balance().await;
 
 	// HTLC settlement on lightning side
-	res1.fast().await.unwrap();
+	res1.ready().await.unwrap();
 
 	assert_eq!(balance, pay_amount + board_amount);
 }

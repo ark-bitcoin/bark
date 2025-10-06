@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
+use futures::future::join_all;
 use log::info;
 use server::vtxopool::VtxoTarget;
 use server::Server;
-use tokio::fs;
+use tokio::{fs, join};
 use tonic::transport::Uri;
 
 use server::config::{self, Config, HodlInvoiceClnPlugin};
@@ -459,26 +460,37 @@ impl TestContext {
 	}
 
 	/// Waits for the given transaction ID to be available in both the central bitcoind and electrs
-	pub async fn await_transaction(&self, txid: &Txid) {
-		if let Some(bitcoind) = &self.bitcoind {
-			bitcoind.await_transaction(txid).await;
-		}
-		if let Some(electrs) = &self.electrs {
-			electrs.await_transaction(txid).await;
-		}
+	pub async fn await_transaction(&self, txid: Txid) {
+		let bitcoin = async move {
+			if let Some(bitcoind) = &self.bitcoind {
+				bitcoind.await_transaction(txid).await;
+			}
+		};
+		let electrs = async move {
+			if let Some(electrs) = &self.electrs {
+				electrs.await_transaction(txid).await;
+			}
+		};
+		join!(bitcoin, electrs);
 	}
 
 	/// Waits for the given transaction ID to be available in the central bitcoin and electrs, as
 	/// well as each given bitcoin node.
-	pub async fn await_transaction_across_nodes(
+	pub async fn await_transactions_across_nodes(
 		&self,
-		txid: Txid,
+		txids: impl IntoIterator<Item = Txid>,
 		nodes: impl IntoIterator<Item = &Bitcoind>,
 	) {
-		self.await_transaction(&txid).await;
-		for bitcoind in nodes {
-			bitcoind.await_transaction(&txid).await;
-		}
+		let txids = txids.into_iter().collect::<Vec<_>>();
+		let central_futures = async {
+			join_all(txids.iter().map(|txid| self.await_transaction(*txid))).await;
+		};
+		let nodes_future = async {
+			join_all(nodes.into_iter().flat_map(|b| {
+				txids.iter().map(|txid| b.await_transaction(*txid))
+			})).await
+		};
+		join!(central_futures, nodes_future);
 	}
 
 	/// Generated a block using the central bitcoind and ensures that electrs is synced with it

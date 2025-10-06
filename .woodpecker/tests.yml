@@ -108,6 +108,8 @@ steps:
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
       RUST_TEST_THREADS: 2
+      BARK_COMMAND_TIMEOUT_MILLIS: 120000
+      TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
     commands:
       - git log --oneline | head -n 1
@@ -125,6 +127,8 @@ steps:
       CHAIN_SOURCE: mempool
       TEST_DIRECTORY: ./test/mempool
       RUST_TEST_THREADS: 2
+      BARK_COMMAND_TIMEOUT_MILLIS: 120000
+      TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
     commands:
       - git log --oneline | head -n 1
@@ -141,6 +145,8 @@ steps:
     environment:
       TEST_DIRECTORY: ./test/btc29
       RUST_TEST_THREADS: 2
+      BARK_COMMAND_TIMEOUT_MILLIS: 120000
+      TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
     commands:
       - git log --oneline | head -n 1
