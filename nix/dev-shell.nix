@@ -1,7 +1,7 @@
 { pkgs, masterPkgs, lib, rustToolchain, rustBuildToolchain, slog-tools }:
 let
 	bitcoinVersion = "29.1";
-	lightningVersion = "25.09";
+	lightningVersion = "25.09.1";
 	esploraElectrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 	mempoolElectrsRevision = "v3.2.0";
 
@@ -79,7 +79,7 @@ let
 		version = lightningVersion;
 		src = pkgs.fetchurl {
 			url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-			hash = "sha256-qX9EZHuDtEcYCU8YOMbHTo3JDAAJ8nc6N7F/+AAEpn4=";
+			hash = "sha256-maH+SSMunXH43Hl9FFvk5L6n4e06vgsL3T8W3ydy+hQ=";
 		};
 		makeFlags = [ "VERSION=v${lightningVersion}" ];
 		preInstall = ''
@@ -95,17 +95,17 @@ let
 			owner = "ElementsProject";
 			repo = "lightning";
 			rev = "v${lightningVersion}";
-			hash = "sha256-SiPYB463l9279+zawsxmql1Ui/dTdah5KgJgmrWsR2A=";
+			hash = "sha256-H1baJIYmTbXXkvXXBZ9PiYv/yAtd9bGJ7W9yU5k82Xk=";
 		};
 		buildAndTestSubdir = "plugins/grpc-plugin";
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
 		buildInputs = (if isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Security ] else []);
-		cargoDeps = rustPlatform.importCargoLock { lockFile = "${src}/Cargo.lock"; };
+		doCheck = false;
+		cargoLock.lockFile = "${src}/Cargo.lock";
 		cargoHash = "sha256-UOhoqVs7nxZ98v2lJrAOc/qT8bcSPHekloUObI7wuJc=";
 		postUnpack = ''
 			rm ${src.name}/configure
 		'';
-		doCheck = false;
 	};
 
 	hold-invoice = rustPlatform.buildRustPackage rec {
@@ -114,8 +114,8 @@ let
 		src = pkgs.fetchFromGitHub {
 			owner = "BoltzExchange";
 			repo = "hold";
-			rev = "v0.2.2";
-			hash = "sha256-vksvnLV9pcMxJcoylF+r2ezQmauiGGt+/MSNMfS3Gxc=";
+			rev = "1e5dec4b479397d77c813060dd01263d689469bc";
+			hash = "sha256-VFohDTItt/8TUN0my4gXs0r+JuJ+e7IyO1ZDVoanyfQ=";
 		};
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
 		buildInputs = [
@@ -124,8 +124,8 @@ let
 		] ++ (if isDarwin then [
 			pkgs.darwin.apple_sdk.frameworks.Security
 		] else []);
-		cargoDeps = rustPlatform.importCargoLock { lockFile = "${src}/Cargo.lock"; };
 		doCheck = false;
+		cargoLock.lockFile = "${src}/Cargo.lock";
 	};
 
 	cln-plugins = pkgs.linkFarm "plugins" {
