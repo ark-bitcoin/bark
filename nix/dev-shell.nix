@@ -210,7 +210,6 @@ in pkgs.mkShell {
 		pkgs.python3 # for clightning
 		esploraElectrs
 		mempoolElectrs
-		pkgs.cargo-llvm-cov
 
 		# For CI images
 		pkgs.coreutils
@@ -221,7 +220,10 @@ in pkgs.mkShell {
 	] ++ (
 		if isDarwin then [
 			pkgs.docker
-		] else []
+		] else [
+			# doesn't work on darwin
+			pkgs.cargo-llvm-cov
+		]
 	);
 
 	LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
