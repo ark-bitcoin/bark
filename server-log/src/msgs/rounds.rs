@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use ark::rounds::RoundSeq;
-use ark::vtxo::VtxoPolicyType;
+use ark::vtxo::VtxoPolicyKind;
 use bitcoin::{Amount, OutPoint, Txid};
 use bitcoin::secp256k1::{PublicKey, SecretKey};
 use bitcoin_ext::BlockHeight;
@@ -322,7 +322,7 @@ pub struct RoundVtxoCreated {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
 	pub vtxo_id: VtxoId,
-	pub vtxo_type: VtxoPolicyType,
+	pub vtxo_type: VtxoPolicyKind,
 }
 impl_slog!(RoundVtxoCreated, Debug, "New VTXO created in round");
 

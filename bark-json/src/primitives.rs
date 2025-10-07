@@ -5,7 +5,7 @@ use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 
 use ark::{Vtxo, VtxoId};
-use ark::vtxo::VtxoPolicyType;
+use ark::vtxo::VtxoPolicyKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct InvoiceInfo {
@@ -40,7 +40,7 @@ pub struct VtxoInfo {
 	pub id: VtxoId,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
-	pub policy_type: VtxoPolicyType,
+	pub policy_type: VtxoPolicyKind,
 	pub user_pubkey: PublicKey,
 	pub server_pubkey: PublicKey,
 	pub expiry_height: u32,

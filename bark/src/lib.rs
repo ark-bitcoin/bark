@@ -55,7 +55,7 @@ use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage, 
 use ark::musig;
 use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
-use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
+use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyKind};
 use server_rpc::{self as rpc, protos, ServerConnection};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
@@ -1395,8 +1395,8 @@ impl Wallet {
 
 		// Not all policies are supported for sending arkoor
 		match address.policy().policy_type() {
-			VtxoPolicyType::Pubkey => {},
-			VtxoPolicyType::ServerHtlcRecv | VtxoPolicyType::ServerHtlcSend => {
+			VtxoPolicyKind::Pubkey => {},
+			VtxoPolicyKind::ServerHtlcRecv | VtxoPolicyKind::ServerHtlcSend => {
 				bail!("VTXO policy in address cannot be used for arkoor payment: {}",
 					address.policy().policy_type(),
 				);

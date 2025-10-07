@@ -6,7 +6,7 @@ use bitcoin::{sighash, Amount, OutPoint, Transaction, TxOut};
 use bitcoin_ext::TxOutExt;
 
 use crate::SECP;
-use crate::vtxo::{GenesisTransition, Vtxo, VtxoPolicyType};
+use crate::vtxo::{GenesisTransition, Vtxo, VtxoPolicyKind};
 
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -33,7 +33,7 @@ pub enum VtxoValidationError {
 	},
 	#[error("invalid arkoor policy of type {policy}: {msg}")]
 	InvalidArkoorPolicy {
-		policy: VtxoPolicyType,
+		policy: VtxoPolicyKind,
 		msg: &'static str,
 	}
 }
