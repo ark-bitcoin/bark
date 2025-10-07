@@ -41,7 +41,7 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 		}
 
 		// Fast-forward if we're just waiting for confirmations
-		if let Some(height) = response.spendable_height {
+		if let Some(height) = response.claimable_height {
 			let current = ctx.bitcoind().sync_client().get_block_count().unwrap() as u32;
 			let blocks = if current > height { 0 } else { height - current };
 			ctx.generate_blocks(blocks).await;

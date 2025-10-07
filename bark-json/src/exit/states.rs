@@ -99,25 +99,25 @@ pub struct ExitProcessingState {
 pub struct ExitAwaitingDeltaState {
 	pub tip_height: BlockHeight,
 	pub confirmed_block: BlockRef,
-	pub spendable_height: BlockHeight,
+	pub claimable_height: BlockHeight,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct ExitSpendableState {
+pub struct ExitClaimableState {
 	pub tip_height: BlockHeight,
-	pub spendable_since: BlockRef,
+	pub claimable_since: BlockRef,
 	pub last_scanned_block: Option<BlockRef>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct ExitSpendInProgressState {
+pub struct ExitClaimInProgressState {
 	pub tip_height: BlockHeight,
-	pub spendable_since: BlockRef,
-	pub spending_txid: Txid,
+	pub claimable_since: BlockRef,
+	pub claim_txid: Txid,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct ExitSpentState {
+pub struct ExitClaimedState {
 	pub tip_height: BlockHeight,
 	pub txid: Txid,
 	pub block: BlockRef,
@@ -141,20 +141,20 @@ impl Into<ExitState> for ExitAwaitingDeltaState {
 	}
 }
 
-impl Into<ExitState> for ExitSpendableState {
+impl Into<ExitState> for ExitClaimableState {
 	fn into(self) -> ExitState {
-		ExitState::Spendable(self)
+		ExitState::Claimable(self)
 	}
 }
 
-impl Into<ExitState> for ExitSpendInProgressState {
+impl Into<ExitState> for ExitClaimInProgressState {
 	fn into(self) -> ExitState {
-		ExitState::SpendInProgress(self)
+		ExitState::ClaimInProgress(self)
 	}
 }
 
-impl Into<ExitState> for ExitSpentState {
+impl Into<ExitState> for ExitClaimedState {
 	fn into(self) -> ExitState {
-		ExitState::Spent(self)
+		ExitState::Claimed(self)
 	}
 }

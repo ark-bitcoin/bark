@@ -55,7 +55,7 @@ impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 		self.version(2);
 
 		for input in exit_outputs {
-			if !matches!(input.state(), ExitState::Spendable(..)) {
+			if !matches!(input.state(), ExitState::Claimable(..)) {
 				bail!("VTXO exit is not spendable");
 			}
 
