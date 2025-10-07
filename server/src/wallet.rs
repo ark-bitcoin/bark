@@ -1,4 +1,6 @@
 
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::{fmt, ops};
 use std::path::Path;
 use std::str::FromStr;
@@ -7,11 +9,11 @@ use std::time::{SystemTime, UNIX_EPOCH, Instant};
 use anyhow::Context;
 use bdk_wallet::{Balance, SignOptions, Wallet};
 use bip39::Mnemonic;
-use bitcoin::{bip32, Address, Amount, FeeRate, Network, ScriptBuf};
+use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use log::{error, trace};
 
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
 use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 
@@ -93,6 +95,7 @@ pub struct PersistedWallet {
 	wallet: Wallet,
 	kind: WalletKind,
 	db: database::Db,
+	locked_outputs: LockedWalletUtxosIndex,
 }
 
 impl PersistedWallet {
@@ -129,7 +132,7 @@ impl PersistedWallet {
 			db.store_changeset(kind, &cs).await.context("error storing initial wallet state")?;
 		}
 
-		Ok(Self { wallet, kind, db })
+		Ok(Self { wallet, kind, db, locked_outputs: LockedWalletUtxosIndex::new() })
 	}
 
 	/// Persist the committed wallet changes to the database.
@@ -242,9 +245,9 @@ impl PersistedWallet {
 		amount: Amount,
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Transaction> {
-		let untrusted = self.untrusted_utxos(None);
+		let unavailable = self.unavailable_outputs(None);
 		let mut b = self.build_tx();
-		b.unspendable(untrusted);
+		b.unspendable(unavailable);
 		b.add_recipient(script_pubkey, amount);
 		b.fee_rate(fee_rate);
 		let psbt = b.finish()?;
@@ -280,6 +283,16 @@ impl PersistedWallet {
 
 		Ok(tx)
 	}
+
+	pub fn unavailable_outputs(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
+		self.untrusted_utxos(confirmed_height).into_iter()
+			.chain(self.locked_outputs.utxos())
+			.collect::<Vec<_>>()
+	}
+
+	pub fn lock_wallet_utxo(&self, utxo: OutPoint) -> WalletUtxoGuard {
+		WalletUtxoGuard::new(self.locked_outputs.clone(), utxo)
+	}
 }
 
 impl ops::Deref for PersistedWallet {
@@ -300,6 +313,51 @@ pub fn read_mnemonic_from_datadir(data_dir: &Path) -> anyhow::Result<Mnemonic> {
 	let mnemonic = std::fs::read_to_string(data_dir.join(MNEMONIC_FILE))
 		.context("failed to read mnemonic")?;
 	Ok(Mnemonic::from_str(&mnemonic)?)
+}
+
+/// An index of all locked utxos in the wallet, with a mutex over it.
+#[derive(Debug, Clone)]
+pub struct LockedWalletUtxosIndex(Arc<parking_lot::Mutex<HashSet<OutPoint>>>);
+
+impl LockedWalletUtxosIndex {
+	pub fn new() -> Self {
+		Self(Arc::new(parking_lot::Mutex::new(HashSet::new())))
+	}
+
+	pub fn utxos(&self) -> HashSet<OutPoint> {
+		self.0.lock().clone()
+	}
+}
+
+/// A guard over a utxo in the wallet to keep it locked during guard
+/// lifetime.
+///
+/// Creating a guard will add the utxo to the locked index, and dropping
+/// the guard will remove it from the index.
+#[derive(Debug, Clone)]
+pub struct WalletUtxoGuard {
+	index: LockedWalletUtxosIndex,
+	utxo: OutPoint,
+}
+
+impl WalletUtxoGuard {
+	pub fn new(index: LockedWalletUtxosIndex, utxo: OutPoint) -> Self {
+		let mut index_lock = index.0.lock();
+		index_lock.insert(utxo);
+		drop(index_lock);
+		Self { index, utxo }
+	}
+
+	pub fn utxo(&self) -> OutPoint {
+		self.utxo.clone()
+	}
+}
+
+impl ops::Drop for WalletUtxoGuard {
+	fn drop(&mut self) {
+		let mut index_lock = self.index.0.lock();
+		index_lock.remove(&self.utxo);
+	}
 }
 
 #[cfg(test)]
