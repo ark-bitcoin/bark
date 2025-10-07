@@ -763,6 +763,23 @@ pub fn get_paginated_lightning_receives<'a>(
 	Ok(result)
 }
 
+pub fn get_pending_lightning_receives<'a>(
+	conn: &'a Connection,
+) -> anyhow::Result<Vec<LightningReceive>> {
+	let query = "SELECT * FROM bark_lightning_receive \
+		WHERE preimage_revealed_at IS NULL
+		ORDER BY created_at DESC";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([])?;
+
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		result.push(row_to_lightning_receive(&row)?);
+	}
+
+	Ok(result)
+}
+
 pub fn set_preimage_revealed(conn: &Connection, payment_hash: PaymentHash) -> anyhow::Result<()> {
 	let query = "UPDATE bark_lightning_receive SET preimage_revealed_at = :revealed_at \
 		WHERE payment_hash = :payment_hash";

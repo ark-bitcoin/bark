@@ -9,7 +9,7 @@ use bitcoin::Amount;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
-use log::info;
+use log::{info, trace};
 use tokio::fs;
 
 use ark::{ProtocolEncoding, Vtxo};
@@ -1086,4 +1086,55 @@ async fn test_ark_address_other_ark() {
 	let addr1 = bark1.address().await;
 	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().to_alt_string();
 	assert!(err.contains("Ark address is for different server"), "err: {err}");
+}
+
+#[tokio::test]
+async fn bark_can_claim_all_claimable_lightning_receives() {
+	let ctx = TestContext::new("bark/bark_can_claim_all_claimable_lightning_receives").await;
+
+	// Start two lightning nodes and open a channel between them.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	let funding_txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// We need to await the channel funding transaction or else we get
+	// infinite 'Waiting for gossip...' below.
+	ctx.await_transaction(funding_txid).await;
+	// Default depth before channel_ready
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &srv, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info_1 = bark.bolt11_invoice(btc(1)).await;
+	let invoice_info_2 = bark.bolt11_invoice(btc(1)).await;
+
+	let res = tokio::spawn(async move {
+		tokio::join!(
+			lightningd_1.pay_bolt11(invoice_info_1.invoice),
+			lightningd_1.pay_bolt11(invoice_info_2.invoice),
+		)
+	});
+
+	bark.lightning_receive_all().wait(10_000).await;
+
+	// HTLC settlement on lightning side
+	res.ready().await.unwrap();
+
+	assert_eq!(bark.offchain_balance().await, btc(4));
 }

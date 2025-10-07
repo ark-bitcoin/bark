@@ -393,6 +393,15 @@ pub trait BarkPersister: Send + Sync + 'static {
 		pagination: Pagination,
 	) -> anyhow::Result<Vec<LightningReceive>>;
 
+	/// Returns a list of all pending lightning receives
+	///
+	/// Returns:
+	/// - `Ok(Vec<LightningReceive>)` possibly empty.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
+
 	/// Mark a Lightning receive preimage as revealed (e.g., after settlement).
 	///
 	/// Parameters:
