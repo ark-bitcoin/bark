@@ -1,7 +1,6 @@
 fn main() {
 	tonic_prost_build::configure()
 		.build_client(true)
-		.out_dir("src/")
 		.protoc_arg("--experimental_allow_proto3_optional")
 		.compile_protos(&["./protos/node.proto"], &["./protos/"])
 		.expect("Failed to compile cln server protos");
@@ -11,7 +10,6 @@ fn main() {
 
 	tonic_prost_build::configure()
 		.build_client(true)
-		.out_dir("src/plugins/")
 		.protoc_arg("--experimental_allow_proto3_optional")
 		.compile_protos(&["./protos/hold.proto"], &["./protos/"])
 		.expect("Failed to compile hold invoice plugin server protos");

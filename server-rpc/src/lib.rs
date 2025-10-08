@@ -36,9 +36,13 @@ pub use convert::{ConvertError, TryFromBytes};
 
 pub mod client;
 pub mod protos {
-	pub mod bark_server; // generated
+	pub mod bark_server {
+		tonic::include_proto!("bark_server");
+	}
 	pub use bark_server::*;
-	pub mod intman; // generated
+	pub mod intman {
+		tonic::include_proto!("intman");
+	}
 }
 
 pub use client::ServerConnection;
