@@ -4,9 +4,9 @@ use server_rpc::protos;
 use crate::database::ln::LightningHtlcSubscription;
 
 
-impl From<LightningHtlcSubscription> for protos::SubscribeLightningReceiveResponse {
+impl From<LightningHtlcSubscription> for protos::CheckLightningReceiveResponse {
 	fn from(v: LightningHtlcSubscription) -> Self {
-		protos::SubscribeLightningReceiveResponse {
+		protos::CheckLightningReceiveResponse {
 			invoice: v.invoice.to_string(),
 			amount_sat: v.amount().to_sat(),
 			status: protos::LightningReceiveStatus::from(v.status) as i32,

@@ -35,7 +35,7 @@ pub const RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT: &'static str = "check_lightni
 pub const RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT: &'static str = "revoke_lightning_payment";
 pub const RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE: &'static str = "fetch_bolt12_invoice";
 pub const RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE: &'static str = "start_lightning_receive";
-pub const RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE: &'static str = "subscribe_lightning_receive";
+pub const RPC_SERVICE_ARK_CHECK_LIGHTNING_RECEIVE: &'static str = "check_lightning_receive";
 pub const RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE: &'static str = "claim_lightning_receive";
 pub const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
 pub const RPC_SERVICE_ARK_LAST_ROUND_EVENT: &'static str = "last_round_event";
@@ -59,7 +59,7 @@ const RPC_SERVICE_ARK_METHODS: [&str; 22] = [
 	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE,
 	RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE,
-	RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE,
+	RPC_SERVICE_ARK_CHECK_LIGHTNING_RECEIVE,
 	RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE,
 	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
 	RPC_SERVICE_ARK_LAST_ROUND_EVENT,

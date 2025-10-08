@@ -41,7 +41,7 @@ service ArkService {
 	rpc FetchBolt12Invoice(FetchBolt12InvoiceRequest) returns (FetchBolt12InvoiceResponse) {}
 
 	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
-	rpc SubscribeLightningReceive(SubscribeLightningReceiveRequest) returns (SubscribeLightningReceiveResponse) {}
+	rpc CheckLightningReceive(CheckLightningReceiveRequest) returns (CheckLightningReceiveResponse) {}
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
 
@@ -224,8 +224,9 @@ message StartLightningReceiveResponse {
 	string bolt11 = 1;
 }
 
-message SubscribeLightningReceiveRequest {
-	bytes payment_hash = 1;
+message CheckLightningReceiveRequest {
+	bytes hash = 1;
+	bool wait = 2;
 }
 
 message PrepareLightningReceiveClaimRequest {
@@ -234,7 +235,7 @@ message PrepareLightningReceiveClaimRequest {
 }
 
 message PrepareLightningReceiveClaimResponse {
-	SubscribeLightningReceiveResponse receive = 1;
+	CheckLightningReceiveResponse receive = 1;
 	repeated bytes htlc_vtxos = 2;
 }
 
@@ -258,7 +259,7 @@ enum LightningReceiveStatus {
 	CANCELLED = 4;
 }
 
-message SubscribeLightningReceiveResponse {
+message CheckLightningReceiveResponse {
 	string invoice = 1;
 	uint64 amount_sat = 2;
 	LightningReceiveStatus status = 3;

@@ -1927,8 +1927,9 @@ impl Wallet {
 		let mut srv = self.require_server()?;
 
 		info!("Waiting for payment...");
-		let sub = srv.client.subscribe_lightning_receive(protos::SubscribeLightningReceiveRequest {
-			payment_hash: payment_hash.to_byte_array().to_vec(),
+		let sub = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
+			hash: payment_hash.to_byte_array().to_vec(),
+			wait: true,
 		}).await?.into_inner();
 
 		let status = protos::LightningReceiveStatus::try_from(sub.status)

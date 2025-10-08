@@ -77,11 +77,11 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(self.upstream().start_lightning_receive(req).await?.into_inner())
 	}
 
-	async fn subscribe_lightning_receive(
+	async fn check_lightning_receive(
 		&self,
-		req: protos::SubscribeLightningReceiveRequest,
-	) -> Result<protos::SubscribeLightningReceiveResponse, tonic::Status> {
-		Ok(self.upstream().subscribe_lightning_receive(req).await?.into_inner())
+		req: protos::CheckLightningReceiveRequest,
+	) -> Result<protos::CheckLightningReceiveResponse, tonic::Status> {
+		Ok(self.upstream().check_lightning_receive(req).await?.into_inner())
 	}
 
 	async fn prepare_lightning_receive_claim(&mut self, req: protos::PrepareLightningReceiveClaimRequest) -> Result<protos::PrepareLightningReceiveClaimResponse, tonic::Status> {
@@ -270,11 +270,11 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
-	async fn subscribe_lightning_receive(
+	async fn check_lightning_receive(
 		&self,
-		req: tonic::Request<protos::SubscribeLightningReceiveRequest>,
-	) -> Result<tonic::Response<protos::SubscribeLightningReceiveResponse>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::subscribe_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
+		req: tonic::Request<protos::CheckLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::CheckLightningReceiveResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_receive(&mut self.0.clone(), req.into_inner()).await?))
 	}
 
 	async fn prepare_lightning_receive_claim(

@@ -418,19 +418,19 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(resp))
 	}
 
-	async fn subscribe_lightning_receive(
+	async fn check_lightning_receive(
 		&self,
-		req: tonic::Request<protos::SubscribeLightningReceiveRequest>,
-	) -> Result<tonic::Response<protos::SubscribeLightningReceiveResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBSCRIBE_LIGHTNING_RECEIVE);
+		req: tonic::Request<protos::CheckLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::CheckLightningReceiveResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CHECK_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
-		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
+		let payment_hash = PaymentHash::from_bytes(req.hash)?;
 		crate::rpcserver::add_tracing_attributes(vec![
 			KeyValue::new("payment_hash", payment_hash.to_string()),
 		]);
 
-		let sub = self.subscribe_lightning_receive(payment_hash).await.to_status()?;
+		let sub = self.check_lightning_receive(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(sub.into()))
 	}
 
