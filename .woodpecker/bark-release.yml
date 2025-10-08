@@ -1,5 +1,6 @@
 when:
   - event: tag
+    ref: refs/tags/bark-*
 
 clone:
   - name: clone
