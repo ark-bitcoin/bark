@@ -104,7 +104,7 @@ steps:
       - cp x86_64-unknown-linux-gnu/release/captaind "captaind-$(cat ../VERSION)-linux-x86_64"
       - cp x86_64-unknown-linux-gnu/release/watchmand "watchmand-$(cat ../VERSION)-linux-x86_64"
       - sha256sum "captaind-$(cat ../VERSION)-linux-x86_64" > SHA256SUMS
-      - sha256sum "watchmand-$(cat ../VERSION)-linux-x86_64" > SHA256SUMS
+      - sha256sum "watchmand-$(cat ../VERSION)-linux-x86_64" >> SHA256SUMS
 
   - name: publish-server
     when:
