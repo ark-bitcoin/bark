@@ -5,6 +5,7 @@ license = "CC0-1.0"
 authors = [ "Steven Roose <steven@roose.io>" ]
 edition = "2024"
 repository = "https://codeberg.org/ark-bitcoin/bark"
+description = "Primitives for the Ark protocol and bark implementation"
 
 [lib]
 name = "ark"
@@ -16,8 +17,8 @@ test-util = [ "serde_json" ]
 
 # * EXPORTED DEPS
 bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
-bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false }
-serde = { version = "1.0.219" }
+bark-bitcoin-ext = { version = "0.1.0-beta.1", path = "../bitcoin-ext", default-features = false }
+serde = "1.0.219"
 
 # * INTERNAL DEPS
 lazy_static.workspace = true

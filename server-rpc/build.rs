@@ -1,12 +1,8 @@
-use std::fs;
 
 fn main() {
-	fs::create_dir_all("./src/protos").expect("error creating src/protos dir");
-
 	tonic_prost_build::configure()
 		.build_server(cfg!(feature = "server"))
 		.build_client(true)
-		.out_dir("./src/protos/")
 		.protoc_arg("--experimental_allow_proto3_optional")
 		.compile_protos(&[
 			"./protos/bark_server.proto",
