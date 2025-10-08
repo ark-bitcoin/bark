@@ -16,7 +16,7 @@ intman = []
 
 [dependencies]
 # OWN
-ark-lib = { path = "../lib" }
+ark-lib = { version = "0.1.0-beta.1", path = "../lib" }
 bitcoin.workspace = true
 
 # EXPORTED
