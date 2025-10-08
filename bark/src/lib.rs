@@ -218,7 +218,7 @@ impl VtxoSeed {
 ///     - [Wallet::maintenance_refresh]: Refreshes VTXOs where necessary without syncing anything,
 ///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
 ///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
-///     - [Wallet::sync_pending_lightning_vtxos]: Updates the status of pending lightning payments,
+///     - [Wallet::sync_pending_lightning_send_vtxos]: Updates the status of pending lightning payments,
 ///     - [Wallet::register_all_confirmed_boards]: Registers boards which are available for use
 ///       in offchain payments
 ///
@@ -299,7 +299,7 @@ impl VtxoSeed {
 /// // Alternatively, you can use the fine-grained sync commands to sync individual parts of the
 /// // wallet state and use `maintenance_refresh` where necessary to refresh VTXOs.
 /// wallet.sync().await?;
-/// wallet.sync_pending_lightning_vtxos().await?;
+/// wallet.sync_pending_lightning_send_vtxos().await?;
 /// wallet.register_all_confirmed_boards(&mut onchain_wallet).await?;
 /// wallet.sync_exits(&mut onchain_wallet).await?;
 /// wallet.maintenance_refresh().await?;
@@ -835,7 +835,7 @@ impl Wallet {
 	///
 	/// Notes:
 	///   - even when onchain wallet is provided, the onchain wallet will not be sync, but
-	///     - [Wallet::sync_pending_lightning_vtxos] will be called
+	///     - [Wallet::sync_pending_lightning_send_vtxos] will be called
 	///   - [Wallet::sync_exits] will not be called
 	pub async fn sync(&self) {
 		tokio::join!(
@@ -857,7 +857,7 @@ impl Wallet {
 				}
 			},
 			async {
-				if let Err(e) = self.sync_pending_lightning_vtxos().await {
+				if let Err(e) = self.sync_pending_lightning_send_vtxos().await {
 					warn!("Error syncing pending lightning payments: {:#}", e);
 				}
 			},
@@ -884,7 +884,7 @@ impl Wallet {
 
 	/// Syncs pending lightning payments, verifying whether the payment status has changed and
 	/// creating a revocation VTXO if necessary.
-	pub async fn sync_pending_lightning_vtxos(&self) -> anyhow::Result<()> {
+	pub async fn sync_pending_lightning_send_vtxos(&self) -> anyhow::Result<()> {
 		let pending_payments = self.db.get_all_pending_lightning_send()?;
 
 		if pending_payments.is_empty() {
