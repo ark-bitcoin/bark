@@ -1831,7 +1831,29 @@ impl Wallet {
 		Ok(self.db.get_pending_lightning_receives()?)
 	}
 
-	async fn claim_htlc_vtxos(
+	/// Claim incoming lightning payment with the given [PaymentHash].
+	///
+	/// This function reveals the preimage of the lightning payment in
+	/// exchange of getting pubkey VTXOs from HTLC ones
+	///
+	/// # Arguments
+	///
+	/// * `payment_hash` - The [PaymentHash] of the lightning payment
+	/// to wait for.
+	/// * `vtxos` - The list of HTLC VTXOs that were previously granted
+	/// by the Server, with the hash lock clause matching payment hash.
+	///
+	/// # Returns
+	///
+	/// Returns an `anyhow::Result<()>`, which is:
+	/// * `Ok(())` if the process completes successfully.
+	/// * `Err` if an error occurs at any stage of the operation.
+	///
+	/// # Remarks
+	///
+	/// * The list of HTLC VTXOs must have the hash lock clause matching the given
+	///   [PaymentHash].
+	async fn claim_ln_receive(
 		&self,
 		payment_hash: PaymentHash,
 		vtxos: &[WalletVtxo],
@@ -1901,21 +1923,23 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Attempts to receive a payment from the given [Bolt11Invoice].
+	/// Check for incoming lightning payment with the given [PaymentHash].
 	///
-	/// This function finalizes the receipt of a Lightning payment and prepares the payment for use
-	/// in the user's wallet. It performs several key actions including verifying the invoice,
-	/// subscribing to the payment and preparing an HTLC output for the received payment.
+	/// This function checks for an incoming lightning payment with the
+	/// given [PaymentHash] and returns the HTLC VTXOs that are associated
+	/// with it.
 	///
 	/// # Arguments
 	///
-	/// * `invoice` - The [Bolt11Invoice] which was previously generated using
-	///   [Wallet::bolt11_invoice].
+	/// * `payment_hash` - The [PaymentHash] of the lightning payment
+	/// to check for.
+	/// * `wait` - Whether to wait for the payment to be received.
 	///
 	/// # Returns
 	///
-	/// Returns an `anyhow::Result<()>`, which is:
-	/// * `Ok(())` if the process completes successfully.
+	/// Returns an `anyhow::Result<Vec<WalletVtxo>>`, which is:
+	/// * `Ok(wallet_vtxos)` if the process completes successfully, where `wallet_vtxos` is
+	///   the list of HTLC VTXOs that are associated with the payment.
 	/// * `Err` if an error occurs at any stage of the operation.
 	///
 	/// # Remarks
@@ -1923,13 +1947,14 @@ impl Wallet {
 	/// * The invoice must contain an explicit amount specified in milli-satoshis.
 	/// * The HTLC expiry height is calculated by adding the servers' HTLC expiry delta to the
 	///   current chain tip.
-	pub async fn finish_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+	/// * The payment hash must be from an invoice previously generated using
+	///   [Wallet::bolt11_invoice].
+	pub async fn check_ln_receive(&self, payment_hash: PaymentHash, wait: bool) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut srv = self.require_server()?;
 
 		info!("Waiting for payment...");
 		let sub = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
-			hash: payment_hash.to_byte_array().to_vec(),
-			wait: true,
+			hash: payment_hash.to_byte_array().to_vec(), wait,
 		}).await?.into_inner();
 
 		let status = protos::LightningReceiveStatus::try_from(sub.status)
@@ -1974,7 +1999,7 @@ impl Wallet {
 				vtxos.push(vtxo);
 			}
 			if all_found {
-				return self.claim_htlc_vtxos(payment_hash, &vtxos).await;
+				return Ok(vtxos)
 			}
 			// else we continue below
 		}
@@ -2016,15 +2041,54 @@ impl Wallet {
 		let wallet_vtxos = vtxos.iter()
 			.map(|v| Ok(self.db.get_wallet_vtxo(v.id())?.expect("missing VTXO we just put")))
 			.collect::<anyhow::Result<Vec<_>>>()?;
-		self.claim_htlc_vtxos(payment_hash, &wallet_vtxos).await
+		Ok(wallet_vtxos)
 	}
 
-	/// Finish and claim all open Lightning invoices
-	pub async fn claim_all_open_invoices(&self) -> anyhow::Result<()> {
+	/// Check and claim a Lightning receive
+	///
+	/// This function checks for an incoming lightning payment with the given [PaymentHash]
+	/// and then claims the payment using returned HTLC VTXOs.
+	///
+	/// # Arguments
+	///
+	/// * `payment_hash` - The [PaymentHash] of the lightning payment
+	/// to check for.
+	/// * `wait` - Whether to wait for the payment to be received.
+	///
+	/// # Returns
+	///
+	/// Returns an `anyhow::Result<()>`, which is:
+	/// * `Ok(())` if the process completes successfully.
+	/// * `Err` if an error occurs at any stage of the operation.
+	///
+	/// # Remarks
+	///
+	/// * The payment hash must be from an invoice previously generated using
+	///   [Wallet::bolt11_invoice].
+	pub async fn check_and_claim_ln_receive(&self, payment_hash: PaymentHash, wait: bool) -> anyhow::Result<()> {
+		let wallet_vtxos = self.check_ln_receive(payment_hash, wait).await?;
+		self.claim_ln_receive(payment_hash, &wallet_vtxos).await
+	}
+
+	/// Check and claim all opened Lightning receive
+	///
+	/// This function fetches all opened lightning receives and then
+	/// concurrently tries to check and claim them
+	///
+	/// # Arguments
+	///
+	/// * `wait` - Whether to wait for each payment to be received.
+	///
+	/// # Returns
+	///
+	/// Returns an `anyhow::Result<()>`, which is:
+	/// * `Ok(())` if the process completes successfully.
+	/// * `Err` if an error occurs at any stage of the operation.
+	pub async fn check_and_claim_all_open_ln_receives(&self, wait: bool) -> anyhow::Result<()> {
 		// Asynchronously attempts to claim all pending receive by converting the list into a stream
 		tokio_stream::iter(self.pending_lightning_receives()?).for_each_concurrent(3, |receive| async move {
-			if let Err(e) = self.finish_lightning_receive(receive.invoice.into()).await {
-				error!("Error claiming invoice: {}", e);
+			if let Err(e) = self.check_and_claim_ln_receive(receive.invoice.into(), wait).await {
+				error!("Error claiming lightning receive: {}", e);
 			}
 		}).await;
 

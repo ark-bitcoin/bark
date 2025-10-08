@@ -354,7 +354,7 @@ impl Bark {
 	}
 
 	pub async fn try_lightning_receive(&self, invoice: String) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", &invoice, "--verbose"]).await?;
+		self.try_run(["lightning", "claim", &invoice, "--wait", "--verbose"]).await?;
 		Ok(())
 	}
 
@@ -363,7 +363,7 @@ impl Bark {
 	}
 
 	pub async fn try_lightning_receive_all(&self) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", "--verbose"]).await?;
+		self.try_run(["lightning", "claim", "--wait", "--verbose"]).await?;
 		Ok(())
 	}
 
