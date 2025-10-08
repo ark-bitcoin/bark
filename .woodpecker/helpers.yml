@@ -20,7 +20,7 @@ steps:
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - tar -czf "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
-      - mv "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
+      - sudo mv "/host/data/test/${CI_COMMIT_SHA}.tar.gz" "/host/data/test/${CI_COMMIT_SHA}/"
       - echo "Test data tar.gz     -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
       - echo "Test data URL        -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
 
@@ -32,7 +32,7 @@ steps:
       - /data:/host/data
     commands:
       - tar -czf "/host/data/codecov/${CI_COMMIT_SHA}.tar.gz" "/host/data/codecov/${CI_COMMIT_SHA}/"
-      - mv "/host/data/codecov/${CI_COMMIT_SHA}.tar.gz" "/host/data/codecov/${CI_COMMIT_SHA}/"
+      - sudo mv "/host/data/codecov/${CI_COMMIT_SHA}.tar.gz" "/host/data/codecov/${CI_COMMIT_SHA}/"
       - echo "Code Coverage tar.gz -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
       - echo "Code Coverage URL    -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
 
@@ -45,7 +45,7 @@ steps:
       - /data:/host/data
     commands:
       - nix develop .#default --command bash -c "just rustdocs"
-      - cp -r rustdocs /host/data/
+      - sudo cp -r rustdocs /host/data/
       - bash contrib/generate-index.sh /host/data/rustdocs/doc
       - echo "rustdocs -> https://rustdocs.2nd.dev/master/"
 
