@@ -89,11 +89,11 @@ impl PaymentHash {
 	}
 }
 
-/// Build taproot spend info to build a VTXO to enable lightning send
+/// Construct taproot spending information for a VTXO that enables outgoing
+/// Lightning payments. This relates to the [crate::VtxoPolicy::ServerHtlcSend]
+/// policy.
 ///
-/// This related to the [VtxoPolicy::ServerHtlcSend] policy.
-///
-/// This build a taproot with 3 clauses:
+/// This will build a taproot with 3 clauses:
 /// 1. The keyspend path allows Alice and Server to collaborate to spend
 /// the HTLC. The Server can use this path to revoke the HTLC if payment
 /// failed
@@ -128,11 +128,11 @@ pub fn server_htlc_send_taproot(
 		.finalize(&SECP, combined_pk).unwrap()
 }
 
-/// Build taproot spend info to build a VTXO for Alice lightning receive
+/// Construct taproot spending information for a VTXO that enables incoming
+/// Lightning payments. This relates to the [crate::VtxoPolicy::ServerHtlcRecv]
+/// policy.
 ///
-/// This related to the [VtxoPolicy::ServerHtlcRecv] policy.
-///
-/// This build a taproot with 3 clauses:
+/// This will build a taproot with 3 clauses:
 /// 1. The keyspend path allows Alice and Server to collaborate to spend
 /// the HTLC. This is the expected path to be used. Server should only
 /// accept to collaborate if Alice reveals the preimage.
@@ -181,9 +181,7 @@ impl fmt::Display for PaymentStatus {
 	}
 }
 
-/// Enum to represent either a bolt11 or bolt12 invoice
-///
-/// Used in [`LightningPaymentDetails`] to represent the invoice to pay.
+/// Enum to represent either a lightning [Bolt11Invoice] or a [Bolt12Invoice].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Invoice {
 	Bolt11(Bolt11Invoice),

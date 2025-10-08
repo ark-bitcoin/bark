@@ -423,7 +423,7 @@ impl Builder {
 		self
 	}
 
-	/// Set the VTXO policy to [VtxoPolicy::PublicKey]
+	/// Set the VTXO policy to the given [PublicKey].
 	pub fn pubkey_policy(self, user_pubkey: PublicKey) -> Self {
 		self.policy(VtxoPolicy::new_pubkey(user_pubkey))
 	}

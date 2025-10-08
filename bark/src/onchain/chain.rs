@@ -34,7 +34,7 @@ const MIN_BITCOIND_VERSION: usize = 290000;
 /// [ChainSource::new] along with the expected [Network].
 ///
 /// Notes:
-/// - For [ChainSource::Bitcoind], authentication must be provided (cookie file or user/pass).
+/// - For [ChainSourceSpec::Bitcoind], authentication must be provided (cookie file or user/pass).
 #[derive(Clone, Debug)]
 pub enum ChainSourceSpec {
 	Bitcoind {
@@ -145,9 +145,9 @@ impl ChainSource {
 	/// fallback fee rate.
 	///
 	/// This function initializes the internal chain source client based on the provided `chain_source`:
-	/// - If `chain_source` is of type [ChainSource::Bitcoind], it creates a Bitcoin Core RPC client
+	/// - If `chain_source` is of type [ChainSourceSpec::Bitcoind], it creates a Bitcoin Core RPC client
 	///   using the provided URL and authentication parameters.
-	/// - If `chain_source` is of type [ChainSource::Esplora], it creates an Esplora client with the
+	/// - If `chain_source` is of type [ChainSourceSpec::Esplora], it creates an Esplora client with the
 	///   given URL.
 	///
 	/// Both clients are initialized asynchronously, and any errors encountered during their

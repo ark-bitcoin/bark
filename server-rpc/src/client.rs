@@ -41,12 +41,12 @@ use crate::{protos, ArkServiceClient, ConvertError, RequestExt};
 
 /// The minimum protocol version supported by the client.
 ///
-/// For info on protocol versions, see [server_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc](crate) module documentation.
 pub const MIN_PROTOCOL_VERSION: u64 = 1;
 
 /// The maximum protocol version supported by the client.
 ///
-/// For info on protocol versions, see [server_rpc] module documentation.
+/// For info on protocol versions, see [server_rpc](crate) module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
 #[derive(Debug, thiserror::Error)]
@@ -109,7 +109,7 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 pub struct ServerConnection {
 	/// Protocol version used for rpc protocol.
 	///
-	/// For info on protocol versions, see [server_rpc] module documentation.
+	/// For info on protocol versions, see [server_rpc](crate) module documentation.
 	#[allow(unused)]
 	pub pver: u64,
 	/// Server-side configuration and network parameters returned after connection.

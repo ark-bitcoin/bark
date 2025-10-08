@@ -3,7 +3,7 @@
 //!
 //! * user creates a builder using [BoardBuilder::new]
 //! * user creates the funding tx which pays to [BoardBuilder::funding_script_pubkey]
-//! * user sets the funding output in [BoardBuilder::set_funding_utxo]
+//! * user sets the funding output in [BoardBuilder::set_funding_details]
 //! * user generates signing nonces using [BoardBuilder::generate_user_nonces]
 //! * user sends all board info to the server
 //! * server creates a builder using [BoardBuilder::new_for_cosign]
@@ -94,7 +94,7 @@ pub mod state {
 /// cosign the request and return his partial signature (along with public nonce)
 /// back to the user so that the user can finish the request and create a [Vtxo].
 ///
-/// Currently you can only create VTXOs with [VtxoPolicy::PublicKey].
+/// Currently you can only create VTXOs with [VtxoPolicy::Pubkey].
 #[derive(Debug)]
 pub struct BoardBuilder<S: BuilderState> {
 	pub user_pubkey: PublicKey,

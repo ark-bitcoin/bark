@@ -45,7 +45,8 @@ impl From<LocalOutput> for LocalUtxo {
 
 /// Trait extension for TxBuilder to add exit outputs
 ///
-/// When used, the resulting PSBT should be signed using [`crate::exit::Exit::sign_psbt`]
+/// When used, the resulting PSBT should be signed using
+/// [crate::exit::Exit::sign_exit_claim_inputs].
 pub trait TxBuilderExt {
 	fn add_exit_claim_inputs(&mut self, exit_outputs: &[&ExitVtxo]) -> anyhow::Result<()>;
 }

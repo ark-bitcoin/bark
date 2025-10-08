@@ -432,7 +432,11 @@ impl VtxoPolicy {
 		}
 	}
 
-	/// Returns the tapscript internal to the [VtxoPolicy::taproot] that is used for the user exit.
+	/// Generates a script based on the exit conditions for a given policy type.
+	///
+	/// Depending on the specific policy variant, this function produces an appropriate script
+	/// that implements the user exit clause. The exit clause enforces specific rules for exiting
+	/// the contract or completing a transaction based on the provided `exit_delta` parameter.
 	pub fn user_exit_clause(&self, exit_delta: u16) -> ScriptBuf {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
