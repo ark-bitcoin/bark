@@ -1,6 +1,10 @@
 [package]
 name = "bark-bitcoin-ext"
 version = "0.1.0-beta.1"
+license = "CC0-1.0"
+authors = [ "Steven Roose <steven@roose.io>" ]
+repository = "https://codeberg.org/ark-bitcoin/bark"
+description = "Extension library to the rust-bitcoin ecosystem crates used in bark"
 edition = "2024"
 
 [lib]
