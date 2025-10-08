@@ -444,13 +444,21 @@ impl Bark {
 		self.maintain().await;
 	}
 
-	pub async fn try_refresh_all(&self) -> anyhow::Result<()> {
-		self.try_run(["refresh", "--all"]).await?;
-		Ok(())
+	/// returns Err if the round failed or if no round happened
+	pub async fn try_refresh_all(&self) -> anyhow::Result<RoundStatus> {
+		let res = self.try_run_json::<Option<RoundStatus>, _, _>(["refresh", "--all"]).await
+			.context("running refresh --all command failed")?
+			.context("no round was joined")?;
+		if let RoundStatus::Failed { error } = res {
+			bail!("round failed: {}", error);
+		}
+		Ok(res)
 	}
 
+	/// panics if the round failed or if no round happened
 	pub async fn refresh_all(&self) {
-		self.try_refresh_all().await.expect("refresh --all command failed")
+		let res = self.try_refresh_all().await.expect("refresh failed");
+		assert!(res.is_success(), "round failed: {:?}", res);
 	}
 
 	pub async fn refresh_counterparty(&self) {
@@ -458,7 +466,15 @@ impl Bark {
 	}
 
 	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<RoundStatus> {
-		self.try_run_json(["offboard", "--all", "--address", &address.to_string()]).await
+		let res = self.try_run_json::<Option<RoundStatus>, _, _>(
+			["offboard", "--all", "--address", &address.to_string()],
+		).await
+			.context("running offboard --all command failed")?
+			.context("no round was joined")?;
+		if !res.is_success() {
+			bail!("round failed: {:?}", res);
+		}
+		Ok(res)
 	}
 
 	pub async fn offboard_all(&self, address: impl fmt::Display) -> RoundStatus {
