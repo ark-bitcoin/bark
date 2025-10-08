@@ -193,9 +193,6 @@ in pkgs.mkShell {
 		# for bark
 		pkgs.sqlite
 
-		# for server
-		pkgs.postgresql.lib
-
 		# for development
 		rustToolchain.rust-docs
 		rustToolchain.rust-analyzer
@@ -228,7 +225,12 @@ in pkgs.mkShell {
 
 	LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 	RUSTDOCS_STDLIB = "${rustToolchain.rust-docs}/share/doc/rust/html/std/index.html";
-	LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.gcc.cc.lib pkgs.sqlite pkgs.postgresql.lib ];
+	LD_LIBRARY_PATH = lib.makeLibraryPath [
+		pkgs.gcc.cc.lib
+		# hold plugin needs these at runtime
+		pkgs.sqlite
+		postgresql.lib
+	];
 
 	POSTGRES_BINS = "${postgresql}/bin";
 	BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
