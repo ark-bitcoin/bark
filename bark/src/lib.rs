@@ -13,6 +13,7 @@ pub mod exit;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
+pub mod round;
 pub mod vtxo_state;
 pub mod vtxo_selection;
 
@@ -25,7 +26,6 @@ pub use bark_json::cli::{Offboard, Board, SendOnchain};
 mod config;
 mod lnurl;
 mod psbtext;
-mod round;
 
 use std::collections::{HashMap, HashSet};
 
@@ -59,13 +59,12 @@ use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyType};
 use server_rpc::{self as rpc, protos, ServerConnection};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
-use round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
-
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
 use crate::persist::models::{LightningReceive, StoredVtxoRequest};
+use crate::round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind};
 use crate::vtxo_selection::RefreshStrategy;

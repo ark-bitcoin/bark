@@ -31,9 +31,9 @@ use json::exit::states::ExitTxOrigin;
 
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::{
-	Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties
+	Pagination, Vtxo, VtxoId, VtxoState, WalletProperties
 };
-use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
+use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::persist::BarkPersister;
 use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};

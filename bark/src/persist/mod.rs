@@ -28,14 +28,14 @@ use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
 use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
-use json::exit::states::ExitTxOrigin;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId};
+use json::exit::states::ExitTxOrigin;
 
-use crate::{Movement, MovementArgs, Pagination, RoundParticipation, WalletProperties};
+use crate::{Movement, MovementArgs, Pagination, WalletProperties};
 use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
-use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState};
+use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 /// Storage interface for Bark wallets.
