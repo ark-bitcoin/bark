@@ -702,10 +702,9 @@ impl Wallet {
 	/// when a board is created and when it becomes spendable.
 	///
 	/// See [ArkInfo::required_board_confirmations] and [Wallet::register_all_confirmed_boards].
-	pub fn pending_board_vtxos(&self) -> anyhow::Result<Vec<Vtxo>> {
+	pub fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?
 			.into_iter()
-			.map(|r| r.vtxo)
 			.collect();
 		Ok(boards)
 	}
