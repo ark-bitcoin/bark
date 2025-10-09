@@ -148,7 +148,7 @@ impl TestContext {
 
 	pub async fn init_central_postgres(&mut self) {
 		if self.postgres_manager.is_none() {
-			let datadir = self.datadir.join("central_postgres");
+			let datadir = self.datadir.join("postgres");
 			self.postgres_manager = Some(PostgresDatabaseManager::init(datadir).await);
 		}
 	}
