@@ -418,6 +418,14 @@ enum OnchainCommand {
 		#[arg(long)]
 		no_sync: bool,
 	},
+
+	/// List our wallet's transactions
+	#[command()]
+	Transactions {
+		/// Skip syncing before fetching transactions
+		#[arg(long)]
+		no_sync: bool,
+	},
 }
 
 /// Simple logger that splits into two logger
@@ -702,6 +710,21 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					.collect::<json::onchain::Utxos>();
 
 				output_json(&utxos);
+			},
+			OnchainCommand::Transactions { no_sync } => {
+				if !no_sync {
+					info!("Syncing wallet...");
+					if let Err(e) = onchain.sync(&wallet.chain).await {
+						warn!("Sync error: {}", e)
+					}
+				}
+
+				let mut transactions = onchain.list_transactions();
+
+				// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
+				transactions.reverse();
+
+				output_json(&transactions);
 			},
 		},
 		Command::Address { index } => {
