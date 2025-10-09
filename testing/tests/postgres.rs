@@ -94,7 +94,9 @@ async fn duplicated_lightning_invoice() {
 	let err = db_client.query_one(
 		&stmt, &[&invoice.to_string(), &&invoice.payment_hash().to_vec()[..]],
 	).await.unwrap_err();
-	assert!(err.to_string().contains("duplicate key value violates unique constraint \"lightning_invoice_payment_hash_key\""), "err: {}", err);
+	assert!(err.as_db_error()
+		.expect("db error expected").to_string()
+		.contains("duplicate key value violates unique constraint \"lightning_invoice_payment_hash_key\""), "err: {}", err);
 }
 
 #[tokio::test]
