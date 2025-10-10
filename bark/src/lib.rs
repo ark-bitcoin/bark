@@ -806,7 +806,7 @@ impl Wallet {
 	/// Note:
 	///   - [Wallet::sync_exits] will not be called
 	///   - [Wallet::sync_pending_lightning_vtxos] will not be called
-	pub async fn sync(&mut self) -> anyhow::Result<()> {
+	pub async fn sync(&self) -> anyhow::Result<()> {
 		// NB: order matters here, if syncing call fails, we still want to update the fee rates
 		if let Err(e) = self.chain.update_fee_rates(self.config.fallback_fee_rate).await {
 			warn!("Error updating fee rates: {}", e);
