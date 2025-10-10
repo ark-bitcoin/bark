@@ -16,6 +16,7 @@ use anyhow::Context;
 use bark::movement::Movement;
 use bark::vtxo_state::WalletVtxo;
 use bitcoin::{address, Amount, FeeRate};
+use clap::builder::BoolishValueParser;
 use clap::Parser;
 use ::lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
@@ -71,10 +72,22 @@ fn movement_to_json(movement: &Movement) -> json::Movement {
 #[command(name = "bark", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
 struct Cli {
 	/// Enable verbose logging
-	#[arg(long, short = 'v', env = "BARK_VERBOSE", global = true)]
+	#[arg(
+		long,
+		short = 'v',
+		env = "BARK_VERBOSE",
+		global = true,
+		value_parser = BoolishValueParser::new(),
+	)]
 	verbose: bool,
 	/// Disable all terminal logging
-	#[arg(long, short = 'q', env = "BARK_QUIET", global = true)]
+	#[arg(
+		long,
+		short = 'q',
+		env = "BARK_QUIET",
+		global = true,
+		value_parser = BoolishValueParser::new(),
+	)]
 	quiet: bool,
 
 	/// The datadir of the bark wallet
