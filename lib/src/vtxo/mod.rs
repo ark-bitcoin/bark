@@ -57,6 +57,7 @@
 mod validation;
 pub use self::validation::{Validation, VtxoValidationError};
 
+use std::collections::HashSet;
 use std::iter::FusedIterator;
 use std::{fmt, io};
 use std::str::FromStr;
@@ -933,6 +934,15 @@ impl Vtxo {
 		}
 
 		ret.unwrap_or_default()
+	}
+
+	/// The set of all arkoor pubkeys present in the arkoor part
+	/// of the VTXO exit path.
+	pub fn arkoor_pubkeys(&self) -> HashSet<PublicKey> {
+		self.genesis.iter().filter_map(|i| match &i.transition {
+			GenesisTransition::Arkoor { policy, .. } => policy.arkoor_pubkey(),
+			GenesisTransition::Cosigned { .. } => None,
+		}).collect()
 	}
 
 	/// Fully validate this VTXO and its entire transaction chain.
