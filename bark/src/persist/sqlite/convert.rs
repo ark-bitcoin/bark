@@ -26,11 +26,11 @@ use crate::round::{
 	RoundAbandonedState,
 	RoundCancelledState,
 	RoundConfirmedState,
+	RoundParticipation,
 	RoundState,
 	RoundStateKind,
 	VtxoTreeSignedState
 };
-use crate::RoundParticipation;
 
 pub trait RowExt<'a>: Borrow<Row<'a>> {
 	/// We need the value from a potentially optional column
@@ -107,7 +107,7 @@ fn row_to_participation(row: &Row<'_>) -> anyhow::Result<RoundParticipation> {
 	let offboard_requests = serde_json::from_slice(&row.need::<_, Vec<u8>>("offboard_requests")?)?;
 
 	Ok(RoundParticipation {
-		inputs: inputs,
+		inputs,
 		outputs: payment_requests,
 		offboards: offboard_requests,
 	})

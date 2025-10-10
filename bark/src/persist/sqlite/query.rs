@@ -18,11 +18,13 @@ use json::exit::ExitState;
 use json::exit::states::ExitTxOrigin;
 
 use crate::persist::sqlite::convert::{row_to_secret_nonces, row_to_round_state};
-use crate::{Pagination, RoundParticipation, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::movement::{Movement, MovementKind};
 use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
-use crate::round::{AttemptStartedState, PendingConfirmationState, RoundState, RoundStateKind};
+use crate::round::{
+	AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState, RoundStateKind,
+};
 
 use super::convert::{row_to_lightning_receive, row_to_movement};
 
