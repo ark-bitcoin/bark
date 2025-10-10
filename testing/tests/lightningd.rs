@@ -517,7 +517,7 @@ async fn bark_can_receive_lightning() {
 	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
 	assert!(vtxos.iter().any(|v| v.amount == board_amount));
 
-	let [ln_claim_mvt, ln_round_mvt, board_mvt] = bark.list_movements().await
+	let [board_mvt, ln_round_mvt, ln_claim_mvt] = bark.list_movements().await
 		.try_into().expect("should have 4 movements");
 	assert!(
 		board_mvt.spends.is_empty() &&

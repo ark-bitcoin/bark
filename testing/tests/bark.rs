@@ -478,19 +478,19 @@ async fn list_movements() {
 	bark2.maintain().await;
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 1);
-	assert_eq!(movements[0].spends.len(), 0);
-	assert_eq!(movements[0].receives[0].amount, sat(300_000));
-	assert_eq!(movements[0].fees, Amount::ZERO);
-	assert!(movements[0].recipients.first().is_none());
+	assert_eq!(movements.last().unwrap().spends.len(), 0);
+	assert_eq!(movements.last().unwrap().receives[0].amount, sat(300_000));
+	assert_eq!(movements.last().unwrap().fees, Amount::ZERO);
+	assert!(movements.last().unwrap().recipients.first().is_none());
 
 	// oor change
 	bark1.send_oor(&bark2.address().await, sat(150_000)).await;
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 2);
-	assert_eq!(movements[0].spends[0].amount, sat(300_000));
-	assert_eq!(movements[0].receives[0].amount, sat(150_000));
-	assert_eq!(movements[0].fees, Amount::ZERO);
-	assert!(movements[0].recipients.first().is_some());
+	assert_eq!(movements.last().unwrap().spends[0].amount, sat(300_000));
+	assert_eq!(movements.last().unwrap().receives[0].amount, sat(150_000));
+	assert_eq!(movements.last().unwrap().fees, Amount::ZERO);
+	assert!(movements.last().unwrap().recipients.first().is_some());
 
 	// refresh vtxos
 	bark1.refresh_all().await;
@@ -498,20 +498,20 @@ async fn list_movements() {
 
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 3);
-	assert_eq!(movements[0].spends[0].amount, sat(150_000));
-	assert_eq!(movements[0].receives[0].amount, sat(150_000));
-	assert_eq!(movements[0].fees, Amount::ZERO);
-	assert!(movements[0].recipients.first().is_none());
+	assert_eq!(movements.last().unwrap().spends[0].amount, sat(150_000));
+	assert_eq!(movements.last().unwrap().receives[0].amount, sat(150_000));
+	assert_eq!(movements.last().unwrap().fees, Amount::ZERO);
+	assert!(movements.last().unwrap().recipients.first().is_none());
 
 	// oor vtxo
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 	let movements = bark1.list_movements().await;
 
 	assert_eq!(movements.len(), 4);
-	assert_eq!(movements[0].spends.len(), 0);
-	assert_eq!(movements[0].receives[0].amount, sat(330_000));
-	assert_eq!(movements[0].fees, Amount::ZERO);
-	assert!(movements[0].recipients.first().is_none());
+	assert_eq!(movements.last().unwrap().spends.len(), 0);
+	assert_eq!(movements.last().unwrap().receives[0].amount, sat(330_000));
+	assert_eq!(movements.last().unwrap().fees, Amount::ZERO);
+	assert!(movements.last().unwrap().recipients.first().is_none());
 }
 
 #[tokio::test]
@@ -534,12 +534,13 @@ async fn multiple_spends_in_payment() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let movements = bark1.list_movements().await;
-	assert_eq!(movements[0].spends.len(), 3);
-	assert_eq!(movements[0].spends[0].amount, sat(100_000));
-	assert_eq!(movements[0].spends[1].amount, sat(200_000));
-	assert_eq!(movements[0].spends[2].amount, sat(300_000));
-	assert_eq!(movements[0].receives[0].amount, sat(600_000));
-	assert_eq!(movements[0].fees, Amount::ZERO);
+	let offboard_mvt = movements.last().unwrap();
+	assert_eq!(offboard_mvt.spends.len(), 3);
+	assert_eq!(offboard_mvt.spends[0].amount, sat(100_000));
+	assert_eq!(offboard_mvt.spends[1].amount, sat(200_000));
+	assert_eq!(offboard_mvt.spends[2].amount, sat(300_000));
+	assert_eq!(offboard_mvt.receives[0].amount, sat(600_000));
+	assert_eq!(offboard_mvt.fees, Amount::ZERO);
 }
 
 #[tokio::test]
@@ -572,7 +573,7 @@ async fn offboard_all() {
 	assert_eq!(Amount::ZERO, bark1.offchain_balance().await);
 
 	let movements = bark1.list_movements().await;
-	let offb_movement = movements.first().unwrap();
+	let offb_movement = movements.last().unwrap();
 	assert_eq!(offb_movement.spends.len(), 3, "all offboard vtxos should be in movement");
 	assert_eq!(
 		offb_movement.recipients.first(),
@@ -630,7 +631,7 @@ async fn offboard_vtxos() {
 	assert!(updated_vtxos.contains(&vtxos[2].id));
 
 	let movements = bark1.list_movements().await;
-	let offb_movement = movements.first().unwrap();
+	let offb_movement = movements.last().unwrap();
 	assert_eq!(offb_movement.spends.len(), 1, "only provided vtxo should be offboarded");
 	assert_eq!(offb_movement.spends[0].id, vtxo_to_offboard.id, "only provided vtxo should be offboarded");
 	assert_eq!(
@@ -668,7 +669,7 @@ async fn bark_send_onchain() {
 	assert_eq!(change_vtxo.amount, sat(498_900));
 
 	let movements = bark1.list_movements().await;
-	let send_movement = movements.first().unwrap();
+	let send_movement = movements.last().unwrap();
 	assert_eq!(send_movement.spends[0].id, sent_vtxos.id);
 	assert_eq!(
 		send_movement.recipients.first(),

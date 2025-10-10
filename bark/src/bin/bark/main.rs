@@ -24,16 +24,13 @@ use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 
 use ark::VtxoId;
-use bark::{Config, Pagination, UtxoInfo};
+use bark::{Config, UtxoInfo};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::{cli as json, primitives};
 use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
-
-const DEFAULT_PAGE_SIZE: u16 = 10;
-const DEFAULT_PAGE_INDEX: u16 = 0;
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -237,13 +234,6 @@ enum Command {
 	/// By default will fetch the 10 first items
 	#[command()]
 	Movements {
-		/// Page index to return, default to 0
-		#[arg(long)]
-		page_index: Option<u16>,
-		/// Page size to return, default to 10
-		#[arg(long)]
-		page_size: Option<u16>,
-
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
@@ -751,7 +741,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			output_json(&vtxos);
 		},
-		Command::Movements { page_index, page_size, no_sync } => {
+		Command::Movements { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				if let Err(e) = wallet.sync().await {
@@ -759,14 +749,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 
-			let pagination = Pagination {
-				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX),
-				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
-			};
-
-			let movements = wallet.movements(pagination)?.into_iter()
+			let mut movements = wallet.movements()?.into_iter()
 				.map(|mv| movement_to_json(&mv))
 				.collect::<Vec<_>>();
+
+			// movements are ordered from newest to oldest, so we reverse them so last terminal item is newest
+			movements.reverse();
 
 			output_json(&movements);
 		},

@@ -101,17 +101,6 @@ struct ArkoorCreateResult {
 	change: Option<Vtxo>,
 }
 
-/// Represents the structure for pagination settings, including the current page index
-/// and the number of items per page.
-pub struct Pagination {
-	/// The current page index (0-based). This indicates which page of data is being requested or
-	/// displayed. For example, a `page_index` of `0` refers to the first page.
-	pub page_index: u16,
-	/// The number of items to be displayed per page. This determines how many data items are
-	/// retrieved or shown for the current page index.
-	pub page_size: u16,
-}
-
 impl From<Utxo> for UtxoInfo {
 	fn from(value: Utxo) -> Self {
 		match value {
@@ -659,9 +648,9 @@ impl Wallet {
 		Ok(vtxo)
 	}
 
-	/// Fetches all wallet fund movements with the given [Pagination] parameters.
-	pub fn movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
-		Ok(self.db.get_paginated_movements(pagination)?)
+	/// Fetches all wallet fund movements ordered from newest to oldest.
+	pub fn movements(&self) -> anyhow::Result<Vec<Movement>> {
+		Ok(self.db.get_movements()?)
 	}
 
 	/// Returns all not spent vtxos
@@ -1822,11 +1811,12 @@ impl Wallet {
 		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into())?)
 	}
 
-	/// Fetches the status of all lightning receives with the given [Pagination] parameters.
-	pub fn lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(self.db.get_paginated_lightning_receives(pagination)?)
+	/// Fetches all lightning receives ordered from newest to oldest.
+	pub fn lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+		Ok(self.db.get_lightning_receives()?)
 	}
 
+	/// Fetches all pending lightning receives ordered from newest to oldest.
 	pub fn pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		Ok(self.db.get_pending_lightning_receives()?)
 	}

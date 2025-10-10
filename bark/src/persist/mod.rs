@@ -33,7 +33,7 @@ use lightning_invoice::Bolt11Invoice;
 use ark::{Vtxo, VtxoId};
 use json::exit::states::ExitTxOrigin;
 
-use crate::{Movement, MovementArgs, Pagination, WalletProperties};
+use crate::{Movement, MovementArgs, WalletProperties};
 use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -131,17 +131,14 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the lookup fails.
 	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool>;
 
-	/// Return a paginated list of movements, see [Movement].
-	///
-	/// Parameters:
-	/// - pagination: Paging parameters (offset/limit).
+	/// Return a list of movements, see [Movement].
 	///
 	/// Returns:
 	/// - `Ok(Vec<Movement>)` possibly empty.
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>>;
+	fn get_movements(&self) -> anyhow::Result<Vec<Movement>>;
 
 	/// Register a movement of VTXOs atomically.
 	///
@@ -378,20 +375,14 @@ pub trait BarkPersister: Send + Sync + 'static {
 		invoice: &Bolt11Invoice,
 	) -> anyhow::Result<()>;
 
-	/// Return a paginated list of Lightning receives.
-	///
-	/// Parameters:
-	/// - pagination: Paging parameters.
+	/// Return a list of Lightning receives.
 	///
 	/// Returns:
 	/// - `Ok(Vec<LightningReceive>)` possibly empty.
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_paginated_lightning_receives(
-		&self,
-		pagination: Pagination,
-	) -> anyhow::Result<Vec<LightningReceive>>;
+	fn get_lightning_receives(&self,) -> anyhow::Result<Vec<LightningReceive>>;
 
 	/// Returns a list of all pending lightning receives
 	///
