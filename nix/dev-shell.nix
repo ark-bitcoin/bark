@@ -134,7 +134,7 @@ let
 	};
 
 in pkgs.mkShell {
-	buildInputs = [
+	packages = [
 		slog-tools
 
 		# For building
