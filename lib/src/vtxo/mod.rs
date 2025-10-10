@@ -453,7 +453,6 @@ impl VtxoPolicy {
 				)
 			},
 		}
-
 	}
 
 	pub(crate) fn script_pubkey(&self, server_pubkey: PublicKey, exit_delta: u16) -> ScriptBuf {
@@ -906,6 +905,34 @@ impl Vtxo {
 			VtxoPolicy::ServerHtlcSend { .. } => VTXO_CLAIM_INPUT_WEIGHT,
 			VtxoPolicy::ServerHtlcRecv { .. } => VTXO_CLAIM_INPUT_WEIGHT,
 		}
+	}
+
+	/// The set of cosign pubkeys that is present in all of the exit nodes of the
+	/// non-arkoor part of the exit path.
+	pub fn round_cosign_pubkeys(&self) -> Vec<PublicKey> {
+		let mut ret = Option::<Vec<PublicKey>>::None;
+
+		// We want to gather the cosign pubkeys that are present in all cosigned
+		// transitions. We expect the last transition to have the fewest number of
+		// cosign pubkeys so we go backwards.
+		for item in self.genesis.iter().rev() {
+			match &item.transition {
+				GenesisTransition::Cosigned { pubkeys, .. } => {
+					if let Some(ref mut keys) = ret {
+						keys.retain(|p| pubkeys.contains(p));
+						if keys.is_empty() {
+							break;
+						}
+					} else {
+						// first cosigned transition
+						ret = Some(pubkeys.clone());
+					}
+				},
+				GenesisTransition::Arkoor { .. } => {},
+			}
+		}
+
+		ret.unwrap_or_default()
 	}
 
 	/// Fully validate this VTXO and its entire transaction chain.
