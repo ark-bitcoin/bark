@@ -87,15 +87,16 @@
 //! let (mut bark_wallet, mut onchain_wallet) = get_wallets().await;
 //!
 //! // Mark all VTXOs for exit.
-//! bark_wallet.exit.start_exit_for_entire_wallet(&onchain_wallet).await?;
+//! bark_wallet.exit.get_mut().start_exit_for_entire_wallet(&onchain_wallet).await?;
 //!
 //! // Transactions will be broadcast and require confirmations so keep periodically calling this.
-//! bark_wallet.exit.progress_exits(&mut onchain_wallet, None).await?;
+//! bark_wallet.exit.get_mut().progress_exits(&mut onchain_wallet, None).await?;
 //!
 //! // Once all VTXOs are claimable, construct a PSBT to drain them.
 //! let drain_to = bitcoin::Address::from_str("bc1p...")?.assume_checked();
-//! let drain_psbt = bark_wallet.exit.drain_exits(
-//!   &bark_wallet.exit.list_claimable(),
+//! let exit = bark_wallet.exit.read().await;
+//! let drain_psbt = exit.drain_exits(
+//!   &exit.list_claimable(),
 //!   &bark_wallet,
 //!   drain_to,
 //!   None,
@@ -114,6 +115,7 @@ pub use vtxo::ExitVtxo;
 
 mod vtxo;
 
+use std::borrow::Borrow;
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -319,13 +321,13 @@ impl Exit {
 	///
 	/// This is a lower level primitive to be used in conjunction with [Exit::mark_vtxos_for_exit].
 	pub async fn start_vtxo_exits(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
-		let tip = self.chain_source.tip().await?;
 		if self.vtxos_to_exit.is_empty() {
-			warn!("There are VTXOs to exit!");
 			return Ok(());
 		}
 
-		let cloned = self.vtxos_to_exit.clone().into_iter().collect::<Vec<_>>();
+		let tip = self.chain_source.tip().await?;
+
+		let cloned = self.vtxos_to_exit.iter().cloned().collect::<Vec<_>>();
 		for vtxo_id in cloned {
 			let vtxo = match self.persister.get_wallet_vtxo(vtxo_id)? {
 				Some(vtxo) => vtxo.vtxo,
@@ -352,15 +354,6 @@ impl Exit {
 
 		Ok(())
 	}
-
-	async fn maybe_start_exit_for_vtxos(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
-		if !self.vtxos_to_exit.is_empty() {
-			self.start_vtxo_exits(onchain).await?;
-		}
-
-		Ok(())
-	}
-
 
 	/// Reset exit to an empty state. Should be called when dropping VTXOs
 	///
@@ -435,7 +428,7 @@ impl Exit {
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
 		self.tx_manager.sync().await?;
-		self.maybe_start_exit_for_vtxos(onchain).await?;
+		self.start_vtxo_exits(onchain).await?;
 		for exit in &mut self.exit_vtxos {
 			// If the exit is waiting for new blocks, we should trigger an update
 			if exit.state().requires_network_update() {
@@ -508,7 +501,7 @@ impl Exit {
 	/// Returns a PSBT ready to be broadcast.
 	pub async fn drain_exits<'a>(
 		&self,
-		inputs: &[&ExitVtxo],
+		inputs: &[impl Borrow<ExitVtxo>],
 		wallet: &Wallet,
 		address: Address,
 		fee_rate_override: Option<FeeRate>,
@@ -520,6 +513,7 @@ impl Exit {
 			let mut output_amount = Amount::ZERO;
 			let mut tx_ins = Vec::with_capacity(inputs.len());
 			for input in inputs {
+				let input = input.borrow();
 				if !matches!(input.state(), ExitState::Claimable(..)) {
 					return Err(ExitError::VtxoNotClaimable { vtxo: input.id() });
 				}
@@ -551,8 +545,8 @@ impl Exit {
 					error: format!("Failed to create exit claim PSBT: {}", e),
 				})?;
 			psbt.inputs.iter_mut().zip(inputs).for_each(|(i, v)| {
-				i.set_exit_claim_input(&v.vtxo());
-				i.witness_utxo = Some(v.vtxo().txout())
+				i.set_exit_claim_input(&v.borrow().vtxo());
+				i.witness_utxo = Some(v.borrow().vtxo().txout())
 			});
 			self.sign_exit_claim_inputs(&mut psbt, wallet)
 				.map_err(|e| ExitError::ClaimSigningError { error: e.to_string() })?;

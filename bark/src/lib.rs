@@ -86,7 +86,8 @@ pub struct Balance {
 	/// Coins locked in a round.
 	pub pending_in_round: Amount,
 	/// Coins that are in the process of unilaterally exiting the Ark.
-	pub pending_exit: Amount,
+	/// None if exit subsystem was unavailable
+	pub pending_exit: Option<Amount>,
 	/// Coins that are pending sufficient confirmations from board transactions.
 	pub pending_board: Amount,
 }
@@ -304,7 +305,7 @@ pub struct Wallet {
 	pub chain: Arc<ChainSource>,
 
 	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
-	pub exit: Exit,
+	pub exit: tokio::sync::Mutex<Exit>,
 
 	/// Active runtime configuration for networking, fees, policies and thresholds.
 	config: Config,
@@ -523,7 +524,7 @@ impl Wallet {
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		let mut wallet = Wallet::create(mnemonic, network, config, db, force).await?;
-		wallet.exit.load(onchain).await?;
+		wallet.exit.get_mut().load(onchain).await?;
 		Ok(wallet)
 	}
 
@@ -573,7 +574,7 @@ impl Wallet {
 			}
 		};
 
-		let exit = Exit::new(db.clone(), chain.clone()).await?;
+		let exit = tokio::sync::Mutex::new(Exit::new(db.clone(), chain.clone()).await?);
 
 		Ok(Wallet { config, db, vtxo_seed, exit, server, chain })
 	}
@@ -587,7 +588,7 @@ impl Wallet {
 		cfg: Config,
 	) -> anyhow::Result<Wallet> {
 		let mut wallet = Wallet::open(mnemonic, db, cfg).await?;
-		wallet.exit.load(onchain).await?;
+		wallet.exit.get_mut().load(onchain).await?;
 		Ok(wallet)
 	}
 
@@ -629,7 +630,7 @@ impl Wallet {
 		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
 			.map(|v| v.amount()).sum();
 
-		let pending_exit = self.exit.pending_total();
+		let pending_exit = self.exit.try_lock().ok().map(|e| e.pending_total());
 
 		Ok(Balance {
 			spendable,
@@ -744,7 +745,7 @@ impl Wallet {
 	///
 	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
 	/// payments and refreshing VTXOs if necessary.
-	pub async fn maintenance(&mut self) -> anyhow::Result<()> {
+	pub async fn maintenance(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance");
 		self.sync().await?;
 		self.maintenance_refresh().await?;
@@ -758,7 +759,7 @@ impl Wallet {
 	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
 	/// refreshing VTXOs if necessary.
 	pub async fn maintenance_with_onchain<W: PreparePsbt + SignPsbt + ExitUnilaterally>(
-		&mut self,
+		&self,
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance with onchain wallet");
@@ -814,16 +815,16 @@ impl Wallet {
 	/// in any way, it will merely check the transaction status of each transaction as well as check
 	/// whether any exits have become claimable or have been claimed.
 	pub async fn sync_exits<W: ExitUnilaterally>(
-		&mut self,
+		&self,
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
-		self.exit.sync_exit(onchain).await?;
+		self.exit.lock().await.sync_exit(onchain).await?;
 		Ok(())
 	}
 
 	/// Syncs pending lightning payments, verifying whether the payment status has changed and
 	/// creating a revocation VTXO if necessary.
-	pub async fn sync_pending_lightning_vtxos(&mut self) -> anyhow::Result<()> {
+	pub async fn sync_pending_lightning_vtxos(&self) -> anyhow::Result<()> {
 		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
 
 		if vtxos.is_empty() {
@@ -861,7 +862,7 @@ impl Wallet {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
 
-		self.exit.clear_exit()?;
+		self.exit.lock().await.clear_exit()?;
 		Ok(())
 	}
 
@@ -1691,7 +1692,7 @@ impl Wallet {
 	///     the VTXOs.
 	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement in the
 	///     database and returns
-	pub async fn check_lightning_payment(&mut self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
+	pub async fn check_lightning_payment(&self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
 		let mut srv = self.require_server()?;
 		let tip = self.chain.tip().await?;
 
@@ -1765,7 +1766,7 @@ impl Wallet {
 						.iter()
 						.map(|v| v.vtxo.clone())
 						.collect::<Vec<_>>();
-					self.exit.mark_vtxos_for_exit(&vtxos);
+					self.exit.lock().await.mark_vtxos_for_exit(&vtxos);
 				}
 			}
 		}
