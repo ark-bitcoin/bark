@@ -156,9 +156,7 @@ pub async fn start_exit(
 		warn!("Failed to perform onchain sync: {}", err.to_string());
 	}
 	info!("Starting offchain sync");
-	if let Err(err) = wallet.sync().await {
-		warn!("Failed to perform ark sync: {}", err.to_string());
-	}
+	wallet.sync().await;
 	info!("Starting exit");
 
 	if args.all {
@@ -233,9 +231,7 @@ pub async fn claim_exits(
 ) -> anyhow::Result<()> {
 	if !no_sync {
 		info!("Syncing wallet...");
-		if let Err(e) = wallet.sync().await {
-			warn!("Sync error: {}", e)
-		}
+		wallet.sync().await;
 		if let Err(e) = onchain.sync(&wallet.chain).await {
 			warn!("Sync error: {}", e)
 		}
@@ -246,7 +242,7 @@ pub async fn claim_exits(
 		format!("address is not valid for configured network {}", network)
 	})?;
 
-	let exit = wallet.exit.lock().await;
+	let exit = wallet.exit.read().await;
 	let vtxos = match (vtxos, all) {
 		(Some(vtxo_ids), false) => {
 			let mut vtxo_ids = vtxo_ids.iter().map(|s| {

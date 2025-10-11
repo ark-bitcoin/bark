@@ -526,9 +526,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
-					warn!("Sync error: {}", e)
-				}
+				wallet.sync().await;
 			}
 
 			let balance = wallet.balance()?;
@@ -543,9 +541,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Vtxos { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
-					warn!("Sync error: {}", e)
-				}
+				wallet.sync().await;
 			}
 
 			let vtxos = wallet.vtxos()?.into_iter()
@@ -556,9 +552,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Movements { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = wallet.sync().await {
-					warn!("Sync error: {}", e)
-				}
+				wallet.sync().await;
 			}
 
 			let mut movements = wallet.movements()?.into_iter()
@@ -573,9 +567,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
-					warn!("Sync error: {}", e)
-				}
+				wallet.sync().await;
 			}
 
 			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxos) {
@@ -613,7 +605,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
-				info!("Syncing wallet...");
+				info!("Syncing onchain wallet...");
 				if let Err(e) = onchain.sync(&wallet.chain).await {
 					warn!("Sync error: {}", e)
 				}
@@ -641,9 +633,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
-						warn!("Sync error: {}", e)
-					}
+					wallet.sync().await;
 				}
 
 				info!("Sending arkoor payment of {} to address {}", amount, addr);
@@ -669,9 +659,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
-						warn!("Sync error: {}", e)
-					}
+					wallet.sync().await;
 				}
 
 				info!("Sending on-chain payment of {} to {} through round...", amount, addr);
@@ -705,9 +693,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = wallet.maintenance_with_onchain(&mut onchain).await {
-						warn!("Sync error: {}", e)
-					}
+					wallet.sync().await;
 				}
 
 				info!("Offboarding {} vtxos...", vtxos.len());
@@ -715,9 +701,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else if all {
 				if !no_sync {
 					info!("Syncing wallet...");
-					if let Err(e) = wallet.sync().await {
-						warn!("Sync error: {}", e)
-					}
+					wallet.sync().await;
 				}
 				info!("Offboarding all off-chain funds...");
 				wallet.offboard_all(address).await?

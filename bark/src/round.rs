@@ -1767,7 +1767,8 @@ impl Wallet {
 		}
 	}
 
-	pub(crate) async fn sync_pending_rounds(&self, tip: u32) -> anyhow::Result<()> {
+	pub(crate) async fn sync_pending_rounds(&self) -> anyhow::Result<()> {
+		let tip = self.chain.tip().await?;
 		info!("Syncing pending rounds at tip: {}", tip);
 		let rounds = self.db.list_pending_rounds()?;
 

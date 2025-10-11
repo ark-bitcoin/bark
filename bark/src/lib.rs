@@ -305,7 +305,7 @@ pub struct Wallet {
 	pub chain: Arc<ChainSource>,
 
 	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
-	pub exit: tokio::sync::Mutex<Exit>,
+	pub exit: tokio::sync::RwLock<Exit>,
 
 	/// Active runtime configuration for networking, fees, policies and thresholds.
 	config: Config,
@@ -574,7 +574,7 @@ impl Wallet {
 			}
 		};
 
-		let exit = tokio::sync::Mutex::new(Exit::new(db.clone(), chain.clone()).await?);
+		let exit = tokio::sync::RwLock::new(Exit::new(db.clone(), chain.clone()).await?);
 
 		Ok(Wallet { config, db, vtxo_seed, exit, server, chain })
 	}
@@ -630,7 +630,7 @@ impl Wallet {
 		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
 			.map(|v| v.amount()).sum();
 
-		let pending_exit = self.exit.try_lock().ok().map(|e| e.pending_total());
+		let pending_exit = self.exit.try_read().ok().map(|e| e.pending_total());
 
 		Ok(Balance {
 			spendable,
@@ -708,9 +708,7 @@ impl Wallet {
 	/// Attempts to register all pendings boards with the Ark server. A board transaction must have
 	/// sufficient confirmations before it will be registered. For more details see
 	/// [ArkInfo::required_board_confirmations].
-	pub async fn register_all_confirmed_boards(
-		&self,
-	) -> anyhow::Result<()> {
+	pub async fn sync_pending_boards(&self) -> anyhow::Result<()> {
 		let ark_info = self.require_server()?.info;
 		let current_height = self.chain.tip().await?;
 		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
@@ -747,9 +745,8 @@ impl Wallet {
 	/// payments and refreshing VTXOs if necessary.
 	pub async fn maintenance(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance");
-		self.sync().await?;
+		self.sync().await;
 		self.maintenance_refresh().await?;
-		self.sync_pending_lightning_vtxos().await?;
 		Ok(())
 	}
 
@@ -763,10 +760,8 @@ impl Wallet {
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance with onchain wallet");
-		self.sync().await?;
-		self.register_all_confirmed_boards().await?;
+		self.sync().await;
 		self.maintenance_refresh().await?;
-		self.sync_pending_lightning_vtxos().await?;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
 		self.sync_exits(onchain).await?;
@@ -790,25 +785,41 @@ impl Wallet {
 	}
 
 	/// Sync offchain wallet and update onchain fees. This is a much more lightweight alternative
-	/// to [Wallet::maintenance] as it will not refresh VTXOs.
+	/// to [Wallet::maintenance] as it will not refresh VTXOs or sync the onchain wallet.
 	///
-	/// Note:
+	/// Notes:
+	///   - even when onchain wallet is provided, the onchain wallet will not be sync, but
+	///     - [Wallet::sync_pending_lightning_vtxos] will be called
 	///   - [Wallet::sync_exits] will not be called
-	///   - [Wallet::sync_pending_lightning_vtxos] will not be called
-	pub async fn sync(&self) -> anyhow::Result<()> {
-		// NB: order matters here, if syncing call fails, we still want to update the fee rates
-		if let Err(e) = self.chain.update_fee_rates(self.config.fallback_fee_rate).await {
-			warn!("Error updating fee rates: {}", e);
-		}
-
-		if let Err(e) = self.sync_oors().await {
-			error!("Error in arkoor sync: {}", e);
-		}
-
-		let tip = self.chain.tip().await?;
-		self.sync_pending_rounds(tip).await?;
-
-		Ok(())
+	pub async fn sync(&self) {
+		tokio::join!(
+			async {
+				// NB: order matters here, if syncing call fails, we still want to update the fee rates
+				if let Err(e) = self.chain.update_fee_rates(self.config.fallback_fee_rate).await {
+					warn!("Error updating fee rates: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_oors().await {
+					warn!("Error in arkoor sync: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_pending_rounds().await {
+					warn!("Error syncing pending rounds: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_pending_lightning_vtxos().await {
+					warn!("Error syncing pending lightning payments: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_pending_boards().await {
+					warn!("Error syncing pending boards: {:#}", e);
+				}
+			}
+		);
 	}
 
 	/// Sync the transaction status of unilateral exits. This will not progress the unilateral exits
@@ -818,7 +829,7 @@ impl Wallet {
 		&self,
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
-		self.exit.lock().await.sync_exit(onchain).await?;
+		self.exit.write().await.sync_exit(onchain).await?;
 		Ok(())
 	}
 
@@ -862,7 +873,7 @@ impl Wallet {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
 
-		self.exit.lock().await.clear_exit()?;
+		self.exit.write().await.clear_exit()?;
 		Ok(())
 	}
 
@@ -961,10 +972,7 @@ impl Wallet {
 	}
 
 	/// Registers a board to the Ark server
-	async fn register_board(
-		&self,
-		vtxo_id: VtxoId,
-	) -> anyhow::Result<Board> {
+	async fn register_board(&self, vtxo_id: VtxoId) -> anyhow::Result<Board> {
 		trace!("Attempting to register board {} to server", vtxo_id);
 		let mut srv = self.require_server()?;
 
@@ -1766,7 +1774,7 @@ impl Wallet {
 						.iter()
 						.map(|v| v.vtxo.clone())
 						.collect::<Vec<_>>();
-					self.exit.lock().await.mark_vtxos_for_exit(&vtxos);
+					self.exit.write().await.mark_vtxos_for_exit(&vtxos);
 				}
 			}
 		}
