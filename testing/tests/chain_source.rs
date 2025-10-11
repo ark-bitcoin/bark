@@ -106,11 +106,11 @@ async fn chain_source_block() {
 	let start_hash = chain_source.block_ref(start_height).await.unwrap().hash;
 
 	// Ensure we can retrieve blocks by hash
-	chain_source.block(&start_hash).await.expect("Hash should be valid");
+	chain_source.block(start_hash).await.expect("Hash should be valid");
 
 	// Ensure invalid hashes succeed with an empty result
 	let invalid_hash = BlockHash::from_engine(HashEngine::default());
-	let empty_result = chain_source.block(&invalid_hash).await
+	let empty_result = chain_source.block(invalid_hash).await
 		.expect("Invalid hash should not error");
 	assert!(matches!(empty_result, None));
 
@@ -119,7 +119,7 @@ async fn chain_source_block() {
 	for i in 0..10 {
 		ctx.generate_blocks(1).await;
 		let block_ref = chain_source.block_ref(i).await.expect("Block Ref should be valid");
-		match chain_source.block(&block_ref.hash).await.expect("Hash should be valid") {
+		match chain_source.block(block_ref.hash).await.expect("Hash should be valid") {
 			None => panic!("Hash should not return an empty result"),
 			Some(block) => assert!(headers.insert(block.header)),
 		}
@@ -127,7 +127,7 @@ async fn chain_source_block() {
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.block(&start_hash).await
+	chain_source.block(start_hash).await
 		.expect_err("We shouldn't be able to retrieve data");
 }
 
@@ -268,7 +268,7 @@ async fn chain_source_tx_confirmed() {
 	let test_bitcoind = test_bitcoind(&ctx, 0).await;
 
 	// Ensure invalid transaction don't error
-	let invalid = chain_source.tx_confirmed(&Hash::from_engine(HashEngine::default())).await
+	let invalid = chain_source.tx_confirmed(Hash::from_engine(HashEngine::default())).await
 		.expect("Invalid transactions shouldn't error");
 	assert!(matches!(invalid, None));
 
@@ -276,13 +276,13 @@ async fn chain_source_tx_confirmed() {
 	let test_address = test_bitcoind.get_new_address();
 	let pending = ctx.bitcoind().fund_addr(&test_address, sat(1_000_000)).await;
 	ctx.await_transaction(pending).await;
-	let pending_result = chain_source.tx_confirmed(&pending).await
+	let pending_result = chain_source.tx_confirmed(pending).await
 		.expect("Unconfirmed transactions are valid");
 	assert!(matches!(pending_result, None));
 
 	// Ensure confirmed transactions are returned
 	ctx.generate_blocks(1).await;
-	let confirmed_result = chain_source.tx_confirmed(&pending).await
+	let confirmed_result = chain_source.tx_confirmed(pending).await
 		.expect("Confirmed transactions are valid");
 	match confirmed_result {
 		Some(h) => assert_eq!(h, ctx.bitcoind().get_block_count().await as BlockHeight),
@@ -291,7 +291,7 @@ async fn chain_source_tx_confirmed() {
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.tx_confirmed(&pending).await
+	chain_source.tx_confirmed(pending).await
 		.expect_err("We shouldn't be able to retrieve data");
 }
 
@@ -301,7 +301,7 @@ async fn chain_source_tx_status() {
 	let test_bitcoind = test_bitcoind(&ctx, 0).await;
 
 	// Ensure invalid transaction don't error
-	let invalid = chain_source.tx_status(&Hash::from_engine(HashEngine::default())).await
+	let invalid = chain_source.tx_status(Hash::from_engine(HashEngine::default())).await
 		.expect("Invalid transactions shouldn't error");
 	assert!(matches!(invalid, TxStatus::NotFound));
 
@@ -309,13 +309,13 @@ async fn chain_source_tx_status() {
 	let test_address = test_bitcoind.get_new_address();
 	let pending = ctx.bitcoind().fund_addr(&test_address, sat(1_000_000)).await;
 	ctx.await_transaction(pending).await;
-	let pending_result = chain_source.tx_status(&pending).await
+	let pending_result = chain_source.tx_status(pending).await
 		.expect("Unconfirmed transactions are valid");
 	assert!(matches!(pending_result, TxStatus::Mempool));
 
 	// Ensure confirmed transactions are returned
 	ctx.generate_blocks(1).await;
-	let confirmed_result = chain_source.tx_status(&pending).await
+	let confirmed_result = chain_source.tx_status(pending).await
 		.expect("Confirmed transactions are valid");
 	match confirmed_result {
 		TxStatus::Confirmed(block) => {
@@ -326,7 +326,7 @@ async fn chain_source_tx_status() {
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.tx_status(&pending).await
+	chain_source.tx_status(pending).await
 		.expect_err("We shouldn't be able to retrieve data");
 }
 

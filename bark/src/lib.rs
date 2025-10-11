@@ -93,7 +93,8 @@ pub struct Balance {
 }
 
 // TODO: we set it to 0 for now to avoid breaking UX,
-// but we should implement "pending confirmation" vtxo state and only allow a subset of actions for it
+// but we should implement "pending confirmation" vtxo state and
+// only allow a subset of actions for it
 const ROUND_DEEPLY_CONFIRMED: u32 = 0;
 
 struct ArkoorCreateResult {
@@ -324,7 +325,9 @@ pub struct Wallet {
 impl Wallet {
 	/// Creates a [onchain::ChainSource] instance to communicate with an onchain backend from the
 	/// given [Config].
-	pub fn chain_source<P: BarkPersister>(config: &Config) -> anyhow::Result<onchain::ChainSourceSpec> {
+	pub fn chain_source<P: BarkPersister>(
+		config: &Config,
+	) -> anyhow::Result<onchain::ChainSourceSpec> {
 		if let Some(ref url) = config.esplora_address {
 			Ok(onchain::ChainSourceSpec::Esplora {
 				url: url.clone(),
@@ -347,9 +350,9 @@ impl Wallet {
 		}
 	}
 
-	/// Verifies that the bark [Wallet] can be used with the configured [onchain::ChainSource]. More
-	/// specifically, if the [onchain::ChainSource] connects to Bitcoin Core it must be a high
-	/// enough version to support ephemeral anchors.
+	/// Verifies that the bark [Wallet] can be used with the configured [onchain::ChainSource].
+	/// More specifically, if the [onchain::ChainSource] connects to Bitcoin Core it must be
+	/// a high enough version to support ephemeral anchors.
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
 		self.chain.require_version()
 	}
@@ -566,7 +569,9 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let server = match ServerConnection::connect(&config.server_address, properties.network).await {
+		let server = match ServerConnection::connect(
+			&config.server_address, properties.network,
+		).await {
 			Ok(s) => Some(s),
 			Err(e) => {
 				warn!("Ark server handshake failed: {}", e);
@@ -676,7 +681,10 @@ impl Wallet {
 	}
 
 	/// Returns all spendable vtxos matching the provided predicate
-	pub fn spendable_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
+	pub fn spendable_vtxos_with(
+		&self,
+		filter: &impl FilterVtxos,
+	) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.spendable_vtxos()?;
 		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
 	}
@@ -699,7 +707,10 @@ impl Wallet {
 	}
 
 	/// Returns all vtxos that will expire within `threshold` blocks
-	pub async fn get_expiring_vtxos(&mut self, threshold: BlockHeight) -> anyhow::Result<Vec<WalletVtxo>> {
+	pub async fn get_expiring_vtxos(
+		&mut self,
+		threshold: BlockHeight,
+	) -> anyhow::Result<Vec<WalletVtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
 		Ok(self.spendable_vtxos_with(&filter)?)
@@ -721,8 +732,10 @@ impl Wallet {
 		trace!("Attempting registration of sufficiently confirmed boards");
 
 		for board in unregistered_boards {
-			if let Some(confirmed_at) = self.chain.tx_confirmed(&board.vtxo.chain_anchor().txid).await? {
-				if current_height + 1 >= confirmed_at + (ark_info.required_board_confirmations as u32) {
+			let anchor = board.vtxo.chain_anchor();
+			if let Some(confirmed_at) = self.chain.tx_confirmed(anchor.txid).await? {
+				let required = ark_info.required_board_confirmations as u32;
+				if current_height + 1 >= confirmed_at + required {
 					if let Err(e) = self.register_board(board.vtxo.id()).await {
 						warn!("Failed to register board {}: {}", board.vtxo.id(), e);
 					} else {
@@ -794,7 +807,8 @@ impl Wallet {
 	pub async fn sync(&self) {
 		tokio::join!(
 			async {
-				// NB: order matters here, if syncing call fails, we still want to update the fee rates
+				// NB: order matters here, if syncing call fails,
+				// we still want to update the fee rates
 				if let Err(e) = self.chain.update_fee_rates(self.config.fallback_fee_rate).await {
 					warn!("Error updating fee rates: {:#}", e);
 				}
@@ -822,9 +836,11 @@ impl Wallet {
 		);
 	}
 
-	/// Sync the transaction status of unilateral exits. This will not progress the unilateral exits
-	/// in any way, it will merely check the transaction status of each transaction as well as check
-	/// whether any exits have become claimable or have been claimed.
+	/// Sync the transaction status of unilateral exits
+	///
+	/// This will not progress the unilateral exits in any way, it will merely check the
+	/// transaction status of each transaction as well as check whether any exits have become
+	/// claimable or have been claimed.
 	pub async fn sync_exits<W: ExitUnilaterally>(
 		&self,
 		onchain: &mut W,
@@ -916,7 +932,10 @@ impl Wallet {
 			srv.info.vtxo_exit_delta,
 		);
 
-		let addr = bitcoin::Address::from_script(&builder.funding_script_pubkey(), properties.network).unwrap();
+		let addr = bitcoin::Address::from_script(
+			&builder.funding_script_pubkey(),
+			properties.network,
+		).unwrap();
 
 		// We create the board tx template, but don't sign it yet.
 		let fee_rate = self.chain.fee_rates().await.regular;
@@ -998,7 +1017,11 @@ impl Wallet {
 		})
 	}
 
-	fn build_vtxo(&self, vtxos: &CachedSignedVtxoTree, leaf_idx: usize) -> anyhow::Result<Option<Vtxo>> {
+	fn build_vtxo(
+		&self,
+		vtxos: &CachedSignedVtxoTree,
+		leaf_idx: usize,
+	) -> anyhow::Result<Option<Vtxo>> {
 		let vtxo = vtxos.build_vtxo(leaf_idx).context("invalid leaf idx..")?;
 
 		if self.db.get_wallet_vtxo(vtxo.id())?.is_some() {
@@ -1057,7 +1080,9 @@ impl Wallet {
 					return Ok::<_, anyhow::Error>(());
 				}
 
-				let req = protos::RoundId { txid: round_id.as_round_txid().to_byte_array().to_vec() };
+				let req = protos::RoundId {
+					txid: round_id.as_round_txid().to_byte_array().to_vec(),
+				};
 				let round = srv.client.get_round(req).await?.into_inner();
 
 				let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
@@ -1264,13 +1289,17 @@ impl Wallet {
 		let fee_rate = self.chain.fee_rates().await.fast;
 
 		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.spendable_vtxos_with(&RefreshStrategy::must_refresh(self, tip, fee_rate))?;
+		let must_refresh_vtxos = self.spendable_vtxos_with(
+			&RefreshStrategy::must_refresh(self, tip, fee_rate),
+		)?;
 		if must_refresh_vtxos.is_empty() {
 			return Ok(vec![]);
 		} else {
 			// If we need to do a refresh, we take all the should_refresh vtxo's as well
 			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.spendable_vtxos_with(&RefreshStrategy::should_refresh(self, tip, fee_rate))?;
+			let should_refresh_vtxos = self.spendable_vtxos_with(
+				&RefreshStrategy::should_refresh(self, tip, fee_rate),
+			)?;
 			Ok(should_refresh_vtxos)
 		}
 	}
@@ -1296,7 +1325,12 @@ impl Wallet {
 	/// Returns an error if amount cannot be reached
 	///
 	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
-	fn select_vtxos_to_cover(&self, amount: Amount, max_depth: Option<u16>, current_height: Option<BlockHeight>) -> anyhow::Result<Vec<Vtxo>> {
+	fn select_vtxos_to_cover(
+		&self,
+		amount: Amount,
+		max_depth: Option<u16>,
+		current_height: Option<BlockHeight>,
+	) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.spendable_vtxos()?;
 
 		// Iterate over all rows until the required amount is reached
@@ -1305,16 +1339,20 @@ impl Wallet {
 		for input in inputs {
 			if let Some(max_depth) = max_depth {
 				if input.arkoor_depth() >= max_depth {
-					warn!("VTXO {} reached max depth of {}, skipping it. Please refresh your VTXO.", input.id(), max_depth);
+					warn!("VTXO {} reached max depth of {}, skipping it. \
+						Please refresh your VTXO.", input.id(), max_depth,
+					);
 					continue;
 				}
 			}
 
 			// Check if vtxo is soon-to-expire for arkoor payments
 			if let Some(height) = current_height {
-				if input.expiry_height() < height.saturating_add(self.config.vtxo_refresh_expiry_threshold) {
-					warn!("VTXO {} is expiring soon (expires at {}, current height {}), skipping for arkoor payment",
-						input.id(), input.expiry_height(), height);
+				let threshold = height.saturating_add(self.config.vtxo_refresh_expiry_threshold);
+				if input.expiry_height() < threshold {
+					warn!("VTXO {} is expiring soon (expires at {}, current height {}), \
+						skipping for arkoor payment", input.id(), input.expiry_height(), height,
+					);
 					continue;
 				}
 			}
@@ -1470,7 +1508,9 @@ impl Wallet {
 		self.db.register_movement(MovementArgs {
 			kind: MovementKind::ArkoorSend,
 			spends: &arkoor.input.iter().collect::<Vec<_>>(),
-			receives: &arkoor.change.as_ref().map(|v| vec![(v, VtxoState::Spendable)]).unwrap_or(vec![]),
+			receives: &arkoor.change.as_ref()
+				.map(|v| vec![(v, VtxoState::Spendable)])
+				.unwrap_or(vec![]),
 			recipients: &[(&destination.to_string(), amount)],
 			fees: None,
 		}).context("failed to store arkoor vtxo")?;
@@ -1528,8 +1568,8 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment so the same
-	/// [Wallet::send_arkoor_payment] rules apply.
+	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
+	/// so the same [Wallet::send_arkoor_payment] rules apply.
 	pub async fn send_lightning_payment(
 		&mut self,
 		invoice: Invoice,
@@ -1696,11 +1736,14 @@ impl Wallet {
 	/// - Sends a request to the lightning payment server to check the payment status.
 	/// - Depending on the payment status:
 	///   - **Failed**: Revokes the associated VTXOs.
-	///   - **Pending**: Checks if the HTLC has expired based on the tip height. If expired, revokes
-	///     the VTXOs.
-	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement in the
-	///     database and returns
-	pub async fn check_lightning_payment(&self, htlc_vtxos: &[WalletVtxo]) -> anyhow::Result<Option<Preimage>> {
+	///   - **Pending**: Checks if the HTLC has expired based on the tip height. If expired,
+	///     revokes the VTXOs.
+	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement
+	///     in the database and returns
+	pub async fn check_lightning_payment(
+		&self,
+		htlc_vtxos: &[WalletVtxo],
+	) -> anyhow::Result<Option<Preimage>> {
 		let mut srv = self.require_server()?;
 		let tip = self.chain.tip().await?;
 
@@ -1733,17 +1776,21 @@ impl Wallet {
 				true
 			},
 			protos::PaymentStatus::Pending => {
-				trace!("Payment is still pending, HTLC expiry: {}, tip: {}", spk_spec.htlc_expiry, tip);
+				trace!("Payment is still pending, HTLC expiry: {}, tip: {}",
+					spk_spec.htlc_expiry, tip);
 				if tip > spk_spec.htlc_expiry {
 					info!("Payment is still pending, but HTLC is expired: revoking VTXO");
 					true
 				} else {
-					info!("Payment is still pending and HTLC is not expired ({}): doing nothing for now", spk_spec.htlc_expiry);
+					info!("Payment is still pending and HTLC is not expired ({}): \
+						doing nothing for now", spk_spec.htlc_expiry,
+					);
 					false
 				}
 			},
 			protos::PaymentStatus::Complete => {
-				let preimage: Preimage = res.payment_preimage.context("payment completed but no preimage")?
+				let preimage: Preimage = res.payment_preimage
+					.context("payment completed but no preimage")?
 					.try_into().map_err(|_| anyhow!("preimage is not 32 bytes"))?;
 				info!("Payment is complete, preimage, {}", preimage.as_hex());
 
@@ -1760,7 +1807,9 @@ impl Wallet {
 		};
 
 		if should_revoke {
-			if let Err(e) = self.process_lightning_revocation(&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>()).await {
+			if let Err(e) = self.process_lightning_revocation(
+				&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(),
+			).await {
 				warn!("Failed to revoke VTXO: {}", e);
 
 				// if one of the htlc is about to expire, we exit all of them.
@@ -1884,16 +1933,19 @@ impl Wallet {
 		trace!("ln arkoor builder params: inputs: {:?}; user_nonces: {:?}; req: {:?}",
 			inputs.iter().map(|v| v.id()).collect::<Vec<_>>(), pub_nonces, pay_req,
 		);
-		let builder = ArkoorPackageBuilder::new(inputs.iter().copied(), &pub_nonces, pay_req, None)?;
+		let builder = ArkoorPackageBuilder::new(
+			inputs.iter().copied(), &pub_nonces, pay_req, None,
+		)?;
 
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(lightning_receive.payment_hash)?;
-		let cosign_resp: Vec<_> = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
+		let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 			payment_hash: payment_hash.to_byte_array().to_vec(),
 			payment_preimage: lightning_receive.payment_preimage.to_vec(),
 			vtxo_policy: receive_policy.serialize(),
 			user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
-		}).await?.into_inner().try_into().context("invalid cosign response")?;
+		}).await?.into_inner();
+		let cosign_resp: Vec<_> = resp.try_into().context("invalid cosign response")?;
 
 		ensure!(builder.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
@@ -1999,10 +2051,12 @@ impl Wallet {
 		}
 
 		let (keypair, _) = self.derive_store_next_keypair()?;
-		let res = srv.client.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
+		let req = protos::PrepareLightningReceiveClaimRequest {
 			payment_hash: payment_hash.to_vec(),
 			user_pubkey: keypair.public_key().serialize().to_vec(),
-		}).await.context("error preparing lightning receive claim")?.into_inner();
+		};
+		let res = srv.client.prepare_lightning_receive_claim(req).await
+			.context("error preparing lightning receive claim")?.into_inner();
 		let vtxos = res.htlc_vtxos.into_iter()
 			.map(|b| Vtxo::deserialize(&b))
 			.collect::<Result<Vec<_>, _>>()
@@ -2012,7 +2066,9 @@ impl Wallet {
 		for vtxo in &vtxos {
 			if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
 				if p.payment_hash != payment_hash {
-					bail!("invalid payment hash on HTLC VTXOs received from server: {}", p.payment_hash);
+					bail!("invalid payment hash on HTLC VTXOs received from server: {}",
+						p.payment_hash,
+					);
 				}
 				if p.user_pubkey != keypair.public_key() {
 					bail!("invalid pubkey on HTLC VTXOs received from server: {}", p.user_pubkey);
@@ -2080,11 +2136,12 @@ impl Wallet {
 	/// * `Err` if an error occurs at any stage of the operation.
 	pub async fn check_and_claim_all_open_ln_receives(&self, wait: bool) -> anyhow::Result<()> {
 		// Asynchronously attempts to claim all pending receive by converting the list into a stream
-		tokio_stream::iter(self.pending_lightning_receives()?).for_each_concurrent(3, |receive| async move {
-			if let Err(e) = self.check_and_claim_ln_receive(receive.invoice.into(), wait).await {
-				error!("Error claiming lightning receive: {}", e);
-			}
-		}).await;
+		tokio_stream::iter(self.pending_lightning_receives()?)
+			.for_each_concurrent(3, |rcv| async move {
+				if let Err(e) = self.check_and_claim_ln_receive(rcv.invoice.into(), wait).await {
+					error!("Error claiming lightning receive: {}", e);
+				}
+			}).await;
 
 		Ok(())
 	}
@@ -2150,7 +2207,9 @@ impl Wallet {
 		).expect("script from address");
 
 		if balance < amount + early_fees {
-			bail!("Your balance is too low. Needed: {}, available: {}", amount + early_fees, balance);
+			bail!("Your balance is too low. Needed: {}, available: {}",
+				amount + early_fees, balance,
+			);
 		}
 
 		let participation = DesiredRoundParticipation::OnchainPayment {

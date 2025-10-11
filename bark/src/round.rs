@@ -1400,7 +1400,7 @@ impl PendingConfirmationState {
 			AttemptError::StreamError(e)
 		})?;
 
-		let confirmed_in = wallet.chain.tx_confirmed(&round_tx.compute_txid()).await;
+		let confirmed_in = wallet.chain.tx_confirmed(round_tx.compute_txid()).await;
 		if let Ok(Some(confirmed_in)) = confirmed_in {
 			let confs = tip - (confirmed_in - 1);
 			if confs >= ROUND_DEEPLY_CONFIRMED {

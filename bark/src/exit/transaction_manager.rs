@@ -269,7 +269,7 @@ impl ExitTransactionManager {
 	}
 
 	async fn get_tx_status(&self, txid: Txid) -> anyhow::Result<TxStatus, ExitError> {
-		self.chain_source.tx_status(&txid).await
+		self.chain_source.tx_status(txid).await
 			.map_err(|e| ExitError::TransactionRetrievalFailure { txid, error: e.to_string() })
 	}
 
