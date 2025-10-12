@@ -64,8 +64,8 @@ pub enum LightningCommand {
 	/// claim the receipt of an invoice
 	#[command()]
 	Claim {
-		/// If `Some`, the invoice to claim; else claim all invoices
-		invoice: Option<String>,
+		/// payment hash or invoice to claim; claiming all pending payments if absent
+		payment: Option<String>,
 	},
 }
 
@@ -99,7 +99,7 @@ pub async fn execute_lightning_command(
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
-				wallet.finish_lightning_receive(&invoice).await?;
+				wallet.finish_lightning_receive(invoice.into()).await?;
 			}
 		},
 		LightningCommand::Status { filter, preimage } => {
@@ -124,10 +124,17 @@ pub async fn execute_lightning_command(
 			let receives = wallet.lightning_receives(pagination)?;
 			output_json(&receives);
 		},
-		LightningCommand::Claim { invoice } => {
-			if let Some(invoice) = invoice {
-				let invoice = Bolt11Invoice::from_str(&invoice).context("invalid invoice")?;
-				wallet.finish_lightning_receive(&invoice).await?;
+		LightningCommand::Claim { payment } => {
+			if let Some(payment) = payment {
+				let payment_hash = match PaymentHash::from_str(&payment) {
+					Ok(h) => h,
+					Err(_) => match Bolt11Invoice::from_str(&payment) {
+						Ok(i) => i.into(),
+						Err(_) => bail!("invalid invoice or payment hash"),
+					}
+				};
+
+				wallet.finish_lightning_receive(payment_hash).await?;
 			} else {
 				info!("no invoice provided, trying to claim all open invoices");
 				wallet.claim_all_open_invoices().await?;
