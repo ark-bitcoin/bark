@@ -1923,11 +1923,10 @@ impl Wallet {
 	/// * The invoice must contain an explicit amount specified in milli-satoshis.
 	/// * The HTLC expiry height is calculated by adding the servers' HTLC expiry delta to the
 	///   current chain tip.
-	pub async fn finish_lightning_receive(&self, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
+	pub async fn finish_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
 		info!("Waiting for payment...");
-		let payment_hash = ark::lightning::PaymentHash::from(invoice);
 		let sub = srv.client.subscribe_lightning_receive(protos::SubscribeLightningReceiveRequest {
 			payment_hash: payment_hash.to_byte_array().to_vec(),
 		}).await?.into_inner();
@@ -2023,7 +2022,7 @@ impl Wallet {
 	pub async fn claim_all_open_invoices(&self) -> anyhow::Result<()> {
 		// Asynchronously attempts to claim all pending receive by converting the list into a stream
 		tokio_stream::iter(self.pending_lightning_receives()?).for_each_concurrent(3, |receive| async move {
-			if let Err(e) = self.finish_lightning_receive(&receive.invoice).await {
+			if let Err(e) = self.finish_lightning_receive(receive.invoice.into()).await {
 				error!("Error claiming invoice: {}", e);
 			}
 		}).await;
