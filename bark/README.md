@@ -70,15 +70,16 @@ const DB_FILE: &str = "db.sqlite";
 
 #[tokio::main]
 async fn main() {
+  // Pick the bitcoin network that will be used
+  let network = bitcoin::Network::Signet;
+
   // Configure the wallet
   let config = Config {
     server_address: String::from("https://ark.signet.2nd.dev"),
     esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
-    ..Default::default()
+    ..Config::network_default(network)
   };
 
-  // Pick the bitcoin network that will be used
-  let network = bitcoin::Network::Signet;
 
   // Create a sqlite database
   let datadir = PathBuf::from("./bark");
@@ -122,7 +123,7 @@ async fn main() {
   let config = Config {
     server_address: String::from("https://ark.signet.2nd.dev"),
     esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
-    ..Default::default()
+    ..Config::network_default(bitcoin::Network::Signet)
   };
 
   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
@@ -154,7 +155,7 @@ you can request some sats from our [faucet](https://signet.2nd.dev).
 #
 # async fn get_wallet() -> Wallet {
 #   let datadir = PathBuf::from("./bark");
-#   let config = Config::default();
+#   let config = Config::network_default(bitcoin::Network::Signet);
 #
 #   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
@@ -199,7 +200,7 @@ The snippet below shows how you can inspect your [bark::WalletVtxo]s.
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
 #
-#   let config = Config::default();
+#   let config = Config::network_default(bitcoin::Network::Signet);
 #
 #   Wallet::open(&mnemonic, db, config).await.unwrap()
 # }
@@ -253,7 +254,7 @@ default that selects all [ark::Vtxo]s that must be refreshed.
 #   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
 #
-#   let config = Config::default();
+#   let config = Config::network_default(bitcoin::Network::Signet);
 #
 #   Wallet::open(&mnemonic, db, config).await.unwrap()
 # }
