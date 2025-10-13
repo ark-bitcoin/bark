@@ -16,6 +16,45 @@ use ark_testing::{TestContext, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::util::{FutureExt, ReceiverExt};
 
+#[ignore]
+#[tokio::test]
+async fn sweep_board_and_oor() {
+	let ctx = TestContext::new("sweeper/sweep_board").await;
+
+	let vtxo_lifetime = 64;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_millis(500000000);
+		cfg.vtxo_lifetime = vtxo_lifetime;
+		cfg.vtxo_sweeper.enabled_mut().unwrap().sweep_threshold = sat(100_000);
+	}).await;
+	ctx.fund_captaind(&srv, sat(1_000_000)).await;
+
+	// Create a board and spend it
+	// We should have at least two vtxos that originate from the same board
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(500_000)).await;
+	bark.board_all().await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	let addr = bark.address().await;
+	bark.send_oor(&addr, sat(10_000)).await;
+	assert_eq!(bark.vtxos().await.len(), 2);
+
+	// Make the board expire so we can sweep it
+	ctx.generate_blocks(vtxo_lifetime as u32).await;
+
+	// subscribe to a few log messages
+	let mut log_sweeping = srv.subscribe_log::<SweepBroadcast>();
+	let mut log_sweeps = srv.subscribe_log::<SweepingOutput>();
+
+	srv.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
+	srv.trigger_sweep().await;
+
+	log_sweeping.recv().wait(15_000).await;
+	let sweeps = log_sweeps.collect();
+	assert_eq!(1, sweeps.len(), "sweeps: {:?}", sweeps);
+	assert_eq!(sweeps[0].sweep_type, "board");
+}
+
+
 #[tokio::test]
 async fn sweep_vtxos() {
 	//! Testing server spending expired rounds.
