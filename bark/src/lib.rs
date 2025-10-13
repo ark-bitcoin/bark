@@ -709,7 +709,6 @@ impl Wallet {
 	/// [ArkInfo::required_board_confirmations].
 	pub async fn register_all_confirmed_boards(
 		&self,
-		onchain: &mut impl GetWalletTx,
 	) -> anyhow::Result<()> {
 		let ark_info = self.require_server()?.info;
 		let current_height = self.chain.tip().await?;
@@ -725,7 +724,7 @@ impl Wallet {
 		for board in unregistered_boards {
 			if let Some(confirmed_at) = self.chain.tx_confirmed(&board.vtxo.chain_anchor().txid).await? {
 				if current_height + 1 >= confirmed_at + (ark_info.required_board_confirmations as u32) {
-					if let Err(e) = self.register_board(onchain, board.vtxo.id()).await {
+					if let Err(e) = self.register_board(board.vtxo.id()).await {
 						warn!("Failed to register board {}: {}", board.vtxo.id(), e);
 					} else {
 						info!("Registered board {}", board.vtxo.id());
@@ -764,7 +763,7 @@ impl Wallet {
 	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance with onchain wallet");
 		self.sync().await?;
-		self.register_all_confirmed_boards(onchain).await?;
+		self.register_all_confirmed_boards().await?;
 		self.maintenance_refresh().await?;
 		self.sync_pending_lightning_vtxos().await?;
 
@@ -963,7 +962,6 @@ impl Wallet {
 	/// Registers a board to the Ark server
 	async fn register_board(
 		&self,
-		wallet: &mut impl GetWalletTx,
 		vtxo_id: VtxoId,
 	) -> anyhow::Result<Board> {
 		trace!("Attempting to register board {} to server", vtxo_id);
@@ -973,14 +971,9 @@ impl Wallet {
 		let vtxo = self.db.get_wallet_vtxo(vtxo_id)?
 			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
 
-		let txid = vtxo.vtxo.chain_anchor().txid;
-		let funding_tx = wallet.get_wallet_tx(txid)
-			.context(anyhow!("Failed to find funding_tx for {}", txid))?;
-
 		// Register the vtxo with the server
 		srv.client.register_board_vtxo(protos::BoardVtxoRequest {
 			board_vtxo: vtxo.vtxo.serialize(),
-			board_tx: bitcoin::consensus::serialize(&funding_tx),
 		}).await.context("error registering board with the Ark server")?;
 
 		// Remember that we have stored the vtxo
@@ -988,8 +981,10 @@ impl Wallet {
 		let allowed_states = &[VtxoStateKind::UnregisteredBoard, VtxoStateKind::Spendable];
 		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
 
+		let funding_txid = vtxo.vtxo.chain_anchor().txid;
+
 		Ok(Board {
-			funding_txid: funding_tx.compute_txid(),
+			funding_txid: funding_txid,
 			vtxos: vec![vtxo.vtxo.into()],
 		})
 	}

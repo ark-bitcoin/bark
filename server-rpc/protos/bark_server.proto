@@ -115,7 +115,6 @@ message BoardCosignResponse {
 
 message BoardVtxoRequest {
 	bytes board_vtxo = 1;
-	bytes board_tx = 2;
 }
 
 
