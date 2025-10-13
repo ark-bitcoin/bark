@@ -13,6 +13,7 @@ use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
+use server_rpc::protos::{self, prepare_lightning_receive_claim_request::LightningReceiveAntiDos};
 
 
 #[tokio::test]
@@ -742,4 +743,150 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning() {
 	bark.pay_lightning(invoice_send, None).await;
 
 	assert_eq!(bark.spendable_balance().await, pay_amount - sat(500_000));
+}
+
+#[tokio::test]
+async fn server_allows_claim_receive_with_vtxo_proof() {
+	let ctx = TestContext::new("lightningd/server_allows_claim_receive_with_vtxo_proof").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server with anti-dos enabled and link it to our cln installation
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+		cfg.ln_receive_anti_dos_required = true;
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &srv, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+
+	let res = tokio::spawn(async move {
+		lightning.sender.pay_bolt11(invoice_info.invoice).await;
+	});
+
+	srv.wait_for_vtxopool(&ctx).await;
+
+	bark.lightning_receive_all().wait(20_000).await;
+
+	// HTLC settlement on lightning side
+	res.ready().await.unwrap();
+
+	assert_eq!(bark.spendable_balance().await, btc(3));
+}
+
+#[tokio::test]
+async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
+	let ctx = TestContext::new("lightningd/server_rejects_claim_receive_for_bad_vtxo_proof").await;
+
+	#[derive(Clone)]
+	struct InvalidVtxoProofProxy;
+
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for InvalidVtxoProofProxy {
+		async fn prepare_lightning_receive_claim(
+			&self, upstream: &mut ArkClient, mut req: protos::PrepareLightningReceiveClaimRequest,
+		) -> Result<protos::PrepareLightningReceiveClaimResponse, tonic::Status> {
+			let bad_anti_dos = match req.lightning_receive_anti_dos.unwrap() {
+				LightningReceiveAntiDos::Token(_) => panic!("unexpected token"),
+				LightningReceiveAntiDos::InputVtxo(mut input) => {
+					input.ownership_proof = vec![0; 64];
+					LightningReceiveAntiDos::InputVtxo(input)
+				},
+			};
+			req.lightning_receive_anti_dos = Some(bad_anti_dos);
+			let res = upstream.prepare_lightning_receive_claim(req).await;
+			match res {
+				Ok(_) => panic!("should fail"),
+				Err(_) => ()
+			}
+			Ok(protos::PrepareLightningReceiveClaimResponse {
+				receive: None,
+				htlc_vtxos: vec![],
+			})
+		}
+	}
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server with anti-dos enabled and link it to our cln installation
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+		cfg.ln_receive_anti_dos_required = true;
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	// create a proxy to invalidate the proof
+	let proxy = srv.get_proxy_rpc(InvalidVtxoProofProxy).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &proxy.address, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let invoice = invoice_info.invoice.clone();
+
+	let _ = tokio::spawn(async move {
+		lightning.sender.pay_bolt11(invoice).await;
+	});
+
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let res = bark.try_lightning_receive_no_wait(invoice_info.invoice).await;
+
+	assert!(res.is_err());
+	assert_eq!(bark.spendable_balance().await, btc(2));
+}
+
+#[tokio::test]
+async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used() {
+	let ctx = TestContext::new("lightningd/server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server with anti-dos enabled and link it to our cln installation
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+		cfg.ln_receive_anti_dos_required = true;
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	// Add integration `single-use-board` token configuration for "captaind" with 1 open token count and a 60 seconds activity.
+	let stdout = srv.integration_cmd(&["configure-token-type", "captaind", "single-use-board", "1", "100"]).await;
+	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
+	assert_ne!(number, 0);
+	// Generate integration token of type single-use-board for "captaind" with a 60 seconds activity.
+	let stdout = srv.integration_cmd(&["generate-token", "captaind", "single-use-board"]).await;
+	let mut parts = stdout.split(' ');
+	assert_eq!(parts.next().unwrap(), "Token:");
+	let token = parts.next().unwrap().trim().to_string();
+
+	// Start a bark and don't board anything
+	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &srv, btc(3)).await);
+
+	let invoice_info_1 = bark.bolt11_invoice(btc(1)).await;
+	let invoice_info_2 = bark.bolt11_invoice(btc(1)).await;
+	let invoice_1 = invoice_info_1.invoice.clone();
+	let invoice_2 = invoice_info_2.invoice.clone();
+
+	let _res = tokio::spawn(async move {
+		tokio::join!(
+			lightning.sender.pay_bolt11(invoice_1),
+			lightning.sender.pay_bolt11(invoice_2),
+		)
+	});
+
+	srv.wait_for_vtxopool(&ctx).await;
+
+	// First try claim with invalid token
+	let res = bark.try_lightning_receive_with_token(invoice_info_1.invoice.clone(), "badtoken".to_string()).await;
+	assert!(res.is_err());
+	assert_eq!(bark.spendable_balance().await, btc(0));
+	// Then claim with valid token
+	let res = bark.try_lightning_receive_with_token(invoice_info_1.invoice, token.clone()).await;
+	assert!(res.is_ok());
+	assert_eq!(bark.spendable_balance().await, btc(1));
+	// Claiming with token that has already been used should fail
+	let res = bark.try_lightning_receive_with_token(invoice_info_2.invoice, token).await;
+	assert!(res.is_err());
+	assert_eq!(bark.spendable_balance().await, btc(1));
 }

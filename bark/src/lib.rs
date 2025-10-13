@@ -329,11 +329,12 @@ use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, 
 use ark::address::VtxoDelivery;
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, LightningReceiveChallenge, Offer, PaymentHash, Preimage};
 use ark::musig;
 use ark::rounds::RoundId;
 use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy, VtxoPolicyKind};
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST, TxStatus};
+use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::exit::Exit;
@@ -2393,6 +2394,29 @@ impl Wallet {
 		Ok(())
 	}
 
+	async fn compute_lightning_receive_anti_dos(
+		&self,
+		payment_hash: PaymentHash,
+		token: Option<&str>,
+	) -> anyhow::Result<LightningReceiveAntiDos> {
+		Ok(if let Some(token) = token {
+			LightningReceiveAntiDos::Token(token.to_string())
+		} else {
+			let challenge = LightningReceiveChallenge::new(payment_hash);
+			// We get an exisiting VTXO as an anti-dos measure.
+			let vtxo = self.select_vtxos_to_cover(Amount::ONE_SAT, None, None)
+				.and_then(|vtxos| vtxos.into_iter().next().ok_or_else(|| anyhow!("have no spendable vtxo to prove ownership of")))?;
+			let vtxo_keypair = self.get_vtxo_key(&vtxo).expect("owned vtxo should be in database");
+			LightningReceiveAntiDos::InputVtxo(protos::InputVtxo {
+				vtxo_id: vtxo.id().to_bytes().to_vec(),
+				ownership_proof: {
+					let sig = challenge.sign_with(vtxo.id(), vtxo_keypair);
+					sig.serialize().to_vec()
+				}
+			})
+		})
+	}
+
 	/// Check for incoming lightning payment with the given [PaymentHash].
 	///
 	/// This function checks for an incoming lightning payment with the
@@ -2404,6 +2428,8 @@ impl Wallet {
 	/// * `payment_hash` - The [PaymentHash] of the lightning payment
 	/// to check for.
 	/// * `wait` - Whether to wait for the payment to be received.
+	/// * `token` - An optional lightning receive token used to authenticate a lightning
+	/// receive when no spendable VTXOs are owned by this wallet.
 	///
 	/// # Returns
 	///
@@ -2423,6 +2449,7 @@ impl Wallet {
 		&self,
 		payment_hash: PaymentHash,
 		wait: bool,
+		token: Option<&str>,
 	) -> anyhow::Result<LightningReceive> {
 		let mut srv = self.require_server()?;
 		let current_height = self.chain.tip().await?;
@@ -2461,13 +2488,22 @@ impl Wallet {
 			return Ok(lightning_receive)
 		}
 
+		let lightning_receive_anti_dos = match self.compute_lightning_receive_anti_dos(payment_hash, token).await {
+			Ok(anti_dos) => Some(anti_dos),
+			Err(e) => {
+				warn!("Could not compute anti-dos: {e}. Trying without");
+				None
+			},
+		};
+
 		let htlc_recv_expiry = current_height + lightning_receive.htlc_recv_cltv_delta as BlockHeight;
 
-		let (keypair, _) = self.derive_store_next_keypair()?;
+		let (next_keypair, _) = self.derive_store_next_keypair()?;
 		let req = protos::PrepareLightningReceiveClaimRequest {
 			payment_hash: lightning_receive.payment_hash.to_vec(),
-			user_pubkey: keypair.public_key().serialize().to_vec(),
+			user_pubkey: next_keypair.public_key().serialize().to_vec(),
 			htlc_recv_expiry: htlc_recv_expiry,
+			lightning_receive_anti_dos,
 		};
 		let res = srv.client.prepare_lightning_receive_claim(req).await
 			.context("error preparing lightning receive claim")?.into_inner();
@@ -2484,7 +2520,7 @@ impl Wallet {
 						p.payment_hash,
 					);
 				}
-				if p.user_pubkey != keypair.public_key() {
+				if p.user_pubkey != next_keypair.public_key() {
 					bail!("invalid pubkey on HTLC VTXOs received from server: {}", p.user_pubkey);
 				}
 				if p.htlc_expiry < htlc_recv_expiry {
@@ -2533,6 +2569,8 @@ impl Wallet {
 	/// * `payment_hash` - The [PaymentHash] of the lightning payment
 	/// to check for.
 	/// * `wait` - Whether to wait for the payment to be received.
+	/// * `token` - An optional lightning receive token used to authenticate a lightning
+	/// receive when no spendable VTXOs are owned by this wallet.
 	///
 	/// # Returns
 	///
@@ -2548,8 +2586,9 @@ impl Wallet {
 		&self,
 		payment_hash: PaymentHash,
 		wait: bool,
+		token: Option<&str>,
 	) -> anyhow::Result<()> {
-		let receive = self.check_lightning_receive(payment_hash, wait).await?;
+		let receive = self.check_lightning_receive(payment_hash, wait, token).await?;
 		self.claim_lightning_receive(&receive).await
 	}
 
@@ -2571,7 +2610,7 @@ impl Wallet {
 		// Asynchronously attempts to claim all pending receive by converting the list into a stream
 		tokio_stream::iter(self.pending_lightning_receives()?)
 			.for_each_concurrent(3, |rcv| async move {
-				if let Err(e) = self.try_claim_lightning_receive(rcv.invoice.into(), wait).await {
+				if let Err(e) = self.try_claim_lightning_receive(rcv.invoice.into(), wait, None).await {
 					error!("Error claiming lightning receive: {}", e);
 				}
 			}).await;

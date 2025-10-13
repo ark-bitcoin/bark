@@ -77,6 +77,10 @@ pub struct ArkInfo {
 
 	//TODO(stevenroose) move elsewhere eith other temp fields
 	pub offboard_feerate: FeeRate,
+	/// Indicates whether the Ark server requires clients to either
+	/// provide a VTXO ownership proof, or a lightning receive token
+	/// when preparing a lightning claim.
+	pub ln_receive_anti_dos_required: bool,
 }
 
 /// Input of a round
