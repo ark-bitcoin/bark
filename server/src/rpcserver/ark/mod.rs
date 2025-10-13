@@ -158,7 +158,6 @@ impl rpc::server::ArkService for Server {
 
 		crate::rpcserver::add_tracing_attributes(vec![
 			KeyValue::new("board_vtxo", format!("{:?}", req.board_vtxo.as_hex())),
-			KeyValue::new("board_txid", format!("{:?}", req.board_tx.as_hex())),
 		]);
 
 		let vtxo = Vtxo::from_bytes(&req.board_vtxo)?;

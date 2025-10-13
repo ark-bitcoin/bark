@@ -407,12 +407,10 @@ async fn sweep_vtxos() {
 	let bark_client = bark.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 
 	let mut rpc = srv.get_public_rpc().await;
 	let request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
-		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
 	};
 	rpc.register_board_vtxo(request).await.unwrap();
 
@@ -1122,13 +1120,11 @@ async fn register_board_is_idempotent() {
 	let bark_client = bark_wallet.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 
 	// We will now call the register_board a few times
 	let mut rpc = srv.get_public_rpc().await;
 	let request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
-		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
 	};
 
 	for _ in 0..5 {
@@ -1150,11 +1146,9 @@ async fn register_unconfirmed_board() {
 	let bark_client = bark.client().await;
 
 	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0].id).unwrap();
-	let funding_tx = ctx.bitcoind().await_transaction(unconfirmed_board.funding_txid).await;
 
 	let unconfirmed_board_request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
-		board_tx: bitcoin::consensus::encode::serialize(&funding_tx),
 	};
 
 	#[derive(Clone)]
