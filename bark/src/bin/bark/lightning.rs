@@ -10,10 +10,10 @@ use lnurl::lightning_address::LightningAddress;
 use log::{info, warn};
 
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use bark::{Pagination, Wallet};
+use bark::Wallet;
 use bark_json::InvoiceInfo;
 
-use crate::{util::output_json, DEFAULT_PAGE_INDEX, DEFAULT_PAGE_SIZE};
+use crate::util::output_json;
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
@@ -53,14 +53,7 @@ pub enum LightningCommand {
 	},
 	/// list all generated invoices
 	#[command()]
-	Invoices {
-		/// The page index
-		#[arg(long)]
-		page_index: Option<u16>,
-		/// The page size
-		#[arg(long)]
-		page_size: Option<u16>,
-	},
+	Invoices,
 	/// claim the receipt of an invoice
 	#[command()]
 	Claim {
@@ -118,13 +111,10 @@ pub async fn execute_lightning_command(
 				info!("No invoice found");
 			}
 		},
-		LightningCommand::Invoices { page_index, page_size } => {
-			let pagination = Pagination {
-				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX),
-				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
-			};
-
-			let receives = wallet.lightning_receives(pagination)?;
+		LightningCommand::Invoices => {
+			let mut receives = wallet.lightning_receives()?;
+			// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
+			receives.reverse();
 			output_json(&receives);
 		},
 		LightningCommand::Claim { payment, wait } => {

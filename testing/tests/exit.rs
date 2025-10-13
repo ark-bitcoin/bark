@@ -319,7 +319,7 @@ async fn double_exit_call() {
 	let movements = bark1.list_movements().await;
 	assert_eq!(movements.len(), 7);
 
-	let last_moves = &movements[0..=2];
+	let last_moves = &movements[4..];
 	assert!(
 		vtxos.iter().all(|v| last_moves.iter().any(|m| {
 				let exit_spk = exit_taproot(v.user_pubkey, v.server_pubkey, v.exit_delta).script_pubkey();
@@ -346,7 +346,7 @@ async fn double_exit_call() {
 	assert_eq!(movements.len(), 9);
 
 	// check we only exited last vtxo
-	let last_move = movements.first().unwrap();
+	let last_move = movements.last().unwrap();
 	assert_eq!(last_move.spends.len(), 1, "we should only exit last spendable vtxo");
 	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
 

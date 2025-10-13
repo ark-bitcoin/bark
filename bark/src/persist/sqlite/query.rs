@@ -18,7 +18,7 @@ use json::exit::ExitState;
 use json::exit::states::ExitTxOrigin;
 
 use crate::persist::sqlite::convert::{row_to_secret_nonces, row_to_round_state};
-use crate::{Pagination, Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::movement::{Movement, MovementKind};
 use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
@@ -113,24 +113,16 @@ pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Res
 	Ok(exists)
 }
 
-pub fn get_paginated_movements(conn: &Connection, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
-	let take = pagination.page_size;
-	let skip = pagination.page_index * take;
-
+pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
 	let query = "
 		SELECT * FROM movement_view
 		ORDER BY movement_view.created_at DESC
-		LIMIT :take
-		OFFSET :skip
 	";
 
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query(named_params! {
-		":take" : take,
-		":skip" : skip,
-	})?;
+	let mut rows = statement.query([])?;
 
-	let mut movements = Vec::with_capacity(take as usize);
+	let mut movements = Vec::new();
 	while let Some(row) = rows.next()? {
 		movements.push(row_to_movement(row)?);
 	}
@@ -745,17 +737,11 @@ pub fn store_lightning_receive(
 	Ok(())
 }
 
-pub fn get_paginated_lightning_receives<'a>(
-	conn: &'a Connection,
-	pagination: Pagination,
-) -> anyhow::Result<Vec<LightningReceive>> {
-	let query = "SELECT * FROM bark_lightning_receive \
-		ORDER BY created_at DESC LIMIT :take OFFSET :skip";
+pub fn get_lightning_receives<'a>(conn: &'a Connection) -> anyhow::Result<Vec<LightningReceive>> {
+	let query = "SELECT * FROM bark_lightning_receive ORDER BY created_at DESC";
+
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query(named_params! {
-		":take": pagination.page_size,
-		":skip": pagination.page_index * pagination.page_size,
-	})?;
+	let mut rows = statement.query([])?;
 
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {

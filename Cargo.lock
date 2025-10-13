@@ -127,7 +127,7 @@ dependencies = [
  "hex-conservative 0.3.0",
  "lazy_static",
  "lightning",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "rand 0.9.2",
  "secp256k1-preview-xg2904r5rj",
  "serde",
@@ -340,7 +340,7 @@ dependencies = [
  "ipnet",
  "lazy_static",
  "lightning",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "log",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -420,10 +420,11 @@ dependencies = [
  "clap",
  "env_logger",
  "futures",
+ "hal",
  "home",
  "lazy_static",
  "lightning",
- "lightning-invoice",
+ "lightning-invoice 0.33.2",
  "lnurl-rs",
  "log",
  "rand 0.9.2",
@@ -549,6 +550,12 @@ dependencies = [
 
 [[package]]
 name = "bech32"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
+
+[[package]]
+name = "bech32"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
@@ -574,7 +581,7 @@ checksum = "0fda569d741b895131a88ee5589a467e73e9c4718e958ac9308e4f7dc44b6945"
 dependencies = [
  "base58ck",
  "base64 0.21.7",
- "bech32",
+ "bech32 0.11.0",
  "bitcoin-internals 0.3.0",
  "bitcoin-io",
  "bitcoin-units",
@@ -1278,12 +1285,38 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http",
- "indexmap",
+ "indexmap 2.11.4",
  "slab",
  "tokio",
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "hal"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d794c6b7443e77bb78df235de0a7f08913a77427b3244ddedef442e9a1cb442"
+dependencies = [
+ "bip39",
+ "bitcoin",
+ "byteorder",
+ "chrono",
+ "hex",
+ "lazy_static",
+ "lightning-invoice 0.32.0",
+ "miniscript",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
@@ -1339,6 +1372,12 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hex"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "805026a5d0141ffc30abb3be3173848ad46a1b1664fe632428479619a3644d77"
 
 [[package]]
 name = "hex-conservative"
@@ -1660,6 +1699,16 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
+dependencies = [
+ "autocfg",
+ "hashbrown 0.12.3",
+]
+
+[[package]]
+name = "indexmap"
 version = "2.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
@@ -1829,14 +1878,25 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e540fcb289a76826c9c0b078d3dd1f05691972c5a53fb4d3120540862040a147"
 dependencies = [
- "bech32",
+ "bech32 0.11.0",
  "bitcoin",
  "dnssec-prover",
  "hashbrown 0.13.2",
  "libm",
- "lightning-invoice",
- "lightning-types",
+ "lightning-invoice 0.33.2",
+ "lightning-types 0.2.0",
  "possiblyrandom",
+]
+
+[[package]]
+name = "lightning-invoice"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90ab9f6ea77e20e3129235e62a2e6bd64ed932363df104e864ee65ccffb54a8f"
+dependencies = [
+ "bech32 0.9.1",
+ "bitcoin",
+ "lightning-types 0.1.0",
 ]
 
 [[package]]
@@ -1845,10 +1905,21 @@ version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11209f386879b97198b2bfc9e9c1e5d42870825c6bd4376f17f95357244d6600"
 dependencies = [
- "bech32",
+ "bech32 0.11.0",
  "bitcoin",
- "lightning-types",
+ "lightning-types 0.2.0",
  "serde",
+]
+
+[[package]]
+name = "lightning-types"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1083b8d9137000edf3bfcb1ff011c0d25e0cdd2feb98cc21d6765e64a494148f"
+dependencies = [
+ "bech32 0.9.1",
+ "bitcoin",
+ "hex-conservative 0.2.1",
 ]
 
 [[package]]
@@ -1893,7 +1964,7 @@ dependencies = [
  "aes",
  "anyhow",
  "base64 0.22.1",
- "bech32",
+ "bech32 0.11.0",
  "bitcoin",
  "cbc",
  "email_address",
@@ -1981,7 +2052,7 @@ version = "12.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "487906208f38448e186e3deb02f2b8ef046a9078b0de00bdb28bf4fb9b76951c"
 dependencies = [
- "bech32",
+ "bech32 0.11.0",
  "bitcoin",
  "serde",
 ]
@@ -2269,7 +2340,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset",
- "indexmap",
+ "indexmap 2.11.4",
 ]
 
 [[package]]
@@ -3131,6 +3202,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.8.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "578a7433b776b56a35785ed5ce9a7e777ac0598aac5a6dd1b4b18a307c7fc71b"
+dependencies = [
+ "indexmap 1.9.3",
+ "ryu",
+ "serde",
+ "yaml-rust",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3599,7 +3682,7 @@ version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
- "indexmap",
+ "indexmap 2.11.4",
  "serde",
  "serde_spanned 0.6.9",
  "toml_datetime 0.6.11",
@@ -3702,7 +3785,7 @@ checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
 dependencies = [
  "futures-core",
  "futures-util",
- "indexmap",
+ "indexmap 2.11.4",
  "pin-project-lite",
  "slab",
  "sync_wrapper",
@@ -4457,6 +4540,15 @@ name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea2f10b9bb0928dfb1b42b65e1f9e36f7f54dbdf08457afefb38afcdec4fa2bb"
+
+[[package]]
+name = "yaml-rust"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
+dependencies = [
+ "linked-hash-map",
+]
 
 [[package]]
 name = "yaml-rust2"

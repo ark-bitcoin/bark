@@ -3,6 +3,7 @@
 mod dev;
 mod exit;
 mod lightning;
+mod onchain;
 mod util;
 mod wallet;
 
@@ -10,12 +11,11 @@ use std::{cmp, env, process};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::Duration;
 
 use anyhow::Context;
 use bark::movement::Movement;
 use bark::vtxo_state::WalletVtxo;
-use bitcoin::{address, Amount, FeeRate};
+use bitcoin::{Amount, FeeRate};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
 use ::lightning::offers::offer::Offer;
@@ -24,16 +24,13 @@ use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 
 use ark::VtxoId;
-use bark::{Config, Pagination, UtxoInfo};
+use bark::Config;
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::{cli as json, primitives};
 use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;
 use crate::wallet::{CreateOpts, create_wallet, open_wallet};
-
-const DEFAULT_PAGE_SIZE: u16 = 10;
-const DEFAULT_PAGE_INDEX: u16 = 0;
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -200,10 +197,6 @@ enum Command {
 	#[command()]
 	Config,
 
-	/// Use the built-in onchain wallet
-	#[command(subcommand)]
-	Onchain(OnchainCommand),
-
 	/// Prints information related to the Ark Server
 	#[command()]
 	ArkInfo,
@@ -237,13 +230,6 @@ enum Command {
 	/// By default will fetch the 10 first items
 	#[command()]
 	Movements {
-		/// Page index to return, default to 0
-		#[arg(long)]
-		page_index: Option<u16>,
-		/// Page size to return, default to 10
-		#[arg(long)]
-		page_size: Option<u16>,
-
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
@@ -343,6 +329,10 @@ enum Command {
 		no_sync: bool,
 	},
 
+	/// Use the built-in onchain wallet
+	#[command(subcommand)]
+	Onchain(onchain::OnchainCommand),
+
 	/// Perform a unilateral exit from the Ark
 	#[command(subcommand)]
 	Exit(exit::ExitCommand),
@@ -361,73 +351,6 @@ enum Command {
 	/// syncing Lightning VTXOs, syncing exits, and refreshing soon-to-expire VTXOs
 	#[command()]
 	Maintain,
-}
-
-#[derive(clap::Subcommand)]
-enum OnchainCommand {
-	/// Get the on-chain balance
-	#[command()]
-	Balance {
-		/// Skip syncing before computing balance
-		#[arg(long)]
-		no_sync: bool,
-	},
-
-	/// Get an on-chain address
-	#[command()]
-	Address,
-
-	/// Send using the on-chain wallet
-	#[command()]
-	Send {
-		destination: bitcoin::Address<address::NetworkUnchecked>,
-		/// Amount to send
-		///
-		/// Provided value must match format `<amount> <unit>`, where unit can be any
-		/// amount denomination. Example: `250000 sats`.
-		amount: Amount,
-		/// Skip syncing wallet
-		#[arg(long)]
-		no_sync: bool,
-	},
-
-	#[command(
-		about = "\
-			Send using the on-chain wallet to multiple destinations. \n\
-			Example usage: send-many --destination bc1pfq...:10000sat --destination bc1pke...:20000sat\n\
-			This will send 10,000 sats to bc1pfq... and 20,000 sats to bc1pke...",
-	)]
-	SendMany {
-		/// Adds an output to the given address, this can be specified multiple times.
-		/// The format is address:amount, e.g. bc1pfq...:10000sat
-		#[arg(long = "destination", required = true)]
-		destinations: Vec<String>,
-
-		/// Sends the transaction immediately instead of printing the summary before continuing
-		#[arg(long)]
-		immediate: bool,
-
-		/// Skip syncing wallet
-		#[arg(long)]
-		no_sync: bool,
-	},
-
-	/// Send all wallet funds to provided destination
-	#[command()]
-	Drain {
-		destination: bitcoin::Address<address::NetworkUnchecked>,
-		/// Skip syncing wallet
-		#[arg(long)]
-		no_sync: bool,
-	},
-
-	/// List our wallet's UTXOs
-	#[command()]
-	Utxos {
-		/// Skip syncing before fetching UTXOs
-		#[arg(long)]
-		no_sync: bool,
-	},
 }
 
 /// Simple logger that splits into two logger
@@ -593,127 +516,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				warn!("Could not connect with Ark server.")
 			}
 		},
-		Command::Onchain(cmd) => match cmd {
-			OnchainCommand::Balance { no_sync } => {
-				if !no_sync {
-					info!("Syncing wallet...");
-					if let Err(e) = onchain.sync(&wallet.chain).await {
-						warn!("Onchain sync error: {}", e)
-					}
-				}
-
-				let balance = onchain.balance();
-				let onchain_balance  = json::onchain::Balance {
-					total: balance.total(),
-					trusted_spendable: balance.trusted_spendable(),
-					immature: balance.immature,
-					trusted_pending: balance.trusted_pending,
-					untrusted_pending: balance.untrusted_pending,
-					confirmed: balance.confirmed,
-				};
-				output_json(&onchain_balance);
-			},
-			OnchainCommand::Address => {
-				let address = onchain.address().expect("Wallet failed to generate address");
-				let output = json::onchain::Address { address: address.into_unchecked() };
-				output_json(&output);
-			},
-			OnchainCommand::Send { destination: address, amount, no_sync } => {
-				let addr = address.require_network(net).with_context(|| {
-					format!("address is not valid for configured network {}", net)
-				})?;
-
-				if !no_sync {
-					info!("Syncing wallet...");
-					if let Err(e) = onchain.sync(&wallet.chain).await {
-						warn!("Sync error: {}", e)
-					}
-				}
-
-				let fee_rate = wallet.chain.fee_rates().await.regular;
-				let txid = onchain.send(&wallet.chain, addr, amount, fee_rate).await?;
-
-				let output = json::onchain::Send { txid };
-				output_json(&output);
-			},
-			OnchainCommand::Drain { destination: address, no_sync } => {
-				let addr = address.require_network(net).with_context(|| {
-					format!("address is not valid for configured network {}", net)
-				})?;
-
-				if !no_sync {
-					info!("Syncing wallet...");
-					if let Err(e) = onchain.sync(&wallet.chain).await {
-						warn!("Sync error: {}", e)
-					}
-				}
-
-				let fee_rate = wallet.chain.fee_rates().await.regular;
-				let txid = onchain.drain(&wallet.chain, addr, fee_rate).await?;
-
-				let output = json::onchain::Send { txid };
-				output_json(&output);
-			},
-			OnchainCommand::SendMany { destinations, immediate, no_sync } => {
-				let outputs = destinations
-					.iter()
-					.map(|dest| -> anyhow::Result<(bitcoin::Address, Amount)> {
-						let mut parts = dest.splitn(2, ':');
-						let addr = {
-							let s = parts.next()
-								.context("invalid destination format, expected address:amount")?;
-							bitcoin::Address::from_str(s)?.require_network(net)
-								.with_context(|| format!("invalid address: '{}'", s))?
-						};
-						let amount = {
-							let s = parts.next()
-								.context("invalid destination format, expected address:amount")?;
-							Amount::from_str(s)
-								.with_context(|| format!("invalid amount: '{}'", s))?
-						};
-						Ok((addr, amount))
-					})
-					.collect::<Result<Vec<_>, _>>()?;
-
-				info!("Attempting to send the following:");
-				for (address, amount) in &outputs {
-					info!("{} to {}", amount, address);
-				}
-
-				if !immediate {
-					info!("Will continue after 10 seconds...");
-					tokio::time::sleep(Duration::from_secs(10)).await;
-				}
-
-				if !no_sync {
-					info!("Syncing wallet...");
-					if let Err(e) = onchain.sync(&wallet.chain).await {
-						warn!("Sync error: {}", e)
-					}
-				}
-
-				let fee_rate = wallet.chain.fee_rates().await.regular;
-				let txid = onchain.send_many(&wallet.chain, outputs, fee_rate).await?;
-
-				let output = json::onchain::Send { txid };
-				output_json(&output);
-			},
-			OnchainCommand::Utxos { no_sync } => {
-				if !no_sync {
-					info!("Syncing wallet...");
-					if let Err(e) = onchain.sync(&wallet.chain).await {
-						warn!("Sync error: {}", e)
-					}
-				}
-
-				let utxos = onchain.utxos()
-					.into_iter()
-					.map(UtxoInfo::from)
-					.collect::<json::onchain::Utxos>();
-
-				output_json(&utxos);
-			},
-		},
 		Command::Address { index } => {
 			if let Some(index) = index {
 				println!("{}", wallet.peak_address(index)?)
@@ -751,7 +553,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			output_json(&vtxos);
 		},
-		Command::Movements { page_index, page_size, no_sync } => {
+		Command::Movements { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				if let Err(e) = wallet.sync().await {
@@ -759,14 +561,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			}
 
-			let pagination = Pagination {
-				page_index: page_index.unwrap_or(DEFAULT_PAGE_INDEX),
-				page_size: page_size.unwrap_or(DEFAULT_PAGE_SIZE),
-			};
-
-			let movements = wallet.movements(pagination)?.into_iter()
+			let mut movements = wallet.movements()?.into_iter()
 				.map(|mv| movement_to_json(&mv))
 				.collect::<Vec<_>>();
+
+			// movements are ordered from newest to oldest, so we reverse them so last terminal item is newest
+			movements.reverse();
 
 			output_json(&movements);
 		},
@@ -925,6 +725,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
 			output_json(&ret);
+		},
+		Command::Onchain(onchain_command) => {
+			onchain::execute_lightning_command(onchain_command, &mut wallet, &mut onchain).await?;
 		},
 		Command::Exit(cmd) => {
 			exit::execute_exit_command(cmd, &mut wallet, &mut onchain).await?;

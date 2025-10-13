@@ -30,9 +30,7 @@ use ark::rounds::{RoundId, RoundSeq};
 use json::exit::states::ExitTxOrigin;
 
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
-use crate::{
-	Pagination, Vtxo, VtxoId, VtxoState, WalletProperties
-};
+use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::persist::BarkPersister;
@@ -130,9 +128,9 @@ impl BarkPersister for SqliteClient {
 		query::check_recipient_exists(&conn, recipient)
 	}
 
-	fn get_paginated_movements(&self, pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		let conn = self.connect()?;
-		query::get_paginated_movements(&conn, pagination)
+		query::get_movements(&conn)
 	}
 
 	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()> {
@@ -273,9 +271,9 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_paginated_lightning_receives(&self, pagination: Pagination) -> anyhow::Result<Vec<LightningReceive>> {
+	fn get_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		let conn = self.connect()?;
-		query::get_paginated_lightning_receives(&conn, pagination)
+		query::get_lightning_receives(&conn)
 	}
 
 	fn get_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {

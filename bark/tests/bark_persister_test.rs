@@ -13,7 +13,7 @@ use ark::musig::SecretNonce;
 use ark::musig::secpm::ffi::MUSIG_SECNONCE_SIZE;
 use ark::rounds::{RoundId, RoundSeq};
 use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPolicy};
-use bark::{Pagination, WalletProperties, WalletVtxo};
+use bark::{WalletProperties, WalletVtxo};
 use bark::movement::{Movement, MovementArgs, MovementKind, MovementRecipient};
 use bark::persist::BarkPersister;
 use bark::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
@@ -53,7 +53,7 @@ impl BarkPersister for Dummy {
 		Ok(true)
 	}
 
-	fn get_paginated_movements(&self, _pagination: Pagination) -> anyhow::Result<Vec<Movement>> {
+	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(Vec::<Movement>::from([Movement {
 			id: 0,
 			kind: MovementKind::Board,
@@ -209,10 +209,7 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn get_paginated_lightning_receives(
-		&self,
-		_pagination: Pagination,
-	) -> anyhow::Result<Vec<LightningReceive>> {
+	fn get_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		Ok(Vec::<LightningReceive>::from([
 			dummy_lightning_receive(),
 		]))
