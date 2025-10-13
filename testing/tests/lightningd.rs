@@ -548,6 +548,71 @@ async fn bark_can_receive_lightning() {
 	assert!(receives[0].preimage_revealed_at.is_some());
 }
 
+#[tokio::test]
+async fn bark_check_lightning_receive_no_wait() {
+	let ctx = TestContext::new("lightningd/bark_check_lightning_receive_no_wait").await;
+
+	// Start a three lightning nodes
+	// And connect them in a line.
+	trace!("Start lightningd-1, lightningd-2, ...");
+	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+
+	trace!("Funding all lightning-nodes");
+	ctx.fund_lightning(&lightningd_1, btc(10)).await;
+	ctx.generate_blocks(6).await;
+	lightningd_1.wait_for_block_sync().await;
+
+	trace!("Creating channel between lightning nodes");
+	lightningd_1.connect(&lightningd_2).await;
+	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
+
+	// TODO: find a way how to remove this sleep
+	// maybe: let ctx.bitcoind wait for channel funding transaction
+	// without the sleep we get infinite 'Waiting for gossip...'
+	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
+	ctx.generate_blocks(6).await;
+
+	lightningd_1.wait_for_gossip(1).await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+	srv.wait_for_vtxopool().await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let pay_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
+
+	let error = bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).ready().await.unwrap_err();
+	assert!(error.to_string().contains("payment not yet initiated by sender"), "should have received error.  received: {}", error);
+
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move {
+		lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
+	});
+
+	let mut success = false;
+	for _ in 0..10 {
+		tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+		if bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).await.is_ok() {
+			success = true;
+			break;
+		}
+	}
+
+	if !success {
+		panic!("Lightning receive could not be claimed")
+	}
+
+	// HTLC settlement on lightning side
+	res1.ready().await.unwrap();
+}
 
 #[tokio::test]
 async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
