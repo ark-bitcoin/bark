@@ -1171,6 +1171,8 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 		)
 	});
 
+	srv.wait_for_vtxopool(&ctx).await;
+
 	bark.lightning_receive_all().wait(10_000).await;
 
 	// HTLC settlement on lightning side

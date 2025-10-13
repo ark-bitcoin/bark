@@ -1,24 +1,26 @@
 use bitcoin::constants::ChainHash;
-use bitcoin::Network;
-pub use lightning::offers::offer::{Offer, Amount as OfferAmount};
+use bitcoin::key::Keypair;
+use bitcoin::{secp256k1, Network};
 pub use lightning::offers::invoice::Bolt12Invoice;
 pub use lightning_invoice::Bolt11Invoice;
+pub use lightning::offers::offer::{Amount as OfferAmount, Offer};
 
 use std::fmt;
 use std::borrow::Borrow;
+use std::io::Write as _;
 use std::str::FromStr;
 
 use bitcoin::Amount;
 use bitcoin::bech32::{encode_to_fmt, EncodeError, Hrp, NoChecksum, primitives::decode::CheckedHrpstring};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::secp256k1::{Message, PublicKey};
+use bitcoin::secp256k1::{schnorr, Message, PublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
 use lightning::offers::parse::Bolt12ParseError;
 use lightning::util::ser::Writeable;
 
 use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
 
-use crate::{musig, scripts, SECP};
+use crate::{musig, scripts, Vtxo, VtxoId, SECP};
 
 const BECH32_BOLT12_INVOICE_HRP: &str = "lni";
 
@@ -83,6 +85,53 @@ impl PaymentHash {
 	pub fn to_sha256_hash(&self) -> bitcoin::hashes::sha256::Hash {
 		bitcoin::hashes::sha256::Hash::from_slice(&self.0)
 			.expect("PaymentHash must be 32 bytes, which is always valid for sha256::Hash")
+	}
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct LightningReceiveChallenge(PaymentHash);
+
+impl LightningReceiveChallenge {
+	const CHALLENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"Lightning receive VTXO challenge";
+
+	pub fn new(value: PaymentHash) -> Self {
+		Self(value)
+	}
+
+	/// Combines [VtxoId] and the inner [PaymentHash] to prove ownership of
+	/// a VTXO while commiting to the Lightning receive associated with the unique
+	/// payment hash.
+	fn as_signable_message(&self, vtxo_id: VtxoId) -> Message {
+		let mut engine = sha256::Hash::engine();
+		engine.write_all(Self::CHALLENGE_MESSAGE_PREFIX).unwrap();
+		engine.write_all(&self.0.to_byte_array()).unwrap();
+		engine.write_all(&vtxo_id.to_bytes()).unwrap();
+
+		let hash = sha256::Hash::from_engine(engine).to_byte_array();
+		Message::from_digest(hash)
+	}
+
+	pub fn sign_with(
+		&self,
+		vtxo_id: VtxoId,
+		vtxo_keypair: Keypair,
+	) -> schnorr::Signature {
+		SECP.sign_schnorr(
+			&LightningReceiveChallenge::as_signable_message(self, vtxo_id),
+			&vtxo_keypair,
+		)
+	}
+
+	pub fn verify_input_vtxo_sig(
+		&self,
+		vtxo: &Vtxo,
+		sig: &schnorr::Signature,
+	) -> Result<(), secp256k1::Error> {
+		SECP.verify_schnorr(
+			sig,
+			&LightningReceiveChallenge::as_signable_message(self, vtxo.id()),
+			&vtxo.user_pubkey().x_only_public_key().0,
+		)
 	}
 }
 
