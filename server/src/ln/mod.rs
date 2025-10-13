@@ -287,9 +287,10 @@ impl Server {
 		})
 	}
 
-	pub async fn subscribe_lightning_receive(
+	pub async fn check_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
+		wait: bool,
 	) -> anyhow::Result<LightningHtlcSubscription> {
 		let sub = loop {
 			if let Some(htlc) = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await? {
@@ -300,6 +301,10 @@ impl Server {
 				if htlc.status == LightningHtlcSubscriptionStatus::Accepted {
 					break htlc;
 				}
+			}
+
+			if !wait {
+				bail!("payment not yet initiated by sender");
 			}
 
 			tokio::time::sleep(self.config.invoice_check_interval).await;
