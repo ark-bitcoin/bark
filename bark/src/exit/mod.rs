@@ -72,7 +72,7 @@
 //! #
 //! # async fn get_wallets() -> (Wallet, OnchainWallet) {
 //! #   let datadir = PathBuf::from("./bark");
-//! #   let config = Config::default();
+//! #   let config = Config::network_default(bitcoin::Network::Bitcoin);
 //! #   let db = Arc::new(SqliteClient::open(datadir.join("db.sqlite")).unwrap());
 //! #   let mnemonic_str = fs::read_to_string(datadir.join("mnemonic")).await.unwrap();
 //! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();

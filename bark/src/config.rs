@@ -23,7 +23,7 @@ use bitcoin_ext::BlockHeight;
 /// let cfg = Config {
 ///   server_address: "https://ark.signet.2nd.dev".into(),
 ///   esplora_address: Some("https://esplora.signet.2nd.dev".into()),
-///   ..Config::default()
+///   ..Config::network_default(bitcoin::Network::Bitcoin)
 /// };
 /// // cfg now has all other fields from the default configuration
 /// ```
@@ -75,18 +75,7 @@ impl Config {
 	///
 	/// The [Default::default] provides a sane default for mainnet
 	pub fn network_default(network: Network) -> Self {
-		let mut ret = Self::default();
-		if network != Network::Bitcoin {
-			ret.vtxo_refresh_expiry_threshold = 12;
-			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
-		}
-		ret
-	}
-}
-
-impl Default for Config {
-	fn default() -> Config {
-		Config {
+		let mut ret = Self {
 			server_address: "http://127.0.0.1:3535".to_owned(),
 			esplora_address: None,
 			bitcoind_address: None,
@@ -95,6 +84,13 @@ impl Default for Config {
 			bitcoind_pass: None,
 			vtxo_refresh_expiry_threshold: 144,
 			fallback_fee_rate: None,
+		};
+
+		if network != Network::Bitcoin {
+			ret.vtxo_refresh_expiry_threshold = 12;
+			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
 		}
+		ret
 	}
 }
+
