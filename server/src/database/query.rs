@@ -125,7 +125,24 @@ pub async fn get_sweepable_boards<T>(
 		SELECT * FROM board WHERE expiry_height <= $1 AND swept_at IS NULL AND EXITED_at IS NULL;
 	").await?;
 
-	let rows = client.query(&statement, &[&height]).await?;
+	let rows = client.query(&statement, &[&(height as i32)]).await
+		.context("Failed to execute `get_sweepable_boards` query")?;
 
 	Ok(rows.into_iter().map(|row| Board::try_from(row)).collect::<anyhow::Result<Vec<_>>>()?)
+}
+
+pub async fn mark_board_swept<T>(
+	client: &T,
+	vtxo_id: VtxoId,
+) -> anyhow::Result<()>
+	where T : GenericClient
+{
+	let statement = client.prepare("
+		UPDATE board SET swept_at = NOW(), updated_at = NOW() WHERE vtxo_id = $1 and swept_at IS NULL;
+	").await?;
+
+	client.execute(&statement, &[&vtxo_id.to_string()]).await
+		.context("Failed to execute query")?;
+
+	Ok(())
 }

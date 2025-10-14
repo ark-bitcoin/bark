@@ -13,7 +13,6 @@ pub mod vtxopool;
 
 mod model;
 pub use model::*;
-use tokio_stream::StreamExt;
 
 
 use std::task;
@@ -181,42 +180,21 @@ impl Db {
 		Ok(())
 	}
 
-	/// Get all board vtxos that expired before or on `height`.
-	pub async fn get_expired_boards(
+	/// Get all board are sweepable
+	/// A board is sweepable if it has expired and the funding outpoint hasn't been spent yet
+	/// A spent could be a sweep or an exit
+	pub async fn get_sweepable_boards(
 		&self,
 		height: BlockHeight,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
+	) -> anyhow::Result<Vec<Board>> {
 		let conn = self.pool.get().await?;
-
-		// TODO: maybe store kind in a column to filter board at the db level
-		let statement = conn.prepare_typed("
-			SELECT vtxo
-			FROM vtxo
-			WHERE expiry <= $1 AND board_swept_at IS NULL
-		", &[Type::INT4]).await?;
-
-		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
-		let stream = OwnedRowStream::new(conn, rows);
-		Ok(stream.map_err(anyhow::Error::from).try_filter_map(|row| async {
-			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
-			drop(row); // borrowck acts weird here
-			if !self.is_round_tx(vtxo.chain_anchor().txid).await? {
-				Ok(Some(vtxo))
-			} else {
-				Ok(None)
-			}
-		}).fuse())
+		query::get_sweepable_boards(&*conn, height).await
 	}
 
 	pub async fn mark_board_swept(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
-
-		let statement = conn.prepare("
-			UPDATE vtxo SET board_swept_at = NOW(), updated_at = NOW() WHERE vtxo_id = $1;
-		").await?;
-
-		conn.execute(&statement, &[&vtxo.id().to_string()]).await?;
-
+		query::mark_board_swept(&*conn, vtxo.id()).await
+			.context("Failed to mark board as swept")?;
 		Ok(())
 	}
 

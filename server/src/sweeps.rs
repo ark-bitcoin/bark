@@ -50,7 +50,6 @@ use bitcoin::{
 };
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
-use futures::StreamExt;
 use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
 
@@ -651,9 +650,9 @@ impl Process {
 		telemetry::set_pending_expired_rounds_count(expired_rounds.len());
 
 		let expired_boards = self.db
-			.get_expired_boards(tip).await?
-			.filter_map(|o| async { o.ok() })
-			.collect::<Vec<_>>().await;
+			.get_sweepable_boards(tip).await?;
+		let expired_board_vtxos = self.db.get_vtxos_by_id(&expired_boards.iter().map(|b| b.vtxo_id).collect::<Vec<_>>()).await?;
+
 		trace!("{} expired boards fetched", expired_boards.len());
 		telemetry::set_pending_expired_boards_count(expired_boards.len());
 
@@ -669,10 +668,12 @@ impl Process {
 			builder.purge_uneconomical();
 			//TODO(stevenroose) check if we exceeded some builder limits
 		}
-		for board in &expired_boards {
-			trace!("Processing board {}", board.id());
-			if let Err(err) = builder.process_board(&board, done_height).await {
-				warn!("Failed to add board {} to sweep_builder: {}", board.id(), err);
+		for board in expired_board_vtxos {
+			let vtxo = board.vtxo;
+			let vtxo_id = board.vtxo_id;
+			trace!("Processing board {}", vtxo_id);
+			if let Err(err) = builder.process_board(&vtxo, done_height).await {
+				warn!("Failed to add board {} to sweep_builder: {}", vtxo_id, err);
 			}
 			builder.purge_uneconomical();
 		}
