@@ -119,7 +119,7 @@ impl Server {
 		}
 
 		let mut htlc_vtxo_sum = Amount::ZERO;
-		for htlc_vtxo in vtxos {
+		for htlc_vtxo in vtxos.iter() {
 			let payment_hash = htlc_vtxo.server_htlc_out_payment_hash()
 				.context("vtxo provided is not an outgoing htlc vtxo")?;
 			if payment_hash != invoice_payment_hash {
@@ -127,6 +127,10 @@ impl Server {
 			}
 			htlc_vtxo_sum += htlc_vtxo.amount();
 		}
+
+		let lowest_expiry_height = vtxos.iter()
+			.map(|v| v.policy().as_server_htlc_send().expect("checked before").htlc_expiry).min()
+			.expect("vtxos are not empty");
 
 		if let Some(amount) = invoice.amount_milli_satoshis() {
 			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
@@ -136,7 +140,7 @@ impl Server {
 		}
 
 		// Spawn a task that performs the payment
-		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, wait).await;
+		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, lowest_expiry_height, wait).await;
 
 		Self::process_lightning_pay_response(invoice_payment_hash, res)
 	}
