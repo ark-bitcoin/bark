@@ -115,6 +115,11 @@ max_user_invoice_cltv_delta = 250
 # Timeout on the HTLC subscription RPC call
 htlc_subscription_timeout = "10m"
 
+# Indicates whether the Ark server requires clients to either
+# provide a VTXO ownership proof, or a lightning receive token
+# when preparing a lightning claim.
+ln_receive_anti_dos_required = false
+
 # This allows you to configure one or more lightning nodes for the server to use. Just add as
 # many [[cln_array]] entries as you need!
 #[[cln_array]]
