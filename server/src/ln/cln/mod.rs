@@ -723,7 +723,12 @@ impl ClnManagerProcess {
 		let sub = self.db.get_htlc_subscription_by_payment_hash(invoice.payment_hash()).await?;
 		if let Some(sub) = sub {
 			if sub.status == LightningHtlcSubscriptionStatus::Created {
-				self.cancel_invoice(sub, LightningHtlcSubscriptionStatus::Accepted).await?;
+				self.db.store_lightning_htlc_subscription_status(
+					sub.id,
+					LightningHtlcSubscriptionStatus::Accepted,
+				).await?;
+
+				self.cancel_invoice(sub).await?;
 				return Ok(());
 			}
 		}
@@ -818,12 +823,7 @@ impl ClnManagerProcess {
 	}
 
 	/// Cancels an invoice by sending a cancel request to the hodl plugin.
-	///
-	/// Note that in the case of a server self-payment, the invoice can be
-	/// canceled on CLN, but the htlc subscription marked as accepted and
-	/// later settled when the receiver provides a preimage, we just don't
-	/// need to watch it on lightning anymore.
-	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription, status: LightningHtlcSubscriptionStatus) -> anyhow::Result<()> {
+	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription) -> anyhow::Result<()> {
 		// NB: we need to use the node that created the subscription
 		let mut hold_client = self.get_node_by_id(subscription.lightning_node_id)
 			.context("invoice cannot be cancelled: node is now offline")?
@@ -834,7 +834,6 @@ impl ClnManagerProcess {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
-		self.db.store_lightning_htlc_subscription_status(subscription.id, status).await?;
 		Ok(())
 	}
 
