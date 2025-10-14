@@ -18,6 +18,7 @@ use ark::tree::signed::CachedSignedVtxoTree;
 
 use crate::database::Db;
 use crate::database::forfeits::ForfeitState;
+use crate::database::query;
 
 
 impl Db {
@@ -77,7 +78,7 @@ impl Db {
 		}
 
 		// Finally insert new vtxos.
-		Self::inner_upsert_vtxos(&tx, vtxos.all_vtxos()).await?;
+		query::upsert_vtxos(&tx, vtxos.all_vtxos()).await?;
 
 		tx.commit().await?;
 		Ok(())
