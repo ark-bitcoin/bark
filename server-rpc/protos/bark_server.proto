@@ -31,7 +31,7 @@ service ArkService {
 
 	// * SEND LN payments
 
-	rpc StartLightningPayment(LightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc StartLightningPayment(StartLightningPaymentRequest) returns (StartLightningPaymentResponse) {}
 	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
@@ -168,12 +168,17 @@ message ArkoorVtxosResponse {
 
 // lightning
 
-message LightningPaymentRequest {
+message StartLightningPaymentRequest {
 	string invoice = 1;
 	optional uint64 user_amount_sat = 2;
 	repeated bytes input_vtxo_ids = 3;
 	repeated bytes user_nonces = 4;
 	bytes user_pubkey = 5;
+}
+
+message StartLightningPaymentResponse {
+	repeated ArkoorCosignResponse sigs = 1;
+	bytes policy = 2;
 }
 
 message SignedLightningPaymentDetails {

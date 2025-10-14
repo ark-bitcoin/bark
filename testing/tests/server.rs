@@ -1296,8 +1296,8 @@ async fn reject_dust_bolt11_payment() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
-		async fn start_lightning_payment(&mut self, mut req: protos::LightningPaymentRequest)
-			-> Result<protos::ArkoorPackageCosignResponse, tonic::Status>
+		async fn start_lightning_payment(&mut self, mut req: protos::StartLightningPaymentRequest)
+			-> Result<protos::StartLightningPaymentResponse, tonic::Status>
 		{
 			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
 			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())
@@ -1739,8 +1739,8 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
-		async fn start_lightning_payment(&mut self, mut req: protos::LightningPaymentRequest)
-			-> Result<protos::ArkoorPackageCosignResponse, tonic::Status>
+		async fn start_lightning_payment(&mut self, mut req: protos::StartLightningPaymentRequest)
+			-> Result<protos::StartLightningPaymentResponse, tonic::Status>
 		{
 			req.input_vtxo_ids = vec![self.1.to_bytes().to_vec()];
 			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())

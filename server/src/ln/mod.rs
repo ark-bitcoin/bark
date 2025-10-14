@@ -10,7 +10,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use log::{info, trace, error};
 
-use ark::{musig, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, Preimage};
 use server_rpc::protos;
@@ -32,7 +32,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		inputs: Vec<Vtxo>,
 		user_nonces: Vec<musig::PublicNonce>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+	) -> anyhow::Result<protos::StartLightningPaymentResponse> {
 		let invoice_payment_hash = invoice.payment_hash();
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
@@ -45,21 +45,22 @@ impl Server {
 		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {
-			//TODO(stevenroose) this is kinda fragile when a block happens after
-			// the user did the same calculation
 			let tip = self.bitcoind.get_block_count()? as BlockHeight;
 			tip + self.config.htlc_expiry_delta as BlockHeight
 		};
 
-		let pay_req = VtxoRequest {
-			amount: amount,
-			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry),
-		};
+		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
+		let pay_req = VtxoRequest { amount, policy: policy.clone() };
 
 		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
 			.badarg("error creating arkoor package")?;
 
-		self.cosign_oor_package_with_builder(&package).await
+		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
+
+		Ok(protos::StartLightningPaymentResponse {
+			sigs: cosign_resp.into_iter().map(|i| i.into()).collect(),
+			policy: policy.serialize().to_vec(),
+		})
 	}
 
 	/// Try to finish the lightning payment that was previously started.
