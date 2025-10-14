@@ -1400,7 +1400,7 @@ impl PendingConfirmationState {
 			AttemptError::StreamError(e)
 		})?;
 
-		let confirmed_in = wallet.chain.tx_confirmed(&round_tx.compute_txid()).await;
+		let confirmed_in = wallet.chain.tx_confirmed(round_tx.compute_txid()).await;
 		if let Ok(Some(confirmed_in)) = confirmed_in {
 			let confs = tip - (confirmed_in - 1);
 			if confs >= ROUND_DEEPLY_CONFIRMED {
@@ -1767,7 +1767,8 @@ impl Wallet {
 		}
 	}
 
-	pub(crate) async fn sync_pending_rounds(&self, tip: u32) -> anyhow::Result<()> {
+	pub(crate) async fn sync_pending_rounds(&self) -> anyhow::Result<()> {
+		let tip = self.chain.tip().await?;
 		info!("Syncing pending rounds at tip: {}", tip);
 		let rounds = self.db.list_pending_rounds()?;
 

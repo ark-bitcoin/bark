@@ -32,6 +32,7 @@ use crate::persist::models::StoredExit;
 ///
 /// Use [ExitVtxo::progress] to drive the state machine forward. The method is idempotent and will
 /// only persist when a logical state transition occurs.
+#[derive(Debug, Clone)]
 pub struct ExitVtxo {
 	vtxo: Vtxo,
 	txids: Vec<Txid>,

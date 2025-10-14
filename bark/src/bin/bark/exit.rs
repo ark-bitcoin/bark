@@ -121,9 +121,9 @@ pub async fn execute_exit_command(
 
 pub async fn get_exit_status(
 	args: StatusExitOpts,
-	wallet: &Wallet,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
-	match wallet.exit.get_exit_status(args.vtxo, args.history, args.transactions).await? {
+	match wallet.exit.get_mut().get_exit_status(args.vtxo, args.history, args.transactions).await? {
 		None => bail!("VTXO not found: {}", args.vtxo),
 		Some(status) => output_json(&status),
 	}
@@ -132,15 +132,12 @@ pub async fn get_exit_status(
 
 pub async fn list_exits(
 	args: ListExitsOpts,
-	wallet: &Wallet,
+	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
-	let mut statuses = Vec::with_capacity(wallet.exit.get_exit_vtxos().len());
-	for exit in wallet.exit.get_exit_vtxos() {
-		statuses.push(wallet.exit.get_exit_status(
-			exit.id(),
-			args.history,
-			args.transactions,
-		).await?.unwrap());
+	let exit = wallet.exit.get_mut();
+	let mut statuses = Vec::with_capacity(exit.get_exit_vtxos().len());
+	for e in exit.get_exit_vtxos() {
+		statuses.push(exit.get_exit_status(e.id(), args.history, args.transactions).await?.unwrap());
 	}
 	output_json(&statuses);
 	Ok(())
@@ -159,13 +156,11 @@ pub async fn start_exit(
 		warn!("Failed to perform onchain sync: {}", err.to_string());
 	}
 	info!("Starting offchain sync");
-	if let Err(err) = wallet.sync().await {
-		warn!("Failed to perform ark sync: {}", err.to_string());
-	}
+	wallet.sync().await;
 	info!("Starting exit");
 
 	if args.all {
-		wallet.exit.start_exit_for_entire_wallet(onchain).await
+		wallet.exit.get_mut().start_exit_for_entire_wallet(onchain).await
 	} else {
 		let filter = VtxoFilter::new(wallet).include_many(args.vtxos);
 
@@ -177,7 +172,7 @@ pub async fn start_exit(
 		let vtxos = spendable.into_iter().chain(inround)
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
-		wallet.exit.start_exit_for_vtxos(&vtxos, onchain).await
+		wallet.exit.get_mut().start_exit_for_vtxos(&vtxos, onchain).await
 	}
 }
 
@@ -216,11 +211,12 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	let result = wallet.exit.progress_exits(onchain, fee_rate).await
+	let exit = wallet.exit.get_mut();
+	let result = exit.progress_exits(onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
-	let done = !wallet.exit.has_pending_exits();
-	let claimable_height = wallet.exit.all_claimable_at_height().await;
+	let done = !exit.has_pending_exits();
+	let claimable_height = exit.all_claimable_at_height().await;
 	let exits = result.unwrap_or_default();
 	Ok(bark_json::cli::ExitProgressResponse { done, claimable_height, exits, })
 }
@@ -235,9 +231,7 @@ pub async fn claim_exits(
 ) -> anyhow::Result<()> {
 	if !no_sync {
 		info!("Syncing wallet...");
-		if let Err(e) = wallet.sync().await {
-			warn!("Sync error: {}", e)
-		}
+		wallet.sync().await;
 		if let Err(e) = onchain.sync(&wallet.chain).await {
 			warn!("Sync error: {}", e)
 		}
@@ -248,12 +242,13 @@ pub async fn claim_exits(
 		format!("address is not valid for configured network {}", network)
 	})?;
 
+	let exit = wallet.exit.read().await;
 	let vtxos = match (vtxos, all) {
 		(Some(vtxo_ids), false) => {
 			let mut vtxo_ids = vtxo_ids.iter().map(|s| {
 				VtxoId::from_str(s).with_context(|| format!("invalid vtxo id: {}", s))
 			}).collect::<anyhow::Result<HashSet<_>>>()?;
-			let vtxos = wallet.exit.list_claimable().into_iter()
+			let vtxos = exit.list_claimable().into_iter()
 				.filter(|v| vtxo_ids.remove(&v.id()))
 				.collect::<Vec<_>>();
 			for id in vtxo_ids {
@@ -261,12 +256,12 @@ pub async fn claim_exits(
 			}
 			vtxos
 		},
-		(None, true) => wallet.exit.list_claimable(),
+		(None, true) => exit.list_claimable(),
 		(None, false) => bail!("Either --vtxo or --all must be specified"),
 		(Some(_), true) => bail!("Cannot specify both --vtxo and --all"),
 	};
 
-	let psbt = wallet.exit.drain_exits(&vtxos, &wallet, address, None).await?;
+	let psbt = exit.drain_exits(&vtxos, &wallet, address, None).await?;
 	let tx = psbt.extract_tx()?;
 	wallet.chain.broadcast_tx(&tx).await?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());

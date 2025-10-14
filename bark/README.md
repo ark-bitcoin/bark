@@ -212,7 +212,7 @@ async fn main() -> anyhow::Result<()> {
 
   // The vtxo's command doesn't sync your wallet
   // Make sure your app is synced before inspecting the wallet
-  wallet.sync().await.unwrap();
+  wallet.sync().await;
 
   let vtxos: Vec<bark::WalletVtxo> = wallet.vtxos().unwrap();
   Ok(())

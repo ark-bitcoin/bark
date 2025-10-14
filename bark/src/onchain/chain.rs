@@ -258,17 +258,17 @@ impl ChainSource {
 		}
 	}
 
-	pub async fn block(&self, hash: &BlockHash) -> anyhow::Result<Option<Block>> {
+	pub async fn block(&self, hash: BlockHash) -> anyhow::Result<Option<Block>> {
 		match self.inner() {
 			ChainSourceClient::Bitcoind(bitcoind) => {
-				match bitcoind.get_block(hash) {
+				match bitcoind.get_block(&hash) {
 					Ok(b) => Ok(Some(b)),
 					Err(e) if e.is_not_found() => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},
 			ChainSourceClient::Esplora(client) => {
-				Ok(client.get_block_by_hash(hash).await?)
+				Ok(client.get_block_by_hash(&hash).await?)
 			},
 		}
 	}
@@ -292,7 +292,7 @@ impl ChainSource {
 			ChainSourceClient::Esplora(client) => {
 				// We should first verify the transaction is in the mempool to maintain the same
 				// behavior as Bitcoin Core
-				let status = self.tx_status(&txid).await?;
+				let status = self.tx_status(txid).await?;
 				if !matches!(status, TxStatus::Mempool) {
 					return Err(anyhow!("{} is not in the mempool, status is {:?}", txid, status));
 				}
@@ -510,12 +510,12 @@ impl ChainSource {
 	}
 
 	/// Returns the block height the tx is confirmed in, if any.
-	pub async fn tx_confirmed(&self, txid: &Txid) -> anyhow::Result<Option<BlockHeight>> {
+	pub async fn tx_confirmed(&self, txid: Txid) -> anyhow::Result<Option<BlockHeight>> {
 		Ok(self.tx_status(txid).await?.confirmed_height())
 	}
 
 	/// Returns the status of the given transaction, including the block height if it is confirmed
-	pub async fn tx_status(&self, txid: &Txid) -> anyhow::Result<TxStatus> {
+	pub async fn tx_status(&self, txid: Txid) -> anyhow::Result<TxStatus> {
 		match self.inner() {
 			ChainSourceClient::Bitcoind(bitcoind) => Ok(bitcoind.tx_status(&txid)?),
 			ChainSourceClient::Esplora(esplora) => {

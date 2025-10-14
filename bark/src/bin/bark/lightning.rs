@@ -7,7 +7,7 @@ use clap;
 use lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
-use log::{info, warn};
+use log::info;
 
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bark::Wallet;
@@ -50,6 +50,9 @@ pub enum LightningCommand {
 		/// filter by preimage
 		#[arg(long)]
 		preimage: Option<Preimage>,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 	/// list all generated invoices
 	#[command()]
@@ -62,6 +65,9 @@ pub enum LightningCommand {
 		/// Wait for the incoming payment to settle
 		#[arg(long)]
 		wait: bool,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
 	},
 }
 
@@ -98,7 +104,12 @@ pub async fn execute_lightning_command(
 				wallet.check_and_claim_ln_receive(invoice.into(), true).await?;
 			}
 		},
-		LightningCommand::Status { filter, preimage } => {
+		LightningCommand::Status { filter, preimage, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				wallet.sync().await;
+			}
+
 			let payment_hash = match (filter, preimage) {
 				(Some(filter), None) => payment_hash_from_filter(&filter)?,
 				(None, Some(p)) => p.into(),
@@ -117,7 +128,12 @@ pub async fn execute_lightning_command(
 			receives.reverse();
 			output_json(&receives);
 		},
-		LightningCommand::Claim { payment, wait } => {
+		LightningCommand::Claim { payment, wait, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				wallet.sync().await;
+			}
+
 			if let Some(payment) = payment {
 				let payment_hash = match PaymentHash::from_str(&payment) {
 					Ok(h) => h,
@@ -158,9 +174,7 @@ pub async fn pay_invoice(
 
 	if !no_sync {
 		info!("Syncing wallet...");
-		if let Err(e) = wallet.sync().await {
-			warn!("Sync error: {}", e)
-		}
+		wallet.sync().await;
 	}
 	info!("Sending bolt11 payment of {} to invoice {}", final_amount, invoice);
 	let preimage = wallet.send_lightning_payment(Invoice::Bolt11(invoice), amount).await?;
@@ -182,9 +196,7 @@ pub async fn pay_offer(
 
 	if !no_sync {
 		info!("Syncing wallet...");
-		if let Err(e) = wallet.sync().await {
-			warn!("Sync error: {}", e)
-		}
+		wallet.sync().await;
 	}
 
 	info!("Sending bolt12 payment of {:?} to offer {}", amount, offer);
@@ -206,9 +218,7 @@ pub async fn pay_lnaddr(
 
 	if !no_sync {
 		info!("Syncing wallet...");
-		if let Err(e) = wallet.sync().await {
-			warn!("Sync error: {}", e)
-		}
+		wallet.sync().await;
 	}
 	info!("Sending {} to lightning address {}", amount, lnaddr);
 	let comment = comment.as_ref().map(|c| c.as_str());
