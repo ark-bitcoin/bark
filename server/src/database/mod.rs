@@ -31,7 +31,7 @@ use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
 use futures::{Stream, TryStreamExt};
-use tokio_postgres::{Client, GenericClient, NoTls, RowStream};
+use tokio_postgres::{Client, NoTls, RowStream};
 use tokio_postgres::types::Type;
 use log::{info, warn};
 
@@ -210,46 +210,9 @@ impl Db {
 		Ok(())
 	}
 
-	/// Get vtxos by id and ensure the order of the returned vtxos matches
-	/// the order of the provided ids
-	async fn get_vtxos_by_id_with_client<T>(
-		client: &T,
-		ids: &[VtxoId],
-	) -> anyhow::Result<Vec<VtxoState>>
-		where T : GenericClient + Sized
-	{
-		let statement = client.prepare_typed("
-			SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
-				board_swept_at, created_at, updated_at
-			FROM vtxo
-			WHERE vtxo_id = ANY($1);
-		", &[Type::TEXT_ARRAY]).await?;
-
-		let id_str = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
-		let rows = client.query(&statement, &[&id_str]).await
-			.context("Query get_vtxos_by_id failed")?;
-
-		// Parse all rows
-		let mut vtxos = rows.into_iter()
-			.map(|row| {
-				let vtxo = VtxoState::try_from(row)?;
-				Ok((vtxo.vtxo.id(), vtxo))
-			})
-			.collect::<anyhow::Result<HashMap<_, _>>>()
-			.context("Failed to parse VtxoState from database")?;
-
-		// Bail if one of the id's could not be found
-		if vtxos.len() != ids.len() {
-			let missing = ids.into_iter().filter(|id| !vtxos.contains_key(id));
-			return not_found!(missing, "vtxo does not exist");
-		}
-
-		Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
-	}
-
 	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
 		let conn = self.pool.get().await?;
-		Self::get_vtxos_by_id_with_client(&*conn, ids).await
+		query::get_vtxos_by_id(&*conn, ids).await
 	}
 
 	/// Fetch all vtxos that have been forfeited.
@@ -311,7 +274,7 @@ impl Db {
 				UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW() WHERE vtxo_id = $1;
 			", &[Type::TEXT, Type::TEXT]).await?;
 
-			let vtxos = Self::get_vtxos_by_id_with_client(&tx, &[input.id()]).await?;
+			let vtxos = query::get_vtxos_by_id(&tx, &[input.id()]).await?;
 			for vtxo in vtxos {
 				if !vtxo.is_spendable() {
 					return Ok(Some(vtxo.vtxo_id));
