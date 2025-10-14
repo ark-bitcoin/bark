@@ -85,7 +85,7 @@ impl<T: serde::Serialize> serde::Serialize for OptionalService<T> {
 	}
 }
 
-impl<'de, T: Default + serde::Deserialize<'de>> serde::Deserialize<'de> for OptionalService<T> {
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for OptionalService<T> {
 	fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
 		#[derive(Deserialize)]
 	    struct C<T> {
@@ -96,7 +96,7 @@ impl<'de, T: Default + serde::Deserialize<'de>> serde::Deserialize<'de> for Opti
 
 		let c = C::<T>::deserialize(d)?;
 		if c.enabled {
-			Ok(Self::Enabled(c.config.unwrap_or_default()))
+			Ok(Self::Enabled(c.config.ok_or_else(|| serde::de::Error::custom("missing config"))?))
 		} else {
 			Ok(Self::Disabled)
 		}
@@ -292,7 +292,7 @@ pub struct Config {
 	pub htlc_expiry_delta: u16,
 
 	/// Maximum value any vtxo can have.
-	#[serde(with = "crate::serde_util::string::opt")]
+	#[serde(default, with = "crate::serde_util::string::opt")]
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
@@ -426,23 +426,16 @@ impl Default for Config {
 
 impl Config {
 	fn load_with_custom_env(
-		config_file: Option<&Path>,
+		config_file: impl AsRef<Path>,
 		#[cfg(test)]
 		custom_env: Option<std::collections::HashMap<String, String>>,
 	) -> anyhow::Result<Self> {
-		let default = config::Config::try_from(&Self::default())
-			.expect("default config failed to deconstruct");
-
-		// We'll add three layers of config:
-		// - the defaults defined in Config's Default impl
+		// We'll add two layers of config:
 		// - the config file passed in this function, if any
 		// - environment variables (prefixed with `BARK_SERVER_`)
 
 		let mut builder = config::Config::builder()
-			.add_source(default);
-		if let Some(file) = config_file {
-			builder = builder.add_source(File::from(file));
-		}
+			.add_source(File::from(config_file.as_ref()));
 
 		let env = Environment::with_prefix("BARK_SERVER")
 			.separator("__");
@@ -475,7 +468,7 @@ impl Config {
 		Ok(cfg)
 	}
 
-	pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
+	pub fn load(config_file: impl AsRef<Path>) -> anyhow::Result<Self> {
 		Self::load_with_custom_env(config_file, #[cfg(test)] None)
 	}
 
@@ -556,23 +549,16 @@ pub mod watchman {
 
 	impl Config {
 		fn load_with_custom_env(
-			config_file: Option<&Path>,
+			config_file: impl AsRef<Path>,
 			#[cfg(test)]
 			custom_env: Option<std::collections::HashMap<String, String>>,
 		) -> anyhow::Result<Self> {
-			let default = config::Config::try_from(&Self::default())
-				.expect("default config failed to deconstruct");
-
-			// We'll add three layers of config:
-			// - the defaults defined in Config's Default impl
+			// We'll add two layers of config:
 			// - the config file passed in this function, if any
 			// - environment variables (prefixed with `WATCHMAND__`)
 
 			let mut builder = config::Config::builder()
-				.add_source(default);
-			if let Some(file) = config_file {
-				builder = builder.add_source(File::from(file));
-			}
+				.add_source(File::from(config_file.as_ref()));
 
 			let env = Environment::with_prefix("WATCHMAND")
 				.separator("__");
@@ -586,7 +572,7 @@ pub mod watchman {
 			Ok(cfg)
 		}
 
-		pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
+		pub fn load(config_file: impl AsRef<Path>) -> anyhow::Result<Self> {
 			Self::load_with_custom_env(config_file, #[cfg(test)] None)
 		}
 
@@ -614,10 +600,15 @@ mod test {
 	use tonic::transport::Uri;
 	use super::*;
 
+	const DEFAULT_CAPTAIND_CONFIG_PATH: &str =
+		concat!(env!("CARGO_MANIFEST_DIR"), "/captaind.default.toml");
+	const DEFAULT_WATCHMAND_CONFIG_PATH: &str =
+		concat!(env!("CARGO_MANIFEST_DIR"), "/watchmand.default.toml");
+
 	#[test]
 	fn parse_validate_default_captaind_config_file() {
-		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/captaind.default.toml"));
-		let mut cfg = Config::load(Some(&path)).expect("error loading config");
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH)
+			.expect("error loading config");
 
 		// some configs are mandatory but can't be set in defaults
 		cfg.bitcoind.cookie = Some(".cookie".into());
@@ -627,8 +618,8 @@ mod test {
 
 	#[test]
 	fn parse_validate_default_watchmand_config_file() {
-		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/watchmand.default.toml"));
-		let mut cfg = watchman::Config::load(Some(&path)).expect("error loading config");
+		let mut cfg = watchman::Config::load(DEFAULT_WATCHMAND_CONFIG_PATH)
+			.expect("error loading config");
 
 		// some configs are mandatory but can't be set in defaults
 		cfg.bitcoind.cookie = Some(".cookie".into());
@@ -638,32 +629,33 @@ mod test {
 
 	#[test]
 	fn validate_bitcoind_config() {
+		let default = DEFAULT_CAPTAIND_CONFIG_PATH;
 		let bitcoind_url = String::from("http://belson.labs:13444");
 		let bitcoind_cookie = Some(PathBuf::from("/not/hot/dog/but/cookie"));
 		let bitcoind_rpc_user = Some(String::from("erlich"));
 		let bitcoind_rpc_pass = Some(Secret::new(String::from("belson")));
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.cookie = bitcoind_cookie.clone();
 		cfg.validate().expect("This config should be valid");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
 		cfg.bitcoind.rpc_pass = bitcoind_rpc_pass.clone();
 		cfg.validate().expect("This config should be valid");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.validate().expect_err("Invalid because auth info is missing");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
 		cfg.validate().expect_err("Invalid because pass is missing");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.cookie = bitcoind_cookie.clone();
 		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
@@ -679,7 +671,7 @@ mod test {
 		let client_cert_path = "/hooli/http_public/certs/client.crt".to_string();
 		let client_key_path = "/hooli/http_public/certs/client.key".to_string();
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
 
 		let cln = Lightningd {
 			uri: Uri::from_str(uri.clone().as_str()).unwrap(),
@@ -724,7 +716,7 @@ mod test {
 			}]"#),
 		].into_iter().map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
 
-		let cfg = Config::load_with_custom_env(None, Some(env)).unwrap();
+		let cfg = Config::load_with_custom_env(DEFAULT_CAPTAIND_CONFIG_PATH, Some(env)).unwrap();
 		cfg.validate().expect("invalid configuration");
 
 		assert_eq!(cfg.vtxo_lifetime, 42);
@@ -734,5 +726,25 @@ mod test {
 		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
 		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
 		assert_eq!(lncfg.client_key_path, PathBuf::from(client_key_path));
+	}
+
+	#[test]
+	fn test_optional_service() {
+		#[derive(Serialize, Deserialize)]
+		struct S {
+			var: usize,
+		}
+		#[derive(Serialize, Deserialize)]
+		struct C {
+			optional: OptionalService<S>,
+		}
+
+		let enabled = "[optional]\nenabled = true\nvar = 5";
+		let enabled = toml::from_str::<C>(enabled).unwrap();
+		assert_eq!(enabled.optional.enabled().unwrap().var, 5);
+
+		let disabled = "[optional]\nenabled = false";
+		let disabled = toml::from_str::<C>(disabled).unwrap();
+		assert!(disabled.optional.enabled().is_none());
 	}
 }

@@ -225,7 +225,8 @@ async fn inner_main() -> anyhow::Result<()> {
 		return run_rpc(&addr, cmd).await;
 	}
 
-	let cfg = Config::load(cli.config.as_ref().map(|p| p.as_path()))?;
+	let cfg = Config::load(cli.config.as_ref().context("no config file path provided")?)
+		.context("error loading config file")?;
 	cfg.validate().expect("invalid configuration");
 
 	common::init_logging();

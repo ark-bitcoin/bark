@@ -5,6 +5,7 @@ mod common;
 use std::path::PathBuf;
 use std::process;
 
+use anyhow::Context;
 use clap::Parser;
 use log::{error, info};
 
@@ -54,7 +55,8 @@ async fn main() {
 async fn inner_main() -> anyhow::Result<()> {
 	let cli = Cli::parse();
 
-	let cfg = Config::load(cli.config.as_ref().map(|p| p.as_path()))?;
+	let cfg = Config::load(cli.config.as_ref().context("no config file path provided")?)
+		.context("error loading config file")?;
 	cfg.validate().expect("invalid configuration");
 
 	common::init_logging();
