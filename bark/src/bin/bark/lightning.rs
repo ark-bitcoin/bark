@@ -45,11 +45,8 @@ pub enum LightningCommand {
 	/// get the status of an invoice
 	#[command()]
 	Status {
-		/// payment hash or invoice string
-		filter: Option<String>,
-		/// filter by preimage
-		#[arg(long)]
-		preimage: Option<Preimage>,
+		#[clap(flatten)]
+		filter_args: LightningStatusFilterGroup,
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
@@ -69,6 +66,16 @@ pub enum LightningCommand {
 		#[arg(long)]
 		no_sync: bool,
 	},
+}
+
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+pub struct LightningStatusFilterGroup {
+	/// payment hash or invoice string
+	filter: Option<String>,
+	/// filter by preimage
+	#[arg(long)]
+	preimage: Option<Preimage>,
 }
 
 fn payment_hash_from_filter(filter: &str) -> anyhow::Result<PaymentHash> {
@@ -104,7 +111,7 @@ pub async fn execute_lightning_command(
 				wallet.check_and_claim_ln_receive(invoice.into(), true).await?;
 			}
 		},
-		LightningCommand::Status { filter, preimage, no_sync } => {
+		LightningCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
