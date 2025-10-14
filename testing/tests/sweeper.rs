@@ -16,7 +16,6 @@ use ark_testing::{TestContext, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::util::{FutureExt, ReceiverExt};
 
-#[ignore]
 #[tokio::test]
 async fn sweep_board_and_oor() {
 	let ctx = TestContext::new("sweeper/sweep_board").await;
