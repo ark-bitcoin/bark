@@ -281,8 +281,9 @@ impl ClnManager {
 	) -> anyhow::Result<anyhow::Result<()>> {
 		let payment_hash = preimage.compute_payment_hash();
 
-		// If an open payment attempt exists for the payment hash, it's a server self-payment
-		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
+		// If an open payment attempt exists for the payment hash, it is an
+		// intra-Ark lightning payment so we can mark it as succeeded with
+		// preimage, then skip hold invoice settlement
 		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
 		if let Some(attempt) = attempt {
 			let status = LightningPaymentStatus::Succeeded;
@@ -716,8 +717,8 @@ impl ClnManagerProcess {
 		};
 		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
 
-		// If there is an existing subscription, it's a server self-payment
-		// so we can directly mark it as accepted, then skip cln payment
+		// If there is an existing subscription, it's an intra-Ark lightning
+		// payment so we can directly mark it as accepted, then skip cln payment
 		let sub = self.db.get_htlc_subscription_by_payment_hash(invoice.payment_hash()).await?;
 		if let Some(sub) = sub {
 			if sub.status == LightningHtlcSubscriptionStatus::Created {
