@@ -46,7 +46,18 @@ impl Server {
 
 		let expiry = {
 			let tip = self.bitcoind.get_block_count()? as BlockHeight;
-			tip + self.config.htlc_send_expiry_delta as BlockHeight
+			let sub = self.db.get_htlc_subscription_by_payment_hash(invoice_payment_hash).await?;
+
+			// If we have a subscription for that invoice, it means user is
+			// performing intra-Ark lightning payment: we will be the single
+			// hop so we can use its min final cltv expiry delta as expiry delta
+			let expiry_delta = if let Some(sub) = sub {
+				sub.invoice.min_final_cltv_expiry_delta()
+			} else {
+				self.config.htlc_send_expiry_delta as u64
+			};
+
+			tip + expiry_delta as BlockHeight
 		};
 
 		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
