@@ -43,12 +43,6 @@ impl<T> From<T> for OptionalService<T> {
 	}
 }
 
-impl<T: Default> Default for OptionalService<T> {
-	fn default() -> Self {
-	    OptionalService::Enabled(Default::default())
-	}
-}
-
 impl<T: Clone> Clone for OptionalService<T> {
 	fn clone(&self) -> Self {
 	    match self {
@@ -121,17 +115,6 @@ pub struct Bitcoind {
 	/// It is mandatory to configure exactly one authentication method
 	/// If a [bitcoind.rpc_user] is provided [bitcoind.rpc_pass] must be provided
 	pub rpc_pass: Option<Secret<String>>,
-}
-
-impl Default for Bitcoind {
-	fn default() -> Self {
-	    Bitcoind {
-			url: "http://127.0.0.1:18443".into(),
-			cookie: None,
-			rpc_user: None,
-			rpc_pass: None,
-		}
-	}
 }
 
 impl Bitcoind {
@@ -267,19 +250,6 @@ pub struct Postgres {
 	pub max_connections: u32,
 }
 
-impl Default for Postgres {
-	fn default() -> Self {
-	    Postgres {
-			host: String::from("localhost"),
-			port: 5432,
-			name: String::from("bark-server-db"),
-			user: None,
-			password: None,
-			max_connections: 10,
-		}
-	}
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -367,61 +337,6 @@ pub struct Config {
 	/// generated invoice will be cancelled if not settled yet.
 	#[serde(with = "serde_util::duration")]
 	pub htlc_subscription_timeout: Duration,
-}
-
-impl Default for Config {
-	fn default() -> Self {
-		Config {
-			data_dir: "./bark-server".into(),
-			network: bitcoin::Network::Regtest,
-			vtxo_lifetime: 6 * 24 * 30,
-			vtxo_exit_delta: 2 * 6,
-			htlc_expiry_delta: 6,
-
-			max_vtxo_amount: None,
-			max_arkoor_depth: 5,
-			required_board_confirmations: 3,
-			round_tx_untrusted_input_confirmations: 2,
-
-			round_interval: Duration::from_secs(10),
-			round_submit_time: Duration::from_millis(2000),
-			round_sign_time: Duration::from_millis(2000),
-			nb_round_nonces: 64,
-			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
-
-			rpc_rich_errors: true,
-
-			handshake_psa: None,
-
-			txindex_check_interval: Duration::from_secs(30),
-
-			otel_collector_endpoint: None,
-			otel_tracing_sampler: None,
-			vtxo_sweeper: Default::default(),
-			forfeit_watcher: Default::default(),
-			forfeit_watcher_min_balance: Amount::from_sat(10_000_000),
-
-			vtxopool: Default::default(),
-
-			transaction_rebroadcast_interval: std::time::Duration::from_secs(60),
-
-			rpc: Rpc {
-				public_address: "127.0.0.1:3535".parse().unwrap(),
-				admin_address: Some("127.0.0.1:3536".parse().unwrap()),
-				integration_address: Some("127.0.0.1:3537".parse().unwrap()),
-			},
-			bitcoind: Bitcoind::default(),
-			postgres: Postgres::default(),
-			cln_array: Vec::new(),
-			cln_reconnect_interval: Duration::from_secs(10),
-			invoice_check_interval: Duration::from_secs(3),
-			invoice_recheck_delay: Duration::from_secs(2),
-			invoice_check_base_delay: Duration::from_secs(10),
-			invoice_check_max_delay: Duration::from_secs(10*60),
-			invoice_poll_interval: Duration::from_secs(30),
-			htlc_subscription_timeout: Duration::from_secs(10*60),
-		}
-	}
 }
 
 impl Config {
@@ -522,29 +437,6 @@ pub mod watchman {
 		pub bitcoind: Bitcoind,
 
 		pub sweep_address: Option<Address<NetworkUnchecked>>, // no default
-	}
-
-	impl Default for Config {
-		fn default() -> Self {
-			Config {
-				data_dir: "./bark-server-watchmand".into(),
-				network: bitcoin::Network::Regtest,
-
-				txindex_check_interval: Duration::from_secs(30),
-
-				otel_collector_endpoint: None,
-				otel_tracing_sampler: None,
-				vtxo_sweeper: Default::default(),
-				forfeit_watcher: Default::default(),
-
-				transaction_rebroadcast_interval: std::time::Duration::from_secs(60),
-
-				bitcoind: Bitcoind::default(),
-				postgres: Postgres::default(),
-
-				sweep_address: None,
-			}
-		}
 	}
 
 	impl Config {
