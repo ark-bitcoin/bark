@@ -1,22 +1,69 @@
+#
+# This is a template config file for watchmand.
+# All required values have a default value provided in this file.
+# All optional values are included here but are commented out.
+#
+
+# The directory all watchmand data is stored
 data_dir = "./bark-server-watchmand"
+
+# The bitcoin network this server runs on
 network = "regtest"
+
+# The interval to update the tx index
 txindex_check_interval = "30s"
+
+# The interval to rebroadcast transactions
 transaction_rebroadcast_interval = "1m"
 
+
+################
+# VTXO SWEEPER #
+################
+
 [vtxo_sweeper]
+# Fallback feerate to use for sweep txs
 sweep_tx_fallback_feerate = "2500sat/kwu"
+# Interval to check if sweeps can be made
 round_sweep_interval = "1h"
+# Minimum total sweep value to merit a sweep tx
 sweep_threshold = 1000000
 
+
+###################
+# FORFEIT WATCHER #
+###################
+
 [forfeit_watcher]
+# Fallback feerate to use for forfeit claims
 claim_fallback_feerate = "6250sat/kwu"
+# Interval to check of forfeited exits have been broadcast
 wake_interval = "1m"
+
+
+#################
+# POSTGRESQL DB #
+#################
 
 [postgres]
 host = "localhost"
+#user = "postgres"
+#password = "super_secure"
 port = 5432
 name = "bark-server-db"
+# Maximum parallel connections to maintain in our connection pool
 max_connections = 10
 
+
+############
+# BITCOIND #
+############
+
 [bitcoind]
+# Bitcoind JSON_RPC API endpoint
 url = "http://127.0.0.1:18443"
+# Path to the cookie file for RPC authentication
+#cookie = "/home/bitcoin/.bitcoin/.cookie"
+#rpc_user = "admin"
+#rpc_pass = "super_secure"
+
