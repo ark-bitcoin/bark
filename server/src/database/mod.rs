@@ -232,7 +232,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 		//TODO(stevenroose) this query is wrong
 		let stmt = conn.prepare("
-			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL AND board_swept_at IS NULL;
+			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL;
 		").await?;
 
 		let raw = conn.query_raw(&stmt, NOARG).await?;
@@ -250,7 +250,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let stmt = conn.prepare_typed("
 			SELECT v.id, v.vtxo_id, v.vtxo, v.expiry, v.oor_spent_txid, v.forfeit_state, v.forfeit_round_id,
-				v.board_swept_at, v.created_at, v.updated_at
+				v.created_at, v.updated_at
 			FROM vtxo AS v
 				JOIN round ON round.id = v.forfeit_round_id
 			WHERE round.funding_txid = ANY($1);

@@ -32,7 +32,6 @@ pub struct VtxoState {
 	/// The round id this vtxo was forfeited in.
 	pub forfeit_round_id: Option<i64>,
 	/// If this is a board vtxo, the time at which it was swept.
-	pub board_swept_at: Option<DateTime<Local>>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 }
@@ -65,7 +64,6 @@ impl TryFrom<Row> for VtxoState {
 				.map(|bytes| rmp_serde::from_slice(bytes))
 				.transpose()?,
 			forfeit_round_id: row.get("forfeit_round_id"),
-			board_swept_at: row.get("board_swept_at"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})

@@ -59,8 +59,7 @@ pub async fn get_vtxos_by_id<T>(
 	where T : GenericClient + Sized
 {
 	let statement = client.prepare_typed("
-		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
-			board_swept_at, created_at, updated_at
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = ANY($1);
 	", &[Type::TEXT_ARRAY]).await?;
