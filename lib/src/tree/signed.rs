@@ -1235,7 +1235,7 @@ mod test {
 
 	use crate::encode;
 	use crate::encode::test::{encoding_roundtrip, json_roundtrip};
-	use crate::vtxo::{Validation, VtxoPolicy};
+	use crate::vtxo::{ValidationResult, VtxoPolicy};
 	use crate::tree::signed::builder::SignedTreeBuilder;
 
 	use super::*;
@@ -1412,12 +1412,7 @@ mod test {
 
 		// check that vtxos are valid
 		for vtxo in tree.all_vtxos() {
-			match vtxo.validate(&funding_tx).unwrap() {
-				Validation::Trusted { cosign_pubkey } => {
-					assert_eq!(cosign_pubkey, user_cosign_pubkey);
-				},
-				Validation::Arkoor => panic!("should be trusted"),
-			}
+			assert_eq!(vtxo.validate(&funding_tx).unwrap(), ValidationResult::Cosigned);
 		}
 	}
 }

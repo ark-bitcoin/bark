@@ -55,8 +55,9 @@
 
 
 mod validation;
-pub use self::validation::{Validation, VtxoValidationError};
+pub use self::validation::{ValidationResult, VtxoValidationError};
 
+use std::collections::HashSet;
 use std::iter::FusedIterator;
 use std::{fmt, io};
 use std::str::FromStr;
@@ -236,7 +237,7 @@ pub fn create_exit_tx(
 
 /// Type enum of [VtxoPolicy].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum VtxoPolicyType {
+pub enum VtxoPolicyKind {
 	/// Standard VTXO output protected with a public key.
 	Pubkey,
 	/// A VTXO that represents an HTLC with the Ark server to send money.
@@ -245,7 +246,7 @@ pub enum VtxoPolicyType {
 	ServerHtlcRecv,
 }
 
-impl fmt::Display for VtxoPolicyType {
+impl fmt::Display for VtxoPolicyKind {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 	    match self {
 			Self::Pubkey => f.write_str("pubkey"),
@@ -255,7 +256,7 @@ impl fmt::Display for VtxoPolicyType {
 	}
 }
 
-impl FromStr for VtxoPolicyType {
+impl FromStr for VtxoPolicyKind {
 	type Err = String;
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		Ok(match s {
@@ -267,22 +268,22 @@ impl FromStr for VtxoPolicyType {
 	}
 }
 
-impl serde::Serialize for VtxoPolicyType {
+impl serde::Serialize for VtxoPolicyKind {
 	fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
 		s.collect_str(self)
 	}
 }
 
-impl<'de> serde::Deserialize<'de> for VtxoPolicyType {
+impl<'de> serde::Deserialize<'de> for VtxoPolicyKind {
 	fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
 		struct Visitor;
 		impl<'de> serde::de::Visitor<'de> for Visitor {
-			type Value = VtxoPolicyType;
+			type Value = VtxoPolicyKind;
 			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 				write!(f, "a VtxoPolicyType")
 			}
 			fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-				VtxoPolicyType::from_str(v).map_err(serde::de::Error::custom)
+				VtxoPolicyKind::from_str(v).map_err(serde::de::Error::custom)
 			}
 		}
 		d.deserialize_str(Visitor)
@@ -378,11 +379,11 @@ impl VtxoPolicy {
 	}
 
 	/// The policy type id.
-	pub fn policy_type(&self) -> VtxoPolicyType {
+	pub fn policy_type(&self) -> VtxoPolicyKind {
 		match self {
-			Self::Pubkey { .. } => VtxoPolicyType::Pubkey,
-			Self::ServerHtlcSend { .. } => VtxoPolicyType::ServerHtlcSend,
-			Self::ServerHtlcRecv { .. } => VtxoPolicyType::ServerHtlcRecv,
+			Self::Pubkey { .. } => VtxoPolicyKind::Pubkey,
+			Self::ServerHtlcSend { .. } => VtxoPolicyKind::ServerHtlcSend,
+			Self::ServerHtlcRecv { .. } => VtxoPolicyKind::ServerHtlcRecv,
 		}
 	}
 
@@ -453,7 +454,6 @@ impl VtxoPolicy {
 				)
 			},
 		}
-
 	}
 
 	pub(crate) fn script_pubkey(&self, server_pubkey: PublicKey, exit_delta: u16) -> ScriptBuf {
@@ -795,7 +795,7 @@ impl Vtxo {
 	}
 
 	/// The output policy type of this VTXO.
-	pub fn policy_type(&self) -> VtxoPolicyType {
+	pub fn policy_type(&self) -> VtxoPolicyKind {
 		self.policy.policy_type()
 	}
 
@@ -908,6 +908,43 @@ impl Vtxo {
 		}
 	}
 
+	/// The set of cosign pubkeys that is present in all of the exit nodes of the
+	/// non-arkoor part of the exit path.
+	pub fn round_cosign_pubkeys(&self) -> Vec<PublicKey> {
+		let mut ret = Option::<Vec<PublicKey>>::None;
+
+		// We want to gather the cosign pubkeys that are present in all cosigned
+		// transitions. We expect the last transition to have the fewest number of
+		// cosign pubkeys so we go backwards.
+		for item in self.genesis.iter().rev() {
+			match &item.transition {
+				GenesisTransition::Cosigned { pubkeys, .. } => {
+					if let Some(ref mut keys) = ret {
+						keys.retain(|p| pubkeys.contains(p));
+						if keys.is_empty() {
+							break;
+						}
+					} else {
+						// first cosigned transition
+						ret = Some(pubkeys.clone());
+					}
+				},
+				GenesisTransition::Arkoor { .. } => {},
+			}
+		}
+
+		ret.unwrap_or_default()
+	}
+
+	/// The set of all arkoor pubkeys present in the arkoor part
+	/// of the VTXO exit path.
+	pub fn arkoor_pubkeys(&self) -> HashSet<PublicKey> {
+		self.genesis.iter().filter_map(|i| match &i.transition {
+			GenesisTransition::Arkoor { policy, .. } => policy.arkoor_pubkey(),
+			GenesisTransition::Cosigned { .. } => None,
+		}).collect()
+	}
+
 	/// Fully validate this VTXO and its entire transaction chain.
 	///
 	/// The `chain_anchor_tx` must be the tx with txid matching
@@ -915,7 +952,7 @@ impl Vtxo {
 	pub fn validate(
 		&self,
 		chain_anchor_tx: &Transaction,
-	) -> Result<Validation, VtxoValidationError> {
+	) -> Result<ValidationResult, VtxoValidationError> {
 		self::validation::validate(&self, chain_anchor_tx)
 	}
 }
