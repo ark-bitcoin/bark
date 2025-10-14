@@ -622,7 +622,8 @@ impl Server {
 		trace!("Board tx {} is sufficiently confirmed, registering board", vtxo.chain_anchor().txid);
 
 		// Accepted, let's register
-		self.db.upsert_vtxos(&[vtxo.clone().into()]).await.context("db error")?;
+		self.db.upsert_board(&vtxo).await.context("db error")
+			.context("Failed to upsert board into database")?;
 
 		slog!(RegisteredBoard, onchain_utxo: vtxo.chain_anchor(), vtxo: vtxo.point(),
 			amount: vtxo.amount(),

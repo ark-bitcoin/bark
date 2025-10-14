@@ -3,8 +3,8 @@
 ///
 /// This module does not create connections or
 /// transactions. It is up to the user of this
-/// module to create and commit transactions if
-/// this is a requirement.
+/// module to create a database connection or
+/// transaction if that is required.
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -13,8 +13,9 @@ use anyhow::Context;
 use tokio_postgres::GenericClient;
 use tokio_postgres::types::Type;
 
+use bitcoin_ext::BlockHeight;
 use ark::{Vtxo, VtxoId, ProtocolEncoding};
-use crate::database::model::VtxoState;
+use crate::database::model::{VtxoState, Board};
 
 pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 	client: &T,
@@ -86,3 +87,46 @@ pub async fn get_vtxos_by_id<T>(
 	Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
 }
 
+/// Upsert a board into the database
+pub async fn upsert_board<T>(
+	client: &T,
+	vtxo_id: VtxoId,
+	expiry_height: BlockHeight,
+) -> anyhow::Result<Board>
+	where T : GenericClient
+{
+	let statement = client.prepare("
+		WITH INSERTED AS (
+			INSERT INTO board (vtxo_id, expiry_height, created_at, updated_at)
+			VALUES ($1, $2, NOW(), NOW())
+			ON CONFLICT DO NOTHING
+			RETURNING *
+		)
+		SELECT * FROM INSERTED
+		UNION ALL
+		SELECT * FROM board where vtxo_id = $1
+		LIMIT 1;
+	").await?;
+
+	let row = client.query_one(&statement, &[&vtxo_id.to_string(), &(expiry_height as i32)]).await
+		.context("Failed to execute query")?;
+
+	Ok(Board::try_from(row)
+		.context("Bad row: not a valid Board")?
+	)
+}
+
+pub async fn get_sweepable_boards<T>(
+	client: &T,
+	height: BlockHeight,
+) -> anyhow::Result<Vec<Board>>
+	where T : GenericClient
+{
+	let statement = client.prepare("
+		SELECT * FROM board WHERE expiry_height <= $1 AND swept_at IS NULL AND EXITED_at IS NULL;
+	").await?;
+
+	let rows = client.query(&statement, &[&height]).await?;
+
+	Ok(rows.into_iter().map(|row| Board::try_from(row)).collect::<anyhow::Result<Vec<_>>>()?)
+}

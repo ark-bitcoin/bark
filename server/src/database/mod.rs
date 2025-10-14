@@ -171,6 +171,16 @@ impl Db {
 		Ok(())
 	}
 
+	/// Upsert a board into the database
+	pub async fn upsert_board(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+		let mut conn = self.pool.get().await?;
+		let tx = conn.transaction().await?;
+		query::upsert_vtxos(&tx, [vtxo]).await?;
+		query::upsert_board(&tx, vtxo.id(), vtxo.expiry_height()).await?;
+		tx.commit().await?;
+		Ok(())
+	}
+
 	/// Get all board vtxos that expired before or on `height`.
 	pub async fn get_expired_boards(
 		&self,
