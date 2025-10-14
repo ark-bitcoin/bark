@@ -176,12 +176,6 @@ message LightningPaymentRequest {
 	bytes user_pubkey = 5;
 }
 
-message LightningPaymentDetails {
-	bytes details = 1;
-	bytes pub_nonce = 2;
-	bytes partial_sig = 3;
-}
-
 message SignedLightningPaymentDetails {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;

@@ -387,16 +387,6 @@ impl TryFrom<protos::ArkoorPackageCosignResponse> for Vec<ArkoorCosignResponse> 
 	}
 }
 
-impl TryFrom<protos::LightningPaymentDetails> for ArkoorCosignResponse {
-	type Error = ConvertError;
-	fn try_from(v: protos::LightningPaymentDetails) -> Result<Self, Self::Error> {
-		Ok(Self {
-			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
-			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
-		})
-	}
-}
-
 impl From<BoardCosignResponse> for protos::BoardCosignResponse {
 	fn from(v: BoardCosignResponse) -> Self {
 		Self {
