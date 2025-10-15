@@ -118,16 +118,19 @@ impl ClnManager {
 			check_max_delay: config.invoice_check_max_delay,
 		};
 		let proc = ClnManagerProcess {
+			db: db.clone(),
 			rtmgr,
+			waker: Arc::new(Notify::new()),
+
 			ctrl_rx,
 			payment_rx,
 			bolt12_rx,
 			node_monitor_config,
 			invoice_gen_rx,
 			invoice_settle_rx,
-			db: db.clone(),
+
 			payment_update_tx: payment_update_tx.clone(),
-			waker: Arc::new(Notify::new()),
+
 			network: config.network,
 			nodes: config.cln_array.iter().map(|conf| (conf.uri.clone(), ClnNodeInfo {
 				uri: conf.uri.clone(),
@@ -135,6 +138,8 @@ impl ClnManager {
 				state: ClnNodeState::Offline,
 			})).collect(),
 			node_by_id: HashMap::with_capacity(config.cln_array.len()),
+
+			htlc_expiry_delta: config.htlc_expiry_delta,
 		};
 		info!("Starting ClnManager thread... nb_nodes={}", proc.nodes.len());
 		tokio::spawn(proc.run(config.cln_reconnect_interval));
@@ -499,18 +504,22 @@ enum Ctrl {
 struct ClnManagerProcess {
 	db: database::Db,
 	rtmgr: RuntimeManager,
+	waker: Arc<Notify>,
+
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
 	payment_rx: mpsc::UnboundedReceiver<(Invoice, Option<Amount>)>,
 	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
 	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
-	payment_update_tx: broadcast::Sender<PaymentHash>,
 	bolt12_rx: mpsc::UnboundedReceiver<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
-	waker: Arc<Notify>,
+
+	payment_update_tx: broadcast::Sender<PaymentHash>,
 
 	network: bitcoin::Network,
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
+
+	htlc_expiry_delta: u16,
 }
 
 impl ClnManagerProcess {
