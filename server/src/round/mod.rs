@@ -31,12 +31,10 @@ use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundInfo, RoundSeq, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT
 };
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
-use ark::vtxo::ServerHtlcRecvVtxoPolicy;
 use server_log::{LogMsg, RoundVtxoCreated};
 use server_rpc::protos;
 
-use crate::{database, telemetry, Server, SECP};
-use crate::database::ln::LightningHtlcSubscriptionStatus;
+use crate::{telemetry, Server, SECP};
 use crate::database::forfeits::ForfeitState;
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
@@ -341,38 +339,6 @@ impl CollectingPayments {
 		Ok(())
 	}
 
-	/// If a [SignedVtxoRequest] requests an [VtxoPolicy::ServerHtlcRecv], we check that
-	/// there is an incoming HTLC with the same payment hash that is accepted and
-	/// not already claimed.
-	///
-	/// Supported protocols:
-	/// - Lightning Network
-	async fn check_vtxo_request_htlcs(
-		&self,
-		db: &database::Db,
-		reqs: &[VtxoParticipant],
-	) -> anyhow::Result<()> {
-		for req in reqs {
-			if let VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) = req.req.vtxo.policy {
-				// TODO: check if a non-expired htlc vtxo with same payment_hash exists and bail if so
-
-				if let Some(sub) = db.get_htlc_subscription_by_payment_hash(payment_hash).await? {
-					if sub.status != LightningHtlcSubscriptionStatus::Accepted {
-						return not_found!([payment_hash],
-							"pending payment for invoicie is in incorrect state: {}", sub.status,
-						);
-					}
-				} else {
-					return not_found!([payment_hash],
-						"Cannot find payment for provided payment hash",
-					);
-				}
-			}
-		}
-
-		Ok(())
-	}
-
 	/// Fetch and check whether the vtxos are owned by user and
 	/// weren't already spent, then return them.
 	///
@@ -436,8 +402,6 @@ impl CollectingPayments {
 				bail!("vtxo {id} already in flux");
 			},
 		};
-
-		self.check_vtxo_request_htlcs(&srv.db, &vtxo_requests).await?;
 
 		// Check if the input vtxos exist and are unspent.
 		let input_vtxos = match self.check_fetch_round_input_vtxos(srv, &inputs).await {
