@@ -1575,6 +1575,9 @@ impl Wallet {
 		invoice: Invoice,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Preimage> {
+		let mut srv = self.require_server()?;
+		let tip = self.chain.tip().await?;
+
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		if invoice.network() != properties.network {
@@ -1586,8 +1589,6 @@ impl Wallet {
 		}
 
 		invoice.check_signature()?;
-
-		let mut srv = self.require_server()?;
 
 		let inv_amount = invoice.amount_milli_satoshis().map(|v| Amount::from_msat_ceil(v));
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
@@ -1602,9 +1603,10 @@ impl Wallet {
 
 		let (change_keypair, _) = self.derive_store_next_keypair()?;
 
+		let expected_expiry = tip + srv.info.htlc_send_expiry_delta as BlockHeight;
 		let inputs = self.select_vtxos_to_cover(
-			amount, Some(srv.info.max_arkoor_depth), None,
-		)?;
+			amount, Some(srv.info.max_arkoor_depth), Some(expected_expiry),
+		).context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
