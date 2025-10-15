@@ -17,7 +17,7 @@ use crate::{serde_utils, WalletVtxoInfo};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkInfo {
-	/// the network the server operates on
+	/// The bitcoin network the server operates on
 	pub network: bitcoin::Network,
 	/// The Ark server pubkey
 	pub server_pubkey: PublicKey,
@@ -36,7 +36,7 @@ pub struct ArkInfo {
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
-	/// number of confirmations required to register a board vtxo
+	/// The number of confirmations required to register a board vtxo
 	pub required_board_confirmations: usize,
 }
 
