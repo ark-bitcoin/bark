@@ -4,8 +4,6 @@ JUSTFILE_DIR := justfile_directory()
 export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
-DEFAULT_CAPTAIND_CONFIG_PATH := "server/captaind.default.toml"
-DEFAULT_WATCHMAND_CONFIG_PATH := "server/watchmand.default.toml"
 SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 
@@ -144,12 +142,6 @@ clippy LINT:
 	cargo clippy -- -A clippy::all -W clippy::{{LINT}}
 
 
-default-server-config:
-	cargo run --example dump-default-captaind-config > {{DEFAULT_CAPTAIND_CONFIG_PATH}}
-	echo "Default captaind config file written to {{DEFAULT_CAPTAIND_CONFIG_PATH}}"
-	cargo run --example dump-default-watchmand-config > {{DEFAULT_WATCHMAND_CONFIG_PATH}}
-	echo "Default captaind config file written to {{DEFAULT_WATCHMAND_CONFIG_PATH}}"
-
 dump-server-sql-schema:
 	cargo run --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
 	# Use sed to remove lines that are hard to reproduce across different systems
@@ -163,6 +155,6 @@ dump-bark-sql-schema:
 	cargo run --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
 	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
 
-generate-static-files: default-server-config dump-server-sql-schema dump-bark-sql-schema
+generate-static-files: dump-server-sql-schema dump-bark-sql-schema
 
 

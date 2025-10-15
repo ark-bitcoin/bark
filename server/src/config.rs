@@ -43,12 +43,6 @@ impl<T> From<T> for OptionalService<T> {
 	}
 }
 
-impl<T: Default> Default for OptionalService<T> {
-	fn default() -> Self {
-	    OptionalService::Enabled(Default::default())
-	}
-}
-
 impl<T: Clone> Clone for OptionalService<T> {
 	fn clone(&self) -> Self {
 	    match self {
@@ -85,7 +79,7 @@ impl<T: serde::Serialize> serde::Serialize for OptionalService<T> {
 	}
 }
 
-impl<'de, T: Default + serde::Deserialize<'de>> serde::Deserialize<'de> for OptionalService<T> {
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for OptionalService<T> {
 	fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
 		#[derive(Deserialize)]
 	    struct C<T> {
@@ -96,7 +90,7 @@ impl<'de, T: Default + serde::Deserialize<'de>> serde::Deserialize<'de> for Opti
 
 		let c = C::<T>::deserialize(d)?;
 		if c.enabled {
-			Ok(Self::Enabled(c.config.unwrap_or_default()))
+			Ok(Self::Enabled(c.config.ok_or_else(|| serde::de::Error::custom("missing config"))?))
 		} else {
 			Ok(Self::Disabled)
 		}
@@ -121,17 +115,6 @@ pub struct Bitcoind {
 	/// It is mandatory to configure exactly one authentication method
 	/// If a [bitcoind.rpc_user] is provided [bitcoind.rpc_pass] must be provided
 	pub rpc_pass: Option<Secret<String>>,
-}
-
-impl Default for Bitcoind {
-	fn default() -> Self {
-	    Bitcoind {
-			url: "http://127.0.0.1:18443".into(),
-			cookie: None,
-			rpc_user: None,
-			rpc_pass: None,
-		}
-	}
 }
 
 impl Bitcoind {
@@ -267,19 +250,6 @@ pub struct Postgres {
 	pub max_connections: u32,
 }
 
-impl Default for Postgres {
-	fn default() -> Self {
-	    Postgres {
-			host: String::from("localhost"),
-			port: 5432,
-			name: String::from("bark-server-db"),
-			user: None,
-			password: None,
-			max_connections: 10,
-		}
-	}
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -292,7 +262,7 @@ pub struct Config {
 	pub htlc_expiry_delta: u16,
 
 	/// Maximum value any vtxo can have.
-	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
+	#[serde(default, with = "crate::serde_util::string::opt")]
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
@@ -333,7 +303,7 @@ pub struct Config {
 
 	/// Config for the ForfeitWatcher process.
 	pub forfeit_watcher: OptionalService<forfeits::Config>,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(with = "crate::serde_util::string")]
 	pub forfeit_watcher_min_balance: Amount,
 
 	/// Config for the VtxoPool process
@@ -369,80 +339,18 @@ pub struct Config {
 	pub htlc_subscription_timeout: Duration,
 }
 
-impl Default for Config {
-	fn default() -> Self {
-		Config {
-			data_dir: "./bark-server".into(),
-			network: bitcoin::Network::Regtest,
-			vtxo_lifetime: 6 * 24 * 30,
-			vtxo_exit_delta: 2 * 6,
-			htlc_expiry_delta: 6,
-
-			max_vtxo_amount: None,
-			max_arkoor_depth: 5,
-			required_board_confirmations: 3,
-			round_tx_untrusted_input_confirmations: 2,
-
-			round_interval: Duration::from_secs(10),
-			round_submit_time: Duration::from_millis(2000),
-			round_sign_time: Duration::from_millis(2000),
-			nb_round_nonces: 64,
-			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
-
-			rpc_rich_errors: true,
-
-			handshake_psa: None,
-
-			txindex_check_interval: Duration::from_secs(30),
-
-			otel_collector_endpoint: None,
-			otel_tracing_sampler: None,
-			vtxo_sweeper: Default::default(),
-			forfeit_watcher: Default::default(),
-			forfeit_watcher_min_balance: Amount::from_sat(10_000_000),
-
-			vtxopool: Default::default(),
-
-			transaction_rebroadcast_interval: std::time::Duration::from_secs(60),
-
-			rpc: Rpc {
-				public_address: "127.0.0.1:3535".parse().unwrap(),
-				admin_address: Some("127.0.0.1:3536".parse().unwrap()),
-				integration_address: Some("127.0.0.1:3537".parse().unwrap()),
-			},
-			bitcoind: Bitcoind::default(),
-			postgres: Postgres::default(),
-			cln_array: Vec::new(),
-			cln_reconnect_interval: Duration::from_secs(10),
-			invoice_check_interval: Duration::from_secs(3),
-			invoice_recheck_delay: Duration::from_secs(2),
-			invoice_check_base_delay: Duration::from_secs(10),
-			invoice_check_max_delay: Duration::from_secs(10*60),
-			invoice_poll_interval: Duration::from_secs(30),
-			htlc_subscription_timeout: Duration::from_secs(10*60),
-		}
-	}
-}
-
 impl Config {
 	fn load_with_custom_env(
-		config_file: Option<&Path>,
+		config_file: impl AsRef<Path>,
 		#[cfg(test)]
 		custom_env: Option<std::collections::HashMap<String, String>>,
 	) -> anyhow::Result<Self> {
-		let default = config::Config::try_from(&Self::default())
-			.expect("default config failed to deconstruct");
-
-		// We'll add three layers of config:
-		// - the defaults defined in Config's Default impl
+		// We'll add two layers of config:
 		// - the config file passed in this function, if any
 		// - environment variables (prefixed with `BARK_SERVER_`)
 
 		let mut builder = config::Config::builder()
-			.add_source(default);
-		if let Some(file) = config_file {
-			builder = builder.add_source(File::from(file));
-		}
+			.add_source(File::from(config_file.as_ref()));
 
 		let env = Environment::with_prefix("BARK_SERVER")
 			.separator("__");
@@ -475,7 +383,7 @@ impl Config {
 		Ok(cfg)
 	}
 
-	pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
+	pub fn load(config_file: impl AsRef<Path>) -> anyhow::Result<Self> {
 		Self::load_with_custom_env(config_file, #[cfg(test)] None)
 	}
 
@@ -531,48 +439,18 @@ pub mod watchman {
 		pub sweep_address: Option<Address<NetworkUnchecked>>, // no default
 	}
 
-	impl Default for Config {
-		fn default() -> Self {
-			Config {
-				data_dir: "./bark-server-watchmand".into(),
-				network: bitcoin::Network::Regtest,
-
-				txindex_check_interval: Duration::from_secs(30),
-
-				otel_collector_endpoint: None,
-				otel_tracing_sampler: None,
-				vtxo_sweeper: Default::default(),
-				forfeit_watcher: Default::default(),
-
-				transaction_rebroadcast_interval: std::time::Duration::from_secs(60),
-
-				bitcoind: Bitcoind::default(),
-				postgres: Postgres::default(),
-
-				sweep_address: None,
-			}
-		}
-	}
-
 	impl Config {
 		fn load_with_custom_env(
-			config_file: Option<&Path>,
+			config_file: impl AsRef<Path>,
 			#[cfg(test)]
 			custom_env: Option<std::collections::HashMap<String, String>>,
 		) -> anyhow::Result<Self> {
-			let default = config::Config::try_from(&Self::default())
-				.expect("default config failed to deconstruct");
-
-			// We'll add three layers of config:
-			// - the defaults defined in Config's Default impl
+			// We'll add two layers of config:
 			// - the config file passed in this function, if any
 			// - environment variables (prefixed with `WATCHMAND__`)
 
 			let mut builder = config::Config::builder()
-				.add_source(default);
-			if let Some(file) = config_file {
-				builder = builder.add_source(File::from(file));
-			}
+				.add_source(File::from(config_file.as_ref()));
 
 			let env = Environment::with_prefix("WATCHMAND")
 				.separator("__");
@@ -586,7 +464,7 @@ pub mod watchman {
 			Ok(cfg)
 		}
 
-		pub fn load(config_file: Option<&Path>) -> anyhow::Result<Self> {
+		pub fn load(config_file: impl AsRef<Path>) -> anyhow::Result<Self> {
 			Self::load_with_custom_env(config_file, #[cfg(test)] None)
 		}
 
@@ -614,10 +492,15 @@ mod test {
 	use tonic::transport::Uri;
 	use super::*;
 
+	const DEFAULT_CAPTAIND_CONFIG_PATH: &str =
+		concat!(env!("CARGO_MANIFEST_DIR"), "/captaind.default.toml");
+	const DEFAULT_WATCHMAND_CONFIG_PATH: &str =
+		concat!(env!("CARGO_MANIFEST_DIR"), "/watchmand.default.toml");
+
 	#[test]
 	fn parse_validate_default_captaind_config_file() {
-		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/captaind.default.toml"));
-		let mut cfg = Config::load(Some(&path)).expect("error loading config");
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH)
+			.expect("error loading config");
 
 		// some configs are mandatory but can't be set in defaults
 		cfg.bitcoind.cookie = Some(".cookie".into());
@@ -627,8 +510,8 @@ mod test {
 
 	#[test]
 	fn parse_validate_default_watchmand_config_file() {
-		let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/watchmand.default.toml"));
-		let mut cfg = watchman::Config::load(Some(&path)).expect("error loading config");
+		let mut cfg = watchman::Config::load(DEFAULT_WATCHMAND_CONFIG_PATH)
+			.expect("error loading config");
 
 		// some configs are mandatory but can't be set in defaults
 		cfg.bitcoind.cookie = Some(".cookie".into());
@@ -638,32 +521,33 @@ mod test {
 
 	#[test]
 	fn validate_bitcoind_config() {
+		let default = DEFAULT_CAPTAIND_CONFIG_PATH;
 		let bitcoind_url = String::from("http://belson.labs:13444");
 		let bitcoind_cookie = Some(PathBuf::from("/not/hot/dog/but/cookie"));
 		let bitcoind_rpc_user = Some(String::from("erlich"));
 		let bitcoind_rpc_pass = Some(Secret::new(String::from("belson")));
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.cookie = bitcoind_cookie.clone();
 		cfg.validate().expect("This config should be valid");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
 		cfg.bitcoind.rpc_pass = bitcoind_rpc_pass.clone();
 		cfg.validate().expect("This config should be valid");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.validate().expect_err("Invalid because auth info is missing");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
 		cfg.validate().expect_err("Invalid because pass is missing");
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(default).unwrap();
 		cfg.bitcoind.url = bitcoind_url.clone();
 		cfg.bitcoind.cookie = bitcoind_cookie.clone();
 		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
@@ -679,7 +563,7 @@ mod test {
 		let client_cert_path = "/hooli/http_public/certs/client.crt".to_string();
 		let client_key_path = "/hooli/http_public/certs/client.key".to_string();
 
-		let mut cfg = Config::load(None).unwrap();
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
 
 		let cln = Lightningd {
 			uri: Uri::from_str(uri.clone().as_str()).unwrap(),
@@ -724,7 +608,7 @@ mod test {
 			}]"#),
 		].into_iter().map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
 
-		let cfg = Config::load_with_custom_env(None, Some(env)).unwrap();
+		let cfg = Config::load_with_custom_env(DEFAULT_CAPTAIND_CONFIG_PATH, Some(env)).unwrap();
 		cfg.validate().expect("invalid configuration");
 
 		assert_eq!(cfg.vtxo_lifetime, 42);
@@ -734,5 +618,25 @@ mod test {
 		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
 		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
 		assert_eq!(lncfg.client_key_path, PathBuf::from(client_key_path));
+	}
+
+	#[test]
+	fn test_optional_service() {
+		#[derive(Serialize, Deserialize)]
+		struct S {
+			var: usize,
+		}
+		#[derive(Serialize, Deserialize)]
+		struct C {
+			optional: OptionalService<S>,
+		}
+
+		let enabled = "[optional]\nenabled = true\nvar = 5";
+		let enabled = toml::from_str::<C>(enabled).unwrap();
+		assert_eq!(enabled.optional.enabled().unwrap().var, 5);
+
+		let disabled = "[optional]\nenabled = false";
+		let disabled = toml::from_str::<C>(disabled).unwrap();
+		assert!(disabled.optional.enabled().is_none());
 	}
 }
