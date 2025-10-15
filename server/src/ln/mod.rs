@@ -46,7 +46,7 @@ impl Server {
 
 		let expiry = {
 			let tip = self.bitcoind.get_block_count()? as BlockHeight;
-			tip + self.config.htlc_expiry_delta as BlockHeight
+			tip + self.config.htlc_send_expiry_delta as BlockHeight
 		};
 
 		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
@@ -343,7 +343,7 @@ impl Server {
 		}
 
 		let vtxos = {
-			let expiry = self.chain_tip().height + self.config.htlc_expiry_delta as BlockHeight;
+			let expiry = self.chain_tip().height + self.config.htlc_send_expiry_delta as BlockHeight;
 			let request = VtxoRequest {
 				amount: sub.amount(),
 				policy: VtxoPolicy::new_server_htlc_recv(user_pubkey, payment_hash, expiry),

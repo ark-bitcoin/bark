@@ -78,9 +78,6 @@ round_tx_feerate = "2500sat/kwu"
 # LIGHTNING #
 #############
 
-# FIXME Expiry delta of HTLCs
-htlc_expiry_delta = 6
-
 # Interval to retry connecting to disconnected CLN nodes
 cln_reconnect_interval = "10s"
 
@@ -98,6 +95,15 @@ invoice_check_max_delay = "10m"
 
 # FIXME
 invoice_poll_interval = "30s"
+
+# The number of blocks to keep between Lightning and Ark HTLCs expiries.
+htlc_expiry_delta = 40
+
+# The number of blocks after which an HTLC-send VTXO expires once granted.
+# When granting an HTLC-send VTXO, the Server doesn't know the lightning
+# route yet, so it needs this config to be sufficiently high to account
+# for the worst routing scenario.
+htlc_send_expiry_delta = 258
 
 # Timeout on the HTLC subscription RPC call
 htlc_subscription_timeout = "10m"

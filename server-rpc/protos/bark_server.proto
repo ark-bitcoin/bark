@@ -74,7 +74,7 @@ message ArkInfo {
 	uint32 nb_round_nonces = 4;
 	uint32 vtxo_exit_delta = 5;
 	uint32 vtxo_expiry_delta = 6;
-	uint32 htlc_expiry_delta = 7;
+	uint32 htlc_send_expiry_delta = 7;
 	optional uint64 max_vtxo_amount = 8;
 	uint32 max_arkoor_depth = 9;
 	uint32 required_board_confirmations = 10;

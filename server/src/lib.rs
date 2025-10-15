@@ -233,7 +233,7 @@ impl Server {
 			nb_round_nonces: self.config.nb_round_nonces,
 			vtxo_exit_delta: self.config.vtxo_exit_delta,
 			vtxo_expiry_delta: self.config.vtxo_lifetime,
-			htlc_expiry_delta: self.config.htlc_expiry_delta,
+			htlc_send_expiry_delta: self.config.htlc_send_expiry_delta,
 			max_vtxo_amount: self.config.max_vtxo_amount,
 			max_arkoor_depth: self.config.max_arkoor_depth,
 			required_board_confirmations: self.config.required_board_confirmations,

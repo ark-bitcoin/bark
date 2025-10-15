@@ -52,7 +52,7 @@ pub struct ArkInfo {
 	pub nb_round_nonces: usize,
 	pub vtxo_exit_delta: u16,
 	pub vtxo_expiry_delta: u16,
-	pub htlc_expiry_delta: u16,
+	pub htlc_send_expiry_delta: u16,
 	pub max_vtxo_amount: Option<Amount>,
 	pub max_arkoor_depth: u16,
 	pub required_board_confirmations: usize,
