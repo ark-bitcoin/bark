@@ -105,6 +105,33 @@ pub mod string {
 		Ok(OwnedWrapper::deserialize(d)?.0)
 	}
 
+	pub mod opt {
+		use super::*;
+
+		pub fn serialize<T, S>(v: &Option<T>, s: S) -> Result<S::Ok, S::Error>
+		where
+			T: fmt::Display,
+			S: Serializer,
+		{
+			match v {
+				Some(v) => s.serialize_some(&RefWrapper(v)),
+				None => s.serialize_none(),
+			}
+		}
+
+		pub fn deserialize<'de, T, D>(d: D) -> Result<Option<T>, D::Error>
+		where
+			D: Deserializer<'de>,
+			T: FromStr,
+			T::Err: fmt::Display,
+		{
+			match Option::<Cow<'de, str>>::deserialize(d)? {
+				Some(s) => Ok(Some(T::from_str(s.as_ref()).map_err(de::Error::custom)?)),
+				None => Ok(None),
+			}
+		}
+	}
+
 	pub mod vec {
 		use std::marker::PhantomData;
 

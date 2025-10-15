@@ -292,7 +292,7 @@ pub struct Config {
 	pub htlc_expiry_delta: u16,
 
 	/// Maximum value any vtxo can have.
-	#[serde(with = "bitcoin::amount::serde::as_sat::opt")]
+	#[serde(with = "crate::serde_util::string::opt")]
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
@@ -333,7 +333,7 @@ pub struct Config {
 
 	/// Config for the ForfeitWatcher process.
 	pub forfeit_watcher: OptionalService<forfeits::Config>,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	#[serde(with = "crate::serde_util::string")]
 	pub forfeit_watcher_min_balance: Amount,
 
 	/// Config for the VtxoPool process
