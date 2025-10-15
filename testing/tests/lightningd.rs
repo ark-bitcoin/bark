@@ -274,7 +274,7 @@ async fn bark_refresh_payment_revocation() {
 	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	bark_1.refresh_all().await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);
 	assert_eq!(vtxos[0].amount, btc(2));
@@ -553,7 +553,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	bark_1.try_send_lightning(invoice, None).try_wait(1000).await.expect_err("the payment is held");
 
 	// htlc expiry is 6 ahead of current block
-	ctx.generate_blocks(8).await;
+	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
 	bark_1.maintain().await;
 
 	let vtxos = bark_1.vtxos().await;
