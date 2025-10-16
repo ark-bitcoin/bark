@@ -1,5 +1,4 @@
 
-
 mod embedded {
 	use refinery::embed_migrations;
 	embed_migrations!("src/database/migrations");
@@ -8,12 +7,12 @@ pub mod intman;
 
 pub mod forfeits;
 pub mod ln;
+mod query;
 pub mod rounds;
 pub mod vtxopool;
 
 mod model;
 pub use model::*;
-use tokio_stream::StreamExt;
 
 
 use std::task;
@@ -31,7 +30,7 @@ use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
 use futures::{Stream, TryStreamExt};
-use tokio_postgres::{Client, GenericClient, NoTls, RowStream};
+use tokio_postgres::{Client, NoTls, RowStream};
 use tokio_postgres::types::Type;
 use log::{info, warn};
 
@@ -152,37 +151,6 @@ impl Db {
 	 * VTXOs
 	*/
 
-	async fn inner_upsert_vtxos<T, V: Borrow<Vtxo>>(
-		client: &T,
-		vtxos: impl IntoIterator<Item = V>,
-	) -> Result<(), tokio_postgres::Error>
-		where T: GenericClient
-	{
-		// Store all vtxos created in this round.
-		let statement = client.prepare_typed("
-			INSERT INTO vtxo (vtxo_id, vtxo, expiry, created_at, updated_at) VALUES (
-				UNNEST($1), UNNEST($2), UNNEST($3), NOW(), NOW())
-			ON CONFLICT DO NOTHING
-		", &[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
-
-		let vtxos = vtxos.into_iter();
-		let mut vtxo_ids = Vec::with_capacity(vtxos.size_hint().0);
-		let mut data = Vec::with_capacity(vtxos.size_hint().0);
-		let mut expiry = Vec::with_capacity(vtxos.size_hint().0);
-		for vtxo in vtxos {
-			let vtxo = vtxo.borrow();
-			vtxo_ids.push(vtxo.id().to_string());
-			data.push(vtxo.serialize());
-			expiry.push(vtxo.expiry_height() as i32);
-		}
-
-		client.execute(
-			&statement,
-			&[&vtxo_ids, &data, &expiry]
-		).await?;
-
-		Ok(())
-	}
 
 
 	/// Atomically insert the given vtxos.
@@ -196,91 +164,43 @@ impl Db {
 		let mut conn = self.pool.get().await?;
 		let tx = conn.transaction().await?;
 
-		Self::inner_upsert_vtxos(&tx, vtxos).await?;
+		query::upsert_vtxos(&tx, vtxos).await?;
 
 		tx.commit().await?;
 		Ok(())
 	}
 
-	/// Get all board vtxos that expired before or on `height`.
-	pub async fn get_expired_boards(
+	/// Upsert a board into the database
+	pub async fn upsert_board(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+		let mut conn = self.pool.get().await?;
+		let tx = conn.transaction().await?;
+		query::upsert_vtxos(&tx, [vtxo]).await?;
+		query::upsert_board(&tx, vtxo.id(), vtxo.expiry_height()).await?;
+		tx.commit().await?;
+		Ok(())
+	}
+
+	/// Get all board are sweepable
+	/// A board is sweepable if it has expired and the funding outpoint hasn't been spent yet
+	/// A spent could be a sweep or an exit
+	pub async fn get_sweepable_boards(
 		&self,
 		height: BlockHeight,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
+	) -> anyhow::Result<Vec<Board>> {
 		let conn = self.pool.get().await?;
-
-		// TODO: maybe store kind in a column to filter board at the db level
-		let statement = conn.prepare_typed("
-			SELECT vtxo
-			FROM vtxo
-			WHERE expiry <= $1 AND board_swept_at IS NULL
-		", &[Type::INT4]).await?;
-
-		let rows = conn.query_raw(&statement, &[&(height as i32)]).await?;
-		let stream = OwnedRowStream::new(conn, rows);
-		Ok(stream.map_err(anyhow::Error::from).try_filter_map(|row| async {
-			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
-			drop(row); // borrowck acts weird here
-			if !self.is_round_tx(vtxo.chain_anchor().txid).await? {
-				Ok(Some(vtxo))
-			} else {
-				Ok(None)
-			}
-		}).fuse())
+		query::get_sweepable_boards(&*conn, height).await
 	}
 
 	pub async fn mark_board_swept(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
 		let conn = self.pool.get().await?;
-
-		let statement = conn.prepare("
-			UPDATE vtxo SET board_swept_at = NOW(), updated_at = NOW() WHERE vtxo_id = $1;
-		").await?;
-
-		conn.execute(&statement, &[&vtxo.id().to_string()]).await?;
-
+		query::mark_board_swept(&*conn, vtxo.id()).await
+			.context("Failed to mark board as swept")?;
 		Ok(())
-	}
-
-	/// Get vtxos by id and ensure the order of the returned vtxos matches
-	/// the order of the provided ids
-	async fn get_vtxos_by_id_with_client<T>(
-		client: &T,
-		ids: &[VtxoId],
-	) -> anyhow::Result<Vec<VtxoState>>
-		where T : GenericClient + Sized
-	{
-		let statement = client.prepare_typed("
-			SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
-				board_swept_at, created_at, updated_at
-			FROM vtxo
-			WHERE vtxo_id = ANY($1);
-		", &[Type::TEXT_ARRAY]).await?;
-
-		let id_str = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
-		let rows = client.query(&statement, &[&id_str]).await
-			.context("Query get_vtxos_by_id failed")?;
-
-		// Parse all rows
-		let mut vtxos = rows.into_iter()
-			.map(|row| {
-				let vtxo = VtxoState::try_from(row)?;
-				Ok((vtxo.vtxo.id(), vtxo))
-			})
-			.collect::<anyhow::Result<HashMap<_, _>>>()
-			.context("Failed to parse VtxoState from database")?;
-
-		// Bail if one of the id's could not be found
-		if vtxos.len() != ids.len() {
-			let missing = ids.into_iter().filter(|id| !vtxos.contains_key(id));
-			return not_found!(missing, "vtxo does not exist");
-		}
-
-		Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
 	}
 
 	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
 		let conn = self.pool.get().await?;
-		Self::get_vtxos_by_id_with_client(&*conn, ids).await
+		query::get_vtxos_by_id(&*conn, ids).await
 	}
 
 	/// Fetch all vtxos that have been forfeited.
@@ -290,7 +210,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 		//TODO(stevenroose) this query is wrong
 		let stmt = conn.prepare("
-			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL AND board_swept_at IS NULL;
+			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL;
 		").await?;
 
 		let raw = conn.query_raw(&stmt, NOARG).await?;
@@ -308,7 +228,7 @@ impl Db {
 		let conn = self.pool.get().await?;
 		let stmt = conn.prepare_typed("
 			SELECT v.id, v.vtxo_id, v.vtxo, v.expiry, v.oor_spent_txid, v.forfeit_state, v.forfeit_round_id,
-				v.board_swept_at, v.created_at, v.updated_at
+				v.created_at, v.updated_at
 			FROM vtxo AS v
 				JOIN round ON round.id = v.forfeit_round_id
 			WHERE round.funding_txid = ANY($1);
@@ -342,7 +262,7 @@ impl Db {
 				UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW() WHERE vtxo_id = $1;
 			", &[Type::TEXT, Type::TEXT]).await?;
 
-			let vtxos = Self::get_vtxos_by_id_with_client(&tx, &[input.id()]).await?;
+			let vtxos = query::get_vtxos_by_id(&tx, &[input.id()]).await?;
 			for vtxo in vtxos {
 				if !vtxo.is_spendable() {
 					return Ok(Some(vtxo.vtxo_id));
@@ -352,7 +272,7 @@ impl Db {
 			}
 		}
 
-		Self::inner_upsert_vtxos(&tx, new_vtxos).await?;
+		query::upsert_vtxos(&tx, new_vtxos).await?;
 
 		tx.commit().await?;
 		Ok(None)

@@ -1,3 +1,4 @@
+use anyhow::Context;
 
 use std::str::FromStr;
 
@@ -6,6 +7,7 @@ use bitcoin::consensus::deserialize;
 use chrono::{DateTime, Local};
 use tokio_postgres::Row;
 
+use bitcoin_ext::BlockHeight;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 
 use crate::database::forfeits::ForfeitState;
@@ -30,7 +32,6 @@ pub struct VtxoState {
 	/// The round id this vtxo was forfeited in.
 	pub forfeit_round_id: Option<i64>,
 	/// If this is a board vtxo, the time at which it was swept.
-	pub board_swept_at: Option<DateTime<Local>>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 }
@@ -63,7 +64,6 @@ impl TryFrom<Row> for VtxoState {
 				.map(|bytes| rmp_serde::from_slice(bytes))
 				.transpose()?,
 			forfeit_round_id: row.get("forfeit_round_id"),
-			board_swept_at: row.get("board_swept_at"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})
@@ -85,6 +85,42 @@ impl TryFrom<Row> for Sweep {
 		debug_assert_eq!(tx.compute_txid(), txid);
 
 		Ok(Self { txid, tx })
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct Board {
+	pub id: i64,
+	pub vtxo_id: VtxoId,
+	pub expiry_height: BlockHeight,
+	pub exited_at: Option<DateTime<Local>>,
+	pub swept_at: Option<DateTime<Local>>,
+	pub created_at: DateTime<Local>,
+	pub updated_at: DateTime<Local>,
+}
+
+impl TryFrom<Row> for Board {
+
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> Result<Self, Self::Error> {
+		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("vtxo_id"))?;
+		let expiry_height = BlockHeight::try_from(row.get::<_, i32>("expiry_height"))
+			.context("Invalid blockheight")?;
+		let exited_at = row.get("exited_at");
+		let swept_at = row.get("swept_at");
+		let created_at = row.get("created_at");
+		let updated_at = row.get("updated_at");
+
+		Ok(Self {
+			id: row.get("id"),
+			vtxo_id,
+			expiry_height,
+			exited_at,
+			swept_at,
+			created_at,
+			updated_at,
+		})
 	}
 }
 

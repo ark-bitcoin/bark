@@ -291,10 +291,10 @@ CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
     AS $$
 BEGIN
     INSERT INTO vtxo_history (
-        id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id, board_swept_at,
+        id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
         created_at, updated_at
     ) VALUES (
-        OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.forfeit_state, OLD.forfeit_round_id, OLD.board_swept_at,
+        OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.forfeit_state, OLD.forfeit_round_id,
         OLD.created_at, OLD.updated_at
     );
 
@@ -369,6 +369,40 @@ ALTER TABLE public.bitcoin_transaction ALTER COLUMN id ADD GENERATED ALWAYS AS I
     NO MAXVALUE
     CACHE 1
 );
+
+
+--
+-- Name: board; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.board (
+    id bigint NOT NULL,
+    vtxo_id text,
+    expiry_height integer NOT NULL,
+    swept_at timestamp with time zone,
+    exited_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: board_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.board_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: board_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.board_id_seq OWNED BY public.board.id;
 
 
 --
@@ -890,7 +924,6 @@ CREATE TABLE public.vtxo (
     oor_spent_txid text,
     forfeit_state bytea,
     forfeit_round_id bigint,
-    board_swept_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     lightning_htlc_subscription_id bigint
@@ -909,7 +942,6 @@ CREATE TABLE public.vtxo_history (
     oor_spent_txid text,
     forfeit_state bytea,
     forfeit_round_id bigint,
-    board_swept_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
@@ -1005,6 +1037,13 @@ ALTER SEQUENCE public.wallet_changeset_id_seq OWNED BY public.wallet_changeset.i
 --
 
 ALTER TABLE ONLY public.arkoor_mailbox ALTER COLUMN id SET DEFAULT nextval('public.arkoor_mailbox_id_seq'::regclass);
+
+
+--
+-- Name: board id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.board ALTER COLUMN id SET DEFAULT nextval('public.board_id_seq'::regclass);
 
 
 --
@@ -1127,6 +1166,22 @@ ALTER TABLE ONLY public.bitcoin_transaction
 
 ALTER TABLE ONLY public.bitcoin_transaction
     ADD CONSTRAINT bitcoin_transaction_txid_key UNIQUE (txid);
+
+
+--
+-- Name: board board_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.board
+    ADD CONSTRAINT board_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: board board_sweep_vtxo_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.board
+    ADD CONSTRAINT board_sweep_vtxo_unique UNIQUE (vtxo_id);
 
 
 --
@@ -1296,6 +1351,27 @@ CREATE UNIQUE INDEX arkoor_mailbox_vtxo_id_uix ON public.arkoor_mailbox USING bt
 
 
 --
+-- Name: board_sweep_exited_at_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX board_sweep_exited_at_ix ON public.board USING btree (((exited_at IS NULL)));
+
+
+--
+-- Name: board_sweep_swept_at_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX board_sweep_swept_at_ix ON public.board USING btree (((swept_at IS NULL)));
+
+
+--
+-- Name: board_sweep_vtxo_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX board_sweep_vtxo_id_ix ON public.board USING btree (vtxo_id);
+
+
+--
 -- Name: integration_api_key_api_key_uix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1405,13 +1481,6 @@ CREATE UNIQUE INDEX round_seq_uix ON public.round USING btree (seq);
 --
 
 CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) INCLUDE (abandoned_at, confirmed_at);
-
-
---
--- Name: vtxo_board_not_swept_expiry_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX vtxo_board_not_swept_expiry_ix ON public.vtxo USING btree (((board_swept_at IS NULL)), expiry, vtxo_id);
 
 
 --
@@ -1525,6 +1594,14 @@ CREATE TRIGGER vtxo_update BEFORE UPDATE ON public.vtxo FOR EACH ROW EXECUTE FUN
 
 ALTER TABLE ONLY public.arkoor_mailbox
     ADD CONSTRAINT arkoor_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(id);
+
+
+--
+-- Name: board board_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.board
+    ADD CONSTRAINT board_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --
