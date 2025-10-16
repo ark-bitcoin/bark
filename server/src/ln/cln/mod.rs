@@ -707,14 +707,15 @@ impl ClnManagerProcess {
 			.context("failed to get info from rpc")?
 			.into_inner().blockheight;
 
-		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {:#?}",
-			node.id, invoice.payment_hash(), user_amount,
-		);
-
 		let amount_msat = match invoice.amount_milli_satoshis() {
 			Some(msat) => msat,
 			None => user_amount.context("user amount required for invoice without amount")?.to_msat(),
 		};
+
+		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {}. Current block height is {}",
+			node.id, invoice.payment_hash(), Amount::from_msat_floor(amount_msat), tip,
+		);
+
 		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
@@ -896,7 +897,7 @@ impl ClnManagerProcess {
 				},
 
 				msg = self.payment_rx.recv() => if let Some((invoice, amount, htlc_send_expiry_height)) = msg {
-					trace!("Payment received: payment_hash={:?}", invoice.payment_hash());
+					trace!("Payment request received: payment_hash={:?}", invoice.payment_hash());
 					if let Err(e) = self.start_payment(invoice, amount, htlc_send_expiry_height).await {
 						error!("Error sending bolt11 payment for invoice: {}", e);
 					}
@@ -972,6 +973,7 @@ async fn handle_pay_bolt11(
 		},
 		// Fetch and store the attempt as failed.
 		Err(pay_err) => {
+			error!("Error calling pay-command: {}", pay_err);
 			match db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await {
 				Ok(Some(attempt)) => match db.verify_and_update_invoice(
 					&payment_hash,
