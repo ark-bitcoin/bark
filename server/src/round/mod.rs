@@ -27,7 +27,7 @@ use ark::{
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundInfo, RoundSeq, VtxoOwnershipChallenge, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT
+	RoundAttempt, RoundEvent, RoundFinished, RoundInfo, RoundProposal, RoundSeq, VtxoOwnershipChallenge, VtxoProposal, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT
 };
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use server_log::{LogMsg, RoundVtxoCreated};
@@ -647,13 +647,13 @@ impl CollectingPayments {
 		};
 
 		// Send out vtxo proposal to signers.
-		srv.rounds.broadcast_event(RoundEvent::VtxoProposal {
+		srv.rounds.broadcast_event(RoundEvent::VtxoProposal(VtxoProposal {
 			round_seq: self.round_seq,
 			attempt_seq: self.attempt_seq,
 			unsigned_round_tx: unsigned_round_tx.clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
-		});
+		}));
 
 		let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(vtxos_utxo);
 		let mut cosign_part_sigs = HashMap::with_capacity(unsigned_vtxo_tree.nb_leaves());
@@ -849,13 +849,13 @@ impl SigningVtxoTree {
 		}
 
 		// Send out round proposal to signers.
-		srv.rounds.broadcast_event(RoundEvent::RoundProposal {
+		srv.rounds.broadcast_event(RoundEvent::RoundProposal(RoundProposal {
 			round_seq: self.round_seq,
 			attempt_seq: self.attempt_seq,
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
 			forfeit_nonces: forfeit_pub_nonces.clone(),
 			connector_pubkey: self.connector_key.public_key(),
-		});
+		}));
 
 		let conns_utxo = OutPoint::new(self.round_txid, ROUND_TX_CONNECTOR_VOUT);
 		let connectors = ConnectorChain::new(
@@ -1023,11 +1023,11 @@ impl SigningForfeits {
 
 		// Send out the finished round to users.
 		trace!("Sending out finish event.");
-		srv.rounds.broadcast_event(RoundEvent::Finished {
+		srv.rounds.broadcast_event(RoundEvent::Finished(RoundFinished {
 			round_seq: self.round_seq,
 			attempt_seq: self.attempt_seq,
 			signed_round_tx: signed_round_tx.tx.clone(),
-		});
+		}));
 
 		let round_step = telemetry::RoundStep::Persist(Instant::now());
 		let tracer_provider = global::tracer_provider().tracer(telemetry::Captaind::TRACER);
