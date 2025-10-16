@@ -702,11 +702,11 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let invoice_amount = btc(2);
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
+	lightning.sync().await;
+
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"This lightning payment has completed. preimage: ",
-	), "err: {err}");
+	assert!(err.to_string().contains("This lightning payment has completed. preimage: "), "err: {err}");
 }
 
 #[tokio::test]

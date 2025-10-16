@@ -68,9 +68,9 @@ async fn cln_can_pay_lightning() {
 	lightning.receiver.wait_for_block_sync().await;
 
 	// Pay an invoice from lightningd_1 to lightningd_2
-	trace!("Lightningd_2 creates an invoice");
+	trace!("receiver node creates an invoice");
 	let invoice = lightning.receiver.invoice(Some(sat(1000)), "test_label", "Test Description").await;
-	trace!("lightningd_1 pays the invoice");
+	trace!("sender node pays the invoice");
 	lightning.sender.pay_bolt11(invoice).await;
 	lightning.receiver.wait_invoice_paid("test_label").await;
 }
@@ -235,6 +235,8 @@ async fn bark_refresh_ln_change_vtxo() {
 	// Create a payable invoice
 	let invoice_amount = btc(2);
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	lightning.sync().await;
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.send_lightning(invoice, None).await;
