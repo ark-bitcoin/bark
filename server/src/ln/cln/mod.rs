@@ -993,14 +993,9 @@ async fn call_pay_bolt11(
 		_ => {},
 	}
 
-	// Call the pay command
-	let pay_response = rpc.pay(cln_rpc::PayRequest {
-		bolt11: invoice.to_string(),
-		label: None,
-		maxfee: None,
-		maxfeepercent: None,
-		retry_for: None,
-		maxdelay: None,
+	// Call the xpay command
+	let pay_response = rpc.xpay(cln_rpc::XpayRequest {
+		invstring: invoice.to_string(),
 		amount_msat: {
 			if invoice.amount_milli_satoshis().is_none() {
 				Some(user_amount.unwrap().into())
@@ -1008,18 +1003,17 @@ async fn call_pay_bolt11(
 				None
 			}
 		},
-		description: None,
-		exemptfee: None,
-		riskfactor: None,
-		exclude: vec![],
-		localinvreqid: None,
+		maxdelay: None,
+		maxfee: None,
+		retry_for: None,
 		partial_msat: None,
+		layers: vec![],
 	}).await?.into_inner();
 
 	if pay_response.payment_preimage.len() > 0 {
 		Ok(pay_response.payment_preimage.try_into().ok().context("invalid preimage not 32 bytes")?)
 	} else {
-		bail!("pay returned with status {}", pay_response.status().as_str_name())
+		bail!("xpay returned invalid preimage: {}", pay_response.payment_preimage.as_hex());
 	}
 }
 
