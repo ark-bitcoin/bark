@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
-use log::info;
+use log::{info, trace};
 use server::vtxopool::VtxoTarget;
 use server::Server;
 use tokio::{fs, join};
@@ -24,6 +24,20 @@ use crate::util::{
 use crate::{
 	btc, constants, sat, Bark, BarkConfig, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig, Lightningd, LightningdConfig
 };
+
+pub struct LightningPaymentSetup {
+	pub receiver: Lightningd,
+	pub sender: Lightningd,
+}
+
+impl LightningPaymentSetup {
+	pub async fn sync(&self) {
+		tokio::join!(
+			self.receiver.wait_for_block_sync(),
+			self.sender.wait_for_block_sync(),
+		);
+	}
+}
 
 pub trait ToArkUrl {
 	fn ark_url(&self) -> String;
@@ -414,6 +428,42 @@ impl TestContext {
 			}
 		}.wait(5000).await;
 		ret
+	}
+
+
+	/// Creates one sender and one receiver lightningd node and funds sender,
+	/// but does not create a channel between them.
+	pub async fn new_lightning_setup_no_channel(&self, name: impl AsRef<str>) -> LightningPaymentSetup {
+		trace!("Start receiver and sender lightningd nodes");
+		let receiver = self.new_lightningd(format!("{}_receiver", name.as_ref())).await;
+		let sender = self.new_lightningd(format!("{}_sender", name.as_ref())).await;
+
+		trace!("Funding all lightning-nodes");
+		self.fund_lightning(&sender, btc(10)).await;
+		self.generate_blocks(6).await;
+		sender.wait_for_block_sync().await;
+
+		LightningPaymentSetup { receiver, sender }
+	}
+
+	/// Creates one sender and one receiver lightningd node and funds sender,
+	/// and creates a channel between them.
+	pub async fn new_lightning_setup(&self, name: impl AsRef<str>) -> LightningPaymentSetup {
+		let lightning = self.new_lightning_setup_no_channel(name).await;
+
+		trace!("Creating channel between lightning nodes");
+		lightning.sender.connect(&lightning.receiver).await;
+		let funding_txid = lightning.sender.fund_channel(&lightning.receiver, btc(8)).await;
+
+		// We need to await the channel funding transaction or else we get
+		// infinite 'Waiting for gossip...' below.
+		self.await_transaction(funding_txid).await;
+		// Default depth before channel_ready
+		self.generate_blocks(6).await;
+
+		lightning.sender.wait_for_gossip(1).await;
+
+		lightning
 	}
 
 	pub async fn fund_captaind(&self, srv: &Captaind, amount: Amount) {

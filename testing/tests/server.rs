@@ -683,28 +683,10 @@ async fn reject_revocation_on_successful_lightning_payment() {
 		}
 	}
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
-
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	ctx.await_transaction(txid).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
+	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
@@ -718,7 +700,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
-	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
@@ -1339,31 +1321,10 @@ async fn reject_dust_bolt11_payment() {
 async fn server_refuse_claim_invoice_not_settled() {
 	let ctx = TestContext::new("server/server_refuse_claim_invoice_not_settled").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
-
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	#[derive(Clone)]
 	struct Proxy(captaind::ArkClient);
@@ -1387,7 +1348,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
 	let cloned = invoice_info.clone();
-	tokio::spawn(async move { lightningd_1.pay_bolt11(cloned.invoice).await; });
+	tokio::spawn(async move { lightning.sender.pay_bolt11(cloned.invoice).await; });
 	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("bad user input: preimage doesn't match payment hash"), "err: {err}");
 }
@@ -1397,30 +1358,9 @@ async fn server_should_release_hodl_invoice_when_subscription_is_cancelled() {
 	let ctx = TestContext::new("server/server_should_release_hodl_invoice_when_subscription_is_cancelled").await;
 	let cfg_htlc_subscription_timeout = Duration::from_secs(5);
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
-
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightningd_2), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
 		// Set the subscription timeout very short to cancel the subscription quickly
 		cfg.htlc_subscription_timeout = cfg_htlc_subscription_timeout
 	}).await;
@@ -1436,7 +1376,7 @@ async fn server_should_release_hodl_invoice_when_subscription_is_cancelled() {
 	tokio::time::sleep(cfg_htlc_subscription_timeout + srv.config().invoice_check_interval).await;
 
 	// cln rpc error code when cannot pay invoice
-	let err = lightningd_1.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
+	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
 }
 
@@ -1444,31 +1384,10 @@ async fn server_should_release_hodl_invoice_when_subscription_is_cancelled() {
 async fn server_should_refuse_claim_twice() {
 	let ctx = TestContext::new("server/server_should_refuse_claim_twice").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
-
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
@@ -1478,7 +1397,7 @@ async fn server_should_refuse_claim_twice() {
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
+		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
@@ -1552,16 +1471,12 @@ async fn run_two_captainds() {
 async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	let ctx = TestContext::new("server/should_refuse_paying_invoice_not_matching_htlcs").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let dummy_invoice = lightningd_1.invoice(None, "dummy_invoice", "A dummy invoice").await;
+	let dummy_invoice = lightning.receiver.invoice(None, "dummy_invoice", "A dummy invoice").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	#[derive(Clone)]
 	struct Proxy(captaind::ArkClient, String);
@@ -1578,25 +1493,11 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	let proxy = Proxy(srv.get_public_rpc().await, dummy_invoice);
 	let proxy = ArkRpcProxyServer::start(proxy).await;
 
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	ctx.await_transaction(txid).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
-
 	// Start a bark and create a VTXO to be able to board
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
 	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
 
-	let invoice = lightningd_1.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
+	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
 	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains("htlc payment hash doesn't match invoice"), "err: {err}");
@@ -1606,14 +1507,10 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let ctx = TestContext::new("server/should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	#[derive(Clone)]
 	struct Proxy(captaind::ArkClient);
@@ -1630,20 +1527,6 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let proxy = Proxy(srv.get_public_rpc().await);
 	let proxy = ArkRpcProxyServer::start(proxy).await;
 
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	ctx.await_transaction(txid).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
-
 	// Start a bark and create a VTXO to be able to board
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
 	bark_1.board(btc(0.5)).await;
@@ -1651,7 +1534,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark_1.maintain().await;
 
-	let invoice = lightningd_1.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
+	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
 	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains("htlc vtxo amount too low for invoice"), "err: {err}");
@@ -2048,31 +1931,10 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 async fn server_can_use_multi_input_from_vtxo_pool() {
 	let ctx = TestContext::new("server/server_can_use_multi_input_from_vtxo_pool").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
-
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	// TODO: find a way how to remove this sleep
-	// maybe: let ctx.bitcoind wait for channel funding transaction
-	// without the sleep we get infinite 'Waiting for gossip...'
-	tokio::time::sleep(std::time::Duration::from_millis(8_000)).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightningd_2), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
 		cfg.vtxopool.vtxo_targets = vec![
 			VtxoTarget { count: 5, amount: sat(100_000) },
 		];
@@ -2095,7 +1957,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
+		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
 	srv.wait_for_vtxopool().await;

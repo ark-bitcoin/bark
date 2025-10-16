@@ -3,7 +3,6 @@ use std::iter;
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
 use futures::FutureExt;
-use log::trace;
 use rand::random;
 
 use ark::vtxo::exit_taproot;
@@ -365,28 +364,10 @@ async fn double_exit_call() {
 async fn exit_bolt11_change() {
 	let ctx = TestContext::new("exit/exit_bolt11_change").await;
 
-	// Start 2 lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
-
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	let txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	ctx.await_transaction(txid).await;
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
+	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
 
 	// Start a bark and create a VTXO
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
@@ -396,7 +377,10 @@ async fn exit_bolt11_change() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let invoice_amount = btc(2);
-	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	// Ensure receive node is synced
+	lightning.sync().await;
 
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	bark_1.send_lightning(invoice, None).await;
@@ -420,16 +404,11 @@ async fn exit_bolt11_change() {
 async fn exit_revoked_lightning_payment() {
 	let ctx = TestContext::new("exit/exit_revoked_lightning_payment").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
-
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightningd_1)).await;
+	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -441,7 +420,7 @@ async fn exit_revoked_lightning_payment() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
-	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
@@ -463,14 +442,11 @@ async fn exit_revoked_lightning_payment() {
 async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke").await;
 
-	// Start a three lightning nodes
-	// And connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
+	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_1), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -509,7 +485,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
-	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
@@ -520,7 +496,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.maintain().await;
 
 	// Should start an exit
-	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 239 }));
+	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 245 }));
 	complete_exit(&ctx, &bark_1).await;
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
@@ -530,13 +506,11 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke").await;
 
-	// Start three lightning nodes and connect them in a line.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
+	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_1), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -592,7 +566,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
-	let invoice = lightningd_2.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.offchain_balance().await, board_amount);

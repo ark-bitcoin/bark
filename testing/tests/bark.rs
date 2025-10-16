@@ -9,7 +9,7 @@ use bitcoin::Amount;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
-use log::{info, trace};
+use log::info;
 use tokio::fs;
 
 use ark::{ProtocolEncoding, Vtxo};
@@ -1093,30 +1093,10 @@ async fn test_ark_address_other_ark() {
 async fn bark_can_claim_all_claimable_lightning_receives() {
 	let ctx = TestContext::new("bark/bark_can_claim_all_claimable_lightning_receives").await;
 
-	// Start two lightning nodes and open a channel between them.
-	trace!("Start lightningd-1, lightningd-2, ...");
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-	let lightningd_2 = ctx.new_lightningd("lightningd-2").await;
-
-	trace!("Funding all lightning-nodes");
-	ctx.fund_lightning(&lightningd_1, btc(10)).await;
-	ctx.generate_blocks(6).await;
-	lightningd_1.wait_for_block_sync().await;
-
-	trace!("Creating channel between lightning nodes");
-	lightningd_1.connect(&lightningd_2).await;
-	let funding_txid = lightningd_1.fund_channel(&lightningd_2, btc(8)).await;
-
-	// We need to await the channel funding transaction or else we get
-	// infinite 'Waiting for gossip...' below.
-	ctx.await_transaction(funding_txid).await;
-	// Default depth before channel_ready
-	ctx.generate_blocks(6).await;
-
-	lightningd_1.wait_for_gossip(1).await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd_2), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &srv, btc(3)).await);
@@ -1127,8 +1107,8 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 
 	let res = tokio::spawn(async move {
 		tokio::join!(
-			lightningd_1.pay_bolt11(invoice_info_1.invoice),
-			lightningd_1.pay_bolt11(invoice_info_2.invoice),
+			lightning.sender.pay_bolt11(invoice_info_1.invoice),
+			lightning.sender.pay_bolt11(invoice_info_2.invoice),
 		)
 	});
 
