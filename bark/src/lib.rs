@@ -708,7 +708,7 @@ impl Wallet {
 
 	/// Returns all vtxos that will expire within `threshold` blocks
 	pub async fn get_expiring_vtxos(
-		&mut self,
+		&self,
 		threshold: BlockHeight,
 	) -> anyhow::Result<Vec<WalletVtxo>> {
 		let expiry = self.chain.tip().await? + threshold;
@@ -875,7 +875,7 @@ impl Wallet {
 
 	/// Drop a specific [Vtxo] from the database. This is destructive and will result in a loss of
 	/// funds.
-	pub async fn drop_vtxo(&mut self, vtxo_id: VtxoId) -> anyhow::Result<()> {
+	pub async fn drop_vtxo(&self, vtxo_id: VtxoId) -> anyhow::Result<()> {
 		warn!("Drop vtxo {} from the database", vtxo_id);
 		self.db.remove_vtxo(vtxo_id)?;
 		Ok(())
@@ -883,7 +883,7 @@ impl Wallet {
 
 	/// Drop all VTXOs from the database. This is destructive and will result in a loss of funds.
 	//TODO(stevenroose) improve the way we expose dangerous methods
-	pub async fn drop_vtxos(&mut self) -> anyhow::Result<()> {
+	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
 		for vtxo in self.vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
@@ -897,7 +897,7 @@ impl Wallet {
 	///
 	/// NB we will spend a little more onchain to cover fees.
 	pub async fn board_amount<W: PreparePsbt + SignPsbt + GetWalletTx>(
-		&mut self,
+		&self,
 		onchain: &mut W,
 		amount: Amount,
 	) -> anyhow::Result<Board> {
@@ -907,7 +907,7 @@ impl Wallet {
 
 	/// Board a [Vtxo] with all the funds in your onchain wallet.
 	pub async fn board_all<W: PreparePsbt + SignPsbt + GetWalletTx>(
-		&mut self,
+		&self,
 		onchain: &mut W,
 	) -> anyhow::Result<Board> {
 		let (user_keypair, _) = self.derive_store_next_keypair()?;
@@ -915,7 +915,7 @@ impl Wallet {
 	}
 
 	async fn board<W: PreparePsbt + SignPsbt + GetWalletTx>(
-		&mut self,
+		&self,
 		wallet: &mut W,
 		amount: Option<Amount>,
 		user_keypair: Keypair,
@@ -1376,7 +1376,7 @@ impl Wallet {
 	/// arkoors for each input needed to match requested amount + one
 	/// optional change output.
 	async fn create_arkoor_vtxos(
-		&mut self,
+		&self,
 		destination_policy: VtxoPolicy,
 		amount: Amount,
 	) -> anyhow::Result<ArkoorCreateResult> {
@@ -1479,7 +1479,7 @@ impl Wallet {
 	/// will become more uneconomical to unilaterally exit, so you should eventually refresh them
 	/// with [Wallet::refresh_vtxos] or periodically call [Wallet::maintenance_refresh].
 	pub async fn send_arkoor_payment(
-		&mut self,
+		&self,
 		destination: &ark::Address,
 		amount: Amount,
 	) -> anyhow::Result<Vec<Vtxo>> {
@@ -1571,7 +1571,7 @@ impl Wallet {
 	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
 	/// so the same [Wallet::send_arkoor_payment] rules apply.
 	pub async fn send_lightning_payment(
-		&mut self,
+		&self,
 		invoice: Invoice,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Preimage> {
@@ -1674,7 +1674,7 @@ impl Wallet {
 
 		let pending_lightning_state = VtxoState::PendingLightningSend {
 			invoice: invoice.clone(),
-			amount: amount,
+			amount,
 		};
 
 		self.db.register_movement(MovementArgs {
@@ -1832,7 +1832,7 @@ impl Wallet {
 	}
 
 	/// Create, store and return a [Bolt11Invoice] for offchain boarding
-	pub async fn bolt11_invoice(&mut self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+	pub async fn bolt11_invoice(&self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let mut srv = self.require_server()?;
 
 		let preimage = Preimage::random();
@@ -2148,7 +2148,7 @@ impl Wallet {
 
 	/// Same as [Wallet::send_lightning_payment] but instead it pays a [LightningAddress].
 	pub async fn send_lnaddr(
-		&mut self,
+		&self,
 		addr: &LightningAddress,
 		amount: Amount,
 		comment: Option<&str>,
@@ -2163,7 +2163,7 @@ impl Wallet {
 
 	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
 	pub async fn pay_offer(
-		&mut self,
+		&self,
 		offer: Offer,
 		amount: Option<Amount>,
 	) -> anyhow::Result<(Bolt12Invoice, Preimage)> {
@@ -2195,7 +2195,7 @@ impl Wallet {
 	/// Sends the given [Amount] to an onchain [bitcoin::Address]. This is an in-round operation
 	/// which may take a long time to perform.
 	pub async fn send_round_onchain_payment(
-		&mut self,
+		&self,
 		addr: bitcoin::Address,
 		amount: Amount,
 	) -> anyhow::Result<SendOnchain> {
@@ -2214,7 +2214,7 @@ impl Wallet {
 
 		let participation = DesiredRoundParticipation::OnchainPayment {
 			destination: addr.script_pubkey(),
-			amount: amount,
+			amount,
 		};
 		let RoundResult { round_id, .. } = self.participate_round(participation).await
 			.context("round failed")?;

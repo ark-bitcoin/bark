@@ -59,7 +59,7 @@ pub async fn execute_dev_command(
 			output_json(&bark_json::cli::ArkInfo::from(info));
 		},
 		DevCommand::DropVtxos => {
-			let (mut wallet, _onchain) = open_wallet(&datadir).await?;
+			let (wallet, _onchain) = open_wallet(&datadir).await?;
 			wallet.drop_vtxos().await?;
 			info!("Dropped all vtxos");
 		},
