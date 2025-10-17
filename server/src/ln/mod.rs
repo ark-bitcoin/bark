@@ -2,6 +2,7 @@
 pub mod cln;
 
 
+use std::cmp;
 use std::collections::HashMap;
 
 use anyhow::Context;
@@ -61,7 +62,7 @@ impl Server {
 		};
 
 		if let Some(vtxo) = inputs.iter().find(|v| v.expiry_height() < expiry) {
-			bail!("VTXO expires before HTLC expiry height: {}", vtxo.id());
+			return badarg!("VTXO expires before HTLC expiry height: {}", vtxo.id());
 		}
 
 		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
@@ -119,18 +120,16 @@ impl Server {
 		}
 
 		let mut htlc_vtxo_sum = Amount::ZERO;
-		for htlc_vtxo in vtxos.iter() {
-			let payment_hash = htlc_vtxo.server_htlc_out_payment_hash()
+		let mut min_expiry_height = BlockHeight::MAX;
+		for htlc_vtxo in &vtxos {
+			let htlc = htlc_vtxo.policy().as_server_htlc_send()
 				.context("vtxo provided is not an outgoing htlc vtxo")?;
-			if payment_hash != invoice_payment_hash {
+			if htlc.payment_hash != invoice_payment_hash {
 				return badarg!("htlc payment hash doesn't match invoice");
 			}
+			min_expiry_height = cmp::min(min_expiry_height, htlc.htlc_expiry);
 			htlc_vtxo_sum += htlc_vtxo.amount();
 		}
-
-		let lowest_expiry_height = vtxos.iter()
-			.map(|v| v.policy().as_server_htlc_send().expect("checked before").htlc_expiry).min()
-			.expect("vtxos are not empty");
 
 		if let Some(amount) = invoice.amount_milli_satoshis() {
 			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
@@ -140,7 +139,7 @@ impl Server {
 		}
 
 		// Spawn a task that performs the payment
-		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, lowest_expiry_height, wait).await;
+		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, min_expiry_height, wait).await;
 
 		Self::process_lightning_pay_response(invoice_payment_hash, res)
 	}

@@ -731,7 +731,7 @@ impl ClnManagerProcess {
 		// NB: we don't want lightning payment to take more time than the htlc-send expiry
 		let max_cltv_expiry_delta = htlc_send_expiry_height
 			.checked_sub(tip + self.htlc_expiry_delta as BlockHeight)
-			.ok_or(anyhow!("HTLC expiry height is too soon to perform a lightning payment"))?;
+			.context("HTLC expiry height is too soon to perform a lightning payment")?;
 
 		// Call pay over GRPC
 		// If it returns a pre-image we know the call succeeded,
