@@ -702,11 +702,11 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let invoice_amount = btc(2);
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
+	lightning.sync().await;
+
 	assert_eq!(bark_1.offchain_balance().await, board_amount);
 	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"This lightning payment has completed. preimage: ",
-	), "err: {err}");
+	assert!(err.to_string().contains("This lightning payment has completed. preimage: "), "err: {err}");
 }
 
 #[tokio::test]
@@ -1296,8 +1296,8 @@ async fn reject_dust_bolt11_payment() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
-		async fn start_lightning_payment(&mut self, mut req: protos::LightningPaymentRequest)
-			-> Result<protos::ArkoorPackageCosignResponse, tonic::Status>
+		async fn start_lightning_payment(&mut self, mut req: protos::StartLightningPaymentRequest)
+			-> Result<protos::StartLightningPaymentResponse, tonic::Status>
 		{
 			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
 			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())
@@ -1739,8 +1739,8 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
 
-		async fn start_lightning_payment(&mut self, mut req: protos::LightningPaymentRequest)
-			-> Result<protos::ArkoorPackageCosignResponse, tonic::Status>
+		async fn start_lightning_payment(&mut self, mut req: protos::StartLightningPaymentRequest)
+			-> Result<protos::StartLightningPaymentResponse, tonic::Status>
 		{
 			req.input_vtxo_ids = vec![self.1.to_bytes().to_vec()];
 			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())

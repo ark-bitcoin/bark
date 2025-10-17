@@ -46,15 +46,25 @@ lazy_static! {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArkInfo {
+	/// The bitcoin network the server operates on
 	pub network: Network,
+	/// The Ark server pubkey
 	pub server_pubkey: PublicKey,
+	/// The interval between each round
 	pub round_interval: Duration,
+	/// Number of nonces per round
 	pub nb_round_nonces: usize,
+	/// Delta between exit confirmation and coins becoming spendable
 	pub vtxo_exit_delta: u16,
+	/// Expiration delta of the VTXO
 	pub vtxo_expiry_delta: u16,
-	pub htlc_expiry_delta: u16,
+	/// The number of blocks after which an HTLC-send VTXO expires once granted.
+	pub htlc_send_expiry_delta: u16,
+	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
+	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
+	/// The number of confirmations required to register a board vtxo
 	pub required_board_confirmations: usize,
 }
 

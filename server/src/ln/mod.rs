@@ -10,7 +10,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use log::{info, trace, error};
 
-use ark::{musig, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, Preimage};
 use server_rpc::protos;
@@ -32,7 +32,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		inputs: Vec<Vtxo>,
 		user_nonces: Vec<musig::PublicNonce>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+	) -> anyhow::Result<protos::StartLightningPaymentResponse> {
 		let invoice_payment_hash = invoice.payment_hash();
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
@@ -45,21 +45,37 @@ impl Server {
 		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {
-			//TODO(stevenroose) this is kinda fragile when a block happens after
-			// the user did the same calculation
 			let tip = self.bitcoind.get_block_count()? as BlockHeight;
-			tip + self.config.htlc_expiry_delta as BlockHeight
+			let sub = self.db.get_htlc_subscription_by_payment_hash(invoice_payment_hash).await?;
+
+			// If we have a subscription for that invoice, it means user is
+			// performing intra-Ark lightning payment: we will be the single
+			// hop so we can use its min final cltv expiry delta as expiry delta
+			let expiry_delta = if let Some(sub) = sub {
+				sub.invoice.min_final_cltv_expiry_delta()
+			} else {
+				self.config.htlc_send_expiry_delta as u64
+			};
+
+			tip + expiry_delta as BlockHeight
 		};
 
-		let pay_req = VtxoRequest {
-			amount: amount,
-			policy: VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry),
-		};
+		if let Some(vtxo) = inputs.iter().find(|v| v.expiry_height() < expiry) {
+			bail!("VTXO expires before HTLC expiry height: {}", vtxo.id());
+		}
+
+		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
+		let pay_req = VtxoRequest { amount, policy: policy.clone() };
 
 		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
 			.badarg("error creating arkoor package")?;
 
-		self.cosign_oor_package_with_builder(&package).await
+		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
+
+		Ok(protos::StartLightningPaymentResponse {
+			sigs: cosign_resp.into_iter().map(|i| i.into()).collect(),
+			policy: policy.serialize().to_vec(),
+		})
 	}
 
 	/// Try to finish the lightning payment that was previously started.
@@ -103,7 +119,7 @@ impl Server {
 		}
 
 		let mut htlc_vtxo_sum = Amount::ZERO;
-		for htlc_vtxo in vtxos {
+		for htlc_vtxo in vtxos.iter() {
 			let payment_hash = htlc_vtxo.server_htlc_out_payment_hash()
 				.context("vtxo provided is not an outgoing htlc vtxo")?;
 			if payment_hash != invoice_payment_hash {
@@ -111,6 +127,10 @@ impl Server {
 			}
 			htlc_vtxo_sum += htlc_vtxo.amount();
 		}
+
+		let lowest_expiry_height = vtxos.iter()
+			.map(|v| v.policy().as_server_htlc_send().expect("checked before").htlc_expiry).min()
+			.expect("vtxos are not empty");
 
 		if let Some(amount) = invoice.amount_milli_satoshis() {
 			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
@@ -120,7 +140,7 @@ impl Server {
 		}
 
 		// Spawn a task that performs the payment
-		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, wait).await;
+		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, lowest_expiry_height, wait).await;
 
 		Self::process_lightning_pay_response(invoice_payment_hash, res)
 	}
@@ -342,7 +362,7 @@ impl Server {
 		}
 
 		let vtxos = {
-			let expiry = self.chain_tip().height + self.config.htlc_expiry_delta as BlockHeight;
+			let expiry = self.chain_tip().height + self.config.htlc_send_expiry_delta as BlockHeight;
 			let request = VtxoRequest {
 				amount: sub.amount(),
 				policy: VtxoPolicy::new_server_htlc_recv(user_pubkey, payment_hash, expiry),

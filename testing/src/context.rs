@@ -239,7 +239,6 @@ impl TestContext {
 			network: Network::Regtest,
 			vtxo_lifetime: 144,
 			vtxo_exit_delta: 12,
-			htlc_expiry_delta: 6,
 			round_interval: Duration::from_millis(1000),
 			round_submit_time: Duration::from_millis(1000),
 			round_sign_time: Duration::from_millis(2500),
@@ -297,6 +296,8 @@ impl TestContext {
 			invoice_check_base_delay: Duration::from_secs(2),
 			invoice_check_max_delay: Duration::from_secs(10),
 			invoice_poll_interval: Duration::from_secs(10),
+			htlc_expiry_delta: 6,
+			htlc_send_expiry_delta: 58,
 			htlc_subscription_timeout: Duration::from_secs(10*60),
 		}
 	}

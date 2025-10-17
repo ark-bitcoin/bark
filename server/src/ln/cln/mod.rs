@@ -46,7 +46,7 @@ use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::AmountExt;
+use bitcoin_ext::{AmountExt, BlockHeight};
 use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
@@ -79,7 +79,7 @@ pub struct ClnManager {
 	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
 
 	/// This channel sends payment requests to the process.
-	payment_tx: mpsc::UnboundedSender<(Invoice, Option<Amount>)>,
+	payment_tx: mpsc::UnboundedSender<(Invoice, Option<Amount>, BlockHeight)>,
 
 	/// This channel sends invoice generation requests to the process.
 	invoice_gen_tx: mpsc::UnboundedSender<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
@@ -118,16 +118,19 @@ impl ClnManager {
 			check_max_delay: config.invoice_check_max_delay,
 		};
 		let proc = ClnManagerProcess {
+			db: db.clone(),
 			rtmgr,
+			waker: Arc::new(Notify::new()),
+
 			ctrl_rx,
 			payment_rx,
 			bolt12_rx,
 			node_monitor_config,
 			invoice_gen_rx,
 			invoice_settle_rx,
-			db: db.clone(),
+
 			payment_update_tx: payment_update_tx.clone(),
-			waker: Arc::new(Notify::new()),
+
 			network: config.network,
 			nodes: config.cln_array.iter().map(|conf| (conf.uri.clone(), ClnNodeInfo {
 				uri: conf.uri.clone(),
@@ -135,6 +138,8 @@ impl ClnManager {
 				state: ClnNodeState::Offline,
 			})).collect(),
 			node_by_id: HashMap::with_capacity(config.cln_array.len()),
+
+			htlc_expiry_delta: config.htlc_expiry_delta,
 		};
 		info!("Starting ClnManager thread... nb_nodes={}", proc.nodes.len());
 		tokio::spawn(proc.run(config.cln_reconnect_interval));
@@ -160,6 +165,7 @@ impl ClnManager {
 		&self,
 		invoice: &Invoice,
 		htlc_amount: Amount,
+		htlc_send_expiry_height: BlockHeight,
 		wait: bool,
 	) -> anyhow::Result<Preimage> {
 		invoice.check_signature().context("invalid invoice signature")?;
@@ -171,7 +177,7 @@ impl ClnManager {
 		};
 
 		let update_rx = self.payment_update_tx.subscribe();
-		self.payment_tx.send((invoice.clone(), user_amount)).context("payment channel broken")?;
+		self.payment_tx.send((invoice.clone(), user_amount, htlc_send_expiry_height)).context("payment channel broken")?;
 
 		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
 
@@ -275,8 +281,9 @@ impl ClnManager {
 	) -> anyhow::Result<anyhow::Result<()>> {
 		let payment_hash = preimage.compute_payment_hash();
 
-		// If an open payment attempt exists for the payment hash, it's a server self-payment
-		// so we can mark it as succeeded with preimage, then skip hold invoice settlement
+		// If an open payment attempt exists for the payment hash, it is an
+		// intra-Ark lightning payment so we can mark it as succeeded with
+		// preimage, then skip hold invoice settlement
 		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
 		if let Some(attempt) = attempt {
 			let status = LightningPaymentStatus::Succeeded;
@@ -499,18 +506,22 @@ enum Ctrl {
 struct ClnManagerProcess {
 	db: database::Db,
 	rtmgr: RuntimeManager,
+	waker: Arc<Notify>,
+
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
-	payment_rx: mpsc::UnboundedReceiver<(Invoice, Option<Amount>)>,
+	payment_rx: mpsc::UnboundedReceiver<(Invoice, Option<Amount>, BlockHeight)>,
 	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
 	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
-	payment_update_tx: broadcast::Sender<PaymentHash>,
 	bolt12_rx: mpsc::UnboundedReceiver<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
-	waker: Arc<Notify>,
+
+	payment_update_tx: broadcast::Sender<PaymentHash>,
 
 	network: bitcoin::Network,
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
+
+	htlc_expiry_delta: u16,
 }
 
 impl ClnManagerProcess {
@@ -689,21 +700,26 @@ impl ClnManagerProcess {
 		&self,
 		invoice: Invoice,
 		user_amount: Option<Amount>,
+		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let node = self.get_active_node().context("no active cln node")?;
-
-		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {:#?}",
-			node.id, invoice.payment_hash(), user_amount,
-		);
+		let tip = node.rpc.clone().getinfo(cln_rpc::GetinfoRequest {}).await
+			.context("failed to get info from rpc")?
+			.into_inner().blockheight;
 
 		let amount_msat = match invoice.amount_milli_satoshis() {
 			Some(msat) => msat,
 			None => user_amount.context("user amount required for invoice without amount")?.to_msat(),
 		};
+
+		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {}. Current block height is {}",
+			node.id, invoice.payment_hash(), Amount::from_msat_floor(amount_msat), tip,
+		);
+
 		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
 
-		// If there is an existing subscription, it's a server self-payment
-		// so we can directly mark it as accepted, then skip cln payment
+		// If there is an existing subscription, it's an intra-Ark lightning
+		// payment so we can directly mark it as accepted, then skip cln payment
 		let sub = self.db.get_htlc_subscription_by_payment_hash(invoice.payment_hash()).await?;
 		if let Some(sub) = sub {
 			if sub.status == LightningHtlcSubscriptionStatus::Created {
@@ -711,6 +727,11 @@ impl ClnManagerProcess {
 				return Ok(());
 			}
 		}
+
+		// NB: we don't want lightning payment to take more time than the htlc-send expiry
+		let max_cltv_expiry_delta = htlc_send_expiry_height
+			.checked_sub(tip + self.htlc_expiry_delta as BlockHeight)
+			.ok_or(anyhow!("HTLC expiry height is too soon to perform a lightning payment"))?;
 
 		// Call pay over GRPC
 		// If it returns a pre-image we know the call succeeded,
@@ -725,6 +746,7 @@ impl ClnManagerProcess {
 			node.rpc.clone(),
 			invoice,
 			user_amount,
+			max_cltv_expiry_delta,
 		));
 
 		Ok(())
@@ -874,9 +896,9 @@ impl ClnManagerProcess {
 					break;
 				},
 
-				msg = self.payment_rx.recv() => if let Some((invoice, amount)) = msg {
-					trace!("Payment received: payment_hash={:?}", invoice.payment_hash());
-					if let Err(e) = self.start_payment(invoice, amount).await {
+				msg = self.payment_rx.recv() => if let Some((invoice, amount, htlc_send_expiry_height)) = msg {
+					trace!("Payment request received: payment_hash={:?}", invoice.payment_hash());
+					if let Err(e) = self.start_payment(invoice, amount, htlc_send_expiry_height).await {
 						error!("Error sending bolt11 payment for invoice: {}", e);
 					}
 				} else {
@@ -938,9 +960,10 @@ async fn handle_pay_bolt11(
 	mut rpc: ClnGrpcClient,
 	invoice: Invoice,
 	amount: Option<Amount>,
+	max_cltv_expiry_delta: u32,
 ) {
 	let payment_hash = invoice.payment_hash();
-	match call_pay_bolt11(&mut rpc, &invoice, amount).await {
+	match call_pay_bolt11(&mut rpc, &invoice, amount, max_cltv_expiry_delta).await {
 		Ok(preimage) => {
 			// NB we don't do db stuff when it's succesful, because
 			// it will happen in the sendpay stream of the monitor process
@@ -950,6 +973,7 @@ async fn handle_pay_bolt11(
 		},
 		// Fetch and store the attempt as failed.
 		Err(pay_err) => {
+			error!("Error calling pay-command: {}", pay_err);
 			match db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await {
 				Ok(Some(attempt)) => match db.verify_and_update_invoice(
 					&payment_hash,
@@ -979,6 +1003,7 @@ async fn call_pay_bolt11(
 	rpc: &mut ClnGrpcClient,
 	invoice: &Invoice,
 	user_amount: Option<Amount>,
+	max_cltv_expiry_delta: u32,
 ) -> anyhow::Result<Preimage> {
 	match (user_amount, invoice.amount_milli_satoshis()) {
 		(Some(user), Some(inv)) => {
@@ -993,14 +1018,9 @@ async fn call_pay_bolt11(
 		_ => {},
 	}
 
-	// Call the pay command
-	let pay_response = rpc.pay(cln_rpc::PayRequest {
-		bolt11: invoice.to_string(),
-		label: None,
-		maxfee: None,
-		maxfeepercent: None,
-		retry_for: None,
-		maxdelay: None,
+	// Call the xpay command
+	let pay_response = rpc.xpay(cln_rpc::XpayRequest {
+		invstring: invoice.to_string(),
 		amount_msat: {
 			if invoice.amount_milli_satoshis().is_none() {
 				Some(user_amount.unwrap().into())
@@ -1008,18 +1028,17 @@ async fn call_pay_bolt11(
 				None
 			}
 		},
-		description: None,
-		exemptfee: None,
-		riskfactor: None,
-		exclude: vec![],
-		localinvreqid: None,
+		maxdelay: Some(max_cltv_expiry_delta),
+		maxfee: None,
+		retry_for: None,
 		partial_msat: None,
+		layers: vec![],
 	}).await?.into_inner();
 
 	if pay_response.payment_preimage.len() > 0 {
 		Ok(pay_response.payment_preimage.try_into().ok().context("invalid preimage not 32 bytes")?)
 	} else {
-		bail!("pay returned with status {}", pay_response.status().as_str_name())
+		bail!("xpay returned invalid preimage: {}", pay_response.payment_preimage.as_hex());
 	}
 }
 

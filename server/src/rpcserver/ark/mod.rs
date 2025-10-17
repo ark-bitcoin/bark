@@ -255,8 +255,8 @@ impl rpc::server::ArkService for Server {
 
 	async fn start_lightning_payment(
 		&self,
-		req: tonic::Request<protos::LightningPaymentRequest>,
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		req: tonic::Request<protos::StartLightningPaymentRequest>,
+	) -> Result<tonic::Response<protos::StartLightningPaymentResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
@@ -294,11 +294,11 @@ impl rpc::server::ArkService for Server {
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 
-		let cosign_resp = self.start_lightning_payment(
+		let resp = self.start_lightning_payment(
 			invoice, amount, user_pubkey, input_vtxos, user_nonces
 		).await.context("error making payment")?;
 
-		Ok(tonic::Response::new(cosign_resp.into()))
+		Ok(tonic::Response::new(resp))
 	}
 
 	async fn finish_lightning_payment(

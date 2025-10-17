@@ -55,8 +55,8 @@ use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage, 
 use ark::musig;
 use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
-use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy, VtxoPolicyKind};
-use server_rpc::{self as rpc, protos, ServerConnection};
+use ark::vtxo::{PubkeyVtxoPolicy, VtxoPolicyKind};
+use server_rpc::{self as rpc, protos, ServerConnection, TryFromBytes};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
 use crate::exit::Exit;
@@ -1575,8 +1575,10 @@ impl Wallet {
 		invoice: Invoice,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Preimage> {
+		let mut srv = self.require_server()?;
+		let tip = self.chain.tip().await?;
+
 		let properties = self.db.read_properties()?.context("Missing config")?;
-		let current_height = self.chain.tip().await?;
 
 		if invoice.network() != properties.network {
 			bail!("Invoice is for wrong network: {}", invoice.network());
@@ -1587,8 +1589,6 @@ impl Wallet {
 		}
 
 		invoice.check_signature()?;
-
-		let mut srv = self.require_server()?;
 
 		let inv_amount = invoice.amount_milli_satoshis().map(|v| Amount::from_msat_ceil(v));
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
@@ -1603,19 +1603,10 @@ impl Wallet {
 
 		let (change_keypair, _) = self.derive_store_next_keypair()?;
 
-		let htlc_expiry = current_height + srv.info.htlc_expiry_delta as u32;
-		let pay_req = VtxoRequest {
-			amount,
-			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
-				user_pubkey: change_keypair.public_key(),
-				payment_hash: invoice.payment_hash(),
-				htlc_expiry,
-			}),
-		};
-
+		let expected_expiry = tip + srv.info.htlc_send_expiry_delta as BlockHeight;
 		let inputs = self.select_vtxos_to_cover(
-			pay_req.amount, Some(srv.info.max_arkoor_depth), None,
-		)?;
+			amount, Some(srv.info.max_arkoor_depth), Some(expected_expiry),
+		).context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
@@ -1628,11 +1619,7 @@ impl Wallet {
 			keypairs.push(keypair);
 		}
 
-		let builder = ArkoorPackageBuilder::new(
-			&inputs, &pubs, pay_req, Some(change_keypair.public_key()),
-		)?;
-
-		let req = protos::LightningPaymentRequest {
+		let req = protos::StartLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
 			input_vtxo_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
@@ -1640,9 +1627,26 @@ impl Wallet {
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
-		let cosign_resp: Vec<_> = srv.client.start_lightning_payment(req).await
-			.context("htlc request failed")?.into_inner()
-			.try_into().context("invalid arkoor cosign response from server")?;
+		let resp =  srv.client.start_lightning_payment(req).await
+			.context("htlc request failed")?.into_inner();
+
+		let cosign_resp = resp.sigs.into_iter().map(|i| i.try_into())
+			.collect::<Result<Vec<_>, _>>()?;
+		let policy = VtxoPolicy::from_bytes(&resp.policy)?;
+
+		let pay_req = match policy {
+			VtxoPolicy::ServerHtlcSend(policy) => {
+				ensure!(policy.user_pubkey == change_keypair.public_key(), "user pubkey mismatch");
+				ensure!(policy.payment_hash == invoice.payment_hash(), "payment hash mismatch");
+				// TODO: ensure expiry is not too high? add new bark config to check against?
+				VtxoRequest { amount: amount, policy: policy.into() }
+			},
+			_ => bail!("invalid policy returned from server"),
+		};
+
+		let builder = ArkoorPackageBuilder::new(
+			&inputs, &pubs, pay_req, Some(change_keypair.public_key()),
+		)?;
 
 		ensure!(builder.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",

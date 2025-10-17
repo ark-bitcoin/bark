@@ -17,7 +17,7 @@ use crate::{serde_utils, WalletVtxoInfo};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkInfo {
-	/// the network the server operates on
+	/// The bitcoin network the server operates on
 	pub network: bitcoin::Network,
 	/// The Ark server pubkey
 	pub server_pubkey: PublicKey,
@@ -30,13 +30,13 @@ pub struct ArkInfo {
 	pub vtxo_exit_delta: u16,
 	/// Expiration delta of the VTXO
 	pub vtxo_expiry_delta: u16,
-	/// delta between in-Ark HTLC expiry and LN HTLC expiry
-	pub htlc_expiry_delta: u16,
+	/// The number of blocks after which an HTLC-send VTXO expires once granted.
+	pub htlc_send_expiry_delta: u16,
 	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
-	/// number of confirmations required to register a board vtxo
+	/// The number of confirmations required to register a board vtxo
 	pub required_board_confirmations: usize,
 }
 
@@ -50,7 +50,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			nb_round_nonces: v.nb_round_nonces,
 			vtxo_exit_delta: v.vtxo_exit_delta,
 			vtxo_expiry_delta: v.vtxo_expiry_delta,
-			htlc_expiry_delta: v.htlc_expiry_delta,
+			htlc_send_expiry_delta: v.htlc_send_expiry_delta,
 			max_vtxo_amount: v.max_vtxo_amount,
 			max_arkoor_depth: v.max_arkoor_depth,
 			required_board_confirmations: v.required_board_confirmations,
@@ -251,7 +251,7 @@ mod test {
 				nb_round_nonces: j.nb_round_nonces,
 				vtxo_exit_delta: j.vtxo_exit_delta,
 				vtxo_expiry_delta: j.vtxo_expiry_delta,
-				htlc_expiry_delta: j.htlc_expiry_delta,
+				htlc_send_expiry_delta: j.htlc_send_expiry_delta,
 				max_vtxo_amount: j.max_vtxo_amount,
 				max_arkoor_depth: j.max_arkoor_depth,
 				required_board_confirmations: j.required_board_confirmations,
