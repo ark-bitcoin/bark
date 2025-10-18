@@ -161,6 +161,13 @@ impl BarkPersister for Dummy {
 		}))
 	}
 
+	fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
+			vtxo: Vtxo::from_bytes([])?,
+			state: VtxoState::Spendable,
+		}]))
+	}
+
 	fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::from_bytes([])?,

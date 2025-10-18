@@ -222,6 +222,11 @@ impl BarkPersister for SqliteClient {
 		query::get_wallet_vtxo_by_id(&conn, id)
 	}
 
+	fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		let conn = self.connect()?;
+		query::get_all_vtxos(&conn)
+	}
+
 	/// Get all VTXOs that are in one of the provided states
 	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;

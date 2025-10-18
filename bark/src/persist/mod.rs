@@ -282,6 +282,15 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the lookup fails.
 	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
 
+	/// Fetch all wallet VTXOs in the database.
+	///
+	/// Returns:
+	/// - `Ok(Vec<WalletVtxo>)` possibly empty.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>>;
+
 	/// Fetch all wallet VTXOs whose state matches any of the provided kinds.
 	///
 	/// Parameters:

@@ -660,6 +660,10 @@ impl Wallet {
 		Ok(self.db.get_movements()?)
 	}
 
+	pub fn all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(self.db.get_all_vtxos()?)
+	}
+
 	/// Returns all not spent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(self.db.get_vtxos_by_state(&[
