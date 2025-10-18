@@ -270,7 +270,7 @@ impl TestContext {
 					VtxoTarget { count: 3, amount: btc(1) },
 				],
 				vtxo_target_issue_threshold: 50,
-				vtxo_lifetime: 144 / 2,
+				vtxo_lifetime: 144,
 				vtxo_pre_expiry: 12,
 				vtxo_max_arkoor_depth: 3,
 				issue_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(1),
