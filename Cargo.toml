@@ -64,7 +64,7 @@ futures = {version = "0.3.30"}
 async-trait = "0.1.83"
 pin-project = "1.1.10"
 # bitcoin
-bip39 = { version = "2.0.0", features = [ "rand", "serde" ] }
+bip39 = { version = "2.0.0", features = [ "rand" ] }
 miniscript = "12.3"
 rand = { version = "0.9.0", features = [ "std", "std_rng" ] }
 bdk_wallet = { version = "2.1.0" }
