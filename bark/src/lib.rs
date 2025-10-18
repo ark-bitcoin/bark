@@ -1717,7 +1717,7 @@ impl Wallet {
 		for (vtxo, input) in htlc_vtxos.iter().zip(inputs.iter()) {
 			if let Ok(tx) = self.chain.get_tx(&input.chain_anchor().txid).await {
 				let tx = tx.with_context(|| {
-					format!("input vtxo chain anchor not found: {}", input.chain_anchor().txid)
+					format!("input vtxo chain anchor not found for lightning send htlc vtxo: {}", input.chain_anchor().txid)
 				})?;
 				vtxo.validate(&tx).context("invalid lightning htlc vtxo")?;
 			} else {
@@ -1730,7 +1730,7 @@ impl Wallet {
 			let last_input = inputs.last().context("no inputs provided")?;
 			let tx = self.chain.get_tx(&last_input.chain_anchor().txid).await?;
 			let tx = tx.with_context(|| {
-				format!("input vtxo chain anchor not found: {}", last_input.chain_anchor().txid)
+				format!("input vtxo chain anchor not found for lightning change vtxo: {}", last_input.chain_anchor().txid)
 			})?;
 			change.validate(&tx).context("invalid lightning change vtxo")?;
 		}
@@ -2026,6 +2026,17 @@ impl Wallet {
 		let (outputs, change) = builder.build_vtxos(&cosign_resp, &keypairs, sec_nonces)?;
 		if change.is_some() {
 			bail!("shouldn't have change VTXO, this is a bug");
+		}
+
+		for (vtxo, input) in outputs.iter().zip(inputs.iter()) {
+			if let Ok(tx) = self.chain.get_tx(&input.chain_anchor().txid).await {
+				let tx = tx.with_context(|| {
+					format!("input vtxo chain anchor not found for lightning receive vtxo: {}", input.chain_anchor().txid)
+				})?;
+				vtxo.validate(&tx).context("invalid lightning receive htlc vtxo")?;
+			} else {
+				warn!("We couldn't validate the new VTXOs because of chain source error.");
+			}
 		}
 
 		info!("Got arkoors from lightning: {}",
