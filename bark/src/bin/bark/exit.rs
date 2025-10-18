@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bitcoin::{address, Address, FeeRate};
@@ -261,10 +261,17 @@ pub async fn claim_exits(
 		(Some(_), true) => bail!("Cannot specify both --vtxo and --all"),
 	};
 
+	let address_spk = address.script_pubkey();
 	let psbt = exit.drain_exits(&vtxos, &wallet, address, None).await?;
 	let tx = psbt.extract_tx()?;
 	wallet.chain.broadcast_tx(&tx).await?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
 
+	// Commit the transaction to the wallet if the claim destination is ours
+	if onchain.is_mine(address_spk) {
+		info!("Adding claim transaction to wallet: {}", tx.compute_txid());
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+		onchain.apply_unconfirmed_txs([(tx, timestamp)]);
+	}
 	Ok(())
 }
