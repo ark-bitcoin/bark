@@ -50,8 +50,8 @@ pub struct VtxoInfo {
 	pub arkoor_depth: u16,
 }
 
-impl From<Vtxo> for VtxoInfo {
-	fn from(v: Vtxo) -> VtxoInfo {
+impl<'a> From<&'a Vtxo> for VtxoInfo {
+	fn from(v: &'a Vtxo) -> VtxoInfo {
 		VtxoInfo {
 			id: v.id(),
 			amount: v.amount(),
@@ -64,6 +64,12 @@ impl From<Vtxo> for VtxoInfo {
 			exit_depth: v.exit_depth(),
 			arkoor_depth: v.arkoor_depth(),
 		}
+	}
+}
+
+impl From<Vtxo> for VtxoInfo {
+	fn from(v: Vtxo) -> VtxoInfo {
+		VtxoInfo::from(&v)
 	}
 }
 

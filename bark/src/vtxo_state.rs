@@ -20,6 +20,7 @@
 
 use std::ops::Deref;
 
+use ark::vtxo::VtxoRef;
 use bitcoin::Amount;
 
 use ark::Vtxo;
@@ -126,6 +127,16 @@ pub struct WalletVtxo {
 	pub vtxo: Vtxo,
 	/// The current tracked state for [WalletVtxo::vtxo].
 	pub state: VtxoState,
+}
+
+impl VtxoRef for WalletVtxo {
+	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
+	fn vtxo(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
+}
+
+impl<'a> VtxoRef for &'a WalletVtxo {
+	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
+	fn vtxo(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
 }
 
 impl Deref for WalletVtxo {
