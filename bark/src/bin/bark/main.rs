@@ -7,6 +7,7 @@ mod onchain;
 mod util;
 mod wallet;
 
+use std::cmp::Ordering;
 use std::{cmp, env, process};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,7 +15,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use bark::movement::Movement;
-use bark::vtxo_state::WalletVtxo;
+use bark::vtxo_state::{VtxoStateKind, WalletVtxo};
 use bitcoin::{Amount, FeeRate};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
@@ -223,6 +224,9 @@ enum Command {
 		/// Skip syncing before fetching VTXOs
 		#[arg(long)]
 		no_sync: bool,
+		/// Returns all VTXOs regardless of their state
+		#[arg(long)]
+		all: bool,
 	},
 
 	/// List the wallet's payments
@@ -538,16 +542,27 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				pending_board: balance.pending_board,
 			});
 		},
-		Command::Vtxos { no_sync } => {
+		Command::Vtxos { all, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
 			}
 
-			let vtxos = wallet.vtxos()?.into_iter()
-				.map(|v| wallet_vtxo_to_json(&v)).collect::<Vec<_>>();
+			let mut vtxos = if all {
+				wallet.all_vtxos()?
+			} else {
+				wallet.vtxos()?
+			};
 
-			output_json(&vtxos);
+			vtxos.sort_by(|a, b| {
+				match (a.state.as_kind(), b.state.as_kind()) {
+					(VtxoStateKind::Spent, b) if b != VtxoStateKind::Spent => Ordering::Less,
+					(VtxoStateKind::Spendable, a) if a != VtxoStateKind::Spendable => Ordering::Greater,
+					_ => a.expiry_height().cmp(&b.expiry_height()),
+				}
+			});
+
+			output_json(&vtxos.iter().map(wallet_vtxo_to_json).collect::<Vec<_>>());
 		},
 		Command::Movements { no_sync } => {
 			if !no_sync {
