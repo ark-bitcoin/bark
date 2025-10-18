@@ -19,10 +19,14 @@
 //!
 //! A reference implementation based on BDK is available behind the `onchain_bdk`
 //! cargo feature. Enable it to use the provided [OnchainWallet] implementation.
+//! You can use all features from BDK because [bdk_wallet] is re-exported.
 
 mod chain;
 #[cfg(feature = "onchain_bdk")]
 mod bdk;
+
+#[cfg(feature = "onchain_bdk")]
+pub use bdk_wallet;
 
 pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 pub use crate::onchain::chain::{ChainSourceSpec, ChainSource, ChainSourceClient, FeeRates};
