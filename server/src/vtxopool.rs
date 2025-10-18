@@ -93,7 +93,8 @@ impl Config {
 	///
 	/// We take double the created VTXO lifetime.
 	fn vtxo_key_lifetime(&self) -> Duration {
-		Duration::from_secs(2 * 60 * 10 * self.vtxo_lifetime as u64)
+		// take double as a buffer
+		Duration::from_secs(60 * 10 * self.vtxo_lifetime as u64 * 2)
 	}
 }
 

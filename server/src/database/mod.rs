@@ -579,7 +579,9 @@ impl Db {
 			"DELETE FROM ephemeral_tweak WHERE expires_at < NOW()",
 		).await?;
 		let nb_tweaks = conn.execute(&stmt, &[]).await.context("cleaning ephemeral tweaks")?;
-		slog!(CleanedEphemeralTweaks, nb_tweaks: nb_tweaks as usize);
+		if nb_tweaks > 0 {
+			slog!(CleanedEphemeralTweaks, nb_tweaks: nb_tweaks as usize);
+		}
 		Ok(())
 	}
 }
