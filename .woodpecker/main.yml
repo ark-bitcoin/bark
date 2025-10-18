@@ -27,7 +27,7 @@ steps:
         from_secret: github-mirror-push-key
 
   - name: prechecks
-    image: registry.2nd.dev/build:23
+    image: registry.2nd.dev/build:24
     volumes:
       - /data:/host/data
     commands:

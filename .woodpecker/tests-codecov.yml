@@ -16,7 +16,7 @@ steps:
   - name: check-commits
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
-    image: registry.2nd.dev/build:23
+    image: registry.2nd.dev/build:24
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - git log --oneline | head -n 1
@@ -27,7 +27,7 @@ steps:
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: check-commits
-    image: registry.2nd.dev/build:23
+    image: registry.2nd.dev/build:24
     environment:
       RUST_TEST_THREADS: 1
     commands:
@@ -41,7 +41,7 @@ steps:
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: check-commits
-    image: registry.2nd.dev/build:23
+    image: registry.2nd.dev/build:24
     environment:
       RUST_TEST_THREADS: 1
     commands:
@@ -56,7 +56,7 @@ steps:
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: build
-    image: registry.2nd.dev/build:23
+    image: registry.2nd.dev/build:24
     volumes:
       - /data:/host/data
     environment:
@@ -77,7 +77,7 @@ steps:
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
     depends_on: test-integration-btc29.1
-    image: registry.2nd.dev/build:23
+    image: registry.2nd.dev/build:24
     volumes:
       - /data:/host/data
     commands:

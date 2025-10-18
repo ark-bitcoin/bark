@@ -104,18 +104,19 @@ RUN cd /tmp/ && \
 	export PATH=$PATH:/usr/local/osxcross/bin && \
 	ls -alh /usr/local/osxcross/bin
 
-RUN echo "clone bark" && \
-	git clone -b ci-nix-releases https://codeberg.org/ark-bitcoin/bark.git
-
 #RUN echo "Installing sccache"
 #RUN cargo install --locked sccache
 RUN echo "Installing just"
 RUN cargo install --locked just
-#RUN mkdir -p /root/.cargo && \
-#	echo '[build]\nrustc-wrapper = "sccache"\n[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n[target.i686-pc-windows-gnu]\nlinker = "i686-w64-mingw32-gcc"\n[target.x86_64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang"\nar = "/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar"\n[target.aarch64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang"\nar = "/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar"\n' > /root/.cargo/config.toml
+#RUN mkdir -p /home/nixuser/.cargo && \
+#	echo "[build]\nrustc-wrapper = \"sccache\"\n[target.x86_64-pc-windows-gnu]\nlinker = \"x86_64-w64-mingw32-gcc\"\n[target.i686-pc-windows-gnu]\nlinker = \"i686-w64-mingw32-gcc\"\n[target.x86_64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n[target.aarch64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n" > /home/nixuser/.cargo/config.toml
 RUN mkdir -p /home/nixuser/.cargo && \
-	echo '[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n[target.i686-pc-windows-gnu]\nlinker = "i686-w64-mingw32-gcc"\n[target.x86_64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang"\nar = "/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar"\n[target.aarch64-apple-darwin]\nlinker = "/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang"\nar = "/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar"\n' > /home/nixuser/.cargo/config.toml
+	echo "[target.x86_64-pc-windows-gnu]\nlinker = \"x86_64-w64-mingw32-gcc\"\n[target.i686-pc-windows-gnu]\nlinker = \"i686-w64-mingw32-gcc\"\n[target.x86_64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n[target.aarch64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n" > /home/nixuser/.cargo/config.toml
 RUN cat /home/nixuser/.cargo/config.toml
+
+RUN echo "clone bark" && \
+	git clone -b hold-plugin-upgrade https://codeberg.org/ark-bitcoin/bark.git
+
 RUN echo "pre-build bark" && \
 	cd /tmp && \
 	wget https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz && \
@@ -124,6 +125,8 @@ RUN echo "pre-build bark" && \
 	cargo install cargo-zigbuild && \
 	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
 	cd ~/bark && \
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path server/Cargo.toml && \
+	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \
 	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml && \
 	cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark/Cargo.toml && \
@@ -143,15 +146,7 @@ RUN echo "build bark" && \
 		cargo install --locked --path bark && \
 		cargo install --locked --path server && \
 		cargo run --example dump-sqlite-schema && \
-		cargo run --example dump-default-config && \
 		cargo run --example dump-server-postgres-schema"
-
-RUN echo "releasing bark+server" && \
-	. /etc/profile.d/nix.sh && \
-	cd ~/bark && \
-	nix build .#server && \
-	nix build .#bark
 
 RUN rm -rf /tmp/bark
 RUN echo "Done"
-
