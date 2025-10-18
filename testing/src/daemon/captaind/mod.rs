@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::{Network, Amount};
+use bitcoin::{Amount, Network, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
 use log::{info, trace};
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
 use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer};
-use crate::{secs, Bitcoind, Daemon, DaemonHelper};
+use crate::{secs, Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::LogHandler;
 use crate::constants::env::CAPTAIND_EXEC;
 use crate::util::resolve_path;
@@ -62,15 +62,25 @@ impl WalletStatuses {
 	}
 }
 
+#[derive(Debug)]
+pub enum VtxoPoolState {
+	Ready(Txid),
+	NotReady,
+}
+
+impl Default for VtxoPoolState {
+	fn default() -> Self { VtxoPoolState::NotReady }
+}
+
 #[derive(Debug, Default)]
 pub struct State {
-	vtxopool_ready: bool,
+	vtxopool_state: VtxoPoolState,
 }
 
 impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
-	    if log.is::<FinishedPoolIssuance>() {
-			self.lock().vtxopool_ready = true;
+	    if let Ok(FinishedPoolIssuance { txid, .. }) = log.try_as::<FinishedPoolIssuance>() {
+			self.lock().vtxopool_state = VtxoPoolState::Ready(txid);
 		}
 
 		false
@@ -247,11 +257,12 @@ impl Captaind {
 	}
 
 	/// Wait until the vtxopool is ready
-	pub async fn wait_for_vtxopool(&self) {
+	pub async fn wait_for_vtxopool(&self, ctx: &TestContext) {
 		info!("Waiting for VtxoPool...");
 		loop {
-			if self.inner.state.lock().vtxopool_ready {
-				info!("VtxoPool ready");
+			if let VtxoPoolState::Ready(txid) = self.inner.state.lock().vtxopool_state {
+				info!("VtxoPool ready: waiting for tx {} propagation", txid);
+				ctx.await_transaction(txid).await;
 				return;
 			}
 			tokio::time::sleep(secs(1)).await;

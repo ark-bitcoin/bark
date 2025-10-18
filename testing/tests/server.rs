@@ -1942,7 +1942,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	srv.wait_for_vtxopool().await;
+	srv.wait_for_vtxopool(&ctx).await;
 
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
 

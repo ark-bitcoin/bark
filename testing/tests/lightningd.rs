@@ -389,7 +389,7 @@ async fn bark_can_receive_lightning() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	srv.wait_for_vtxopool().await;
+	srv.wait_for_vtxopool(&ctx).await;
 
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
 
@@ -442,7 +442,7 @@ async fn bark_check_lightning_receive_no_wait() {
 
 	// Start a server and link it to our cln installation
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
-	srv.wait_for_vtxopool().await;
+	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
@@ -507,7 +507,7 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 	let pay_amount = btc(1);
 	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
 
-	srv.wait_for_vtxopool().await;
+	srv.wait_for_vtxopool(&ctx).await;
 
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
@@ -729,7 +729,7 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning() {
 		cloned_lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	srv.wait_for_vtxopool().await;
+	srv.wait_for_vtxopool(&ctx).await;
 
 	bark.lightning_receive(invoice_recv_info.invoice.clone()).wait(10_000).await;
 
