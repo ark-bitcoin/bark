@@ -1,6 +1,6 @@
 
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use anyhow::Context;
 use clap;
 use log::{debug, info};
 
-use ark::{ArkInfo, Vtxo};
+use ark::{ArkInfo, Vtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
 use bark_json::VtxoInfo;
 use server_rpc as rpc;
@@ -30,12 +30,6 @@ pub enum DevCommand {
 		/// the address of the Ark server to inspect (defaults to wallet server)
 		ark_address: String,
 	},
-
-	// ** some wallet-using dev comands
-
-	/// drop the vtxo database
-	#[command(hide = true)]
-	DropVtxos,
 }
 
 pub async fn execute_dev_command(
@@ -43,7 +37,7 @@ pub async fn execute_dev_command(
 	datadir: PathBuf,
 ) -> anyhow::Result<()> {
 	match command {
-		DevCommand::Vtxo(c) => execute_vtxo_command(c)?,
+		DevCommand::Vtxo(c) => execute_vtxo_command(&datadir, c).await?,
 		DevCommand::ArkInfo { ark_address } => {
 			let mut srv = connect_server(ark_address).await
 				.context("failed to connect to server")?;
@@ -52,11 +46,6 @@ pub async fn execute_dev_command(
 			let info = ArkInfo::try_from(res.into_inner())
 				.context("invalid ark info from ark server")?;
 			output_json(&bark_json::cli::ArkInfo::from(info));
-		},
-		DevCommand::DropVtxos => {
-			let (wallet, _onchain) = open_wallet(&datadir).await?;
-			wallet.dangerous_drop_all_vtxos().await?;
-			info!("Dropped all vtxos");
 		},
 	}
 	Ok(())
@@ -70,9 +59,23 @@ pub enum VtxoCommand {
 		/// VTXO encoded in hex
 		vtxo: String,
 	},
+
+	/// Drops a vtxo from the database (dangerous)
+	#[command()]
+	Drop {
+		/// You must use this flag to acknowledge the danger of running this command
+		#[arg(long = "dangerous")]
+		dangerous: bool,
+		/// Drop all vtxos
+		#[arg(long = "all")]
+		all: bool,
+		/// Mention a specific vtxo. You can use it multiple times
+		#[arg(long= "vtxo")]
+		vtxo: Vec<VtxoId>,
+	}
 }
 
-fn execute_vtxo_command(command: VtxoCommand) -> anyhow::Result<()> {
+async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::Result<()> {
 	match command {
 		VtxoCommand::Decode { vtxo } => {
 			let vtxo = Vtxo::deserialize_hex(&vtxo).context("invalid vtxo")?;
@@ -81,6 +84,26 @@ fn execute_vtxo_command(command: VtxoCommand) -> anyhow::Result<()> {
 			let info = VtxoInfo::from(vtxo);
 			output_json(&info);
 		},
+		VtxoCommand::Drop { dangerous, all, vtxo} => {
+			if !dangerous {
+				bail!("You must acknowledge the danger. Run again with --dangerous")
+			}
+
+			let (wallet, _onchain) = open_wallet(&datadir).await
+				.context("Failed to open wallet")?;
+
+			if all {
+				log::info!("Dropping all vtxos");
+				wallet.dangerous_drop_all_vtxos().await
+					.context("Failed to drop vtxos")?;
+			}
+
+			for v in vtxo {
+				log::info!("Dropping vtxo {}", v);
+				wallet.dangerous_drop_vtxo(v).await
+					.context("Failed to drop vtxo")?;
+			}
+		}
 	}
 	Ok(())
 }

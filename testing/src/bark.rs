@@ -460,7 +460,7 @@ impl Bark {
 	}
 
 	pub async fn drop_vtxos(&self) {
-		self.run(["dev", "drop-vtxos"]).await;
+		self.run(["dev", "vtxo", "drop", "--all", "--dangerous"]).await;
 	}
 
 	pub async fn progress_exit(&self) -> json::ExitProgressResponse {
