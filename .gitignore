@@ -13,4 +13,8 @@ flake_finder/
 .idea/
 testing/tmp-pg-data
 
+# VS Code
 .vscode/
+
+# macOS
+.DS_Store
