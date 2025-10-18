@@ -28,7 +28,7 @@ pub enum DevCommand {
 	#[command()]
 	ArkInfo {
 		/// the address of the Ark server to inspect (defaults to wallet server)
-		ark_address: Option<String>,
+		ark_address: String,
 	},
 
 	// ** some wallet-using dev comands
@@ -45,22 +45,17 @@ pub async fn execute_dev_command(
 	match command {
 		DevCommand::Vtxo(c) => execute_vtxo_command(c)?,
 		DevCommand::ArkInfo { ark_address } => {
-			let info = if let Some(address) = ark_address {
-				let mut srv = connect_server(address).await
-					.context("failed to connect to server")?;
-				let res = srv.get_ark_info(rpc::protos::Empty {}).await
-					.context("ark_info request failed")?;
-				ArkInfo::try_from(res.into_inner())
-					.context("invalid ark info from ark server")?
-			} else {
-				let (wallet, _onchain) = open_wallet(&datadir).await?;
-				wallet.ark_info().context("could not connect to ark server")?.clone()
-			};
+			let mut srv = connect_server(ark_address).await
+				.context("failed to connect to server")?;
+			let res = srv.get_ark_info(rpc::protos::Empty {}).await
+				.context("ark_info request failed")?;
+			let info = ArkInfo::try_from(res.into_inner())
+				.context("invalid ark info from ark server")?;
 			output_json(&bark_json::cli::ArkInfo::from(info));
 		},
 		DevCommand::DropVtxos => {
 			let (wallet, _onchain) = open_wallet(&datadir).await?;
-			wallet.drop_vtxos().await?;
+			wallet.dangerous_drop_all_vtxos().await?;
 			info!("Dropped all vtxos");
 		},
 	}

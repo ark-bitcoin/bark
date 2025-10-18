@@ -56,7 +56,7 @@ use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage, 
 use ark::musig;
 use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
-use ark::vtxo::{PubkeyVtxoPolicy, VtxoPolicyKind};
+use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy, VtxoPolicyKind};
 use server_rpc::{self as rpc, protos, ServerConnection, TryFromBytes};
 use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
 
@@ -789,7 +789,8 @@ impl Wallet {
 	/// Returns a [RoundId] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
 		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.vtxo).collect::<Vec<_>>();
+			.map(|v| v.id())
+			.collect::<Vec<_>>();
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
@@ -884,7 +885,7 @@ impl Wallet {
 
 	/// Drop all VTXOs from the database. This is destructive and will result in a loss of funds.
 	//TODO(stevenroose) improve the way we expose dangerous methods
-	pub async fn drop_vtxos(&self) -> anyhow::Result<()> {
+	pub async fn dangerous_drop_all_vtxos(&self) -> anyhow::Result<()> {
 		warn!("Dropping all vtxos from the db...");
 		for vtxo in self.vtxos()? {
 			self.db.remove_vtxo(vtxo.id())?;
@@ -992,17 +993,23 @@ impl Wallet {
 	}
 
 	/// Registers a board to the Ark server
-	async fn register_board(&self, vtxo_id: VtxoId) -> anyhow::Result<Board> {
+	async fn register_board(&self, vtxo: impl VtxoRef) -> anyhow::Result<Board> {
+		let vtxo_id = vtxo.vtxo_id();
 		trace!("Attempting to register board {} to server", vtxo_id);
 		let mut srv = self.require_server()?;
 
 		// Get the vtxo and funding transaction from the database
-		let vtxo = self.db.get_wallet_vtxo(vtxo_id)?
-			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
+		let vtxo = match vtxo.vtxo() {
+			Some(v) => v,
+			None => {
+				&self.db.get_wallet_vtxo(vtxo_id)?
+					.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?
+			},
+		};
 
 		// Register the vtxo with the server
 		srv.client.register_board_vtxo(protos::BoardVtxoRequest {
-			board_vtxo: vtxo.vtxo.serialize(),
+			board_vtxo: vtxo.serialize(),
 		}).await.context("error registering board with the Ark server")?;
 
 		// Remember that we have stored the vtxo
@@ -1010,11 +1017,11 @@ impl Wallet {
 		let allowed_states = &[VtxoStateKind::UnregisteredBoard, VtxoStateKind::Spendable];
 		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
 
-		let funding_txid = vtxo.vtxo.chain_anchor().txid;
+		let funding_txid = vtxo.chain_anchor().txid;
 
 		Ok(Board {
 			funding_txid: funding_txid,
-			vtxos: vec![vtxo.vtxo.into()],
+			vtxos: vec![vtxo.into()],
 		})
 	}
 
@@ -1203,11 +1210,24 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn offboard(
+	async fn offboard<V: VtxoRef>(
 		&mut self,
-		vtxos: Vec<Vtxo>,
+		vtxos: impl IntoIterator<Item = V>,
 		destination: ScriptBuf,
 	) -> anyhow::Result<Offboard> {
+		let vtxos = {
+			let vtxos = vtxos.into_iter();
+			let mut ret = Vec::with_capacity(vtxos.size_hint().0);
+			for v in vtxos {
+				let vtxo = match v.vtxo() {
+					Some(v) => v.clone(),
+					None => self.get_vtxo_by_id(v.vtxo_id()).context("vtxo not found")?.vtxo,
+				};
+				ret.push(vtxo);
+			}
+			ret
+		};
+
 		if vtxos.is_empty() {
 			bail!("no VTXO to offboard");
 		}
@@ -1221,25 +1241,26 @@ impl Wallet {
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
 	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
-		let input_vtxos = self.spendable_vtxos()?.into_iter()
-			.map(|v| v.vtxo).collect();
-
+		let input_vtxos = self.spendable_vtxos()?;
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
 	/// Offboard the given VTXOs to a given [bitcoin::Address].
-	pub async fn offboard_vtxos(
+	pub async fn offboard_vtxos<V: VtxoRef>(
 		&mut self,
-		vtxos: Vec<VtxoId>,
+		vtxos: impl IntoIterator<Item = V>,
 		address: bitcoin::Address,
 	) -> anyhow::Result<Offboard> {
 		let input_vtxos =  vtxos
-				.into_iter()
-				.map(|vtxoid| match self.db.get_wallet_vtxo(vtxoid)? {
+			.into_iter()
+			.map(|v| {
+				let id = v.vtxo_id();
+				match self.db.get_wallet_vtxo(id)? {
 					Some(vtxo) => Ok(vtxo.vtxo),
-					_ => bail!("cannot find requested vtxo: {}", vtxoid),
-				})
-				.collect::<anyhow::Result<_>>()?;
+					_ => bail!("cannot find requested vtxo: {}", id),
+				}
+			})
+			.collect::<anyhow::Result<Vec<_>>>()?;
 
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
@@ -1249,19 +1270,29 @@ impl Wallet {
 	///
 	/// Returns the [RoundId] of the round if a successful refresh occurred.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
-	pub async fn refresh_vtxos(&self, mut vtxos: Vec<Vtxo>) -> anyhow::Result<Option<RoundId>> {
+	pub async fn refresh_vtxos<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+	) -> anyhow::Result<Option<RoundId>> {
+		let vtxos = {
+			let mut ret = HashMap::new();
+			for v in vtxos {
+				let id = v.vtxo_id();
+				let vtxo = self.get_vtxo_by_id(id)
+					.with_context(|| format!("vtxo with id {} not found", id))?;
+				if !ret.insert(id, vtxo).is_none() {
+					bail!("duplicate VTXO id: {}", id);
+				}
+			}
+			ret
+		};
+
 		if vtxos.is_empty() {
 			info!("Skipping refresh since no VTXOs are provided.");
 			return Ok(None);
 		}
 
-		vtxos.sort_unstable();
-
-		if let Some(dup) = vtxos.windows(2).find(|w| w[0].id() == w[1].id()) {
-			bail!("duplicate VTXO id detected: {}", dup[0].id());
-		}
-
-		let total_amount = vtxos.iter().map(|v| v.amount()).sum();
+		let total_amount = vtxos.values().map(|v| v.vtxo.amount()).sum();
 
 		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
 
@@ -1272,7 +1303,7 @@ impl Wallet {
 		};
 
 		let participation = DesiredRoundParticipation::Funded(RoundParticipation {
-			inputs: vtxos.to_vec(),
+			inputs: vtxos.into_values().map(|v| v.vtxo).collect(),
 			outputs: vec![StoredVtxoRequest::from_parts(req.clone(), VtxoState::Spendable)],
 			offboards: Vec::new(),
 		});
@@ -2000,7 +2031,11 @@ impl Wallet {
 	///   current chain tip.
 	/// * The payment hash must be from an invoice previously generated using
 	///   [Wallet::bolt11_invoice].
-	pub async fn check_ln_receive(&self, payment_hash: PaymentHash, wait: bool) -> anyhow::Result<Vec<WalletVtxo>> {
+	pub async fn check_ln_receive(
+		&self,
+		payment_hash: PaymentHash,
+		wait: bool,
+	) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut srv = self.require_server()?;
 
 		info!("Waiting for payment...");
@@ -2120,7 +2155,11 @@ impl Wallet {
 	///
 	/// * The payment hash must be from an invoice previously generated using
 	///   [Wallet::bolt11_invoice].
-	pub async fn check_and_claim_ln_receive(&self, payment_hash: PaymentHash, wait: bool) -> anyhow::Result<()> {
+	pub async fn check_and_claim_ln_receive(
+		&self,
+		payment_hash: PaymentHash,
+		wait: bool,
+	) -> anyhow::Result<()> {
 		let wallet_vtxos = self.check_ln_receive(payment_hash, wait).await?;
 		self.claim_ln_receive(payment_hash, &wallet_vtxos).await
 	}

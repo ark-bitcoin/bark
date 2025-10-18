@@ -983,6 +983,35 @@ impl std::hash::Hash for Vtxo {
 	}
 }
 
+/// Implemented on anything that is kinda a [Vtxo]
+pub trait VtxoRef {
+	/// The [VtxoId] of the VTXO
+	fn vtxo_id(&self) -> VtxoId;
+
+	/// If the [Vtxo] can be provided, provides it
+	fn vtxo(&self) -> Option<&Vtxo>;
+}
+
+impl VtxoRef for VtxoId {
+	fn vtxo_id(&self) -> VtxoId { *self }
+	fn vtxo(&self) -> Option<&Vtxo> { None }
+}
+
+impl<'a> VtxoRef for &'a VtxoId {
+	fn vtxo_id(&self) -> VtxoId { **self }
+	fn vtxo(&self) -> Option<&Vtxo> { None }
+}
+
+impl VtxoRef for Vtxo {
+	fn vtxo_id(&self) -> VtxoId { self.id() }
+	fn vtxo(&self) -> Option<&Vtxo> { Some(self) }
+}
+
+impl<'a> VtxoRef for &'a Vtxo {
+	fn vtxo_id(&self) -> VtxoId { self.id() }
+	fn vtxo(&self) -> Option<&Vtxo> { Some(*self) }
+}
+
 /// The byte used to encode the [VtxoPolicy::Pubkey] output type.
 const VTXO_POLICY_PUBKEY: u8 = 0x00;
 

@@ -593,7 +593,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
 			};
 
-			let vtxos = vtxos.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
+			let vtxos = vtxos.into_iter().map(|v| v.id()).collect::<Vec<_>>();
 
 			info!("Refreshing {} vtxos...", vtxos.len());
 			let round_id = wallet.refresh_vtxos(vtxos).await?;
