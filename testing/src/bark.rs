@@ -20,7 +20,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use bark_json::InvoiceInfo;
+use bark_json::{InvoiceInfo, WalletVtxoInfo};
 use bark::onchain::ChainSourceSpec;
 use bark::persist::models::LightningReceive;
 use bark::UtxoInfo;
@@ -273,12 +273,12 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn vtxos(&self) -> json::WalletVtxos {
+	pub async fn vtxos(&self) -> Vec<WalletVtxoInfo> {
 		let res = self.run(["vtxos"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn vtxos_no_sync(&self) -> json::WalletVtxos {
+	pub async fn vtxos_no_sync(&self) -> Vec<WalletVtxoInfo> {
 		let res = self.run(["vtxos", "--no-sync"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}

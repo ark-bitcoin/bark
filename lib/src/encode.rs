@@ -378,13 +378,13 @@ pub mod serde {
 	impl<'de, T: ProtocolEncoding> Deserialize<'de> for DeWrapper<T> {
 		fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
 			if d.is_human_readable() {
-					let s = <Cow<'de, str>>::deserialize(d)?;
-					Ok(DeWrapper(ProtocolEncoding::deserialize_hex(s.as_ref())
-							.map_err(serde::de::Error::custom)?))
+				let s = <Cow<'de, str>>::deserialize(d)?;
+				Ok(DeWrapper(ProtocolEncoding::deserialize_hex(s.as_ref())
+					.map_err(serde::de::Error::custom)?))
 			} else {
-					let b = <Cow<'de, [u8]>>::deserialize(d)?;
-					Ok(DeWrapper(ProtocolEncoding::deserialize(b.as_ref())
-							.map_err(serde::de::Error::custom)?))
+				let b = <Cow<'de, [u8]>>::deserialize(d)?;
+				Ok(DeWrapper(ProtocolEncoding::deserialize(b.as_ref())
+					.map_err(serde::de::Error::custom)?))
 			}
 		}
 	}
