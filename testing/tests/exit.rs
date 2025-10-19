@@ -13,7 +13,7 @@ use server_rpc::protos;
 
 use ark_testing::{btc, sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
-use ark_testing::daemon::captaind;
+use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::exit::complete_exit;
 
 #[tokio::test]
@@ -450,29 +450,24 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> server_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
-
 		async fn finish_lightning_payment(
-			&mut self,
-			_req: protos::SignedLightningPaymentDetails,
+			&self, _upstream: &mut ArkClient, _req: protos::SignedLightningPaymentDetails,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
 		}
 
 		async fn revoke_lightning_payment(
-			&mut self,
-			_req: protos::RevokeLightningPaymentRequest,
+			&self, _upstream: &mut ArkClient, _req: protos::RevokeLightningPaymentRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -514,15 +509,12 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> server_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
-
 		async fn finish_lightning_payment(
-			&mut self,
-			_req: protos::SignedLightningPaymentDetails,
+			&self, _upstream: &mut ArkClient, _req: protos::SignedLightningPaymentDetails,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			Ok(protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),
@@ -533,7 +525,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		}
 
 		async fn check_lightning_payment(
-			&mut self,
+			&self, _upstream: &mut ArkClient,
 			_req: protos::CheckLightningPaymentRequest,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			Ok(protos::LightningPaymentResult {
@@ -545,15 +537,14 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		}
 
 		async fn revoke_lightning_payment(
-			&mut self,
+			&self, _upstream: &mut ArkClient,
 			_req: protos::RevokeLightningPaymentRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);

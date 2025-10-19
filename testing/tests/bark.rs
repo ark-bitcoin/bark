@@ -14,11 +14,11 @@ use tokio::fs;
 
 use ark::{ProtocolEncoding, Vtxo};
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
-use server_rpc::{self as rpc, protos};
+use server_rpc::protos;
 
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
-use ark_testing::daemon::captaind;
+use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{
 	get_bark_chain_source_from_env, FutureExt, TestContextChainSource, ToAltString,
 };
@@ -766,14 +766,14 @@ async fn reject_arkoor_with_bad_signature() {
 	let ctx = TestContext::new("bark/reject_arkoor_with_bad_signature").await;
 
 	#[derive(Clone)]
-	struct InvalidSigProxy(rpc::ArkServiceClient<tonic::transport::Channel>);
+	struct InvalidSigProxy;
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for InvalidSigProxy {
-		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
-
-		async fn empty_arkoor_mailbox(&mut self, req: protos::ArkoorVtxosRequest) -> Result<protos::ArkoorVtxosResponse, tonic::Status>  {
-			let response = self.upstream().empty_arkoor_mailbox(req).await?.into_inner();
+		async fn empty_arkoor_mailbox(
+			&self, upstream: &mut ArkClient, req: protos::ArkoorVtxosRequest,
+		) -> Result<protos::ArkoorVtxosResponse, tonic::Status> {
+			let response = upstream.empty_arkoor_mailbox(req).await?.into_inner();
 			let mut vtxo = Vtxo::deserialize(&response.packages[0].vtxos[0]).unwrap();
 			vtxo.invalidate_final_sig();
 			Ok(protos::ArkoorVtxosResponse {
@@ -793,7 +793,7 @@ async fn reject_arkoor_with_bad_signature() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// create a proxy to return an arkoor with invalid signatures
-	let proxy = captaind::proxy::ArkRpcProxyServer::start(InvalidSigProxy(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(InvalidSigProxy).await;
 
 	// create a third wallet to receive the invalid arkoor
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
@@ -817,20 +817,17 @@ async fn second_round_attempt() {
 
 	/// This proxy will drop the very first request to provide_forfeit_signatures.
 	#[derive(Clone)]
-	struct Proxy(rpc::ArkServiceClient<tonic::transport::Channel>, Arc<AtomicBool>);
+	struct Proxy(Arc<AtomicBool>);
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
-
 		async fn provide_forfeit_signatures(
-			&mut self,
-			req: protos::ForfeitSignaturesRequest,
+			&self, upstream: &mut ArkClient, req: protos::ForfeitSignaturesRequest,
 		) -> Result<protos::Empty, tonic::Status> {
-			if self.1.swap(false, atomic::Ordering::Relaxed) {
+			if self.0.swap(false, atomic::Ordering::Relaxed) {
 				Ok(protos::Empty {})
 			} else {
-				Ok(self.0.provide_forfeit_signatures(req).await?.into_inner())
+				Ok(upstream.provide_forfeit_signatures(req).await?.into_inner())
 			}
 		}
 	}
@@ -844,8 +841,7 @@ async fn second_round_attempt() {
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
-	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
-	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy(Arc::new(AtomicBool::new(true)))).await;
 
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
 	bark1.send_oor(bark2.address().await, sat(200_000)).await;
@@ -1011,26 +1007,24 @@ async fn bark_recover_unregistered_board() {
 
 	/// This proxy will drop the very first request to register_board
 	#[derive(Clone)]
-	struct Proxy(rpc::ArkServiceClient<tonic::transport::Channel>, Arc<AtomicBool>);
+	struct Proxy(Arc<AtomicBool>);
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
-
 		async fn register_board_vtxo(
-			&mut self,
-			req: protos::BoardVtxoRequest,
+			&self, upstream: &mut ArkClient, req: protos::BoardVtxoRequest,
 		) -> Result<protos::Empty, tonic::Status> {
-			if self.1.swap(false, atomic::Ordering::Relaxed) {
-				Err(tonic::Status::from_error("Nope! I do not register on the first attempt!".into()))
+			if self.0.swap(false, atomic::Ordering::Relaxed) {
+				Err(tonic::Status::from_error(
+					"Nope! I do not register on the first attempt!".into(),
+				))
 			} else {
-				Ok(self.0.register_board_vtxo(req).await?.into_inner())
+				Ok(upstream.register_board_vtxo(req).await?.into_inner())
 			}
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(AtomicBool::new(true)));
-	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy(Arc::new(AtomicBool::new(true)))).await;
 
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;
 	// Only asks server to cosign, not register a board.

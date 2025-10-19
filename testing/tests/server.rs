@@ -38,8 +38,7 @@ use server_rpc::protos;
 use ark_testing::{Captaind, TestContext, btc, sat, secs, Bark};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
-use ark_testing::daemon::captaind;
-use ark_testing::daemon::captaind::proxy::ArkRpcProxyServer;
+use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ReceiverExt};
 
 use ark_testing::exit::complete_exit;
@@ -415,19 +414,19 @@ async fn full_round() {
 	/// Once it reaches MAX_OUTPUTS, it asserts the next one fails.
 	/// Once that happened succesfully, it fullfils the result channel.
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient, Arc<Mutex<usize>>, Arc<mpsc::UnboundedSender<tonic::Status>>);
+	struct Proxy(Arc<Mutex<usize>>, Arc<mpsc::UnboundedSender<tonic::Status>>);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn submit_payment(&mut self, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			let mut lock = self.1.lock().await;
-			let res = self.upstream().submit_payment(req).await;
+		async fn submit_payment(
+			&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			let mut lock = self.0.lock().await;
+			let res = upstream.submit_payment(req).await;
 			// the last bark should fail being registered
 			let ret = if *lock == NB_BARKS-1 {
 				let err = res.expect_err("must error at max");
 				trace!("proxy: NOK: {}", err);
-				self.2.send(err.clone()).unwrap();
+				self.1.send(err.clone()).unwrap();
 				Err(err)
 			} else {
 				trace!("proxy: OK (nb={})", *lock);
@@ -438,8 +437,8 @@ async fn full_round() {
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await, Arc::new(Mutex::new(0)), Arc::new(tx));
-	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
+	let proxy = Proxy(Arc::new(Mutex::new(0)), Arc::new(tx));
+	let proxy = srv.get_proxy_rpc(proxy).await;
 	futures::future::join_all(barks.iter().map(|bark| bark.set_ark_url(&proxy))).await;
 
 	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
@@ -461,18 +460,18 @@ async fn double_spend_oor() {
 
 	/// This proxy will always duplicate OOR requests and store the latest request in the mutex.
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient, Arc<Mutex<Option<protos::ArkoorPackageCosignRequest>>>);
+	struct Proxy(Arc<Mutex<Option<protos::ArkoorPackageCosignRequest>>>);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn request_arkoor_package_cosign(&mut self, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
+		async fn request_arkoor_package_cosign(
+			&self, upstream: &mut ArkClient, req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			let (mut c1, mut c2) = (upstream.clone(), upstream.clone());
 			let (res1, res2) = tokio::join!(
 				c1.request_arkoor_package_cosign(req.clone()),
 				c2.request_arkoor_package_cosign(req.clone()),
 			);
-			self.1.lock().await.replace(req);
+			self.0.lock().await.replace(req);
 			match (res1, res2) {
 				(Ok(_), Ok(_)) => panic!("one of them should fail"),
 				(Err(_), Err(_)) => panic!("one of them should work"),
@@ -490,8 +489,7 @@ async fn double_spend_oor() {
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let last_req = Arc::new(Mutex::new(None));
-	let proxy = Proxy(srv.get_public_rpc().await, last_req.clone());
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy(last_req.clone())).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -518,15 +516,15 @@ async fn double_spend_round() {
 
 	/// This proxy will duplicate all round payment submission requests.
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+		async fn submit_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
 			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
 
-			let (mut c1, mut c2) = (self.0.clone(), self.0.clone());
+			let (mut c1, mut c2) = (upstream.clone(), upstream.clone());
 			let res1 = c1.submit_payment(req.clone()).await;
 			// avoid duplicate cosign key error
 			req.vtxo_requests[0].cosign_pubkey = Vec::<u8>::from_hex(
@@ -544,7 +542,7 @@ async fn double_spend_round() {
 	}
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = ArkRpcProxyServer::start(Proxy(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -565,36 +563,38 @@ async fn test_participate_round_wrong_step() {
 
 	/// This proxy will send a `provide_vtxo_signatures` req instead of `submit_payment` one
 	#[derive(Clone)]
-	struct ProxyA(captaind::ArkClient);
+	struct ProxyA;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for ProxyA {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-		async fn submit_payment(&mut self, _req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
-			self.0.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
+		async fn submit_payment(
+			&self, upstream: &mut ArkClient, _req: protos::SubmitPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			upstream.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
 				pubkey: RANDOM_PK.serialize().to_vec(), signatures: vec![]
 			}).await?;
 			Ok(protos::Empty{})
 		}
 	}
 
-	let proxy = ArkRpcProxyServer::start(ProxyA(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(ProxyA).await;
 	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
 
 	/// This proxy will send a `provide_forfeit_signatures` req instead of `provide_vtxo_signatures` one
 	#[derive(Clone)]
-	struct ProxyB(captaind::ArkClient);
+	struct ProxyB;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for ProxyB {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-		async fn provide_vtxo_signatures(&mut self, _req: protos::VtxoSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
-			self.0.provide_forfeit_signatures(protos::ForfeitSignaturesRequest { signatures: vec![] }).await?;
+		async fn provide_vtxo_signatures(
+			&self, upstream: &mut ArkClient, _req: protos::VtxoSignaturesRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			upstream.provide_forfeit_signatures(protos::ForfeitSignaturesRequest { signatures: vec![] }).await?;
 			Ok(protos::Empty{})
 		}
 	}
 
-	let proxy = ArkRpcProxyServer::start(ProxyB(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(ProxyB).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
 	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
@@ -602,19 +602,20 @@ async fn test_participate_round_wrong_step() {
 
 	/// This proxy will send a `submit_payment` req instead of `provide_forfeit_signatures` one
 	#[derive(Clone)]
-	struct ProxyC(captaind::ArkClient);
+	struct ProxyC;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for ProxyC {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-		async fn provide_forfeit_signatures(&mut self, _req: protos::ForfeitSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
-			self.0.submit_payment(protos::SubmitPaymentRequest {
+		async fn provide_forfeit_signatures(
+			&self, upstream: &mut ArkClient, _req: protos::ForfeitSignaturesRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			upstream.submit_payment(protos::SubmitPaymentRequest {
 				input_vtxos: vec![], vtxo_requests: vec![], offboard_requests: vec![]
 			}).await?;
 			Ok(protos::Empty{})
 		}
 	}
 
-	let proxy = ArkRpcProxyServer::start(ProxyC(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(ProxyC).await;
 	bark.set_ark_url(&proxy).await;
 	bark.timeout = None;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
@@ -626,19 +627,19 @@ async fn spend_unregistered_board() {
 	let ctx = TestContext::new("server/spend_unregistered_board").await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn register_board_vtxo(&mut self, _req: protos::BoardVtxoRequest) -> Result<protos::Empty, tonic::Status> {
+		async fn register_board_vtxo(
+			&self, _upstream: &mut ArkClient, _req: protos::BoardVtxoRequest,
+		) -> Result<protos::Empty, tonic::Status> {
 			// drop the request
 			Ok(protos::Empty{})
 		}
 	}
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = ArkRpcProxyServer::start(Proxy(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -657,17 +658,15 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let ctx = TestContext::new("server/reject_revocation_on_successful_lightning_payment").await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
 		async fn finish_lightning_payment(
-			&mut self, req: protos::SignedLightningPaymentDetails,
+			&self, upstream: &mut ArkClient, req: protos::SignedLightningPaymentDetails,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			trace!("ArkRpcProxy: Calling finish_lightning_payment.");
 			// Wait until payment is successful then we drop update so client asks for revocation
-			let res = self.upstream().finish_lightning_payment(req).await?.into_inner();
+			let res = upstream.finish_lightning_payment(req).await?.into_inner();
 			if res.payment_preimage().len() > 0 {
 				trace!("ArkRpcProxy: Received preimage which we are 'dropping' for this test.");
 			} else {
@@ -692,7 +691,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
 
-	let proxy = ArkRpcProxyServer::start(Proxy(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
@@ -846,15 +845,15 @@ async fn bad_round_input() {
 }
 
 #[derive(Clone)]
-struct NoFinishRoundProxy(captaind::ArkClient);
+struct NoFinishRoundProxy;
 #[tonic::async_trait]
 impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
-	fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-	async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+	async fn subscribe_rounds(
+		&self, upstream: &mut ArkClient, req: protos::Empty,
+	) -> Result<Box<
 		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>, tonic::Status> {
-		let s = self.upstream().subscribe_rounds(req).await?.into_inner();
+		let s = upstream.subscribe_rounds(req).await?.into_inner();
 		Ok(Box::new(s.map(|r| match r {
 			Ok(protos::RoundEvent { event: Some(protos::round_event::Event::Finished(_))}) => {
 				Err(tonic::Status::internal("can't have it!"))
@@ -869,7 +868,7 @@ async fn claim_forfeit_connector_chain() {
 	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = ArkRpcProxyServer::start(NoFinishRoundProxy(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(NoFinishRoundProxy).await;
 
 	// To make sure we have a chain of connector, we make a bunch of inputs
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(5_000_000)).await;
@@ -933,7 +932,7 @@ async fn claim_forfeit_round_connector() {
 	let ctx = TestContext::new("server/claim_forfeit_round_connector").await;
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = ArkRpcProxyServer::start(NoFinishRoundProxy(srv.get_public_rpc().await)).await;
+	let proxy = srv.get_proxy_rpc(NoFinishRoundProxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -1023,23 +1022,21 @@ async fn register_unconfirmed_board() {
 
 	#[derive(Clone)]
 	struct Proxy {
-		pub upstream: captaind::ArkClient,
 		pub unconfirmed_board_request: protos::BoardVtxoRequest,
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
-
-		async fn register_board_vtxo(&mut self, _req: protos::BoardVtxoRequest) -> Result<protos::Empty, tonic::Status> {
-			Ok(self.upstream().register_board_vtxo(self.unconfirmed_board_request.clone()).await?.into_inner())
+		async fn register_board_vtxo(
+			&self, upstream: &mut ArkClient, _req: protos::BoardVtxoRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			Ok(upstream.register_board_vtxo(self.unconfirmed_board_request.clone()).await?.into_inner())
 		}
 	}
 
 	let proxy = Proxy {
-		upstream: srv.get_public_rpc().await,
 		unconfirmed_board_request,
 	};
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1057,19 +1054,18 @@ async fn reject_dust_board_cosign() {
 	let srv = ctx.new_captaind("server", None).await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn request_board_cosign(&mut self, mut req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
+		async fn request_board_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::BoardCosignRequest,
+		) -> Result<protos::BoardCosignResponse, tonic::Status> {
 			req.amount = P2TR_DUST_SAT - 1;
-			Ok(self.upstream().request_board_cosign(req).await?.into_inner())
+			Ok(upstream.request_board_cosign(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	let err = bark.try_board_all().await.unwrap_err();
@@ -1093,19 +1089,18 @@ async fn reject_dust_vtxo_request() {
 
 	#[derive(Clone)]
 	struct Proxy {
-		pub upstream: captaind::ArkClient,
 		pub vtxo: WalletVtxoInfo,
 		pub wallet: Arc<Wallet>,
 		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
-
-		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+		async fn subscribe_rounds(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<Box<
 			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 		>, tonic::Status> {
-			let stream = self.upstream().subscribe_rounds(req).await?.into_inner();
+			let stream = upstream.subscribe_rounds(req).await?.into_inner();
 
 			let shared = self.challenge.clone();
 
@@ -1121,7 +1116,9 @@ async fn reject_dust_vtxo_request() {
 		}
 
 		// Proxy alters the request to make it vtxo request subdust but correctly signed
-		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+		async fn submit_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
 			req.vtxo_requests[0].vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
 
 			let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
@@ -1145,17 +1142,16 @@ async fn reject_dust_vtxo_request() {
 
 			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
 
-			Ok(self.upstream().submit_payment(req).await?.into_inner())
+			Ok(upstream.submit_payment(req).await?.into_inner())
 		}
 	}
 
 	let proxy = Proxy {
-		upstream: srv.get_public_rpc().await,
 		vtxo: vtxo.clone(),
 		wallet: Arc::new(bark_client),
 		challenge: Arc::new(Mutex::new(None)),
 	};
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1181,19 +1177,18 @@ async fn reject_dust_offboard_request() {
 
 	#[derive(Clone)]
 	struct Proxy {
-		pub upstream: captaind::ArkClient,
 		pub vtxo: WalletVtxoInfo,
 		pub wallet: Arc<Wallet>,
 		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
-
-		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+		async fn subscribe_rounds(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<Box<
 			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 		>, tonic::Status> {
-			let stream = self.upstream().subscribe_rounds(req).await?.into_inner();
+			let stream = upstream.subscribe_rounds(req).await?.into_inner();
 
 			let shared = self.challenge.clone();
 
@@ -1209,7 +1204,9 @@ async fn reject_dust_offboard_request() {
 		}
 
 		// Proxy alters the request to make it vtxo request subdust but correctly signed
-		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+		async fn submit_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
 			req.offboard_requests[0].amount = P2TR_DUST_SAT - 1;
 
 			let mut offboard_requests = Vec::with_capacity(req.offboard_requests.len());
@@ -1233,17 +1230,16 @@ async fn reject_dust_offboard_request() {
 
 			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
 
-			Ok(self.upstream().submit_payment(req).await?.into_inner())
+			Ok(upstream.submit_payment(req).await?.into_inner())
 		}
 	}
 
 	let proxy = Proxy {
-		upstream: srv.get_public_rpc().await,
 		vtxo: vtxo.clone(),
 		wallet: Arc::new(bark_client),
 		challenge: Arc::new(Mutex::new(None)),
 	};
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1260,19 +1256,18 @@ async fn reject_dust_arkoor_cosign() {
 	let srv = ctx.new_captaind("server", None).await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn request_arkoor_package_cosign(&mut self, mut req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		async fn request_arkoor_package_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.arkoors[0].outputs[0].amount = P2TR_DUST.to_sat() - 1;
-			Ok(self.upstream().request_arkoor_package_cosign(req).await?.into_inner())
+			Ok(upstream.request_arkoor_package_cosign(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	bark.board_all_and_confirm_and_register(&ctx).await;
@@ -1291,21 +1286,18 @@ async fn reject_dust_bolt11_payment() {
 	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn start_lightning_payment(&mut self, mut req: protos::StartLightningPaymentRequest)
-			-> Result<protos::StartLightningPaymentResponse, tonic::Status>
-		{
+		async fn start_lightning_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::StartLightningPaymentRequest,
+		) -> Result<protos::StartLightningPaymentResponse, tonic::Status> {
 			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
-			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())
+			Ok(upstream.start_lightning_payment(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	bark.board_all_and_confirm_and_register(&ctx).await;
@@ -1327,19 +1319,18 @@ async fn server_refuse_claim_invoice_not_settled() {
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn claim_lightning_receive(&mut self, mut req: protos::ClaimLightningReceiveRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		async fn claim_lightning_receive(
+			&self, upstream: &mut ArkClient, mut req: protos::ClaimLightningReceiveRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.payment_preimage = vec![1; 32];
-			Ok(self.upstream().claim_lightning_receive(req).await?.into_inner())
+			Ok(upstream.claim_lightning_receive(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(3)).await);
@@ -1422,20 +1413,19 @@ async fn server_refuse_too_deep_arkoor_input() {
 	let ctx = TestContext::new("server/server_refuse_too_deep_arkoor_input").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn get_ark_info(&mut self, req: protos::Empty) -> Result<protos::ArkInfo, tonic::Status>  {
-			let mut info = self.upstream().get_ark_info(req).await?.into_inner();
+		async fn get_ark_info(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<protos::ArkInfo, tonic::Status>  {
+			let mut info = upstream.get_ark_info(req).await?.into_inner();
 			info.max_arkoor_depth = 10;
 			Ok(info)
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	let bark1 = ctx.new_bark_with_funds("bark1", &proxy.address, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
@@ -1479,19 +1469,18 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient, String);
+	struct Proxy(String);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn finish_lightning_payment(&mut self, mut req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
-			req.invoice = self.1.to_string();
-			Ok(self.upstream().finish_lightning_payment(req).await?.into_inner())
+		async fn finish_lightning_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::SignedLightningPaymentDetails,
+		) -> Result<protos::LightningPaymentResult, tonic::Status> {
+			req.invoice = self.0.clone();
+			Ok(upstream.finish_lightning_payment(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await, dummy_invoice);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy(dummy_invoice)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
@@ -1513,19 +1502,18 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn finish_lightning_payment(&mut self, mut req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
+		async fn finish_lightning_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::SignedLightningPaymentDetails,
+		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			req.htlc_vtxo_ids.pop();
-			Ok(self.upstream().finish_lightning_payment(req).await?.into_inner())
+			Ok(upstream.finish_lightning_payment(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
@@ -1687,19 +1675,18 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	assert_eq!(bark.onchain_balance().await, sat(596_429));
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient, VtxoId);
+	struct Proxy(VtxoId);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn request_arkoor_package_cosign(&mut self, mut req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			req.arkoors[0].input_id = self.1.to_bytes().to_vec();
-			Ok(self.upstream().request_arkoor_package_cosign(req).await?.into_inner())
+		async fn request_arkoor_package_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			req.arkoors[0].input_id = self.0.to_bytes().to_vec();
+			Ok(upstream.request_arkoor_package_cosign(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await, vtxo_a.id);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy(vtxo_a.id)).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1734,21 +1721,18 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	assert_eq!(bark.onchain_balance().await, sat(596_429));
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient, VtxoId);
+	struct Proxy(VtxoId);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn start_lightning_payment(&mut self, mut req: protos::StartLightningPaymentRequest)
-			-> Result<protos::StartLightningPaymentResponse, tonic::Status>
-		{
-			req.input_vtxo_ids = vec![self.1.to_bytes().to_vec()];
-			Ok(self.upstream().start_lightning_payment(req).await?.into_inner())
+		async fn start_lightning_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::StartLightningPaymentRequest,
+		) -> Result<protos::StartLightningPaymentResponse, tonic::Status> {
+			req.input_vtxo_ids = vec![self.0.to_bytes().to_vec()];
+			Ok(upstream.start_lightning_payment(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await, vtxo_a.id);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy(vtxo_a.id)).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1787,20 +1771,19 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 
 	#[derive(Clone)]
 	struct Proxy {
-		pub upstream: captaind::ArkClient,
 		pub wallet: Arc<Wallet>,
 		pub challenge: Arc<Mutex<Option<VtxoOwnershipChallenge>>>,
 		pub vtxo: WalletVtxoInfo
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.upstream.clone() }
-
-		async fn subscribe_rounds(&mut self, req: protos::Empty) -> Result<Box<
+		async fn subscribe_rounds(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<Box<
 			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 		>, tonic::Status> {
 			let shared = self.challenge.clone();
-			let stream = self.upstream().subscribe_rounds(req).await?.into_inner()
+			let stream = upstream.subscribe_rounds(req).await?.into_inner()
 				.inspect_ok(move |event| {
 					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
 						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
@@ -1811,7 +1794,9 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 			Ok(Box::new(stream))
 		}
 
-		async fn submit_payment(&mut self, mut req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+		async fn submit_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
 			// Spending input boarded with first derivation
 			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
 
@@ -1835,17 +1820,16 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 				ownership_proof: sig.serialize().to_vec(),
 			};
 
-			Ok(self.upstream().submit_payment(req).await?.into_inner())
+			Ok(upstream.submit_payment(req).await?.into_inner())
 		}
 	}
 
 	let proxy = Proxy {
-		upstream: srv.get_public_rpc().await,
 		wallet: Arc::new(bark.client().await),
 		challenge: Arc::new(Mutex::new(None)),
 		vtxo: vtxo_a.clone(),
 	};
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 	bark.timeout = Some(Duration::from_millis(10_000));
@@ -1870,19 +1854,18 @@ async fn should_refuse_subdust_lightning_receive_request() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn start_lightning_receive(&self, mut req: protos::StartLightningReceiveRequest) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
+		async fn start_lightning_receive(
+			&self, upstream: &mut ArkClient, mut req: protos::StartLightningReceiveRequest,
+		) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
 			req.amount_sat = P2TR_DUST_SAT - 1;
-			Ok(self.upstream().start_lightning_receive(req).await?.into_inner())
+			Ok(upstream.start_lightning_receive(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1907,19 +1890,18 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> captaind::ArkClient { self.0.clone() }
-
-		async fn start_lightning_receive(&self, mut req: protos::StartLightningReceiveRequest) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
+		async fn start_lightning_receive(
+			&self, upstream: &mut ArkClient, mut req: protos::StartLightningReceiveRequest,
+		) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
 			req.amount_sat = 1_000_001;
-			Ok(self.upstream().start_lightning_receive(req).await?.into_inner())
+			Ok(upstream.start_lightning_receive(req).await?.into_inner())
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 

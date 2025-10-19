@@ -19,6 +19,7 @@ use server_log::{FinishedPoolIssuance, LogMsg, ParsedRecord, TipUpdated, TxIndex
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
+use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer};
 use crate::{secs, Bitcoind, Daemon, DaemonHelper};
 use crate::daemon::LogHandler;
 use crate::constants::env::CAPTAIND_EXEC;
@@ -154,6 +155,10 @@ impl Captaind {
 
 	pub async fn get_public_rpc(&self) -> ArkClient {
 		ArkClient::connect(self.ark_url()).await.expect("can't connect server public rpc")
+	}
+
+	pub async fn get_proxy_rpc(&self, proxy: impl ArkRpcProxy) -> ArkRpcProxyServer {
+		ArkRpcProxyServer::start(proxy, self.get_public_rpc().await).await
 	}
 
 	pub async fn get_wallet_rpc(&self) -> WalletAdminClient {

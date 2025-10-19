@@ -9,8 +9,9 @@ use cln_rpc as rpc;
 
 use log::{info, trace};
 
-use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, daemon::captaind, sat, TestContext};
-use ark_testing::util::{FutureExt};
+use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
+use ark_testing::daemon::captaind::{self, ArkClient};
+use ark_testing::util::FutureExt;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 
 
@@ -506,14 +507,13 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
-	struct Proxy(captaind::ArkClient);
+	struct Proxy;
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		fn upstream(&self) -> server_rpc::ArkServiceClient<tonic::transport::Channel> { self.0.clone() }
-
 		async fn finish_lightning_payment(
-			&mut self,
+			&self,
+			_upstream: &mut ArkClient,
 			_req: server_rpc::protos::SignedLightningPaymentDetails,
 		) -> Result<server_rpc::protos::LightningPaymentResult, tonic::Status> {
 			// Never return - wait indefinitely
@@ -523,7 +523,8 @@ async fn bark_revoke_expired_pending_ln_payment() {
 		}
 
 		async fn check_lightning_payment(
-			&mut self,
+			&self,
+			_upstream: &mut ArkClient,
 			_req: server_rpc::protos::CheckLightningPaymentRequest,
 		) -> Result<server_rpc::protos::LightningPaymentResult, tonic::Status> {
 			Ok(server_rpc::protos::LightningPaymentResult {
@@ -535,8 +536,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 		}
 	}
 
-	let proxy = Proxy(srv.get_public_rpc().await);
-	let proxy = captaind::proxy::ArkRpcProxyServer::start(proxy).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
