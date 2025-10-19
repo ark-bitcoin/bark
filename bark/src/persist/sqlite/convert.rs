@@ -9,7 +9,7 @@ use bitcoin::hex::FromHex;
 use bitcoin::{Amount, Transaction};
 use lightning_invoice::Bolt11Invoice;
 use rusqlite::types::FromSql;
-use rusqlite::{Row, RowIndex};
+use rusqlite::{Row, RowIndex, Rows};
 
 use ark::lightning::{PaymentHash, Preimage};
 use ark::{ProtocolEncoding, Vtxo};
@@ -31,6 +31,8 @@ use crate::round::{
 	RoundStateKind,
 	VtxoTreeSignedState
 };
+use crate::vtxo_state::VtxoState;
+use crate::WalletVtxo;
 
 pub trait RowExt<'a>: Borrow<Row<'a>> {
 	/// We need the value from a potentially optional column
@@ -259,4 +261,20 @@ pub (crate) fn row_to_round_state(row: &Row<'_>) -> anyhow::Result<RoundState> {
 			Ok(RoundState::RoundAbandoned(RoundAbandonedState { round_attempt_id }))
 		},
 	}
+}
+
+pub (crate) fn row_to_wallet_vtxo(row: &Row<'_>) -> anyhow::Result<WalletVtxo> {
+	let raw_vtxo = row.get::<_, Vec<u8>>("raw_vtxo")?;
+	let vtxo = Vtxo::deserialize(&raw_vtxo)?;
+
+	let state = serde_json::from_slice::<VtxoState>(&row.get::<_, Vec<u8>>("state")?)?;
+	Ok(WalletVtxo { vtxo, state })
+}
+
+pub (crate) fn rows_to_wallet_vtxos(mut rows: Rows<'_>) -> anyhow::Result<Vec<WalletVtxo>> {
+	let mut vtxos = Vec::new();
+	while let Some(row) = rows.next()? {
+		vtxos.push(row_to_wallet_vtxo(&row)?);
+	}
+	Ok(vtxos)
 }

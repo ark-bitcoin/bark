@@ -17,7 +17,7 @@ use ark::rounds::{RoundId, RoundSeq};
 use json::exit::ExitState;
 use json::exit::states::ExitTxOrigin;
 
-use crate::persist::sqlite::convert::{row_to_secret_nonces, row_to_round_state};
+use crate::persist::sqlite::convert::{row_to_round_state, row_to_secret_nonces, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::movement::{Movement, MovementKind};
@@ -522,12 +522,22 @@ pub fn get_wallet_vtxo_by_id(
 	let mut rows = statement.query([id.to_string()])?;
 
 	if let Some(row) = rows.next()? {
-		let vtxo = Vtxo::deserialize(&row.get::<_, Vec<u8>>("raw_vtxo")?)?;
-		let state = serde_json::from_slice::<VtxoState>(&row.get::<_, Vec<u8>>("state")?)?;
-		Ok(Some(WalletVtxo { vtxo, state }))
+		Ok(Some(row_to_wallet_vtxo(&row)?))
 	} else {
 		Ok(None)
 	}
+}
+
+pub fn get_all_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> {
+	let query = "
+		SELECT raw_vtxo, state
+		FROM vtxo_view
+		ORDER BY expiry_height ASC, amount_sat DESC";
+
+	let mut statement = conn.prepare(query)?;
+	let rows = statement.query(())?;
+
+	rows_to_wallet_vtxos(rows)
 }
 
 pub fn get_vtxos_by_state(
@@ -541,24 +551,9 @@ pub fn get_vtxos_by_state(
 		ORDER BY expiry_height ASC, amount_sat DESC";
 
 	let mut statement = conn.prepare(query)?;
+	let rows = statement.query(&[&serde_json::to_string(&state)?])?;
 
-	let mut rows = statement.query(&[&serde_json::to_string(&state)?])?;
-
-	let mut result = Vec::new();
-	while let Some(row) = rows.next()? {
-		let vtxo = {
-			let raw_vtxo : Vec<u8> = row.get("raw_vtxo")?;
-			Vtxo::deserialize(&raw_vtxo)?
-		};
-
-		let state = {
-			let raw_state : Vec<u8> = row.get("state")?;
-			serde_json::from_slice::<VtxoState>(&raw_state)?
-		};
-
-		result.push(WalletVtxo { vtxo, state });
-	}
-	Ok(result)
+	rows_to_wallet_vtxos(rows)
 }
 
 pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> {
@@ -568,21 +563,9 @@ pub fn get_in_round_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> 
 		WHERE locked_in_round_attempt_id IS NOT NULL AND state_kind = ?1";
 
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([VtxoStateKind::Spendable.as_str()])?;
+	let rows = statement.query([VtxoStateKind::Spendable.as_str()])?;
 
-	let mut result = Vec::new();
-	while let Some(row) = rows.next()? {
-		let raw_vtxo= row.get::<_, Vec<u8>>("raw_vtxo")?;
-		let vtxo = Vtxo::deserialize(&raw_vtxo)?;
-
-		let state = {
-			let raw_state : Vec<u8> = row.get("state")?;
-			serde_json::from_slice::<VtxoState>(&raw_state)?
-		};
-
-		result.push(WalletVtxo { vtxo, state });
-	}
-	Ok(result)
+	rows_to_wallet_vtxos(rows)
 }
 
 pub fn delete_vtxo(
