@@ -882,7 +882,7 @@ impl Wallet {
 
 	/// Drop a specific [Vtxo] from the database. This is destructive and will result in a loss of
 	/// funds.
-	pub async fn drop_vtxo(&self, vtxo_id: VtxoId) -> anyhow::Result<()> {
+	pub async fn dangerous_drop_vtxo(&self, vtxo_id: VtxoId) -> anyhow::Result<()> {
 		warn!("Drop vtxo {} from the database", vtxo_id);
 		self.db.remove_vtxo(vtxo_id)?;
 		Ok(())
