@@ -11,7 +11,6 @@ use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
-use bitcoin_ext::bdk::WalletExt;
 use log::{debug, error, info, log_enabled, trace, warn};
 use opentelemetry::global;
 use opentelemetry::global::BoxedTracer;
@@ -40,7 +39,7 @@ use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
 use crate::secret::Secret;
 use crate::telemetry::{MetricsService, SpanExt};
-use crate::wallet::{BdkWalletExt, PersistedWallet};
+use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
 
 
 #[macro_export]
@@ -169,6 +168,8 @@ pub struct CollectingPayments {
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	all_offboards: Vec<OffboardRequest>,
 
+	common_round_tx_input: Option<WalletUtxoGuard>,
+
 	attempt_start: Instant,
 	proceed: bool,
 }
@@ -180,6 +181,7 @@ impl CollectingPayments {
 		round_data: RoundData,
 		locked_inputs: OwnedVtxoFluxLock,
 		allowed_inputs: Option<HashSet<VtxoId>>,
+		common_round_tx_input: Option<WalletUtxoGuard>,
 	) -> CollectingPayments {
 		CollectingPayments {
 			round_seq,
@@ -196,6 +198,8 @@ impl CollectingPayments {
 			all_outputs: Vec::new(),
 			inputs_per_cosigner: HashMap::new(),
 			all_offboards: Vec::new(),
+
+			common_round_tx_input,
 
 			attempt_start: Instant::now(),
 			proceed: false,
@@ -576,12 +580,17 @@ impl CollectingPayments {
 			n => Some(tip.saturating_sub(n as BlockHeight - 1)),
 		};
 		let mut wallet_lock = srv.rounds_wallet.clone().lock_owned().await;
-		let unspendable = wallet_lock.untrusted_utxos(trusted_height);
 		let round_tx_psbt = {
+			let unavailable = wallet_lock.unavailable_outputs(trusted_height);
 			let mut b = wallet_lock.build_tx();
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
 			b.current_height(tip);
-			b.unspendable(unspendable);
+			b.unspendable(unavailable);
+			// NB: manual selection overrides unspendable
+			if let Some(ref common_round_tx_input) = self.common_round_tx_input {
+				let utxo = common_round_tx_input.utxo().clone();
+				b.add_utxo(utxo).map_err(|e| RoundError::Recoverable(e.into()))?;
+			}
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
 			b.add_recipient(vtxos_spec.funding_tx_script_pubkey(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
@@ -599,6 +608,16 @@ impl CollectingPayments {
 			Ok(tx) => tx,
 			Err(e) => return Err(RoundError::Recoverable(e)),
 		};
+
+		let common_round_tx_input = match self.common_round_tx_input {
+			Some(input) => input.clone(),
+			None => {
+				let common_round_tx_input = unsigned_round_tx.input.first()
+					.expect("funded round tx should have an input").previous_output;
+				wallet_lock.lock_wallet_utxo(common_round_tx_input)
+			}
+		};
+
 		let round_txid = unsigned_round_tx.compute_txid();
 		let vtxos_utxo = OutPoint::new(round_txid, ROUND_TX_VTXO_TREE_VOUT);
 
@@ -667,6 +686,7 @@ impl CollectingPayments {
 			connector_key,
 			user_cosign_nonces,
 			inputs_per_cosigner: self.inputs_per_cosigner,
+			common_round_tx_input,
 			attempt_start: self.attempt_start,
 			proceed,
 		})
@@ -702,6 +722,8 @@ pub struct SigningVtxoTree {
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	/// All inputs that have participated, but might have dropped out.
 	locked_inputs: OwnedVtxoFluxLock,
+
+	common_round_tx_input: WalletUtxoGuard,
 
 	attempt_start: Instant,
 
@@ -766,6 +788,7 @@ impl SigningVtxoTree {
 			self.round_data,
 			self.locked_inputs,
 			Some(allowed_inputs),
+			Some(self.common_round_tx_input),
 		)
 	}
 
@@ -852,6 +875,7 @@ impl SigningVtxoTree {
 			connector_key: self.connector_key,
 			wallet_lock: self.wallet_lock,
 			round_tx_psbt: self.round_tx_psbt,
+			common_round_tx_input: self.common_round_tx_input,
 			attempt_start: self.attempt_start,
 			proceed: false,
 		}
@@ -880,6 +904,8 @@ pub struct SigningForfeits {
 
 	wallet_lock: OwnedMutexGuard<PersistedWallet>,
 	round_tx_psbt: Psbt,
+	common_round_tx_input: WalletUtxoGuard,
+
 	attempt_start: Instant,
 
 	proceed: bool,
@@ -945,6 +971,7 @@ impl SigningForfeits {
 			self.round_data,
 			self.locked_inputs,
 			Some(allowed_inputs),
+			Some(self.common_round_tx_input),
 		)
 	}
 
@@ -1275,7 +1302,7 @@ async fn perform_round(
 	};
 
 	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
-		round_seq, 0, round_data, srv.vtxos_in_flux.empty_lock().into_owned(), None,
+		round_seq, 0, round_data, srv.vtxos_in_flux.empty_lock().into_owned(), None, None,
 	));
 	telemetry::set_round_state(round_state.kind());
 
@@ -1435,6 +1462,7 @@ async fn perform_round(
 
 						return round_state.result().unwrap();
 					}
+
 
 					continue 'attempt;
 				},
@@ -1714,7 +1742,7 @@ mod tests {
 			offboard_feerate: FeeRate::ZERO,
 			max_vtxo_amount: None,
 		};
-		CollectingPayments::new(0.into(), 0, round_data, OwnedVtxoFluxLock::dummy(), None)
+		CollectingPayments::new(0.into(), 0, round_data, OwnedVtxoFluxLock::dummy(), None, None)
 	}
 
 	#[test]

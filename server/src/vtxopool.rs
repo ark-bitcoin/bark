@@ -8,7 +8,6 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, FeeRate, OutPoint};
-use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::BlockHeight;
 use futures::{stream, StreamExt, TryStreamExt};
 use log::{info, warn};
@@ -393,9 +392,9 @@ impl Process {
 			warn!("Wallet sync error before funding vtxo pool issuance tx: {:#}", e);
 		}
 		let funding_psbt = {
-			let untrusted = wallet.untrusted_utxos(None);
+			let unavailable = wallet.unavailable_outputs(None);
 			let mut b = wallet.build_tx();
-			b.unspendable(untrusted);
+			b.unspendable(unavailable);
 			b.add_recipient(funding_txout.script_pubkey.clone(), funding_txout.value);
 			b.fee_rate(fee_rate);
 			b.finish().context("failed to build signed tree funding tx")?
