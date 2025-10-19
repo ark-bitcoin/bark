@@ -170,7 +170,7 @@ impl ClnManager {
 	) -> anyhow::Result<Preimage> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
-		let user_amount = if invoice.amount_milli_satoshis().is_none() {
+		let user_amount = if invoice.amount_msat().is_none() {
 			Some(htlc_amount)
 		} else {
 			None
@@ -707,7 +707,7 @@ impl ClnManagerProcess {
 			.context("failed to get info from rpc")?
 			.into_inner().blockheight;
 
-		let amount_msat = match invoice.amount_milli_satoshis() {
+		let amount_msat = match invoice.amount_msat() {
 			Some(msat) => msat,
 			None => user_amount.context("user amount required for invoice without amount")?.to_msat(),
 		};
@@ -1005,7 +1005,7 @@ async fn call_pay_bolt11(
 	user_amount: Option<Amount>,
 	max_cltv_expiry_delta: u32,
 ) -> anyhow::Result<Preimage> {
-	match (user_amount, invoice.amount_milli_satoshis()) {
+	match (user_amount, invoice.amount_msat()) {
 		(Some(user), Some(inv)) => {
 			let inv = Amount::from_msat_ceil(inv);
 			if user != inv {
@@ -1022,7 +1022,7 @@ async fn call_pay_bolt11(
 	let pay_response = rpc.xpay(cln_rpc::XpayRequest {
 		invstring: invoice.to_string(),
 		amount_msat: {
-			if invoice.amount_milli_satoshis().is_none() {
+			if invoice.amount_msat().is_none() {
 				Some(user_amount.unwrap().into())
 			} else {
 				None

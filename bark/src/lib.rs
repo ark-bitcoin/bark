@@ -1627,7 +1627,7 @@ impl Wallet {
 
 		invoice.check_signature()?;
 
-		let inv_amount = invoice.amount_milli_satoshis().map(|v| Amount::from_msat_ceil(v));
+		let inv_amount = invoice.amount_msat().map(|v| Amount::from_msat_ceil(v));
 		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
 			bail!("Invoice has amount of {} encoded. Please omit user amount argument", inv);
 		}

@@ -32,7 +32,7 @@ pub struct LightningReceive {
 
 /// Persistable view of an [ExitVtxo].
 ///
-/// `StoredExit` is a lightweight data transfer object tailored for storage backends. It captures 
+/// `StoredExit` is a lightweight data transfer object tailored for storage backends. It captures
 /// the VTXO ID, the current state, and the full history of the unilateral exit.
 pub struct StoredExit {
 	/// Identifier of the VTXO being exited.
@@ -132,7 +132,7 @@ mod test {
 		let serialised = r#""UnregisteredBoard""#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 
-		let serialised = r#"{"PendingLightningSend":{"invoice":{"Bolt11":"lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8"},"amount":300000}}"#;
+		let serialised = r#"{"PendingLightningSend":{"invoice":"lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8","amount":300000}}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#"{"PendingLightningRecv":{"payment_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
