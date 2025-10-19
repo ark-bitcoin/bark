@@ -207,6 +207,18 @@ impl FromStr for Invoice {
 	}
 }
 
+impl From<Bolt11Invoice> for Invoice {
+	fn from(invoice: Bolt11Invoice) -> Self {
+		Invoice::Bolt11(invoice)
+	}
+}
+
+impl From<Bolt12Invoice> for Invoice {
+	fn from(invoice: Bolt12Invoice) -> Self {
+		Invoice::Bolt12(invoice)
+	}
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("invalid invoice signature: {0}")]
 pub struct CheckSignatureError(pub String);
