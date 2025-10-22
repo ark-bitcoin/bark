@@ -72,7 +72,7 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn store_pending_board(&self, _vtxo: &Vtxo, _funding_txid: &str) -> anyhow::Result<()> {
+	fn store_pending_board(&self, _vtxo: &Vtxo, _funding_tx: &Transaction) -> anyhow::Result<()> {
 		Ok(())
 	}
 

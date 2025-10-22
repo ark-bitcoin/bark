@@ -630,8 +630,7 @@ impl Wallet {
 		let pending_lightning_send = VtxoStateKind::PendingLightningSend.filter(vtxos.clone())?
 			.iter().map(|v| v.amount()).sum::<Amount>();
 
-		let pending_board = VtxoStateKind::UnregisteredBoard.filter(vtxos.clone())?
-			.iter().map(|v| v.amount()).sum::<Amount>();
+		let pending_board = self.pending_board_vtxos()?.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
 			.map(|v| v.amount()).sum();
@@ -669,7 +668,7 @@ impl Wallet {
 	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(self.db.get_vtxos_by_state(&[
 			VtxoStateKind::Spendable,
-			VtxoStateKind::UnregisteredBoard,
+			VtxoStateKind::Locked,
 			VtxoStateKind::PendingLightningSend,
 			VtxoStateKind::PendingLightningRecv,
 		])?)
@@ -706,10 +705,15 @@ impl Wallet {
 	///
 	/// See [ArkInfo::required_board_confirmations] and [Wallet::register_all_confirmed_boards].
 	pub fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?
-			.into_iter()
-			.collect();
-		Ok(boards)
+		let vtxos = self.db.get_all_pending_boards()?.iter()
+			.map(|vtxo_id| self.get_vtxo_by_id(*vtxo_id))
+			.collect::<anyhow::Result<Vec<_>>>()?;
+
+		debug_assert!(vtxos.iter().all(|v| matches!(v.state.kind(), VtxoStateKind::Locked)),
+			"all pending board vtxos should be locked"
+		);
+
+		Ok(vtxos)
 	}
 
 	/// Returns all vtxos that will expire within `threshold` blocks
@@ -728,7 +732,7 @@ impl Wallet {
 	pub async fn sync_pending_boards(&self) -> anyhow::Result<()> {
 		let ark_info = self.require_server()?.info;
 		let current_height = self.chain.tip().await?;
-		let unregistered_boards = self.db.get_vtxos_by_state(&[VtxoStateKind::UnregisteredBoard])?;
+		let unregistered_boards = self.pending_board_vtxos()?;
 		let mut registered_boards = 0;
 
 		if unregistered_boards.is_empty() {
@@ -980,12 +984,14 @@ impl Wallet {
 		self.db.register_movement(MovementArgs {
 			kind: MovementKind::Board,
 			spends: &[],
-			receives: &[(&vtxo, VtxoState::UnregisteredBoard)],
+			receives: &[(&vtxo, VtxoState::Locked)],
 			recipients: &[],
 			fees: None,
 		}).context("db error storing vtxo")?;
 
 		let tx = wallet.finish_tx(board_psbt)?;
+
+		self.db.store_pending_board(&vtxo, &tx)?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.chain.broadcast_tx(&tx).await?;
@@ -999,16 +1005,15 @@ impl Wallet {
 
 	/// Registers a board to the Ark server
 	async fn register_board(&self, vtxo: impl VtxoRef) -> anyhow::Result<Board> {
-		let vtxo_id = vtxo.vtxo_id();
-		trace!("Attempting to register board {} to server", vtxo_id);
+		trace!("Attempting to register board {} to server", vtxo.vtxo_id());
 		let mut srv = self.require_server()?;
 
 		// Get the vtxo and funding transaction from the database
 		let vtxo = match vtxo.vtxo() {
 			Some(v) => v,
 			None => {
-				&self.db.get_wallet_vtxo(vtxo_id)?
-					.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?
+				&self.db.get_wallet_vtxo(vtxo.vtxo_id())?
+					.with_context(|| format!("VTXO doesn't exist: {}", vtxo.vtxo_id()))?
 			},
 		};
 
@@ -1019,8 +1024,10 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		let allowed_states = &[VtxoStateKind::UnregisteredBoard, VtxoStateKind::Spendable];
-		self.db.update_vtxo_state_checked(vtxo_id, VtxoState::Spendable, allowed_states)?;
+		let allowed_states = &[VtxoStateKind::Locked, VtxoStateKind::Spendable];
+		self.db.update_vtxo_state_checked(vtxo.vtxo_id(), VtxoState::Spendable, allowed_states)?;
+
+		self.db.remove_pending_board(&vtxo.vtxo_id())?;
 
 		let funding_txid = vtxo.chain_anchor().txid;
 

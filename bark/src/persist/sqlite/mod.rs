@@ -82,7 +82,7 @@ impl SqliteClient {
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
 		let allowed_states = [
-			VtxoStateKind::UnregisteredBoard,
+			VtxoStateKind::Locked,
 			VtxoStateKind::Spendable,
 			VtxoStateKind::PendingLightningSend,
 			VtxoStateKind::PendingLightningRecv,
@@ -156,10 +156,10 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn store_pending_board(&self, vtxo: &Vtxo, funding_txid: &str) -> anyhow::Result<()> {
+	fn store_pending_board(&self, vtxo: &Vtxo, funding_tx: &bitcoin::Transaction) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-		query::store_new_pending_board(&tx, vtxo, funding_txid)?;
+		query::store_new_pending_board(&tx, vtxo, funding_tx)?;
 		tx.commit()?;
 		Ok(())
 	}

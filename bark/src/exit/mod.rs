@@ -274,7 +274,7 @@ impl Exit {
 		onchain: &W,
 	) -> anyhow::Result<()> {
 		let vtxos: Vec<Vtxo> = self.persister.get_vtxos_by_state(&[
-			VtxoStateKind::UnregisteredBoard,
+			VtxoStateKind::Locked,
 			VtxoStateKind::Spendable
 		])?.into_iter().map(|v| v.vtxo).collect();
 		self.start_exit_for_vtxos(&vtxos, onchain).await?;

@@ -116,11 +116,13 @@ async fn board_bark() {
 
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
 	assert_eq!(board.vtxos[0].id, vtxo.id);
-	assert_eq!(vtxo.state, "UnregisteredBoard");
+	assert_eq!(vtxo.state, "Locked");
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(sat(BOARD_AMOUNT), bark1.offchain_balance().await);
+
+	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
 }
 
 #[tokio::test]
@@ -137,11 +139,13 @@ async fn board_twice_bark() {
 	assert_eq!(vtxos.len(), 2, "should have 2 board vtxos");
 	assert!(vtxos.iter().any(|v| v.id == board_a.vtxos[0].id));
 	assert!(vtxos.iter().any(|v| v.id == board_b.vtxos[0].id));
-	assert!(vtxos.iter().all(|v| v.state == "UnregisteredBoard"));
+	assert!(vtxos.iter().all(|v| v.state == "Locked"));
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(sat(BOARD_AMOUNT) * 2, bark1.offchain_balance().await);
+
+	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
 }
 
 #[tokio::test]
@@ -158,7 +162,7 @@ async fn board_all_bark() {
 	let board = bark1.board_all().await;
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
 	assert_eq!(board.vtxos[0].id, vtxo.id);
-	assert_eq!(vtxo.state, "UnregisteredBoard");
+	assert_eq!(vtxo.state, "Locked");
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -172,6 +176,8 @@ async fn board_all_bark() {
 		board_tx.output.last().unwrap().value,
 	);
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
+
+	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
 }
 
 #[tokio::test]

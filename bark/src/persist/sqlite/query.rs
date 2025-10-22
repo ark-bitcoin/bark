@@ -131,7 +131,7 @@ pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
 }
 
 pub fn get_all_pending_boards(conn: &rusqlite::Connection) -> anyhow::Result<Vec<VtxoId>> {
-	let q = "SELECT vtxo_id, funding_txid FROM bark_pending_board;";
+	let q = "SELECT vtxo_id, funding_tx FROM bark_pending_board;";
 	let mut statement = conn.prepare(q)?;
 	let mut rows = statement.query([])?;
 	let mut pending_boards = Vec::new();
@@ -144,21 +144,22 @@ pub fn get_all_pending_boards(conn: &rusqlite::Connection) -> anyhow::Result<Vec
 }
 
 pub fn store_new_pending_board(
-	tx: &rusqlite::Transaction,
+	tx: &Transaction,
 	vtxo: &Vtxo,
-	funding_txid: &str,
+	funding_tx: &bitcoin::Transaction,
 ) -> anyhow::Result<()> {
-	let q = "INSERT INTO bark_pending_board (vtxo_id, funding_txid) VALUES (:vtxo_id, :funding_txid);";
+	let q = "INSERT INTO bark_pending_board (vtxo_id, funding_tx) VALUES (:vtxo_id, :funding_tx);";
 	let mut statement = tx.prepare(q)?;
+
 	statement.execute(named_params! {
 		":vtxo_id": vtxo.id().to_string(),
-		":funding_txid": funding_txid,
+		":funding_tx": bitcoin::consensus::encode::serialize_hex(&funding_tx),
 	})?;
 	Ok(())
 }
 
 pub fn remove_pending_board(
-	tx: &rusqlite::Transaction,
+	tx: &Transaction,
 	vtxo_id: &VtxoId,
 ) -> anyhow::Result<()> {
 	let q = "DELETE FROM bark_pending_board WHERE vtxo_id = :vtxo_id;";
@@ -170,7 +171,7 @@ pub fn remove_pending_board(
 }
 
 pub fn store_vtxo_with_initial_state(
-	tx: &rusqlite::Transaction,
+	tx: &Transaction,
 	vtxo: &Vtxo,
 	movement_id: i32,
 	state: &VtxoState,
@@ -928,25 +929,25 @@ mod test {
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
 		let movement_id = create_movement(&tx, MovementKind::Board, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, &VtxoState::UnregisteredBoard).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::UnregisteredBoard).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::UnregisteredBoard).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, &VtxoState::Locked).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::Locked).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::Locked).unwrap();
 
-		// This update will fail because the current state is UnregisteredBoard
+		// This update will fail because the current state is Locked
 		// We only allow the state to switch from VtxoState::Spendable
 		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoStateKind::Spendable])
 			.expect_err("The vtxo isn't spendable and query should fail");
 
 		// Perform a state-update on vtxo_1
-		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spendable, &[VtxoStateKind::UnregisteredBoard]).unwrap();
+		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spendable, &[VtxoStateKind::Locked]).unwrap();
 
 		// Perform a second state-update on vtxo_1
 		update_vtxo_state_checked(&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoStateKind::Spendable]).unwrap();
 
 		// Ensure the state of vtxo_2 and vtxo_3 isn't modified
 		let state_2 = get_vtxo_state(&tx, vtxo_2.id()).unwrap().unwrap();
-		assert_eq!(state_2, VtxoState::UnregisteredBoard);
+		assert_eq!(state_2, VtxoState::Locked);
 		let state_2 = get_vtxo_state(&tx, vtxo_3.id()).unwrap().unwrap();
-		assert_eq!(state_2, VtxoState::UnregisteredBoard);
+		assert_eq!(state_2, VtxoState::Locked);
 	}
 }

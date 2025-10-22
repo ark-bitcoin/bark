@@ -4,7 +4,6 @@
 //! managed by the wallet. A [Vtxo] can be:
 //! - created and ready to spend on Ark: [VtxoStateKind::Spendable]
 //! - owned but not usable because it is locked by subsystem: [VtxoStateKind::Locked]
-//! - created but not yet acknowledged/registered by the server: [VtxoStateKind::UnregisteredBoard]
 //! - consumed (no longer part of the wallet's balance): [VtxoStateKind::Spent]
 //! - temporarily locked in an outgoing Lightning HTLC: [VtxoStateKind::PendingLightningSend]
 //! - temporarily locked while waiting for an incoming Lightning HTLC to be claimed:
@@ -29,7 +28,6 @@ use ark::Vtxo;
 use ark::lightning::{Invoice, PaymentHash};
 
 const SPENDABLE: &'static str = "Spendable";
-const UNREGISTERED_BOARD : &'static str = "UnregisteredBoard";
 const LOCKED: &'static str = "Locked";
 const SPENT: &'static str = "Spent";
 const PENDING_LIGHTNING_SEND: &'static str = "PendingLightningSend";
@@ -44,9 +42,6 @@ pub enum VtxoStateKind {
 	Spendable,
 	/// The [Vtxo] is currently locked in an action.
 	Locked,
-	/// The [Vtxo] was produced by a board but is not yet registered/acknowledged by the server.
-	/// The board may also not have sufficient confirmations, in which case it cannot be registered yet.
-	UnregisteredBoard,
 	/// The [Vtxo] has been consumed and is no longer part of the wallet's balance.
 	Spent,
 	/// The [Vtxo] is currently locked in an outgoing Lightning HTLC.
@@ -59,7 +54,6 @@ impl VtxoStateKind {
 	/// Returns a stable string identifier for this state, suitable for DB rows, logs, and APIs.
 	pub fn as_str(&self) -> &str {
 		match self {
-			VtxoStateKind::UnregisteredBoard => UNREGISTERED_BOARD,
 			VtxoStateKind::Spendable => SPENDABLE,
 			VtxoStateKind::Locked => LOCKED,
 			VtxoStateKind::Spent => SPENT,
@@ -92,10 +86,8 @@ pub enum VtxoState {
 	Spendable,
 	/// The [Vtxo] has been consumed.
 	Spent,
+	/// The [Vtxo] is currently locked in an action.
 	Locked,
-	/// The [Vtxo] was produced by a board but is not yet registered/acknowledged by the server.
-	/// The board may also not have sufficient confirmations, in which case it cannot be registered yet.
-	UnregisteredBoard,
 	/// The current [Vtxo] is locked in an outgoing Lightning HTLC pending settlement.
 	///
 	/// The associated data identifies the Lightning [Invoice] being paid and the
@@ -120,7 +112,6 @@ impl VtxoState {
 	/// Returns the compact [VtxoStateKind] discriminator for this rich state.
 	pub fn kind(&self) -> VtxoStateKind {
 		match self {
-			VtxoState::UnregisteredBoard => VtxoStateKind::UnregisteredBoard,
 			VtxoState::Locked => VtxoStateKind::Locked,
 			VtxoState::Spendable => VtxoStateKind::Spendable,
 			VtxoState::Spent => VtxoStateKind::Spent,
@@ -177,14 +168,13 @@ mod test {
 			VtxoStateKind::Spendable,
 			VtxoStateKind::Spent,
 			VtxoStateKind::Locked,
-			VtxoStateKind::UnregisteredBoard,
 			VtxoStateKind::PendingLightningSend,
 			VtxoStateKind::PendingLightningRecv,
 		];
 
 		assert_eq!(
 			serde_json::to_string(&states).unwrap(),
-			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED, UNREGISTERED_BOARD, PENDING_LIGHTNING_SEND, PENDING_LIGHTNING_RECV]).unwrap(),
+			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED, PENDING_LIGHTNING_SEND, PENDING_LIGHTNING_RECV]).unwrap(),
 		);
 
 		// If a compiler error occurs,
@@ -193,7 +183,6 @@ mod test {
 			VtxoState::Spendable => {},
 			VtxoState::Spent => {},
 			VtxoState::Locked => {},
-			VtxoState::UnregisteredBoard => (),
 			VtxoState::PendingLightningSend { .. } => (),
 			VtxoState::PendingLightningRecv { .. } => (),
 		}
