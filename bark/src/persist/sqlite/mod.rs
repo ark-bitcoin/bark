@@ -29,7 +29,7 @@ use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
 use json::exit::states::ExitTxOrigin;
 
-use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
+use crate::vtxo_state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
@@ -81,8 +81,7 @@ impl SqliteClient {
 
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
-		let allowed_states = [VtxoStateKind::Locked, VtxoStateKind::Spendable];
-		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &allowed_states)?;
+		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &UNSPENT_STATES)?;
 		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
 		Ok(())
 	}

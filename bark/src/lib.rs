@@ -67,7 +67,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::{LightningReceive, PendingLightningSend, StoredVtxoRequest};
 use crate::round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
-use crate::vtxo_state::{VtxoState, VtxoStateKind};
+use crate::vtxo_state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
@@ -680,7 +680,7 @@ impl Wallet {
 
 	/// Returns all not spent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(self.db.get_vtxos_by_state(&[VtxoStateKind::Spendable, VtxoStateKind::Locked])?)
+		Ok(self.db.get_vtxos_by_state(&UNSPENT_STATES)?)
 	}
 
 	/// Returns all vtxos matching the provided predicate
@@ -1036,8 +1036,7 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		let allowed_states = &[VtxoStateKind::Locked, VtxoStateKind::Spendable];
-		self.db.update_vtxo_state_checked(vtxo.vtxo_id(), VtxoState::Spendable, allowed_states)?;
+		self.db.update_vtxo_state_checked(vtxo.vtxo_id(), VtxoState::Spendable, &UNSPENT_STATES)?;
 
 		self.db.remove_pending_board(&vtxo.vtxo_id())?;
 

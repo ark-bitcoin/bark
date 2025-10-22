@@ -62,6 +62,13 @@ impl fmt::Debug for VtxoStateKind {
 	}
 }
 
+lazy_static::lazy_static! {
+	pub static ref UNSPENT_STATES: Vec<VtxoStateKind> = vec![
+		VtxoStateKind::Spendable,
+		VtxoStateKind::Locked,
+	];
+}
+
 /// Rich [Vtxo] state carrying additional context needed at runtime.
 ///
 /// Use this when application logic needs to act on a [Vtxo]: e.g. to surface the
