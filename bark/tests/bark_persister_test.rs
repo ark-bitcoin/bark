@@ -16,7 +16,7 @@ use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPo
 use bark::{WalletProperties, WalletVtxo};
 use bark::movement::{Movement, MovementArgs, MovementKind, MovementRecipient};
 use bark::persist::BarkPersister;
-use bark::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
+use bark::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
 use bark::round::{
 	AttemptStartedState, PendingConfirmationState, RoundConfirmedState, RoundParticipation,
 	RoundState, VtxoForfeitedInRound,
@@ -219,6 +219,22 @@ impl BarkPersister for Dummy {
 		Ok(Some(0))
 	}
 
+	fn store_new_pending_lightning_send(
+		&self,
+		_invoice: &Invoice,
+		_amount: &Amount,
+		_vtxos: &[VtxoId],
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
+		Ok(vec![])
+	}
+
+	fn remove_pending_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+		Ok(())
+	}
 	fn store_lightning_receive(
 		&self,
 		_payment_hash: PaymentHash,

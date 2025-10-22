@@ -6,13 +6,14 @@ use ark::musig::{DangerousSecretNonce, SecretNonce};
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::consensus;
+use bitcoin::hex::DisplayHex;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 use rusqlite::{self, named_params, Connection, ToSql, Transaction};
 
 use ark::ProtocolEncoding;
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::rounds::{RoundId, RoundSeq};
 use json::exit::ExitState;
 use json::exit::states::ExitTxOrigin;
@@ -21,7 +22,7 @@ use crate::persist::sqlite::convert::{row_to_round_state, row_to_secret_nonces, 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 use crate::movement::{Movement, MovementKind};
-use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
 use crate::round::{
 	AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState, RoundStateKind,
 };
@@ -549,6 +550,64 @@ fn unlink_vtxo_from_round(
 			}
 		}
 	}
+
+	Ok(())
+}
+
+pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<PendingLightningSend>> {
+	let query = "SELECT htlc_vtxo_ids, invoice, amount_sats FROM bark_pending_lightning_send";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(())?;
+
+	let mut pending_lightning_sends = Vec::new();
+	while let Some(row) = rows.next()? {
+		let invoice = row.get::<_, String>("invoice")?;
+		let htlc_vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&row.get::<_, String>(0)?)?;
+		let amount = row.get::<_, i64>("amount")?;
+
+		let mut htlc_vtxos = Vec::new();
+		for htlc_vtxo_id in htlc_vtxo_ids {
+			htlc_vtxos.push(get_wallet_vtxo_by_id(conn, htlc_vtxo_id)?.context("no vtxo found")?);
+		}
+
+		pending_lightning_sends.push(PendingLightningSend {
+			invoice: Invoice::from_str(&invoice)?,
+			amount: Amount::from_sat(amount as u64),
+			htlc_vtxos: htlc_vtxos,
+		});
+	}
+
+	Ok(pending_lightning_sends)
+}
+
+pub fn store_new_pending_lightning_send(
+	conn: &Connection,
+	invoice: &Invoice,
+	amount: &Amount,
+	htlc_vtxo_ids: &[VtxoId],
+) -> anyhow::Result<()> {
+	let query = "
+		INSERT INTO bark_pending_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids)
+		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids)
+	";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! {
+		":invoice": invoice.to_string(),
+		":payment_hash": invoice.payment_hash().as_hex().to_string(),
+		":amount_sats": amount.to_sat(),
+		":htlc_vtxo_ids": serde_json::to_string(htlc_vtxo_ids)?,
+	})?;
+
+	Ok(())
+}
+
+pub fn remove_pending_lightning_send(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+) -> anyhow::Result<()> {
+	let query = "DELETE FROM bark_pending_lightning_send WHERE payment_hash = :payment_hash";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! { ":payment_hash": payment_hash.as_hex().to_string() })?;
 
 	Ok(())
 }

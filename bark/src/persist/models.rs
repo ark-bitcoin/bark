@@ -12,16 +12,31 @@ use bdk_esplora::esplora_client::Amount;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{VtxoId, VtxoPolicy, VtxoRequest};
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use json::exit::ExitState;
 
 use crate::exit::ExitVtxo;
 use crate::vtxo_state::VtxoState;
+use crate::WalletVtxo;
+
+/// Persisted representation of a pending lightning send.
+///
+/// Stores the invoice and the amount being sent.
+///
+/// Note: the record should be removed when the payments is completed or failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingLightningSend {
+	pub invoice: Invoice,
+	pub amount: Amount,
+	pub htlc_vtxos: Vec<WalletVtxo>,
+}
 
 /// Persisted representation of an incoming Lightning payment.
 ///
 /// Stores the invoice and related cryptographic material (e.g., payment hash and preimage)
 /// and tracks whether the preimage has been revealed.
+///
+/// Note: the record should be removed when the receive is completed or failed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceive {
 	pub payment_hash: PaymentHash,

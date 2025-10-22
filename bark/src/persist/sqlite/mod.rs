@@ -24,7 +24,7 @@ use lightning_invoice::Bolt11Invoice;
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
 use json::exit::states::ExitTxOrigin;
@@ -34,7 +34,7 @@ use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::persist::BarkPersister;
-use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
 
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
 /// [PathBuf].
@@ -294,6 +294,23 @@ impl BarkPersister for SqliteClient {
 	fn store_lightning_receive(&self, payment_hash: PaymentHash, preimage: Preimage, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_lightning_receive(&conn, payment_hash, preimage, invoice)?;
+		Ok(())
+	}
+
+	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId]) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos)?;
+		Ok(())
+	}
+
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
+		let conn = self.connect()?;
+		query::get_all_pending_lightning_send(&conn)
+	}
+
+	fn remove_pending_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_pending_lightning_send(&conn, payment_hash)?;
 		Ok(())
 	}
 

@@ -23,10 +23,10 @@ pub mod sqlite;
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
 
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 
@@ -34,7 +34,7 @@ use ark::{Vtxo, VtxoId};
 use json::exit::states::ExitTxOrigin;
 
 use crate::{Movement, MovementArgs, WalletProperties};
-use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -395,6 +395,35 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the query fails.
 	fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>>;
+
+	/// Store a new pending lightning send.
+	///
+	/// Parameters:
+	/// - invoice: The invoice of the pending lightning send.
+	/// - amount: The amount of the pending lightning send.
+	/// - vtxos: The vtxos of the pending lightning send.
+	///
+	/// Errors:
+	/// - Returns an error if the pending lightning send cannot be stored.
+	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId]) -> anyhow::Result<()>;
+
+	/// Get all pending lightning sends.
+	///
+	/// Returns:
+	/// - `Ok(Vec<PendingLightningSend>)` possibly empty.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>>;
+
+	/// Remove a pending lightning send.
+	///
+	/// Parameters:
+	/// - invoice: The invoice of the pending lightning send.
+	///
+	/// Errors:
+	/// - Returns an error if the pending lightning send cannot be removed.
+	fn remove_pending_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
 	/// Store an incoming Lightning receive record.
 	///
