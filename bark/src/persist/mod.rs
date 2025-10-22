@@ -405,7 +405,8 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the pending lightning send cannot be stored.
-	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId]) -> anyhow::Result<()>;
+	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId])
+		-> anyhow::Result<PendingLightningSend>;
 
 	/// Get all pending lightning sends.
 	///
@@ -419,7 +420,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Remove a pending lightning send.
 	///
 	/// Parameters:
-	/// - invoice: The invoice of the pending lightning send.
+	/// - payment_hash: The [PaymentHash] of the pending lightning send to remove.
 	///
 	/// Errors:
 	/// - Returns an error if the pending lightning send cannot be removed.

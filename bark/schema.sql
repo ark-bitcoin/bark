@@ -169,6 +169,7 @@ CREATE TABLE bark_pending_board (
 CREATE TABLE bark_pending_lightning_send (
 				id INTEGER PRIMARY KEY,
 				invoice TEXT NOT NULL UNIQUE,
+				payment_hash TEXT NOT NULL UNIQUE,
 				amount_sats INTEGER NOT NULL,
 				htlc_vtxo_ids TEXT NOT NULL,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))

@@ -64,7 +64,7 @@ use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
-use crate::persist::models::{LightningReceive, StoredVtxoRequest};
+use crate::persist::models::{LightningReceive, PendingLightningSend, StoredVtxoRequest};
 use crate::round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
 use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
 use crate::vtxo_state::{VtxoState, VtxoStateKind};
@@ -627,8 +627,8 @@ impl Wallet {
 		let spendable = VtxoStateKind::Spendable.filter(vtxos.clone())?
 			.iter().map(|v| v.amount()).sum::<Amount>();
 
-		let pending_lightning_send = VtxoStateKind::PendingLightningSend.filter(vtxos.clone())?
-			.iter().map(|v| v.amount()).sum::<Amount>();
+		let pending_lightning_send = self.pending_lightning_send_vtxos()?.iter().map(|v| v.amount())
+			.sum::<Amount>();
 
 		let pending_board = self.pending_board_vtxos()?.iter().map(|v| v.amount()).sum::<Amount>();
 
@@ -669,7 +669,6 @@ impl Wallet {
 		Ok(self.db.get_vtxos_by_state(&[
 			VtxoStateKind::Spendable,
 			VtxoStateKind::Locked,
-			VtxoStateKind::PendingLightningSend,
 			VtxoStateKind::PendingLightningRecv,
 		])?)
 	}
@@ -712,6 +711,15 @@ impl Wallet {
 		debug_assert!(vtxos.iter().all(|v| matches!(v.state.kind(), VtxoStateKind::Locked)),
 			"all pending board vtxos should be locked"
 		);
+
+		Ok(vtxos)
+	}
+
+	/// Queries the database for any VTXO that is an pending lightning send.
+	pub fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		let vtxos = self.db.get_all_pending_lightning_send()?.into_iter()
+			.flat_map(|pending_lightning_send| pending_lightning_send.htlc_vtxos)
+			.collect::<Vec<_>>();
 
 		Ok(vtxos)
 	}
@@ -863,22 +871,16 @@ impl Wallet {
 	/// Syncs pending lightning payments, verifying whether the payment status has changed and
 	/// creating a revocation VTXO if necessary.
 	pub async fn sync_pending_lightning_vtxos(&self) -> anyhow::Result<()> {
-		let vtxos = self.db.get_vtxos_by_state(&[VtxoStateKind::PendingLightningSend])?;
+		let pending_payments = self.db.get_all_pending_lightning_send()?;
 
-		if vtxos.is_empty() {
+		if pending_payments.is_empty() {
 			return Ok(());
 		}
 
-		info!("Syncing {} pending lightning vtxos", vtxos.len());
+		info!("Syncing {} pending lightning sends", pending_payments.len());
 
-		let mut htlc_vtxos_by_payment_hash = HashMap::<_, Vec<_>>::new();
-		for vtxo in vtxos {
-			let invoice = vtxo.state.as_pending_lightning_send().unwrap();
-			htlc_vtxos_by_payment_hash.entry(invoice.0.payment_hash()).or_default().push(vtxo);
-		}
-
-		for (_, vtxos) in htlc_vtxos_by_payment_hash {
-			self.check_lightning_payment(&vtxos).await?;
+		for payment in pending_payments {
+			self.check_lightning_payment(&payment).await?;
 		}
 
 		Ok(())
@@ -1562,15 +1564,17 @@ impl Wallet {
 		Ok(arkoor.created)
 	}
 
-	async fn process_lightning_revocation(&self, htlc_vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	async fn process_lightning_revocation(&self, payment: &PendingLightningSend) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
+		let htlc_vtxos = payment.htlc_vtxos.clone().into_iter()
+			.map(|v: WalletVtxo| v.vtxo).collect::<Vec<_>>();
 
 		info!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
 
 		let mut secs = Vec::with_capacity(htlc_vtxos.len());
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
 		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
-		for input in htlc_vtxos.into_iter() {
+		for input in htlc_vtxos.iter() {
 			let keypair = self.get_vtxo_key(&input)?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
@@ -1606,6 +1610,8 @@ impl Wallet {
 			recipients: &[],
 			fees: None,
 		})?;
+
+		self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
 
 		info!("Revoked {} HTLC VTXOs", vtxos.len());
 
@@ -1720,21 +1726,20 @@ impl Wallet {
 			change.validate(&tx).context("invalid lightning change vtxo")?;
 		}
 
-		let pending_lightning_state = VtxoState::PendingLightningSend {
-			invoice: invoice.clone(),
-			amount,
-		};
-
 		self.db.register_movement(MovementArgs {
 			kind: MovementKind::LightningSend,
 			spends: &inputs.iter().collect::<Vec<_>>(),
 			receives: &htlc_vtxos.iter()
-				.map(|v| (v, pending_lightning_state.clone()))
+				.map(|v| (v, VtxoState::Locked))
 				.chain(change_vtxo.as_ref().map(|c| (c, VtxoState::Spendable)))
 				.collect::<Vec<_>>(),
 			recipients: &[],
 			fees: None,
 		}).context("failed to store OOR vtxo")?;
+
+		let payment = self.db.store_new_pending_lightning_send(
+			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(),
+		)?;
 
 		let req = protos::SignedLightningPaymentDetails {
 			invoice: invoice.to_string(),
@@ -1755,9 +1760,11 @@ impl Wallet {
 				recipients: &[(&invoice.to_string(), amount)],
 				fees: None,
 			}).context("failed to store OOR vtxo")?;
+
+			self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
 			Ok(preimage)
 		} else {
-			self.process_lightning_revocation(&htlc_vtxos).await?;
+			self.process_lightning_revocation(&payment).await?;
 			bail!("No preimage, payment failed: {}", res.progress_message);
 		}
 	}
@@ -1788,30 +1795,25 @@ impl Wallet {
 	///     revokes the VTXOs.
 	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement
 	///     in the database and returns
-	pub async fn check_lightning_payment(
-		&self,
-		htlc_vtxos: &[WalletVtxo],
-	) -> anyhow::Result<Option<Preimage>> {
+	pub async fn check_lightning_payment(&self, payment: &PendingLightningSend)
+		-> anyhow::Result<Option<Preimage>>
+	{
 		let mut srv = self.require_server()?;
 		let tip = self.chain.tip().await?;
 
-		// we check that all htlc have the same invoice, amount, and HTLC out spec
-		let mut parts = None;
-		for vtxo in htlc_vtxos.iter() {
-			if let VtxoState::PendingLightningSend { ref invoice, amount } = vtxo.state {
-				let policy = vtxo.vtxo.policy().as_server_htlc_send()
-					.context("VTXO is not an HTLC send")?;
-				let this_parts = (invoice, amount, policy);
-				if parts.get_or_insert_with(|| this_parts) != &this_parts {
-					bail!("All lightning htlc should have the same invoice, amount and policy");
-				}
-			}
+		let payment_hash = payment.invoice.payment_hash();
+
+		let policy = payment.htlc_vtxos.first().context("no vtxo provided")?.vtxo.policy();
+		debug_assert!(payment.htlc_vtxos.iter().all(|v| v.vtxo.policy() == policy),
+			"All lightning htlc should have the same policy",
+		);
+		let policy = policy.as_server_htlc_send().context("VTXO is not an HTLC send")?;
+		if policy.payment_hash != payment_hash {
+			bail!("Payment hash mismatch");
 		}
 
-		let (invoice, amount, spk_spec) = parts.context("no htlc vtxo provided")?;
-		let payment_hash = ark::lightning::PaymentHash::from(invoice.payment_hash());
 		let req = protos::CheckLightningPaymentRequest {
-			hash: payment_hash.to_vec(),
+			hash: policy.payment_hash.to_vec(),
 			wait: false,
 		};
 		let res = srv.client.check_lightning_payment(req).await?.into_inner();
@@ -1825,13 +1827,13 @@ impl Wallet {
 			},
 			protos::PaymentStatus::Pending => {
 				trace!("Payment is still pending, HTLC expiry: {}, tip: {}",
-					spk_spec.htlc_expiry, tip);
-				if tip > spk_spec.htlc_expiry {
+					policy.htlc_expiry, tip);
+				if tip > policy.htlc_expiry {
 					info!("Payment is still pending, but HTLC is expired: revoking VTXO");
 					true
 				} else {
 					info!("Payment is still pending and HTLC is not expired ({}): \
-						doing nothing for now", spk_spec.htlc_expiry,
+						doing nothing for now", policy.htlc_expiry,
 					);
 					false
 				}
@@ -1844,34 +1846,37 @@ impl Wallet {
 
 				self.db.register_movement(MovementArgs {
 					kind: MovementKind::LightningSend,
-					spends: &htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
+					spends: &payment.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
 					receives: &[],
-					recipients: &[(&invoice.to_string(), amount)],
+					recipients: &[(&payment.invoice.to_string(), payment.amount)],
 					fees: None,
 				}).context("failed to store OOR vtxo")?;
+
+				self.db.remove_pending_lightning_send(payment_hash)?;
 
 				return Ok(Some(preimage));
 			},
 		};
 
 		if should_revoke {
-			if let Err(e) = self.process_lightning_revocation(
-				&htlc_vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(),
-			).await {
+			if let Err(e) = self.process_lightning_revocation(payment).await {
 				warn!("Failed to revoke VTXO: {}", e);
 
 				// if one of the htlc is about to expire, we exit all of them.
 				// Maybe we want a different behavior here, but we have to decide whether
 				// htlc vtxos revocation is a all or nothing process.
-				let min_expiry = htlc_vtxos.iter()
+				let min_expiry = payment.htlc_vtxos.iter()
 					.map(|v| v.vtxo.spec().expiry_height).min().unwrap();
+
 				if tip > min_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
 					warn!("Some VTXO is about to expire soon, marking to exit");
-					let vtxos = htlc_vtxos
+					let vtxos = payment.htlc_vtxos
 						.iter()
 						.map(|v| v.vtxo.clone())
 						.collect::<Vec<_>>();
 					self.exit.write().await.mark_vtxos_for_exit(&vtxos);
+
+					self.db.remove_pending_lightning_send(payment_hash)?;
 				}
 			}
 		}

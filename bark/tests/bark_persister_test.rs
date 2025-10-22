@@ -192,10 +192,7 @@ impl BarkPersister for Dummy {
 	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::from_bytes([])?,
-			state: VtxoState::PendingLightningSend {
-				invoice: Invoice::Bolt11(Bolt11Invoice::from_str("bob")?),
-				amount: Amount::ZERO,
-			},
+			state: VtxoState::Locked,
 		}]))
 	}
 
@@ -221,11 +218,15 @@ impl BarkPersister for Dummy {
 
 	fn store_new_pending_lightning_send(
 		&self,
-		_invoice: &Invoice,
-		_amount: &Amount,
+		invoice: &Invoice,
+		amount: &Amount,
 		_vtxos: &[VtxoId],
-	) -> anyhow::Result<()> {
-		Ok(())
+	) -> anyhow::Result<PendingLightningSend> {
+		Ok(PendingLightningSend {
+			invoice: invoice.clone(),
+			amount: *amount,
+			htlc_vtxos: vec![],
+		})
 	}
 
 	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {

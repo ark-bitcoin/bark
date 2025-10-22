@@ -5,7 +5,6 @@
 //! - created and ready to spend on Ark: [VtxoStateKind::Spendable]
 //! - owned but not usable because it is locked by subsystem: [VtxoStateKind::Locked]
 //! - consumed (no longer part of the wallet's balance): [VtxoStateKind::Spent]
-//! - temporarily locked in an outgoing Lightning HTLC: [VtxoStateKind::PendingLightningSend]
 //! - temporarily locked while waiting for an incoming Lightning HTLC to be claimed:
 //!   [VtxoStateKind::PendingLightningRecv]
 //!
@@ -22,15 +21,13 @@ use std::fmt;
 use std::ops::Deref;
 
 use ark::vtxo::VtxoRef;
-use bitcoin::Amount;
 
 use ark::Vtxo;
-use ark::lightning::{Invoice, PaymentHash};
+use ark::lightning::PaymentHash;
 
 const SPENDABLE: &'static str = "Spendable";
 const LOCKED: &'static str = "Locked";
 const SPENT: &'static str = "Spent";
-const PENDING_LIGHTNING_SEND: &'static str = "PendingLightningSend";
 const PENDING_LIGHTNING_RECV: &'static str = "PendingLightningRecv";
 
 /// A compact, serialization-friendly representation of a VTXO's state.
@@ -44,8 +41,6 @@ pub enum VtxoStateKind {
 	Locked,
 	/// The [Vtxo] has been consumed and is no longer part of the wallet's balance.
 	Spent,
-	/// The [Vtxo] is currently locked in an outgoing Lightning HTLC.
-	PendingLightningSend,
 	/// The [Vtxo] is currently locked for an incoming Lightning HTLC (awaiting claim).
 	PendingLightningRecv,
 }
@@ -57,7 +52,6 @@ impl VtxoStateKind {
 			VtxoStateKind::Spendable => SPENDABLE,
 			VtxoStateKind::Locked => LOCKED,
 			VtxoStateKind::Spent => SPENT,
-			VtxoStateKind::PendingLightningSend => PENDING_LIGHTNING_SEND,
 			VtxoStateKind::PendingLightningRecv => PENDING_LIGHTNING_RECV,
 		}
 	}
@@ -88,16 +82,6 @@ pub enum VtxoState {
 	Spent,
 	/// The [Vtxo] is currently locked in an action.
 	Locked,
-	/// The current [Vtxo] is locked in an outgoing Lightning HTLC pending settlement.
-	///
-	/// The associated data identifies the Lightning [Invoice] being paid and the
-	/// amount reserved from this [Vtxo] for that payment. While in this state,
-	/// the wallet should not use the [Vtxo] for other operations unless the HTLC
-	/// is revoked or otherwise resolved.
-	PendingLightningSend {
-		invoice: Invoice,
-		amount: Amount,
-	},
 	/// The current [Vtxo] is reserved for an incoming Lightning HTLC awaiting claim by the
 	/// recipient.
 	///
@@ -115,18 +99,7 @@ impl VtxoState {
 			VtxoState::Locked => VtxoStateKind::Locked,
 			VtxoState::Spendable => VtxoStateKind::Spendable,
 			VtxoState::Spent => VtxoStateKind::Spent,
-			VtxoState::PendingLightningSend { .. } => VtxoStateKind::PendingLightningSend,
 			VtxoState::PendingLightningRecv { .. } => VtxoStateKind::PendingLightningRecv,
-		}
-	}
-
-	/// If the [Vtxo] is [VtxoStateKind::PendingLightningSend], returns the `(invoice, amount)`
-	/// currently reserved.
-	/// Otherwise returns `None`.
-	pub fn as_pending_lightning_send(&self) -> Option<(&Invoice, Amount)> {
-		match self {
-			VtxoState::PendingLightningSend { invoice, amount } => Some((invoice, *amount)),
-			_ => None,
 		}
 	}
 }
@@ -168,13 +141,12 @@ mod test {
 			VtxoStateKind::Spendable,
 			VtxoStateKind::Spent,
 			VtxoStateKind::Locked,
-			VtxoStateKind::PendingLightningSend,
 			VtxoStateKind::PendingLightningRecv,
 		];
 
 		assert_eq!(
 			serde_json::to_string(&states).unwrap(),
-			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED, PENDING_LIGHTNING_SEND, PENDING_LIGHTNING_RECV]).unwrap(),
+			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED, PENDING_LIGHTNING_RECV]).unwrap(),
 		);
 
 		// If a compiler error occurs,
@@ -183,7 +155,6 @@ mod test {
 			VtxoState::Spendable => {},
 			VtxoState::Spent => {},
 			VtxoState::Locked => {},
-			VtxoState::PendingLightningSend { .. } => (),
 			VtxoState::PendingLightningRecv { .. } => (),
 		}
 	}

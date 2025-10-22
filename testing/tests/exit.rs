@@ -568,6 +568,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.maintain().await;
 	complete_exit(&ctx, &bark_1).await;
 
+	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0));
+
 	// TODO: Drain exit outputs then check balance in onchain wallet
 }
 

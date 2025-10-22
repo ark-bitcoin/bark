@@ -212,6 +212,11 @@ impl Bark {
 		serde_json::from_str::<json::onchain::Utxos>(&output).unwrap()
 	}
 
+	pub async fn offchain_balance(&self) -> json::Balance {
+		let json = self.run(["balance"]).await;
+		serde_json::from_str::<json::Balance>(&json).unwrap()
+	}
+
 	pub async fn spendable_balance(&self) -> Amount {
 		let json = self.run(["balance"]).await;
 		serde_json::from_str::<json::Balance>(&json).unwrap().spendable

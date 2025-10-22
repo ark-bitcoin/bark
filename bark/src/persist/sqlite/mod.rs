@@ -84,7 +84,6 @@ impl SqliteClient {
 		let allowed_states = [
 			VtxoStateKind::Locked,
 			VtxoStateKind::Spendable,
-			VtxoStateKind::PendingLightningSend,
 			VtxoStateKind::PendingLightningRecv,
 		];
 		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &allowed_states)?;
@@ -297,10 +296,9 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId]) -> anyhow::Result<()> {
+	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId]) -> anyhow::Result<PendingLightningSend> {
 		let conn = self.connect()?;
-		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos)?;
-		Ok(())
+		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos)
 	}
 
 	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {

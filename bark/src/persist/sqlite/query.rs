@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::musig::{DangerousSecretNonce, SecretNonce};
+use ark::vtxo::VtxoRef;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::consensus;
@@ -563,7 +564,7 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 	while let Some(row) = rows.next()? {
 		let invoice = row.get::<_, String>("invoice")?;
 		let htlc_vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&row.get::<_, String>(0)?)?;
-		let amount = row.get::<_, i64>("amount")?;
+		let amount_sats = row.get::<_, i64>("amount_sats")?;
 
 		let mut htlc_vtxos = Vec::new();
 		for htlc_vtxo_id in htlc_vtxo_ids {
@@ -572,7 +573,7 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 
 		pending_lightning_sends.push(PendingLightningSend {
 			invoice: Invoice::from_str(&invoice)?,
-			amount: Amount::from_sat(amount as u64),
+			amount: Amount::from_sat(amount_sats as u64),
 			htlc_vtxos: htlc_vtxos,
 		});
 	}
@@ -580,25 +581,38 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 	Ok(pending_lightning_sends)
 }
 
-pub fn store_new_pending_lightning_send(
+pub fn store_new_pending_lightning_send<V: VtxoRef>(
 	conn: &Connection,
 	invoice: &Invoice,
 	amount: &Amount,
-	htlc_vtxo_ids: &[VtxoId],
-) -> anyhow::Result<()> {
+	htlc_vtxo_ids: &[V],
+) -> anyhow::Result<PendingLightningSend> {
 	let query = "
 		INSERT INTO bark_pending_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids)
 		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids)
 	";
+
 	let mut statement = conn.prepare(query)?;
+
+	let mut htlc_vtxos = Vec::new();
+	let mut vtxo_ids = Vec::new();
+	for v in htlc_vtxo_ids {
+		htlc_vtxos.push(get_wallet_vtxo_by_id(conn, v.vtxo_id())?.context("no vtxo found")?);
+		vtxo_ids.push(v.vtxo_id().to_string());
+	}
+
 	statement.execute(named_params! {
 		":invoice": invoice.to_string(),
 		":payment_hash": invoice.payment_hash().as_hex().to_string(),
 		":amount_sats": amount.to_sat(),
-		":htlc_vtxo_ids": serde_json::to_string(htlc_vtxo_ids)?,
+		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
 	})?;
 
-	Ok(())
+	Ok(PendingLightningSend {
+		invoice: invoice.clone(),
+		amount: *amount,
+		htlc_vtxos: htlc_vtxos,
+	})
 }
 
 pub fn remove_pending_lightning_send(
