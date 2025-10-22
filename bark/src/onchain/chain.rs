@@ -2,6 +2,7 @@
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr as _;
 
 use anyhow::Context;
 use bdk_core::{BlockId, CheckPoint};
@@ -64,7 +65,10 @@ impl ChainSourceClient {
 				}
 			},
 			ChainSourceClient::Esplora(client) => {
-				let genesis_hash = client.get_block_hash(0).await?;
+				let res = client.client().get(format!("{}/block-height/0", client.url()))
+					.send().await?.text().await?;
+				let genesis_hash = BlockHash::from_str(&res)
+					.context("bad response from server (not a blockhash). Esplora client possibly misconfigured")?;
 				if genesis_hash != genesis_block(expected).block_hash() {
 					bail!("Network mismatch: expected {:?}, got {:?}", expected, genesis_hash);
 				}
