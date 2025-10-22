@@ -30,6 +30,8 @@ impl Migration for Migration0017 {
 				htlc_vtxo_ids TEXT NOT NULL,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);",
+			"ALTER TABLE bark_lightning_receive RENAME TO bark_pending_lightning_receive;",
+			"ALTER TABLE bark_pending_lightning_receive ADD COLUMN htlc_vtxo_ids TEXT;",
 		];
 
 		for query in queries {

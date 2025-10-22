@@ -37,12 +37,13 @@ pub struct PendingLightningSend {
 /// and tracks whether the preimage has been revealed.
 ///
 /// Note: the record should be removed when the receive is completed or failed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LightningReceive {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
 	pub invoice: Bolt11Invoice,
 	pub preimage_revealed_at: Option<u64>,
+	pub htlc_vtxos: Option<Vec<WalletVtxo>>,
 }
 
 /// Persistable view of an [ExitVtxo].
@@ -145,9 +146,6 @@ mod test {
 		let serialised = r#""Spent""#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#""Locked""#;
-		serde_json::from_str::<VtxoState>(serialised).unwrap();
-
-		let serialised = r#"{"PendingLightningRecv":{"payment_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 
 		let serialised = r#"{"request_policy":"0003a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount":300000,"state":"Spendable"}"#;

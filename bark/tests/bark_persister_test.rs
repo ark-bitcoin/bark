@@ -183,9 +183,7 @@ impl BarkPersister for Dummy {
 	fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::from_bytes([])?,
-			state: VtxoState::PendingLightningRecv {
-				payment_hash: PaymentHash::from_bytes([])?,
-			},
+			state: VtxoState::Locked,
 		}]))
 	}
 
@@ -245,13 +243,7 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn get_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(Vec::<LightningReceive>::from([
-			dummy_lightning_receive(),
-		]))
-	}
-
-	fn get_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		Ok(Vec::<LightningReceive>::from([
 			dummy_lightning_receive(),
 		]))
@@ -261,11 +253,19 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
+	fn set_lightning_receive_vtxos(&self, _payment_hash: PaymentHash, _vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+		Ok(())
+	}
+
 	fn fetch_lightning_receive_by_payment_hash(
 		&self,
 		_payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningReceive>> {
 		Ok(Some(dummy_lightning_receive()))
+	}
+
+	fn remove_pending_lightning_receive(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+		Ok(())
 	}
 
 	fn store_exit_vtxo_entry(&self, _exit: &StoredExit) -> anyhow::Result<()> {
@@ -335,6 +335,7 @@ fn dummy_lightning_receive() -> LightningReceive {
 		payment_preimage: Preimage::from_bytes([]).unwrap(),
 		invoice: Bolt11Invoice::from_str("bob").unwrap(),
 		preimage_revealed_at:Some(0),
+		htlc_vtxos: None,
 	}
 }
 

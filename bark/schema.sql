@@ -70,13 +70,13 @@ CREATE VIEW movement_view AS
 					) AS recipients
 				FROM bark_movement
 /* movement_view(id,fees_sat,created_at,kind,spends,receives,recipients) */;
-CREATE TABLE bark_lightning_receive (
+CREATE TABLE IF NOT EXISTS "bark_pending_lightning_receive" (
 			payment_hash BLOB NOT NULL PRIMARY KEY,
 			preimage BLOB NOT NULL UNIQUE,
 			preimage_revealed_at TIMESTAMP,
 			invoice TEXT NOT NULL,
 			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-		);
+		, htlc_vtxo_ids TEXT);
 CREATE TABLE bark_exit_states (
 				vtxo_id TEXT PRIMARY KEY,
 				state TEXT NOT NULL,

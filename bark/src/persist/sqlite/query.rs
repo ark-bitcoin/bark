@@ -11,7 +11,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
-use rusqlite::{self, named_params, Connection, ToSql, Transaction};
+use rusqlite::{self, named_params, Connection, Row, ToSql, Transaction};
 
 use ark::ProtocolEncoding;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
@@ -28,7 +28,7 @@ use crate::round::{
 	AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState, RoundStateKind,
 };
 
-use super::convert::{row_to_lightning_receive, row_to_movement};
+use super::convert::row_to_movement;
 
 /// Set read-only properties for the wallet
 ///
@@ -819,7 +819,7 @@ pub fn store_lightning_receive(
 	invoice: &Bolt11Invoice,
 ) -> anyhow::Result<()> {
 	let query = "
-		INSERT INTO bark_lightning_receive (payment_hash, preimage, invoice)
+		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice)
 		VALUES (:payment_hash, :preimage, :invoice);
 	";
 	let mut statement = conn.prepare(query)?;
@@ -833,24 +833,25 @@ pub fn store_lightning_receive(
 	Ok(())
 }
 
-pub fn get_lightning_receives<'a>(conn: &'a Connection) -> anyhow::Result<Vec<LightningReceive>> {
-	let query = "SELECT * FROM bark_lightning_receive ORDER BY created_at DESC";
-
-	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([])?;
-
-	let mut result = Vec::new();
-	while let Some(row) = rows.next()? {
-		result.push(row_to_lightning_receive(&row)?);
+fn get_htlc_vtxos(conn: &Connection, row: &Row<'_>) -> anyhow::Result<Option<Vec<WalletVtxo>>> {
+	match row.get::<_, Option<String>>("htlc_vtxo_ids")? {
+		Some(vtxo_ids_str) => {
+			let vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&vtxo_ids_str)?;
+			let mut vtxos = Vec::new();
+			for vtxo_id in vtxo_ids {
+				vtxos.push(get_wallet_vtxo_by_id(conn, vtxo_id)?.context("no vtxo found")?);
+			}
+			Ok(Some(vtxos))
+		},
+		None => Ok(None),
 	}
-
-	Ok(result)
 }
 
-pub fn get_pending_lightning_receives<'a>(
+pub fn get_all_pending_lightning_receives<'a>(
 	conn: &'a Connection,
 ) -> anyhow::Result<Vec<LightningReceive>> {
-	let query = "SELECT * FROM bark_lightning_receive \
+	let query = "SELECT payment_hash, preimage, invoice, htlc_vtxo_ids, preimage_revealed_at
+		FROM bark_pending_lightning_receive \
 		WHERE preimage_revealed_at IS NULL
 		ORDER BY created_at DESC";
 	let mut statement = conn.prepare(query)?;
@@ -858,14 +859,20 @@ pub fn get_pending_lightning_receives<'a>(
 
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
-		result.push(row_to_lightning_receive(&row)?);
+		result.push(LightningReceive {
+			payment_hash: PaymentHash::from(row.get::<_, [u8; 32]>("payment_hash")?),
+			payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
+			preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
+			invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
+			htlc_vtxos: get_htlc_vtxos(conn, &row)?,
+		});
 	}
 
 	Ok(result)
 }
 
 pub fn set_preimage_revealed(conn: &Connection, payment_hash: PaymentHash) -> anyhow::Result<()> {
-	let query = "UPDATE bark_lightning_receive SET preimage_revealed_at = :revealed_at \
+	let query = "UPDATE bark_pending_lightning_receive SET preimage_revealed_at = :revealed_at \
 		WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
@@ -875,15 +882,61 @@ pub fn set_preimage_revealed(conn: &Connection, payment_hash: PaymentHash) -> an
 	Ok(())
 }
 
+pub fn set_lightning_receive_vtxos(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+	htlc_vtxo_ids: &[VtxoId],
+) -> anyhow::Result<()> {
+	let query = "UPDATE bark_pending_lightning_receive SET htlc_vtxo_ids = :htlc_vtxo_ids \
+		WHERE payment_hash = :payment_hash";
+
+	let mut statement = conn.prepare(query)?;
+
+	let mut vtxo_ids = Vec::new();
+	for v in htlc_vtxo_ids {
+		get_wallet_vtxo_by_id(conn, *v)?.context("no vtxo found")?;
+		vtxo_ids.push(v.vtxo_id().to_string());
+	}
+
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.to_vec(),
+		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?
+	})?;
+
+	Ok(())
+}
+
+pub fn remove_pending_lightning_receive(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+) -> anyhow::Result<()> {
+	let query = "DELETE FROM bark_pending_lightning_receive WHERE payment_hash = :payment_hash";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! { ":payment_hash": payment_hash.as_hex().to_string() })?;
+
+	Ok(())
+}
+
 pub fn fetch_lightning_receive_by_payment_hash(
 	conn: &Connection,
 	payment_hash: PaymentHash,
 ) -> anyhow::Result<Option<LightningReceive>> {
-	let query = "SELECT * FROM bark_lightning_receive WHERE payment_hash = ?1";
+	let query = "SELECT * FROM bark_pending_lightning_receive WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query((payment_hash.as_ref(), ))?;
 
-	Ok(rows.next()?.map(|row| row_to_lightning_receive(&row)).transpose()?)
+	let row = match rows.next()? {
+		Some(row) => row,
+		None => return Ok(None),
+	};
+
+	Ok(Some(LightningReceive {
+		payment_hash: PaymentHash::from(row.get::<_, [u8; 32]>("payment_hash")?),
+		payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
+		preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
+		invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
+		htlc_vtxos: get_htlc_vtxos(conn, &row)?,
+	}))
 }
 
 pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &StoredExit) -> anyhow::Result<()> {

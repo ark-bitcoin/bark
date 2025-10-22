@@ -442,15 +442,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 		invoice: &Bolt11Invoice,
 	) -> anyhow::Result<()>;
 
-	/// Return a list of Lightning receives.
-	///
-	/// Returns:
-	/// - `Ok(Vec<LightningReceive>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn get_lightning_receives(&self,) -> anyhow::Result<Vec<LightningReceive>>;
-
 	/// Returns a list of all pending lightning receives
 	///
 	/// Returns:
@@ -458,7 +449,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
+	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
 
 	/// Mark a Lightning receive preimage as revealed (e.g., after settlement).
 	///
@@ -468,6 +459,17 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the update fails or the receive does not exist.
 	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+
+	/// Set the VTXO IDs for a Lightning receive.
+	///
+	/// Parameters:
+	/// - payment_hash: The payment hash identifying the receive.
+	/// - htlc_vtxo_ids: The VTXO IDs to set.
+	///
+	/// Errors:
+	/// - Returns an error if the update fails or the receive does not exist.
+	fn set_lightning_receive_vtxos(&self, payment_hash: PaymentHash, htlc_vtxo_ids: &[VtxoId])
+		-> anyhow::Result<()>;
 
 	/// Fetch a Lightning receive by its payment hash.
 	///
@@ -481,6 +483,15 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the lookup fails.
 	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningReceive>>;
+
+	/// Remove a Lightning receive by its payment hash.
+	///
+	/// Parameters:
+	/// - payment_hash: The payment hash of the record to remove.
+	///
+	/// Errors:
+	/// - Returns an error if the removal fails.
+	fn remove_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
 	/// Store an entry indicating a [Vtxo] is being exited.
 	///

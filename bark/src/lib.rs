@@ -666,11 +666,7 @@ impl Wallet {
 
 	/// Returns all not spent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(self.db.get_vtxos_by_state(&[
-			VtxoStateKind::Spendable,
-			VtxoStateKind::Locked,
-			VtxoStateKind::PendingLightningRecv,
-		])?)
+		Ok(self.db.get_vtxos_by_state(&[VtxoStateKind::Spendable, VtxoStateKind::Locked])?)
 	}
 
 	/// Returns all vtxos matching the provided predicate
@@ -1917,14 +1913,9 @@ impl Wallet {
 		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into())?)
 	}
 
-	/// Fetches all lightning receives ordered from newest to oldest.
-	pub fn lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(self.db.get_lightning_receives()?)
-	}
-
 	/// Fetches all pending lightning receives ordered from newest to oldest.
 	pub fn pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(self.db.get_pending_lightning_receives()?)
+		Ok(self.db.get_all_pending_lightning_receives()?)
 	}
 
 	/// Claim incoming lightning payment with the given [PaymentHash].
@@ -1951,20 +1942,15 @@ impl Wallet {
 	///   [PaymentHash].
 	async fn claim_ln_receive(
 		&self,
-		payment_hash: PaymentHash,
-		vtxos: &[WalletVtxo],
+		lightning_receive: LightningReceive,
 	) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
-		let lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
-			.context("no lightning receive found")?;
-		assert_eq!(payment_hash, lightning_receive.payment_preimage.compute_payment_hash(),
-			"we have an incorrect preimage in our db for a ln payment",
-		);
-
 		// order inputs by vtxoid before we generate nonces
 		let inputs = {
-			let mut ret = vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+			let htlc_vtxos = lightning_receive.htlc_vtxos.as_ref()
+				.context("no HTLC VTXOs set on record yet")?;
+			let mut ret = htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
 			ret.sort_by_key(|v| v.id());
 			ret
 		};
@@ -1981,7 +1967,7 @@ impl Wallet {
 
 		let pay_req = VtxoRequest {
 			policy: receive_policy.clone(),
-			amount: vtxos.iter().map(|v| v.vtxo.amount()).sum(),
+			amount: inputs.iter().map(|v| v.amount()).sum(),
 		};
 		trace!("ln arkoor builder params: inputs: {:?}; user_nonces: {:?}; req: {:?}",
 			inputs.iter().map(|v| v.id()).collect::<Vec<_>>(), pub_nonces, pay_req,
@@ -1993,7 +1979,7 @@ impl Wallet {
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(lightning_receive.payment_hash)?;
 		let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
-			payment_hash: payment_hash.to_byte_array().to_vec(),
+			payment_hash: lightning_receive.payment_hash.to_byte_array().to_vec(),
 			payment_preimage: lightning_receive.payment_preimage.to_vec(),
 			vtxo_policy: receive_policy.serialize(),
 			user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
@@ -2018,6 +2004,8 @@ impl Wallet {
 			recipients: &[],
 			fees: None,
 		})?;
+
+		self.db.remove_pending_lightning_receive(lightning_receive.payment_hash)?;
 
 		Ok(())
 	}
@@ -2052,8 +2040,11 @@ impl Wallet {
 		&self,
 		payment_hash: PaymentHash,
 		wait: bool,
-	) -> anyhow::Result<Vec<WalletVtxo>> {
+	) -> anyhow::Result<LightningReceive> {
 		let mut srv = self.require_server()?;
+
+		let mut lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
+			.context("no lightning receive found")?;
 
 		info!("Waiting for payment...");
 		let sub = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
@@ -2071,45 +2062,24 @@ impl Wallet {
 			protos::LightningReceiveStatus::Cancelled => bail!("payment was canceled"),
 		}
 
-		// if we are in state htlcs-ready, let's see if we have already stored the HTLC VTXOs
-		if status == protos::LightningReceiveStatus::HtlcsReady {
-			ensure!(!sub.htlc_vtxos.is_empty(), "server didn't provide any HTLC VTXOs");
-			let mut all_found = true;
-			let mut vtxos = Vec::with_capacity(sub.htlc_vtxos.len());
-			for v in &sub.htlc_vtxos {
-				let id = VtxoId::from_slice(v)?;
-				let vtxo = match self.db.get_wallet_vtxo(id)? {
-					Some(v) => v,
-					None => {
-						all_found = false;
-						break;
-					},
-				};
+		// If we have already HTLC VTXOs stored, let's only check if the server sent us the same ones
+		if let Some(vtxos) = &lightning_receive.htlc_vtxos {
+			debug_assert!({
+				let vtxos_by_id = vtxos.iter().map(|v| (v.id(), v)).collect::<HashMap<_, _>>();
+				sub.htlc_vtxos.iter().all(|v| {
+					match VtxoId::from_slice(v) {
+						Ok(id) => vtxos_by_id.contains_key(&id),
+						Err(_) => false,
+					}
+				})
+			}, "server sent HTLC VTXOs that we don't have");
 
-				match vtxo.state {
-					VtxoState::PendingLightningRecv { payment_hash: h } => {
-						if h != payment_hash {
-							bail!("server sent lightning receive HTLC VTXO with \
-								wrong payment hash: {}", vtxo.vtxo.id(),
-							);
-						}
-					},
-					ref s => bail!("server sent incorrect lightning receive \
-						HTLC VTXO: {}, state={:?}", vtxo.vtxo.id(), s,
-					),
-				}
-
-				vtxos.push(vtxo);
-			}
-			if all_found {
-				return Ok(vtxos)
-			}
-			// else we continue below
+			return Ok(lightning_receive)
 		}
 
 		let (keypair, _) = self.derive_store_next_keypair()?;
 		let req = protos::PrepareLightningReceiveClaimRequest {
-			payment_hash: payment_hash.to_vec(),
+			payment_hash: lightning_receive.payment_hash.to_vec(),
 			user_pubkey: keypair.public_key().serialize().to_vec(),
 		};
 		let res = srv.client.prepare_lightning_receive_claim(req).await
@@ -2122,7 +2092,7 @@ impl Wallet {
 		// sanity check the vtxos
 		for vtxo in &vtxos {
 			if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
-				if p.payment_hash != payment_hash {
+				if p.payment_hash != lightning_receive.payment_hash {
 					bail!("invalid payment hash on HTLC VTXOs received from server: {}",
 						p.payment_hash,
 					);
@@ -2136,19 +2106,32 @@ impl Wallet {
 			}
 		}
 
-		let vtxo_state = VtxoState::PendingLightningRecv { payment_hash };
+		// check sum match invoice amount
+		let invoice_amount = lightning_receive.invoice.amount_milli_satoshis().map(|a| Amount::from_msat_floor(a))
+			.expect("ln receive invoice should have amount");
+		ensure!(vtxos.iter().map(|v| v.amount()).sum::<Amount>() >= invoice_amount,
+			"Server didn't return enough VTXOs to cover invoice amount"
+		);
+
+		let vtxos = vtxos.into_iter().map(|v| WalletVtxo {
+			vtxo: v.clone(),
+			state: VtxoState::Locked,
+		}).collect::<Vec<_>>();
+
 		self.db.register_movement(MovementArgs {
 			kind: MovementKind::LightningReceive,
 			spends: &[],
-			receives: &vtxos.iter().map(|v| (v, vtxo_state.clone())).collect::<Vec<_>>(),
+			receives: &vtxos.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
 			recipients: &[],
 			fees: None,
 		})?;
 
-		let wallet_vtxos = vtxos.iter()
-			.map(|v| Ok(self.db.get_wallet_vtxo(v.id())?.expect("missing VTXO we just put")))
-			.collect::<anyhow::Result<Vec<_>>>()?;
-		Ok(wallet_vtxos)
+		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.db.set_lightning_receive_vtxos(payment_hash, &vtxo_ids)?;
+
+		lightning_receive.htlc_vtxos = Some(vtxos);
+
+		Ok(lightning_receive)
 	}
 
 	/// Check and claim a Lightning receive
@@ -2177,8 +2160,8 @@ impl Wallet {
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<()> {
-		let wallet_vtxos = self.check_ln_receive(payment_hash, wait).await?;
-		self.claim_ln_receive(payment_hash, &wallet_vtxos).await
+		let receive = self.check_ln_receive(payment_hash, wait).await?;
+		self.claim_ln_receive(receive).await
 	}
 
 	/// Check and claim all opened Lightning receive

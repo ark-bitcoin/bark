@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
+use bark::persist::models::LightningReceive;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use clap;
@@ -11,9 +12,10 @@ use log::info;
 
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bark::Wallet;
-use bark_json::InvoiceInfo;
+use bark_json::{InvoiceInfo, LightningReceiveInfo};
 
 use crate::util::output_json;
+use crate::wallet_vtxo_to_json;
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
@@ -88,6 +90,18 @@ fn payment_hash_from_filter(filter: &str) -> anyhow::Result<PaymentHash> {
 	}
 }
 
+fn lightning_receive_to_info(receive: LightningReceive) -> LightningReceiveInfo {
+	LightningReceiveInfo {
+		payment_hash: receive.payment_hash,
+		payment_preimage: receive.payment_preimage,
+		preimage_revealed_at: receive.preimage_revealed_at,
+		invoice: receive.invoice.to_string(),
+		htlc_vtxos: receive.htlc_vtxos.map(|vtxos| {
+			vtxos.into_iter().map(|vtxo| wallet_vtxo_to_json(&vtxo)).collect()
+		}),
+	}
+}
+
 pub async fn execute_lightning_command(
 	lightning_command: LightningCommand,
 	wallet: &mut Wallet,
@@ -124,16 +138,16 @@ pub async fn execute_lightning_command(
 				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
 			};
 			if let Some(ret) = wallet.lightning_receive_status(payment_hash)? {
-				output_json(&ret);
+				output_json(&lightning_receive_to_info(ret));
 			} else {
 				info!("No invoice found");
 			}
 		},
 		LightningCommand::Invoices => {
-			let mut receives = wallet.lightning_receives()?;
+			let mut receives = wallet.pending_lightning_receives()?;
 			// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
 			receives.reverse();
-			output_json(&receives);
+			output_json(&receives.into_iter().map(|r| lightning_receive_to_info(r)).collect::<Vec<_>>());
 		},
 		LightningCommand::Claim { payment, wait, no_sync } => {
 			if !no_sync {

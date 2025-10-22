@@ -81,11 +81,7 @@ impl SqliteClient {
 
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
-		let allowed_states = [
-			VtxoStateKind::Locked,
-			VtxoStateKind::Spendable,
-			VtxoStateKind::PendingLightningRecv,
-		];
+		let allowed_states = [VtxoStateKind::Locked, VtxoStateKind::Spendable];
 		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &allowed_states)?;
 		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
 		Ok(())
@@ -312,19 +308,20 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		let conn = self.connect()?;
-		query::get_lightning_receives(&conn)
-	}
-
-	fn get_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		let conn = self.connect()?;
-		query::get_pending_lightning_receives(&conn)
+		query::get_all_pending_lightning_receives(&conn)
 	}
 
 	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::set_preimage_revealed(&conn, payment_hash)?;
+		Ok(())
+	}
+
+	fn set_lightning_receive_vtxos(&self, payment_hash: PaymentHash, htlc_vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::set_lightning_receive_vtxos(&conn, payment_hash, htlc_vtxo_ids)?;
 		Ok(())
 	}
 
@@ -335,6 +332,12 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<Option<LightningReceive>> {
 		let conn = self.connect()?;
 		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
+	}
+
+	fn remove_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_pending_lightning_receive(&conn, payment_hash)?;
+		Ok(())
 	}
 
 	fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {

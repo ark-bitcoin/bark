@@ -20,9 +20,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use bark_json::{InvoiceInfo, WalletVtxoInfo};
+use bark_json::{InvoiceInfo, LightningReceiveInfo, WalletVtxoInfo};
 use bark::onchain::ChainSourceSpec;
-use bark::persist::models::LightningReceive;
 use bark::UtxoInfo;
 use bitcoin_ext::FeeRateExt;
 
@@ -385,7 +384,7 @@ impl Bark {
 		self.try_lightning_receive_all().await.unwrap();
 	}
 
-	pub async fn list_lightning_receives(&self) -> Vec<LightningReceive> {
+	pub async fn list_lightning_receives(&self) -> Vec<LightningReceiveInfo> {
 		let res = self.run(["lightning", "invoices"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
@@ -393,7 +392,7 @@ impl Bark {
 	pub async fn lightning_receive_status(
 		&self,
 		payment_hash: impl Into<PaymentHash>,
-	) -> Option<LightningReceive> {
+	) -> Option<LightningReceiveInfo> {
 		let hash = payment_hash.into().to_string();
 		let res = self.run(["lightning", "status", &hash]).await;
 		serde_json::from_str(&res).expect("json error")

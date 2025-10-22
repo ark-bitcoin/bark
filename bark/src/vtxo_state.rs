@@ -5,8 +5,6 @@
 //! - created and ready to spend on Ark: [VtxoStateKind::Spendable]
 //! - owned but not usable because it is locked by subsystem: [VtxoStateKind::Locked]
 //! - consumed (no longer part of the wallet's balance): [VtxoStateKind::Spent]
-//! - temporarily locked while waiting for an incoming Lightning HTLC to be claimed:
-//!   [VtxoStateKind::PendingLightningRecv]
 //!
 //! Two layers of state are provided:
 //! - [VtxoStateKind]: a compact, serialization-friendly discriminator intended for storage, logs,
@@ -23,12 +21,10 @@ use std::ops::Deref;
 use ark::vtxo::VtxoRef;
 
 use ark::Vtxo;
-use ark::lightning::PaymentHash;
 
 const SPENDABLE: &'static str = "Spendable";
 const LOCKED: &'static str = "Locked";
 const SPENT: &'static str = "Spent";
-const PENDING_LIGHTNING_RECV: &'static str = "PendingLightningRecv";
 
 /// A compact, serialization-friendly representation of a VTXO's state.
 ///
@@ -41,8 +37,6 @@ pub enum VtxoStateKind {
 	Locked,
 	/// The [Vtxo] has been consumed and is no longer part of the wallet's balance.
 	Spent,
-	/// The [Vtxo] is currently locked for an incoming Lightning HTLC (awaiting claim).
-	PendingLightningRecv,
 }
 
 impl VtxoStateKind {
@@ -52,7 +46,6 @@ impl VtxoStateKind {
 			VtxoStateKind::Spendable => SPENDABLE,
 			VtxoStateKind::Locked => LOCKED,
 			VtxoStateKind::Spent => SPENT,
-			VtxoStateKind::PendingLightningRecv => PENDING_LIGHTNING_RECV,
 		}
 	}
 }
@@ -82,14 +75,6 @@ pub enum VtxoState {
 	Spent,
 	/// The [Vtxo] is currently locked in an action.
 	Locked,
-	/// The current [Vtxo] is reserved for an incoming Lightning HTLC awaiting claim by the
-	/// recipient.
-	///
-	/// The associated payment hash can be used to check the payment status and
-	/// to finalize or revoke the HTLC as needed.
-	PendingLightningRecv {
-		payment_hash: PaymentHash,
-	},
 }
 
 impl VtxoState {
@@ -99,7 +84,6 @@ impl VtxoState {
 			VtxoState::Locked => VtxoStateKind::Locked,
 			VtxoState::Spendable => VtxoStateKind::Spendable,
 			VtxoState::Spent => VtxoStateKind::Spent,
-			VtxoState::PendingLightningRecv { .. } => VtxoStateKind::PendingLightningRecv,
 		}
 	}
 }
@@ -141,12 +125,11 @@ mod test {
 			VtxoStateKind::Spendable,
 			VtxoStateKind::Spent,
 			VtxoStateKind::Locked,
-			VtxoStateKind::PendingLightningRecv,
 		];
 
 		assert_eq!(
 			serde_json::to_string(&states).unwrap(),
-			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED, PENDING_LIGHTNING_RECV]).unwrap(),
+			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED]).unwrap(),
 		);
 
 		// If a compiler error occurs,
@@ -155,7 +138,6 @@ mod test {
 			VtxoState::Spendable => {},
 			VtxoState::Spent => {},
 			VtxoState::Locked => {},
-			VtxoState::PendingLightningRecv { .. } => (),
 		}
 	}
 }

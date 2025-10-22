@@ -230,7 +230,7 @@ mod test {
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_movement").unwrap());
-		assert!(table_exists(&conn, "bark_lightning_receive").unwrap());
+		assert!(table_exists(&conn, "bark_pending_lightning_receive").unwrap());
 		assert!(table_exists(&conn, "bark_exit_states").unwrap());
 		assert!(table_exists(&conn, "bark_exit_child_transactions").unwrap());
 		assert!(table_exists(&conn, "bark_round_attempt").unwrap());
