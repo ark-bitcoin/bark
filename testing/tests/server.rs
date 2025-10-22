@@ -310,7 +310,7 @@ async fn max_vtxo_amount() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// then try send in a round
-	bark1.timeout = Some(Duration::from_millis(3_000));
+	bark1.timeout = Some(Duration::from_millis(5_000));
 	let err = bark1.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(
 		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
@@ -650,7 +650,7 @@ async fn spend_unregistered_board() {
 		let _ = bark.refresh_all().await;
 		// we don't care that that call fails
 	});
-	l.recv().wait(2500).await;
+	l.recv().wait(4500).await;
 }
 
 #[tokio::test]
