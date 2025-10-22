@@ -72,6 +72,18 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
+	fn store_pending_board(&self, _vtxo: &Vtxo, _funding_txid: &str) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn remove_pending_board(&self, _vtxo_id: &VtxoId) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>> {
+		Ok(vec![])
+	}
+
 	fn store_new_round_attempt(
 		&self,
 		_round_seq: RoundSeq,

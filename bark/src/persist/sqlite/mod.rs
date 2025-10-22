@@ -156,6 +156,27 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	fn store_pending_board(&self, vtxo: &Vtxo, funding_txid: &str) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::store_new_pending_board(&tx, vtxo, funding_txid)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::remove_pending_board(&tx, vtxo_id)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>> {
+		let conn = self.connect()?;
+		query::get_all_pending_boards(&conn)
+	}
+
 	fn store_new_round_attempt(&self, round_seq: RoundSeq, attempt_seq: usize, round_participation: RoundParticipation)
 		-> anyhow::Result<AttemptStartedState>
 	{

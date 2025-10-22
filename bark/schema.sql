@@ -159,3 +159,10 @@ CREATE VIEW round_view
 				) AS vtxo_forfeited_in_round
 			FROM bark_round_attempt as r
 /* round_view(id,round_seq,attempt_seq,status,round_txid,round_tx,payment_requests,offboard_requests,cosign_keys,secret_nonces,vtxos,vtxo_tree,updated_at,inputs,vtxo_forfeited_in_round) */;
+CREATE TABLE bark_pending_board (
+				id INTEGER PRIMARY KEY,
+				vtxo_id TEXT NOT NULL REFERENCES bark_vtxo(id) ON DELETE CASCADE,
+				funding_tx TEXT NOT NULL UNIQUE,
+				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+				UNIQUE (vtxo_id)
+			);

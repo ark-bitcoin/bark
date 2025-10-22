@@ -155,6 +155,34 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///   committed in that case.
 	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
 
+	/// Store a pending board.
+	///
+	/// Parameters:
+	/// - vtxo: The [Vtxo] to store.
+	/// - funding_txid: The funding transaction ID.
+	///
+	/// Errors:
+	/// - Returns an error if the board cannot be stored.
+	fn store_pending_board(&self, vtxo: &Vtxo, funding_txid: &str) -> anyhow::Result<()>;
+
+	/// Remove a pending board.
+	///
+	/// Parameters:
+	/// - vtxo_id: The [VtxoId] to remove.
+	///
+	/// Errors:
+	/// - Returns an error if the board cannot be removed.
+	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()>;
+
+	/// Get all pending boards.
+	///
+	/// Returns:
+	/// - `Ok(Vec<VtxoId>)` possibly empty.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>>;
+
 	/// Create a new round attempt with the initial [AttemptStartedState].
 	///
 	/// Parameters:

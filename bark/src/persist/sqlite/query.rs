@@ -130,6 +130,45 @@ pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
 	Ok(movements)
 }
 
+pub fn get_all_pending_boards(conn: &rusqlite::Connection) -> anyhow::Result<Vec<VtxoId>> {
+	let q = "SELECT vtxo_id, funding_txid FROM bark_pending_board;";
+	let mut statement = conn.prepare(q)?;
+	let mut rows = statement.query([])?;
+	let mut pending_boards = Vec::new();
+	while let Some(row) = rows.next()? {
+		let vtxo_id = row.get::<_, String>(0)?;
+		pending_boards.push(VtxoId::from_str(&vtxo_id)?);
+	}
+
+	Ok(pending_boards)
+}
+
+pub fn store_new_pending_board(
+	tx: &rusqlite::Transaction,
+	vtxo: &Vtxo,
+	funding_txid: &str,
+) -> anyhow::Result<()> {
+	let q = "INSERT INTO bark_pending_board (vtxo_id, funding_txid) VALUES (:vtxo_id, :funding_txid);";
+	let mut statement = tx.prepare(q)?;
+	statement.execute(named_params! {
+		":vtxo_id": vtxo.id().to_string(),
+		":funding_txid": funding_txid,
+	})?;
+	Ok(())
+}
+
+pub fn remove_pending_board(
+	tx: &rusqlite::Transaction,
+	vtxo_id: &VtxoId,
+) -> anyhow::Result<()> {
+	let q = "DELETE FROM bark_pending_board WHERE vtxo_id = :vtxo_id;";
+	let mut statement = tx.prepare(q)?;
+	statement.execute(named_params! {
+		":vtxo_id": vtxo_id.to_string(),
+	})?;
+	Ok(())
+}
+
 pub fn store_vtxo_with_initial_state(
 	tx: &rusqlite::Transaction,
 	vtxo: &Vtxo,
