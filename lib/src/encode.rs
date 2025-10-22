@@ -3,6 +3,7 @@
 //!
 
 
+use std::borrow::Cow;
 use std::{fmt, io};
 
 use bitcoin::hashes::{sha256, Hash};
@@ -334,6 +335,17 @@ impl_bitcoin_encode!(bitcoin::OutPoint);
 impl_bitcoin_encode!(bitcoin::TxOut);
 
 
+impl<'a, T: ProtocolEncoding + Clone> ProtocolEncoding for Cow<'a, T> {
+	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
+	    ProtocolEncoding::encode(self.as_ref(), writer)
+	}
+
+	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
+	    Ok(Cow::Owned(ProtocolEncoding::decode(reader)?))
+	}
+}
+
+
 pub mod serde {
 	//! Module that helps to encode [ProtocolEncoding] objects with serde.
 	//!
@@ -427,6 +439,71 @@ pub mod serde {
 				}
 			}
 			d.deserialize_seq(Visitor(PhantomData))
+		}
+	}
+
+	pub mod cow {
+		use super::*;
+
+		use std::borrow::Cow;
+
+		pub fn serialize<'a, T, S>(v: &Cow<'a, T>, s: S) -> Result<S::Ok, S::Error>
+		where
+			T: ProtocolEncoding + Clone,
+			S: Serializer,
+		{
+			SerWrapper(v.as_ref()).serialize(s)
+		}
+
+		pub fn deserialize<'d, T, D>(d: D) -> Result<Cow<'static, T>, D::Error>
+		where
+			T: ProtocolEncoding + Clone,
+			D: Deserializer<'d>,
+		{
+			Ok(Cow::Owned(DeWrapper::<T>::deserialize(d)?.0))
+		}
+
+		pub mod vec {
+			use super::*;
+
+			use std::borrow::Cow;
+
+			pub fn serialize<'a, T, S>(v: &Cow<'a, [T]>, s: S) -> Result<S::Ok, S::Error>
+			where
+				T: ProtocolEncoding + Clone,
+				S: Serializer,
+			{
+				let mut seq = s.serialize_seq(Some(v.len()))?;
+				for item in v.as_ref().iter() {
+					ser::SerializeSeq::serialize_element(&mut seq, &SerWrapper(item))?;
+				}
+				ser::SerializeSeq::end(seq)
+			}
+
+			pub fn deserialize<'d, T, D>(d: D) -> Result<Cow<'static, [T]>, D::Error>
+			where
+				T: ProtocolEncoding + Clone,
+				D: Deserializer<'d>,
+			{
+				struct Visitor<T>(PhantomData<T>);
+
+				impl<'de, T: ProtocolEncoding + Clone + 'static> de::Visitor<'de> for Visitor<T> {
+					type Value = Cow<'static, [T]>;
+
+					fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+						f.write_str("a vector of objects implementing ProtocolEncoding")
+					}
+
+					fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+						let mut ret = Vec::with_capacity(seq.size_hint().unwrap_or_default());
+						while let Some(v) = seq.next_element::<DeWrapper<T>>()? {
+							ret.push(v.0);
+						}
+						Ok(ret.into())
+					}
+				}
+				d.deserialize_seq(Visitor(PhantomData))
+			}
 		}
 	}
 }
