@@ -59,11 +59,20 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LightningReceiveBalance {
+	#[serde(rename = "total_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub total: Amount,
+	#[serde(rename = "claimable_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub claimable: Amount,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Balance {
 	#[serde(rename = "spendable_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub spendable: Amount,
 	#[serde(rename = "pending_lightning_send_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_lightning_send: Amount,
+	pub pending_lightning_receive: LightningReceiveBalance,
 	#[serde(rename = "pending_in_round_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub pending_in_round: Amount,
 	#[serde(rename = "pending_board_sat", with = "bitcoin::amount::serde::as_sat")]
