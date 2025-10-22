@@ -212,19 +212,19 @@ impl Bark {
 		serde_json::from_str::<json::onchain::Utxos>(&output).unwrap()
 	}
 
-	pub async fn offchain_balance(&self) -> Amount {
+	pub async fn spendable_balance(&self) -> Amount {
 		let json = self.run(["balance"]).await;
+		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
+	}
+
+	pub async fn spendable_balance_no_sync(&self) -> Amount {
+		let json = self.run(["balance", "--no-sync"]).await;
 		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
 	}
 
 	pub async fn pending_board_balance(&self) -> Amount {
 		let json = self.run(["balance"]).await;
 		serde_json::from_str::<json::Balance>(&json).unwrap().pending_board
-	}
-
-	pub async fn offchain_balance_no_sync(&self) -> Amount {
-		let json = self.run(["balance", "--no-sync"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
 	}
 
 	pub async fn inround_balance(&self) -> Amount {

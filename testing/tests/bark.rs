@@ -120,7 +120,7 @@ async fn board_bark() {
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	assert_eq!(sat(BOARD_AMOUNT), bark1.offchain_balance().await);
+	assert_eq!(sat(BOARD_AMOUNT), bark1.spendable_balance().await);
 
 	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
 }
@@ -143,7 +143,7 @@ async fn board_twice_bark() {
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	assert_eq!(sat(BOARD_AMOUNT) * 2, bark1.offchain_balance().await);
+	assert_eq!(sat(BOARD_AMOUNT) * 2, bark1.spendable_balance().await);
 
 	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
 }
@@ -172,7 +172,7 @@ async fn board_all_bark() {
 	// Check if the boarding tx's output value is the same as our off-chain balance
 	let board_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
 	assert_eq!(
-		bark1.offchain_balance().await,
+		bark1.spendable_balance().await,
 		board_tx.output.last().unwrap().value,
 	);
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
@@ -308,8 +308,8 @@ async fn send_simple_arkoor() {
 	let addr2 = bark2.address().await;
 	bark1.send_oor(addr2, sat(20_000)).await;
 
-	assert_eq!(60_000, bark1.offchain_balance().await.to_sat());
-	assert_eq!(20_000, bark2.offchain_balance().await.to_sat());
+	assert_eq!(60_000, bark1.spendable_balance().await.to_sat());
+	assert_eq!(20_000, bark2.spendable_balance().await.to_sat());
 }
 
 #[tokio::test]
@@ -324,8 +324,8 @@ async fn send_full_arkoor() {
 	let addr2 = bark2.address().await;
 	bark1.send_oor(addr2, sat(80_000)).await;
 
-	assert_eq!(0, bark1.offchain_balance().await.to_sat());
-	assert_eq!(80_000, bark2.offchain_balance().await.to_sat());
+	assert_eq!(0, bark1.spendable_balance().await.to_sat());
+	assert_eq!(80_000, bark2.spendable_balance().await.to_sat());
 }
 
 #[tokio::test]
@@ -396,7 +396,7 @@ async fn bark_rejects_sending_subdust_oor() {
 	let res = bark1.try_send_oor(&bark2.address().await, subdust_amount, true).await;
 
 	assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
-	assert_eq!(bark1.offchain_balance().await, board_amount);
+	assert_eq!(bark1.spendable_balance().await, board_amount);
 }
 
 #[tokio::test]
@@ -458,13 +458,13 @@ async fn compute_balance() {
 	// oor vtxo
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
-	let balance = bark1.offchain_balance().await;
+	let balance = bark1.spendable_balance().await;
 	assert_eq!(balance, sat(830_000));
 
 	// Should have the same behavior when the server is offline
 	srv.stop().await.unwrap();
 
-	let balance = bark1.offchain_balance().await;
+	let balance = bark1.spendable_balance().await;
 	assert_eq!(balance, sat(830_000));
 }
 
@@ -569,14 +569,14 @@ async fn offboard_all() {
 
 	let address = ctx.bitcoind().get_new_address();
 
-	let init_balance = bark1.offchain_balance().await;
+	let init_balance = bark1.spendable_balance().await;
 	assert_eq!(init_balance, sat(830_000));
 
 	bark1.offboard_all(address.clone()).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// We check that all vtxos have been offboarded
-	assert_eq!(Amount::ZERO, bark1.offchain_balance().await);
+	assert_eq!(Amount::ZERO, bark1.spendable_balance().await);
 
 	let movements = bark1.list_movements().await;
 	let offb_movement = movements.last().unwrap();
@@ -712,7 +712,7 @@ async fn bark_send_onchain_too_much() {
 		&format!("Your balance is too low. Needed: {}, available: {}",
 		sat(1_000_110), board_amount)
 	));
-	assert_eq!(bark1.offchain_balance().await, board_amount, "offchain balance shouldn't have changed");
+	assert_eq!(bark1.spendable_balance().await, board_amount, "offchain balance shouldn't have changed");
 	assert_eq!(bark1.list_movements().await.len(), 1, "Should only have board movement");
 }
 
@@ -743,10 +743,10 @@ async fn bark_balance_shows_pending_board_sats_until_deeply_confirmed() {
 	bark1.board(board_amount).await;
 
 	assert_eq!(bark1.pending_board_balance().await, board_amount);
-	assert_eq!(bark1.offchain_balance().await, Amount::ZERO);
+	assert_eq!(bark1.spendable_balance().await, Amount::ZERO);
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO);
-	assert_eq!(bark1.offchain_balance().await, board_amount);
+	assert_eq!(bark1.spendable_balance().await, board_amount);
 }
 
 #[tokio::test]
@@ -762,7 +762,7 @@ async fn drop_vtxos() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark1.drop_vtxos().await;
-	let balance = bark1.offchain_balance_no_sync().await;
+	let balance = bark1.spendable_balance_no_sync().await;
 
 	assert_eq!(balance, Amount::ZERO);
 }
@@ -889,7 +889,7 @@ async fn recover_mnemonic() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	let onchain = bark.onchain_balance().await;
-	let _offchain = bark.offchain_balance().await;
+	let _offchain = bark.spendable_balance().await;
 
 	const MNEMONIC_FILE: &str = "mnemonic";
 	let mnemonic = fs::read_to_string(bark.config().datadir.join(MNEMONIC_FILE)).await.unwrap();
@@ -1117,5 +1117,5 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 	// HTLC settlement on lightning side
 	res.ready().await.unwrap();
 
-	assert_eq!(bark.offchain_balance().await, btc(4));
+	assert_eq!(bark.spendable_balance().await, btc(4));
 }

@@ -97,9 +97,9 @@ async fn bark_pay_ln_succeeds() {
 		let invoice_amount = btc(2);
 		let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
-		assert_eq!(bark_1.offchain_balance().await, board_amount);
+		assert_eq!(bark_1.spendable_balance().await, board_amount);
 		bark_1.send_lightning(invoice, None).await;
-		assert_eq!(bark_1.offchain_balance().await, btc(3));
+		assert_eq!(bark_1.spendable_balance().await, btc(3));
 	}
 
 	{
@@ -107,14 +107,14 @@ async fn bark_pay_ln_succeeds() {
 		let invoice_amount = btc(1);
 		let invoice = lightning.receiver.invoice(None, "test_payment2", "A test payment").await;
 		bark_1.send_lightning(invoice, Some(invoice_amount)).await;
-		assert_eq!(bark_1.offchain_balance().await, btc(2));
+		assert_eq!(bark_1.spendable_balance().await, btc(2));
 	}
 
 	{
 		// Test invoice with msat amount
 		let invoice = lightning.receiver.invoice_msat(330300, "test_payment3", "msat").await;
 		bark_1.send_lightning(invoice, None).await;
-		assert_eq!(bark_1.offchain_balance().await, btc(2) - sat(331));
+		assert_eq!(bark_1.spendable_balance().await, btc(2) - sat(331));
 	}
 }
 
@@ -141,7 +141,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	bark_2.send_oor(bark_1.address().await, btc(1)).await;
 
 	let expected_balance = btc(3);
-	assert_eq!(bark_1.offchain_balance().await, expected_balance, "bark should have 3BTC spendable offchain");
+	assert_eq!(bark_1.spendable_balance().await, expected_balance, "bark should have 3BTC spendable offchain");
 
 	let invoice = lightning.receiver.invoice(Some(expected_balance - sat(10_000)), "test_payment", "A test payment").await.clone();
 	bark_1.send_lightning(invoice.clone(), None).await;
@@ -197,7 +197,7 @@ async fn bark_pay_ln_fails() {
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
-	assert_eq!(bark.offchain_balance().await, board_amount);
+	assert_eq!(bark.spendable_balance().await, board_amount);
 	bark.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	let vtxos = bark.vtxos().await;
@@ -239,9 +239,9 @@ async fn bark_refresh_ln_change_vtxo() {
 
 	lightning.sync().await;
 
-	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.send_lightning(invoice, None).await;
-	assert_eq!(bark_1.offchain_balance().await, btc(3));
+	assert_eq!(bark_1.spendable_balance().await, btc(3));
 
 	bark_1.refresh_all().await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
@@ -273,7 +273,7 @@ async fn bark_refresh_payment_revocation() {
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
-	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
 
 	bark_1.refresh_all().await;
@@ -333,7 +333,7 @@ async fn bark_can_send_full_balance_on_lightning() {
 	let invoice = lightning.receiver.invoice(Some(board_amount), "test_payment2", "A test payment").await;
 	bark_1.send_lightning(invoice, None).await;
 
-	assert_eq!(0, bark_1.offchain_balance().await.to_sat());
+	assert_eq!(0, bark_1.spendable_balance().await.to_sat());
 }
 
 #[tokio::test]
@@ -397,7 +397,7 @@ async fn bark_can_receive_lightning() {
 		ln_claim_mvt.recipients.is_empty()
 	);
 
-	assert_eq!(bark.offchain_balance().await, board_amount + pay_amount);
+	assert_eq!(bark.spendable_balance().await, board_amount + pay_amount);
 
 	let receives = bark.list_lightning_receives().await;
 	assert_eq!(receives.len(), 1);
@@ -493,7 +493,7 @@ async fn bark_can_pay_an_invoice_generated_by_same_server_user() {
 	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
 	assert!(vtxos.iter().any(|v| v.amount == board_amount), "should have fees change");
 
-	assert_eq!(bark_1.offchain_balance().await, board_amount + pay_amount);
+	assert_eq!(bark_1.spendable_balance().await, board_amount + pay_amount);
 }
 
 #[tokio::test]
@@ -551,7 +551,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
-	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.try_send_lightning(invoice, None).try_wait(1000).await.expect_err("the payment is held");
 
 	// htlc expiry is 6 ahead of current block
@@ -590,14 +590,14 @@ async fn bark_pay_ln_offer() {
 	{
 		let offer = lightning.receiver.offer(None, Some("A test payment")).await;
 		bark_1.send_lightning(offer, Some(btc(1))).await;
-		assert_eq!(bark_1.offchain_balance().await, btc(4));
+		assert_eq!(bark_1.spendable_balance().await, btc(4));
 	}
 
 	// Pay invoice with amount specified
 	{
 		let offer = lightning.receiver.offer(Some(btc(1)), Some("A test payment")).await;
 		bark_1.send_lightning(offer, None).await;
-		assert_eq!(bark_1.offchain_balance().await, btc(3));
+		assert_eq!(bark_1.spendable_balance().await, btc(3));
 	}
 }
 
@@ -620,8 +620,8 @@ async fn bark_pay_twice_ln_offer() {
 	let offer = lightning.receiver.offer(None, Some("A test payment")).await;
 
 	bark_1.send_lightning(offer.clone(), Some(btc(1))).await;
-	assert_eq!(bark_1.offchain_balance().await, btc(4));
+	assert_eq!(bark_1.spendable_balance().await, btc(4));
 
 	bark_1.send_lightning(offer, Some(btc(2))).await;
-	assert_eq!(bark_1.offchain_balance().await, btc(2));
+	assert_eq!(bark_1.spendable_balance().await, btc(2));
 }

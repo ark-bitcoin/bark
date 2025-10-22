@@ -703,7 +703,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	lightning.sync().await;
 
-	assert_eq!(bark_1.offchain_balance().await, board_amount);
+	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains("This lightning payment has completed. preimage: "), "err: {err}");
 }
@@ -1396,12 +1396,12 @@ async fn server_should_refuse_claim_twice() {
 	// Wait for the onboarding round to be deeply enough confirmed
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	// We use that to sync and get onboarded vtxos
-	bark.offchain_balance().await;
+	bark.spendable_balance().await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
 
-	assert_eq!(bark.offchain_balance().await, btc(3));
+	assert_eq!(bark.spendable_balance().await, btc(3));
 
 	// bark should not be able to subscribe to already settled invoice
 	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
@@ -1570,8 +1570,8 @@ async fn captaind_config_change(){
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
 
-	assert_eq!(bark1.offchain_balance().await, sat(180_000));
-	assert_eq!(bark2.offchain_balance().await, sat(820_000));
+	assert_eq!(bark1.spendable_balance().await, sat(180_000));
+	assert_eq!(bark2.spendable_balance().await, sat(820_000));
 
 	// new vtxo should have new exit_delta
 	let new_vtxo = bark1.vtxos().await;
@@ -1930,7 +1930,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	// Triggers maintenance under the hood
 	// Needed to register and transition confirmed boards to `Spendable`.
-	bark.offchain_balance().await;
+	bark.spendable_balance().await;
 
 	let pay_amount = sat(200_000);
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
@@ -1949,7 +1949,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 	// Wait for the onboarding round to be deeply enough confirmed
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	// We use that to sync and get onboarded vtxos
-	let balance = bark.offchain_balance().await;
+	let balance = bark.spendable_balance().await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
