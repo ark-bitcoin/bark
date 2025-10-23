@@ -20,6 +20,7 @@ bark-json = { version = "0.1.0-beta.2", path = "../bark-json" }
 bark-wallet = { version = "0.1.0-beta.2", path = "../bark", features = [ "onchain_bdk" ] }
 bark-bitcoin-ext = { version = "0.1.0-beta.2", path = "../bitcoin-ext" }
 bark-server-rpc = { version = "0.1.0-beta.2", path = "../server-rpc" }
+bark-rest = { version = "0.1.0-beta.2", path = "../bark-rest" }
 
 anyhow.workspace = true
 bitcoin.workspace = true
@@ -33,6 +34,8 @@ lnurl-rs.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 toml.workspace = true
 tonic.workspace = true
 tokio = { workspace = true, features = ["macros"] }

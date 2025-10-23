@@ -6,6 +6,7 @@ members = [
   "bark",
   "bark-cli",
   "bark-json",
+  "bark-rest",
   "server",
   "server-log",
   "server-rpc",
