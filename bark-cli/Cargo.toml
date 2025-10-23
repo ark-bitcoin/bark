@@ -1,0 +1,39 @@
+[package]
+name = "bark-cli"
+version = "0.1.0-beta.1"
+edition = "2024"
+authors = ["hello@second.tech"]
+
+[[bin]]
+name = "bark"
+path = "src/bin/bark/main.rs"
+
+[[bin]]
+name = "barkd"
+path = "src/bin/barkd/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bitcoin.workspace = true
+bip39.workspace = true
+clap.workspace = true
+chrono.workspace = true
+env_logger.workspace = true
+lightning.workspace = true
+lightning-invoice.workspace = true
+lnurl-rs.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tonic.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+
+
+home = "=0.5.9"
+
+ark-lib = { path = "../lib" }
+bark-json = { path = "../bark-json" }
+bark-wallet = { path = "../bark", features=["onchain_bdk"] }
+bark-bitcoin-ext = { path = "../bitcoin-ext"}
+bark-server-rpc = { path ="../server-rpc" }

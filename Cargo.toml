@@ -4,6 +4,7 @@ members = [
   "bitcoin-ext",
   "lib",
   "bark",
+  "bark-cli",
   "bark-json",
   "server",
   "server-log",
