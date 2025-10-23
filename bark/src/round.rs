@@ -34,11 +34,13 @@
 //! - [ToAbandoned] — transition to an abandoned state
 //!
 
+use std::collections::HashSet;
 use std::iter;
 use std::time::Duration;
 use std::{collections::HashMap, fmt::{self, Debug}, str::FromStr, sync::Arc};
 
 use anyhow::Context;
+use ark::vtxo::VtxoRef;
 use bip39::rand;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::hex::DisplayHex;
@@ -1527,13 +1529,45 @@ pub struct RoundCancelledState {
 }
 
 impl Wallet {
-	fn fund_round(
+	async fn add_should_refresh_vtxos(&self, mut participation: RoundParticipation)
+		-> anyhow::Result<RoundParticipation>
+	{
+		let excluded_ids = participation.inputs.iter().map(|v| v.vtxo_id())
+			.collect::<HashSet<_>>();
+
+		let should_refresh_vtxos = self.get_vtxos_to_refresh().await?.into_iter()
+			.filter(|v| !excluded_ids.contains(&v.id()))
+			.map(|v| v.vtxo).collect::<Vec<_>>();
+
+
+		let total_amount = should_refresh_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
+		if total_amount > P2TR_DUST {
+			let (user_keypair, _) = self.derive_store_next_keypair()?;
+			let req = StoredVtxoRequest::from_parts(VtxoRequest {
+				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
+				amount: total_amount,
+			}, VtxoState::Spendable);
+
+			participation.inputs.extend(should_refresh_vtxos);
+			participation.outputs.push(req);
+		}
+
+		Ok(participation)
+	}
+
+	/// Fund a round with the desired participation.
+	///
+	/// Note: This will refresh VTXOs if necessary.
+	async fn fund_round(
 		&self,
 		desired: &DesiredRoundParticipation,
 		offboard_feerate: FeeRate,
 	) -> anyhow::Result<RoundParticipation> {
 		match desired {
-			DesiredRoundParticipation::Funded(p) => Ok(p.clone()),
+			DesiredRoundParticipation::Funded(p) => {
+				self.add_should_refresh_vtxos(p.clone()).await
+			},
 			DesiredRoundParticipation::Offboard { vtxos, destination } => {
 				let fee = OffboardRequest::calculate_fee(&destination, offboard_feerate)
 					.expect("bdk created invalid scriptPubkey");
@@ -1549,11 +1583,13 @@ impl Wallet {
 					script_pubkey: destination.clone(),
 				};
 
-				Ok(RoundParticipation {
+				let participation = RoundParticipation {
 					inputs: vtxos.clone(),
-					outputs: Vec::new(),
+					outputs: vec![],
 					offboards: vec![offb],
-				})
+				};
+
+				self.add_should_refresh_vtxos(participation).await
 			},
 			DesiredRoundParticipation::OnchainPayment { destination, amount } => {
 				let offb = OffboardRequest {
@@ -1584,12 +1620,15 @@ impl Wallet {
 					}
 				};
 
-				Ok(RoundParticipation {
+				let participation = RoundParticipation {
 					inputs: input_vtxos.clone(),
 					outputs: change.into_iter()
-						.map(|c| StoredVtxoRequest::from_parts(c, VtxoState::Spendable)).collect(),
+						.map(|c| StoredVtxoRequest::from_parts(c, VtxoState::Spendable))
+						.collect(),
 					offboards: vec![offb],
-				})
+				};
+
+				self.add_should_refresh_vtxos(participation).await
 			},
 		}
 	}
@@ -1711,7 +1750,7 @@ impl Wallet {
 			info!("Round started");
 			debug!("Started round #{}", round_info.round_seq);
 
-			let participation = self.fund_round(&participation, round_info.offboard_feerate)
+			let participation = self.fund_round(&participation, round_info.offboard_feerate).await
 				.context("failed to fund round")?;
 
 			if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
