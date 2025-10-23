@@ -48,7 +48,7 @@ There are 2 tagging options:
 * `captaind-0.0.1` this will check if `0.0.1` is also specified as version in `server/Cargo.toml`
 * `bark-0.0.1` this will check if `0.0.1` is also specified as version in `bark/Cargo.toml`
 
-## check-codeberg-release.sh
+## check-gitlab-release.sh
 #### parameters:
 1. tag-name
 

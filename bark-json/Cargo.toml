@@ -2,7 +2,7 @@
 name = "bark-json"
 version = "0.1.0-beta.1" # lock to bark-wallet version
 license = "CC0-1.0"
-authors = ["Steven Roose <steven@roose.io>"]
+authors = [ "Team Second <hello@second.tech>" ]
 description = "JSON definitions for the bark APIs"
 edition = "2024"
 

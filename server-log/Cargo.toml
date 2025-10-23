@@ -2,8 +2,8 @@
 name = "bark-server-log"
 version = "0.1.0-beta.1" # lock to bark-server version
 license = "CC0-1.0"
-authors = ["Steven Roose <steven@roose.io>"]
-repository = "https://codeberg.org/ark-bitcoin/bark"
+authors = [ "Team Second <hello@second.tech>" ]
+repository = "https://gitlab.com/ark-bitcoin/bark"
 description = "structured log message definitions for bark-server"
 edition = "2024"
 

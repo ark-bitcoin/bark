@@ -2,7 +2,7 @@ when:
   - event: pull_request
   - event: manual
   - event: tag
-  - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://codeberg.org/ark-bitcoin/bark"'
+  - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
 
 clone:
   - name: clone
@@ -38,7 +38,7 @@ steps:
 
   - name: generate-rustdocs
     when:
-      - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://codeberg.org/ark-bitcoin/bark"'
+      - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
     failure: ignore
     image: registry.2nd.dev/build:24
     volumes:
@@ -56,12 +56,12 @@ steps:
     commands:
       - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
 
-  - name: check-codeberg-release
+  - name: check-gitlab-release
     when:
       - event: tag
     image: registry.2nd.dev/build:24
     commands:
-      - bash ./contrib/check-codeberg-release.sh "${CI_COMMIT_TAG}"
+      - bash ./contrib/check-gitlab-release.sh "${CI_COMMIT_TAG}"
 
 depends_on:
   - main
