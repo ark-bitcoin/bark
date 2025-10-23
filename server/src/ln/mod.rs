@@ -364,7 +364,9 @@ impl Server {
 			let expiry = self.chain_tip().height + self.config.htlc_send_expiry_delta as BlockHeight;
 			let request = VtxoRequest {
 				amount: sub.amount(),
-				policy: VtxoPolicy::new_server_htlc_recv(user_pubkey, payment_hash, expiry),
+				policy: VtxoPolicy::new_server_htlc_recv(
+					user_pubkey, payment_hash, expiry, self.config.htlc_expiry_delta,
+				),
 			};
 			self.vtxopool.send_arkoor(self, request).await.context("vtxopool error")?
 		};

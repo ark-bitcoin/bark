@@ -147,13 +147,14 @@ pub fn server_htlc_receive_taproot(
 	server_pubkey: PublicKey,
 	user_pubkey: PublicKey,
 	exit_delta: BlockDelta,
+	htlc_expiry_delta: BlockDelta,
 	htlc_expiry: BlockHeight,
 ) -> TaprootSpendInfo {
 	let server_branch =
 		scripts::delay_timelock_sign(exit_delta, htlc_expiry, server_pubkey.x_only_public_key().0);
 	let user_branch = scripts::hash_delay_sign(
 		payment_hash.to_sha256_hash(),
-		2 * exit_delta,
+		exit_delta + htlc_expiry_delta,
 		user_pubkey.x_only_public_key().0,
 	);
 

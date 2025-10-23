@@ -364,6 +364,7 @@ fn dummy_round_participation() -> RoundParticipation {
 					user_pubkey: PublicKey::from_bytes([]).unwrap(),
 					payment_hash: PaymentHash::from_bytes([]).unwrap(),
 					htlc_expiry: 0 as BlockHeight,
+					htlc_expiry_delta: 40,
 				}),
 				amount: Amount::ZERO,
 				state: VtxoState::Spendable,
