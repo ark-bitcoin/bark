@@ -15,6 +15,7 @@ onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
 rand = ["bitcoin/rand", "bip39/rand"]
+wasm-web = ["bark-server-rpc/tonic-web"]
 
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
 # Used for testingn, enables testing storage adaptor implementation
@@ -59,7 +60,7 @@ bdk_bitcoind_rpc = { workspace = true }
 bdk_esplora = { workspace = true }
 lightning.workspace = true
 
-tonic.workspace = true
+tonic = { version = "0.14.2", default-features = false }
 tokio.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true

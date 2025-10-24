@@ -10,6 +10,7 @@ fn main() {
 
 	tonic_prost_build::configure()
 		.build_server(cfg!(feature = "server"))
+		.build_transport(cfg!(feature = "server"))
 		.build_client(true)
 		.protoc_arg("--experimental_allow_proto3_optional")
 		.file_descriptor_set_path(&descriptor_path)
