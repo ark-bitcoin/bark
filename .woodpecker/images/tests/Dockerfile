@@ -143,7 +143,7 @@ RUN echo "build bark" && \
 	cd ~/bark && \
 	nix develop .#default --command bash -c "\
 		cargo build --workspace && \
-		cargo install --locked --path bark && \
+		cargo install --locked --path bark-cli && \
 		cargo install --locked --path server && \
 		cargo run --example dump-sqlite-schema && \
 		cargo run --example dump-server-postgres-schema"

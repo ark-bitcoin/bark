@@ -32,7 +32,7 @@ steps:
         nix develop .#default --command bash -c "
           cargo version &&
           cargo build --workspace &&
-          cargo install --locked --path bark &&
+          cargo install --locked --path bark-cli &&
           cargo install --locked --path server
         "
 
