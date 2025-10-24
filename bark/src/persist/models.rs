@@ -101,23 +101,23 @@ mod test {
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 		let serialised = r#"{"type":"processing","tip_height":119,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"awaiting-input-confirmation","txids":["ddfe11920358d1a1fae970dc80459c60675bf1392896f69b103fc638313751de"]}}]}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
-		let serialised = r#"{"type":"awaiting-delta","tip_height":122,"confirmed_block":{"height":122,"hash":"3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f"},"claimable_height":134}"#;
+		let serialised = r#"{"type":"awaiting-delta","tip_height":122,"confirmed_block":"122:3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f","claimable_height":134}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
-		let serialised = r#"{"type":"claimable","tip_height":134,"claimable_since":{"height":134,"hash":"71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"},"last_scanned_block":null}"#;
+		let serialised = r#"{"type":"claimable","tip_height":134,"claimable_since": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9","last_scanned_block":null}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
-		let serialised = r#"{"type":"claim-in-progress","tip_height":134,"claimable_since":{"height":134,"hash":"6585896bdda6f08d924bf45cc2b16418af56703b3c50930e4dccbc1728d3800a"},"claim_txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c"}"#;
+		let serialised = r#"{"type":"claim-in-progress","tip_height":134, "claimable_since": "134:6585896bdda6f08d924bf45cc2b16418af56703b3c50930e4dccbc1728d3800a","claim_txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c"}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
-		let serialised = r#"{"type":"claimed","tip_height":134,"txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c","block":{"height":122,"hash":"3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f"}}"#;
+		let serialised = r#"{"type":"claimed","tip_height":134,"txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c","block": "122:3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f"}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 
 		// Exit child tx origins
 		let serialized = r#"{"type":"wallet","confirmed_in":null}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
-		let serialized = r#"{"type":"wallet","confirmed_in":{"height":134,"hash":"71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}}"#;
+		let serialized = r#"{"type":"wallet","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 		let serialized = r#"{"type":"mempool","fee_rate_kwu":25000,"total_fee":27625}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
-		let serialized = r#"{"type":"block","confirmed_in":{"height":134,"hash":"71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}}"#;
+		let serialized = r#"{"type":"block","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 
 		// Movement recipient
