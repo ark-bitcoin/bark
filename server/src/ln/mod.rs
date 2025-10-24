@@ -131,7 +131,7 @@ impl Server {
 			htlc_vtxo_sum += htlc_vtxo.amount();
 		}
 
-		if let Some(amount) = invoice.amount_milli_satoshis() {
+		if let Some(amount) = invoice.amount_msat() {
 			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
 				return badarg!("htlc vtxo amount too low for invoice");
 				// any remainder we just keep, can later become fee
