@@ -144,3 +144,12 @@ pub struct RecipientInfo {
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub amount: Amount
 }
+
+impl From<bark::movement::MovementRecipient> for RecipientInfo {
+	fn from(v: bark::movement::MovementRecipient) -> Self {
+		RecipientInfo {
+			recipient: v.recipient,
+			amount: v.amount,
+		}
+	}
+}

@@ -51,6 +51,8 @@ pub struct ArkInfo {
 	/// invoice generation with.
 	pub max_user_invoice_cltv_delta: u16,
 	/// Minimum amount for a board the server will cosign
+	#[serde(rename = "min_board_amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub min_board_amount: Amount,
 	/// offboard feerate in sat per kvb
 	pub offboard_feerate_sat_per_kvb: u64,
@@ -89,6 +91,15 @@ pub struct LightningReceiveBalance {
 	pub claimable: Amount,
 }
 
+impl From<bark::LightningReceiveBalance> for LightningReceiveBalance {
+	fn from(v: bark::LightningReceiveBalance) -> Self {
+		LightningReceiveBalance {
+			total: v.total,
+			claimable: v.claimable,
+		}
+	}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct Balance {
@@ -113,6 +124,19 @@ pub struct Balance {
 	)]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64, nullable=true))]
 	pub pending_exit: Option<Amount>,
+}
+
+impl From<bark::Balance> for Balance {
+	fn from(v: bark::Balance) -> Self {
+		Balance {
+			spendable: v.spendable,
+			pending_in_round: v.pending_in_round,
+			pending_lightning_send: v.pending_lightning_send,
+			pending_lightning_receive: v.pending_lightning_receive.into(),
+			pending_exit: v.pending_exit,
+			pending_board: v.pending_board,
+		}
+	}
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -238,6 +262,19 @@ pub struct Movement {
 	pub recipients: Vec<RecipientInfo>,
 	/// Movement date
 	pub created_at: String,
+}
+
+impl From<bark::movement::Movement> for Movement {
+	fn from(v: bark::movement::Movement) -> Self {
+		Movement {
+			id: v.id,
+			fees: v.fees,
+			spends: v.spends.into_iter().map(VtxoInfo::from).collect(),
+			receives: v.receives.into_iter().map(VtxoInfo::from).collect(),
+			recipients: v.recipients.into_iter().map(RecipientInfo::from).collect(),
+			created_at: v.created_at.to_string(),
+		}
+	}
 }
 
 pub mod onchain {
@@ -529,3 +566,4 @@ mod test {
 		}
 	}
 }
+

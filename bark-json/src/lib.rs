@@ -8,8 +8,10 @@ pub extern crate hal;
 pub mod cli;
 pub mod exit;
 pub mod primitives;
+pub mod web;
 mod serde_utils;
 
 pub use primitives::*;
+pub use web::*;
 
 

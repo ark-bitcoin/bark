@@ -2,6 +2,7 @@ use bitcoin::constants::ChainHash;
 use bitcoin::Network;
 pub use lightning::offers::offer::{Offer, Amount as OfferAmount};
 pub use lightning::offers::invoice::Bolt12Invoice;
+pub use lightning_invoice::Bolt11Invoice;
 
 use std::fmt;
 use std::borrow::Borrow;
@@ -14,7 +15,6 @@ use bitcoin::secp256k1::{Message, PublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
 use lightning::offers::parse::Bolt12ParseError;
 use lightning::util::ser::Writeable;
-use lightning_invoice::Bolt11Invoice;
 
 use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
 
