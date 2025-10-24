@@ -87,7 +87,7 @@ pub enum OnchainCommand {
 	},
 }
 
-pub async fn execute_lightning_command(onchain_command: OnchainCommand, wallet: &mut Wallet, onchain: &mut OnchainWallet) -> anyhow::Result<()> {
+pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &mut Wallet, onchain: &mut OnchainWallet) -> anyhow::Result<()> {
 	let net = wallet.properties()?.network;
 
 	match onchain_command {
