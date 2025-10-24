@@ -7,16 +7,13 @@ use ark::tree::signed::VtxoTreeSpec;
 use bitcoin::consensus::encode::deserialize_hex;
 use bitcoin::hex::FromHex;
 use bitcoin::{Amount, Transaction};
-use lightning_invoice::Bolt11Invoice;
 use rusqlite::types::FromSql;
 use rusqlite::{Row, RowIndex, Rows};
 
-use ark::lightning::{PaymentHash, Preimage};
 use ark::{ProtocolEncoding, Vtxo};
 use ark::rounds::{RoundId, RoundSeq};
 
 use crate::movement::{Movement, MovementKind, MovementRecipient};
-use crate::persist::models::LightningReceive;
 use crate::round::{
 	AttemptStartedState,
 	VtxoForfeitedInRound,
@@ -81,18 +78,6 @@ pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 		receives: receives,
 		recipients: recipients,
 		created_at: row.get("created_at")?,
-	})
-}
-
-pub (crate) fn row_to_lightning_receive(row: &Row<'_>) -> anyhow::Result<LightningReceive> {
-	let invoice_str = row.get::<_, String>("invoice")?;
-	let invoice = Bolt11Invoice::from_str(&invoice_str)?;
-
-	Ok(LightningReceive {
-		payment_hash: PaymentHash::from(row.get::<_, [u8; 32]>("payment_hash")?),
-		payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
-		preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
-		invoice: invoice,
 	})
 }
 

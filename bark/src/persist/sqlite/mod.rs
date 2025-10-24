@@ -24,17 +24,17 @@ use lightning_invoice::Bolt11Invoice;
 use log::debug;
 use rusqlite::{Connection, Transaction};
 
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
 use json::exit::states::ExitTxOrigin;
 
-use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
+use crate::vtxo_state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::persist::BarkPersister;
-use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
 
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
 /// [PathBuf].
@@ -81,13 +81,7 @@ impl SqliteClient {
 
 	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
 	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
-		let allowed_states = [
-			VtxoStateKind::UnregisteredBoard,
-			VtxoStateKind::Spendable,
-			VtxoStateKind::PendingLightningSend,
-			VtxoStateKind::PendingLightningRecv,
-		];
-		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &allowed_states)?;
+		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &UNSPENT_STATES)?;
 		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
 		Ok(())
 	}
@@ -154,6 +148,27 @@ impl BarkPersister for SqliteClient {
 		}
 		tx.commit()?;
 		Ok(())
+	}
+
+	fn store_pending_board(&self, vtxo: &Vtxo, funding_tx: &bitcoin::Transaction) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::store_new_pending_board(&tx, vtxo, funding_tx)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::remove_pending_board(&tx, vtxo_id)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>> {
+		let conn = self.connect()?;
+		query::get_all_pending_boards(&conn)
 	}
 
 	fn store_new_round_attempt(&self, round_seq: RoundSeq, attempt_seq: usize, round_participation: RoundParticipation)
@@ -276,19 +291,36 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId]) -> anyhow::Result<PendingLightningSend> {
 		let conn = self.connect()?;
-		query::get_lightning_receives(&conn)
+		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos)
 	}
 
-	fn get_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
 		let conn = self.connect()?;
-		query::get_pending_lightning_receives(&conn)
+		query::get_all_pending_lightning_send(&conn)
+	}
+
+	fn remove_pending_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_pending_lightning_send(&conn, payment_hash)?;
+		Ok(())
+	}
+
+	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+		let conn = self.connect()?;
+		query::get_all_pending_lightning_receives(&conn)
 	}
 
 	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::set_preimage_revealed(&conn, payment_hash)?;
+		Ok(())
+	}
+
+	fn set_lightning_receive_vtxos(&self, payment_hash: PaymentHash, htlc_vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::set_lightning_receive_vtxos(&conn, payment_hash, htlc_vtxo_ids)?;
 		Ok(())
 	}
 
@@ -299,6 +331,12 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<Option<LightningReceive>> {
 		let conn = self.connect()?;
 		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
+	}
+
+	fn remove_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_pending_lightning_receive(&conn, payment_hash)?;
+		Ok(())
 	}
 
 	fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {

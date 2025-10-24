@@ -23,10 +23,10 @@ pub mod sqlite;
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
 
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 
@@ -34,7 +34,7 @@ use ark::{Vtxo, VtxoId};
 use json::exit::states::ExitTxOrigin;
 
 use crate::{Movement, MovementArgs, WalletProperties};
-use crate::persist::models::{LightningReceive, StoredExit, StoredVtxoRequest};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -154,6 +154,34 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if any part of the operation fails; no partial state should be
 	///   committed in that case.
 	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
+
+	/// Store a pending board.
+	///
+	/// Parameters:
+	/// - vtxo: The [Vtxo] to store.
+	/// - funding_txid: The funding transaction ID.
+	///
+	/// Errors:
+	/// - Returns an error if the board cannot be stored.
+	fn store_pending_board(&self, vtxo: &Vtxo, funding_tx: &Transaction) -> anyhow::Result<()>;
+
+	/// Remove a pending board.
+	///
+	/// Parameters:
+	/// - vtxo_id: The [VtxoId] to remove.
+	///
+	/// Errors:
+	/// - Returns an error if the board cannot be removed.
+	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()>;
+
+	/// Get all pending boards.
+	///
+	/// Returns:
+	/// - `Ok(Vec<VtxoId>)` possibly empty.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>>;
 
 	/// Create a new round attempt with the initial [AttemptStartedState].
 	///
@@ -368,6 +396,36 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the query fails.
 	fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>>;
 
+	/// Store a new pending lightning send.
+	///
+	/// Parameters:
+	/// - invoice: The invoice of the pending lightning send.
+	/// - amount: The amount of the pending lightning send.
+	/// - vtxos: The vtxos of the pending lightning send.
+	///
+	/// Errors:
+	/// - Returns an error if the pending lightning send cannot be stored.
+	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId])
+		-> anyhow::Result<PendingLightningSend>;
+
+	/// Get all pending lightning sends.
+	///
+	/// Returns:
+	/// - `Ok(Vec<PendingLightningSend>)` possibly empty.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>>;
+
+	/// Remove a pending lightning send.
+	///
+	/// Parameters:
+	/// - payment_hash: The [PaymentHash] of the pending lightning send to remove.
+	///
+	/// Errors:
+	/// - Returns an error if the pending lightning send cannot be removed.
+	fn remove_pending_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+
 	/// Store an incoming Lightning receive record.
 	///
 	/// Parameters:
@@ -384,15 +442,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 		invoice: &Bolt11Invoice,
 	) -> anyhow::Result<()>;
 
-	/// Return a list of Lightning receives.
-	///
-	/// Returns:
-	/// - `Ok(Vec<LightningReceive>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn get_lightning_receives(&self,) -> anyhow::Result<Vec<LightningReceive>>;
-
 	/// Returns a list of all pending lightning receives
 	///
 	/// Returns:
@@ -400,7 +449,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
+	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
 
 	/// Mark a Lightning receive preimage as revealed (e.g., after settlement).
 	///
@@ -410,6 +459,17 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the update fails or the receive does not exist.
 	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+
+	/// Set the VTXO IDs for a Lightning receive.
+	///
+	/// Parameters:
+	/// - payment_hash: The payment hash identifying the receive.
+	/// - htlc_vtxo_ids: The VTXO IDs to set.
+	///
+	/// Errors:
+	/// - Returns an error if the update fails or the receive does not exist.
+	fn set_lightning_receive_vtxos(&self, payment_hash: PaymentHash, htlc_vtxo_ids: &[VtxoId])
+		-> anyhow::Result<()>;
 
 	/// Fetch a Lightning receive by its payment hash.
 	///
@@ -423,6 +483,15 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the lookup fails.
 	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningReceive>>;
+
+	/// Remove a Lightning receive by its payment hash.
+	///
+	/// Parameters:
+	/// - payment_hash: The payment hash of the record to remove.
+	///
+	/// Errors:
+	/// - Returns an error if the removal fails.
+	fn remove_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
 	/// Store an entry indicating a [Vtxo] is being exited.
 	///

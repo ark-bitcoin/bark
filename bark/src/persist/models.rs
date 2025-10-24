@@ -12,22 +12,38 @@ use bdk_esplora::esplora_client::Amount;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{VtxoId, VtxoPolicy, VtxoRequest};
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use json::exit::ExitState;
 
 use crate::exit::ExitVtxo;
 use crate::vtxo_state::VtxoState;
+use crate::WalletVtxo;
+
+/// Persisted representation of a pending lightning send.
+///
+/// Stores the invoice and the amount being sent.
+///
+/// Note: the record should be removed when the payments is completed or failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingLightningSend {
+	pub invoice: Invoice,
+	pub amount: Amount,
+	pub htlc_vtxos: Vec<WalletVtxo>,
+}
 
 /// Persisted representation of an incoming Lightning payment.
 ///
 /// Stores the invoice and related cryptographic material (e.g., payment hash and preimage)
 /// and tracks whether the preimage has been revealed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Note: the record should be removed when the receive is completed or failed.
+#[derive(Debug, Clone)]
 pub struct LightningReceive {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
 	pub invoice: Bolt11Invoice,
 	pub preimage_revealed_at: Option<u64>,
+	pub htlc_vtxos: Option<Vec<WalletVtxo>>,
 }
 
 /// Persistable view of an [ExitVtxo].
@@ -129,12 +145,7 @@ mod test {
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#""Spent""#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
-		let serialised = r#""UnregisteredBoard""#;
-		serde_json::from_str::<VtxoState>(serialised).unwrap();
-
-		let serialised = r#"{"PendingLightningSend":{"invoice":"lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8","amount":300000}}"#;
-		serde_json::from_str::<VtxoState>(serialised).unwrap();
-		let serialised = r#"{"PendingLightningRecv":{"payment_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
+		let serialised = r#""Locked""#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 
 		let serialised = r#"{"request_policy":"0003a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount":300000,"state":"Spendable"}"#;

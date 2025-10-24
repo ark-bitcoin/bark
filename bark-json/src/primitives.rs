@@ -1,6 +1,7 @@
 
 use std::ops::Deref;
 
+use ark::lightning::{PaymentHash, Preimage};
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 
@@ -95,4 +96,13 @@ pub struct RecipientInfo {
 	pub recipient: String,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LightningReceiveInfo {
+	pub payment_hash: PaymentHash,
+	pub payment_preimage: Preimage,
+	pub preimage_revealed_at: Option<u64>,
+	pub invoice: String,
+	pub htlc_vtxos: Option<Vec<WalletVtxoInfo>>,
 }

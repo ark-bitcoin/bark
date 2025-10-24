@@ -538,6 +538,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				spendable: balance.spendable,
 				pending_in_round: balance.pending_in_round,
 				pending_lightning_send: balance.pending_lightning_send,
+				pending_lightning_receive: json::LightningReceiveBalance {
+					total: balance.pending_lightning_receive.total,
+					claimable: balance.pending_lightning_receive.claimable,
+				},
 				pending_exit: balance.pending_exit,
 				pending_board: balance.pending_board,
 			});

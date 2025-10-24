@@ -14,6 +14,7 @@ mod m0013_round_sync;
 mod m0014_drop_past_round_sync;
 mod m0015_optional_round_seq;
 mod m0016_config;
+mod m0017_great_state_cleanup;
 
 use anyhow::Context;
 use log::debug;
@@ -35,6 +36,7 @@ use m0013_round_sync::Migration0013;
 use m0014_drop_past_round_sync::Migration0014;
 use m0015_optional_round_seq::Migration0015;
 use m0016_config::Migration0016;
+use m0017_great_state_cleanup::Migration0017;
 
 pub struct MigrationContext {}
 
@@ -68,6 +70,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0014{})?;
 		self.try_migration(conn, &Migration0015{})?;
 		self.try_migration(conn, &Migration0016{})?;
+		self.try_migration(conn, &Migration0017{})?;
 
 		Ok(())
 	}
@@ -222,12 +225,12 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 16).unwrap();
+		assert_current_version(&conn, 17).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
 		assert!(table_exists(&conn, "bark_movement").unwrap());
-		assert!(table_exists(&conn, "bark_lightning_receive").unwrap());
+		assert!(table_exists(&conn, "bark_pending_lightning_receive").unwrap());
 		assert!(table_exists(&conn, "bark_exit_states").unwrap());
 		assert!(table_exists(&conn, "bark_exit_child_transactions").unwrap());
 		assert!(table_exists(&conn, "bark_round_attempt").unwrap());
