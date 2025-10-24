@@ -1,1 +1,2 @@
 open-api.json text diff=json linguist-generated=true
+clients/rust/** linguist-generated=true

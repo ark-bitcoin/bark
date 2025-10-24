@@ -1,0 +1,12 @@
+# ExitProgressRequest
+
+## Properties
+
+Name | Type | Description | Notes
+------------ | ------------- | ------------- | -------------
+**fee_rate** | Option<**i64**> | Sets the desired fee-rate in sats/kvB to use broadcasting exit transactions | [optional]
+**wait** | Option<**bool**> | Wait until the exit is completed | [optional]
+
+[[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+
