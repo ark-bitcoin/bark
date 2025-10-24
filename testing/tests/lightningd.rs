@@ -92,6 +92,8 @@ async fn bark_pay_ln_succeeds() {
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
+	lightning.sync().await;
+
 	{
 		// Create a payable invoice
 		let invoice_amount = btc(2);
@@ -145,6 +147,8 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	let expected_balance = btc(3);
 	assert_eq!(bark_1.spendable_balance().await, expected_balance, "bark should have 3BTC spendable offchain");
 
+	lightning.sync().await;
+
 	let invoice = lightning.receiver.invoice(Some(expected_balance - sat(10_000)), "test_payment", "A test payment").await.clone();
 	bark_1.send_lightning(invoice.clone(), None).await;
 
@@ -169,6 +173,8 @@ async fn bark_pay_invoice_twice() {
 	// Create a payable invoice
 	let invoice_amount = btc(2);
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	lightning.sync().await;
 
 	bark_1.send_lightning(invoice.clone(), None).await;
 
@@ -343,6 +349,8 @@ async fn bark_can_send_full_balance_on_lightning() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	lightning.sync().await;
 
 	let invoice = lightning.receiver.invoice(Some(board_amount), "test_payment2", "A test payment").await;
 	bark_1.send_lightning(invoice, None).await;
@@ -587,6 +595,8 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	let invoice_amount = btc(1);
 	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
+	lightning.sync().await;
+
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.try_send_lightning(invoice, None).try_wait(1000).await.expect_err("the payment is held");
@@ -624,6 +634,8 @@ async fn bark_pay_ln_offer() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	lightning.sync().await;
 
 	// Pay invoice with no amount specified
 	{
@@ -663,6 +675,8 @@ async fn bark_pay_twice_ln_offer() {
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let offer = lightning.receiver.offer(None, Some("A test payment")).await;
+
+	lightning.sync().await;
 
 	bark_1.send_lightning(offer.clone(), Some(btc(1))).await;
 	assert_eq!(bark_1.spendable_balance().await, btc(4));
