@@ -148,6 +148,9 @@ in pkgs.mkShell {
 		pkgs.gcc.cc.lib
 		pkgs.protobuf
 
+		# For generating clients
+		pkgs.openapi-generator-cli
+
 		# for bark
 		pkgs.sqlite
 
