@@ -30,6 +30,7 @@ steps:
       - git log --oneline | head -n 1
       - >
         nix develop .#default --command bash -c "
+          rm $(which bark)
           cargo version &&
           cargo build --workspace &&
           cargo install --locked --path bark-cli &&
