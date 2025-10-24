@@ -63,7 +63,7 @@ log_info "Rebasing: ${FEATURE_BRANCH} into ${MASTER_BRANCH}"
 
 if [ "$CI_CONTEXT" = "true" ]; then
 	git fetch --prune origin "+refs/heads/*:refs/remotes/origin/*"
-	git config --global user.email "ci@codeberg.org"
+	git config --global user.email "ci@gitlab.com"
 	git config --global user.name "ci"
 fi
 

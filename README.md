@@ -8,7 +8,7 @@
 <p align="center">
   <br />
   <a href="https://docs.second.tech">Docs</a> ·
-  <a href="https://codeberg.org/ark-bitcoin/bark/issues">Issues</a> ·
+  <a href="https://gitlab.com/ark-bitcoin/bark/issues">Issues</a> ·
   <a href="https://second.tech">Website</a> ·
   <a href="https://blog.second.tech">Blog</a> ·
   <a href="https://www.youtube.com/@2ndbtc">YouTube</a>
@@ -16,8 +16,8 @@
 
 <div align="center">
 
-[![Release](https://img.shields.io/gitea/v/release/ark-bitcoin/bark?label=release&gitea_url=https://codeberg.org)](https://codeberg.org/ark-bitcoin/bark/tags)
-[![Project Status](https://img.shields.io/badge/status-experimental-red.svg)](https://codeberg.org/ark-bitcoin/bark)
+[![Release](https://img.shields.io/gitlab/pipeline-status/ark-bitcoin/bark?branch=master&gitlab_url=https%3A%2F%2Fgitlab.com)](https://gitlab.com/ark-bitcoin/bark/tags)
+[![Project Status](https://img.shields.io/badge/status-experimental-red.svg)](https://gitlab.com/ark-bitcoin/bark)
 [![License](https://img.shields.io/badge/license-CC0--1.0-blue.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?logo=git)](CONTRIBUTING.md)
 [![Community](https://img.shields.io/badge/community-forum-blue?logo=discourse)](https://community.second.tech)
@@ -81,13 +81,13 @@ Thinking of opening a pull request? See our [contribution guide](CONTRIBUTING.md
 If you run into any issues at all, let us know:
 
 - [Community forum](https://community.second.tech)
-- [Issue tracker](https://codeberg.org/ark-bitcoin/bark/issues)
+- [Issue tracker](https://gitlab.com/ark-bitcoin/bark/issues)
 
 ## Security policy and responsible disclosure
 
 **The Ark protocol code is experimental and must not be used in production.**
 
-If you happen to find a vulnerability we invite you to [file a public issue](https://codeberg.org/ark-bitcoin/bark/issues/new).
+If you happen to find a vulnerability we invite you to [file a public issue](https://gitlab.com/ark-bitcoin/bark/issues/new).
 
 ## License
 

@@ -115,7 +115,7 @@ RUN mkdir -p /home/nixuser/.cargo && \
 RUN cat /home/nixuser/.cargo/config.toml
 
 RUN echo "clone bark" && \
-	git clone -b hold-plugin-upgrade https://codeberg.org/ark-bitcoin/bark.git
+	git clone -b hold-plugin-upgrade https://gitlab.com/ark-bitcoin/bark.git
 
 RUN echo "pre-build bark" && \
 	cd /tmp && \

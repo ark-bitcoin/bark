@@ -11,7 +11,7 @@ probe() { curl -sfL "$1" >/dev/null; }
 
 check_release_exists() {
   tag_to_probe=$1
-  if probe "https://codeberg.org/api/v1/repos/ark-bitcoin/bark/releases/tags/${tag_to_probe}"; then
+  if probe "https://gitlab.com/api/v4/projects/75519706/releases/${tag_to_probe}"; then
     log_error "${tag_to_probe} already exists."
   fi
   log_info "Release ${tag_to_probe} is free to use."

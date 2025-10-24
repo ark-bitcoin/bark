@@ -64,7 +64,7 @@ steps:
 
   - name: push-captaind-to-docker
     when:
-      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/server-" && CI_REPO_URL == "https://codeberg.org/ark-bitcoin/bark"'
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/server-" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
     failure: ignore
     depends_on: build-and-push-captaind-to-registry
     # When this task fails make sure the sha256 is still available.
