@@ -22,7 +22,7 @@ pub use mbitcoin::{
 #[path = "bitcoin.rs"]
 mod mbitcoin;
 
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use bitcoin::{Amount, BlockHash};
 
@@ -61,7 +61,10 @@ pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 /// Type representing a block height in the bitcoin blockchain.
 pub type BlockHeight = u32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// Reference to a block in the chain
+///
+/// Stirng representation is "<height>:<hash>".
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockRef {
 	pub height: BlockHeight,
 	pub hash: BlockHash,
@@ -69,7 +72,49 @@ pub struct BlockRef {
 
 impl fmt::Display for BlockRef {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		fmt::Debug::fmt(self, f)
+		write!(f, "{}:{}", self.height, self.hash)
+	}
+}
+
+impl fmt::Debug for BlockRef {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+impl FromStr for BlockRef {
+	type Err = &'static str;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let mut parts = s.splitn(2, ':');
+		Ok(BlockRef {
+			height: parts.next().expect("always one part")
+				.parse().map_err(|_| "invalid height")?,
+			hash: parts.next().ok_or("should be <height>:<hash> string")?
+				.parse().map_err(|_| "invalid hash")?,
+		})
+	}
+}
+
+impl serde_crate::Serialize for BlockRef {
+	fn serialize<S: serde_crate::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+		s.collect_str(self)
+	}
+}
+
+impl<'de> serde_crate::Deserialize<'de> for BlockRef {
+	fn deserialize<D: serde_crate::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+		struct Visitor;
+		impl<'de> serde_crate::de::Visitor<'de> for Visitor {
+			type Value = BlockRef;
+			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+				write!(f, "a BlockRef")
+			}
+			fn visit_str<E: serde_crate::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+				BlockRef::from_str(v).map_err(serde_crate::de::Error::custom)
+			}
+		}
+		d.deserialize_str(Visitor)
 	}
 }
 
