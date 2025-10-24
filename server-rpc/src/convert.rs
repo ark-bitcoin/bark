@@ -186,11 +186,12 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 						vtxo_ownership_challenge: challenge.inner().to_vec(),
 					})
 				},
-				ark::rounds::RoundEvent::VtxoProposal {
-					round_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces
-				} => {
+				ark::rounds::RoundEvent::VtxoProposal(ark::rounds::VtxoProposal {
+					round_seq, attempt_seq, vtxos_spec, unsigned_round_tx, cosign_agg_nonces,
+				}) => {
 					protos::round_event::Event::VtxoProposal(protos::VtxoProposal {
 						round_seq: (*round_seq).into(),
+						attempt_seq: *attempt_seq as u64,
 						vtxos_spec: vtxos_spec.serialize(),
 						unsigned_round_tx: bitcoin::consensus::serialize(&unsigned_round_tx),
 						vtxos_agg_nonces: cosign_agg_nonces.into_iter()
@@ -198,11 +199,12 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 							.collect(),
 					})
 				},
-				ark::rounds::RoundEvent::RoundProposal {
-					round_seq, cosign_sigs, forfeit_nonces, connector_pubkey,
-				} => {
+				ark::rounds::RoundEvent::RoundProposal(ark::rounds::RoundProposal {
+					round_seq, attempt_seq, cosign_sigs, forfeit_nonces, connector_pubkey,
+				}) => {
 					protos::round_event::Event::RoundProposal(protos::RoundProposal {
 						round_seq: (*round_seq).into(),
+						attempt_seq: *attempt_seq as u64,
 						vtxo_cosign_signatures: cosign_sigs.into_iter()
 							.map(|s| s.serialize().to_vec()).collect(),
 						forfeit_nonces: forfeit_nonces.into_iter().map(|(id, nonces)| {
@@ -216,9 +218,12 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 						connector_pubkey: connector_pubkey.serialize().to_vec(),
 					})
 				},
-				ark::rounds::RoundEvent::Finished { round_seq, signed_round_tx } => {
+				ark::rounds::RoundEvent::Finished(ark::rounds::RoundFinished {
+					round_seq, attempt_seq, signed_round_tx,
+				}) => {
 					protos::round_event::Event::Finished(protos::RoundFinished {
 						round_seq: (*round_seq).into(),
+						attempt_seq: *attempt_seq as u64,
 						signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 					})
 				},
@@ -249,8 +254,9 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 				})
 			},
 			protos::round_event::Event::VtxoProposal(m) => {
-				ark::rounds::RoundEvent::VtxoProposal {
+				ark::rounds::RoundEvent::VtxoProposal(ark::rounds::VtxoProposal {
 					round_seq: m.round_seq.into(),
+					attempt_seq: m.attempt_seq as usize,
 					unsigned_round_tx: bitcoin::consensus::deserialize(&m.unsigned_round_tx)
 						.map_err(|_| "invalid unsigned_round_tx")?,
 					vtxos_spec: VtxoTreeSpec::deserialize(&m.vtxos_spec)
@@ -258,11 +264,12 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					cosign_agg_nonces: m.vtxos_agg_nonces.into_iter().map(|n| {
 						musig::AggregatedNonce::from_bytes(&n)
 					}).collect::<Result<_, _>>()?,
-				}
+				})
 			},
 			protos::round_event::Event::RoundProposal(m) => {
-				ark::rounds::RoundEvent::RoundProposal {
+				ark::rounds::RoundEvent::RoundProposal(ark::rounds::RoundProposal {
 					round_seq: m.round_seq.into(),
+					attempt_seq: m.attempt_seq as usize,
 					cosign_sigs: m.vtxo_cosign_signatures.into_iter().map(|s| {
 						schnorr::Signature::from_slice(&s)
 							.map_err(|_| "invalid vtxo_cosign_signatures")
@@ -277,14 +284,15 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					}).collect::<Result<_, ConvertError>>()?,
 					connector_pubkey: PublicKey::from_slice(&m.connector_pubkey)
 						.map_err(|_| "invalid connector pubkey")?,
-				}
+				})
 			},
 			protos::round_event::Event::Finished(m) => {
-				ark::rounds::RoundEvent::Finished {
+				ark::rounds::RoundEvent::Finished(ark::rounds::RoundFinished {
 					round_seq: m.round_seq.into(),
+					attempt_seq: m.attempt_seq as usize,
 					signed_round_tx: bitcoin::consensus::deserialize(&m.signed_round_tx)
 						.map_err(|_| "invalid signed_round_tx")?,
-				}
+				})
 			},
 		})
 	}

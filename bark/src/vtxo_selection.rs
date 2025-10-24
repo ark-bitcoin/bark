@@ -389,6 +389,6 @@ impl FilterVtxos for RefreshStrategy<'_> {
 
 impl FilterVtxos for VtxoStateKind {
 	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(vtxos.into_iter().filter(|vtxo| vtxo.state.as_kind() == *self).collect::<Vec<_>>())
+		Ok(vtxos.into_iter().filter(|vtxo| vtxo.state.kind() == *self).collect::<Vec<_>>())
 	}
 }

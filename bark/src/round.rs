@@ -802,17 +802,12 @@ impl PaymentSubmittedState {
 	) -> anyhow::Result<ProgressResult<VtxoTreeSignedState>, AttemptError> {
 		let (vtxo_tree, unsigned_round_tx, cosign_agg_nonces) = {
 			match event {
-				RoundEvent::VtxoProposal {
-					round_seq,
-					unsigned_round_tx,
-					vtxos_spec,
-					cosign_agg_nonces,
-				} => {
-					if round_seq != self.round_seq {
+				RoundEvent::VtxoProposal(e) => {
+					if e.round_seq != self.round_seq {
 						warn!("Unexpected different round id");
 						return Ok(ProgressResult::WaitNewRound);
 					}
-					(vtxos_spec, unsigned_round_tx, cosign_agg_nonces)
+					(e.vtxos_spec, e.unsigned_round_tx, e.cosign_agg_nonces)
 				},
 				RoundEvent::Start(round_info) => {
 					return Ok(ProgressResult::NewRoundStarted(round_info));
@@ -985,12 +980,12 @@ impl VtxoTreeSignedState {
 	{
 		let (vtxo_cosign_sigs, forfeit_nonces, connector_pubkey) = {
 			match event {
-				RoundEvent::RoundProposal { round_seq, cosign_sigs, forfeit_nonces, connector_pubkey } => {
-					if round_seq != self.round_seq {
+				RoundEvent::RoundProposal(e) => {
+					if e.round_seq != self.round_seq {
 						warn!("Unexpected different round id");
 						return Ok(ProgressResult::WaitNewRound);
 					}
-					(cosign_sigs, forfeit_nonces, connector_pubkey)
+					(e.cosign_sigs, e.forfeit_nonces, e.connector_pubkey)
 				},
 				RoundEvent::Start(e) => {
 					return Ok(ProgressResult::NewRoundStarted(e));
@@ -1280,12 +1275,12 @@ impl ForfeitSignedState {
 		}
 
 		let signed_round_tx = match event {
-			Some(RoundEvent::Finished { round_seq, signed_round_tx }) => {
-				if round_seq != self.round_seq {
+			Some(RoundEvent::Finished(e)) => {
+				if e.round_seq != self.round_seq {
 					error!("Unexpected round ID from round finished event: {} != {}",
-						round_seq, self.round_seq);
+						e.round_seq, self.round_seq);
 				}
-				signed_round_tx
+				e.signed_round_tx
 			},
 			Some(RoundEvent::Start(round_info)) => {
 				return Ok(ProgressResult::NewRoundStarted(round_info));

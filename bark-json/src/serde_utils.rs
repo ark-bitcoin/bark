@@ -34,3 +34,4 @@ pub mod fee_rate_sats_per_kvb {
 		Ok(opt.map(FeeRate::from_sat_per_kvb_ceil))
 	}
 }
+

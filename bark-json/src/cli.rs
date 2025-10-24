@@ -13,7 +13,7 @@ use crate::exit::ExitState;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
 use crate::primitives::{UtxoInfo, VtxoInfo, RecipientInfo};
-use crate::{serde_utils, WalletVtxoInfo};
+use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArkInfo {
@@ -143,7 +143,7 @@ pub struct Board {
 	/// in this board.
 	///
 	/// Currently, this is always a vector of length 1
-	pub vtxos: Vtxos,
+	pub vtxos: Vec<VtxoInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -152,9 +152,9 @@ pub struct Movement {
 	/// Fees paid for the movement
 	pub fees: Amount,
 	/// wallet's VTXOs spent in this movement
-	pub spends: Vtxos,
+	pub spends: Vec<VtxoInfo>,
 	/// Received VTXOs from this movement
-	pub receives: Vtxos,
+	pub receives: Vec<VtxoInfo>,
 	/// External recipients of the movement
 	pub recipients: Vec<RecipientInfo>,
 	/// Movement date
@@ -230,8 +230,6 @@ pub struct SendOnchain {
 	// TODO: List the [OutPoint] and [Amount] here
 }
 
-pub type Vtxos = Vec<VtxoInfo>;
-pub type WalletVtxos = Vec<WalletVtxoInfo>;
 
 #[cfg(test)]
 mod test {

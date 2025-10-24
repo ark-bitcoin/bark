@@ -1,6 +1,7 @@
 
 #[macro_use] extern crate lazy_static;
-#[macro_use] extern crate serde;
+#[macro_use] extern crate serde as serde_crate;
+
 pub extern crate bitcoin;
 
 pub mod cpfp;
@@ -12,6 +13,7 @@ pub mod bdk;
 pub mod esplora;
 #[cfg(feature = "rpc")]
 pub mod rpc;
+pub mod serde;
 
 pub use mbitcoin::{
 	AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt, TxOutExt,
