@@ -24,7 +24,20 @@ steps:
       local_branch: master
       force: true
       ssh_key:
-        from_secret: github-mirror-push-key
+        from_secret: GITHUB_LOGIN_TOKEN
+
+  - name: push-codeberg-mirror
+    when:
+      - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
+    failure: ignore
+    image: appleboy/drone-git-push@sha256:b7fbe3c66653f36d5898ccaf142be65274dc18ba260783b3a99ccc3098eed7b2
+    settings:
+      remote: git@codeberg.org:ark-bitcoin/bark.git
+      branch: master
+      local_branch: master
+      force: true
+      ssh_key:
+        from_secret: CODEBERG_LOGIN_TOKEN
 
   - name: prechecks
     image: registry.2nd.dev/build:24
