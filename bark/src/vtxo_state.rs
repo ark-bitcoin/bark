@@ -18,6 +18,7 @@
 //! [WalletVtxo] pairs a concrete [Vtxo] with its current [VtxoState], providing the primary
 //! representation used by persistence and higher-level wallet logic.
 
+use std::fmt;
 use std::ops::Deref;
 
 use ark::vtxo::VtxoRef;
@@ -35,7 +36,7 @@ const PENDING_LIGHTNING_RECV: &'static str = "PendingLightningRecv";
 /// A compact, serialization-friendly representation of a VTXO's state.
 ///
 /// Use [VtxoState::as_kind] to derive it from a richer [VtxoState].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VtxoStateKind {
 	/// The [Vtxo] is available and can be selected as an input for a new offboard/round.
 	Spendable,
@@ -60,6 +61,18 @@ impl VtxoStateKind {
 			VtxoStateKind::PendingLightningSend => PENDING_LIGHTNING_SEND,
 			VtxoStateKind::PendingLightningRecv => PENDING_LIGHTNING_RECV,
 		}
+	}
+}
+
+impl fmt::Display for VtxoStateKind {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    f.write_str(self.as_str())
+	}
+}
+
+impl fmt::Debug for VtxoStateKind {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    f.write_str(self.as_str())
 	}
 }
 
@@ -99,7 +112,7 @@ pub enum VtxoState {
 
 impl VtxoState {
 	/// Returns the compact [VtxoStateKind] discriminator for this rich state.
-	pub fn as_kind(&self) -> VtxoStateKind {
+	pub fn kind(&self) -> VtxoStateKind {
 		match self {
 			VtxoState::UnregisteredBoard => VtxoStateKind::UnregisteredBoard,
 			VtxoState::Spendable => VtxoStateKind::Spendable,

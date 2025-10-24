@@ -48,7 +48,7 @@ const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HA
 fn wallet_vtxo_to_json(vtxo: &WalletVtxo) -> primitives::WalletVtxoInfo {
 	primitives::WalletVtxoInfo {
 		vtxo: vtxo.vtxo.clone().into(),
-		state: vtxo.state.as_kind().as_str().to_string(),
+		state: vtxo.state.kind().as_str().to_string(),
 	}
 }
 
@@ -555,7 +555,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 
 			vtxos.sort_by(|a, b| {
-				match (a.state.as_kind(), b.state.as_kind()) {
+				match (a.state.kind(), b.state.kind()) {
 					(VtxoStateKind::Spent, b) if b != VtxoStateKind::Spent => Ordering::Less,
 					(VtxoStateKind::Spendable, a) if a != VtxoStateKind::Spendable => Ordering::Greater,
 					_ => a.expiry_height().cmp(&b.expiry_height()),

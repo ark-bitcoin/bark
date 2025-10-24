@@ -156,7 +156,7 @@ pub fn store_vtxo_with_initial_state(
 	let mut statement = tx.prepare(q2)?;
 	statement.execute(named_params! {
 		":vtxo_id": vtxo.id().to_string(),
-		":state_kind": state.as_kind().as_str(),
+		":state_kind": state.kind().as_str(),
 		":state": serde_json::to_vec(&state)?,
 	})?;
 
@@ -651,7 +651,7 @@ pub fn update_vtxo_state_checked(
 	let mut statement = conn.prepare(query)?;
 	let nb_inserted = statement.execute(named_params! {
 		":vtxo_id": vtxo_id.to_string(),
-		":state_kind": new_state.as_kind().as_str(),
+		":state_kind": new_state.kind().as_str(),
 		":state": serde_json::to_vec(&new_state)?,
 		":old_states": &serde_json::to_string(old_states)?,
 	})?;
