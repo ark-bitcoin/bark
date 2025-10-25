@@ -16,7 +16,7 @@ use lightning::offers::parse::Bolt12ParseError;
 use lightning::util::ser::Writeable;
 use lightning_invoice::Bolt11Invoice;
 
-use bitcoin_ext::P2TR_DUST;
+use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
 
 use crate::{musig, scripts, SECP};
 
@@ -108,8 +108,8 @@ pub fn server_htlc_send_taproot(
 	payment_hash: PaymentHash,
 	server_pubkey: PublicKey,
 	user_pubkey: PublicKey,
-	exit_delta: u16,
-	htlc_expiry: u32,
+	exit_delta: BlockDelta,
+	htlc_expiry: BlockHeight,
 ) -> TaprootSpendInfo {
 	let server_branch = scripts::hash_delay_sign(
 		payment_hash.to_sha256_hash(), exit_delta, server_pubkey.x_only_public_key().0,
@@ -146,8 +146,8 @@ pub fn server_htlc_receive_taproot(
 	payment_hash: PaymentHash,
 	server_pubkey: PublicKey,
 	user_pubkey: PublicKey,
-	exit_delta: u16,
-	htlc_expiry: u32,
+	exit_delta: BlockDelta,
+	htlc_expiry: BlockHeight,
 ) -> TaprootSpendInfo {
 	let server_branch =
 		scripts::delay_timelock_sign(exit_delta, htlc_expiry, server_pubkey.x_only_public_key().0);

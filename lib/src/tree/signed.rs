@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use secp256k1_musig::musig::{AggregatedNonce, PartialSignature, PublicNonce, SecretNonce};
 
-use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt, TransactionExt, TxOutExt};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt, TransactionExt, TxOutExt};
 
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, SECP, SignedVtxoRequest, Vtxo, VtxoPolicy, VtxoRequest};
@@ -45,7 +45,7 @@ pub struct VtxoTreeSpec {
 	pub vtxos: Vec<SignedVtxoRequest>,
 	pub expiry_height: BlockHeight,
 	pub server_pubkey: PublicKey,
-	pub exit_delta: u16,
+	pub exit_delta: BlockDelta,
 	pub global_cosign_pubkeys: Vec<PublicKey>,
 }
 
@@ -54,7 +54,7 @@ impl VtxoTreeSpec {
 		vtxos: Vec<SignedVtxoRequest>,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 		global_cosign_pubkeys: Vec<PublicKey>,
 	) -> VtxoTreeSpec {
 		assert_ne!(vtxos.len(), 0);
@@ -770,7 +770,7 @@ pub mod builder {
 	use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut};
 	use bitcoin::hashes::Hash;
 	use bitcoin::secp256k1::{Keypair, PublicKey};
-	use bitcoin_ext::BlockHeight;
+	use bitcoin_ext::{BlockDelta, BlockHeight};
 
 	use crate::{musig, SignedVtxoRequest, VtxoRequest};
 	use crate::error::IncorrectSigningKeyError;
@@ -842,7 +842,7 @@ pub mod builder {
 	pub struct SignedTreeBuilder<S: state::BuilderState> {
 		pub expiry_height: BlockHeight,
 		pub server_pubkey: PublicKey,
-		pub exit_delta: u16,
+		pub exit_delta: BlockDelta,
 		/// The cosign pubkey used to cosign all nodes in the tree
 		pub cosign_pubkey: PublicKey,
 
@@ -900,7 +900,7 @@ pub mod builder {
 			expiry_height: BlockHeight,
 			server_pubkey: PublicKey,
 			server_cosign_pubkey: PublicKey,
-			exit_delta: u16,
+			exit_delta: BlockDelta,
 		) -> VtxoTreeSpec {
 			let reqs = vtxos.into_iter()
 				.map(|vtxo| SignedVtxoRequest { cosign_pubkey: None, vtxo })
@@ -923,7 +923,7 @@ pub mod builder {
 			expiry_height: BlockHeight,
 			server_pubkey: PublicKey,
 			server_cosign_pubkey: PublicKey,
-			exit_delta: u16,
+			exit_delta: BlockDelta,
 		) -> SignedTreeBuilder<state::Preparing> {
 			let tree = Self::construct_tree_spec(
 				vtxos,
@@ -1004,7 +1004,7 @@ pub mod builder {
 			expiry_height: BlockHeight,
 			server_pubkey: PublicKey,
 			server_cosign_pubkey: PublicKey,
-			exit_delta: u16,
+			exit_delta: BlockDelta,
 			utxo: OutPoint,
 			user_pub_nonces: Vec<musig::PublicNonce>,
 		) -> SignedTreeBuilder<state::ServerCanCosign> {

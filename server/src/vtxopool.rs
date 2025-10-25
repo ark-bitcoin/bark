@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, FeeRate, OutPoint};
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use futures::{stream, StreamExt, TryStreamExt};
 use log::{info, warn};
 
@@ -60,11 +60,11 @@ pub struct Config {
 	/// below what percentage of the target should we issue more vtxos
 	pub vtxo_target_issue_threshold: u8,
 	/// number of blocks for the vtxo lifetime
-	pub vtxo_lifetime: u16,
+	pub vtxo_lifetime: BlockDelta,
 	/// number of blocks before their expiry to discard vtxos
-	pub vtxo_pre_expiry: u16,
+	pub vtxo_pre_expiry: BlockDelta,
 	/// maximum arkoor depth to keep change until
-	pub vtxo_max_arkoor_depth: u16,
+	pub vtxo_max_arkoor_depth: ArkoorDepth,
 
 	#[serde(with = "crate::serde_util::fee_rate")]
 	pub issue_tx_fallback_feerate: FeeRate,

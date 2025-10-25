@@ -60,7 +60,8 @@ pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
 
 /// Type representing a block height in the bitcoin blockchain.
 pub type BlockHeight = u32;
-
+/// Type representing a block height delta
+pub type BlockDelta = u16;
 /// Reference to a block in the chain
 ///
 /// Stirng representation is "<height>:<hash>".

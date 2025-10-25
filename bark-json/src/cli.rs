@@ -7,7 +7,7 @@ use bitcoin::{Amount, FeeRate, Txid};
 
 use ark::rounds::RoundId;
 use ark::VtxoId;
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use crate::exit::ExitState;
 use crate::exit::error::ExitError;
@@ -27,11 +27,11 @@ pub struct ArkInfo {
 	/// Number of nonces per round
 	pub nb_round_nonces: usize,
 	/// Delta between exit confirmation and coins becoming spendable
-	pub vtxo_exit_delta: u16,
+	pub vtxo_exit_delta: BlockDelta,
 	/// Expiration delta of the VTXO
-	pub vtxo_expiry_delta: u16,
+	pub vtxo_expiry_delta: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
-	pub htlc_send_expiry_delta: u16,
+	pub htlc_send_expiry_delta: BlockDelta,
 	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf

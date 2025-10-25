@@ -69,7 +69,7 @@ use bitcoin::absolute::LockTime;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey};
 
-use bitcoin_ext::{fee, BlockHeight, TaprootSpendInfoExt};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::{musig, scripts, SECP};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
@@ -189,7 +189,7 @@ impl<'de> serde::Deserialize<'de> for VtxoId {
 /// Returns the clause to unilaterally spend a VTXO
 fn exit_clause(
 	user_pubkey: PublicKey,
-	exit_delta: u16,
+	exit_delta: BlockDelta,
 ) -> ScriptBuf {
 	scripts::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
 }
@@ -198,7 +198,7 @@ fn exit_clause(
 pub fn exit_taproot(
 	user_pubkey: PublicKey,
 	server_pubkey: PublicKey,
-	exit_delta: u16,
+	exit_delta: BlockDelta,
 ) -> taproot::TaprootSpendInfo {
 	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
 	taproot::TaprootBuilder::new()
@@ -418,7 +418,7 @@ impl VtxoPolicy {
 	pub(crate) fn taproot(
 		&self,
 		server_pubkey: PublicKey,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 	) -> taproot::TaprootSpendInfo {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
@@ -438,7 +438,7 @@ impl VtxoPolicy {
 	/// Depending on the specific policy variant, this function produces an appropriate script
 	/// that implements the user exit clause. The exit clause enforces specific rules for exiting
 	/// the contract or completing a transaction based on the provided `exit_delta` parameter.
-	pub fn user_exit_clause(&self, exit_delta: u16) -> ScriptBuf {
+	pub fn user_exit_clause(&self, exit_delta: BlockDelta) -> ScriptBuf {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				exit_clause(*user_pubkey, exit_delta)
@@ -456,11 +456,11 @@ impl VtxoPolicy {
 		}
 	}
 
-	pub(crate) fn script_pubkey(&self, server_pubkey: PublicKey, exit_delta: u16) -> ScriptBuf {
+	pub(crate) fn script_pubkey(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> ScriptBuf {
 		self.taproot(server_pubkey, exit_delta).script_pubkey()
 	}
 
-	pub(crate) fn txout(&self, amount: Amount, server_pubkey: PublicKey, exit_delta: u16) -> TxOut {
+	pub(crate) fn txout(&self, amount: Amount, server_pubkey: PublicKey, exit_delta: BlockDelta) -> TxOut {
 		TxOut {
 			value: amount,
 			script_pubkey: self.script_pubkey(server_pubkey, exit_delta),
@@ -498,7 +498,7 @@ impl GenesisTransition {
 		&self,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 	) -> taproot::TaprootSpendInfo {
 		match self {
 			Self::Cosigned { pubkeys, .. } => {
@@ -515,7 +515,7 @@ impl GenesisTransition {
 		amount: Amount,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 	) -> TxOut {
 		let taproot = self.input_taproot(server_pubkey, expiry_height, exit_delta);
 		TxOut {
@@ -697,7 +697,7 @@ pub struct VtxoSpec {
 	pub amount: Amount,
 	pub expiry_height: BlockHeight,
 	pub server_pubkey: PublicKey,
-	pub exit_delta: u16,
+	pub exit_delta: BlockDelta,
 }
 
 impl VtxoSpec {
@@ -737,7 +737,7 @@ pub struct Vtxo {
 	pub(crate) expiry_height: BlockHeight,
 
 	pub(crate) server_pubkey: PublicKey,
-	pub(crate) exit_delta: u16,
+	pub(crate) exit_delta: BlockDelta,
 
 	pub(crate) anchor_point: OutPoint,
 	pub(crate) genesis: Vec<GenesisItem>,
@@ -810,7 +810,7 @@ impl Vtxo {
 	}
 
 	/// The relative timelock block delta used for exits.
-	pub fn exit_delta(&self) -> u16 {
+	pub fn exit_delta(&self) -> BlockDelta {
 		self.exit_delta
 	}
 

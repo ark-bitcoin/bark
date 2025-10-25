@@ -762,7 +762,7 @@ impl Wallet {
 		for board in unregistered_boards {
 			let anchor = board.vtxo.chain_anchor();
 			if let Some(confirmed_at) = self.chain.tx_confirmed(anchor.txid).await? {
-				let required = ark_info.required_board_confirmations as u32;
+				let required = ark_info.required_board_confirmations as BlockHeight;
 				if current_height + 1 >= confirmed_at + required {
 					if let Err(e) = self.register_board(board.vtxo.id()).await {
 						warn!("Failed to register board {}: {}", board.vtxo.id(), e);

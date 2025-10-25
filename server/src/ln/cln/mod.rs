@@ -46,7 +46,7 @@ use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::{AmountExt, BlockHeight};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
@@ -521,7 +521,7 @@ struct ClnManagerProcess {
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
 
-	htlc_expiry_delta: u16,
+	htlc_expiry_delta: BlockDelta,
 }
 
 impl ClnManagerProcess {
@@ -751,7 +751,7 @@ impl ClnManagerProcess {
 			node.rpc.clone(),
 			invoice,
 			user_amount,
-			max_cltv_expiry_delta,
+			max_cltv_expiry_delta as BlockDelta,
 		));
 
 		Ok(())
@@ -959,7 +959,7 @@ async fn handle_pay_bolt11(
 	mut rpc: ClnGrpcClient,
 	invoice: Invoice,
 	amount: Option<Amount>,
-	max_cltv_expiry_delta: u32,
+	max_cltv_expiry_delta: BlockDelta,
 ) {
 	let payment_hash = invoice.payment_hash();
 	match call_pay_bolt11(&mut rpc, &invoice, amount, max_cltv_expiry_delta).await {
@@ -1002,7 +1002,7 @@ async fn call_pay_bolt11(
 	rpc: &mut ClnGrpcClient,
 	invoice: &Invoice,
 	user_amount: Option<Amount>,
-	max_cltv_expiry_delta: u32,
+	max_cltv_expiry_delta: BlockDelta,
 ) -> anyhow::Result<Preimage> {
 	match (user_amount, invoice.amount_msat()) {
 		(Some(user), Some(inv)) => {
@@ -1027,7 +1027,7 @@ async fn call_pay_bolt11(
 				None
 			}
 		},
-		maxdelay: Some(max_cltv_expiry_delta),
+		maxdelay: Some(max_cltv_expiry_delta as u32),
 		maxfee: None,
 		retry_for: None,
 		partial_msat: None,
