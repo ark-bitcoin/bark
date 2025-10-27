@@ -191,6 +191,13 @@ pub trait ReadExt: io::Read {
 		self.read_exact(slice)
 	}
 
+	/// Read a byte array
+	fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N], io::Error> {
+		let mut ret = [0u8; N];
+		self.read_exact(&mut ret)?;
+		Ok(ret)
+	}
+
 	/// Read a value in compact size aka "VarInt" encoding.
 	fn read_compact_size(&mut self) -> Result<u64, io::Error> {
 		match self.read_u8()? {
