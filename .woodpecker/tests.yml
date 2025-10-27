@@ -102,7 +102,7 @@ steps:
     environment:
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
-      RUST_TEST_THREADS: 2
+      RUST_TEST_THREADS: 3
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
@@ -121,7 +121,7 @@ steps:
     environment:
       CHAIN_SOURCE: mempool
       TEST_DIRECTORY: ./test/mempool
-      RUST_TEST_THREADS: 2
+      RUST_TEST_THREADS: 3
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
@@ -139,7 +139,7 @@ steps:
       - tmpfs:/dev/shm:rw
     environment:
       TEST_DIRECTORY: ./test/btc29
-      RUST_TEST_THREADS: 2
+      RUST_TEST_THREADS: 3
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
