@@ -48,7 +48,8 @@ pub async fn serve(cfg: &Config, state: BarkWebState) -> anyhow::Result<()> {
 	let router = router
 		.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
 		.layer(CorsLayer::permissive())
-		.with_state(state);
+		.with_state(state)
+		.fallback(error::not_found);
 
 	// Run the server
 	let socket_addr = cfg.socket_addr();
