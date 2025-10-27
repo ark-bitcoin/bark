@@ -9,8 +9,7 @@ edition = "2024"
 readme = "README.md"
 
 [features]
-default = ["cli", "tls-native-roots", "rand"]
-cli = ["clap", "env_logger", "home", "onchain_bdk", "toml"]
+default = ["tls-native-roots", "rand"]
 onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk", "hal"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
@@ -19,11 +18,6 @@ rand = ["dep:rand", "bitcoin/rand", "bip39/rand"]
 [lib]
 name = "bark"
 path = "src/lib.rs"
-
-[[bin]]
-name = "bark"
-path = "src/bin/bark/main.rs"
-required-features = ["cli"]
 
 [dependencies]
 
@@ -64,13 +58,7 @@ futures.workspace = true
 # Prebuilt BDK Wallet only
 bdk_wallet = { workspace = true, features = [ "rusqlite" ], optional = true }
 
-# CLI only
-clap = { workspace = true, optional = true }
-env_logger = { workspace = true, optional = true }
-home = { version = "=0.5.9", optional = true }
-toml = { workspace = true, optional = true}
 hal = { version = "=0.10.0", default-features = false, optional = true}
-
 # For some doctests
 rand = { workspace = true, optional = true }
 

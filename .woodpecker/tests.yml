@@ -14,7 +14,7 @@ clone:
 
 steps:
   - name: check-commits
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - git log --oneline | head -n 1
@@ -23,23 +23,24 @@ steps:
 
   - name: build
     depends_on: check-commits
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
     commands:
       - git log --oneline | head -n 1
       - >
         nix develop .#default --command bash -c "
+          rm $(which bark)
           cargo version &&
           cargo build --workspace &&
-          cargo install --locked --path bark &&
+          cargo install --locked --path bark-cli &&
           cargo install --locked --path server
         "
 
 
   - name: compare-static-files
     depends_on: check-commits
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -57,7 +58,7 @@ steps:
 
   - name: test-unit
     depends_on: build
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     commands:
       - git log --oneline | head -n 1
       - >
@@ -67,7 +68,7 @@ steps:
 
   - name: use-bark-as-dependency
     depends_on: test-unit
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -80,7 +81,7 @@ steps:
 
   - name: bark-as-libs
     depends_on: test-unit
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -94,7 +95,7 @@ steps:
       - event: push
         branch: master
     depends_on: bark-as-libs
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
       - tmpfs:/dev/shm:rw
@@ -113,7 +114,7 @@ steps:
 
   - name: test-integration-mempool
     depends_on: bark-as-libs
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
       - tmpfs:/dev/shm:rw
@@ -132,7 +133,7 @@ steps:
 
   - name: test-integration-btc29.1
     depends_on: bark-as-libs
-    image: registry.2nd.dev/build:24
+    image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
       - tmpfs:/dev/shm:rw

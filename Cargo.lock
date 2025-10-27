@@ -288,6 +288,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "bark-cli"
+version = "0.1.0-beta.1"
+dependencies = [
+ "anyhow",
+ "ark-lib",
+ "bark-bitcoin-ext",
+ "bark-json",
+ "bark-server-rpc",
+ "bark-wallet",
+ "bip39",
+ "bitcoin",
+ "chrono",
+ "clap",
+ "env_logger",
+ "home",
+ "lightning",
+ "lightning-invoice 0.33.2",
+ "lnurl-rs",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+ "tonic",
+]
+
+[[package]]
 name = "bark-cln-rpc"
 version = "0.2.0+cln.25.09-hold.0.3.2.patched"
 dependencies = [
@@ -418,11 +445,8 @@ dependencies = [
  "bip39",
  "bitcoin",
  "chrono",
- "clap",
- "env_logger",
  "futures",
  "hal",
- "home",
  "lazy_static",
  "lightning",
  "lightning-invoice 0.33.2",
@@ -434,7 +458,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
- "toml 0.8.23",
  "tonic",
 ]
 
