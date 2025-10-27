@@ -163,6 +163,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 				out.borrow().amount,
 				self.input.server_pubkey(),
 				self.input.exit_delta(),
+				self.input.expiry_height(),
 			)
 		}).collect()
 	}
