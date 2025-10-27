@@ -216,3 +216,106 @@ pub struct ExitClaimRequest {
 pub struct ExitClaimResponse {
 	pub message: String,
 }
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct PendingRoundInfo {
+	/// Unique identifier for the round
+	pub id: u32,
+	/// Discriminant of the round state
+	pub kind: String,
+	/// Round sequence number, if known
+	pub round_seq: Option<u64>,
+	/// Attempt sequence number within the round, if known
+	pub attempt_seq: Option<usize>,
+	/// The round transaction id, if already assigned
+	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
+	pub round_txid: Option<ark::rounds::RoundId>,
+}
+
+impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
+	fn from(state: bark::persist::StoredRoundState) -> Self {
+		match state.state.flow() {
+			bark::round::RoundFlowState::WaitingToStart => {
+				PendingRoundInfo {
+					id: state.id.0,
+					kind: "WaitingToStart".to_string(),
+					round_seq: None,
+					attempt_seq: None,
+					round_txid: None,
+				}
+			},
+			bark::round::RoundFlowState::Ongoing { round_seq, attempt_seq, state: attempt_state } => {
+				// Map attempt state kind to the old kind strings
+				let kind = match attempt_state {
+					bark::round::AttemptState::AwaitingAttempt => "AttemptStarted",
+					bark::round::AttemptState::AwaitingUnsignedVtxoTree { .. } => "PaymentSubmitted",
+					bark::round::AttemptState::AwaitingRoundProposal { .. } => "VtxoTreeSigned",
+					bark::round::AttemptState::AwaitingFinishedRound { .. } => "ForfeitSigned",
+				};
+				// Get round_txid from unconfirmed_rounds if available
+				let round_txid = state.state.unconfirmed_rounds().first()
+					.map(|r| r.funding_txid())
+					.map(|txid| ark::rounds::RoundId::from(txid));
+
+				PendingRoundInfo {
+					id: state.id.0,
+					kind: kind.to_string(),
+					round_seq: Some(round_seq.inner() as u64),
+					attempt_seq: Some(*attempt_seq),
+					round_txid: round_txid,
+				}
+			},
+			bark::round::RoundFlowState::Success => {
+				// If we have unconfirmed rounds, it's pending confirmation
+				// Otherwise it's a completed success state
+				if !state.state.unconfirmed_rounds().is_empty() {
+					let round_txid = state.state.unconfirmed_rounds().first()
+						.map(|r| r.funding_txid())
+						.map(|txid| ark::rounds::RoundId::from(txid));
+
+					PendingRoundInfo {
+						id: state.id.0,
+						kind: "PendingConfirmation".to_string(),
+						round_seq: None,
+						attempt_seq: None,
+						round_txid: round_txid,
+					}
+				} else {
+					PendingRoundInfo {
+						id: state.id.0,
+						kind: "RoundConfirmed".to_string(),
+						round_seq: None,
+						attempt_seq: None,
+						round_txid: None,
+					}
+				}
+			},
+			bark::round::RoundFlowState::Failed { .. } => {
+				// If we have unconfirmed rounds, it might be cancelled
+				// Otherwise it's abandoned
+				if !state.state.unconfirmed_rounds().is_empty() {
+					let round_txid = state.state.unconfirmed_rounds().first()
+						.map(|r| r.funding_txid())
+						.map(|txid| ark::rounds::RoundId::from(txid));
+
+					PendingRoundInfo {
+						id: state.id.0,
+						kind: "RoundCancelled".to_string(),
+						round_seq: None,
+						attempt_seq: None,
+						round_txid: round_txid,
+					}
+				} else {
+					PendingRoundInfo {
+						id: state.id.0,
+						kind: "RoundAbandoned".to_string(),
+						round_seq: None,
+						attempt_seq: None,
+						round_txid: None,
+					}
+				}
+			},
+		}
+	}
+}
