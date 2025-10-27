@@ -80,7 +80,7 @@ macro_rules! impl_byte_newtype {
 				struct Visitor;
 				impl<'de> serde::de::Visitor<'de> for Visitor {
 					type Value = $name;
-					fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+					fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 						write!(f, concat!("a ", stringify!($name)))
 					}
 					fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
