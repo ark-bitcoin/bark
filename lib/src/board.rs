@@ -18,7 +18,7 @@ use bitcoin::taproot::TaprootSpendInfo;
 use bitcoin::{Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Keypair, PublicKey};
-use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
+use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, Vtxo, VtxoPolicy, SECP};
@@ -100,7 +100,7 @@ pub struct BoardBuilder<S: BuilderState> {
 	pub user_pubkey: PublicKey,
 	pub expiry_height: BlockHeight,
 	pub server_pubkey: PublicKey,
-	pub exit_delta: u16,
+	pub exit_delta: BlockDelta,
 
 	amount: Option<Amount>,
 	utxo: Option<OutPoint>,
@@ -126,7 +126,7 @@ impl BoardBuilder<state::Preparing> {
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 	) -> BoardBuilder<state::Preparing> {
 		BoardBuilder {
 			user_pubkey, expiry_height, server_pubkey, exit_delta,
@@ -238,7 +238,7 @@ impl BoardBuilder<state::ServerCanCosign> {
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 		amount: Amount,
 		utxo: OutPoint,
 		user_pub_nonce: musig::PublicNonce,

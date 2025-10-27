@@ -10,6 +10,7 @@ use bitcoin::consensus;
 use bitcoin::hex::DisplayHex;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::secp256k1::PublicKey;
+use bitcoin_ext::BlockDelta;
 use lightning_invoice::Bolt11Invoice;
 use rusqlite::{self, named_params, Connection, Row, ToSql, Transaction};
 
@@ -817,10 +818,11 @@ pub fn store_lightning_receive(
 	payment_hash: PaymentHash,
 	preimage: Preimage,
 	invoice: &Bolt11Invoice,
+	htlc_recv_cltv_delta: BlockDelta,
 ) -> anyhow::Result<()> {
 	let query = "
-		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice)
-		VALUES (:payment_hash, :preimage, :invoice);
+		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice, htlc_recv_cltv_delta)
+		VALUES (:payment_hash, :preimage, :invoice, :htlc_recv_cltv_delta);
 	";
 	let mut statement = conn.prepare(query)?;
 
@@ -828,6 +830,7 @@ pub fn store_lightning_receive(
 		":payment_hash": payment_hash.to_vec(),
 		":preimage": preimage.to_vec(),
 		":invoice": invoice.to_string(),
+		":htlc_recv_cltv_delta": htlc_recv_cltv_delta,
 	})?;
 
 	Ok(())
@@ -850,7 +853,7 @@ fn get_htlc_vtxos(conn: &Connection, row: &Row<'_>) -> anyhow::Result<Option<Vec
 pub fn get_all_pending_lightning_receives<'a>(
 	conn: &'a Connection,
 ) -> anyhow::Result<Vec<LightningReceive>> {
-	let query = "SELECT payment_hash, preimage, invoice, htlc_vtxo_ids, preimage_revealed_at
+	let query = "SELECT payment_hash, preimage, invoice, htlc_vtxo_ids, preimage_revealed_at, htlc_recv_cltv_delta
 		FROM bark_pending_lightning_receive \
 		WHERE preimage_revealed_at IS NULL
 		ORDER BY created_at DESC";
@@ -864,6 +867,7 @@ pub fn get_all_pending_lightning_receives<'a>(
 			payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
 			preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
 			invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
+			htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 			htlc_vtxos: get_htlc_vtxos(conn, &row)?,
 		});
 	}
@@ -935,6 +939,7 @@ pub fn fetch_lightning_receive_by_payment_hash(
 		payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
 		preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
 		invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
+		htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 		htlc_vtxos: get_htlc_vtxos(conn, &row)?,
 	}))
 }

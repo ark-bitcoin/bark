@@ -58,7 +58,7 @@ use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy, VtxoPolicyKind};
 use server_rpc::{self as rpc, protos, ServerConnection, TryFromBytes};
-use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
@@ -71,6 +71,10 @@ use crate::vtxo_state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
 use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
+
+/// Leniency delta to allow claim when blocks were mined between htlc
+/// receive and claim preparation
+const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -214,7 +218,9 @@ impl VtxoSeed {
 ///     - [Wallet::maintenance_refresh]: Refreshes VTXOs where necessary without syncing anything,
 ///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
 ///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
-///     - [Wallet::sync_pending_lightning_vtxos]: Updates the status of pending lightning payments,
+///     - [Wallet::sync_pending_lightning_send_vtxos]: Updates the status of pending lightning payments,
+///     - [Wallet::check_and_claim_all_open_ln_receives]: Wait for payment receipt of all open invoices, then claim them,
+///     - [Wallet::claim_all_pending_htlc_recvs]: Attempts to claim all pending lightning receives,
 ///     - [Wallet::register_all_confirmed_boards]: Registers boards which are available for use
 ///       in offchain payments
 ///
@@ -295,7 +301,7 @@ impl VtxoSeed {
 /// // Alternatively, you can use the fine-grained sync commands to sync individual parts of the
 /// // wallet state and use `maintenance_refresh` where necessary to refresh VTXOs.
 /// wallet.sync().await?;
-/// wallet.sync_pending_lightning_vtxos().await?;
+/// wallet.sync_pending_lightning_send_vtxos().await?;
 /// wallet.register_all_confirmed_boards(&mut onchain_wallet).await?;
 /// wallet.sync_exits(&mut onchain_wallet).await?;
 /// wallet.maintenance_refresh().await?;
@@ -762,7 +768,7 @@ impl Wallet {
 		for board in unregistered_boards {
 			let anchor = board.vtxo.chain_anchor();
 			if let Some(confirmed_at) = self.chain.tx_confirmed(anchor.txid).await? {
-				let required = ark_info.required_board_confirmations as u32;
+				let required = ark_info.required_board_confirmations as BlockHeight;
 				if current_height + 1 >= confirmed_at + required {
 					if let Err(e) = self.register_board(board.vtxo.id()).await {
 						warn!("Failed to register board {}: {}", board.vtxo.id(), e);
@@ -806,6 +812,7 @@ impl Wallet {
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
 		self.sync_exits(onchain).await?;
+
 		Ok(())
 	}
 
@@ -831,7 +838,7 @@ impl Wallet {
 	///
 	/// Notes:
 	///   - even when onchain wallet is provided, the onchain wallet will not be sync, but
-	///     - [Wallet::sync_pending_lightning_vtxos] will be called
+	///     - [Wallet::sync_pending_lightning_send_vtxos] will be called
 	///   - [Wallet::sync_exits] will not be called
 	pub async fn sync(&self) {
 		tokio::join!(
@@ -853,8 +860,13 @@ impl Wallet {
 				}
 			},
 			async {
-				if let Err(e) = self.sync_pending_lightning_vtxos().await {
+				if let Err(e) = self.sync_pending_lightning_send_vtxos().await {
 					warn!("Error syncing pending lightning payments: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.claim_all_pending_htlc_recvs().await {
+					warn!("Error claiming pending lightning receives: {:#}", e);
 				}
 			},
 			async {
@@ -880,7 +892,7 @@ impl Wallet {
 
 	/// Syncs pending lightning payments, verifying whether the payment status has changed and
 	/// creating a revocation VTXO if necessary.
-	pub async fn sync_pending_lightning_vtxos(&self) -> anyhow::Result<()> {
+	pub async fn sync_pending_lightning_send_vtxos(&self) -> anyhow::Result<()> {
 		let pending_payments = self.db.get_all_pending_lightning_send()?;
 
 		if pending_payments.is_empty() {
@@ -1896,6 +1908,24 @@ impl Wallet {
 	/// Create, store and return a [Bolt11Invoice] for offchain boarding
 	pub async fn bolt11_invoice(&self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let mut srv = self.require_server()?;
+		let config = self.config();
+
+		// User needs to enfore the following delta:
+		// - vtxo exit delta + htlc expiry delta (to give him time to exit the vtxo before htlc expires)
+		// - vtxo exit margin (to give him time to exit the vtxo before htlc expires)
+		// - htlc recv claim delta (to give him time to claim the htlc before it expires)
+		let requested_min_cltv_delta = srv.info.vtxo_exit_delta +
+			srv.info.htlc_expiry_delta +
+			config.vtxo_exit_margin +
+			config.htlc_recv_claim_delta +
+			LIGHTNING_PREPARE_CLAIM_DELTA;
+
+		if requested_min_cltv_delta > srv.info.max_user_invoice_cltv_delta {
+			bail!("HTLC CLTV delta ({}) is greater than Server's max HTLC recv CLTV delta: {}",
+				requested_min_cltv_delta,
+				srv.info.max_user_invoice_cltv_delta,
+			);
+		}
 
 		let preimage = Preimage::random();
 		let payment_hash = preimage.compute_payment_hash();
@@ -1905,6 +1935,7 @@ impl Wallet {
 		let req = protos::StartLightningReceiveRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_sat: amount.to_sat(),
+			min_cltv_delta: requested_min_cltv_delta as u32,
 		};
 
 		let resp = srv.client.start_lightning_receive(req).await?.into_inner();
@@ -1913,7 +1944,12 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		self.db.store_lightning_receive(payment_hash, preimage, &invoice)?;
+		self.db.store_lightning_receive(
+			payment_hash,
+			preimage,
+			&invoice,
+			requested_min_cltv_delta,
+		)?;
 
 		Ok(invoice)
 	}
@@ -1975,7 +2011,7 @@ impl Wallet {
 	///   [PaymentHash].
 	async fn claim_ln_receive(
 		&self,
-		lightning_receive: LightningReceive,
+		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
@@ -2075,6 +2111,7 @@ impl Wallet {
 		wait: bool,
 	) -> anyhow::Result<LightningReceive> {
 		let mut srv = self.require_server()?;
+		let current_height = self.chain.tip().await?;
 
 		let mut lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
 			.context("no lightning receive found")?;
@@ -2110,10 +2147,13 @@ impl Wallet {
 			return Ok(lightning_receive)
 		}
 
+		let htlc_recv_expiry = current_height + lightning_receive.htlc_recv_cltv_delta as BlockHeight;
+
 		let (keypair, _) = self.derive_store_next_keypair()?;
 		let req = protos::PrepareLightningReceiveClaimRequest {
 			payment_hash: lightning_receive.payment_hash.to_vec(),
 			user_pubkey: keypair.public_key().serialize().to_vec(),
+			htlc_recv_expiry: htlc_recv_expiry,
 		};
 		let res = srv.client.prepare_lightning_receive_claim(req).await
 			.context("error preparing lightning receive claim")?.into_inner();
@@ -2133,7 +2173,9 @@ impl Wallet {
 				if p.user_pubkey != keypair.public_key() {
 					bail!("invalid pubkey on HTLC VTXOs received from server: {}", p.user_pubkey);
 				}
-				//TODO(stevenroose) check the expiry height?
+				if p.htlc_expiry < htlc_recv_expiry {
+					bail!("HTLC VTXO expiry height is less than requested: Requested {}, received {}", htlc_recv_expiry, p.htlc_expiry);
+				}
 			} else {
 				bail!("invalid HTLC VTXO policy: {:?}", vtxo.policy());
 			}
@@ -2194,7 +2236,7 @@ impl Wallet {
 		wait: bool,
 	) -> anyhow::Result<()> {
 		let receive = self.check_ln_receive(payment_hash, wait).await?;
-		self.claim_ln_receive(receive).await
+		self.claim_ln_receive(&receive).await
 	}
 
 	/// Check and claim all opened Lightning receive
@@ -2219,6 +2261,64 @@ impl Wallet {
 					error!("Error claiming lightning receive: {}", e);
 				}
 			}).await;
+
+		Ok(())
+	}
+
+	/// Claim all pending lightning receives
+	///
+	/// This is different from [Wallet::check_and_claim_all_open_ln_receives] in
+	/// that it only affect pending lightning receives whose HTLC VTXOs
+	/// have already been issued.
+	///
+	/// Note:
+	///   - If an HTLC VTXO cannot be claimed and the htlc expiry is too close,
+	///   it will either mark the htlc as cancelled (preimage not revealed) or
+	///   mark the vtxo for exit (preimage revealed).
+	async fn claim_all_pending_htlc_recvs(&self) -> anyhow::Result<()> {
+		let srv = self.require_server()?;
+		let tip = self.chain.tip().await?;
+		let lightning_receives = self.db.get_all_pending_lightning_receives()?;
+		info!("Syncing {} pending lightning receives", lightning_receives.len());
+
+		for lightning_receive in lightning_receives {
+			let vtxos = match &lightning_receive.htlc_vtxos {
+				Some(vtxos) => vtxos,
+				None => continue,
+			};
+
+			if let Err(e) = self.claim_ln_receive(&lightning_receive).await {
+				error!("Failed to claim pubkey vtxo from htlc vtxo: {}", e);
+
+				let first_vtxo = &vtxos.first().unwrap().vtxo;
+				debug_assert!(vtxos.iter().all(|v| {
+					v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
+				}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
+
+				let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
+					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
+
+				let safe_exit_margin = first_vtxo.exit_delta() +
+					srv.info.htlc_expiry_delta +
+					self.config.vtxo_exit_margin;
+
+				if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
+					if lightning_receive.preimage_revealed_at.is_some() {
+						warn!("HTLC-recv VTXOs are about to expire and preimage has been disclosed, must exit");
+						self.exit.write().await.mark_vtxos_for_exit(&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>());
+					} else {
+						warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
+						self.db.register_movement(MovementArgs {
+							kind: MovementKind::LightningReceive,
+							spends: &vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
+							receives: &[],
+							recipients: &[],
+							fees: None,
+						})?;
+					}
+				}
+			}
+		}
 
 		Ok(())
 	}

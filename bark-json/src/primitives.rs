@@ -7,6 +7,7 @@ use bitcoin::secp256k1::PublicKey;
 
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::VtxoPolicyKind;
+use bitcoin_ext::BlockDelta;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct InvoiceInfo {
@@ -45,7 +46,7 @@ pub struct VtxoInfo {
 	pub user_pubkey: PublicKey,
 	pub server_pubkey: PublicKey,
 	pub expiry_height: u32,
-	pub exit_delta: u16,
+	pub exit_delta: BlockDelta,
 	pub chain_anchor: OutPoint,
 	pub exit_depth: u16,
 	pub arkoor_depth: u16,

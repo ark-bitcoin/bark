@@ -46,7 +46,7 @@ use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::{AmountExt, BlockHeight};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
@@ -82,7 +82,7 @@ pub struct ClnManager {
 	payment_tx: mpsc::UnboundedSender<(Invoice, Option<Amount>, BlockHeight)>,
 
 	/// This channel sends invoice generation requests to the process.
-	invoice_gen_tx: mpsc::UnboundedSender<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
+	invoice_gen_tx: mpsc::UnboundedSender<((PaymentHash, Amount, BlockDelta), oneshot::Sender<Bolt11Invoice>)>,
 
 	/// This channel sends invoice settle requests to the process.
 	invoice_settle_tx: mpsc::UnboundedSender<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
@@ -268,9 +268,10 @@ impl ClnManager {
 		&self,
 		payment_hash: PaymentHash,
 		amount: Amount,
+		cltv_delta: BlockDelta,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let (tx, rx) = oneshot::channel();
-		self.invoice_gen_tx.send(((payment_hash, amount), tx)).context("invoice channel broken")?;
+		self.invoice_gen_tx.send(((payment_hash, amount, cltv_delta), tx)).context("invoice channel broken")?;
 		rx.await.context("invoice return channel broken")
 	}
 
@@ -510,7 +511,7 @@ struct ClnManagerProcess {
 
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
 	payment_rx: mpsc::UnboundedReceiver<(Invoice, Option<Amount>, BlockHeight)>,
-	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount), oneshot::Sender<Bolt11Invoice>)>,
+	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount, BlockDelta), oneshot::Sender<Bolt11Invoice>)>,
 	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
 	bolt12_rx: mpsc::UnboundedReceiver<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
 
@@ -521,7 +522,7 @@ struct ClnManagerProcess {
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
 
-	htlc_expiry_delta: u16,
+	htlc_expiry_delta: BlockDelta,
 }
 
 impl ClnManagerProcess {
@@ -723,7 +724,13 @@ impl ClnManagerProcess {
 		let sub = self.db.get_htlc_subscription_by_payment_hash(invoice.payment_hash()).await?;
 		if let Some(sub) = sub {
 			if sub.status == LightningHtlcSubscriptionStatus::Created {
-				self.cancel_invoice(sub, LightningHtlcSubscriptionStatus::Accepted).await?;
+				self.db.store_lightning_htlc_subscription_status(
+					sub.id,
+					LightningHtlcSubscriptionStatus::Accepted,
+					Some(htlc_send_expiry_height),
+				).await?;
+
+				self.cancel_invoice(sub).await?;
 				return Ok(());
 			}
 		}
@@ -746,7 +753,7 @@ impl ClnManagerProcess {
 			node.rpc.clone(),
 			invoice,
 			user_amount,
-			max_cltv_expiry_delta,
+			max_cltv_expiry_delta as BlockDelta,
 		));
 
 		Ok(())
@@ -761,7 +768,7 @@ impl ClnManagerProcess {
 	///
 	/// Caller is responsible for checking if there is an existing opened
 	/// subscription in the db and act accordingly.
-	async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+	async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount, cltv_delta: BlockDelta) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.get_hodl_active_node().context("no active hodl-compatible cln node")?;
 		let mut hold_client = node.hodl_rpc.clone().expect("active node not hodl enabled");
 
@@ -780,8 +787,8 @@ impl ClnManagerProcess {
 		let res = hold_client.invoice(hold::InvoiceRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
+			min_final_cltv_expiry: Some(cltv_delta as u64),
 			expiry: None,
-			min_final_cltv_expiry: None,
 			routing_hints: vec![],
 			description: None,
 		}).await?.into_inner();
@@ -812,18 +819,13 @@ impl ClnManagerProcess {
 		}).await?;
 
 		self.db.store_lightning_htlc_subscription_status(
-			subscription_id, LightningHtlcSubscriptionStatus::Settled).await?;
+			subscription_id, LightningHtlcSubscriptionStatus::Settled, None).await?;
 
 		Ok(())
 	}
 
 	/// Cancels an invoice by sending a cancel request to the hodl plugin.
-	///
-	/// Note that in the case of a server self-payment, the invoice can be
-	/// canceled on CLN, but the htlc subscription marked as accepted and
-	/// later settled when the receiver provides a preimage, we just don't
-	/// need to watch it on lightning anymore.
-	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription, status: LightningHtlcSubscriptionStatus) -> anyhow::Result<()> {
+	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription) -> anyhow::Result<()> {
 		// NB: we need to use the node that created the subscription
 		let mut hold_client = self.get_node_by_id(subscription.lightning_node_id)
 			.context("invoice cannot be cancelled: node is now offline")?
@@ -834,7 +836,6 @@ impl ClnManagerProcess {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
-		self.db.store_lightning_htlc_subscription_status(subscription.id, status).await?;
 		Ok(())
 	}
 
@@ -906,9 +907,9 @@ impl ClnManagerProcess {
 					break;
 				},
 
-				msg = self.invoice_gen_rx.recv() => if let Some(((payment_hash, amount), sender)) = msg {
+				msg = self.invoice_gen_rx.recv() => if let Some(((payment_hash, amount, cltv_delta), sender)) = msg {
 					trace!("Invoice generation received: payment_hash={:?}", payment_hash);
-					match self.generate_invoice(payment_hash, amount).await {
+					match self.generate_invoice(payment_hash, amount, cltv_delta).await {
 						Ok(invoice) => {
 							trace!("Invoice generation successful: payment_hash={:?}", payment_hash);
 							sender.send(invoice).unwrap();
@@ -960,7 +961,7 @@ async fn handle_pay_bolt11(
 	mut rpc: ClnGrpcClient,
 	invoice: Invoice,
 	amount: Option<Amount>,
-	max_cltv_expiry_delta: u32,
+	max_cltv_expiry_delta: BlockDelta,
 ) {
 	let payment_hash = invoice.payment_hash();
 	match call_pay_bolt11(&mut rpc, &invoice, amount, max_cltv_expiry_delta).await {
@@ -1003,7 +1004,7 @@ async fn call_pay_bolt11(
 	rpc: &mut ClnGrpcClient,
 	invoice: &Invoice,
 	user_amount: Option<Amount>,
-	max_cltv_expiry_delta: u32,
+	max_cltv_expiry_delta: BlockDelta,
 ) -> anyhow::Result<Preimage> {
 	match (user_amount, invoice.amount_msat()) {
 		(Some(user), Some(inv)) => {
@@ -1028,7 +1029,7 @@ async fn call_pay_bolt11(
 				None
 			}
 		},
-		maxdelay: Some(max_cltv_expiry_delta),
+		maxdelay: Some(max_cltv_expiry_delta as u32),
 		maxfee: None,
 		retry_for: None,
 		partial_msat: None,

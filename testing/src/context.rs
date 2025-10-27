@@ -299,6 +299,7 @@ impl TestContext {
 			invoice_poll_interval: Duration::from_secs(10),
 			htlc_expiry_delta: 6,
 			htlc_send_expiry_delta: 58,
+			max_user_invoice_cltv_delta: 58,
 			htlc_subscription_timeout: Duration::from_secs(10*60),
 		}
 	}

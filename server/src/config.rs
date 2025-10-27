@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Amount, FeeRate};
+use bitcoin_ext::BlockDelta;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 use config::{Environment, File, Value};
 use serde::{Deserialize, Serialize};
@@ -257,8 +258,8 @@ pub struct Config {
 	pub network: bitcoin::Network,
 	/// The number of blocks after which a VTXO expires, by default 6*24*30 so that
 	/// a VTXO can live for up to 30 days.
-	pub vtxo_lifetime: u16,
-	pub vtxo_exit_delta: u16,
+	pub vtxo_lifetime: BlockDelta,
+	pub vtxo_exit_delta: BlockDelta,
 
 	/// Maximum value any vtxo can have.
 	#[serde(default, with = "crate::serde_util::string::opt")]
@@ -336,7 +337,7 @@ pub struct Config {
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries.
 	///
 	/// Default is 6
-	pub htlc_expiry_delta: u16,
+	pub htlc_expiry_delta: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
 	/// When granting an HTLC-send VTXO, the Server doesn't know the lightning
 	/// route yet, so it needs this config to be sufficiently high to account
@@ -345,7 +346,16 @@ pub struct Config {
 	/// Default is `min_final_cltv_expiry_delta + n_hops * cltv_expiry_delta`
 	/// where _n_hops_ is an upper bound on the expected number of hops a lightning
 	/// route usually takes and other vars are lightning defaults: _18 + 6*40 = 258_
-	pub htlc_send_expiry_delta: u16,
+	///
+	/// Note: it is added to [Config::htlc_expiry_delta] to provide `maxdelay` in
+	/// xpay call.
+	pub htlc_send_expiry_delta: BlockDelta,
+	/// Maximum CLTV delta server will allow clients to request an
+	/// invoice generation with.
+	///
+	/// Note: it is added to [Config::htlc_expiry_delta]
+	/// to set the actual invoice's min final cltv expiry delta.
+	pub max_user_invoice_cltv_delta: BlockDelta,
 	/// The delay after which an htlc subscription made for a
 	/// generated invoice will be cancelled if not settled yet.
 	#[serde(with = "serde_util::duration")]

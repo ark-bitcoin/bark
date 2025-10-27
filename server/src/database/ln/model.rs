@@ -4,7 +4,6 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use bitcoin::Amount;
-use bitcoin_ext::AmountExt;
 use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 use postgres_types::{FromSql, ToSql};
@@ -13,6 +12,7 @@ use tokio_postgres::Row;
 
 use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use bitcoin_ext::{AmountExt, BlockHeight};
 
 use super::ClnNodeId;
 
@@ -187,6 +187,7 @@ pub struct LightningHtlcSubscription {
 	pub lightning_node_id: ClnNodeId,
 	pub invoice: Bolt11Invoice,
 	pub status: LightningHtlcSubscriptionStatus,
+	pub lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 	/// NB this field is not always provided by all queries
@@ -213,6 +214,7 @@ impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
 			lightning_node_id: row.get("lightning_node_id"),
 			invoice: invoice,
 			status: row.get("status"),
+			lowest_incoming_htlc_expiry: row.get::<_, Option<i64>>("lowest_incoming_htlc_expiry").map(|i| i as BlockHeight),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 			htlc_vtxos: if let Some(raw) = row.try_get::<_, Vec<&str>>("htlc_vtxos").ok() {

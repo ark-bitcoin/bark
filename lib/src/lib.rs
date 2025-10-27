@@ -36,7 +36,7 @@ use bitcoin::{Amount, FeeRate, Network, Script, ScriptBuf, TxOut, Weight};
 use bitcoin::secp256k1::{self, schnorr, PublicKey};
 
 use bitcoin_ext::{
-	TxOutExt, P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB,
+	BlockDelta, TxOutExt, P2PKH_DUST_VB, P2SH_DUST_VB, P2TR_DUST_VB, P2WPKH_DUST_VB, P2WSH_DUST_VB
 };
 
 lazy_static! {
@@ -55,17 +55,22 @@ pub struct ArkInfo {
 	/// Number of nonces per round
 	pub nb_round_nonces: usize,
 	/// Delta between exit confirmation and coins becoming spendable
-	pub vtxo_exit_delta: u16,
+	pub vtxo_exit_delta: BlockDelta,
 	/// Expiration delta of the VTXO
-	pub vtxo_expiry_delta: u16,
+	pub vtxo_expiry_delta: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
-	pub htlc_send_expiry_delta: u16,
+	pub htlc_send_expiry_delta: BlockDelta,
+	/// The number of blocks to keep between Lightning and Ark HTLCs expiries
+	pub htlc_expiry_delta: BlockDelta,
 	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
 	/// The number of confirmations required to register a board vtxo
 	pub required_board_confirmations: usize,
+	/// Maximum CLTV delta server will allow clients to request an
+	/// invoice generation with.
+	pub max_user_invoice_cltv_delta: u16,
 }
 
 /// Input of a round
@@ -181,12 +186,12 @@ pub mod scripts {
 	use bitcoin::hashes::{sha256, ripemd160, Hash};
 	use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 
-	use bitcoin_ext::{BlockHeight, TAPROOT_KEYSPEND_WEIGHT};
+	use bitcoin_ext::{BlockDelta, BlockHeight, TAPROOT_KEYSPEND_WEIGHT};
 
 	use crate::musig;
 
 	/// Create a tapscript that is a checksig and a relative timelock.
-	pub fn delayed_sign(delay_blocks: u16, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	pub fn delayed_sign(delay_blocks: BlockDelta, pubkey: XOnlyPublicKey) -> ScriptBuf {
 		let csv = bitcoin::Sequence::from_height(delay_blocks);
 		bitcoin::Script::builder()
 			.push_int(csv.to_consensus_u32() as i64)
@@ -210,7 +215,7 @@ pub mod scripts {
 	}
 
 	/// Create a tapscript
-	pub fn delay_timelock_sign(delay_blocks: u16, timelock_height: u32, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	pub fn delay_timelock_sign(delay_blocks: BlockDelta, timelock_height: BlockHeight, pubkey: XOnlyPublicKey) -> ScriptBuf {
 		let csv = bitcoin::Sequence::from_height(delay_blocks);
 		let lt = bitcoin::absolute::LockTime::from_height(timelock_height).unwrap();
 		bitcoin::Script::builder()
@@ -237,7 +242,7 @@ pub mod scripts {
 			.into_script()
 	}
 
-	pub fn hash_delay_sign(hash: sha256::Hash, delay_blocks: u16, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	pub fn hash_delay_sign(hash: sha256::Hash, delay_blocks: BlockDelta, pubkey: XOnlyPublicKey) -> ScriptBuf {
 		let hash_160 = ripemd160::Hash::hash(&hash[..]);
 		let csv = bitcoin::Sequence::from_height(delay_blocks);
 

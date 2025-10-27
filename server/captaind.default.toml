@@ -105,6 +105,10 @@ htlc_expiry_delta = 40
 # for the worst routing scenario.
 htlc_send_expiry_delta = 258
 
+# Maximum CLTV delta server will allow clients to request an
+# invoice generation with.
+max_user_invoice_cltv_delta = 58
+
 # Timeout on the HTLC subscription RPC call
 htlc_subscription_timeout = "10m"
 

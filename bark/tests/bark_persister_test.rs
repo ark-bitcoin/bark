@@ -24,7 +24,7 @@ use bark::round::{
 use bark::vtxo_state::{VtxoState, VtxoStateKind};
 use bark_json::exit::ExitState;
 use bark_json::exit::states::{ExitClaimableState, ExitTxOrigin};
-use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef};
 use server_rpc::TryFromBytes;
 
 struct Dummy;
@@ -239,6 +239,7 @@ impl BarkPersister for Dummy {
 		_payment_hash: PaymentHash,
 		_preimage: Preimage,
 		_invoice: &Bolt11Invoice,
+		_htlc_recv_cltv_delta: BlockDelta,
 	) -> anyhow::Result<()> {
 		Ok(())
 	}
@@ -336,6 +337,7 @@ fn dummy_lightning_receive() -> LightningReceive {
 		invoice: Bolt11Invoice::from_str("bob").unwrap(),
 		preimage_revealed_at:Some(0),
 		htlc_vtxos: None,
+		htlc_recv_cltv_delta: 0,
 	}
 }
 
@@ -364,6 +366,7 @@ fn dummy_round_participation() -> RoundParticipation {
 					user_pubkey: PublicKey::from_bytes([]).unwrap(),
 					payment_hash: PaymentHash::from_bytes([]).unwrap(),
 					htlc_expiry: 0 as BlockHeight,
+					htlc_expiry_delta: 40,
 				}),
 				amount: Amount::ZERO,
 				state: VtxoState::Spendable,

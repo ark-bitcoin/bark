@@ -14,6 +14,7 @@ mod query;
 
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
+use bitcoin_ext::BlockDelta;
 
 use std::path::PathBuf;
 
@@ -285,9 +286,15 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Store a lightning receive
-	fn store_lightning_receive(&self, payment_hash: PaymentHash, preimage: Preimage, invoice: &Bolt11Invoice) -> anyhow::Result<()> {
+	fn store_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+		invoice: &Bolt11Invoice,
+		htlc_recv_cltv_delta: BlockDelta,
+	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_lightning_receive(&conn, payment_hash, preimage, invoice)?;
+		query::store_lightning_receive(&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta)?;
 		Ok(())
 	}
 

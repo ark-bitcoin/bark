@@ -1,4 +1,5 @@
 
+use std::str::FromStr;
 use std::{cmp, fmt ,str};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,9 +8,11 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
+use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::ClnGrpcClient;
+use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
 use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::JoinHandle;
@@ -409,6 +412,9 @@ impl ClnNodeMonitorProcess {
 	/// - After a delay, it cancels the subscription on the plugin and updates
 	/// the status to cancelled.
 	async fn process_htlc_subscriptions(&mut self) -> anyhow::Result<()> {
+		let tip = self.rpc.getinfo(cln_rpc::GetinfoRequest {}).await?
+			.into_inner().blockheight;
+
 		let mut hodl_client = match &self.hold_rpc {
 			Some(client) => client.clone(),
 			None => {
@@ -441,17 +447,50 @@ impl ClnNodeMonitorProcess {
 				);
 			}
 
-			if res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32) {
-					debug!("Lightning htlc subscription ({}) was accepted.",
-						htlc_subscription.id,
-					);
+			let accepted_invoice = res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32);
+
+			if let Some(accepted_invoice) = accepted_invoice {
+				let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
+					Some(Some(lowest_incoming_htlc_expiry)) => lowest_incoming_htlc_expiry as BlockHeight,
+					None | Some(None) => {
+						warn!("CLN returned no HTLC expiry height for accepted invoice of subscription {}",
+							htlc_subscription.id,
+						);
+						continue;
+					},
+				};
+
+				let invoice = match Bolt11Invoice::from_str(&accepted_invoice.invoice) {
+					Ok(invoice) => invoice,
+					Err(e) => {
+						warn!("Failed to parse invoice from cln: '{}', {}", accepted_invoice.invoice, e);
+						continue;
+					},
+				};
+
+				// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
+				let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
+				if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
+					debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
 
 					self.db.store_lightning_htlc_subscription_status(
 						htlc_subscription.id,
 						LightningHtlcSubscriptionStatus::Accepted,
+						Some(lowest_incoming_htlc_expiry),
 					).await?;
+				} else {
+					debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
+						htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
+					);
 
-					continue;
+					self.db.store_lightning_htlc_subscription_status(
+						htlc_subscription.id,
+						LightningHtlcSubscriptionStatus::Cancelled,
+						None,
+					).await?;
+				}
+
+				continue;
 			}
 
 			if htlc_subscription.created_at < Local::now() - self.config.htlc_subscription_timeout {
@@ -466,6 +505,7 @@ impl ClnNodeMonitorProcess {
 				self.db.store_lightning_htlc_subscription_status(
 					htlc_subscription.id,
 					LightningHtlcSubscriptionStatus::Cancelled,
+					None,
 				).await?;
 			}
 		}

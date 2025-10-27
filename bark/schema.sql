@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS "bark_pending_lightning_receive" (
 			preimage_revealed_at TIMESTAMP,
 			invoice TEXT NOT NULL,
 			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-		, htlc_vtxo_ids TEXT);
+		, htlc_vtxo_ids TEXT, htlc_recv_cltv_delta INTEGER NOT NULL);
 CREATE TABLE bark_exit_states (
 				vtxo_id TEXT PRIMARY KEY,
 				state TEXT NOT NULL,

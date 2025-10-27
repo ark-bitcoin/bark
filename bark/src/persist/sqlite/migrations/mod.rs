@@ -15,6 +15,7 @@ mod m0014_drop_past_round_sync;
 mod m0015_optional_round_seq;
 mod m0016_config;
 mod m0017_great_state_cleanup;
+mod m0018_htlc_recv_cltv_delta;
 
 use anyhow::Context;
 use log::debug;
@@ -37,6 +38,7 @@ use m0014_drop_past_round_sync::Migration0014;
 use m0015_optional_round_seq::Migration0015;
 use m0016_config::Migration0016;
 use m0017_great_state_cleanup::Migration0017;
+use m0018_htlc_recv_cltv_delta::Migration0018;
 
 pub struct MigrationContext {}
 
@@ -71,6 +73,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0015{})?;
 		self.try_migration(conn, &Migration0016{})?;
 		self.try_migration(conn, &Migration0017{})?;
+		self.try_migration(conn, &Migration0018{})?;
 
 		Ok(())
 	}
@@ -225,7 +228,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 17).unwrap();
+		assert_current_version(&conn, 18).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());

@@ -15,7 +15,7 @@ use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, Preimage};
 use server_rpc::protos;
-use bitcoin_ext::{AmountExt, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
 use bitcoin_ext::rpc::RpcApi;
 
 use crate::database::ln::{
@@ -256,8 +256,15 @@ impl Server {
 		&self,
 		payment_hash: PaymentHash,
 		amount: Amount,
+		min_cltv_delta: BlockDelta,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
+
+		if min_cltv_delta > self.config.max_user_invoice_cltv_delta {
+			bail!("Requested min HTLC CLTV delta is greater than max HTLC recv CLTV delta: requested: {}, max: {}",
+				min_cltv_delta, self.config.max_user_invoice_cltv_delta,
+			);
+		}
 
 		if amount < P2TR_DUST {
 			return badarg!("Requested amount must be at least {}", P2TR_DUST);
@@ -296,7 +303,11 @@ impl Server {
 			}
 		}
 
-		let invoice = self.cln.generate_invoice(payment_hash, amount).await?;
+		// NB: we had user's requested cltv delta with the delta configured
+		// between last lightning htlc and htlc-recv vtxo one
+		let ln_cltv_delta = min_cltv_delta + self.config.htlc_expiry_delta;
+
+		let invoice = self.cln.generate_invoice(payment_hash, amount, ln_cltv_delta).await?;
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
 			payment_hash, amount, invoice.to_string(),
 		);
@@ -336,6 +347,7 @@ impl Server {
 		&self,
 		payment_hash: PaymentHash,
 		user_pubkey: PublicKey,
+		htlc_recv_expiry: BlockHeight,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo>)> {
 		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -361,10 +373,31 @@ impl Server {
 		}
 
 		let vtxos = {
-			let expiry = self.chain_tip().height + self.config.htlc_send_expiry_delta as BlockHeight;
+			// We compare requested htlc expiry height with the lowest LN HTLC expiry height
+			// If the difference is lower than the configured delta, we refuse the request.
+			let expiry = match sub.lowest_incoming_htlc_expiry {
+				Some(lowest_incoming_htlc_expiry) => {
+					let max_htlc_recv_expiry = lowest_incoming_htlc_expiry + self.config.htlc_expiry_delta as BlockHeight;
+					if htlc_recv_expiry > max_htlc_recv_expiry {
+						return badarg!("Requested HTLC recv expiry is too high. Requested {}. Max {}",
+							htlc_recv_expiry,
+							max_htlc_recv_expiry,
+						);
+					}
+
+					htlc_recv_expiry
+				},
+				None => {
+					error!("An accepted invoice has no lowest HTLC expiry. subscription id: {}", sub.id);
+					bail!("Cannot prepare claim: invoice subscription has no lowest HTLC expiry set");
+				},
+			};
+
 			let request = VtxoRequest {
 				amount: sub.amount(),
-				policy: VtxoPolicy::new_server_htlc_recv(user_pubkey, payment_hash, expiry),
+				policy: VtxoPolicy::new_server_htlc_recv(
+					user_pubkey, payment_hash, expiry, self.config.htlc_expiry_delta,
+				),
 			};
 			self.vtxopool.send_arkoor(self, request).await.context("vtxopool error")?
 		};

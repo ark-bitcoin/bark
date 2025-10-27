@@ -27,7 +27,7 @@ impl TryFrom<Row> for PoolVtxo {
 		Ok(PoolVtxo {
 			vtxo: VtxoId::from_str(row.get("vtxo_id"))?,
 			amount: Amount::from_sat(row.get::<_, i64>("amount") as u64),
-			expiry_height: row.get::<_, i32>("expiry_height") as u32,
+			expiry_height: row.get::<_, i32>("expiry_height") as BlockHeight,
 			depth: row.get::<_, i16>("depth") as u16,
 		})
 	}
