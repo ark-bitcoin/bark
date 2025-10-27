@@ -338,6 +338,7 @@ macro_rules! impl_bitcoin_encode {
 	};
 }
 
+impl_bitcoin_encode!(bitcoin::BlockHash);
 impl_bitcoin_encode!(bitcoin::OutPoint);
 impl_bitcoin_encode!(bitcoin::TxOut);
 
