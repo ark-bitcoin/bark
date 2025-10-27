@@ -26,4 +26,5 @@ utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 ark-lib = { path="../lib" }
 bark-wallet = { path = "../bark", features = ["onchain_bdk"] }
 bark-json = { path = "../bark-json", features = ["utoipa"] }
+bark-bitcoin-ext = { path = "../bitcoin-ext" }
 

@@ -19,13 +19,15 @@ const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
 #[derive(OpenApi)]
 #[openapi(
+	nest(
+		(path = "/api/v1/exit", api = api::v1::exit::ExitApiDoc),
+	),
 	info(
 		title = "Barkd API",
 		version = CRATE_VERSION,
 		description = "A simple REST API for Barkd"
 	)
 )]
-
 pub struct ApiDoc;
 
 #[derive(Clone)]
@@ -46,6 +48,7 @@ pub async fn serve(cfg: &Config, state: BarkWebState) -> anyhow::Result<()> {
 
 	// Build our application with routes
 	let router = router
+		.nest("/api/v1", api::v1::router())
 		.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
 		.layer(CorsLayer::permissive())
 		.with_state(state)

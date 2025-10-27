@@ -382,6 +382,7 @@ dependencies = [
  "anyhow",
  "ark-lib",
  "axum",
+ "bark-bitcoin-ext",
  "bark-json",
  "bark-wallet",
  "bitcoin",
