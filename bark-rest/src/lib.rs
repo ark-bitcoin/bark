@@ -20,6 +20,7 @@ const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 #[derive(OpenApi)]
 #[openapi(
 	nest(
+		(path = "/api/v1/board", api = api::v1::board::BoardApiDoc),
 		(path = "/api/v1/exit", api = api::v1::exit::ExitApiDoc),
 	),
 	info(
