@@ -14,9 +14,9 @@ use lightning_invoice::Bolt11Invoice;
 
 use ark::{VtxoId, VtxoPolicy, VtxoRequest};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use json::exit::ExitState;
 
 use crate::exit::ExitVtxo;
+use crate::exit::models::ExitState;
 use crate::vtxo_state::VtxoState;
 use crate::WalletVtxo;
 
@@ -105,8 +105,7 @@ impl StoredVtxoRequest {
 mod test {
 	use super::*;
 
-	use json::exit::ExitState;
-	use json::exit::states::ExitTxOrigin;
+	use crate::exit::models::{ExitState, ExitTxOrigin};
 	use crate::movement::MovementRecipient;
 	use crate::vtxo_state::VtxoState;
 

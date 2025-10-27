@@ -11,10 +11,10 @@ use bitcoin_ext::{BlockDelta, BlockHeight};
 #[cfg(feature = "open-api")]
 use utoipa::ToSchema;
 
-use crate::exit::ExitState;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
-use crate::primitives::{UtxoInfo, VtxoInfo, RecipientInfo};
+use crate::exit::ExitState;
+use crate::primitives::{VtxoInfo, RecipientInfo};
 use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -155,6 +155,16 @@ pub struct ExitProgressStatus {
 	pub error: Option<ExitError>,
 }
 
+impl From<bark::exit::models::ExitProgressStatus> for ExitProgressStatus {
+	fn from(v: bark::exit::models::ExitProgressStatus) -> Self {
+		ExitProgressStatus {
+			vtxo_id: v.vtxo_id,
+			state: v.state.into(),
+			error: v.error.map(ExitError::from),
+		}
+	}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct ExitTransactionStatus {
@@ -171,6 +181,17 @@ pub struct ExitTransactionStatus {
 	pub transactions: Vec<ExitTransactionPackage>,
 }
 
+impl From<bark::exit::models::ExitTransactionStatus> for ExitTransactionStatus {
+	fn from(v: bark::exit::models::ExitTransactionStatus) -> Self {
+		ExitTransactionStatus {
+			vtxo_id: v.vtxo_id,
+			state: v.state.into(),
+			history: v.history.map(|h| h.into_iter().map(ExitState::from).collect()),
+			transactions: v.transactions.into_iter().map(ExitTransactionPackage::from).collect(),
+		}
+	}
+}
+
 /// Describes a completed transition of funds from onchain to offchain.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "open-api", derive(ToSchema))]
@@ -185,6 +206,15 @@ pub struct Board {
 	///
 	/// Currently, this is always a vector of length 1
 	pub vtxos: Vec<VtxoInfo>,
+}
+
+impl From<bark::Board> for Board {
+	fn from(v: bark::Board) -> Self {
+		Board {
+			funding_txid: v.funding_txid,
+			vtxos: v.vtxos.into_iter().map(VtxoInfo::from).collect(),
+		}
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -221,8 +251,6 @@ pub mod onchain {
 		#[cfg_attr(feature = "open-api", schema(value_type = String))]
 		pub address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
 	}
-
-	pub type Utxos = Vec<UtxoInfo>;
 
 	#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "open-api", derive(ToSchema))]
@@ -265,6 +293,13 @@ pub struct Offboard {
 	/// The [RoundId] of the round in which the offboard occurred
 	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub round: RoundId,
+	// TODO: List the [OutPoint] and [Amount] here
+}
+
+impl From<bark::Offboard> for Offboard {
+	fn from(v: bark::Offboard) -> Self {
+		Offboard { round: v.round }
+	}
 }
 
 /// The output of the `bark refresh` command
@@ -279,17 +314,6 @@ pub struct Refresh {
 	#[cfg_attr(feature = "open-api", schema(value_type = String, nullable = true))]
 	pub round: Option<RoundId>,
 }
-
-/// The result of participating in a round to send offchain funds to an onchain address.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
-pub struct SendOnchain {
-	/// The [RoundId] of the round in which the onchain transaction occurred
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
-	pub round: RoundId,
-	// TODO: List the [OutPoint] and [Amount] here
-}
-
 
 #[cfg(test)]
 mod test {

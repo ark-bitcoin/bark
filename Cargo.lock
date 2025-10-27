@@ -332,6 +332,7 @@ version = "0.1.0-beta.1"
 dependencies = [
  "ark-lib",
  "bark-bitcoin-ext",
+ "bark-wallet",
  "bitcoin",
  "humantime",
  "serde",
@@ -437,7 +438,6 @@ dependencies = [
  "anyhow",
  "ark-lib",
  "bark-bitcoin-ext",
- "bark-json",
  "bark-server-rpc",
  "bdk_bitcoind_rpc",
  "bdk_core",
@@ -457,6 +457,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
  "tonic",

@@ -7,19 +7,10 @@ use tokio::sync::RwLock;
 
 use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, TransactionExt, TxStatus, DEEPLY_CONFIRMED};
-use json::exit::error::ExitError;
-use json::exit::package::{ChildTransactionInfo, ExitTransactionPackage, TransactionInfo};
-use json::exit::states::ExitTxOrigin;
 
+use crate::exit::models::{ChildTransactionInfo, ExitChildStatus, ExitError, ExitTransactionPackage, ExitTxOrigin, TransactionInfo};
 use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
-
-#[derive(Clone, Copy, Debug,  Eq, PartialEq, Deserialize, Serialize)]
-pub struct ExitChildStatus {
-	pub txid: Txid,
-	pub status: TxStatus,
-	pub origin: ExitTxOrigin,
-}
 
 pub struct ExitTransactionManager {
 	persister: Arc<dyn BarkPersister>,

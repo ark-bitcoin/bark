@@ -2,21 +2,18 @@ pub mod error;
 pub mod package;
 pub mod states;
 
+pub use package::*;
+pub use error::*;
+pub use states::*;
+
+use ark::VtxoId;
 use bitcoin::Txid;
 
-use bitcoin_ext::{BlockHeight, BlockRef};
-#[cfg(feature = "open-api")]
-use utoipa::ToSchema;
-
-use crate::exit::states::{
-	ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
-	ExitClaimedState, ExitStartState, ExitTx, ExitTxStatus
-};
+use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 
 /// A utility type to wrap ExitState children so they can be easily serialized. This also helps with
 /// debugging a lot!
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ExitState {
 	Start(ExitStartState),
@@ -148,36 +145,41 @@ impl ExitState {
 	}
 }
 
-impl From<bark::exit::models::ExitState> for ExitState {
-	fn from(v: bark::exit::models::ExitState) -> Self {
-		match v {
-			bark::exit::models::ExitState::Start(s) => ExitState::Start(ExitStartState {
-				tip_height: s.tip_height,
-			}),
-			bark::exit::models::ExitState::Processing(s) => ExitState::Processing(ExitProcessingState {
-				tip_height: s.tip_height,
-				transactions: s.transactions.into_iter().map(|t| ExitTx { txid: t.txid, status: t.status.into() }).collect(),
-			}),
-			bark::exit::models::ExitState::AwaitingDelta(s) => ExitState::AwaitingDelta(ExitAwaitingDeltaState {
-				tip_height: s.tip_height,
-				confirmed_block: s.confirmed_block,
-				claimable_height: s.claimable_height,
-			}),
-			bark::exit::models::ExitState::Claimable(s) => ExitState::Claimable(ExitClaimableState {
-				tip_height: s.tip_height,
-				claimable_since: s.claimable_since,
-				last_scanned_block: s.last_scanned_block,
-			}),
-			bark::exit::models::ExitState::ClaimInProgress(s) => ExitState::ClaimInProgress(ExitClaimInProgressState {
-				tip_height: s.tip_height,
-				claimable_since: s.claimable_since,
-				claim_txid: s.claim_txid,
-			}),
-			bark::exit::models::ExitState::Claimed(s) => ExitState::Claimed(ExitClaimedState {
-				tip_height: s.tip_height,
-				txid: s.txid,
-				block: s.block,
-			}),
-		}
-	}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitProgressResponse {
+	/// Status of each pending exit transaction
+	pub exits: Vec<ExitProgressStatus>,
+	/// Whether all transactions have been confirmed
+	pub done: bool,
+	/// Block height at which all exit outputs will be spendable
+	pub claimable_height: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitProgressStatus {
+	/// The ID of the VTXO that is being unilaterally exited
+	pub vtxo_id: VtxoId,
+	/// The current state of the exit transaction
+	pub state: ExitState,
+	/// Any error that occurred during the exit process
+	pub error: Option<ExitError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitTransactionStatus {
+	/// The ID of the VTXO that is being unilaterally exited
+	pub vtxo_id: VtxoId,
+	/// The current state of the exit transaction
+	pub state: ExitState,
+	/// The history of each state the exit transaction has gone through
+	pub history: Option<Vec<ExitState>>,
+	/// Each exit transaction package required for the unilateral exit
+	pub transactions: Vec<ExitTransactionPackage>,
+}
+
+#[derive(Clone, Copy, Debug,  Eq, PartialEq)]
+pub struct ExitChildStatus {
+	pub txid: Txid,
+	pub status: TxStatus,
+	pub origin: ExitTxOrigin,
 }

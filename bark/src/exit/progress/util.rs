@@ -5,7 +5,7 @@ use bitcoin::{Amount, FeeRate, Weight};
 
 use ark::Vtxo;
 
-use crate::json::exit::states::{ExitTx, ExitTxStatus};
+use crate::exit::models::{ExitTx, ExitTxStatus};
 
 /// Counts how many of the given ExitTx objects exist in either the mempool or the blockchain
 pub(crate) fn count_broadcast(status: &[ExitTx]) -> usize {

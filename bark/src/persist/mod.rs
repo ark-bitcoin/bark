@@ -32,9 +32,9 @@ use bitcoin_ext::BlockDelta;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId};
-use json::exit::states::ExitTxOrigin;
 
 use crate::{Movement, MovementArgs, WalletProperties};
+use crate::exit::models::ExitTxOrigin;
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};

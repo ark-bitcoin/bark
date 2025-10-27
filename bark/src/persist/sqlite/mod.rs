@@ -28,8 +28,8 @@ use rusqlite::{Connection, Transaction};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::musig::SecretNonce;
 use ark::rounds::{RoundId, RoundSeq};
-use json::exit::states::ExitTxOrigin;
 
+use crate::exit::models::ExitTxOrigin;
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};

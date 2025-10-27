@@ -1,5 +1,4 @@
 use bitcoin::{Amount, FeeRate, Txid};
-use bitcoin::address::FromScriptError;
 use thiserror::Error;
 
 use ark::VtxoId;
@@ -133,9 +132,82 @@ pub enum ExitError {
 	VtxoScriptPubKeyInvalid { error: String },
 }
 
-impl From<FromScriptError> for ExitError {
-	fn from(e: FromScriptError) -> Self {
-		ExitError::VtxoScriptPubKeyInvalid { error: e.to_string() }
+impl From<bark::exit::models::ExitError> for ExitError {
+	fn from(v: bark::exit::models::ExitError) -> Self {
+		match v {
+			bark::exit::models::ExitError::AncestorRetrievalFailure { txid, error } => {
+				ExitError::AncestorRetrievalFailure { txid, error }
+			},
+			bark::exit::models::ExitError::BlockRetrievalFailure { height, error } => {
+				ExitError::BlockRetrievalFailure { height, error }
+			},
+			bark::exit::models::ExitError::ClaimMissingInputs => {
+				ExitError::ClaimMissingInputs
+			},
+			bark::exit::models::ExitError::ClaimFeeExceedsOutput { needed, output } => {
+				ExitError::ClaimFeeExceedsOutput { needed, output }
+			},
+			bark::exit::models::ExitError::ClaimSigningError { error } => {
+				ExitError::ClaimSigningError { error }
+			},
+			bark::exit::models::ExitError::CyclicExitTransactions { vtxo } => {
+				ExitError::CyclicExitTransactions { vtxo }
+			},
+			bark::exit::models::ExitError::DatabaseVtxoStoreFailure { vtxo_id, error } => {
+				ExitError::DatabaseVtxoStoreFailure { vtxo_id, error }
+			},
+			bark::exit::models::ExitError::DatabaseChildRetrievalFailure { error } => {
+				ExitError::DatabaseChildRetrievalFailure { error }
+			},
+			bark::exit::models::ExitError::DustLimit { vtxo, dust } => {
+				ExitError::DustLimit { vtxo, dust }
+			},
+			bark::exit::models::ExitError::ExitPackageBroadcastFailure { txid, error } => {
+				ExitError::ExitPackageBroadcastFailure { txid, error }
+			},
+			bark::exit::models::ExitError::ExitPackageFinalizeFailure { error } => {
+				ExitError::ExitPackageFinalizeFailure { error }
+			},
+			bark::exit::models::ExitError::ExitPackageStoreFailure { txid, error } => {
+				ExitError::ExitPackageStoreFailure { txid, error }
+			},
+			bark::exit::models::ExitError::InsufficientConfirmedFunds { needed, available } => {
+				ExitError::InsufficientConfirmedFunds { needed, available }
+			},
+			bark::exit::models::ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate } => {
+				ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate }
+			},
+			bark::exit::models::ExitError::InternalError { error } => {
+				ExitError::InternalError { error }
+			},
+			bark::exit::models::ExitError::InvalidExitTransactionStatus { txid, status, error } => {
+				ExitError::InvalidExitTransactionStatus { txid, status: status.into(), error }
+			},
+			bark::exit::models::ExitError::InvalidWalletState { error } => {
+				ExitError::InvalidWalletState { error }
+			},
+			bark::exit::models::ExitError::MissingAnchorOutput { txid } => {
+				ExitError::MissingAnchorOutput { txid }
+			},
+			bark::exit::models::ExitError::MissingExitTransaction { txid } => {
+				ExitError::MissingExitTransaction { txid }
+			},
+			bark::exit::models::ExitError::MovementRegistrationFailure { error } => {
+				ExitError::MovementRegistrationFailure { error }
+			},
+			bark::exit::models::ExitError::TipRetrievalFailure { error } => {
+				ExitError::TipRetrievalFailure { error }
+			},
+			bark::exit::models::ExitError::TransactionRetrievalFailure { txid, error } => {
+				ExitError::TransactionRetrievalFailure { txid, error }
+			},
+			bark::exit::models::ExitError::VtxoNotClaimable { vtxo } => {
+				ExitError::VtxoNotClaimable { vtxo }
+			},
+			bark::exit::models::ExitError::VtxoScriptPubKeyInvalid { error } => {
+				ExitError::VtxoScriptPubKeyInvalid { error }
+			},
+		}
 	}
 }
 

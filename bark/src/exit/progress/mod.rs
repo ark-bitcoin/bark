@@ -11,10 +11,8 @@ use tonic::async_trait;
 use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
-use json::exit::error::ExitError;
-use json::exit::ExitState;
-use json::exit::states::{ExitTx, ExitTxOrigin, ExitTxStatus};
 
+use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;

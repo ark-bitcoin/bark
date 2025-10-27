@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 
 pub extern crate ark;
-pub extern crate bark_json as json;
 
 pub extern crate bip39;
 pub extern crate lightning_invoice;
@@ -21,8 +20,6 @@ pub mod vtxo_selection;
 pub use self::config::Config;
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo_state::WalletVtxo;
-pub use bark_json::primitives::UtxoInfo;
-pub use bark_json::cli::{Offboard, Board, SendOnchain};
 
 mod config;
 mod lnurl;
@@ -119,6 +116,12 @@ struct ArkoorCreateResult {
 	change: Option<Vtxo>,
 }
 
+pub struct UtxoInfo {
+	pub outpoint: OutPoint,
+	pub amount: Amount,
+	pub confirmation_height: Option<u32>,
+}
+
 impl From<Utxo> for UtxoInfo {
 	fn from(value: Utxo) -> Self {
 		match value {
@@ -134,6 +137,28 @@ impl From<Utxo> for UtxoInfo {
 			},
 		}
 	}
+}
+
+/// Describes a completed transition of funds from onchain to offchain.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Board {
+	/// The [Txid] of the funding-transaction.
+	/// This is the transaction that has to be confirmed
+	/// onchain for the board to succeed.
+	pub funding_txid: bitcoin::Txid,
+	/// The info for each [ark::Vtxo] that was created
+	/// in this board.
+	///
+	/// Currently, this is always a vector of length 1
+	pub vtxos: Vec<Vtxo>,
+}
+
+/// Describes a completed transition of funds from offchain to onchain collaboratively with the
+/// Ark server.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Offboard {
+	/// The [RoundId] of the round in which the offboard occurred
+	pub round: RoundId,
 }
 
 /// Represents an offchain balance structure consisting of available funds, pending amounts in
@@ -1056,7 +1081,7 @@ impl Wallet {
 
 		Ok(Board {
 			funding_txid: funding_txid,
-			vtxos: vec![vtxo.into()],
+			vtxos: vec![vtxo.clone()],
 		})
 	}
 
@@ -2375,7 +2400,7 @@ impl Wallet {
 		&self,
 		addr: bitcoin::Address,
 		amount: Amount,
-	) -> anyhow::Result<SendOnchain> {
+	) -> anyhow::Result<Offboard> {
 		let balance = self.balance()?.spendable;
 
 		// do a quick check to fail early and not wait for round if we don't have enough money
@@ -2396,6 +2421,6 @@ impl Wallet {
 		let RoundResult { round_id, .. } = self.participate_round(participation).await
 			.context("round failed")?;
 
-		Ok(SendOnchain { round: round_id })
+		Ok(Offboard { round: round_id })
 	}
 }

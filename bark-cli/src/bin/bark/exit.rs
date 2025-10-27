@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use bark_json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use bitcoin::{address, Address, FeeRate};
 use clap;
 use log::{warn, info};
@@ -125,7 +126,7 @@ pub async fn get_exit_status(
 ) -> anyhow::Result<()> {
 	match wallet.exit.get_mut().get_exit_status(args.vtxo, args.history, args.transactions).await? {
 		None => bail!("VTXO not found: {}", args.vtxo),
-		Some(status) => output_json(&status),
+		Some(status) => output_json(&ExitTransactionStatus::from(status)),
 	}
 	Ok(())
 }
@@ -139,6 +140,10 @@ pub async fn list_exits(
 	for e in exit.get_exit_vtxos() {
 		statuses.push(exit.get_exit_status(e.id(), args.history, args.transactions).await?.unwrap());
 	}
+
+	let statuses = statuses.into_iter()
+		.map(ExitTransactionStatus::from).collect::<Vec<_>>();
+
 	output_json(&statuses);
 	Ok(())
 }
@@ -217,7 +222,9 @@ async fn progress_once(
 
 	let done = !exit.has_pending_exits();
 	let claimable_height = exit.all_claimable_at_height().await;
-	let exits = result.unwrap_or_default();
+	let exits = result.unwrap_or_default()
+		.into_iter().map(ExitProgressStatus::from).collect::<Vec<_>>();
+
 	Ok(bark_json::cli::ExitProgressResponse { done, claimable_height, exits, })
 }
 

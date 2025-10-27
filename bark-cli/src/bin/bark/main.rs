@@ -641,7 +641,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				},
 				_ => bail!("please provide either an amount or --all"),
 			};
-			output_json(&board);
+			output_json(&json::Board::from(board));
 		},
 		Command::Send { destination, amount, comment, no_sync } => {
 			if let Ok(addr) = ark::Address::from_str(&destination) {
@@ -727,7 +727,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
-			output_json(&ret);
+			output_json(&json::Offboard::from(ret));
 		},
 		Command::Onchain(onchain_command) => {
 			onchain::execute_lightning_command(onchain_command, &mut wallet, &mut onchain).await?;

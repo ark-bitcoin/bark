@@ -17,9 +17,8 @@ use rusqlite::{self, named_params, Connection, Row, ToSql, Transaction};
 use ark::ProtocolEncoding;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::rounds::{RoundId, RoundSeq};
-use json::exit::ExitState;
-use json::exit::states::ExitTxOrigin;
 
+use crate::exit::models::{ExitState, ExitTxOrigin};
 use crate::persist::sqlite::convert::{row_to_round_state, row_to_secret_nonces, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};

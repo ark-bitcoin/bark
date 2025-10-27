@@ -78,6 +78,34 @@ impl fmt::Display for ExitTxStatus {
 	}
 }
 
+impl From<bark::exit::models::ExitTxStatus> for ExitTxStatus {
+	fn from(v: bark::exit::models::ExitTxStatus) -> Self {
+		match v {
+			bark::exit::models::ExitTxStatus::VerifyInputs => {
+				ExitTxStatus::VerifyInputs
+			},
+			bark::exit::models::ExitTxStatus::AwaitingInputConfirmation { txids } => {
+				ExitTxStatus::AwaitingInputConfirmation { txids }
+			},
+			bark::exit::models::ExitTxStatus::NeedsSignedPackage => {
+				ExitTxStatus::NeedsSignedPackage
+			},
+			bark::exit::models::ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
+				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee }
+			},
+			bark::exit::models::ExitTxStatus::NeedsBroadcasting { child_txid, origin } => {
+				ExitTxStatus::NeedsBroadcasting { child_txid, origin: origin.into() }
+			},
+			bark::exit::models::ExitTxStatus::BroadcastWithCpfp { child_txid, origin } => {
+				ExitTxStatus::BroadcastWithCpfp { child_txid, origin: origin.into() }
+			},
+			bark::exit::models::ExitTxStatus::Confirmed { child_txid, block, origin } => {
+				ExitTxStatus::Confirmed { child_txid, block, origin: origin.into() }
+			},
+		}
+	}
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "open-api", derive(ToSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -114,6 +142,22 @@ impl ExitTxOrigin {
 impl fmt::Display for ExitTxOrigin {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		fmt::Debug::fmt(self, f)
+	}
+}
+
+impl From<bark::exit::models::ExitTxOrigin> for ExitTxOrigin {
+	fn from(v: bark::exit::models::ExitTxOrigin) -> Self {
+		match v {
+			bark::exit::models::ExitTxOrigin::Wallet { confirmed_in } => {
+				ExitTxOrigin::Wallet { confirmed_in }
+			},
+			bark::exit::models::ExitTxOrigin::Mempool { fee_rate, total_fee } => {
+				ExitTxOrigin::Mempool { fee_rate, total_fee }
+			},
+			bark::exit::models::ExitTxOrigin::Block { confirmed_in } => {
+				ExitTxOrigin::Block { confirmed_in }
+			},
+		}
 	}
 }
 

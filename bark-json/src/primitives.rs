@@ -41,6 +41,34 @@ pub struct UtxoInfo {
 	pub confirmation_height: Option<u32>,
 }
 
+impl From<bark::UtxoInfo> for UtxoInfo {
+	fn from(v: bark::UtxoInfo) -> Self {
+		UtxoInfo {
+			outpoint: v.outpoint,
+			amount: v.amount,
+			confirmation_height: v.confirmation_height,
+		}
+	}
+}
+
+impl From<bark::onchain::Utxo> for UtxoInfo {
+
+	fn from(v: bark::onchain::Utxo) -> Self {
+		match v {
+			bark::onchain::Utxo::Local(o) => UtxoInfo {
+				outpoint: o.outpoint,
+				amount: o.amount,
+				confirmation_height: o.confirmation_height,
+			},
+			bark::onchain::Utxo::Exit(e) => UtxoInfo {
+				outpoint: e.vtxo.point(),
+				amount: e.vtxo.amount(),
+				confirmation_height: Some(e.height),
+			},
+		}
+	}
+}
+
 /// Struct representing information about a VTXO.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "open-api", derive(ToSchema))]
