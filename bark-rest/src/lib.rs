@@ -23,6 +23,7 @@ const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 		(path = "/api/v1/board", api = api::v1::board::BoardApiDoc),
 		(path = "/api/v1/exit", api = api::v1::exit::ExitApiDoc),
 		(path = "/api/v1/lightning", api = api::v1::lightning::LightningApiDoc),
+		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 	),
 	info(
 		title = "Barkd API",
