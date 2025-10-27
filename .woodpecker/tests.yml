@@ -31,9 +31,7 @@ steps:
       - >
         nix develop .#default --command bash -c "
           cargo version &&
-          cargo build --workspace &&
-          cargo install --locked --path bark-cli &&
-          cargo install --locked --path server
+          cargo build --workspace
         "
 
 
@@ -87,6 +85,16 @@ steps:
           cargo build -p bark-wallet      --no-default-features --features=\"\" &&
           cargo build -p bark-bitcoin-ext --no-default-features --features=\"\" &&
           cargo build -p ark-lib          --no-default-features --features=\"\"
+        "
+
+  - name: check-release
+    depends_on: test-unit
+    image: registry.2nd.dev/build:25
+    commands:
+      - >
+        nix develop .#default --command bash -c "
+          cargo check --release -p bark-cli &&
+          cargo check --release -p bark-server
         "
 
   - name: test-integration-esplora
