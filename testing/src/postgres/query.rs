@@ -18,3 +18,14 @@ pub async fn drop_and_create_database(client: &Client, db_name: &str) {
 	drop_database(client, db_name).await;
 	create_database(client, db_name).await;
 }
+
+pub async fn enable_verbose_logging(client: &Client) {
+	client.execute("ALTER SYSTEM SET log_statement = 'all';", &[]).await
+		.expect("failed to enable verbose logging");
+	client.execute("ALTER SYSTEM SET logging_collector = 'on';", &[]).await
+		.expect("failed to enable logging collector");
+	client.execute("ALTER SYSTEM SET log_destination = 'stderr';", &[]).await
+		.expect("failed to enable logging destination");
+	client.execute("SELECT pg_reload_conf();", &[]).await
+		.expect("failed to reload configuration");
+}

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tokio_postgres::Client;
 
 use crate::daemon::postgres::Postgres;
-use crate::postgres::query::drop_and_create_database;
+use crate::postgres::query::{drop_and_create_database, enable_verbose_logging};
 
 pub struct TestManagedPostgres {
 	postgresd: Postgres,
@@ -21,6 +21,7 @@ impl TestManagedPostgres {
 	) -> server::config::Postgres {
 		let client = self.global_client().await;
 		drop_and_create_database(&client, db_name).await;
+		enable_verbose_logging(&client).await;
 		self.postgresd.helper().into_config(db_name)
 	}
 
