@@ -4,10 +4,11 @@ use std::str::FromStr;
 
 use bitcoin::bech32::{self, ByteIterExt, Fe32IterExt};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{Keypair, PublicKey};
 
 use crate::{ProtocolDecodingError, ProtocolEncoding, VtxoPolicy};
 use crate::encode::{ReadExt, WriteExt};
+use crate::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 
 
 /// The human-readable part for mainnet addresses
@@ -53,8 +54,12 @@ impl From<PublicKey> for ArkId {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum VtxoDelivery {
-	/// Use the built-in VTXO mailbox of the Ark server
+	/// Use the built-in single-VTXO mailbox of the Ark server
 	ServerBuiltin,
+	/// Use the unified mailbox of the Ark server
+	ServerMailbox {
+		blinded_id: BlindedMailboxIdentifier,
+	},
 	Unknown {
 		delivery_type: u8,
 		data: Vec<u8>,
@@ -63,6 +68,8 @@ pub enum VtxoDelivery {
 
 /// The type byte for the "server built-in" delivery mechanism
 const DELIVERY_BUILTIN: u8 = 0x00;
+/// The type byte for the "server mailbox" delivery mechanism
+const DELIVERY_MAILBOX: u8 = 0x01;
 
 impl VtxoDelivery {
 	/// Returns whether the VTXO delivery type is unknown
@@ -77,14 +84,20 @@ impl VtxoDelivery {
 	fn encoded_length(&self) -> usize {
 		match self {
 			Self::ServerBuiltin => 1,
+			Self::ServerMailbox { .. } => 1 + 33,
 			Self::Unknown { data, .. } => 1 + data.len(),
 		}
 	}
 
+	/// Encode the address payload
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::ServerBuiltin => {
 				w.emit_u8(DELIVERY_BUILTIN)?;
+			},
+			Self::ServerMailbox { blinded_id } => {
+				w.emit_u8(DELIVERY_MAILBOX)?;
+				w.emit_slice(blinded_id.as_ref())?;
 			},
 			Self::Unknown { delivery_type, data } => {
 				w.emit_u8(*delivery_type)?;
@@ -94,6 +107,7 @@ impl VtxoDelivery {
 		Ok(())
 	}
 
+	/// Decode the address payload
 	fn decode(payload: &[u8]) -> Result<Self, ParseAddressError> {
 		if payload.is_empty() {
 			return Err(ParseAddressError::Eof);
@@ -101,6 +115,11 @@ impl VtxoDelivery {
 
 		match payload[0] {
 			DELIVERY_BUILTIN => Ok(Self::ServerBuiltin),
+			DELIVERY_MAILBOX => Ok(Self::ServerMailbox {
+				blinded_id: BlindedMailboxIdentifier::from_slice(&payload[1..]).map_err(
+					|_| ParseAddressError::Invalid("invalid blinded mailbox identifier"),
+				)?,
+			}),
 			delivery_type => Ok(Self::Unknown {
 				delivery_type: delivery_type,
 				data: payload[1..].to_vec(),
@@ -384,11 +403,14 @@ impl From<&'static str> for AddressBuilderError {
 #[derive(Debug)]
 pub struct Builder {
 	testnet: bool,
-	ark_id: Option<ArkId>,
+
+	server_pubkey: Option<PublicKey>,
+
 	policy: Option<VtxoPolicy>,
+
 	delivery: Vec<VtxoDelivery>,
-	/// Do not add default built-in delivery when no delivery is sets.
-	no_delivery: bool,
+	mailbox_id: Option<BlindedMailboxIdentifier>,
+	add_builtin_delivery: bool,
 }
 
 impl Builder {
@@ -396,10 +418,11 @@ impl Builder {
 	pub fn new() -> Self {
 		Self {
 			testnet: false,
-			ark_id: None,
+			server_pubkey: None,
 			policy: None,
 			delivery: Vec::new(),
-			no_delivery: false,
+			mailbox_id: None,
+			add_builtin_delivery: true,
 		}
 	}
 
@@ -413,7 +436,7 @@ impl Builder {
 
 	/// Set the Ark server pubkey
 	pub fn server_pubkey(mut self, server_pubkey: PublicKey) -> Self {
-		self.ark_id = Some(ArkId::from_server_pubkey(server_pubkey));
+		self.server_pubkey = Some(server_pubkey);
 		self
 	}
 
@@ -436,21 +459,53 @@ impl Builder {
 
 	/// Prevent the builder from adding the built-in delivery when no delivery is set.
 	pub fn no_delivery(mut self) -> Self {
-		self.no_delivery = true;
+		self.delivery.clear();
+		self.add_builtin_delivery = false;
 		self
+	}
+
+	/// Set the mailbox identifier of the server mailbox to use
+	///
+	/// This will also disable adding the built-in delivery mechanism.
+	///
+	/// Errors if no server pubkey was provided yet or if the vtxo key
+	/// is incorrect.
+	pub fn mailbox(
+		mut self,
+		mailbox: MailboxIdentifier,
+		vtxo_key: &Keypair,
+	) -> Result<Self, AddressBuilderError> {
+		// check the vtxo key
+		let pol = self.policy.as_ref().ok_or("set policy first")?;
+		if vtxo_key.public_key() != pol.user_pubkey() {
+			return Err("VTXO key does not match policy".into());
+		}
+
+		let server = self.server_pubkey.ok_or("set server pubkey first")?;
+		self.mailbox_id = Some(mailbox.to_blinded(server, vtxo_key));
+		self.add_builtin_delivery = false;
+		Ok(self)
 	}
 
 	/// Finish by building an [Address]
 	pub fn into_address(self) -> Result<Address, AddressBuilderError> {
 		Ok(Address {
 			testnet: self.testnet,
-			ark_id: self.ark_id.ok_or("missing ark_id")?,
+			ark_id: self.server_pubkey.ok_or("missing server pubkey")?.into(),
 			policy: self.policy.ok_or("missing policy")?,
-			delivery: if self.delivery.is_empty() && !self.no_delivery {
-				vec![VtxoDelivery::ServerBuiltin]
-			} else {
-				self.delivery
-			},
+			delivery: {
+				let mut ret = Vec::new();
+				if self.delivery.is_empty() && self.add_builtin_delivery {
+					ret.push(VtxoDelivery::ServerBuiltin);
+				}
+
+				if let Some(blinded_id) = self.mailbox_id {
+					ret.push(VtxoDelivery::ServerMailbox { blinded_id });
+				}
+
+				ret.extend(self.delivery);
+				ret
+			}
 		})
 	}
 }
@@ -475,6 +530,8 @@ impl<T: Iterator<Item = u8>> io::Read for ByteIter<T> {
 
 #[cfg(test)]
 mod test {
+	use bitcoin::secp256k1::rand;
+	use crate::SECP;
 	use super::*;
 
 	#[test]
@@ -526,5 +583,30 @@ mod test {
 		assert_eq!(parsed.ark_id, ArkId::from_server_pubkey(ark));
 		assert_eq!(parsed.policy, policy);
 		assert_eq!(parsed.delivery.len(), 0);
+	}
+
+	#[test]
+	fn test_mailbox() {
+		let mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let vtxo_key = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let mailbox = MailboxIdentifier::from_pubkey(mailbox_key.public_key());
+
+		let addr = Address::builder()
+			.server_pubkey(server_key.public_key())
+			.pubkey_policy(vtxo_key.public_key())
+			.mailbox(mailbox, &vtxo_key).expect("error mailbox call")
+			.into_address().unwrap();
+
+		let blinded = match addr.delivery[0] {
+			VtxoDelivery::ServerMailbox { blinded_id } => blinded_id,
+			_ => panic!("unexpected delivery"),
+		};
+
+		let unblinded = MailboxIdentifier::from_blinded(
+			blinded, addr.policy().user_pubkey(), &server_key);
+
+		assert_eq!(mailbox, unblinded);
 	}
 }

@@ -124,6 +124,7 @@ dependencies = [
  "bark-bitcoin-ext",
  "bitcoin",
  "bitcoinconsensus",
+ "chrono",
  "hex-conservative 0.3.0",
  "lazy_static",
  "lightning",

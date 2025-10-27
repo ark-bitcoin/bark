@@ -13,6 +13,7 @@ pub mod encode;
 pub mod error;
 pub mod forfeit;
 pub mod lightning;
+pub mod mailbox;
 pub mod musig;
 pub mod board;
 pub mod rounds;
