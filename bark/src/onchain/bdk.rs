@@ -12,8 +12,6 @@ use bitcoin::{
 	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
 	Txid,
 };
-use hal::tx::TransactionInfo;
-use hal::GetInfo;
 use log::{debug, error, info, trace, warn};
 
 use bitcoin_ext::{BlockHeight, BlockRef};
@@ -280,9 +278,8 @@ impl OnchainWallet {
 		self.inner.list_unspent().collect()
 	}
 
-	pub fn list_transactions(&self) -> Vec<TransactionInfo> {
-		let network = self.inner.network();
-		self.inner.transactions().map(|tx| tx.tx_node.tx.get_info(network)).collect()
+	pub fn list_transactions(&self) -> Vec<Arc<Transaction>> {
+		self.inner.transactions().map(|tx| tx.tx_node.tx).collect()
 	}
 
 	pub fn address(&mut self) -> anyhow::Result<Address> {

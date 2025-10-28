@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bark::onchain::OnchainWallet;
+use bark_json::hal::GetInfo;
 use bitcoin::{address, Amount};
 use log::{info, warn};
 
@@ -219,9 +220,12 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 			}
 
 			let mut transactions = onchain.list_transactions();
-
 			// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
 			transactions.reverse();
+
+			let transactions = transactions.into_iter()
+				.map(|tx| bark_json::cli::TransactionInfo::from(tx.get_info(net)))
+				.collect::<Vec<_>>();
 
 			output_json(&transactions);
 		},
