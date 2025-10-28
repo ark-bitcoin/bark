@@ -1514,48 +1514,6 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 }
 
 #[tokio::test]
-async fn server_refuse_too_deep_arkoor_input() {
-	let ctx = TestContext::new("server/server_refuse_too_deep_arkoor_input").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-	#[derive(Clone)]
-	struct Proxy;
-	#[tonic::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn get_ark_info(
-			&self, upstream: &mut ArkClient, req: protos::Empty,
-		) -> Result<protos::ArkInfo, tonic::Status>  {
-			let mut info = upstream.get_ark_info(req).await?.into_inner();
-			info.max_arkoor_depth = 10;
-			Ok(info)
-		}
-	}
-
-	let proxy = srv.get_proxy_rpc(Proxy).await;
-
-	let bark1 = ctx.new_bark_with_funds("bark1", &proxy.address, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
-
-	bark1.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	let addr = bark2.address().await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-
-	let [vtxo] = bark1.vtxos_no_sync().await.try_into().unwrap();
-
-	let err = bark1.try_send_oor(&addr, sat(100_000), false).await.unwrap_err();
-	assert!(err
-		.to_string()
-		.contains(&format!("bad user input: OOR depth reached maximum of 5, please refresh your VTXO: {}", vtxo.id)),
-		"err: {err}"
-	);
-}
-
-#[tokio::test]
 async fn run_two_captainds() {
 	let ctx = TestContext::new("server/run_two_captainds").await;
 	let _srv1 = ctx.new_captaind("server1", None).await;

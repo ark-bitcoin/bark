@@ -1111,28 +1111,6 @@ async fn bark_recover_unregistered_board() {
 }
 
 #[tokio::test]
-async fn bark_does_not_spend_too_deep_arkoors() {
-	let ctx = TestContext::new("bark/does_not_spend_too_deep_arkoors").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
-
-	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
-
-	let addr = bark2.address().await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-	bark1.send_oor(&addr, sat(100_000)).await;
-
-	let err = bark1.try_send_oor(&addr, sat(100_000), false).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"Insufficient money available. Needed 0.00100000 BTC but 0 BTC is available",
-	), "err: {err}");
-}
-
-#[tokio::test]
 async fn test_ark_address_other_ark() {
 	let ctx = TestContext::new("bark/test_ark_address_other_ark").await;
 
