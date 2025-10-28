@@ -6,6 +6,7 @@ export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 
 SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
+BARK_OPENAPI_SCHEMA_PATH := "bark-rest/openapi.json"
 
 precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
@@ -123,7 +124,7 @@ rustdocs ARG="":
 		--target-dir $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
 	echo "Open Rust docs at file://$(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs/doc/{{DEFAULT_DOCS_PATH}}"
 
-rustdocs-internal: 
+rustdocs-internal:
 	@just rustdocs --document-private-items
 
 
@@ -157,6 +158,9 @@ dump-bark-sql-schema:
 	cargo run --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
 	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
 
-generate-static-files: dump-server-sql-schema dump-bark-sql-schema
+dump-bark-openapi-schema:
+	cargo run --package bark-rest --example dump_api_docs > {{BARK_OPENAPI_SCHEMA_PATH}}
+
+generate-static-files: dump-server-sql-schema dump-bark-sql-schema dump-bark-openapi-schema
 
 
