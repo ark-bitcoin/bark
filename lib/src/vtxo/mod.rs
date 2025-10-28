@@ -640,15 +640,6 @@ impl GenesisTransition {
 	}
 
 
-	/// Whether this transition is an out-of-round transition
-	fn is_arkoor(&self) -> bool {
-		match self {
-			Self::Cosigned { .. } => false,
-			Self::HashLockedCosigned { .. } => false,
-			Self::Arkoor { .. } => true,
-		}
-	}
-
 	/// Whether the transition is fully signed
 	fn is_fully_signed(&self) -> bool {
 		match self {
@@ -909,13 +900,6 @@ impl Vtxo {
 		self.genesis.len() as u16
 	}
 
-	/// Returns the OOR depth of the vtxo.
-	pub fn arkoor_depth(&self) -> u16 {
-		// NB this relies on the invariant that all arkoor transitions
-		// follow the cosign transitions
-		self.genesis.iter().rev().take_while(|item| item.transition.is_arkoor()).count() as u16
-	}
-
 	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
 	pub fn server_htlc_out_payment_hash(&self) -> Option<PaymentHash> {
 		match self.policy {
@@ -945,6 +929,7 @@ impl Vtxo {
 			}
 		})
 	}
+
 
 	/// Returns the user pubkey associated with this [Vtxo].
 	pub fn user_pubkey(&self) -> PublicKey {
@@ -1612,21 +1597,6 @@ pub mod test {
 
 		// this passes because the Eq is based on id which doesn't compare signatures
 		assert_eq!(g, *v);
-	}
-
-	#[test]
-	fn arkoor_depth() {
-		let vtxos = &*VTXO_VECTORS;
-		// board
-		assert_eq!(vtxos.board_vtxo.arkoor_depth(), 0);
-
-		// round
-		assert_eq!(vtxos.round1_vtxo.arkoor_depth(), 0);
-
-		// arkoor
-		assert_eq!(vtxos.arkoor_htlc_out_vtxo.arkoor_depth(), 1);
-		assert_eq!(vtxos.arkoor2_vtxo.arkoor_depth(), 2);
-		assert_eq!(vtxos.arkoor3_vtxo.arkoor_depth(), 1);
 	}
 
 	#[test]

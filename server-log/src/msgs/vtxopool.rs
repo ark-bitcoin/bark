@@ -18,7 +18,6 @@ impl_slog!(SpentPoolVtxo, Debug, "a VTXO pool vtxo was spent");
 pub struct ChangePoolVtxo {
 	pub vtxo: VtxoId,
 	pub amount: Amount,
-	pub depth: u16,
 }
 impl_slog!(ChangePoolVtxo, Debug, "we created a change VTXO from the VTXO pool");
 

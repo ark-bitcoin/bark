@@ -206,7 +206,7 @@ impl Wallet {
 		} else {
 			let challenge = LightningReceiveChallenge::new(payment_hash);
 			// We get an existing VTXO as an anti-dos measure.
-			let vtxo = self.select_vtxos_to_cover(Amount::ONE_SAT, None, None)
+			let vtxo = self.select_vtxos_to_cover(Amount::ONE_SAT, None)
 				.and_then(|vtxos| vtxos.into_iter().next().ok_or_else(|| anyhow!("have no spendable vtxo to prove ownership of")))?;
 			let vtxo_keypair = self.get_vtxo_key(&vtxo).expect("owned vtxo should be in database");
 			LightningReceiveAntiDos::InputVtxo(protos::InputVtxo {

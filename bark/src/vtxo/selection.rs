@@ -341,15 +341,6 @@ impl FilterVtxos for RefreshStrategy<'_> {
 	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
 			InnerRefreshStrategy::MustRefresh => {
-				if let Some(max_arkoor_depth) = self.wallet.ark_info().map(|i| i.max_arkoor_depth) {
-					if vtxo.arkoor_depth() >= max_arkoor_depth {
-						warn!("VTXO {} reached max OOR depth {}, must be refreshed",
-							vtxo.id(), max_arkoor_depth,
-						);
-						return Ok(true);
-					}
-				}
-
 				let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
 				if self.tip > vtxo.spec().expiry_height.saturating_sub(threshold) {
 					warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
@@ -359,16 +350,6 @@ impl FilterVtxos for RefreshStrategy<'_> {
 				Ok(false)
 			},
 			InnerRefreshStrategy::ShouldRefresh => {
-				let soft_depth_threshold = self.wallet.ark_info().map(|i| i.max_arkoor_depth - 1);
-				if let Some(max_oor_depth) = soft_depth_threshold {
-					if vtxo.arkoor_depth() >= max_oor_depth {
-						warn!("VTXO {} is about to become too deep, \
-							should be refreshed on next opportunity", vtxo.id(),
-						);
-						return Ok(true);
-					}
-				}
-
 				let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
 				if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
 					warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
@@ -386,7 +367,7 @@ impl FilterVtxos for RefreshStrategy<'_> {
 				}
 
 				Ok(false)
-			},
+			}
 		}
 	}
 }

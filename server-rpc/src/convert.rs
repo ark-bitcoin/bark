@@ -129,7 +129,14 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			htlc_send_expiry_delta: v.htlc_send_expiry_delta as u32,
 			htlc_expiry_delta: v.htlc_expiry_delta as u32,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| v.to_sat()),
-			max_arkoor_depth: v.max_arkoor_depth as u32,
+			// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+			// bark version 0.1.0-beta.4 and older
+			// expect the max_arkoor_depth field to be set.
+			//
+			// To make sure they don't complain or crash when receiving
+			// a bad ArkInfo message we keep pretending the field exists
+			// and give them a sufficiently high value.
+			max_arkoor_depth: u16::MAX as u32,
 			required_board_confirmations: v.required_board_confirmations as u32,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 			min_board_amount: v.min_board_amount.to_sat(),
@@ -157,7 +164,6 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			htlc_expiry_delta: v.htlc_expiry_delta.try_into()
 				.map_err(|_| "invalid htlc expiry delta")?,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| Amount::from_sat(v)),
-			max_arkoor_depth: v.max_arkoor_depth as u16,
 			required_board_confirmations: v.required_board_confirmations as usize,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta.try_into()
 				.map_err(|_| "invalid max user invoice cltv delta")?,

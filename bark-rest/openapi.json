@@ -1238,7 +1238,6 @@
           "htlc_send_expiry_delta",
           "htlc_expiry_delta",
           "max_vtxo_amount",
-          "max_arkoor_depth",
           "required_board_confirmations",
           "max_user_invoice_cltv_delta",
           "min_board_amount_sat",
@@ -1257,12 +1256,6 @@
           "ln_receive_anti_dos_required": {
             "type": "boolean",
             "description": "Indicates whether the Ark server requires clients to either\nprovide a VTXO ownership proof, or a lightning receive token\nwhen preparing a lightning claim."
-          },
-          "max_arkoor_depth": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Maximum number of OOR transition after VTXO tree leaf",
-            "minimum": 0
           },
           "max_user_invoice_cltv_delta": {
             "type": "integer",
@@ -3458,18 +3451,12 @@
           "expiry_height",
           "exit_delta",
           "chain_anchor",
-          "exit_depth",
-          "arkoor_depth"
+          "exit_depth"
         ],
         "properties": {
           "amount_sat": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
-          },
-          "arkoor_depth": {
-            "type": "integer",
-            "format": "int32",
             "minimum": 0
           },
           "chain_anchor": {

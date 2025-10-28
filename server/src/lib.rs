@@ -33,7 +33,6 @@ pub mod filters;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
-use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
@@ -230,7 +229,6 @@ impl Server {
 			htlc_send_expiry_delta: self.config.htlc_send_expiry_delta,
 			htlc_expiry_delta: self.config.htlc_expiry_delta,
 			max_vtxo_amount: self.config.max_vtxo_amount,
-			max_arkoor_depth: self.config.max_arkoor_depth,
 			required_board_confirmations: self.config.required_board_confirmations,
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
 			min_board_amount: self.config.min_board_amount,
@@ -654,21 +652,6 @@ impl Server {
 		Ok(())
 	}
 
-	/// Validate all arkoor inputs are not too deep
-	fn validate_arkoor_inputs<V: Borrow<Vtxo>>(
-		&self,
-		inputs: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()> {
-		for input in inputs {
-			if input.borrow().arkoor_depth() >= self.config.max_arkoor_depth {
-				return badarg!("OOR depth reached maximum of {}, please refresh your VTXO: {}",
-					self.config.max_arkoor_depth, input.borrow().id());
-			}
-		}
-
-		Ok(())
-	}
-
 	/// Perform the arkoor cosign from the builder.
 	/// Assumes that sanity checks on the input have been performed.
 	/// Will lock the input vtxo in flux.
@@ -720,8 +703,6 @@ impl Server {
 			.collect::<anyhow::Result<Vec<_>>>()?;
 
 		self.check_vtxos_not_exited(&input_vtxos).await?;
-
-		self.validate_arkoor_inputs(&input_vtxos)?;
 
 		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
 			.badarg("error creating arkoor package")?;
