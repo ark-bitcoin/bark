@@ -5,6 +5,7 @@ use std::time::Duration;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Address, Amount, FeeRate, Txid, Wtxid, address};
 
+use ark::lightning::{PaymentHash, Preimage};
 use ark::rounds::RoundId;
 use ark::VtxoId;
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -15,7 +16,7 @@ use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
 use crate::exit::ExitState;
 use crate::primitives::{VtxoInfo, RecipientInfo};
-use crate::serde_utils;
+use crate::{WalletVtxoInfo, serde_utils};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -315,6 +316,48 @@ pub struct Refresh {
 	pub round: Option<RoundId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct InvoiceInfo {
+	/// The invoice string
+	pub invoice: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct LightningReceiveInfo {
+	/// The payment hash linked to the lightning receive info
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub payment_hash: PaymentHash,
+	/// The payment preimage linked to the lightning receive info
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub payment_preimage: Preimage,
+	/// The timestamp at which the preimage was revealed
+	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Utc>>,
+	/// The invoice string
+	pub invoice: String,
+	/// The HTLC VTXOs granted by the server for the lightning receive
+	///
+	/// Only present if the lightning HTLC has been received by the server.
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<WalletVtxoInfo>, nullable = true))]
+	pub htlc_vtxos: Option<Vec<WalletVtxoInfo>>,
+}
+
+impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
+	fn from(v: bark::persist::models::LightningReceive) -> Self {
+		LightningReceiveInfo {
+			payment_hash: v.payment_hash,
+			payment_preimage: v.payment_preimage,
+			preimage_revealed_at: v.preimage_revealed_at.map(|ts| {
+				chrono::DateTime::from_timestamp_secs(ts as i64)
+					.expect("timestamp is valid")
+			}),
+			invoice: v.invoice.to_string(),
+			htlc_vtxos: v.htlc_vtxos.map(|vtxos| vtxos.into_iter()
+				.map(crate::primitives::WalletVtxoInfo::from).collect()),
+		}
+	}
+}
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]

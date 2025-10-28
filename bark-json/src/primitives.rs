@@ -1,7 +1,6 @@
 
 use std::ops::Deref;
 
-use ark::lightning::{PaymentHash, Preimage};
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
 #[cfg(feature = "utoipa")]
@@ -10,11 +9,6 @@ use utoipa::ToSchema;
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::VtxoPolicyKind;
 use bitcoin_ext::{BlockDelta, BlockHeight};
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct InvoiceInfo {
-	pub invoice: String,
-}
 
 /// Struct representing information about an Unspent Transaction Output (UTXO).
 ///
@@ -124,6 +118,15 @@ pub struct WalletVtxoInfo {
 	pub state: String,
 }
 
+impl From<bark::WalletVtxo> for WalletVtxoInfo {
+	fn from(v: bark::WalletVtxo) -> Self {
+		WalletVtxoInfo {
+			vtxo: v.vtxo.into(),
+			state: v.state.kind().as_str().to_string(),
+		}
+	}
+}
+
 impl Deref for WalletVtxoInfo {
 	type Target = VtxoInfo;
 
@@ -140,16 +143,4 @@ pub struct RecipientInfo {
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub amount: Amount
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct LightningReceiveInfo {
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_hash: PaymentHash,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_preimage: Preimage,
-	pub preimage_revealed_at: Option<u64>,
-	pub invoice: String,
-	pub htlc_vtxos: Option<Vec<WalletVtxoInfo>>,
 }

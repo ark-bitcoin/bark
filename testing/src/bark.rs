@@ -21,7 +21,8 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
 use bark::onchain::ChainSourceSpec;
-use bark_json::{InvoiceInfo, LightningReceiveInfo, UtxoInfo, WalletVtxoInfo};
+use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
+use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::FeeRateExt;
 
 use crate::constants::BOARD_CONFIRMATIONS;

@@ -334,6 +334,7 @@ dependencies = [
  "bark-bitcoin-ext",
  "bark-wallet",
  "bitcoin",
+ "chrono",
  "hal",
  "humantime",
  "serde",
