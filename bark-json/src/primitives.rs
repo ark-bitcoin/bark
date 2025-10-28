@@ -4,7 +4,7 @@ use std::ops::Deref;
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
-#[cfg(feature = "open-api")]
+#[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
 use ark::{Vtxo, VtxoId};
@@ -27,14 +27,14 @@ pub struct InvoiceInfo {
 /// * The `amount` field is serialized and deserialized with a custom function from the `bitcoin`
 ///   crate that ensures the value is interpreted as satoshis with the name `amount_sat`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct UtxoInfo {
 	/// Contains the reference to the specific transaction output via transaction ID and index.
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub outpoint: OutPoint,
 	/// The value of the UTXO in satoshis.
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub amount: Amount,
 	/// An optional field that specifies the block height at which the transaction was confirmed. If
 	/// the transaction is unconfirmed, this value will be `None`.
@@ -71,22 +71,22 @@ impl From<bark::onchain::Utxo> for UtxoInfo {
 
 /// Struct representing information about a VTXO.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct VtxoInfo {
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub id: VtxoId,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub amount: Amount,
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub policy_type: VtxoPolicyKind,
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub user_pubkey: PublicKey,
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub server_pubkey: PublicKey,
 	pub expiry_height: BlockHeight,
 	pub exit_delta: BlockDelta,
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub chain_anchor: OutPoint,
 	pub exit_depth: u16,
 	pub arkoor_depth: u16,
@@ -117,7 +117,7 @@ impl From<Vtxo> for VtxoInfo {
 
 /// Same as [VtxoInfo], but with the current VTXO state.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct WalletVtxoInfo {
 	#[serde(flatten)]
 	pub vtxo: VtxoInfo,
@@ -133,21 +133,21 @@ impl Deref for WalletVtxoInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct RecipientInfo {
 	/// Can either be a publickey, spk or a bolt11 invoice
 	pub recipient: String,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub amount: Amount
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningReceiveInfo {
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub payment_hash: PaymentHash,
-	#[cfg_attr(feature = "open-api", schema(value_type = String))]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub payment_preimage: Preimage,
 	pub preimage_revealed_at: Option<u64>,
 	pub invoice: String,

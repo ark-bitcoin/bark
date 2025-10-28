@@ -6,9 +6,6 @@ authors = [ "Team Second <hello@second.tech>" ]
 description = "JSON definitions for the bark APIs"
 edition = "2024"
 
-[features]
-open-api = ["dep:utoipa"]
-
 [dependencies]
 # OWN
 bark-wallet = { path = "../bark" }
