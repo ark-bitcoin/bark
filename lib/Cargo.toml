@@ -34,8 +34,8 @@ serde_json = { workspace = true, optional = true }
 
 # using PR branch for musig2 code
 [dependencies.secp256k1-musig]
-package = "secp256k1-preview-xg2904r5rj"
-version = "0.32.0"
+package = "secp256k1"
+version = "0.32.0-beta.0"
 features = [ "serde" ]
 
 [dev-dependencies]
