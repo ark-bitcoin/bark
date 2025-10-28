@@ -358,7 +358,6 @@ mod test {
 	use bitcoin::{absolute, transaction, Amount};
 
 	use crate::encode::test::encoding_roundtrip;
-	use crate::vtxo::ValidationResult;
 
 	use super::*;
 
@@ -405,6 +404,6 @@ mod test {
 
 		encoding_roundtrip(&vtxo);
 
-		assert_eq!(vtxo.validate(&funding_tx).unwrap(), ValidationResult::Cosigned);
+		vtxo.validate(&funding_tx).unwrap();
 	}
 }

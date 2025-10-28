@@ -1267,7 +1267,7 @@ mod test {
 
 	use crate::encode;
 	use crate::encode::test::{encoding_roundtrip, json_roundtrip};
-	use crate::vtxo::{ValidationResult, VtxoPolicy};
+	use crate::vtxo::VtxoPolicy;
 	use crate::tree::signed::builder::SignedTreeBuilder;
 
 	use super::*;
@@ -1444,7 +1444,7 @@ mod test {
 
 		// check that vtxos are valid
 		for vtxo in tree.all_vtxos() {
-			assert_eq!(vtxo.validate(&funding_tx).unwrap(), ValidationResult::Cosigned);
+			vtxo.validate(&funding_tx).expect("The new vtxo is valid");
 		}
 	}
 }
