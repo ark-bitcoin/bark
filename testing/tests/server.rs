@@ -22,12 +22,12 @@ use ark::{
 	musig, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest,
 	SECP,
 };
-use bark::lightning_invoice::Bolt11Invoice;
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bark::Wallet;
-use bark_json::WalletVtxoInfo;
+use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::cli::RoundStatus;
+use bark_json::primitives::WalletVtxoInfo;
 use bark_json::exit::ExitState;
 use server::secret::Secret;
 use server::vtxopool::VtxoTarget;

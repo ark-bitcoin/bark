@@ -14,8 +14,8 @@ use utoipa::ToSchema;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
 use crate::exit::ExitState;
-use crate::primitives::{VtxoInfo, RecipientInfo};
-use crate::{WalletVtxoInfo, serde_utils};
+use crate::primitives::{VtxoInfo, WalletVtxoInfo, RecipientInfo};
+use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]

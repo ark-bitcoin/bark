@@ -10,7 +10,7 @@ use log::{debug, info};
 
 use ark::{ArkInfo, Vtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
-use bark_json::VtxoInfo;
+use bark_json::primitives::VtxoInfo;
 use server_rpc as rpc;
 
 use crate::util::{https_default_scheme, output_json};

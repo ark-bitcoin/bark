@@ -4,11 +4,6 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
-use ark::rounds::RoundEvent;
-use ark::vtxo::PubkeyVtxoPolicy;
-use bark::persist::StoredRoundState;
-use bark::round::RoundParticipation;
-use bark_json::RecipientInfo;
 use bitcoin::Amount;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
@@ -18,6 +13,12 @@ use tokio::fs;
 use tokio_stream::StreamExt;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
+use ark::rounds::RoundEvent;
+use ark::vtxo::PubkeyVtxoPolicy;
+use bark::persist::StoredRoundState;
+use bark::round::RoundParticipation;
+use bark_json::primitives::RecipientInfo;
+
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
