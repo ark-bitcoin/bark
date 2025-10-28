@@ -293,6 +293,7 @@ pub mod movement;
 pub mod onchain;
 pub mod persist;
 pub mod round;
+pub mod lightning_utils;
 pub mod vtxo_state;
 pub mod vtxo_selection;
 
