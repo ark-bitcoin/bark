@@ -3,18 +3,18 @@ use thiserror::Error;
 
 use ark::VtxoId;
 use bitcoin_ext::BlockHeight;
-#[cfg(feature = "open-api")]
+#[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
 use crate::exit::states::ExitTxStatus;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ExitError {
 	#[error("Transaction Retrieval Failure: Unable to retrieve ancestral data for TX {txid}: {error}")]
 	AncestorRetrievalFailure {
-		#[cfg_attr(feature = "open-api", schema(value_type = String))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		txid: Txid,
 		error: String
 	},
@@ -27,9 +27,9 @@ pub enum ExitError {
 
 	#[error("Claim Fee Exceeds Output: Cost to claim exits was {needed}, but the total output was {output}")]
 	ClaimFeeExceedsOutput {
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		needed: Amount,
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		output: Amount,
 	},
 
@@ -38,13 +38,13 @@ pub enum ExitError {
 
 	#[error("Cyclic Exit Transactions Error: The exit transactions for VTXO {vtxo} are cyclic")]
 	CyclicExitTransactions {
-		#[cfg_attr(feature = "open-api", schema(value_type = String))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		vtxo: VtxoId
 	},
 
 	#[error("Database Store Failure: Unable to update exit VTXO {vtxo_id} in the database: {error}")]
 	DatabaseVtxoStoreFailure {
-		#[cfg_attr(feature = "open-api", schema(value_type = String))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		vtxo_id: VtxoId,
 		error: String
 	},
@@ -54,15 +54,15 @@ pub enum ExitError {
 
 	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
 	DustLimit {
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		vtxo: Amount,
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		dust: Amount
 	},
 
 	#[error("Exit Package Broadcast Failure: Unable to broadcast exit transaction package {txid}: {error}")]
 	ExitPackageBroadcastFailure {
-		#[cfg_attr(feature = "open-api", schema(value_type = String))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		txid: Txid,
 		error: String
 	},
@@ -72,27 +72,27 @@ pub enum ExitError {
 
 	#[error("Exit Package Store Failure: Unable to store exit transaction package {txid}: {error}")]
 	ExitPackageStoreFailure {
-		#[cfg_attr(feature = "open-api", schema(value_type = String))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		txid: Txid,
 		error: String
 	},
 
 	#[error("Insufficient Confirmed Funds: {needed} is needed but only {available} is available")]
 	InsufficientConfirmedFunds {
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		needed: Amount,
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		available: Amount
 	},
 
 	#[error("Insufficient Fee Error: Your balance is {balance} but an estimated {total_fee} (fee rate of {fee_rate}) is required to exit the VTXO")]
 	InsufficientFeeToStart {
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		balance: Amount,
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		total_fee: Amount,
 		#[serde(rename = "fee_rate_kwu")]
-		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		fee_rate: FeeRate,
 	},
 
@@ -101,7 +101,7 @@ pub enum ExitError {
 
 	#[error("Invalid Exit Transaction Status: Exit tx {txid} has an invalid status ({status}): {error}")]
 	InvalidExitTransactionStatus {
-		#[cfg_attr(feature = "open-api", schema(value_type = String))]
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		txid: Txid,
 		status: ExitTxStatus,
 		error: String
@@ -111,10 +111,10 @@ pub enum ExitError {
 	InvalidWalletState { error: String },
 
 	#[error("Missing Anchor Output: Malformed exit tx {txid}")]
-	MissingAnchorOutput { #[cfg_attr(feature = "open-api", schema(value_type = String))] txid: Txid },
+	MissingAnchorOutput { #[cfg_attr(feature = "utoipa", schema(value_type = String))] txid: Txid },
 
 	#[error("Missing VTXO Transaction: Couldn't find exit tx {txid}")]
-	MissingExitTransaction { #[cfg_attr(feature = "open-api", schema(value_type = String))] txid: Txid },
+	MissingExitTransaction { #[cfg_attr(feature = "utoipa", schema(value_type = String))] txid: Txid },
 
 	#[error("Movement Registration Failure: {error}")]
 	MovementRegistrationFailure { error: String },
@@ -123,10 +123,10 @@ pub enum ExitError {
 	TipRetrievalFailure { error: String },
 
 	#[error("Transaction Retrieval Failure: Unable to check the status of TX {txid}: {error}")]
-	TransactionRetrievalFailure { #[cfg_attr(feature = "open-api", schema(value_type = String))] txid: Txid, error: String },
+	TransactionRetrievalFailure { #[cfg_attr(feature = "utoipa", schema(value_type = String))] txid: Txid, error: String },
 
 	#[error("VTXO Not Spendable Error: Attempted to claim a VTXO which is not in a spendable state: {vtxo}")]
-	VtxoNotClaimable { #[cfg_attr(feature = "open-api", schema(value_type = String))] vtxo: VtxoId },
+	VtxoNotClaimable { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
 
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },

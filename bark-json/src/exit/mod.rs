@@ -5,7 +5,7 @@ pub mod states;
 use bitcoin::Txid;
 
 use bitcoin_ext::{BlockHeight, BlockRef};
-#[cfg(feature = "open-api")]
+#[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
 use crate::exit::states::{
@@ -16,7 +16,7 @@ use crate::exit::states::{
 /// A utility type to wrap ExitState children so they can be easily serialized. This also helps with
 /// debugging a lot!
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "open-api", derive(ToSchema))]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ExitState {
 	Start(ExitStartState),
