@@ -4,10 +4,12 @@ use std::ops::Deref;
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin::{Amount, OutPoint};
 use bitcoin::secp256k1::PublicKey;
+#[cfg(feature = "open-api")]
+use utoipa::ToSchema;
 
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::VtxoPolicyKind;
-use bitcoin_ext::BlockDelta;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct InvoiceInfo {
@@ -25,28 +27,66 @@ pub struct InvoiceInfo {
 /// * The `amount` field is serialized and deserialized with a custom function from the `bitcoin`
 ///   crate that ensures the value is interpreted as satoshis with the name `amount_sat`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct UtxoInfo {
 	/// Contains the reference to the specific transaction output via transaction ID and index.
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub outpoint: OutPoint,
 	/// The value of the UTXO in satoshis.
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub amount: Amount,
 	/// An optional field that specifies the block height at which the transaction was confirmed. If
 	/// the transaction is unconfirmed, this value will be `None`.
 	pub confirmation_height: Option<u32>,
 }
 
+impl From<bark::UtxoInfo> for UtxoInfo {
+	fn from(v: bark::UtxoInfo) -> Self {
+		UtxoInfo {
+			outpoint: v.outpoint,
+			amount: v.amount,
+			confirmation_height: v.confirmation_height,
+		}
+	}
+}
+
+impl From<bark::onchain::Utxo> for UtxoInfo {
+
+	fn from(v: bark::onchain::Utxo) -> Self {
+		match v {
+			bark::onchain::Utxo::Local(o) => UtxoInfo {
+				outpoint: o.outpoint,
+				amount: o.amount,
+				confirmation_height: o.confirmation_height,
+			},
+			bark::onchain::Utxo::Exit(e) => UtxoInfo {
+				outpoint: e.vtxo.point(),
+				amount: e.vtxo.amount(),
+				confirmation_height: Some(e.height),
+			},
+		}
+	}
+}
+
 /// Struct representing information about a VTXO.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct VtxoInfo {
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub id: VtxoId,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub amount: Amount,
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub policy_type: VtxoPolicyKind,
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub user_pubkey: PublicKey,
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub server_pubkey: PublicKey,
-	pub expiry_height: u32,
+	pub expiry_height: BlockHeight,
 	pub exit_delta: BlockDelta,
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub chain_anchor: OutPoint,
 	pub exit_depth: u16,
 	pub arkoor_depth: u16,
@@ -77,6 +117,7 @@ impl From<Vtxo> for VtxoInfo {
 
 /// Same as [VtxoInfo], but with the current VTXO state.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct WalletVtxoInfo {
 	#[serde(flatten)]
 	pub vtxo: VtxoInfo,
@@ -92,16 +133,21 @@ impl Deref for WalletVtxoInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct RecipientInfo {
 	/// Can either be a publickey, spk or a bolt11 invoice
 	pub recipient: String,
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub amount: Amount
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct LightningReceiveInfo {
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub payment_hash: PaymentHash,
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub payment_preimage: Preimage,
 	pub preimage_revealed_at: Option<u64>,
 	pub invoice: String,

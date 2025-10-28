@@ -20,9 +20,9 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
 use bitcoin_ext::rpc::RpcApi;
-use json::exit::ExitState;
 
 use crate::exit::ExitVtxo;
+use crate::exit::models::ExitState;
 use crate::onchain::{
 	ChainSource, LocalUtxo, GetBalance, GetSpendingTx, GetWalletTx, MakeCpfp, MakeCpfpFees,
 	PreparePsbt, SignPsbt, Utxo,

@@ -2,11 +2,9 @@ use log::{debug, error, info, trace, warn};
 use tonic::async_trait;
 
 use bitcoin_ext::{BlockHeight, TxStatus, P2TR_DUST};
-use json::exit::error::ExitError;
-use json::exit::ExitState;
-use json::exit::states::{
-	ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
-	ExitClaimedState, ExitStartState, ExitTx, ExitTxOrigin, ExitTxStatus,
+use crate::exit::models::{
+	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
+	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxOrigin, ExitTxStatus,
 };
 
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};

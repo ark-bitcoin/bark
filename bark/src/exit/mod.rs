@@ -108,6 +108,8 @@
 //! # }
 //! ```
 
+pub mod models;
+
 pub(crate) mod progress;
 pub(crate) mod transaction_manager;
 
@@ -128,10 +130,8 @@ use log::{error, info, warn};
 
 use ark::{Vtxo, VtxoId, SECP};
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
-use json::cli::{ExitProgressStatus, ExitTransactionStatus};
-use json::exit::ExitState;
-use json::exit::error::ExitError;
 
+use crate::exit::models::{ExitError, ExitProgressStatus, ExitState, ExitTransactionStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;

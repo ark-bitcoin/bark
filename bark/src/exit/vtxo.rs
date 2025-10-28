@@ -13,9 +13,8 @@ use bitcoin::{FeeRate, Txid};
 use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
-use json::exit::ExitState;
-use json::exit::error::ExitError;
 
+use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::{ChainSource, ExitUnilaterally};

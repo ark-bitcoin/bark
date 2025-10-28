@@ -22,11 +22,9 @@ use bark::round::{
 	RoundState, VtxoForfeitedInRound,
 };
 use bark::vtxo_state::{VtxoState, VtxoStateKind};
-use bark_json::exit::ExitState;
-use bark_json::exit::states::{ExitClaimableState, ExitTxOrigin};
+use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
 use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef};
 use server_rpc::TryFromBytes;
-
 struct Dummy;
 
 impl BarkPersister for Dummy {

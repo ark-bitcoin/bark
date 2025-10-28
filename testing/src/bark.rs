@@ -20,9 +20,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use bark_json::{InvoiceInfo, LightningReceiveInfo, WalletVtxoInfo};
 use bark::onchain::ChainSourceSpec;
-use bark::UtxoInfo;
+use bark_json::{InvoiceInfo, LightningReceiveInfo, UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::FeeRateExt;
 
 use crate::constants::BOARD_CONFIRMATIONS;
@@ -206,9 +205,9 @@ impl Bark {
 		balance.total
 	}
 
-	pub async fn onchain_utxos(&self) -> json::onchain::Utxos {
+	pub async fn onchain_utxos(&self) -> Vec<UtxoInfo> {
 		let output = self.run(["onchain", "utxos"]).await;
-		serde_json::from_str::<json::onchain::Utxos>(&output).unwrap()
+		serde_json::from_str::<Vec<UtxoInfo>>(&output).unwrap()
 	}
 
 	pub async fn offchain_balance(&self) -> json::Balance {

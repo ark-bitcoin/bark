@@ -7,8 +7,8 @@ use bark::onchain::OnchainWallet;
 use bitcoin::{address, Amount};
 use log::{info, warn};
 
-use bark::{UtxoInfo, Wallet};
-use bark_json::cli as json;
+use bark::Wallet;
+use bark_json::{cli as json, primitives};
 
 use crate::util::output_json;
 
@@ -205,8 +205,8 @@ pub async fn execute_lightning_command(onchain_command: OnchainCommand, wallet: 
 
 			let utxos = onchain.utxos()
 				.into_iter()
-				.map(UtxoInfo::from)
-				.collect::<json::onchain::Utxos>();
+				.map(primitives::UtxoInfo::from)
+				.collect::<Vec<_>>();
 
 			output_json(&utxos);
 		},

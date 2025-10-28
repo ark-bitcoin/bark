@@ -8,21 +8,27 @@ use bitcoin::{Amount, FeeRate, Txid};
 use ark::rounds::RoundId;
 use ark::VtxoId;
 use bitcoin_ext::{BlockDelta, BlockHeight};
+#[cfg(feature = "open-api")]
+use utoipa::ToSchema;
 
-use crate::exit::ExitState;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
-use crate::primitives::{UtxoInfo, VtxoInfo, RecipientInfo};
+use crate::exit::ExitState;
+use crate::primitives::{VtxoInfo, RecipientInfo};
 use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct ArkInfo {
 	/// The bitcoin network the server operates on
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub network: bitcoin::Network,
 	/// The Ark server pubkey
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub server_pubkey: PublicKey,
 	/// The interval between each round
 	#[serde(with = "serde_utils::duration")]
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub round_interval: Duration,
 	/// Number of nonces per round
 	pub nb_round_nonces: usize,
@@ -35,6 +41,7 @@ pub struct ArkInfo {
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries
 	pub htlc_expiry_delta: BlockDelta,
 	/// Maximum amount of a VTXO
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub max_vtxo_amount: Option<Amount>,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
@@ -66,23 +73,31 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct LightningReceiveBalance {
 	#[serde(rename = "total_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub total: Amount,
 	#[serde(rename = "claimable_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub claimable: Amount,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct Balance {
 	#[serde(rename = "spendable_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub spendable: Amount,
 	#[serde(rename = "pending_lightning_send_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub pending_lightning_send: Amount,
 	pub pending_lightning_receive: LightningReceiveBalance,
 	#[serde(rename = "pending_in_round_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub pending_in_round: Amount,
 	#[serde(rename = "pending_board_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub pending_board: Amount,
 	#[serde(
 		default,
@@ -90,10 +105,12 @@ pub struct Balance {
 		with = "bitcoin::amount::serde::as_sat::opt",
 		skip_serializing_if = "Option::is_none",
 	)]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64, nullable=true))]
 	pub pending_exit: Option<Amount>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct Config {
 	/// Ark server address
 	pub ark: String,
@@ -110,10 +127,12 @@ pub struct Config {
 	/// How many blocks before VTXO expiration before preemptively refreshing them
 	pub vtxo_refresh_expiry_threshold: BlockHeight,
 	#[serde(rename = "fallback_fee_rate_kvb", with = "serde_utils::fee_rate_sats_per_kvb")]
+	#[cfg_attr(feature = "open-api", schema(value_type = u64, nullable = true))]
 	pub fallback_fee_rate: Option<FeeRate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct ExitProgressResponse {
 	/// Status of each pending exit transaction
 	pub exits: Vec<ExitProgressStatus>,
@@ -124,8 +143,10 @@ pub struct ExitProgressResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct ExitProgressStatus {
 	/// The ID of the VTXO that is being unilaterally exited
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub vtxo_id: VtxoId,
 	/// The current state of the exit transaction
 	pub state: ExitState,
@@ -134,9 +155,21 @@ pub struct ExitProgressStatus {
 	pub error: Option<ExitError>,
 }
 
+impl From<bark::exit::models::ExitProgressStatus> for ExitProgressStatus {
+	fn from(v: bark::exit::models::ExitProgressStatus) -> Self {
+		ExitProgressStatus {
+			vtxo_id: v.vtxo_id,
+			state: v.state.into(),
+			error: v.error.map(ExitError::from),
+		}
+	}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct ExitTransactionStatus {
 	/// The ID of the VTXO that is being unilaterally exited
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub vtxo_id: VtxoId,
 	/// The current state of the exit transaction
 	pub state: ExitState,
@@ -148,12 +181,25 @@ pub struct ExitTransactionStatus {
 	pub transactions: Vec<ExitTransactionPackage>,
 }
 
+impl From<bark::exit::models::ExitTransactionStatus> for ExitTransactionStatus {
+	fn from(v: bark::exit::models::ExitTransactionStatus) -> Self {
+		ExitTransactionStatus {
+			vtxo_id: v.vtxo_id,
+			state: v.state.into(),
+			history: v.history.map(|h| h.into_iter().map(ExitState::from).collect()),
+			transactions: v.transactions.into_iter().map(ExitTransactionPackage::from).collect(),
+		}
+	}
+}
+
 /// Describes a completed transition of funds from onchain to offchain.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct Board {
 	/// The [Txid] of the funding-transaction.
 	/// This is the transaction that has to be confirmed
 	/// onchain for the board to succeed.
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub funding_txid: Txid,
 	/// The info for each [ark::Vtxo] that was created
 	/// in this board.
@@ -162,10 +208,21 @@ pub struct Board {
 	pub vtxos: Vec<VtxoInfo>,
 }
 
+impl From<bark::Board> for Board {
+	fn from(v: bark::Board) -> Self {
+		Board {
+			funding_txid: v.funding_txid,
+			vtxos: v.vtxos.into_iter().map(VtxoInfo::from).collect(),
+		}
+	}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct Movement {
 	pub id: u32,
 	/// Fees paid for the movement
+	#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 	pub fees: Amount,
 	/// wallet's VTXOs spent in this movement
 	pub spends: Vec<VtxoInfo>,
@@ -182,39 +239,48 @@ pub mod onchain {
 	use super::*;
 
 	#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+	#[cfg_attr(feature = "open-api", derive(ToSchema))]
 	pub struct Send {
+		#[cfg_attr(feature = "open-api", schema(value_type = String))]
 		pub txid: Txid,
 	}
 
 	#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+	#[cfg_attr(feature = "open-api", derive(ToSchema))]
 	pub struct Address {
+		#[cfg_attr(feature = "open-api", schema(value_type = String))]
 		pub address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
 	}
 
-	pub type Utxos = Vec<UtxoInfo>;
-
 	#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 	pub struct Balance {
 		/// All of them combined.
 		#[serde(rename="total_sat", with="bitcoin::amount::serde::as_sat")]
+		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 		pub total: Amount,
 		/// Get sum of trusted_pending and confirmed coins.
 		///
 		/// This is the balance you can spend right now that shouldn't get cancelled via another party
 		/// double spending it.
 		#[serde(rename="trusted_spendable_sat", with="bitcoin::amount::serde::as_sat")]
+		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 		pub trusted_spendable: Amount,
 		/// All coinbase outputs not yet matured
 		#[serde(rename="immature_sat", with="bitcoin::amount::serde::as_sat")]
+		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 		pub immature: Amount,
 		/// Unconfirmed UTXOs generated by a wallet tx
 		#[serde(rename="trusted_pending_sat", with="bitcoin::amount::serde::as_sat")]
+		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 		pub trusted_pending: Amount,
 		/// Unconfirmed UTXOs received from an external wallet
 		#[serde(rename="untrusted_pending_sat", with="bitcoin::amount::serde::as_sat")]
+		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 		pub untrusted_pending: Amount,
 		/// Confirmed and immediately spendable balance
 		#[serde(rename="confirmed_sat", with="bitcoin::amount::serde::as_sat")]
+		#[cfg_attr(feature = "open-api", schema(value_type = u64))]
 		pub confirmed: Amount,
 	}
 }
@@ -222,30 +288,32 @@ pub mod onchain {
 /// Describes a completed transition of funds from offchain to onchain collaboratively with the
 /// Ark server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct Offboard {
 	/// The [RoundId] of the round in which the offboard occurred
+	#[cfg_attr(feature = "open-api", schema(value_type = String))]
 	pub round: RoundId,
+	// TODO: List the [OutPoint] and [Amount] here
+}
+
+impl From<bark::Offboard> for Offboard {
+	fn from(v: bark::Offboard) -> Self {
+		Offboard { round: v.round }
+	}
 }
 
 /// The output of the `bark refresh` command
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "open-api", derive(ToSchema))]
 pub struct Refresh {
 	/// A boolean indicated if the command participated
 	/// in a round. If no [ark::Vtxo] was refreshed this variable
 	/// will be set to [false] and otherwise [true]
 	pub participate_round: bool,
 	/// The [RoundId] of the round if the client participated in a round
+	#[cfg_attr(feature = "open-api", schema(value_type = String, nullable = true))]
 	pub round: Option<RoundId>,
 }
-
-/// The result of participating in a round to send offchain funds to an onchain address.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SendOnchain {
-	/// The [RoundId] of the round in which the onchain transaction occurred
-	pub round: RoundId,
-	// TODO: List the [OutPoint] and [Amount] here
-}
-
 
 #[cfg(test)]
 mod test {
