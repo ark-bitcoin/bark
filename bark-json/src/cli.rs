@@ -253,8 +253,8 @@ pub mod onchain {
 	}
 
 	#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-	pub struct Balance {
+	#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+	pub struct OnchainBalance {
 		/// All of them combined.
 		#[serde(rename="total_sat", with="bitcoin::amount::serde::as_sat")]
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]

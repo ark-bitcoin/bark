@@ -213,7 +213,7 @@ impl Bark {
 
 	pub async fn onchain_balance(&self) -> Amount {
 		let balance_output = self.run(["onchain", "balance"]).await;
-		let balance = serde_json::from_str::<json::onchain::Balance>(&balance_output).unwrap();
+		let balance = serde_json::from_str::<json::onchain::OnchainBalance>(&balance_output).unwrap();
 		balance.total
 	}
 

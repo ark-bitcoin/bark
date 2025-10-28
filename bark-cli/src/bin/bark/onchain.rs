@@ -100,7 +100,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 			}
 
 			let balance = onchain.balance();
-			let onchain_balance  = json::onchain::Balance {
+			let onchain_balance  = json::onchain::OnchainBalance {
 				total: balance.total(),
 				trusted_spendable: balance.trusted_spendable(),
 				immature: balance.immature,
