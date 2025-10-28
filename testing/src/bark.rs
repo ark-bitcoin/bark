@@ -48,7 +48,7 @@ pub struct Bark {
 	name: String,
 	config: BarkConfig,
 	counter: AtomicUsize,
-	pub timeout: Option<Duration>,
+	timeout: Option<Duration>,
 	_bitcoind: Option<Bitcoind>,
 	command_log: Mutex<fs::File>,
 }
@@ -139,6 +139,18 @@ impl Bark {
 
 	pub fn config(&self) -> &BarkConfig {
 		&self.config
+	}
+
+	pub fn timeout(&self) -> Option<Duration> {
+		self.timeout
+	}
+
+	pub fn set_timeout(&mut self, timeout: Duration) {
+		self.timeout = Some(timeout);
+	}
+
+	pub fn unset_timeout(&mut self) {
+		self.timeout = None;
 	}
 
 	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
