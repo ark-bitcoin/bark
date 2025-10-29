@@ -1,0 +1,86 @@
+when:
+  - event: manual
+  - event: cron
+    cron: nightly
+
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git@sha256:2aaacedd7da067f2f6b54a3ef3d39cc69cc0c1152e377fd8df266bd34acd317e
+    settings:
+      partial: false
+      depth: 100
+      lfs: false
+
+steps:
+  - name: check-master-status
+    image: alpine/curl:latest
+    commands:
+      - |
+        RESPONSE=$(curl -s -X GET 'https://ci.2nd.dev/api/badges/6/cc.xml' -H 'accept: text/xml')
+        echo "Response from API: $RESPONSE"
+        if echo "$RESPONSE" | grep -q 'Success'; then
+          echo "Master branch CI is successful."
+        else
+          echo "Master branch CI is not in a successful state. Aborting pipeline."
+          exit 1
+        fi
+
+  - name: assign-version
+    depends_on: check-master-status
+    image: registry.2nd.dev/build:25
+    commands:
+      - sudo chown -R nixuser:nixbld /woodpecker
+      - echo "nightly-$(date -d '1 minute ago' +%Y-%m-%d)" > VERSION
+      - bash ./contrib/assign-nightly-version.sh "$(cat VERSION)"
+      - cat VERSION
+
+  - name: build
+    depends_on: assign-version
+    image: registry.2nd.dev/build:25
+    commands:
+      - cat VERSION
+      - just build
+      - just release-bark-linux
+      - cp ./target/x86_64-unknown-linux-gnu/release/bark      bark-linux-x86_64
+      - cp ./target/aarch64-unknown-linux-gnu/release/bark     bark-linux-aarch64
+      - cp ./target/armv7-unknown-linux-gnueabihf/release/bark bark-linux-armv7
+      - just release-server
+      - cp ./target/x86_64-unknown-linux-gnu/release/captaind  captaind-linux-x86_64
+
+  - name: build-and-push-to-docker
+    when:
+      - evaluate: 'CI_REPO_URL == "https://gitlab.com/2Fast2BCn/bark"'
+    depends_on: build
+    # When this task fails make sure the sha256 is still available.
+    #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
+    #  or `skopeo inspect docker://quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b`
+    image: quay.io/buildah/stable@sha256:5f67b6ece887c7ffbc063d174fd95f057a76b218adf1160c7a5c3d63997efd4b
+    environment:
+      DOCKER_LOGIN_TOKEN:
+        from_secret: DOCKER_LOGIN_TOKEN
+    pull: true
+    privileged: true
+    commands:
+      - cat VERSION
+      - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+      # Build the containers
+      - buildah build -f ./.woodpecker/images/releases/bark/linux_amd64.Dockerfile --tag docker.io/secondark/bark:linux-amd64 .
+      - buildah build -f ./.woodpecker/images/releases/bark/linux_arm64.Dockerfile --tag docker.io/secondark/bark:linux-arm64 .
+      - buildah build -f ./.woodpecker/images/releases/bark/linux_armv7.Dockerfile --tag docker.io/secondark/bark:linux-armv7 .
+      - buildah build -f ./.woodpecker/images/releases/captaind/Dockerfile         --tag docker.io/secondark/captaind:latest  .
+      # Tag containers with a specific version number for docker.io/secondark
+      - buildah tag docker.io/secondark/bark:linux-amd64 "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+      - buildah tag docker.io/secondark/bark:linux-arm64 "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+      - buildah tag docker.io/secondark/bark:linux-armv7 "docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
+      - buildah tag docker.io/secondark/captaind:latest  "docker.io/secondark/captaind:$(cat VERSION)"
+      # Push containers with a specific version number to docker.io/secondark
+      - buildah push "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+      - buildah push "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+      - buildah push "docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
+      - buildah push "docker.io/secondark/captaind:$(cat VERSION)"
+      # Create and push multi-arch docker manifest with versioned tag to docker.io/secondark
+      - buildah manifest create     "bark-multiarch-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+      - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
+      - buildah manifest push --all "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:$(cat VERSION)"
