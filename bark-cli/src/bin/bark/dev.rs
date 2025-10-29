@@ -13,8 +13,9 @@ use ark::encode::ProtocolEncoding;
 use bark_json::primitives::VtxoInfo;
 use server_rpc as rpc;
 
+use bark_cli::wallet::open_wallet;
+
 use crate::util::{https_default_scheme, output_json};
-use crate::wallet::open_wallet;
 
 #[derive(clap::Subcommand)]
 pub enum DevCommand {

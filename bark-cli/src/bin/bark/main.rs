@@ -31,8 +31,10 @@ use bark::vtxo_selection::VtxoFilter;
 use bark_json::{cli as json, primitives};
 use bitcoin_ext::FeeRateExt;
 
+use bark_cli::wallet::open_wallet;
+
 use crate::util::output_json;
-use crate::wallet::{CreateOpts, create_wallet, open_wallet};
+use crate::wallet::{CreateOpts, create_wallet};
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
