@@ -208,7 +208,7 @@ async fn cant_spend_untrusted() {
 
 	// Set a time-out on the bark command for the refresh --all
 	// The command is expected to time-out
-	bark.timeout = Some(Duration::from_millis(10_000));
+	bark.set_timeout(Duration::from_millis(10_000));
 	let mut bark = Arc::new(bark);
 
 	// we will launch bark to try refresh, it will produce an error log at first,
@@ -229,7 +229,7 @@ async fn cant_spend_untrusted() {
 	tokio::time::sleep(Duration::from_millis(3000)).await;
 
 	log_round_err.clear();
-	Arc::get_mut(&mut bark).unwrap().timeout = None;
+	Arc::get_mut(&mut bark).unwrap().unset_timeout();
 	if let Err(err) = bark.try_refresh_all().await {
 		let mut round_errs = String::new();
 		while let Ok(e) = log_round_err.try_recv() {
@@ -310,14 +310,14 @@ async fn max_vtxo_amount() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// then try send in a round
-	bark1.timeout = Some(Duration::from_millis(5_000));
+	bark1.set_timeout(Duration::from_millis(5_000));
 	let err = bark1.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(
 		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
 	), "err: {err}");
 
 	// but we can offboard the entire amount!
-	bark1.timeout = None;
+	bark1.unset_timeout();
 	let address = ctx.bitcoind().get_new_address();
 	bark1.offboard_all(address.clone()).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
@@ -595,7 +595,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = srv.get_proxy_rpc(ProxyB).await;
-	bark.timeout = Some(Duration::from_millis(10_000));
+	bark.set_timeout(Duration::from_millis(10_000));
 	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
@@ -617,7 +617,7 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = srv.get_proxy_rpc(ProxyC).await;
 	bark.set_ark_url(&proxy).await;
-	bark.timeout = None;
+	bark.unset_timeout();
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
 }
@@ -1155,7 +1155,7 @@ async fn reject_dust_vtxo_request() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	bark.timeout = Some(Duration::from_millis(3_500));
+	bark.set_timeout(Duration::from_millis(3_500));
 	let err = bark.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(
 		"bad user input: vtxo amount must be at least 0.00000330 BTC",
@@ -1243,7 +1243,7 @@ async fn reject_dust_offboard_request() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	bark.timeout = Some(Duration::from_millis(10_000));
+	bark.set_timeout(Duration::from_millis(10_000));
 
 	let addr = bark.get_onchain_address().await;
 	let err = bark.try_offboard_all(&addr).await.unwrap_err();
@@ -1832,7 +1832,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	let proxy = srv.get_proxy_rpc(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
-	bark.timeout = Some(Duration::from_millis(10_000));
+	bark.set_timeout(Duration::from_millis(10_000));
 
 	let err = bark.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
