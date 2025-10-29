@@ -353,8 +353,17 @@ pub struct Config {
 	/// Maximum CLTV delta server will allow clients to request an
 	/// invoice generation with.
 	///
+	/// It should be much higher than the sum of:
+	/// - `vtxo_exit_delta` (144) + `htlc_expiry_delta` (40) +
+	/// `vtxo_exit_margin` (12) + `htlc_recv_claim_delta` (18)
+	///
+	/// Generated invoices will be cancelled after `htlc_subscription_timeout` anyway, if
+	/// not settled yet.
+	///
 	/// Note: it is added to [Config::htlc_expiry_delta]
 	/// to set the actual invoice's min final cltv expiry delta.
+	///
+	/// Default is 250
 	pub max_user_invoice_cltv_delta: BlockDelta,
 	/// The delay after which an htlc subscription made for a
 	/// generated invoice will be cancelled if not settled yet.

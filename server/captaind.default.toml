@@ -18,7 +18,7 @@ vtxo_lifetime = 4320
 #max_vtxo_amount = "1000000 sat"
 
 # The time between execution of each exit clause of the VTXO, in blocks
-vtxo_exit_delta = 12
+vtxo_exit_delta = 144
 
 # The maximum transaction depth of the arkoor part of VTXOs that server cosigns
 max_arkoor_depth = 5
@@ -107,7 +107,7 @@ htlc_send_expiry_delta = 258
 
 # Maximum CLTV delta server will allow clients to request an
 # invoice generation with.
-max_user_invoice_cltv_delta = 58
+max_user_invoice_cltv_delta = 250
 
 # Timeout on the HTLC subscription RPC call
 htlc_subscription_timeout = "10m"
