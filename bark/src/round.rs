@@ -32,7 +32,7 @@ use bitcoin_ext::{TxStatus, P2TR_DUST};
 use server_rpc::protos;
 
 use crate::{SECP, Wallet};
-use crate::movement::{MovementArgs, MovementKind};
+use crate::movement::old;
 use crate::vtxo_state::{VtxoState, VtxoStateKind};
 use crate::onchain::{ChainSource, ChainSourceClient};
 use crate::persist::StoredRoundState;
@@ -844,8 +844,8 @@ fn persist_round_success(
 		new_vtxos.len(), participation.offboards.len(),
 	);
 
-	if let Err(e) = wallet.db.register_movement(MovementArgs {
-		kind: MovementKind::Round,
+	if let Err(e) = wallet.db.register_movement_old(old::MovementArgs {
+		kind: old::MovementKind::Round,
 		spends: &participation.inputs.iter().collect::<Vec<_>>(),
 		receives: &new_vtxos.iter()
 			.map(|v| (v, VtxoState::Spendable))

@@ -17,7 +17,7 @@ use ark::vtxo::VtxoRef;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::{ExitState, ExitTxOrigin};
-use crate::movement::{Movement, MovementKind};
+use crate::movement::old;
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
 	LightningReceive, PendingLightningSend, SerdeRoundState, SerdeUnconfirmedRound, StoredExit,
@@ -26,7 +26,7 @@ use crate::persist::sqlite::convert::{row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
 
-use super::convert::row_to_movement;
+use super::convert::row_to_movement_old;
 
 /// Set read-only properties for the wallet
 ///
@@ -69,7 +69,7 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 	}
 }
 
-pub fn create_movement(conn: &Connection, kind: MovementKind, fees_sat: Option<Amount>) -> anyhow::Result<i32> {
+pub fn create_movement_old(conn: &Connection, kind: old::MovementKind, fees_sat: Option<Amount>) -> anyhow::Result<i32> {
 	// Store the vtxo
 	let query = "INSERT INTO bark_movement (kind, fees_sat) VALUES (:kind, :fees_sat) RETURNING *;";
 	let mut statement = conn.prepare(query)?;
@@ -113,7 +113,7 @@ pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Res
 	Ok(exists)
 }
 
-pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
+pub fn get_movements_old(conn: &Connection) -> anyhow::Result<Vec<old::Movement>> {
 	let query = "
 		SELECT * FROM movement_view
 		ORDER BY movement_view.created_at DESC
@@ -124,7 +124,7 @@ pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
 
 	let mut movements = Vec::new();
 	while let Some(row) = rows.next()? {
-		movements.push(row_to_movement(row)?);
+		movements.push(row_to_movement_old(row)?);
 	}
 
 	Ok(movements)
@@ -799,7 +799,7 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let movement_id = create_movement(&tx, MovementKind::Board, None).unwrap();
+		let movement_id = create_movement_old(&tx, old::MovementKind::Board, None).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, &VtxoState::Locked).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::Locked).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::Locked).unwrap();

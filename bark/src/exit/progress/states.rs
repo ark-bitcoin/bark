@@ -9,7 +9,7 @@ use crate::exit::models::{
 
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
 use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_cost};
-use crate::movement::{MovementArgs, MovementKind};
+use crate::movement::old::{MovementArgs, MovementKind};
 use crate::onchain::ExitUnilaterally;
 
 #[async_trait]
@@ -69,7 +69,7 @@ impl ExitStateProgress for ExitStartState {
 		debug!("Registering movement, spending VTXO: {}, recipient: {} to {}",
 			ctx.vtxo.id(), ctx.vtxo.amount(), recipient,
 		);
-		ctx.persister.register_movement(movement)
+		ctx.persister.register_movement_old(movement)
 			.map_err(|e| ExitError::MovementRegistrationFailure { error: e.to_string() })?;
 
 		Ok(ExitState::new_processing(

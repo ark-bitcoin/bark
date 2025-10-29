@@ -356,7 +356,7 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 #[cfg(test)]
 mod test {
 	use crate::exit::models::{ExitState, ExitTxOrigin};
-	use crate::movement::MovementRecipient;
+	use crate::movement::old::MovementRecipient;
 	use crate::vtxo_state::VtxoState;
 
 	#[test]

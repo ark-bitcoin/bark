@@ -33,8 +33,9 @@ use bdk_wallet::ChangeSet;
 use ark::{Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 
-use crate::{Movement, MovementArgs, WalletProperties};
+use crate::WalletProperties;
 use crate::exit::models::ExitTxOrigin;
+use crate::movement::old;
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -154,7 +155,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_movements(&self) -> anyhow::Result<Vec<Movement>>;
+	fn get_movements_old(&self) -> anyhow::Result<Vec<old::Movement>>;
 
 	/// Register a movement of VTXOs atomically.
 	///
@@ -169,7 +170,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if any part of the operation fails; no partial state should be
 	///   committed in that case.
-	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
+	fn register_movement_old(&self, movement: old::MovementArgs) -> anyhow::Result<()>;
 
 	/// Store a pending board.
 	///

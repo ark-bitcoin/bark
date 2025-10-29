@@ -338,7 +338,7 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::exit::Exit;
-use crate::movement::{Movement, MovementArgs, MovementKind};
+use crate::movement::old::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingLightningSend, LightningReceive};
@@ -1000,7 +1000,7 @@ impl Wallet {
 
 	/// Fetches all wallet fund movements ordered from newest to oldest.
 	pub fn movements(&self) -> anyhow::Result<Vec<Movement>> {
-		Ok(self.db.get_movements()?)
+		Ok(self.db.get_movements_old()?)
 	}
 
 	/// Returns all VTXOs from the database.
@@ -1352,7 +1352,7 @@ impl Wallet {
 		// Store vtxo first before we actually make the on-chain tx.
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
-		self.db.register_movement(MovementArgs {
+		self.db.register_movement_old(MovementArgs {
 			kind: MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo, VtxoState::Locked)],
@@ -1480,7 +1480,7 @@ impl Wallet {
 					vtxos.push(vtxo);
 				}
 
-				self.db.register_movement(MovementArgs {
+				self.db.register_movement_old(MovementArgs {
 					kind: MovementKind::ArkoorReceive,
 					spends: &[],
 					receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
@@ -1894,7 +1894,7 @@ impl Wallet {
 			//NB we will continue to at least not lose our own change
 		}
 
-		self.db.register_movement(MovementArgs {
+		self.db.register_movement_old(MovementArgs {
 			kind: MovementKind::ArkoorSend,
 			spends: &arkoor.input.iter().collect::<Vec<_>>(),
 			receives: &arkoor.change.as_ref()
@@ -1946,7 +1946,7 @@ impl Wallet {
 			info!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
 		}
 
-		self.db.register_movement(MovementArgs {
+		self.db.register_movement_old(MovementArgs {
 			kind: MovementKind::LightningSendRevocation,
 			spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
 			receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
@@ -2063,7 +2063,7 @@ impl Wallet {
 			change.validate(&tx).context("invalid lightning change vtxo")?;
 		}
 
-		self.db.register_movement(MovementArgs {
+		self.db.register_movement_old(MovementArgs {
 			kind: MovementKind::LightningSend,
 			spends: &inputs.iter().collect::<Vec<_>>(),
 			receives: &htlc_vtxos.iter()
@@ -2090,7 +2090,7 @@ impl Wallet {
 
 		if let Some(preimage) = payment_preimage {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
-			self.db.register_movement(MovementArgs {
+			self.db.register_movement_old(MovementArgs {
 				kind: MovementKind::LightningSend,
 				spends: &htlc_vtxos.iter().collect::<Vec<_>>(),
 				receives: &[],
@@ -2181,7 +2181,7 @@ impl Wallet {
 					.try_into().map_err(|_| anyhow!("preimage is not 32 bytes"))?;
 				info!("Payment is complete, preimage, {}", preimage.as_hex());
 
-				self.db.register_movement(MovementArgs {
+				self.db.register_movement_old(MovementArgs {
 					kind: MovementKind::LightningSend,
 					spends: &payment.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
 					receives: &[],
@@ -2391,7 +2391,7 @@ impl Wallet {
 
 		info!("Got arkoors from lightning: {}",
 			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", "));
-		self.db.register_movement(MovementArgs {
+		self.db.register_movement_old(MovementArgs {
 			kind: MovementKind::LightningReceive,
 			spends: &inputs,
 			receives: &outputs.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
@@ -2545,7 +2545,7 @@ impl Wallet {
 			state: VtxoState::Locked,
 		}).collect::<Vec<_>>();
 
-		self.db.register_movement(MovementArgs {
+		self.db.register_movement_old(MovementArgs {
 			kind: MovementKind::LightningReceive,
 			spends: &[],
 			receives: &vtxos.iter().map(|v| (&v.vtxo, v.state.clone())).collect::<Vec<_>>(),
@@ -2663,7 +2663,7 @@ impl Wallet {
 						self.exit.write().await.mark_vtxos_for_exit(&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>());
 					} else {
 						warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
-						self.db.register_movement(MovementArgs {
+						self.db.register_movement_old(MovementArgs {
 							kind: MovementKind::LightningReceive,
 							spends: &vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>(),
 							receives: &[],

@@ -9,7 +9,7 @@ use rusqlite::{Row, RowIndex, Rows};
 
 use ark::{ProtocolEncoding, Vtxo};
 
-use crate::movement::{Movement, MovementKind, MovementRecipient};
+use crate::movement::old;
 use crate::vtxo_state::VtxoState;
 use crate::WalletVtxo;
 
@@ -30,10 +30,10 @@ pub trait RowExt<'a>: Borrow<Row<'a>> {
 
 impl<'a> RowExt<'a> for Row<'a> {}
 
-pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
+pub (crate) fn row_to_movement_old(row: &Row<'_>) -> anyhow::Result<old::Movement> {
 	let fees: Amount = Amount::from_sat(row.get("fees_sat")?);
 
-	let kind = MovementKind::from_str(&row.get::<_, String>("kind")?)?;
+	let kind = old::MovementKind::from_str(&row.get::<_, String>("kind")?)?;
 	let spends = serde_json::from_str::<Vec<String>>(&row.get::<_, String>("spends")?)?
 		.iter()
 		.map(|v| {
@@ -51,9 +51,9 @@ pub (crate) fn row_to_movement(row: &Row<'_>) -> anyhow::Result<Movement> {
 		.collect::<Result<Vec<Vtxo>, _>>()?;
 
 
-	let recipients = serde_json::from_str::<Vec<MovementRecipient>>(&row.get::<_, String>("recipients")?)?;
+	let recipients = serde_json::from_str::<Vec<old::MovementRecipient>>(&row.get::<_, String>("recipients")?)?;
 
-	Ok(Movement {
+	Ok(old::Movement {
 		id: row.get("id")?,
 		kind: kind,
 		fees: fees,

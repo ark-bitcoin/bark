@@ -146,8 +146,8 @@ pub struct RecipientInfo {
 	pub amount: Amount
 }
 
-impl From<bark::movement::MovementRecipient> for RecipientInfo {
-	fn from(v: bark::movement::MovementRecipient) -> Self {
+impl From<bark::movement::old::MovementRecipient> for RecipientInfo {
+	fn from(v: bark::movement::old::MovementRecipient) -> Self {
 		RecipientInfo {
 			recipient: v.recipient,
 			amount: v.amount,

@@ -269,8 +269,8 @@ pub struct Movement {
 	pub created_at: String,
 }
 
-impl From<bark::movement::Movement> for Movement {
-	fn from(v: bark::movement::Movement) -> Self {
+impl From<bark::movement::old::Movement> for Movement {
+	fn from(v: bark::movement::old::Movement) -> Self {
 		Movement {
 			id: v.id,
 			fees: v.fees,

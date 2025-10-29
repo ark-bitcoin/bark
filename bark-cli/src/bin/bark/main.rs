@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
-use bark::movement::Movement;
+use bark::movement::old::Movement;
 use bark::round::RoundStatus;
 use bark::vtxo_state::{VtxoStateKind, WalletVtxo};
 use bitcoin::{Amount, Network};

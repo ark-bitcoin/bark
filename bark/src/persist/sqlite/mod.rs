@@ -27,7 +27,7 @@ use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
-use crate::movement::{Movement, MovementArgs, MovementKind};
+use crate::movement::old;
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::round::{RoundState, UnconfirmedRound};
@@ -61,8 +61,8 @@ impl SqliteClient {
 	}
 
 	/// Create a movement to link VTXOs to it
-	fn create_movement(&self, tx: &Transaction, kind: MovementKind, fees: Option<Amount>) -> anyhow::Result<i32> {
-		let movement_id = query::create_movement(&tx, kind, fees)?;
+	fn create_movement_old(&self, tx: &Transaction, kind: old::MovementKind, fees: Option<Amount>) -> anyhow::Result<i32> {
+		let movement_id = query::create_movement_old(&tx, kind, fees)?;
 
 		Ok(movement_id)
 	}
@@ -121,16 +121,16 @@ impl BarkPersister for SqliteClient {
 		query::check_recipient_exists(&conn, recipient)
 	}
 
-	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
+	fn get_movements_old(&self) -> anyhow::Result<Vec<old::Movement>> {
 		let conn = self.connect()?;
-		query::get_movements(&conn)
+		query::get_movements_old(&conn)
 	}
 
-	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()> {
+	fn register_movement_old(&self, movement: old::MovementArgs) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
-		let movement_id = self.create_movement(&tx, movement.kind, movement.fees)?;
+		let movement_id = self.create_movement_old(&tx, movement.kind, movement.fees)?;
 
 		for v in movement.spends {
 			self.mark_vtxo_as_spent(&tx, v.id(), movement_id)
@@ -435,16 +435,16 @@ mod test {
 		let (cs, conn) = in_memory_db();
 		let db = SqliteClient::open(cs).unwrap();
 
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
+		db.register_movement_old(old::MovementArgs {
+			kind: old::MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo_1, VtxoState::Spendable)],
 			recipients: &[],
 			fees: None,
 		}).unwrap();
 
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
+		db.register_movement_old(old::MovementArgs {
+			kind: old::MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo_2, VtxoState::Spendable)],
 			recipients: &[],
@@ -466,8 +466,8 @@ mod test {
 		assert!(!vtxos.iter().any(|v| v.vtxo == *vtxo_3));
 
 		// Verify that we can mark a vtxo as spent
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
+		db.register_movement_old(old::MovementArgs {
+			kind: old::MovementKind::Board,
 			spends: &[&vtxo_1],
 			receives: &[],
 			recipients: &[
@@ -480,8 +480,8 @@ mod test {
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
+		db.register_movement_old(old::MovementArgs {
+			kind: old::MovementKind::Board,
 			spends: &[],
 			receives: &[(&vtxo_3, VtxoState::Spendable)],
 			recipients: &[],

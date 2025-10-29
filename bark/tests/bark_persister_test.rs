@@ -17,7 +17,7 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 
 use bark::{WalletProperties, WalletVtxo};
 use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
-use bark::movement::{Movement, MovementArgs, MovementKind, MovementRecipient};
+use bark::movement::old::{Movement, MovementArgs, MovementKind, MovementRecipient};
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, PendingLightningSend, LightningReceive, StoredExit};
 use bark::round::{RoundState, UnconfirmedRound};
@@ -52,7 +52,7 @@ impl BarkPersister for Dummy {
 		Ok(true)
 	}
 
-	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
+	fn get_movements_old(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(Vec::<Movement>::from([Movement {
 			id: 0,
 			kind: MovementKind::Board,
@@ -67,7 +67,7 @@ impl BarkPersister for Dummy {
 		}]))
 	}
 
-	fn register_movement(&self, _movement: MovementArgs) -> anyhow::Result<()> {
+	fn register_movement_old(&self, _movement: MovementArgs) -> anyhow::Result<()> {
 		Ok(())
 	}
 
