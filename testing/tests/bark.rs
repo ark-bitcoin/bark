@@ -94,8 +94,8 @@ async fn bark_create_is_atomic() {
 	srv.stop().await.unwrap();
 	let err = ctx.try_new_bark("bark_fails", &srv).await.unwrap_err();
 	assert!(err.to_alt_string().contains(
-		"Not connected to a server. If you are sure use the --force flag.",
-	));
+		"Failed to connect to provided server (if you are sure use the --force flag): transport error"
+	), "{:?}", err);
 	assert!(!ctx.datadir.join("bark_fails").is_dir());
 }
 

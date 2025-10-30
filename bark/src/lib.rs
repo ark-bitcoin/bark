@@ -806,8 +806,8 @@ impl Wallet {
 		}
 
 		if !force {
-			if let Err(_) = ServerConnection::connect(&config.server_address, network).await {
-				bail!("Not connected to a server. If you are sure use the --force flag.");
+			if let Err(err) = ServerConnection::connect(&config.server_address, network).await {
+				bail!("Failed to connect to provided server (if you are sure use the --force flag): {}", err);
 			}
 		}
 
