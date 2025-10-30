@@ -25,8 +25,8 @@
 //! }
 //!
 //! # fn demo(mut vtxos: Vec<WalletVtxo>) -> Result<Vec<WalletVtxo>> {
-//! let selected = FilterVtxos::filter(&is_large, vtxos)?;
-//! # Ok(selected) }
+//! FilterVtxos::filter_vtxos(&is_large, &mut vtxos)?;
+//! # Ok(vtxos) }
 //! ```
 //!
 //! Builder style with [VtxoFilter]:
@@ -34,13 +34,13 @@
 //! use bitcoin_ext::BlockHeight;
 //! use bark::vtxo_selection::{FilterVtxos, VtxoFilter};
 //!
-//! # fn example(wallet: &bark::Wallet, vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+//! # fn example(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 //! let tip: BlockHeight = 1_000;
 //! let filter = VtxoFilter::new(wallet)
 //!     .expires_before(tip + 144) // expiring within ~1 day
 //!     .counterparty();           // and/or with counterparty risk
-//! let expiring_or_risky = filter.filter(vtxos)?;
-//! # Ok(expiring_or_risky) }
+//! filter.filter_vtxos(&mut vtxos)?;
+//! # Ok(vtxos) }
 //! ```
 //!
 //! Notes on semantics
@@ -57,7 +57,7 @@
 //!
 //! The intent is to allow users to filter VTXOs based on different parameters.
 
-use std::collections::HashSet;
+use std::{borrow::Borrow, collections::HashSet};
 
 use anyhow::Context;
 use bitcoin::FeeRate;
@@ -74,20 +74,26 @@ use crate::{exit::progress::util::estimate_exit_cost, vtxo_state::VtxoStateKind,
 ///
 /// This trait is also implemented for `Fn(&WalletVtxo) -> anyhow::Result<bool>`.
 pub trait FilterVtxos {
-	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>>;
+	/// Check whether the VTXO mathes this filter
+	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool>;
+
+	/// Eliminate from the vector all non-matching VTXOs
+	fn filter_vtxos<V: Borrow<WalletVtxo>>(&self, vtxos: &mut Vec<V>) -> anyhow::Result<()> {
+		for i in (0..vtxos.len()).rev() {
+			if !self.matches(vtxos[i].borrow())? {
+				vtxos.swap_remove(i);
+			}
+		}
+		Ok(())
+	}
 }
 
 impl<F> FilterVtxos for F
 where
 	F: Fn(&WalletVtxo) -> anyhow::Result<bool>,
 {
-	fn filter(&self, mut vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
-		for i in (0..vtxos.len()).rev() {
-			if !self(&vtxos[i])? {
-				vtxos.swap_remove(i);
-			}
-		}
-		Ok(vtxos)
+	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+	    self(vtxo)
 	}
 }
 
@@ -139,32 +145,6 @@ impl<'a> VtxoFilter<'a> {
 			include: HashSet::new(),
 			wallet,
 		}
-	}
-
-	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
-		let id = vtxo.id();
-
-		// First do explicit includes and excludes.
-		if self.include.contains(&id) {
-			return Ok(true);
-		}
-		if self.exclude.contains(&id) {
-			return Ok(false);
-		}
-
-		if let Some(height) = self.expires_before {
-			if (vtxo.expiry_height()) < height {
-				return Ok(true);
-			}
-		}
-
-		if self.counterparty {
-			if self.wallet.has_counterparty_risk(vtxo).context("db error")? {
-				return Ok(true);
-			}
-		}
-
-		Ok(false)
 	}
 
 	/// Include vtxos that expire before the given height.
@@ -221,13 +201,30 @@ impl<'a> VtxoFilter<'a> {
 }
 
 impl FilterVtxos for VtxoFilter<'_> {
-	fn filter(&self, mut vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
-		for i in (0..vtxos.len()).rev() {
-			if !self.matches(&vtxos[i])? {
-				vtxos.swap_remove(i);
+	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+		let id = vtxo.id();
+
+		// First do explicit includes and excludes.
+		if self.include.contains(&id) {
+			return Ok(true);
+		}
+		if self.exclude.contains(&id) {
+			return Ok(false);
+		}
+
+		if let Some(height) = self.expires_before {
+			if (vtxo.expiry_height()) < height {
+				return Ok(true);
 			}
 		}
-		Ok(vtxos)
+
+		if self.counterparty {
+			if self.wallet.has_counterparty_risk(vtxo).context("db error")? {
+				return Ok(true);
+			}
+		}
+
+		Ok(false)
 	}
 }
 
@@ -276,7 +273,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet, vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo_selection::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
@@ -284,8 +281,8 @@ impl<'a> RefreshStrategy<'a> {
 	/// let tip: BlockHeight = 200_000;
 	/// let fr = FeeRate::from_sat_per_vb(5).unwrap();
 	/// let must = RefreshStrategy::must_refresh(wallet, tip, fr);
-	/// let to_refresh_now = must.filter(vtxos)?;
-	/// # Ok(to_refresh_now) }
+	/// must.filter_vtxos(&mut vtxos)?;
+	/// # Ok(vtxos) }
 	/// ```
 	pub fn must_refresh(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
 		Self {
@@ -317,7 +314,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet, vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo_selection::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
@@ -325,8 +322,8 @@ impl<'a> RefreshStrategy<'a> {
 	/// let tip: BlockHeight = 200_000;
 	/// let fr = FeeRate::from_sat_per_vb(8).unwrap();
 	/// let should = RefreshStrategy::should_refresh(wallet, tip, fr);
-	/// let to_refresh_soon = should.filter(vtxos)?;
-	/// # Ok(to_refresh_soon) }
+	/// should.filter_vtxos(&mut vtxos)?;
+	/// # Ok(vtxos) }
 	/// ```
 	pub fn should_refresh(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
 		Self {
@@ -339,56 +336,61 @@ impl<'a> RefreshStrategy<'a> {
 }
 
 impl FilterVtxos for RefreshStrategy<'_> {
-	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
+	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
 			InnerRefreshStrategy::MustRefresh => {
-				Ok(vtxos.into_iter().filter(|vtxo| {
-					if let Some(max_arkoor_depth) = self.wallet.ark_info().map(|i| i.max_arkoor_depth) {
-						if vtxo.arkoor_depth() >= max_arkoor_depth {
-							warn!("VTXO {} reached max OOR depth {}, must be refreshed", vtxo.id(), max_arkoor_depth);
-							return true;
-						}
+				if let Some(max_arkoor_depth) = self.wallet.ark_info().map(|i| i.max_arkoor_depth) {
+					if vtxo.arkoor_depth() >= max_arkoor_depth {
+						warn!("VTXO {} reached max OOR depth {}, must be refreshed",
+							vtxo.id(), max_arkoor_depth,
+						);
+						return Ok(true);
 					}
+				}
 
-					if self.tip > vtxo.spec().expiry_height.saturating_sub(self.wallet.config().vtxo_refresh_expiry_threshold) {
-						warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
-						return true;
-					}
+				let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
+				if self.tip > vtxo.spec().expiry_height.saturating_sub(threshold) {
+					warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
+					return Ok(true);
+				}
 
-					false
-				}).collect::<Vec<_>>())
+				Ok(false)
 			},
 			InnerRefreshStrategy::ShouldRefresh => {
-				Ok(vtxos.into_iter().filter(|vtxo| {
-					let soft_depth_threshold = self.wallet.ark_info().map(|i| i.max_arkoor_depth - 1);
-					if let Some(max_oor_depth) = soft_depth_threshold {
-						if vtxo.arkoor_depth() >= max_oor_depth {
-							warn!("VTXO {} is about to become too deep, should be refreshed on next opportunity", vtxo.id());
-							return true;
-						}
+				let soft_depth_threshold = self.wallet.ark_info().map(|i| i.max_arkoor_depth - 1);
+				if let Some(max_oor_depth) = soft_depth_threshold {
+					if vtxo.arkoor_depth() >= max_oor_depth {
+						warn!("VTXO {} is about to become too deep, \
+							should be refreshed on next opportunity", vtxo.id(),
+						);
+						return Ok(true);
 					}
+				}
 
-					let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
-					if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
-						warn!("VTXO {} is about to expire, should be refreshed on next opportunity", vtxo.id());
-						return true;
-					}
+				let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
+				if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
+					warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
+						vtxo.id(),
+					);
+					return Ok(true);
+				}
 
-					let fr = self.fee_rate;
-					if vtxo.amount() < estimate_exit_cost(&[vtxo.vtxo.clone()], fr) {
-						warn!("VTXO {} is uneconomical to exit, should be refreshed on next opportunity", vtxo.id());
-						return true;
-					}
+				let fr = self.fee_rate;
+				if vtxo.amount() < estimate_exit_cost(&[vtxo.vtxo.clone()], fr) {
+					warn!("VTXO {} is uneconomical to exit, should be refreshed on \
+						next opportunity", vtxo.id(),
+					);
+					return Ok(true);
+				}
 
-					false
-				}).collect::<Vec<_>>())
+				Ok(false)
 			},
 		}
 	}
 }
 
 impl FilterVtxos for VtxoStateKind {
-	fn filter(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(vtxos.into_iter().filter(|vtxo| vtxo.state.kind() == *self).collect::<Vec<_>>())
+	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+	    Ok(vtxo.state.kind() == *self)
 	}
 }

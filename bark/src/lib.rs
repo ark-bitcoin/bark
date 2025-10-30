@@ -666,8 +666,11 @@ impl Wallet {
 	pub fn balance(&self) -> anyhow::Result<Balance> {
 		let vtxos = self.vtxos()?;
 
-		let spendable = VtxoStateKind::Spendable.filter(vtxos.clone())?
-			.iter().map(|v| v.amount()).sum::<Amount>();
+		let spendable = {
+			let mut v = vtxos.iter().collect();
+			VtxoStateKind::Spendable.filter_vtxos(&mut v)?;
+			v.into_iter().map(|v| v.amount()).sum::<Amount>()
+		};
 
 		let pending_lightning_send = self.pending_lightning_send_vtxos()?.iter().map(|v| v.amount())
 			.sum::<Amount>();
@@ -716,8 +719,9 @@ impl Wallet {
 
 	/// Returns all vtxos matching the provided predicate
 	pub fn vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.vtxos()?;
-		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
+		let mut vtxos = self.vtxos()?;
+		filter.filter_vtxos(&mut vtxos).context("error filtering vtxos")?;
+		Ok(vtxos)
 	}
 
 	/// Returns all spendable vtxos
@@ -730,14 +734,16 @@ impl Wallet {
 		&self,
 		filter: &impl FilterVtxos,
 	) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.spendable_vtxos()?;
-		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
+		let mut vtxos = self.spendable_vtxos()?;
+		filter.filter_vtxos(&mut vtxos).context("error filtering vtxos")?;
+		Ok(vtxos)
 	}
 
 	/// Returns all in-round VTXOs matching the provided predicate
 	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.db.get_in_round_vtxos()?;
-		Ok(filter.filter(vtxos).context("error filtering vtxos")?)
+		let mut vtxos = self.db.get_in_round_vtxos()?;
+		filter.filter_vtxos(&mut vtxos).context("error filtering vtxos")?;
+		Ok(vtxos)
 	}
 
 	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
