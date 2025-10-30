@@ -383,6 +383,7 @@ async fn full_round() {
 		cfg.round_submit_time = Duration::from_millis(10_000);
 		cfg.round_sign_time = Duration::from_millis(10_000);
 		cfg.nb_round_nonces = 2;
+		cfg.min_board_amount = sat(0);
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
@@ -1051,7 +1052,11 @@ async fn register_unconfirmed_board() {
 #[tokio::test]
 async fn reject_dust_board_cosign() {
 	let ctx = TestContext::new("server/reject_dust_board_cosign").await;
-	let srv = ctx.new_captaind("server", None).await;
+	// Need to set the `min_board_amount` less than dust to check we
+	// reject signing on dust always.
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.min_board_amount = sat(0);
+	}).await;
 
 	#[derive(Clone)]
 	struct Proxy;
@@ -1071,6 +1076,24 @@ async fn reject_dust_board_cosign() {
 	let err = bark.try_board_all().await.unwrap_err();
 	assert!(err.to_string().contains(
 		"bad user input: board amount must be at least 0.00000330 BTC",
+	), "err: {err}");
+}
+
+#[tokio::test]
+async fn reject_below_minimum_board_cosign() {
+	let ctx = TestContext::new("server/reject_below_minimum_board_cosign").await;
+
+	// Set up server with `min_board_amount` of 30 000 sats
+	const MIN_BOARD_AMOUNT_SATS: u64 = 30_000;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.min_board_amount = sat(MIN_BOARD_AMOUNT_SATS);
+	}).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(MIN_BOARD_AMOUNT_SATS - 1)).await;
+
+	let err = bark.try_board_all().await.unwrap_err();
+	assert!(err.to_string().contains(
+		"bad user input: board amount must be at least 0.00030000 BTC",
 	), "err: {err}");
 }
 
