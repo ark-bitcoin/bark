@@ -1,6 +1,7 @@
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use bitcoin::{FeeRate, Network};
 
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -111,7 +112,21 @@ impl Config {
 			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
 			ret.round_tx_required_confirmations = 2;
 		}
+
 		ret
+	}
+
+	/// Load config from the config file path, filling missing fields
+	/// from the network default
+	pub fn load(network: Network, path: impl AsRef<Path>) -> anyhow::Result<Config> {
+		let default = config::Config::try_from(&Self::network_default(network))
+			.expect("default config failed to deconstruct");
+
+		Ok(config::Config::builder()
+			.add_source(default)
+			.add_source(config::File::from(path.as_ref()))
+			.build().context("error building config")?
+			.try_deserialize::<Config>().context("error parsing config")?)
 	}
 }
 

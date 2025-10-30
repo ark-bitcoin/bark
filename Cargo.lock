@@ -516,6 +516,7 @@ dependencies = [
  "bip39",
  "bitcoin",
  "chrono",
+ "config",
  "futures",
  "lazy_static",
  "lightning",
