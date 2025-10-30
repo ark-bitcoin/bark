@@ -1401,18 +1401,20 @@ impl PendingConfirmationState {
 		if let Ok(Some(confirmed_in)) = confirmed_in {
 			let confs = tip - (confirmed_in - 1);
 			if confs >= ROUND_DEEPLY_CONFIRMED {
-				let vtxos = wallet.db.get_in_round_vtxos().map_err(|e| {
-					error!("DB error when trying to get in round vtxos: {}", e);
-					AttemptError::DatabaseError(e.to_string())
-				})?;
-
-				let input_ids = self.forfeited_vtxos.iter()
-					.map(|f| f.vtxo_id).collect::<Vec<_>>();
-				let filter = VtxoFilter::new(wallet).include_many(input_ids);
-				let inputs = filter.filter(vtxos).map_err(|e| {
-					error!("DB error when trying to get filtered vtxos: {}", e);
-					AttemptError::DatabaseError(e.to_string())
-				})?;
+				let inputs = {
+					let mut vtxos = wallet.db.get_in_round_vtxos().map_err(|e| {
+						error!("DB error when trying to get in round vtxos: {}", e);
+						AttemptError::DatabaseError(e.to_string())
+					})?;
+					let input_ids = self.forfeited_vtxos.iter()
+						.map(|f| f.vtxo_id).collect::<Vec<_>>();
+					let filter = VtxoFilter::new(wallet).include_many(input_ids);
+					filter.filter_vtxos(&mut vtxos).map_err(|e| {
+						error!("DB error when trying to get filtered vtxos: {}", e);
+						AttemptError::DatabaseError(e.to_string())
+					})?;
+					vtxos
+				};
 
 				debug_assert_eq!(inputs.len(), self.forfeited_vtxos.len());
 
