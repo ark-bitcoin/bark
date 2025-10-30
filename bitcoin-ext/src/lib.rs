@@ -64,7 +64,7 @@ pub type BlockHeight = u32;
 pub type BlockDelta = u16;
 /// Reference to a block in the chain
 ///
-/// Stirng representation is "<height>:<hash>".
+/// String representation is "<height>:<hash>".
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockRef {
 	pub height: BlockHeight,

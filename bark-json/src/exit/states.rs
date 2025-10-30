@@ -7,8 +7,6 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
-use crate::exit::ExitState;
-
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitTx {
@@ -52,24 +50,6 @@ pub enum ExitTxStatus {
 		block: BlockRef,
 		origin: ExitTxOrigin,
 	},
-}
-
-impl ExitTxStatus {
-	pub fn child_txid(&self) -> Option<&Txid> {
-		match self {
-			ExitTxStatus::NeedsBroadcasting { child_txid, .. } => Some(child_txid),
-			ExitTxStatus::BroadcastWithCpfp { child_txid, .. } => Some(child_txid),
-			ExitTxStatus::Confirmed { child_txid, .. } => Some(child_txid),
-			_ => None,
-		}
-	}
-
-	pub fn confirmed_in(&self) -> Option<&BlockRef> {
-		match self {
-			ExitTxStatus::Confirmed { block, .. } => Some(block),
-			_ => None,
-		}
-	}
 }
 
 impl fmt::Display for ExitTxStatus {
@@ -127,16 +107,6 @@ pub enum ExitTxOrigin {
 		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		confirmed_in: BlockRef
 	},
-}
-
-impl ExitTxOrigin {
-	pub fn confirmed_in(&self) -> Option<BlockRef> {
-		match self {
-			ExitTxOrigin::Wallet { confirmed_in } => *confirmed_in,
-			ExitTxOrigin::Mempool { .. } => None,
-			ExitTxOrigin::Block { confirmed_in } => Some(*confirmed_in),
-		}
-	}
 }
 
 impl fmt::Display for ExitTxOrigin {
@@ -211,40 +181,4 @@ pub struct ExitClaimedState {
 	pub txid: Txid,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub block: BlockRef,
-}
-
-impl Into<ExitState> for ExitStartState {
-	fn into(self) -> ExitState {
-		ExitState::Start(self)
-	}
-}
-
-impl Into<ExitState> for ExitProcessingState {
-	fn into(self) -> ExitState {
-		ExitState::Processing(self)
-	}
-}
-
-impl Into<ExitState> for ExitAwaitingDeltaState {
-	fn into(self) -> ExitState {
-		ExitState::AwaitingDelta(self)
-	}
-}
-
-impl Into<ExitState> for ExitClaimableState {
-	fn into(self) -> ExitState {
-		ExitState::Claimable(self)
-	}
-}
-
-impl Into<ExitState> for ExitClaimInProgressState {
-	fn into(self) -> ExitState {
-		ExitState::ClaimInProgress(self)
-	}
-}
-
-impl Into<ExitState> for ExitClaimedState {
-	fn into(self) -> ExitState {
-		ExitState::Claimed(self)
-	}
 }

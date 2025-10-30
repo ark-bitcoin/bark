@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bark::onchain::OnchainWallet;
+use bark_json::hal::GetInfo;
 use bitcoin::{address, Amount};
 use log::{info, warn};
 
@@ -87,7 +88,7 @@ pub enum OnchainCommand {
 	},
 }
 
-pub async fn execute_lightning_command(onchain_command: OnchainCommand, wallet: &mut Wallet, onchain: &mut OnchainWallet) -> anyhow::Result<()> {
+pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &mut Wallet, onchain: &mut OnchainWallet) -> anyhow::Result<()> {
 	let net = wallet.properties()?.network;
 
 	match onchain_command {
@@ -100,7 +101,7 @@ pub async fn execute_lightning_command(onchain_command: OnchainCommand, wallet: 
 			}
 
 			let balance = onchain.balance();
-			let onchain_balance  = json::onchain::Balance {
+			let onchain_balance  = json::onchain::OnchainBalance {
 				total: balance.total(),
 				trusted_spendable: balance.trusted_spendable(),
 				immature: balance.immature,
@@ -219,9 +220,12 @@ pub async fn execute_lightning_command(onchain_command: OnchainCommand, wallet: 
 			}
 
 			let mut transactions = onchain.list_transactions();
-
 			// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
 			transactions.reverse();
+
+			let transactions = transactions.into_iter()
+				.map(|tx| bark_json::cli::TransactionInfo::from(tx.get_info(net)))
+				.collect::<Vec<_>>();
 
 			output_json(&transactions);
 		},

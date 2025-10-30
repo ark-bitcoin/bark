@@ -1,10 +1,28 @@
 
+use bark_json::cli::ExitProgressStatus;
+use bark_json::exit::ExitState;
+use bark_json::exit::states::ExitTxStatus;
 use bitcoincore_rpc::RpcApi;
 use log::warn;
 
 use bark_json::exit::error::ExitError;
 
 use crate::{Bark, TestContext};
+
+fn check_exit_requires_confirmations(exit: &ExitProgressStatus) -> bool {
+	match &exit.state {
+		ExitState::Processing(s) => {
+			s.transactions.iter().any(|s| match s.status {
+				ExitTxStatus::AwaitingInputConfirmation { .. } => true,
+				ExitTxStatus::BroadcastWithCpfp { .. } => true,
+				_ => false,
+			})
+		},
+		ExitState::AwaitingDelta(_) => true,
+		ExitState::ClaimInProgress(_) => true,
+		_ => false,
+	}
+}
 
 pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	let mut flip = false;
@@ -36,7 +54,7 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 				}
 			}
 		}
-		if response.exits.iter().any(|t| t.state.requires_confirmations()) {
+		if response.exits.iter().any(check_exit_requires_confirmations) {
 			generate_block = true;
 		}
 

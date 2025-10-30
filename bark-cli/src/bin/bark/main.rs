@@ -730,7 +730,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			output_json(&json::Offboard::from(ret));
 		},
 		Command::Onchain(onchain_command) => {
-			onchain::execute_lightning_command(onchain_command, &mut wallet, &mut onchain).await?;
+			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut onchain).await?;
 		},
 		Command::Exit(cmd) => {
 			exit::execute_exit_command(cmd, &mut wallet, &mut onchain).await?;
