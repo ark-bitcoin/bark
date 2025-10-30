@@ -14,6 +14,29 @@
     "version": "0.1.0-beta.2"
   },
   "paths": {
+    "/api/v1/bitcoin/tip": {
+      "get": {
+        "tags": [
+          "bitcoin"
+        ],
+        "operationId": "tip",
+        "responses": {
+          "200": {
+            "description": "Returns the current bitcoin tip height",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TipResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/api/v1/board/board": {
       "post": {
         "tags": [
@@ -3291,6 +3314,19 @@
           }
         }
       },
+      "TipResponse": {
+        "type": "object",
+        "required": [
+          "tip_height"
+        ],
+        "properties": {
+          "tip_height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "TransactionInfo": {
         "type": "object",
         "description": "An information struct used to pair the ID of a transaction with the full transaction for ease\nof use and readability for the user",
@@ -3453,6 +3489,10 @@
     {
       "name": "wallet",
       "description": "Wallet-related endpoints"
+    },
+    {
+      "name": "bitcoin",
+      "description": "Bitcoin network endpoints"
     }
   ]
 }

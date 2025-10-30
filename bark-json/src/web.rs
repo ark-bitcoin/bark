@@ -5,6 +5,12 @@ use utoipa::ToSchema;
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct TipResponse {
+	pub tip_height: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct PeakAddressRequest {
 	pub index: u32,
 }

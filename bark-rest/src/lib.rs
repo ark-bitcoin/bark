@@ -29,6 +29,7 @@ const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 		(path = "/api/v1/lightning", api = api::v1::lightning::LightningApiDoc),
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
+		(path = "/api/v1/bitcoin", api = api::v1::bitcoin::BitcoinApiDoc),
 	),
 	info(
 		title = "Barkd API",
