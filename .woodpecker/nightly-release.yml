@@ -16,9 +16,9 @@ steps:
     image: alpine/curl:latest
     commands:
       - |
-        RESPONSE=$(curl -s -X GET 'https://ci.2nd.dev/api/badges/6/cc.xml' -H 'accept: text/xml')
+        RESPONSE=$(curl -s -X GET 'https://gitlab.com/api/v4/projects/75519706/pipelines?ref=master&order_by=updated_at&sort=desc&per_page=1')
         echo "Response from API: $RESPONSE"
-        if echo "$RESPONSE" | grep -q 'Success'; then
+        if echo "$RESPONSE" | grep -q 'success'; then
           echo "Master branch CI is successful."
         else
           echo "Master branch CI is not in a successful state. Aborting pipeline."
