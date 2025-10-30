@@ -19,6 +19,7 @@ test-util = [ "serde_json" ]
 bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
 bark-bitcoin-ext = { version = "0.1.0-beta.1", path = "../bitcoin-ext", default-features = false }
 serde = "1.0.219"
+chrono = "0.4"
 
 # * INTERNAL DEPS
 lazy_static.workspace = true
