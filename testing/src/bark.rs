@@ -1,8 +1,9 @@
 
+use bark::{BarkNetwork, Config};
 pub use bark_json::cli as json;
 
 use std::{env, fmt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,20 +11,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::lightning::PaymentHash;
 use bitcoin::{Address, Amount, FeeRate, Network};
-use bitcoincore_rpc::Auth;
-use log::{trace, info, error};
+use log::{error, info, trace, warn};
 use serde_json;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use bark::onchain::ChainSourceSpec;
+use ark::lightning::PaymentHash;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
-use bitcoin_ext::FeeRateExt;
+use bitcoin_ext::{BlockHeight, FeeRateExt};
 
 use crate::constants::BOARD_CONFIRMATIONS;
 use crate::{Bitcoind, TestContext};
@@ -35,19 +34,10 @@ const COMMAND_LOG_FILE: &str = "commands.log";
 const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
-pub struct BarkConfig {
-	pub datadir: PathBuf,
-	pub ark_url: String,
-	pub network: Network,
-	pub chain_source: ChainSourceSpec,
-	pub fallback_fee: FeeRate,
-	pub extra_create_args: Vec<String>,
-}
-
-#[derive(Debug)]
 pub struct Bark {
 	name: String,
-	config: BarkConfig,
+	datadir: PathBuf,
+	config: Config,
 	counter: AtomicUsize,
 	timeout: Option<Duration>,
 	_bitcoind: Option<Bitcoind>,
@@ -62,75 +52,91 @@ impl Bark {
 	}
 
 	/// Creates Bark client with a dedicated bitcoind daemon.
-	pub async fn new(name: impl AsRef<str>, bitcoind: Option<Bitcoind>, cfg: BarkConfig) -> Bark {
-		Self::try_new(name, bitcoind, cfg).await.unwrap()
+	pub async fn new(
+		name: impl AsRef<str>,
+		datadir: impl AsRef<Path>,
+		network: BarkNetwork,
+		config: Config,
+		bitcoind: Option<Bitcoind>,
+	) -> Bark {
+		Self::try_new(name, datadir, network, config, bitcoind).await.unwrap()
 	}
 
 	pub async fn try_new(
 		name: impl AsRef<str>,
+		datadir: impl AsRef<Path>,
+		network: BarkNetwork,
+		config: Config,
 		bitcoind: Option<Bitcoind>,
-		cfg: BarkConfig
 	) -> anyhow::Result<Bark> {
+		Self::try_new_with_create_opts(name, datadir, network, config, bitcoind, None, None, false).await
+	}
+
+	pub async fn try_new_with_create_opts(
+		name: impl AsRef<str>,
+		datadir: impl AsRef<Path>,
+		network: BarkNetwork,
+		config: Config,
+		bitcoind: Option<Bitcoind>,
+		mnemonic: Option<String>,
+		birthday: Option<BlockHeight>,
+		force: bool,
+	) -> anyhow::Result<Bark> {
+		let datadir = datadir.as_ref().to_path_buf();
+
+		if datadir.exists() {
+			bail!("Datadir already exists: {}", datadir.display());
+		}
+
+		fs::create_dir_all(&datadir).await
+			.with_context(|| format!("error creating bark datadir at {}", datadir.display()))?;
+
+		let config_path = datadir.join("config.toml");
+		fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).await
+			.with_context(|| format!("error writing bark config file to {}", config_path.display()))?;
+
 		let mut cmd = Self::cmd();
 		cmd
 			.arg("create")
+			.arg(format!("--{}", network))
 			.arg("--datadir")
-			.arg(&cfg.datadir)
-			.arg("--verbose")
-			.arg("--ark")
-			.arg(&cfg.ark_url)
-			.arg("--vtxo-refresh-expiry-threshold")
-			.arg("24")
-			.arg(format!("--{}", &cfg.network))
-			.arg("--fallback-fee-rate")
-			.arg(&format!("{}", cfg.fallback_fee.to_sat_per_kvb()));
-
-		// allow extra args
-		for arg in &cfg.extra_create_args {
-			cmd.arg(arg);
+			.arg(&datadir)
+			.arg("--verbose");
+		if let Some(m) = mnemonic {
+			cmd.arg("--mnemonic").arg(m);
 		}
-
-		// Configure barks' chain source
-		match &cfg.chain_source {
-			ChainSourceSpec::Bitcoind { url, auth } => {
-				cmd.args(["--bitcoind", &url]);
-				match auth {
-					Auth::None => panic!("Missing credentials for bitcoind"),
-					Auth::UserPass(user, password) => {
-						cmd.args([
-							"--bitcoind-user", user,
-							"--bitcoind-password", password,
-						]);
-					}
-					Auth::CookieFile(cookie) => {
-						cmd.args(["--bitcoind-cookie", &cookie.display().to_string()]);
-					}
-				}
-			}
-			ChainSourceSpec::Esplora { url } => {
-				cmd.args(["--esplora", &url]);
-			}
+		if let Some(h) = birthday {
+			cmd.arg("--birthday-height").arg(h.to_string());
+		}
+		if force {
+			cmd.arg("--force");
 		}
 
 		let output = cmd.output().await?;
 		if !output.status.success() {
 			error!("Failure creating new bark wallet");
-			let stdout = String::from_utf8(output.stdout)?;
-			let stderr = String::from_utf8(output.stderr)?;
 
-			error!("{}", stderr);
-			error!("{}", stdout);
+			let stderr = str::from_utf8(&output.stderr)?;
+			error!("STDERR:\n{}", stderr);
+			let stdout = str::from_utf8(&output.stdout)?;
+			error!("STDOUT:\n{}", stdout);
+
+			// we wrote the config file, so let's clean it up
+			if let Err(e) = fs::remove_dir_all(&datadir).await {
+				warn!("Error cleaning up bark datadir at {}: {:#}", datadir.display(), e);
+			}
 
 			bail!("Failed to create {}: stderr: {}; stdout: {}", name.as_ref(), stderr, stdout);
 		}
 
 		Ok(Bark {
 			_bitcoind: bitcoind,
+			config: config,
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
 			timeout: None,
-			command_log: Mutex::new(fs::File::create(cfg.datadir.join(COMMAND_LOG_FILE)).await?),
-			config: cfg,
+			command_log: Mutex::new(fs::File::create(datadir.join(COMMAND_LOG_FILE)).await?),
+			datadir: datadir,
 		})
 	}
 
@@ -138,7 +144,11 @@ impl Bark {
 		&self.name
 	}
 
-	pub fn config(&self) -> &BarkConfig {
+	pub fn datadir(&self) -> &Path {
+		&self.datadir
+	}
+
+	pub fn config(&self) -> &Config {
 		&self.config
 	}
 
@@ -160,19 +170,19 @@ impl Bark {
 		const CONFIG_FILE: &str = "config.toml";
 
 		// read mnemonic file
-		let mnemonic_path = self.config.datadir.join(MNEMONIC_FILE);
+		let mnemonic_path = self.datadir.join(MNEMONIC_FILE);
 		let mnemonic_str = fs::read_to_string(&mnemonic_path).await
 			.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
 		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 
 		// Read the config file
-		let config_path = self.config.datadir.join(CONFIG_FILE);
+		let config_path = self.datadir.join(CONFIG_FILE);
 		let config_str = fs::read_to_string(&config_path).await
 			.with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
 		let config: bark::Config = toml::from_str(&config_str)
 			.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
 
-		let db = bark::SqliteClient::open(self.config.datadir.join(DB_FILE))?;
+		let db = bark::SqliteClient::open(self.datadir.join(DB_FILE))?;
 
 		Ok(bark::Wallet::open(&mnemonic, Arc::new(db), config).await?)
 	}
@@ -186,16 +196,16 @@ impl Bark {
 	}
 
 	pub fn command_log_file(&self) -> PathBuf {
-		self.config.datadir.join(COMMAND_LOG_FILE)
+		self.datadir.join(COMMAND_LOG_FILE)
 	}
 
 	/// Set the bark's server address.
 	pub async fn set_ark_url(&self, srv: &dyn ToArkUrl) {
-		let config_path = self.config().datadir.join("config.toml");
+		let config_path = self.datadir.join("config.toml");
 
 		// Read the config
 		let config_str = fs::read_to_string(&config_path).await.expect("Failed to read config.toml");
-		let mut config: bark::Config = toml::from_str(&config_str).expect("Failed to parse config.toml");
+		let mut config = toml::from_str::<Config>(&config_str).expect("Failed to parse config.toml");
 
 		// modify the config
 		config.server_address = srv.ark_url();
@@ -558,7 +568,7 @@ impl Bark {
 		command.args(&[
 			"--verbose",
 			"--datadir",
-			self.config.datadir.as_os_str().to_str().unwrap(),
+			self.datadir.as_os_str().to_str().unwrap(),
 		]);
 		command.args(args);
 		command.kill_on_drop(true);
@@ -566,7 +576,7 @@ impl Bark {
 
 		// Create a folder for each command
 		let count = self.counter.fetch_add(1, Ordering::Relaxed);
-		let folder = self.config.datadir.join("cmd").join(format!("{:03}", count));
+		let folder = self.datadir.join("cmd").join(format!("{:03}", count));
 		fs::create_dir_all(&folder).await?;
 		fs::write(folder.join("cmd.log"), &command_str).await?;
 		let mut command_log = self.command_log.lock().await;

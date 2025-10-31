@@ -1,4 +1,5 @@
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -6,6 +7,48 @@ use bitcoin::{FeeRate, Network};
 
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
+
+/// Networks bark can be used on
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BarkNetwork {
+	/// Bitcoin's mainnet
+	Mainnet,
+	/// The official Bitcoin Core signet
+	Signet,
+	/// Mutinynet
+	Mutinynet,
+	/// Any regtest network
+	Regtest,
+}
+
+impl BarkNetwork {
+	/// Map to the [Network] types
+	pub fn as_bitcoin(&self) -> Network {
+		match self {
+			Self::Mainnet => Network::Bitcoin,
+			Self::Signet => Network::Signet,
+			Self::Mutinynet => Network::Signet,
+			Self::Regtest => Network::Regtest,
+		}
+	}
+}
+
+impl fmt::Display for BarkNetwork {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    match self {
+			Self::Mainnet => f.write_str("mainnet"),
+			Self::Signet => f.write_str("signet"),
+			Self::Mutinynet => f.write_str("mutinynet"),
+			Self::Regtest => f.write_str("regtest"),
+		}
+	}
+}
+
+impl fmt::Debug for BarkNetwork {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
 
 /// Configuration of the Bark wallet.
 ///

@@ -297,7 +297,7 @@ pub mod lightning_utils;
 pub mod vtxo_state;
 pub mod vtxo_selection;
 
-pub use self::config::Config;
+pub use self::config::{BarkNetwork, Config};
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo_state::WalletVtxo;
 

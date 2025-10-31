@@ -1,18 +1,16 @@
-use std::fs::File;
-use std::io::Write;
+
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
-use bitcoin::Network;
 use clap::Args;
 use log::{debug, info, warn};
 
-use bark::{Config, Wallet as BarkWallet, SqliteClient};
+use bark::{BarkNetwork, Config, SqliteClient, Wallet as BarkWallet};
 use bark::onchain::OnchainWallet;
 use bitcoin_ext::BlockHeight;
 
-use crate::ConfigOpts;
+use crate::{ConfigOpts, DEBUG_LOG_FILE};
 
 /// File name of the mnemonic file.
 const MNEMONIC_FILE: &str = "mnemonic";
@@ -55,45 +53,101 @@ pub struct CreateOpts {
 	config: ConfigOpts,
 }
 
+/// Checks the config file and maybe cleans it
+/// - returns whether a config file was present
+/// - if clean is false, errors if any file not config or logs is present
+/// - if clean is true, removes all files not config or logs
+async fn check_clean_datadir(datadir: &Path, clean: bool) -> anyhow::Result<bool> {
+	let mut has_config = false;
+	if datadir.exists() {
+		for item in datadir.read_dir().context("error accessing datadir")? {
+			let item = item.context("error reading existing content of datadir")?;
+
+			if item.file_name() == CONFIG_FILE {
+				has_config = true;
+				continue;
+			}
+			if item.file_name() == DEBUG_LOG_FILE {
+				continue;
+			}
+
+			if !clean {
+				bail!("Datadir has unexpected contents: {}", item.path().display());
+			}
+
+			// otherwise try wipe
+			let file_type = item.file_type().context("error accessing datadir content")?;
+			if file_type.is_dir() {
+				tokio::fs::remove_dir_all(item.path()).await.context("error deleting datadir content")?;
+			} else if file_type.is_file() || file_type.is_symlink() {
+				tokio::fs::remove_file(item.path()).await.context("error deleting datadir content")?;
+			} else {
+				// can't happen
+				bail!("non-existent file type in ");
+			}
+		}
+	}
+	Ok(has_config)
+}
+
 pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<()> {
 	debug!("Creating wallet in {}", datadir.display());
 
 	let net = match (opts.mainnet, opts.signet, opts.regtest, opts.mutinynet) {
-		(true,  false, false, false) => Network::Bitcoin,
-		(false, true,  false, false) => Network::Signet,
-		(false, false, true,  false) => Network::Regtest,
-		(false, false, false, true ) => Network::Signet, // mutinynet piggy-backs on Signet params
+		(true,  false, false, false) => BarkNetwork::Mainnet,
+		(false, true,  false, false) => BarkNetwork::Signet,
+		(false, false, true,  false) => BarkNetwork::Regtest,
+		(false, false, false, true ) => BarkNetwork::Mutinynet,
 		_ => bail!("Specify exactly one of --mainnet, --signet, --regtest or --mutinynet"),
 	};
 
-	let mut config = Config {
-		// required args
-		server_address: opts.config.ark.clone().context("Ark server address missing, use --ark")?,
-		..Config::network_default(net)
-	};
+	// check for non-config file contents in the datadir and wipe if force
+	let config_existed = check_clean_datadir(datadir, opts.force).await?;
 
-	// Fallback to our default signet backend
-	// Only do it when the user did *not* specify either --esplora or --bitcoind.
-	if opts.signet && opts.config.esplora.is_none() && opts.config.bitcoind.is_none() {
-		config.esplora_address = Some("https://esplora.signet.2nd.dev/".to_owned());
-	}
-
-	// Fallback to MutinyNet community Esplora
-	// Only do it when the user did *not* specify either --esplora or --bitcoind.
-	if opts.mutinynet && opts.config.esplora.is_none() && opts.config.bitcoind.is_none() {
-		config.esplora_address = Some("https://mutinynet.com/api".to_owned());
-	}
-
-	opts.config.merge_into(&mut config).context("invalid configuration")?;
-
-	// check if dir doesn't exists, then create it
-	if datadir.exists() {
-		if opts.force {
-			tokio::fs::remove_dir_all(datadir).await?;
+	// Everything that errors after this will wipe the datadir again.
+	let result = try_create_wallet(datadir, net, opts).await;
+	if let Err(e) = result {
+		if config_existed {
+			if let Err(e) = check_clean_datadir(datadir, true).await {
+				warn!("Error cleaning datadir after failure: {:#}", e);
+			}
 		} else {
-			bail!("Directory {} already exists", datadir.display());
+			if let Err(e) = tokio::fs::remove_dir_all(datadir).await {
+				warn!("Error removing datadir after failure: {:#}", e);
+			}
 		}
+
+		bail!("Error while creating wallet: {:#}", e);
 	}
+	Ok(())
+}
+
+/// In this method we create the wallet and if it fails, the datadir will be wiped again.
+async fn try_create_wallet(
+	datadir: &Path,
+	net: BarkNetwork,
+	mut opts: CreateOpts,
+) -> anyhow::Result<()> {
+	info!("Creating new bark Wallet at {}", datadir.display());
+
+	tokio::fs::create_dir_all(datadir).await.context("can't create dir")?;
+
+	let config_path = datadir.join(CONFIG_FILE);
+	let has_config_args = opts.config != ConfigOpts::default();
+	let config = match (config_path.exists(), has_config_args) {
+		(true, false) => {
+			Config::load(net.as_bitcoin(), &config_path).with_context(|| format!(
+				"error loading existing config file at {}", config_path.display(),
+			))?
+		},
+		(false, true) => {
+			opts.config.fill_network_defaults(net);
+			opts.config.validate().context("invalid config options")?;
+			opts.config.write_to_file(net.as_bitcoin(), config_path)?
+		},
+		(false, false) => bail!("You need to provide config flags or a config file"),
+		(true, true) => bail!("Cannot provide an existing config file and config flags"),
+	};
 
 	// A mnemonic implies that the user wishes to recover an existing wallet.
 	if opts.mnemonic.is_some() {
@@ -112,62 +166,26 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 		}
 	}
 
-	// Everything that errors after this will wipe the datadir again.
-	let result = try_create_wallet(
-		&datadir, net, config, opts.mnemonic, opts.birthday_height, opts.force,
-	).await;
-	if let Err(e) = result {
-		// Remove the datadir if it exists
-		if datadir.exists() {
-			if let Err(e) = tokio::fs::remove_dir_all(datadir).await {
-				warn!("Failed to remove '{}", datadir.display());
-				warn!("{}", e.to_string());
-			}
-		}
-		bail!("Error while creating wallet: {:?}", e);
-	}
-	Ok(())
-}
-
-/// In this method we create the wallet and if it fails, the datadir will be wiped again.
-async fn try_create_wallet(
-	datadir: &Path,
-	net: Network,
-	config: Config,
-	mnemonic: Option<bip39::Mnemonic>,
-	birthday_height: Option<BlockHeight>,
-	force: bool,
-) -> anyhow::Result<()> {
-	info!("Creating new bark Wallet at {}", datadir.display());
-
-	tokio::fs::create_dir_all(datadir).await.context("can't create dir")?;
-
 	// generate seed
-	let is_new_wallet = mnemonic.is_none();
-	let mnemonic = mnemonic.unwrap_or_else(|| bip39::Mnemonic::generate(12).expect("12 is valid"));
+	let is_new_wallet = opts.mnemonic.is_none();
+	let mnemonic = opts.mnemonic.unwrap_or_else(|| bip39::Mnemonic::generate(12).expect("12 is valid"));
 	let seed = mnemonic.to_seed("");
 	tokio::fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
 		.context("failed to write mnemonic")?;
 
-	// Write the config to disk
-	let toml_string = toml::to_string_pretty(&config).expect("config serialization error");
-
-	let config_path = datadir.join(CONFIG_FILE);
-	let mut file = File::create(&config_path)?;
-	write!(file, "{}", toml_string)
-		.with_context(|| format!("Failed to write config to {}", config_path.display()))?;
-
 	// open db
 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
 
-	let mut onchain = OnchainWallet::load_or_create(net, seed, db.clone())?;
-	let wallet = BarkWallet::create_with_onchain(&mnemonic, net, config, db, &onchain, force).await.context("error creating wallet")?;
+	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone())?;
+	let wallet = BarkWallet::create_with_onchain(
+		&mnemonic, net.as_bitcoin(), config, db, &onchain, opts.force,
+	).await.context("error creating wallet")?;
 
 	// Skip initial block sync if we generated a new wallet.
 	let birthday_height = if is_new_wallet {
 		Some(wallet.chain.tip().await?)
 	} else {
-		birthday_height
+		opts.birthday_height
 	};
 	onchain.initial_wallet_scan(&wallet.chain, birthday_height).await?;
 	Ok(())
