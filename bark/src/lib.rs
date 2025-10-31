@@ -1427,7 +1427,7 @@ impl Wallet {
 		&self,
 		amount: Amount,
 		max_depth: Option<u16>,
-		current_height: Option<BlockHeight>,
+		expiry_threshold: Option<BlockHeight>,
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.spendable_vtxos()?;
 
@@ -1445,11 +1445,11 @@ impl Wallet {
 			}
 
 			// Check if vtxo is soon-to-expire for arkoor payments
-			if let Some(height) = current_height {
-				let threshold = height.saturating_add(self.config.vtxo_refresh_expiry_threshold);
+			if let Some(threshold) = expiry_threshold {
 				if input.expiry_height() < threshold {
-					warn!("VTXO {} is expiring soon (expires at {}, current height {}), \
-						skipping for arkoor payment", input.id(), input.expiry_height(), height,
+					warn!("VTXO {} is expiring soon (expires at {}, threshold {}), \
+						skipping for arkoor payment",
+						input.id(), input.expiry_height(), threshold,
 					);
 					continue;
 				}
@@ -1487,10 +1487,11 @@ impl Wallet {
 		};
 
 		// Get current height for expiry checking
-		let current_height = self.chain.tip().await.ok();
-
+		let tip = self.chain.tip().await?;
 		let inputs = self.select_vtxos_to_cover(
-			req.amount, Some(srv.info.max_arkoor_depth), current_height,
+			req.amount,
+			Some(srv.info.max_arkoor_depth),
+			Some(tip + self.config.vtxo_refresh_expiry_threshold),
 		)?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
@@ -1678,8 +1679,6 @@ impl Wallet {
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<Preimage> {
 		let mut srv = self.require_server()?;
-		let tip = self.chain.tip().await?;
-
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		if invoice.network() != properties.network {
@@ -1705,10 +1704,8 @@ impl Wallet {
 
 		let (change_keypair, _) = self.derive_store_next_keypair()?;
 
-		let expected_expiry = tip + srv.info.htlc_send_expiry_delta as BlockHeight;
-		let inputs = self.select_vtxos_to_cover(
-			amount, Some(srv.info.max_arkoor_depth), Some(expected_expiry),
-		).context("Could not find enough suitable VTXOs to cover lightning payment")?;
+		let inputs = self.select_vtxos_to_cover(amount, Some(srv.info.max_arkoor_depth), None)
+			.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
