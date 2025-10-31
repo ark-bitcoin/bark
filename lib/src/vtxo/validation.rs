@@ -144,11 +144,6 @@ pub fn validate(
 		return Err(VtxoValidationError::Invalid("no genesis items"));
 	}
 
-	let cosign_pubkeys = vtxo.round_cosign_pubkeys();
-	if cosign_pubkeys.is_empty() {
-		return Err(VtxoValidationError::InconsistentCosignPubkeys);
-	}
-
 	let mut prev = (Cow::Borrowed(chain_anchor_tx), vtxo.chain_anchor().vout as usize, onchain_amount);
 	let mut iter = vtxo.genesis.iter().enumerate().peekable();
 	while let Some((idx, item)) = iter.next() {

@@ -980,35 +980,6 @@ impl Vtxo {
 		}
 	}
 
-	/// The set of cosign pubkeys that is present in all of the exit nodes of the
-	/// non-arkoor part of the exit path.
-	pub fn round_cosign_pubkeys(&self) -> Vec<PublicKey> {
-		let mut ret = Option::<Vec<PublicKey>>::None;
-
-		// We want to gather the cosign pubkeys that are present in all cosigned
-		// transitions. We expect the last transition to have the fewest number of
-		// cosign pubkeys so we go backwards.
-		for item in self.genesis.iter().rev() {
-			match &item.transition {
-				GenesisTransition::Cosigned { pubkeys, .. } => {
-					if let Some(ref mut keys) = ret {
-						keys.retain(|p| pubkeys.contains(p));
-						if keys.is_empty() {
-							break;
-						}
-					} else {
-						// first cosigned transition
-						ret = Some(pubkeys.clone());
-					}
-				},
-				GenesisTransition::HashLockedCosigned { .. } => {},
-				GenesisTransition::Arkoor { .. } => {},
-			}
-		}
-
-		ret.unwrap_or_default()
-	}
-
 	/// The set of all arkoor pubkeys present in the arkoor part
 	/// of the VTXO exit path.
 	pub fn arkoor_pubkeys(&self) -> HashSet<PublicKey> {
