@@ -938,15 +938,6 @@ impl Vtxo {
 		}
 	}
 
-	/// Whether this [Vtxo] can be spent in an arkoor tx.
-	pub fn is_arkoor_compatible(&self) -> bool {
-		self.genesis.iter().all(|i| match i.transition {
-			GenesisTransition::Cosigned { .. } => true,
-			GenesisTransition::HashLockedCosigned { .. } => true,
-			GenesisTransition::Arkoor { ref policy, .. } => policy.is_arkoor_compatible(),
-		}) && self.policy.is_arkoor_compatible()
-	}
-
 	/// The public key used to cosign arkoor txs spending this [Vtxo].
 	/// This will return [None] if [Vtxo::is_arkoor_compatible] returns false.
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
