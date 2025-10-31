@@ -179,7 +179,7 @@
 //! However, the user remains in full control of the funds and can perform
 //! a unilateral exit at any time.
 //!
-//! The snippet below shows how you can inspect your [bark::WalletVtxo]s.
+//! The snippet below shows how you can inspect your [WalletVtxo]s.
 //!
 //! ```no_run
 //! # use std::sync::Arc;
@@ -219,7 +219,7 @@
 //! }
 //! ```
 //!
-//! Use [Wallet::offchain_balance] if you are only interested in the balance.
+//! Use [Wallet::balance] if you are only interested in the balance.
 //!
 //! ## Participating in a round
 //!
@@ -421,7 +421,7 @@ impl From<Utxo> for UtxoInfo {
 /// Describes a completed transition of funds from onchain to offchain.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Board {
-	/// The [Txid] of the funding-transaction.
+	/// The [bitcoin::Txid] of the funding-transaction.
 	/// This is the transaction that has to be confirmed
 	/// onchain for the board to succeed.
 	pub funding_txid: bitcoin::Txid,
@@ -524,8 +524,7 @@ impl VtxoSeed {
 ///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
 ///     - [Wallet::sync_pending_lightning_send_vtxos]: Updates the status of pending lightning payments,
 ///     - [Wallet::check_and_claim_all_open_ln_receives]: Wait for payment receipt of all open invoices, then claim them,
-///     - [Wallet::claim_all_pending_htlc_recvs]: Attempts to claim all pending lightning receives,
-///     - [Wallet::register_all_confirmed_boards]: Registers boards which are available for use
+///     - [Wallet::sync_pending_boards]: Registers boards which are available for use
 ///       in offchain payments
 ///
 /// Key capabilities
@@ -1028,7 +1027,7 @@ impl Wallet {
 	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
 	/// when a board is created and when it becomes spendable.
 	///
-	/// See [ArkInfo::required_board_confirmations] and [Wallet::register_all_confirmed_boards].
+	/// See [ArkInfo::required_board_confirmations] and [Wallet::sync_pending_boards].
 	pub fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.db.get_all_pending_boards()?.iter()
 			.map(|vtxo_id| self.get_vtxo_by_id(*vtxo_id))
