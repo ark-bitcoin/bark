@@ -1,4 +1,4 @@
-![bark: Ark on bitcoin](https://gitlab.com/ark-bitcoin/bark/media/branch/master/assets/bark-header-white.jpg)
+![bark: Ark on bitcoin](https://gitlab.com/ark-bitcoin/bark/-/raw/master/assets/bark-header-white.jpg)
 
 <div align="center">
 <h1>Bark: Ark on bitcoin</h1>
@@ -42,4 +42,4 @@ This guide puts focus on how to use the Rust-API and assumes
 some basic familiarity with the Ark protocol. We refer to the
 [protocol docs](http://docs.second.tech/ark-protocol) for an introduction.
 
-For setup and usage instructions, see the [Getting Started guide](https://docs.second.tech/getting-started/) or look at our [Rust API docs](docs.rs/bark-wallet)"*? 
+For setup and usage instructions, see the [Getting Started guide](https://docs.second.tech/getting-started/) or look at our [Rust API docs](https://docs.rs/bark-wallet)? 
