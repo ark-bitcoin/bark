@@ -61,10 +61,6 @@ impl Server {
 			tip + expiry_delta as BlockHeight
 		};
 
-		if let Some(vtxo) = inputs.iter().find(|v| v.expiry_height() < expiry) {
-			return badarg!("VTXO expires before HTLC expiry height: {}", vtxo.id());
-		}
-
 		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
 		let pay_req = VtxoRequest { amount, policy: policy.clone() };
 
