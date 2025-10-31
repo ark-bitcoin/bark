@@ -350,7 +350,11 @@ impl VtxoPolicy {
 		Self::Pubkey(PubkeyVtxoPolicy { user_pubkey })
 	}
 
-	pub fn new_server_htlc_send(user_pubkey: PublicKey, payment_hash: PaymentHash, htlc_expiry: BlockHeight) -> Self {
+	pub fn new_server_htlc_send(
+		user_pubkey: PublicKey,
+		payment_hash: PaymentHash,
+		htlc_expiry: BlockHeight,
+	) -> Self {
 		Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
 	}
 
