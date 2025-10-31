@@ -288,6 +288,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
+pub mod daemon;
 pub mod error;
 pub mod exit;
 pub mod lightning_utils;
@@ -338,6 +339,7 @@ use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::{self as rpc, protos, ServerConnection};
 
+use crate::daemon::Daemon;
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementDestination, MovementStatus};
 use crate::movement::manager::{MovementGuard, MovementManager};
@@ -1468,7 +1470,7 @@ impl Wallet {
 		Ok(!self.db.get_public_key_idx(&vtxo.user_pubkey())?.is_some())
 	}
 
-	async fn sync_oors(&self) -> anyhow::Result<()> {
+	pub async fn sync_oors(&self) -> anyhow::Result<()> {
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
 			self.vtxo_seed.derive_keypair(idx).public_key()
@@ -2900,6 +2902,24 @@ impl Wallet {
 		}
 
 		self.participate_round(participation, Some(RoundMovement::SendOnchain)).await
+	}
+
+	/// Starts a daemon for the wallet, for more information see [Daemon].
+	///
+	/// Note:
+	/// - This function doesn't check if a daemon is already running,
+	/// so it's possible to start multiple daemons by mistake.
+	pub async fn run_daemon(
+		self: &Arc<Self>,
+		onchain: Arc<RwLock<dyn ExitUnilaterally>>,
+	) -> anyhow::Result<()> {
+		let daemon = Daemon::new(self.clone(), onchain)?;
+
+		tokio::spawn(async move {
+			let _ = daemon.run().await;
+		});
+
+		Ok(())
 	}
 }
 

@@ -78,7 +78,10 @@ async fn main() -> anyhow::Result<()>{
 	let wallet = Arc::new(wallet);
 	let onchain = Arc::new(RwLock::new(onchain));
 
+	wallet.run_daemon(onchain.clone()).await?;
+
 	let server = RestServer::new(cli.to_config(), wallet, onchain);
+
 	server.serve().await?;
 
 	Ok(())
