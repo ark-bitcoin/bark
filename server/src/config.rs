@@ -264,6 +264,9 @@ pub struct Config {
 	/// Maximum value any vtxo can have.
 	#[serde(default, with = "crate::serde_util::string::opt")]
 	pub max_vtxo_amount: Option<Amount>,
+	/// Minimum amount required for board transactions.
+	#[serde(with = "crate::serde_util::string")]
+	pub min_board_amount: Amount,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.

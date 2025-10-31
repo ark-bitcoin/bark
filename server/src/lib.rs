@@ -566,8 +566,10 @@ impl Server {
 		utxo: OutPoint,
 		user_pub_nonce: PublicNonce,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
-		if amount < P2TR_DUST {
-			return badarg!("board amount must be at least {}", P2TR_DUST);
+		let min_amount = self.config.min_board_amount.max(P2TR_DUST);
+
+		if amount < min_amount {
+			return badarg!("board amount must be at least {}", min_amount);
 		}
 
 		if let Some(max) = self.config.max_vtxo_amount {
