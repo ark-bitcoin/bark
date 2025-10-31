@@ -928,6 +928,15 @@ impl Wallet {
 		self.server.clone().context("You should be connected to Ark server to perform this action")
 	}
 
+	pub async fn check_connection(&self) -> anyhow::Result<()> {
+		let mut server = self.require_server()?;
+		server.client.handshake(protos::HandshakeRequest {
+			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
+		}).await?;
+
+		Ok(())
+	}
+
 	/// Return [ArkInfo] fetched on last handshake with the Ark server
 	pub fn ark_info(&self) -> Option<&ArkInfo> {
 		self.server.as_ref().map(|a| &a.info)

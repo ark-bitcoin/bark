@@ -17,6 +17,13 @@ pub struct PeakAddressRequest {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct ConnectedResponse {
+	/// Whether the wallet is currently connected to its Ark server
+	pub connected: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ArkAddressResponse {
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub address: String,
