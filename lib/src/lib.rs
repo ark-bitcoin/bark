@@ -72,6 +72,8 @@ pub struct ArkInfo {
 	/// Maximum CLTV delta server will allow clients to request an
 	/// invoice generation with.
 	pub max_user_invoice_cltv_delta: u16,
+	/// Minimum amount for a board the server will cosign
+	pub min_board_amount: Amount,
 }
 
 /// Input of a round

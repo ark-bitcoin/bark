@@ -1085,11 +1085,27 @@ async fn reject_below_minimum_board_cosign() {
 
 	// Set up server with `min_board_amount` of 30 000 sats
 	const MIN_BOARD_AMOUNT_SATS: u64 = 30_000;
+
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.min_board_amount = sat(MIN_BOARD_AMOUNT_SATS);
 	}).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(MIN_BOARD_AMOUNT_SATS - 1)).await;
+	// We need to modify the client's requested amount to board via a proxy as the client
+	// side check would prevent a board below the minimum.
+	#[derive(Clone)]
+	struct Proxy;
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn request_board_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::BoardCosignRequest,
+		) -> Result<protos::BoardCosignResponse, tonic::Status> {
+			req.amount = MIN_BOARD_AMOUNT_SATS - 1;
+			Ok(upstream.request_board_cosign(req).await?.into_inner())
+		}
+	}
+
+	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(100_000)).await;
 
 	let err = bark.try_board_all().await.unwrap_err();
 	assert!(err.to_string().contains(

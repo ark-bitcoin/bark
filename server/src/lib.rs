@@ -239,6 +239,7 @@ impl Server {
 			max_arkoor_depth: self.config.max_arkoor_depth,
 			required_board_confirmations: self.config.required_board_confirmations,
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
+			min_board_amount: self.config.min_board_amount,
 		}
 	}
 

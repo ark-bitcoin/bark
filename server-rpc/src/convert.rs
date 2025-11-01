@@ -131,6 +131,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			max_arkoor_depth: v.max_arkoor_depth as u32,
 			required_board_confirmations: v.required_board_confirmations as u32,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
+			min_board_amount: v.min_board_amount.to_sat(),
 		}
 	}
 }
@@ -157,6 +158,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			required_board_confirmations: v.required_board_confirmations as usize,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta.try_into()
 				.map_err(|_| "invalid max user invoice cltv delta")?,
+			min_board_amount: Amount::from_sat(v.min_board_amount),
 		})
 	}
 }

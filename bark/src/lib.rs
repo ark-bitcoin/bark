@@ -1015,6 +1015,11 @@ impl Wallet {
 			(psbt, amount)
 		};
 
+		ensure!(amount >= srv.info.min_board_amount,
+			"board amount of {amount} is less than minimum board amount required by server ({})",
+			srv.info.min_board_amount,
+		);
+
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 		let builder = builder
 			.set_funding_details(amount, utxo)

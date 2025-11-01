@@ -80,6 +80,7 @@ message ArkInfo {
 	uint32 max_arkoor_depth = 10;
 	uint32 required_board_confirmations = 11;
 	uint32 max_user_invoice_cltv_delta = 12;
+	uint64 min_board_amount = 13;
 }
 
 message FreshRoundsRequest {
