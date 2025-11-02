@@ -46,7 +46,7 @@ This is a helper script for CI so it can verify the version number from the tag.
 It compares this version number with the version number defined in Cargo.toml of the respective project.
 There are 2 tagging options:
 * `captaind-0.0.1` this will check if `0.0.1` is also specified as version in `server/Cargo.toml`
-* `bark-0.0.1` this will check if `0.0.1` is also specified as version in `bark/Cargo.toml`
+* `bark-0.0.1` this will check if `0.0.1` is also specified as version in `bark-cli/Cargo.toml`
 
 ## check-gitlab-release.sh
 #### parameters:
