@@ -1,36 +1,54 @@
 #!/usr/bin/env sh
 
-TEST_VERSION=$1
-if [ -z "${TEST_VERSION}" ]; then
+TEST_VERSION="${1:-}"
+if [ -z "$TEST_VERSION" ]; then
+  echo "Error: TEST_VERSION argument is required" >&2
   exit 1
 fi
 
-# Define cleanup function
-cleanup() {
-  echo "Running cleanup..."
-  bash ./contrib/ci-run-test-copy.sh
+# -----------------------------------------
+# - State flag – prevent double execution -
+# -----------------------------------------
+ACTION_DONE=0   # 0 = none, 1 = copy, 2 = trash
+
+copy() {
+  if [ "$ACTION_DONE" -ne 0 ]; then return; fi
+  ACTION_DONE=1
+  echo "Running copy test data command..."
+  bash ./contrib/ci-run-test-copy.sh || echo "Warning: copy failed" >&2
 }
 
-# Set trap for script exit (covers normal exit and termination signals)
-trap cleanup EXIT INT TERM
+trash() {
+  if [ "$ACTION_DONE" -ne 0 ]; then return; fi
+  ACTION_DONE=2
+  echo "Running trash (deleting test data)..."
+  bash ./contrib/ci-run-test-trash.sh || echo "Warning: trash failed" >&2
+}
 
-# Start watchdog in the background (55 minutes = 3300 seconds)
+trap 'copy' EXIT INT TERM
+
 (
   sleep 3300
-  echo "Watchdog: Approaching timeout, triggering cleanup"
-  cleanup
-  kill $$  # Terminate the main process
+  echo "Watchdog: 55-minute timeout reached – forcing copy"
+  copy
+  kill -TERM "$PPID" 2>/dev/null || true
 ) &
-
 WATCHDOG_PID=$!
 
-# Run main task
+echo "Starting test for version: $TEST_VERSION"
 nix develop .#default --command bash -c "just '${TEST_VERSION}'"
 TASK_EXIT_CODE=$?
 
-# Kill the watchdog if main task finishes first
-kill "$WATCHDOG_PID" 2>/dev/null
-wait "$WATCHDOG_PID" 2>/dev/null
+if kill "$WATCHDOG_PID" 2>/dev/null; then
+  wait "$WATCHDOG_PID" 2>/dev/null || true
+fi
 
-# Exit with the same code as the main task
-exit $TASK_EXIT_CODE
+trap - EXIT INT TERM
+
+if [ "$TASK_EXIT_CODE" -eq 0 ] && [ "${KEEP_ALL_TEST_DATA:-}" != "1" ] && [ "${CI_CODECOV_PIPELINE:-}" != "true" ]; then
+  trash
+else
+  copy
+fi
+
+exit "$TASK_EXIT_CODE"

@@ -92,7 +92,10 @@ Check if there are structure log messages in server-logs that are not used.
 
 ## ci-run-test.sh
 #### Parameters:
-1. `<TEST>` — e.g. `test-integration` or `test-integration-codecov`
+1. `<TEST>` - e.g. `test-integration` or `test-integration-codecov`
+
+#### Environment Variables:
+1. `KEEP_TEST_DATA` - When set to 1 then ever successful runs will create a link to the test data
 
 #### Description:
 Runs a `just` task for the given test with a watchdog and automatic data copy.
@@ -134,4 +137,18 @@ Test data -> https://ci.2nd.dev/testdata/<CI_COMMIT_SHA>/
 
 #### Exit Codes:
 - Exits with `1` if either `TEST_DIRECTORY` or `CI_COMMIT_SHA` is not set
+- Exits with `0` on success
+
+## ci-run-test-trash.sh
+#### Environment Variables:
+1. `CI_COMMIT_SHA` - Git commit SHA used to create a unique destination path
+
+#### Description:
+Copies test data from the current repository into a persistent location tied to the current commit SHA.
+
+- trashes the directory:
+  `/host/data/test/<CI_COMMIT_SHA>/`
+
+#### Exit Codes:
+- Exits with `1` if `CI_COMMIT_SHA` is not set
 - Exits with `0` on success
