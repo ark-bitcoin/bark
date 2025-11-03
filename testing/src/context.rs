@@ -579,10 +579,11 @@ impl Drop for TestContext {
 			// do nothing
 		} else {
 			if let None = std::env::var_os(crate::constants::env::KEEP_ALL_TEST_DATA) {
-				log::info!("Cleaning up {:?} because test passed and {} is not set",
-					self.datadir, crate::constants::env::KEEP_ALL_TEST_DATA,
-				);
-				std::fs::remove_dir_all(&self.datadir).unwrap();
+				match std::fs::remove_dir_all(&self.datadir) {
+					Ok(_) => log::info!("Cleaned up {:?}", self.datadir),
+					Err(e) => log::warn!("Failed to clean up datadir {:?} because {:?}", self.datadir, e)
+
+				}
 			} else {
 				log::info!("Keep test data intact because {} is set", crate::constants::env::KEEP_ALL_TEST_DATA);
 			}
