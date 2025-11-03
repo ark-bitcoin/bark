@@ -194,6 +194,24 @@ async fn bark_rejects_boarding_subdust_amount() {
 }
 
 #[tokio::test]
+async fn bark_rejects_boarding_below_minimum_board_amount() {
+	let ctx = TestContext::new("bark/bark_rejects_boarding_below_minimum_board_amount").await;
+	// Set up server with `min_board_amount` of 30 000 sats
+	const MIN_BOARD_AMOUNT_SATS: u64 = 30_000;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.min_board_amount = sat(MIN_BOARD_AMOUNT_SATS);
+	}).await;
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+
+	let board_amount = sat(MIN_BOARD_AMOUNT_SATS - 1);
+	let res = bark1.try_board(board_amount).await;
+
+	assert!(res.unwrap_err().to_string().contains(&format!(
+		"board amount of 0.00029999 BTC is less than minimum board amount required by server (0.00030000 BTC)",
+	)));
+}
+
+#[tokio::test]
 async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
 

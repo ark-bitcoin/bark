@@ -51,6 +51,8 @@ pub struct ArkInfo {
 	/// Maximum CLTV delta server will allow clients to request an
 	/// invoice generation with.
 	pub max_user_invoice_cltv_delta: u16,
+	/// Minimum amount for a board the server will cosign
+	pub min_board_amount: Amount,
 }
 
 impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
@@ -69,6 +71,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			max_arkoor_depth: v.max_arkoor_depth,
 			required_board_confirmations: v.required_board_confirmations,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta,
+			min_board_amount: v.min_board_amount,
 		}
 	}
 }
@@ -502,6 +505,7 @@ mod test {
 				max_arkoor_depth: j.max_arkoor_depth,
 				required_board_confirmations: j.required_board_confirmations,
 				max_user_invoice_cltv_delta: j.max_user_invoice_cltv_delta,
+				min_board_amount: j.min_board_amount,
 			}
 		}
 	}
