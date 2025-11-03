@@ -48,7 +48,7 @@ use bitcoin::key::Keypair;
 use bitcoin::params::Params;
 use bitcoin::{Address, Amount, FeeRate, OutPoint, ScriptBuf, Transaction, Txid};
 use bitcoin::hashes::Hash;
-use bitcoin_ext::{TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockDelta, DEEPLY_CONFIRMED, P2TR_DUST, TxStatus};
 use futures::Stream;
 use log::{debug, error, info, trace, warn};
 use tokio_stream::StreamExt;
@@ -64,8 +64,8 @@ use ark::rounds::{
 use ark::tree::signed::VtxoTreeSpec;
 use server_rpc::{protos, ServerConnection};
 
+use crate::{SECP, Wallet};
 use crate::persist::models::StoredVtxoRequest;
-use crate::{ROUND_DEEPLY_CONFIRMED, SECP, Wallet};
 use crate::movement::{MovementArgs, MovementKind};
 use crate::onchain::ChainSource;
 use crate::persist::BarkPersister;
@@ -211,7 +211,8 @@ async fn check_round_cancelled<T: ToCancelled>(
 
 	let confirmed_round_double_spend = spent_outpoints.map.values().find(|(_, status)| {
 		if let TxStatus::Confirmed(block_ref) = status {
-			tip - block_ref.height - 1 > ROUND_DEEPLY_CONFIRMED
+			// TODO: this const is very high but the code will be changed with the round state rework
+			tip - block_ref.height - 1 > DEEPLY_CONFIRMED
 		} else {
 			false
 		}
@@ -1397,10 +1398,17 @@ impl PendingConfirmationState {
 			AttemptError::StreamError(e)
 		})?;
 
-		let confirmed_in = wallet.chain.tx_confirmed(round_tx.compute_txid()).await;
-		if let Ok(Some(confirmed_in)) = confirmed_in {
-			let confs = tip - (confirmed_in - 1);
-			if confs >= ROUND_DEEPLY_CONFIRMED {
+		let confs = match wallet.chain.tx_status(round_tx.compute_txid()).await {
+			Ok(TxStatus::Confirmed(block_ref)) => {
+				Some((tip - (block_ref.height - 1)) as BlockDelta)
+			},
+			Ok(TxStatus::Mempool) => Some(0),
+			Ok(TxStatus::NotFound) => None,
+			Err(_) => None,
+		};
+
+		if let Some(confs) = confs {
+			if confs >= wallet.config.deep_round_confirmations {
 				let inputs = {
 					let mut vtxos = wallet.db.get_in_round_vtxos().map_err(|e| {
 						error!("DB error when trying to get in round vtxos: {}", e);

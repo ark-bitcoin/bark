@@ -55,7 +55,7 @@ use ark::rounds::RoundId;
 use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy, VtxoPolicyKind};
 use server_rpc::{self as rpc, protos, ServerConnection, TryFromBytes};
-use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST, TxStatus};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
@@ -104,11 +104,6 @@ pub struct Balance {
 	/// Coins that are pending sufficient confirmations from board transactions.
 	pub pending_board: Amount,
 }
-
-// TODO: we set it to 0 for now to avoid breaking UX,
-// but we should implement "pending confirmation" vtxo state and
-// only allow a subset of actions for it
-const ROUND_DEEPLY_CONFIRMED: u32 = 0;
 
 struct ArkoorCreateResult {
 	input: Vec<Vtxo>,
@@ -798,9 +793,15 @@ impl Wallet {
 
 		for board in unregistered_boards {
 			let anchor = board.vtxo.chain_anchor();
-			if let Some(confirmed_at) = self.chain.tx_confirmed(anchor.txid).await? {
-				let required = ark_info.required_board_confirmations as BlockHeight;
-				if current_height + 1 >= confirmed_at + required {
+			let confs = match self.chain.tx_status(anchor.txid).await {
+				Ok(TxStatus::Confirmed(block_ref)) => Some(current_height - (block_ref.height - 1)),
+				Ok(TxStatus::Mempool) => Some(0),
+				Ok(TxStatus::NotFound) => None,
+				Err(_) => None,
+			};
+
+			if let Some(confs) = confs {
+				if confs >= ark_info.required_board_confirmations as BlockHeight {
 					if let Err(e) = self.register_board(board.vtxo.id()).await {
 						warn!("Failed to register board {}: {}", board.vtxo.id(), e);
 					} else {
