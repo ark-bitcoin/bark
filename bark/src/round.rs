@@ -1397,9 +1397,14 @@ impl PendingConfirmationState {
 			AttemptError::StreamError(e)
 		})?;
 
-		let confirmed_in = wallet.chain.tx_confirmed(round_tx.compute_txid()).await;
-		if let Ok(Some(confirmed_in)) = confirmed_in {
-			let confs = tip - (confirmed_in - 1);
+		let confs = match wallet.chain.tx_status(round_tx.compute_txid()).await {
+			Ok(TxStatus::Confirmed(block_ref)) => Some(tip - (block_ref.height - 1)),
+			Ok(TxStatus::Mempool) => Some(0),
+			Ok(TxStatus::NotFound) => None,
+			Err(_) => None,
+		};
+
+		if let Some(confs) = confs {
 			if confs >= ROUND_DEEPLY_CONFIRMED {
 				let inputs = {
 					let mut vtxos = wallet.db.get_in_round_vtxos().map_err(|e| {
