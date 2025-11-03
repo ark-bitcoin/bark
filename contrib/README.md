@@ -118,8 +118,8 @@ Runs a `just` task for the given test with a watchdog and automatic data copy.
 
 ## ci-run-test-copy.sh
 #### Environment Variables:
-1. `TEST_DIRECTORY` — Relative path to the test folder (e.g. `./test/btc29`)
-2. `CI_COMMIT_SHA` — Git commit SHA used to create a unique destination path
+1. `TEST_DIRECTORY` - Relative path to the test folder (e.g. `./test/btc29`)
+2. `CI_COMMIT_SHA` - Git commit SHA used to create a unique destination path
 
 #### Description:
 Copies test data from the current repository into a persistent location tied to the current commit SHA.

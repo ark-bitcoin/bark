@@ -31,7 +31,7 @@ Bark is an implementation of the Ark protocol on bitcoin, led by [Second](https:
 
 Integrating the Ark-protocol offers
 
-- 🏃‍♂️ **Smooth boarding**: No channels to open, no on-chain setup required—create a wallet and start transacting
+- 🏃‍♂️ **Smooth boarding**: No channels to open, no on-chain setup required-create a wallet and start transacting
 - 🤌 **Simplified UX**: Send and receive without managing channels, liquidity, or routing
 - 🌐 **Universal payments**: Send Ark, Lightning, and on-chain payments from a single off-chain balance
 - 🔌 **Easier integration**: Client-server architecture reduces complexity compared to P2P protocols

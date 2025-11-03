@@ -26,12 +26,12 @@
 //! The module defines traits representing *capabilities* available in certain
 //! states:
 //!
-//! - [GetRoundContext] — access round identifiers and participation
-//! - [GetRoundTx] — access to the round transaction / txid
-//! - [GetForfeitedVtxos] — access to forfeited VTXOs where applicable
-//! - [StartNewAttempt] — derive a new [RoundState::AttemptStarted] state
-//! - [ToCancelled] — transition to a canceled state
-//! - [ToAbandoned] — transition to an abandoned state
+//! - [GetRoundContext] - access round identifiers and participation
+//! - [GetRoundTx] - access to the round transaction / txid
+//! - [GetForfeitedVtxos] - access to forfeited VTXOs where applicable
+//! - [StartNewAttempt] - derive a new [RoundState::AttemptStarted] state
+//! - [ToCancelled] - transition to a canceled state
+//! - [ToAbandoned] - transition to an abandoned state
 //!
 
 use std::collections::HashSet;

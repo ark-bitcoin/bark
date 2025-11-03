@@ -37,7 +37,7 @@ The project consists of:
 > **Warning**  
 > This repository contains experimental code. Using it with real bitcoin is reckless and can result in loss of funds.
 >
-> - Updating bark or captaind may corrupt your wallet—we prioritize development velocity over backward compatibility.
+> - Updating bark or captaind may corrupt your wallet-we prioritize development velocity over backward compatibility.
 > - Known bugs and vulnerabilities can still lead to loss of funds.
 
 ## Get started
@@ -48,11 +48,11 @@ The project consists of:
 
 ## Why Ark?
 
-As bitcoin adoption grows, on-chain fees spike during busy periods, making everyday transactions impractical. While Lightning has been revolutionary for bitcoin scaling, it's beginning to show its limitations—channel management and liquidity requirements create complexity for developers and users.
+As bitcoin adoption grows, on-chain fees spike during busy periods, making everyday transactions impractical. While Lightning has been revolutionary for bitcoin scaling, it's beginning to show its limitations-channel management and liquidity requirements create complexity for developers and users.
 
 Ark offers a complementary scaling solution that simplifies bitcoin self-custody:
 
-🏃‍♂️ **Smooth onboarding**: No channels to open, no on-chain setup required—create a wallet and start transacting  
+🏃‍♂️ **Smooth onboarding**: No channels to open, no on-chain setup required-create a wallet and start transacting  
 🤌 **Simplified UX**: Send and receive without managing channels, liquidity, or routing  
 🌐 **Universal payments**: Send Ark, Lightning, and on-chain payments from a single off-chain balance  
 🔌 **Easier integration**: Client-server architecture reduces complexity compared to P2P protocols  
@@ -65,7 +65,7 @@ Perfect for users who want self-custody without the hassle, and developers who w
 
 ## How does Ark work?
 
-The Ark protocol enables multiple users to share control of a single bitcoin UTXO through a tree of pre-signed, off-chain transactions. This allows instant, off-chain payments while maintaining self-custody—users can always withdraw their bitcoin either cooperatively with the Ark server or unilaterally on-chain.
+The Ark protocol enables multiple users to share control of a single bitcoin UTXO through a tree of pre-signed, off-chain transactions. This allows instant, off-chain payments while maintaining self-custody-users can always withdraw their bitcoin either cooperatively with the Ark server or unilaterally on-chain.
 
 For a detailed technical explanation, see our [protocol documentation](https://docs.second.tech/protocol/intro).
 
@@ -91,4 +91,4 @@ If you happen to find a vulnerability we invite you to [file a public issue](htt
 
 ## License
 
-Released under the **CC0 1.0 Universal** license—see the [LICENSE](LICENSE) file for details.
+Released under the **CC0 1.0 Universal** license-see the [LICENSE](LICENSE) file for details.
