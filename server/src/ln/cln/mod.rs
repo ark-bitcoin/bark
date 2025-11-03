@@ -1,4 +1,3 @@
-
 //!
 //! Lightning logic based on our CLN node.
 //!
@@ -91,6 +90,9 @@ pub struct ClnManager {
 	/// payment request that fail before the hit the sendpay stream.
 	//TODO(stevenroose) consider changing this to hold some update info
 	payment_update_tx: broadcast::Sender<PaymentHash>,
+	// If all receivers are dropped the channel will close and the payment might fail
+	// The only purpose of this field is to ensure we will always keep at least one receiver alive
+	payment_update_rx: broadcast::Receiver<PaymentHash>,
 
 	/// This channel sends bolt12 offer to the process and wait for a bolt 12 invoice in return.
 	bolt12_tx: mpsc::UnboundedSender<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
@@ -107,7 +109,7 @@ impl ClnManager {
 		let (payment_tx, payment_rx) = mpsc::unbounded_channel();
 		let (invoice_gen_tx, invoice_gen_rx) = mpsc::unbounded_channel();
 		let (invoice_settle_tx, invoice_settle_rx) = mpsc::unbounded_channel();
-		let (payment_update_tx, _rx) = broadcast::channel(256);
+		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
 		let (bolt12_tx, bolt12_rx) = mpsc::unbounded_channel();
 
 		let node_monitor_config = ClnNodeMonitorConfig {
@@ -149,6 +151,7 @@ impl ClnManager {
 			ctrl_tx,
 			payment_tx,
 			payment_update_tx,
+			payment_update_rx,
 			invoice_gen_tx,
 			invoice_settle_tx,
 			bolt12_tx,
@@ -176,7 +179,7 @@ impl ClnManager {
 			None
 		};
 
-		let update_rx = self.payment_update_tx.subscribe();
+		let update_rx = self.payment_update_rx.resubscribe();
 		self.payment_tx.send((invoice.clone(), user_amount, htlc_send_expiry_height)).context("payment channel broken")?;
 
 		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
@@ -191,7 +194,7 @@ impl ClnManager {
 		payment_hash: &PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<Preimage> {
-		let update_rx = self.payment_update_tx.subscribe();
+		let update_rx = self.payment_update_rx.resubscribe();
 
 		self.inner_check_bolt11(update_rx, payment_hash, wait, true).await
 	}
