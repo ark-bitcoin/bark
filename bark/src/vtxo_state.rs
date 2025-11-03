@@ -9,8 +9,7 @@
 //! Two layers of state are provided:
 //! - [VtxoStateKind]: a compact, serialization-friendly discriminator intended for storage, logs,
 //!   and wire formats. It maps to stable string identifiers via `as_str()`.
-//! - [VtxoState]: a richer state that may include associated data needed at runtime (e.g.
-//!   [Invoice], [Amount], or [PaymentHash]).
+//! - [VtxoState]: A richer state that might include metadata
 //!
 //! [WalletVtxo] pairs a concrete [Vtxo] with its current [VtxoState], providing the primary
 //! representation used by persistence and higher-level wallet logic.
@@ -28,7 +27,7 @@ const SPENT: &'static str = "Spent";
 
 /// A compact, serialization-friendly representation of a VTXO's state.
 ///
-/// Use [VtxoState::as_kind] to derive it from a richer [VtxoState].
+/// Use [VtxoState::kind] to derive it from a richer [VtxoState].
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VtxoStateKind {
 	/// The [Vtxo] is available and can be selected as an input for a new offboard/round.
@@ -70,10 +69,6 @@ lazy_static::lazy_static! {
 }
 
 /// Rich [Vtxo] state carrying additional context needed at runtime.
-///
-/// Use this when application logic needs to act on a [Vtxo]: e.g. to surface the
-/// [Invoice] being paid, the amount committed to a Lightning payment, or the
-/// payment hash for an expected incoming HTLC.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VtxoState {
 	/// The [Vtxo] is available and can be spent in a future round.

@@ -269,7 +269,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Returns:
 	/// - A [RefreshStrategy] implementing [FilterVtxos]. Pass it to [Wallet::vtxos_with] or call
-	///   [FilterVtxos::filter] directly.
+	///   [FilterVtxos::filter_vtxos] directly.
 	///
 	/// Examples
 	/// ```
@@ -310,7 +310,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Returns:
 	/// - A [RefreshStrategy] implementing [FilterVtxos]. Pass it to [Wallet::vtxos_with] or call
-	///   [FilterVtxos::filter] directly.
+	///   [FilterVtxos::filter_vtxos] directly.
 	///
 	/// Examples
 	/// ```
