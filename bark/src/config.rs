@@ -79,6 +79,13 @@ pub struct Config {
 	///
 	/// Example for 1 sat/vB: --fallback-fee-rate 250
 	pub fallback_fee_rate: Option<FeeRate>,
+
+	// TODO: we set this to 0 by default for now to avoid breaking UX,
+	// but we should increase it eventually
+	/// The number of blocks after which a round tx is considered deeply confirmed.
+	///
+	/// Default value: 0 (disabled)
+	pub deep_round_confirmations: BlockDelta,
 }
 
 impl Config {
@@ -97,6 +104,7 @@ impl Config {
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: None,
+			deep_round_confirmations: 0,
 		};
 
 		if network != Network::Bitcoin {

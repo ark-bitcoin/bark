@@ -105,11 +105,6 @@ pub struct Balance {
 	pub pending_board: Amount,
 }
 
-// TODO: we set it to 0 for now to avoid breaking UX,
-// but we should implement "pending confirmation" vtxo state and
-// only allow a subset of actions for it
-const ROUND_DEEPLY_CONFIRMED: u32 = 0;
-
 struct ArkoorCreateResult {
 	input: Vec<Vtxo>,
 	created: Vec<Vtxo>,
