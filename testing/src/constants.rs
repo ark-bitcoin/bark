@@ -29,8 +29,10 @@ pub mod env {
 	pub const TX_PROPAGATION_TIMEOUT_MILLIS: &str = "TX_PROPAGATION_TIMEOUT_MILLIS";
 	/// The env var to reach postgres binaries folder
 	pub const POSTGRES_BINS: &str = "POSTGRES_BINS";
-	/// Remove the directory once a test is successful
-	pub const CLEAN_SUCCESSFUL_TESTS: &str = "CLEAN_SUCCESSFUL_TESTS";
+	/// By default, all artifacts of a tests are deleted after a succesful run.
+	/// We only keep the data for failed tests
+	/// When KEEP_ALL_TEST_DATA is set all test data is kept by default
+	pub const KEEP_ALL_TEST_DATA: &str = "KEEP_ALL_TEST_DATA";
 	/// Use an external database to run the tests
 	pub const TEST_POSTGRES_HOST: &str = "TEST_POSTGRES_HOST";
 }

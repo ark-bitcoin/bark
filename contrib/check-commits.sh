@@ -54,7 +54,7 @@ else
 		log_info "local feature branch found"
 		FEATURE_BRANCH="${CI_COMMIT_SOURCE_BRANCH}"
 	else
-		log_info "Could not find source branch in remote or local — likely a fork. Falling back to commit SHA."
+		log_info "Could not find source branch in remote or local - likely a fork. Falling back to commit SHA."
 		FEATURE_BRANCH="${CI_COMMIT_SHA}"
 	fi
 fi
