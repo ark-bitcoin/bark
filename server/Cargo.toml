@@ -1,6 +1,6 @@
 [package]
 name = "bark-server"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"

@@ -1,6 +1,6 @@
 [package]
 name = "bark-json"
-version = "0.1.0-beta.1" # lock to bark-wallet version
+version = "0.1.0-beta.2" # lock to bark-wallet version
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 description = "JSON definitions for the bark APIs"
@@ -8,9 +8,9 @@ edition = "2024"
 
 [dependencies]
 # OWN
-bark-wallet = { path = "../bark" }
-ark-lib = { version = "0.1.0-beta.1", path = "../lib" }
-bark-bitcoin-ext = { version = "0.1.0-beta.1", path = "../bitcoin-ext", default-features = false }
+bark-wallet = { version = "0.1.0-beta.2", path = "../bark" }
+ark-lib = { version = "0.1.0-beta.2", path = "../lib" }
+bark-bitcoin-ext = { version = "0.1.0-beta.2", path = "../bitcoin-ext", default-features = false }
 
 # INTERNAL
 hal = { version = "=0.10.0", default-features = false }
