@@ -13,15 +13,15 @@ clone:
 
 steps:
   - name: check-master-status
-    image: alpine/curl:latest
+    image: registry.2nd.dev/build:25
     commands:
       - |
-        RESPONSE=$(curl -s -X GET 'https://gitlab.com/api/v4/projects/75519706/pipelines?ref=master&order_by=updated_at&sort=desc&per_page=1')
+        RESPONSE=$(curl -s -X GET 'https://gitlab.com/api/v4/projects/75519706/pipelines?ref=master&order_by=updated_at&sort=desc&per_page=2')
         echo "Response from API: $RESPONSE"
-        if echo "$RESPONSE" | grep -q 'success'; then
-          echo "Master branch CI is successful."
+        if jq -e '.[0].status == "running" and .[1].status == "success"' <<<"$response" >/dev/null; then
+          echo "Master branch CI is in a successful state."
         else
-          echo "Master branch CI is not in a successful state. Aborting pipeline."
+          echo "Master branch CI is NOT in a successful state. Aborting pipeline."
           exit 1
         fi
 
