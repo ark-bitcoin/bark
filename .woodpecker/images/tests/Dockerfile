@@ -126,12 +126,12 @@ RUN echo "pre-build bark" && \
 	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
 	cd ~/bark && \
 	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path server/Cargo.toml && \
-	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark/Cargo.toml && \
-	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark/Cargo.toml && \
-	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark/Cargo.toml && \
-	cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark/Cargo.toml && \
-	cargo zigbuild --release --target x86_64-apple-darwin           --locked --manifest-path bark/Cargo.toml && \
-	cargo zigbuild --release --target aarch64-apple-darwin          --locked --manifest-path bark/Cargo.toml
+	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark-cli/Cargo.toml && \
+	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark-cli/Cargo.toml && \
+	cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark-cli/Cargo.toml && \
+	cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark-cli/Cargo.toml && \
+	cargo zigbuild --release --target x86_64-apple-darwin           --locked --manifest-path bark-cli/Cargo.toml && \
+	cargo zigbuild --release --target aarch64-apple-darwin          --locked --manifest-path bark-cli/Cargo.toml
 
 RUN echo "build nix devShell" && \
 	. /etc/profile.d/nix.sh && \
