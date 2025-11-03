@@ -126,71 +126,10 @@ steps:
     depends_on: release-server
     image: registry.2nd.dev/build:25
     environment:
-      GITLAB_TOKEN:
-        from_secret: GITLAB_LOGIN_TOKEN
+      GITLAB_RELEASE_TOKEN:
+        from_secret: GITLAB_RELEASE_TOKEN
     commands:
-      - |
-        echo "Checking release for tag ${CI_COMMIT_TAG}"
-        RESPONSE=$(curl --silent --request GET \
-          --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-          "https://gitlab.com/api/v4/projects/75519706/releases/${CI_COMMIT_TAG}")
+      - bash ./contrib/ci-gitlab-release.sh "./target/captaind-*-linux-x86_64 ./target/watchmand-*-linux-x86_64 ./target/SHA256SUMS"
 
-        if echo "$RESPONSE" | jq -e '.tag_name' > /dev/null; then
-          RELEASE_ID=$(echo "$RESPONSE" | jq '.id')
-          echo "Release exists: ID $RELEASE_ID"
-        else
-          echo "Creating new release"
-          RESPONSE=$(curl --silent --request POST \
-            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data '{
-              "name": "'${CI_COMMIT_TAG}'",
-              "tag_name": "'${CI_COMMIT_TAG}'",
-              "description": "Automated release from Woodpecker CI",
-              "milestones": [],
-              "assets": { "links": [] }
-            }' \
-            "https://gitlab.com/api/v4/projects/75519706/releases")
-          RELEASE_ID=$(echo "$RESPONSE" | jq '.id')
-          echo "Created release: ID $RELEASE_ID"
-        fi
-        
-        ASSET_LINKS=""
-        for file in ./target/captaind-*-linux-x86_64 ./target/watchmand-*-linux-x86_64 ./target/SHA256SUMS; do
-          if [ -f "$file" ]; then
-            FILENAME=$(basename "$file")
-            echo "Uploading $FILENAME"
-            UPLOAD_RESPONSE=$(curl --silent --request POST \
-              --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-              --header "Content-Type: application/octet-stream" \
-              --data-binary "@$file" \
-              "https://gitlab.com/api/v4/projects/75519706/uploads")
-
-            UPLOAD_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.url')
-            if [ "$UPLOAD_URL" != "null" ]; then
-              # Add to links array
-              LINK_JSON=$(printf '{"name": "%s", "url": "%s", "link_type": "other"}' "$FILENAME" "$UPLOAD_URL")
-              if [ -z "$ASSET_LINKS" ]; then
-                ASSET_LINKS="[$LINK_JSON"
-              else
-                ASSET_LINKS="$ASSET_LINKS, $LINK_JSON"
-              fi
-            fi
-          else
-            echo "Warning: $file not found"
-          fi
-        done
-        ASSET_LINKS="$ASSET_LINKS]"
-        
-        if [ "$ASSET_LINKS" != "[]" ]; then
-          echo "Linking assets to release"
-          curl --silent --request PUT \
-            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data "{\"assets\": {\"links\": $ASSET_LINKS}}" \
-            "https://gitlab.com/api/v4/projects/75519706/releases/${CI_COMMIT_TAG}" \
-            --output /dev/null
-          echo "Assets linked successfully"
-        fi
-        
-        echo "GitLab release: https://gitlab.com/ark-bitcoin/bark/-/releases/${CI_COMMIT_TAG}"
+depends_on:
+  - helpers

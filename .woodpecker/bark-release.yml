@@ -161,10 +161,9 @@ steps:
       - sha256sum "bark-$(cat ../VERSION)-apple-x86_64"       >> SHA256SUMS
       - sha256sum "bark-$(cat ../VERSION)-apple-aarch64"      >> SHA256SUMS
 
-  - name: publish-bark
+  - name: publish-bark-forgejo
     when:
-      - event: tag
-        ref: refs/tags/bark-*
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/bark-" && CI_REPO_URL != "https://gitlab.com/ark-bitcoin/bark"'
     depends_on: release-bark
     image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
     settings:
@@ -175,6 +174,17 @@ steps:
         - "./target/SHA256SUMS"
       api_key:
         from_secret: RELEASE
+
+  - name: publish-bark-gitlab
+    when:
+      - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/bark-" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
+    depends_on: release-bark
+    image: registry.2nd.dev/build:25
+    environment:
+      GITLAB_RELEASE_TOKEN:
+        from_secret: GITLAB_RELEASE_TOKEN
+    commands:
+      - bash ./contrib/ci-gitlab-release.sh "./target/bark-*-linux-* ./target/bark-*-windows-x86_64.exe ./target/bark-*-apple-* ./target/SHA256SUMS"
 
 depends_on:
   - helpers
