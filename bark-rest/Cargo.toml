@@ -1,0 +1,30 @@
+[package]
+name = "bark-rest"
+version = "0.1.0-beta.2"
+edition = "2024"
+authors = ["Second Team <hello@second.tech>"]
+repository = "https://gitlab.com/ark-bitcoin/bark"
+license = "CC0-1.0"
+
+
+[dependencies]
+anyhow.workspace = true
+bitcoin.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tower.workspace = true
+
+axum = { version = "0.8.4", features = ["macros", "tokio", "http2", "query", "json"], default-features = false }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-axum = "0.2.0"
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
+
+ark-lib = { path="../lib" }
+bark-wallet = { path = "../bark", features = ["onchain_bdk"] }
+bark-json = { path = "../bark-json", features = ["utoipa"] }
+bark-bitcoin-ext = { path = "../bitcoin-ext" }
+

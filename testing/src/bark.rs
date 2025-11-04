@@ -218,9 +218,9 @@ impl Bark {
 		balance.total
 	}
 
-	pub async fn onchain_utxos(&self) -> Vec<UtxoInfo> {
+	pub async fn onchain_utxos(&self) -> Vec<bark_json::primitives::UtxoInfo> {
 		let output = self.run(["onchain", "utxos"]).await;
-		serde_json::from_str::<Vec<UtxoInfo>>(&output).unwrap()
+		serde_json::from_str::<Vec<bark_json::primitives::UtxoInfo>>(&output).unwrap()
 	}
 
 	pub async fn offchain_balance(&self) -> json::Balance {

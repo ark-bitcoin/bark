@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::Context;
+use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::movement::Movement;
 use bark::round::RoundStatus;
 use bark::vtxo_state::{VtxoStateKind, WalletVtxo};
@@ -31,8 +32,10 @@ use bark::vtxo_selection::VtxoFilter;
 use bark_json::{cli as json, primitives};
 use bitcoin_ext::FeeRateExt;
 
+use bark_cli::wallet::open_wallet;
+
 use crate::util::output_json;
-use crate::wallet::{CreateOpts, create_wallet, open_wallet};
+use crate::wallet::{CreateOpts, create_wallet};
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -675,11 +678,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				info!("Sending arkoor payment of {} to address {}", amount, addr);
 				wallet.send_arkoor_payment(&addr, amount).await?;
 			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
-				lightning::pay_invoice(inv, amount, comment, no_sync, &mut wallet).await?;
+				pay_invoice(inv, amount, comment, no_sync, &mut wallet).await?;
 			} else if let Ok(offer) = Offer::from_str(&destination) {
-				lightning::pay_offer(offer, amount, comment, no_sync, &mut wallet).await?;
+				pay_offer(offer, amount, comment, no_sync, &mut wallet).await?;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
-				lightning::pay_lnaddr(addr, amount, comment, no_sync, &mut wallet).await?;
+				pay_lnaddr(addr, amount, comment, no_sync, &mut wallet).await?;
 			} else {
 				bail!("Argument is not a valid destination. Supported are: \
 					VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",

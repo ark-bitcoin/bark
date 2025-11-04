@@ -1,15 +1,12 @@
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::str::FromStr;
 
 use anyhow::Context;
-use bark::persist::BarkPersister;
 use bitcoin::Network;
 use clap::Args;
 use log::{debug, info, warn};
-use tokio::fs;
 
 use bark::{Config, Wallet as BarkWallet, SqliteClient};
 use bark::onchain::OnchainWallet;
@@ -92,7 +89,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	// check if dir doesn't exists, then create it
 	if datadir.exists() {
 		if opts.force {
-			fs::remove_dir_all(datadir).await?;
+			tokio::fs::remove_dir_all(datadir).await?;
 		} else {
 			bail!("Directory {} already exists", datadir.display());
 		}
@@ -122,7 +119,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	if let Err(e) = result {
 		// Remove the datadir if it exists
 		if datadir.exists() {
-			if let Err(e) = fs::remove_dir_all(datadir).await {
+			if let Err(e) = tokio::fs::remove_dir_all(datadir).await {
 				warn!("Failed to remove '{}", datadir.display());
 				warn!("{}", e.to_string());
 			}
@@ -143,13 +140,13 @@ async fn try_create_wallet(
 ) -> anyhow::Result<()> {
 	info!("Creating new bark Wallet at {}", datadir.display());
 
-	fs::create_dir_all(datadir).await.context("can't create dir")?;
+	tokio::fs::create_dir_all(datadir).await.context("can't create dir")?;
 
 	// generate seed
 	let is_new_wallet = mnemonic.is_none();
 	let mnemonic = mnemonic.unwrap_or_else(|| bip39::Mnemonic::generate(12).expect("12 is valid"));
 	let seed = mnemonic.to_seed("");
-	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
+	tokio::fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
 		.context("failed to write mnemonic")?;
 
 	// Write the config to disk
@@ -176,38 +173,3 @@ async fn try_create_wallet(
 	Ok(())
 }
 
-pub async fn open_wallet(datadir: &Path) -> anyhow::Result<(BarkWallet, OnchainWallet)> {
-	debug!("Opening bark wallet in {}", datadir.display());
-
-	// read mnemonic file
-	let mnemonic_path = datadir.join(MNEMONIC_FILE);
-	let mnemonic_str = fs::read_to_string(&mnemonic_path).await
-		.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
-	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
-	let seed = mnemonic.to_seed("");
-
-	// Read the config
-	let config_path = datadir.join("config.toml");
-	let mut config_file = File::open(&config_path)
-		.with_context(|| format!("Failed to open config file at {}", config_path.display()))?;
-
-	let mut config_str = String::new();
-	config_file.read_to_string(&mut config_str)
-		.with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
-
-	let config: Config = toml::from_str(&config_str)
-		.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
-
-	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
-	let properties = db.read_properties()?.context("failed to read properties")?;
-
-
-	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone())?;
-	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config).await?;
-
-	if let Err(e) = bark_wallet.require_chainsource_version() {
-		warn!("{}", e);
-	}
-
-	Ok((bark_wallet, bdk_wallet))
-}

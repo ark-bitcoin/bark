@@ -6,11 +6,13 @@ members = [
   "bark",
   "bark-cli",
   "bark-json",
+  "bark-rest",
   "server",
   "server-log",
   "server-rpc",
   "testing",
   "cln-rpc",
+  "clients/rust"
 ]
 
 resolver = "2"
@@ -35,6 +37,7 @@ tower = "0.5.2"
 hyper = "1.6.0"
 http = "1.2.0"
 http-body = "1.0.1"
+
 #
 # * INTERNAL
 

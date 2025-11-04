@@ -1,0 +1,15 @@
+# PendingRoundInfo
+
+## Properties
+
+Name | Type | Description | Notes
+------------ | ------------- | ------------- | -------------
+**attempt_seq** | Option<**i32**> | Attempt sequence number within the round, if known | [optional]
+**id** | **i32** | Unique identifier for the round | 
+**kind** | **String** | Discriminant of the round state | 
+**round_seq** | Option<**i64**> | Round sequence number, if known | [optional]
+**round_txid** | Option<**String**> | The round transaction id, if already assigned | 
+
+[[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

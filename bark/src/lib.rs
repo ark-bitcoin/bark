@@ -293,6 +293,7 @@ pub mod movement;
 pub mod onchain;
 pub mod persist;
 pub mod round;
+pub mod lightning_utils;
 pub mod vtxo_state;
 pub mod vtxo_selection;
 
@@ -1502,11 +1503,11 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn offboard<V: VtxoRef>(
-		&mut self,
+	pub fn build_offboard_participation<V: VtxoRef>(
+		&self,
 		vtxos: impl IntoIterator<Item = V>,
 		destination: ScriptBuf,
-	) -> anyhow::Result<RoundStatus> {
+	) -> anyhow::Result<RoundParticipation> {
 		let srv = self.require_server()?;
 
 		let vtxos = {
@@ -1540,11 +1541,19 @@ impl Wallet {
 			script_pubkey: destination.clone(),
 		};
 
-		let mut participation = RoundParticipation {
+		Ok(RoundParticipation {
 			inputs: vtxos.clone(),
 			outputs: Vec::new(),
 			offboards: vec![offb],
-		};
+		})
+	}
+
+	async fn offboard<V: VtxoRef>(
+		&mut self,
+		vtxos: impl IntoIterator<Item = V>,
+		destination: ScriptBuf,
+	) -> anyhow::Result<RoundStatus> {
+		let mut participation = self.build_offboard_participation(vtxos, destination.clone())?;
 
 		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
@@ -1579,15 +1588,10 @@ impl Wallet {
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
-	/// This will refresh all provided VTXOs. Note that attempting to refresh a board VTXO which
-	/// has not yet confirmed will result in an error.
-	///
-	/// Returns the [RoundId] of the round if a successful refresh occurred.
-	/// It will return [None] if no [Vtxo] needed to be refreshed.
-	pub async fn refresh_vtxos<V: VtxoRef>(
+	pub fn build_refresh_participation<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<Option<RoundStatus>> {
+	) -> anyhow::Result<Option<RoundParticipation>> {
 		let vtxos = {
 			let mut ret = HashMap::new();
 			for v in vtxos {
@@ -1616,10 +1620,25 @@ impl Wallet {
 			amount: total_amount,
 		};
 
-		let mut participation = RoundParticipation {
+		Ok(Some(RoundParticipation {
 			inputs: vtxos.into_values().map(|v| v.vtxo).collect(),
 			outputs: vec![req],
 			offboards: Vec::new(),
+		}))
+	}
+
+	/// This will refresh all provided VTXOs. Note that attempting to refresh a board VTXO which
+	/// has not yet confirmed will result in an error.
+	///
+	/// Returns the [RoundId] of the round if a successful refresh occurred.
+	/// It will return [None] if no [Vtxo] needed to be refreshed.
+	pub async fn refresh_vtxos<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+	) -> anyhow::Result<Option<RoundStatus>> {
+		let mut participation = match self.build_refresh_participation(vtxos)? {
+			Some(participation) => participation,
+			None => return Ok(None),
 		};
 
 		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
@@ -2658,13 +2677,11 @@ impl Wallet {
 		Ok((invoice, preimage))
 	}
 
-	/// Sends the given [Amount] to an onchain [bitcoin::Address]. This is an in-round operation
-	/// which may take a long time to perform.
-	pub async fn send_round_onchain_payment(
+	pub fn build_round_onchain_payment_participation(
 		&self,
 		addr: bitcoin::Address,
 		amount: Amount,
-	) -> anyhow::Result<RoundStatus> {
+	) -> anyhow::Result<RoundParticipation> {
 		let srv = self.require_server()?;
 
 		let offb = OffboardRequest {
@@ -2695,11 +2712,21 @@ impl Wallet {
 			}
 		};
 
-		let mut participation = RoundParticipation {
+		Ok(RoundParticipation {
 			inputs: inputs,
 			outputs: change.into_iter().collect(),
 			offboards: vec![offb],
-		};
+		})
+	}
+
+	/// Sends the given [Amount] to an onchain [bitcoin::Address]. This is an in-round operation
+	/// which may take a long time to perform.
+	pub async fn send_round_onchain_payment(
+		&self,
+		addr: bitcoin::Address,
+		amount: Amount,
+	) -> anyhow::Result<RoundStatus> {
+		let mut participation = self.build_round_onchain_payment_participation(addr, amount)?;
 
 		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);

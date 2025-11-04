@@ -1,0 +1,3458 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Barkd API",
+    "description": "A simple REST API for Barkd",
+    "contact": {
+      "name": "Second Team",
+      "email": "hello@second.tech"
+    },
+    "license": {
+      "name": "CC0-1.0",
+      "identifier": "CC0-1.0"
+    },
+    "version": "0.1.0-beta.2"
+  },
+  "paths": {
+    "/api/v1/board/board": {
+      "post": {
+        "tags": [
+          "board"
+        ],
+        "operationId": "board",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the board result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Board"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/board/board/all": {
+      "post": {
+        "tags": [
+          "board"
+        ],
+        "operationId": "board_all",
+        "responses": {
+          "200": {
+            "description": "Returns the board result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Board"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/exit/claim": {
+      "post": {
+        "tags": [
+          "exit"
+        ],
+        "operationId": "exit_claim",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Exit claimed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitClaimResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/exit/list": {
+      "get": {
+        "tags": [
+          "exit"
+        ],
+        "operationId": "exit_list",
+        "parameters": [
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Whether to include the detailed history of the exit process",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "transactions",
+            "in": "query",
+            "description": "Whether to include the exit transactions and their CPFP children",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns all exit statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExitTransactionStatus"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/exit/progress": {
+      "post": {
+        "tags": [
+          "exit"
+        ],
+        "operationId": "exit_progress",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitProgressRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the exit progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitProgressResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/exit/start/all": {
+      "post": {
+        "tags": [
+          "exit"
+        ],
+        "operationId": "exit_start_all",
+        "responses": {
+          "200": {
+            "description": "Exit started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - no VTXOs specified"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/exit/start/vtxos": {
+      "post": {
+        "tags": [
+          "exit"
+        ],
+        "operationId": "exit_start_vtxos",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Exit started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - no VTXOs specified"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/exit/status": {
+      "get": {
+        "tags": [
+          "exit"
+        ],
+        "operationId": "exit_status",
+        "parameters": [
+          {
+            "name": "vtxo",
+            "in": "query",
+            "description": "The VTXO to check the exit status of",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Whether to include the detailed history of the exit process",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "transactions",
+            "in": "query",
+            "description": "Whether to include the exit transactions and their CPFP children",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the exit status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitTransactionStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "VTXO not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/lightning/pay": {
+      "post": {
+        "tags": [
+          "lightning"
+        ],
+        "operationId": "lightning_pay",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LightningPayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns payment result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LightningPayResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid destination or amount"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/lightning/receive/invoice": {
+      "post": {
+        "tags": [
+          "lightning"
+        ],
+        "operationId": "lightning_invoice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LightningInvoiceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the created invoice",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/lightning/receive/invoices": {
+      "get": {
+        "tags": [
+          "lightning"
+        ],
+        "operationId": "lightning_invoices",
+        "responses": {
+          "200": {
+            "description": "Returns all lightning invoices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LightningReceiveInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/lightning/receive/status": {
+      "get": {
+        "tags": [
+          "lightning"
+        ],
+        "operationId": "lightning_status",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LightningStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the lightning receive status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LightningStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/addresses/next": {
+      "put": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_address",
+        "responses": {
+          "200": {
+            "description": "Returns the onchain address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Address"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/balance": {
+      "get": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_balance",
+        "responses": {
+          "200": {
+            "description": "Returns the onchain balance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnchainBalance"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/drain": {
+      "post": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_drain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnchainDrainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the drain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Send"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid destination"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/send": {
+      "post": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_send",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnchainSendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the send result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Send"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid destination or amount"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/send-many": {
+      "post": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_send_many",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnchainSendManyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the send result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Send"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid destinations"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/sync": {
+      "put": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_sync",
+        "responses": {
+          "200": {
+            "description": "Synced onchain wallet"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/transactions": {
+      "get": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_transactions",
+        "responses": {
+          "200": {
+            "description": "Returns the onchain transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TransactionInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/onchain/utxos": {
+      "get": {
+        "tags": [
+          "onchain"
+        ],
+        "operationId": "onchain_utxos",
+        "responses": {
+          "200": {
+            "description": "Returns the onchain UTXOs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UtxoInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/addresses/next": {
+      "put": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "address",
+        "responses": {
+          "200": {
+            "description": "Returns the Ark address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Address"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/addresses/peak": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "peak_address",
+        "parameters": [
+          {
+            "name": "index",
+            "in": "query",
+            "description": "Index for the address.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the Ark address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Address"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/api/v1/refresh/vtxos": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "refresh_vtxos",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the refresh result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - exactly one parameter must be provided"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/ark-info": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "ark_info",
+        "responses": {
+          "200": {
+            "description": "Returns the Ark info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArkInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No ark info found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/balance": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "balance",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet balance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Balance"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/movements": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "movements",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet movements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Movement"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/offboard/all": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "offboard_all",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OffboardAllRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the offboard result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/offboard/vtxos": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "offboard_vtxos",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OffboardVtxosRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the offboard result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/refresh/all": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "refresh_all",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the refresh result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - exactly one parameter must be provided"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/refresh/counterparty": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "refresh_counterparty",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the refresh result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - exactly one parameter must be provided"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/rounds": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "pending_rounds",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet pending rounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingRoundInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/send": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "send",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Payment sent successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/send-onchain": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "send_onchain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendOnchainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the send onchain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/sync": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "sync",
+        "responses": {
+          "200": {
+            "description": "Synced wallet"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/vtxos": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "vtxos",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "query",
+            "description": "Return all VTXOs regardless of their state. If not provided, returns only non-spent VTXOs.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the wallet VTXOs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WalletVtxoInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Address": {
+        "type": "object",
+        "required": [
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          }
+        }
+      },
+      "ArkAddressResponse": {
+        "type": "object",
+        "required": [
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          }
+        }
+      },
+      "ArkInfo": {
+        "type": "object",
+        "required": [
+          "network",
+          "server_pubkey",
+          "round_interval",
+          "nb_round_nonces",
+          "vtxo_exit_delta",
+          "vtxo_expiry_delta",
+          "htlc_send_expiry_delta",
+          "htlc_expiry_delta",
+          "max_vtxo_amount",
+          "max_arkoor_depth",
+          "required_board_confirmations",
+          "max_user_invoice_cltv_delta",
+          "min_board_amount_sat",
+          "offboard_feerate_sat_per_kvb"
+        ],
+        "properties": {
+          "htlc_expiry_delta": {
+            "$ref": "#/components/schemas/u16",
+            "description": "The number of blocks to keep between Lightning and Ark HTLCs expiries"
+          },
+          "htlc_send_expiry_delta": {
+            "$ref": "#/components/schemas/u16",
+            "description": "The number of blocks after which an HTLC-send VTXO expires once granted."
+          },
+          "max_arkoor_depth": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum number of OOR transition after VTXO tree leaf",
+            "minimum": 0
+          },
+          "max_user_invoice_cltv_delta": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum CLTV delta server will allow clients to request an\ninvoice generation with.",
+            "minimum": 0
+          },
+          "max_vtxo_amount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum amount of a VTXO",
+            "minimum": 0
+          },
+          "min_board_amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minimum amount for a board the server will cosign",
+            "minimum": 0
+          },
+          "nb_round_nonces": {
+            "type": "integer",
+            "description": "Number of nonces per round",
+            "minimum": 0
+          },
+          "network": {
+            "type": "string",
+            "description": "The bitcoin network the server operates on"
+          },
+          "offboard_feerate_sat_per_kvb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "offboard feerate in sat per kvb",
+            "minimum": 0
+          },
+          "required_board_confirmations": {
+            "type": "integer",
+            "description": "The number of confirmations required to register a board vtxo",
+            "minimum": 0
+          },
+          "round_interval": {
+            "type": "string",
+            "description": "The interval between each round"
+          },
+          "server_pubkey": {
+            "type": "string",
+            "description": "The Ark server pubkey"
+          },
+          "vtxo_exit_delta": {
+            "$ref": "#/components/schemas/u16",
+            "description": "Delta between exit confirmation and coins becoming spendable"
+          },
+          "vtxo_expiry_delta": {
+            "$ref": "#/components/schemas/u16",
+            "description": "Expiration delta of the VTXO"
+          }
+        }
+      },
+      "Balance": {
+        "type": "object",
+        "required": [
+          "spendable_sat",
+          "pending_lightning_send_sat",
+          "pending_lightning_receive",
+          "pending_in_round_sat",
+          "pending_board_sat"
+        ],
+        "properties": {
+          "pending_board_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pending_exit_sat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "pending_in_round_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pending_lightning_receive": {
+            "$ref": "#/components/schemas/LightningReceiveBalance"
+          },
+          "pending_lightning_send_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "spendable_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "Board": {
+        "type": "object",
+        "description": "Describes a completed transition of funds from onchain to offchain.",
+        "required": [
+          "funding_txid",
+          "vtxos"
+        ],
+        "properties": {
+          "funding_txid": {
+            "type": "string",
+            "description": "The [Txid] of the funding-transaction.\nThis is the transaction that has to be confirmed\nonchain for the board to succeed."
+          },
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VtxoInfo"
+            },
+            "description": "The info for each [ark::Vtxo] that was created\nin this board.\n\nCurrently, this is always a vector of length 1"
+          }
+        }
+      },
+      "BoardRequest": {
+        "type": "object",
+        "required": [
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Amount of on-chain funds to board (in satoshis)",
+            "minimum": 0
+          }
+        }
+      },
+      "ChildTransactionInfo": {
+        "type": "object",
+        "description": "Represents a child transaction for an exit transaction package with information about the origin\nof the transaction",
+        "required": [
+          "info",
+          "origin"
+        ],
+        "properties": {
+          "info": {
+            "$ref": "#/components/schemas/TransactionInfo"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ExitTxOrigin"
+          }
+        }
+      },
+      "ExitAwaitingDeltaState": {
+        "type": "object",
+        "required": [
+          "tip_height",
+          "confirmed_block",
+          "claimable_height"
+        ],
+        "properties": {
+          "claimable_height": {
+            "$ref": "#/components/schemas/u32"
+          },
+          "confirmed_block": {
+            "type": "string"
+          },
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          }
+        }
+      },
+      "ExitClaimInProgressState": {
+        "type": "object",
+        "required": [
+          "tip_height",
+          "claimable_since",
+          "claim_txid"
+        ],
+        "properties": {
+          "claim_txid": {
+            "type": "string"
+          },
+          "claimable_since": {
+            "type": "string"
+          },
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          }
+        }
+      },
+      "ExitClaimRequest": {
+        "type": "object",
+        "required": [
+          "destination"
+        ],
+        "properties": {
+          "all": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Claim all exited VTXOs"
+          },
+          "destination": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          },
+          "vtxos": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The ID of an exited VTXO to be claimed"
+          }
+        }
+      },
+      "ExitClaimResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ExitClaimableState": {
+        "type": "object",
+        "required": [
+          "tip_height",
+          "claimable_since",
+          "last_scanned_block"
+        ],
+        "properties": {
+          "claimable_since": {
+            "type": "string"
+          },
+          "last_scanned_block": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          }
+        }
+      },
+      "ExitClaimedState": {
+        "type": "object",
+        "required": [
+          "tip_height",
+          "txid",
+          "block"
+        ],
+        "properties": {
+          "block": {
+            "type": "string"
+          },
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "ExitError": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ancestor-retrieval-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "height",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "height": {
+                "$ref": "#/components/schemas/u32"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "block-retrieval-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "claim-missing-inputs"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "needed",
+              "output",
+              "type"
+            ],
+            "properties": {
+              "needed": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "output": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "claim-fee-exceeds-output"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "claim-signing-error"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "cyclic-exit-transactions"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo_id",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "database-vtxo-store-failure"
+                ]
+              },
+              "vtxo_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "database-child-retrieval-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "dust",
+              "type"
+            ],
+            "properties": {
+              "dust": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "dust-limit"
+                ]
+              },
+              "vtxo": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit-package-broadcast-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit-package-finalize-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit-package-store-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "needed",
+              "available",
+              "type"
+            ],
+            "properties": {
+              "available": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "needed": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "insufficient-confirmed-funds"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "balance",
+              "total_fee",
+              "fee_rate_kwu",
+              "type"
+            ],
+            "properties": {
+              "balance": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "fee_rate_kwu": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "total_fee": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "insufficient-fee-to-start"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "internal-error"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "status",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/ExitTxStatus"
+              },
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "invalid-exit-transaction-status"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "invalid-wallet-state"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "type"
+            ],
+            "properties": {
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "missing-anchor-output"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "type"
+            ],
+            "properties": {
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "missing-exit-transaction"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "movement-registration-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "tip-retrieval-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "transaction-retrieval-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vtxo-not-claimable"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vtxo-script-pub-key-invalid"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ExitListRequest": {
+        "type": "object",
+        "properties": {
+          "history": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to include the detailed history of the exit process"
+          },
+          "transactions": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to include the exit transactions and their CPFP children"
+          }
+        }
+      },
+      "ExitProcessingState": {
+        "type": "object",
+        "required": [
+          "tip_height",
+          "transactions"
+        ],
+        "properties": {
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitTx"
+            }
+          }
+        }
+      },
+      "ExitProgressRequest": {
+        "type": "object",
+        "properties": {
+          "fee_rate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sets the desired fee-rate in sats/kvB to use broadcasting exit transactions",
+            "minimum": 0
+          },
+          "wait": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Wait until the exit is completed"
+          }
+        }
+      },
+      "ExitProgressResponse": {
+        "type": "object",
+        "required": [
+          "exits",
+          "done"
+        ],
+        "properties": {
+          "claimable_height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Block height at which all exit outputs will be spendable",
+            "minimum": 0
+          },
+          "done": {
+            "type": "boolean",
+            "description": "Whether all transactions have been confirmed"
+          },
+          "exits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitProgressStatus"
+            },
+            "description": "Status of each pending exit transaction"
+          }
+        }
+      },
+      "ExitProgressStatus": {
+        "type": "object",
+        "required": [
+          "vtxo_id",
+          "state"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExitError",
+                "description": "Any error that occurred during the exit process"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExitState",
+            "description": "The current state of the exit transaction"
+          },
+          "vtxo_id": {
+            "type": "string",
+            "description": "The ID of the VTXO that is being unilaterally exited"
+          }
+        }
+      },
+      "ExitStartRequest": {
+        "type": "object",
+        "required": [
+          "vtxos"
+        ],
+        "properties": {
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The ID of VTXOs to unilaterally exit"
+          }
+        }
+      },
+      "ExitStartResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ExitStartState": {
+        "type": "object",
+        "required": [
+          "tip_height"
+        ],
+        "properties": {
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          }
+        }
+      },
+      "ExitState": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitStartState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "start"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitProcessingState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "processing"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitAwaitingDeltaState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "awaiting-delta"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitClaimableState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "claimable"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitClaimInProgressState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "claim-in-progress"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitClaimedState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "claimed"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "description": "A utility type to wrap ExitState children so they can be easily serialized. This also helps with\ndebugging a lot!"
+      },
+      "ExitStatusRequest": {
+        "type": "object",
+        "required": [
+          "vtxo"
+        ],
+        "properties": {
+          "history": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to include the detailed history of the exit process"
+          },
+          "transactions": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to include the exit transactions and their CPFP children"
+          },
+          "vtxo": {
+            "type": "string",
+            "description": "The VTXO to check the exit status of"
+          }
+        }
+      },
+      "ExitTransactionPackage": {
+        "type": "object",
+        "required": [
+          "exit"
+        ],
+        "properties": {
+          "child": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChildTransactionInfo",
+                "description": "The child transaction used to spend, and thus confirm, the exit anchor output"
+              }
+            ]
+          },
+          "exit": {
+            "$ref": "#/components/schemas/TransactionInfo",
+            "description": "The actual unilateral exit transaction containing an anchor output and a spendable amount"
+          }
+        }
+      },
+      "ExitTransactionStatus": {
+        "type": "object",
+        "required": [
+          "vtxo_id",
+          "state"
+        ],
+        "properties": {
+          "history": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ExitState"
+            },
+            "description": "The history of each state the exit transaction has gone through"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExitState",
+            "description": "The current state of the exit transaction"
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitTransactionPackage"
+            },
+            "description": "Each exit transaction package required for the unilateral exit"
+          },
+          "vtxo_id": {
+            "type": "string",
+            "description": "The ID of the VTXO that is being unilaterally exited"
+          }
+        }
+      },
+      "ExitTx": {
+        "type": "object",
+        "required": [
+          "txid",
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ExitTxStatus"
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "ExitTxOrigin": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "confirmed_in",
+              "type"
+            ],
+            "properties": {
+              "confirmed_in": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "wallet"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "fee_rate_kwu",
+              "total_fee",
+              "type"
+            ],
+            "properties": {
+              "fee_rate_kwu": {
+                "type": "integer",
+                "format": "int64",
+                "description": "This is the effective fee rate of the transaction (including CPFP ancestors)",
+                "minimum": 0
+              },
+              "total_fee": {
+                "type": "integer",
+                "format": "int64",
+                "description": "This includes the fees of the CPFP ancestors",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "mempool"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "confirmed_in",
+              "type"
+            ],
+            "properties": {
+              "confirmed_in": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "block"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ExitTxStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "verify-inputs"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txids",
+              "type"
+            ],
+            "properties": {
+              "txids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "awaiting-input-confirmation"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "needs-signed-package"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "min_fee_rate_kwu",
+              "min_fee",
+              "type"
+            ],
+            "properties": {
+              "min_fee": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "min_fee_rate_kwu": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "needs-replacement-package"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "child_txid",
+              "origin",
+              "type"
+            ],
+            "properties": {
+              "child_txid": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/components/schemas/ExitTxOrigin"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "needs-broadcasting"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "child_txid",
+              "origin",
+              "type"
+            ],
+            "properties": {
+              "child_txid": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/components/schemas/ExitTxOrigin"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "broadcast-with-cpfp"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "child_txid",
+              "block",
+              "origin",
+              "type"
+            ],
+            "properties": {
+              "block": {
+                "type": "string"
+              },
+              "child_txid": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/components/schemas/ExitTxOrigin"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "confirmed"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "InputInfo": {
+        "type": "object",
+        "required": [
+          "txid"
+        ],
+        "properties": {
+          "prevout": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "script_sig": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InputScriptInfo"
+              }
+            ]
+          },
+          "sequence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "txid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "vout": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "witness": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      "InputScriptInfo": {
+        "type": "object",
+        "properties": {
+          "asm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hex": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "InvoiceInfo": {
+        "type": "object",
+        "required": [
+          "invoice"
+        ],
+        "properties": {
+          "invoice": {
+            "type": "string",
+            "description": "The invoice string"
+          }
+        }
+      },
+      "LightningInvoiceRequest": {
+        "type": "object",
+        "required": [
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount to create invoice for (in satoshis)",
+            "minimum": 0
+          }
+        }
+      },
+      "LightningPayRequest": {
+        "type": "object",
+        "required": [
+          "destination"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The amount to send (in satoshis). Optional for bolt11 invoices with amount",
+            "minimum": 0
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An optional comment, only supported when paying to lightning addresses"
+          },
+          "destination": {
+            "type": "string",
+            "description": "The invoice, offer, or lightning address to pay"
+          }
+        }
+      },
+      "LightningPayResponse": {
+        "type": "object",
+        "required": [
+          "message",
+          "preimage"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Success message"
+          },
+          "preimage": {
+            "type": "string",
+            "description": "The payment preimage (for successful payments)"
+          }
+        }
+      },
+      "LightningReceiveBalance": {
+        "type": "object",
+        "required": [
+          "total_sat",
+          "claimable_sat"
+        ],
+        "properties": {
+          "claimable_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "LightningReceiveInfo": {
+        "type": "object",
+        "required": [
+          "payment_hash",
+          "payment_preimage",
+          "invoice",
+          "htlc_vtxos"
+        ],
+        "properties": {
+          "htlc_vtxos": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/WalletVtxoInfo"
+            },
+            "description": "The HTLC VTXOs granted by the server for the lightning receive\n\nOnly present if the lightning HTLC has been received by the server."
+          },
+          "invoice": {
+            "type": "string",
+            "description": "The invoice string"
+          },
+          "payment_hash": {
+            "type": "string",
+            "description": "The payment hash linked to the lightning receive info"
+          },
+          "payment_preimage": {
+            "type": "string",
+            "description": "The payment preimage linked to the lightning receive info"
+          },
+          "preimage_revealed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The timestamp at which the preimage was revealed"
+          }
+        }
+      },
+      "LightningStatusRequest": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Payment hash or invoice string"
+          },
+          "preimage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Filter by preimage"
+          }
+        }
+      },
+      "LightningStatusResponse": {
+        "type": "object",
+        "required": [
+          "payment_hash",
+          "payment_preimage",
+          "invoice"
+        ],
+        "properties": {
+          "invoice": {
+            "type": "string",
+            "description": "The invoice that was paid"
+          },
+          "payment_hash": {
+            "type": "string",
+            "description": "The payment hash of the invoice"
+          },
+          "payment_preimage": {
+            "type": "string",
+            "description": "The preimage that was used to pay the invoice"
+          },
+          "preimage_revealed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The time the preimage was revealed"
+          }
+        }
+      },
+      "Movement": {
+        "type": "object",
+        "required": [
+          "id",
+          "fees",
+          "spends",
+          "receives",
+          "recipients",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "description": "Movement date"
+          },
+          "fees": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fees paid for the movement",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "receives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VtxoInfo"
+            },
+            "description": "Received VTXOs from this movement"
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecipientInfo"
+            },
+            "description": "External recipients of the movement"
+          },
+          "spends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VtxoInfo"
+            },
+            "description": "wallet's VTXOs spent in this movement"
+          }
+        }
+      },
+      "OffboardAllRequest": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional Bitcoin address to send to. If not provided, uses the onchain wallet's address"
+          }
+        }
+      },
+      "OffboardVtxosRequest": {
+        "type": "object",
+        "required": [
+          "vtxos"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional Bitcoin address to send to. If not provided, uses the onchain wallet's address"
+          },
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of VTXO IDs to offboard"
+          }
+        }
+      },
+      "OnchainBalance": {
+        "type": "object",
+        "required": [
+          "total_sat",
+          "trusted_spendable_sat",
+          "immature_sat",
+          "trusted_pending_sat",
+          "untrusted_pending_sat",
+          "confirmed_sat"
+        ],
+        "properties": {
+          "confirmed_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Confirmed and immediately spendable balance",
+            "minimum": 0
+          },
+          "immature_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "All coinbase outputs not yet matured",
+            "minimum": 0
+          },
+          "total_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "All of them combined.",
+            "minimum": 0
+          },
+          "trusted_pending_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unconfirmed UTXOs generated by a wallet tx",
+            "minimum": 0
+          },
+          "trusted_spendable_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Get sum of trusted_pending and confirmed coins.\n\nThis is the balance you can spend right now that shouldn't get cancelled via another party\ndouble spending it.",
+            "minimum": 0
+          },
+          "untrusted_pending_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unconfirmed UTXOs received from an external wallet",
+            "minimum": 0
+          }
+        }
+      },
+      "OnchainDrainRequest": {
+        "type": "object",
+        "required": [
+          "destination"
+        ],
+        "properties": {
+          "destination": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          }
+        }
+      },
+      "OnchainSendManyRequest": {
+        "type": "object",
+        "required": [
+          "destinations"
+        ],
+        "properties": {
+          "destinations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of destinations in format \"address:amount\""
+          },
+          "immediate": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Sends the transaction immediately instead of waiting"
+          }
+        }
+      },
+      "OnchainSendRequest": {
+        "type": "object",
+        "required": [
+          "destination",
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount to send (in satoshis)",
+            "minimum": 0
+          },
+          "destination": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          }
+        }
+      },
+      "OutputInfo": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "script_pub_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OutputScriptInfo"
+              }
+            ]
+          },
+          "value": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "OutputScriptInfo": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hex": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PeakAddressRequest": {
+        "type": "object",
+        "required": [
+          "index"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "PendingRoundInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "round_txid"
+        ],
+        "properties": {
+          "attempt_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Attempt sequence number within the round, if known",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Unique identifier for the round",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "Discriminant of the round state"
+          },
+          "round_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Round sequence number, if known",
+            "minimum": 0
+          },
+          "round_txid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The round transaction id, if already assigned"
+          }
+        }
+      },
+      "RecipientInfo": {
+        "type": "object",
+        "required": [
+          "recipient",
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "recipient": {
+            "type": "string",
+            "description": "Can either be a publickey, spk or a bolt11 invoice"
+          }
+        }
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "required": [
+          "vtxos"
+        ],
+        "properties": {
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of VTXO IDs to refresh"
+          }
+        }
+      },
+      "RoundStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The round was successful and is fully confirmed",
+            "required": [
+              "funding_txid",
+              "result"
+            ],
+            "properties": {
+              "funding_txid": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "confirmed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Round successful but not fully confirmed",
+            "required": [
+              "funding_txid",
+              "result"
+            ],
+            "properties": {
+              "funding_txid": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "unconfirmed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "We have unsigned funding transactions that might confirm",
+            "required": [
+              "unsigned_funding_txids",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "pending"
+                ]
+              },
+              "unsigned_funding_txids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The round failed",
+            "required": [
+              "error",
+              "result"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Send": {
+        "type": "object",
+        "required": [
+          "txid"
+        ],
+        "properties": {
+          "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "SendOnchainRequest": {
+        "type": "object",
+        "required": [
+          "destination",
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount to send (in satoshis)",
+            "minimum": 0
+          },
+          "destination": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          }
+        }
+      },
+      "SendRequest": {
+        "type": "object",
+        "required": [
+          "destination"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The amount to send (in satoshis). Optional for bolt11 invoices",
+            "minimum": 0
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An optional comment, only supported when paying to lightning addresses"
+          },
+          "destination": {
+            "type": "string",
+            "description": "The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address"
+          }
+        }
+      },
+      "SendResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Success message"
+          }
+        }
+      },
+      "TransactionInfo": {
+        "type": "object",
+        "description": "An information struct used to pair the ID of a transaction with the full transaction for ease\nof use and readability for the user",
+        "required": [
+          "txid",
+          "tx"
+        ],
+        "properties": {
+          "tx": {
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "UtxoInfo": {
+        "type": "object",
+        "description": "Struct representing information about an Unspent Transaction Output (UTXO).\n\nThis structure provides details about a UTXO, which includes the outpoint (transaction ID and\nindex), the associated amount in satoshis, and the block height at which the transaction was\nconfirmed (if available).\n\n# Serde Behavior\n\n* The `amount` field is serialized and deserialized with a custom function from the `bitcoin`\n  crate that ensures the value is interpreted as satoshis with the name `amount_sat`.",
+        "required": [
+          "outpoint",
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The value of the UTXO in satoshis.",
+            "minimum": 0
+          },
+          "confirmation_height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "An optional field that specifies the block height at which the transaction was confirmed. If\nthe transaction is unconfirmed, this value will be `None`.",
+            "minimum": 0
+          },
+          "outpoint": {
+            "type": "string",
+            "description": "Contains the reference to the specific transaction output via transaction ID and index."
+          }
+        }
+      },
+      "VtxoInfo": {
+        "type": "object",
+        "description": "Struct representing information about a VTXO.",
+        "required": [
+          "id",
+          "amount_sat",
+          "policy_type",
+          "user_pubkey",
+          "server_pubkey",
+          "expiry_height",
+          "exit_delta",
+          "chain_anchor",
+          "exit_depth",
+          "arkoor_depth"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "arkoor_depth": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "chain_anchor": {
+            "type": "string"
+          },
+          "exit_delta": {
+            "$ref": "#/components/schemas/u16"
+          },
+          "exit_depth": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "expiry_height": {
+            "$ref": "#/components/schemas/u32"
+          },
+          "id": {
+            "type": "string"
+          },
+          "policy_type": {
+            "type": "string"
+          },
+          "server_pubkey": {
+            "type": "string"
+          },
+          "user_pubkey": {
+            "type": "string"
+          }
+        }
+      },
+      "VtxosQuery": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Return all VTXOs regardless of their state (including spent ones)"
+          }
+        }
+      },
+      "WalletVtxoInfo": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/VtxoInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Same as [VtxoInfo], but with the current VTXO state."
+      },
+      "u16": {
+        "type": "integer",
+        "format": "int32",
+        "minimum": 0
+      },
+      "u32": {
+        "type": "integer",
+        "format": "int32",
+        "minimum": 0
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "board",
+      "description": "Board-related endpoints"
+    },
+    {
+      "name": "exit",
+      "description": "Exit-related endpoints"
+    },
+    {
+      "name": "lightning",
+      "description": "Lightning-related endpoints"
+    },
+    {
+      "name": "onchain",
+      "description": "Onchain wallet endpoints"
+    },
+    {
+      "name": "wallet",
+      "description": "Wallet-related endpoints"
+    }
+  ]
+}
