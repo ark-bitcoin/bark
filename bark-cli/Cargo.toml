@@ -2,7 +2,9 @@
 name = "bark-cli"
 version = "0.1.0-beta.2"
 edition = "2024"
-authors = ["Team Second <hello@second.tech>"]
+license = "CC0-1.0"
+description = "CLI for the bitcoin Ark protocol built by Second"
+authors = [ "Team Second <hello@second.tech>" ]
 
 [[bin]]
 name = "bark"
