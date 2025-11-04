@@ -319,13 +319,19 @@ impl Server {
 		wait: bool,
 	) -> anyhow::Result<LightningHtlcSubscription> {
 		let sub = loop {
-			if let Some(htlc) = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await? {
-				if htlc.status == LightningHtlcSubscriptionStatus::Settled {
-					bail!("invoice already settled");
-				}
-
-				if htlc.status == LightningHtlcSubscriptionStatus::Accepted {
-					break htlc;
+			if let Some(subscription) = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await? {
+				match subscription.status {
+					LightningHtlcSubscriptionStatus::Accepted |
+					LightningHtlcSubscriptionStatus::HtlcsReady => {
+						break subscription;
+					},
+					LightningHtlcSubscriptionStatus::Settled => {
+						return badarg!("invoice already settled");
+					},
+					LightningHtlcSubscriptionStatus::Cancelled => {
+						return badarg!("payment cancelled");
+					},
+					LightningHtlcSubscriptionStatus::Created => {},
 				}
 			}
 
