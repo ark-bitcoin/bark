@@ -1,0 +1,6 @@
+- The `bark ln claim` command now accepts an optional `--token` argument, allowing you to
+  provide a Lightning receive token to receive via Lightning even if you do not have any
+  existing VTXOs in the Ark. This acts as an anti-denial-of-service measure for the Ark
+  server which can be optionally enforced by the server. Tokens will be distributed by
+  integrators or directly by the Ark operator.
+  [#1183](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1183)

@@ -1,0 +1,4 @@
+- A new field `ln_receive_anti_dos_required` has been added to the `ArkInfo` struct, indicating
+  whether the Ark server requires clients to either provide a VTXO ownership proof, or a Lightning
+  receive token when preparing a Lightning claim as an anti-denial-of-service measure.
+  [#1183](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1183)
