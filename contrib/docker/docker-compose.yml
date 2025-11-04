@@ -1,7 +1,7 @@
 services:
   bitcoind:
     image:
-      bitcoin/bitcoin:29
+      bitcoin/bitcoin:30.0
     command: [
       "bitcoind",
       "-regtest",
@@ -47,8 +47,9 @@ services:
       - bitcoind:/root/.bitcoin
       - cln:/root/.lightning
     ports:
-      - "9988:9988"
+      - "9735:9735"
       - "9736:9736"
+      - "9988:9988"
     depends_on:
       bitcoind:
         condition: service_healthy
