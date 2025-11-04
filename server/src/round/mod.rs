@@ -100,7 +100,7 @@ fn validate_forfeit_sigs(
 		vtxo.output_taproot().tap_tweak().to_byte_array(),
 	);
 	for (idx, (conn, _tx)) in connectors.connectors().enumerate() {
-		let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
+		let (sighash, _tx) = ark::forfeit::connector_forfeit_sighash_exit(
 			vtxo, conn, connector_pk,
 		);
 		let part_sig = part_sigs.get(idx).expect("we checked length");

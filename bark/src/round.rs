@@ -795,7 +795,7 @@ async fn sign_forfeits(
 		let keypair = wallet.get_vtxo_key(&vtxo)?;
 
 		let sigs = connectors.connectors().enumerate().map(|(i, (conn, _))| {
-			let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
+			let (sighash, _tx) = ark::forfeit::connector_forfeit_sighash_exit(
 				vtxo, conn, connector_pubkey,
 			);
 			let srv_nonce = forfeit_nonces.get(&vtxo.id())
