@@ -78,12 +78,12 @@ fn anchor_input() -> TxIn {
 	empty_input()
 }
 
-fn ctv_node_tx(radix: usize) -> Transaction {
+fn ctv_node_tx(radix: u64) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: vec![ctv_input()],
-		output: iter::repeat(ctv_output()).take(radix).chain(Some(anchor_output())).collect(),
+		output: iter::repeat(ctv_output()).take(radix as usize).chain(Some(anchor_output())).collect(),
 	}
 }
 
@@ -96,12 +96,12 @@ fn ctv_leaf_tx() -> Transaction {
 	}
 }
 
-fn clark_node_tx(radix: usize) -> Transaction {
+fn clark_node_tx(radix: u64) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
 		input: vec![taproot_input()],
-		output: iter::repeat(taproot_output()).take(radix).chain(Some(anchor_output())).collect(),
+		output: iter::repeat(taproot_output()).take(radix as usize).chain(Some(anchor_output())).collect(),
 	}
 }
 
@@ -114,11 +114,20 @@ fn clark_leaf_tx() -> Transaction {
 	}
 }
 
-fn calc_exit_cost(n: usize, radix: usize) {
+fn round_tx() -> Transaction {
+	Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
+		input: vec![taproot_input(), taproot_input(), taproot_input()],
+		output: vec![taproot_output(), taproot_output(), anchor_output()],
+	}
+}
+
+fn calc_exit_cost(n: u64, radix: u64) {
 	let (nodes, levels) = {
 		let mut n = n;
 		let mut nodes = 0;
-		let mut levels = 0;
+		let mut levels = 0u64;
 		loop {
 			nodes += n / radix;
 			levels += 1;
@@ -139,32 +148,32 @@ fn calc_exit_cost(n: usize, radix: usize) {
 	let exit_claim_tx = Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
-		input: iter::repeat(anchor_input()).take(levels).chain(Some(taproot_input())).collect(),
+		input: iter::repeat(anchor_input()).take(levels as usize).chain(Some(taproot_input())).collect(),
 		output: vec![taproot_output()],
 	};
 
 	println!("Calculations for n={}, radix={}: levels={}", n, radix, levels);
 
-	let ctv_exit_cost = levels * ctv_node_tx(radix).size() + ctv_leaf_tx().size() + exit_claim_tx.size();
-	println!("CTV exit cost: {}", ctv_exit_cost);
-	let ctv_total_tree = nodes * ctv_node_tx(radix).size() + n * ctv_leaf_tx().size();
-	println!("CTV total tree size: {}", ctv_total_tree);
+	let ctv_exit_weight = ctv_node_tx(radix).weight() * levels + ctv_leaf_tx().weight() + exit_claim_tx.weight();
+	println!("CTV exit weight: {}", ctv_exit_weight);
+	let ctv_total_tree = ctv_node_tx(radix).weight() * nodes + ctv_leaf_tx().weight() * n;
+	println!("CTV total tree weight: {}", ctv_total_tree);
 
-	let clark_exit_cost = levels * clark_node_tx(radix).size() + clark_leaf_tx().size() + exit_claim_tx.size();
-	println!("clArk exit cost: {}", clark_exit_cost);
-	let clark_total_tree = nodes * clark_node_tx(radix).size() + n * clark_leaf_tx().size();
-	println!("clArk total tree size: {}", clark_total_tree);
+	let clark_exit_weight = clark_node_tx(radix).weight() * levels + clark_leaf_tx().weight() + exit_claim_tx.weight();
+	println!("clArk exit weight: {}", clark_exit_weight);
+	let clark_total_tree = nodes * clark_node_tx(radix).weight() + clark_leaf_tx().weight() * n;
+	println!("clArk total tree weight: {}", clark_total_tree);
 	println!();
 }
 
 #[test]
 fn napkin() {
-	println!("CTV node tx radix=2: {} bytes", ctv_node_tx(2).size());
-	println!("CTV node tx radix=4: {} bytes", ctv_node_tx(4).size());
-	println!("CTV leaf tx: {} bytes", ctv_leaf_tx().size());
-	println!("clArk node tx radix=2: {} bytes", clark_node_tx(2).size());
-	println!("clArk node tx radix=4: {} bytes", clark_node_tx(4).size());
-	println!("clArk leaf tx: {} bytes", clark_leaf_tx().size());
+	println!("CTV node tx radix=2: {} wu", ctv_node_tx(2).weight());
+	println!("CTV node tx radix=4: {} wu", ctv_node_tx(4).weight());
+	println!("CTV leaf tx: {} wu", ctv_leaf_tx().weight());
+	println!("clArk node tx radix=2: {} wu", clark_node_tx(2).weight());
+	println!("clArk node tx radix=4: {} wu", clark_node_tx(4).weight());
+	println!("clArk leaf tx: {} wu", clark_leaf_tx().weight());
 	println!();
 	println!();
 
@@ -192,4 +201,8 @@ fn napkin() {
 	calc_exit_cost(10_000_000, 5);
 	calc_exit_cost(10_000_000, 6);
 	calc_exit_cost(100_000_000, 4);
+
+	println!();
+
+	println!("Round tx weight: {} wu", round_tx().weight());
 }
