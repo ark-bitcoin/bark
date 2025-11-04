@@ -9,16 +9,6 @@ use bitcoin::hashes::Hash;
 const BYTES32: [u8; 32] = [0; 32];
 const BYTES64: [u8; 64] = [0; 64];
 
-trait EncSize {
-	fn size(&self) -> usize;
-}
-
-impl<T: bitcoin::consensus::Encodable> EncSize for T {
-	fn size(&self) -> usize {
-		bitcoin::consensus::serialize(self).len()
-	}
-}
-
 fn empty_input() -> TxIn {
 	TxIn {
 		previous_output: OutPoint::new(Txid::from_byte_array(BYTES32), 0),
