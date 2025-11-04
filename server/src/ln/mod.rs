@@ -341,7 +341,7 @@ impl Server {
 			}
 
 			if !wait {
-				bail!("payment not yet initiated by sender");
+				return badarg!("payment not yet initiated by sender");
 			}
 
 			tokio::time::sleep(self.config.invoice_check_interval).await;
