@@ -5,7 +5,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -16,17 +15,22 @@ use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
-use log::{error, info, trace};
-use server::vtxopool::VtxoTarget;
+use log::{debug, error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
-use ark::{musig, OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{
+	musig, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest,
+	SECP,
+};
+use bark::lightning_invoice::Bolt11Invoice;
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bark::Wallet;
 use bark_json::WalletVtxoInfo;
+use bark_json::cli::RoundStatus;
 use bark_json::exit::ExitState;
 use server::secret::Secret;
+use server::vtxopool::VtxoTarget;
 use server_log::{
 	RoundFinished, RoundUserVtxoAlreadyRegistered,
 	RoundUserVtxoUnknown, TxIndexUpdateFinished,
@@ -39,7 +43,7 @@ use ark_testing::{Captaind, TestContext, btc, sat, secs, Bark};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{FutureExt, ReceiverExt};
+use ark_testing::util::{FutureExt, ReceiverExt, ToAltString};
 
 use ark_testing::exit::complete_exit;
 
@@ -213,13 +217,15 @@ async fn cant_spend_untrusted() {
 
 	// we will launch bark to try refresh, it will produce an error log at first,
 	// then we'll confirm the server's money and then bark should succeed by retrying
+
 	let bark_clone = bark.clone();
 	let attempt_handle = tokio::spawn(async move {
-		bark_clone.try_refresh_all().await.unwrap_err();
+		let err = bark_clone.try_refresh_all().await.unwrap_err();
+		debug!("First refresh failed: {:#}", err);
 	});
 
 	// this will at first produce an error
-	let err = log_round_err.recv().wait(5_000).await.unwrap().error;
+	let err = log_round_err.recv().wait(15_000).await.unwrap().error;
 	assert!(err.contains("Insufficient funds"), "err: {err}");
 
 	attempt_handle.await.unwrap();
@@ -557,8 +563,9 @@ async fn double_spend_round() {
 #[tokio::test]
 async fn test_participate_round_wrong_step() {
 	let ctx = TestContext::new("server/test_participate_round_wrong_step").await;
-	let srv = ctx.new_captaind_with_funds("server", None, Amount::from_int_btc(10)).await;
-	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &srv, Amount::from_sat(1_000_000)).await;
+
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
 	bark.board(Amount::from_sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -579,7 +586,7 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = srv.get_proxy_rpc(ProxyA).await;
 	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
+	let err = bark.try_refresh_all().await.expect_err("refresh should time out");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
 
 	/// This proxy will send a `provide_forfeit_signatures` req instead of `provide_vtxo_signatures` one
@@ -619,8 +626,12 @@ async fn test_participate_round_wrong_step() {
 	let proxy = srv.get_proxy_rpc(ProxyC).await;
 	bark.set_ark_url(&proxy).await;
 	bark.unset_timeout();
-	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
-	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
+	let res = bark.try_refresh_all().await.expect("should get pending state");
+	if let RoundStatus::Pending { .. } = res {
+		// since from the bark POV we sent our forfeits, it should keep the pending state
+	} else {
+		panic!("should be pending state")
+	}
 }
 
 #[tokio::test]
@@ -883,7 +894,7 @@ async fn claim_forfeit_connector_chain() {
 	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
 	let mut log_round = srv.subscribe_log::<RoundFinished>();
 	assert!(bark.try_refresh_all().await.is_err());
-	assert_eq!(bark.inround_balance().await, sat(4_000_000));
+	assert_eq!(bark.inround_balance().await, sat(4_000_000), "vtxos: {:?}", bark.vtxos().await);
 	assert_eq!(log_round.recv().ready().await.unwrap().nb_input_vtxos, 10);
 
 	// start the exit process
@@ -1200,9 +1211,9 @@ async fn reject_dust_vtxo_request() {
 
 	bark.set_timeout(Duration::from_millis(3_500));
 	let err = bark.try_refresh_all().await.unwrap_err();
-	assert!(err.to_string().contains(
+	assert!(err.to_alt_string().contains(
 		"bad user input: vtxo amount must be at least 0.00000330 BTC",
-	), "err: {err}");
+	), "err: {err:#}");
 }
 
 #[tokio::test]

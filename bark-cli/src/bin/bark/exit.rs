@@ -11,7 +11,7 @@ use log::{warn, info};
 use ark::VtxoId;
 use bark::Wallet;
 use bark::onchain::OnchainWallet;
-use bark::vtxo_selection::VtxoFilter;
+use bark::vtxo_selection::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;
@@ -171,8 +171,11 @@ pub async fn start_exit(
 
 		let spendable = wallet.spendable_vtxos_with(&filter)
 			.context("Error parsing vtxos")?;
-		let inround = wallet.inround_vtxos_with(&filter)
-			.context("Error parsing vtxos")?;
+		let inround = {
+			let mut buf = wallet.pending_round_input_vtxos()?;
+			filter.filter_vtxos(&mut buf)?;
+			buf
+		};
 
 		let vtxos = spendable.into_iter().chain(inround)
 			.map(|v| v.vtxo).collect::<Vec<_>>();

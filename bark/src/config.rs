@@ -60,7 +60,7 @@ pub struct Config {
 
 	/// The number of blocks before expiration to refresh vtxos.
 	///
-	/// Default value: 288 (48 hrs)
+	/// Default value: 144 (24h) for mainnet, 12 for testnets
 	pub vtxo_refresh_expiry_threshold: BlockHeight,
 
 	/// An upper limit of the number of blocks we expect to need to
@@ -86,6 +86,12 @@ pub struct Config {
 	///
 	/// Default value: 0 (disabled)
 	pub deep_round_confirmations: BlockDelta,
+
+	/// The number of confirmations required before considering a round tx
+	/// fully confirmed
+	///
+	/// Default value: 6 for mainnet, 2 for testnets
+	pub round_tx_required_confirmations: BlockHeight,
 }
 
 impl Config {
@@ -105,11 +111,13 @@ impl Config {
 			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: None,
 			deep_round_confirmations: 0,
+			round_tx_required_confirmations: 6,
 		};
 
 		if network != Network::Bitcoin {
 			ret.vtxo_refresh_expiry_threshold = 12;
 			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
+			ret.round_tx_required_confirmations = 2;
 		}
 		ret
 	}

@@ -15,6 +15,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use bark::movement::Movement;
+use bark::round::RoundStatus;
 use bark::vtxo_state::{VtxoStateKind, WalletVtxo};
 use bitcoin::{Amount, FeeRate};
 use clap::builder::BoolishValueParser;
@@ -63,6 +64,23 @@ fn movement_to_json(movement: &Movement) -> json::Movement {
 			amount: r.amount,
 		}).collect(),
 		created_at: movement.created_at.to_string(),
+	}
+}
+
+fn round_status_to_json(status: &RoundStatus) -> json::RoundStatus {
+	match status {
+		RoundStatus::Confirmed { funding_txid } => {
+			json::RoundStatus::Confirmed { funding_txid: *funding_txid }
+		},
+		RoundStatus::Unconfirmed { funding_txid } => {
+			json::RoundStatus::Unconfirmed { funding_txid: *funding_txid }
+		},
+		RoundStatus::Pending { unsigned_funding_txids } => {
+			json::RoundStatus::Pending { unsigned_funding_txids: unsigned_funding_txids.clone() }
+		},
+		RoundStatus::Failed { error } => {
+			json::RoundStatus::Failed { error: error.clone() }
+		},
 	}
 }
 
@@ -615,12 +633,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let vtxos = vtxos.into_iter().map(|v| v.id()).collect::<Vec<_>>();
 
 			info!("Refreshing {} vtxos...", vtxos.len());
-			let round_id = wallet.refresh_vtxos(vtxos).await?;
-			let refresh_output = json::Refresh {
-				participate_round: round_id.is_some(),
-				round: round_id,
-			};
-			output_json(&refresh_output);
+			if let Some(res) = wallet.refresh_vtxos(vtxos).await? {
+				output_json(&round_status_to_json(&res));
+			} else {
+				info!("No round happened");
+			}
 		},
 		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
@@ -727,7 +744,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
-			output_json(&json::Offboard::from(ret));
+			output_json(&round_status_to_json(&ret));
 		},
 		Command::Onchain(onchain_command) => {
 			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut onchain).await?;

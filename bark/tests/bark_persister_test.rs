@@ -1,30 +1,31 @@
+//!
+//! A test to ensure that it is possible to implement the [BarkPersister] trait.
+//!
+
+
 use std::str::FromStr;
 
 use bdk_wallet::ChangeSet;
-use bitcoin::{Amount, BlockHash, Network, ScriptBuf, Transaction, Txid};
+use bitcoin::{Amount, BlockHash, Network, Transaction, Txid};
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
 use lightning_invoice::Bolt11Invoice;
 
-use ark::{OffboardRequest, Vtxo, VtxoId, VtxoPolicy};
+use ark::{Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use ark::musig::SecretNonce;
-use ark::musig::secpm::ffi::MUSIG_SECNONCE_SIZE;
-use ark::rounds::{RoundId, RoundSeq};
-use ark::vtxo::{PubkeyVtxoPolicy, ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPolicy};
+
 use bark::{WalletProperties, WalletVtxo};
-use bark::movement::{Movement, MovementArgs, MovementKind, MovementRecipient};
-use bark::persist::BarkPersister;
-use bark::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
-use bark::round::{
-	AttemptStartedState, PendingConfirmationState, RoundConfirmedState, RoundParticipation,
-	RoundState, VtxoForfeitedInRound,
-};
-use bark::vtxo_state::{VtxoState, VtxoStateKind};
 use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
-use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef};
+use bark::movement::{Movement, MovementArgs, MovementKind, MovementRecipient};
+use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
+use bark::persist::models::{self, PendingLightningSend, LightningReceive, StoredExit};
+use bark::round::{RoundState, UnconfirmedRound};
+use bark::vtxo_state::{VtxoState, VtxoStateKind};
+use bitcoin_ext::{BlockDelta, BlockRef};
 use server_rpc::TryFromBytes;
+
+
 struct Dummy;
 
 impl BarkPersister for Dummy {
@@ -82,88 +83,6 @@ impl BarkPersister for Dummy {
 		Ok(vec![])
 	}
 
-	fn store_new_round_attempt(
-		&self,
-		_round_seq: RoundSeq,
-		_attempt_seq: usize,
-		_round_participation: RoundParticipation,
-	) -> anyhow::Result<AttemptStartedState> {
-		Ok(AttemptStartedState {
-			round_attempt_id: 0,
-			round_seq: RoundSeq::new(0),
-			attempt_seq: 0,
-			participation: dummy_round_participation()
-		})
-	}
-
-	fn store_pending_confirmation_round(
-		&self,
-		_round_txid: RoundId,
-		_round_tx: Transaction,
-		_reqs: Vec<StoredVtxoRequest>,
-		_vtxos: Vec<Vtxo>,
-	) -> anyhow::Result<PendingConfirmationState> {
-		Ok(PendingConfirmationState {
-			round_attempt_id: 0,
-			round_seq: Some(RoundSeq::new(0)),
-			attempt_seq: Some(0),
-			participation: dummy_round_participation(),
-			round_tx: Transaction::from_bytes([])?,
-			round_txid: RoundId::from_bytes([])?,
-			vtxos: Vec::<Vtxo>::new(),
-			forfeited_vtxos: Vec::<VtxoForfeitedInRound>::from([
-				VtxoForfeitedInRound {
-					round_attempt_id: 0,
-					vtxo_id: VtxoId::from_bytes([])?,
-					double_spend_txid: Some(Txid::all_zeros()),
-				}
-			]),
-		})
-	}
-
-	fn store_round_state(
-		&self,
-		_round_state: RoundState,
-		_prev_state: RoundState,
-	) -> anyhow::Result<RoundState> {
-		Ok(dummy_round_state())
-	}
-
-	fn store_secret_nonces(
-		&self,
-		_round_attempt_id: i64,
-		_secret_nonces: Vec<Vec<SecretNonce>>,
-	) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	fn take_secret_nonces(
-		&self,
-		_round_attempt_id: i64,
-	) -> anyhow::Result<Option<Vec<Vec<SecretNonce>>>> {
-		Ok(Some(vec![Vec::<SecretNonce>::from([
-			SecretNonce::dangerous_from_bytes([0u8; MUSIG_SECNONCE_SIZE])
-		])]))
-	}
-
-	fn get_round_attempt_by_id(
-		&self,
-		_round_attempt_id: i64,
-	) -> anyhow::Result<Option<RoundState>> {
-		Ok(Some(dummy_round_state()))
-	}
-
-	fn get_round_attempt_by_round_txid(
-		&self,
-		_round_id: RoundId,
-	) -> anyhow::Result<Option<RoundState>> {
-		Ok(Some(dummy_round_state()))
-	}
-
-	fn list_pending_rounds(&self) -> anyhow::Result<Vec<RoundState>> {
-		Ok(Vec::<RoundState>::from([dummy_round_state()]))
-	}
-
 	fn get_wallet_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
 		Ok(Some(WalletVtxo {
 			vtxo: Vtxo::from_bytes([])?,
@@ -179,13 +98,6 @@ impl BarkPersister for Dummy {
 	}
 
 	fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
-			vtxo: Vtxo::from_bytes([])?,
-			state: VtxoState::Locked,
-		}]))
-	}
-
-	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::from_bytes([])?,
 			state: VtxoState::Locked,
@@ -326,6 +238,37 @@ impl BarkPersister for Dummy {
 			state: VtxoState::Spent,
 		}]).pop().unwrap())
 	}
+
+	fn store_round_state_lock_vtxos(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {
+		Ok(RoundStateId(5))
+	}
+
+	fn update_round_state(&self, _round_state: &StoredRoundState) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn remove_round_state(&self, _round_state: &StoredRoundState) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+		Ok(vec![StoredRoundState {
+			id: RoundStateId(5),
+			state: rmp_serde::from_slice::<models::SerdeRoundState>(&[]).unwrap().into(),
+		}])
+	}
+
+	fn store_recovered_round(&self, _round: &UnconfirmedRound) -> anyhow::Result<()> {
+		Ok(())
+	}
+	fn remove_recovered_round(&self, _funding_txid: Txid) -> anyhow::Result<()> {
+
+		Ok(())
+	}
+
+	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>> {
+		Ok(vec![rmp_serde::from_slice::<models::SerdeUnconfirmedRound>(&[]).unwrap().into()])
+	}
 }
 
 fn dummy_lightning_receive() -> LightningReceive {
@@ -337,56 +280,6 @@ fn dummy_lightning_receive() -> LightningReceive {
 		htlc_vtxos: None,
 		htlc_recv_cltv_delta: 0,
 	}
-}
-
-fn dummy_round_participation() -> RoundParticipation {
-	RoundParticipation {
-		inputs: Vec::<Vtxo>::new(),
-		outputs: Vec::<StoredVtxoRequest>::from([
-			StoredVtxoRequest {
-				request_policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy {
-					user_pubkey: PublicKey::from_bytes([]).unwrap(),
-				}),
-				amount: Amount::ZERO,
-				state: VtxoState::Spendable,
-			},
-			StoredVtxoRequest {
-				request_policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
-					user_pubkey: PublicKey::from_bytes([]).unwrap(),
-					payment_hash: PaymentHash::from_bytes([]).unwrap(),
-					htlc_expiry: 0 as BlockHeight,
-				}),
-				amount: Amount::ZERO,
-				state: VtxoState::Spendable,
-			},
-			StoredVtxoRequest {
-				request_policy: VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
-					user_pubkey: PublicKey::from_bytes([]).unwrap(),
-					payment_hash: PaymentHash::from_bytes([]).unwrap(),
-					htlc_expiry: 0 as BlockHeight,
-					htlc_expiry_delta: 40,
-				}),
-				amount: Amount::ZERO,
-				state: VtxoState::Spendable,
-			},
-		]),
-		offboards: Vec::<OffboardRequest>::from([
-			OffboardRequest {
-				script_pubkey: ScriptBuf::new_p2a(),
-				amount: Amount::ZERO,
-			},
-		]),
-	}
-}
-
-fn dummy_round_state() -> RoundState {
-	RoundState::RoundConfirmed(RoundConfirmedState {
-		round_attempt_id: 0,
-		round_seq: Some(RoundSeq::new(0)),
-		attempt_seq: Some(0),
-		round_tx: Transaction::from_bytes([]).unwrap(),
-		round_txid: RoundId::from_bytes([]).unwrap(),
-	})
 }
 
 #[test]

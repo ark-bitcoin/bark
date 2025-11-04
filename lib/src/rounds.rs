@@ -4,11 +4,10 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::str::FromStr;
 
+use bitcoin::{Transaction, Txid};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::PublicKey;
-use bitcoin::{key::Keypair, FeeRate, Transaction, Txid};
-use bitcoin::secp256k1::{self, schnorr, Message};
+use bitcoin::secp256k1::{self, schnorr, Keypair, Message, PublicKey};
 
 use crate::{musig, OffboardRequest, SECP, SignedVtxoRequest, Vtxo, VtxoId};
 use crate::encode::ProtocolEncoding;
@@ -44,7 +43,12 @@ impl VtxoOwnershipChallenge {
 	/// Combines [VtxoOwnershipChallenge] and [VtxoId] in a signable message
 	///
 	/// Note: because we use [`VtxoId`] in the message, there is no
-	fn as_signable_message(&self, vtxo_id: VtxoId, vtxo_reqs: &[SignedVtxoRequest], offboard_reqs: &[OffboardRequest]) -> Message {
+	fn as_signable_message(
+		&self,
+		vtxo_id: VtxoId,
+		vtxo_reqs: &[SignedVtxoRequest],
+		offboard_reqs: &[OffboardRequest],
+	) -> Message {
 		let mut engine = sha256::Hash::engine();
 		engine.write_all(Self::CHALENGE_MESSAGE_PREFIX).unwrap();
 		engine.write_all(&self.0).unwrap();
@@ -65,8 +69,15 @@ impl VtxoOwnershipChallenge {
 		Message::from_digest(hash)
 	}
 
-	pub fn sign_with(&self, vtxo_id: VtxoId, vtxo_reqs: &[SignedVtxoRequest], offboard_reqs: &[OffboardRequest], vtxo_keypair: Keypair) -> schnorr::Signature {
-		SECP.sign_schnorr(&self.as_signable_message(vtxo_id, vtxo_reqs, offboard_reqs), &vtxo_keypair)
+	pub fn sign_with(
+		&self,
+		vtxo_id: VtxoId,
+		vtxo_reqs: &[SignedVtxoRequest],
+		offboard_reqs: &[OffboardRequest],
+		vtxo_keypair: Keypair,
+	) -> schnorr::Signature {
+		let msg = self.as_signable_message(vtxo_id, vtxo_reqs, offboard_reqs);
+		SECP.sign_schnorr(&msg, &vtxo_keypair)
 	}
 
 	pub fn verify_input_vtxo_sig(
@@ -76,11 +87,8 @@ impl VtxoOwnershipChallenge {
 		offboard_reqs: &[OffboardRequest],
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
-		SECP.verify_schnorr(
-			sig,
-			&self.as_signable_message(vtxo.id(), vtxo_reqs, offboard_reqs),
-			&vtxo.user_pubkey().x_only_public_key().0,
-		)
+		let msg = self.as_signable_message(vtxo.id(), vtxo_reqs, offboard_reqs);
+		SECP.verify_schnorr( sig, &msg, &vtxo.user_pubkey().x_only_public_key().0)
 	}
 }
 
@@ -207,13 +215,6 @@ impl<'de> serde::Deserialize<'de> for RoundId {
 	}
 }
 
-
-#[derive(Debug, Clone)]
-pub struct RoundInfo {
-	pub round_seq: RoundSeq,
-	pub offboard_feerate: FeeRate,
-}
-
 #[derive(Debug, Clone)]
 pub struct RoundAttempt {
 	pub round_seq: RoundSeq,
@@ -248,7 +249,6 @@ pub struct RoundFinished {
 
 #[derive(Debug, Clone)]
 pub enum RoundEvent {
-	Start(RoundInfo),
 	Attempt(RoundAttempt),
 	VtxoProposal(VtxoProposal),
 	RoundProposal(RoundProposal),
@@ -256,13 +256,31 @@ pub enum RoundEvent {
 }
 
 impl RoundEvent {
+	/// String representation of the kind of event
+	pub fn kind(&self) -> &'static str {
+		match self {
+			Self::Attempt(_) => "RoundAttempt",
+			Self::VtxoProposal { .. } => "VtxoProposal",
+			Self::RoundProposal { .. } => "RoundProposal",
+			Self::Finished { .. } => "Finished",
+		}
+	}
+
 	pub fn round_seq(&self) -> RoundSeq {
 		match self {
-			Self::Start(e) => e.round_seq,
 			Self::Attempt(e) => e.round_seq,
 			Self::VtxoProposal(e) => e.round_seq,
 			Self::RoundProposal(e) => e.round_seq,
 			Self::Finished(e) => e.round_seq,
+		}
+	}
+
+	pub fn attempt_seq(&self) -> usize {
+		match self {
+			Self::Attempt(e) => e.attempt_seq,
+			Self::VtxoProposal(e) => e.attempt_seq,
+			Self::RoundProposal(e) => e.attempt_seq,
+			Self::Finished(e) => e.attempt_seq,
 		}
 	}
 }
@@ -271,14 +289,8 @@ impl RoundEvent {
 impl fmt::Display for RoundEvent {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::Start(RoundInfo { round_seq, offboard_feerate }) => {
-				f.debug_struct("Start")
-					.field("round_seq", round_seq)
-					.field("offboard_feerate", offboard_feerate)
-					.finish()
-			},
 			Self::Attempt(RoundAttempt { round_seq, attempt_seq, challenge }) => {
-				f.debug_struct("Attempt")
+				f.debug_struct("RoundAttempt")
 					.field("round_seq", round_seq)
 					.field("attempt_seq", attempt_seq)
 					.field("challenge", &challenge.inner().as_hex())

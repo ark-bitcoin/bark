@@ -55,8 +55,8 @@ pub fn init_logging() {
 			let lvl = rec.level();
 			let module = rec.module_path().expect("no module");
 			let msg = rec.args();
-			if module.starts_with("ark_testing") {
-				let module = module.strip_prefix("ark_").unwrap();
+			if module.starts_with("ark_testing") || module.starts_with("bark") {
+				let module = module.strip_prefix("ark_").unwrap_or(module);
 				let file = rec.file().expect("log record without file");
 				let file = file.split("testing/src/").last().unwrap();
 				let line = rec.line().expect("log record without line");

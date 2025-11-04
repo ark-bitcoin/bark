@@ -43,6 +43,7 @@ rusqlite =  "0.31.0"
 lazy_static.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+rmp-serde.workspace = true
 
 bip39.workspace = true
 bdk_core = { workspace = true }

@@ -20,24 +20,39 @@
 pub mod models;
 pub mod sqlite;
 
-#[cfg(feature = "onchain_bdk")]
-use bdk_wallet::ChangeSet;
 
-use ark::lightning::{Invoice, PaymentHash, Preimage};
-use ark::musig::SecretNonce;
-use ark::rounds::{RoundId, RoundSeq};
+use std::fmt;
+
 use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::BlockDelta;
 use lightning_invoice::Bolt11Invoice;
+#[cfg(feature = "onchain_bdk")]
+use bdk_wallet::ChangeSet;
 
 use ark::{Vtxo, VtxoId};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 
 use crate::{Movement, MovementArgs, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
-use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit, StoredVtxoRequest};
-use crate::round::{AttemptStartedState, PendingConfirmationState, RoundParticipation, RoundState};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
+use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
+
+/// Identifier for a stored [RoundState].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoundStateId(pub u32);
+
+impl fmt::Display for RoundStateId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    fmt::Display::fmt(&self.0, f)
+	}
+}
+
+pub struct StoredRoundState {
+	pub id: RoundStateId,
+	pub state: RoundState,
+}
 
 /// Storage interface for Bark wallets.
 ///
@@ -184,119 +199,54 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the query fails.
 	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>>;
 
-	/// Create a new round attempt with the initial [AttemptStartedState].
+	/// Store a new ongoing round state and lock the VTXOs in round
 	///
 	/// Parameters:
-	/// - round_seq: Monotonic round sequence number.
-	/// - attempt_seq: Attempt index within the round sequence.
-	/// - round_participation: Participation details for the wallet.
+	/// - `round_state`: the state to store
 	///
 	/// Returns:
-	/// - `Ok(AttemptStartedState)` persisted.
+	/// - `RoundStateId`: the storaged ID of the new state
 	///
 	/// Errors:
-	/// - Returns an error if the round attempt cannot be created (e.g., conflicts).
-	fn store_new_round_attempt(
-		&self,
-	    round_seq: RoundSeq,
-		attempt_seq: usize,
-		round_participation: RoundParticipation,
-	) -> anyhow::Result<AttemptStartedState>;
+	/// - returns an error of the new round state could not be stored or the VTXOs
+	///   couldn't be marked as locked
+	fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId>;
 
-	/// Transition a round to [PendingConfirmationState], persisting round tx and [Vtxo] effects.
+	/// Update an existing stored pending round state
 	///
 	/// Parameters:
-	/// - round_txid: Round transaction identifier.
-	/// - round_tx: Full round [Transaction].
-	/// - reqs: [StoredVtxoRequest] entries associated to the round.
-	/// - vtxos: VTXOs produced or affected by the round.
-	///
-	/// Returns:
-	/// - `Ok(PendingConfirmationState)` persisted.
+	/// - `round_state`: the round state to update
 	///
 	/// Errors:
-	/// - Returns an error if any element cannot be stored atomically.
-	fn store_pending_confirmation_round(
-		&self,
-		round_txid: RoundId,
-		round_tx: Transaction,
-		reqs: Vec<StoredVtxoRequest>,
-		vtxos: Vec<Vtxo>,
-	) -> anyhow::Result<PendingConfirmationState>;
+	/// - returns an error of the existing round state could not be found or updated
+	fn update_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
 
-	/// Store a round state update, validating the previous state.
+	/// Remove a pending round state from the db and releases the locked VTXOs
 	///
 	/// Parameters:
-	/// - round_state: The new [RoundState] to persist.
-	/// - prev_state: The expected current [RoundState]; used to prevent invalid transitions.
+	/// - `round_state`: the round state to remove
+	///
+	/// Errors:
+	/// - returns an error of the existing round state could not be found or removed
+	fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
+
+	/// Load all pending round states from the db
 	///
 	/// Returns:
-	/// - `Ok(RoundState)` persisted state.
+	/// - `Vec<StoredRoundState>`: unordered vector with all stored round states
 	///
 	/// Errors:
-	/// - Returns an error if the transition is invalid or writing fails.
-	fn store_round_state(&self, round_state: RoundState, prev_state: RoundState) -> anyhow::Result<RoundState>;
+	/// - returns an error of the states could not be succesfully retrieved
+	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>>;
 
-	/// Store secret nonces associated with a specific round attempt.
-	///
-	/// The nonces are ephemeral and typically consumed once. Store atomically.
-	///
-	/// Parameters:
-	/// - round_attempt_id: Identifier of the round attempt.
-	/// - secret_nonces: Nested collection of SecretNonce sets (e.g., per input/output). These
-	///   nonces should only ever be accessed using `take_secret_nonces` to avoid the risk of reuse.
-	///
-	/// Errors:
-	/// - Returns an error if the nonces cannot be persisted.
-	fn store_secret_nonces(&self, round_attempt_id: i64, secret_nonces: Vec<Vec<SecretNonce>>) -> anyhow::Result<()>;
+	/// Store a recovered past round
+	fn store_recovered_round(&self, round: &UnconfirmedRound) -> anyhow::Result<()>;
 
-	/// Take and remove secret nonces for a round attempt (consume-once semantics).
-	///
-	/// Parameters:
-	/// - round_attempt_id: Identifier of the round attempt.
-	///
-	/// Returns:
-	/// - `Ok(Some(nonches))` if found
-	/// - `Ok(None)` if none exist.
-	///
-	/// Errors:
-	/// - Returns an error if retrieval or deletion fails.
-	fn take_secret_nonces(&self, round_attempt_id: i64) -> anyhow::Result<Option<Vec<Vec<SecretNonce>>>>;
+	/// Remove a recovered past round
+	fn remove_recovered_round(&self, funding_txid: Txid) -> anyhow::Result<()>;
 
-	/// Fetch a round by its internal attempt ID.
-	///
-	/// Parameters:
-	/// - round_attempt_id: Attempt identifier.
-	///
-	/// Returns:
-	/// - `Ok(Some(RoundState))` if found,
-	/// - `Ok(None)` if not present.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn get_round_attempt_by_id(&self, round_attempt_id: i64) -> anyhow::Result<Option<RoundState>>;
-
-	/// Fetch a round by its round transaction ID.
-	///
-	/// Parameters:
-	/// - round_id: Round transaction ID.
-	///
-	/// Returns:
-	/// - `Ok(Some(RoundState))` if found,
-	/// - `Ok(None)` otherwise.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn get_round_attempt_by_round_txid(&self, round_id: RoundId) -> anyhow::Result<Option<RoundState>>;
-
-	/// List all rounds that are pending (e.g., awaiting confirmation or resolution).
-	///
-	/// Returns:
-	/// - `Ok(Vec<RoundState>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn list_pending_rounds(&self) -> anyhow::Result<Vec<RoundState>>;
+	/// Load the recovered past rounds
+	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>>;
 
 	/// Fetch a wallet [Vtxo] with its current state by ID.
 	///
@@ -331,15 +281,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the query fails.
 	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>>;
-
-	/// Fetch all VTXOs currently engaged in an active round.
-	///
-	/// Returns:
-	/// - `Ok(Vec<Vtxo>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn get_in_round_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>>;
 
 	/// Remove a [Vtxo] by ID.
 	///
@@ -485,7 +426,10 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn fetch_lightning_receive_by_payment_hash(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningReceive>>;
+	fn fetch_lightning_receive_by_payment_hash(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<LightningReceive>>;
 
 	/// Remove a Lightning receive by its payment hash.
 	///

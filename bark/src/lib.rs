@@ -304,6 +304,7 @@ mod config;
 mod lnurl;
 mod psbtext;
 
+
 use std::collections::{HashMap, HashSet};
 
 use std::convert::TryFrom;
@@ -312,17 +313,15 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, FeeRate, Network, OutPoint, ScriptBuf, Transaction};
+use bitcoin::{Amount, Network, OutPoint, ScriptBuf};
 use bitcoin::bip32::{self, Fingerprint};
-use bitcoin::consensus::deserialize;
-use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
-use lnurllib::lightning_address::LightningAddress;
+use futures::StreamExt;
 use lightning_invoice::Bolt11Invoice;
 use lightning::util::ser::Writeable;
+use lnurllib::lightning_address::LightningAddress;
 use log::{trace, debug, info, warn, error};
-use futures::StreamExt;
 
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -331,20 +330,18 @@ use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage, PaymentHash};
 use ark::musig;
 use ark::rounds::RoundId;
-use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec};
 use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy, VtxoPolicyKind};
-use server_rpc::{self as rpc, protos, ServerConnection, TryFromBytes};
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST, TxStatus};
+use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementArgs, MovementKind};
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
-use crate::persist::models::{LightningReceive, PendingLightningSend, StoredVtxoRequest};
-use crate::round::{DesiredRoundParticipation, RoundParticipation, RoundResult};
-use crate::vtxo_selection::{FilterVtxos, VtxoFilter};
+use crate::persist::models::{PendingLightningSend, LightningReceive};
+use crate::round::{RoundParticipation, RoundStatus};
+use crate::vtxo_selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
 use crate::vtxo_state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
-use crate::vtxo_selection::RefreshStrategy;
 
 const ARK_PURPOSE_INDEX: u32 = 350;
 
@@ -952,8 +949,7 @@ impl Wallet {
 
 		let pending_board = self.pending_board_vtxos()?.iter().map(|v| v.amount()).sum::<Amount>();
 
-		let pending_in_round = self.db.get_in_round_vtxos()?.iter()
-			.map(|v| v.amount()).sum();
+		let pending_in_round = self.pending_round_input_vtxos()?.iter().map(|v| v.amount()).sum();
 
 		let pending_exit = self.exit.try_read().ok().map(|e| e.pending_total());
 
@@ -1012,13 +1008,6 @@ impl Wallet {
 		Ok(vtxos)
 	}
 
-	/// Returns all in-round VTXOs matching the provided predicate
-	pub fn inround_vtxos_with(&self, filter: &impl FilterVtxos) -> anyhow::Result<Vec<WalletVtxo>> {
-		let mut vtxos = self.db.get_in_round_vtxos()?;
-		filter.filter_vtxos(&mut vtxos).context("error filtering vtxos")?;
-		Ok(vtxos)
-	}
-
 	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
 	/// when a board is created and when it becomes spendable.
 	///
@@ -1033,6 +1022,22 @@ impl Wallet {
 		);
 
 		Ok(vtxos)
+	}
+
+	/// Returns all VTXOs that are locked in a pending round
+	///
+	/// This excludes all input VTXOs for which the output VTXOs have already
+	/// been created.
+	pub fn pending_round_input_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		let mut ret = Vec::new();
+		for round in self.db.load_round_states()? {
+			let inputs = round.state.locked_pending_inputs();
+			ret.reserve(inputs.len());
+			for input in inputs {
+				ret.push(self.get_vtxo_by_id(input.id()).context("unknown round input VTXO")?);
+			}
+		}
+		Ok(ret)
 	}
 
 	/// Queries the database for any VTXO that is an pending lightning send.
@@ -1131,7 +1136,7 @@ impl Wallet {
 	/// are uneconomical to exit due to onchain network conditions.
 	///
 	/// Returns a [RoundId] if a refresh occurs.
-	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundId>> {
+	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundStatus>> {
 		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
 			.map(|v| v.id())
 			.collect::<Vec<_>>();
@@ -1166,7 +1171,7 @@ impl Wallet {
 			},
 			async {
 				if let Err(e) = self.sync_pending_rounds().await {
-					warn!("Error syncing pending rounds: {:#}", e);
+					warn!("Error while trying to progress rounds awaiting confirmations: {:#}", e);
 				}
 			},
 			async {
@@ -1375,22 +1380,6 @@ impl Wallet {
 		})
 	}
 
-	fn build_vtxo(
-		&self,
-		vtxos: &CachedSignedVtxoTree,
-		leaf_idx: usize,
-	) -> anyhow::Result<Option<Vtxo>> {
-		let vtxo = vtxos.build_vtxo(leaf_idx).context("invalid leaf idx..")?;
-
-		if self.db.get_wallet_vtxo(vtxo.id())?.is_some() {
-			debug!("Not adding vtxo {} because it already exists", vtxo.id());
-			return Ok(None)
-		}
-
-		debug!("Built new vtxo {} with value {}", vtxo.id(), vtxo.amount());
-		Ok(Some(vtxo))
-	}
-
 	/// Checks if the provided VTXO has some counterparty risk in the current wallet
 	///
 	/// An arkoor vtxo is considered to have some counterparty risk
@@ -1402,84 +1391,6 @@ impl Wallet {
 			}
 		}
 		Ok(!self.db.get_public_key_idx(&vtxo.user_pubkey())?.is_some())
-	}
-
-	/// Sync all past rounds
-	///
-	/// Intended for recovery after data loss.
-	pub async fn sync_past_rounds(&self) -> anyhow::Result<()> {
-		let mut srv = self.require_server()?;
-
-		let fresh_rounds = srv.client.get_fresh_rounds(protos::FreshRoundsRequest {
-			last_round_txid: None,
-		}).await?.into_inner().txids.into_iter()
-			.map(|txid| RoundId::from_slice(&txid))
-			.collect::<Result<Vec<_>, _>>()?;
-
-		if fresh_rounds.is_empty() {
-			debug!("No new rounds to sync");
-			return Ok(());
-		}
-
-		debug!("Received {} new rounds from ark", fresh_rounds.len());
-
-		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
-		let pubkeys = (0..=last_pk_index).map(|idx| {
-			self.vtxo_seed.derive_keypair(idx).public_key()
-		}).collect::<HashSet<_>>();
-
-		let results = tokio_stream::iter(fresh_rounds).map(|round_id| {
-			let pubkeys = pubkeys.clone();
-			let mut srv = srv.clone();
-
-			async move {
-				if self.db.get_round_attempt_by_round_txid(round_id)?.is_some() {
-					debug!("Skipping round {} because it already exists", round_id);
-					return Ok::<_, anyhow::Error>(());
-				}
-
-				let req = protos::RoundId {
-					txid: round_id.as_round_txid().to_byte_array().to_vec(),
-				};
-				let round = srv.client.get_round(req).await?.into_inner();
-
-				let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
-					.context("invalid signed vtxo tree from srv")?
-					.into_cached_tree();
-
-				let mut reqs = Vec::new();
-				let mut vtxos = vec![];
-				for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-					if pubkeys.contains(&dest.vtxo.policy.user_pubkey()) {
-						if let Some(vtxo) = self.build_vtxo(&tree, idx)? {
-							reqs.push(StoredVtxoRequest {
-								request_policy: dest.vtxo.policy.clone(),
-								amount: dest.vtxo.amount,
-								state: VtxoState::Spendable,
-							});
-
-							vtxos.push(vtxo);
-						}
-					}
-				}
-
-				let round_tx = deserialize::<Transaction>(&round.funding_tx)?;
-				self.db.store_pending_confirmation_round(round_id, round_tx, reqs, vtxos)?;
-
-				Ok(())
-			}
-		})
-		.buffer_unordered(10)
-		.collect::<Vec<_>>()
-		.await;
-
-		for result in results {
-			if let Err(e) = result {
-				return Err(e).context("failed to sync round");
-			}
-		}
-
-		Ok(())
 	}
 
 	async fn sync_oors(&self) -> anyhow::Result<()> {
@@ -1560,11 +1471,44 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// If there are any VTXOs that match the "should-refresh" condition with
+	/// a total value over the  p2tr dust limit, they are added to the round
+	/// participation and an additional output is also created.
+	async fn add_should_refresh_vtxos(
+		&self,
+		participation: &mut RoundParticipation,
+	) -> anyhow::Result<()> {
+		let excluded_ids = participation.inputs.iter().map(|v| v.vtxo_id())
+			.collect::<HashSet<_>>();
+
+		let should_refresh_vtxos = self.get_vtxos_to_refresh().await?.into_iter()
+			.filter(|v| !excluded_ids.contains(&v.id()))
+			.map(|v| v.vtxo).collect::<Vec<_>>();
+
+
+		let total_amount = should_refresh_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
+		if total_amount > P2TR_DUST {
+			let (user_keypair, _) = self.derive_store_next_keypair()?;
+			let req = VtxoRequest {
+				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
+				amount: total_amount,
+			};
+
+			participation.inputs.extend(should_refresh_vtxos);
+			participation.outputs.push(req);
+		}
+
+		Ok(())
+	}
+
 	async fn offboard<V: VtxoRef>(
 		&mut self,
 		vtxos: impl IntoIterator<Item = V>,
 		destination: ScriptBuf,
-	) -> anyhow::Result<Offboard> {
+	) -> anyhow::Result<RoundStatus> {
+		let srv = self.require_server()?;
+
 		let vtxos = {
 			let vtxos = vtxos.into_iter();
 			let mut ret = Vec::with_capacity(vtxos.size_hint().0);
@@ -1582,15 +1526,35 @@ impl Wallet {
 			bail!("no VTXO to offboard");
 		}
 
-		let participation = DesiredRoundParticipation::Offboard { vtxos, destination };
-		let RoundResult { round_id, .. } = self.participate_round(participation).await
-			.context("round failed")?;
+		let fee = OffboardRequest::calculate_fee(&destination, srv.info.offboard_feerate)
+			.expect("bdk created invalid scriptPubkey");
 
-		Ok(Offboard { round: round_id })
+		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+
+		if fee > vtxo_sum {
+			bail!("offboarded amount is lower than fees. Need {fee}, got: {vtxo_sum}");
+		}
+
+		let offb = OffboardRequest {
+			amount: vtxo_sum - fee,
+			script_pubkey: destination.clone(),
+		};
+
+		let mut participation = RoundParticipation {
+			inputs: vtxos.clone(),
+			outputs: Vec::new(),
+			offboards: vec![offb],
+		};
+
+		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
+			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
+		}
+
+		Ok(self.participate_round(participation).await?)
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
-	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<Offboard> {
+	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<RoundStatus> {
 		let input_vtxos = self.spendable_vtxos()?;
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
@@ -1600,7 +1564,7 @@ impl Wallet {
 		&mut self,
 		vtxos: impl IntoIterator<Item = V>,
 		address: bitcoin::Address,
-	) -> anyhow::Result<Offboard> {
+	) -> anyhow::Result<RoundStatus> {
 		let input_vtxos =  vtxos
 			.into_iter()
 			.map(|v| {
@@ -1623,7 +1587,7 @@ impl Wallet {
 	pub async fn refresh_vtxos<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<Option<RoundId>> {
+	) -> anyhow::Result<Option<RoundStatus>> {
 		let vtxos = {
 			let mut ret = HashMap::new();
 			for v in vtxos {
@@ -1652,15 +1616,17 @@ impl Wallet {
 			amount: total_amount,
 		};
 
-		let participation = DesiredRoundParticipation::Funded(RoundParticipation {
+		let mut participation = RoundParticipation {
 			inputs: vtxos.into_values().map(|v| v.vtxo).collect(),
-			outputs: vec![StoredVtxoRequest::from_parts(req.clone(), VtxoState::Spendable)],
+			outputs: vec![req],
 			offboards: Vec::new(),
-		});
-		let RoundResult { round_id, .. } = self.participate_round(participation).await
-			.context("round failed")?;
+		};
 
-		Ok(Some(round_id))
+		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
+			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
+		}
+
+		Ok(Some(self.participate_round(participation).await?))
 	}
 
 	/// This will find all VTXOs that meets must-refresh criteria.
@@ -2015,7 +1981,7 @@ impl Wallet {
 
 		let cosign_resp = resp.sigs.into_iter().map(|i| i.try_into())
 			.collect::<Result<Vec<_>, _>>()?;
-		let policy = VtxoPolicy::from_bytes(&resp.policy)?;
+		let policy = VtxoPolicy::deserialize(&resp.policy)?;
 
 		let pay_req = match policy {
 			VtxoPolicy::ServerHtlcSend(policy) => {
@@ -2698,27 +2664,47 @@ impl Wallet {
 		&self,
 		addr: bitcoin::Address,
 		amount: Amount,
-	) -> anyhow::Result<Offboard> {
-		let balance = self.balance()?.spendable;
+	) -> anyhow::Result<RoundStatus> {
+		let srv = self.require_server()?;
 
-		// do a quick check to fail early and not wait for round if we don't have enough money
-		let early_fees = OffboardRequest::calculate_fee(
-			&addr.script_pubkey(), FeeRate::BROADCAST_MIN,
-		).expect("script from address");
+		let offb = OffboardRequest {
+			script_pubkey: addr.script_pubkey(),
+			amount: amount,
+		};
+		let required_amount = offb.amount + offb.fee(srv.info.offboard_feerate)?;
 
-		if balance < amount + early_fees {
-			bail!("Your balance is too low. Needed: {}, available: {}",
-				amount + early_fees, balance,
-			);
+		let inputs = self.select_vtxos_to_cover(required_amount, None, None)?;
+
+		let change = {
+			let input_sum = inputs.iter().map(|v| v.amount()).sum::<Amount>();
+			if input_sum < offb.amount {
+				bail!("Your balance is too low. Needed: {}, available: {}",
+					required_amount, self.balance()?.spendable,
+				);
+			} else if input_sum <= required_amount + P2TR_DUST {
+				info!("No change, emptying wallet.");
+				None
+			} else {
+				let change_amount = input_sum - required_amount;
+				let (change_keypair, _) = self.derive_store_next_keypair()?;
+				info!("Adding change vtxo for {}", change_amount);
+				Some(VtxoRequest {
+					amount: change_amount,
+					policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
+				})
+			}
+		};
+
+		let mut participation = RoundParticipation {
+			inputs: inputs,
+			outputs: change.into_iter().collect(),
+			offboards: vec![offb],
+		};
+
+		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
+			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
-		let participation = DesiredRoundParticipation::OnchainPayment {
-			destination: addr.script_pubkey(),
-			amount,
-		};
-		let RoundResult { round_id, .. } = self.participate_round(participation).await
-			.context("round failed")?;
-
-		Ok(Offboard { round: round_id })
+		Ok(self.participate_round(participation).await?)
 	}
 }

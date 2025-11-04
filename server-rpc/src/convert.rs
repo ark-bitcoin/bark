@@ -132,6 +132,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			required_board_confirmations: v.required_board_confirmations as u32,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 			min_board_amount: v.min_board_amount.to_sat(),
+			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
 		}
 	}
 }
@@ -159,6 +160,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta.try_into()
 				.map_err(|_| "invalid max user invoice cltv delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
+			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
 		})
 	}
 }
@@ -177,14 +179,6 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 	fn from(e: &'a ark::rounds::RoundEvent) -> Self {
 		protos::RoundEvent {
 			event: Some(match e {
-				ark::rounds::RoundEvent::Start(ark::rounds::RoundInfo {
-					round_seq, offboard_feerate,
-				}) => {
-					protos::round_event::Event::Start(protos::RoundStart {
-						round_seq: (*round_seq).into(),
-						offboard_feerate_sat_vkb: offboard_feerate.to_sat_per_kwu() * 4,
-					})
-				},
 				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq, attempt_seq, challenge,
 				}) => {
@@ -245,13 +239,6 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 
 	fn try_from(m: protos::RoundEvent) -> Result<ark::rounds::RoundEvent, Self::Error> {
 		Ok(match m.event.unwrap() {
-			protos::round_event::Event::Start(m) => {
-				let offboard_feerate = FeeRate::from_sat_per_kwu(m.offboard_feerate_sat_vkb / 4);
-				ark::rounds::RoundEvent::Start(ark::rounds::RoundInfo {
-					round_seq: m.round_seq.into(),
-					offboard_feerate,
-				})
-			},
 			protos::round_event::Event::Attempt(m) => {
 				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq: m.round_seq.into(),

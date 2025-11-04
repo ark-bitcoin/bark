@@ -47,8 +47,9 @@ service ArkService {
 
 	// * ARK ROUND INTERACTIONS *
 
-	// Subscribe to the round events. Immediatelly returns the last event that happened.
+	// Subscribe to the round events
 	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
+	// Get the last round event
 	rpc LastRoundEvent(Empty) returns (RoundEvent) {}
 	rpc SubmitPayment(SubmitPaymentRequest) returns (Empty) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (Empty) {}
@@ -81,6 +82,10 @@ message ArkInfo {
 	uint32 required_board_confirmations = 11;
 	uint32 max_user_invoice_cltv_delta = 12;
 	uint64 min_board_amount = 13;
+
+	//TODO(stevenroose) move fee related values that are less
+	// permanent into another struct for bark to check
+	uint64 offboard_feerate_sat_vkb = 14;
 }
 
 message FreshRoundsRequest {
@@ -272,11 +277,6 @@ message CheckLightningReceiveResponse {
 
 // round
 
-message RoundStart {
-	uint64 round_seq = 1;
-	uint64 offboard_feerate_sat_vkb = 2;
-}
-
 message RoundAttempt {
 	uint64 round_seq = 1;
 	uint64 attempt_seq = 2;
@@ -314,11 +314,10 @@ message RoundFinished {
 
 message RoundEvent {
 	oneof event {
-		RoundStart start = 1;
-		RoundAttempt attempt = 2;
-		VtxoProposal vtxo_proposal = 3;
-		RoundProposal round_proposal = 4;
-		RoundFinished finished = 5;
+		RoundAttempt attempt = 1;
+		VtxoProposal vtxo_proposal = 2;
+		RoundProposal round_proposal = 3;
+		RoundFinished finished = 4;
 	};
 }
 

@@ -4,15 +4,20 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
+use ark::rounds::RoundEvent;
+use ark::vtxo::PubkeyVtxoPolicy;
+use bark::persist::StoredRoundState;
+use bark::round::RoundParticipation;
 use bark_json::RecipientInfo;
 use bitcoin::Amount;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
-use log::info;
+use log::{debug, info, trace};
 use tokio::fs;
+use tokio_stream::StreamExt;
 
-use ark::{ProtocolEncoding, Vtxo};
+use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
@@ -726,12 +731,16 @@ async fn bark_send_onchain_too_much() {
 	let ret = bark1.try_send_onchain(&addr, sat(1_000_000)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
-	assert!(ret.unwrap_err().to_string().contains(
-		&format!("Your balance is too low. Needed: {}, available: {}",
-		sat(1_000_110), board_amount)
-	));
-	assert_eq!(bark1.spendable_balance().await, board_amount, "offchain balance shouldn't have changed");
-	assert_eq!(bark1.list_movements().await.len(), 1, "Should only have board movement");
+	let err = ret.unwrap_err();
+	let expected = format!("Insufficient money available. Needed {} but {} is available",
+		sat(1_001_100), board_amount,
+	);
+	assert!(err.to_alt_string().contains(&expected),
+		"err does not match '{}': {:#}", expected, err);
+	assert_eq!(bark1.spendable_balance().await, board_amount,
+		"offchain balance shouldn't have changed");
+	assert_eq!(bark1.list_movements().await.len(), 1,
+		"Should only have board movement");
 }
 
 #[tokio::test]
@@ -841,18 +850,14 @@ async fn second_round_attempt() {
 
 	/// This proxy will drop the very first request to provide_forfeit_signatures.
 	#[derive(Clone)]
-	struct Proxy(Arc<AtomicBool>);
+	struct Proxy;
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn provide_forfeit_signatures(
-			&self, upstream: &mut ArkClient, req: protos::ForfeitSignaturesRequest,
+			&self, _upstream: &mut ArkClient, _req: protos::ForfeitSignaturesRequest,
 		) -> Result<protos::Empty, tonic::Status> {
-			if self.0.swap(false, atomic::Ordering::Relaxed) {
-				Ok(protos::Empty {})
-			} else {
-				Ok(upstream.provide_forfeit_signatures(req).await?.into_inner())
-			}
+			Ok(protos::Empty {})
 		}
 	}
 
@@ -862,12 +867,12 @@ async fn second_round_attempt() {
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
+	let mut bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
-	let proxy = srv.get_proxy_rpc(Proxy(Arc::new(AtomicBool::new(true)))).await;
+	let proxy = srv.get_proxy_rpc(Proxy).await;
 
-	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
+	let mut bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
 	bark1.send_oor(bark2.address().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
@@ -875,6 +880,8 @@ async fn second_round_attempt() {
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
+	bark1.set_timeout(Duration::from_secs(60));
+	bark2.set_timeout(Duration::from_secs(60));
 	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
@@ -882,16 +889,13 @@ async fn second_round_attempt() {
 	let mut log_restart_missing_forfeits = srv.subscribe_log::<RestartMissingForfeits>();
 	srv.trigger_round().await;
 	log_restart_missing_forfeits.recv().await.unwrap();
+	info!("Waiting for bark2 to fail...");
+	res2.await.unwrap_err();
+	info!("Waiting for bark1 to finish...");
 	res1.await.unwrap();
 	// check that bark2 was kicked
 	assert_eq!(log_missing_forfeits.recv().ready().await.unwrap().input, bark2_vtxo);
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
-
-	// bark2 is kicked out of the first round, so we need to start another one
-	ctx.generate_blocks(1).await;
-	let _ = srv.wallet_status().await;
-	srv.trigger_round().await;
-	res2.await.unwrap();
 }
 
 #[tokio::test]
@@ -1136,4 +1140,96 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 	res.ready().await.unwrap();
 
 	assert_eq!(bark.spendable_balance().await, btc(4));
+}
+
+fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState> {
+	let states = wallet.pending_round_states().unwrap();
+	info!("Wallet has {} pending round states:", states.len());
+	for state in &states {
+		info!("  - {}", state.id);
+	}
+	states
+}
+
+#[tokio::test]
+async fn stepwise_round() {
+	//! this test tests that the bark rust api can be used to participate
+	//! in rounds stepwise by manually feeding events into the wallet
+
+	let ctx = TestContext::new("bark/stepwise_round").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	// let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	// 	cfg.vtxo_lifetime = 144;
+	// }).await;
+	// ctx.fund_captaind(&src, btc(1)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.maintain().await;
+
+	// let vtxo almost expire
+	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 - BOARD_CONFIRMATIONS).await;
+
+	let bark = bark.client().await; // explicitly override name to avoid cli usage
+
+	let inputs = bark.get_vtxos_to_refresh().await.unwrap();
+	assert_eq!(inputs.len(), 1);
+	info!("refreshing {}", inputs[0].vtxo.id());
+
+	let participation = RoundParticipation {
+		inputs: vec![inputs[0].vtxo.clone()],
+		outputs: vec![VtxoRequest {
+			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy {
+				user_pubkey: bark.derive_store_next_keypair().unwrap().0.public_key(),
+			}),
+			amount: inputs[0].vtxo.amount(),
+		}],
+		offboards: vec![],
+	};
+	let state = bark.join_next_round(participation).unwrap();
+	let state_id = state.id;
+
+	info!("Signed up for round, state_id={}", state.id);
+	print_pending_rounds(&bark);
+	assert_eq!(bark.balance().unwrap().pending_in_round, sat(800_000));
+
+	let mut rpc = srv.get_public_rpc().await;
+	let mut events = rpc.subscribe_rounds(protos::Empty{}).await.unwrap().into_inner();
+
+	while let Some(item) = events.next().await {
+		let event = RoundEvent::try_from(item.unwrap()).unwrap();
+		info!("Received round event of type: {}", event.kind());
+		bark.progress_ongoing_rounds(Some(&event)).await.unwrap();
+
+		let states = print_pending_rounds(&bark);
+		if let Some(ours) = states.into_iter().find(|s| s.id == state_id) {
+			if ours.state.round_has_finished() {
+				info!("Round finished");
+				break;
+			}
+		} else {
+			panic!("our round is gone");
+		}
+	}
+	drop(events);
+
+	info!("Starting to wait for confirmations");
+
+	loop {
+		ctx.generate_blocks(1).await;
+		trace!("Syncing pending rounds");
+		bark.sync_pending_rounds().await.unwrap();
+
+		let states = print_pending_rounds(&bark);
+		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
+			debug!("Result: {:#?}", ours.state.sync(&bark).await);
+		} else {
+			info!("Our state is gone!");
+			break;
+		}
+
+		tokio::time::sleep(Duration::from_millis(500)).await;
+	}
+
+	//TODO(stevenroose) test new vtxo state and movement
 }
