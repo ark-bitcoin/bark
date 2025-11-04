@@ -129,6 +129,14 @@ impl RoundState {
 		&self.participation
 	}
 
+	pub fn flow(&self) -> &RoundFlowState {
+		&self.flow
+	}
+
+	pub fn unconfirmed_rounds(&self) -> &[UnconfirmedRound] {
+		&self.unconfirmed_rounds
+	}
+
 	/// Whether the interactive part of the round has finished
 	pub fn round_has_finished(&self) -> bool {
 		match self.flow {
@@ -381,7 +389,7 @@ impl RoundState {
 ///
 /// This tracks the progress of the interactive part of the round, from
 /// waiting to start until finishing either succesfully or with a failure.
-pub(crate) enum RoundFlowState {
+pub enum RoundFlowState {
 	WaitingToStart,
 	Ongoing {
 		round_seq: RoundSeq,
@@ -398,7 +406,7 @@ pub(crate) enum RoundFlowState {
 ///
 /// For each attempt that we participate in, we keep the state of our concrete
 /// participation.
-pub(crate) enum AttemptState {
+pub enum AttemptState {
 	AwaitingAttempt,
 	AwaitingUnsignedVtxoTree {
 		cosign_keys: Vec<Keypair>,
