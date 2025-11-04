@@ -30,6 +30,7 @@ mod telemetry;
 mod txindex;
 pub mod filters;
 
+pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
 use std::borrow::Borrow;
