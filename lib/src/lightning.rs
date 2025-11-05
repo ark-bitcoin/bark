@@ -216,6 +216,20 @@ impl From<Bolt12Invoice> for Invoice {
 	}
 }
 
+impl<'a> TryFrom<&'a str> for Invoice {
+	type Error = <Invoice as FromStr>::Err;
+	fn try_from(invoice: &'a str) -> Result<Self, Self::Error> {
+	    FromStr::from_str(invoice)
+	}
+}
+
+impl TryFrom<String> for Invoice {
+	type Error = <Invoice as FromStr>::Err;
+	fn try_from(invoice: String) -> Result<Self, Self::Error> {
+	    FromStr::from_str(&invoice)
+	}
+}
+
 impl serde::Serialize for Invoice {
 	fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
 		s.collect_str(self)

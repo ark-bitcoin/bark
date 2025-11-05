@@ -1,4 +1,4 @@
-# Updates to captaind and watchmand
 
 - `SubscribeRoundEvents` gRPC no longer opens with the last happened event,
   use `LastRoundEvent` if you want the last event
+  [#1070](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1070)

@@ -716,7 +716,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	lightning.sync().await;
 
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
+	let err = bark_1.try_pay_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains("This lightning payment has completed. preimage: "), "err: {err}");
 }
 
@@ -1358,7 +1358,7 @@ async fn reject_dust_bolt11_payment() {
 	bark.board_all_and_confirm_and_register(&ctx).await;
 
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
-	let err = bark.try_send_lightning(invoice, Some(sat(100_000))).await.unwrap_err();
+	let err = bark.try_pay_lightning(invoice, Some(sat(100_000))).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"arkoor output amounts cannot be below the p2tr dust threshold",
 	), "err: {err}");
@@ -1543,7 +1543,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
+	let err = bark_1.try_pay_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains("htlc payment hash doesn't match invoice"), "err: {err}");
 }
 
@@ -1579,7 +1579,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_send_lightning(invoice, None).await.unwrap_err();
+	let err = bark_1.try_pay_lightning(invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains("htlc vtxo amount too low for invoice"), "err: {err}");
 }
 
@@ -1793,7 +1793,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 
 	let invoice = lightningd.invoice(Some(sat(100_000)), "real invoice", "A real invoice").await;
 
-	let err = bark.try_send_lightning(&invoice, None).await.unwrap_err();
+	let err = bark.try_pay_lightning(&invoice, None).await.unwrap_err();
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
 }
 

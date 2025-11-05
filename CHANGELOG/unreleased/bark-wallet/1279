@@ -1,0 +1,7 @@
+- rename some lightning methods to be more consistent 
+  [#1279](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1279)
+  - `send_lnaddr` -> `pay_lightning_address`
+  - `pay_offer` -> `pay_lightning_offer`
+  - `send_lightning_payment` -> `pay_lightning_invoice`
+  - `check_and_claim_all_open_ln_receives` -> `try_claim_all_lightning_receives`
+  - `check_and_claim_ln_receive` -> `try_claim_lightning_receive`

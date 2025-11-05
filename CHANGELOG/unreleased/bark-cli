@@ -1,5 +1,0 @@
-# Updates to bark and barkd
-
-
-- all commands that involve a round now return `RoundStatus` instead of a structure containing
-  only the round funding txid
