@@ -2,18 +2,22 @@ pub mod api;
 pub mod config;
 pub mod error;
 
+pub use crate::config::Config;
+
+
 use std::sync::Arc;
 
 use anyhow;
-use bark::{onchain::OnchainWallet, Wallet};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
-
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::config::Config;
+use bark::Wallet;
+use bark::onchain::OnchainWallet;
+
+
 
 const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
@@ -34,35 +38,47 @@ const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 )]
 pub struct ApiDoc;
 
+/// A server that serves a REST API for the bark [Wallet]
 #[derive(Clone)]
-pub struct BarkWebState {
-	wallet: Arc<RwLock<Wallet>>,
+pub struct RestServer {
+	config: Config,
+	wallet: Arc<Wallet>,
 	onchain: Arc<RwLock<OnchainWallet>>,
 }
 
-impl BarkWebState {
-	pub fn new(wallet: Arc<RwLock<Wallet>>, onchain: Arc<RwLock<OnchainWallet>>) -> Self {
-		Self { wallet, onchain }
+impl RestServer {
+	/// Create a new [RestServer] for the given bark [Wallet] and [OnchainWallet]
+	pub fn new(
+		config: Config,
+		wallet: Arc<Wallet>,
+		onchain: Arc<RwLock<OnchainWallet>>,
+	) -> Self {
+		Self { config, wallet, onchain }
 	}
-}
 
-pub async fn serve(cfg: &Config, state: BarkWebState) -> anyhow::Result<()> {
-	let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-		.split_for_parts();
+	/// Serve the REST server
+	///
+	/// This function blocks while the API is being served.
+	pub async fn serve(self: RestServer) -> anyhow::Result<()> {
+		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+			.split_for_parts();
 
-	// Build our application with routes
-	let router = router
-		.nest("/api/v1", api::v1::router())
-		.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
-		.layer(CorsLayer::permissive())
-		.with_state(state)
-		.fallback(error::not_found);
+		let socket_addr = self.config.socket_addr();
 
-	// Run the server
-	let socket_addr = cfg.socket_addr();
-	tracing::info!("Server running on http://{}", socket_addr);
+		// Build our application with routes
+		let router = router
+			.nest("/api/v1", api::v1::router())
+			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
+			.layer(CorsLayer::permissive())
+			.with_state(self)
+			.fallback(error::not_found);
 
-	let listener = tokio::net::TcpListener::bind(socket_addr).await.expect("Failed to bind to address");
-	axum::serve(listener, router.into_make_service()).await.expect("Failed to serve");
-	Ok(())
+		// Run the server
+		tracing::info!("Server running on http://{}", socket_addr);
+
+		let listener = tokio::net::TcpListener::bind(socket_addr).await.expect("Failed to bind to address");
+		axum::serve(listener, router.into_make_service()).await.expect("Failed to serve");
+
+		Ok(())
+	}
 }

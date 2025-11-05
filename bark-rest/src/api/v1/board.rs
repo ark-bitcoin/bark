@@ -5,7 +5,7 @@ use bitcoin::Amount;
 use utoipa::OpenApi;
 
 use crate::error::HandlerResult;
-use crate::BarkWebState;
+use crate::RestServer;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -21,7 +21,7 @@ use crate::BarkWebState;
 )]
 pub struct BoardApiDoc;
 
-pub fn router() -> Router<BarkWebState> {
+pub fn router() -> Router<RestServer> {
 	Router::new()
 		.route("/board", post(board))
 		.route("/board/all", post(board_all))
@@ -39,13 +39,12 @@ pub fn router() -> Router<BarkWebState> {
 )]
 #[debug_handler]
 pub async fn board(
-	State(state): State<BarkWebState>,
+	State(state): State<RestServer>,
 	Json(params): Json<bark_json::web::BoardRequest>,
 ) -> HandlerResult<Json<bark_json::cli::Board>> {
-	let wallet_lock = state.wallet.read().await;
 	let mut onchain_lock = state.onchain.write().await;
 
-	let board = wallet_lock.board_amount(
+	let board = state.wallet.board_amount(
 		&mut *onchain_lock,
 		Amount::from_sat(params.amount_sat),
 	).await?;
@@ -64,12 +63,11 @@ pub async fn board(
 )]
 #[debug_handler]
 pub async fn board_all(
-	State(state): State<BarkWebState>,
+	State(state): State<RestServer>,
 ) -> HandlerResult<Json<bark_json::cli::Board>> {
-	let wallet_lock = state.wallet.read().await;
 	let mut onchain_lock = state.onchain.write().await;
 
-	let board = wallet_lock.board_all(&mut *onchain_lock).await?;
+	let board = state.wallet.board_all(&mut *onchain_lock).await?;
 
 	Ok(axum::Json(board.into()))
 }

@@ -1549,7 +1549,7 @@ impl Wallet {
 	}
 
 	async fn offboard<V: VtxoRef>(
-		&mut self,
+		&self,
 		vtxos: impl IntoIterator<Item = V>,
 		destination: ScriptBuf,
 	) -> anyhow::Result<RoundStatus> {
@@ -1563,14 +1563,14 @@ impl Wallet {
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
-	pub async fn offboard_all(&mut self, address: bitcoin::Address) -> anyhow::Result<RoundStatus> {
+	pub async fn offboard_all(&self, address: bitcoin::Address) -> anyhow::Result<RoundStatus> {
 		let input_vtxos = self.spendable_vtxos()?;
 		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
 	/// Offboard the given VTXOs to a given [bitcoin::Address].
 	pub async fn offboard_vtxos<V: VtxoRef>(
-		&mut self,
+		&self,
 		vtxos: impl IntoIterator<Item = V>,
 		address: bitcoin::Address,
 	) -> anyhow::Result<RoundStatus> {
