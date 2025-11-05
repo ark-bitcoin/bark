@@ -1,3 +1,4 @@
+
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
@@ -5,9 +6,10 @@ use lightning_invoice::Bolt11Invoice;
 use lnurllib::lightning_address::LightningAddress;
 use log::info;
 
-use ark::lightning::{Invoice, Offer, Preimage};
+use ark::lightning::{Offer, Preimage};
 
 use crate::Wallet;
+
 
 pub async fn pay_invoice(
 	invoice: Bolt11Invoice,
@@ -32,7 +34,7 @@ pub async fn pay_invoice(
 		wallet.sync().await;
 	}
 	info!("Sending bolt11 payment of {} to invoice {}", final_amount, invoice);
-	let preimage = wallet.send_lightning_payment(Invoice::Bolt11(invoice), amount).await?;
+	let preimage = wallet.send_lightning_payment(invoice, amount).await?;
 	info!("Payment preimage received: {}", preimage.as_hex());
 
 	Ok(preimage)

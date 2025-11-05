@@ -309,6 +309,7 @@ mod psbtext;
 use std::collections::{HashMap, HashSet};
 
 use std::convert::TryFrom;
+use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -1942,14 +1943,19 @@ impl Wallet {
 
 	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
 	/// so the same [Wallet::send_arkoor_payment] rules apply.
-	pub async fn send_lightning_payment(
+	pub async fn send_lightning_payment<T>(
 		&self,
-		invoice: Invoice,
+		invoice: T,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<Preimage> {
+	) -> anyhow::Result<Preimage>
+	where
+		T: TryInto<Invoice>,
+		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
+	{
 		let mut srv = self.require_server()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
+		let invoice = invoice.try_into().context("failed to parse invoice")?;
 		if invoice.network() != properties.network {
 			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
@@ -2641,7 +2647,7 @@ impl Wallet {
 		let invoice = lnurl::lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);
-		let preimage = self.send_lightning_payment(Invoice::Bolt11(invoice.clone()), None).await
+		let preimage = self.send_lightning_payment(invoice.clone(), None).await
 			.context("bolt11 payment error")?;
 		Ok((invoice, preimage))
 	}
@@ -2672,7 +2678,7 @@ impl Wallet {
 
 		invoice.validate_issuance(offer)?;
 
-		let preimage = self.send_lightning_payment(Invoice::Bolt12(invoice.clone()), None).await
+		let preimage = self.send_lightning_payment(invoice.clone(), None).await
 			.context("bolt11 payment error")?;
 		Ok((invoice, preimage))
 	}
@@ -2733,5 +2739,35 @@ impl Wallet {
 		}
 
 		Ok(self.participate_round(participation).await?)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[allow(unused)] // just exists for compile check
+	async fn send_lightning_payment_argument() {
+		//! Check the different possible argument for send_lightning_payment
+
+		let db = Arc::new(SqliteClient::open("").unwrap());
+		let w = Wallet::open(
+			&"".parse().unwrap(), db, Config::network_default(Network::Regtest),
+		).await.unwrap();
+
+		let bolt11 = Bolt11Invoice::from_str("").unwrap();
+		w.send_lightning_payment(bolt11, None).await.unwrap();
+
+		let bolt12 = Bolt12Invoice::from_str("").unwrap();
+		w.send_lightning_payment(bolt12, None).await.unwrap();
+
+		let string = format!("lnbc1..");
+		w.send_lightning_payment(string, None).await.unwrap();
+
+		let strr = "lnbc1..";
+		w.send_lightning_payment(strr, None).await.unwrap();
+
+		let invoice = Invoice::Bolt11("".parse().unwrap());
+		w.send_lightning_payment(invoice, None).await.unwrap();
 	}
 }
