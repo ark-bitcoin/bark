@@ -423,7 +423,7 @@ impl ClnNodeMonitorProcess {
 			},
 		};
 
-		let htlc_subscriptions = self.db.get_created_lightning_htlc_subscriptions(
+		let htlc_subscriptions = self.db.get_open_lightning_htlc_subscriptions(
 			self.node_id,
 		).await?;
 
@@ -507,6 +507,18 @@ impl ClnNodeMonitorProcess {
 					LightningHtlcSubscriptionStatus::Cancelled,
 					None,
 				).await?;
+
+				let payment_hash = PaymentHash::from(&htlc_subscription.invoice);
+				let payment_attempt = self.db
+					.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
+				if let Some(payment_attempt) = payment_attempt {
+					trace!("HTLC subscription timed out with ongoing payment attempt: {}. Marking as failed.", payment_attempt.id);
+					self.db.update_lightning_payment_attempt_status(
+						&payment_attempt,
+						LightningPaymentStatus::Failed,
+						Some("HTLC subscription timed out"),
+					).await?;
+				}
 			}
 		}
 

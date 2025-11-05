@@ -591,7 +591,7 @@ impl Db {
 	/// Retrieve all htlc subscriptions created in the given node
 	///
 	/// This method DOES NOT fetch the htlc vtxos for the subscription.
-	pub async fn get_created_lightning_htlc_subscriptions(
+	pub async fn get_open_lightning_htlc_subscriptions(
 		&self,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
@@ -604,13 +604,14 @@ impl Db {
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
 				sub.lightning_invoice_id = invoice.id
-			WHERE status = $1 AND lightning_node_id = $2
+			WHERE status NOT IN ($1, $2) AND lightning_node_id = $3
 			ORDER BY sub.created_at DESC;
 		").await?;
 
-		let status_started = LightningHtlcSubscriptionStatus::Created;
+		let status_settled = LightningHtlcSubscriptionStatus::Settled;
+		let status_cancelled = LightningHtlcSubscriptionStatus::Cancelled;
 		let rows = conn.query(
-			&stmt, &[&status_started, &node_id]
+			&stmt, &[&status_settled, &status_cancelled, &node_id]
 		).await?;
 
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
