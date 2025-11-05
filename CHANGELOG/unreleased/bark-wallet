@@ -6,3 +6,10 @@
   - output VTXOs are made available as soon as we have signed funding tx
   - round state is only fully cleared when the funding tx deeply confirms or all failed rounds
 	are unlikely to ever confirm
+
+- rename some lightning methods to be more consistent
+  - `send_lnaddr` -> `pay_lightning_address`
+  - `pay_offer` -> `pay_lightning_offer`
+  - `send_lightning_payment` -> `pay_lightning_invoice`
+  - `check_and_claim_all_open_ln_receives` -> `try_claim_all_lightning_receives`
+  - `check_and_claim_ln_receive` -> `try_claim_lightning_receive`

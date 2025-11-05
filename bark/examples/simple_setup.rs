@@ -1,13 +1,10 @@
-
 use std::sync::Arc;
 
 use bitcoin::Network;
 
 use bark::{Config, SqliteClient, Wallet};
 
-
 async fn example() -> anyhow::Result<()> {
-
 	let mnemonic = "super secret ...".parse()?;
 	let cfg = Config {
 		server_address: "https://ark.signet.2nd.dev".into(),
@@ -24,17 +21,16 @@ async fn example() -> anyhow::Result<()> {
 	println!("Send me some sats: {}", invoice);
 
 	// Wait for someone to send the sats...
-	wallet.check_and_claim_all_open_ln_receives(true).await?;
+	wallet.try_claim_all_lightning_receives(true).await?;
 
 	let balance = wallet.balance()?;
 	println!("I now have sats: {}!", balance.spendable);
 
 	// Let's give back!
 	let invoice = "lnbc1... get this from someone you like";
-	wallet.send_lightning_payment(invoice, None).await?;
+	wallet.pay_lightning_invoice(invoice, None).await?;
 
 	Ok(())
-
 }
 
 

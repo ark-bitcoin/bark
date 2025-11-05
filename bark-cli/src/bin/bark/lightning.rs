@@ -107,7 +107,7 @@ pub async fn execute_lightning_command(
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
-				wallet.check_and_claim_ln_receive(invoice.into(), true).await?;
+				wallet.try_claim_lightning_receive(invoice.into(), true).await?;
 			}
 		},
 		LightningCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {
@@ -149,10 +149,10 @@ pub async fn execute_lightning_command(
 					}
 				};
 
-				wallet.check_and_claim_ln_receive(payment_hash, wait).await?;
+				wallet.try_claim_lightning_receive(payment_hash, wait).await?;
 			} else {
 				info!("no invoice provided, trying to claim all open invoices");
-				wallet.check_and_claim_all_open_ln_receives(wait).await?;
+				wallet.try_claim_all_lightning_receives(wait).await?;
 			}
 		},
 	}

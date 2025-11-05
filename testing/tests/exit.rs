@@ -383,7 +383,7 @@ async fn exit_bolt11_change() {
 	lightning.sync().await;
 
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.send_lightning(invoice, None).await;
+	bark_1.pay_lightning(invoice, None).await;
 	assert_eq!(bark_1.spendable_balance().await, btc(3));
 
 	// We try to perform an exit for ln payment change
@@ -424,7 +424,7 @@ async fn exit_revoked_lightning_payment() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
+	bark_1.try_pay_lightning(invoice, None).await.expect_err("The payment fails");
 
 	srv.stop().await.unwrap();
 	bark_1.start_exit_all().await;
@@ -484,7 +484,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
+	bark_1.try_pay_lightning(invoice, None).await.expect_err("The payment fails");
 
 	// vtxo expiry is 144, so exit should be triggered after 120 blocks
 	ctx.generate_blocks(130).await;
@@ -561,7 +561,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_send_lightning(invoice, None).await.expect_err("The payment fails");
+	bark_1.try_pay_lightning(invoice, None).await.expect_err("The payment fails");
 
 	// vtxo expiry is 144, so exit should be triggered after 120 blocks
 	ctx.generate_blocks(130).await;

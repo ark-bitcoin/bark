@@ -34,7 +34,7 @@ pub async fn pay_invoice(
 		wallet.sync().await;
 	}
 	info!("Sending bolt11 payment of {} to invoice {}", final_amount, invoice);
-	let preimage = wallet.send_lightning_payment(invoice, amount).await?;
+	let preimage = wallet.pay_lightning_invoice(invoice, amount).await?;
 	info!("Payment preimage received: {}", preimage.as_hex());
 
 	Ok(preimage)
@@ -57,7 +57,7 @@ pub async fn pay_offer(
 	}
 
 	info!("Sending bolt12 payment of {:?} to offer {}", amount, offer);
-	let (invoice, preimage) = wallet.pay_offer(offer, amount).await?;
+	let (invoice, preimage) = wallet.pay_lightning_offer(offer, amount).await?;
 	info!("Paid invoice: {:?}", invoice);
 	info!("Payment preimage received: {}", preimage.as_hex());
 
@@ -79,7 +79,7 @@ pub async fn pay_lnaddr(
 	}
 	info!("Sending {} to lightning address {}", amount, lnaddr);
 	let comment = comment.as_ref().map(|c| c.as_str());
-	let (inv, preimage) = wallet.send_lnaddr(&lnaddr, amount, comment).await?;
+	let (inv, preimage) = wallet.pay_lightning_address(&lnaddr, amount, comment).await?;
 	info!("Paid invoice {}", inv);
 	info!("Payment preimage received: {}", preimage.as_hex());
 
