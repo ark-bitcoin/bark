@@ -13,7 +13,7 @@ mod migrations;
 mod query;
 
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use bitcoin::{Amount, Txid};
@@ -41,7 +41,10 @@ pub struct SqliteClient {
 }
 
 impl SqliteClient {
-	pub fn open(path: PathBuf) -> anyhow::Result<SqliteClient> {
+	/// Open a new [SqliteClient] with the given file path
+	pub fn open(db_file: impl AsRef<Path>) -> anyhow::Result<SqliteClient> {
+		let path = db_file.as_ref().to_path_buf();
+
 		debug!("Opening database at {}", path.display());
 		let mut conn = rusqlite::Connection::open(&path)
 			.with_context(|| format!("Error connecting to database {}", path.display()))?;
@@ -83,7 +86,6 @@ impl SqliteClient {
 		Ok(())
 	}
 }
-
 
 impl BarkPersister for SqliteClient {
 	fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()> {

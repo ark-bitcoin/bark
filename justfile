@@ -18,7 +18,7 @@ prechecks:
 	just precheck unused_server_logs
 
 check:
-	cargo check --all --tests
+	cargo check --all --tests --examples
 
 checks: prechecks check
 

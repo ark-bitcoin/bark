@@ -309,6 +309,7 @@ mod psbtext;
 use std::collections::{HashMap, HashSet};
 
 use std::convert::TryFrom;
+use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -500,9 +501,9 @@ impl VtxoSeed {
 ///   - sending and receiving Ark payments (including to BOLT11/BOLT12 invoices)
 ///     - [Wallet::send_arkoor_payment],
 ///     - [Wallet::send_round_onchain_payment],
-///     - [Wallet::send_lightning_payment],
-///     - [Wallet::send_lnaddr],
-///     - [Wallet::pay_offer]
+///     - [Wallet::pay_lightning_invoice],
+///     - [Wallet::pay_lightning_address],
+///     - [Wallet::pay_lightning_offer]
 ///   - tracking, selecting, and refreshing VTXOs
 ///     - [Wallet::vtxos],
 ///     - [Wallet::vtxos_with],
@@ -516,7 +517,7 @@ impl VtxoSeed {
 ///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
 ///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
 ///     - [Wallet::sync_pending_lightning_send_vtxos]: Updates the status of pending lightning payments,
-///     - [Wallet::check_and_claim_all_open_ln_receives]: Wait for payment receipt of all open invoices, then claim them,
+///     - [Wallet::try_claim_all_lightning_receives]: Wait for payment receipt of all open invoices, then claim them,
 ///     - [Wallet::sync_pending_boards]: Registers boards which are available for use
 ///       in offchain payments
 ///
@@ -1942,14 +1943,19 @@ impl Wallet {
 
 	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
 	/// so the same [Wallet::send_arkoor_payment] rules apply.
-	pub async fn send_lightning_payment(
+	pub async fn pay_lightning_invoice<T>(
 		&self,
-		invoice: Invoice,
+		invoice: T,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<Preimage> {
+	) -> anyhow::Result<Preimage>
+	where
+		T: TryInto<Invoice>,
+		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
+	{
 		let mut srv = self.require_server()?;
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
+		let invoice = invoice.try_into().context("failed to parse invoice")?;
 		if invoice.network() != properties.network {
 			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
@@ -2306,7 +2312,7 @@ impl Wallet {
 	///
 	/// * The list of HTLC VTXOs must have the hash lock clause matching the given
 	///   [PaymentHash].
-	async fn claim_ln_receive(
+	async fn claim_lightning_receive(
 		&self,
 		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
@@ -2413,7 +2419,7 @@ impl Wallet {
 	///   current chain tip.
 	/// * The payment hash must be from an invoice previously generated using
 	///   [Wallet::bolt11_invoice].
-	pub async fn check_ln_receive(
+	async fn check_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		wait: bool,
@@ -2538,13 +2544,13 @@ impl Wallet {
 	///
 	/// * The payment hash must be from an invoice previously generated using
 	///   [Wallet::bolt11_invoice].
-	pub async fn check_and_claim_ln_receive(
+	pub async fn try_claim_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<()> {
-		let receive = self.check_ln_receive(payment_hash, wait).await?;
-		self.claim_ln_receive(&receive).await
+		let receive = self.check_lightning_receive(payment_hash, wait).await?;
+		self.claim_lightning_receive(&receive).await
 	}
 
 	/// Check and claim all opened Lightning receive
@@ -2561,11 +2567,11 @@ impl Wallet {
 	/// Returns an `anyhow::Result<()>`, which is:
 	/// * `Ok(())` if the process completes successfully.
 	/// * `Err` if an error occurs at any stage of the operation.
-	pub async fn check_and_claim_all_open_ln_receives(&self, wait: bool) -> anyhow::Result<()> {
+	pub async fn try_claim_all_lightning_receives(&self, wait: bool) -> anyhow::Result<()> {
 		// Asynchronously attempts to claim all pending receive by converting the list into a stream
 		tokio_stream::iter(self.pending_lightning_receives()?)
 			.for_each_concurrent(3, |rcv| async move {
-				if let Err(e) = self.check_and_claim_ln_receive(rcv.invoice.into(), wait).await {
+				if let Err(e) = self.try_claim_lightning_receive(rcv.invoice.into(), wait).await {
 					error!("Error claiming lightning receive: {}", e);
 				}
 			}).await;
@@ -2575,7 +2581,7 @@ impl Wallet {
 
 	/// Claim all pending lightning receives
 	///
-	/// This is different from [Wallet::check_and_claim_all_open_ln_receives] in
+	/// This is different from [Wallet::try_claim_all_lightning_receives] in
 	/// that it only affect pending lightning receives whose HTLC VTXOs
 	/// have already been issued.
 	///
@@ -2595,7 +2601,7 @@ impl Wallet {
 				None => continue,
 			};
 
-			if let Err(e) = self.claim_ln_receive(&lightning_receive).await {
+			if let Err(e) = self.claim_lightning_receive(&lightning_receive).await {
 				error!("Failed to claim pubkey vtxo from htlc vtxo: {}", e);
 
 				let first_vtxo = &vtxos.first().unwrap().vtxo;
@@ -2631,8 +2637,8 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Same as [Wallet::send_lightning_payment] but instead it pays a [LightningAddress].
-	pub async fn send_lnaddr(
+	/// Same as [Wallet::pay_lightning_invoice] but instead it pays a [LightningAddress].
+	pub async fn pay_lightning_address(
 		&self,
 		addr: &LightningAddress,
 		amount: Amount,
@@ -2641,13 +2647,13 @@ impl Wallet {
 		let invoice = lnurl::lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);
-		let preimage = self.send_lightning_payment(Invoice::Bolt11(invoice.clone()), None).await
+		let preimage = self.pay_lightning_invoice(invoice.clone(), None).await
 			.context("bolt11 payment error")?;
 		Ok((invoice, preimage))
 	}
 
 	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
-	pub async fn pay_offer(
+	pub async fn pay_lightning_offer(
 		&self,
 		offer: Offer,
 		amount: Option<Amount>,
@@ -2672,7 +2678,7 @@ impl Wallet {
 
 		invoice.validate_issuance(offer)?;
 
-		let preimage = self.send_lightning_payment(Invoice::Bolt12(invoice.clone()), None).await
+		let preimage = self.pay_lightning_invoice(invoice.clone(), None).await
 			.context("bolt11 payment error")?;
 		Ok((invoice, preimage))
 	}
@@ -2733,5 +2739,35 @@ impl Wallet {
 		}
 
 		Ok(self.participate_round(participation).await?)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[allow(unused)] // just exists for compile check
+	async fn pay_lightning_invoice_argument() {
+		//! Check the different possible argument for pay_lightning_invoice
+
+		let db = Arc::new(SqliteClient::open("").unwrap());
+		let w = Wallet::open(
+			&"".parse().unwrap(), db, Config::network_default(Network::Regtest),
+		).await.unwrap();
+
+		let bolt11 = Bolt11Invoice::from_str("").unwrap();
+		w.pay_lightning_invoice(bolt11, None).await.unwrap();
+
+		let bolt12 = Bolt12Invoice::from_str("").unwrap();
+		w.pay_lightning_invoice(bolt12, None).await.unwrap();
+
+		let string = format!("lnbc1..");
+		w.pay_lightning_invoice(string, None).await.unwrap();
+
+		let strr = "lnbc1..";
+		w.pay_lightning_invoice(strr, None).await.unwrap();
+
+		let invoice = Invoice::Bolt11("".parse().unwrap());
+		w.pay_lightning_invoice(invoice, None).await.unwrap();
 	}
 }
