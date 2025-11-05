@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use bark_cli::wallet::open_wallet;
 use bark_rest::{Config, RestServer};
 
+
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
 		std::env::current_dir().ok()
@@ -20,13 +21,13 @@ fn default_datadir() -> String {
 #[command(name = "barkd", about = "Bark web daemon")]
 struct Cli {
 	/// The datadir of the bark wallet
-	#[arg(long, env = "BARK_DATADIR", default_value_t = default_datadir())]
+	#[arg(long, env = "BARKD_DATADIR", default_value_t = default_datadir())]
 	datadir: String,
 	/// The port to listen on
-	#[arg(long, env = "BARK_PORT")]
+	#[arg(long, env = "BARKD_PORT")]
 	port: Option<u16>,
 	/// The host to listen on
-	#[arg(long, env = "BARK_HOST")]
+	#[arg(long, env = "BARKD_HOST")]
 	host: Option<String>,
 }
 
