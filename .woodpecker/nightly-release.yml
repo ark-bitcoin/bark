@@ -18,7 +18,7 @@ steps:
       - |
         RESPONSE=$(curl -s -X GET 'https://gitlab.com/api/v4/projects/75519706/pipelines?ref=master&order_by=updated_at&sort=desc&per_page=2')
         echo "Response from API: $RESPONSE"
-        if jq -e '.[0].status == "running" and .[1].status == "success"' <<<"$response" >/dev/null; then
+        if echo "$RESPONSE" | jq -e '.[0].status == "running" and .[1].status == "success"' >/dev/null; then
           echo "Master branch CI is in a successful state."
         else
           echo "Master branch CI is NOT in a successful state. Aborting pipeline."
