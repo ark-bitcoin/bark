@@ -6,9 +6,9 @@ pub mod wallet;
 
 use axum::Router;
 
-use crate::BarkWebState;
+use crate::RestServer;
 
-pub fn router() -> Router<BarkWebState> {
+pub fn router() -> Router<RestServer> {
 	Router::new()
 		.nest("/lightning", lightning::router())
 		.nest("/onchain", onchain::router())

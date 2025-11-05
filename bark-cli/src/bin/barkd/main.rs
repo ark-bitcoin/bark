@@ -2,13 +2,11 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
 use clap::Parser;
-
-use bark_rest::{serve, BarkWebState};
-use bark_rest::config::Config;
+use tokio::sync::RwLock;
 
 use bark_cli::wallet::open_wallet;
+use bark_rest::{Config, RestServer};
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -54,12 +52,12 @@ async fn main() -> anyhow::Result<()>{
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 
 	let (wallet, onchain) = open_wallet(&datadir).await?;
-	let wallet = Arc::new(RwLock::new(wallet));
+	let wallet = Arc::new(wallet);
 	let onchain = Arc::new(RwLock::new(onchain));
 
-	let state = BarkWebState::new(wallet, onchain);
+	let server = RestServer::new(cli.to_config(), wallet, onchain);
+	server.serve().await?;
 
-	serve(&cli.to_config(), state).await?;
 	Ok(())
 }
 

@@ -14,7 +14,7 @@ pub async fn pay_invoice(
 	amount: Option<Amount>,
 	comment: Option<String>,
 	no_sync: bool,
-	wallet: &mut Wallet,
+	wallet: &Wallet,
 ) -> anyhow::Result<Preimage> {
 	let inv_amount = invoice.amount_milli_satoshis()
 		.map(|v| Amount::from_sat(v.div_ceil(1000)));
@@ -43,7 +43,7 @@ pub async fn pay_offer(
 	amount: Option<Amount>,
 	comment: Option<String>,
 	no_sync: bool,
-	wallet: &mut Wallet,
+	wallet: &Wallet,
 ) -> anyhow::Result<Preimage> {
 	if comment.is_some() {
 		bail!("comment not supported for bolt12 offer");
@@ -67,7 +67,7 @@ pub async fn pay_lnaddr(
 	amount: Option<Amount>,
 	comment: Option<String>,
 	no_sync: bool,
-	wallet: &mut Wallet,
+	wallet: &Wallet,
 ) -> anyhow::Result<Preimage> {
 	let amount = amount.context("amount missing")?;
 

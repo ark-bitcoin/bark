@@ -13,7 +13,7 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
 
 use crate::error::HandlerResult;
-use crate::BarkWebState;
+use crate::RestServer;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -36,7 +36,7 @@ use crate::BarkWebState;
 )]
 pub struct LightningApiDoc;
 
-pub fn router() -> Router<BarkWebState> {
+pub fn router() -> Router<RestServer> {
 	Router::new()
 		.route("/receive/invoice", post(lightning_invoice))
 		.route("/receive/invoices", get(lightning_invoices))
@@ -57,13 +57,11 @@ pub fn router() -> Router<BarkWebState> {
 )]
 #[debug_handler]
 pub async fn lightning_invoice(
-	State(state): State<BarkWebState>,
+	State(state): State<RestServer>,
 	Json(params): Json<bark_json::web::LightningInvoiceRequest>,
 ) -> HandlerResult<Json<bark_json::cli::InvoiceInfo>> {
-	let wallet_lock = state.wallet.read().await;
-
 	let amount = Amount::from_sat(params.amount_sat);
-	let invoice = wallet_lock.bolt11_invoice(amount).await
+	let invoice = state.wallet.bolt11_invoice(amount).await
 		.context("Failed to create invoice")?;
 
 	Ok(axum::Json(bark_json::cli::InvoiceInfo {
@@ -84,11 +82,9 @@ pub async fn lightning_invoice(
 )]
 #[debug_handler]
 pub async fn lightning_status(
-	State(state): State<BarkWebState>,
+	State(state): State<RestServer>,
 	Query(params): Query<bark_json::web::LightningStatusRequest>,
 ) -> HandlerResult<Json<bark_json::web::LightningStatusResponse>> {
-	let wallet_lock = state.wallet.read().await;
-
 	let payment_hash = match (params.filter, params.preimage) {
 		(Some(filter), None) => {
 			if let Ok(h) = ark::lightning::PaymentHash::from_str(&filter) {
@@ -107,7 +103,7 @@ pub async fn lightning_status(
 		(Some(_), Some(_)) => return Err(anyhow::anyhow!("cannot provide both filter and preimage").into()),
 	};
 
-	if let Some(status) = wallet_lock.lightning_receive_status(payment_hash)
+	if let Some(status) = state.wallet.lightning_receive_status(payment_hash)
 		.context("Failed to get lightning receive status")? {
 
 		Ok(axum::Json(bark_json::web::LightningStatusResponse {
@@ -135,11 +131,9 @@ pub async fn lightning_status(
 )]
 #[debug_handler]
 pub async fn lightning_invoices(
-	State(state): State<BarkWebState>,
+	State(state): State<RestServer>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::LightningReceiveInfo>>> {
-	let wallet_lock = state.wallet.read().await;
-
-	let mut receives = wallet_lock.pending_lightning_receives()
+	let mut receives = state.wallet.pending_lightning_receives()
 		.context("Failed to get lightning receives")?;
 	// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
 	receives.reverse();
@@ -163,20 +157,18 @@ pub async fn lightning_invoices(
 )]
 #[debug_handler]
 pub async fn lightning_pay(
-	State(state): State<BarkWebState>,
+	State(state): State<RestServer>,
 	Json(params): Json<bark_json::web::LightningPayRequest>,
 ) -> HandlerResult<Json<bark_json::web::LightningPayResponse>> {
-	let mut wallet_lock = state.wallet.write().await;
-
 	let amount = params.amount_sat.map(|a| Amount::from_sat(a));
 	let no_sync = true;
 
 	let preimage = if let Ok(invoice) = Bolt11Invoice::from_str(&params.destination) {
-		pay_invoice(invoice, amount, params.comment, no_sync, &mut *wallet_lock).await?
+		pay_invoice(invoice, amount, params.comment, no_sync, &state.wallet).await?
 	} else if let Ok(offer) = Offer::from_str(&params.destination) {
-		pay_offer(offer, amount, params.comment, no_sync, &mut *wallet_lock).await?
+		pay_offer(offer, amount, params.comment, no_sync, &state.wallet).await?
 	} else if let Ok(lnaddr) = LightningAddress::from_str(&params.destination) {
-		pay_lnaddr(lnaddr, amount, params.comment, no_sync, &mut *wallet_lock).await?
+		pay_lnaddr(lnaddr, amount, params.comment, no_sync, &state.wallet).await?
 	} else {
 		return Err(anyhow::anyhow!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address").into());
 	};
