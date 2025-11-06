@@ -51,12 +51,9 @@ async fn exit_round() {
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Create a few clients
-	let create_bark = |name: &str| ctx.try_new_bark_with_create_args::<String>(
-		name.to_string(),
-		&srv,
-		Some(FeeRate::from_sat_per_kwu(250 + random::<u64>() % 24_750)), // 1 to 100 sats/vB
-		[],
-	);
+	let create_bark = |name: &str| ctx.try_new_bark_with_cfg(name.to_string(), &srv, |cfg| {
+		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_kwu(250 + random::<u64>() % 24_750)); // 1 to 100 sats/vB
+	});
 	let bark1 = create_bark("bark1").await.unwrap();
 	let bark2 = create_bark("bark2").await.unwrap();
 	let bark3 = create_bark("bark3").await.unwrap();
@@ -577,12 +574,9 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 async fn bark_claim_specific_exit_in_low_fee_market() {
 	let ctx = TestContext::new("exit/bark_claim_specific_exit_in_low_fee_market").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.try_new_bark_with_create_args::<String>(
-		"bark",
-		&srv.ark_url(),
-		Some(FeeRate::from_sat_per_vb(1).unwrap()),
-		[],
-	).await.unwrap();
+	let bark = ctx.try_new_bark_with_cfg("bark", &srv, |cfg| {
+		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb(1).unwrap());
+	}).await.unwrap();
 	ctx.fund_bark(&bark, sat(10_000_000)).await;
 
 	// Create multiple VTXOs
@@ -614,12 +608,9 @@ async fn bark_claim_specific_exit_in_low_fee_market() {
 async fn bark_claim_all_exits_in_low_fee_market() {
 	let ctx = TestContext::new("exit/bark_claim_all_exits_in_low_fee_market").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.try_new_bark_with_create_args::<String>(
-		"bark",
-		&srv.ark_url(),
-		Some(FeeRate::from_sat_per_vb(1).unwrap()),
-		[],
-	).await.unwrap();
+	let bark = ctx.try_new_bark_with_cfg("bark", &srv, |cfg| {
+		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb(1).unwrap());
+	}).await.unwrap();
 	ctx.fund_bark(&bark, sat(10_000_000)).await;
 
 	// Create multiple VTXOs
@@ -707,12 +698,12 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	let ctx = TestContext::new("exit/exit_oor_ping_pong_then_rbf_tx").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
-	let bark1 = ctx.try_new_bark_with_create_args::<String>(
-		"bark1", &srv, FeeRate::from_sat_per_vb(1), [],
-	).await.unwrap();
-	let bark2 = ctx.try_new_bark_with_create_args::<String>(
-		"bark2", &srv, FeeRate::from_sat_per_vb(100), [],
-	).await.unwrap();
+	let bark1 = ctx.try_new_bark_with_cfg("bark1", &srv, |cfg| {
+		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
+	}).await.unwrap();
+	let bark2 = ctx.try_new_bark_with_cfg("bark2", &srv, |cfg| {
+		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(100));
+	}).await.unwrap();
 
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
 	ctx.fund_bark(&bark2, sat(1_000_000)).await;

@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use bark::BarkNetwork;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
@@ -22,7 +23,8 @@ use crate::util::{
 	get_bark_chain_source_from_env, test_data_directory, FutureExt, TestContextChainSource,
 };
 use crate::{
-	btc, constants, sat, Bark, BarkConfig, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig, Lightningd, LightningdConfig
+	btc, constants, sat, Bark, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
+	Lightningd, LightningdConfig,
 };
 
 pub struct LightningPaymentSetup {
@@ -357,33 +359,48 @@ impl TestContext {
 		Server::start(cfg).await.expect("error starting server")
 	}
 
-	pub async fn try_new_bark_with_create_args<T: AsRef<str>>(
+	pub fn bark_default_cfg(
+		&self,
+		srv: &dyn ToArkUrl,
+		bitcoind: Option<&Bitcoind>,
+	) -> bark::Config {
+		bark::Config {
+			server_address: srv.ark_url(),
+			esplora_address: if bitcoind.is_none() {
+				Some(self.electrs.as_ref().expect("need either bitcoind or electrs").rest_url())
+			} else {
+				None
+			},
+			bitcoind_address: bitcoind.map(|b| b.rpc_url()),
+			bitcoind_cookiefile: bitcoind.map(|b| b.rpc_cookie()),
+			bitcoind_user: None,
+			bitcoind_pass: None,
+
+			vtxo_refresh_expiry_threshold: 24,
+			vtxo_exit_margin: 12,
+			htlc_recv_claim_delta: 18,
+			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_unchecked(5)),
+			round_tx_required_confirmations: 6,
+		}
+	}
+
+	pub async fn try_new_bark_with_cfg(
 		&self,
 		name: impl AsRef<str>,
 		srv: &dyn ToArkUrl,
-		fallback_fee_override: Option<FeeRate>,
-		extra_create_args: impl IntoIterator<Item = T>,
+		mod_cfg: impl FnOnce(&mut bark::Config),
 	) -> anyhow::Result<Bark> {
-		let datadir = self.datadir.join(name.as_ref());
-
-		let (bitcoind, chain_source) = if let Some(ref electrs) = self.electrs {
-			(None, electrs.chain_source())
+		let bitcoind = if self.electrs.is_none() {
+			Some(self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await)
 		} else {
-			let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-			let chain_source = bitcoind.chain_source();
-			(Some(bitcoind), chain_source)
+			None
 		};
-		let cfg = BarkConfig {
-			datadir,
-			ark_url: srv.ark_url(),
-			network: Network::Regtest,
-			chain_source,
-			fallback_fee: fallback_fee_override.unwrap_or(FeeRate::from_sat_per_vb(5).unwrap()),
-			extra_create_args: extra_create_args.into_iter()
-				.map(|s| s.as_ref().to_owned())
-				.collect(),
-		};
-		Bark::try_new(name, bitcoind, cfg).await
+
+		let mut cfg = self.bark_default_cfg(srv, bitcoind.as_ref());
+		mod_cfg(&mut cfg);
+
+		let datadir = self.datadir.join(name.as_ref());
+		Bark::try_new(name, datadir, BarkNetwork::Regtest, cfg, bitcoind).await
 	}
 
 	pub async fn try_new_bark(
@@ -391,7 +408,7 @@ impl TestContext {
 		name: impl AsRef<str>,
 		srv: &dyn ToArkUrl,
 	) -> anyhow::Result<Bark> {
-		self.try_new_bark_with_create_args::<&str>(name, srv, None, []).await
+		self.try_new_bark_with_cfg(name, srv, |_| {}).await
 	}
 
 	/// Creates new bark without any funds.

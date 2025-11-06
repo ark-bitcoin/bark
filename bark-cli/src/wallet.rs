@@ -28,18 +28,16 @@
 //! # }
 //! ```
 
-use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bark::persist::BarkPersister;
 use log::{debug, warn};
 
 use bark::{Config, Wallet as BarkWallet, SqliteClient};
 use bark::onchain::OnchainWallet;
+use bark::persist::BarkPersister;
 
 /// File name of the mnemonic file.
 const MNEMONIC_FILE: &str = "mnemonic";
@@ -57,21 +55,13 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<(BarkWallet, OnchainW
 	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 	let seed = mnemonic.to_seed("");
 
-	// Read the config
-	let config_path = datadir.join("config.toml");
-	let mut config_file = File::open(&config_path)
-		.with_context(|| format!("Failed to open config file at {}", config_path.display()))?;
-
-	let mut config_str = String::new();
-	config_file.read_to_string(&mut config_str)
-		.with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
-
-	let config: Config = toml::from_str(&config_str)
-		.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
-
 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
 	let properties = db.read_properties()?.context("failed to read properties")?;
 
+	// Read the config
+	let config_path = datadir.join("config.toml");
+	let config = Config::load(properties.network, config_path)
+		.context("error loading bark config file")?;
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone())?;
 	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config).await?;

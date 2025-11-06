@@ -19,7 +19,7 @@ pub use daemon::bitcoind::{Bitcoind, BitcoindConfig};
 pub use daemon::electrs::{Electrs, ElectrsConfig};
 pub use daemon::captaind::Captaind;
 pub use daemon::lightningd::{Lightningd, LightningdConfig};
-pub use bark::{Bark, BarkConfig};
+pub use bark::Bark;
 
 
 use std::fmt;

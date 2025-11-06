@@ -7,8 +7,8 @@ mod onchain;
 mod util;
 mod wallet;
 
-use std::cmp::Ordering;
 use std::{cmp, env, process};
+use std::cmp::Ordering;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -18,7 +18,7 @@ use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::movement::Movement;
 use bark::round::RoundStatus;
 use bark::vtxo_state::{VtxoStateKind, WalletVtxo};
-use bitcoin::{Amount, FeeRate};
+use bitcoin::{Amount, Network};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
 use ::lightning::offers::offer::Offer;
@@ -27,15 +27,18 @@ use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 
 use ark::VtxoId;
-use bark::Config;
+use bark::{BarkNetwork, Config};
 use bark::vtxo_selection::VtxoFilter;
 use bark_json::{cli as json, primitives};
-use bitcoin_ext::FeeRateExt;
 
 use bark_cli::wallet::open_wallet;
 
 use crate::util::output_json;
 use crate::wallet::{CreateOpts, create_wallet};
+
+
+const DEBUG_LOG_FILE: &str = "debug.log";
+
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -117,7 +120,8 @@ struct Cli {
 	command: Command,
 }
 
-#[derive(clap::Args)]
+/// Options to define the initial bark config
+#[derive(Clone, PartialEq, Eq, Default, clap::Args)]
 struct ConfigOpts {
 	/// The address of your Ark server.
 	#[arg(long)]
@@ -152,57 +156,80 @@ struct ConfigOpts {
 	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	bitcoind_pass: Option<String>,
-
-	/// The number of blocks before expiration to refresh vtxos.
-	///
-	/// Default value: 288 (48 hrs)
-	#[arg(long)]
-	vtxo_refresh_expiry_threshold: Option<u32>,
-
-	/// A fallback fee rate in sats/kvB to use when we fail to retrieve a fee rate from the
-	/// configured bitcoind/esplora connection instead of erroring.
-	///
-	/// Example for 1 sat/vB: --fallback-fee-rate 1000
-	#[arg(long)]
-	fallback_fee_rate: Option<u64>,
 }
 
 impl ConfigOpts {
-	fn merge_into(self, cfg: &mut Config) -> anyhow::Result<()> {
-		if let Some(url) = self.ark {
-			cfg.server_address = util::https_default_scheme(url).context("invalid Ark server url")?;
-		}
-		if let Some(v) = self.esplora {
-			cfg.esplora_address = match v.is_empty() {
-				true => None,
-				false => Some(util::https_default_scheme(v).context("invalid esplora url")?),
-			};
-		}
-		if let Some(v) = self.bitcoind {
-			cfg.bitcoind_address = if v == "" { None } else { Some(v) };
-		}
-		if let Some(v) = self.bitcoind_cookie {
-			cfg.bitcoind_cookiefile = if v == "" { None } else { Some(v.into()) };
-		}
-		if let Some(v) = self.bitcoind_user {
-			cfg.bitcoind_user = if v == "" { None } else { Some(v) };
-		}
-		if let Some(v) = self.bitcoind_pass {
-			cfg.bitcoind_pass = if v == "" { None } else { Some(v) };
-		}
-		if let Some(v) = self.vtxo_refresh_expiry_threshold {
-			cfg.vtxo_refresh_expiry_threshold = v;
+	/// Fill the default required config fields based on network
+	fn fill_network_defaults(&mut self, net: BarkNetwork) {
+		// Fallback to our default signet backend
+		// Only do it when the user did *not* specify either --esplora or --bitcoind.
+		if net == BarkNetwork::Signet && self.esplora.is_none() && self.bitcoind.is_none() {
+			self.esplora = Some("https://esplora.signet.2nd.dev/".to_owned());
 		}
 
-		if let Some(v) = self.fallback_fee_rate {
-			cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_kvb_ceil(v));
+		// Fallback to Mutinynet community Esplora
+		// Only do it when the user did *not* specify either --esplora or --bitcoind.
+		if net == BarkNetwork::Mutinynet && self.esplora.is_none() && self.bitcoind.is_none() {
+			self.esplora = Some("https://mutinynet.com/api".to_owned());
+		}
+	}
+
+	/// Validate the config options are sane
+	fn validate(&self) -> anyhow::Result<()> {
+		if self.esplora.is_none() && self.bitcoind.is_none() {
+			bail!("You need to provide a chain source using either --esplora or --bitcoind");
 		}
 
-		if cfg.esplora_address.is_none() && cfg.bitcoind_address.is_none() {
-			bail!("Provide either an esplora or bitcoind url as chain source.");
+		match (
+			self.bitcoind.is_some(),
+			self.bitcoind_cookie.is_some(),
+			self.bitcoind_user.is_some(),
+			self.bitcoind_pass.is_some(),
+		) {
+			(false, false, false, false) => {},
+			(false, _, _, _) => bail!("Provided bitcoind auth args without bitcoind address"),
+			(_, true, false, false) => {},
+			(_, true, _, _) => bail!("Bitcoind user/pass shouldn't be provided together with cookie file"),
+			(_, _, true, true) => {},
+			_ => bail!("When providing --bitcoind, you need to provide auth args as well."),
 		}
 
 		Ok(())
+	}
+
+	/// Will write the provided config options to the config
+	///
+	/// Will also load and return the config when loaded from the written file.
+	fn write_to_file(&self, network: Network, path: impl AsRef<Path>) -> anyhow::Result<Config> {
+		use std::fmt::Write;
+
+		let mut conf = String::new();
+		let ark = self.ark.as_ref().context("missing --ark arg")?;
+		writeln!(conf, "server_address = \"{}\"", ark).unwrap();
+
+		if let Some(ref v) = self.esplora {
+			writeln!(conf, "esplora_address = \"{}\"", v).unwrap();
+		}
+		if let Some(ref v) = self.bitcoind {
+			writeln!(conf, "bitcoind_address = \"{}\"", v).unwrap();
+		}
+		if let Some(ref v) = self.bitcoind_cookie {
+			writeln!(conf, "bitcoind_cookiefile = \"{}\"", v).unwrap();
+		}
+		if let Some(ref v) = self.bitcoind_user {
+			writeln!(conf, "bitcoind_user = \"{}\"", v).unwrap();
+		}
+		if let Some(ref v) = self.bitcoind_pass {
+			writeln!(conf, "bitcoind_pass = \"{}\"", v).unwrap();
+		}
+
+		let path = path.as_ref();
+		std::fs::write(path, conf).with_context(|| format!(
+			"error writing new config file to {}", path.display(),
+		))?;
+
+		// new let's try load it to make sure it's sane
+		Ok(Config::load(network, path).context("problematic config flags provided")?)
 	}
 }
 
@@ -467,7 +494,7 @@ fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 	};
 
 	let logfile = if datadir.exists() {
-		let path = datadir.join("debug.log");
+		let path = datadir.join(DEBUG_LOG_FILE);
 		match std::fs::File::options().create(true).append(true).open(path) {
 			Ok(mut file) => {
 				// try write a newline into the file to separate commands
@@ -483,7 +510,7 @@ fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 				Some(logger)
 			},
 			Err(e) => {
-				eprintln!("Failed to open debug.log file: {:#}", e);
+				eprintln!("Failed to open debug log file: {:#}", e);
 				None
 			},
 		}

@@ -15,14 +15,14 @@ use tokio_stream::StreamExt;
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundEvent;
 use ark::vtxo::PubkeyVtxoPolicy;
+use bark::BarkNetwork;
 use bark::persist::StoredRoundState;
 use bark::round::RoundParticipation;
 use bark_json::primitives::RecipientInfo;
-
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
-use ark_testing::{TestContext, btc, sat};
+use ark_testing::{btc, sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{
@@ -79,22 +79,24 @@ async fn bark_create_is_atomic() {
 
 	// Create a bark defines the folder
 	let _  = ctx.try_new_bark("bark_ok", &srv).await.expect("Can create bark");
-	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_ok").as_path()));
+	assert!(ctx.datadir.join("bark_ok").is_dir());
 
 	// You can't create a bark twice
 	// If you want to overwrite the folder you need force
 	let _ = ctx.try_new_bark("bark_twice", &srv).await.expect("Can create bark");
-	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_twice").as_path()));
+	assert!(ctx.datadir.join("bark_twice").is_dir());
 
 	let _ = ctx.try_new_bark("bark_twice", &srv).await.expect_err("Can create bark");
-	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_twice").as_path()));
+	assert!(ctx.datadir.join("bark_twice").is_dir());
 
 	// We stop the server
 	// This ensures that clients cannot be created
 	srv.stop().await.unwrap();
 	let err = ctx.try_new_bark("bark_fails", &srv).await.unwrap_err();
-	assert!(err.to_alt_string().contains("Not connected to a server. If you are sure use the --force flag."));
-	assert!(!std::path::Path::is_dir(ctx.datadir.join("bark_fails").as_path()));
+	assert!(err.to_alt_string().contains(
+		"Not connected to a server. If you are sure use the --force flag.",
+	));
+	assert!(!ctx.datadir.join("bark_fails").is_dir());
 }
 
 #[tokio::test]
@@ -106,9 +108,14 @@ async fn bark_create_force_flag() {
 	srv.stop().await.unwrap();
 
 	// Attempt to create with force_create should succeed
-	let args = &["--force"];
-	let _ = ctx.try_new_bark_with_create_args("bark_succeeds_with_force", &srv, None, args).await.unwrap();
-	assert!(std::path::Path::is_dir(ctx.datadir.join("bark_succeeds_with_force").as_path()));
+	let datadir = ctx.datadir.join("bark");
+	let bitcoind = ctx.new_bitcoind("bark_bitcoind").await;
+	let cfg = ctx.bark_default_cfg(&srv, Some(&bitcoind));
+	Bark::try_new_with_create_opts(
+		"bark", datadir, BarkNetwork::Regtest, cfg, Some(bitcoind), None, None, true,
+	).await.unwrap();
+
+	assert!(std::path::Path::is_dir(ctx.datadir.join("bark").as_path()));
 }
 
 #[tokio::test]
@@ -915,12 +922,28 @@ async fn recover_mnemonic() {
 	let _offchain = bark.spendable_balance().await;
 
 	const MNEMONIC_FILE: &str = "mnemonic";
-	let mnemonic = fs::read_to_string(bark.config().datadir.join(MNEMONIC_FILE)).await.unwrap();
+	let mnemonic = fs::read_to_string(bark.datadir().join(MNEMONIC_FILE)).await.unwrap();
 	let _ = bip39::Mnemonic::parse(&mnemonic).expect("invalid mnemonic?");
 
 	// first ensure we need to set a birthday for bitcoin core
-	let args = &["--mnemonic", &mnemonic];
-	let result = ctx.try_new_bark_with_create_args("bark_recovered_no_birthday", &srv, None, args).await;
+	let bitcoind = if ctx.electrs.is_none() {
+		Some(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await)
+	} else {
+		None
+	};
+	let datadir = ctx.datadir.join("bark_recovered_no_birthday");
+	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_ref());
+	let result = Bark::try_new_with_create_opts(
+		"bark_recovered_no_birthday",
+		datadir,
+		BarkNetwork::Regtest,
+		cfg,
+		bitcoind,
+		Some(mnemonic.to_string()),
+		None,
+		true,
+	).await;
+
 	match get_bark_chain_source_from_env() {
 		TestContextChainSource::BitcoinCore => {
 			// it's not easy to get a grip of what the actual error was
@@ -938,10 +961,23 @@ async fn recover_mnemonic() {
 	}
 
 	// Now check that specifying a birthday height always succeeds
-	let args = &["--mnemonic", &mnemonic, "--birthday-height", "0"];
-	let recovered = ctx.try_new_bark_with_create_args("bark_recovered_with_birthday", &srv, None, args)
-		.await
-		.expect("mnemonic + birthday should work");
+	let bitcoind = if ctx.electrs.is_none() {
+		Some(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await)
+	} else {
+		None
+	};
+	let datadir = ctx.datadir.join("bark_recovered_with_birthday");
+	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_ref());
+	let recovered = Bark::try_new_with_create_opts(
+		"bark_recovered_with_birthday",
+		datadir,
+		BarkNetwork::Regtest,
+		cfg,
+		bitcoind,
+		Some(mnemonic.to_string()),
+		Some(0),
+		true,
+	).await.expect("mnemonic + birthday should work");
 	assert_eq!(onchain, recovered.onchain_balance().await);
 	//TODO(stevenroose) implement offchain recovery
 	// assert_eq!(offchain, recovered.offchain_balance().await);
