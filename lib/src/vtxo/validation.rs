@@ -1,11 +1,12 @@
 
 use std::borrow::Cow;
 
-use bitcoin::{sighash, Amount, OutPoint, Transaction, TxOut};
+use bitcoin::{sighash, Amount, OutPoint, TapLeafHash, Transaction, TxOut};
 
 use bitcoin_ext::TxOutExt;
 
-use crate::SECP;
+use crate::tree::signed::unlock_clause;
+use crate::{musig, SECP};
 use crate::vtxo::{GenesisTransition, Vtxo, VtxoPolicyKind};
 
 
@@ -21,10 +22,11 @@ pub enum VtxoValidationError {
 	},
 	#[error("Cosigned genesis transitions don't have any common pubkeys")]
 	InconsistentCosignPubkeys,
-	#[error("error verifying one of the genesis transitions (idx={genesis_item_idx}): {error}")]
+	#[error("error verifying one of the genesis transitions (idx={genesis_idx}/{genesis_len}): {error}")]
 	GenesisTransition {
 		error: &'static str,
-		genesis_item_idx: usize,
+		genesis_idx: usize,
+		genesis_len: usize,
 	},
 	#[error("non-standard output on genesis item #{genesis_item_idx} other \
 		output #{other_output_idx}")]
@@ -41,8 +43,8 @@ pub enum VtxoValidationError {
 
 impl VtxoValidationError {
 	/// Constructor for [VtxoValidationError::GenesisTransition].
-	fn transition(genesis_item_idx: usize, error: &'static str) -> Self {
-		VtxoValidationError::GenesisTransition { error, genesis_item_idx }
+	fn transition(genesis_item_idx: usize, nb_genesis_items: usize, error: &'static str) -> Self {
+		VtxoValidationError::GenesisTransition { error, genesis_idx: genesis_item_idx, genesis_len: nb_genesis_items }
 	}
 }
 
@@ -82,13 +84,24 @@ fn verify_transition(
 	});
 
 	let prevout = OutPoint::new(prev_tx.compute_txid(), prev_vout as u32);
-	let tx = item.tx(prevout, next_output);
+	let tx = item.tx(prevout, next_output, vtxo.server_pubkey, vtxo.expiry_height);
 
-	let sighash = {
-		let mut shc = sighash::SighashCache::new(&tx);
-		shc.taproot_key_spend_signature_hash(
-			0, &sighash::Prevouts::All(&[prev_txout]), sighash::TapSighashType::Default,
-		).expect("correct prevouts")
+	let sighash = match item.transition {
+		GenesisTransition::HashLockedCosigned { user_pubkey, unlock, .. } => {
+			let mut shc = sighash::SighashCache::new(&tx);
+			let agg_pk = musig::combine_keys([user_pubkey, vtxo.server_pubkey]);
+			let script = unlock_clause(agg_pk, unlock.hash());
+			let leaf = TapLeafHash::from_script(&script, bitcoin::taproot::LeafVersion::TapScript);
+			shc.taproot_script_spend_signature_hash(
+				0, &sighash::Prevouts::All(&[prev_txout]), leaf, sighash::TapSighashType::Default,
+			).expect("correct prevouts")
+		},
+		GenesisTransition::Cosigned { .. } | GenesisTransition::Arkoor { .. } => {
+			let mut shc = sighash::SighashCache::new(&tx);
+			shc.taproot_key_spend_signature_hash(
+				0, &sighash::Prevouts::All(&[prev_txout]), sighash::TapSighashType::Default,
+			).expect("correct prevouts")
+		},
 	};
 
 	let pubkey = {
@@ -100,6 +113,7 @@ fn verify_transition(
 
 	let signature = match item.transition {
 		GenesisTransition::Cosigned { signature, .. } => signature,
+		GenesisTransition::HashLockedCosigned { signature, .. } => signature,
 		GenesisTransition::Arkoor { signature: Some(signature), .. } => signature,
 		GenesisTransition::Arkoor { signature: None, .. } => {
 			return Err("missing arkoor signature");
@@ -117,25 +131,6 @@ fn verify_transition(
 	}
 
 	Ok(tx)
-}
-
-#[inline]
-fn check_transitions_cosigned_then_arkoor<'a>(
-	transitions: impl Iterator<Item = &'a GenesisTransition> + Clone,
-) -> Result<(), VtxoValidationError> {
-	let cosigned = transitions.clone()
-		.take_while(|t| matches!(t, GenesisTransition::Cosigned { .. }));
-	if cosigned.count() < 1 {
-		return Err(VtxoValidationError::Invalid("should start with Cosigned genesis items"));
-	}
-	let mut after_cosigned = transitions.clone()
-		.skip_while(|t| matches!(t, GenesisTransition::Cosigned { .. }));
-	if !after_cosigned.all(|t| matches!(t, GenesisTransition::Arkoor { .. })) {
-		return Err(VtxoValidationError::Invalid(
-			"can only have Arkoor transitions after last Cosigned",
-		));
-	}
-	Ok(())
 }
 
 /// Validate that the [Vtxo] is valid and can be constructed from its
@@ -157,15 +152,11 @@ pub fn validate(
 		return Err(VtxoValidationError::IncorrectChainAnchor { expected: expected_anchor_txout, got: anchor_txout.clone() });
 	}
 
-	// Then let's go over each transition.
-	let transitions = vtxo.genesis.iter().map(|i| &i.transition);
-
 	// Every VTXO should have one or more `Cosigned` transitions, followed by 0 or more
 	// `Arkoor` transitions.
 	if vtxo.genesis.is_empty() {
 		return Err(VtxoValidationError::Invalid("no genesis items"));
 	}
-	check_transitions_cosigned_then_arkoor(transitions.clone())?;
 
 	let cosign_pubkeys = vtxo.round_cosign_pubkeys();
 	if cosign_pubkeys.is_empty() {
@@ -174,10 +165,26 @@ pub fn validate(
 
 	let mut has_arkoor = false;
 	let mut prev = (Cow::Borrowed(chain_anchor_tx), vtxo.chain_anchor().vout as usize, onchain_amount);
-	for (idx, item) in vtxo.genesis.iter().enumerate() {
+	let mut iter = vtxo.genesis.iter().enumerate().peekable();
+	while let Some((idx, item)) = iter.next() {
 		// transition-dependent validation
 		match &item.transition {
 			GenesisTransition::Cosigned { .. } => {},
+			GenesisTransition::HashLockedCosigned { .. } => {
+				// can only be followed by arkoor
+				if let Some((_idx, next)) = iter.peek() {
+					match &next.transition {
+						GenesisTransition::Arkoor { .. } => {},
+						GenesisTransition::Cosigned { .. }
+						| GenesisTransition::HashLockedCosigned { .. } => {
+							return Err(VtxoValidationError::transition(
+								idx, vtxo.genesis.len(), "hash-locked cosigned transition must \
+									be followed by arkoor transitions",
+							));
+						},
+					}
+				}
+			},
 			GenesisTransition::Arkoor { policy, .. } => {
 				has_arkoor = true;
 				if policy.arkoor_pubkey().is_none() {
@@ -185,6 +192,20 @@ pub fn validate(
 						policy: policy.policy_type(),
 						msg: "arkoor transition without arkoor pubkey",
 					});
+				}
+
+				// can only be followed by more arkoor
+				if let Some((_idx, next)) = iter.peek() {
+					match &next.transition {
+						GenesisTransition::Arkoor { .. } => {},
+						GenesisTransition::Cosigned { .. }
+						| GenesisTransition::HashLockedCosigned { .. } => {
+							return Err(VtxoValidationError::transition(
+								idx, vtxo.genesis.len(),
+								"Arkoor transition must be followed by arkoor transitions",
+							));
+						},
+					}
 				}
 			},
 		}
@@ -200,7 +221,7 @@ pub fn validate(
 		let next_amount = prev.2.checked_sub(item.other_outputs.iter().map(|o| o.value).sum())
 			.ok_or(VtxoValidationError::Invalid("insufficient onchain amount"))?;
 		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount)
-			.map_err(|e| VtxoValidationError::transition(idx, e))?;
+			.map_err(|e| VtxoValidationError::transition(idx, vtxo.genesis.len(), e))?;
 		prev = (Cow::Owned(next_tx), item.output_idx as usize, next_amount);
 	}
 

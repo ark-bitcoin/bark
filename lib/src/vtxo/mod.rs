@@ -68,13 +68,14 @@ use bitcoin::{
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey};
+use bitcoin::taproot::LeafVersion;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::{musig, scripts, SECP};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::lightning::{server_htlc_receive_taproot, server_htlc_send_taproot, PaymentHash};
-use crate::tree::signed::cosign_taproot;
+use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause};
 
 
 
@@ -492,6 +493,25 @@ impl VtxoPolicy {
 	}
 }
 
+/// Enum type used to represent a preimage<>hash relationship
+/// for which the preimage might be known but the hash always
+/// should be known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MaybePreimage {
+	Preimage([u8; 32]),
+	Hash(sha256::Hash),
+}
+
+impl MaybePreimage {
+	/// Get the hash
+	fn hash(&self) -> sha256::Hash {
+		match self {
+			Self::Preimage(p) => sha256::Hash::hash(p),
+			Self::Hash(h) => *h,
+		}
+	}
+}
+
 /// A transition from one genesis tx to the next.
 ///
 /// See private module-level documentation for more info.
@@ -502,12 +522,28 @@ pub(crate) enum GenesisTransition {
 	/// This can be either the result of a cosigned "clArk" tree branch transition
 	/// or a board which is cosigned just with the server.
 	Cosigned {
-		/// All the user cosign pubkeys signing the node.
+		/// All the cosign pubkeys signing the node.
 		///
 		/// Has to include server's cosign pubkey because it differs
 		/// from its regular pubkey.
 		pubkeys: Vec<PublicKey>,
 		signature: schnorr::Signature,
+	},
+	/// A transition based on a cosignature and a hash lock
+	///
+	/// This is the transition type for hArk leaf policy outputs,
+	/// that spend into the leaf transaction.
+	///
+	/// Refraining from any optimizations, this type is implemented the naive way:
+	/// - the keyspend path is currently unused, could be used later
+	/// - witness will always contain the cosignature and preimage in the script spend
+	HashLockedCosigned {
+		/// User pubkey that is combined with the server pubkey
+		user_pubkey: PublicKey,
+		/// The script-spend signature
+		signature: schnorr::Signature,
+		/// The unlock preimage or the unlock hash
+		unlock: MaybePreimage,
 	},
 	/// A regular arkoor spend, using the co-signed p2tr key-spend path.
 	Arkoor {
@@ -529,6 +565,10 @@ impl GenesisTransition {
 				let agg_pk = musig::combine_keys(pubkeys.iter().copied());
 				cosign_taproot(agg_pk, server_pubkey, expiry_height)
 			},
+			Self::HashLockedCosigned { user_pubkey, unlock, .. } => {
+				let agg_pk = musig::combine_keys([*user_pubkey, server_pubkey]);
+				leaf_cosign_taproot(agg_pk, server_pubkey, expiry_height, unlock.hash())
+			},
 			Self::Arkoor { policy, .. } => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
@@ -549,9 +589,39 @@ impl GenesisTransition {
 	}
 
 	/// The transaction witness for this transition.
-	fn witness(&self) -> Witness {
+	fn witness(
+		&self,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> Witness {
 		match self {
 			Self::Cosigned { signature, .. } => Witness::from_slice(&[&signature[..]]),
+			Self::HashLockedCosigned {
+				user_pubkey,
+				signature,
+				unlock: MaybePreimage::Preimage(preimage),
+			} => {
+				let unlock_hash = sha256::Hash::hash(preimage);
+				let agg_pk = musig::combine_keys([*user_pubkey, server_pubkey]);
+				let taproot = leaf_cosign_taproot(
+					agg_pk, server_pubkey, expiry_height, unlock_hash,
+				);
+
+				let clause = unlock_clause(agg_pk, unlock_hash);
+				let script_leaf = (clause, LeafVersion::TapScript);
+				let cb = taproot.control_block(&script_leaf)
+					.expect("unlock clause not found in hArk taproot");
+				Witness::from_slice(&[
+					&signature.serialize()[..],
+					&preimage[..],
+					&script_leaf.0.as_bytes(),
+					&cb.serialize()[..],
+				])
+			},
+			Self::HashLockedCosigned { unlock: MaybePreimage::Hash(_), .. } => {
+				// without preimage this transition is unfulfilled
+				Witness::new()
+			},
 			Self::Arkoor { signature: Some(sig), .. } => Witness::from_slice(&[&sig[..]]),
 			Self::Arkoor { signature: None, .. } => Witness::new(),
 		}
@@ -561,6 +631,7 @@ impl GenesisTransition {
 	fn has_exit(&self) -> bool {
 		match self {
 			Self::Cosigned { .. } => false,
+			Self::HashLockedCosigned { .. } => false,
 			Self::Arkoor { .. } => true,
 		}
 	}
@@ -569,7 +640,18 @@ impl GenesisTransition {
 	fn is_arkoor(&self) -> bool {
 		match self {
 			Self::Cosigned { .. } => false,
+			Self::HashLockedCosigned { .. } => false,
 			Self::Arkoor { .. } => true,
+		}
+	}
+
+	/// Whether the transition is fully signed
+	fn is_fully_signed(&self) -> bool {
+		match self {
+			Self::Cosigned { .. } => true,
+			Self::HashLockedCosigned { unlock: MaybePreimage::Hash(_), .. } => false,
+			Self::HashLockedCosigned { unlock: MaybePreimage::Preimage(_), .. } => true,
+			Self::Arkoor { signature, .. } => signature.is_some(),
 		}
 	}
 }
@@ -590,7 +672,12 @@ pub(crate) struct GenesisItem {
 
 impl GenesisItem {
 	/// Construct the exit transaction at this level of the genesis.
-	fn tx(&self, prev: OutPoint, next: TxOut) -> Transaction {
+	fn tx(&self,
+		prev: OutPoint,
+		next: TxOut,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> Transaction {
 		Transaction {
 			version: bitcoin::transaction::Version(3),
 			lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -598,7 +685,7 @@ impl GenesisItem {
 				previous_output: prev,
 				script_sig: ScriptBuf::new(),
 				sequence: Sequence::ZERO,
-				witness: self.transition.witness(),
+				witness: self.transition.witness(server_pubkey, expiry_height),
 			}],
 			output: {
 				let mut out = Vec::with_capacity(self.other_outputs.len() + 2);
@@ -689,7 +776,7 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.server_pubkey, self.vtxo.exit_delta)
 		};
 
-		let tx = item.tx(self.prev, next_output);
+		let tx = item.tx(self.prev, next_output, self.vtxo.server_pubkey, self.vtxo.expiry_height);
 		self.prev = OutPoint::new(tx.compute_txid(), item.output_idx as u32);
 		self.genesis_idx += 1;
 		self.current_amount = next_amount;
@@ -855,6 +942,7 @@ impl Vtxo {
 	pub fn is_arkoor_compatible(&self) -> bool {
 		self.genesis.iter().all(|i| match i.transition {
 			GenesisTransition::Cosigned { .. } => true,
+			GenesisTransition::HashLockedCosigned { .. } => true,
 			GenesisTransition::Arkoor { ref policy, .. } => policy.is_arkoor_compatible(),
 		}) && self.policy.is_arkoor_compatible()
 	}
@@ -906,6 +994,14 @@ impl Vtxo {
 		self.genesis.iter().any(|t| t.transition.has_exit())
 	}
 
+	/// Whether this VTXO is fully signed
+	///
+	/// It is possible to represent unsigned VTXOs, for which this method
+	/// will return false.
+	pub fn is_fully_signed(&self) -> bool {
+		self.genesis.iter().all(|g| g.transition.is_fully_signed())
+	}
+
 	/// Iterator that constructs all the exit txs for this [Vtxo].
 	pub fn transactions(&self) -> VtxoTxIter<'_> {
 		VtxoTxIter::new(self)
@@ -945,6 +1041,7 @@ impl Vtxo {
 						ret = Some(pubkeys.clone());
 					}
 				},
+				GenesisTransition::HashLockedCosigned { .. } => {},
 				GenesisTransition::Arkoor { .. } => {},
 			}
 		}
@@ -958,6 +1055,7 @@ impl Vtxo {
 		self.genesis.iter().filter_map(|i| match &i.transition {
 			GenesisTransition::Arkoor { policy, .. } => policy.arkoor_pubkey(),
 			GenesisTransition::Cosigned { .. } => None,
+			GenesisTransition::HashLockedCosigned { .. } => None,
 		}).collect()
 	}
 
@@ -1095,6 +1193,9 @@ const GENESIS_TRANSITION_TYPE_COSIGNED: u8 = 1;
 /// The byte used to encode the [GenesisTransition::Arkoor] gen transition type.
 const GENESIS_TRANSITION_TYPE_ARKOOR: u8 = 2;
 
+/// The byte used to encode the [GenesisTransition::HashLockedCosigned] gen transition type.
+const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 3;
+
 impl ProtocolEncoding for GenesisTransition {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
@@ -1105,6 +1206,21 @@ impl ProtocolEncoding for GenesisTransition {
 					pk.encode(w)?;
 				}
 				signature.encode(w)?;
+			},
+			Self::HashLockedCosigned { user_pubkey, signature, unlock } => {
+				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED)?;
+				user_pubkey.encode(w)?;
+				signature.encode(w)?;
+				match unlock {
+					MaybePreimage::Preimage(p) => {
+						w.emit_u8(0)?;
+						w.emit_slice(&p[..])?;
+					},
+					MaybePreimage::Hash(h) => {
+						w.emit_u8(1)?;
+						w.emit_slice(&h[..])?;
+					},
+				}
 			},
 			Self::Arkoor { policy, signature } => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_ARKOOR)?;
@@ -1125,6 +1241,18 @@ impl ProtocolEncoding for GenesisTransition {
 				}
 				let signature = schnorr::Signature::decode(r)?;
 				Ok(Self::Cosigned { pubkeys, signature })
+			},
+			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED => {
+				let user_pubkey = PublicKey::decode(r)?;
+				let signature = schnorr::Signature::decode(r)?;
+				let unlock = match r.read_u8()? {
+					0 => MaybePreimage::Preimage(r.read_byte_array()?),
+					1 => MaybePreimage::Hash(ProtocolEncoding::decode(r)?),
+					v => return Err(ProtocolDecodingError::invalid(format_args!(
+						"invalid HashLockedCosignedTransitionWitness type byte: {v:#x}",
+					))),
+				};
+				Ok(Self::HashLockedCosigned { user_pubkey, signature, unlock })
 			},
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
 				let policy = VtxoPolicy::decode(r)?;
