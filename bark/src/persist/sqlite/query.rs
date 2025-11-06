@@ -564,8 +564,8 @@ pub fn store_lightning_receive(
 	let mut statement = conn.prepare(query)?;
 
 	statement.execute(named_params! {
-		":payment_hash": payment_hash.to_vec(),
-		":preimage": preimage.to_vec(),
+		":payment_hash": payment_hash.as_hex().to_string(),
+		":preimage": preimage.as_hex().to_string(),
 		":invoice": invoice.to_string(),
 		":htlc_recv_cltv_delta": htlc_recv_cltv_delta,
 	})?;
@@ -600,8 +600,8 @@ pub fn get_all_pending_lightning_receives<'a>(
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
 		result.push(LightningReceive {
-			payment_hash: PaymentHash::from(row.get::<_, [u8; 32]>("payment_hash")?),
-			payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
+			payment_hash: PaymentHash::from_str(&row.get::<_, String>("payment_hash")?)?,
+			payment_preimage: Preimage::from_str(&row.get::<_, String>("preimage")?)?,
 			preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
 			invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 			htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
@@ -617,7 +617,7 @@ pub fn set_preimage_revealed(conn: &Connection, payment_hash: PaymentHash) -> an
 		WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
-		":payment_hash": payment_hash.to_vec(),
+		":payment_hash": payment_hash.as_hex().to_string(),
 		":revealed_at": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
 	})?;
 	Ok(())
@@ -640,7 +640,7 @@ pub fn set_lightning_receive_vtxos(
 	}
 
 	statement.execute(named_params! {
-		":payment_hash": payment_hash.to_vec(),
+		":payment_hash": payment_hash.as_hex().to_string(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?
 	})?;
 
@@ -662,9 +662,11 @@ pub fn fetch_lightning_receive_by_payment_hash(
 	conn: &Connection,
 	payment_hash: PaymentHash,
 ) -> anyhow::Result<Option<LightningReceive>> {
-	let query = "SELECT * FROM bark_pending_lightning_receive WHERE payment_hash = ?1";
+	let query = "SELECT * FROM bark_pending_lightning_receive WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query((payment_hash.as_ref(), ))?;
+	let mut rows = statement.query(named_params! {
+		":payment_hash": payment_hash.as_hex().to_string(),
+	})?;
 
 	let row = match rows.next()? {
 		Some(row) => row,
@@ -672,8 +674,8 @@ pub fn fetch_lightning_receive_by_payment_hash(
 	};
 
 	Ok(Some(LightningReceive {
-		payment_hash: PaymentHash::from(row.get::<_, [u8; 32]>("payment_hash")?),
-		payment_preimage: Preimage::from(row.get::<_, [u8; 32]>("preimage")?),
+		payment_hash: PaymentHash::from_str(&row.get::<_, String>("payment_hash")?)?,
+		payment_preimage: Preimage::from_str(&row.get::<_, String>("preimage")?)?,
 		preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
 		invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 		htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,

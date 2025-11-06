@@ -70,13 +70,6 @@ CREATE VIEW movement_view AS
 					) AS recipients
 				FROM bark_movement
 /* movement_view(id,fees_sat,created_at,kind,spends,receives,recipients) */;
-CREATE TABLE IF NOT EXISTS "bark_pending_lightning_receive" (
-			payment_hash BLOB NOT NULL PRIMARY KEY,
-			preimage BLOB NOT NULL UNIQUE,
-			preimage_revealed_at TIMESTAMP,
-			invoice TEXT NOT NULL,
-			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-		, htlc_vtxo_ids TEXT, htlc_recv_cltv_delta INTEGER NOT NULL);
 CREATE TABLE bark_exit_states (
 				vtxo_id TEXT PRIMARY KEY,
 				state TEXT NOT NULL,
@@ -134,4 +127,13 @@ CREATE VIEW vtxo_view
 CREATE TABLE bark_recovered_past_round (
 				funding_txid TEXT PRIMARY KEY,
 				past_round_state BLOB NOT NULL
+			);
+CREATE TABLE bark_pending_lightning_receive (
+				payment_hash TEXT NOT NULL PRIMARY KEY,
+				preimage TEXT NOT NULL UNIQUE,
+				invoice TEXT NOT NULL,
+				htlc_recv_cltv_delta INTEGER NOT NULL,
+				htlc_vtxo_ids TEXT,
+				preimage_revealed_at DATETIME,
+				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);
