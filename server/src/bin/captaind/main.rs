@@ -17,8 +17,9 @@ use tonic::transport::Uri;
 
 use ark::integration::{TokenStatus, TokenType};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use uuid::Uuid;
 
-use server::{Server, Config, filters};
+use server::{filters, Config, Server, CAPTAIND_CLI_API_KEY};
 use server_rpc::{self as rpc, protos};
 
 /// Defaults to our default port on localhost.
@@ -160,10 +161,12 @@ enum IntegrationCommand {
 	GenerateToken {
 		/// Name of the integration to generate a token for
 		integration_name: String,
-		/// The integration's API key
-		integration_api_key: uuid::Uuid,
 		/// Type of the token
 		token_type: TokenType,
+		/// Optionally, the integration's API key
+		/// If no key is provided, the hardcoded `CAPTAIND_CLI_API_KEY` is used.
+		#[arg(long)]
+		integration_api_key: Option<uuid::Uuid>,
 		/// Filters for the token
 		#[command(flatten)]
 		filters: Filters,
@@ -173,22 +176,26 @@ enum IntegrationCommand {
 	UpdateTokenStatus {
 		/// Name of the integration to generate a token for
 		integration_name: String,
-		/// The integration's API key
-		integration_api_key: uuid::Uuid,
 		/// Token
 		token: String,
 		/// Status of the token
 		status: TokenStatus,
+		/// Optionally, the integration's API key
+		/// If no key is provided, the hardcoded `CAPTAIND_CLI_API_KEY` is used.
+		#[arg(long)]
+		integration_api_key: Option<uuid::Uuid>,
 	},
 	/// Update the filters of a token
 	#[command()]
 	UpdateTokenFilters {
 		/// Name of the integration to generate a token for
 		integration_name: String,
-		/// The integration's API key
-		integration_api_key: uuid::Uuid,
 		/// Token
 		token: String,
+		/// Optionally, the integration's API key
+		/// If no key is provided, the hardcoded `CAPTAIND_CLI_API_KEY` is used.
+		#[arg(long)]
+		integration_api_key: Option<uuid::Uuid>,
 		/// Filters for the token
 		#[command(flatten)]
 		filters: Filters,
@@ -350,8 +357,9 @@ async fn inner_main() -> anyhow::Result<()> {
 						.expect("Invalid integration name");
 					let integration_token_config = db.get_integration_token_config(token_type, integration.id).await?
 						.expect("no token configuration found");
-					let integration_api_key = db.get_integration_api_key_by_api_key(integration_api_key).await?
-						.expect("invalid API Key");
+					let integration_api_key = db.get_integration_api_key_by_api_key(
+						integration_api_key.unwrap_or_else(|| Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid"))
+					).await?.expect("invalid API Key");
 					let expiry_time = Local::now() +
 						chrono::Duration::seconds(integration_token_config.active_seconds as i64);
 
@@ -379,8 +387,9 @@ async fn inner_main() -> anyhow::Result<()> {
 						bail!("integration doesn't match token");
 					}
 
-					let integration_api_key = db.get_integration_api_key_by_api_key(integration_api_key).await?
-						.expect("invalid API Key");
+					let integration_api_key = db.get_integration_api_key_by_api_key(
+						integration_api_key.unwrap_or_else(|| Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid"))
+					).await?.expect("invalid API Key");
 
 					let integration_token = db.update_integration_token(
 						integration_token.clone(),
@@ -404,8 +413,9 @@ async fn inner_main() -> anyhow::Result<()> {
 						bail!("integration doesn't match token");
 					}
 
-					let integration_api_key = db.get_integration_api_key_by_api_key(integration_api_key).await?
-						.expect("invalid API Key");
+					let integration_api_key = db.get_integration_api_key_by_api_key(
+						integration_api_key.unwrap_or_else(|| Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid"))
+					).await?.expect("invalid API Key");
 
 					let integration_token = db.update_integration_token(
 						integration_token.clone(),

@@ -6,15 +6,20 @@ use std::cmp;
 use std::collections::HashMap;
 
 use anyhow::Context;
+use ark::integration::TokenStatus;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{schnorr, PublicKey};
 use log::{info, trace, error};
+use uuid::Uuid;
 
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
-use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, Preimage};
-use server_rpc::protos;
+use ark::lightning::{Bolt12Invoice, Invoice, LightningReceiveChallenge, Offer, PaymentHash, Preimage};
+use server_rpc::{
+	protos::{self, InputVtxo, prepare_lightning_receive_claim_request::LightningReceiveAntiDos},
+	TryFromBytes
+};
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
 use bitcoin_ext::rpc::RpcApi;
 
@@ -22,7 +27,7 @@ use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use crate::error::ContextExt;
-use crate::Server;
+use crate::{Server, CAPTAIND_API_KEY};
 
 
 impl Server {
@@ -350,6 +355,7 @@ impl Server {
 		payment_hash: PaymentHash,
 		user_pubkey: PublicKey,
 		htlc_recv_expiry: BlockHeight,
+		anti_dos: Option<protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos>,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo>)> {
 		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -373,6 +379,8 @@ impl Server {
 				return badarg!("payment not yet initiated by sender");
 			},
 		}
+
+		self.verify_ln_receive_anti_dos(anti_dos, payment_hash).await?;
 
 		let vtxos = {
 			// We compare requested htlc expiry height with the lowest LN HTLC expiry height
@@ -413,6 +421,52 @@ impl Server {
 		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
 
 		Ok((sub, vtxos))
+	}
+
+	async fn verify_ln_receive_anti_dos(
+		&self,
+		anti_dos: Option<LightningReceiveAntiDos>,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<()> {
+		if let Some(anti_dos) = anti_dos {
+			// Always verify anti-DoS proof or token if provided
+			match anti_dos {
+				LightningReceiveAntiDos::InputVtxo(InputVtxo { vtxo_id, ownership_proof }) => {
+					let challenge = LightningReceiveChallenge::new(payment_hash);
+					let vtxo_id = VtxoId::from_bytes(vtxo_id)?;
+					let ownership_proof = schnorr::Signature::from_bytes(ownership_proof)?;
+
+					let vtxos = self.db.get_vtxos_by_id(&[vtxo_id]).await?;
+					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
+					if !vtxo.is_spendable() {
+						return badarg!("vtxo for proof is not spendable");
+					}
+
+					challenge.verify_input_vtxo_sig(&vtxo.vtxo, &ownership_proof).context("vtxo ownership proof invalid")?;
+				},
+				LightningReceiveAntiDos::Token(token_string) => {
+					let api_key = self.db.get_integration_api_key_by_api_key(Uuid::parse_str(CAPTAIND_API_KEY)
+						.expect("hardcoded api key is valid")).await?
+						.context("captaind integration api key not found")?;
+					let token = self.db.get_integration_token(&token_string).await?.context("token not found")?;
+
+					if token.is_expired() {
+						return badarg!("token has expired");
+					}
+
+					if !matches!(token.status, TokenStatus::Unused) {
+						return badarg!("token has already been used or is invalid");
+					}
+
+					let filters = token.filters.clone();
+					let _ = self.db.update_integration_token(token, api_key.id, TokenStatus::Used, &filters).await?;
+				},
+			}
+		} else if self.config.ln_receive_anti_dos_required {
+			return badarg!("either a receive token or a challenge proof must be provided");
+		}
+
+		Ok(())
 	}
 
 	pub async fn claim_lightning_receive(

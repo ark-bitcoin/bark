@@ -86,6 +86,7 @@ message ArkInfo {
 	//TODO(stevenroose) move fee related values that are less
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
+	bool ln_receive_anti_dos_required = 15;
 }
 
 message FreshRoundsRequest {
@@ -240,6 +241,10 @@ message PrepareLightningReceiveClaimRequest {
 	bytes payment_hash = 1;
 	bytes user_pubkey = 2;
 	uint32 htlc_recv_expiry = 3;
+	oneof lightning_receive_anti_dos {
+		InputVtxo input_vtxo = 4;
+		string token = 5;
+	};
 }
 
 message PrepareLightningReceiveClaimResponse {

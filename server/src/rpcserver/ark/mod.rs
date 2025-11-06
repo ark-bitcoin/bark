@@ -455,7 +455,7 @@ impl rpc::server::ArkService for Server {
 		let htlc_recv_expiry = req.htlc_recv_expiry as BlockHeight;
 
 		let (sub, htlcs) = self.prepare_lightning_claim(
-			payment_hash, user_pubkey, htlc_recv_expiry,
+			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {

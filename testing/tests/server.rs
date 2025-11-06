@@ -109,19 +109,19 @@ async fn integration() {
 	assert_ne!(number, 0);
 
 	// Generate integration token of type single-use-board for "third" with a 60 seconds activity.
-	let stdout = srv.integration_cmd(&["generate-token", "third", api_key, "single-use-board"]).await;
+	let stdout = srv.integration_cmd(&["generate-token", "third", "single-use-board", "--integration-api-key", api_key]).await;
 	let mut parts = stdout.split(' ');
 	assert_eq!(parts.next().unwrap(), "Token:");
 	let token = parts.next().unwrap().trim();
 	trace!("Token: {}", token);
 
 	// Add integration token filters for "third".
-	let stdout = srv.integration_cmd(&["update-token-filters", "third", api_key, token, "--ip", "127.0.0.1", "--dns", "localhost"]).await;
+	let stdout = srv.integration_cmd(&["update-token-filters", "third", token, "--integration-api-key", api_key, "--ip", "127.0.0.1", "--dns", "localhost"]).await;
 	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
 	assert_ne!(number, 0);
 
 	// Update integration token status for "third".
-	let stdout = srv.integration_cmd(&["update-token-status", "third", api_key, token, "abused"]).await;
+	let stdout = srv.integration_cmd(&["update-token-status", "third", token, "abused", "--integration-api-key", api_key]).await;
 	let number = stdout.parse::<i64>().expect("Failed to convert stdout to i64");
 	assert_ne!(number, 0);
 

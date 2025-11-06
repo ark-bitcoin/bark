@@ -30,6 +30,7 @@ mod telemetry;
 mod txindex;
 pub mod filters;
 
+pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
 use std::borrow::Borrow;
@@ -234,6 +235,7 @@ impl Server {
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
 			min_board_amount: self.config.min_board_amount,
 			offboard_feerate: self.config.round_tx_feerate,
+			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
 		}
 	}
 

@@ -11,6 +11,9 @@ use crate::Server;
 use crate::database::intman::model::{Integration, IntegrationApiKey, IntegrationToken};
 use crate::filters::Filters;
 
+pub const CAPTAIND_API_KEY: &'static str = "00000000-0000-0000-0000-000000000002";
+pub const CAPTAIND_CLI_API_KEY: &'static str = "00000000-0000-0000-0000-000000000003";
+
 impl Server {
 	pub async fn get_integration_tokens(
 		&self,

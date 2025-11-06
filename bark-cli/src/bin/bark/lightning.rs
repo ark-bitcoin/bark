@@ -40,6 +40,10 @@ pub enum LightningCommand {
 		/// Wait for the incoming payment to settle
 		#[arg(long)]
 		wait: bool,
+		/// Provide a lightning receive token for authentication of this claim if the server requires one
+		/// and there are no existing spendable VTXOs to prove ownership of
+		#[arg(long)]
+		token: Option<String>,
 	},
 	/// get the status of an invoice
 	#[command()]
@@ -64,6 +68,10 @@ pub enum LightningCommand {
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
+		/// Provide a lightning receive token for authentication of this claim if the server requires one
+		/// and there are no existing spendable VTXOs to prove ownership of
+		#[arg(long)]
+		token: Option<String>,
 	},
 }
 
@@ -103,11 +111,12 @@ pub async fn execute_lightning_command(
 				bail!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address");
 			}
 		},
-		LightningCommand::Invoice { amount, wait } => {
+		LightningCommand::Invoice { amount, wait, token } => {
 			let invoice = wallet.bolt11_invoice(amount).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
-				wallet.try_claim_lightning_receive(invoice.into(), true).await?;
+				let token = token.as_ref().map(|c| c.as_str());
+				wallet.try_claim_lightning_receive(invoice.into(), true, token).await?;
 			}
 		},
 		LightningCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {
@@ -134,7 +143,7 @@ pub async fn execute_lightning_command(
 			receives.reverse();
 			output_json(&receives.into_iter().map(LightningReceiveInfo::from).collect::<Vec<_>>());
 		},
-		LightningCommand::Claim { payment, wait, no_sync } => {
+		LightningCommand::Claim { payment, wait, no_sync, token } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
@@ -149,7 +158,8 @@ pub async fn execute_lightning_command(
 					}
 				};
 
-				wallet.try_claim_lightning_receive(payment_hash, wait).await?;
+				let token = token.as_ref().map(|c| c.as_str());
+				wallet.try_claim_lightning_receive(payment_hash, wait, token).await?;
 			} else {
 				info!("no invoice provided, trying to claim all open invoices");
 				wallet.try_claim_all_lightning_receives(wait).await?;
