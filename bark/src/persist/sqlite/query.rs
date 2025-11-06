@@ -590,9 +590,10 @@ fn get_htlc_vtxos(conn: &Connection, row: &Row<'_>) -> anyhow::Result<Option<Vec
 pub fn get_all_pending_lightning_receives<'a>(
 	conn: &'a Connection,
 ) -> anyhow::Result<Vec<LightningReceive>> {
-	let query = "SELECT payment_hash, preimage, invoice, htlc_vtxo_ids, preimage_revealed_at, htlc_recv_cltv_delta
-		FROM bark_pending_lightning_receive \
-		WHERE preimage_revealed_at IS NULL
+	let query = "
+		SELECT payment_hash, preimage, invoice, htlc_vtxo_ids,
+			preimage_revealed_at, htlc_recv_cltv_delta
+		FROM bark_pending_lightning_receive
 		ORDER BY created_at DESC";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([])?;

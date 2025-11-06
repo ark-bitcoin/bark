@@ -2,3 +2,7 @@
   of strings. This also fixes a bug preventing any lightning receive
   deletion.
   [#1285](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1285)
+- remove `preimage_revealed_at is NULL` filter when fetching pending
+  lightning receive. This was preventing us from claiming again after
+  first claim if anything bad happened
+  [#1285](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1285)
