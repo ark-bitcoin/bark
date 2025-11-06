@@ -825,6 +825,29 @@
         }
       }
     },
+    "/api/v1/wallet/connected": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "connected",
+        "responses": {
+          "200": {
+            "description": "Returns whether the wallet is connected to an Ark server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectedResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/api/v1/wallet/movements": {
       "get": {
         "tags": [
@@ -1136,6 +1159,17 @@
           }
         }
       }
+    },
+    "/ping": {
+      "get": {
+        "tags": [],
+        "operationId": "ping",
+        "responses": {
+          "200": {
+            "description": "Returns pong"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1178,7 +1212,8 @@
           "required_board_confirmations",
           "max_user_invoice_cltv_delta",
           "min_board_amount_sat",
-          "offboard_feerate_sat_per_kvb"
+          "offboard_feerate_sat_per_kvb",
+          "ln_receive_anti_dos_required"
         ],
         "properties": {
           "htlc_expiry_delta": {
@@ -1188,6 +1223,10 @@
           "htlc_send_expiry_delta": {
             "$ref": "#/components/schemas/u16",
             "description": "The number of blocks after which an HTLC-send VTXO expires once granted."
+          },
+          "ln_receive_anti_dos_required": {
+            "type": "boolean",
+            "description": "Indicates whether the Ark server requires clients to either\nprovide a VTXO ownership proof, or a lightning receive token\nwhen preparing a lightning claim."
           },
           "max_arkoor_depth": {
             "type": "integer",
@@ -1342,6 +1381,18 @@
           },
           "origin": {
             "$ref": "#/components/schemas/ExitTxOrigin"
+          }
+        }
+      },
+      "ConnectedResponse": {
+        "type": "object",
+        "required": [
+          "connected"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "description": "Whether the wallet is currently connected to its Ark server"
           }
         }
       },

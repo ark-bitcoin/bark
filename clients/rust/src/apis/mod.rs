@@ -111,7 +111,9 @@ impl From<&str> for ContentType {
     }
 }
 
+pub mod bitcoin_api;
 pub mod board_api;
+pub mod default_api;
 pub mod exit_api;
 pub mod lightning_api;
 pub mod onchain_api;

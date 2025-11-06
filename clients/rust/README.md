@@ -26,8 +26,10 @@ All URIs are relative to *http://localhost*
 
 Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
+*BitcoinApi* | [**tip**](docs/BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | 
 *BoardApi* | [**board**](docs/BoardApi.md#board) | **POST** /api/v1/board/board | 
 *BoardApi* | [**board_all**](docs/BoardApi.md#board_all) | **POST** /api/v1/board/board/all | 
+*DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | 
 *ExitApi* | [**exit_claim**](docs/ExitApi.md#exit_claim) | **POST** /api/v1/exit/claim | 
 *ExitApi* | [**exit_list**](docs/ExitApi.md#exit_list) | **GET** /api/v1/exit/list | 
 *ExitApi* | [**exit_progress**](docs/ExitApi.md#exit_progress) | **POST** /api/v1/exit/progress | 
@@ -49,6 +51,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**address**](docs/WalletApi.md#address) | **PUT** /api/v1/wallet/addresses/next | 
 *WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 *WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
+*WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 *WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
@@ -72,6 +75,7 @@ Class | Method | HTTP request | Description
  - [Board](docs/Board.md)
  - [BoardRequest](docs/BoardRequest.md)
  - [ChildTransactionInfo](docs/ChildTransactionInfo.md)
+ - [ConnectedResponse](docs/ConnectedResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
  - [ExitClaimInProgressState](docs/ExitClaimInProgressState.md)
  - [ExitClaimRequest](docs/ExitClaimRequest.md)
@@ -166,6 +170,7 @@ Class | Method | HTTP request | Description
  - [SendOnchainRequest](docs/SendOnchainRequest.md)
  - [SendRequest](docs/SendRequest.md)
  - [SendResponse](docs/SendResponse.md)
+ - [TipResponse](docs/TipResponse.md)
  - [TransactionInfo](docs/TransactionInfo.md)
  - [UtxoInfo](docs/UtxoInfo.md)
  - [VtxoInfo](docs/VtxoInfo.md)
