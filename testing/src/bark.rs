@@ -19,7 +19,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use ark::lightning::PaymentHash;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
@@ -421,12 +420,10 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn lightning_receive_status(
-		&self,
-		payment_hash: impl Into<PaymentHash>,
-	) -> Option<LightningReceiveInfo> {
-		let hash = payment_hash.into().to_string();
-		let res = self.run(["lightning", "status", &hash]).await;
+	pub async fn lightning_receive_status(&self, filter: impl fmt::Display)
+		-> Option<LightningReceiveInfo>
+	{
+		let res = self.run(["lightning", "status", &filter.to_string()]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
