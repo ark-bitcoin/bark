@@ -876,7 +876,6 @@ impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
 }
 
 #[tokio::test]
-#[ignore]
 async fn claim_forfeit_connector_chain() {
 	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
 
