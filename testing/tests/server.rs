@@ -876,7 +876,6 @@ impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
 }
 
 #[tokio::test]
-#[ignore]
 async fn claim_forfeit_connector_chain() {
 	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
 
@@ -940,7 +939,6 @@ async fn claim_forfeit_connector_chain() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn claim_forfeit_round_connector() {
 	//! Special case of the forfeit caim test where the connector output is on the round tx
 	let ctx = TestContext::new("server/claim_forfeit_round_connector").await;
@@ -1063,7 +1061,6 @@ async fn register_unconfirmed_board() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn reject_dust_board_cosign() {
 	let ctx = TestContext::new("server/reject_dust_board_cosign").await;
 	// Need to set the `min_board_amount` less than dust to check we
@@ -1128,7 +1125,6 @@ async fn reject_below_minimum_board_cosign() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn reject_dust_vtxo_request() {
 	let ctx = TestContext::new("server/reject_dust_vtxo_request").await;
 	let srv = ctx.new_captaind("server", None).await;
@@ -1217,7 +1213,6 @@ async fn reject_dust_vtxo_request() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn reject_dust_offboard_request() {
 	let ctx = TestContext::new("server/reject_dust_offboard_request").await;
 	let srv = ctx.new_captaind("server", None).await;
