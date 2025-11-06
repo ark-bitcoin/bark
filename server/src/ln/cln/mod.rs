@@ -708,12 +708,42 @@ impl ClnManagerProcess {
 		}
 	}
 
+	async fn set_created_subscription_to_accepted(
+		&self,
+		subscription: LightningHtlcSubscription,
+		htlc_send_expiry_height: BlockHeight,
+	) -> anyhow::Result<()> {
+		match subscription.status {
+			LightningHtlcSubscriptionStatus::Created => {
+				self.db.store_lightning_htlc_subscription_status(
+					subscription.id,
+					LightningHtlcSubscriptionStatus::Accepted,
+					Some(htlc_send_expiry_height),
+				).await?;
+
+				self.cancel_invoice(subscription.clone()).await?;
+			},
+			LightningHtlcSubscriptionStatus::Accepted |
+			LightningHtlcSubscriptionStatus::HtlcsReady |
+			LightningHtlcSubscriptionStatus::Settled |
+			LightningHtlcSubscriptionStatus::Cancelled => {
+				bail!("invoice is not in a valid state to pay: {}. expected: {}",
+					subscription.status,
+					LightningHtlcSubscriptionStatus::Created,
+				);
+			},
+		};
+
+		Ok(())
+	}
+
 	async fn start_payment(
 		&self,
 		invoice: Invoice,
 		user_amount: Option<Amount>,
 		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
+		let payment_hash = invoice.payment_hash();
 		let node = self.get_active_node().context("no active cln node")?;
 		let tip = node.rpc.clone().getinfo(cln_rpc::GetinfoRequest {}).await
 			.context("failed to get info from rpc")?
@@ -725,25 +755,34 @@ impl ClnManagerProcess {
 		};
 
 		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {}. Current block height is {}",
-			node.id, invoice.payment_hash(), Amount::from_msat_floor(amount_msat), tip,
+			node.id, payment_hash, Amount::from_msat_floor(amount_msat), tip,
 		);
 
 		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
 		// payment so we can directly mark it as accepted, then skip cln payment
-		let sub = self.db.get_htlc_subscription_by_payment_hash(invoice.payment_hash()).await?;
+		let sub = self.db
+			.get_htlc_subscription_by_payment_hash(payment_hash).await?;
 		if let Some(sub) = sub {
-			if sub.status == LightningHtlcSubscriptionStatus::Created {
-				self.db.store_lightning_htlc_subscription_status(
-					sub.id,
-					LightningHtlcSubscriptionStatus::Accepted,
-					Some(htlc_send_expiry_height),
+			trace!("Updating subscription status for intra-Ark lightning payment with payment hash {payment_hash}");
+			let res = self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await;
+			if let Err(e) = res {
+				trace!("Failed to update subscription status: {e}");
+				let payment_attempt = self.db
+					.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?
+					.expect("we inserted a payment attempt");
+
+				self.db.update_lightning_payment_attempt_status(
+					&payment_attempt,
+					LightningPaymentStatus::Failed,
+					Some(&e.to_string()),
 				).await?;
 
-				self.cancel_invoice(sub).await?;
-				return Ok(());
+				return Err(e);
 			}
+
+			return Ok(());
 		}
 
 		// NB: we don't want lightning payment to take more time than the htlc-send expiry
