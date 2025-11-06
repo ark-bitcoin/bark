@@ -32,7 +32,7 @@ impl Db {
 	) -> anyhow::Result<()> {
 		let round_txid = round_tx.compute_txid();
 
-		let mut conn = self.pool.get().await?;
+		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		// First, store the round itself.
@@ -85,7 +85,7 @@ impl Db {
 	}
 
 	pub async fn is_round_tx(&self, txid: Txid) -> anyhow::Result<bool> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("SELECT 1 FROM round WHERE funding_txid = $1 LIMIT 1;").await?;
 
 		let rows = conn.query(&statement, &[&txid.to_string()]).await?;
@@ -93,7 +93,7 @@ impl Db {
 	}
 
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT id, seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos, connector_key,
 				expiry, swept_at, created_at
@@ -111,7 +111,7 @@ impl Db {
 	}
 
 	pub async fn mark_round_swept(&self, id: RoundId) -> anyhow::Result<()> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let statement = conn.prepare("
 			UPDATE round SET swept_at = NOW(), updated_at = NOW() WHERE funding_txid = $1;
@@ -125,7 +125,7 @@ impl Db {
 	/// Get all round IDs of rounds that expired before or on `height`
 	/// and that have not been swept
 	pub async fn get_expired_round_ids(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT funding_txid FROM round WHERE expiry <= $1 AND swept_at IS NULL;
 		").await?;
@@ -146,7 +146,7 @@ impl Db {
 		last_round_id: Option<RoundId>,
 		vtxo_lifetime: Option<Duration>,
 	) -> anyhow::Result<Vec<RoundId>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 
 		let rows = if let Some(last) = last_round_id {
 			let stmt = conn.prepare("
@@ -177,7 +177,7 @@ impl Db {
 	}
 
 	pub async fn get_last_round_id(&self) -> anyhow::Result<Option<RoundId>> {
-		let conn = self.pool.get().await?;
+		let conn = self.get_conn().await?;
 		let stmt = conn.prepare("SELECT funding_txid FROM round ORDER BY id DESC LIMIT 1").await?;
 		Ok(conn.query_opt(&stmt, &[]).await?.map(|r|
 			RoundId::from_str(&r.get::<_, &str>("funding_txid")).expect("corrupt db: funding txid")

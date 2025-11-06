@@ -27,6 +27,14 @@ use chrono::Local;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostgresConnectionPoolConnectionFailure {
+	pub err: String,
+	pub backtrace: String,
+}
+impl_slog!(PostgresConnectionPoolConnectionFailure, Error, "postgres connection pool failed to provide a connection");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TipUpdated {
 	pub height: BlockHeight,
 	pub hash: BlockHash,
