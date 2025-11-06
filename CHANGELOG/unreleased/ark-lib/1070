@@ -1,0 +1,6 @@
+
+- added `offboard_feerate` field to `ArkInfo`.
+  the offboard feerate is now fixed and no longer specified JIT for each round
+  [#1070](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1070)
+- Removed the `RoundEvent::Start` variant.
+  [#1070](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1070)

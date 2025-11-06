@@ -1,5 +1,0 @@
-# Updates to ark-lib
-
-- added `offboard_feerate` field to `ArkInfo`: the offboard feerate is now fixed
-  and no longer specified JIT for each round
-- removed the `RoundEvent::Start` variant
