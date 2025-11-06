@@ -2457,6 +2457,11 @@ impl Wallet {
 		let mut lightning_receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
 			.context("no lightning receive found")?;
 
+		// If we have already HTLC VTXOs stored, we can return them without asking the server
+		if lightning_receive.htlc_vtxos.is_some() {
+			return Ok(lightning_receive)
+		}
+
 		info!("Waiting for payment...");
 		let sub = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
 			hash: payment_hash.to_byte_array().to_vec(), wait,
@@ -2471,21 +2476,6 @@ impl Wallet {
 			protos::LightningReceiveStatus::Created => bail!("sender didn't initiate payment yet"),
 			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
 			protos::LightningReceiveStatus::Cancelled => bail!("payment was canceled"),
-		}
-
-		// If we have already HTLC VTXOs stored, let's only check if the server sent us the same ones
-		if let Some(vtxos) = &lightning_receive.htlc_vtxos {
-			debug_assert!({
-				let vtxos_by_id = vtxos.iter().map(|v| (v.id(), v)).collect::<HashMap<_, _>>();
-				sub.htlc_vtxos.iter().all(|v| {
-					match VtxoId::from_slice(v) {
-						Ok(id) => vtxos_by_id.contains_key(&id),
-						Err(_) => false,
-					}
-				})
-			}, "server sent HTLC VTXOs that we don't have");
-
-			return Ok(lightning_receive)
 		}
 
 		let lightning_receive_anti_dos = match self.compute_lightning_receive_anti_dos(payment_hash, token).await {

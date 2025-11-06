@@ -6,3 +6,6 @@
   lightning receive. This was preventing us from claiming again after
   first claim if anything bad happened
   [#1285](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1285)
+- return earlier in `check_lightning_receive` when we already got our
+  htlc VTXOs. This saves us one useless gRPC call to the server
+  [#1285](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1285)
