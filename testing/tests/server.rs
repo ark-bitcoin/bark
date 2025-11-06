@@ -1440,6 +1440,7 @@ async fn server_should_refuse_claim_twice() {
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
@@ -1458,9 +1459,20 @@ async fn server_should_refuse_claim_twice() {
 
 	assert_eq!(bark.spendable_balance().await, btc(3));
 
-	// bark should not be able to subscribe to already settled invoice
-	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
-	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
+	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let pub_nonces = receive.htlc_vtxos.iter()
+		.map(|_| musig::nonce_pair(&keypair).1)
+		.collect::<Vec<_>>();
+	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
+
+	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
+		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
+		payment_preimage: receive.payment_preimage.to_vec(),
+		vtxo_policy: policy.serialize(),
+		user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+	}).await.unwrap_err();
+
+	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
 }
 
 #[tokio::test]
