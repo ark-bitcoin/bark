@@ -622,14 +622,6 @@ pub struct VtxoTxIterItem {
 	pub is_exit: bool,
 }
 
-//TODO(stevenroose) what do you guys think?
-// impl std::ops::Deref for VtxoTxIterItem {
-// 	type Target = Transaction;
-// 	fn deref(&self) -> &Self::Target {
-// 	    &self.tx
-// 	}
-// }
-
 /// Iterator returned by [Vtxo::transactions].
 pub struct VtxoTxIter<'a> {
 	vtxo: &'a Vtxo,
