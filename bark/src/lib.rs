@@ -2505,6 +2505,8 @@ impl Wallet {
 
 		// sanity check the vtxos
 		for vtxo in &vtxos {
+			self.validate_vtxo(vtxo).await?;
+
 			if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
 				if p.payment_hash != lightning_receive.payment_hash {
 					bail!("invalid payment hash on HTLC VTXOs received from server: {}",
