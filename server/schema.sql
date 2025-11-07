@@ -979,7 +979,8 @@ CREATE TABLE public.vtxo_pool (
     amount bigint NOT NULL,
     depth smallint NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    spent_at timestamp with time zone
+    spent_at timestamp with time zone,
+    vtxo bytea NOT NULL
 );
 
 

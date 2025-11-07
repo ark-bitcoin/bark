@@ -117,7 +117,7 @@ impl Data {
 	/// Shorthand to insert a series of vtxos at once
 	pub fn insert_vtxos(&mut self, vtxos: &[PoolVtxo]) {
 		for v in vtxos {
-			self.insert(v.vtxo, v.expiry_height, v.amount, v.depth);
+			self.insert(v.id(), v.expiry_height(), v.amount(), v.arkoor_depth());
 		}
 	}
 
@@ -127,7 +127,7 @@ impl Data {
 
 		let mut ret = Data::default();
 		while let Some(v) = stream.try_next().await? {
-			ret.insert(v.vtxo, v.expiry_height, v.amount, v.depth);
+			ret.insert(v.id(), v.expiry_height(), v.amount(), v.arkoor_depth());
 		}
 		Ok(ret)
 	}
@@ -240,14 +240,15 @@ impl VtxoPool {
 		inputs: &[(VtxoId, BlockHeight, Amount, ArkoorDepth)],
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
-		let vtxos = srv.db.get_vtxos_by_id(&input_ids).await?;
+		let vtxos = srv.db.get_pool_vtxos_by_ids(&input_ids).await?;
+
 		let keys = {
 			let mut ret = Vec::with_capacity(vtxos.len());
 			for v in &vtxos {
-				ret.push(srv.get_ephemeral_cosign_key(v.vtxo.user_pubkey()).await
+				ret.push(srv.get_ephemeral_cosign_key(v.user_pubkey()).await
 					.with_context(|| format!(
 						"failed to fetch ephemeral keys for vtxo {}: {}",
-						v.vtxo.id(), v.vtxo.user_pubkey(),
+						v.id(), v.user_pubkey(),
 					))?
 				);
 			}
@@ -260,7 +261,7 @@ impl VtxoPool {
 
 		let change_key = srv.generate_ephemeral_cosign_key(self.config.vtxo_key_lifetime()).await?;
 		let builder = ArkoorPackageBuilder::new(
-			vtxos.iter().map(|v| &v.vtxo),
+			vtxos.iter().map(|v| v.inner()),
 			&pub_nonces,
 			req.clone(),
 			Some(change_key.public_key()),
@@ -279,18 +280,13 @@ impl VtxoPool {
 		}
 
 		if let Some(ch) = change.filter(|c| c.arkoor_depth() <= self.config.vtxo_max_arkoor_depth) {
-			let new = PoolVtxo {
-				vtxo: ch.id(),
-				amount: ch.amount(),
-				expiry_height: ch.expiry_height(),
-				depth: ch.arkoor_depth(),
-			};
+			let new = PoolVtxo::new(ch.clone());
 			if let Err(e) = srv.db.store_vtxopool_vtxo(&new).await {
 				// don't abort for this
 				warn!("Failed to store change from a vtxopool spend: {:#}", e);
 			} else {
-				self.data.lock().insert_vtxos(&[new]);
-				slog!(ChangePoolVtxo, vtxo: ch.id(), amount: ch.amount(), depth: ch.arkoor_depth());
+				self.data.lock().insert_vtxos(&[new.clone()]);
+				slog!(ChangePoolVtxo, vtxo: new.id(), amount: new.amount(), depth: new.arkoor_depth());
 			}
 		}
 
@@ -445,12 +441,8 @@ impl Process {
 			.context("error storing unbroadcasted vtxo issuance funding tx")?;
 		let tree = tree.into_cached_tree();
 		// we rely here on the order of the vtxos being identical to the order of the requests
-		let pool_vtxos = tree.all_vtxos().into_iter().map(|v| PoolVtxo {
-			vtxo: v.id(),
-			amount: v.amount(),
-			expiry_height: v.expiry_height(),
-			depth: 0,
-		}).collect::<Vec<_>>();
+		let pool_vtxos = tree.all_vtxos().into_iter()
+			.map(|v| PoolVtxo::new(v)).collect::<Vec<_>>();
 		self.srv.db.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
 		self.data.lock().insert_vtxos(&pool_vtxos);
 		slog!(FinishedPoolIssuance, txid: funding_txid, total_count: requests.len(), total_amount);
