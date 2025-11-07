@@ -302,6 +302,7 @@ impl Server {
 			telemetry::init_telemetry::<telemetry::Captaind>(
 				endpoint,
 				cfg.otel_tracing_sampler,
+				cfg.otel_deployment_name.as_str(),
 				cfg.network,
 				cfg.round_interval,
 				cfg.max_vtxo_amount,

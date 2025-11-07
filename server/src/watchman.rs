@@ -122,6 +122,7 @@ impl Watchman {
 			telemetry::init_telemetry::<telemetry::Watchmand>(
 				endpoint,
 				cfg.otel_tracing_sampler,
+				cfg.otel_deployment_name.as_str(),
 				cfg.network,
 				Duration::ZERO,
 				None,
