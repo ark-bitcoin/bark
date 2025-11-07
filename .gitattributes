@@ -1,2 +1,2 @@
-open-api.json text diff=json linguist-generated=true
-clients/rust/** linguist-generated=true
+open-api.json text diff=json linguist-generated=true linguist-vendored=true -diff
+clients/rust/** linguist-generated=true linguist-vendored=true -diff
