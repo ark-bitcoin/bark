@@ -819,6 +819,7 @@ impl Wallet {
 
 		// write the config to db
 		db.init_wallet(&properties).context("cannot init wallet in the database")?;
+		info!("Created wallet with fingerprint: {}", wallet_fingerprint);
 
 		// from then on we can open the wallet
 		let wallet = Wallet::open(&mnemonic, db, config).await.context("failed to open wallet")?;
