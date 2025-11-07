@@ -3,9 +3,12 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use clap::Parser;
+use clap::builder::BoolishValueParser;
 use tokio::sync::RwLock;
 
+use bark_cli::log::init_logging;
 use bark_cli::wallet::open_wallet;
+
 use bark_rest::{Config, RestServer};
 
 
@@ -20,6 +23,25 @@ fn default_datadir() -> String {
 #[derive(Parser)]
 #[command(name = "barkd", about = "Bark web daemon")]
 struct Cli {
+	/// Enable verbose logging
+	#[arg(
+		long,
+		short = 'v',
+		env = "BARK_VERBOSE",
+		global = true,
+		value_parser = BoolishValueParser::new(),
+	)]
+	verbose: bool,
+	/// Disable all terminal logging
+	#[arg(
+		long,
+		short = 'q',
+		env = "BARK_QUIET",
+		global = true,
+		value_parser = BoolishValueParser::new(),
+	)]
+	quiet: bool,
+
 	/// The datadir of the bark wallet
 	#[arg(long, env = "BARKD_DATADIR", default_value_t = default_datadir())]
 	datadir: String,
@@ -49,6 +71,8 @@ async fn main() -> anyhow::Result<()>{
 	let cli = Cli::parse();
 
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
+
+	init_logging(cli.verbose, cli.quiet, &datadir);
 
 	let (wallet, onchain) = open_wallet(&datadir).await?;
 	let wallet = Arc::new(wallet);
