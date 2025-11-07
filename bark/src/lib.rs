@@ -967,6 +967,20 @@ impl Wallet {
 		})
 	}
 
+	/// Fetches [Vtxo]'s funding transaction and validates the VTXO against it.
+	pub async fn validate_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+		let tx = self.chain.get_tx(&vtxo.chain_anchor().txid).await
+			.context("could not fetch chain tx")?;
+
+		let tx = tx.with_context(|| {
+			format!("vtxo chain anchor not found for vtxo: {}", vtxo.chain_anchor().txid)
+		})?;
+
+		vtxo.validate(&tx)?;
+
+		Ok(())
+	}
+
 	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.
 	pub fn get_vtxo_by_id(&self, vtxo_id: VtxoId) -> anyhow::Result<WalletVtxo> {
 		let vtxo = self.db.get_wallet_vtxo(vtxo_id)
@@ -1436,12 +1450,7 @@ impl Wallet {
 						}
 					};
 
-
-					let txid = vtxo.chain_anchor().txid;
-					let chain_anchor = self.chain.get_tx(&txid).await?.with_context(|| {
-						format!("received arkoor vtxo with unknown chain anchor: {}", txid)
-					})?;
-					if let Err(e) = vtxo.validate(&chain_anchor) {
+					if let Err(e) = self.validate_vtxo(&vtxo).await {
 						error!("Received invalid arkoor VTXO from server: {}", e);
 						continue;
 					}
@@ -2031,15 +2040,8 @@ impl Wallet {
 		let (htlc_vtxos, change_vtxo) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
 		// Validate the new vtxos. They have the same chain anchor.
-		for (vtxo, input) in htlc_vtxos.iter().zip(inputs.iter()) {
-			if let Ok(tx) = self.chain.get_tx(&input.chain_anchor().txid).await {
-				let tx = tx.with_context(|| {
-					format!("input vtxo chain anchor not found for lightning send htlc vtxo: {}", input.chain_anchor().txid)
-				})?;
-				vtxo.validate(&tx).context("invalid lightning htlc vtxo")?;
-			} else {
-				warn!("We couldn't validate the new VTXOs because of chain source error.");
-			}
+		for vtxo in &htlc_vtxos {
+			self.validate_vtxo(vtxo).await?;
 		}
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
@@ -2369,14 +2371,12 @@ impl Wallet {
 			bail!("shouldn't have change VTXO, this is a bug");
 		}
 
-		for (vtxo, input) in outputs.iter().zip(inputs.iter()) {
-			if let Ok(tx) = self.chain.get_tx(&input.chain_anchor().txid).await {
-				let tx = tx.with_context(|| {
-					format!("input vtxo chain anchor not found for lightning receive vtxo: {}", input.chain_anchor().txid)
-				})?;
-				vtxo.validate(&tx).context("invalid lightning receive htlc vtxo")?;
-			} else {
-				warn!("We couldn't validate the new VTXOs because of chain source error.");
+		for vtxo in &outputs {
+			// TODO: bailing here results in vtxos not being registered despite preimage being revealed
+			// should we make `srv.client.claim_lightning_receive` indempotent, so that bark can at
+			// least retry some times before giving up and exiting?
+			if let Err(e) = self.validate_vtxo(vtxo).await {
+				bail!("invalid arkoor from lightning receive: {e}");
 			}
 		}
 
