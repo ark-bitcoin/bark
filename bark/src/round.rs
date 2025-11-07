@@ -19,7 +19,7 @@ use bitcoin::{Address, Network, OutPoint, Transaction, Txid};
 use bitcoin::consensus::Params;
 use bitcoin::hashes::Hash;
 use futures::future::try_join_all;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
 use ark::{OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
@@ -1329,6 +1329,21 @@ impl Wallet {
 		Ok(())
 	}
 
+	pub async fn subscribe_round_events(&self)
+		-> anyhow::Result<impl Stream<Item = anyhow::Result<RoundEvent>> + Unpin>
+	{
+		let mut srv = self.require_server()?;
+		let events = srv.client.subscribe_rounds(protos::Empty {}).await?
+			.into_inner().map(|m| {
+				let m = m.context("received error on event stream")?;
+				let e = RoundEvent::try_from(m.clone())
+					.with_context(|| format!("error converting rpc round event: {:?}", m))?;
+				trace!("Received round event: {}", e);
+				Ok::<_, anyhow::Error>(e)
+			});
+		Ok(events)
+	}
+
 	/// Participate in a round
 	///
 	/// This function will start a new round participation and block until
@@ -1340,18 +1355,10 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<RoundStatus> {
-		let mut srv = self.require_server()?;
-
 		let mut state = self.join_next_round(participation, movement_kind).await?;
 
 		info!("Waiting for a round start...");
-		let mut events = srv.client.subscribe_rounds(protos::Empty {}).await?.into_inner()
-			.map(|m| {
-				let m = m.context("received error on event stream")?;
-				let e = RoundEvent::try_from(m).context("error converting rpc round event")?;
-				trace!("Received round event: {}", e);
-				Ok::<_, anyhow::Error>(e)
-			});
+		let mut events = self.subscribe_round_events().await?;
 
 		loop {
 			if state.state.round_has_finished() {
