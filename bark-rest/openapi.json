@@ -14,6 +14,29 @@
     "version": "0.1.0-beta.2"
   },
   "paths": {
+    "/api/v1/bitcoin/tip": {
+      "get": {
+        "tags": [
+          "bitcoin"
+        ],
+        "operationId": "tip",
+        "responses": {
+          "200": {
+            "description": "Returns the current bitcoin tip height",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TipResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/api/v1/board/board": {
       "post": {
         "tags": [
@@ -802,6 +825,29 @@
         }
       }
     },
+    "/api/v1/wallet/connected": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "connected",
+        "responses": {
+          "200": {
+            "description": "Returns whether the wallet is connected to an Ark server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectedResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/api/v1/wallet/movements": {
       "get": {
         "tags": [
@@ -1113,6 +1159,17 @@
           }
         }
       }
+    },
+    "/ping": {
+      "get": {
+        "tags": [],
+        "operationId": "ping",
+        "responses": {
+          "200": {
+            "description": "Returns pong"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1155,7 +1212,8 @@
           "required_board_confirmations",
           "max_user_invoice_cltv_delta",
           "min_board_amount_sat",
-          "offboard_feerate_sat_per_kvb"
+          "offboard_feerate_sat_per_kvb",
+          "ln_receive_anti_dos_required"
         ],
         "properties": {
           "htlc_expiry_delta": {
@@ -1165,6 +1223,10 @@
           "htlc_send_expiry_delta": {
             "$ref": "#/components/schemas/u16",
             "description": "The number of blocks after which an HTLC-send VTXO expires once granted."
+          },
+          "ln_receive_anti_dos_required": {
+            "type": "boolean",
+            "description": "Indicates whether the Ark server requires clients to either\nprovide a VTXO ownership proof, or a lightning receive token\nwhen preparing a lightning claim."
           },
           "max_arkoor_depth": {
             "type": "integer",
@@ -1319,6 +1381,18 @@
           },
           "origin": {
             "$ref": "#/components/schemas/ExitTxOrigin"
+          }
+        }
+      },
+      "ConnectedResponse": {
+        "type": "object",
+        "required": [
+          "connected"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "description": "Whether the wallet is currently connected to its Ark server"
           }
         }
       },
@@ -3291,6 +3365,19 @@
           }
         }
       },
+      "TipResponse": {
+        "type": "object",
+        "required": [
+          "tip_height"
+        ],
+        "properties": {
+          "tip_height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "TransactionInfo": {
         "type": "object",
         "description": "An information struct used to pair the ID of a transaction with the full transaction for ease\nof use and readability for the user",
@@ -3453,6 +3540,10 @@
     {
       "name": "wallet",
       "description": "Wallet-related endpoints"
+    },
+    {
+      "name": "bitcoin",
+      "description": "Bitcoin network endpoints"
     }
   ]
 }

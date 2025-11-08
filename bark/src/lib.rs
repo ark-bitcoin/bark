@@ -806,8 +806,8 @@ impl Wallet {
 		}
 
 		if !force {
-			if let Err(_) = ServerConnection::connect(&config.server_address, network).await {
-				bail!("Not connected to a server. If you are sure use the --force flag.");
+			if let Err(err) = ServerConnection::connect(&config.server_address, network).await {
+				bail!("Failed to connect to provided server (if you are sure use the --force flag): {}", err);
 			}
 		}
 
@@ -926,6 +926,15 @@ impl Wallet {
 
 	fn require_server(&self) -> anyhow::Result<ServerConnection> {
 		self.server.clone().context("You should be connected to Ark server to perform this action")
+	}
+
+	pub async fn check_connection(&self) -> anyhow::Result<()> {
+		let mut server = self.require_server()?;
+		server.client.handshake(protos::HandshakeRequest {
+			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
+		}).await?;
+
+		Ok(())
 	}
 
 	/// Return [ArkInfo] fetched on last handshake with the Ark server

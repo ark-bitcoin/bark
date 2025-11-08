@@ -8,6 +8,7 @@ pub use crate::config::Config;
 use std::sync::Arc;
 
 use anyhow;
+use axum::routing::get;
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
@@ -23,12 +24,16 @@ const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
 #[derive(OpenApi)]
 #[openapi(
+	paths(
+		ping,
+	),
 	nest(
 		(path = "/api/v1/board", api = api::v1::board::BoardApiDoc),
 		(path = "/api/v1/exit", api = api::v1::exit::ExitApiDoc),
 		(path = "/api/v1/lightning", api = api::v1::lightning::LightningApiDoc),
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
+		(path = "/api/v1/bitcoin", api = api::v1::bitcoin::BitcoinApiDoc),
 	),
 	info(
 		title = "Barkd API",
@@ -67,6 +72,7 @@ impl RestServer {
 
 		// Build our application with routes
 		let router = router
+			.route("/ping", get(ping))
 			.nest("/api/v1", api::v1::router())
 			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
 			.layer(CorsLayer::permissive())
@@ -82,3 +88,12 @@ impl RestServer {
 		Ok(())
 	}
 }
+
+#[utoipa::path(
+	get,
+	path = "/ping",
+	responses(
+		(status = 200, description = "Returns pong")
+	)
+)]
+pub async fn ping() -> &'static str { "pong" }

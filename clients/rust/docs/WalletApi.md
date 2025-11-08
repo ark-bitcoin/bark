@@ -7,6 +7,7 @@ Method | HTTP request | Description
 [**address**](WalletApi.md#address) | **PUT** /api/v1/wallet/addresses/next | 
 [**ark_info**](WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 [**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
+[**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 [**offboard_vtxos**](WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
@@ -84,6 +85,31 @@ This endpoint does not need any parameter.
 ### Return type
 
 [**models::Balance**](Balance.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## connected
+
+> models::ConnectedResponse connected()
+
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**models::ConnectedResponse**](ConnectedResponse.md)
 
 ### Authorization
 

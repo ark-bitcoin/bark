@@ -3,6 +3,7 @@ pub mod lightning;
 pub mod onchain;
 pub mod board;
 pub mod wallet;
+pub mod bitcoin;
 
 use axum::Router;
 
@@ -15,4 +16,5 @@ pub fn router() -> Router<RestServer> {
 		.nest("/board", board::router())
 		.nest("/exit", exit::router())
 		.nest("/wallet", wallet::router())
+		.nest("/bitcoin", bitcoin::router())
 }

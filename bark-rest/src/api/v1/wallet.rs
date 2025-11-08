@@ -19,6 +19,7 @@ use crate::error::HandlerResult;
 
 pub fn router() -> Router<RestServer> {
 	Router::new()
+		.route("/connected", get(connected))
 		.route("/ark-info", get(ark_info))
 		.route("/addresses/next", put(address))
 		.route("/addresses/peak", get(peak_address))
@@ -39,6 +40,7 @@ pub fn router() -> Router<RestServer> {
 #[derive(OpenApi)]
 #[openapi(
 	paths(
+		connected,
 		ark_info,
 		address,
 		peak_address,
@@ -56,6 +58,7 @@ pub fn router() -> Router<RestServer> {
 		sync,
 	),
 	components(schemas(
+		bark_json::web::ConnectedResponse,
 		bark_json::cli::ArkInfo,
 		bark_json::web::ArkAddressResponse,
 		bark_json::web::PeakAddressRequest,
@@ -76,6 +79,22 @@ pub fn router() -> Router<RestServer> {
 	)
 )]
 pub struct WalletApiDoc;
+
+#[utoipa::path(
+	get,
+	path = "/connected",
+	responses(
+		(status = 200, description = "Returns whether the wallet is connected to an Ark server", body = bark_json::web::ConnectedResponse),
+		(status = 500, description = "Internal server error")
+	),
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn connected(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::web::ConnectedResponse>> {
+	Ok(axum::Json(bark_json::web::ConnectedResponse {
+		connected: state.wallet.check_connection().await.is_ok(),
+	}))
+}
 
 #[utoipa::path(
 	get,

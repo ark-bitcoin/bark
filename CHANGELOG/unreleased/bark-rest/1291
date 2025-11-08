@@ -1,0 +1,6 @@
+- Add new endpoints in bark-rest
+  - `GET /bitcoin/tip` : fetch current bitcoin tip on barkd's bitcoin
+  node
+  - `GET /wallet/connect` : fetch ark server connection status
+  - `GET /ping` : ping barkd
+  [#1291](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1291)
