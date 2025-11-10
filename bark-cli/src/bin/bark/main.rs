@@ -204,14 +204,17 @@ impl ConfigOpts {
 		use std::fmt::Write;
 
 		let mut conf = String::new();
-		let ark = self.ark.as_ref().context("missing --ark arg")?;
+		let ark = util::default_scheme("https", self.ark.as_ref().context("missing --ark arg")?)
+			.context("invalid ark server URL")?;
 		writeln!(conf, "server_address = \"{}\"", ark).unwrap();
 
 		if let Some(ref v) = self.esplora {
-			writeln!(conf, "esplora_address = \"{}\"", v).unwrap();
+			let url = util::default_scheme("https", v).context("invalid esplora URL")?;
+			writeln!(conf, "esplora_address = \"{}\"", url).unwrap();
 		}
 		if let Some(ref v) = self.bitcoind {
-			writeln!(conf, "bitcoind_address = \"{}\"", v).unwrap();
+			let url = util::default_scheme("http", v).context("invalid bitcoind URL")?;
+			writeln!(conf, "bitcoind_address = \"{}\"", url).unwrap();
 		}
 		if let Some(ref v) = self.bitcoind_cookie {
 			writeln!(conf, "bitcoind_cookiefile = \"{}\"", v).unwrap();

@@ -15,7 +15,7 @@ use server_rpc as rpc;
 
 use bark_cli::wallet::open_wallet;
 
-use crate::util::{https_default_scheme, output_json};
+use crate::util::{self, output_json};
 
 #[derive(clap::Subcommand)]
 pub enum DevCommand {
@@ -147,7 +147,7 @@ fn create_server_endpoint(address: &str) -> anyhow::Result<tonic::transport::End
 pub async fn connect_server(
 	address: String,
 ) -> anyhow::Result<rpc::ArkServiceClient<tonic::transport::Channel>> {
-	let address = https_default_scheme(address)?;
+	let address = util::default_scheme("https", address)?;
 	let endpoint = create_server_endpoint(&address)?;
 	let channel = endpoint.connect().await
 		.context("couldn't connect to Ark server")?;
