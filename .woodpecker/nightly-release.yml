@@ -49,7 +49,7 @@ steps:
 
   - name: build-and-push-to-docker
     when:
-      - evaluate: 'CI_REPO_URL == "https://gitlab.com/2Fast2BCn/bark"'
+      - evaluate: 'CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
     depends_on: build
     # When this task fails make sure the sha256 is still available.
     #  You can verify using command: `skopeo inspect docker://quay.io/buildah/stable`
