@@ -91,8 +91,39 @@
 					"slog-tools" = slog-tools;
 				};
 
-				devShells.default = import ./nix/dev-shell.nix {
-					inherit pkgs masterPkgs lib rustToolchain rustBuildToolchain slog-tools;
+				# NB each of our shell files exposes a `env` and a `shell` which respectively
+				# contain only the env variables and the actual shell.
+				# This enables one shell inheriting the env vars from another shell.
+				devShells = let
+					buildShell = import ./nix/build-shell.nix {
+						inherit pkgs lib rustToolchain;
+					};
+
+					devShell = import ./nix/dev-shell.nix {
+						inherit pkgs masterPkgs lib buildShell rustBuildToolchain slog-tools;
+					};
+
+					libMsrvShell =
+						let
+							rustVersion = "1.74.0";
+							rustToolchain = fenix.packages.${system}.fromToolchainName {
+								name = rustVersion;
+								sha256 = "sha256-U2yfueFohJHjif7anmJB5vZbpP7G6bICH4ZsjtufRoU=";
+							};
+						in import ./nix/build-shell.nix {
+							inherit pkgs lib rustToolchain;
+						};
+				in {
+					# The default shell is used for development and contains all
+					# tools that we use for running unit and integration tests.
+					default = devShell.shell;
+
+					# Exposes a minimal shell to build our project.
+					build = buildShell.shell;
+
+					# In this shell we expose the Rust version required to build for the
+					# ark-lib MSRV.
+					msrv-lib = libMsrvShell.shell;
 				};
 			}
 		);
