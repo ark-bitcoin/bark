@@ -5,7 +5,7 @@ license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"
 description = "Extension library to the rust-bitcoin ecosystem crates used in bark"
-edition = "2024"
+edition = "2021"
 
 [lib]
 name = "bitcoin_ext"
