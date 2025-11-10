@@ -22,7 +22,7 @@ ark-lib = { path = "../lib" }
 bark-cln-rpc = { path = "../cln-rpc" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server", "intman"] }
-bark-bitcoin-ext = { path = "../bitcoin-ext", default-features = false, features = ["bdk", "rpc" ] }
+bark-bitcoin-ext = { path = "../bitcoin-ext" }
 
 # EXPORTED
 bitcoin.workspace = true

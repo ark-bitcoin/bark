@@ -78,6 +78,7 @@ pub trait TransactionExt: Borrow<Transaction> {
 	}
 
 	/// Returns an iterator over all input and output UTXOs related to this tx.
+	#[cfg(feature = "all-related-utxos")]
 	fn all_related_utxos(&self) -> impl Iterator<Item = OutPoint> {
 		let tx = self.borrow();
 		let inputs = tx.input.iter().map(|i| i.previous_output);
