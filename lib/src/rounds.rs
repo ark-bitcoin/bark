@@ -7,7 +7,7 @@ use std::str::FromStr;
 use bitcoin::{Transaction, Txid};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{self, schnorr, Keypair, Message, PublicKey};
+use bitcoin::secp256k1::{self, rand, schnorr, Keypair, Message, PublicKey};
 
 use crate::{musig, OffboardRequest, SECP, SignedVtxoRequest, Vtxo, VtxoId};
 use crate::encode::ProtocolEncoding;

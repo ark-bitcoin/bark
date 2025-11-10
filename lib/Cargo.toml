@@ -3,7 +3,7 @@ name = "ark-lib"
 version = "0.1.0-beta.2"
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
-edition = "2024"
+edition = "2021"
 repository = "https://gitlab.com/ark-bitcoin/bark"
 description = "Primitives for the Ark protocol and bark implementation"
 
@@ -24,7 +24,6 @@ chrono = "0.4"
 # * INTERNAL DEPS
 lazy_static.workspace = true
 thiserror.workspace = true
-rand.workspace = true
 lightning-invoice.workspace = true
 lightning.workspace = true
 # can use bitcoin::hex once they upgrade to v0.3.0
@@ -36,7 +35,7 @@ serde_json = { workspace = true, optional = true }
 # using PR branch for musig2 code
 [dependencies.secp256k1-musig]
 package = "secp256k1"
-version = "0.32.0-beta.0"
+version = "0.32.0-beta.2"
 features = [ "serde" ]
 
 [dev-dependencies]

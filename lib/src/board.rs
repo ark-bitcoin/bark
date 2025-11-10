@@ -17,7 +17,7 @@ use bitcoin::sighash::{self, SighashCache};
 use bitcoin::taproot::TaprootSpendInfo;
 use bitcoin::{Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut, Txid};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::error::IncorrectSigningKeyError;

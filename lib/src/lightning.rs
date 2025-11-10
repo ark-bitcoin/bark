@@ -13,7 +13,7 @@ use std::str::FromStr;
 use bitcoin::Amount;
 use bitcoin::bech32::{encode_to_fmt, EncodeError, Hrp, NoChecksum, primitives::decode::CheckedHrpstring};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::secp256k1::{schnorr, Message, PublicKey};
+use bitcoin::secp256k1::{rand, schnorr, Message, PublicKey};
 use bitcoin::taproot::TaprootSpendInfo;
 use lightning::offers::parse::Bolt12ParseError;
 use lightning::util::ser::Writeable;
