@@ -11,6 +11,7 @@ use bitcoin::hashes::{sha256, Hash};
 // I created this issue in the hope that rust-bitcoin fixes this nuisance:
 //  https://github.com/rust-bitcoin/rust-bitcoin/issues/4530
 use bitcoin::secp256k1::{self, schnorr, PublicKey};
+use secp256k1_musig::musig;
 
 
 /// Error occuring during protocol decoding.
@@ -315,6 +316,28 @@ impl ProtocolEncoding for sha256::Hash {
 		let mut buf = [0; sha256::Hash::LEN];
 		r.read_exact(&mut buf[..])?;
 		Ok(sha256::Hash::from_byte_array(buf))
+	}
+}
+
+impl ProtocolEncoding for musig::PublicNonce {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+	    w.emit_slice(&self.serialize())
+	}
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		Ok(Self::from_byte_array(&r.read_byte_array()?).map_err(|e| {
+			ProtocolDecodingError::invalid_err(e, "invalid musig public nonce")
+		})?)
+	}
+}
+
+impl ProtocolEncoding for musig::PartialSignature {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+	    w.emit_slice(&self.serialize())
+	}
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		Ok(Self::from_byte_array(&r.read_byte_array()?).map_err(|e| {
+			ProtocolDecodingError::invalid_err(e, "invalid musig public nonce")
+		})?)
 	}
 }
 
