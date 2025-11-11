@@ -67,7 +67,7 @@ use bitcoin::{
 };
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::secp256k1::{schnorr, PublicKey};
+use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::LeafVersion;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
@@ -200,7 +200,7 @@ impl ProtocolEncoding for VtxoId {
 }
 
 /// Returns the clause to unilaterally spend a VTXO
-fn exit_clause(
+pub(crate) fn exit_clause(
 	user_pubkey: PublicKey,
 	exit_delta: BlockDelta,
 ) -> ScriptBuf {
@@ -951,6 +951,14 @@ impl Vtxo {
 		self.policy.user_pubkey()
 	}
 
+	/// Return the aggregate pubkey of the user and server pubkey used in
+	/// hArk forfeit transactions
+	pub(crate) fn forfeit_agg_pubkey(&self) -> XOnlyPublicKey {
+		let ret = musig::combine_keys([self.user_pubkey(), self.server_pubkey()]);
+		debug_assert_eq!(ret, self.output_taproot().internal_key());
+		ret
+	}
+
 	/// The taproot spend info for the output of this [Vtxo].
 	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
 		self.policy.taproot(self.server_pubkey, self.exit_delta)
@@ -1287,7 +1295,7 @@ pub mod test {
 	use crate::board::BoardBuilder;
 	use crate::encode::test::encoding_roundtrip;
 	use crate::tree::signed::VtxoTreeSpec;
-	use crate::{SECP, SignedVtxoRequest, VtxoRequest};
+	use crate::{SignedVtxoRequest, VtxoRequest, SECP};
 
 	use super::*;
 
@@ -1307,6 +1315,8 @@ pub mod test {
 
 	#[derive(Debug, PartialEq, Eq)]
 	pub struct VtxoTestVectors {
+		pub server_key: Keypair,
+
 		pub anchor_tx: Transaction,
 		pub board_vtxo: Vtxo,
 
@@ -1317,6 +1327,7 @@ pub mod test {
 		pub round1_vtxo: Vtxo,
 		pub round2_vtxo: Vtxo,
 
+		pub arkoor3_user_key: Keypair,
 		pub arkoor3_vtxo: Vtxo,
 	}
 
@@ -1324,13 +1335,13 @@ pub mod test {
 	fn generate_vtxo_vectors() -> VtxoTestVectors {
 		let expiry_height = 101_010;
 		let exit_delta = 2016;
-		let server_pubkey = Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap();
+		let server_key = Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap();
 		let board_user_key = Keypair::from_str("fab9e598081a3e74b2233d470c4ad87bcc285b6912ed929568e62ac0e9409879").unwrap();
 		let amount = Amount::from_sat(10_000);
 		let builder = BoardBuilder::new(
 			board_user_key.public_key(),
 			expiry_height,
-			server_pubkey.public_key(),
+			server_key.public_key(),
 			exit_delta,
 		);
 		let anchor_tx = Transaction {
@@ -1361,7 +1372,7 @@ pub mod test {
 				amount,
 				anchor_point,
 				*builder.user_pub_nonce(),
-			).server_cosign(&server_pubkey)
+			).server_cosign(&server_key)
 		};
 
 		assert!(builder.verify_cosign_response(&board_cosign));
@@ -1388,7 +1399,7 @@ pub mod test {
 		let outputs = [&arkoor1out1, &arkoor1out2];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&board_user_key);
 		let builder = ArkoorBuilder::new(&board_vtxo, &pub_nonce, &outputs).unwrap();
-		let cosign = builder.server_cosign(&server_pubkey);
+		let cosign = builder.server_cosign(&server_key);
 		assert!(builder.verify_cosign_response(&cosign));
 		let [arkoor_htlc_out_vtxo, change] = builder.build_vtxos(
 			sec_nonce, &board_user_key, &cosign,
@@ -1411,7 +1422,7 @@ pub mod test {
 		let outputs = [&arkoor2out1, &arkoor2out2];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&arkoor_htlc_out_user_key);
 		let builder = ArkoorBuilder::new(&arkoor_htlc_out_vtxo, &pub_nonce, &outputs).unwrap();
-		let arkoor2_cosign = builder.server_cosign(&server_pubkey);
+		let arkoor2_cosign = builder.server_cosign(&server_key);
 		assert!(builder.verify_cosign_response(&arkoor2_cosign));
 		let [arkoor2_vtxo, change] = builder.build_vtxos(
 			sec_nonce, &arkoor_htlc_out_user_key, &arkoor2_cosign,
@@ -1478,7 +1489,7 @@ pub mod test {
 		let server_cosign_key = Keypair::from_str("4371a4a7989b89ebe1b2582db4cd658cb95070977e6f10601ddc1e9b53edee79").unwrap();
 		let spec = VtxoTreeSpec::new(
 			[&round1_req, &round2_req].into_iter().chain(other_reqs.iter()).cloned().collect(),
-			server_pubkey.public_key(),
+			server_key.public_key(),
 			expiry_height,
 			exit_delta,
 			vec![server_cosign_key.public_key()],
@@ -1560,7 +1571,7 @@ pub mod test {
 		let outputs = [&arkoor3out];
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&round2_user_key);
 		let builder = ArkoorBuilder::new(&round2_vtxo, &pub_nonce, &outputs).unwrap();
-		let arkoor3_cosign = builder.server_cosign(&server_pubkey);
+		let arkoor3_cosign = builder.server_cosign(&server_key);
 		assert!(builder.verify_cosign_response(&arkoor3_cosign));
 		let [arkoor3_vtxo] = builder.build_vtxos(
 			sec_nonce, &round2_user_key, &arkoor3_cosign,
@@ -1569,6 +1580,7 @@ pub mod test {
 		println!("arkoor3_vtxo: {}", arkoor3_vtxo.serialize().as_hex());
 
 		VtxoTestVectors {
+			server_key,
 			anchor_tx,
 			board_vtxo,
 			arkoor_htlc_out_vtxo,
@@ -1576,6 +1588,7 @@ pub mod test {
 			round_tx,
 			round1_vtxo,
 			round2_vtxo,
+			arkoor3_user_key,
 			arkoor3_vtxo,
 		}
 	}
@@ -1583,6 +1596,7 @@ pub mod test {
 	lazy_static! {
 		/// A set of deterministically generated and fully correct VTXOs.
 		pub static ref VTXO_VECTORS: VtxoTestVectors = VtxoTestVectors {
+			server_key: Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap(),
 			anchor_tx: deserialize_hex("02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0000000000011027000000000000225120652675904a84ea02e24b57b3d547203d2ce71526113d35bf4d02e0b4efbe9a2d00000000").unwrap(),
 			board_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000001010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b624ca17311d98cad1de3dbf28029c44d06da19e3101f9d688e51d5b8ac450a7eb6476c3f8ca9ba3a828150fb92791328480e313ce2b0ea8789e1aba4998455377a010000030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee4c99b744ad009b7070f330794bf003fa8e5cd46ea1a6eb854aaf469385e3080000000000").unwrap(),
 			arkoor_htlc_out_vtxo: ProtocolEncoding::deserialize_hex("01002823000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000002010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b624ca17311d98cad1de3dbf28029c44d06da19e3101f9d688e51d5b8ac450a7eb6476c3f8ca9ba3a828150fb92791328480e313ce2b0ea8789e1aba4998455377a01000200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee4a4402956ec89190685f761fbe77018d1727c01d62f877cc5737d3f951725a0629410c1a0ead31328f24bb54c856d6efb3205032c1fdf723bf2fed7a7c6dfbc90200e8030000000000002251209b987ec3c169c70d1ed6aef420a4858e3e3ec9d8404358787d4e06ba926a4ae40103eb4570ae385202d4a48f06bdb14126910b90c07f8e42d7dc5e28a860c085e73712358912c950a9a7d04bb9011ee9f6a16b6127a5aab7415803d48c0225f620f5aa860100c692b81703c12cac1e8d69b86fa9f0e2f167168d96ae1045ef8d9192bc4a6e4c00000000").unwrap(),
@@ -1590,6 +1604,7 @@ pub mod test {
 			round_tx: deserialize_hex("02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff000000000001c8af000000000000225120649657f65947abfd83ff629ad8a851c795f419ed4d52a2748d3f868cc3e6c94d00000000").unwrap(),
 			round1_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000003010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b2427431fbf80b38758fed9f56d58a7b9f1b64d25c6219591637932f9939678e45d845cd725141a30d0b1ff28e56f7fdc838630b166449b2ad8953538006baf77a1294104038813000000000000225120c6b818ec8692762e68c7bd4c6d4ccebf4c764deb670a2b39daa0d05f53a1c07f8813000000000000225120b1daa25905430275c3b86e002bc586337fc4315e0c2a585969cf0ae60fad2f268813000000000000225120e790cc3be3288cd57290afd4cc977f4aca98023f0cfbad671768b25376e8a5c8010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b2427436f5c1527ec051272529b96c08fc51711565a71174fa762dfb0353d39f8d93f64215368326730353875cabd078be4badf8b82d1f5a6b0ca05aed5e49cc117e8ae04001027000000000000225120b54cbc99321d02aa2114fabb39dc5e8f346e88296dcec79b1b3c0849caba3d6f881300000000000022512058460fc9dbe1e0acb12eeabd9423161ce27fbb50dccab1179f2d843f455354a78813000000000000225120f6dbe7d3ee38ca1eb90721b3ae9d26f456e9e8b305451bede118d42807a471ef010200036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b2427437a733b847aed8ceda6460c70a55c80778115c536cfca265559d2f6890be7bd3ab55ef96405f2f136b185893b5d73696f866808229b1506c98b06d992a81b618c0100000374a3ec37cc4ccd29717388e6dc24f2aa366632f1a36a49e73cd7671b231792988588da5d9b08f1767aab3b3a78b6cd27deb937193e153300bcf84b3eeaaef07200000000").unwrap(),
 			round2_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000003010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743fd28289b9179bcd986f615bfe559c17fe868b34739b9856cffc2b7d5e8f11c952579af829442116177efc4ea7867ab69376215c6eb30c9f2f79e97e1c06cf2f604038813000000000000225120c6b818ec8692762e68c7bd4c6d4ccebf4c764deb670a2b39daa0d05f53a1c07f8813000000000000225120b1daa25905430275c3b86e002bc586337fc4315e0c2a585969cf0ae60fad2f268813000000000000225120e790cc3be3288cd57290afd4cc977f4aca98023f0cfbad671768b25376e8a5c8010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743273b637dbe9a823fe1e04d0360d887914b83a9266e09ae0b893004fc633552038b01b2fa4f4db5dd811a87e42a4718adba852b9af5536109a07dfe81a1067a6b040110270000000000002251202df700706227474e89354e4ad3ac28f007952140fff42a5a0f0675bdff87f6b3881300000000000022512058460fc9dbe1e0acb12eeabd9423161ce27fbb50dccab1179f2d843f455354a78813000000000000225120f6dbe7d3ee38ca1eb90721b3ae9d26f456e9e8b305451bede118d42807a471ef010200024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc4024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743f622e425138d7c93cc09185f8328d8e113af4511c6b11053da214c65afc17f9aedca7bc667eafae74b9e232cbab6031b457c14886a3cf5573343654283b712cd0100020256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd9ea50d885c3f66d40d27e779648ba8dc730629663f65a3e6f7749b4a35b6dfecc28201002800396ada529b0608572b3b0b6095394574c55f5b3e6911320608d35cc1cc200dab00000000").unwrap(),
+			arkoor3_user_key: Keypair::from_str("ad12595bdbdab56cb61d1f60ccc46ff96b11c5d6fe06ae7ba03d3a5f4347440f").unwrap(),
 			arkoor3_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000004010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b2427431fbf80b38758fed9f56d58a7b9f1b64d25c6219591637932f9939678e45d845cd725141a30d0b1ff28e56f7fdc838630b166449b2ad8953538006baf77a1294104038813000000000000225120c6b818ec8692762e68c7bd4c6d4ccebf4c764deb670a2b39daa0d05f53a1c07f8813000000000000225120b1daa25905430275c3b86e002bc586337fc4315e0c2a585969cf0ae60fad2f268813000000000000225120e790cc3be3288cd57290afd4cc977f4aca98023f0cfbad671768b25376e8a5c8010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b2427436f5c1527ec051272529b96c08fc51711565a71174fa762dfb0353d39f8d93f64215368326730353875cabd078be4badf8b82d1f5a6b0ca05aed5e49cc117e8ae040110270000000000002251202df700706227474e89354e4ad3ac28f007952140fff42a5a0f0675bdff87f6b3881300000000000022512058460fc9dbe1e0acb12eeabd9423161ce27fbb50dccab1179f2d843f455354a78813000000000000225120f6dbe7d3ee38ca1eb90721b3ae9d26f456e9e8b305451bede118d42807a471ef010200024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc4024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743b6c685b3ee849d2400f96fb5968ddd472e18c54b8910a8f952d5b127494cbd51556346bbb0a44d7f5f5150310535b4b2f2aa4412d7b88af929dae5a9652f7643010002020256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd9ea50d885c3f66d40d27e779648ba8dc730629663f65a3e6f7749b4a35b6dfecc282010028003e6785232b2247cb57de941a898729170b3a50e1bed843700f5dfaeb90ee8e531aa4e35b2bf72ceb2de6bfd2d859be86bdbe5f75fbc90a17ab9c2babb40fc83501000002ed1334f116cea9128e1f59f1d5a431cb4f338f0998e2b32f654c310bf7831f97ff70cc93c752b2cdfa42fef244be8915b087a7e13d9cf6cb24b6443b6a8b87dc00000000").unwrap(),
 		};
 	}
