@@ -1139,9 +1139,9 @@ async fn reject_dust_vtxo_request() {
 
 	#[derive(Clone)]
 	struct Proxy {
-		pub vtxo: WalletVtxoInfo,
-		pub wallet: Arc<Wallet>,
-		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
+		vtxo: WalletVtxoInfo,
+		wallet: Arc<Wallet>,
+		challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
@@ -1154,13 +1154,12 @@ async fn reject_dust_vtxo_request() {
 
 			let shared = self.challenge.clone();
 
-			let s = stream
-				.inspect_ok(move |event| {
-					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
-						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
-						shared.try_lock().unwrap().replace(challenge);
-					}
-				});
+			let s = stream.inspect_ok(move |event| {
+				if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
+					let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+					shared.try_lock().unwrap().replace(challenge);
+				}
+			});
 
 			Ok(Box::new(s))
 		}
@@ -1189,7 +1188,6 @@ async fn reject_dust_vtxo_request() {
 				keypair,
 			);
 
-
 			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
 
 			Ok(upstream.submit_payment(req).await?.into_inner())
@@ -1205,7 +1203,7 @@ async fn reject_dust_vtxo_request() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	bark.set_timeout(Duration::from_millis(3_500));
+	bark.set_timeout(srv.max_round_delay());
 	let err = bark.try_refresh_all().await.unwrap_err();
 	assert!(err.to_alt_string().contains(
 		"bad user input: vtxo amount must be at least 0.00000330 BTC",
