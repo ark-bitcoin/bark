@@ -381,7 +381,7 @@ impl TestContext {
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_unchecked(5)),
-			round_tx_required_confirmations: 6,
+			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
 		}
 	}
 
@@ -596,14 +596,14 @@ impl Drop for TestContext {
 			log::info!("Leave test directory intact");
 			// do nothing
 		} else {
-			if let None = std::env::var_os(crate::constants::env::KEEP_ALL_TEST_DATA) {
+			if let None = std::env::var_os(constants::env::KEEP_ALL_TEST_DATA) {
 				match std::fs::remove_dir_all(&self.datadir) {
 					Ok(_) => log::info!("Cleaned up {:?}", self.datadir),
 					Err(e) => log::warn!("Failed to clean up datadir {:?} because {:?}", self.datadir, e)
 
 				}
 			} else {
-				log::info!("Keep test data intact because {} is set", crate::constants::env::KEEP_ALL_TEST_DATA);
+				log::info!("Keep test data intact because {} is set", constants::env::KEEP_ALL_TEST_DATA);
 			}
 		}
 	}
