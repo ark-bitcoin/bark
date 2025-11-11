@@ -31,7 +31,7 @@ use crate::movement::old;
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::round::{RoundState, UnconfirmedRound};
-use crate::vtxo_state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
+use crate::vtxo::state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
 
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
 /// [PathBuf].

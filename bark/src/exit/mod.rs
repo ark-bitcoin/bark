@@ -131,14 +131,14 @@ use log::{error, info, warn};
 use ark::{Vtxo, VtxoId, SECP};
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
+use crate::Wallet;
 use crate::exit::models::{ExitError, ExitProgressStatus, ExitState, ExitTransactionStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
-use crate::vtxo_state::UNSPENT_STATES;
-use crate::Wallet;
+use crate::vtxo::state::UNSPENT_STATES;
 
 /// Handles the process of ongoing VTXO exits.
 pub struct Exit {

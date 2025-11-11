@@ -357,7 +357,7 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 mod test {
 	use crate::exit::models::{ExitState, ExitTxOrigin};
 	use crate::movement::old::MovementRecipient;
-	use crate::vtxo_state::VtxoState;
+	use crate::vtxo::state::VtxoState;
 
 	#[test]
 	/// Each struct stored as JSON in the database should have test to check for backwards compatibility

@@ -24,7 +24,7 @@ use crate::persist::models::{
 };
 use crate::persist::sqlite::convert::{row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::{RoundState, UnconfirmedRound};
-use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
+use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
 use super::convert::row_to_movement_old;
 

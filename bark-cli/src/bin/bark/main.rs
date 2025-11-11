@@ -14,10 +14,6 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::Context;
-use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
-use bark::movement::old::Movement;
-use bark::round::RoundStatus;
-use bark::vtxo_state::{VtxoStateKind, WalletVtxo};
 use bitcoin::{Amount, Network};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
@@ -28,7 +24,11 @@ use log::{debug, info, warn};
 
 use ark::VtxoId;
 use bark::{BarkNetwork, Config};
-use bark::vtxo_selection::VtxoFilter;
+use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
+use bark::movement::old::Movement;
+use bark::round::RoundStatus;
+use bark::vtxo::selection::VtxoFilter;
+use bark::vtxo::state::{VtxoStateKind, WalletVtxo};
 use bark_json::{cli as json, primitives};
 
 use bark_cli::wallet::open_wallet;

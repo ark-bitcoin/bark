@@ -33,7 +33,7 @@ use server_rpc::protos;
 
 use crate::{SECP, Wallet};
 use crate::movement::old;
-use crate::vtxo_state::{VtxoState, VtxoStateKind};
+use crate::vtxo::state::{VtxoState, VtxoStateKind};
 use crate::onchain::{ChainSource, ChainSourceClient};
 use crate::persist::StoredRoundState;
 

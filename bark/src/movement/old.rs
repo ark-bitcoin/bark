@@ -2,7 +2,7 @@
 use ark::Vtxo;
 use bitcoin::Amount;
 
-use crate::vtxo_state::VtxoState;
+use crate::vtxo::state::VtxoState;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum MovementKind {

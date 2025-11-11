@@ -38,7 +38,7 @@ use crate::exit::models::ExitTxOrigin;
 use crate::movement::old;
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
-use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 /// Identifier for a stored [RoundState].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

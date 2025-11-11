@@ -21,7 +21,7 @@ use bark::movement::old::{Movement, MovementArgs, MovementKind, MovementRecipien
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, PendingLightningSend, LightningReceive, StoredExit};
 use bark::round::{RoundState, UnconfirmedRound};
-use bark::vtxo_state::{VtxoState, VtxoStateKind};
+use bark::vtxo::state::{VtxoState, VtxoStateKind};
 use bitcoin_ext::{BlockDelta, BlockRef};
 use server_rpc::TryFromBytes;
 

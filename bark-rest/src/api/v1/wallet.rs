@@ -12,7 +12,7 @@ use utoipa::OpenApi;
 use ark::lightning::{Bolt11Invoice, Offer};
 use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::lnurllib::lightning_address::LightningAddress;
-use bark::vtxo_selection::VtxoFilter;
+use bark::vtxo::selection::VtxoFilter;
 
 use crate::RestServer;
 use crate::error::HandlerResult;

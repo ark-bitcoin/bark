@@ -10,8 +10,8 @@ use rusqlite::{Row, RowIndex, Rows};
 use ark::{ProtocolEncoding, Vtxo};
 
 use crate::movement::old;
-use crate::vtxo_state::VtxoState;
 use crate::WalletVtxo;
+use crate::vtxo::state::VtxoState;
 
 #[allow(unused)]
 pub trait RowExt<'a>: Borrow<Row<'a>> {

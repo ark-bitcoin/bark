@@ -259,7 +259,7 @@
 //! 	#   Wallet::open(&mnemonic, db, config).await.unwrap()
 //! 	# }
 //! #
-//! use bark::vtxo_selection::RefreshStrategy;
+//! use bark::vtxo::selection::RefreshStrategy;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -289,22 +289,20 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod exit;
+pub mod lightning_utils;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
 pub mod round;
-pub mod lightning_utils;
-pub mod vtxo_state;
-pub mod vtxo_selection;
+pub mod vtxo;
 
 pub use self::config::{BarkNetwork, Config};
 pub use self::persist::sqlite::SqliteClient;
-pub use self::vtxo_state::WalletVtxo;
+pub use self::vtxo::state::WalletVtxo;
 
 mod config;
 mod lnurl;
 mod psbtext;
-
 
 use std::collections::{HashMap, HashSet};
 
@@ -343,8 +341,8 @@ use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWallet
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingLightningSend, LightningReceive};
 use crate::round::{RoundParticipation, RoundStatus};
-use crate::vtxo_selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
-use crate::vtxo_state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
+use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
+use crate::vtxo::state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
 
 const ARK_PURPOSE_INDEX: u32 = 350;
 
