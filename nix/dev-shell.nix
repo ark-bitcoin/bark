@@ -177,6 +177,10 @@ in {
 			pkgs.git
 			pkgs.gnugrep
 
+			# for rust-bitcoinkernel build
+			pkgs.cmake
+			pkgs.boost.dev
+
 		] ++ (
 			if isDarwin then [
 				pkgs.docker
