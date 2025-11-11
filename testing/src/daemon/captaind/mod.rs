@@ -108,6 +108,14 @@ impl Captaind {
 		&mut self.inner.cfg
 	}
 
+	/// The maximum time it can take for a user to wait for the next round to finish,
+	/// counting for max one failed attempt
+	pub fn max_round_delay(&self) -> Duration {
+		let cfg = &self.inner.cfg;
+		let buffer = Duration::from_millis(500);
+		cfg.round_interval + 2 * (cfg.round_submit_time + 2 * cfg.round_sign_time) + buffer
+	}
+
 	/// Gracefully shutdown bitcoind associated with this server.
 	pub async fn shutdown_bitcoind(&self) {
 		self.inner.bitcoind.stop().await.expect("error stopping bitcoind");
