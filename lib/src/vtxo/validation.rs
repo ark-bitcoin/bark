@@ -108,6 +108,13 @@ fn verify_transition(
 	SECP.verify_schnorr(&signature, &sighash.into(), &pubkey)
 		.map_err(|_| "invalid signature")?;
 
+	#[cfg(test)]
+	{
+		if let Err(e) = crate::test::verify_tx(&[prev_txout.clone()], 0, &tx) {
+			panic!("invalid tx in genesis of vtxo {}: idx={}: {:#}", vtxo.id(), genesis_idx, e);
+		}
+	}
+
 	Ok(tx)
 }
 
