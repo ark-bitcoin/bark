@@ -875,12 +875,12 @@ async fn second_round_attempt() {
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let mut bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
+	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	let proxy = srv.get_proxy_rpc(Proxy).await;
 
-	let mut bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
+	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
 	bark1.send_oor(bark2.address().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
@@ -888,8 +888,6 @@ async fn second_round_attempt() {
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
-	bark1.set_timeout(Duration::from_secs(60));
-	bark2.set_timeout(Duration::from_secs(60));
 	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;

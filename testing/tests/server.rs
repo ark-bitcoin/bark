@@ -316,7 +316,7 @@ async fn max_vtxo_amount() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// then try send in a round
-	bark1.set_timeout(Duration::from_millis(5_000));
+	bark1.set_timeout(srv.max_round_delay());
 	let err = bark1.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(
 		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
@@ -603,7 +603,7 @@ async fn test_participate_round_wrong_step() {
 	}
 
 	let proxy = srv.get_proxy_rpc(ProxyB).await;
-	bark.set_timeout(Duration::from_millis(10_000));
+	bark.set_timeout(srv.max_round_delay());
 	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
 	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
@@ -1139,9 +1139,9 @@ async fn reject_dust_vtxo_request() {
 
 	#[derive(Clone)]
 	struct Proxy {
-		pub vtxo: WalletVtxoInfo,
-		pub wallet: Arc<Wallet>,
-		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
+		vtxo: WalletVtxoInfo,
+		wallet: Arc<Wallet>,
+		challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
@@ -1154,13 +1154,12 @@ async fn reject_dust_vtxo_request() {
 
 			let shared = self.challenge.clone();
 
-			let s = stream
-				.inspect_ok(move |event| {
-					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
-						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
-						shared.try_lock().unwrap().replace(challenge);
-					}
-				});
+			let s = stream.inspect_ok(move |event| {
+				if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
+					let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+					shared.try_lock().unwrap().replace(challenge);
+				}
+			});
 
 			Ok(Box::new(s))
 		}
@@ -1189,7 +1188,6 @@ async fn reject_dust_vtxo_request() {
 				keypair,
 			);
 
-
 			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
 
 			Ok(upstream.submit_payment(req).await?.into_inner())
@@ -1205,7 +1203,7 @@ async fn reject_dust_vtxo_request() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	bark.set_timeout(Duration::from_millis(3_500));
+	bark.set_timeout(srv.max_round_delay());
 	let err = bark.try_refresh_all().await.unwrap_err();
 	assert!(err.to_alt_string().contains(
 		"bad user input: vtxo amount must be at least 0.00000330 BTC",
@@ -1293,7 +1291,7 @@ async fn reject_dust_offboard_request() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	bark.set_timeout(Duration::from_millis(10_000));
+	bark.set_timeout(srv.max_round_delay());
 
 	let addr = bark.get_onchain_address().await;
 	let err = bark.try_offboard_all(&addr).await.unwrap_err();
@@ -1894,7 +1892,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	let proxy = srv.get_proxy_rpc(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
-	bark.set_timeout(Duration::from_millis(10_000));
+	bark.set_timeout(srv.max_round_delay());
 
 	let err = bark.try_refresh_all().await.unwrap_err();
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
