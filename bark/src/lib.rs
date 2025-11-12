@@ -339,8 +339,10 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::exit::Exit;
-use crate::movement::old::{Movement, MovementArgs, MovementKind};
+use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::manager::{MovementGuard, MovementManager};
+use crate::movement::old::*;
+use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingLightningSend, LightningReceive};
@@ -1066,7 +1068,7 @@ impl Wallet {
 	///
 	/// See [ArkInfo::required_board_confirmations] and [Wallet::sync_pending_boards].
 	pub fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.db.get_all_pending_boards()?.iter()
+		let vtxos = self.db.get_all_pending_board_ids()?.iter()
 			.map(|vtxo_id| self.get_vtxo_by_id(*vtxo_id))
 			.collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -1338,7 +1340,7 @@ impl Wallet {
 		let addr = bitcoin::Address::from_script(
 			&builder.funding_script_pubkey(),
 			properties.network,
-		).unwrap();
+		)?;
 
 		// We create the board tx template, but don't sign it yet.
 		let fee_rate = self.chain.fee_rates().await.regular;
@@ -1365,7 +1367,7 @@ impl Wallet {
 		let cosign_resp = srv.client.request_board_cosign(protos::BoardCosignRequest {
 			amount: amount.to_sat(),
 			utxo: bitcoin::consensus::serialize(&utxo), //TODO(stevenroose) change to own
-			expiry_height: expiry_height,
+			expiry_height,
 			user_pubkey: user_keypair.public_key().serialize().to_vec(),
 			pub_nonce: builder.user_pub_nonce().serialize().to_vec(),
 		}).await.context("error requesting board cosign")?
@@ -1378,17 +1380,22 @@ impl Wallet {
 		// Store vtxo first before we actually make the on-chain tx.
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
-		self.db.register_movement_old(MovementArgs {
-			kind: MovementKind::Board,
-			spends: &[],
-			receives: &[(&vtxo, VtxoState::Locked)],
-			recipients: &[],
-			fees: None,
-		}).context("db error storing vtxo")?;
+		let onchain_fee = board_psbt.fee()?;
+		let movement_id = self.movements.new_movement(
+			self.subsystem_ids[&BarkSubsystem::Board],
+			BoardMovement::Board.to_string(),
+		).await?;
+		self.movements.update_movement(
+			movement_id,
+			MovementUpdate::new()
+				.produced_vtxo(&vtxo)
+				.intended_and_effective_balance(vtxo.amount().to_signed()?)
+				.metadata(BoardMovement::metadata(utxo, onchain_fee)?),
+		).await?;
+		self.store_locked_vtxos([&vtxo], movement_id)?;
 
 		let tx = wallet.finish_tx(board_psbt)?;
-
-		self.db.store_pending_board(&vtxo, &tx)?;
+		self.db.store_pending_board(vtxo.id(), &tx, movement_id)?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.chain.broadcast_tx(&tx).await?;
@@ -1421,14 +1428,17 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		self.db.update_vtxo_state_checked(vtxo.vtxo_id(), VtxoState::Spendable, &UNSPENT_STATES)?;
+		self.db.update_vtxo_state_checked(vtxo.id(), VtxoState::Spendable, &UNSPENT_STATES)?;
 
-		self.db.remove_pending_board(&vtxo.vtxo_id())?;
+		let movement_id = self.db.get_pending_board_movement_id(vtxo.id())?;
+		self.db.remove_pending_board(&vtxo.id())?;
+
+		self.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
 
 		let funding_txid = vtxo.chain_anchor().txid;
 
 		Ok(Board {
-			funding_txid: funding_txid,
+			funding_txid,
 			vtxos: vec![vtxo.clone()],
 		})
 	}

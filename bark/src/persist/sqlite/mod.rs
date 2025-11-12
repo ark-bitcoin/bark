@@ -180,10 +180,15 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn store_pending_board(&self, vtxo: &Vtxo, funding_tx: &bitcoin::Transaction) -> anyhow::Result<()> {
+	fn store_pending_board(
+		&self,
+		vtxo_id: VtxoId,
+		funding_tx: &bitcoin::Transaction,
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-		query::store_new_pending_board(&tx, vtxo, funding_tx)?;
+		query::store_new_pending_board(&tx, vtxo_id, funding_tx, movement_id)?;
 		tx.commit()?;
 		Ok(())
 	}
@@ -196,9 +201,14 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>> {
+	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		let conn = self.connect()?;
-		query::get_all_pending_boards(&conn)
+		query::get_all_pending_boards_ids(&conn)
+	}
+
+	fn get_pending_board_movement_id(&self, vtxo_id: VtxoId) -> anyhow::Result<MovementId> {
+		let conn = self.connect()?;
+		query::get_pending_board_movement_id(&conn, vtxo_id)
 	}
 
 	fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {

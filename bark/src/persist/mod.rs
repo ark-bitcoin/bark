@@ -226,11 +226,17 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Parameters:
 	/// - vtxo: The [Vtxo] to store.
-	/// - funding_txid: The funding transaction ID.
+	/// - funding_txid: The funding [Txid].
+	/// - movement_id: The [MovementId] associated with this board.
 	///
 	/// Errors:
 	/// - Returns an error if the board cannot be stored.
-	fn store_pending_board(&self, vtxo: &Vtxo, funding_tx: &Transaction) -> anyhow::Result<()>;
+	fn store_pending_board(
+		&self,
+		vtxo_id: VtxoId,
+		funding_tx: &Transaction,
+		movement_id: MovementId,
+	) -> anyhow::Result<()>;
 
 	/// Remove a pending board.
 	///
@@ -241,14 +247,23 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the board cannot be removed.
 	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()>;
 
-	/// Get all pending boards.
+	/// Get the [VtxoId] for each pending board.
 	///
 	/// Returns:
 	/// - `Ok(Vec<VtxoId>)` possibly empty.
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>>;
+	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>>;
+
+	/// Get the [MovementId] associated with the pending board corresponding to the given [VtxoId].
+	///
+	/// Returns:
+	/// - `Ok(MovementId)` if a matching board exists
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_pending_board_movement_id(&self, vtxo_id: VtxoId) -> anyhow::Result<MovementId>;
 
 	/// Store a new ongoing round state and lock the VTXOs in round
 	///

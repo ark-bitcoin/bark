@@ -239,8 +239,8 @@ pub fn get_movements_old(conn: &Connection) -> anyhow::Result<Vec<old::Movement>
 	Ok(movements)
 }
 
-pub fn get_all_pending_boards(conn: &rusqlite::Connection) -> anyhow::Result<Vec<VtxoId>> {
-	let q = "SELECT vtxo_id, funding_tx FROM bark_pending_board;";
+pub fn get_all_pending_boards_ids(conn: &Connection) -> anyhow::Result<Vec<VtxoId>> {
+	let q = "SELECT vtxo_id FROM bark_pending_board;";
 	let mut statement = conn.prepare(q)?;
 	let mut rows = statement.query([])?;
 	let mut pending_boards = Vec::new();
@@ -252,17 +252,33 @@ pub fn get_all_pending_boards(conn: &rusqlite::Connection) -> anyhow::Result<Vec
 	Ok(pending_boards)
 }
 
+pub fn get_pending_board_movement_id(
+	conn: &Connection,
+	vtxo_id: VtxoId,
+) -> anyhow::Result<MovementId> {
+	Ok(conn.prepare(
+		"SELECT movement_id FROM bark_pending_board WHERE vtxo_id = ?1",
+	)?.query_row(
+		params![vtxo_id.to_string()],
+		|row| Ok(MovementId::new(row.get(0)?)),
+	)?)
+}
+
 pub fn store_new_pending_board(
 	tx: &Transaction,
-	vtxo: &Vtxo,
+	vtxo_id: VtxoId,
 	funding_tx: &bitcoin::Transaction,
+	movement_id: MovementId,
 ) -> anyhow::Result<()> {
-	let q = "INSERT INTO bark_pending_board (vtxo_id, funding_tx) VALUES (:vtxo_id, :funding_tx);";
-	let mut statement = tx.prepare(q)?;
+	let mut statement = tx.prepare("
+		INSERT INTO bark_pending_board (vtxo_id, funding_tx, movement_id)
+		VALUES (:vtxo_id, :funding_tx, :movement_id);"
+	)?;
 
 	statement.execute(named_params! {
-		":vtxo_id": vtxo.id().to_string(),
+		":vtxo_id": vtxo_id.to_string(),
 		":funding_tx": bitcoin::consensus::encode::serialize_hex(&funding_tx),
+		":movement_id": movement_id.inner(),
 	})?;
 	Ok(())
 }

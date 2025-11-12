@@ -75,7 +75,12 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn store_pending_board(&self, _vtxo: &Vtxo, _funding_tx: &Transaction) -> anyhow::Result<()> {
+	fn store_pending_board(
+		&self,
+		_vtxo: VtxoId,
+		_funding_tx: &Transaction,
+		_movement_id: MovementId,
+	) -> anyhow::Result<()> {
 		Ok(())
 	}
 
@@ -83,7 +88,7 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>> {
+	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		Ok(vec![])
 	}
 
@@ -293,6 +298,10 @@ impl BarkPersister for Dummy {
 
 	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(vec![dummy_movement(MovementStatus::Failed)])
+	}
+
+	fn get_pending_board_movement_id(&self, _vtxo_id: VtxoId) -> anyhow::Result<MovementId> {
+		Ok(MovementId::new(0))
 	}
 
 	fn store_vtxos(&self, _vtxos: &[(&Vtxo, &VtxoState)], _mid: MovementId) -> anyhow::Result<()> {
