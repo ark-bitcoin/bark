@@ -326,6 +326,7 @@ use lightning::util::ser::Writeable;
 use lnurllib::lightning_address::LightningAddress;
 use log::{trace, debug, info, warn, error};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -2911,9 +2912,10 @@ impl Wallet {
 	/// so it's possible to start multiple daemons by mistake.
 	pub async fn run_daemon(
 		self: &Arc<Self>,
+		shutdown: CancellationToken,
 		onchain: Arc<RwLock<dyn ExitUnilaterally>>,
 	) -> anyhow::Result<()> {
-		let daemon = Daemon::new(self.clone(), onchain)?;
+		let daemon = Daemon::new(shutdown, self.clone(), onchain)?;
 
 		tokio::spawn(async move {
 			let _ = daemon.run().await;

@@ -4,12 +4,14 @@ use std::sync::Arc;
 
 use clap::Parser;
 use clap::builder::BoolishValueParser;
+use log::info;
 use tokio::sync::RwLock;
+
+use bark::daemon::CancellationToken;
+use bark_rest::{Config, RestServer};
 
 use bark_cli::log::init_logging;
 use bark_cli::wallet::open_wallet;
-
-use bark_rest::{Config, RestServer};
 
 
 fn default_datadir() -> String {
@@ -66,6 +68,30 @@ impl Cli {
 	}
 }
 
+/// Runs a thread that will watch for SIGTERM and ctrl-c signals.
+fn run_shutdown_signal_listener() -> CancellationToken {
+	let shutdown = CancellationToken::new();
+
+	let cloned = shutdown.clone();
+	tokio::spawn(async move {
+		let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+			.expect("Failed to listen for SIGTERM");
+
+		tokio::select! {
+			_ = sigterm.recv() => info!("SIGTERM received! Sending shutdown signal..."),
+			r = tokio::signal::ctrl_c() => match r {
+				Ok(()) => info!("Ctrl+C received! Sending shutdown signal..."),
+				Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
+			},
+		}
+
+		let _ = cloned.cancel();
+	});
+
+	shutdown
+}
+
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
 	let cli = Cli::parse();
@@ -78,10 +104,10 @@ async fn main() -> anyhow::Result<()>{
 	let wallet = Arc::new(wallet);
 	let onchain = Arc::new(RwLock::new(onchain));
 
-	wallet.run_daemon(onchain.clone()).await?;
+	let shutdown = run_shutdown_signal_listener();
+	wallet.run_daemon(shutdown.clone(), onchain.clone()).await?;
 
-	let server = RestServer::new(cli.to_config(), wallet, onchain);
-
+	let server = RestServer::new(shutdown.clone(), cli.to_config(), wallet, onchain);
 	server.serve().await?;
 
 	Ok(())
