@@ -299,12 +299,12 @@ impl Exit {
 	///
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
-	pub async fn start_exit_for_vtxos(
+	pub async fn start_exit_for_vtxos<V: Borrow<Vtxo>>(
 		&mut self,
-		vtxos: &[Vtxo],
+		vtxos: &[V],
 		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
-		self.mark_vtxos_for_exit(vtxos).await?;
+		self.mark_vtxos_for_exit(&vtxos).await?;
 		self.start_vtxo_exits(onchain).await?;
 		Ok(())
 	}
@@ -320,15 +320,16 @@ impl Exit {
 	/// provide an onchain wallet. The actual exit process is started with [Exit::start_vtxo_exits].
 	pub async fn mark_vtxos_for_exit<'a>(
 		&mut self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+		vtxos: &[impl Borrow<Vtxo>],
 	) -> anyhow::Result<()> {
 		for vtxo in vtxos {
+			let vtxo = vtxo.borrow();
 			let vtxo_id = vtxo.id();
 			if self.exit_vtxos.iter().any(|ev| ev.id() == vtxo_id) {
 				warn!("VTXO {} is already in the exit process", vtxo_id);
 				continue;
 			}
-			self.vtxos_to_exit.insert(vtxo_id);
+			self.vtxos_to_exit.insert(vtxo.id());
 
 			// Register the movement now so users can be aware of where their funds have gone.
 			self.persister.update_vtxo_state_checked(vtxo_id, VtxoState::Spent, &UNSPENT_STATES)?;
