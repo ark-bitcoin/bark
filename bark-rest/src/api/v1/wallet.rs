@@ -12,6 +12,7 @@ use utoipa::OpenApi;
 use ark::lightning::{Bolt11Invoice, Offer};
 use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::lnurllib::lightning_address::LightningAddress;
+use bark::subsystem::RoundMovement;
 use bark::vtxo::selection::VtxoFilter;
 
 use crate::RestServer;
@@ -348,7 +349,8 @@ pub async fn refresh_vtxos(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation)
+			let round = state.wallet.join_next_round(participation, RoundMovement::Refresh)
+				.await
 				.context("Failed to store round participation")?;
 
 			Ok(axum::Json(round.into()))
@@ -384,7 +386,8 @@ pub async fn refresh_all(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation)
+			let round = state.wallet.join_next_round(participation, RoundMovement::Refresh)
+				.await
 				.context("Failed to store round participation")?;
 
 			Ok(axum::Json(round.into()))
@@ -421,7 +424,8 @@ pub async fn refresh_counterparty(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation)
+			let round = state.wallet.join_next_round(participation, RoundMovement::Refresh)
+				.await
 				.context("Failed to store round participation")?;
 
 			Ok(axum::Json(round.into()))
@@ -473,7 +477,8 @@ pub async fn offboard_vtxos(
 		.build_offboard_participation(vtxo_ids, address.script_pubkey())
 		.context("Failed to build round participation")?;
 
-	let round = state.wallet.join_next_round(participation)
+	let round = state.wallet.join_next_round(participation, RoundMovement::Offboard)
+		.await
 		.context("Failed to store round participation")?;
 
 	Ok(axum::Json(round.into()))
@@ -512,7 +517,8 @@ pub async fn offboard_all(
 		.build_offboard_participation(input_vtxos, address.script_pubkey())
 		.context("Failed to build round participation")?;
 
-	let round = state.wallet.join_next_round(participation)
+	let round = state.wallet.join_next_round(participation, RoundMovement::Offboard)
+		.await
 		.context("Failed to store round participation")?;
 
 	Ok(axum::Json(round.into()))
@@ -544,7 +550,8 @@ pub async fn send_onchain(
 		.build_round_onchain_payment_participation(addr, amount)
 		.context("Failed to build round participation")?;
 
-	let round = state.wallet.join_next_round(participation)
+	let round = state.wallet.join_next_round(participation, RoundMovement::SendOnchain)
+		.await
 		.context("Failed to store round participation")?;
 
 	Ok(axum::Json(round.into()))

@@ -1634,7 +1634,7 @@ impl Wallet {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
-		Ok(self.participate_round(participation).await?)
+		Ok(self.participate_round(participation, RoundMovement::Offboard).await?)
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
@@ -1720,7 +1720,7 @@ impl Wallet {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
-		Ok(Some(self.participate_round(participation).await?))
+		Ok(Some(self.participate_round(participation, RoundMovement::Refresh).await?))
 	}
 
 	/// This will find all VTXOs that meets must-refresh criteria.
@@ -2839,7 +2839,7 @@ impl Wallet {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
-		Ok(self.participate_round(participation).await?)
+		Ok(self.participate_round(participation, RoundMovement::SendOnchain).await?)
 	}
 }
 

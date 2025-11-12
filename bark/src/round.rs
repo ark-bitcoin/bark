@@ -2,21 +2,22 @@
 //!
 //!
 
+use std::{cmp, iter};
 use std::borrow::Cow;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use std::{cmp, iter};
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
+use bdk_esplora::esplora_client::Amount;
 use bip39::rand;
 use bitcoin::consensus::encode::{serialize_hex, deserialize};
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{schnorr, PublicKey};
-use bitcoin::{OutPoint, Transaction, Txid};
+use bitcoin::{Address, Network, OutPoint, Transaction, Txid};
+use bitcoin::consensus::Params;
 use bitcoin::hashes::Hash;
-use bitcoin_ext::rpc::RpcApi;
 use futures::future::try_join_all;
 use futures::StreamExt;
 use log::{debug, error, info, trace, warn};
@@ -29,14 +30,15 @@ use ark::rounds::{
 };
 use ark::tree::signed::{SignedVtxoTreeSpec, VtxoTreeSpec};
 use bitcoin_ext::{TxStatus, P2TR_DUST};
+use bitcoin_ext::rpc::RpcApi;
 use server_rpc::protos;
 
 use crate::{SECP, Wallet};
-use crate::movement::old;
-use crate::vtxo::state::{VtxoState, VtxoStateKind};
+use crate::movement::{MovementDestination, MovementId, MovementStatus};
+use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ChainSourceClient};
 use crate::persist::StoredRoundState;
-
+use crate::subsystem::{BarkSubsystem, RoundMovement};
 
 /// Bitcoin's block time of 10 minutes.
 const BLOCK_TIME: Duration = Duration::from_secs(10 * 60);
@@ -51,6 +53,29 @@ pub struct RoundParticipation {
 	/// including change
 	pub outputs: Vec<VtxoRequest>,
 	pub offboards: Vec<OffboardRequest>,
+}
+
+impl RoundParticipation {
+	pub fn to_movement_update(&self, network: Network) -> anyhow::Result<MovementUpdate> {
+		let params = Params::from(network);
+		let input_amount = self.inputs.iter().map(|i| i.amount()).sum::<Amount>();
+		let output_amount = self.outputs.iter().map(|r| r.amount).sum::<Amount>();
+		let offboard_amount = self.offboards.iter().map(|r| r.amount).sum::<Amount>();
+		let fee = input_amount - output_amount - offboard_amount;
+		let intended = -offboard_amount.to_signed()?;
+		let mut sent_to = Vec::with_capacity(self.offboards.len());
+		for o in &self.offboards {
+			let address = Address::from_script(&o.script_pubkey, &params)?;
+			sent_to.push(MovementDestination::new(address.to_string(), o.amount));
+		}
+		Ok(MovementUpdate::new()
+			.consumed_vtxos(&self.inputs)
+			.intended_balance(intended)
+			.effective_balance(intended - fee.to_signed()?)
+			.fee(fee)
+			.sent_to(sent_to)
+		)
+	}
 }
 
 #[derive(Debug, Clone)]
@@ -113,12 +138,16 @@ pub struct RoundState {
 
 	/// A potential final state for each round-attempt
 	pub(crate) unconfirmed_rounds: Vec<UnconfirmedRound>,
+
+	/// The ID of the [Movement] associated with this round
+	pub(crate) movement_id: MovementId,
 }
 
 impl RoundState {
-	fn new(participation: RoundParticipation) -> Self {
+	fn new(participation: RoundParticipation, movement_id: MovementId) -> Self {
 		Self {
-			participation: participation,
+			participation,
+			movement_id,
 			flow: RoundFlowState::WaitingToStart,
 			unconfirmed_rounds: Vec::new(),
 		}
@@ -236,8 +265,12 @@ impl RoundState {
 							round.funding_tx = signed_round_tx;
 
 							if let Err(e) = persist_round_success(
-								wallet, &self.participation, &vtxos, &round.funding_tx,
-							) {
+								wallet,
+								&self.participation,
+								self.movement_id,
+								&vtxos,
+								&round.funding_tx,
+							).await {
 								error!("Error while storing succesful round: {:#}", e);
 								//TODO(stevenroose) make sure we call this again timely!
 							}
@@ -276,8 +309,12 @@ impl RoundState {
 			// sure a db failure get fixed on the next call of `sync`.
 			if !was_signed && round.is_tx_signed() {
 				if let Err(e) = persist_round_success(
-					wallet, &self.participation, &round.new_vtxos, &round.funding_tx,
-				) {
+					wallet,
+					&self.participation,
+					self.movement_id,
+					&round.new_vtxos,
+					&round.funding_tx,
+				).await {
 					error!("Error storing state after seeing signed funding tx: {:#?}", e);
 					idx += 1;
 					continue;
@@ -320,6 +357,9 @@ impl RoundState {
 		}
 
 		let status = if let Some(funding_txid) = confirmed_funding_txid {
+			self.update_funding_txid(funding_txid, wallet).await?;
+			wallet.movements.finish_movement(self.movement_id, MovementStatus::Finished).await?;
+
 			RoundStatus::Confirmed { funding_txid }
 		} else if self.unconfirmed_rounds.is_empty() {
 			match self.flow {
@@ -327,20 +367,25 @@ impl RoundState {
 					RoundStatus::Pending { unsigned_funding_txids: vec![] }
 				}
 				RoundFlowState::Success => {
-					persist_round_failure(wallet, &self.participation)
+					persist_round_failure(wallet, &self.participation, self.movement_id)
+						.await
 						.context("failed to persist round failure")?;
 					RoundStatus::Failed {
 						error: "all pending round funding transactions have been double spent".into(),
 					}
 				},
 				RoundFlowState::Failed { ref error } => {
-					persist_round_failure(wallet, &self.participation)
+					persist_round_failure(wallet, &self.participation, self.movement_id)
+						.await
 						.context("failed to persist round failure")?;
 					RoundStatus::Failed { error: error.clone() }
 				},
 			}
 		} else if let Some(signed) = self.unconfirmed_rounds.iter().find(|r| r.is_tx_signed()) {
-			RoundStatus::Unconfirmed { funding_txid: signed.funding_txid() }
+			let funding_txid = signed.funding_txid();
+			self.update_funding_txid(funding_txid, wallet).await?;
+
+			RoundStatus::Unconfirmed { funding_txid }
 		} else {
 			RoundStatus::Pending {
 				unsigned_funding_txids: self.unconfirmed_rounds.iter()
@@ -382,6 +427,14 @@ impl RoundState {
 				&[]
 			},
 		}
+	}
+
+	async fn update_funding_txid(&self, funding_txid: Txid, wallet: &Wallet) -> anyhow::Result<()> {
+		wallet.movements.update_movement(
+			self.movement_id,
+			MovementUpdate::new()
+				.metadata([("funding_txid".into(), serde_json::to_value(&funding_txid)?)])
+		).await.map_err(|e| format_err!("Unable to update funding txid: {:#}", e))
 	}
 }
 
@@ -827,68 +880,49 @@ async fn submit_forfeit_sigs(
 }
 
 //TODO(stevenroose) should be made idempotent
-fn persist_round_success(
+async fn persist_round_success(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
+	movement_id: MovementId,
 	new_vtxos: &[Vtxo],
 	signed_round_tx: &Transaction,
 ) -> anyhow::Result<()> {
-	let addr_params = bitcoin::params::Params::new(wallet.properties().unwrap().network);
-	let offboards = participation.offboards.iter().map(|o| {
-		let addr = bitcoin::Address::from_script(&o.script_pubkey, addr_params.clone())
-			.expect("invalid offboard scriptPubkey");
-		(addr.to_string(), o.amount)
-	}).collect::<Vec<_>>();
-
-	debug!("Registering movement for newly finished round. {} new vtxos, {} offboards",
-		new_vtxos.len(), participation.offboards.len(),
+	debug!("Registering movement for newly finished round. {} new vtxos, {} offboards, movement ID {}",
+		new_vtxos.len(), participation.offboards.len(), movement_id,
 	);
 
-	if let Err(e) = wallet.db.register_movement_old(old::MovementArgs {
-		kind: old::MovementKind::Round,
-		spends: &participation.inputs.iter().collect::<Vec<_>>(),
-		receives: &new_vtxos.iter()
-			.map(|v| (v, VtxoState::Spendable))
-			.collect::<Vec<_>>(),
-		recipients: &offboards.iter()
-			.map(|(addr, amt)| (addr.as_str(), *amt))
-			.collect::<Vec<_>>(),
-		fees: None,
-	}) {
-		error!("Failed to store new VTXOs from a finished round: {:#}", e);
-		error!("Raw VTXOs for debugging:");
-		for v in new_vtxos {
-			error!(" - {}", v.serialize_hex());
-		}
-		error!("Signed round tx: {}", serialize_hex(&signed_round_tx));
-
-		Err(anyhow!("Failed to store new VTXOs from a finished round: {:#}", e))
-	} else {
-		Ok(())
+	let store_result = wallet.store_spendable_vtxos(new_vtxos, movement_id);
+	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs, Some(movement_id));
+	let update_result = wallet.movements.update_movement(movement_id, MovementUpdate::new()
+		.produced_vtxos(new_vtxos)
+		.metadata([("funding_txid".into(), serde_json::to_value(signed_round_tx.compute_txid())?)])
+	).await;
+	match (store_result, spent_result, update_result) {
+		(Ok(()), Ok(()), Ok(())) => Ok(()),
+		(Err(e), _, _) => Err(e),
+		(_, Err(e), _) => Err(e),
+		(_, _, Err(e)) => Err(anyhow!(
+			"Failed to update movement after round success: {:#}", e
+		)),
 	}
 }
 
 //TODO(stevenroose) should be made idempotent
-fn persist_round_failure(
+async fn persist_round_failure(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
+	movement_id: MovementId,
 ) -> anyhow::Result<()> {
-	let mut failed = false;
-	for vtxo in &participation.inputs {
-		if let Err(e) = wallet.db.update_vtxo_state_checked(
-			vtxo.id(),
-			VtxoState::Spendable,
-			&[VtxoStateKind::Spendable, VtxoStateKind::Locked, VtxoStateKind::Spent],
-		) {
-			error!("Failed to mark VTXO {} as spendable after failed round: {:#}", vtxo.id(), e);
-			failed = true;
-		}
+	debug!("Attempting to persist the failure of a round with the movement ID {}", movement_id);
+	let unlock_result = wallet.unlock_vtxos(&participation.inputs);
+	let finish_result = wallet.movements.finish_movement(movement_id, MovementStatus::Failed).await;
+	if let Err(e) = &finish_result {
+		error!("Failed to mark movement as failed: {:#}", e);
 	}
-
-	if failed {
-		Err(anyhow!("Failed to mark all VTXOs as spendable after failed round"))
-	} else {
-		Ok(())
+	match (unlock_result, finish_result) {
+		(Ok(()), Ok(())) => Ok(()),
+		(Err(e), _) => Err(e),
+		(_, Err(e)) => Err(anyhow!("Failed to mark movement as failed: {:#}", e)),
 	}
 }
 
@@ -1112,9 +1146,10 @@ impl Wallet {
 	/// Start a new round participation
 	///
 	/// This function will store the state in the db and mark the VTXOs as locked.
-	pub fn join_next_round(
+	pub async fn join_next_round(
 		&self,
 		participation: RoundParticipation,
+		kind: RoundMovement,
 	) -> anyhow::Result<StoredRoundState> {
 		// verify if our participation makes sense
 		if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
@@ -1124,8 +1159,15 @@ impl Wallet {
 			bail!("Offboard amount must be at least {}, requested {}", P2TR_DUST, offb.amount);
 		}
 
-		let state = RoundState::new(participation);
+		let movement_id = self.movements.new_movement(
+			self.subsystem_ids[&BarkSubsystem::Round], kind.to_string(),
+		).await?;
+		let update = participation.to_movement_update(self.chain.network())?;
+		let state = RoundState::new(participation, movement_id);
+
 		let id = self.db.store_round_state_lock_vtxos(&state)?;
+		self.movements.update_movement(movement_id, update).await?;
+
 		Ok(StoredRoundState { id, state })
 	}
 
@@ -1276,10 +1318,11 @@ impl Wallet {
 	pub(crate) async fn participate_round(
 		&self,
 		participation: RoundParticipation,
+		movement_kind: RoundMovement
 	) -> anyhow::Result<RoundStatus> {
 		let mut srv = self.require_server()?;
 
-		let mut state = self.join_next_round(participation)?;
+		let mut state = self.join_next_round(participation, movement_kind).await?;
 
 		info!("Waiting for a round start...");
 		let mut events = srv.client.subscribe_rounds(protos::Empty {}).await?.into_inner()

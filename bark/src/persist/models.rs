@@ -25,6 +25,7 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletVtxo;
 use crate::exit::ExitVtxo;
 use crate::exit::models::ExitState;
+use crate::movement::MovementId;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState, UnconfirmedRound};
 
 /// Persisted representation of a pending lightning send.
@@ -329,6 +330,7 @@ impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerdeRoundState<'a> {
 	participation: SerdeRoundParticipation<'a>,
+	movement_id: MovementId,
 	flow: SerdeRoundFlowState<'a>,
 	unconfirmed_rounds: Vec<SerdeUnconfirmedRound<'a>>,
 }
@@ -337,6 +339,7 @@ impl<'a> From<&'a RoundState> for SerdeRoundState<'a> {
 	fn from(state: &'a RoundState) -> Self {
 		Self {
 			participation: (&state.participation).into(),
+			movement_id: state.movement_id,
 			flow: (&state.flow).into(),
 			unconfirmed_rounds: state.unconfirmed_rounds.iter().map(|r| r.into()).collect(),
 		}
@@ -347,6 +350,7 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 	fn from(state: SerdeRoundState<'a>) -> Self {
 		Self {
 			participation: state.participation.into(),
+			movement_id: state.movement_id,
 			flow: state.flow.into(),
 			unconfirmed_rounds: state.unconfirmed_rounds.into_iter().map(|r| r.into()).collect(),
 		}

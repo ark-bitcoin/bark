@@ -18,6 +18,7 @@ use ark::vtxo::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
 use bark::persist::StoredRoundState;
 use bark::round::RoundParticipation;
+use bark::subsystem::RoundMovement;
 use bark_json::primitives::RecipientInfo;
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
@@ -1223,7 +1224,7 @@ async fn stepwise_round() {
 		}],
 		offboards: vec![],
 	};
-	let state = bark.join_next_round(participation).unwrap();
+	let state = bark.join_next_round(participation, RoundMovement::Refresh).await.unwrap();
 	let state_id = state.id;
 
 	info!("Signed up for round, state_id={}", state.id);
