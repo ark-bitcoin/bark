@@ -132,7 +132,6 @@ impl ExitVtxo {
 				exit_txids: &self.txids,
 				chain_source: &chain_source,
 				fee_rate: fee_rate_override.unwrap_or(chain_source.fee_rates().await.fast),
-				persister,
 				tx_manager,
 			};
 			// Attempt to move to the next state, which may or may not generate a new state

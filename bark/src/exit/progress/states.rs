@@ -9,7 +9,6 @@ use crate::exit::models::{
 
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
 use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_cost};
-use crate::movement::old::{MovementArgs, MovementKind};
 use crate::onchain::ExitUnilaterally;
 
 #[async_trait]
@@ -56,21 +55,6 @@ impl ExitStateProgress for ExitStartState {
 			}.into());
 		}
 		info!("Validated VTXO {}, exit process can now begin", id);
-
-		// Register the coin movement in the database
-		let recipient = ctx.vtxo_recipient()?.to_string();
-		let movement = MovementArgs {
-			kind: MovementKind::Exit,
-			spends: &[ctx.vtxo],
-			receives: &[],
-			recipients: &[(&recipient, ctx.vtxo.amount())],
-			fees: None,
-		};
-		debug!("Registering movement, spending VTXO: {}, recipient: {} to {}",
-			ctx.vtxo.id(), ctx.vtxo.amount(), recipient,
-		);
-		ctx.persister.register_movement_old(movement)
-			.map_err(|e| ExitError::MovementRegistrationFailure { error: e.to_string() })?;
 
 		Ok(ExitState::new_processing(
 			ctx.chain_source.tip().await.unwrap_or(self.tip_height),

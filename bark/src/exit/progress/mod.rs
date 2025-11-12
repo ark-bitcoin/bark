@@ -3,8 +3,7 @@ pub(crate) mod util;
 
 use std::collections::HashSet;
 
-use bitcoin::{Address, Amount, FeeRate, Transaction, Txid};
-use bitcoin::params::Params;
+use bitcoin::{Amount, FeeRate, Transaction, Txid};
 use log::{debug, error, warn};
 use tonic::async_trait;
 
@@ -15,7 +14,6 @@ use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::{ChainSource, ExitUnilaterally};
-use crate::persist::BarkPersister;
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
 /// depending on the contents of the users wallet, the mempool or the blockchain. E.g. Calling
@@ -88,7 +86,6 @@ pub(crate) struct ProgressContext<'a> {
 	pub exit_txids: &'a Vec<Txid>,
 	pub chain_source: &'a ChainSource,
 	pub fee_rate: FeeRate,
-	pub persister: &'a dyn BarkPersister,
 	pub tx_manager: &'a mut ExitTransactionManager,
 }
 
@@ -238,10 +235,5 @@ impl<'a> ProgressContext<'a> {
 	pub async fn tip_height(&self) -> anyhow::Result<u32, ExitError> {
 		self.chain_source.tip().await
 			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })
-	}
-
-	pub fn vtxo_recipient(&self) -> anyhow::Result<Address, ExitError> {
-		let params = Params::new(self.chain_source.network());
-		Ok(Address::from_script(&self.vtxo.output_script_pubkey(), params)?)
 	}
 }

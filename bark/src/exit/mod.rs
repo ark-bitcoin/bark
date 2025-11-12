@@ -126,6 +126,7 @@ use anyhow::Context;
 use bitcoin::{
 	sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
+use bitcoin::consensus::Params;
 use log::{error, info, warn};
 
 use ark::{Vtxo, VtxoId, SECP};
@@ -134,7 +135,9 @@ use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use crate::Wallet;
 use crate::exit::models::{ExitError, ExitProgressStatus, ExitState, ExitTransactionStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
+use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::manager::MovementManager;
+use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
@@ -301,7 +304,7 @@ impl Exit {
 		vtxos: &[Vtxo],
 		onchain: &W,
 	) -> anyhow::Result<()> {
-		self.mark_vtxos_for_exit(vtxos);
+		self.mark_vtxos_for_exit(vtxos).await?;
 		self.start_vtxo_exits(onchain).await?;
 		Ok(())
 	}
@@ -315,14 +318,38 @@ impl Exit {
 	///
 	/// This is a lower level primitive used as a buffer to mark vtxos for exit without having to
 	/// provide an onchain wallet. The actual exit process is started with [Exit::start_vtxo_exits].
-	pub fn mark_vtxos_for_exit(&mut self, vtxos: &[Vtxo]) -> () {
+	pub async fn mark_vtxos_for_exit<'a>(
+		&mut self,
+		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+	) -> anyhow::Result<()> {
 		for vtxo in vtxos {
-			if self.exit_vtxos.iter().any(|ev| ev.id() == vtxo.id()) {
-				warn!("VTXO {} is already in the exit process", vtxo.id());
+			let vtxo_id = vtxo.id();
+			if self.exit_vtxos.iter().any(|ev| ev.id() == vtxo_id) {
+				warn!("VTXO {} is already in the exit process", vtxo_id);
 				continue;
 			}
-			self.vtxos_to_exit.insert(vtxo.id());
+			self.vtxos_to_exit.insert(vtxo_id);
+
+			// Register the movement now so users can be aware of where their funds have gone.
+			self.persister.update_vtxo_state_checked(vtxo_id, VtxoState::Spent, &UNSPENT_STATES)?;
+			let params = Params::new(self.chain_source.network());
+			let balance = -vtxo.amount().to_signed()?;
+			let destination = MovementDestination::new(
+				Address::from_script(&vtxo.output_script_pubkey(), &params)?.to_string(),
+				vtxo.amount(),
+			);
+			let movement_id = self.movement_manager.new_finished_movement(
+				self.subsystem_id,
+				ExitMovement::Exit.to_string(),
+				MovementStatus::Finished,
+				MovementUpdate::new()
+					.intended_and_effective_balance(balance)
+					.consumed_vtxo(vtxo.id())
+					.sent_to([destination]),
+			).await.map_err(|e| format_err!("Failed to register movement: {}", e))?;
+			self.persister.link_spent_vtxo_to_movement(vtxo_id, movement_id)?;
 		}
+		Ok(())
 	}
 
 	/// Starts the unilateral exit process for any VTXOs marked for exit.
