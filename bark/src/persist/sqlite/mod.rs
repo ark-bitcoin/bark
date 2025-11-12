@@ -164,7 +164,7 @@ impl BarkPersister for SqliteClient {
 			query::update_vtxo_state_checked(
 				&*tx,
 				vtxo.id(),
-				VtxoState::Locked,
+				VtxoState::Locked { movement_id: round_state.movement_id },
 				&[VtxoStateKind::Spendable],
 			)?;
 		}

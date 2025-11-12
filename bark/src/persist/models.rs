@@ -393,11 +393,11 @@ mod test {
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 
 		// Vtxo state
-		let serialised = r#""Spendable""#;
+		let serialised = r#"{"type": "spendable"}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
-		let serialised = r#""Spent""#;
+		let serialised = r#"{"type": "spent"}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
-		let serialised = r#""Locked""#;
+		let serialised = r#"{"type": "locked", "movement_id": null}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 	}
 }

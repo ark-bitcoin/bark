@@ -2097,7 +2097,7 @@ impl Wallet {
 				.consumed_vtxos(&inputs)
 				.sent_to([MovementDestination::new(invoice.to_string(), amount)])
 		).await?;
-		self.lock_vtxos(&input_ids)?;
+		self.lock_vtxos(&input_ids, Some(movement.id()))?;
 
 		let resp = srv.client.start_lightning_payment(req).await
 			.context("htlc request failed")?.into_inner();

@@ -89,7 +89,9 @@ impl BarkPersister for Dummy {
 	fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::from_bytes([])?,
-			state: VtxoState::Locked,
+			state: VtxoState::Locked {
+				movement_id: Some(MovementId::new(0)),
+			},
 		}]))
 	}
 

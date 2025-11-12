@@ -27,8 +27,9 @@ use bark::{BarkNetwork, Config};
 use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::round::RoundStatus;
 use bark::vtxo::selection::VtxoFilter;
-use bark::vtxo::state::{VtxoStateKind, WalletVtxo};
-use bark_json::{cli as json, primitives};
+use bark::vtxo::state::VtxoStateKind;
+use bark_json::{cli as json};
+use bark_json::primitives::WalletVtxoInfo;
 
 use bark_cli::wallet::open_wallet;
 
@@ -50,13 +51,6 @@ fn default_datadir() -> String {
 /// The full version string we show in our binary.
 /// (GIT_HASH is set in build.rs)
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
-
-fn wallet_vtxo_to_json(vtxo: &WalletVtxo) -> primitives::WalletVtxoInfo {
-	primitives::WalletVtxoInfo {
-		vtxo: vtxo.vtxo.clone().into(),
-		state: vtxo.state.kind().as_str().to_string(),
-	}
-}
 
 fn round_status_to_json(status: &RoundStatus) -> json::RoundStatus {
 	match status {
@@ -602,7 +596,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			});
 
-			output_json(&vtxos.iter().map(wallet_vtxo_to_json).collect::<Vec<_>>());
+			output_json(&vtxos.into_iter().map(WalletVtxoInfo::from).collect::<Vec<_>>());
 		},
 		Command::Movements { no_sync } => {
 			if !no_sync {

@@ -3487,6 +3487,59 @@
           }
         }
       },
+      "VtxoStateInfo": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "spendable"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "spent"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "movement_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "locked"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Describe the state of a [Vtxo] with additional context."
+      },
       "VtxosQuery": {
         "type": "object",
         "properties": {
@@ -3511,7 +3564,7 @@
             ],
             "properties": {
               "state": {
-                "type": "string"
+                "$ref": "#/components/schemas/VtxoStateInfo"
               }
             }
           }

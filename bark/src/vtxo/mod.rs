@@ -20,8 +20,9 @@ impl Wallet {
 	pub fn lock_vtxos(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
+		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Locked, &UNSPENT_STATES, None)
+		self.set_vtxo_states(vtxos, &VtxoState::Locked { movement_id }, &UNSPENT_STATES, None)
 	}
 
 	/// Attempts to mark VTXOs as [VtxoState::Spent], given that each [VtxoId] is currently a state
@@ -106,7 +107,7 @@ impl Wallet {
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Locked, movement_id)
+		self.store_vtxos(vtxos, &VtxoState::Locked { movement_id }, movement_id)
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of

@@ -205,7 +205,7 @@ pub async fn vtxos(
 		.iter()
 		.map(|vtxo| bark_json::primitives::WalletVtxoInfo {
 			vtxo: vtxo.vtxo.clone().into(),
-			state: vtxo.state.kind().as_str().to_string(),
+			state: vtxo.state.clone().into(),
 		})
 		.collect::<Vec<_>>();
 

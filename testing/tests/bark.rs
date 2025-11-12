@@ -20,6 +20,7 @@ use bark::persist::StoredRoundState;
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
 use bark_json::cli::MovementDestination;
+use bark_json::primitives::VtxoStateInfo;
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
@@ -130,7 +131,7 @@ async fn board_bark() {
 
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
 	assert_eq!(board.vtxos[0].id, vtxo.id);
-	assert_eq!(vtxo.state, "Locked");
+	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -153,7 +154,7 @@ async fn board_twice_bark() {
 	assert_eq!(vtxos.len(), 2, "should have 2 board vtxos");
 	assert!(vtxos.iter().any(|v| v.id == board_a.vtxos[0].id));
 	assert!(vtxos.iter().any(|v| v.id == board_b.vtxos[0].id));
-	assert!(vtxos.iter().all(|v| v.state == "Locked"));
+	assert!(vtxos.iter().all(|v| matches!(v.state, VtxoStateInfo::Locked { .. })));
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -176,7 +177,7 @@ async fn board_all_bark() {
 	let board = bark1.board_all().await;
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
 	assert_eq!(board.vtxos[0].id, vtxo.id);
-	assert_eq!(vtxo.state, "Locked");
+	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 

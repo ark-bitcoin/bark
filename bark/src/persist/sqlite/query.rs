@@ -883,9 +883,10 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		store_vtxo_with_initial_state(&tx, &vtxo_1, &VtxoState::Locked, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, &VtxoState::Locked, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, &VtxoState::Locked, None).unwrap();
+		let locked = VtxoState::Locked { movement_id: None };
+		store_vtxo_with_initial_state(&tx, &vtxo_1, &locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, &locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, &locked, None).unwrap();
 
 		// This update will fail because the current state is Locked
 		// We only allow the state to switch from VtxoState::Spendable
@@ -900,8 +901,8 @@ mod test {
 
 		// Ensure the state of vtxo_2 and vtxo_3 isn't modified
 		let state_2 = get_vtxo_state(&tx, vtxo_2.id()).unwrap().unwrap();
-		assert_eq!(state_2, VtxoState::Locked);
+		assert_eq!(state_2, locked);
 		let state_2 = get_vtxo_state(&tx, vtxo_3.id()).unwrap().unwrap();
-		assert_eq!(state_2, VtxoState::Locked);
+		assert_eq!(state_2, locked);
 	}
 }
