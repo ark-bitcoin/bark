@@ -1,4 +1,6 @@
+pub mod manager;
 pub mod old;
+pub mod update;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -14,7 +16,6 @@ const MOVEMENT_PENDING: &'static str = "pending";
 const MOVEMENT_FINISHED: &'static str = "finished";
 const MOVEMENT_FAILED: &'static str = "failed";
 const MOVEMENT_CANCELLED: &'static str = "cancelled";
-
 
 /// Describes an attempted movement of offchain funds within the Bark [Wallet].
 #[derive(Debug, Clone)]

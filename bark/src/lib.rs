@@ -288,12 +288,14 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
+pub mod error;
 pub mod exit;
 pub mod lightning_utils;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
 pub mod round;
+pub mod subsystem;
 pub mod vtxo;
 
 pub use self::config::{BarkNetwork, Config};
