@@ -635,9 +635,8 @@ impl Server {
 
 	pub async fn check_vtxos_not_exited(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
 		for vtxo in vtxos {
-			// NB: we only care about the first exit tx, because next ones are descendants of it
-			let tx = vtxo.transactions().first_exit().expect("branch should have exit tx");
-			let status = self.bitcoind.tx_status(&tx.compute_txid())?;
+			let txid = vtxo.point().txid;
+			let status = self.bitcoind.tx_status(&txid)?;
 
 			match status {
 				TxStatus::Confirmed(_) => {
