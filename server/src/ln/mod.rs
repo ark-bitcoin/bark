@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
-use ark::lightning::{Bolt12Invoice, Invoice, LightningReceiveChallenge, Offer, PaymentHash, Preimage};
+use ark::challenges::LightningReceiveChallenge;
+use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, Preimage};
 use server_rpc::{
 	protos::{self, InputVtxo, prepare_lightning_receive_claim_request::LightningReceiveAntiDos},
 	TryFromBytes

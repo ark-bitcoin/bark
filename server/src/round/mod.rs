@@ -23,11 +23,12 @@ use ark::{
 	OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
 	VtxoRequest,
 };
+use ark::challenges::RoundAttemptChallenge;
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundFinished, RoundProposal, RoundSeq, RoundAttemptChallenge,
-	VtxoProposal, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
+	RoundAttempt, RoundEvent, RoundFinished, RoundProposal, RoundSeq, VtxoProposal,
+	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use server_log::{LogMsg, RoundVtxoCreated};

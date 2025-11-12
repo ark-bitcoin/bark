@@ -9,8 +9,9 @@ use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
+use ark::challenges::RoundAttemptChallenge;
 use ark::lightning::{PaymentHash, Preimage};
-use ark::rounds::{RoundId, RoundAttemptChallenge};
+use ark::rounds::RoundId;
 use ark::tree::signed::VtxoTreeSpec;
 
 use crate::protos;

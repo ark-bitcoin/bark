@@ -22,7 +22,7 @@ use ark::{
 	musig, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest,
 	SECP,
 };
-use ark::rounds::RoundAttemptChallenge;
+use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
