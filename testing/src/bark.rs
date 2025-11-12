@@ -428,6 +428,7 @@ impl Bark {
 		-> Option<LightningReceiveInfo>
 	{
 		let res = self.run(["lightning", "status", &filter.to_string()]).await;
+		if res.is_empty() { return None; }
 		serde_json::from_str(&res).expect("json error")
 	}
 

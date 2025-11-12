@@ -474,8 +474,8 @@ async fn bark_check_lightning_receive_no_wait() {
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
 
-	let error = bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).ready().await.unwrap_err();
-	assert!(error.to_string().contains("payment not yet initiated by sender"), "should have received error.  received: {}", error);
+	bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).ready().await.expect("should not fail");
+	bark.lightning_receive_status(&invoice).await.expect("should still be pending");
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
@@ -485,7 +485,12 @@ async fn bark_check_lightning_receive_no_wait() {
 	let mut success = false;
 	for _ in 0..10 {
 		tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-		if bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).await.is_ok() {
+
+		bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).ready().await
+			.expect("should not fail");
+
+		// once pending receive is removed, it means payment is done
+		if bark.lightning_receive_status(&invoice).await.is_none() {
 			success = true;
 			break;
 		}
@@ -931,15 +936,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 				},
 			};
 			req.lightning_receive_anti_dos = Some(bad_anti_dos);
-			let res = upstream.prepare_lightning_receive_claim(req).await;
-			match res {
-				Ok(_) => panic!("should fail"),
-				Err(_) => ()
-			}
-			Ok(protos::PrepareLightningReceiveClaimResponse {
-				receive: None,
-				htlc_vtxos: vec![],
-			})
+			Ok(upstream.prepare_lightning_receive_claim(req).await?.into_inner())
 		}
 	}
 
@@ -950,6 +947,8 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 		cfg.ln_receive_anti_dos_required = true;
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
 	// create a proxy to invalidate the proof
 	let proxy = srv.get_proxy_rpc(InvalidVtxoProofProxy).await;
 
@@ -964,11 +963,23 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 		lightning.sender.pay_bolt11(invoice).await;
 	});
 
-	srv.wait_for_vtxopool(&ctx).await;
+	let mut err = None;
+	for _ in 0..10 {
+		tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-	let res = bark.try_lightning_receive_no_wait(invoice_info.invoice).await;
+		let fut = bark.try_lightning_receive_no_wait(invoice_info.invoice.clone());
+		match fut.ready().await {
+			Ok(_) => {},
+			Err(error) => {
+				err = Some(error);
+				break;
+			},
+		}
+	}
 
-	assert!(res.is_err());
+	let err = err.expect("should fail");
+	assert!(err.to_string().contains("vtxo ownership proof invalid"), "{err:?}");
+
 	assert_eq!(bark.spendable_balance().await, btc(2));
 }
 
