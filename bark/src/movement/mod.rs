@@ -1,5 +1,4 @@
 pub mod manager;
-pub mod old;
 pub mod update;
 
 use std::collections::HashMap;

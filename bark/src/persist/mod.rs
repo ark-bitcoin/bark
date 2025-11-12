@@ -36,7 +36,7 @@ use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
 use crate::exit::models::ExitTxOrigin;
-use crate::movement::{old, Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -197,30 +197,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - If retrieving the movements fails.
 	fn get_movements(&self) -> anyhow::Result<Vec<Movement>>;
-
-	/// Return a list of movements, see [Movement].
-	///
-	/// Returns:
-	/// - `Ok(Vec<Movement>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn get_movements_old(&self) -> anyhow::Result<Vec<old::Movement>>;
-
-	/// Register a movement of VTXOs atomically.
-	///
-	/// Side effects:
-	/// - Creates new VTXOs in `receives`.
-	/// - Marks VTXOs in `spends` as spent (with state checks).
-	/// - Optionally stores recipients and fees.
-	///
-	/// Parameters:
-	/// - movement: [MovementArgs] including spends, receives, recipients and fees.
-	///
-	/// Errors:
-	/// - Returns an error if any part of the operation fails; no partial state should be
-	///   committed in that case.
-	fn register_movement_old(&self, movement: old::MovementArgs) -> anyhow::Result<()>;
 
 	/// Store a pending board.
 	///

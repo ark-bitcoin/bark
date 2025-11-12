@@ -362,7 +362,6 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 #[cfg(test)]
 mod test {
 	use crate::exit::models::{ExitState, ExitTxOrigin};
-	use crate::movement::old::MovementRecipient;
 	use crate::vtxo::state::VtxoState;
 
 	#[test]
@@ -392,10 +391,6 @@ mod test {
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 		let serialized = r#"{"type":"block","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
-
-		// Movement recipient
-		let serialised = r#"{"recipient":"03a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount_sat":150000}"#;
-		serde_json::from_str::<MovementRecipient>(serialised).unwrap();
 
 		// Vtxo state
 		let serialised = r#""Spendable""#;

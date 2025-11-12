@@ -5,7 +5,6 @@ use std::fmt;
 use std::str::FromStr;
 
 use bitcoin::{Amount, SignedAmount};
-use bitcoin::hex::FromHex;
 use chrono::DateTime;
 use rusqlite::{Row, RowIndex, Rows};
 use rusqlite::types::FromSql;
@@ -14,7 +13,7 @@ use serde::Deserialize;
 use ark::{ProtocolEncoding, Vtxo};
 
 use crate::WalletVtxo;
-use crate::movement::{old, Movement, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp};
 use crate::vtxo::state::VtxoState;
 
 #[allow(unused)]
@@ -74,40 +73,6 @@ pub(crate) fn row_to_movement(row: &Row) -> anyhow::Result<Movement> {
 			completed_at: row.get::<&str, Option<i64>>("completed_at")?
 				.and_then(|ts| DateTime::from_timestamp(ts, 0)),
 		},
-	})
-}
-
-pub (crate) fn row_to_movement_old(row: &Row<'_>) -> anyhow::Result<old::Movement> {
-	let fees: Amount = Amount::from_sat(row.get("fees_sat")?);
-
-	let kind = old::MovementKind::from_str(&row.get::<_, String>("kind")?)?;
-	let spends = serde_json::from_str::<Vec<String>>(&row.get::<_, String>("spends")?)?
-		.iter()
-		.map(|v| {
-			let bytes = Vec::<u8>::from_hex(v).expect("corrupt db");
-			Vtxo::deserialize(&bytes)
-		})
-		.collect::<Result<Vec<Vtxo>, _>>()?;
-
-	let receives = serde_json::from_str::<Vec<String>>(&row.get::<_, String>("receives")?)?
-		.iter()
-		.map(|v| {
-			let bytes = Vec::<u8>::from_hex(v).expect("corrupt db");
-			Vtxo::deserialize(&bytes)
-		})
-		.collect::<Result<Vec<Vtxo>, _>>()?;
-
-
-	let recipients = serde_json::from_str::<Vec<old::MovementRecipient>>(&row.get::<_, String>("recipients")?)?;
-
-	Ok(old::Movement {
-		id: row.get("id")?,
-		kind: kind,
-		fees: fees,
-		spends: spends,
-		receives: receives,
-		recipients: recipients,
-		created_at: row.get("created_at")?,
 	})
 }
 

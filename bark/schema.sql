@@ -31,12 +31,6 @@ CREATE TABLE bark_properties (
 				network TEXT NOT NULL,
 				fingerprint TEXT NOT NULL
 			);
-CREATE TABLE bark_recipient (
-				id INTEGER PRIMARY KEY,
-				movement REFERENCES bark_movement(id),
-				recipient TEXT NOT NULL,
-				amount_sat INTEGER NOT NULL
-			);
 CREATE TABLE bark_exit_states (
 				vtxo_id TEXT PRIMARY KEY,
 				state TEXT NOT NULL,

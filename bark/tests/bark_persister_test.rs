@@ -23,7 +23,6 @@ use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
 use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp,
 };
-use bark::movement::old;
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, PendingLightningSend, LightningReceive, StoredExit};
 use bark::round::{RoundState, UnconfirmedRound};
@@ -54,25 +53,6 @@ impl BarkPersister for Dummy {
 
 	fn check_recipient_exists(&self, _recipient: &str) -> anyhow::Result<bool> {
 		Ok(true)
-	}
-
-	fn get_movements_old(&self) -> anyhow::Result<Vec<old::Movement>> {
-		Ok(Vec::<old::Movement>::from([old::Movement {
-			id: 0,
-			kind: old::MovementKind::Board,
-			fees: Amount::ZERO,
-			spends: Vec::<Vtxo>::new(),
-			receives: Vec::<Vtxo>::new(),
-			recipients: Vec::<old::MovementRecipient>::from([old::MovementRecipient {
-				recipient: "".to_string(),
-				amount: Amount::ZERO,
-			}]),
-			created_at: "".to_string(),
-		}]))
-	}
-
-	fn register_movement_old(&self, _movement: old::MovementArgs) -> anyhow::Result<()> {
-		Ok(())
 	}
 
 	fn store_pending_board(

@@ -18,7 +18,7 @@ use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::{ExitState, ExitTxOrigin};
-use crate::movement::{old, Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
 	LightningReceive, PendingLightningSend, SerdeRoundState, SerdeUnconfirmedRound, StoredExit,
@@ -26,8 +26,6 @@ use crate::persist::models::{
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
-
-use super::convert::row_to_movement_old;
 
 /// Set read-only properties for the wallet
 ///
@@ -68,39 +66,6 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 	} else {
 		Ok(None)
 	}
-}
-
-pub fn create_movement_old(conn: &Connection, kind: old::MovementKind, fees_sat: Option<Amount>) -> anyhow::Result<i32> {
-	// Store the vtxo
-	let query = "INSERT INTO bark_movement (kind, fees_sat) VALUES (:kind, :fees_sat) RETURNING *;";
-	let mut statement = conn.prepare(query)?;
-	let movement_id = statement.query_row(named_params! {
-		":kind" : kind.as_str(),
-		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat()
-	}, |row| row.get::<_, i32>(0))?;
-
-	Ok(movement_id)
-}
-
-pub fn create_recipient(
-	conn: &Connection,
-	movement: i32,
-	recipient: &str,
-	amount: Amount,
-) -> anyhow::Result<i32> {
-	// Store the vtxo
-	let query = "
-		INSERT INTO bark_recipient (movement, recipient, amount_sat)
-		VALUES (:movement, :recipient, :amount_sat) RETURNING *;";
-
-	let mut statement = conn.prepare(query)?;
-	let recipient_id = statement.query_row(named_params! {
-		":movement": movement,
-		":recipient" : recipient,
-		":amount_sat": amount.to_sat()
-	}, |row| row.get::<_, i32>(0))?;
-
-	Ok(recipient_id)
 }
 
 pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Result<bool> {
@@ -222,23 +187,6 @@ pub fn get_movement(conn: &Connection, id: MovementId) -> anyhow::Result<Movemen
 	}
 }
 
-pub fn get_movements_old(conn: &Connection) -> anyhow::Result<Vec<old::Movement>> {
-	let query = "
-		SELECT * FROM movement_view
-		ORDER BY movement_view.created_at DESC
-	";
-
-	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([])?;
-
-	let mut movements = Vec::new();
-	while let Some(row) = rows.next()? {
-		movements.push(row_to_movement_old(row)?);
-	}
-
-	Ok(movements)
-}
-
 pub fn get_all_pending_boards_ids(conn: &Connection) -> anyhow::Result<Vec<VtxoId>> {
 	let q = "SELECT vtxo_id FROM bark_pending_board;";
 	let mut statement = conn.prepare(q)?;
@@ -299,7 +247,7 @@ pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
 	state: &VtxoState,
-	movement_id: i32,
+	movement_id: MovementId,
 ) -> anyhow::Result<()> {
 	// Store the vtxo
 	let q1 =
@@ -310,7 +258,7 @@ pub fn store_vtxo_with_initial_state(
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
-		":received_in": movement_id,
+		":received_in": movement_id.inner(),
 		":raw_vtxo": vtxo.serialize(),
 	})?;
 
@@ -598,13 +546,13 @@ pub fn get_vtxo_state(
 pub fn link_spent_vtxo_to_movement(
 	conn: &Connection,
 	id: VtxoId,
-	movement_id: i32
+	movement_id: MovementId
 ) -> anyhow::Result<()> {
 	let query = "UPDATE bark_vtxo SET spent_in = :spent_in WHERE id = :vtxo_id";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
 		":vtxo_id": id.to_string(),
-		":spent_in": movement_id
+		":spent_in": movement_id.inner()
 	})?;
 
 	Ok(())
@@ -941,7 +889,7 @@ mod test {
 		};
 		let movement_id = create_new_movement(
 			&tx, MovementStatus::Pending, &subsystem, chrono::Utc::now(),
-		).unwrap().inner() as i32;
+		).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_1, &VtxoState::Locked, movement_id).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_2, &VtxoState::Locked, movement_id).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_3, &VtxoState::Locked, movement_id).unwrap();

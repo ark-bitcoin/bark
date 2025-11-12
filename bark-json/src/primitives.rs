@@ -136,25 +136,6 @@ impl Deref for WalletVtxoInfo {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct RecipientInfo {
-	/// Can either be a publickey, spk or a bolt11 invoice
-	pub recipient: String,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub amount: Amount
-}
-
-impl From<bark::movement::old::MovementRecipient> for RecipientInfo {
-	fn from(v: bark::movement::old::MovementRecipient) -> Self {
-		RecipientInfo {
-			recipient: v.recipient,
-			amount: v.amount,
-		}
-	}
-}
-
 /// An information struct used to pair the ID of a transaction with the full transaction for ease
 /// of use and readability for the user
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

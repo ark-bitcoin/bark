@@ -129,6 +129,7 @@ impl Migration for Migration0020 {
 			);",
 			"ALTER TABLE bark_pending_board ADD COLUMN movement_id INTEGER NOT NULL;",
 			"ALTER TABLE bark_pending_lightning_send ADD COLUMN movement_id INTEGER NOT NULL;",
+			"DROP TABLE bark_recipient",
 		];
 
 		for query in queries {
