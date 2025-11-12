@@ -1516,13 +1516,22 @@ impl Wallet {
 					vtxos.push(vtxo);
 				}
 
-				self.db.register_movement_old(MovementArgs {
-					kind: MovementKind::ArkoorReceive,
-					spends: &[],
-					receives: &vtxos.iter().map(|v| (v, VtxoState::Spendable)).collect::<Vec<_>>(),
-					recipients: &[],
-					fees: None,
-				}).context("failed to store OOR vtxo")?;
+				// TODO: Consider whether we should try to create a single movement for the entire
+				//       sync process instead of on a per-mailbox-package basis.
+				let movement_id = self.movements.new_finished_movement(
+					self.subsystem_ids[&BarkSubsystem::Arkoor],
+					ArkoorMovement::Receive.to_string(),
+					MovementStatus::Finished,
+					MovementUpdate::new()
+						.produced_vtxos(&vtxos)
+						.intended_and_effective_balance(
+							vtxos
+							.iter()
+							.map(|vtxo| vtxo.amount()).sum::<Amount>()
+							.to_signed()?,
+						),
+				).await?;
+				self.store_spendable_vtxos(&vtxos, movement_id)?;
 			}
 		}
 
