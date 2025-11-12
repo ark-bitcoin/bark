@@ -649,6 +649,15 @@ impl GenesisTransition {
 			Self::Arkoor { signature, .. } => signature.is_some(),
 		}
 	}
+
+	/// String of the transition type, for error reporting
+	fn transition_type(&self) -> &'static str {
+		match self {
+			Self::Cosigned { .. } => "cosigned",
+			Self::HashLockedCosigned { .. } => "hash-locked-cosigned",
+			Self::Arkoor { .. } => "arkoor",
+		}
+	}
 }
 
 /// An item in a VTXO's genesis.
