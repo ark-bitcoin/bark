@@ -452,6 +452,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "smallvec",
  "tokio",
  "tokio-postgres",
  "tokio-stream",
