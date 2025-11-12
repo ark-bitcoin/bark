@@ -4,7 +4,8 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**exit_claim**](ExitApi.md#exit_claim) | **POST** /api/v1/exit/claim | 
+[**exit_claim_all**](ExitApi.md#exit_claim_all) | **POST** /api/v1/exit/claim/all | 
+[**exit_claim_vtxos**](ExitApi.md#exit_claim_vtxos) | **POST** /api/v1/exit/claim/vtxos | 
 [**exit_list**](ExitApi.md#exit_list) | **GET** /api/v1/exit/list | 
 [**exit_progress**](ExitApi.md#exit_progress) | **POST** /api/v1/exit/progress | 
 [**exit_start_all**](ExitApi.md#exit_start_all) | **POST** /api/v1/exit/start/all | 
@@ -13,9 +14,9 @@ Method | HTTP request | Description
 
 
 
-## exit_claim
+## exit_claim_all
 
-> models::ExitClaimResponse exit_claim(exit_claim_request)
+> models::ExitClaimResponse exit_claim_all(exit_claim_all_request)
 
 
 ### Parameters
@@ -23,7 +24,35 @@ Method | HTTP request | Description
 
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
-**exit_claim_request** | [**ExitClaimRequest**](ExitClaimRequest.md) |  | [required] |
+**exit_claim_all_request** | [**ExitClaimAllRequest**](ExitClaimAllRequest.md) |  | [required] |
+
+### Return type
+
+[**models::ExitClaimResponse**](ExitClaimResponse.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## exit_claim_vtxos
+
+> models::ExitClaimResponse exit_claim_vtxos(exit_claim_vtxos_request)
+
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**exit_claim_vtxos_request** | [**ExitClaimVtxosRequest**](ExitClaimVtxosRequest.md) |  | [required] |
 
 ### Return type
 

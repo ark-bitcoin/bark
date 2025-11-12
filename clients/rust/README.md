@@ -30,7 +30,8 @@ Class | Method | HTTP request | Description
 *BoardApi* | [**board**](docs/BoardApi.md#board) | **POST** /api/v1/board/board | 
 *BoardApi* | [**board_all**](docs/BoardApi.md#board_all) | **POST** /api/v1/board/board/all | 
 *DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | 
-*ExitApi* | [**exit_claim**](docs/ExitApi.md#exit_claim) | **POST** /api/v1/exit/claim | 
+*ExitApi* | [**exit_claim_all**](docs/ExitApi.md#exit_claim_all) | **POST** /api/v1/exit/claim/all | 
+*ExitApi* | [**exit_claim_vtxos**](docs/ExitApi.md#exit_claim_vtxos) | **POST** /api/v1/exit/claim/vtxos | 
 *ExitApi* | [**exit_list**](docs/ExitApi.md#exit_list) | **GET** /api/v1/exit/list | 
 *ExitApi* | [**exit_progress**](docs/ExitApi.md#exit_progress) | **POST** /api/v1/exit/progress | 
 *ExitApi* | [**exit_start_all**](docs/ExitApi.md#exit_start_all) | **POST** /api/v1/exit/start/all | 
@@ -45,7 +46,7 @@ Class | Method | HTTP request | Description
 *OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
 *OnchainApi* | [**onchain_send**](docs/OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
 *OnchainApi* | [**onchain_send_many**](docs/OnchainApi.md#onchain_send_many) | **POST** /api/v1/onchain/send-many | 
-*OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **PUT** /api/v1/onchain/sync | 
+*OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | 
 *OnchainApi* | [**onchain_transactions**](docs/OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | 
 *OnchainApi* | [**onchain_utxos**](docs/OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | 
 *WalletApi* | [**address**](docs/WalletApi.md#address) | **PUT** /api/v1/wallet/addresses/next | 
@@ -59,7 +60,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
 *WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
 *WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
-*WalletApi* | [**refresh_vtxos**](docs/WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/api/v1/refresh/vtxos | 
+*WalletApi* | [**refresh_vtxos**](docs/WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | 
 *WalletApi* | [**send**](docs/WalletApi.md#send) | **POST** /api/v1/wallet/send | 
 *WalletApi* | [**send_onchain**](docs/WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | 
 *WalletApi* | [**sync**](docs/WalletApi.md#sync) | **POST** /api/v1/wallet/sync | 
@@ -77,9 +78,10 @@ Class | Method | HTTP request | Description
  - [ChildTransactionInfo](docs/ChildTransactionInfo.md)
  - [ConnectedResponse](docs/ConnectedResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
+ - [ExitClaimAllRequest](docs/ExitClaimAllRequest.md)
  - [ExitClaimInProgressState](docs/ExitClaimInProgressState.md)
- - [ExitClaimRequest](docs/ExitClaimRequest.md)
  - [ExitClaimResponse](docs/ExitClaimResponse.md)
+ - [ExitClaimVtxosRequest](docs/ExitClaimVtxosRequest.md)
  - [ExitClaimableState](docs/ExitClaimableState.md)
  - [ExitClaimedState](docs/ExitClaimedState.md)
  - [ExitError](docs/ExitError.md)
@@ -138,8 +140,6 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
  - [ExitTxStatusOneOf5](docs/ExitTxStatusOneOf5.md)
  - [ExitTxStatusOneOf6](docs/ExitTxStatusOneOf6.md)
- - [InputInfo](docs/InputInfo.md)
- - [InputScriptInfo](docs/InputScriptInfo.md)
  - [InvoiceInfo](docs/InvoiceInfo.md)
  - [LightningInvoiceRequest](docs/LightningInvoiceRequest.md)
  - [LightningPayRequest](docs/LightningPayRequest.md)
@@ -155,8 +155,6 @@ Class | Method | HTTP request | Description
  - [OnchainDrainRequest](docs/OnchainDrainRequest.md)
  - [OnchainSendManyRequest](docs/OnchainSendManyRequest.md)
  - [OnchainSendRequest](docs/OnchainSendRequest.md)
- - [OutputInfo](docs/OutputInfo.md)
- - [OutputScriptInfo](docs/OutputScriptInfo.md)
  - [PeakAddressRequest](docs/PeakAddressRequest.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
  - [RecipientInfo](docs/RecipientInfo.md)
