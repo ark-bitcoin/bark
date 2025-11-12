@@ -2,27 +2,28 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bitcoin::{Amount, Network, Txid};
+use bitcoin::{Amount, Network, SignedAmount, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::BlockDelta;
+use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
-use rusqlite::{self, named_params, Connection, Row, ToSql, Transaction};
+use rusqlite::{self, named_params, params, Connection, Row, ToSql, Transaction};
 
 use ark::ProtocolEncoding;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::vtxo::VtxoRef;
+use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::{ExitState, ExitTxOrigin};
-use crate::movement::old;
+use crate::movement::{old, Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
 	LightningReceive, PendingLightningSend, SerdeRoundState, SerdeUnconfirmedRound, StoredExit,
 };
-use crate::persist::sqlite::convert::{row_to_wallet_vtxo, rows_to_wallet_vtxos};
+use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
@@ -103,14 +104,122 @@ pub fn create_recipient(
 }
 
 pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Result<bool> {
-	let query = "SELECT COUNT(*) FROM bark_recipient WHERE recipient = :recipient";
-
-	let mut statement = conn.prepare(query)?;
-	let exists = statement.query_row(named_params! {
-		":recipient" : recipient,
-	}, |row| Ok(row.get::<_, i32>(0)? > 0))?;
+	let exists: bool = conn.query_row(
+		"SELECT EXISTS(
+			SELECT 1
+			FROM bark_movements m
+			INNER JOIN bark_movements_sent_to st ON m.id = st.movement_id
+			WHERE m.status = ?1 AND st.destination = ?2
+		)",
+		params!(MovementStatus::Finished.as_str(), recipient),
+		|row| row.get(0)
+	)?;
 
 	Ok(exists)
+}
+
+pub fn create_new_movement(
+	tx: &Transaction,
+	status: MovementStatus,
+	subsystem: &MovementSubsystem,
+	time: DateTime<chrono::Utc>,
+) -> anyhow::Result<MovementId> {
+	let mut statement = tx.prepare("
+		INSERT INTO bark_movements (status, subsystem_name, movement_kind, intended_balance,
+			effective_balance, offchain_fee, created_at, updated_at)
+		VALUES (:status, :name, :kind, :intended_balance, :effective_balance, :offchain_fee,
+			:created_at, :updated_at)
+		RETURNING id"
+	)?;
+	let time = time.timestamp();
+	let id = statement.query_row(named_params! {
+		":status": status.as_str(),
+		":name": subsystem.name,
+		":kind": subsystem.kind,
+		":intended_balance": SignedAmount::ZERO.to_sat(),
+		":effective_balance": SignedAmount::ZERO.to_sat(),
+		":offchain_fee": Amount::ZERO.to_sat(),
+		":created_at": time,
+		":updated_at": time,
+	}, |row| row.get::<_, u32>(0))?;
+
+	Ok(MovementId::new(id))
+}
+
+pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<()> {
+	let id = movement.id.inner();
+	tx.execute(
+		"UPDATE bark_movements
+		SET status = :status, metadata = :metadata, intended_balance = :intended,
+			effective_balance = :effective, offchain_fee = :offchain_fee, updated_at = :updated_at,
+			completed_at = :completed_at
+		WHERE id = :id",
+		named_params! {
+			":id": id,
+			":status": movement.status.as_str(),
+			":metadata": serde_json::to_string(&movement.metadata)?,
+			":intended": movement.intended_balance.to_sat(),
+			":effective": movement.effective_balance.to_sat(),
+			":offchain_fee": movement.offchain_fee.to_sat(),
+			":updated_at": movement.time.updated_at.timestamp(),
+			":completed_at": movement.time.completed_at.map(|t| t.timestamp()),
+		},
+	)?;
+	// Update the recipient tables
+	let recipient_updates = [
+		("bark_movements_sent_to", &movement.sent_to),
+		("bark_movements_received_on", &movement.received_on),
+	];
+	for (table, vec) in recipient_updates {
+		tx.execute(&format!("DELETE FROM {} WHERE movement_id = ?1", table), params![id])?;
+		for dest in vec {
+			tx.execute(
+				&format!(
+					"INSERT INTO {} (movement_id, destination, amount) VALUES (?1, ?2, ?3)",
+					table,
+				),
+				params![id, dest.destination.to_string(), dest.amount.to_sat()],
+			)?;
+		}
+	}
+	// Update the VTXO tables
+	let vtxo_updates = [
+		("bark_movements_input_vtxos", &movement.input_vtxos),
+		("bark_movements_output_vtxos", &movement.output_vtxos),
+		("bark_movements_exited_vtxos", &movement.exited_vtxos),
+	];
+	for (table, vec) in vtxo_updates {
+		tx.execute(&format!("DELETE FROM {} WHERE movement_id = ?1", table), params![id])?;
+		for vtxo_id in vec {
+			tx.execute(
+				&format!("INSERT INTO {} (movement_id, vtxo_id) VALUES (?1, ?2)", table),
+				params![id, vtxo_id.to_string()],
+			)?;
+		}
+	}
+	Ok(())
+}
+
+pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
+	let mut statement = conn.prepare("SELECT * FROM bark_movements_view ORDER BY created_at DESC")?;
+	let mut rows = statement.query([])?;
+	let mut results = Vec::new();
+	while let Some(row) = rows.next()? {
+		results.push(row_to_movement(row)?);
+	}
+	Ok(results)
+}
+
+pub fn get_movement(conn: &Connection, id: MovementId) -> anyhow::Result<Movement> {
+	let mut statement = conn.prepare(
+		"SELECT * FROM bark_movements_view WHERE id = ?1 ORDER BY created_at DESC"
+	)?;
+	let mut rows = statement.query([id.to_string()])?;
+	if let Some(row) = rows.next()? {
+		Ok(row_to_movement(row)?)
+	} else {
+		Err(anyhow::anyhow!("Movement {} not found", id))
+	}
 }
 
 pub fn get_movements_old(conn: &Connection) -> anyhow::Result<Vec<old::Movement>> {

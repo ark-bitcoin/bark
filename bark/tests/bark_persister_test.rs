@@ -2,28 +2,32 @@
 //! A test to ensure that it is possible to implement the [BarkPersister] trait.
 //!
 
-
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use bdk_wallet::ChangeSet;
-use bitcoin::{Amount, BlockHash, Network, Transaction, Txid};
+use bitcoin::{Amount, BlockHash, Network, SignedAmount, Transaction, Txid};
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
+use chrono::{DateTime, Utc};
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use bitcoin_ext::{BlockDelta, BlockRef};
+use server_rpc::TryFromBytes;
 
 use bark::{WalletProperties, WalletVtxo};
 use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
-use bark::movement::old::{Movement, MovementArgs, MovementKind, MovementRecipient};
+use bark::movement::{
+	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp,
+};
+use bark::movement::old;
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, PendingLightningSend, LightningReceive, StoredExit};
 use bark::round::{RoundState, UnconfirmedRound};
 use bark::vtxo::state::{VtxoState, VtxoStateKind};
-use bitcoin_ext::{BlockDelta, BlockRef};
-use server_rpc::TryFromBytes;
 
 
 struct Dummy;
@@ -52,14 +56,14 @@ impl BarkPersister for Dummy {
 		Ok(true)
 	}
 
-	fn get_movements_old(&self) -> anyhow::Result<Vec<Movement>> {
-		Ok(Vec::<Movement>::from([Movement {
+	fn get_movements_old(&self) -> anyhow::Result<Vec<old::Movement>> {
+		Ok(Vec::<old::Movement>::from([old::Movement {
 			id: 0,
-			kind: MovementKind::Board,
+			kind: old::MovementKind::Board,
 			fees: Amount::ZERO,
 			spends: Vec::<Vtxo>::new(),
 			receives: Vec::<Vtxo>::new(),
-			recipients: Vec::<MovementRecipient>::from([MovementRecipient {
+			recipients: Vec::<old::MovementRecipient>::from([old::MovementRecipient {
 				recipient: "".to_string(),
 				amount: Amount::ZERO,
 			}]),
@@ -67,7 +71,7 @@ impl BarkPersister for Dummy {
 		}]))
 	}
 
-	fn register_movement_old(&self, _movement: MovementArgs) -> anyhow::Result<()> {
+	fn register_movement_old(&self, _movement: old::MovementArgs) -> anyhow::Result<()> {
 		Ok(())
 	}
 
@@ -269,6 +273,27 @@ impl BarkPersister for Dummy {
 	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>> {
 		Ok(vec![rmp_serde::from_slice::<models::SerdeUnconfirmedRound>(&[]).unwrap().into()])
 	}
+
+	fn create_new_movement(
+		&self,
+		_status: MovementStatus,
+		_subsystem: &MovementSubsystem,
+		_time: DateTime<Utc>,
+	) -> anyhow::Result<MovementId> {
+		Ok(MovementId::new(0))
+	}
+
+	fn update_movement(&self, _movement: &Movement) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn get_movement(&self, _movement_id: MovementId) -> anyhow::Result<Movement> {
+		Ok(dummy_movement(MovementStatus::Pending))
+	}
+
+	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
+		Ok(vec![dummy_movement(MovementStatus::Failed)])
+	}
 }
 
 fn dummy_lightning_receive() -> LightningReceive {
@@ -279,6 +304,34 @@ fn dummy_lightning_receive() -> LightningReceive {
 		preimage_revealed_at:Some(0),
 		htlc_vtxos: None,
 		htlc_recv_cltv_delta: 0,
+	}
+}
+
+fn dummy_movement(status: MovementStatus) -> Movement {
+	Movement {
+		status,
+		id: MovementId::new(0),
+		subsystem: MovementSubsystem {
+			name: "".to_string(),
+			kind: "".to_string(),
+		},
+		metadata: HashMap::new(),
+		intended_balance: SignedAmount::ZERO,
+		effective_balance: SignedAmount::ZERO,
+		offchain_fee: Amount::ZERO,
+		sent_to: vec![MovementDestination {
+			destination: "".to_string(),
+			amount: Amount::ZERO,
+		}],
+		received_on: vec![],
+		input_vtxos: vec![],
+		output_vtxos: vec![],
+		exited_vtxos: vec![],
+		time: MovementTimestamp {
+			created_at: Utc::now(),
+			updated_at: Utc::now(),
+			completed_at: Some(Utc::now()),
+		},
 	}
 }
 

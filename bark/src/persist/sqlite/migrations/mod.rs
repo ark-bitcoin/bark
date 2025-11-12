@@ -238,7 +238,12 @@ mod test {
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
-		assert!(table_exists(&conn, "bark_movement").unwrap());
+		assert!(table_exists(&conn, "bark_movements").unwrap());
+		assert!(table_exists(&conn, "bark_movements_sent_to").unwrap());
+		assert!(table_exists(&conn, "bark_movements_received_on").unwrap());
+		assert!(table_exists(&conn, "bark_movements_input_vtxos").unwrap());
+		assert!(table_exists(&conn, "bark_movements_output_vtxos").unwrap());
+		assert!(table_exists(&conn, "bark_movements_exited_vtxos").unwrap());
 		assert!(table_exists(&conn, "bark_pending_lightning_receive").unwrap());
 		assert!(table_exists(&conn, "bark_exit_states").unwrap());
 		assert!(table_exists(&conn, "bark_exit_child_transactions").unwrap());

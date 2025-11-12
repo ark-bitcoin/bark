@@ -25,17 +25,18 @@ use std::fmt;
 
 use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::BlockDelta;
+use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
 
 use ark::{Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
 use crate::exit::models::ExitTxOrigin;
-use crate::movement::old;
+use crate::movement::{old, Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -147,6 +148,55 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the lookup fails.
 	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool>;
+
+	/// Creates a new movement in the given state, ready to be updated.
+	///
+	/// Parameters:
+	/// - status: The desired status for the new movement.
+	/// - subsystem: The subsystem that created the movement.
+	/// - time: The time the movement should be marked as created.
+	///
+	/// Returns:
+	/// - `Ok(MovementId)` of the newly created movement.
+	///
+	/// Errors:
+	/// - Returns an error if the movement is unable to be created.
+	fn create_new_movement(&self,
+		status: MovementStatus,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Utc>,
+	) -> anyhow::Result<MovementId>;
+
+	/// Persists the given movement state.
+	///
+	/// Parameters:
+	/// - movement: The movement and its associated data to be persisted.
+	///
+	/// Errors:
+	/// - Returns an error if updating the movement fails for any reason.
+	fn update_movement(&self, movement: &Movement) -> anyhow::Result<()>;
+
+	/// Gets the movement with the given [MovementId].
+	///
+	/// Parameters:
+	/// - movement_id: The ID of the movement to retrieve.
+	///
+	/// Returns:
+	/// - `Ok(Movement)` if the movement exists.
+	///
+	/// Errors:
+	/// - If the movement does not exist.
+	/// - If retrieving the movement fails.
+	fn get_movement(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
+
+	/// Gets every stored movement.
+	///
+	/// Returns:
+	/// - `Ok(Vec<Movement>)` containing all movements, empty if none exist.
+	///
+	/// Errors:
+	/// - If retrieving the movements fails.
+	fn get_movements(&self) -> anyhow::Result<Vec<Movement>>;
 
 	/// Return a list of movements, see [Movement].
 	///

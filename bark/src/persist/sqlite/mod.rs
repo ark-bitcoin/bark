@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
+use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
 use log::debug;
 use rusqlite::{Connection, Transaction};
@@ -27,9 +28,9 @@ use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
-use crate::movement::old;
-use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
+use crate::movement::{old, Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
 
@@ -119,6 +120,36 @@ impl BarkPersister for SqliteClient {
 	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
 		query::check_recipient_exists(&conn, recipient)
+	}
+
+	fn create_new_movement(&self,
+		status: MovementStatus,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Utc>,
+	) -> anyhow::Result<MovementId> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let movement_id = query::create_new_movement(&tx, status, subsystem, time)?;
+		tx.commit()?;
+		Ok(movement_id)
+	}
+
+	fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::update_movement(&tx, movement)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn get_movement(&self, movement_id: MovementId) -> anyhow::Result<Movement> {
+		let conn = self.connect()?;
+		query::get_movement(&conn, movement_id)
+	}
+
+	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
+		let conn = self.connect()?;
+		query::get_movements(&conn)
 	}
 
 	fn get_movements_old(&self) -> anyhow::Result<Vec<old::Movement>> {
