@@ -350,7 +350,7 @@ pub async fn refresh_vtxos(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation, RoundMovement::Refresh)
+			let round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
 				.await
 				.context("Failed to store round participation")?;
 
@@ -387,7 +387,7 @@ pub async fn refresh_all(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation, RoundMovement::Refresh)
+			let round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
 				.await
 				.context("Failed to store round participation")?;
 
@@ -425,7 +425,7 @@ pub async fn refresh_counterparty(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation, RoundMovement::Refresh)
+			let round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
 				.await
 				.context("Failed to store round participation")?;
 
@@ -478,7 +478,7 @@ pub async fn offboard_vtxos(
 		.build_offboard_participation(vtxo_ids, address.script_pubkey())
 		.context("Failed to build round participation")?;
 
-	let round = state.wallet.join_next_round(participation, RoundMovement::Offboard)
+	let round = state.wallet.join_next_round(participation, Some(RoundMovement::Offboard))
 		.await
 		.context("Failed to store round participation")?;
 
@@ -518,7 +518,7 @@ pub async fn offboard_all(
 		.build_offboard_participation(input_vtxos, address.script_pubkey())
 		.context("Failed to build round participation")?;
 
-	let round = state.wallet.join_next_round(participation, RoundMovement::Offboard)
+	let round = state.wallet.join_next_round(participation, Some(RoundMovement::Offboard))
 		.await
 		.context("Failed to store round participation")?;
 
@@ -551,7 +551,7 @@ pub async fn send_onchain(
 		.build_round_onchain_payment_participation(addr, amount)
 		.context("Failed to build round participation")?;
 
-	let round = state.wallet.join_next_round(participation, RoundMovement::SendOnchain)
+	let round = state.wallet.join_next_round(participation, Some(RoundMovement::SendOnchain))
 		.await
 		.context("Failed to store round participation")?;
 

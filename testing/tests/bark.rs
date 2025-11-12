@@ -1228,7 +1228,7 @@ async fn stepwise_round() {
 		}],
 		offboards: vec![],
 	};
-	let state = bark.join_next_round(participation, RoundMovement::Refresh).await.unwrap();
+	let state = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
 	let state_id = state.id;
 
 	info!("Signed up for round, state_id={}", state.id);

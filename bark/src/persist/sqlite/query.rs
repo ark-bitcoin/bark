@@ -247,7 +247,7 @@ pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
 	state: &VtxoState,
-	movement_id: MovementId,
+	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	// Store the vtxo
 	let q1 =
@@ -258,7 +258,7 @@ pub fn store_vtxo_with_initial_state(
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
-		":received_in": movement_id.inner(),
+		":received_in": movement_id.map(|m| m.inner()),
 		":raw_vtxo": vtxo.serialize(),
 	})?;
 
@@ -883,16 +883,9 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let subsystem = MovementSubsystem {
-			name: "unit test".to_string(),
-			kind: "test_update_vtxo_state".to_string(),
-		};
-		let movement_id = create_new_movement(
-			&tx, MovementStatus::Pending, &subsystem, chrono::Utc::now(),
-		).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_1, &VtxoState::Locked, movement_id).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, &VtxoState::Locked, movement_id).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, &VtxoState::Locked, movement_id).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_1, &VtxoState::Locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, &VtxoState::Locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, &VtxoState::Locked, None).unwrap();
 
 		// This update will fail because the current state is Locked
 		// We only allow the state to switch from VtxoState::Spendable

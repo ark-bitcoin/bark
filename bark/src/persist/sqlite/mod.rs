@@ -208,7 +208,7 @@ impl BarkPersister for SqliteClient {
 	fn store_vtxos(
 		&self,
 		vtxos: &[(&Vtxo, &VtxoState)],
-		movement_id: MovementId,
+		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
@@ -436,12 +436,10 @@ pub mod helpers {
 mod test {
 	use bdk_wallet::chain::DescriptorExt;
 	use bitcoin::bip32;
-	use chrono::Utc;
 
 	use ark::vtxo::test::VTXO_VECTORS;
 
 	use crate::persist::sqlite::helpers::in_memory_db;
-	use crate::persist::sqlite::query::create_new_movement;
 	use crate::vtxo::state::UNSPENT_STATES;
 
 	use super::*;
@@ -452,22 +450,12 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let (cs, mut conn) = in_memory_db();
+		let (cs, conn) = in_memory_db();
 		let db = SqliteClient::open(cs).unwrap();
-		let tx = conn.transaction().unwrap();
-
-		let subsystem = MovementSubsystem {
-			name: "unit test".into(),
-			kind: "test_add_and_retreive_vtxos".into(),
-		};
-		let movement_id = create_new_movement(
-			&tx, MovementStatus::Pending, &subsystem, Utc::now(),
-		).unwrap();
-		tx.commit().unwrap();
 
 		db.store_vtxos(&[
 			(vtxo_1, &VtxoState::Spendable), (vtxo_2, &VtxoState::Spendable)
-		], movement_id).unwrap();
+		], None).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
 		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
@@ -492,7 +480,7 @@ mod test {
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
-		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)], movement_id).unwrap();
+		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)], None).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);

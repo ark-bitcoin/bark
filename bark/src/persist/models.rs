@@ -332,7 +332,7 @@ impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerdeRoundState<'a> {
 	participation: SerdeRoundParticipation<'a>,
-	movement_id: MovementId,
+	movement_id: Option<MovementId>,
 	flow: SerdeRoundFlowState<'a>,
 	unconfirmed_rounds: Vec<SerdeUnconfirmedRound<'a>>,
 }

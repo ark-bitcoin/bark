@@ -140,11 +140,11 @@ pub struct RoundState {
 	pub(crate) unconfirmed_rounds: Vec<UnconfirmedRound>,
 
 	/// The ID of the [Movement] associated with this round
-	pub(crate) movement_id: MovementId,
+	pub(crate) movement_id: Option<MovementId>,
 }
 
 impl RoundState {
-	fn new(participation: RoundParticipation, movement_id: MovementId) -> Self {
+	fn new(participation: RoundParticipation, movement_id: Option<MovementId>) -> Self {
 		Self {
 			participation,
 			movement_id,
@@ -357,8 +357,10 @@ impl RoundState {
 		}
 
 		let status = if let Some(funding_txid) = confirmed_funding_txid {
-			self.update_funding_txid(funding_txid, wallet).await?;
-			wallet.movements.finish_movement(self.movement_id, MovementStatus::Finished).await?;
+			if let Some(movement_id) = self.movement_id {
+				update_funding_txid(funding_txid, movement_id, wallet).await?;
+				wallet.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
+			}
 
 			RoundStatus::Confirmed { funding_txid }
 		} else if self.unconfirmed_rounds.is_empty() {
@@ -383,7 +385,9 @@ impl RoundState {
 			}
 		} else if let Some(signed) = self.unconfirmed_rounds.iter().find(|r| r.is_tx_signed()) {
 			let funding_txid = signed.funding_txid();
-			self.update_funding_txid(funding_txid, wallet).await?;
+			if let Some(movement_id) = self.movement_id {
+				update_funding_txid(funding_txid, movement_id, wallet).await?;
+			}
 
 			RoundStatus::Unconfirmed { funding_txid }
 		} else {
@@ -427,14 +431,6 @@ impl RoundState {
 				&[]
 			},
 		}
-	}
-
-	async fn update_funding_txid(&self, funding_txid: Txid, wallet: &Wallet) -> anyhow::Result<()> {
-		wallet.movements.update_movement(
-			self.movement_id,
-			MovementUpdate::new()
-				.metadata([("funding_txid".into(), serde_json::to_value(&funding_txid)?)])
-		).await.map_err(|e| format_err!("Unable to update funding txid: {:#}", e))
 	}
 }
 
@@ -883,20 +879,24 @@ async fn submit_forfeit_sigs(
 async fn persist_round_success(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
-	movement_id: MovementId,
+	movement_id: Option<MovementId>,
 	new_vtxos: &[Vtxo],
 	signed_round_tx: &Transaction,
 ) -> anyhow::Result<()> {
-	debug!("Registering movement for newly finished round. {} new vtxos, {} offboards, movement ID {}",
+	debug!("Persisting newly finished round. {} new vtxos, {} offboards, movement ID {:?}",
 		new_vtxos.len(), participation.offboards.len(), movement_id,
 	);
 
 	let store_result = wallet.store_spendable_vtxos(new_vtxos, movement_id);
-	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs, Some(movement_id));
-	let update_result = wallet.movements.update_movement(movement_id, MovementUpdate::new()
-		.produced_vtxos(new_vtxos)
-		.metadata([("funding_txid".into(), serde_json::to_value(signed_round_tx.compute_txid())?)])
-	).await;
+	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs, movement_id);
+	let update_result = if let Some(movement_id) = movement_id {
+		wallet.movements.update_movement(movement_id, MovementUpdate::new()
+			.produced_vtxos(new_vtxos)
+			.metadata([("funding_txid".into(), serde_json::to_value(signed_round_tx.compute_txid())?)])
+		).await
+	} else {
+		Ok(())
+	};
 	match (store_result, spent_result, update_result) {
 		(Ok(()), Ok(()), Ok(())) => Ok(()),
 		(Err(e), _, _) => Err(e),
@@ -911,11 +911,15 @@ async fn persist_round_success(
 async fn persist_round_failure(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
-	movement_id: MovementId,
+	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
-	debug!("Attempting to persist the failure of a round with the movement ID {}", movement_id);
+	debug!("Attempting to persist the failure of a round with the movement ID {:?}", movement_id);
 	let unlock_result = wallet.unlock_vtxos(&participation.inputs);
-	let finish_result = wallet.movements.finish_movement(movement_id, MovementStatus::Failed).await;
+	let finish_result = if let Some(movement_id) = movement_id {
+		wallet.movements.finish_movement(movement_id, MovementStatus::Failed).await
+	} else {
+		Ok(())
+	};
 	if let Err(e) = &finish_result {
 		error!("Failed to mark movement as failed: {:#}", e);
 	}
@@ -924,6 +928,18 @@ async fn persist_round_failure(
 		(Err(e), _) => Err(e),
 		(_, Err(e)) => Err(anyhow!("Failed to mark movement as failed: {:#}", e)),
 	}
+}
+
+async fn update_funding_txid(
+	funding_txid: Txid,
+	movement_id: MovementId,
+	wallet: &Wallet,
+) -> anyhow::Result<()> {
+	wallet.movements.update_movement(
+		movement_id,
+		MovementUpdate::new()
+			.metadata([("funding_txid".into(), serde_json::to_value(&funding_txid)?)])
+	).await.map_err(|e| format_err!("Unable to update funding txid: {:#}", e))
 }
 
 /// Track any round for which we signed forfeit txs
@@ -1149,7 +1165,7 @@ impl Wallet {
 	pub async fn join_next_round(
 		&self,
 		participation: RoundParticipation,
-		kind: RoundMovement,
+		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
 		// verify if our participation makes sense
 		if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
@@ -1159,15 +1175,19 @@ impl Wallet {
 			bail!("Offboard amount must be at least {}, requested {}", P2TR_DUST, offb.amount);
 		}
 
-		let movement_id = self.movements.new_movement(
-			self.subsystem_ids[&BarkSubsystem::Round], kind.to_string(),
-		).await?;
-		let update = participation.to_movement_update(self.chain.network())?;
+		let movement_id = if let Some(kind) = movement_kind {
+			let movement_id = self.movements.new_movement(
+				self.subsystem_ids[&BarkSubsystem::Round], kind.to_string(),
+			).await?;
+			let update = participation.to_movement_update(self.chain.network())?;
+			self.movements.update_movement(movement_id, update).await?;
+			Some(movement_id)
+		} else {
+			None
+		};
 		let state = RoundState::new(participation, movement_id);
 
 		let id = self.db.store_round_state_lock_vtxos(&state)?;
-		self.movements.update_movement(movement_id, update).await?;
-
 		Ok(StoredRoundState { id, state })
 	}
 
@@ -1318,7 +1338,7 @@ impl Wallet {
 	pub(crate) async fn participate_round(
 		&self,
 		participation: RoundParticipation,
-		movement_kind: RoundMovement
+		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<RoundStatus> {
 		let mut srv = self.require_server()?;
 

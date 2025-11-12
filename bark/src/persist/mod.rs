@@ -294,7 +294,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn store_vtxos(
 		&self,
 		vtxos: &[(&Vtxo, &VtxoState)],
-		movement_id: MovementId,
+		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()>;
 
 	/// Fetch a wallet [Vtxo] with its current state by ID.

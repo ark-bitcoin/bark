@@ -288,7 +288,11 @@ impl BarkPersister for Dummy {
 		Ok(MovementId::new(0))
 	}
 
-	fn store_vtxos(&self, _vtxos: &[(&Vtxo, &VtxoState)], _mid: MovementId) -> anyhow::Result<()> {
+	fn store_vtxos(
+		&self,
+		_vtxos: &[(&Vtxo, &VtxoState)],
+		_movement_id: Option<MovementId>,
+	) -> anyhow::Result<()> {
 		Ok(())
 	}
 

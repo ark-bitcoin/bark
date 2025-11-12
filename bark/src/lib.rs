@@ -1400,7 +1400,7 @@ impl Wallet {
 				.intended_and_effective_balance(vtxo.amount().to_signed()?)
 				.metadata(BoardMovement::metadata(utxo, onchain_fee)?),
 		).await?;
-		self.store_locked_vtxos([&vtxo], movement_id)?;
+		self.store_locked_vtxos([&vtxo], Some(movement_id))?;
 
 		let tx = wallet.finish_tx(board_psbt)?;
 		self.db.store_pending_board(vtxo.id(), &tx, movement_id)?;
@@ -1539,7 +1539,7 @@ impl Wallet {
 							.to_signed()?,
 						),
 				).await?;
-				self.store_spendable_vtxos(&vtxos, movement_id)?;
+				self.store_spendable_vtxos(&vtxos, Some(movement_id))?;
 			}
 		}
 
@@ -1633,7 +1633,7 @@ impl Wallet {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
-		Ok(self.participate_round(participation, RoundMovement::Offboard).await?)
+		Ok(self.participate_round(participation, Some(RoundMovement::Offboard)).await?)
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
@@ -1719,7 +1719,7 @@ impl Wallet {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
-		Ok(Some(self.participate_round(participation, RoundMovement::Refresh).await?))
+		Ok(Some(self.participate_round(participation, Some(RoundMovement::Refresh)).await?))
 	}
 
 	/// This will find all VTXOs that meets must-refresh criteria.
@@ -1960,7 +1960,7 @@ impl Wallet {
 		}
 		self.mark_vtxos_as_spent(&arkoor.input, Some(movement.id()))?;
 		if let Some(change) = arkoor.change {
-			self.store_spendable_vtxos(&[change], movement.id())?;
+			self.store_spendable_vtxos(&[change], Some(movement.id()))?;
 		}
 		movement.finish(MovementStatus::Finished).await?;
 		Ok(arkoor.created)
@@ -2013,7 +2013,7 @@ impl Wallet {
 				.effective_balance(payment.amount.to_signed()? - revoked)
 				.produced_vtxos(&vtxos)
 		).await?;
-		self.store_spendable_vtxos(&vtxos, payment.movement_id)?;
+		self.store_spendable_vtxos(&vtxos, Some(payment.movement_id))?;
 		self.mark_vtxos_as_spent(&htlc_vtxos, Some(payment.movement_id))?;
 		self.movements.finish_movement(payment.movement_id, MovementStatus::Finished).await?;
 
@@ -2130,7 +2130,7 @@ impl Wallet {
 		for vtxo in &htlc_vtxos {
 			self.validate_vtxo(vtxo).await?;
 		}
-		self.store_locked_vtxos(&htlc_vtxos, movement.id())?;
+		self.store_locked_vtxos(&htlc_vtxos, Some(movement.id()))?;
 		self.mark_vtxos_as_spent(&input_ids, Some(movement.id()))?;
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
@@ -2141,7 +2141,7 @@ impl Wallet {
 				format!("input vtxo chain anchor not found for lightning change vtxo: {}", last_input.chain_anchor().txid)
 			})?;
 			change.validate(&tx).context("invalid lightning change vtxo")?;
-			self.store_spendable_vtxos([change], movement.id())?;
+			self.store_spendable_vtxos([change], Some(movement.id()))?;
 		}
 
 		movement.apply_update(
@@ -2484,7 +2484,7 @@ impl Wallet {
 			effective_balance += vtxo.amount();
 		}
 
-		self.store_spendable_vtxos(&outputs, lightning_receive.movement_id)?;
+		self.store_spendable_vtxos(&outputs, Some(lightning_receive.movement_id))?;
 		self.movements.update_movement(
 			lightning_receive.movement_id,
 			MovementUpdate::new()
@@ -2645,7 +2645,7 @@ impl Wallet {
 			"Server didn't return enough VTXOs to cover invoice amount"
 		);
 
-		self.store_locked_vtxos(&vtxos, lightning_receive.movement_id)?;
+		self.store_locked_vtxos(&vtxos, Some(lightning_receive.movement_id))?;
 		self.movements.update_movement(
 			lightning_receive.movement_id,
 			MovementUpdate::new()
@@ -2895,7 +2895,7 @@ impl Wallet {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
-		Ok(self.participate_round(participation, RoundMovement::SendOnchain).await?)
+		self.participate_round(participation, Some(RoundMovement::SendOnchain)).await
 	}
 }
 
