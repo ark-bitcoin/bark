@@ -681,10 +681,12 @@ pub fn store_lightning_receive(
 	preimage: Preimage,
 	invoice: &Bolt11Invoice,
 	htlc_recv_cltv_delta: BlockDelta,
+	movement_id: MovementId,
 ) -> anyhow::Result<()> {
 	let query = "
-		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice, htlc_recv_cltv_delta)
-		VALUES (:payment_hash, :preimage, :invoice, :htlc_recv_cltv_delta);
+		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice,
+			htlc_recv_cltv_delta, movement_id)
+		VALUES (:payment_hash, :preimage, :invoice, :htlc_recv_cltv_delta, :movement_id);
 	";
 	let mut statement = conn.prepare(query)?;
 
@@ -693,6 +695,7 @@ pub fn store_lightning_receive(
 		":preimage": preimage.as_hex().to_string(),
 		":invoice": invoice.to_string(),
 		":htlc_recv_cltv_delta": htlc_recv_cltv_delta,
+		":movement_id": movement_id.inner(),
 	})?;
 
 	Ok(())
@@ -717,7 +720,7 @@ pub fn get_all_pending_lightning_receives<'a>(
 ) -> anyhow::Result<Vec<LightningReceive>> {
 	let query = "
 		SELECT payment_hash, preimage, invoice, htlc_vtxo_ids,
-			preimage_revealed_at, htlc_recv_cltv_delta
+			preimage_revealed_at, htlc_recv_cltv_delta, movement_id
 		FROM bark_pending_lightning_receive
 		ORDER BY created_at DESC";
 	let mut statement = conn.prepare(query)?;
@@ -732,6 +735,7 @@ pub fn get_all_pending_lightning_receives<'a>(
 			invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 			htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 			htlc_vtxos: get_htlc_vtxos(conn, &row)?,
+			movement_id: MovementId::new(row.get::<_, u32>("movement_id")?),
 		});
 	}
 
@@ -806,6 +810,7 @@ pub fn fetch_lightning_receive_by_payment_hash(
 		invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 		htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 		htlc_vtxos: get_htlc_vtxos(conn, &row)?,
+		movement_id: MovementId::new(row.get::<_, u32>("movement_id")?),
 	}))
 }
 

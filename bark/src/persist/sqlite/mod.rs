@@ -328,9 +328,12 @@ impl BarkPersister for SqliteClient {
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
 		htlc_recv_cltv_delta: BlockDelta,
+		movement_id: MovementId,
 	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_lightning_receive(&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta)?;
+		query::store_lightning_receive(
+			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta, movement_id,
+		)?;
 		Ok(())
 	}
 
