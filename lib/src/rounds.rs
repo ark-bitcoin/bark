@@ -23,9 +23,9 @@ pub const ROUND_TX_VTXO_TREE_VOUT: u32 = 0;
 pub const ROUND_TX_CONNECTOR_VOUT: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VtxoOwnershipChallenge([u8; 32]);
+pub struct RoundAttemptChallenge([u8; 32]);
 
-impl VtxoOwnershipChallenge {
+impl RoundAttemptChallenge {
 	const CHALENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"Ark round input ownership proof ";
 
 	pub fn new(value: [u8; 32]) -> Self {
@@ -40,7 +40,7 @@ impl VtxoOwnershipChallenge {
 		self.0
 	}
 
-	/// Combines [VtxoOwnershipChallenge] and [VtxoId] in a signable message
+	/// Combines [RoundAttemptChallenge] and [VtxoId] in a signable message
 	///
 	/// Note: because we use [`VtxoId`] in the message, there is no
 	fn as_signable_message(
@@ -219,7 +219,7 @@ impl<'de> serde::Deserialize<'de> for RoundId {
 pub struct RoundAttempt {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
-	pub challenge: VtxoOwnershipChallenge,
+	pub challenge: RoundAttemptChallenge,
 }
 
 #[derive(Debug, Clone)]

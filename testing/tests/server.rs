@@ -22,7 +22,7 @@ use ark::{
 	musig, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest,
 	SECP,
 };
-use ark::rounds::VtxoOwnershipChallenge;
+use ark::rounds::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
@@ -739,7 +739,7 @@ async fn bad_round_input() {
 		match stream.next().await.unwrap().unwrap() {
 			protos::RoundEvent { event: Some(event) } => match event {
 				protos::round_event::Event::Attempt(a) => {
-					break VtxoOwnershipChallenge::new(a.vtxo_ownership_challenge.try_into().unwrap());
+					break RoundAttemptChallenge::new(a.round_attempt_challenge.try_into().unwrap());
 				},
 				_ => {},
 			},
@@ -1141,7 +1141,7 @@ async fn reject_dust_vtxo_request() {
 	struct Proxy {
 		vtxo: WalletVtxoInfo,
 		wallet: Arc<Wallet>,
-		challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
+		challenge:  Arc<Mutex<Option<RoundAttemptChallenge>>>
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
@@ -1156,7 +1156,7 @@ async fn reject_dust_vtxo_request() {
 
 			let s = stream.inspect_ok(move |event| {
 				if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
-					let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+					let challenge = RoundAttemptChallenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
 					shared.try_lock().unwrap().replace(challenge);
 				}
 			});
@@ -1227,7 +1227,7 @@ async fn reject_dust_offboard_request() {
 	struct Proxy {
 		pub vtxo: WalletVtxoInfo,
 		pub wallet: Arc<Wallet>,
-		pub challenge:  Arc<Mutex<Option<VtxoOwnershipChallenge>>>
+		pub challenge:  Arc<Mutex<Option<RoundAttemptChallenge>>>
 	}
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
@@ -1243,7 +1243,7 @@ async fn reject_dust_offboard_request() {
 			let s = stream
 				.inspect_ok(move |event| {
 					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
-						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+						let challenge = RoundAttemptChallenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
 						shared.try_lock().unwrap().replace(challenge);
 					}
 				});
@@ -1877,7 +1877,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	#[derive(Clone)]
 	struct Proxy {
 		pub wallet: Arc<Wallet>,
-		pub challenge: Arc<Mutex<Option<VtxoOwnershipChallenge>>>,
+		pub challenge: Arc<Mutex<Option<RoundAttemptChallenge>>>,
 		pub vtxo: WalletVtxoInfo
 	}
 	#[tonic::async_trait]
@@ -1891,7 +1891,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 			let stream = upstream.subscribe_rounds(req).await?.into_inner()
 				.inspect_ok(move |event| {
 					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
-						let challenge = VtxoOwnershipChallenge::new(m.vtxo_ownership_challenge.clone().try_into().unwrap());
+						let challenge = RoundAttemptChallenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
 						shared.try_lock().unwrap().replace(challenge);
 					}
 				});

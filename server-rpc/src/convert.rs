@@ -10,7 +10,7 @@ use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::lightning::{PaymentHash, Preimage};
-use ark::rounds::{RoundId, VtxoOwnershipChallenge};
+use ark::rounds::{RoundId, RoundAttemptChallenge};
 use ark::tree::signed::VtxoTreeSpec;
 
 use crate::protos;
@@ -187,7 +187,7 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 					protos::round_event::Event::Attempt(protos::RoundAttempt {
 						round_seq: (*round_seq).into(),
 						attempt_seq: *attempt_seq as u64,
-						vtxo_ownership_challenge: challenge.inner().to_vec(),
+						round_attempt_challenge: challenge.inner().to_vec(),
 					})
 				},
 				ark::rounds::RoundEvent::VtxoProposal(ark::rounds::VtxoProposal {
@@ -245,8 +245,8 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq: m.round_seq.into(),
 					attempt_seq: m.attempt_seq as usize,
-					challenge: VtxoOwnershipChallenge::new(
-						m.vtxo_ownership_challenge.try_into().map_err(|_| "invalid challenge")?
+					challenge: RoundAttemptChallenge::new(
+						m.round_attempt_challenge.try_into().map_err(|_| "invalid challenge")?
 					),
 				})
 			},
