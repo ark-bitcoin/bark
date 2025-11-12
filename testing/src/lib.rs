@@ -26,7 +26,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
 
-use bitcoin::Amount;
+use bitcoin::{Amount, SignedAmount};
 
 #[macro_export]
 macro_rules! assert_eq {
@@ -65,9 +65,20 @@ pub const fn sat(sats: u64) -> Amount {
 	Amount::from_sat(sats)
 }
 
+/// Shorthand for SignedAmount from sats
+pub const fn signed_sat(sats: i64) -> SignedAmount {
+	SignedAmount::from_sat(sats)
+}
+
 /// Shorthand for Amount from BTC
 pub fn btc(btc: impl fmt::Display) -> Amount {
 	Amount::from_str(&format!("{} btc", btc))
+		.expect(&format!("invalid btc amount: {}", btc))
+}
+
+/// Shorthand for SignedAmount from BTC
+pub fn signed_btc(btc: impl fmt::Display) -> SignedAmount {
+	SignedAmount::from_str(&format!("{} btc", btc))
 		.expect(&format!("invalid btc amount: {}", btc))
 }
 

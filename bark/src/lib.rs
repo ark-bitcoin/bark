@@ -339,9 +339,8 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::exit::Exit;
-use crate::movement::{MovementDestination, MovementStatus};
+use crate::movement::{Movement, MovementDestination, MovementStatus};
 use crate::movement::manager::{MovementGuard, MovementManager};
-use crate::movement::old::*;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
@@ -1037,7 +1036,7 @@ impl Wallet {
 
 	/// Fetches all wallet fund movements ordered from newest to oldest.
 	pub fn movements(&self) -> anyhow::Result<Vec<Movement>> {
-		Ok(self.db.get_movements_old()?)
+		Ok(self.db.get_movements()?)
 	}
 
 	/// Returns all VTXOs from the database.

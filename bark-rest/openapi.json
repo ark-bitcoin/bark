@@ -2854,50 +2854,163 @@
       },
       "Movement": {
         "type": "object",
+        "description": "Describes an attempted movement of offchain funds within the Bark [Wallet].",
         "required": [
           "id",
-          "fees",
-          "spends",
-          "receives",
-          "recipients",
-          "created_at"
+          "status",
+          "subsystem",
+          "intended_balance_sat",
+          "effective_balance_sat",
+          "offchain_fee_sat",
+          "sent_to",
+          "received_on",
+          "input_vtxos",
+          "output_vtxos",
+          "exited_vtxos",
+          "time"
         ],
         "properties": {
-          "created_at": {
-            "type": "string",
-            "description": "Movement date"
-          },
-          "fees": {
+          "effective_balance_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "Fees paid for the movement",
-            "minimum": 0
+            "description": "How much the wallet balance actually changed by. Positive numbers indicate an increase and\nnegative numbers indicate a decrease. This is often inclusive of applicable fees, and it\nshould be the most accurate number."
+          },
+          "exited_vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A list of IDs for VTXOs that were marked for unilateral exit as a result of this movement.\nThis could happen for many reasons, e.g. an unsuccessful lightning payment which can't be\nrevoked but is about to expire. VTXOs listed here will result in a reduction of spendable\nbalance due to the VTXOs being managed by the [bark::Exit] system."
           },
           "id": {
             "type": "integer",
             "format": "int32",
+            "description": "The internal ID of the movement.",
             "minimum": 0
           },
-          "receives": {
+          "input_vtxos": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/VtxoInfo"
+              "type": "string"
             },
-            "description": "Received VTXOs from this movement"
+            "description": "A list of [Vtxo] IDs that were consumed by this movement and are either locked or\nunavailable."
           },
-          "recipients": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RecipientInfo"
-            },
-            "description": "External recipients of the movement"
+          "intended_balance_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How much the movement was expected to increase or decrease the balance by. This is always an\nestimate and often discounts any applicable fees."
           },
-          "spends": {
+          "metadata": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Miscellaneous metadata for the movement. This is JSON containing arbitrary information as\ndefined by the subsystem that created the movement."
+          },
+          "offchain_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How much the movement cost the user in offchain fees. If there are applicable onchain fees\nthey will not be included in this value but, depending on the subsystem, could be found in\nthe metadata.",
+            "minimum": 0
+          },
+          "output_vtxos": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/VtxoInfo"
+              "type": "string"
             },
-            "description": "wallet's VTXOs spent in this movement"
+            "description": "A list of IDs for new VTXOs that were produced as a result of this movement. Often change\nVTXOs will be found here for outbound actions unless this was an inbound action."
+          },
+          "received_on": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovementDestination"
+            },
+            "description": "Describes the means by which the wallet received funds in this movement. This could include\nBOLT11 invoices or other useful data."
+          },
+          "sent_to": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovementDestination"
+            },
+            "description": "A list of external recipients that received funds from this movement."
+          },
+          "status": {
+            "type": "string",
+            "description": "The status of the movement."
+          },
+          "subsystem": {
+            "$ref": "#/components/schemas/MovementSubsystem",
+            "description": "Contains information about the subsystem that created the movement as well as the purpose\nof the movement."
+          },
+          "time": {
+            "$ref": "#/components/schemas/MovementTimestamp",
+            "description": "Contains the times at which the movement was created, updated and completed."
+          }
+        }
+      },
+      "MovementDestination": {
+        "type": "object",
+        "description": "Describes a recipient of a movement. This could either be an external recipient in send actions\nor it could be the bark wallet itself.",
+        "required": [
+          "destination",
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many sats the recipient received.",
+            "minimum": 0
+          },
+          "destination": {
+            "type": "string",
+            "description": "An address, invoice or any other identifier to distinguish the recipient."
+          }
+        }
+      },
+      "MovementSubsystem": {
+        "type": "object",
+        "description": "Contains information about the subsystem that created the movement as well as the purpose\nof the movement.",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "The action responsible for registering the movement."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the subsystem that created and manages the movement."
+          }
+        }
+      },
+      "MovementTimestamp": {
+        "type": "object",
+        "description": "Contains the times at which the movement was created, updated and completed.",
+        "required": [
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The action responsible for registering the movement."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the movement was first created."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the movement was last updated."
           }
         }
       },
@@ -3091,24 +3204,6 @@
               "null"
             ],
             "description": "The round transaction id, if already assigned"
-          }
-        }
-      },
-      "RecipientInfo": {
-        "type": "object",
-        "required": [
-          "recipient",
-          "amount_sat"
-        ],
-        "properties": {
-          "amount_sat": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "recipient": {
-            "type": "string",
-            "description": "Can either be a publickey, spk or a bolt11 invoice"
           }
         }
       },

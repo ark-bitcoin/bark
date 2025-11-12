@@ -3,18 +3,20 @@ use std::borrow::Borrow;
 use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::{Amount, FeeRate, Txid, SignedAmount};
+use chrono::DateTime;
+#[cfg(feature = "utoipa")]
+use utoipa::ToSchema;
 
 use ark::lightning::{PaymentHash, Preimage};
 use ark::VtxoId;
+use bark::movement::{MovementId, MovementStatus};
 use bitcoin_ext::{BlockDelta, BlockHeight};
-#[cfg(feature = "utoipa")]
-use utoipa::ToSchema;
 
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
 use crate::exit::ExitState;
-use crate::primitives::{VtxoInfo, WalletVtxoInfo, RecipientInfo};
+use crate::primitives::{VtxoInfo, WalletVtxoInfo};
 use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -252,32 +254,148 @@ impl From<bark::Board> for Board {
 	}
 }
 
+/// Describes an attempted movement of offchain funds within the Bark [Wallet].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct Movement {
-	pub id: u32,
-	/// Fees paid for the movement
+	/// The internal ID of the movement.
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
+	pub id: MovementId,
+	/// The status of the movement.
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub status: MovementStatus,
+	/// Contains information about the subsystem that created the movement as well as the purpose
+	/// of the movement.
+	pub subsystem: MovementSubsystem,
+	/// Miscellaneous metadata for the movement. This is JSON containing arbitrary information as
+	/// defined by the subsystem that created the movement.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub metadata: Option<String>,
+	/// How much the movement was expected to increase or decrease the balance by. This is always an
+	/// estimate and often discounts any applicable fees.
+	#[serde(rename="intended_balance_sat", with="bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = i64))]
+	pub intended_balance: SignedAmount,
+	/// How much the wallet balance actually changed by. Positive numbers indicate an increase and
+	/// negative numbers indicate a decrease. This is often inclusive of applicable fees, and it
+	/// should be the most accurate number.
+	#[serde(rename="effective_balance_sat", with="bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = i64))]
+	pub effective_balance: SignedAmount,
+	/// How much the movement cost the user in offchain fees. If there are applicable onchain fees
+	/// they will not be included in this value but, depending on the subsystem, could be found in
+	/// the metadata.
+	#[serde(rename="offchain_fee_sat", with="bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub fees: Amount,
-	/// wallet's VTXOs spent in this movement
-	pub spends: Vec<VtxoInfo>,
-	/// Received VTXOs from this movement
-	pub receives: Vec<VtxoInfo>,
-	/// External recipients of the movement
-	pub recipients: Vec<RecipientInfo>,
-	/// Movement date
-	pub created_at: String,
+	pub offchain_fee: Amount,
+	/// A list of external recipients that received funds from this movement.
+	pub sent_to: Vec<MovementDestination>,
+	/// Describes the means by which the wallet received funds in this movement. This could include
+	/// BOLT11 invoices or other useful data.
+	pub received_on: Vec<MovementDestination>,
+	/// A list of [Vtxo] IDs that were consumed by this movement and are either locked or
+	/// unavailable.
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+	pub input_vtxos: Vec<VtxoId>,
+	/// A list of IDs for new VTXOs that were produced as a result of this movement. Often change
+	/// VTXOs will be found here for outbound actions unless this was an inbound action.
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+	pub output_vtxos: Vec<VtxoId>,
+	/// A list of IDs for VTXOs that were marked for unilateral exit as a result of this movement.
+	/// This could happen for many reasons, e.g. an unsuccessful lightning payment which can't be
+	/// revoked but is about to expire. VTXOs listed here will result in a reduction of spendable
+	/// balance due to the VTXOs being managed by the [bark::Exit] system.
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+	pub exited_vtxos: Vec<VtxoId>,
+	/// Contains the times at which the movement was created, updated and completed.
+	pub time: MovementTimestamp,
 }
 
-impl From<bark::movement::old::Movement> for Movement {
-	fn from(v: bark::movement::old::Movement) -> Self {
-		Movement {
-			id: v.id,
-			fees: v.fees,
-			spends: v.spends.into_iter().map(VtxoInfo::from).collect(),
-			receives: v.receives.into_iter().map(VtxoInfo::from).collect(),
-			recipients: v.recipients.into_iter().map(RecipientInfo::from).collect(),
-			created_at: v.created_at.to_string(),
+impl TryFrom<bark::movement::Movement> for Movement {
+	type Error = serde_json::Error;
+
+	fn try_from(m: bark::movement::Movement) -> Result<Self, Self::Error> {
+		Ok(Movement {
+			id: m.id,
+			status: m.status,
+			subsystem: MovementSubsystem::from(m.subsystem),
+			metadata: if m.metadata.is_empty() { None } else {
+				Some(serde_json::to_string(&m.metadata)?)
+			},
+			intended_balance: m.intended_balance,
+			effective_balance: m.effective_balance,
+			offchain_fee: m.offchain_fee,
+			sent_to: m.sent_to.into_iter().map(MovementDestination::from).collect(),
+			received_on: m.received_on.into_iter().map(MovementDestination::from).collect(),
+			input_vtxos: m.input_vtxos,
+			output_vtxos: m.output_vtxos,
+			exited_vtxos: m.exited_vtxos,
+			time: MovementTimestamp::from(m.time),
+		})
+	}
+}
+
+/// Describes a recipient of a movement. This could either be an external recipient in send actions
+/// or it could be the bark wallet itself.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct MovementDestination {
+	/// An address, invoice or any other identifier to distinguish the recipient.
+	pub destination: String,
+	/// How many sats the recipient received.
+	#[serde(rename="amount_sat", with="bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub amount: Amount,
+}
+
+impl From<bark::movement::MovementDestination> for MovementDestination {
+	fn from(d: bark::movement::MovementDestination) -> Self {
+		MovementDestination {
+			destination: d.destination,
+			amount: d.amount,
+		}
+	}
+}
+
+/// Contains information about the subsystem that created the movement as well as the purpose
+/// of the movement.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct MovementSubsystem {
+	/// The name of the subsystem that created and manages the movement.
+	pub name: String,
+	/// The action responsible for registering the movement.
+	pub kind: String,
+}
+
+impl From<bark::movement::MovementSubsystem> for MovementSubsystem {
+	fn from(s: bark::movement::MovementSubsystem) -> Self {
+		MovementSubsystem {
+			name: s.name,
+			kind: s.kind,
+		}
+	}
+}
+
+/// Contains the times at which the movement was created, updated and completed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct MovementTimestamp {
+	/// When the movement was first created.
+	pub created_at: DateTime<chrono::Utc>,
+	/// When the movement was last updated.
+	pub updated_at: DateTime<chrono::Utc>,
+	/// The action responsible for registering the movement.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub completed_at: Option<DateTime<chrono::Utc>>,
+}
+
+impl From<bark::movement::MovementTimestamp> for MovementTimestamp {
+	fn from(t: bark::movement::MovementTimestamp) -> Self {
+		MovementTimestamp {
+			created_at: t.created_at,
+			updated_at: t.updated_at,
+			completed_at: t.completed_at,
 		}
 	}
 }

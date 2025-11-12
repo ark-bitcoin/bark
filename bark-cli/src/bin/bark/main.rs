@@ -25,7 +25,6 @@ use log::{debug, info, warn};
 use ark::VtxoId;
 use bark::{BarkNetwork, Config};
 use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
-use bark::movement::old::Movement;
 use bark::round::RoundStatus;
 use bark::vtxo::selection::VtxoFilter;
 use bark::vtxo::state::{VtxoStateKind, WalletVtxo};
@@ -56,20 +55,6 @@ fn wallet_vtxo_to_json(vtxo: &WalletVtxo) -> primitives::WalletVtxoInfo {
 	primitives::WalletVtxoInfo {
 		vtxo: vtxo.vtxo.clone().into(),
 		state: vtxo.state.kind().as_str().to_string(),
-	}
-}
-
-fn movement_to_json(movement: &Movement) -> json::Movement {
-	json::Movement {
-		id: movement.id,
-		fees: movement.fees,
-		spends: movement.spends.clone().into_iter().map(|v| v.into()).collect(),
-		receives: movement.receives.clone().into_iter().map(|v| v.into()).collect(),
-		recipients: movement.recipients.iter().map(|r| primitives::RecipientInfo {
-			recipient: r.recipient.clone(),
-			amount: r.amount,
-		}).collect(),
-		created_at: movement.created_at.to_string(),
 	}
 }
 
@@ -626,11 +611,20 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let mut movements = wallet.movements()?.into_iter()
-				.map(|mv| movement_to_json(&mv))
-				.collect::<Vec<_>>();
+				.map(json::Movement::try_from)
+				.collect::<Result<Vec<_>, _>>()?;
 
-			// movements are ordered from newest to oldest, so we reverse them so last terminal item is newest
-			movements.reverse();
+			// Movements are ordered from newest to oldest, so we reverse them to ensure the last
+			// item in the terminal is the newest. To reduce flaky tests, we should fall back to
+			// sorting by ID.
+			movements.sort_by(|l, r| {
+				let time = l.time.created_at.cmp(&r.time.created_at);
+				if time == Ordering::Equal {
+					l.id.inner().cmp(&r.id.inner())
+				} else {
+					time
+				}
+			});
 
 			output_json(&movements);
 		},

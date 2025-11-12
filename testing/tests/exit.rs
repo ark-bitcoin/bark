@@ -290,12 +290,12 @@ async fn double_exit_call() {
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 	let bark3 = ctx.new_bark_with_funds("bark3", &srv, sat(1_000_000)).await;
 
+	bark1.board(sat(200_000)).await;
 	bark2.board(sat(500_000)).await;
 	bark3.board(sat(500_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// refresh vtxo
-	bark1.board(sat(200_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
 
 	// board vtxo
@@ -321,8 +321,8 @@ async fn double_exit_call() {
 				let exit_spk = exit_taproot(v.user_pubkey, v.server_pubkey, v.exit_delta).script_pubkey();
 				let address = Address::from_script(&exit_spk, Params::REGTEST)
 					.unwrap().to_string();
-				m.spends.first().unwrap().id == v.id &&
-					m.recipients[0].recipient == address.to_string()
+				*m.input_vtxos.first().unwrap() == v.id &&
+					m.sent_to[0].destination == address.to_string()
 			})
 		),
 		"each exited vtxo should be linked to a movement with exit_spk as destination"
@@ -343,12 +343,13 @@ async fn double_exit_call() {
 
 	// check we only exited last vtxo
 	let last_move = movements.last().unwrap();
-	assert_eq!(last_move.spends.len(), 1, "we should only exit last spendable vtxo");
-	assert_eq!(last_move.spends.first().unwrap().id, vtxo.id);
+	assert_eq!(last_move.input_vtxos.len(), 1, "we should only exit last spendable vtxo");
+	assert_eq!(*last_move.input_vtxos.first().unwrap(), vtxo.id);
+	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
 	let exit_spk = exit_taproot(vtxo.user_pubkey, vtxo.server_pubkey, vtxo.exit_delta).script_pubkey();
 	let address = Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string();
-	assert_eq!(last_move.recipients[0].recipient, address, "movement destination should be exit_spk");
+	assert_eq!(last_move.sent_to[0].destination, address, "movement destination should be exit_spk");
 
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
