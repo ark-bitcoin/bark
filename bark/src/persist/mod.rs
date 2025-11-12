@@ -299,6 +299,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Load the recovered past rounds
 	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>>;
 
+	/// Stores the given VTXOs in the given [VtxoState].
+	fn store_vtxos(
+		&self,
+		vtxos: &[(&Vtxo, &VtxoState)],
+		movement_id: MovementId,
+	) -> anyhow::Result<()>;
+
 	/// Fetch a wallet [Vtxo] with its current state by ID.
 	///
 	/// Parameters:
@@ -550,10 +557,40 @@ pub trait BarkPersister: Send + Sync + 'static {
 		exit_txid: Txid,
 	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>>;
 
+	/// Updates the state of the VTXO corresponding to the given [VtxoId], provided that their
+	/// current state is one of the given `allowed_states`.
+	///
+	/// # Parameters
+	/// - `vtxo_id`: The ID of the [Vtxo] to update.
+	/// - `state`: The new state to be set for the specified [Vtxo].
+	/// - `allowed_states`: An iterable collection of allowed states ([VtxoStateKind]) that the
+	///   [Vtxo] must currently be in for their state to be updated to the new `state`.
+	///
+	/// # Returns
+	/// - `Ok(WalletVtxo)` if the state update is successful.
+	/// - `Err(anyhow::Error)` if the VTXO fails to meet the required conditions,
+	///    or if another error occurs during the operation.
+	///
+	/// # Errors
+	/// - Returns an error if the current state is not within the `allowed_states`.
+	/// - Returns an error for any other issues encountered during the operation.
 	fn update_vtxo_state_checked(
 		&self,
 		vtxo_id: VtxoId,
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
+
+	/// Links a spent [Vtxo] to a specific [Movement]. Establishing this link helps in tracking the
+	/// flow of funds.
+	///
+	/// # Parameters
+	///
+	/// * `vtxo_id` - The unique identifier of the [Vtxo] that has been spent.
+	/// * `movement_id` - The unique identifier of the [Movement] which spent the [Vtxo].
+	fn link_spent_vtxo_to_movement(
+		&self,
+		vtxo_id: VtxoId,
+		movement_id: MovementId,
+	) -> anyhow::Result<()>;
 }

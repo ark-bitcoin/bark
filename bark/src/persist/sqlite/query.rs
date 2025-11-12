@@ -282,10 +282,10 @@ pub fn remove_pending_board(
 pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
-	movement_id: i32,
 	state: &VtxoState,
+	movement_id: i32,
 ) -> anyhow::Result<()> {
-	// Store the ftxo
+	// Store the vtxo
 	let q1 =
 		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo)
 		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
@@ -908,10 +908,16 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let movement_id = create_movement_old(&tx, old::MovementKind::Board, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, &VtxoState::Locked).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::Locked).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::Locked).unwrap();
+		let subsystem = MovementSubsystem {
+			name: "unit test".to_string(),
+			kind: "test_update_vtxo_state".to_string(),
+		};
+		let movement_id = create_new_movement(
+			&tx, MovementStatus::Pending, &subsystem, chrono::Utc::now(),
+		).unwrap().inner() as i32;
+		store_vtxo_with_initial_state(&tx, &vtxo_1, &VtxoState::Locked, movement_id).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, &VtxoState::Locked, movement_id).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, &VtxoState::Locked, movement_id).unwrap();
 
 		// This update will fail because the current state is Locked
 		// We only allow the state to switch from VtxoState::Spendable

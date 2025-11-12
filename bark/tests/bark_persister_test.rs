@@ -294,6 +294,14 @@ impl BarkPersister for Dummy {
 	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(vec![dummy_movement(MovementStatus::Failed)])
 	}
+
+	fn store_vtxos(&self, _vtxos: &[(&Vtxo, &VtxoState)], _mid: MovementId) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn link_spent_vtxo_to_movement(&self, _v: VtxoId, _m: MovementId) -> anyhow::Result<()> {
+		Ok(())
+	}
 }
 
 fn dummy_lightning_receive() -> LightningReceive {

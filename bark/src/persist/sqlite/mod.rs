@@ -168,8 +168,8 @@ impl BarkPersister for SqliteClient {
 				.context("Failed to mark vtxo as spent")?;
 		}
 
-		for (v, s) in movement.receives {
-			query::store_vtxo_with_initial_state(&tx, v, movement_id, s)?;
+		for (_v, _s) in movement.receives {
+			//query::store_vtxo_with_initial_state(&tx, v, movement_id, s)?;
 		}
 
 		for (recipient, amount) in movement.recipients {
@@ -247,6 +247,22 @@ impl BarkPersister for SqliteClient {
 	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>> {
 		let conn = self.connect()?;
 		query::load_recovered_past_rounds(&conn)
+	}
+
+	fn store_vtxos(
+		&self,
+		vtxos: &[(&Vtxo, &VtxoState)],
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let movement_id = movement_id.inner() as i32;
+
+		for (vtxo, state) in vtxos {
+			query::store_vtxo_with_initial_state(&tx, vtxo, state, movement_id)?;
+		}
+		tx.commit()?;
+		Ok(())
 	}
 
 	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
@@ -407,6 +423,15 @@ impl BarkPersister for SqliteClient {
 		let conn = self.connect()?;
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
 	}
+
+	fn link_spent_vtxo_to_movement(
+		&self,
+		vtxo_id: VtxoId,
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::link_spent_vtxo_to_movement(&conn, vtxo_id, movement_id.inner() as i32)
+	}
 }
 
 #[cfg(any(test, doc))]
@@ -445,42 +470,38 @@ pub mod helpers {
 
 #[cfg(test)]
 mod test {
-
 	use bdk_wallet::chain::DescriptorExt;
 	use bitcoin::bip32;
+	use chrono::Utc;
 
 	use ark::vtxo::test::VTXO_VECTORS;
 
 	use crate::persist::sqlite::helpers::in_memory_db;
-
+	use crate::persist::sqlite::query::create_new_movement;
 	use super::*;
 
 	#[test]
-	fn test_add_and_retreive_vtxos() {
-		let pk: PublicKey = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
-
+	fn test_add_and_retrieve_vtxos() {
 		let vtxo_1 = &VTXO_VECTORS.board_vtxo;
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let (cs, conn) = in_memory_db();
+		let (cs, mut conn) = in_memory_db();
 		let db = SqliteClient::open(cs).unwrap();
+		let tx = conn.transaction().unwrap();
 
-		db.register_movement_old(old::MovementArgs {
-			kind: old::MovementKind::Board,
-			spends: &[],
-			receives: &[(&vtxo_1, VtxoState::Spendable)],
-			recipients: &[],
-			fees: None,
-		}).unwrap();
+		let subsystem = MovementSubsystem {
+			name: "unit test".into(),
+			kind: "test_add_and_retreive_vtxos".into(),
+		};
+		let movement_id = create_new_movement(
+			&tx, MovementStatus::Pending, &subsystem, Utc::now(),
+		).unwrap();
+		tx.commit().unwrap();
 
-		db.register_movement_old(old::MovementArgs {
-			kind: old::MovementKind::Board,
-			spends: &[],
-			receives: &[(&vtxo_2, VtxoState::Spendable)],
-			recipients: &[],
-			fees: None,
-		}).unwrap();
+		db.store_vtxos(&[
+			(vtxo_1, &VtxoState::Spendable), (vtxo_2, &VtxoState::Spendable)
+		], movement_id).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
 		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
@@ -497,27 +518,15 @@ mod test {
 		assert!(!vtxos.iter().any(|v| v.vtxo == *vtxo_3));
 
 		// Verify that we can mark a vtxo as spent
-		db.register_movement_old(old::MovementArgs {
-			kind: old::MovementKind::Board,
-			spends: &[&vtxo_1],
-			receives: &[],
-			recipients: &[
-				(&pk.to_string(), Amount::from_sat(501))
-			],
-			fees: None
-		}).unwrap();
+		db.update_vtxo_state_checked(
+			vtxo_1.id(), VtxoState::Spent, &UNSPENT_STATES,
+		).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
-		db.register_movement_old(old::MovementArgs {
-			kind: old::MovementKind::Board,
-			spends: &[],
-			receives: &[(&vtxo_3, VtxoState::Spendable)],
-			recipients: &[],
-			fees: None,
-		}).unwrap();
+		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)], movement_id).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);
