@@ -375,6 +375,64 @@ impl Wallet {
 		Ok(receive)
 	}
 
+	async fn exit_or_cancel_lightning_receive(
+		&self,
+		lightning_receive: &LightningReceive,
+	) -> anyhow::Result<()> {
+		let vtxos = lightning_receive.htlc_vtxos.as_ref()
+			.map(|v| v.iter().map(|v| &v.vtxo).collect::<Vec<_>>());
+
+		let update_opt = match (vtxos, lightning_receive.preimage_revealed_at) {
+			(Some(vtxos), Some(_)) => {
+				warn!("LN receive is being cancelled but preimage has been disclosed. Exiting");
+				self.exit.write().await.mark_vtxos_for_exit(&vtxos).await?;
+				if let Some(movement_id) = lightning_receive.movement_id {
+					Some((
+						movement_id,
+						MovementUpdate::new().exited_vtxos(vtxos),
+						MovementStatus::Failed,
+					))
+				} else {
+					error!("movement id is missing but we disclosed preimage: {}", lightning_receive.payment_hash);
+					None
+				}
+			}
+			(Some(vtxos), None) => {
+				warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet. Cancelling");
+				self.mark_vtxos_as_spent(vtxos)?;
+				if let Some(movement_id) = lightning_receive.movement_id {
+					Some((
+						movement_id,
+						MovementUpdate::new()
+							.effective_balance(SignedAmount::ZERO),
+						MovementStatus::Cancelled,
+					))
+				} else {
+					error!("movement id is missing but we got HTLC vtxos: {}", lightning_receive.payment_hash);
+					None
+				}
+			}
+			(None, Some(_)) => {
+				error!("No HTLC vtxos set on ln receive but preimage has been disclosed. Cancelling");
+				lightning_receive.movement_id.map(|id| (id,
+					MovementUpdate::new()
+						.effective_balance(SignedAmount::ZERO),
+					MovementStatus::Cancelled,
+				))
+			}
+			(None, None) => None,
+		};
+
+		if let Some((movement_id, update, status)) = update_opt {
+			self.movements.update_movement(movement_id, update).await?;
+			self.movements.finish_movement(movement_id, status).await?;
+		}
+
+		self.db.remove_pending_lightning_receive(lightning_receive.payment_hash)?;
+
+		Ok(())
+	}
+
 	/// Check and claim a Lightning receive
 	///
 	/// This function checks for an incoming lightning payment with the given [PaymentHash]
@@ -430,35 +488,11 @@ impl Wallet {
 				self.config.vtxo_exit_margin;
 
 			if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
-				if receive.preimage_revealed_at.is_some() {
-					warn!("HTLC-recv VTXOs are about to expire and preimage has been disclosed, \
-						must exit",);
-					self.exit.write().await.mark_vtxos_for_exit(
-						&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(),
-					).await?;
-					if let Some(id) = receive.movement_id {
-						self.movements.update_movement(
-							id,
-							MovementUpdate::new()
-								.exited_vtxos(vtxos)
-						).await?;
-						self.movements.finish_movement(id, MovementStatus::Failed).await?;
-					}
-				} else {
-					warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
-					self.mark_vtxos_as_spent(vtxos)?;
-					if let Some(id) = receive.movement_id {
-						self.movements.update_movement(
-							id,
-							MovementUpdate::new()
-								.effective_balance(SignedAmount::ZERO)
-						).await?;
-						self.movements.finish_movement(id, MovementStatus::Cancelled).await?;
-					}
-				}
+				warn!("HTLC-recv VTXOs are about to expire, interupting lightning receive");
+				self.exit_or_cancel_lightning_receive(&receive).await?;
 			}
 
-			Err(e).context("failed to claim lightning receive")
+			Err(e)
 		} else {
 			Ok(true)
 		}
