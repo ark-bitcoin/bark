@@ -72,7 +72,7 @@ CREATE TABLE bark_pending_lightning_send (
 				amount_sats INTEGER NOT NULL,
 				htlc_vtxo_ids TEXT NOT NULL,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-			);
+			, movement_id INTEGER NOT NULL);
 CREATE TABLE bark_round_state (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				state BLOB NOT NULL

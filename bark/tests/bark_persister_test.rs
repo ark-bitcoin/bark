@@ -138,11 +138,13 @@ impl BarkPersister for Dummy {
 		invoice: &Invoice,
 		amount: &Amount,
 		_vtxos: &[VtxoId],
+		movement_id: MovementId
 	) -> anyhow::Result<PendingLightningSend> {
 		Ok(PendingLightningSend {
 			invoice: invoice.clone(),
 			amount: *amount,
 			htlc_vtxos: vec![],
+			movement_id,
 		})
 	}
 

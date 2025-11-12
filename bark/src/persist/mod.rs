@@ -420,8 +420,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the pending lightning send cannot be stored.
-	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId])
-		-> anyhow::Result<PendingLightningSend>;
+	fn store_new_pending_lightning_send(
+		&self,
+		invoice: &Invoice,
+		amount: &Amount,
+		vtxos: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<PendingLightningSend>;
 
 	/// Get all pending lightning sends.
 	///

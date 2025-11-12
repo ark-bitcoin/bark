@@ -431,8 +431,9 @@ pub fn load_recovered_past_rounds(
 }
 
 pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<PendingLightningSend>> {
-	let query = "SELECT htlc_vtxo_ids, invoice, amount_sats FROM bark_pending_lightning_send";
-	let mut statement = conn.prepare(query)?;
+	let mut statement = conn.prepare("
+		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id FROM bark_pending_lightning_send
+	")?;
 	let mut rows = statement.query(())?;
 
 	let mut pending_lightning_sends = Vec::new();
@@ -440,6 +441,7 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 		let invoice = row.get::<_, String>("invoice")?;
 		let htlc_vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&row.get::<_, String>(0)?)?;
 		let amount_sats = row.get::<_, i64>("amount_sats")?;
+		let movement_id = MovementId::new(row.get::<_, u32>("movement_id")?);
 
 		let mut htlc_vtxos = Vec::new();
 		for htlc_vtxo_id in htlc_vtxo_ids {
@@ -449,7 +451,8 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 		pending_lightning_sends.push(PendingLightningSend {
 			invoice: Invoice::from_str(&invoice)?,
 			amount: Amount::from_sat(amount_sats as u64),
-			htlc_vtxos: htlc_vtxos,
+			htlc_vtxos,
+			movement_id,
 		});
 	}
 
@@ -461,10 +464,11 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 	invoice: &Invoice,
 	amount: &Amount,
 	htlc_vtxo_ids: &[V],
+	movement_id: MovementId,
 ) -> anyhow::Result<PendingLightningSend> {
 	let query = "
-		INSERT INTO bark_pending_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids)
-		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids)
+		INSERT INTO bark_pending_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids, movement_id)
+		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids, :movement_id)
 	";
 
 	let mut statement = conn.prepare(query)?;
@@ -481,12 +485,14 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 		":payment_hash": invoice.payment_hash().as_hex().to_string(),
 		":amount_sats": amount.to_sat(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
+		":movement_id": movement_id.inner(),
 	})?;
 
 	Ok(PendingLightningSend {
 		invoice: invoice.clone(),
 		amount: *amount,
-		htlc_vtxos: htlc_vtxos,
+		htlc_vtxos,
+		movement_id,
 	})
 }
 

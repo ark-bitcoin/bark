@@ -38,6 +38,7 @@ pub struct PendingLightningSend {
 	pub invoice: Invoice,
 	pub amount: Amount,
 	pub htlc_vtxos: Vec<WalletVtxo>,
+	pub movement_id: MovementId,
 }
 
 /// Persisted representation of an incoming Lightning payment.

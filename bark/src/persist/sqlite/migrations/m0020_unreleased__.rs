@@ -128,6 +128,7 @@ impl Migration for Migration0020 {
 				spent_in TEXT REFERENCES bark_movements(id)
 			);",
 			"ALTER TABLE bark_pending_board ADD COLUMN movement_id INTEGER NOT NULL;",
+			"ALTER TABLE bark_pending_lightning_send ADD COLUMN movement_id INTEGER NOT NULL;",
 		];
 
 		for query in queries {
