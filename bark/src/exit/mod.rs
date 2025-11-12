@@ -134,18 +134,22 @@ use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use crate::Wallet;
 use crate::exit::models::{ExitError, ExitProgressStatus, ExitState, ExitTransactionStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
+use crate::movement::manager::MovementManager;
 use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
-use crate::vtxo::state::UNSPENT_STATES;
+use crate::subsystem::{BarkSubsystem, ExitMovement, SubsystemId};
+use crate::vtxo::state::{VtxoState, UNSPENT_STATES};
 
 /// Handles the process of ongoing VTXO exits.
 pub struct Exit {
 	tx_manager: ExitTransactionManager,
 	persister: Arc<dyn BarkPersister>,
 	chain_source: Arc<ChainSource>,
+	movement_manager: Arc<MovementManager>,
 
+	subsystem_id: SubsystemId,
 	vtxos_to_exit: HashSet<VtxoId>,
 	exit_vtxos: Vec<ExitVtxo>,
 }
@@ -154,18 +158,24 @@ impl Exit {
 	pub (crate) async fn new(
 		persister: Arc<dyn BarkPersister>,
 		chain_source: Arc<ChainSource>,
+		movement_manager: Arc<MovementManager>,
 	) -> anyhow::Result<Exit> {
 		let tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
 
 		// Gather the database entries for our exit and convert them into ExitVtxo structs
 		let exit_vtxo_entries = persister.get_exit_vtxo_entries()?;
 
+		let subsystem_id = movement_manager.register_subsystem(
+			BarkSubsystem::Exit.as_str().into(),
+		).await?;
 		Ok(Exit {
 			vtxos_to_exit: HashSet::new(),
 			exit_vtxos: Vec::with_capacity(exit_vtxo_entries.len()),
+			subsystem_id,
 			tx_manager,
 			persister,
 			chain_source,
+			movement_manager,
 		})
 	}
 

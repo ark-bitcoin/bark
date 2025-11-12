@@ -272,7 +272,7 @@
 //!
 //! 	let vtxos = wallet.spendable_vtxos_with(&strategy)?
 //! 		.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
-//!	wallet.refresh_vtxos(vtxos).await?;
+//!    wallet.refresh_vtxos(vtxos).await?;
 //! 	Ok(())
 //! }
 //! ```
@@ -324,6 +324,7 @@ use lightning_invoice::Bolt11Invoice;
 use lightning::util::ser::Writeable;
 use lnurllib::lightning_address::LightningAddress;
 use log::{trace, debug, info, warn, error};
+use tokio::sync::RwLock;
 
 use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -339,10 +340,15 @@ use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::exit::Exit;
 use crate::movement::old::{Movement, MovementArgs, MovementKind};
+use crate::movement::manager::{MovementGuard, MovementManager};
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingLightningSend, LightningReceive};
 use crate::round::{RoundParticipation, RoundStatus};
+use crate::subsystem::{
+	ArkoorMovement, BarkSubsystem, BoardMovement, LightningMovement, LightningReceiveMovement,
+	LightningSendMovement, RoundMovement, SubsystemId,
+};
 use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
 use crate::vtxo::state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
 
@@ -622,7 +628,10 @@ pub struct Wallet {
 	pub chain: Arc<ChainSource>,
 
 	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
-	pub exit: tokio::sync::RwLock<Exit>,
+	pub exit: RwLock<Exit>,
+
+	/// Allows easy creation of and management of wallet fund movements.
+	pub movements: Arc<MovementManager>,
 
 	/// Active runtime configuration for networking, fees, policies and thresholds.
 	config: Config,
@@ -636,6 +645,8 @@ pub struct Wallet {
 	/// Optional live connection to an Ark server for round participation and synchronization.
 	server: Option<ServerConnection>,
 
+	/// TODO: Replace this when we move to a modular subsystem architecture
+	subsystem_ids: HashMap<BarkSubsystem, SubsystemId>,
 }
 
 impl Wallet {
@@ -896,9 +907,24 @@ impl Wallet {
 			}
 		};
 
-		let exit = tokio::sync::RwLock::new(Exit::new(db.clone(), chain.clone()).await?);
+		let movements = Arc::new(MovementManager::new(db.clone()));
+		let exit = RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
+		let mut subsystem_ids = HashMap::new();
+		{
+			let subsystems = [
+				BarkSubsystem::Arkoor,
+				BarkSubsystem::Board,
+				BarkSubsystem::LightningReceive,
+				BarkSubsystem::LightningSend,
+				BarkSubsystem::Round,
+			];
+			for subsystem in subsystems.into_iter() {
+				let id = movements.register_subsystem(subsystem.as_str().into()).await?;
+				subsystem_ids.insert(subsystem, id);
+			}
+		};
 
-		Ok(Wallet { config, db, vtxo_seed, exit, server, chain })
+		Ok(Wallet { config, db, vtxo_seed, exit, movements, server, chain, subsystem_ids })
 	}
 
 	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
