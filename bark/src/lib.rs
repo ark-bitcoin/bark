@@ -398,6 +398,15 @@ struct ArkoorCreateResult {
 	change: Option<Vtxo>,
 }
 
+impl ArkoorCreateResult {
+	pub fn to_movement_update(&self) -> anyhow::Result<MovementUpdate> {
+		Ok(MovementUpdate::new()
+			.consumed_vtxos(self.input.iter())
+			.produced_vtxo_if_some(self.change.as_ref())
+		)
+	}
+}
+
 pub struct UtxoInfo {
 	pub outpoint: OutPoint,
 	pub amount: Amount,
@@ -1817,7 +1826,7 @@ impl Wallet {
 		let change_pubkey = self.derive_store_next_keypair()?.0.public_key();
 
 		let req = VtxoRequest {
-			amount: amount,
+			amount,
 			policy: destination_policy,
 		};
 
@@ -1860,7 +1869,7 @@ impl Wallet {
 		Ok(ArkoorCreateResult {
 			input: inputs,
 			created: sent,
-			change: change,
+			change,
 		})
 	}
 
@@ -1925,7 +1934,17 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
+		let mut movement = MovementGuard::new_movement(
+			self.movements.clone(),
+			self.subsystem_ids[&BarkSubsystem::Arkoor],
+			ArkoorMovement::Send.to_string(),
+		).await?;
 		let arkoor = self.create_arkoor_vtxos(destination.policy().clone(), amount).await?;
+		movement.apply_update(
+			arkoor.to_movement_update()?
+				.sent_to([MovementDestination::new(destination.to_string(), amount)])
+				.intended_and_effective_balance(-amount.to_signed()?)
+		).await?;
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
@@ -1934,21 +1953,17 @@ impl Wallet {
 			}).collect(),
 		};
 
+		// TODO: Figure out how to better handle this error. Technically the payment fails but our
+		//       funds are considered spent anyway? Maybe add the failure reason to the metadata?
 		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{}'", e);
 			//NB we will continue to at least not lose our own change
 		}
-
-		self.db.register_movement_old(MovementArgs {
-			kind: MovementKind::ArkoorSend,
-			spends: &arkoor.input.iter().collect::<Vec<_>>(),
-			receives: &arkoor.change.as_ref()
-				.map(|v| vec![(v, VtxoState::Spendable)])
-				.unwrap_or(vec![]),
-			recipients: &[(&destination.to_string(), amount)],
-			fees: None,
-		}).context("failed to store arkoor vtxo")?;
-
+		self.mark_vtxos_as_spent(&arkoor.input, Some(movement.id()))?;
+		if let Some(change) = arkoor.change {
+			self.store_spendable_vtxos(&[change], movement.id())?;
+		}
+		movement.finish(MovementStatus::Finished).await?;
 		Ok(arkoor.created)
 	}
 
