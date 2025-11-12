@@ -14,21 +14,25 @@ use serde::{Deserialize, Serialize};
 /// PendingBoardInfo : Describes a completed transition of funds from onchain to offchain.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingBoardInfo {
+    /// The amount of the board.
+    #[serde(rename = "amount_sat")]
+    pub amount_sat: i64,
     /// The funding transaction. This is the transaction that has to be confirmed onchain for the board to succeed.
     #[serde(rename = "funding_tx")]
     pub funding_tx: Box<models::TransactionInfo>,
     /// The ID of the movement associated with this board.
     #[serde(rename = "movement_id")]
     pub movement_id: i32,
-    /// The info for each [ark::Vtxo] that was created in this board.  Currently, this is always a vector of length 1
+    /// The IDs of the VTXOs that were created in this board.  Currently, this is always a vector of length 1
     #[serde(rename = "vtxos")]
-    pub vtxos: Vec<models::WalletVtxoInfo>,
+    pub vtxos: Vec<String>,
 }
 
 impl PendingBoardInfo {
     /// Describes a completed transition of funds from onchain to offchain.
-    pub fn new(funding_tx: models::TransactionInfo, movement_id: i32, vtxos: Vec<models::WalletVtxoInfo>) -> PendingBoardInfo {
+    pub fn new(amount_sat: i64, funding_tx: models::TransactionInfo, movement_id: i32, vtxos: Vec<String>) -> PendingBoardInfo {
         PendingBoardInfo {
+            amount_sat,
             funding_tx: Box::new(funding_tx),
             movement_id,
             vtxos,

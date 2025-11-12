@@ -29,6 +29,7 @@ Class | Method | HTTP request | Description
 *BitcoinApi* | [**tip**](docs/BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | 
 *BoardsApi* | [**board_all**](docs/BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | 
 *BoardsApi* | [**board_amount**](docs/BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | 
+*BoardsApi* | [**get_pending_boards**](docs/BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/ | 
 *DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | 
 *ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | 
 *ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | 

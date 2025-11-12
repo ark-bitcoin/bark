@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
 use bitcoin::Amount;
 use utoipa::OpenApi;
@@ -12,6 +12,7 @@ use crate::RestServer;
 	paths(
 		board_amount,
 		board_all,
+		get_pending_boards,
 	),
 	components(schemas(
 		bark_json::web::BoardRequest,
@@ -25,6 +26,7 @@ pub fn router() -> Router<RestServer> {
 	Router::new()
 		.route("/board-amount", post(board_amount))
 		.route("/board-all", post(board_all))
+		.route("/", get(get_pending_boards))
 }
 
 #[utoipa::path(
@@ -73,5 +75,24 @@ pub async fn board_all(
 	let board = state.wallet.board_all(&mut *onchain_lock).await?;
 
 	Ok(axum::Json(board.into()))
+}
+
+#[utoipa::path(
+	get,
+	path = "/",
+	responses(
+		(status = 200, description = "Returns all pending boards", body = Vec<bark_json::cli::PendingBoardInfo>),
+		(status = 500, description = "Internal server error")
+	),
+	tag = "boards"
+)]
+#[debug_handler]
+pub async fn get_pending_boards(
+	State(state): State<RestServer>,
+) -> HandlerResult<Json<Vec<bark_json::cli::PendingBoardInfo>>> {
+	let boards = state.wallet.pending_boards()?.into_iter()
+		.map(bark_json::cli::PendingBoardInfo::from).collect();
+
+	Ok(axum::Json(boards))
 }
 

@@ -45,6 +45,32 @@
         }
       }
     },
+    "/api/v1/boards/": {
+      "get": {
+        "tags": [
+          "boards"
+        ],
+        "operationId": "get_pending_boards",
+        "responses": {
+          "200": {
+            "description": "Returns all pending boards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingBoardInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/api/v1/boards/board-all": {
       "post": {
         "tags": [
@@ -3476,9 +3502,16 @@
         "required": [
           "funding_tx",
           "vtxos",
+          "amount_sat",
           "movement_id"
         ],
         "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount of the board.",
+            "minimum": 0
+          },
           "funding_tx": {
             "$ref": "#/components/schemas/TransactionInfo",
             "description": "The funding transaction.\nThis is the transaction that has to be confirmed\nonchain for the board to succeed."
@@ -3492,9 +3525,9 @@
           "vtxos": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/WalletVtxoInfo"
+              "type": "string"
             },
-            "description": "The info for each [ark::Vtxo] that was created\nin this board.\n\nCurrently, this is always a vector of length 1"
+            "description": "The IDs of the VTXOs that were created\nin this board.\n\nCurrently, this is always a vector of length 1"
           }
         }
       },
