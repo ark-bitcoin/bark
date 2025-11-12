@@ -18,7 +18,12 @@ steps:
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - git log --oneline | head -n 1
-      - nix develop .#default --command bash -c "just check-commits"
+      - |
+        if [ "${CI_PIPELINE_EVENT}" != "tag" ]; then
+          nix develop .#default --command bash -c "just check-commits"
+        else
+          echo "Skipping check-commits for tag event"
+        fi
       - git log --oneline | head -n 1
 
   - name: build
