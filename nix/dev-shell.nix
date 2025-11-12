@@ -1,4 +1,7 @@
-{ pkgs, masterPkgs, lib, rustToolchain, rustBuildToolchain, slog-tools }:
+{ pkgs, masterPkgs, lib, slog-tools, buildShell,
+	# this toolchain is used to build the internal tools
+	rustBuildToolchain,
+}:
 let
 	bitcoinVersion = "29.1";
 	lightningVersion = "25.09.1";
@@ -133,71 +136,55 @@ let
 		"hold" = "${hold-invoice}/bin/hold";
 	};
 
-in pkgs.mkShell {
-	packages = [
-		slog-tools
+	env = buildShell.env // {
+		POSTGRES_BINS = "${postgresql}/bin";
+		BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
+		ESPLORA_ELECTRS_EXEC = "${esploraElectrs}/bin/electrs";
+		MEMPOOL_ELECTRS_EXEC = "${mempoolElectrs}/bin/electrs";
+		LIGHTNINGD_EXEC = if isDarwin then null else "${clightning}/bin/lightningd";
+		LIGHTNINGD_DOCKER_IMAGE = if isDarwin then "docker.io/secondark/cln-hold:v${lightningVersion}" else null;
+		LIGHTNINGD_PLUGIN_DIR = if isDarwin then "/plugins" else "${cln-plugins}";
+	};
 
-		# For building
-		rustBuildToolchain
-		rustPlatform.bindgenHook
-		pkgs.glibcLocales
-		pkgs.llvmPackages.clang
-		pkgs.llvmPackages.bintools
-		pkgs.llvmPackages.llvm
-		pkgs.pkg-config
-		pkgs.gcc.cc.lib
-		pkgs.protobuf
+in {
+	inherit env;
 
-		# For generating clients
-		pkgs.openapi-generator-cli
+	shell = pkgs.mkShell (env // {
+		# extend our build shell
+		inputsFrom = [ buildShell.shell ];
 
-		# for bark
-		pkgs.sqlite
+		packages = [
+			slog-tools
 
-		# for development
-		rustToolchain.rust-docs
-		rustToolchain.rust-analyzer
-		hal
-		pkgs.jq
-		pkgs.just
+			# for bark
+			pkgs.sqlite
 
-		# for integration tests
-		postgresql
-		bitcoin
-		clightning
-		pkgs.python3 # for clightning
-		esploraElectrs
-		mempoolElectrs
+			# for development
+			hal
+			pkgs.jq
 
-		# For CI images
-		pkgs.coreutils
-		pkgs.which
-		pkgs.git
-		pkgs.gnugrep
+			# for integration tests
+			postgresql
+			bitcoin
+			clightning
+			pkgs.python3 # for clightning
+			esploraElectrs
+			mempoolElectrs
 
-	] ++ (
-		if isDarwin then [
-			pkgs.docker
-		] else [
-			# doesn't work on darwin
-			pkgs.cargo-llvm-cov
-		]
-	);
+			# For CI images
+			pkgs.coreutils
+			pkgs.which
+			pkgs.git
+			pkgs.gnugrep
 
-	LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
-	RUSTDOCS_STDLIB = "${rustToolchain.rust-docs}/share/doc/rust/html/std/index.html";
-	LD_LIBRARY_PATH = lib.makeLibraryPath [
-		pkgs.gcc.cc.lib
-		# hold plugin needs these at runtime
-		pkgs.sqlite
-		postgresql.lib
-	];
+		] ++ (
+			if isDarwin then [
+				pkgs.docker
+			] else [
+				# doesn't work on darwin
+				pkgs.cargo-llvm-cov
+			]
+		);
 
-	POSTGRES_BINS = "${postgresql}/bin";
-	BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
-	ESPLORA_ELECTRS_EXEC = "${esploraElectrs}/bin/electrs";
-	MEMPOOL_ELECTRS_EXEC = "${mempoolElectrs}/bin/electrs";
-	LIGHTNINGD_EXEC = if isDarwin then null else "${clightning}/bin/lightningd";
-	LIGHTNINGD_DOCKER_IMAGE = if isDarwin then "docker.io/secondark/cln-hold:v${lightningVersion}" else null;
-	LIGHTNINGD_PLUGIN_DIR = if isDarwin then "/plugins" else "${cln-plugins}";
+	});
 }

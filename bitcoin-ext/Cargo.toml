@@ -11,10 +11,13 @@ edition = "2021"
 name = "bitcoin_ext"
 
 [features]
-default = ["bdk", "rpc", "esplora"]
+default = ["bdk", "rpc", "esplora", "all-related-utxos"]
 bdk = ["bdk_wallet", "log"]
 rpc = ["bdk_bitcoind_rpc"]
 esplora = ["rpc", "bdk_esplora", "async-trait", "reqwest"]
+# temporary feature to gate the TransactionExt::all_related_utxos function that
+# requires a Rust version newer than the rust-bitcoin MSRV.
+all-related-utxos = []
 
 [dependencies]
 # EXPORTED

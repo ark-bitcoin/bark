@@ -87,6 +87,16 @@ steps:
           cargo build -p ark-lib          --no-default-features --features=\"\"
         "
 
+  - name: msrv-lib
+    depends_on: test-unit
+    image: registry.2nd.dev/build:25
+    commands:
+      - >
+        nix develop .#msrv-lib --command bash -c "
+          cd testing/msrv-lib &&
+          cargo build
+        "
+
   - name: check-release
     depends_on: test-unit
     image: registry.2nd.dev/build:25

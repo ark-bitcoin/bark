@@ -971,9 +971,13 @@ pub mod builder {
 		) -> SignedTreeBuilder<state::CanFinish> {
 			let unsigned_tree = self.tree.unsigned_tree().expect("state invariant");
 
-			let (cosign_sec_nonces, cosign_pub_nonces) = unsigned_tree.sighashes.iter().map(|sh| {
-				musig::nonce_pair_with_msg(cosign_key, &sh.to_byte_array())
-			}).collect::<(Vec<_>, Vec<_>)>();
+			let mut cosign_sec_nonces = Vec::with_capacity(unsigned_tree.sighashes.len());
+			let mut cosign_pub_nonces = Vec::with_capacity(unsigned_tree.sighashes.len());
+			for sh in &unsigned_tree.sighashes {
+				let pair = musig::nonce_pair_with_msg(&cosign_key, &sh.to_byte_array());
+				cosign_sec_nonces.push(pair.0);
+				cosign_pub_nonces.push(pair.1);
+			}
 
 			SignedTreeBuilder {
 				user_pub_nonces: cosign_pub_nonces,
@@ -1029,9 +1033,13 @@ pub mod builder {
 		pub fn server_cosign(&self, server_cosign_key: &Keypair) -> SignedTreeCosignResponse {
 			let unsigned_tree = self.tree.unsigned_tree().expect("state invariant");
 
-			let (sec_nonces, pub_nonces) = unsigned_tree.sighashes.iter().map(|sh| {
-				musig::nonce_pair_with_msg(&server_cosign_key, &sh.to_byte_array())
-			}).collect::<(Vec<_>, Vec<_>)>();
+			let mut sec_nonces = Vec::with_capacity(unsigned_tree.sighashes.len());
+			let mut pub_nonces = Vec::with_capacity(unsigned_tree.sighashes.len());
+			for sh in &unsigned_tree.sighashes {
+				let pair = musig::nonce_pair_with_msg(&server_cosign_key, &sh.to_byte_array());
+				sec_nonces.push(pair.0);
+				pub_nonces.push(pair.1);
+			}
 
 			let agg_nonces = self.user_pub_nonces().iter().zip(&pub_nonces)
 				.map(|(u, s)| musig::AggregatedNonce::new(&[u, s]))

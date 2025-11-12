@@ -72,6 +72,14 @@ For a detailed technical explanation, see our [protocol documentation](https://d
 ![An example of an Ark transaction tree from a refresh](assets/tx-tree-refresh.jpg)
 _A transaction tree showing how Ark enables multiple users to share control of a single UTXO through pre-signed transactions._
 
+## Minimum Supported Rust Version (MSRV)
+
+Most of our crates do not yet specify a MSRV, but we will commit to one once we
+make an official release.
+
+The `ark-lib` crate (and by extension the `bark-bitcoin-ext` crate) have a MSRV
+of v1.74.0.
+
 ## Contributing
 
 Thinking of opening a pull request? See our [contribution guide](CONTRIBUTING.md) for dependencies, style guidelines, and code hygiene expectations.
