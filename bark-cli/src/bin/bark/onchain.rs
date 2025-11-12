@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bark::onchain::OnchainWallet;
-use bark_json::hal::GetInfo;
 use bitcoin::{address, Amount};
 use log::{info, warn};
 
@@ -224,7 +223,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 			transactions.reverse();
 
 			let transactions = transactions.into_iter()
-				.map(|tx| bark_json::cli::TransactionInfo::from(tx.get_info(net)))
+				.map(|tx| bark_json::primitives::TransactionInfo::from(tx))
 				.collect::<Vec<_>>();
 
 			output_json(&transactions);

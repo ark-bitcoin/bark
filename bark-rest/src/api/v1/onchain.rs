@@ -4,7 +4,6 @@ use anyhow::Context;
 use axum::extract::State;
 use axum::routing::{get, post, put};
 use axum::{debug_handler, Json, Router};
-use bark_json::hal::GetInfo;
 use bitcoin::Amount;
 use tracing::info;
 use utoipa::OpenApi;
@@ -43,11 +42,7 @@ pub fn router() -> Router<RestServer> {
 		bark_json::web::OnchainSendManyRequest,
 		bark_json::web::OnchainDrainRequest,
 		bark_json::primitives::UtxoInfo,
-		bark_json::cli::TransactionInfo,
-		bark_json::cli::InputInfo,
-		bark_json::cli::InputScriptInfo,
-		bark_json::cli::OutputInfo,
-		bark_json::cli::OutputScriptInfo,
+		bark_json::primitives::TransactionInfo,
 	)),
 	tags((name = "onchain", description = "Onchain wallet endpoints"))
 )]
@@ -246,7 +241,7 @@ pub async fn onchain_utxos(
 	get,
 	path = "/transactions",
 	responses(
-		(status = 200, description = "Returns the onchain transactions", body = Vec<bark_json::cli::TransactionInfo>),
+		(status = 200, description = "Returns the onchain transactions", body = Vec<bark_json::primitives::TransactionInfo>),
 		(status = 500, description = "Internal server error")
 	),
 	tag = "onchain"
@@ -254,17 +249,15 @@ pub async fn onchain_utxos(
 #[debug_handler]
 pub async fn onchain_transactions(
 	State(state): State<RestServer>,
-) -> HandlerResult<Json<Vec<bark_json::cli::TransactionInfo>>> {
+) -> HandlerResult<Json<Vec<bark_json::primitives::TransactionInfo>>> {
 	let onchain_lock = state.onchain.read().await;
-
-	let network = state.wallet.properties()?.network;
 
 	let mut transactions = onchain_lock.list_transactions();
 	// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
 	transactions.reverse();
 
 	let transactions = transactions.into_iter()
-		.map(|tx| bark_json::cli::TransactionInfo::from(tx.get_info(network)))
+		.map(|tx| bark_json::primitives::TransactionInfo::from(tx))
 		.collect::<Vec<_>>();
 
 	Ok(axum::Json(transactions))

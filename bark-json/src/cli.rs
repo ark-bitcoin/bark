@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::{Address, Amount, FeeRate, Txid, Wtxid, address};
+use bitcoin::{Amount, FeeRate, Txid};
 
 use ark::lightning::{PaymentHash, Preimage};
 use ark::VtxoId;
@@ -418,125 +418,6 @@ impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
 			invoice: v.invoice.to_string(),
 			htlc_vtxos: v.htlc_vtxos.map(|vtxos| vtxos.into_iter()
 				.map(crate::primitives::WalletVtxoInfo::from).collect()),
-		}
-	}
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct InputScriptInfo {
-	pub hex: Option<Vec<u8>>,
-	pub asm: Option<String>,
-}
-
-impl From<hal::tx::InputScriptInfo> for InputScriptInfo {
-	fn from(v: hal::tx::InputScriptInfo) -> Self {
-		InputScriptInfo {
-			hex: v.hex.map(|hex| hex.bytes().to_vec()),
-			asm: v.asm,
-		}
-	}
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct InputInfo {
-	pub prevout: Option<String>,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
-	pub txid: Option<Txid>,
-	pub vout: Option<u32>,
-	pub script_sig: Option<InputScriptInfo>,
-	pub sequence: Option<u32>,
-	pub witness: Option<Vec<Vec<u8>>>,
-}
-
-impl From<hal::tx::InputInfo> for InputInfo {
-	fn from(v: hal::tx::InputInfo) -> Self {
-		InputInfo {
-			prevout: v.prevout,
-			txid: v.txid,
-			vout: v.vout,
-			script_sig: v.script_sig.map(InputScriptInfo::from),
-			sequence: v.sequence,
-			witness: v.witness.map(|witness| witness.into_iter().map(|witness| witness.bytes().to_vec()).collect()),
-		}
-	}
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct OutputScriptInfo {
-	pub hex: Option<Vec<u8>>,
-	pub asm: Option<String>,
-	#[serde(skip_serializing_if = "Option::is_none", rename = "type")]
-	pub type_: Option<String>,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
-	pub address: Option<Address<address::NetworkUnchecked>>,
-}
-
-impl From<hal::tx::OutputScriptInfo> for OutputScriptInfo {
-	fn from(v: hal::tx::OutputScriptInfo) -> Self {
-		OutputScriptInfo {
-			hex: v.hex.map(|hex| hex.bytes().to_vec()),
-			asm: v.asm,
-			type_: v.type_,
-			address: v.address,
-		}
-	}
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct OutputInfo {
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64, nullable = true))]
-	pub value: Option<Amount>,
-	pub script_pub_key: Option<OutputScriptInfo>,
-}
-
-impl From<hal::tx::OutputInfo> for OutputInfo {
-	fn from(v: hal::tx::OutputInfo) -> Self {
-		OutputInfo {
-			value: v.value,
-			script_pub_key: v.script_pub_key.map(OutputScriptInfo::from),
-		}
-	}
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct TransactionInfo {
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub txid: Option<Txid>,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub wtxid: Option<Wtxid>,
-	pub size: Option<usize>,
-	pub weight: Option<usize>,
-	pub vsize: Option<usize>,
-	pub version: Option<i32>,
-	pub locktime: Option<u32>,
-	pub inputs: Option<Vec<InputInfo>>,
-	pub outputs: Option<Vec<OutputInfo>>,
-	pub total_output_value: Option<u64>,
-}
-
-impl From<hal::tx::TransactionInfo> for TransactionInfo {
-	fn from(v: hal::tx::TransactionInfo) -> Self {
-		TransactionInfo {
-			txid: v.txid,
-			wtxid: v.wtxid,
-			size: v.size,
-			weight: v.weight,
-			vsize: v.vsize,
-			version: v.version,
-			locktime: v.locktime,
-			inputs: v.inputs.map(|inputs| {
-				inputs.into_iter().map(InputInfo::from).collect()
-			}),
-			outputs: v.outputs.map(|outputs| {
-				outputs.into_iter().map(OutputInfo::from).collect()
-			}),
-			total_output_value: v.total_output_value,
 		}
 	}
 }
