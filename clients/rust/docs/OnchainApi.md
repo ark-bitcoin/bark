@@ -9,7 +9,7 @@ Method | HTTP request | Description
 [**onchain_drain**](OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
 [**onchain_send**](OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
 [**onchain_send_many**](OnchainApi.md#onchain_send_many) | **POST** /api/v1/onchain/send-many | 
-[**onchain_sync**](OnchainApi.md#onchain_sync) | **PUT** /api/v1/onchain/sync | 
+[**onchain_sync**](OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | 
 [**onchain_transactions**](OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | 
 [**onchain_utxos**](OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | 
 
