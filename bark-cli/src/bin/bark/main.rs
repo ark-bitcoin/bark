@@ -547,7 +547,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				},
 				_ => bail!("please provide either an amount or --all"),
 			};
-			output_json(&json::Board::from(board));
+			output_json(&json::PendingBoardInfo::from(board));
 		},
 		Command::Send { destination, amount, comment, no_sync } => {
 			if let Ok(addr) = ark::Address::from_str(&destination) {

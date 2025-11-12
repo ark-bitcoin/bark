@@ -11,7 +11,7 @@ Method | HTTP request | Description
 
 ## board_all
 
-> models::Board board_all()
+> models::PendingBoardInfo board_all()
 
 
 Board all the onchain funds to the offchain wallet
@@ -22,7 +22,7 @@ This endpoint does not need any parameter.
 
 ### Return type
 
-[**models::Board**](Board.md)
+[**models::PendingBoardInfo**](PendingBoardInfo.md)
 
 ### Authorization
 
@@ -38,7 +38,7 @@ No authorization required
 
 ## board_amount
 
-> models::Board board_amount(board_request)
+> models::PendingBoardInfo board_amount(board_request)
 
 
 Board the given amount of onchain funds to the offchain wallet
@@ -52,7 +52,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::Board**](Board.md)
+[**models::PendingBoardInfo**](PendingBoardInfo.md)
 
 ### Authorization
 

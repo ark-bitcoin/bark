@@ -1000,7 +1000,7 @@ async fn register_board_is_idempotent() {
 
 	let bark_client = bark_wallet.client().await;
 
-	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0].id).unwrap();
+	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0]).unwrap();
 
 	// We will now call the register_board a few times
 	let mut rpc = srv.get_public_rpc().await;
@@ -1026,7 +1026,7 @@ async fn register_unconfirmed_board() {
 
 	let bark_client = bark.client().await;
 
-	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0].id).unwrap();
+	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0]).unwrap();
 
 	let unconfirmed_board_request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),

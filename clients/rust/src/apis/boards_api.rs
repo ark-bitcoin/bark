@@ -33,7 +33,7 @@ pub enum BoardAmountError {
 
 
 /// Board all the onchain funds to the offchain wallet
-pub async fn board_all(configuration: &configuration::Configuration, ) -> Result<models::Board, Error<BoardAllError>> {
+pub async fn board_all(configuration: &configuration::Configuration, ) -> Result<models::PendingBoardInfo, Error<BoardAllError>> {
 
     let uri_str = format!("{}/api/v1/boards/board-all", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -57,8 +57,8 @@ pub async fn board_all(configuration: &configuration::Configuration, ) -> Result
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::Board`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::Board`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::PendingBoardInfo`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::PendingBoardInfo`")))),
         }
     } else {
         let content = resp.text().await?;
@@ -68,7 +68,7 @@ pub async fn board_all(configuration: &configuration::Configuration, ) -> Result
 }
 
 /// Board the given amount of onchain funds to the offchain wallet
-pub async fn board_amount(configuration: &configuration::Configuration, board_request: models::BoardRequest) -> Result<models::Board, Error<BoardAmountError>> {
+pub async fn board_amount(configuration: &configuration::Configuration, board_request: models::BoardRequest) -> Result<models::PendingBoardInfo, Error<BoardAmountError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_board_request = board_request;
 
@@ -95,8 +95,8 @@ pub async fn board_amount(configuration: &configuration::Configuration, board_re
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::Board`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::Board`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::PendingBoardInfo`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::PendingBoardInfo`")))),
         }
     } else {
         let content = resp.text().await?;

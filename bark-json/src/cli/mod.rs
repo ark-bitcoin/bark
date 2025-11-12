@@ -19,7 +19,7 @@ use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
 use crate::exit::ExitState;
-use crate::primitives::{VtxoInfo, WalletVtxoInfo};
+use crate::primitives::{TransactionInfo, WalletVtxoInfo};
 use crate::serde_utils;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -214,24 +214,32 @@ impl From<bark::exit::models::ExitTransactionStatus> for ExitTransactionStatus {
 /// Describes a completed transition of funds from onchain to offchain.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct Board {
-	/// The [Txid] of the funding-transaction.
+pub struct PendingBoardInfo {
+	/// The funding transaction.
 	/// This is the transaction that has to be confirmed
 	/// onchain for the board to succeed.
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub funding_txid: Txid,
-	/// The info for each [ark::Vtxo] that was created
+	pub funding_tx: TransactionInfo,
+	/// The IDs of the VTXOs that were created
 	/// in this board.
 	///
 	/// Currently, this is always a vector of length 1
-	pub vtxos: Vec<VtxoInfo>,
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+	pub vtxos: Vec<VtxoId>,
+	/// The amount of the board.
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub amount: Amount,
+	/// The ID of the movement associated with this board.
+	pub movement_id: u32,
 }
 
-impl From<bark::Board> for Board {
-	fn from(v: bark::Board) -> Self {
-		Board {
-			funding_txid: v.funding_txid,
-			vtxos: v.vtxos.into_iter().map(VtxoInfo::from).collect(),
+impl From<bark::persist::models::PendingBoard> for PendingBoardInfo {
+	fn from(v: bark::persist::models::PendingBoard) -> Self {
+		PendingBoardInfo {
+			funding_tx: v.funding_tx.into(),
+			vtxos: v.vtxos,
+			amount: v.amount,
+			movement_id: v.movement_id.0,
 		}
 	}
 }

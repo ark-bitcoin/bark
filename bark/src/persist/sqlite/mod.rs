@@ -30,7 +30,7 @@ use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
-use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
+use crate::persist::models::{PendingLightningSend, LightningReceive, PendingBoard, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
@@ -152,9 +152,9 @@ impl BarkPersister for SqliteClient {
 		query::get_all_pending_boards_ids(&conn)
 	}
 
-	fn get_pending_board_movement_id(&self, vtxo_id: VtxoId) -> anyhow::Result<MovementId> {
+	fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
 		let conn = self.connect()?;
-		query::get_pending_board_movement_id(&conn, vtxo_id)
+		query::get_pending_board_by_vtxo_id(&conn, vtxo_id)
 	}
 
 	fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {

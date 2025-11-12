@@ -37,7 +37,7 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletProperties;
 use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
-use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
+use crate::persist::models::{PendingLightningSend, LightningReceive, PendingBoard, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -232,14 +232,15 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the query fails.
 	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>>;
 
-	/// Get the [MovementId] associated with the pending board corresponding to the given [VtxoId].
+	/// Get the [PendingBoard] associated with the given [VtxoId].
 	///
 	/// Returns:
-	/// - `Ok(MovementId)` if a matching board exists
+	/// - `Ok(Some(PendingBoard))` if a matching board exists
+	/// - `Ok(None)` if no matching board exists
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_pending_board_movement_id(&self, vtxo_id: VtxoId) -> anyhow::Result<MovementId>;
+	fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>>;
 
 	/// Store a new ongoing round state and lock the VTXOs in round
 	///
